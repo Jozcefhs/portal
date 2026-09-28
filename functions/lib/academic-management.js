@@ -1167,6 +1167,7 @@ export function importedAcademicStudentProfile(row, scope, schoolClass, arm, ses
     EnrollmentCategory: 'Returning',
     Status: 'Active',
     ProfileCompletionStatus: 'Needs completion',
+    ParentOnboardingStatus: 'PendingProfile',
     ImportedAt: timestamp,
     ImportedBy: actorName(user),
     ImportSource: 'Academic Management',

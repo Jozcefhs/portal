@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { onboardingStatus } from '../functions/api/parent-dashboard.js';
 
 const [backend, api, html, script, staffStudents, admin] = await Promise.all([
   readFile(new URL('../functions/api/backend.js', import.meta.url), 'utf8'),
@@ -70,4 +71,15 @@ test('staff can re-enable onboarding for an existing student and copy the shared
   assert.match(admin, /data-copy-shared-parent-onboarding/);
   assert.match(admin, /\/parent-dashboard#onboarding=1/);
   assert.match(admin, /copyTextToClipboard\(onboardingUrl\)/);
+});
+
+test('legacy incomplete student profiles can begin onboarding without an explicit status', () => {
+  assert.equal(onboardingStatus({ ProfileCompletionStatus: 'Needs completion' }), 'pendingprofile');
+  assert.equal(onboardingStatus({ ParentOnboardingStatus: 'PendingProfile' }), 'pendingprofile');
+  assert.equal(onboardingStatus({ ParentOnboardingStatus: 'Complete', ProfileCompletionStatus: 'Needs completion' }), 'complete');
+  assert.equal(onboardingStatus({ ParentOnboardingStatus: 'AwaitingPassword', ProfileCompletionStatus: 'Needs completion' }), 'awaitingpassword');
+  assert.equal(onboardingStatus({ ProfileCompletionStatus: 'Complete' }), '');
+  assert.equal(onboardingStatus({ ProfileCompletionStatus: 'Needs completion', ParentOnboardingProfileCompletedAt: '2026-09-28T12:00:00Z' }), '');
+  assert.equal(onboardingStatus({ ProfileCompletionStatus: 'Needs completion', ParentOnboardingCompletedAt: '2026-09-28T12:00:00Z' }), '');
+  assert.equal(onboardingStatus({}), '');
 });

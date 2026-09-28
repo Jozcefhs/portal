@@ -61,8 +61,18 @@ function lower(value) {
 
 const PARENT_ONBOARDING_TEMPORARY_PASSWORD = '12345678';
 
-function onboardingStatus(student = {}) {
-  return lower(student.ParentOnboardingStatus || student.parentOnboardingStatus);
+export function onboardingStatus(student = {}) {
+  const explicitStatus = lower(student.ParentOnboardingStatus || student.parentOnboardingStatus);
+  if (explicitStatus) return explicitStatus;
+  // Academic Management staged student profiles before the parent onboarding
+  // field existed. Its "Needs completion" marker is the staff-side signal that
+  // those records are still awaiting their first parent profile submission.
+  const profileStatus = lower(student.ProfileCompletionStatus || student.profileCompletionStatus);
+  const profileWasCompleted = clean(student.ParentOnboardingProfileCompletedAt || student.parentOnboardingProfileCompletedAt);
+  const onboardingWasCompleted = clean(student.ParentOnboardingCompletedAt || student.parentOnboardingCompletedAt);
+  return profileStatus === 'needs completion' && !profileWasCompleted && !onboardingWasCompleted
+    ? 'pendingprofile'
+    : '';
 }
 
 function validParentEmail(value) {
