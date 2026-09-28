@@ -11477,6 +11477,7 @@ function academicTaskDefinitions(view, root) {
     ],
     teachers: [
       { key: 'assign', label: 'Assign teacher', title: 'Assign a subject teacher', description: 'Choose one teacher and subject, then check every classroom they teach.', nodes: nodes(form('[data-academic-workflow="bulkAssignAcademicSubjectTeacher"]')) },
+      { key: 'formTeacher', label: 'Class teacher subjects', title: 'Assign timetable-only subjects to class teachers', description: 'Choose a classroom and select the timetable-only subjects its saved class teacher will teach.', nodes: nodes(form('[data-academic-form-teacher-subjects]')) },
       { key: 'register', label: 'Saved assignments', title: 'Subject-teacher assignments', description: 'Review allocations and open any record for correction or deletion.', nodes: nodes(form('[data-academic-teacher-edit]'), register('Subject Teacher Allocations')) }
     ],
     students: [
@@ -12134,7 +12135,13 @@ function academicTeacherWorkspace(data, rows) {
       || clean(left.Name).localeCompare(clean(right.Name), undefined, { sensitivity: 'base' });
   });
   const subjects = rows.subjects.filter(academicIsActive);
+  const timetableOnlySubjects = subjects.filter((row) => row.AssessmentCategory === 'TimetableOnly');
   const subjectAllocations = rows.teacherAllocations.filter((row) => row.AllocationRole === 'Subject Teacher');
+  const classTeacherAllocations = rows.teacherAllocations.filter((row) => academicIsActive(row)
+    && row.AllocationRole === 'Form Teacher'
+    && row.SessionId === academicManagementFilters.sessionId
+    && row.TermId === academicManagementFilters.termId);
+  const classTeacherClassrooms = classrooms.filter((classroom) => classTeacherAllocations.some((row) => row.ArmId === classroom.ArmId));
   const staff = academicManagementStaffCandidates(data.staff || [], academicManagementFilters.section);
   const form = canManage ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-workflow="bulkAssignAcademicSubjectTeacher" data-academic-subject-teacher-selection>
     <div class="academic-management-editor-heading"><div><small>Subject teaching</small><h3>Assign a subject teacher</h3><p class="muted">Choose one teacher and one subject, then select the exact classrooms taught for that subject. Repeat the process if the teacher handles another subject.</p></div></div>
@@ -12148,6 +12155,17 @@ function academicTeacherWorkspace(data, rows) {
     ${academicClassroomCheckboxField(classes, classrooms)}
     <button type="submit">Save subject-teacher assignments</button>
   </form>` : '<div class="academic-view-only-note"><strong>My teaching allocations</strong><span>Only administrators can change allocations.</span></div>';
+  const formTeacherSubjects = canManage ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-workflow="bulkAssignAcademicSubjectTeacher" data-academic-form-teacher-subjects>
+    <div class="academic-management-editor-heading"><div><small>Class teacher lessons</small><h3>Assign timetable-only subjects to a class teacher</h3><p class="muted">Choose a classroom, then check the timetable-only subjects its saved form/class teacher will teach. These subjects remain excluded from scores and results.</p></div></div>
+    <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}"><input type="hidden" name="SessionId" value="${escapeHtml(academicManagementFilters.sessionId)}"><input type="hidden" name="TermId" value="${escapeHtml(academicManagementFilters.termId)}"><input type="hidden" name="AssignToFormTeachers" value="true"><input type="hidden" name="FormTeacherAllocationId"><input type="hidden" name="FormTeacherRevisionToken">
+    <label>Classroom<select name="ArmId" required>${academicSelectOptions(classTeacherClassrooms, '', (row) => `${academicLabel(classes, row.ClassId)} / ${row.Name} · ${academicLabel(data.staff, classTeacherAllocations.find((allocation) => allocation.ArmId === row.ArmId)?.TeacherUsername)}`, classTeacherClassrooms.length ? 'Choose classroom' : 'Assign class teachers first')}</select></label>
+    <fieldset class="academic-checkbox-field" data-academic-checkbox-field data-academic-checkbox-name="SubjectIds" data-academic-checkbox-label="timetable-only subject" data-academic-checkbox-required="true">
+      <legend>Timetable-only subjects <span aria-hidden="true">*</span><span class="academic-checkbox-count" data-academic-checkbox-count aria-live="polite">0 selected</span></legend>
+      <div class="academic-checkbox-options">${timetableOnlySubjects.length ? timetableOnlySubjects.map((subject) => `<label class="academic-checkbox-option"><input type="checkbox" name="SubjectIds" value="${escapeHtml(subject.SubjectId)}" disabled><span>${escapeHtml(subject.Code)} - ${escapeHtml(subject.Name)}</span></label>`).join('') : '<span class="academic-checkbox-empty">No timetable-only subjects have been created in this section.</span>'}</div>
+      <small data-academic-form-teacher-subject-help>Choose a classroom to see the subjects configured for it. Saved selections are checked; unchecking one here does not delete its assignment. Use Saved assignments to remove it.</small>
+    </fieldset>
+    <button type="submit" ${classTeacherClassrooms.length && timetableOnlySubjects.length ? '' : 'disabled'}>Assign selected subjects to class teacher</button>
+  </form>` : '';
   const editForm = canManage ? `<form hidden class="academic-management-editor academic-management-editor-wide" data-academic-form="teacherAllocation" data-academic-action="updateAcademicSubjectTeacherAllocation" data-academic-teacher-edit>
     ${academicRecordFields()}<input type="hidden" name="AllocationRole" value="Subject Teacher"><input type="hidden" name="ClassId"><input type="hidden" name="ArmId"><input type="hidden" name="Status" value="Active">
     <div class="academic-management-editor-heading"><div><small>Correct saved allocation</small><h3>Edit subject-teacher allocation</h3><p class="muted">Change the teacher, subject, classroom or academic period, then update the existing allocation.</p></div><button type="button" class="academic-form-reset" data-academic-reset="teacherAllocation">Cancel edit</button></div>
@@ -12161,13 +12179,67 @@ function academicTeacherWorkspace(data, rows) {
     </div>
     <button type="submit">Update this allocation</button>
   </form>` : '';
-  return `${form}${editForm}${table('Subject Teacher Allocations', subjectAllocations, [
+  return `${form}${formTeacherSubjects}${editForm}${table('Subject Teacher Allocations', subjectAllocations, [
     { label: 'Teacher', value: (row) => academicLabel(data.staff, row.TeacherUsername, row.TeacherUsername) },
     { label: 'Class / Arm', value: (row) => `${academicLabel(rows.classes, row.ClassId)}${row.ArmId ? ` / ${academicLabel(rows.arms, row.ArmId)}` : ' / All arms'}` },
     { label: 'Subject', value: (row) => academicLabel(rows.subjects, row.SubjectId, 'Class responsibility') },
     { label: 'Status', value: (row) => row.Status },
     { label: 'Actions', render: (row) => academicActionButtons('teacherAllocation', row, canManage, false, canManage) }
   ])}`;
+}
+
+function academicTimetableOnlySubjectAvailable(data, classroom, subject) {
+  if (!classroom || !subject || !academicIsActive(subject) || subject.AssessmentCategory !== 'TimetableOnly') return false;
+  const schoolClass = academicFind(data.classes || [], classroom.ClassId);
+  if (clean(schoolClass?.SchoolStage).toLowerCase() === 'senior-secondary') {
+    return ['trade', 'optional'].includes(clean(subject.SeniorChoiceRole).toLowerCase())
+      || (data.departments || []).some((department) => academicIsActive(department)
+        && (department.CoreSubjectIds || []).includes(subject.SubjectId));
+  }
+  return (data.offerings || []).some((offering) => academicIsActive(offering)
+    && offering.SessionId === academicManagementFilters.sessionId
+    && offering.TermId === academicManagementFilters.termId
+    && offering.ClassId === classroom.ClassId && offering.SubjectId === subject.SubjectId
+    && (!offering.ArmId || offering.ArmId === classroom.ArmId));
+}
+
+function bindAcademicFormTeacherSubjects(form, data = {}) {
+  if (!form) return;
+  const classroomSelect = form.elements.namedItem('ArmId');
+  const drafts = new Map();
+  let previousClassroomId = '';
+  const sync = () => {
+    if (previousClassroomId) drafts.set(previousClassroomId, academicCheckedValues(form, 'SubjectIds'));
+    const classroomId = clean(classroomSelect?.value);
+    const classroom = academicFind(data.arms || [], classroomId);
+    const formTeacher = (data.teacherAllocations || []).find((row) => academicIsActive(row)
+      && row.AllocationRole === 'Form Teacher' && row.SessionId === academicManagementFilters.sessionId
+      && row.TermId === academicManagementFilters.termId && row.ArmId === classroomId);
+    form.elements.FormTeacherAllocationId.value = academicRecordId(formTeacher || {});
+    form.elements.FormTeacherRevisionToken.value = clean(formTeacher?.RevisionToken);
+    let available = 0;
+    form.querySelectorAll('input[name="SubjectIds"]').forEach((input) => {
+      const subject = academicFind(data.subjects || [], input.value);
+      input.disabled = !formTeacher || !academicTimetableOnlySubjectAvailable(data, classroom, subject);
+      if (!input.disabled) available += 1;
+    });
+    const saved = (data.teacherAllocations || []).filter((row) => academicIsActive(row)
+      && row.AllocationRole === 'Subject Teacher'
+      && row.SessionId === academicManagementFilters.sessionId && row.TermId === academicManagementFilters.termId
+      && row.ArmId === classroomId && clean(row.TeacherUsername).toLowerCase() === clean(formTeacher?.TeacherUsername).toLowerCase())
+      .map((row) => row.SubjectId);
+    setAcademicCheckedValues(form, 'SubjectIds', drafts.get(classroomId) || saved);
+    const help = form.querySelector('[data-academic-form-teacher-subject-help]');
+    if (help) help.textContent = !classroomId ? 'Choose a classroom to see the subjects configured for it.'
+      : !formTeacher ? 'Assign a form/class teacher to this classroom first.'
+        : !available ? 'No timetable-only subjects are configured for this classroom. Add them under Class subjects first.'
+          : `${available} timetable-only subject${available === 1 ? '' : 's'} available. Saved assignments for this class teacher are checked. Uncheck does not delete; use Saved assignments to remove one.`;
+    const submit = form.querySelector('button[type="submit"]');
+    if (submit) submit.disabled = !formTeacher || !available;
+    previousClassroomId = classroomId;
+  };
+  classroomSelect?.addEventListener('change', sync);
+  sync();
 }
 
 function academicStudentMembershipActions(row, canManage) {
@@ -16012,6 +16084,7 @@ function bindAcademicManagement() {
     });
   });
   const classStaffForm = panelEl.querySelector('[data-academic-class-staff-batch]');
+  bindAcademicFormTeacherSubjects(panelEl.querySelector('[data-academic-form-teacher-subjects]'), academicManagementData || {});
   if (classStaffForm) {
     classStaffForm.querySelectorAll('[data-academic-class-staff-row]').forEach((row) => bindAcademicClassStaffRow(classStaffForm, row));
     classStaffForm.querySelector('[data-academic-class-staff-add]')?.addEventListener('click', () => {

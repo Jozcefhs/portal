@@ -2598,6 +2598,18 @@ function assertAcademicClassTeacherSnapshot(current = [], allocationId = '', rev
   );
 }
 
+export function academicFormTeacherForClassroom(allocations = [], classroom = {}, sessionId = '', termId = '') {
+  const matches = allocations.filter((row) => statusActive(row)
+    && row.SessionId === sessionId && row.TermId === termId
+    && row.ClassId === classroom.ClassId && row.ArmId === classroom.ArmId
+    && row.AllocationRole === 'Form Teacher');
+  if (matches.length !== 1) {
+    throw failure(`${classroom.Name || 'This classroom'} must have one assigned class teacher before adding timetable-only subjects.`,
+      409, 'ACADEMIC_FORM_TEACHER_REQUIRED');
+  }
+  return matches[0];
+}
+
 export async function bulkAssignAcademicClassTeachers(env, user = {}, input = {}) {
   requireWritableSubscription(user);
   requireCapability(user, 'canManageAllocations');
@@ -2720,16 +2732,28 @@ export async function bulkAssignAcademicSubjectTeacher(env, user = {}, input = {
   const classroomIds = uniqueIds(input.ClassroomIds || input.ArmIds || input.ArmId);
   const sessionId = clean(input.SessionId);
   const termId = clean(input.TermId);
+  const assignToFormTeachers = input.AssignToFormTeachers === true || lower(input.AssignToFormTeachers) === 'true';
   const teacherUsername = lower(input.TeacherUsername || input.Username);
-  const subjectId = clean(input.SubjectId);
-  if (!sessionId || !termId || !teacherUsername || !subjectId) {
-    throw failure('Choose the session, term, teacher and subject.');
+  const subjectIds = assignToFormTeachers ? uniqueIds(input.SubjectIds || input.SubjectId) : uniqueIds(input.SubjectId);
+  if (!sessionId || !termId || (!assignToFormTeachers && !teacherUsername) || !subjectIds.length) {
+    throw failure(assignToFormTeachers
+      ? 'Choose the session, term and at least one timetable-only subject.'
+      : 'Choose the session, term, teacher and subject.');
   }
   if (!classroomIds.length) {
     throw failure('Choose at least one classroom.');
   }
+  if (assignToFormTeachers && classroomIds.length !== 1) {
+    throw failure('Choose one classroom when assigning subjects to its form teacher.');
+  }
+  if (!assignToFormTeachers && subjectIds.length !== 1) {
+    throw failure('Choose one subject for a named subject teacher.');
+  }
   if (classroomIds.length > 200) {
     throw failure('Assign at most 200 classrooms in one batch.');
+  }
+  if (classroomIds.length * subjectIds.length > 200) {
+    throw failure('Assign at most 200 classroom-subject combinations in one batch.');
   }
   const [state, people] = await Promise.all([
     loadScopedAcademicState(env, scope, ACADEMIC_SUBJECT_TEACHER_STATE_KEYS),
@@ -2737,14 +2761,20 @@ export async function bulkAssignAcademicSubjectTeacher(env, user = {}, input = {
   ]);
   const projected = { ...state, teacherAllocations: [...state.teacherAllocations] };
   const classrooms = classroomIds.map((id) => assertReference(findById(state.arms, id), 'One selected classroom is not active.'));
-  const subject = assertReference(findById(state.subjects, subjectId), 'The selected subject is not active.');
-  if (lower(subject.SchoolSection) !== scope.section) {
-    throw failure('The subject must belong to the selected school section.', 409, 'ACADEMIC_SECTION_MISMATCH');
-  }
+  const subjects = subjectIds.map((id) => assertReference(findById(state.subjects, id), 'One selected subject is not active.'));
+  subjects.forEach((subject) => {
+    if (lower(subject.SchoolSection) !== scope.section) {
+      throw failure('Every subject must belong to the selected school section.', 409, 'ACADEMIC_SECTION_MISMATCH');
+    }
+    if (assignToFormTeachers && subject.AssessmentCategory !== 'TimetableOnly') {
+      throw failure('Only timetable-only subjects can be assigned through the class-teacher option.', 409, 'ACADEMIC_TIMETABLE_ONLY_REQUIRED');
+    }
+  });
   const writes = [];
   let created = 0;
   let restored = 0;
   let skipped = 0;
+  let assignedClassTeacherUsername = '';
   for (const classroom of classrooms) {
     if (!activeValue(classroom.IsClassroom, false)) {
       throw failure(`${classroom.Name} is an arm definition, not an opened classroom.`, 409, 'ACADEMIC_CLASSROOM_REQUIRED');
@@ -2753,55 +2783,66 @@ export async function bulkAssignAcademicSubjectTeacher(env, user = {}, input = {
     if (lower(schoolClass.SchoolSection) !== scope.section || lower(classroom.SchoolSection) !== scope.section) {
       throw failure('Every selected classroom must belong to the selected school section.', 409, 'ACADEMIC_SECTION_MISMATCH');
     }
-    const candidate = normalizeAcademicTeacherAllocation({
-      SessionId: sessionId, TermId: termId, TeacherUsername: teacherUsername,
-      ClassId: schoolClass.ClassId, ArmId: classroom.ArmId, SubjectId: subject.SubjectId,
-      AllocationRole: 'Subject Teacher', Status: 'Active'
-    }, scope);
-    const existing = findById(projected.teacherAllocations, candidate.AllocationId);
-    if (existing && statusActive(existing)) {
-      skipped += 1;
-      continue;
+    const formTeacher = assignToFormTeachers
+      ? academicFormTeacherForClassroom(state.teacherAllocations, classroom, sessionId, termId) : null;
+    if (assignToFormTeachers) {
+      assertAcademicClassTeacherSnapshot([formTeacher], input.FormTeacherAllocationId,
+        input.FormTeacherRevisionToken, 1, 'Form Teacher');
     }
-    const record = existing
-      ? normalizeAcademicTeacherAllocation({ ...candidate, Status: 'Active' }, scope, existing)
-      : candidate;
-    if (existing) {
-      delete record.ArchivedAt;
-      delete record.ArchivedBy;
-    }
-    validateAcademicRecord(projected, 'teacherallocation', record, { ...people, existing });
-    stampAcademicRecord(record, user, existing);
-    if (existing) {
-      projected.teacherAllocations = projected.teacherAllocations.map((row) => recordId(row) === record.AllocationId ? record : row);
-      writes.push({
-        collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.teacherAllocations,
-        documentId: record.AllocationId, data: withoutMetadata(record), updateTime: clean(existing.__updateTime)
-      });
-      restored += 1;
-    } else {
-      projected.teacherAllocations.push(record);
-      writes.push({
-        collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.teacherAllocations,
-        documentId: record.AllocationId, data: withoutMetadata(record), exists: false
-      });
-      created += 1;
+    const classroomTeacherUsername = assignToFormTeachers ? lower(formTeacher.TeacherUsername) : teacherUsername;
+    if (assignToFormTeachers) assignedClassTeacherUsername = classroomTeacherUsername;
+    for (const subject of subjects) {
+      const candidate = normalizeAcademicTeacherAllocation({
+        SessionId: sessionId, TermId: termId, TeacherUsername: classroomTeacherUsername,
+        ClassId: schoolClass.ClassId, ArmId: classroom.ArmId, SubjectId: subject.SubjectId,
+        AllocationRole: 'Subject Teacher', Status: 'Active'
+      }, scope);
+      const existing = findById(projected.teacherAllocations, candidate.AllocationId);
+      if (existing && statusActive(existing)) {
+        skipped += 1;
+        continue;
+      }
+      const record = existing
+        ? normalizeAcademicTeacherAllocation({ ...candidate, Status: 'Active' }, scope, existing)
+        : candidate;
+      if (existing) {
+        delete record.ArchivedAt;
+        delete record.ArchivedBy;
+      }
+      validateAcademicRecord(projected, 'teacherallocation', record, { ...people, existing });
+      stampAcademicRecord(record, user, existing);
+      if (existing) {
+        projected.teacherAllocations = projected.teacherAllocations.map((row) => recordId(row) === record.AllocationId ? record : row);
+        writes.push({
+          collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.teacherAllocations,
+          documentId: record.AllocationId, data: withoutMetadata(record), updateTime: clean(existing.__updateTime)
+        });
+        restored += 1;
+      } else {
+        projected.teacherAllocations.push(record);
+        writes.push({
+          collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.teacherAllocations,
+          documentId: record.AllocationId, data: withoutMetadata(record), exists: false
+        });
+        created += 1;
+      }
     }
   }
   if (created || restored) {
     writes.push(auditWrite(user, 'BULK ASSIGN', 'teacherallocation', {
       BranchId: scope.branchId, SchoolSection: scope.section, SessionId: sessionId, TermId: termId,
-      TeacherUsername: teacherUsername, SubjectId: subject.SubjectId, AllocationId: `bulk-${Date.now()}`
-    }, `${created} subject-teacher allocation(s) created; ${restored} restored; ${skipped} already active.`));
+      TeacherUsername: assignToFormTeachers ? assignedClassTeacherUsername : teacherUsername,
+      SubjectId: subjects.length === 1 ? subjects[0].SubjectId : '', AllocationId: `bulk-${Date.now()}`
+    }, `${created} subject-teacher allocation(s) created; ${restored} restored; ${skipped} already active${assignToFormTeachers ? ` for class teacher ${assignedClassTeacherUsername}: ${subjects.map((subject) => subject.Name).join(', ')}` : ''}.`));
   }
   await commitAcademicBatch(env, writes, 'A selected class, arm or teacher allocation changed while the batch was being saved. Reload and try again.');
   const response = await bootstrapAcademicManagement(env, user, {
     ...input, BranchId: scope.branchId, SchoolSection: scope.section, View: 'teachers'
   });
   response.message = created || restored
-    ? `${created + restored} subject-teacher assignment${created + restored === 1 ? '' : 's'} saved online${skipped ? `; ${skipped} already existed` : ''}. Repeat for another subject if needed.`
+    ? `${created + restored} subject-teacher assignment${created + restored === 1 ? '' : 's'} saved online${skipped ? `; ${skipped} already existed` : ''}.${assignToFormTeachers ? ' Each uses the selected classroom’s current form teacher.' : ' Repeat for another subject if needed.'}`
     : 'Every selected subject-teacher assignment already exists.';
-  response.bulkResult = { Requested: classroomIds.length, Created: created, Restored: restored, Skipped: skipped };
+  response.bulkResult = { Requested: classroomIds.length * subjectIds.length, Created: created, Restored: restored, Skipped: skipped };
   return response;
 }
 

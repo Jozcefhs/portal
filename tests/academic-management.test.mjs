@@ -15,6 +15,7 @@ import {
   academicPermanentDeleteDependants,
   academicManagementCapabilities,
   academicManagementSummary,
+  academicFormTeacherForClassroom,
   academicManagementViewStateKeys,
   academicMembershipCanReceiveInitialArm,
   academicLegacyClassCompatibilityEnabled,
@@ -1047,6 +1048,54 @@ test('subject teachers are batch-assigned only to the exact selected classrooms'
   assert.match(librarySource, /bulkassignacademicsubjectteacher/);
 });
 
+test('selected timetable-only subjects can be assigned to each classroom’s saved form teacher', () => {
+  const bulkTeacherSource = librarySource.slice(
+    librarySource.indexOf('export async function bulkAssignAcademicSubjectTeacher'),
+    librarySource.indexOf('export async function updateAcademicSubjectTeacherAllocation')
+  );
+  assert.match(bulkTeacherSource, /assignToFormTeachers = input\.AssignToFormTeachers/);
+  assert.match(bulkTeacherSource, /uniqueIds\(input\.SubjectIds \|\| input\.SubjectId\)/);
+  assert.match(bulkTeacherSource, /subject\.AssessmentCategory !== 'TimetableOnly'/);
+  assert.match(bulkTeacherSource, /academicFormTeacherForClassroom\(state\.teacherAllocations, classroom, sessionId, termId\)/);
+  assert.match(bulkTeacherSource, /assertAcademicClassTeacherSnapshot\(\[formTeacher\]/);
+  assert.match(bulkTeacherSource, /TeacherUsername: classroomTeacherUsername/);
+  assert.match(bulkTeacherSource, /validateAcademicRecord\(projected, 'teacherallocation', record/);
+  const formClassroom = { ClassId: 'grade-7', ArmId: 'arm-a', Name: 'Brilliance' };
+  const savedFormTeacher = { ClassId: 'grade-7', ArmId: 'arm-a', SessionId: 'session-1', TermId: 'term-1',
+    AllocationRole: 'Form Teacher', TeacherUsername: 'ada', Status: 'Active' };
+  assert.equal(academicFormTeacherForClassroom([savedFormTeacher], formClassroom, 'session-1', 'term-1'), savedFormTeacher);
+  assert.throws(() => academicFormTeacherForClassroom([], formClassroom, 'session-1', 'term-1'),
+    /must have one assigned class teacher/);
+  assert.throws(() => academicFormTeacherForClassroom([savedFormTeacher, { ...savedFormTeacher }], formClassroom, 'session-1', 'term-1'),
+    /must have one assigned class teacher/);
+  const eligibilitySource = adminSource.slice(
+    adminSource.indexOf('function academicTimetableOnlySubjectAvailable'),
+    adminSource.indexOf('function bindAcademicFormTeacherSubjects')
+  );
+  const available = new Function('academicIsActive', 'academicFind', 'clean', 'academicManagementFilters',
+    `${eligibilitySource}; return academicTimetableOnlySubjectAvailable;`)(
+    (row) => row && !/archived|inactive|closed|withdrawn/i.test(String(row.Status || '')),
+    (rows, id) => rows.find((row) => [row.ClassId, row.SubjectId].includes(id)) || null,
+    (value) => String(value ?? '').trim(), { sessionId: 'session-1', termId: 'term-1' }
+  );
+  const classroom = { ClassId: 'grade-7', ArmId: 'arm-a' };
+  const leap = { SubjectId: 'leap', AssessmentCategory: 'TimetableOnly', Status: 'Active' };
+  const graded = { SubjectId: 'math', AssessmentCategory: 'Graded', Status: 'Active' };
+  const junior = { classes: [{ ClassId: 'grade-7', SchoolStage: 'junior-secondary' }], offerings: [
+    { ClassId: 'grade-7', ArmId: '', SubjectId: 'leap', SessionId: 'session-1', TermId: 'term-1', Status: 'Active' }
+  ] };
+  assert.equal(available(junior, classroom, leap), true);
+  assert.equal(available(junior, classroom, graded), false);
+  assert.equal(available({ ...junior, offerings: [{ ...junior.offerings[0], TermId: 'term-2' }] }, classroom, leap), false);
+  const senior = { classes: [{ ClassId: 'grade-7', SchoolStage: 'senior-secondary' }], departments: [
+    { CoreSubjectIds: ['leap'], Status: 'Active' }
+  ] };
+  assert.equal(available(senior, classroom, leap), true);
+  assert.match(adminSource, /data-academic-form-teacher-subjects/);
+  assert.match(adminSource, /name="AssignToFormTeachers" value="true"/);
+  assert.match(adminSource, /bindAcademicFormTeacherSubjects\(panelEl\.querySelector/);
+});
+
 test('class teachers and assistants are assigned across multiple classroom rows in one protected batch', () => {
   const bulkClassStaffSource = librarySource.slice(
     librarySource.indexOf('export async function bulkAssignAcademicClassTeachers'),
@@ -1378,7 +1427,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-task-workspace\{display:grid/);
   assert.match(styleSource, /\.academic-register-card/);
   assert.match(adminHtml, /js\/academic-results-analysis\.js\?v=20260918-academic-readability/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260928-academic-summary-restore/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260928-form-teacher-timetable-only/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {
