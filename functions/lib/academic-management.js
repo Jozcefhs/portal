@@ -387,6 +387,7 @@ export const ACADEMIC_VIEW_STATE_KEYS = Object.freeze({
   teachers: ACADEMIC_SUBJECT_TEACHER_STATE_KEYS,
   students: ACADEMIC_STUDENT_STATE_KEYS,
   timetable: ACADEMIC_TIMETABLE_STATE_KEYS,
+  presence: ACADEMIC_ATTENDANCE_STATE_KEYS,
   attendance: ACADEMIC_ATTENDANCE_STATE_KEYS,
   scorebook: ACADEMIC_SCOREBOOK_STATE_KEYS,
   results: ACADEMIC_RESULTS_STATE_KEYS,
@@ -420,6 +421,7 @@ const ACADEMIC_VIEW_PEOPLE = Object.freeze({
   teachers: { staff: true, students: false },
   students: { staff: true, students: true },
   timetable: { staff: true, students: true },
+  presence: { staff: false, students: true },
   attendance: { staff: false, students: true },
   scorebook: { staff: true, students: true },
   results: { staff: false, students: true },
@@ -616,6 +618,7 @@ export function academicManagementCapabilities(user = {}) {
     enabled,
     canManageStructure: enabled && STRUCTURE_MANAGERS.has(role),
     canManageAllocations: enabled && ALLOCATION_MANAGERS.has(role),
+    canConfigureClassStudentSubjects: enabled && (ALLOCATION_MANAGERS.has(role) || role === 'Teacher' || academicsDepartmentUser),
     canManageTimetables: enabled && TIMETABLE_MANAGERS.has(role),
     canPublishTimetables: enabled && TIMETABLE_PUBLISHERS.has(role),
     canMarkAttendance: enabled && (TIMETABLE_MANAGERS.has(role) || role === 'Teacher' || academicsDepartmentUser),
@@ -661,6 +664,17 @@ export function scopedSection(input = {}, required = true) {
   if (value === 'all' && !required) return '';
   if (!['primary', 'secondary'].includes(value)) throw failure('Choose Primary or Secondary school section.');
   return value;
+}
+
+export function academicCanConfigureClassStudentSubjects(user = {}, allocations = [], input = {}, permissions = academicManagementCapabilities(user)) {
+  if (permissions.canManageAllocations) return true;
+  if (!permissions.canConfigureClassStudentSubjects || !permissions.teacherView) return false;
+  const username = actorUsername(user);
+  return (allocations || []).some((row) => statusActive(row)
+    && lower(row.AllocationRole) === 'form teacher'
+    && lower(row.TeacherUsername) === username
+    && row.SessionId === input.SessionId && row.TermId === input.TermId
+    && row.ClassId === input.ClassId && row.ArmId === input.ArmId);
 }
 
 export function academicLegacyClassCompatibilityEnabled(input = {}) {
@@ -1888,6 +1902,13 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
     const visibleKeys = new Set(state.teacherAllocations.map((row) => `${row.ClassId}|${row.ArmId || '*'}`));
     substituteClassrooms.forEach((row) => visibleKeys.add(`${row.ClassId}|${row.ArmId}`));
     state.studentMemberships = academicTeacherVisibleMemberships(state, username, substituteClassrooms);
+    const ownDailyClassrooms = new Set(state.teacherAllocations.filter((row) => statusActive(row)
+      && ['form teacher', 'assistant teacher'].includes(lower(row.AllocationRole)))
+      .map((row) => `${row.SessionId}|${row.TermId}|${row.ClassId}|${row.ArmId}`));
+    if (focusedView === 'presence') {
+      state.studentMemberships = state.studentMemberships.filter((row) => ownDailyClassrooms.has(
+        `${row.SessionId}|${row.TermId}|${row.ClassId}|${row.ArmId}`));
+    }
     const visibleStudents = new Set(state.studentMemberships.map((row) => lower(row.StudentRef)));
     state.studentMovements = state.studentMovements.filter((row) => visibleStudents.has(lower(row.StudentRef)));
     const publishedVersions = new Set(state.timetableVersions.filter((row) => lower(row.Status) === 'published').map((row) => row.VersionId));
@@ -1899,8 +1920,12 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
     state.timetableSubstitutions = state.timetableSubstitutions.filter((row) => visibleEntries.has(row.TimetableEntryId)
       || lower(row.SubstituteTeacherUsername) === username);
     state.timetableConstraints = state.timetableConstraints.filter((row) => lower(row.TeacherUsername) === username);
-    state.studentAttendance = state.studentAttendance.filter((row) => visibleStudents.has(lower(row.StudentRef)));
-    state.attendanceCorrections = state.attendanceCorrections.filter((row) => lower(row.RequestedByUsername) === username);
+    state.studentAttendance = state.studentAttendance.filter((row) => visibleStudents.has(lower(row.StudentRef))
+      && (focusedView !== 'presence' || (lower(row.Mode) === 'daily' && ownDailyClassrooms.has(
+        `${row.SessionId}|${row.TermId}|${row.ClassId}|${row.ArmId}`))));
+    const visibleAttendanceIds = new Set(state.studentAttendance.map((row) => row.AttendanceId));
+    state.attendanceCorrections = state.attendanceCorrections.filter((row) => lower(row.RequestedByUsername) === username
+      && (focusedView !== 'presence' || visibleAttendanceIds.has(row.AttendanceId)));
     state.scoreSheets = state.scoreSheets.filter((row) => lower(row.TeacherUsername) === username
       || visibleKeys.has(`${row.ClassId}|${row.ArmId}`) || visibleKeys.has(`${row.ClassId}|*`));
     const visibleScoreSheets = new Set(state.scoreSheets.map((row) => row.SheetId));
@@ -3185,7 +3210,7 @@ export async function bulkImportAcademicStudentMemberships(env, user = {}, input
 
 export async function bulkAssignAcademicArmStudentSubjects(env, user = {}, input = {}) {
   requireWritableSubscription(user);
-  requireCapability(user, 'canManageAllocations');
+  const permissions = requireCapability(user, 'canConfigureClassStudentSubjects');
   const scope = await academicScope(env, user, input, { requireSection: true });
   let assignments = input.Assignments || input.StudentSubjectAssignments || [];
   if (typeof assignments === 'string') {
@@ -3208,6 +3233,11 @@ export async function bulkAssignAcademicArmStudentSubjects(env, user = {}, input
   if (schoolStage !== 'senior-secondary') throw failure('Trade and optional subject selection is available only for Senior Secondary classes.');
   const arm = assertReference(findById(state.arms, armId), 'The selected class arm is not active.');
   if (arm.ClassId !== classId) throw failure('The selected class arm does not belong to this class.');
+  if (!academicCanConfigureClassStudentSubjects(user, state.teacherAllocations,
+    { SessionId: sessionId, TermId: termId, ClassId: classId, ArmId: armId }, permissions)) {
+    throw failure('Only this classroom’s assigned class teacher or an authorised administrator may configure its student subjects.',
+      403, 'ACADEMIC_CLASS_SUBJECTS_FORBIDDEN');
+  }
 
   const projected = { ...state, studentMemberships: [...state.studentMemberships] };
   const writes = [];
@@ -5097,7 +5127,7 @@ async function calculateAcademicResultsForType(env, user = {}, input = {}, resul
     Attendance: state.studentAttendance,
     SchoolCalendar: state.schoolCalendars.find((row) => row.SessionId === session.SessionId && row.TermId === term.TermId) || null,
     TermDates: { StartDate: term.StartDate, EndDate: term.EndDate },
-    AttendanceMode: oneOf(input.AttendanceMode, ACADEMIC_ATTENDANCE_MODES, 'Daily'),
+    AttendanceMode: 'Daily',
     ExistingResults: existingResults,
     Policy: policy,
     PolicyRevisionIds: policyRevisionIds,

@@ -158,7 +158,7 @@ let academicManagementLoadRequest = 0;
 let academicManagementTaskViews = {
   classrooms: 'register', classStaff: 'assign', structure: 'classes', bulkSetup: 'classes', departments: 'register',
   offerings: 'seniorChoices', teachers: 'assign', students: 'allocate',
-  timetable: 'builder', attendance: 'mark', scorebook: 'entry', cbt: 'create', outcomes: 'cumulative'
+  timetable: 'builder', presence: 'mark', attendance: 'mark', scorebook: 'entry', cbt: 'create', outcomes: 'cumulative'
 };
 let academicManagementFilters = { section: '', sessionId: '', termId: '' };
 let academicClassroomDraft = { sessionId: '', termId: '', classId: '', armId: '', armTemplateId: '' };
@@ -11501,10 +11501,16 @@ function academicTaskDefinitions(view, root) {
       { key: 'settings', label: 'Days and periods', title: 'Configure the school week', description: 'Define reusable school days, lesson periods, breaks and assemblies for this term.', nodes: nodes(form('[data-academic-timetable-settings]')) },
       { key: 'calendar', label: 'School calendar', title: 'Holidays and open days', description: 'Record dated closures and make-up open days so attendance and term totals reflect days school was open.', nodes: nodes(form('[data-academic-school-calendar]')) }
     ],
+    presence: [
+      { key: 'mark', label: 'Mark presence', title: 'Daily class register', description: 'Mark each child once per open school day. This register feeds the result attendance total.', nodes: nodes(form('[data-academic-attendance-register]')) },
+      { key: 'register', label: 'Presence history', title: 'Saved daily presence', description: 'Review who was present, absent, late or excused on each school day.', nodes: nodes(register('Student Attendance History')) },
+      { key: 'reports', label: 'Term reports', title: 'School presence summary', description: 'Review and print the daily school-presence totals used by results.', nodes: nodes(form('[data-academic-attendance-report]')) },
+      { key: 'corrections', label: 'Corrections', title: 'Daily register corrections', description: 'Request or review corrections to saved daily presence with an audit reason.', nodes: nodes(register('Attendance Correction Requests')) }
+    ],
     attendance: [
-      { key: 'mark', label: 'Mark register', title: 'Mark student attendance', description: 'Start with every student Present, then record only the exceptions before saving.', nodes: nodes(form('[data-academic-attendance-register]')) },
-      { key: 'register', label: 'Attendance history', title: 'Saved attendance', description: 'Review the class, status and marker for every saved student attendance record.', nodes: nodes(register('Student Attendance History')) },
-      { key: 'reports', label: 'Term reports', title: 'Term attendance summaries', description: 'Review and print per-student totals and attendance percentages for the selected classroom and register type.', nodes: nodes(form('[data-academic-attendance-report]')) },
+      { key: 'mark', label: 'Mark lesson', title: 'Lesson attendance', description: 'Mark a published timetable period or subject lesson separately from daily school presence.', nodes: nodes(form('[data-academic-attendance-register]')) },
+      { key: 'register', label: 'Lesson history', title: 'Saved lesson attendance', description: 'Review period and subject attendance without mixing it with school presence.', nodes: nodes(register('Student Attendance History')) },
+      { key: 'reports', label: 'Lesson reports', title: 'Lesson attendance summaries', description: 'Review and print period or subject attendance separately from result presence.', nodes: nodes(form('[data-academic-attendance-report]')) },
       { key: 'corrections', label: 'Corrections', title: 'Late correction requests', description: 'Teachers submit corrections for approval; academic administrators approve or reject them with a reason.', nodes: nodes(register('Attendance Correction Requests')) }
     ],
     scorebook: [
@@ -12304,12 +12310,20 @@ function academicArmSubjectRegister(data, rows, canManage) {
   const sessionId = clean(academicFind(sessions, preferredSessionId)?.SessionId || sessions.find(academicIsActive)?.SessionId);
   const terms = (data.terms || []).filter((row) => academicIsActive(row) && row.SessionId === sessionId);
   const termId = clean(academicFind(terms, academicArmSubjectDraft.termId || academicManagementFilters.termId)?.TermId || terms.find(academicIsActive)?.TermId);
-  const seniorClasses = rows.classes.filter((row) => academicIsActive(row) && clean(row.SchoolStage).toLowerCase() === 'senior-secondary');
+  const administrator = data.permissions?.canManageAllocations === true;
+  const ownClassroomIds = new Set((data.teacherAllocations || []).filter((row) => academicIsActive(row)
+    && row.AllocationRole === 'Form Teacher' && row.SessionId === sessionId && row.TermId === termId)
+    .map((row) => row.ArmId));
+  const seniorClasses = rows.classes.filter((row) => academicIsActive(row)
+    && clean(row.SchoolStage).toLowerCase() === 'senior-secondary'
+    && (administrator || rows.arms.some((arm) => arm.ClassId === row.ClassId && ownClassroomIds.has(arm.ArmId))));
   const preferredClassId = academicArmSubjectDraft.classId || academicStudentAllocationDraft.classId;
-  const classId = clean(academicFind(seniorClasses, preferredClassId)?.ClassId);
-  const arms = rows.arms.filter((row) => academicIsActive(row) && row.ClassId === classId);
+  const classId = clean(academicFind(seniorClasses, preferredClassId)?.ClassId || (!administrator ? seniorClasses[0]?.ClassId : ''));
+  const arms = rows.arms.filter((row) => academicIsActive(row) && row.ClassId === classId
+    && (administrator || ownClassroomIds.has(row.ArmId)));
   const armId = clean(academicFind(arms, academicArmSubjectDraft.armId)?.ArmId
-    || academicFind(arms, academicStudentAllocationDraft.armId)?.ArmId);
+    || academicFind(arms, academicStudentAllocationDraft.armId)?.ArmId
+    || (!administrator ? arms[0]?.ArmId : ''));
   academicArmSubjectDraft = { sessionId, termId, classId, armId };
   const memberships = (data.studentMemberships || []).filter((membership) => academicIsActive(membership)
     && membership.SessionId === sessionId && membership.TermId === termId
@@ -12351,8 +12365,8 @@ function academicArmSubjectRegister(data, rows, canManage) {
       : !memberships.length ? 'No students are assigned to this arm for the selected period.'
         : !tradeConfigured ? 'Configure at least one school-wide Senior Trade subject before saving student selections.'
           : `${memberships.length} assigned student${memberships.length === 1 ? '' : 's'} shown. Core subjects are already selected and cannot be cleared.`;
-  const body = canManage ? `<form class="academic-management-editor academic-management-editor-wide academic-arm-subject-register" data-academic-workflow="bulkAssignAcademicArmStudentSubjects" data-academic-arm-subject-register>
-    <div class="academic-management-editor-heading"><div><small>Senior Secondary arm curriculum</small><h3>Assign Trade and Optional subjects</h3><p class="muted">Open an arm after placement. Department Core subjects are checked and locked for each student; select from the school-wide Trade and Optional subject lists.</p></div></div>
+  const body = canManage && seniorClasses.length ? `<form class="academic-management-editor academic-management-editor-wide academic-arm-subject-register" data-academic-workflow="bulkAssignAcademicArmStudentSubjects" data-academic-arm-subject-register>
+    <div class="academic-management-editor-heading"><div><small>Senior Secondary arm curriculum</small><h3>Assign Trade and Optional subjects</h3><p class="muted">${administrator ? 'Open an arm after placement.' : 'Only classrooms where you are the assigned class teacher are shown.'} Department Core subjects are checked and locked for each student; select from the school-wide Trade and Optional subject lists.</p></div></div>
     <input type="hidden" name="SchoolSection" value="secondary">
     <div class="academic-management-form-grid academic-management-form-grid-4">
       <label>Session<select name="SessionId" required>${academicSelectOptions(sessions, sessionId, (row) => row.Name, 'Choose session')}</select></label>
@@ -12364,7 +12378,7 @@ function academicArmSubjectRegister(data, rows, canManage) {
     <div class="academic-arm-student-subject-list">${studentCards || '<div class="academic-checkbox-empty">Select a class and arm to open its student subject register.</div>'}</div>
     <label>Curriculum note<input name="Reason" placeholder="Senior subject selections confirmed"></label>
     <button type="submit"${memberships.length && tradeConfigured ? '' : ' disabled'}>Save subject selections for this arm</button>
-  </form>` : '<div class="academic-view-only-note"><strong>Senior arm subject register</strong><span>Core, Trade and Optional selections are shown in each membership below. Only authorised administrators can change them.</span></div>';
+  </form>` : `<div class="academic-view-only-note"><strong>Senior arm subject register</strong><span>${data.permissions?.teacherView ? 'Only the assigned class teacher can configure Trade and Optional subjects for their Senior classroom.' : 'Core, Trade and Optional selections are shown in each membership below. Only authorised staff can change them.'}</span></div>`;
   return body;
 }
 
@@ -12439,7 +12453,7 @@ function academicStudentWorkspace(data, rows) {
       <small class="muted">Maximum 100 rows per import. StudentRef, FirstName, Surname and ClassCode are required. MiddleName, ArmCode and the remaining columns are optional. StudentRef remains the unique identity. References already registered in another branch or school section are rejected; conflicting current-term memberships must use Transfer or change.</small>
     </form>
   </div>` : `<div class="academic-view-only-note"><strong>My class registers</strong><span>${learner.Plural} and movement history shown here come only from your teaching allocations.</span></div>`;
-  return `${forms}${academicArmSubjectRegister(data, rows, canManage)}${table(membershipRegister, rows.studentMemberships, [
+  return `${forms}${academicArmSubjectRegister(data, rows, canManage || data.permissions?.canConfigureClassStudentSubjects === true)}${table(membershipRegister, rows.studentMemberships, [
     { label: learner.Singular, value: (row) => academicLabel(data.students, row.StudentRef, row.StudentRef) },
     { label: 'Class / Arm', value: (row) => `${academicLabel(rows.classes, row.ClassId)} / ${academicLabel(rows.arms, row.ArmId)}` },
     { label: 'Department', value: (row) => row.DepartmentId ? academicLabel(rows.departments, row.DepartmentId) : '-' },
@@ -12782,12 +12796,17 @@ function academicCalendarOpenOn(rows, date) {
   return (calendar.OperatingWeekdays || []).includes(['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'][day]);
 }
 
+function academicLocalToday() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+
 function academicTermOpenDays(rows) {
   const calendar = (rows.schoolCalendars || []).find((row) => row.SessionId === academicManagementFilters.sessionId && row.TermId === academicManagementFilters.termId);
   const term = (rows.terms || []).find((row) => row.TermId === academicManagementFilters.termId);
   if (!calendar || !term?.StartDate || !term?.EndDate) return null;
   const start = Date.parse(`${term.StartDate}T00:00:00Z`);
-  const end = Math.min(Date.parse(`${term.EndDate}T00:00:00Z`), Date.parse(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`));
+  const end = Math.min(Date.parse(`${term.EndDate}T00:00:00Z`), Date.parse(`${academicLocalToday()}T00:00:00Z`));
   if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return 0;
   let count = 0;
   for (let time = start; time <= end && time - start <= 730 * 86400000; time += 86400000) {
@@ -12798,11 +12817,14 @@ function academicTermOpenDays(rows) {
 
 function academicTermAttendanceRows(rows, armId, mode = 'Daily') {
   const schoolDaysOpen = academicTermOpenDays(rows);
-  const memberships = rows.studentMemberships.filter((row) => academicIsActive(row) && row.ArmId === armId);
+  const memberships = rows.studentMemberships.filter((row) => academicIsActive(row) && row.ArmId === armId
+    && row.SessionId === academicManagementFilters.sessionId && row.TermId === academicManagementFilters.termId);
   const summaries = new Map(memberships.map((row) => [clean(row.StudentRef).toLowerCase(), {
     StudentRef: row.StudentRef, Present: 0, Absent: 0, Late: 0, Excused: 0, LeftEarly: 0, Total: 0
   }]));
-  rows.studentAttendance.filter((row) => row.ArmId === armId && (mode === 'All' || row.Mode === mode)
+  rows.studentAttendance.filter((row) => row.ArmId === armId
+    && row.SessionId === academicManagementFilters.sessionId && row.TermId === academicManagementFilters.termId
+    && (mode === 'All' || row.Mode === mode)
     && academicCalendarOpenOn(rows, row.AttendanceDate)).forEach((row) => {
     const key = clean(row.StudentRef).toLowerCase();
     if (!summaries.has(key)) return;
@@ -12829,14 +12851,20 @@ function printAcademicAttendanceReport(data, rows, arm, mode, reportRows) {
   printable.focus();
 }
 
-function academicAttendanceWorkspace(data, rows) {
+function academicAttendanceWorkspace(data, rows, presenceOnly = false) {
   const canMark = data.permissions?.canMarkAttendance;
   const canDecide = data.permissions?.canManageTimetables;
   const sessionId = academicManagementFilters.sessionId;
   const termId = academicManagementFilters.termId;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = academicLocalToday();
+  const dailyClassroomIds = new Set(rows.teacherAllocations.filter((row) => academicIsActive(row)
+    && row.SessionId === sessionId && row.TermId === termId
+    && ['Form Teacher', 'Assistant Teacher'].includes(row.AllocationRole)).map((row) => row.ArmId));
   const classrooms = rows.arms.filter((arm) => academicIsActive(arm)
-    && rows.studentMemberships.some((membership) => academicIsActive(membership) && membership.ClassId === arm.ClassId && membership.ArmId === arm.ArmId));
+    && (!presenceOnly || !data.permissions?.teacherView || dailyClassroomIds.has(arm.ArmId))
+    && rows.studentMemberships.some((membership) => academicIsActive(membership)
+      && membership.SessionId === sessionId && membership.TermId === termId
+      && membership.ClassId === arm.ClassId && membership.ArmId === arm.ArmId));
   const selectedArm = academicFind(classrooms, academicAttendanceDraft.armId) || classrooms[0];
   academicAttendanceDraft.armId = clean(selectedArm?.ArmId);
   academicAttendanceDraft.classId = clean(selectedArm?.ClassId);
@@ -12844,13 +12872,16 @@ function academicAttendanceWorkspace(data, rows) {
   const attendanceDayOpen = academicCalendarOpenOn(rows, academicAttendanceDraft.date);
   const attendanceClosure = (rows.schoolCalendars || []).find((row) => row.SessionId === sessionId && row.TermId === termId)
     ?.Exceptions?.find((row) => row.Date === academicAttendanceDraft.date && row.Status === 'Closed');
-  const roster = rows.studentMemberships.filter((row) => academicIsActive(row) && row.ClassId === selectedArm?.ClassId && row.ArmId === selectedArm?.ArmId);
+  const roster = rows.studentMemberships.filter((row) => academicIsActive(row)
+    && row.SessionId === sessionId && row.TermId === termId
+    && row.ClassId === selectedArm?.ClassId && row.ArmId === selectedArm?.ArmId);
   const publishedVersions = new Set(rows.timetableVersions.filter((row) => row.Status === 'Published').map((row) => row.VersionId));
   const lessons = rows.timetableEntries.filter((row) => publishedVersions.has(row.VersionId) && row.ClassId === selectedArm?.ClassId && row.ArmId === selectedArm?.ArmId);
   const subjectIds = [...new Set(rows.teacherAllocations.filter((row) => academicIsActive(row) && row.ClassId === selectedArm?.ClassId && (!row.ArmId || row.ArmId === selectedArm?.ArmId)).map((row) => row.SubjectId).filter(Boolean))];
-  const mode = academicAttendanceDraft.mode || 'Daily';
+  const mode = presenceOnly ? 'Daily' : ['Period', 'Subject'].includes(academicAttendanceDraft.mode) ? academicAttendanceDraft.mode : 'Period';
   const sourceId = mode === 'Period' ? academicAttendanceDraft.timetableEntryId : mode === 'Subject' ? academicAttendanceDraft.subjectId : '';
   const existingRows = rows.studentAttendance.filter((row) => row.AttendanceDate === academicAttendanceDraft.date
+    && row.SessionId === sessionId && row.TermId === termId
     && row.ClassId === selectedArm?.ClassId && row.ArmId === selectedArm?.ArmId && row.Mode === mode
     && (mode === 'Daily' || (mode === 'Period' ? row.TimetableEntryId === sourceId : row.SubjectId === sourceId)));
   const existingByStudent = new Map(existingRows.map((row) => [clean(row.StudentRef).toLowerCase(), row]));
@@ -12865,12 +12896,12 @@ function academicAttendanceWorkspace(data, rows) {
     ? `<label>Subject<select data-academic-attendance-source name="SubjectId" required>${academicSelectOptions(subjectIds.map((id) => ({ RecordId: id, Name: academicLabel(rows.subjects, id) })), academicAttendanceDraft.subjectId, (row) => row.Name, 'Choose subject')}</select></label>`
     : mode === 'Period' ? `<label>Published lesson<select data-academic-attendance-source name="TimetableEntryId" required>${academicSelectOptions(lessons, academicAttendanceDraft.timetableEntryId, lessonLabel, 'Choose lesson')}</select></label>` : '';
   const markForm = canMark ? `<form class="academic-management-editor academic-management-editor-wide academic-attendance-register" data-academic-workflow="saveAcademicStudentAttendance" data-academic-attendance-register>
-    <div class="academic-management-editor-heading"><div><small>Student register</small><h3>Mark attendance</h3><p class="muted">All students start as Present. Changes are kept as a recoverable device draft until online synchronization succeeds; changes to saved records follow the correction workflow.</p></div><strong data-academic-attendance-count>${roster.length} students</strong></div>
+    <div class="academic-management-editor-heading"><div><small>${presenceOnly ? 'Class register' : 'Lesson register'}</small><h3>${presenceOnly ? 'Mark daily school presence' : 'Mark lesson attendance'}</h3><p class="muted">${presenceOnly ? 'Mark each student once for this school day. These Daily records feed term-result attendance; lesson records do not.' : 'Mark a published period or subject lesson separately from daily school presence.'} All students start as Present. Device drafts are recoverable; changes to saved records follow the correction workflow.</p></div><strong data-academic-attendance-count>${roster.length} students</strong></div>
     <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}"><input type="hidden" name="SessionId" value="${escapeHtml(sessionId)}"><input type="hidden" name="TermId" value="${escapeHtml(termId)}">
     <div class="academic-management-form-grid academic-management-form-grid-4">
       <label>Date<input type="date" name="AttendanceDate" data-academic-attendance-filter value="${escapeHtml(academicAttendanceDraft.date)}" required></label>
       <label>Classroom<select name="ClassroomId" data-academic-attendance-classroom required>${academicSelectOptions(classrooms, selectedArm?.ArmId, classroomLabel, 'Choose classroom')}</select></label>
-      <label>Register type<select name="Mode" data-academic-attendance-filter><option${mode === 'Daily' ? ' selected' : ''}>Daily</option><option${mode === 'Period' ? ' selected' : ''}>Period</option><option${mode === 'Subject' ? ' selected' : ''}>Subject</option></select></label>
+      ${presenceOnly ? '<input type="hidden" name="Mode" value="Daily">' : `<label>Lesson register<select name="Mode" data-academic-attendance-filter><option${mode === 'Period' ? ' selected' : ''}>Period</option><option${mode === 'Subject' ? ' selected' : ''}>Subject</option></select></label>`}
       ${sourceControl}
     </div>
     ${attendanceDayOpen ? '' : `<p class="status bad">${escapeHtml(academicAttendanceDraft.date)} is a closed school day${attendanceClosure?.Reason ? `: ${escapeHtml(attendanceClosure.Reason)}` : '.'} Attendance cannot be marked until the school calendar is changed.</p>`}
@@ -12880,14 +12911,17 @@ function academicAttendanceWorkspace(data, rows) {
     <label>Correction reason <input name="CorrectionReason" placeholder="Required only when changing attendance already saved"></label>
     <button type="submit" ${attendanceDayOpen && roster.length && (mode === 'Daily' || sourceId) ? '' : 'disabled'}>Synchronize attendance online</button>
   </form>` : '';
-  const history = table('Student Attendance History', rows.studentAttendance, [
+  const historyRows = rows.studentAttendance.filter((row) => row.SessionId === sessionId && row.TermId === termId
+    && (presenceOnly ? row.Mode === 'Daily' : ['Period', 'Subject'].includes(row.Mode)));
+  const history = table('Student Attendance History', historyRows, [
     { label: 'Date', value: (row) => row.AttendanceDate }, { label: 'Student', value: (row) => academicLabel(data.students, row.StudentRef, row.StudentRef) },
     { label: 'Classroom', value: (row) => `${academicLabel(rows.classes, row.ClassId)} / ${academicLabel(rows.arms, row.ArmId)}` },
     { label: 'Register', value: (row) => row.Mode }, { label: 'Status', value: (row) => row.Status },
     { label: 'Marked by', value: (row) => row.MarkedBy || '-' }
   ]);
   const correctionActions = (row) => canDecide && row.Status === 'Pending' ? `<div class="academic-management-row-actions"><button type="button" class="compact-icon-action compact-edit-action" data-academic-attendance-decision="Approved" data-academic-id="${escapeHtml(row.CorrectionId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="Approve correction">&#10003;</button><button type="button" class="compact-icon-action academic-archive-action" data-academic-attendance-decision="Rejected" data-academic-id="${escapeHtml(row.CorrectionId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="Reject correction">&#10005;</button></div>` : '<span class="muted">View only</span>';
-  const corrections = table('Attendance Correction Requests', rows.attendanceCorrections, [
+  const visibleAttendanceIds = new Set(historyRows.map((row) => row.AttendanceId));
+  const corrections = table('Attendance Correction Requests', rows.attendanceCorrections.filter((row) => visibleAttendanceIds.has(row.AttendanceId)), [
     { label: 'Student', value: (row) => academicLabel(data.students, row.StudentRef, row.StudentRef) },
     { label: 'Change', value: (row) => `${row.PreviousStatus} → ${row.ProposedStatus}` }, { label: 'Reason', value: (row) => row.Reason },
     { label: 'Requested by', value: (row) => row.RequestedBy }, { label: 'Status', value: (row) => row.Status },
@@ -12895,14 +12929,14 @@ function academicAttendanceWorkspace(data, rows) {
   ]);
   const reportArm = academicFind(classrooms, academicAttendanceDraft.reportArmId) || selectedArm || classrooms[0];
   academicAttendanceDraft.reportArmId = clean(reportArm?.ArmId);
-  const reportMode = academicAttendanceDraft.reportMode || 'Daily';
+  const reportMode = presenceOnly ? 'Daily' : ['Period', 'Subject'].includes(academicAttendanceDraft.reportMode) ? academicAttendanceDraft.reportMode : 'Period';
   const reportRows = reportArm ? academicTermAttendanceRows(rows, reportArm.ArmId, reportMode) : [];
   const reportTableRows = reportRows.map((row) => `<tr><td>${escapeHtml(academicLabel(data.students, row.StudentRef, row.StudentRef))}<small>${escapeHtml(row.StudentRef)}</small></td><td>${row.Present}</td><td>${row.Absent}</td><td>${row.Late}</td><td>${row.Excused}</td><td>${row.LeftEarly}</td><td>${row.Total}</td><td>${row.SchoolDaysOpen ?? '—'}</td><td><strong>${row.AttendancePercentage}%</strong></td></tr>`).join('');
   const reportForm = `<form class="academic-management-editor academic-management-editor-wide academic-attendance-report" data-academic-attendance-report>
-    <div class="academic-management-editor-heading"><div><small>Term reporting</small><h3>Student attendance summary</h3><p class="muted">Daily attendance uses declared school open days through today when a calendar is saved. Other register types use saved registers; closed dates are excluded.</p></div><strong>${reportRows.length} students</strong></div>
+    <div class="academic-management-editor-heading"><div><small>Term reporting</small><h3>${presenceOnly ? 'School presence summary' : 'Lesson attendance summary'}</h3><p class="muted">${presenceOnly ? 'Daily school presence uses declared open days and feeds term results. Lesson attendance is counted separately.' : 'Period and subject registers are shown separately and do not alter school-presence totals on results.'}</p></div><strong>${reportRows.length} students</strong></div>
     <div class="academic-management-form-grid academic-management-form-grid-2">
       <label>Classroom<select name="ReportArmId" data-academic-attendance-report-filter>${academicSelectOptions(classrooms, reportArm?.ArmId, classroomLabel, 'Choose classroom')}</select></label>
-      <label>Register type<select name="ReportMode" data-academic-attendance-report-filter><option${reportMode === 'Daily' ? ' selected' : ''}>Daily</option><option${reportMode === 'Period' ? ' selected' : ''}>Period</option><option${reportMode === 'Subject' ? ' selected' : ''}>Subject</option><option${reportMode === 'All' ? ' selected' : ''}>All</option></select></label>
+      ${presenceOnly ? '<input type="hidden" name="ReportMode" value="Daily">' : `<label>Lesson register<select name="ReportMode" data-academic-attendance-report-filter><option${reportMode === 'Period' ? ' selected' : ''}>Period</option><option${reportMode === 'Subject' ? ' selected' : ''}>Subject</option></select></label>`}
     </div>
     <div class="academic-attendance-table"><table><thead><tr><th>Student</th><th>Present</th><th>Absent</th><th>Late</th><th>Excused</th><th>Left early</th><th>Registers</th><th>School open days</th><th>Attendance</th></tr></thead><tbody>${reportTableRows || '<tr><td colspan="9">No active students are assigned to this classroom.</td></tr>'}</tbody></table></div>
     <button type="button" data-academic-attendance-report-print ${reportArm && reportRows.length ? '' : 'disabled'}>Print term attendance report</button>
@@ -13141,7 +13175,7 @@ function academicTermResultsWorkspace(data, rows) {
     <div class="academic-management-editor-heading"><div><small>Milestone 9 term reporting</small><h3>Calculate classroom results</h3><p class="muted">Only complete student scores from Approved or Locked subject sheets are included. The calculation stores the exact score, grading, position, attendance and policy snapshots used.</p></div><strong>${selectedResults.length} results</strong></div>
     <div class="academic-score-import-toolbar"><button type="button" class="secondary" data-academic-result-sample="nursery">Preview Nursery</button><button type="button" class="secondary" data-academic-result-sample="primary">Preview Primary</button><button type="button" class="secondary" data-academic-result-sample="secondary">Preview Secondary</button></div>
     <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}"><input type="hidden" name="SessionId" value="${escapeHtml(academicManagementFilters.sessionId)}"><input type="hidden" name="TermId" value="${escapeHtml(academicManagementFilters.termId)}">
-    <div class="academic-management-form-grid academic-management-form-grid-3"><label>Classroom<select name="ArmId" data-academic-result-classroom required>${academicSelectOptions(classrooms, selectedArm?.ArmId, classroomLabel, 'Choose classroom')}</select></label><label>Attendance register<select name="AttendanceMode"><option value="Daily">Daily</option><option value="Period">Period</option><option value="Subject">Subject</option></select><small>Uses one register type only, preventing duplicate attendance counts.</small></label><div class="academic-result-policy-note"><small>Publication lifecycle</small><strong>Calculated Draft → Reviewed → Approved → Published → Locked</strong><span>Published corrections must be withdrawn with a reason and reapproved.</span></div></div>
+    <div class="academic-management-form-grid academic-management-form-grid-3"><label>Classroom<select name="ArmId" data-academic-result-classroom required>${academicSelectOptions(classrooms, selectedArm?.ArmId, classroomLabel, 'Choose classroom')}</select></label><div class="academic-result-policy-note"><small>Attendance source</small><strong>Daily school presence</strong><span>Only the class register contributes to result attendance; lesson attendance is separate.</span></div><input type="hidden" name="AttendanceMode" value="Daily"><div class="academic-result-policy-note"><small>Publication lifecycle</small><strong>Calculated Draft → Reviewed → Approved → Published → Locked</strong><span>Published corrections must be withdrawn with a reason and reapproved.</span></div></div>
     <div class="academic-management-form-actions"><button type="submit" data-result-calculation="end-term"${selectedArm ? '' : ' disabled'}>${endTermResults.length ? 'Recalculate end-of-term Drafts' : 'Calculate end-of-term results'}</button><button type="submit" class="secondary" data-result-calculation="mid-term"${selectedArm ? '' : ' disabled'}>${midTermResults.length ? 'Recalculate mid-term Drafts' : 'Calculate mid-term results'}</button></div>
   </form>` : `<div class="academic-view-only-note"><strong>Term results are controlled by academic reviewers.</strong><span>Teachers may add draft remarks only for classrooms where they are the Form Teacher or Assistant.</span></div>`;
   const summary = `<div class="academic-result-summary-grid"><div><small>${learner.Plural}</small><strong>${selectedResults.length}</strong></div><div><small>Draft</small><strong>${statusCounts['Calculated Draft'] || 0}</strong></div><div><small>Approved</small><strong>${statusCounts.Approved || 0}</strong></div><div><small>Published / locked</small><strong>${(statusCounts.Published || 0) + (statusCounts.Locked || 0)}</strong></div></div>`;
@@ -13904,11 +13938,11 @@ function academicMigrationReadinessWorkspace(data) {
 function academicManagementViews(data) {
   const cbtView = data.permissions?.canCreateCbt ? [['cbt', 'Online CBT']] : [];
   const learner = academicLearnerTerms();
-  const adminViews = [['classrooms', 'Classrooms'], ...(data.permissions?.canManageAllocations ? [['classStaff', 'Assign class teachers']] : []), ['structure', 'Catalogues'], ...(data.permissions?.canManageStructure ? [['bulkSetup', 'Bulk setup']] : []), ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['offerings', 'Class subjects'], ['teachers', 'Subject teachers'], ['students', `${learner.Singular} records`], ['timetable', 'Timetable'], ['attendance', 'Attendance'], ['scorebook', 'Scorebook'], ['results', 'Results'], ['outcomes', 'Session outcomes'], ...(data.permissions?.canViewResultsAnalysis ? [['analysis', 'Session analysis']] : []), ...(data.permissions?.canManageFinancialClearance ? [['clearances', 'Result clearances']] : []), ...(data.permissions?.canManageStructure ? [['readiness', 'Release readiness']] : []), ...cbtView];
+  const adminViews = [['classrooms', 'Classrooms'], ...(data.permissions?.canManageAllocations ? [['classStaff', 'Assign class teachers']] : []), ['structure', 'Catalogues'], ...(data.permissions?.canManageStructure ? [['bulkSetup', 'Bulk setup']] : []), ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['offerings', 'Class subjects'], ['teachers', 'Subject teachers'], ['students', `${learner.Singular} records`], ['timetable', 'Timetable'], ['presence', 'Class register'], ['attendance', 'Lesson attendance'], ['scorebook', 'Scorebook'], ['results', 'Results'], ['outcomes', 'Session outcomes'], ...(data.permissions?.canViewResultsAnalysis ? [['analysis', 'Session analysis']] : []), ...(data.permissions?.canManageFinancialClearance ? [['clearances', 'Result clearances']] : []), ...(data.permissions?.canManageStructure ? [['readiness', 'Release readiness']] : []), ...cbtView];
   return data.permissions?.financeView
     ? [['clearances', 'Result clearances']]
     : data.permissions?.teacherView
-    ? [['classrooms', 'Classrooms'], ['structure', 'Catalogue'], ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['teachers', 'My allocations'], ['students', 'My registers'], ['timetable', 'Timetable'], ['attendance', 'Attendance'], ['scorebook', 'Scorebook'], ['results', 'Results'], ...cbtView]
+    ? [['classrooms', 'Classrooms'], ['structure', 'Catalogue'], ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['teachers', 'My allocations'], ['students', 'My registers'], ['timetable', 'Timetable'], ['presence', 'Class register'], ['attendance', 'Lesson attendance'], ['scorebook', 'Scorebook'], ['results', 'Results'], ...cbtView]
     : adminViews;
 }
 
@@ -13971,7 +14005,8 @@ function renderAcademicManagement(data = academicManagementData || {}, message =
   else if (academicManagementView === 'teachers') workspace = academicTeacherWorkspace(data, rows);
   else if (academicManagementView === 'students') workspace = academicStudentWorkspace(data, rows);
   else if (academicManagementView === 'timetable') workspace = academicTimetableWorkspace(data, rows);
-  else if (academicManagementView === 'attendance') workspace = academicAttendanceWorkspace(data, rows);
+  else if (academicManagementView === 'presence') workspace = academicAttendanceWorkspace(data, rows, true);
+  else if (academicManagementView === 'attendance') workspace = academicAttendanceWorkspace(data, rows, false);
   else if (academicManagementView === 'scorebook') workspace = academicScorebookWorkspace(data, rows);
   else if (academicManagementView === 'results') workspace = academicTermResultsWorkspace(data, rows);
   else if (academicManagementView === 'outcomes') workspace = academicSessionOutcomesWorkspace(data, rows);
@@ -15329,7 +15364,7 @@ function bindAcademicManagement() {
     const currentRows = academicCurrentRows(academicManagementData || {});
     const arm = academicFind(currentRows.arms, academicAttendanceDraft.reportArmId);
     if (!arm) return;
-    const mode = academicAttendanceDraft.reportMode || 'Daily';
+    const mode = clean(attendanceReportForm.elements.ReportMode.value || 'Daily');
     printAcademicAttendanceReport(academicManagementData || {}, currentRows, arm, mode, academicTermAttendanceRows(currentRows, arm.ArmId, mode));
   });
   panelEl.querySelectorAll('[data-academic-attendance-decision]').forEach((button) => button.addEventListener('click', async () => {

@@ -13,6 +13,7 @@ import {
   applyAcademicStudentCurriculum,
   assertAcademicMembershipCapacity,
   academicPermanentDeleteDependants,
+  academicCanConfigureClassStudentSubjects,
   academicManagementCapabilities,
   academicManagementSummary,
   academicFormTeacherForClassroom,
@@ -71,7 +72,7 @@ test('every academic workspace stays focused below the Worker subrequest ceiling
   ]);
   assert.deepEqual(Object.keys(ACADEMIC_VIEW_STATE_KEYS), [
     'classrooms', 'classstaff', 'structure', 'bulksetup', 'departments', 'offerings', 'teachers',
-    'students', 'timetable', 'attendance', 'scorebook', 'results', 'outcomes',
+    'students', 'timetable', 'presence', 'attendance', 'scorebook', 'results', 'outcomes',
     'analysis', 'clearances', 'readiness', 'cbt'
   ]);
   const validKeys = new Set(Object.keys(ACADEMIC_MANAGEMENT_COLLECTIONS));
@@ -880,6 +881,7 @@ test('Academic Management is a School-only role module with a constrained Teache
   assert.equal(teacher.teacherView, true);
   assert.equal(teacher.canManageStructure, false);
   assert.equal(teacher.canManageAllocations, false);
+  assert.equal(teacher.canConfigureClassStudentSubjects, true);
   assert.equal(teacher.canDelete, false);
   const academicsDepartmentUser = academicManagementCapabilities({
     edition: 'school', role: 'Department User', department: 'Academics', allowedSections: []
@@ -888,6 +890,7 @@ test('Academic Management is a School-only role module with a constrained Teache
   assert.equal(academicsDepartmentUser.teacherView, true);
   assert.equal(academicsDepartmentUser.canManageStructure, false);
   assert.equal(academicsDepartmentUser.canManageAllocations, false);
+  assert.equal(academicsDepartmentUser.canConfigureClassStudentSubjects, true);
   assert.equal(academicManagementCapabilities({
     edition: 'school', role: 'Department User', department: 'Accounts', allowedSections: []
   }).enabled, false);
@@ -1007,6 +1010,21 @@ test('bulk student allocation maps every selected reference into membership and 
   assert.match(bulkAllocationSource, /academicMembershipCanReceiveInitialArm/);
   assert.match(bulkAllocationSource, /writePrecondition\(existing, clean\(existing\.__updateTime\)\)/);
   assert.match(bulkAllocationSource, /MovementType: 'Allocation'/);
+});
+
+test('class teachers configure subjects only for their own active classroom and academic period', () => {
+  const teacher = { edition: 'school', role: 'Teacher', username: 'ADA', allowedSections: ['academics'] };
+  const target = { SessionId: 'session-1', TermId: 'term-1', ClassId: 'class-10', ArmId: 'arm-a' };
+  const allocation = { ...target, TeacherUsername: 'ada', AllocationRole: 'Form Teacher', Status: 'Active' };
+  assert.equal(academicCanConfigureClassStudentSubjects(teacher, [allocation], target), true);
+  assert.equal(academicCanConfigureClassStudentSubjects(teacher, [allocation], { ...target, ArmId: 'arm-b' }), false);
+  assert.equal(academicCanConfigureClassStudentSubjects(teacher, [allocation], { ...target, TermId: 'term-2' }), false);
+  assert.equal(academicCanConfigureClassStudentSubjects(teacher, [{ ...allocation, Status: 'Archived' }], target), false);
+  assert.equal(academicCanConfigureClassStudentSubjects(teacher, [{ ...allocation, AllocationRole: 'Subject Teacher' }], target), false);
+  assert.equal(academicCanConfigureClassStudentSubjects({ ...teacher, username: 'ben' }, [allocation], target), false);
+  assert.equal(academicCanConfigureClassStudentSubjects({ ...teacher, role: 'Principal' }, [], target), true);
+  assert.match(librarySource, /Only this classroom’s assigned class teacher or an authorised administrator/);
+  assert.match(adminSource, /Only classrooms where you are the assigned class teacher are shown/);
 });
 
 test('an active class membership without an arm remains eligible for initial arm allocation', () => {
@@ -1458,7 +1476,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-task-workspace\{display:grid/);
   assert.match(styleSource, /\.academic-register-card/);
   assert.match(adminHtml, /js\/academic-results-analysis\.js\?v=20260918-academic-readability/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260929-calendar-empty-state/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260929-class-register/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {
