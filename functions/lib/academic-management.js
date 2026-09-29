@@ -528,6 +528,7 @@ function schoolStageValue(value, section = '', className = '') {
   const name = lower(className);
   if (/\b(jss|junior)(?:[\s_-]*\d+)?\b/.test(name)) return 'junior-secondary';
   if (/\b(sss?|senior)(?:[\s_-]*\d+)?\b/.test(name)) return 'senior-secondary';
+  if (/\bgrade[\s_-]*(?:10|11|12)\b/.test(name)) return 'senior-secondary';
   return '';
 }
 

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { runInNewContext } from 'node:vm';
 
 import {
   ACADEMIC_CLASS_TEACHER_STATE_KEYS,
@@ -165,6 +166,7 @@ test('AM-003 classes and arms retain branch and school-section isolation', () =>
   assert.equal(schoolClass.LegacyDocumentId, 'JSS_1');
   assert.equal(schoolClass.SchoolStage, 'junior-secondary');
   assert.equal(normalizeAcademicClass({ Name: 'SS 2', Code: 'SS2', SchoolStage: 'senior-secondary' }, scope).SchoolStage, 'senior-secondary');
+  assert.equal(normalizeAcademicClass({ Name: 'Grade 10', Code: 'G10' }, scope).SchoolStage, 'senior-secondary');
   assert.throws(() => normalizeAcademicClass({ Name: 'Year 10', Code: 'Y10' }, scope), /Junior Secondary or Senior Secondary/);
 });
 
@@ -1059,6 +1061,60 @@ test('class teachers configure subjects only for their own active classroom and 
   assert.match(adminSource, /Only classrooms where you are the assigned class teacher are shown/);
 });
 
+test('class-teacher student-subject form follows the selected period and remains discoverable', () => {
+  const helperStart = adminSource.indexOf('function academicIsSeniorClass(');
+  const helperEnd = adminSource.indexOf('function academicOfferingSubjectRole(', helperStart);
+  assert.ok(helperStart >= 0 && helperEnd > helperStart);
+  const clean = (value) => String(value ?? '').trim();
+  const academicIsSeniorClass = runInNewContext(`${adminSource.slice(helperStart, helperEnd)}\nacademicIsSeniorClass`, { clean });
+  assert.equal(academicIsSeniorClass({ Name: 'Grade 10', SchoolStage: '' }), true);
+  assert.equal(academicIsSeniorClass({ Name: 'Grade 8', SchoolStage: '' }), false);
+  const start = adminSource.indexOf('function academicArmSubjectRegister(');
+  const end = adminSource.indexOf('function academicStudentWorkspace(', start);
+  assert.ok(start >= 0 && end > start);
+  const context = {
+    academicManagementFilters: { section: 'secondary', sessionId: 'current-session', termId: 'current-term' },
+    academicArmSubjectDraft: { sessionId: 'old-session', termId: 'old-term', classId: '', armId: '' },
+    academicStudentAllocationDraft: { classId: '', armId: '' },
+    clean,
+    academicIsSeniorClass,
+    academicIsActive: (row) => !['archived', 'inactive'].includes(String(row?.Status || '').toLowerCase()),
+    academicFind: (items, id) => items.find((row) => id && Object.values(row).includes(id)),
+    academicSelectOptions: () => '<option>Choose</option>',
+    escapeHtml: (value) => String(value ?? ''),
+    academicLabel: (_items, id, fallback) => id || fallback || '',
+    academicRecordId: (row) => row.MembershipId || row.RecordId || ''
+  };
+  const profileStart = adminSource.indexOf('function academicStudentSubjectProfile(');
+  const profileEnd = adminSource.indexOf('function academicStudentBelongsToClass(', profileStart);
+  context.academicStudentSubjectProfile = runInNewContext(`${adminSource.slice(profileStart, profileEnd)}\nacademicStudentSubjectProfile`, context);
+  const render = runInNewContext(`${adminSource.slice(start, end)}\nacademicArmSubjectRegister`, context);
+  const data = { permissions: { teacherView: true, canManageAllocations: false },
+    classes: [{ ClassId: 'class-10', SchoolStage: '', Status: 'Active', Name: 'Grade 10' }],
+    subjects: [{ SubjectId: 'trade-1', SeniorChoiceRole: 'Trade', Status: 'Active' }],
+    departments: [{ DepartmentId: 'dept-1', CoreSubjectIds: [] }],
+    students: [],
+    studentMemberships: [{ MembershipId: 'membership-1', StudentRef: 'student-1', SessionId: 'current-session', TermId: 'current-term', ClassId: 'class-10', ArmId: 'arm-a', DepartmentId: 'dept-1', SubjectIds: [], Status: 'Active' }]
+  };
+  const rows = {
+    classes: [{ ClassId: 'class-10', SchoolStage: '', Status: 'Active', Name: 'Grade 10' }],
+    arms: [{ ArmId: 'arm-a', ClassId: 'class-10', Status: 'Active', Name: 'Brilliance' }],
+    teacherAllocations: [{ TeacherUsername: 'teacher-a', AllocationRole: 'Form Teacher', SessionId: 'current-session', TermId: 'current-term', ClassId: 'class-10', ArmId: 'arm-a', Status: 'Active' }]
+  };
+  const html = render(data, rows, false);
+  assert.match(html, /data-academic-arm-subject-register/);
+  assert.match(html, /name="SessionId" value="current-session"/);
+  assert.match(html, /name="TermId" value="current-term"/);
+  assert.match(html, /Only classrooms where you are the assigned class teacher are shown/);
+  assert.match(html, /trade-1/);
+  assert.match(html, /<button type="submit">Save subject selections for this arm<\/button>/);
+  assert.match(adminSource, /\['students', 'My students & subjects'\]/);
+  assert.match(adminSource, /label: 'Student subjects'/);
+  const missing = render(data, { ...rows, teacherAllocations: [] }, true);
+  assert.match(missing, /No active Form Teacher assignment is linked to your account/);
+  assert.match(missing, /data-academic-arm-subject-info/);
+});
+
 test('an active class membership without an arm remains eligible for initial arm allocation', () => {
   const period = { sessionId: 'session-1', termId: 'term-1', classId: 'grade-8' };
   assert.equal(academicMembershipCanReceiveInitialArm({}, period), false);
@@ -1508,7 +1564,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-task-workspace\{display:grid/);
   assert.match(styleSource, /\.academic-register-card/);
   assert.match(adminHtml, /js\/academic-results-analysis\.js\?v=20260918-academic-readability/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260929-my-timetable/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260929-teacher-student-subjects/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {

@@ -10718,6 +10718,13 @@ function academicSchoolStageLabel(value = '') {
   return ({ primary: 'Primary', 'junior-secondary': 'Junior Secondary', 'senior-secondary': 'Senior Secondary' })[clean(value).toLowerCase()] || 'Not classified';
 }
 
+function academicIsSeniorClass(row = {}) {
+  const stage = clean(row.SchoolStage).toLowerCase().replace(/[\s_]+/g, '-');
+  if (['senior', 'sss', 'senior-secondary'].includes(stage)) return true;
+  if (stage) return false;
+  return /\bgrade[\s_-]*(?:10|11|12)\b/i.test(clean(row.Name));
+}
+
 function academicOfferingSubjectRole(offering = {}, schoolStage = '') {
   if (clean(schoolStage).toLowerCase() === 'junior-secondary') return 'Core';
   const role = clean(offering.SubjectRole || offering.RequirementType);
@@ -11117,7 +11124,7 @@ function validateAcademicCheckboxFields(form) {
 
 function academicStudentSubjectProfile(data, membership) {
   const schoolClass = academicFind(data.classes || [], membership.ClassId);
-  const stage = clean(schoolClass?.SchoolStage).toLowerCase();
+  const stage = academicIsSeniorClass(schoolClass) ? 'senior-secondary' : clean(schoolClass?.SchoolStage).toLowerCase();
   const applicable = stage === 'senior-secondary' ? [] : (data.offerings || []).filter((offering) => academicIsActive(offering)
     && offering.SessionId === membership.SessionId && offering.TermId === membership.TermId
     && offering.ClassId === membership.ClassId && (!offering.ArmId || offering.ArmId === membership.ArmId));
@@ -11486,7 +11493,7 @@ function academicTaskDefinitions(view, root) {
       { key: 'allocate', label: `Allocate ${learner.plural}`, title: `Assign ${learner.plural} to a classroom`, description: `Select the target classroom and check one or up to 100 unassigned ${learner.plural}.`, nodes: nodes(form('[data-academic-student-placement="bulk"]')) },
       { key: 'transfer', label: 'Transfer or reassign', title: `Move a ${learner.singular} safely`, description: `Transfer an active membership or reassign a withdrawn ${learner.singular} with an audit reason.`, nodes: nodes(form('[data-academic-workflow="moveAcademicStudentMembership"]')) },
       { key: 'import', label: `Import ${learner.plural}`, title: `Import existing ${learner.singular} memberships`, description: 'Download the CSV template, complete it, then import the finished file.', nodes: nodes(form('[data-academic-student-membership-import]')) },
-      { key: 'subjects', label: 'Arm subjects', title: 'Trade and Optional subjects', description: `Open a Senior classroom and complete subject choices for its ${learner.plural}.`, nodes: nodes(form('[data-academic-arm-subject-register]')) },
+      { key: 'subjects', label: 'Student subjects', title: 'Trade and Optional subjects', description: `Open your Senior classroom and complete subject choices for its ${learner.plural}.`, nodes: nodes(form('[data-academic-arm-subject-register]'), form('[data-academic-arm-subject-info]')) },
       { key: 'register', label: `${learner.Singular} register`, title: 'Class and subject memberships', description: `Review current allocations, curriculum status, and ${learner.singular} actions.`, nodes: nodes(register(membershipRegister)) },
       { key: 'history', label: 'Movement history', title: `${learner.Singular} movement history`, description: 'Review the permanent audit trail for allocations, transfers and withdrawals.', nodes: nodes(register(movementRegister)) }
     ],
@@ -12304,18 +12311,20 @@ function updateAcademicArmStudentSubjectCounts(card) {
 }
 
 function academicArmSubjectRegister(data, rows, canManage) {
-  if (academicManagementFilters.section !== 'secondary') return '';
-  const sessions = rows.sessions.filter(academicIsActive);
-  const preferredSessionId = academicArmSubjectDraft.sessionId || academicManagementFilters.sessionId;
-  const sessionId = clean(academicFind(sessions, preferredSessionId)?.SessionId || sessions.find(academicIsActive)?.SessionId);
-  const terms = (data.terms || []).filter((row) => academicIsActive(row) && row.SessionId === sessionId);
-  const termId = clean(academicFind(terms, academicArmSubjectDraft.termId || academicManagementFilters.termId)?.TermId || terms.find(academicIsActive)?.TermId);
+  if (academicManagementFilters.section !== 'secondary') {
+    return data.permissions?.teacherView
+      ? '<div class="academic-view-only-note" data-academic-arm-subject-info><strong>Student subject choices</strong><span>Individual Trade and Optional choices apply to Senior Secondary. Primary pupils inherit their saved class subjects automatically.</span></div>'
+      : '';
+  }
+  const sessionId = clean(academicManagementFilters.sessionId);
+  const termId = clean(academicManagementFilters.termId);
   const administrator = data.permissions?.canManageAllocations === true;
-  const ownClassroomIds = new Set((data.teacherAllocations || []).filter((row) => academicIsActive(row)
-    && row.AllocationRole === 'Form Teacher' && row.SessionId === sessionId && row.TermId === termId)
+  const ownClassroomIds = new Set(rows.teacherAllocations.filter((row) => academicIsActive(row)
+    && clean(row.AllocationRole).toLowerCase() === 'form teacher'
+    && row.SessionId === sessionId && row.TermId === termId)
     .map((row) => row.ArmId));
   const seniorClasses = rows.classes.filter((row) => academicIsActive(row)
-    && clean(row.SchoolStage).toLowerCase() === 'senior-secondary'
+    && academicIsSeniorClass(row)
     && (administrator || rows.arms.some((arm) => arm.ClassId === row.ClassId && ownClassroomIds.has(arm.ArmId))));
   const preferredClassId = academicArmSubjectDraft.classId || academicStudentAllocationDraft.classId;
   const classId = clean(academicFind(seniorClasses, preferredClassId)?.ClassId || (!administrator ? seniorClasses[0]?.ClassId : ''));
@@ -12365,12 +12374,13 @@ function academicArmSubjectRegister(data, rows, canManage) {
       : !memberships.length ? 'No students are assigned to this arm for the selected period.'
         : !tradeConfigured ? 'Configure at least one school-wide Senior Trade subject before saving student selections.'
           : `${memberships.length} assigned student${memberships.length === 1 ? '' : 's'} shown. Core subjects are already selected and cannot be cleared.`;
-  const body = canManage && seniorClasses.length ? `<form class="academic-management-editor academic-management-editor-wide academic-arm-subject-register" data-academic-workflow="bulkAssignAcademicArmStudentSubjects" data-academic-arm-subject-register>
+  const mayEditOwnClass = data.permissions?.teacherView === true && ownClassroomIds.size > 0;
+  const body = (canManage || mayEditOwnClass) && seniorClasses.length ? `<form class="academic-management-editor academic-management-editor-wide academic-arm-subject-register" data-academic-workflow="bulkAssignAcademicArmStudentSubjects" data-academic-arm-subject-register>
     <div class="academic-management-editor-heading"><div><small>Senior Secondary arm curriculum</small><h3>Assign Trade and Optional subjects</h3><p class="muted">${administrator ? 'Open an arm after placement.' : 'Only classrooms where you are the assigned class teacher are shown.'} Department Core subjects are checked and locked for each student; select from the school-wide Trade and Optional subject lists.</p></div></div>
     <input type="hidden" name="SchoolSection" value="secondary">
-    <div class="academic-management-form-grid academic-management-form-grid-4">
-      <label>Session<select name="SessionId" required>${academicSelectOptions(sessions, sessionId, (row) => row.Name, 'Choose session')}</select></label>
-      <label>Term<select name="TermId" required>${academicSelectOptions(terms, termId, (row) => row.Name, 'Choose term')}</select></label>
+    <input type="hidden" name="SessionId" value="${escapeHtml(sessionId)}"><input type="hidden" name="TermId" value="${escapeHtml(termId)}">
+    <p class="muted">Using the academic session and term selected above. Change them there to open another period.</p>
+    <div class="academic-management-form-grid academic-management-form-grid-2">
       <label>Senior class<select name="ClassId" required>${academicSelectOptions(seniorClasses, classId, (row) => row.Name, 'Choose class')}</select></label>
       <label>Arm<select name="ArmId" required${classId ? '' : ' disabled'}>${academicSelectOptions(arms, armId, (row) => row.Name, classId ? 'Choose arm' : 'Choose class first')}</select></label>
     </div>
@@ -12378,7 +12388,11 @@ function academicArmSubjectRegister(data, rows, canManage) {
     <div class="academic-arm-student-subject-list">${studentCards || '<div class="academic-checkbox-empty">Select a class and arm to open its student subject register.</div>'}</div>
     <label>Curriculum note<input name="Reason" placeholder="Senior subject selections confirmed"></label>
     <button type="submit"${memberships.length && tradeConfigured ? '' : ' disabled'}>Save subject selections for this arm</button>
-  </form>` : `<div class="academic-view-only-note"><strong>Senior arm subject register</strong><span>${data.permissions?.teacherView ? 'Only the assigned class teacher can configure Trade and Optional subjects for their Senior classroom.' : 'Core, Trade and Optional selections are shown in each membership below. Only authorised staff can change them.'}</span></div>`;
+  </form>` : `<div class="academic-view-only-note" data-academic-arm-subject-info><strong>Student subject choices</strong><span>${data.permissions?.teacherView
+    ? !ownClassroomIds.size
+      ? 'No active Form Teacher assignment is linked to your account for the selected session and term. Ask Academic Management to assign you under Assign class teachers.'
+      : 'Your assigned classrooms are not classified as Senior Secondary in this section. Junior Secondary students inherit their saved class subjects automatically.'
+    : 'No Senior classroom is available for the selected period. Core, Trade and Optional selections require an active Senior class and arm.'}</span></div>`;
   return body;
 }
 
@@ -13957,7 +13971,7 @@ function academicManagementViews(data) {
   return data.permissions?.financeView
     ? [['clearances', 'Result clearances']]
     : data.permissions?.teacherView
-    ? [['classrooms', 'Classrooms'], ['structure', 'Catalogue'], ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['teachers', 'My allocations'], ['students', 'My registers'], ['timetable', 'Timetable'], ['presence', 'Class register'], ['attendance', 'Lesson attendance'], ['scorebook', 'Scorebook'], ['results', 'Results'], ...cbtView]
+    ? [['classrooms', 'Classrooms'], ['structure', 'Catalogue'], ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['teachers', 'My allocations'], ['students', 'My students & subjects'], ['timetable', 'Timetable'], ['presence', 'Class register'], ['attendance', 'Lesson attendance'], ['scorebook', 'Scorebook'], ['results', 'Results'], ...cbtView]
     : adminViews;
 }
 
