@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { runInNewContext } from 'node:vm';
 
 import {
   academicAttendanceSummary,
@@ -25,6 +26,33 @@ const portalCss = await readFile(new URL('../css/style.css', import.meta.url), '
 const parentApi = await readFile(new URL('../functions/api/parent-dashboard.js', import.meta.url), 'utf8');
 const parentDashboard = await readFile(new URL('../js/parent-dashboard.js', import.meta.url), 'utf8');
 const parentHtml = await readFile(new URL('../parent-dashboard.html', import.meta.url), 'utf8');
+
+test('print schedules show the overall and per-class or teacher lesson totals', () => {
+  const start = adminSource.indexOf('function printAcademicTimetableSchedule(');
+  const end = adminSource.indexOf('\nfunction academicTimetableBatchKey(', start);
+  assert.ok(start >= 0 && end > start);
+  let printed = '';
+  const preview = { document: { open() {}, write(value) { printed = value; }, close() {} }, focus() {} };
+  const scope = {
+    window: { open: () => preview }, document: { getElementById: () => null, querySelector: () => ({ textContent: 'Example School' }) },
+    staffBrand: null, clean: (value) => String(value ?? '').trim(), escapeHtml: (value) => String(value ?? ''),
+    academicLabel: (_rows, value) => value, academicTimetableTimeLabel: (_version, entry) => entry.PeriodCodes.join(' + ')
+  };
+  const print = runInNewContext(`${adminSource.slice(start, end)}\nprintAcademicTimetableSchedule`, scope);
+  const version = { Name: 'Draft', Status: 'Draft', Days: [{ DayCode: 'MON', Name: 'Monday', SortOrder: 1 }] };
+  const entries = [
+    { ClassId: 'Grade 7', ArmId: 'A', TeacherUsername: 'Teacher 1', DayCode: 'MON', PeriodCodes: ['P1'], SubjectId: 'Math' },
+    { ClassId: 'Grade 7', ArmId: 'A', TeacherUsername: 'Teacher 1', DayCode: 'MON', PeriodCodes: ['P2'], SubjectId: 'English' },
+    { ClassId: 'Grade 8', ArmId: 'B', TeacherUsername: 'Teacher 2', DayCode: 'MON', PeriodCodes: ['P3'], SubjectId: 'Science' }
+  ];
+  print('class', version, entries, { staff: [] }, { classes: [], arms: [], subjects: [] });
+  assert.match(printed, /Class schedules · Total lessons: 3/);
+  assert.match(printed, /Grade 7 \/ A <span class="lesson-count">Total lessons: 2<\/span>/);
+  assert.match(printed, /Grade 8 \/ B <span class="lesson-count">Total lessons: 1<\/span>/);
+  print('teacher', version, entries, { staff: [] }, { classes: [], arms: [], subjects: [] });
+  assert.match(printed, /Teacher schedules · Total lessons: 3/);
+  assert.match(printed, /Teacher 1 <span class="lesson-count">Total lessons: 2<\/span>/);
+});
 
 const timetableDays = normalizeAcademicTimetableDays('MON | Monday\nTUE | Tuesday');
 const settings = {
@@ -276,7 +304,7 @@ test('staff workspace exposes focused timetable and attendance interfaces', () =
   assert.match(adminSource, /data-academic-attendance-report/);
   assert.match(adminSource, /printAcademicAttendanceReport/);
   assert.match(adminSource, /All students start as Present/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260929-school-calendar/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260929-timetable-lesson-count/);
   assert.match(portalCss, /\.academic-attendance-table\{max-height:480px;overflow:auto/);
   assert.match(portalCss, /\.academic-attendance-table th\{[^}]*white-space:nowrap;overflow-wrap:normal;word-break:normal/);
   assert.match(portalCss, /\.academic-attendance-report \.academic-attendance-table td:first-child\{font-size:12px;line-height:1\.3\}/);
