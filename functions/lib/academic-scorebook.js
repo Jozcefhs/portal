@@ -71,7 +71,7 @@ function normalizedGradeBands(policy = {}) {
       MaximumPercentage: finiteNumber(row.MaximumPercentage) ?? 100,
       GradePoint: finiteNumber(row.GradePoint) ?? 0,
       Remark: clean(row.Remark),
-      Classification: oneOf(row.Classification, ['pass', 'fail'], 'pass'),
+      Classification: oneOf(row.Classification, ['pass', 'probation', 'fail'], 'pass'),
       Order: Number(row.Order || index + 1)
     }))
     .filter((row) => row.Grade)

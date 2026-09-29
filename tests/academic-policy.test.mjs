@@ -155,6 +155,22 @@ test('a complete configured policy can be activated', () => {
   assert.equal(policy.Assessment.GradeBands.length, 3);
 });
 
+test('A through F bands can classify E as probation without losing full grading coverage', () => {
+  const policy = completePolicy();
+  policy.Assessment.GradeBands = [
+    { Grade: 'A', MinimumPercentage: 80, MaximumPercentage: 100, GradePoint: 5, Classification: 'pass' },
+    { Grade: 'B', MinimumPercentage: 70, MaximumPercentage: 79.99, GradePoint: 4, Classification: 'pass' },
+    { Grade: 'C', MinimumPercentage: 60, MaximumPercentage: 69.99, GradePoint: 3, Classification: 'pass' },
+    { Grade: 'D', MinimumPercentage: 50, MaximumPercentage: 59.99, GradePoint: 2, Classification: 'pass' },
+    { Grade: 'E', MinimumPercentage: 40, MaximumPercentage: 49.99, GradePoint: 1, Classification: 'probation' },
+    { Grade: 'F', MinimumPercentage: 0, MaximumPercentage: 39.99, GradePoint: 0, Classification: 'fail' }
+  ];
+  const activated = assertAcademicPolicyActivatable(policy);
+
+  assert.equal(activated.Assessment.GradeBands.find((band) => band.Grade === 'E').Classification, 'probation');
+  assert.match(setupJsSource, /\['probation', 'Probation'\]/);
+});
+
 test('invalid component totals and grade ranges are reported before activation', () => {
   const policy = completePolicy();
   policy.Assessment.Components[0].WeightPercentage = 30;

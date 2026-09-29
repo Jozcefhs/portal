@@ -101,7 +101,7 @@ export function academicAutomaticResultComments(result = {}, policyInput = {}) {
   const weakest = subjects.sort((left, right) => Number(left.Total ?? left.WeightedTotal) - Number(right.Total ?? right.WeightedTotal))[0];
   const weakestName = clean(weakest?.SubjectName || weakest?.SubjectId);
   const weakestScore = Number(weakest?.Total ?? weakest?.WeightedTotal ?? 0);
-  const failed = subjects.filter((row) => lower(row.Classification) === 'fail');
+  const failed = subjects.filter((row) => ['probation', 'fail'].includes(lower(row.Classification)));
   const benchmark = promotionBenchmark(policy, result.SchoolStage);
   const average = Number(result.OverallAverage || 0);
   const attention = weakestName ? ` Greater attention to ${weakestName} will strengthen the overall result.` : '';

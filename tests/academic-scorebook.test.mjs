@@ -88,6 +88,23 @@ test('AM-009 score calculations preserve states, weights, grades, points and rem
   assert.equal(missing.Grade, '');
 });
 
+test('scorebook preserves the probation classification on an earned E grade', () => {
+  const probationPolicy = structuredClone(policy);
+  probationPolicy.Assessment.GradeBands = [
+    { Grade: 'A', MinimumPercentage: 50, MaximumPercentage: 100, GradePoint: 2, Classification: 'pass' },
+    { Grade: 'E', MinimumPercentage: 40, MaximumPercentage: 49.99, GradePoint: 1, Classification: 'probation' },
+    { Grade: 'F', MinimumPercentage: 0, MaximumPercentage: 39.99, GradePoint: 0, Classification: 'fail' }
+  ];
+  const score = calculateAcademicStudentScore(probationPolicy, [
+    { ComponentId: 'ca', RawScore: 20 },
+    { ComponentId: 'exam', RawScore: 25 }
+  ]);
+
+  assert.equal(score.Percentage, 45);
+  assert.equal(score.Grade, 'E');
+  assert.equal(score.Classification, 'probation');
+});
+
 test('split assessment components keep Objective A and Theory B separate while calculating one component', () => {
   const splitPolicy = structuredClone(policy);
   splitPolicy.Assessment.Components[0] = {

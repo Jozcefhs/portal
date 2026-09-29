@@ -427,7 +427,7 @@ function createAcademicGradeRow(band = {}, index = 0) {
   const minimum = createPolicyInput('number', band.MinimumPercentage, 'Minimum percentage', { min: '0', max: '100', step: '0.01' });
   const maximum = createPolicyInput('number', band.MaximumPercentage, 'Maximum percentage', { min: '0', max: '100', step: '0.01' });
   const point = createPolicyInput('number', band.GradePoint, 'Grade point', { min: '0', step: '0.01' });
-  const classification = createPolicySelect([['pass', 'Pass'], ['fail', 'Fail']], band.Classification || 'pass', 'Pass or fail classification');
+  const classification = createPolicySelect([['pass', 'Pass'], ['probation', 'Probation'], ['fail', 'Fail']], band.Classification || 'pass', 'Pass, probation or fail classification');
   const remark = createPolicyInput('text', band.Remark, 'Grade remark');
   const remove = document.createElement('button');
   remove.type = 'button';

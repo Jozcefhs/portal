@@ -198,6 +198,28 @@ test('Senior Secondary promotion counts only department Core credits and enforce
   assert.equal(notPromoted.RecommendedOutcome, 'Repeated');
 });
 
+test('probation-class subjects count as non-passing without automatically deciding final promotion', () => {
+  const configured = policy();
+  configured.Promotion.MaximumFailedSubjects = 0;
+  const cumulative = {
+    OverallAverage: 60, MissingRequiredTerms: [],
+    Attendance: { AttendancePercentage: 90 },
+    Subjects: [
+      { SubjectId: 'math', SubjectName: 'Mathematics', Grade: 'E', Classification: 'probation' },
+      { SubjectId: 'eng', SubjectName: 'English', Grade: 'B', Classification: 'pass' }
+    ]
+  };
+  const blocked = evaluateAcademicPromotionDecision(cumulative, configured);
+  assert.equal(blocked.FailedSubjectCount, 1);
+  assert.deepEqual(blocked.FailedSubjectIds, ['math']);
+  assert.equal(blocked.Criteria.find((criterion) => criterion.Name === 'Required core subject Mathematics').Passed, false);
+  assert.equal(blocked.RecommendedOutcome, 'Repeated');
+
+  configured.Promotion.MaximumFailedSubjects = 1;
+  configured.Promotion.RequiredCoreSubjectIds = [];
+  assert.equal(evaluateAcademicPromotionDecision(cumulative, configured).RecommendedOutcome, 'Promoted');
+});
+
 test('Senior promotion pauses for review when the configured five-Core-subject curriculum is incomplete', () => {
   const configured = divisionPolicy();
   const result = seniorCumulative({ math: 70, eng: 60, phy: 55, chem: 50, bio: 50 });

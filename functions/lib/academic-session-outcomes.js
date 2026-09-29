@@ -315,7 +315,7 @@ export function evaluateAcademicPromotionDecision(cumulativeResult = {}, policyV
   const promotion = policy.Promotion;
   const criteria = [];
   const reasons = [];
-  const failedSubjects = (cumulativeResult.Subjects || []).filter((subject) => lower(subject.Classification) === 'fail');
+  const failedSubjects = (cumulativeResult.Subjects || []).filter((subject) => ['probation', 'fail'].includes(lower(subject.Classification)));
   const bySubject = new Map((cumulativeResult.Subjects || []).map((subject) => [lower(subject.SubjectId), subject]));
   const add = (name, passed, actual, expected, appliesTo = 'All') => {
     criteria.push({ Name: name, Passed: passed, Actual: actual, Expected: expected, AppliesTo: appliesTo });
@@ -425,7 +425,7 @@ export function evaluateAcademicPromotionDecision(cumulativeResult = {}, policyV
     }
     promotion.RequiredCoreSubjectIds.forEach((subjectId) => {
       const subject = bySubject.get(lower(subjectId));
-      add(`Required core subject ${subject?.SubjectName || subjectId}`, Boolean(subject && lower(subject.Classification) !== 'fail'),
+      add(`Required core subject ${subject?.SubjectName || subjectId}`, Boolean(subject && lower(subject.Classification) === 'pass'),
         subject ? `${subject.Grade || subject.AnnualTotal}` : 'missing', 'pass');
     });
     if (criteria.some((criterion) => !criterion.Passed)) {

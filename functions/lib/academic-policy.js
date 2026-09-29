@@ -142,7 +142,7 @@ function normalizeGradeBand(row = {}, index = 0) {
     MaximumPercentage: boundedNumber(row.MaximumPercentage ?? row.maximumPercentage ?? row.Maximum, 100, 0, 100),
     GradePoint: boundedNumber(row.GradePoint ?? row.gradePoint ?? row.Point, 0, 0, 100),
     Remark: clean(row.Remark || row.remark),
-    Classification: oneOf(row.Classification ?? row.classification, ['pass', 'fail'], 'pass'),
+    Classification: oneOf(row.Classification ?? row.classification, ['pass', 'probation', 'fail'], 'pass'),
     Order: Math.max(1, Math.floor(boundedNumber(row.Order ?? row.order, index + 1, 1, 1000)))
   };
 }
