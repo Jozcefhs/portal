@@ -12581,7 +12581,7 @@ function academicTimetableWorkspace(data, rows) {
       <label>Reason<input data-academic-calendar-reason maxlength="160" placeholder="National Day, Easter, make-up Saturday..."></label>
     </div>
     <button type="button" class="secondary" data-academic-calendar-add>Add date(s) below</button>
-    <label>Dated exceptions <small>One per line: YYYY-MM-DD | Closed/Open | Reason. Edit or remove lines before saving.</small><textarea name="Exceptions" rows="8" placeholder="2026-10-01 | Closed | National Day&#10;2026-10-03 | Open | Make-up school day">${escapeHtml(calendarLines)}</textarea></label>
+    <label>Dated exceptions <small>Only dates listed in this box will be saved. Use one line per date: YYYY-MM-DD | Closed/Open | Reason. Make-up open dates are optional.</small><textarea name="Exceptions" rows="8">${escapeHtml(calendarLines)}</textarea></label>
     <p class="muted" data-academic-calendar-preview></p>
     <button type="submit" ${term?.StartDate && term?.EndDate ? '' : 'disabled'}>Save school calendar</button>
   </form>` : '';

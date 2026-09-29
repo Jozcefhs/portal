@@ -56,5 +56,7 @@ test('calendar controls are available in web and desktop and attendance writes a
   assert.match(backend, /saveAcademicSchoolCalendar/);
   assert.match(backend, /ACADEMIC_SCHOOL_CLOSED/);
   assert.match(web, /data-academic-school-calendar/);
+  assert.match(web, /Make-up open dates are optional/);
+  assert.doesNotMatch(web, /placeholder="2026-10-01 \| Closed/);
   assert.match(desktop, /School Calendar/);
 });
