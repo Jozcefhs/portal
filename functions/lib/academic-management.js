@@ -3,6 +3,7 @@ import { enforceActorBranch } from './branch-scope.js';
 import { normalizeClassKey } from './class-names.js';
 import { staffRecordMatchesEdition } from './records-desk.js';
 import { createNotification } from './notifications.js';
+import { normalizeSchoolCalendar, schoolCalendarDayIsOpen, schoolCalendarSummary } from './academic-school-calendar.js';
 import { academicCumulativePolicyIssues, academicPolicyIssues, academicPolicyScopeChain, normalizeAcademicPolicy } from './academic-policy.js';
 import { loadAcademicPolicyView } from './academic-policy-store.js';
 import { deleteStoredDocument, getStoredDocument } from './document-storage.js';
@@ -264,6 +265,7 @@ export const ACADEMIC_MANAGEMENT_COLLECTIONS = Object.freeze({
   studentMemberships: 'academicStudentMemberships',
   studentMovements: 'academicStudentMovements',
   timetableSettings: 'academicTimetableSettings',
+  schoolCalendars: 'academicSchoolCalendars',
   timetableConstraints: 'academicTimetableConstraints',
   timetableVersions: 'academicTimetableVersions',
   timetableEntries: 'academicTimetableEntries',
@@ -333,19 +335,19 @@ export const ACADEMIC_STUDENT_STATE_KEYS = Object.freeze([
 
 export const ACADEMIC_TIMETABLE_STATE_KEYS = Object.freeze([
   'sessions', 'terms', 'classes', 'arms', 'subjects', 'teacherAllocations',
-  'studentMemberships', 'timetableSettings', 'timetableConstraints',
+  'studentMemberships', 'timetableSettings', 'schoolCalendars', 'timetableConstraints',
   'timetableVersions', 'timetableEntries', 'timetableSubstitutions', 'studentAttendance'
 ]);
 
 export const ACADEMIC_ATTENDANCE_STATE_KEYS = Object.freeze([
   'sessions', 'terms', 'classes', 'arms', 'subjects', 'teacherAllocations',
-  'studentMemberships', 'timetableVersions', 'timetableEntries',
+  'studentMemberships', 'schoolCalendars', 'timetableVersions', 'timetableEntries',
   'studentAttendance', 'attendanceCorrections'
 ]);
 
 export const ACADEMIC_RESULTS_STATE_KEYS = Object.freeze([
   'sessions', 'terms', 'classes', 'arms', 'subjects', 'teacherAllocations',
-  'studentMemberships', 'studentAttendance', 'scoreSheets', 'studentScores',
+  'studentMemberships', 'schoolCalendars', 'studentAttendance', 'scoreSheets', 'studentScores',
   'termResults', 'resultEvents'
 ]);
 
@@ -552,7 +554,7 @@ function actorUsername(user = {}) {
 
 function recordId(row = {}) {
   return clean(
-    row.RecordId || row.recordId || row.ClearanceId || row.TranscriptEventId || row.TranscriptId || row.PromotionEventId || row.PromotionDecisionId || row.CumulativeEventId || row.CumulativeResultId || row.ResultEventId || row.ResultId || row.CbtTestId || row.ImportId || row.ScoreId || row.SheetId || row.SubstitutionId || row.AttendanceId || row.EntryId || row.VersionId || row.ConstraintId || row.TimetableSettingId
+    row.RecordId || row.recordId || row.ClearanceId || row.TranscriptEventId || row.TranscriptId || row.PromotionEventId || row.PromotionDecisionId || row.CumulativeEventId || row.CumulativeResultId || row.ResultEventId || row.ResultId || row.CbtTestId || row.ImportId || row.ScoreId || row.SheetId || row.SubstitutionId || row.AttendanceId || row.EntryId || row.VersionId || row.ConstraintId || row.SchoolCalendarId || row.TimetableSettingId
       || row.MovementId || row.MembershipId || row.AllocationId || row.OfferingId
       || row.DepartmentId || row.SubjectId || row.ArmId || row.ArmTemplateId || row.ClassId || row.TermId || row.SessionId || row.__id
   );
@@ -1791,6 +1793,7 @@ function sortAcademicState(state) {
     studentMemberships: [...state.studentMemberships].sort((a, b) => clean(a.StudentRef).localeCompare(clean(b.StudentRef))),
     studentMovements: [...state.studentMovements].sort((a, b) => clean(b.RecordedAt || b.EffectiveDate).localeCompare(clean(a.RecordedAt || a.EffectiveDate))),
     timetableSettings: [...state.timetableSettings].sort((a, b) => clean(b.UpdatedAt).localeCompare(clean(a.UpdatedAt))),
+    schoolCalendars: [...state.schoolCalendars].sort((a, b) => clean(b.UpdatedAt).localeCompare(clean(a.UpdatedAt))),
     timetableConstraints: [...state.timetableConstraints].sort((a, b) => clean(a.TeacherUsername).localeCompare(clean(b.TeacherUsername))),
     timetableVersions: [...state.timetableVersions].sort((a, b) => clean(b.CreatedAt).localeCompare(clean(a.CreatedAt))),
     timetableEntries: [...state.timetableEntries].sort((a, b) => clean(a.DayCode).localeCompare(clean(b.DayCode))
@@ -3576,6 +3579,49 @@ export async function saveAcademicTimetableSettings(env, user = {}, input = {}) 
   return academicOperationalResponse(env, user, input, scope, 'School days and periods saved online.');
 }
 
+export async function saveAcademicSchoolCalendar(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canManageTimetables', {
+    view: 'timetable', stateKeys: ['sessions', 'terms', 'schoolCalendars']
+  });
+  const { scope, state, session, term } = context;
+  const calendarId = academicId('school-calendar', scope.branchId, scope.section, session.SessionId, term.TermId);
+  const existing = findById(state.schoolCalendars, calendarId);
+  const normalized = normalizeSchoolCalendar(input, term);
+  const changed = !existing || JSON.stringify(existing.OperatingWeekdays || []) !== JSON.stringify(normalized.OperatingWeekdays)
+    || JSON.stringify(existing.Exceptions || []) !== JSON.stringify(normalized.Exceptions);
+  if (changed) {
+    // A published or approved result is a dated snapshot. Require its controlled
+    // withdrawal before changing the calendar that underpins attendance totals.
+    const resultRows = await queryCollection(env, ACADEMIC_MANAGEMENT_COLLECTIONS.termResults, {
+      filters: [{ field: 'BranchId', op: '==', value: scope.branchId }],
+      select: ['BranchId', 'SchoolSection', 'TermId', 'Status']
+    });
+    const protectedResult = scopedAcademicRows(resultRows, scope).find((row) => row.TermId === term.TermId
+      && !['calculated draft', 'withdrawn'].includes(lower(row.Status)));
+    if (protectedResult) {
+      throw failure('This term has reviewed, approved or published results. Reopen or withdraw them before changing its school calendar.',
+        409, 'ACADEMIC_CALENDAR_RESULTS_LOCKED');
+    }
+  }
+  const timestamp = nowIso();
+  const record = {
+    ...(existing || {}), RecordId: calendarId, SchoolCalendarId: calendarId,
+    SessionId: session.SessionId, TermId: term.TermId,
+    ...normalized, BranchId: scope.branchId, SchoolSection: scope.section,
+    CreatedAt: clean(existing?.CreatedAt) || timestamp, CreatedBy: clean(existing?.CreatedBy) || actorName(user),
+    UpdatedAt: timestamp, UpdatedBy: actorName(user)
+  };
+  await commitAcademicBatch(env, [
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.schoolCalendars, documentId: calendarId,
+      data: withoutMetadata(record), ...writePrecondition(existing, input.RevisionToken) },
+    auditWrite(user, existing ? 'UPDATE' : 'CREATE', 'schoolCalendar', record,
+      `${record.OperatingWeekdays.join(', ')} operating weekdays; ${record.Exceptions.length} dated exceptions`)
+  ], 'The school calendar changed while it was being saved. Reload and try again.');
+  const summary = schoolCalendarSummary(term, record);
+  return academicOperationalResponse(env, user, input, scope,
+    `School calendar saved: ${summary.PlannedOpenDays} planned open days for the term; ${summary.OpenDaysToDate} through today.`);
+}
+
 function academicTimetableConstraint(state = {}, candidate = {}) {
   return (state.timetableConstraints || []).find((row) => statusActive(row)
     && row.SessionId === candidate.SessionId && row.TermId === candidate.TermId
@@ -4274,6 +4320,12 @@ export async function saveAcademicStudentAttendance(env, user = {}, input = {}) 
   const attendanceDate = clean(input.AttendanceDate);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(attendanceDate)) throw failure('Choose a valid attendance date.');
   if (attendanceDate < term.StartDate || attendanceDate > term.EndDate) throw failure('The attendance date must fall within the selected term.');
+  const calendar = state.schoolCalendars.find((row) => row.SessionId === session.SessionId && row.TermId === term.TermId);
+  if (calendar && !schoolCalendarDayIsOpen(calendar, attendanceDate)) {
+    const reason = (calendar.Exceptions || []).find((row) => row.Date === attendanceDate)?.Reason;
+    throw failure(`${attendanceDate} is a closed school day${reason ? ` (${reason})` : ''}. Change the school calendar before marking attendance.`,
+      409, 'ACADEMIC_SCHOOL_CLOSED');
+  }
   const schoolClass = assertReference(findById(state.classes, input.ClassId), 'Choose an active class.');
   const arm = assertReference(findById(state.arms, input.ArmId), 'Choose an active classroom arm.');
   if (arm.ClassId !== schoolClass.ClassId) throw failure('The selected arm does not belong to this class.');
@@ -5043,6 +5095,8 @@ async function calculateAcademicResultsForType(env, user = {}, input = {}, resul
     StudentScores: state.studentScores,
     Subjects: state.subjects,
     Attendance: state.studentAttendance,
+    SchoolCalendar: state.schoolCalendars.find((row) => row.SessionId === session.SessionId && row.TermId === term.TermId) || null,
+    TermDates: { StartDate: term.StartDate, EndDate: term.EndDate },
     AttendanceMode: oneOf(input.AttendanceMode, ACADEMIC_ATTENDANCE_MODES, 'Daily'),
     ExistingResults: existingResults,
     Policy: policy,
@@ -7190,6 +7244,7 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
   if (['bulkimportacademicstudentmemberships', 'importacademicstudentmemberships'].includes(action)) return bulkImportAcademicStudentMemberships(env, user, input);
   if (['bulkassignacademicarmstudentsubjects', 'bulkassignarmstudentsubjects'].includes(action)) return bulkAssignAcademicArmStudentSubjects(env, user, input);
   if (['saveacademictimetablesettings', 'savetimetablesettings'].includes(action)) return saveAcademicTimetableSettings(env, user, input);
+  if (['saveacademicschoolcalendar', 'saveschoolcalendar'].includes(action)) return saveAcademicSchoolCalendar(env, user, input);
   if (['saveacademictimetableconstraint', 'savetimetableconstraint'].includes(action)) return saveAcademicTimetableConstraint(env, user, input);
   if (['deleteacademictimetableconstraint', 'deletetimetableconstraint'].includes(action)) return deleteAcademicTimetableConstraint(env, user, input);
   if (['createacademictimetableversion', 'createtimetableversion'].includes(action)) return createAcademicTimetableVersion(env, user, input);

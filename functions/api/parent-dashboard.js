@@ -40,6 +40,7 @@ import {
 } from '../lib/firebase-messaging.js';
 import { effectiveBranchProfile } from '../lib/branch-profile-settings.js';
 import { academicPolicyIssues, academicPolicyScopeChain } from '../lib/academic-policy.js';
+import { schoolCalendarDayIsOpen, schoolCalendarSummary } from '../lib/academic-school-calendar.js';
 import { loadAcademicPolicyView } from '../lib/academic-policy-store.js';
 import {
   academicFeeCategoryBalances,
@@ -2015,7 +2016,7 @@ async function getChildActivity(env, body, options = {}) {
   child.BranchId = selectedScope.branchId;
   child.SchoolSection = selectedScope.schoolSection;
   const keys = accountKeys(child);
-  const [ledgerRows, invoiceRows, paymentRows, clinicRows, summaryRows, linkedApplication, storeItems, storeOrderRows, academicResultRows, academicClearanceRows, academicMembershipRows, academicAttendanceRows, timetableVersionRows, timetableEntryRows, academicSubjectRows] = await Promise.all([
+  const [ledgerRows, invoiceRows, paymentRows, clinicRows, summaryRows, linkedApplication, storeItems, storeOrderRows, academicResultRows, academicClearanceRows, academicMembershipRows, academicAttendanceRows, timetableVersionRows, timetableEntryRows, academicSubjectRows, schoolCalendarRows, academicTermRows] = await Promise.all([
     queryRowsForReferences(env, 'ledger', ['AccountRef', 'AdmissionNo', 'ApplicationReference'], keys),
     queryRowsForReferences(env, 'invoices', ['AccountRef', 'AdmissionNo', 'ApplicationReference'], keys),
     queryRowsForReferences(env, 'payments', ['AccountRef', 'AdmissionNo', 'ApplicationReference'], keys),
@@ -2037,7 +2038,9 @@ async function getChildActivity(env, body, options = {}) {
     queryRowsForReferences(env, 'academicStudentAttendance', ['StudentRef'], keys),
     listCollection(env, 'academicTimetableVersions').catch(() => []),
     listCollection(env, 'academicTimetableEntries').catch(() => []),
-    listCollection(env, 'academicSubjects').catch(() => [])
+    listCollection(env, 'academicSubjects').catch(() => []),
+    queryCollection(env, 'academicSchoolCalendars', { filters: [{ field: 'BranchId', op: '==', value: selectedScope.branchId }] }).catch(() => []),
+    queryCollection(env, 'academicTerms', { filters: [{ field: 'BranchId', op: '==', value: selectedScope.branchId }] }).catch(() => [])
   ]);
   if (linkedApplication && !findScopedChildApplication(applications, child)) {
     applications.push(linkedApplication);
@@ -2085,6 +2088,10 @@ async function getChildActivity(env, body, options = {}) {
     && !['withdrawn', 'inactive', 'archived'].includes(lower(row.Status)))
     .sort((a, b) => clean(b.UpdatedAt || b.CreatedAt).localeCompare(clean(a.UpdatedAt || a.CreatedAt)));
   const currentMembership = memberships[0] || null;
+  const currentCalendar = schoolCalendarRows.find((row) => recordMatchesSelectedChildScope(row, selectedScope)
+    && row.SessionId === currentMembership?.SessionId && row.TermId === currentMembership?.TermId) || null;
+  const currentTerm = academicTermRows.find((row) => recordMatchesSelectedChildScope(row, selectedScope)
+    && row.SessionId === currentMembership?.SessionId && row.TermId === currentMembership?.TermId) || null;
   const publishedVersions = timetableVersionRows.filter((row) => recordMatchesSelectedChildScope(row, selectedScope)
     && lower(row.Status) === 'published'
     && (!currentMembership || (row.SessionId === currentMembership.SessionId && row.TermId === currentMembership.TermId)))
@@ -2116,16 +2123,22 @@ async function getChildActivity(env, body, options = {}) {
     }).sort((a, b) => a.DaySort - b.DaySort || a.StartTime.localeCompare(b.StartTime)) : [];
   const childAttendance = academicAttendanceRows.filter((row) => recordMatchesSelectedChildScope(row, selectedScope)
     && keys.some((key) => lower(row.StudentRef) === lower(key))
-    && (!currentMembership || (row.SessionId === currentMembership.SessionId && row.TermId === currentMembership.TermId)));
+    && (!currentMembership || (row.SessionId === currentMembership.SessionId && row.TermId === currentMembership.TermId))
+    && lower(row.Mode || 'Daily') === 'daily'
+    && (!currentCalendar || schoolCalendarDayIsOpen(currentCalendar, row.AttendanceDate)));
   const attendanceCounts = { Present: 0, Absent: 0, Late: 0, Excused: 0, LeftEarly: 0 };
   childAttendance.forEach((row) => {
     const key = clean(row.Status).replace(/\s+/g, '');
     if (Object.hasOwn(attendanceCounts, key)) attendanceCounts[key] += 1;
   });
   const attendedCount = attendanceCounts.Present + attendanceCounts.Late + attendanceCounts.LeftEarly;
+  const schoolDaysOpen = currentCalendar && currentTerm
+    ? schoolCalendarSummary(currentTerm, currentCalendar).OpenDaysToDate : null;
+  const attendanceDenominator = schoolDaysOpen === null ? childAttendance.length : schoolDaysOpen;
   const academicAttendanceSummary = {
-    ...attendanceCounts, Total: childAttendance.length,
-    AttendancePercentage: childAttendance.length ? Number(((attendedCount / childAttendance.length) * 100).toFixed(1)) : 0,
+    ...attendanceCounts, Total: childAttendance.length, SchoolDaysOpen: schoolDaysOpen,
+    AttendancePercentage: attendanceDenominator
+      ? Number(((Math.min(attendedCount, attendanceDenominator) / attendanceDenominator) * 100).toFixed(1)) : 0,
     SessionId: clean(currentMembership?.SessionId), TermId: clean(currentMembership?.TermId)
   };
   const notificationData = await parentNotifications(env, email, [child]);

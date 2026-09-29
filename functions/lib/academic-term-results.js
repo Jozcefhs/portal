@@ -1,4 +1,5 @@
 import { normalizeAcademicPolicy } from './academic-policy.js';
+import { schoolCalendarDayIsOpen, schoolCalendarSummary } from './academic-school-calendar.js';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
@@ -56,7 +57,7 @@ function rankValues(rows, valueFor, tieMode = 'competition') {
   return ranked;
 }
 
-function attendanceForStudent(rows = [], studentRef = '') {
+function attendanceForStudent(rows = [], studentRef = '', options = {}) {
   const summary = { Present: 0, Absent: 0, Late: 0, Excused: 0, LeftEarly: 0, Total: 0 };
   rows.filter((row) => lower(row.StudentRef) === lower(studentRef)).forEach((row) => {
     const key = clean(row.Status).replace(/\s+/g, '');
@@ -64,7 +65,9 @@ function attendanceForStudent(rows = [], studentRef = '') {
     summary.Total += 1;
   });
   summary.Attended = summary.Present + summary.Late + summary.LeftEarly;
-  summary.AttendancePercentage = summary.Total ? rounded((summary.Attended / summary.Total) * 100, 1) : 0;
+  summary.SchoolDaysOpen = options.SchoolDaysOpen ?? null;
+  const denominator = options.Mode === 'Daily' && summary.SchoolDaysOpen !== null ? summary.SchoolDaysOpen : summary.Total;
+  summary.AttendancePercentage = denominator ? rounded((Math.min(summary.Attended, denominator) / denominator) * 100, 1) : 0;
   return summary;
 }
 
@@ -176,8 +179,12 @@ export function calculateAcademicTermResultDrafts(input = {}) {
   const existingResults = new Map((input.ExistingResults || []).map((row) => [lower(row.StudentRef), row]));
   const policy = normalizeAcademicPolicy(input.Policy || {});
   const attendanceMode = ['Daily', 'Period', 'Subject'].find((mode) => lower(mode) === lower(input.AttendanceMode)) || 'Daily';
+  const calendar = input.SchoolCalendar || null;
+  const schoolDaysOpen = calendar && input.TermDates?.StartDate && input.TermDates?.EndDate
+    ? schoolCalendarSummary(input.TermDates, calendar).OpenDaysToDate : null;
   const attendanceRows = (input.Attendance || []).filter((row) => contextMatches(row, options)
-    && lower(row.Mode || 'Daily') === lower(attendanceMode));
+    && lower(row.Mode || 'Daily') === lower(attendanceMode)
+    && (!calendar || schoolCalendarDayIsOpen(calendar, row.AttendanceDate)));
   const positionMode = lower(policy.Position.Mode);
   const scoreEligibilityLabel = clean(input.ScoreEligibilityLabel) || 'Approved or Locked';
   const completeScoreLabel = clean(input.CompleteScoreLabel) || 'approved';
@@ -242,7 +249,8 @@ export function calculateAcademicTermResultDrafts(input = {}) {
       OverallGradePoint: overallBand?.GradePoint ?? null,
       OverallRemark: clean(overallBand?.Remark),
       OverallClassification: clean(overallBand?.Classification),
-      Attendance: { ...attendanceForStudent(attendanceRows, studentRef), RegisterType: attendanceMode },
+      Attendance: { ...attendanceForStudent(attendanceRows, studentRef,
+        { Mode: attendanceMode, SchoolDaysOpen: schoolDaysOpen }), RegisterType: attendanceMode },
       AssessedStudentCount: memberships.length,
       PositionMode: policy.Position.Mode,
       PositionTieMode: policy.Position.TieMode,

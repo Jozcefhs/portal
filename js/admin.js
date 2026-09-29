@@ -11374,6 +11374,7 @@ function academicCurrentRows(data = academicManagementData || {}) {
     studentMemberships: periodRows(data.studentMemberships || []),
     studentMovements: periodRows(data.studentMovements || []),
     timetableSettings: periodRows(data.timetableSettings || []),
+    schoolCalendars: periodRows(data.schoolCalendars || []),
     timetableConstraints: periodRows(data.timetableConstraints || []),
     timetableVersions: periodRows(data.timetableVersions || []),
     timetableEntries: periodRows(data.timetableEntries || []),
@@ -11497,7 +11498,8 @@ function academicTaskDefinitions(view, root) {
       { key: 'substitutions', label: 'Substitutions', title: 'Controlled teacher substitutions', description: 'Schedule a dated substitute for a published lesson with subject qualification, conflict and workload checks.', nodes: nodes(form('[data-academic-timetable-substitution]'), register('Teacher Substitutions')) },
       { key: 'limits', label: 'Teacher limits', title: 'Teacher availability and workload', description: 'Block unavailable lesson slots and set optional daily or weekly period limits for each teacher.', nodes: nodes(form('[data-academic-timetable-constraint]'), register('Teacher Timetable Limits')) },
       { key: 'preview', label: 'Preview and print', title: 'Print-ready schedules', description: 'Open class or teacher schedules using the selected version and its saved day-specific times.', nodes: nodes(form('[data-academic-timetable-preview]')) },
-      { key: 'settings', label: 'Days and periods', title: 'Configure the school week', description: 'Define reusable school days, lesson periods, breaks and assemblies for this term.', nodes: nodes(form('[data-academic-timetable-settings]')) }
+      { key: 'settings', label: 'Days and periods', title: 'Configure the school week', description: 'Define reusable school days, lesson periods, breaks and assemblies for this term.', nodes: nodes(form('[data-academic-timetable-settings]')) },
+      { key: 'calendar', label: 'School calendar', title: 'Holidays and open days', description: 'Record dated closures and make-up open days so attendance and term totals reflect days school was open.', nodes: nodes(form('[data-academic-school-calendar]')) }
     ],
     attendance: [
       { key: 'mark', label: 'Mark register', title: 'Mark student attendance', description: 'Start with every student Present, then record only the exceptions before saving.', nodes: nodes(form('[data-academic-attendance-register]')) },
@@ -12527,6 +12529,8 @@ function academicTimetableWorkspace(data, rows) {
   const sessionId = academicManagementFilters.sessionId;
   const termId = academicManagementFilters.termId;
   const settings = rows.timetableSettings.find((row) => row.SessionId === sessionId && row.TermId === termId);
+  const term = rows.terms.find((row) => row.TermId === termId);
+  const schoolCalendar = rows.schoolCalendars.find((row) => row.SessionId === sessionId && row.TermId === termId);
   const constraints = rows.timetableConstraints.filter((row) => row.SessionId === sessionId && row.TermId === termId);
   const versions = rows.timetableVersions.filter((row) => row.SessionId === sessionId && row.TermId === termId);
   const allVersions = (data.timetableVersions || []).filter((row) => !['Copying', 'Deleting'].includes(row.Status));
@@ -12562,6 +12566,24 @@ function academicTimetableWorkspace(data, rows) {
     <label>School days <small>Code | Name | Order</small><textarea name="Days" rows="7" required placeholder="MON | Monday | 1&#10;TUE | Tuesday | 2">${escapeHtml(dayLines)}</textarea></label>
     <label>Periods, breaks and assemblies <small>Day(s) | Code | Name | Start | End | Lesson/Break/Assembly | Order</small><textarea name="Periods" rows="10" required placeholder="ALL | P1 | Period 1 | 08:00 | 08:40 | Lesson | 1&#10;MON | P1 | Period 1 | 08:20 | 09:00 | Lesson | 1&#10;ALL | BRK | Break | 10:00 | 10:20 | Break | 4">${escapeHtml(periodLines)}</textarea><small>Use ALL for the normal weekly schedule. Add a day such as MON with the same period code to override only that day; comma-separated days such as TUE,WED may share one override.</small></label>
     <button type="submit">Save days and periods</button>
+  </form>` : '';
+  const calendarDays = schoolCalendar?.OperatingWeekdays || ['MON', 'TUE', 'WED', 'THU', 'FRI'];
+  const calendarLines = (schoolCalendar?.Exceptions || []).map((row) => `${row.Date} | ${row.Status} | ${row.Reason}`).join('\n');
+  const calendarForm = canManage ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-workflow="saveAcademicSchoolCalendar" data-academic-school-calendar>
+    <div class="academic-management-editor-heading"><div><small>Dated term calendar</small><h3>Holidays and open days</h3><p class="muted">Choose normal operating weekdays, then record each closure or make-up open date. This does not alter the recurring lesson timetable.</p></div></div>
+    <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}"><input type="hidden" name="SessionId" value="${escapeHtml(sessionId)}"><input type="hidden" name="TermId" value="${escapeHtml(termId)}"><input type="hidden" name="RevisionToken" value="${escapeHtml(schoolCalendar?.RevisionToken || '')}">
+    <p class="muted">Term: ${escapeHtml(term?.StartDate || 'No start date')} to ${escapeHtml(term?.EndDate || 'No end date')}</p>
+    <fieldset><legend>Normal school operating days</legend><div class="academic-attendance-bulk-actions">${[['MON','Monday'],['TUE','Tuesday'],['WED','Wednesday'],['THU','Thursday'],['FRI','Friday'],['SAT','Saturday'],['SUN','Sunday']].map(([code, label]) => `<label><input type="checkbox" name="OperatingWeekdays" value="${code}"${calendarDays.includes(code) ? ' checked' : ''}> ${label}</label>`).join('')}</div></fieldset>
+    <div class="academic-management-form-grid academic-management-form-grid-4">
+      <label>From date<input type="date" data-academic-calendar-from min="${escapeHtml(term?.StartDate || '')}" max="${escapeHtml(term?.EndDate || '')}"></label>
+      <label>To date (optional)<input type="date" data-academic-calendar-to min="${escapeHtml(term?.StartDate || '')}" max="${escapeHtml(term?.EndDate || '')}"></label>
+      <label>Day status<select data-academic-calendar-status><option>Closed</option><option>Open</option></select></label>
+      <label>Reason<input data-academic-calendar-reason maxlength="160" placeholder="National Day, Easter, make-up Saturday..."></label>
+    </div>
+    <button type="button" class="secondary" data-academic-calendar-add>Add date(s) below</button>
+    <label>Dated exceptions <small>One per line: YYYY-MM-DD | Closed/Open | Reason. Edit or remove lines before saving.</small><textarea name="Exceptions" rows="8" placeholder="2026-10-01 | Closed | National Day&#10;2026-10-03 | Open | Make-up school day">${escapeHtml(calendarLines)}</textarea></label>
+    <p class="muted" data-academic-calendar-preview></p>
+    <button type="submit" ${term?.StartDate && term?.EndDate ? '' : 'disabled'}>Save school calendar</button>
   </form>` : '';
   const versionForm = canManage ? `<form class="academic-management-editor" data-academic-workflow="createAcademicTimetableVersion" data-academic-timetable-version>
     <div class="academic-management-editor-heading"><div><small>Controlled release</small><h3>Create timetable version</h3></div></div>
@@ -12683,7 +12705,7 @@ function academicTimetableWorkspace(data, rows) {
     { label: 'Teacher', value: (row) => academicLabel(data.staff, row.TeacherUsername, row.TeacherUsername) },
     { label: 'Room', value: (row) => row.Room || '-' }, { label: 'Action', render: entryActions }
   ]);
-  return `${entryForm}${entryTable}${versionForm}${copyForm}${versionTable}${targetCopyForm}${substitutionForm}${substitutionTable}${constraintForm}${constraintTable}${previewForm}${settingsForm}`;
+  return `${entryForm}${entryTable}${versionForm}${copyForm}${versionTable}${targetCopyForm}${substitutionForm}${substitutionTable}${constraintForm}${constraintTable}${previewForm}${settingsForm}${calendarForm}`;
 }
 
 const ACADEMIC_ATTENDANCE_DRAFT_PREFIX = 'dynamax:academic-attendance-draft:v1:';
@@ -12751,12 +12773,37 @@ function clearAcademicAttendanceLocalDraft(form) {
   if (key) localStorage.removeItem(key);
 }
 
+function academicCalendarOpenOn(rows, date) {
+  const calendar = (rows.schoolCalendars || []).find((row) => row.SessionId === academicManagementFilters.sessionId && row.TermId === academicManagementFilters.termId);
+  if (!calendar) return true;
+  const exception = (calendar.Exceptions || []).find((row) => row.Date === date);
+  if (exception) return exception.Status === 'Open';
+  const day = new Date(`${date}T00:00:00Z`).getUTCDay();
+  return (calendar.OperatingWeekdays || []).includes(['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'][day]);
+}
+
+function academicTermOpenDays(rows) {
+  const calendar = (rows.schoolCalendars || []).find((row) => row.SessionId === academicManagementFilters.sessionId && row.TermId === academicManagementFilters.termId);
+  const term = (rows.terms || []).find((row) => row.TermId === academicManagementFilters.termId);
+  if (!calendar || !term?.StartDate || !term?.EndDate) return null;
+  const start = Date.parse(`${term.StartDate}T00:00:00Z`);
+  const end = Math.min(Date.parse(`${term.EndDate}T00:00:00Z`), Date.parse(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`));
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return 0;
+  let count = 0;
+  for (let time = start; time <= end && time - start <= 730 * 86400000; time += 86400000) {
+    if (academicCalendarOpenOn(rows, new Date(time).toISOString().slice(0, 10))) count += 1;
+  }
+  return count;
+}
+
 function academicTermAttendanceRows(rows, armId, mode = 'Daily') {
+  const schoolDaysOpen = academicTermOpenDays(rows);
   const memberships = rows.studentMemberships.filter((row) => academicIsActive(row) && row.ArmId === armId);
   const summaries = new Map(memberships.map((row) => [clean(row.StudentRef).toLowerCase(), {
     StudentRef: row.StudentRef, Present: 0, Absent: 0, Late: 0, Excused: 0, LeftEarly: 0, Total: 0
   }]));
-  rows.studentAttendance.filter((row) => row.ArmId === armId && (mode === 'All' || row.Mode === mode)).forEach((row) => {
+  rows.studentAttendance.filter((row) => row.ArmId === armId && (mode === 'All' || row.Mode === mode)
+    && academicCalendarOpenOn(rows, row.AttendanceDate)).forEach((row) => {
     const key = clean(row.StudentRef).toLowerCase();
     if (!summaries.has(key)) return;
     const summary = summaries.get(key);
@@ -12765,8 +12812,10 @@ function academicTermAttendanceRows(rows, armId, mode = 'Daily') {
     summary.Total += 1;
   });
   return [...summaries.values()].map((row) => ({
-    ...row, Attended: row.Present + row.Late + row.LeftEarly,
-    AttendancePercentage: row.Total ? Math.round(((row.Present + row.Late + row.LeftEarly) / row.Total) * 1000) / 10 : 0
+    ...row, Attended: row.Present + row.Late + row.LeftEarly, SchoolDaysOpen: schoolDaysOpen,
+    AttendancePercentage: (mode === 'Daily' && schoolDaysOpen !== null ? schoolDaysOpen : row.Total)
+      ? Math.round((Math.min(row.Present + row.Late + row.LeftEarly, mode === 'Daily' && schoolDaysOpen !== null ? schoolDaysOpen : row.Total)
+        / (mode === 'Daily' && schoolDaysOpen !== null ? schoolDaysOpen : row.Total)) * 1000) / 10 : 0
   }));
 }
 
@@ -12775,7 +12824,7 @@ function printAcademicAttendanceReport(data, rows, arm, mode, reportRows) {
   if (!printable) return;
   printable.opener = null;
   const classroom = `${academicLabel(rows.classes, arm.ClassId)} / ${academicLabel(rows.arms, arm.ArmId)}`;
-  printable.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(classroom)} attendance</title><style>@page{size:A4 landscape;margin:10mm}body{margin:28px;color:#102a43;font:12px Arial,sans-serif}h1{margin:0 0 5px}p{color:#526d82}table{width:100%;border-collapse:collapse}th,td{padding:7px;border:1px solid #cbd7e5;text-align:left}th{background:#edf3f8;font-size:10px;text-transform:uppercase}button{margin-bottom:15px;padding:8px 14px;border:0;background:#1769e0;color:#fff}@media print{button{display:none}}</style></head><body><button onclick="window.print()">Print attendance summary</button><h1>${escapeHtml(classroom)}</h1><p>${escapeHtml(academicLabel(data.sessions, academicManagementFilters.sessionId))} · ${escapeHtml(academicLabel(data.terms, academicManagementFilters.termId))} · ${escapeHtml(mode)} registers</p><table><thead><tr><th>Student</th><th>Present</th><th>Absent</th><th>Late</th><th>Excused</th><th>Left early</th><th>Registers</th><th>Attendance</th></tr></thead><tbody>${reportRows.map((row) => `<tr><td>${escapeHtml(academicLabel(data.students, row.StudentRef, row.StudentRef))}</td><td>${row.Present}</td><td>${row.Absent}</td><td>${row.Late}</td><td>${row.Excused}</td><td>${row.LeftEarly}</td><td>${row.Total}</td><td>${row.AttendancePercentage}%</td></tr>`).join('')}</tbody></table></body></html>`);
+  printable.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(classroom)} attendance</title><style>@page{size:A4 landscape;margin:10mm}body{margin:28px;color:#102a43;font:12px Arial,sans-serif}h1{margin:0 0 5px}p{color:#526d82}table{width:100%;border-collapse:collapse}th,td{padding:7px;border:1px solid #cbd7e5;text-align:left}th{background:#edf3f8;font-size:10px;text-transform:uppercase}button{margin-bottom:15px;padding:8px 14px;border:0;background:#1769e0;color:#fff}@media print{button{display:none}}</style></head><body><button onclick="window.print()">Print attendance summary</button><h1>${escapeHtml(classroom)}</h1><p>${escapeHtml(academicLabel(data.sessions, academicManagementFilters.sessionId))} · ${escapeHtml(academicLabel(data.terms, academicManagementFilters.termId))} · ${escapeHtml(mode)} registers</p><table><thead><tr><th>Student</th><th>Present</th><th>Absent</th><th>Late</th><th>Excused</th><th>Left early</th><th>Registers</th><th>School open days</th><th>Attendance</th></tr></thead><tbody>${reportRows.map((row) => `<tr><td>${escapeHtml(academicLabel(data.students, row.StudentRef, row.StudentRef))}</td><td>${row.Present}</td><td>${row.Absent}</td><td>${row.Late}</td><td>${row.Excused}</td><td>${row.LeftEarly}</td><td>${row.Total}</td><td>${row.SchoolDaysOpen ?? '—'}</td><td>${row.AttendancePercentage}%</td></tr>`).join('')}</tbody></table></body></html>`);
   printable.document.close();
   printable.focus();
 }
@@ -12792,6 +12841,9 @@ function academicAttendanceWorkspace(data, rows) {
   academicAttendanceDraft.armId = clean(selectedArm?.ArmId);
   academicAttendanceDraft.classId = clean(selectedArm?.ClassId);
   academicAttendanceDraft.date = academicAttendanceDraft.date || today;
+  const attendanceDayOpen = academicCalendarOpenOn(rows, academicAttendanceDraft.date);
+  const attendanceClosure = (rows.schoolCalendars || []).find((row) => row.SessionId === sessionId && row.TermId === termId)
+    ?.Exceptions?.find((row) => row.Date === academicAttendanceDraft.date && row.Status === 'Closed');
   const roster = rows.studentMemberships.filter((row) => academicIsActive(row) && row.ClassId === selectedArm?.ClassId && row.ArmId === selectedArm?.ArmId);
   const publishedVersions = new Set(rows.timetableVersions.filter((row) => row.Status === 'Published').map((row) => row.VersionId));
   const lessons = rows.timetableEntries.filter((row) => publishedVersions.has(row.VersionId) && row.ClassId === selectedArm?.ClassId && row.ArmId === selectedArm?.ArmId);
@@ -12821,11 +12873,12 @@ function academicAttendanceWorkspace(data, rows) {
       <label>Register type<select name="Mode" data-academic-attendance-filter><option${mode === 'Daily' ? ' selected' : ''}>Daily</option><option${mode === 'Period' ? ' selected' : ''}>Period</option><option${mode === 'Subject' ? ' selected' : ''}>Subject</option></select></label>
       ${sourceControl}
     </div>
+    ${attendanceDayOpen ? '' : `<p class="status bad">${escapeHtml(academicAttendanceDraft.date)} is a closed school day${attendanceClosure?.Reason ? `: ${escapeHtml(attendanceClosure.Reason)}` : '.'} Attendance cannot be marked until the school calendar is changed.</p>`}
     <div class="academic-attendance-bulk-actions"><button type="button" class="secondary" data-academic-attendance-all="Present">Mark all Present</button><button type="button" class="secondary" data-academic-attendance-all="Absent">Mark all Absent</button><span data-academic-attendance-summary></span></div>
     <div class="academic-attendance-draft-bar"><span data-academic-attendance-draft-status>Changes are automatically saved on this device.</span><div><button type="button" class="secondary" data-academic-attendance-save-draft>Save offline draft</button><button type="button" class="secondary" data-academic-attendance-discard-draft>Discard draft</button></div></div>
     <div class="academic-attendance-table"><table><thead><tr><th>Student</th><th>Status</th><th>Minutes late</th><th>Note</th></tr></thead><tbody>${rosterRows || '<tr><td colspan="4">No active students are assigned to this classroom.</td></tr>'}</tbody></table></div>
     <label>Correction reason <input name="CorrectionReason" placeholder="Required only when changing attendance already saved"></label>
-    <button type="submit" ${roster.length && (mode === 'Daily' || sourceId) ? '' : 'disabled'}>Synchronize attendance online</button>
+    <button type="submit" ${attendanceDayOpen && roster.length && (mode === 'Daily' || sourceId) ? '' : 'disabled'}>Synchronize attendance online</button>
   </form>` : '';
   const history = table('Student Attendance History', rows.studentAttendance, [
     { label: 'Date', value: (row) => row.AttendanceDate }, { label: 'Student', value: (row) => academicLabel(data.students, row.StudentRef, row.StudentRef) },
@@ -12844,14 +12897,14 @@ function academicAttendanceWorkspace(data, rows) {
   academicAttendanceDraft.reportArmId = clean(reportArm?.ArmId);
   const reportMode = academicAttendanceDraft.reportMode || 'Daily';
   const reportRows = reportArm ? academicTermAttendanceRows(rows, reportArm.ArmId, reportMode) : [];
-  const reportTableRows = reportRows.map((row) => `<tr><td>${escapeHtml(academicLabel(data.students, row.StudentRef, row.StudentRef))}<small>${escapeHtml(row.StudentRef)}</small></td><td>${row.Present}</td><td>${row.Absent}</td><td>${row.Late}</td><td>${row.Excused}</td><td>${row.LeftEarly}</td><td>${row.Total}</td><td><strong>${row.AttendancePercentage}%</strong></td></tr>`).join('');
+  const reportTableRows = reportRows.map((row) => `<tr><td>${escapeHtml(academicLabel(data.students, row.StudentRef, row.StudentRef))}<small>${escapeHtml(row.StudentRef)}</small></td><td>${row.Present}</td><td>${row.Absent}</td><td>${row.Late}</td><td>${row.Excused}</td><td>${row.LeftEarly}</td><td>${row.Total}</td><td>${row.SchoolDaysOpen ?? '—'}</td><td><strong>${row.AttendancePercentage}%</strong></td></tr>`).join('');
   const reportForm = `<form class="academic-management-editor academic-management-editor-wide academic-attendance-report" data-academic-attendance-report>
-    <div class="academic-management-editor-heading"><div><small>Term reporting</small><h3>Student attendance summary</h3><p class="muted">Counts are calculated from the selected term and classroom. Attendance percentage counts Present, Late and Left Early as attended registers.</p></div><strong>${reportRows.length} students</strong></div>
+    <div class="academic-management-editor-heading"><div><small>Term reporting</small><h3>Student attendance summary</h3><p class="muted">Daily attendance uses declared school open days through today when a calendar is saved. Other register types use saved registers; closed dates are excluded.</p></div><strong>${reportRows.length} students</strong></div>
     <div class="academic-management-form-grid academic-management-form-grid-2">
       <label>Classroom<select name="ReportArmId" data-academic-attendance-report-filter>${academicSelectOptions(classrooms, reportArm?.ArmId, classroomLabel, 'Choose classroom')}</select></label>
       <label>Register type<select name="ReportMode" data-academic-attendance-report-filter><option${reportMode === 'Daily' ? ' selected' : ''}>Daily</option><option${reportMode === 'Period' ? ' selected' : ''}>Period</option><option${reportMode === 'Subject' ? ' selected' : ''}>Subject</option><option${reportMode === 'All' ? ' selected' : ''}>All</option></select></label>
     </div>
-    <div class="academic-attendance-table"><table><thead><tr><th>Student</th><th>Present</th><th>Absent</th><th>Late</th><th>Excused</th><th>Left early</th><th>Registers</th><th>Attendance</th></tr></thead><tbody>${reportTableRows || '<tr><td colspan="8">No active students are assigned to this classroom.</td></tr>'}</tbody></table></div>
+    <div class="academic-attendance-table"><table><thead><tr><th>Student</th><th>Present</th><th>Absent</th><th>Late</th><th>Excused</th><th>Left early</th><th>Registers</th><th>School open days</th><th>Attendance</th></tr></thead><tbody>${reportTableRows || '<tr><td colspan="9">No active students are assigned to this classroom.</td></tr>'}</tbody></table></div>
     <button type="button" data-academic-attendance-report-print ${reportArm && reportRows.length ? '' : 'disabled'}>Print term attendance report</button>
   </form>`;
   return `${markForm}${history}${reportForm}${corrections}`;
@@ -14043,6 +14096,18 @@ function academicFormPayload(form) {
 }
 
 function academicWorkflowPayload(form) {
+  if (form.dataset.academicWorkflow === 'saveAcademicSchoolCalendar') {
+    const weekdays = [...form.querySelectorAll('[name="OperatingWeekdays"]:checked')].map((input) => input.value);
+    if (!weekdays.length) throw new Error('Choose at least one normal school operating day.');
+    return {
+      SchoolSection: form.elements.SchoolSection.value,
+      SessionId: form.elements.SessionId.value,
+      TermId: form.elements.TermId.value,
+      RevisionToken: form.elements.RevisionToken.value,
+      OperatingWeekdays: weekdays,
+      Exceptions: form.elements.Exceptions.value
+    };
+  }
   if (form.dataset.academicWorkflow === 'bulkAssignAcademicClassroomDepartments') {
     const assignments = [...form.querySelectorAll('[data-academic-classroom-department-row]')].map((row) => {
       const departmentId = clean(row.querySelector('[data-academic-classroom-department-select]')?.value);
@@ -14470,6 +14535,59 @@ function openAcademicCbtRescheduleDialog(record = {}) {
 }
 
 function bindAcademicManagement() {
+  const calendarForm = panelEl.querySelector('[data-academic-school-calendar]');
+  if (calendarForm) {
+    const term = (academicManagementData?.terms || []).find((row) => row.TermId === academicManagementFilters.termId);
+    const exceptionsControl = calendarForm.elements.Exceptions;
+    const parseLines = () => exceptionsControl.value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
+      const [day, status, ...reason] = line.split('|').map((part) => part.trim());
+      return { day, status, reason: reason.join(' | ') };
+    });
+    const preview = () => {
+      const target = calendarForm.querySelector('[data-academic-calendar-preview]');
+      if (!term?.StartDate || !term?.EndDate) { target.textContent = 'Set valid term dates first.'; return; }
+      const weekdays = new Set([...calendarForm.querySelectorAll('[name="OperatingWeekdays"]:checked')].map((input) => input.value));
+      const lines = parseLines();
+      const overrides = new Map(lines.map((row) => [row.day, row.status]));
+      if (lines.length > 366 || lines.some((row) => !/^\d{4}-\d{2}-\d{2}$/.test(row.day) || !['Closed', 'Open'].includes(row.status) || !row.reason)
+        || overrides.size !== lines.length) { target.textContent = 'Check dated exception lines for a valid date, Closed/Open status, reason, and no duplicate date.'; return; }
+      const start = Date.parse(`${term.StartDate}T00:00:00Z`);
+      const end = Date.parse(`${term.EndDate}T00:00:00Z`);
+      if (!Number.isFinite(start) || !Number.isFinite(end) || end < start || end - start > 730 * 86400000) { target.textContent = 'Check term start and end dates.'; return; }
+      const codes = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+      const today = new Date().toISOString().slice(0, 10);
+      let planned = 0; let elapsed = 0;
+      for (let time = start; time <= end; time += 86400000) {
+        const day = new Date(time).toISOString().slice(0, 10);
+        const open = overrides.has(day) ? overrides.get(day) === 'Open' : weekdays.has(codes[new Date(time).getUTCDay()]);
+        if (open) { planned += 1; if (day <= today) elapsed += 1; }
+      }
+      target.textContent = `${planned} planned open day${planned === 1 ? '' : 's'} in this term; ${elapsed} through today. ${lines.length} dated exception${lines.length === 1 ? '' : 's'}. Save to apply these totals.`;
+    };
+    calendarForm.querySelector('[data-academic-calendar-add]')?.addEventListener('click', () => {
+      const first = calendarForm.querySelector('[data-academic-calendar-from]').value;
+      const last = calendarForm.querySelector('[data-academic-calendar-to]').value || first;
+      const status = calendarForm.querySelector('[data-academic-calendar-status]').value;
+      const reason = clean(calendarForm.querySelector('[data-academic-calendar-reason]').value);
+      const start = Date.parse(`${first}T00:00:00Z`);
+      const end = Date.parse(`${last}T00:00:00Z`);
+      if (!first || !last || !Number.isFinite(start) || !Number.isFinite(end) || end < start || end - start > 365 * 86400000
+        || first < term?.StartDate || last > term?.EndDate || !reason || reason.includes('|')) {
+        setStatus(document.getElementById('academicManagementStatus'), 'Choose dates within the term (up to 366 days) and enter a reason without |.', 'bad');
+        return;
+      }
+      const rows = new Map(parseLines().map((row) => [row.day, `${row.day} | ${row.status} | ${row.reason}`]));
+      for (let time = start; time <= end; time += 86400000) {
+        const day = new Date(time).toISOString().slice(0, 10);
+        rows.set(day, `${day} | ${status} | ${reason}`);
+      }
+      exceptionsControl.value = [...rows.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([, row]) => row).join('\n');
+      preview();
+    });
+    calendarForm.addEventListener('input', preview);
+    calendarForm.addEventListener('change', preview);
+    preview();
+  }
   panelEl.querySelectorAll('[data-academic-checkbox-field]').forEach(bindAcademicCheckboxField);
   bindAcademicSubjectTeacherSelection(
     panelEl.querySelector('[data-academic-subject-teacher-selection]'), academicManagementData || {}

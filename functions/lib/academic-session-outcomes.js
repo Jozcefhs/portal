@@ -46,7 +46,13 @@ function attendanceSnapshot(results = []) {
   results.forEach((result) => fields.forEach((field) => {
     snapshot[field] += Number(result.Attendance?.[field] || 0);
   }));
-  snapshot.AttendancePercentage = snapshot.Total ? rounded((snapshot.Attended / snapshot.Total) * 100, 1) : 0;
+  const calendarCounts = results.map((result) => result.Attendance?.SchoolDaysOpen);
+  snapshot.SchoolDaysOpen = calendarCounts.every((value) => value !== null && value !== undefined)
+    ? calendarCounts.reduce((total, value) => total + Number(value || 0), 0) : null;
+  const denominator = results.reduce((total, result) => total
+    + Number(result.Attendance?.RegisterType === 'Daily' && result.Attendance?.SchoolDaysOpen != null
+      ? result.Attendance.SchoolDaysOpen : result.Attendance?.Total || 0), 0);
+  snapshot.AttendancePercentage = denominator ? rounded((Math.min(snapshot.Attended, denominator) / denominator) * 100, 1) : 0;
   return snapshot;
 }
 

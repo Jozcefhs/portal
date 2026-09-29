@@ -1,3 +1,5 @@
+import { schoolCalendarDayIsOpen, schoolCalendarSummary } from './academic-school-calendar.js';
+
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
 
@@ -315,13 +317,17 @@ export function academicTermAttendanceSummary(attendance = [], memberships = [],
     && (!clean(options.ClassId) || clean(row.ClassId) === clean(options.ClassId))
     && (!clean(options.ArmId) || clean(row.ArmId) === clean(options.ArmId));
   const mode = lower(options.Mode);
+  const calendar = options.SchoolCalendar || null;
+  const schoolDaysOpen = calendar && options.TermDates?.StartDate && options.TermDates?.EndDate
+    ? schoolCalendarSummary(options.TermDates, calendar, options.AsOfDate).OpenDaysToDate : null;
   const eligible = new Map((memberships || []).filter(matches)
     .filter((row) => !['withdrawn', 'inactive', 'archived'].includes(lower(row.Status)))
     .map((row) => [lower(row.StudentRef), clean(row.StudentRef)]));
   const grouped = new Map([...eligible].map(([key, studentRef]) => [key, {
     StudentRef: studentRef, Present: 0, Absent: 0, Late: 0, Excused: 0, LeftEarly: 0, Total: 0
   }]));
-  (attendance || []).filter(matches).filter((row) => !mode || mode === 'all' || lower(row.Mode) === mode).forEach((row) => {
+  (attendance || []).filter(matches).filter((row) => !mode || mode === 'all' || lower(row.Mode) === mode)
+    .filter((row) => !calendar || schoolCalendarDayIsOpen(calendar, row.AttendanceDate)).forEach((row) => {
     const key = lower(row.StudentRef);
     if (eligible.size && !eligible.has(key)) return;
     if (!grouped.has(key)) grouped.set(key, {
@@ -335,6 +341,10 @@ export function academicTermAttendanceSummary(attendance = [], memberships = [],
   return [...grouped.values()].map((row) => ({
     ...row,
     Attended: row.Present + row.Late + row.LeftEarly,
-    AttendancePercentage: row.Total ? Math.round(((row.Present + row.Late + row.LeftEarly) / row.Total) * 1000) / 10 : 0
+    SchoolDaysOpen: schoolDaysOpen,
+    AttendancePercentage: (mode === 'daily' && schoolDaysOpen !== null ? schoolDaysOpen : row.Total)
+      ? Math.round((Math.min(row.Present + row.Late + row.LeftEarly,
+        mode === 'daily' && schoolDaysOpen !== null ? schoolDaysOpen : row.Total)
+        / (mode === 'daily' && schoolDaysOpen !== null ? schoolDaysOpen : row.Total)) * 1000) / 10 : 0
   })).sort((left, right) => left.StudentRef.localeCompare(right.StudentRef, undefined, { numeric: true, sensitivity: 'base' }));
 }

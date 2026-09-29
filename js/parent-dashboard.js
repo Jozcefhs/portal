@@ -1809,8 +1809,9 @@ function renderAcademicAttendance(child) {
   if (!parentAcademicAttendance) return;
   const summary = childResult(dashboard.academicAttendanceSummaries, child, {});
   const total = Number(summary.Total || 0);
-  parentAcademicAttendance.innerHTML = total ? [
+  parentAcademicAttendance.innerHTML = total || summary.SchoolDaysOpen !== null && summary.SchoolDaysOpen !== undefined ? [
     ['Attendance', `${summary.AttendancePercentage || 0}%`],
+    ...(summary.SchoolDaysOpen === null || summary.SchoolDaysOpen === undefined ? [] : [['School open days', summary.SchoolDaysOpen]]),
     ['Present', summary.Present || 0],
     ['Late', summary.Late || 0],
     ['Absent', summary.Absent || 0],
