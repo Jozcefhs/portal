@@ -26,6 +26,7 @@ import {
   academicStudentMatchesClass,
   academicSubjectTeacherCandidates,
   academicTeacherVisibleMemberships,
+  academicTeacherVisibleTimetable,
   importedAcademicStudentProfile,
   normalizeAcademicArm,
   normalizeAcademicArmTemplate,
@@ -1012,6 +1013,37 @@ test('bulk student allocation maps every selected reference into membership and 
   assert.match(bulkAllocationSource, /MovementType: 'Allocation'/);
 });
 
+test('a subject teacher sees only their saved lessons, including provisional versions', () => {
+  const context = { SessionId: 'session-1', TermId: 'term-1', ClassId: 'class-1', ArmId: 'arm-1' };
+  const state = {
+    teacherAllocations: [
+      { ...context, TeacherUsername: 'math.teacher', AllocationRole: 'Subject Teacher', SubjectId: 'math', Status: 'Active' }
+    ],
+    timetableVersions: [
+      { VersionId: 'draft', Status: 'Draft' }, { VersionId: 'approved', Status: 'Approved' },
+      { VersionId: 'published', Status: 'Published' }, { VersionId: 'withdrawn', Status: 'Withdrawn' }
+    ],
+    timetableEntries: [
+      { ...context, EntryId: 'own-draft', VersionId: 'draft', TeacherUsername: 'math.teacher' },
+      { ...context, EntryId: 'other-draft', VersionId: 'draft', TeacherUsername: 'english.teacher' },
+      { ...context, EntryId: 'own-approved', VersionId: 'approved', TeacherUsername: 'math.teacher' },
+      { ...context, EntryId: 'own-published', VersionId: 'published', TeacherUsername: 'math.teacher' },
+      { ...context, EntryId: 'own-withdrawn', VersionId: 'withdrawn', TeacherUsername: 'math.teacher' }
+    ],
+    timetableSubstitutions: []
+  };
+  const timetable = academicTeacherVisibleTimetable(state, 'math.teacher');
+  assert.deepEqual(timetable.versions.map((row) => row.VersionId), ['draft', 'approved', 'published']);
+  assert.deepEqual(timetable.entries.map((row) => row.EntryId), ['own-draft', 'own-approved', 'own-published']);
+  const operational = academicTeacherVisibleTimetable(state, 'math.teacher', 'attendance');
+  assert.deepEqual(operational.versions.map((row) => row.VersionId), ['published']);
+  assert.deepEqual(operational.entries.map((row) => row.EntryId), ['own-published']);
+  const homeroom = academicTeacherVisibleTimetable({ ...state, teacherAllocations: [
+    { ...context, TeacherUsername: 'math.teacher', AllocationRole: 'Form Teacher', Status: 'Active' }
+  ] }, 'math.teacher');
+  assert.ok(homeroom.entries.some((row) => row.EntryId === 'other-draft'));
+});
+
 test('class teachers configure subjects only for their own active classroom and academic period', () => {
   const teacher = { edition: 'school', role: 'Teacher', username: 'ADA', allowedSections: ['academics'] };
   const target = { SessionId: 'session-1', TermId: 'term-1', ClassId: 'class-10', ArmId: 'arm-a' };
@@ -1476,7 +1508,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-task-workspace\{display:grid/);
   assert.match(styleSource, /\.academic-register-card/);
   assert.match(adminHtml, /js\/academic-results-analysis\.js\?v=20260918-academic-readability/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260929-class-register/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260929-my-timetable/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {

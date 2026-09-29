@@ -295,6 +295,10 @@ test('staff workspace exposes focused timetable and attendance interfaces', () =
   assert.match(adminSource, /data-academic-timetable-copy-preview/);
   assert.match(adminSource, /data-academic-timetable-substitution/);
   assert.match(adminSource, /data-academic-timetable-print="class"/);
+  assert.match(adminSource, /data-academic-timetable-print="mine"/);
+  assert.match(adminSource, /No saved lessons are assigned to you in this term/);
+  assert.match(adminSource, /Provisional timetable: this version is not published/);
+  assert.match(adminSource, /mode !== 'mine' \|\| clean\(row\.TeacherUsername\)/);
   assert.match(adminSource, /Print-ready schedules/);
   assert.match(adminSource, /data-academic-timetable-open-version/);
   assert.match(adminSource, /data-academic-timetable-version-edit/);
@@ -309,7 +313,7 @@ test('staff workspace exposes focused timetable and attendance interfaces', () =
   assert.match(adminSource, /data-academic-attendance-report/);
   assert.match(adminSource, /printAcademicAttendanceReport/);
   assert.match(adminSource, /All students start as Present/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260929-class-register/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260929-my-timetable/);
   assert.match(portalCss, /\.academic-attendance-table\{max-height:480px;overflow:auto/);
   assert.match(portalCss, /\.academic-attendance-table th\{[^}]*white-space:nowrap;overflow-wrap:normal;word-break:normal/);
   assert.match(portalCss, /\.academic-attendance-report \.academic-attendance-table td:first-child\{font-size:12px;line-height:1\.3\}/);

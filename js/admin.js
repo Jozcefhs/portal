@@ -12499,6 +12499,7 @@ function academicTimetableTimeLabel(version, entry) {
 
 function printAcademicTimetableSchedule(mode, version, entries, data, rows) {
   if (!version) return;
+  const teacherMode = mode === 'teacher' || mode === 'mine';
   const printable = window.open('', '_blank', 'width=1100,height=760');
   const status = document.getElementById('academicManagementStatus');
   if (!printable) return setStatus(status, 'Allow pop-ups to preview and print the timetable.', 'bad');
@@ -12507,8 +12508,8 @@ function printAcademicTimetableSchedule(mode, version, entries, data, rows) {
   const dayOrder = new Map((version.Days || []).map((day, index) => [day.DayCode, Number(day.SortOrder || index + 1)]));
   const groups = new Map();
   entries.forEach((entry) => {
-    const key = mode === 'teacher' ? clean(entry.TeacherUsername).toLowerCase() : `${entry.ClassId}|${entry.ArmId}`;
-    const label = mode === 'teacher'
+    const key = teacherMode ? clean(entry.TeacherUsername).toLowerCase() : `${entry.ClassId}|${entry.ArmId}`;
+    const label = teacherMode
       ? academicLabel(data.staff, entry.TeacherUsername, entry.TeacherUsername)
       : `${academicLabel(rows.classes, entry.ClassId)} / ${academicLabel(rows.arms, entry.ArmId)}`;
     if (!groups.has(key)) groups.set(key, { label, entries: [] });
@@ -12517,10 +12518,10 @@ function printAcademicTimetableSchedule(mode, version, entries, data, rows) {
   const groupMarkup = [...groups.values()].sort((left, right) => left.label.localeCompare(right.label, undefined, { numeric: true, sensitivity: 'base' })).map((group) => {
     const schedule = group.entries.sort((left, right) => (dayOrder.get(left.DayCode) || 999) - (dayOrder.get(right.DayCode) || 999)
       || academicTimetableTimeLabel(version, left).localeCompare(academicTimetableTimeLabel(version, right)));
-    return `<section><h2>${escapeHtml(group.label)} <span class="lesson-count">Total lessons: ${schedule.length}</span></h2><table><thead><tr><th>Day</th><th>Period and time</th>${mode === 'teacher' ? '<th>Classroom</th>' : '<th>Subject</th><th>Teacher</th>'}<th>Room</th></tr></thead><tbody>${schedule.map((entry) => `<tr><td>${escapeHtml(version.Days?.find((day) => day.DayCode === entry.DayCode)?.Name || entry.DayCode)}</td><td>${escapeHtml(academicTimetableTimeLabel(version, entry))}</td>${mode === 'teacher' ? `<td>${escapeHtml(`${academicLabel(rows.classes, entry.ClassId)} / ${academicLabel(rows.arms, entry.ArmId)}`)}</td>` : `<td>${escapeHtml(academicLabel(rows.subjects, entry.SubjectId))}</td><td>${escapeHtml(academicLabel(data.staff, entry.TeacherUsername, entry.TeacherUsername))}</td>`}<td>${escapeHtml(entry.Room || '-')}</td></tr>`).join('')}</tbody></table></section>`;
+    return `<section><h2>${escapeHtml(group.label)} <span class="lesson-count">Total lessons: ${schedule.length}</span></h2><table><thead><tr><th>Day</th><th>Period and time</th>${teacherMode ? '<th>Subject</th><th>Classroom</th>' : '<th>Subject</th><th>Teacher</th>'}<th>Room</th></tr></thead><tbody>${schedule.map((entry) => `<tr><td>${escapeHtml(version.Days?.find((day) => day.DayCode === entry.DayCode)?.Name || entry.DayCode)}</td><td>${escapeHtml(academicTimetableTimeLabel(version, entry))}</td>${teacherMode ? `<td>${escapeHtml(academicLabel(rows.subjects, entry.SubjectId))}</td><td>${escapeHtml(`${academicLabel(rows.classes, entry.ClassId)} / ${academicLabel(rows.arms, entry.ArmId)}`)}</td>` : `<td>${escapeHtml(academicLabel(rows.subjects, entry.SubjectId))}</td><td>${escapeHtml(academicLabel(data.staff, entry.TeacherUsername, entry.TeacherUsername))}</td>`}<td>${escapeHtml(entry.Room || '-')}</td></tr>`).join('')}</tbody></table></section>`;
   }).join('');
   printable.document.open();
-  printable.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(version.Name)} ${mode} schedules</title><style>@page{size:A4 landscape;margin:10mm}*{box-sizing:border-box}body{margin:28px;color:#102a43;font:12px/1.45 Arial,sans-serif}header{margin-bottom:22px;padding-bottom:12px;border-bottom:4px solid #0b8f76}h1{margin:0;font-size:24px}header p{margin:4px 0 0;color:#526d82}section{margin:0 0 26px;break-inside:avoid-page}h2{margin:0 0 7px;color:#164a78;font-size:16px}.lesson-count{font-size:12px;color:#526d82;font-weight:600;margin-left:8px;white-space:nowrap}table{width:100%;border-collapse:collapse}th,td{padding:7px;border:1px solid #cbd7e5;text-align:left;vertical-align:top}th{background:#edf3f8;font-size:10px;text-transform:uppercase}.print-action{margin:0 0 18px;padding:8px 14px;border:0;border-radius:6px;background:#1769e0;color:#fff;font-weight:bold;cursor:pointer}.empty{padding:20px;border:1px solid #cbd7e5;background:#f7fafc}@media print{body{margin:0}.print-action{display:none}}</style></head><body><button type="button" class="print-action" onclick="window.print()">Print schedules</button><header><h1>${escapeHtml(organisation)}</h1><p>${escapeHtml(version.Name)} · ${escapeHtml(version.Status)} · ${mode === 'teacher' ? 'Teacher schedules' : 'Class schedules'} · Total lessons: ${entries.length}</p></header>${groupMarkup || '<p class="empty">This timetable version has no scheduled lessons.</p>'}</body></html>`);
+  printable.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(version.Name)} ${mode === 'mine' ? 'My timetable' : `${mode} schedules`}</title><style>@page{size:A4 landscape;margin:10mm}*{box-sizing:border-box}body{margin:28px;color:#102a43;font:12px/1.45 Arial,sans-serif}header{margin-bottom:22px;padding-bottom:12px;border-bottom:4px solid #0b8f76}h1{margin:0;font-size:24px}header p{margin:4px 0 0;color:#526d82}section{margin:0 0 26px;break-inside:avoid-page}h2{margin:0 0 7px;color:#164a78;font-size:16px}.lesson-count{font-size:12px;color:#526d82;font-weight:600;margin-left:8px;white-space:nowrap}table{width:100%;border-collapse:collapse}th,td{padding:7px;border:1px solid #cbd7e5;text-align:left;vertical-align:top}th{background:#edf3f8;font-size:10px;text-transform:uppercase}.print-action{margin:0 0 18px;padding:8px 14px;border:0;border-radius:6px;background:#1769e0;color:#fff;font-weight:bold;cursor:pointer}.empty{padding:20px;border:1px solid #cbd7e5;background:#f7fafc}@media print{body{margin:0}.print-action{display:none}}</style></head><body><button type="button" class="print-action" onclick="window.print()">Print schedules</button><header><h1>${escapeHtml(organisation)}</h1><p>${escapeHtml(version.Name)} · ${escapeHtml(version.Status)} · ${mode === 'mine' ? 'My timetable' : teacherMode ? 'Teacher schedules' : 'Class schedules'} · Total lessons: ${entries.length}</p></header>${groupMarkup || '<p class="empty">This timetable version has no scheduled lessons.</p>'}</body></html>`);
   printable.document.close();
   printable.focus();
 }
@@ -12540,23 +12541,31 @@ function academicTimetableBatchEntries(versionId) {
 function academicTimetableWorkspace(data, rows) {
   const canManage = data.permissions?.canManageTimetables;
   const canPublish = data.permissions?.canPublishTimetables;
+  const teacherView = data.permissions?.teacherView === true;
   const sessionId = academicManagementFilters.sessionId;
   const termId = academicManagementFilters.termId;
   const settings = rows.timetableSettings.find((row) => row.SessionId === sessionId && row.TermId === termId);
   const term = rows.terms.find((row) => row.TermId === termId);
   const schoolCalendar = rows.schoolCalendars.find((row) => row.SessionId === sessionId && row.TermId === termId);
   const constraints = rows.timetableConstraints.filter((row) => row.SessionId === sessionId && row.TermId === termId);
-  const versions = rows.timetableVersions.filter((row) => row.SessionId === sessionId && row.TermId === termId);
+  const versions = rows.timetableVersions.filter((row) => row.SessionId === sessionId && row.TermId === termId)
+    .sort((left, right) => teacherView
+      ? ({ Published: 0, Approved: 1, Draft: 2 }[left.Status] ?? 3)
+        - ({ Published: 0, Approved: 1, Draft: 2 }[right.Status] ?? 3)
+        || clean(right.PublishedAt || right.UpdatedAt || right.CreatedAt).localeCompare(clean(left.PublishedAt || left.UpdatedAt || left.CreatedAt))
+      : 0);
   const allVersions = (data.timetableVersions || []).filter((row) => !['Copying', 'Deleting'].includes(row.Status));
   const staff = academicManagementStaffCandidates(data.staff || [], academicManagementFilters.section);
   let version = academicFind(versions, academicTimetableDraft.versionId)
-    || versions.find((row) => row.Status === 'Draft') || versions.find((row) => row.Status === 'Published') || versions[0];
+    || (teacherView ? versions[0] : versions.find((row) => row.Status === 'Draft')
+      || versions.find((row) => row.Status === 'Published') || versions[0]);
   academicTimetableDraft.versionId = clean(version?.VersionId);
   const dayOrder = new Map((version?.Days || []).map((row, index) => [row.DayCode, Number(row.SortOrder || index + 1)]));
   const periodOrder = new Map((version?.Periods || []).map((row, index) => [row.PeriodCode, Number(row.SortOrder || index + 1)]));
   const entries = rows.timetableEntries.filter((row) => !version || row.VersionId === version.VersionId)
     .sort((left, right) => (dayOrder.get(left.DayCode) || 999) - (dayOrder.get(right.DayCode) || 999)
       || (periodOrder.get(left.StartPeriodCode) || 999) - (periodOrder.get(right.StartPeriodCode) || 999));
+  const ownEntries = entries.filter((row) => clean(row.TeacherUsername).toLowerCase() === clean(currentUser?.username).toLowerCase());
   const classrooms = rows.arms.filter(academicIsActive);
   const selectedArm = academicFind(classrooms, academicTimetableDraft.armId) || classrooms[0];
   academicTimetableDraft.armId = clean(selectedArm?.ArmId);
@@ -12668,10 +12677,16 @@ function academicTimetableWorkspace(data, rows) {
     { label: 'Weekly maximum', value: (row) => Number(row.MaxPeriodsPerWeek || 0) || 'Unlimited' },
     { label: 'Status', value: (row) => row.Status }, { label: 'Action', render: constraintActions }
   ]);
+  const ownTimetable = teacherView && version ? `<div class="academic-attendance-table"><table><thead><tr><th>Day</th><th>Period and time</th><th>Subject</th><th>Classroom</th><th>Room</th></tr></thead><tbody>${ownEntries.map((entry) => `<tr><td>${escapeHtml(version.Days?.find((day) => day.DayCode === entry.DayCode)?.Name || entry.DayCode)}</td><td>${escapeHtml(academicTimetableTimeLabel(version, entry))}</td><td>${escapeHtml(academicLabel(rows.subjects, entry.SubjectId))}</td><td>${escapeHtml(`${academicLabel(rows.classes, entry.ClassId)} / ${academicLabel(rows.arms, entry.ArmId)}`)}</td><td>${escapeHtml(entry.Room || '-')}</td></tr>`).join('') || '<tr><td colspan="5">This version has no lessons assigned to you.</td></tr>'}</tbody></table></div>` : '';
+  const canPreviewClass = !teacherView || rows.teacherAllocations.some((row) => academicIsActive(row)
+    && ['Form Teacher', 'Assistant Teacher'].includes(row.AllocationRole)
+    && row.SessionId === sessionId && row.TermId === termId);
   const previewForm = `<form class="academic-management-editor academic-management-editor-wide" data-academic-timetable-preview>
-    <div class="academic-management-editor-heading"><div><small>Print-ready schedules</small><h3>${escapeHtml(version?.Name || 'Choose a timetable version')}</h3><p class="muted">${version ? `${entries.length} scheduled lesson${entries.length === 1 ? '' : 's'} will use this version's saved day-specific times.` : 'Create or open a timetable version first.'}</p></div></div>
+    <div class="academic-management-editor-heading"><div><small>${teacherView ? 'My timetable' : 'Print-ready schedules'}</small><h3>${escapeHtml(version?.Name || (teacherView ? 'No assigned timetable yet' : 'Choose a timetable version'))}</h3><p class="muted">${version ? teacherView ? `${ownEntries.length} lesson${ownEntries.length === 1 ? '' : 's'} assigned to you in this ${escapeHtml(version.Status.toLowerCase())} version.` : `${entries.length} scheduled lesson${entries.length === 1 ? '' : 's'} will use this version's saved day-specific times.` : teacherView ? 'No saved lessons are assigned to you in this term. Ask Academic Management to schedule your subjects.' : 'Create or open a timetable version first.'}</p></div></div>
     <label>Version<select data-academic-timetable-version-select>${academicSelectOptions(versions, version?.VersionId || '', (row) => `${row.Name} · ${row.Status}`, 'Choose version')}</select></label>
-    <div class="academic-attendance-bulk-actions"><button type="button" data-academic-timetable-print="class" ${version ? '' : 'disabled'}>Preview class schedules</button><button type="button" class="secondary" data-academic-timetable-print="teacher" ${version ? '' : 'disabled'}>Preview teacher schedules</button></div>
+    ${teacherView && version && version.Status !== 'Published' ? '<p class="status bad">Provisional timetable: this version is not published and lessons may change.</p>' : ''}
+    ${ownTimetable}
+    <div class="academic-attendance-bulk-actions">${teacherView ? `<button type="button" data-academic-timetable-print="mine" ${ownEntries.length ? '' : 'disabled'}>Preview / print my timetable</button>${canPreviewClass ? `<button type="button" class="secondary" data-academic-timetable-print="class" ${version ? '' : 'disabled'}>Preview class schedules</button>` : ''}` : `<button type="button" data-academic-timetable-print="class" ${version ? '' : 'disabled'}>Preview class schedules</button><button type="button" class="secondary" data-academic-timetable-print="teacher" ${version ? '' : 'disabled'}>Preview teacher schedules</button>`}</div>
   </form>`;
   const versionActions = (row) => {
     const open = `<button type="button" class="compact-icon-action compact-edit-action" data-academic-timetable-open-version="${escapeHtml(row.VersionId)}" title="Open this version" aria-label="Open ${escapeHtml(row.Name)}">&#128065;</button>`;
@@ -15225,8 +15240,10 @@ function bindAcademicManagement() {
   panelEl.querySelectorAll('[data-academic-timetable-print]').forEach((button) => button.addEventListener('click', () => {
     const currentRows = academicCurrentRows(academicManagementData || {});
     const version = academicFind(currentRows.timetableVersions, academicTimetableDraft.versionId);
-    const entries = currentRows.timetableEntries.filter((row) => row.VersionId === version?.VersionId);
-    printAcademicTimetableSchedule(button.dataset.academicTimetablePrint, version, entries, academicManagementData || {}, currentRows);
+    const mode = button.dataset.academicTimetablePrint;
+    const entries = currentRows.timetableEntries.filter((row) => row.VersionId === version?.VersionId
+      && (mode !== 'mine' || clean(row.TeacherUsername).toLowerCase() === clean(currentUser?.username).toLowerCase()));
+    printAcademicTimetableSchedule(mode, version, entries, academicManagementData || {}, currentRows);
   }));
   const targetCopyForm = panelEl.querySelector('[data-academic-timetable-target-copy]');
   const targetCopyResult = targetCopyForm?.querySelector('[data-academic-timetable-copy-result]');

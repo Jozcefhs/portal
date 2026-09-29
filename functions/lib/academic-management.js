@@ -1867,6 +1867,28 @@ export function academicTeacherVisibleMemberships(state = {}, username = '', sub
   ));
 }
 
+export function academicTeacherVisibleTimetable(state = {}, username = '', focusedView = 'timetable') {
+  const teacherUsername = lower(username);
+  const timetableView = focusedView === 'timetable';
+  const allowedStatuses = new Set(timetableView ? ['draft', 'approved', 'published'] : ['published']);
+  const versions = (state.timetableVersions || []).filter((row) => allowedStatuses.has(lower(row.Status)));
+  const allowedVersionIds = new Set(versions.map((row) => row.VersionId));
+  const homerooms = new Set((state.teacherAllocations || []).filter((row) => statusActive(row)
+    && lower(row.TeacherUsername) === teacherUsername
+    && ['form teacher', 'assistant teacher'].includes(lower(row.AllocationRole)))
+    .map((row) => `${row.SessionId}|${row.TermId}|${row.ClassId}|${row.ArmId}`));
+  const substitutions = new Set((state.timetableSubstitutions || []).filter((row) => lower(row.Status) === 'scheduled'
+    && lower(row.SubstituteTeacherUsername) === teacherUsername).map((row) => row.TimetableEntryId));
+  const entries = (state.timetableEntries || []).filter((row) => allowedVersionIds.has(row.VersionId)
+    && (lower(row.TeacherUsername) === teacherUsername || substitutions.has(row.EntryId)
+      || homerooms.has(`${row.SessionId}|${row.TermId}|${row.ClassId}|${row.ArmId}`)));
+  const visibleVersionIds = new Set(entries.map((row) => row.VersionId));
+  return {
+    versions: timetableView ? versions.filter((row) => visibleVersionIds.has(row.VersionId)) : versions,
+    entries
+  };
+}
+
 export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
   const permissions = requireCapability(user, 'enabled');
   const scope = await academicScope(env, user, input, { requireSection: false });
@@ -1911,11 +1933,9 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
     }
     const visibleStudents = new Set(state.studentMemberships.map((row) => lower(row.StudentRef)));
     state.studentMovements = state.studentMovements.filter((row) => visibleStudents.has(lower(row.StudentRef)));
-    const publishedVersions = new Set(state.timetableVersions.filter((row) => lower(row.Status) === 'published').map((row) => row.VersionId));
-    state.timetableVersions = state.timetableVersions.filter((row) => publishedVersions.has(row.VersionId));
-    state.timetableEntries = state.timetableEntries.filter((row) => publishedVersions.has(row.VersionId)
-      && (lower(row.TeacherUsername) === username || substituteEntryIds.has(row.EntryId)
-        || visibleKeys.has(`${row.ClassId}|${row.ArmId}`) || visibleKeys.has(`${row.ClassId}|*`)));
+    const visibleTimetable = academicTeacherVisibleTimetable(state, username, focusedView);
+    state.timetableVersions = visibleTimetable.versions;
+    state.timetableEntries = visibleTimetable.entries;
     const visibleEntries = new Set(state.timetableEntries.map((row) => row.EntryId));
     state.timetableSubstitutions = state.timetableSubstitutions.filter((row) => visibleEntries.has(row.TimetableEntryId)
       || lower(row.SubstituteTeacherUsername) === username);
