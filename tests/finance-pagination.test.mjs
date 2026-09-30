@@ -37,7 +37,9 @@ test('finance screens avoid unbounded dashboard and income collection scans', as
   const income = await readFile(new URL('../functions/api/income-analytics.js', import.meta.url), 'utf8');
   assert.match(admin, /currentSessionFinanceRows\(env, 'invoices', financeSession\)/);
   assert.match(admin, /queryCollectionPages\(env, collection/);
-  assert.match(income, /journalsForPeriod\(env, period\)/);
-  assert.match(income, /queryCollectionPages\(env, 'accountingJournals'/);
+  assert.match(income, /journalsForPeriodPage\(env, period, cursor\)/);
+  assert.match(income, /queryCollection\(env, 'accountingJournals'/);
+  assert.match(income, /startAfterFieldValue: cursor\.date, startAfterName: cursor\.name/);
+  assert.match(income, /nextCursor: page\.nextCursor/);
   assert.doesNotMatch(income, /listCollectionForReport\(env, 'accountingJournals'\)/);
 });

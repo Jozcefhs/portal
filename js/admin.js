@@ -136,6 +136,7 @@ const ATTENDANCE_PRESENCE_SYNC_INTERVAL_MS = 60 * 1000;
 const dashboardSectionRequests = new Map();
 let incomeAnalyticsData = null;
 let incomeAnalyticsFilter = { period: 'monthly' };
+let incomeAnalyticsRequest = 0;
 let recordsDeskRequest = 0;
 let recordsDeskSearchTimer = 0;
 let recordsDeskAbortController = null;
@@ -9446,6 +9447,10 @@ function renderIncomeAnalytics(data) {
   const latestAvailableNotice = period.usedLatestAvailable
     ? `<p class="status">There is no posted income in the current month yet. Showing the latest month with posted income (${escapeHtml(period.dateFrom)} to ${escapeHtml(period.dateTo)}).</p>`
     : '';
+  const displayedTransactions = (data.transactions || []).slice(0, 500);
+  const transactionLimitNotice = (data.transactions || []).length > displayedTransactions.length
+    ? `<p class="muted">Showing the latest ${displayedTransactions.length} transactions. The CSV export includes all ${(data.transactions || []).length} transactions.</p>`
+    : '';
   panelEl.innerHTML = `
     <div class="income-analytics" id="incomeAnalyticsReport">
       <div class="workflow-intro income-report-heading">
@@ -9475,7 +9480,8 @@ function renderIncomeAnalytics(data) {
       </section>
       <section class="income-transactions">
         <div class="income-card-heading"><div><p class="eyebrow">Drill-down</p><h3>Income transactions</h3></div><span>${escapeHtml((data.transactions || []).length)} rows</span></div>
-        ${table('', data.transactions || [], [
+        ${transactionLimitNotice}
+        ${table('', displayedTransactions, [
           { label: 'Date', value: (row) => row.date },
           { label: 'Reference', value: (row) => row.reference || row.journalNo },
           { label: 'Description', value: (row) => row.description },
@@ -9498,21 +9504,118 @@ function renderIncomeAnalytics(data) {
   bindIncomeAnalyticsEvents();
 }
 
-async function loadIncomeAnalytics(filter = incomeAnalyticsFilter) {
-  try {
-    const response = await staffFetch('/api/income-analytics', {
-      method: 'POST',
-      credentials: 'same-origin',
-      cache: 'no-store',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(filter || {})
+function combineIncomeAnalyticsPages(pages) {
+  const result = { ...pages[0], summary: { ...pages[0].summary }, options: { ...pages[0].options } };
+  const summary = result.summary;
+  const timeline = new Map();
+  const sources = new Map();
+  const channels = new Map();
+  const accounts = new Map();
+  const transactions = new Map();
+  const optionSets = Object.fromEntries(['departments', 'channels', 'sources', 'branches'].map((key) => [key, new Set()]));
+  summary.totalIncome = 0;
+  summary.previousTotal = 0;
+  summary.excludedUnconvertedTransactions = 0;
+  pages.forEach((page) => {
+    summary.totalIncome += Number(page.summary?.totalIncome || 0);
+    summary.previousTotal += Number(page.summary?.previousTotal || 0);
+    summary.excludedUnconvertedTransactions += Number(page.summary?.excludedUnconvertedTransactions || 0);
+    (page.timeline || []).forEach((row) => {
+      const existing = timeline.get(row.key) || { ...row, value: 0 };
+      existing.value += Number(row.value || 0);
+      timeline.set(row.key, existing);
     });
-    const data = await response.json().catch(() => ({ ok: false, message: 'Income analytics did not return JSON.' }));
-    if (response.status === 401) { showLogin(data.message || 'Your staff session has expired.', 'bad'); return; }
-    if (!response.ok || !data.ok) throw new Error(data.message || 'Income analytics could not be loaded.');
-    renderIncomeAnalytics(data);
+    for (const [key, totals] of [['sources', sources], ['channels', channels]]) {
+      (page[key] || []).forEach((row) => totals.set(row.label, (totals.get(row.label) || 0) + Number(row.value || 0)));
+    }
+    (page.transactions || []).forEach((row) => {
+      const existing = transactions.get(row.journalNo);
+      if (existing) {
+        existing.amount += Number(row.amount || 0);
+        existing.accounts = [existing.accounts, row.accounts].filter(Boolean).join(', ');
+        existing.department = [existing.department, row.department].filter(Boolean).join(', ');
+      } else transactions.set(row.journalNo, { ...row });
+    });
+    (page.options?.accounts || []).forEach((row) => accounts.set(row.code, row));
+    Object.entries(optionSets).forEach(([key, values]) => (page.options?.[key] || []).forEach((value) => values.add(value)));
+  });
+  result.transactions = [...transactions.values()];
+  summary.transactionCount = result.transactions.length;
+  summary.averageIncome = summary.transactionCount ? summary.totalIncome / summary.transactionCount : 0;
+  summary.comparisonPercent = Math.abs(summary.previousTotal) > 0.005
+    ? Number(((summary.totalIncome - summary.previousTotal) / Math.abs(summary.previousTotal) * 100).toFixed(1))
+    : (Math.abs(summary.totalIncome) > 0.005 ? 100 : 0);
+  result.timeline = [...timeline.values()].sort((a, b) => a.key.localeCompare(b.key));
+  result.sources = [...sources].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value);
+  result.channels = [...channels].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value);
+  result.transactions.sort((a, b) => `${b.date}|${b.journalNo}`.localeCompare(`${a.date}|${a.journalNo}`));
+  result.options.accounts = [...accounts.values()].sort((a, b) => `${a.code}|${a.name}`.localeCompare(`${b.code}|${b.name}`));
+  Object.entries(optionSets).forEach(([key, values]) => {
+    result.options[key] = [...values].sort((a, b) => a.localeCompare(b));
+  });
+  return result;
+}
+
+async function loadIncomeAnalytics(filter = incomeAnalyticsFilter) {
+  const requestId = ++incomeAnalyticsRequest;
+  try {
+    const implicitMonth = (!clean(filter?.period) || clean(filter.period).toLowerCase() === 'monthly')
+      && !clean(filter?.anchorDate) && !clean(filter?.dateFrom) && !clean(filter?.dateTo);
+    const fixedFilter = { ...(filter || {}), anchorDate: clean(filter?.anchorDate) || new Date().toISOString().slice(0, 10) };
+    let usedLatestAvailable = false;
+    for (let pass = 0; pass < 2; pass += 1) {
+      const pages = [];
+      const seenCursors = new Set();
+      let cursor = null;
+      do {
+        const response = await staffFetch('/api/income-analytics', {
+          method: 'POST',
+          credentials: 'same-origin',
+          cache: 'no-store',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...fixedFilter, ...(cursor ? { cursor } : {}) })
+        });
+        const data = await response.json().catch(() => ({ ok: false, message: 'Income analytics did not return JSON.' }));
+        if (requestId !== incomeAnalyticsRequest || activeSection !== 'incomeAnalytics') return;
+        if (response.status === 401) { showLogin(data.message || 'Your staff session has expired.', 'bad'); return; }
+        if (!response.ok || !data.ok) throw new Error(data.message || 'Income analytics could not be loaded.');
+        pages.push(data);
+        cursor = data.nextCursor || null;
+        if (cursor) {
+          const key = `${cursor.date}|${cursor.name}`;
+          if (seenCursors.has(key) || pages.length >= 500) throw new Error('The income report could not complete all pages. Choose a shorter date range; no partial totals were shown.');
+          seenCursors.add(key);
+          panelEl.innerHTML = `<p class="muted">Loading income report… ${pages.length} page${pages.length === 1 ? '' : 's'} processed.</p>`;
+        }
+      } while (cursor);
+      const report = combineIncomeAnalyticsPages(pages);
+      if (pass === 0 && implicitMonth && Math.abs(Number(report.summary.totalIncome || 0)) < 0.005) {
+        let latestDate = Math.abs(Number(report.summary.previousTotal || 0)) > 0.005
+          ? report.period.previousDateFrom : '';
+        if (!latestDate) {
+          const response = await staffFetch('/api/income-analytics', {
+            method: 'POST', credentials: 'same-origin', cache: 'no-store',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...filter, findLatest: true })
+          });
+          const data = await response.json().catch(() => ({ ok: false, message: 'Income analytics did not return JSON.' }));
+          if (requestId !== incomeAnalyticsRequest || activeSection !== 'incomeAnalytics') return;
+          if (!response.ok || !data.ok) throw new Error(data.message || 'The latest income period could not be found.');
+          latestDate = data.latestAvailableDate || '';
+        }
+        if (latestDate && latestDate < report.period.dateFrom) {
+          fixedFilter.anchorDate = latestDate;
+          usedLatestAvailable = true;
+          panelEl.innerHTML = '<p class="muted">Loading the latest month with posted income…</p>';
+          continue;
+        }
+      }
+      if (usedLatestAvailable) report.period.usedLatestAvailable = true;
+      if (requestId === incomeAnalyticsRequest) renderIncomeAnalytics(report);
+      return;
+    }
   } catch (error) {
-    if (activeSection === 'incomeAnalytics') panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
+    if (requestId === incomeAnalyticsRequest && activeSection === 'incomeAnalytics') panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
   }
 }
 
