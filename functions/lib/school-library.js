@@ -168,7 +168,10 @@ async function load(env, user, body) {
     policyFor(env, branchId)
   ]);
   const scopedTitles = branchRows(titles, branchId);
-  const scopedCopies = branchRows(copies, branchId);
+  const titleById = new Map(scopedTitles.map((row) => [row.TitleId, row.Title]));
+  const scopedCopies = branchRows(copies, branchId).map((row) => ({
+    ...row, Title: titleById.get(row.TitleId) || row.Title
+  }));
   const scopedLoans = branchRows(loans, branchId);
   const scopedReservations = branchRows(reservations, branchId);
   const today = localDate();
@@ -238,6 +241,28 @@ async function addCopy(env, user, body, branchId) {
   return { ok: true, message: 'Physical copy added.', copy: saved };
 }
 
+async function restoreCopy(env, user, body, branchId) {
+  const copy = await getDocument(env, COLLECTIONS.copies, clean(body.CopyId));
+  if (!copy || safeScopeId(copy.BranchId) !== branchId) throw failure('The book copy was not found in this branch.', 404);
+  if (!['Damaged', 'Lost'].includes(copy.Status) || clean(copy.CurrentLoanId)) {
+    throw failure('Only a found or repaired copy with no active loan can be made available.', 409);
+  }
+  const condition = clean(body.Condition || 'Good');
+  if (!['New', 'Good', 'Worn'].includes(condition)) throw failure('Choose New, Good or Worn as the copy condition.');
+  const note = clean(body.Note).slice(0, 500);
+  if (!note) throw failure('Record how this copy was found or repaired.');
+  const saved = { ...copy, Status: 'Available', Condition: condition, RestoredAt: nowIso(),
+    RestoredBy: clean(user.displayName || user.username), RestoreNote: note, UpdatedAt: nowIso() };
+  try {
+    await batchCommitDocuments(env, [
+      write('copies', copy.CopyId, saved, current(copy)),
+      audit(user, branchId, 'Restore physical book copy', { CopyId: copy.CopyId,
+        PreviousStatus: copy.Status, Condition: condition, Note: note })
+    ]);
+  } catch (error) { conflict(error); }
+  return { ok: true, message: 'Physical copy restored to available stock.', copy: saved };
+}
+
 async function checkout(env, user, body, branchId) {
   const copy = await getDocument(env, COLLECTIONS.copies, clean(body.CopyId));
   if (!copy || safeScopeId(copy.BranchId) !== branchId) throw failure('The book copy was not found in this branch.', 404);
@@ -259,6 +284,8 @@ async function checkout(env, user, body, branchId) {
   }
   const LoanId = id('LIB-LOAN');
   const checkedOutDate = localDate();
+  const currentTitle = await getDocument(env, COLLECTIONS.titles, copy.TitleId);
+  if (!currentTitle || safeScopeId(currentTitle.BranchId) !== branchId) throw failure('The copy title is missing from this branch.', 409);
   const loan = {
     LoanId, CopyId: copy.CopyId, TitleId: copy.TitleId, Title: copy.Title,
     Barcode: copy.Barcode, BranchId: branchId, ...borrower,
@@ -266,7 +293,8 @@ async function checkout(env, user, body, branchId) {
     DueDate: plusDays(checkedOutDate, type === 'Student' ? policy.StudentLoanDays : policy.StaffLoanDays),
     Renewals: 0, Status: 'On Loan', IssuedBy: clean(user.displayName || user.username)
   };
-  const nextCopy = { ...copy, Status: 'On Loan', CurrentLoanId: LoanId, UpdatedAt: nowIso() };
+  loan.Title = clean(currentTitle.Title);
+  const nextCopy = { ...copy, Title: loan.Title, Status: 'On Loan', CurrentLoanId: LoanId, UpdatedAt: nowIso() };
   const nextState = {
     BorrowerId: borrowerId, BranchId: branchId, ...borrower,
     ActiveLoans: Number(state?.ActiveLoans || 0) + 1, UpdatedAt: nowIso()
@@ -442,6 +470,7 @@ export async function handleSchoolLibraryAction(env, user, body = {}) {
   const branchId = await branchFor(env, user, body);
   if (action === 'savetitle') return saveTitle(env, user, body, branchId);
   if (action === 'addcopy') return addCopy(env, user, body, branchId);
+  if (action === 'restorecopy') return restoreCopy(env, user, body, branchId);
   if (action === 'checkout') return checkout(env, user, body, branchId);
   if (action === 'return') return returnCopy(env, user, body, branchId);
   if (action === 'renew') return renew(env, user, body, branchId);

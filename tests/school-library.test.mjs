@@ -60,6 +60,7 @@ test('library mutations are authenticated, branch-scoped, versioned and atomic',
   assert.match(desktopEndpoint, /case 'getSchoolLibrary':/);
   assert.match(desktopEndpoint, /staffAccessFor\(env,/);
   assert.match(desktopEndpoint, /case 'checkoutLibraryCopy':/);
+  assert.match(desktopEndpoint, /case 'restoreLibraryCopy':/);
   assert.match(service, /allowedSections \|\| \[\]\)\.includes\('library'\)/);
   assert.match(service, /enforceActorBranch\(/);
   assert.match(service, /batchCommitDocuments\(env, \[/);
@@ -69,6 +70,7 @@ test('library mutations are authenticated, branch-scoped, versioned and atomic',
   assert.match(service, /if \(copy\.Status !== 'Available'\)/);
   assert.match(service, /if \(loan\.Status !== 'On Loan'\)/);
   assert.match(service, /audit\(user, branchId, 'Check out book copy'/);
+  assert.match(service, /audit\(user, branchId, 'Restore physical book copy'/);
   assert.match(service, /branchCollection\(env, 'loans', branchId\)/);
 });
 

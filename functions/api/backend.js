@@ -816,7 +816,7 @@ export function requireBackendSecret(env, body) {
 }
 
 const VERIFIED_ACTOR_ACTIONS = new Set([
-  'getSchoolLibrary', 'saveLibraryTitle', 'addLibraryCopy', 'checkoutLibraryCopy',
+  'getSchoolLibrary', 'saveLibraryTitle', 'addLibraryCopy', 'restoreLibraryCopy', 'checkoutLibraryCopy',
   'returnLibraryCopy', 'renewLibraryLoan', 'reserveLibraryTitle',
   'cancelLibraryReservation', 'saveLibraryPolicy',
   'saveOrganizationModulePreferences',
@@ -892,7 +892,7 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
 // applyDesktopDeviceBranchScope.  Organisation-wide and legacy credentials
 // retain the existing action surface for backwards compatibility.
 const BRANCH_BOUND_DEVICE_ACTIONS = new Set([
-  'getSchoolLibrary', 'saveLibraryTitle', 'addLibraryCopy', 'checkoutLibraryCopy',
+  'getSchoolLibrary', 'saveLibraryTitle', 'addLibraryCopy', 'restoreLibraryCopy', 'checkoutLibraryCopy',
   'returnLibraryCopy', 'renewLibraryLoan', 'reserveLibraryTitle',
   'cancelLibraryReservation', 'saveLibraryPolicy',
   'ping',
@@ -9767,6 +9767,7 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     case 'getSchoolLibrary':
     case 'saveLibraryTitle':
     case 'addLibraryCopy':
+    case 'restoreLibraryCopy':
     case 'checkoutLibraryCopy':
     case 'returnLibraryCopy':
     case 'renewLibraryLoan':
@@ -9786,7 +9787,7 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
       }, {
         ...body,
         action: ({ getSchoolLibrary: 'list', saveLibraryTitle: 'saveTitle',
-          addLibraryCopy: 'addCopy', checkoutLibraryCopy: 'checkout',
+          addLibraryCopy: 'addCopy', restoreLibraryCopy: 'restoreCopy', checkoutLibraryCopy: 'checkout',
           returnLibraryCopy: 'return', renewLibraryLoan: 'renew',
           reserveLibraryTitle: 'reserve', cancelLibraryReservation: 'cancelReservation',
           saveLibraryPolicy: 'savePolicy' })[action]

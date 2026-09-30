@@ -10798,7 +10798,9 @@ function renderSchoolLibrary() {
       ${table('Physical copies', data.copies || [], [
         { label: 'Barcode', value: (row) => row.Barcode }, { label: 'Title', value: (row) => row.Title },
         { label: 'Shelf', value: (row) => row.Shelf }, { label: 'Condition', value: (row) => row.Condition },
-        { label: 'Status', value: (row) => row.Status }
+        { label: 'Status', value: (row) => row.Status },
+        { label: 'Actions', render: (row) => canManage && ['Damaged', 'Lost'].includes(row.Status)
+          ? `<button type="button" class="secondary" data-library-restore="${escapeHtml(row.CopyId)}">Restore to stock</button>` : '' }
       ], { searchable: true, searchLabel: 'copies', searchValue: (row) => [row.Barcode, row.Title, row.Shelf, row.Status].join(' ') })}
     </section>
     <section class="school-library-panel" id="libraryCirculationPanel">
@@ -10891,6 +10893,19 @@ function renderSchoolLibrary() {
       : { LoanId: button.dataset.libraryReturn || button.dataset.libraryRenew, ...(outcome ? { Outcome: outcome } : {}) };
     try {
       const result = await runButtonAction(button, 'Saving...', () => schoolLibraryRequest(action, payload));
+      setStatus(dashboardStatus, result.message, 'ok');
+      await loadSchoolLibrary();
+    } catch (error) { setStatus(dashboardStatus, error.message || String(error), 'bad'); }
+  }));
+  panelEl.querySelectorAll('[data-library-restore]').forEach((button) => button.addEventListener('click', async () => {
+    const note = await window.DynamaxDialogs.prompt({ title: 'Restore physical book copy',
+      message: 'Only restore a found or repaired copy that is ready to lend again.',
+      label: 'How was this copy found or repaired?', required: true, confirmText: 'Restore to stock' });
+    if (!clean(note)) return;
+    try {
+      const result = await runButtonAction(button, 'Restoring...', () => schoolLibraryRequest('restoreCopy', {
+        CopyId: button.dataset.libraryRestore, Condition: 'Good', Note: clean(note)
+      }));
       setStatus(dashboardStatus, result.message, 'ok');
       await loadSchoolLibrary();
     } catch (error) { setStatus(dashboardStatus, error.message || String(error), 'bad'); }
