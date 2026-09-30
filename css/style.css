@@ -674,6 +674,14 @@ html[data-theme="dark"] .preference-switch-row:has(.preference-switch input:chec
 .staff-header-icon.staff-tutorial-button:hover{border-color:#b90000;background:#cc0000;color:#fff}
 .staff-header-icon.staff-tutorial-button:focus-visible{outline:3px solid #ffb3b3;outline-offset:2px}
 .student-onboarding-link-action{display:flex;justify-content:flex-end;margin:0 0 12px}
+.student-class-export-action{display:flex;align-items:end;flex-wrap:wrap;gap:10px 12px;margin:0 0 14px;padding:12px 14px;border:1px solid #cad8e8;border-radius:10px;background:#f5f9fd}
+.student-class-export-action label{display:grid;gap:4px;min-width:min(250px,100%);font-weight:700}
+.student-class-export-action select{min-width:min(250px,100%)}
+.student-class-export-action small{align-self:center;color:#52677e}
+@media(max-width:600px){.student-class-export-action label,.student-class-export-action select,.student-class-export-action button{width:100%}}
+html[data-theme="dark"] .student-class-export-action{border-color:#33465c;background:#111f30}
+html[data-theme="dark"] .student-class-export-action label,html[data-theme="dark"] .student-class-export-action small{color:#c2d1df}
+html[data-theme="dark"] .student-class-export-action select{border-color:#42566d;background:#0c1827;color:#edf4ff}
 .staff-header-signout{display:grid;place-items:center;flex:0 0 38px;width:38px;height:38px;min-height:38px;margin:0;padding:0;border-radius:10px}.staff-header-signout span{font-size:19px;line-height:1}
 .staff-sidebar-theme{display:none}
 html[data-theme="dark"] .staff-header-icon{border-color:#3b526b;background:#14263a;color:#eaf2ff}

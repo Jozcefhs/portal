@@ -4714,6 +4714,63 @@ async function scanWalletNfc(form, button, options = {}) {
   }
 }
 
+function studentExportClass(row) {
+  const className = clean(pick(row, ['ClassName', 'ClassAdmitted']));
+  const arm = clean(pick(row, ['ClassArm']));
+  if (!className || !arm || className.toLowerCase().endsWith(arm.toLowerCase())) return className;
+  return `${className} / ${arm}`;
+}
+
+function studentClassExportToolbar(students) {
+  const classes = [...new Set(students.map(studentExportClass).filter(Boolean))]
+    .sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
+  return `<div class="student-class-export-action">
+    <label>Export students by class
+      <select data-student-export-class aria-label="Choose a class for student CSV export">
+        <option value="">Choose class</option>
+        ${classes.map((className) => `<option value="${escapeHtml(className)}">${escapeHtml(className)}</option>`).join('')}
+      </select>
+    </label>
+    <button type="button" class="secondary" data-student-export-csv disabled>Export class CSV</button>
+    <small data-student-export-count aria-live="polite">Choose a class to export</small>
+  </div>`;
+}
+
+function studentClassExportCsv(students, className) {
+  const headings = [
+    'AdmissionNo', 'FirstName', 'MiddleName', 'Surname', 'DisplayName', 'Gender',
+    'ClassName', 'ClassArm', 'StudentType', 'BillingCategory', 'EnrollmentCategory',
+    'AcademicSession', 'Term', 'ParentName', 'ParentPhone', 'ParentEmail',
+    'ProfileCompletionStatus', 'Status', 'BranchId'
+  ];
+  const rows = students.filter((row) => studentExportClass(row) === className);
+  return [headings, ...rows.map((row) => headings.map((heading) => {
+    if (heading === 'ClassName') return studentExportClass(row);
+    if (heading === 'AdmissionNo') return pick(row, ['AdmissionNo', 'AccountRef', '__id']);
+    if (heading === 'DisplayName') return pick(row, ['DisplayName', 'ApplicantName', 'StudentName']);
+    return row[heading] ?? '';
+  }))].map((row) => row.map(csvCell).join(',')).join('\r\n');
+}
+
+function bindStudentClassExport(students) {
+  const select = panelEl.querySelector('[data-student-export-class]');
+  const button = panelEl.querySelector('[data-student-export-csv]');
+  const count = panelEl.querySelector('[data-student-export-count]');
+  if (!select || !button || !count) return;
+  select.addEventListener('change', () => {
+    const className = select.value;
+    const total = students.filter((row) => studentExportClass(row) === className).length;
+    button.disabled = !total;
+    count.textContent = className ? `${total} ${total === 1 ? 'student' : 'students'} in this class` : 'Choose a class to export';
+  });
+  button.addEventListener('click', () => {
+    const className = select.value;
+    if (!className || !students.some((row) => studentExportClass(row) === className)) return;
+    const fileClass = className.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '') || 'class';
+    downloadCsvFile(`students-${fileClass}.csv`, studentClassExportCsv(students, className));
+  });
+}
+
 function walletAmountValue(value, fallback = '') {
   return value === undefined || value === null || value === '' ? fallback : value;
 }
@@ -17350,10 +17407,10 @@ function renderSection(active) {
     const learner = staffLearnerTerms();
     const handoff = takeRecordsDeskHandoff('students');
     const reference = recordsDeskHandoffReference(handoff);
-    panelEl.innerHTML = recordsDeskHandoffBanner(handoff, reference) + '<div class="student-onboarding-link-action"><button type="button" class="secondary" data-copy-shared-parent-onboarding>Copy shared parent completion link</button></div>' + table(learner.Plural, students, [
+    panelEl.innerHTML = recordsDeskHandoffBanner(handoff, reference) + '<div class="student-onboarding-link-action"><button type="button" class="secondary" data-copy-shared-parent-onboarding>Copy shared parent completion link</button></div>' + studentClassExportToolbar(students) + table(learner.Plural, students, [
       { label: 'Admission No', value: (row) => pick(row, ['AdmissionNo', 'AccountRef', '__id']) },
       { label: 'Name', render: studentSearchIdentity },
-      { label: 'Class', value: (row) => [pick(row, ['ClassName']), pick(row, ['ClassArm'])].filter(Boolean).join(' ') },
+      { label: 'Class', value: studentExportClass },
       { label: 'Type', value: (row) => pick(row, ['StudentType']) },
       { label: 'Profile data', value: (row) => pick(row, ['ProfileCompletionStatus']) || 'Not marked' },
       { label: 'Status', value: (row) => pick(row, ['Status']) },
@@ -17380,6 +17437,7 @@ function renderSection(active) {
       ].filter(Boolean).join(' ')
     }) + renderStudentEditor(students);
     bindStudentEditor(students);
+    bindStudentClassExport(students);
     hydrateStudentPassportThumbnails(panelEl);
     if (reference) {
       const student = students.find((row) => recordsDeskRowMatches(
