@@ -3230,7 +3230,10 @@ function table(title, rows, columns, options = {}) {
   const body = sortedEntries.length
     ? sortedEntries.map((entry) => {
       const searchValue = searchable
-        ? clean(typeof options.searchValue === 'function' ? options.searchValue(entry.row) : entry.name)
+        ? [entry.name, ...columns.filter((column) => typeof column.value === 'function')
+          .map((column) => column.value(entry.row)),
+        ...(typeof options.searchValue === 'function' ? [options.searchValue(entry.row)] : [])]
+          .map(clean).filter(Boolean).join(' ')
         : '';
       return `<tr data-list-row data-list-index="${entry.index}" data-list-name="${escapeHtml(entry.name)}" data-list-created="${entry.created}" data-list-modified="${entry.modified}"${searchable ? ` data-list-search="${escapeHtml(searchValue)}"` : ''}>${columns.map((column) => `<td>${column.render ? column.render(entry.row) : escapeHtml(column.value(entry.row))}</td>`).join('')}</tr>`;
     }).join('')
@@ -4122,12 +4125,13 @@ function renderOrganizationCommerceWorkspace(section, data = {}) {
       ${sale ? commerceReceiptPreview(sale) : ''}
       <div class="commerce-pos-layout">
         <section class="commerce-catalog" aria-label="${label} catalogue">
-          <label class="commerce-search-label"><span>Search ${itemLabel}s</span><input id="commerceCatalogSearch" type="search" value="${escapeHtml(search)}" placeholder="Item or category"></label>
+          <label class="commerce-search-label"><span>Search ${itemLabel}s</span><input id="commerceCatalogSearch" type="search" value="${escapeHtml(search)}" placeholder="Name, code, barcode, category or size"></label>
           <div class="commerce-product-list">
             ${available.length ? available.map((item, index) => {
               const reference = commerceItemReference(section, item);
               const inCart = cart.has(reference);
-              const searchText = [item.ItemName, item.ItemCode, item.Category, item.Size].map(clean).join(' ').toLowerCase();
+              const searchText = [item.ItemName, item.ItemCode, item.Barcode, item.SKU, reference,
+                item.Category, item.Size, item.Unit].map(clean).join(' ').toLowerCase();
               return `<article class="commerce-product" data-commerce-search-text="${escapeHtml(searchText)}">
                 <div><strong>${escapeHtml(item.ItemName || reference)}</strong><span>${escapeHtml([item.Category, item.Size || item.Unit].filter(Boolean).join(' · '))}</span><small>${money(commerceItemPrice(item))} &middot; ${commerceItemStock(item)} available</small></div>
                 <div class="commerce-product-action">
@@ -10807,7 +10811,10 @@ function renderSchoolLibrary() {
       ${canManage ? `<form class="config-card workflow-form workflow-form-grid" data-library-action="checkout">
         <h3>Issue a book</h3><label>Available copy *<select name="CopyId" required><option value="">Choose barcode and title</option>${availableOptions}</select></label>
         <label>Borrower type *<select name="BorrowerType"><option>Student</option><option>Staff</option></select></label>
-        <label>Admission number or staff username *<input name="BorrowerRef" required autocomplete="off"></label>
+        <label>Find borrower by name, admission no., card, email or phone *
+          <input name="BorrowerRef" type="search" required autocomplete="off" list="libraryCheckoutBorrowers"
+            data-library-borrower-search placeholder="Search student or staff identifiers">
+          <datalist id="libraryCheckoutBorrowers"></datalist><small data-library-borrower-hint aria-live="polite">Type at least two characters, then select the correct borrower.</small></label>
         <div class="config-actionbar"><button type="submit">Check out</button><p class="status" data-library-status></p></div>
       </form>` : ''}
       ${table('Active library loans', activeLoans, [
@@ -10822,7 +10829,10 @@ function renderSchoolLibrary() {
       ${canManage ? `<form class="config-card workflow-form workflow-form-grid" data-library-action="reserve">
         <h3>Reserve a title</h3><label>Book title *<select name="TitleId" required><option value="">Choose title</option>${titleOptions}</select></label>
         <label>Borrower type *<select name="BorrowerType"><option>Student</option><option>Staff</option></select></label>
-        <label>Admission number or staff username *<input name="BorrowerRef" required autocomplete="off"></label>
+        <label>Find borrower by name, admission no., card, email or phone *
+          <input name="BorrowerRef" type="search" required autocomplete="off" list="libraryReservationBorrowers"
+            data-library-borrower-search placeholder="Search student or staff identifiers">
+          <datalist id="libraryReservationBorrowers"></datalist><small data-library-borrower-hint aria-live="polite">Type at least two characters, then select the correct borrower.</small></label>
         <div class="config-actionbar"><button type="submit">Reserve</button><p class="status" data-library-status></p></div>
       </form>` : ''}
       ${table('Reservation queue', pending, [
@@ -10856,6 +10866,46 @@ function renderSchoolLibrary() {
   ]);
   document.getElementById('refreshSchoolLibrary')?.addEventListener('click', (event) =>
     runButtonAction(event.currentTarget, 'Refreshing...', loadSchoolLibrary));
+  panelEl.querySelectorAll('[data-library-borrower-search]').forEach((input) => {
+    const form = input.closest('form');
+    const type = form.elements.BorrowerType;
+    const suggestions = form.querySelector('datalist');
+    const hint = form.querySelector('[data-library-borrower-hint]');
+    let sequence = 0;
+    let timer;
+    const search = () => {
+      clearTimeout(timer);
+      const query = clean(input.value);
+      const borrowerType = type.value;
+      const request = ++sequence;
+      suggestions.replaceChildren();
+      if (query.length < 2) {
+        hint.textContent = 'Type at least two characters, then select the correct borrower.';
+        return;
+      }
+      hint.textContent = 'Searching borrowers…';
+      timer = setTimeout(async () => {
+        try {
+          const result = await schoolLibraryRequest('searchBorrowers', { BorrowerType: borrowerType, Query: query });
+          if (request !== sequence || !input.isConnected || type.value !== borrowerType) return;
+          (result.borrowers || []).forEach((borrower) => {
+            const option = document.createElement('option');
+            option.value = borrower.BorrowerRef;
+            option.label = [borrower.BorrowerName, borrower.ClassName, borrower.BorrowerRef]
+              .map(clean).filter(Boolean).join(' · ');
+            suggestions.append(option);
+          });
+          hint.textContent = result.borrowers?.length
+            ? `${result.borrowers.length} matching ${borrowerType.toLowerCase()}(s). Select the correct reference.`
+            : 'No borrower found in this branch. Check the identifier and borrower type.';
+        } catch (error) {
+          if (request === sequence) hint.textContent = error.message || 'Borrower search failed.';
+        }
+      }, 250);
+    };
+    input.addEventListener('input', search);
+    type.addEventListener('change', () => { input.value = ''; search(); });
+  });
   panelEl.querySelectorAll('[data-library-action]').forEach((form) => form.addEventListener('submit', async (event) => {
     event.preventDefault();
     const button = event.submitter;

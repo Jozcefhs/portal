@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-import { normalizeLibraryPolicy } from '../functions/lib/school-library.js';
+import { borrowerFrom, normalizeLibraryPolicy, searchLibraryBorrowers } from '../functions/lib/school-library.js';
 import { featureFlagsForEdition, filterSectionsForFeatures } from '../functions/lib/organization-config.js';
 import { defaultModulesForRole } from '../functions/lib/role-module-access.js';
 import {
@@ -54,10 +54,36 @@ test('lending rules reject invalid limits', () => {
   assert.throws(() => normalizeLibraryPolicy({ MaxRenewals: 51 }), /valid max renewals/i);
 });
 
+test('library borrower search accepts relevant identifiers without exposing contact details', () => {
+  const students = [
+    { AdmissionNo: 'DCA/26/001', DisplayName: 'Ada Okoro', ParentEmail: 'family@example.com',
+      ParentPhone: '+234 800 123 4567', WalletCardId: 'CARD-0001', ClassName: 'Grade 7' },
+    { AdmissionNo: 'DCA/26/002', DisplayName: 'Bola Okoro', ParentEmail: 'family@example.com',
+      ParentPhone: '+234 800 123 4567', ClassName: 'Grade 8' },
+    { AdmissionNo: 'DCA/26/003', DisplayName: 'Inactive Reader', Status: 'Withdrawn' }
+  ];
+  const staff = [{ Username: 'teacher1', DisplayName: 'Grace Teacher', WorkEmail: 'grace@school.test',
+    Phone: '0800 999 0000', Department: 'Science' }];
+  for (const query of ['Ada', 'DCA/26/001', 'CARD-0001', 'Grade 7']) {
+    assert.equal(searchLibraryBorrowers(query, 'Student', students, staff)[0]?.BorrowerRef, 'DCA/26/001');
+  }
+  assert.equal(searchLibraryBorrowers('family@example.com', 'Student', students, staff).length, 2);
+  assert.equal(searchLibraryBorrowers('08001234567', 'Student', students, staff).length, 2);
+  assert.equal(searchLibraryBorrowers('Inactive', 'Student', students, staff).length, 0);
+  assert.equal(searchLibraryBorrowers('grace@school.test', 'Staff', students, staff)[0]?.BorrowerRef, 'teacher1');
+  assert.equal(searchLibraryBorrowers('Science', 'Staff', students, staff)[0]?.BorrowerRef, 'teacher1');
+  assert.equal(searchLibraryBorrowers('A', 'Student', students, staff).length, 0);
+  assert.equal(searchLibraryBorrowers('Ada', 'Student', students, staff)[0].ParentEmail, undefined);
+  assert.equal(borrowerFrom('CARD-0001', 'Student', students, staff).BorrowerRef, 'DCA/26/001');
+  assert.equal(borrowerFrom('grace@school.test', 'Staff', students, staff).BorrowerRef, 'teacher1');
+  assert.throws(() => borrowerFrom('family@example.com', 'Student', students, staff), /Multiple borrowers match/);
+});
+
 test('library mutations are authenticated, branch-scoped, versioned and atomic', () => {
   assert.match(endpoint, /requireStaffSession\(env, request\)/);
   assert.match(endpoint, /handleSchoolLibraryAction\(env, user, body\)/);
   assert.match(desktopEndpoint, /case 'getSchoolLibrary':/);
+  assert.match(desktopEndpoint, /case 'searchLibraryBorrowers':/);
   assert.match(desktopEndpoint, /staffAccessFor\(env,/);
   assert.match(desktopEndpoint, /case 'checkoutLibraryCopy':/);
   assert.match(desktopEndpoint, /case 'restoreLibraryCopy':/);
@@ -77,6 +103,7 @@ test('library mutations are authenticated, branch-scoped, versioned and atomic',
 test('staff and parent surfaces show the same scoped loans with due reminders', () => {
   assert.match(admin, /\['library', 'School Library'\]/);
   assert.match(admin, /data-library-action="checkout"/);
+  assert.match(admin, /data-library-borrower-search/);
   assert.match(admin, /data-library-return=/);
   assert.match(admin, /loadSchoolLibrary\(\)/);
   assert.match(css, /\.school-library-summary/);

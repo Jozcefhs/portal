@@ -111,33 +111,101 @@ function borrowerKey(branchId, type, ref) {
   return `${branchId}--${type.toLowerCase()}--${encodeURIComponent(ref.toLowerCase())}`;
 }
 
-function borrowerFrom(reference, type, students, staff) {
+function borrowerIdentity(row, type) {
+  if (type === 'Student') return [row.AdmissionNo, row.AccountRef, row.ApplicationReference, row.__id,
+    row.WalletCardId, row.walletCardId, row.CardId, row.cardId, row.DisplayName, row.ApplicantName,
+    row.StudentName, row.FullName, [row.FirstName, row.MiddleName, row.LastName].filter(Boolean).join(' '),
+    row.ParentEmail, row.VerificationEmail, row.Email, row.FatherEmail, row.MotherEmail, row.GuardianEmail,
+    row.ParentPhone, row.FatherPhone, row.MotherPhone, row.GuardianPhone, row.Phone];
+  return [row.Username, row.LoginUsername, row.__id, row.EmployeeId, row.StaffId,
+    row.DisplayName, row.FullName, row.WorkEmail, row.Email, row.Phone, row.PhoneNumber];
+}
+
+function compact(value) {
+  return lower(value).replace(/[^\p{L}\p{N}]/gu, '');
+}
+
+function identityVariants(values) {
+  return values.flatMap((value) => {
+    const original = lower(value);
+    if (!original) return [];
+    const digits = original.replace(/\D/g, '');
+    if (/^234\d{10}$/.test(digits)) return [original, `0${digits.slice(3)}`];
+    if (/^0\d{10}$/.test(digits)) return [original, `234${digits.slice(1)}`];
+    return [original];
+  });
+}
+
+function borrowerReference(row, type) {
+  return clean(type === 'Student' ? row.AdmissionNo || row.AccountRef || row.__id
+    : row.Username || row.LoginUsername || row.__id);
+}
+
+function borrowerName(row, type) {
+  return clean(type === 'Student' ? row.DisplayName || row.ApplicantName || row.StudentName
+    || row.FullName || [row.FirstName, row.MiddleName, row.LastName].filter(Boolean).join(' ')
+    : row.DisplayName || row.FullName || row.Username);
+}
+
+function borrowerActive(row, type) {
+  return type === 'Student'
+    ? !['withdrawn', 'inactive', 'deleted', 'archived'].includes(lower(row.Status || row.StudentStatus))
+    : row.Active !== false && !['inactive', 'disabled', 'terminated'].includes(lower(row.Status));
+}
+
+export function searchLibraryBorrowers(query, type, students = [], staff = []) {
+  const wanted = lower(query);
+  if (wanted.length < 2 || !['Student', 'Staff'].includes(type)) return [];
+  const terms = wanted.split(/\s+/).filter(Boolean);
+  const source = type === 'Student' ? students : staff;
+  const found = new Map();
+  for (const row of source) {
+    if (!borrowerActive(row, type)) continue;
+    const reference = borrowerReference(row, type);
+    if (!reference || found.has(lower(reference))) continue;
+    const fields = identityVariants([...borrowerIdentity(row, type), row.ClassName, row.ClassArm,
+      row.Department, row.Role]);
+    if (!terms.every((term) => fields.some((field) => field.includes(term) || compact(field).includes(compact(term))))) continue;
+    found.set(lower(reference), {
+      BorrowerType: type, BorrowerRef: reference, BorrowerName: borrowerName(row, type),
+      ClassName: clean(type === 'Student' ? row.ClassName : row.Department)
+    });
+    if (found.size >= 20) break;
+  }
+  return [...found.values()];
+}
+
+export function borrowerFrom(reference, type, students, staff) {
   const wanted = lower(reference);
   if (!wanted) throw failure('Choose a student or staff borrower.');
+  if (!['Student', 'Staff'].includes(type)) throw failure('Choose Student or Staff as the borrower type.');
+  const source = type === 'Student' ? students : staff;
+  const matches = source.filter((row) => identityVariants(borrowerIdentity(row, type)).some((candidate) => {
+    return candidate && (candidate === wanted || compact(candidate) === compact(wanted));
+  }));
+  const unique = [...new Map(matches.map((row) => [lower(borrowerReference(row, type)), row])).values()];
+  if (!unique.length) throw failure(`The ${type.toLowerCase()} was not found in this branch.`, 404);
+  if (unique.length > 1) throw failure('Multiple borrowers match. Search and select the correct admission number or staff username.', 409);
   if (type === 'Student') {
-    const student = students.find((row) => [row.AdmissionNo, row.AccountRef, row.ApplicationReference, row.__id]
-      .some((value) => lower(value) === wanted));
-    if (!student) throw failure('The student was not found in this branch.', 404);
+    const student = unique[0];
     if (['withdrawn', 'inactive', 'deleted', 'archived'].includes(lower(student.Status || student.StudentStatus))) {
       throw failure('Only an active student can borrow a library book.', 409);
     }
     return {
-      BorrowerType: 'Student', BorrowerRef: clean(student.AdmissionNo || student.AccountRef || student.__id),
-      BorrowerName: clean(student.DisplayName || student.ApplicantName || student.StudentName
-        || student.FullName || [student.FirstName, student.MiddleName, student.LastName].filter(Boolean).join(' ')),
+      BorrowerType: 'Student', BorrowerRef: borrowerReference(student, type),
+      BorrowerName: borrowerName(student, type),
       ClassName: clean(student.ClassName), SchoolSection: schoolSectionFor(student),
       ParentEmail: lower(student.ParentEmail || student.VerificationEmail || student.Email)
     };
   }
   if (type === 'Staff') {
-    const person = staff.find((row) => [row.Username, row.LoginUsername, row.__id].some((value) => lower(value) === wanted));
-    if (!person) throw failure('The staff member was not found in this branch.', 404);
+    const person = unique[0];
     if (person.Active === false || ['inactive', 'disabled', 'terminated'].includes(lower(person.Status))) {
       throw failure('Only an active staff member can borrow a library book.', 409);
     }
     return {
-      BorrowerType: 'Staff', BorrowerRef: clean(person.Username || person.__id),
-      BorrowerName: clean(person.DisplayName || person.Username)
+      BorrowerType: 'Staff', BorrowerRef: borrowerReference(person, type),
+      BorrowerName: borrowerName(person, type)
     };
   }
   throw failure('Choose Student or Staff as the borrower type.');
@@ -466,6 +534,13 @@ async function savePolicy(env, user, body, branchId) {
 export async function handleSchoolLibraryAction(env, user, body = {}) {
   const action = lower(body.action || body.Action || 'list');
   if (action === 'list') return load(env, user, body);
+  if (action === 'searchborrowers') {
+    requireAccess(user);
+    const branchId = await branchFor(env, user, body);
+    const directory = await readerDirectory(env, branchId);
+    return { ok: true, borrowers: searchLibraryBorrowers(body.Query, clean(body.BorrowerType),
+      directory.students, directory.staff) };
+  }
   requireAccess(user, true);
   const branchId = await branchFor(env, user, body);
   if (action === 'savetitle') return saveTitle(env, user, body, branchId);
