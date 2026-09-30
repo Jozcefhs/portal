@@ -2309,16 +2309,23 @@ function renderStores(child) {
   const identity = childIdentity(child);
   const eligibleCatalog = (dashboard.storeCatalogByChild?.[identity] || []).filter((item) => storeItemMatchesChild(item, child));
   const query = String(storeSearch?.value || '').trim().toLowerCase();
+  const terms = query.split(/\s+/).filter(Boolean);
   const catalog = query
-    ? eligibleCatalog.filter((item) => [
+    ? eligibleCatalog.filter((item) => {
+      const searchable = [
         item.ItemName,
         item.ItemCode,
+        item.Barcode,
+        item.SKU,
         item.Category,
         item.Size,
+        item.Unit,
         item.Gender,
         item.ClassName,
         item.StoreType
-      ].filter(Boolean).join(' ').toLowerCase().includes(query))
+      ].filter(Boolean).join(' ').toLowerCase();
+      return terms.every((term) => searchable.includes(term));
+    })
     : eligibleCatalog;
   if (storeSearchSummary) {
     storeSearchSummary.textContent = query

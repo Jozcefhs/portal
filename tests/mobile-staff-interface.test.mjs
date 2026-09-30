@@ -435,7 +435,7 @@ test('parents can search the eligible school-store catalog', () => {
   assert.match(parentDashboardHtml, /id="storeSearchSummary"[\s\S]*?aria-live="polite"/);
   assert.match(parentDashboardJs, /const eligibleCatalog = \(dashboard\.storeCatalogByChild\?\.\[identity\] \|\| \[\]\)\.filter/);
   assert.match(parentDashboardJs, /item\.ItemName,[\s\S]*?item\.Category,[\s\S]*?item\.Size,[\s\S]*?item\.ClassName,[\s\S]*?item\.StoreType/);
-  assert.match(parentDashboardJs, /\.join\(' '\)\.toLowerCase\(\)\.includes\(query\)/);
+  assert.match(parentDashboardJs, /terms\.every\(\(term\) => searchable\.includes\(term\)\)/);
   assert.match(parentDashboardJs, /storeSearch\?\.addEventListener\('input'/);
   assert.match(parentDashboardJs, /No store items match/);
   assert.match(portalCss, /\.store-search-control input\{height:36px;min-height:36px;[^}]*font-size:12px/);

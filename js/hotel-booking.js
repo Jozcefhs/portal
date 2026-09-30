@@ -73,10 +73,12 @@ function updateTotal() {
 
 function filteredRooms() {
   const query = clean(roomSearch.value).toLowerCase();
+  const terms = query.split(/\s+/).filter(Boolean);
   const type = roomType.value;
   const rooms = availableRooms.filter((room) => (
     (!type || clean(room.RoomType) === type) &&
-    (!query || `${clean(room.RoomNumber)} ${clean(room.RoomType)}`.toLowerCase().includes(query))
+    terms.every((term) => [room.RoomNumber, room.RoomType, room.RoomId, room.Capacity]
+      .map(clean).join(' ').toLowerCase().includes(term))
   ));
   const compareNumber = (left, right) => clean(left.RoomNumber).localeCompare(clean(right.RoomNumber), undefined, { numeric: true });
   if (roomSort.value === 'price-asc' || roomSort.value === 'price-desc') {

@@ -49,7 +49,7 @@ test('public organisation store exposes a compact searchable catalogue and autho
   assert.match(storeHtml, /class="public-store-header" id="publicStoreHeader"/);
   assert.match(storeHtml, /id="publicStoreCheckout" tabindex="-1"/);
   assert.match(storeHtml, /js\/payment-methods\.js\?v=20260809-direct-transfer/);
-  assert.match(storeHtml, /js\/store\.js\?v=20260809-direct-transfer/);
+  assert.match(storeHtml, /js\/store\.js\?v=20260930-identifier-search/);
   assert.match(storeCompactCss, /\.public-store-header\s*\{[\s\S]*?position: sticky;[\s\S]*?top: 0;[\s\S]*?z-index: 20;/);
   assert.match(storeCompactCss, /@media \(max-width: 820px\)[\s\S]*?\.public-store-header\s*\{[\s\S]*?gap: 6px;[\s\S]*?padding: 10px 12px;/);
   assert.match(storeCompactCss, /\.public-store-header > div:last-child > span\s*\{\s*display: none;/);

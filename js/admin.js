@@ -4266,9 +4266,11 @@ function bindOrganizationCommerceWorkspace(section, data = {}) {
   const search = workspace.querySelector('#commerceCatalogSearch');
   const filterProducts = () => {
     const query = clean(search?.value).toLowerCase();
+    const terms = query.split(/\s+/).filter(Boolean);
     organizationCommerceSearch[section] = search?.value || '';
     workspace.querySelectorAll('[data-commerce-search-text]').forEach((row) => {
-      row.hidden = Boolean(query) && !clean(row.dataset.commerceSearchText).includes(query);
+      const searchable = clean(row.dataset.commerceSearchText);
+      row.hidden = !terms.every((term) => searchable.includes(term));
     });
   };
   search?.addEventListener('input', filterProducts);
@@ -5493,7 +5495,7 @@ function organizedDepartmentWorkspace(data) {
   const meetingOptions = `<option value="">Choose meeting</option>${meetings.map((row) => `<option value="${escapeHtml(row.MeetingId)}">${escapeHtml(`${row.Date || ''} · ${row.Title || row.MeetingId}`)}</option>`).join('')}`;
   const positionOptions = `<option value="">No position</option>${positions.map((row) => `<option value="${escapeHtml(row.PositionId)}" data-department-id="${escapeHtml(row.DepartmentId)}">${escapeHtml(row.Name)}</option>`).join('')}`;
   const batchPeopleOptions = assignablePeople.map((row) => `
-    <label class="department-batch-person check-row" data-batch-person-row data-person-search="${escapeHtml(lower(`${row.DisplayName || ''} ${row.PersonType || ''} ${row.Detail || ''} ${row.PersonId || ''}`))}">
+    <label class="department-batch-person check-row" data-batch-person-row data-person-search="${escapeHtml(lower(`${row.DisplayName || ''} ${row.PersonType || ''} ${row.Detail || ''} ${row.PersonId || ''} ${row.PersonKey || ''}`))}">
       <input type="checkbox" name="PersonKey" value="${escapeHtml(row.PersonKey)}">
       <span><strong>${escapeHtml(row.DisplayName || row.PersonId)}</strong><small>${escapeHtml([row.PersonType, row.Detail].filter(Boolean).join(' · '))}</small></span>
       <em data-person-assignment-state></em>
@@ -5846,7 +5848,11 @@ async function loadOrganizationDepartments() {
       departmentSelect?.addEventListener('change', syncBatchPeople);
       searchInput?.addEventListener('input', () => {
         const query = lower(searchInput.value);
-        personRows.forEach((row) => { row.hidden = Boolean(query && !clean(row.dataset.personSearch).includes(query)); });
+        const terms = query.split(/\s+/).filter(Boolean);
+        personRows.forEach((row) => {
+          const searchable = clean(row.dataset.personSearch);
+          row.hidden = !terms.every((term) => searchable.includes(term));
+        });
       });
       batchAssignmentForm.querySelector('[data-batch-select-all]')?.addEventListener('click', () => {
         personRows.forEach((row) => {
@@ -8237,8 +8243,9 @@ function bindHrPersonPickers(root = document) {
     const staff = source.filter((option) => option.value);
     const render = () => {
       const query = lower(search.value);
+      const terms = query.split(/\s+/).filter(Boolean);
       const previous = select.value;
-      const matches = staff.filter((option) => !query || option.search.includes(query));
+      const matches = staff.filter((option) => terms.every((term) => option.search.includes(term)));
       select.replaceChildren(...source.filter((option) => !option.value || matches.includes(option)).map((item) => {
         const option = document.createElement('option');
         option.value = item.value;
@@ -8274,9 +8281,11 @@ function bindHrWorkspaceSearch(root = document) {
     .filter((row) => !/no records found/i.test(clean(row.textContent)));
   const render = () => {
     const query = lower(search.value);
+    const terms = query.split(/\s+/).filter(Boolean);
     let matches = 0;
     rows.forEach((row) => {
-      const matched = !query || lower(row.textContent).includes(query);
+      const searchable = lower(`${row.textContent} ${row.dataset.listSearch || ''}`);
+      const matched = terms.every((term) => searchable.includes(term));
       row.hidden = !matched;
       if (matched) matches += 1;
     });
@@ -10556,9 +10565,10 @@ function bindStudentConductStudentSearch(data) {
 
   const update = ({ chooseSingle = false } = {}) => {
     const query = lower(search.value);
+    const terms = query.split(/\s+/).filter(Boolean);
     const selectedRef = clean(select.value);
     const matching = query
-      ? students.filter((row) => row.searchText.includes(query))
+      ? students.filter((row) => terms.every((term) => row.searchText.includes(term)))
       : students;
     const visible = [...matching];
     const selectedStudent = students.find((row) => row.ref === selectedRef);
@@ -11517,9 +11527,11 @@ function filterAcademicStudentCandidateOptions(form) {
   const field = form?.querySelector('[data-academic-checkbox-purpose="student-arm-candidates"]');
   if (!search || !field) return;
   const query = clean(search.value).toLowerCase();
+  const terms = query.split(/\s+/).filter(Boolean);
   let visible = 0;
   field.querySelectorAll('.academic-checkbox-option').forEach((option) => {
-    const matches = !query || clean(option.dataset.academicSearchText || option.textContent).toLowerCase().includes(query);
+    const searchable = clean(option.dataset.academicSearchText || option.textContent).toLowerCase();
+    const matches = terms.every((term) => searchable.includes(term));
     option.hidden = !matches;
     if (matches) visible += 1;
   });

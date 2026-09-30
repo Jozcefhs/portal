@@ -57,7 +57,12 @@ function cartTotal() {
 
 function renderProducts() {
   const query = clean(storeSearch.value).toLowerCase();
-  const visible = inventory.filter((item) => !query || [item.ItemName, item.ItemCode, item.Category, item.Size].map(clean).join(' ').toLowerCase().includes(query));
+  const terms = query.split(/\s+/).filter(Boolean);
+  const visible = inventory.filter((item) => {
+    const searchable = [item.ItemName, item.ItemCode, item.Barcode, item.SKU,
+      item.Category, item.Size, item.Unit].map(clean).join(' ').toLowerCase();
+    return terms.every((term) => searchable.includes(term));
+  });
   storeItemCount.textContent = `${inventory.length} item${inventory.length === 1 ? '' : 's'}`;
   storeProducts.innerHTML = visible.length ? visible.map((item) => {
     const reference = clean(item.ItemCode);
