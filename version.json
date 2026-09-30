@@ -1,7 +1,7 @@
 {
-  "version": "3.1.9",
+  "version": "3.1.10",
   "channel": "stable",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.9.exe",
-  "sha256": "ebdacc6bcfb006ff4734531086a242a119b62033b2d25be72ae02ad017244e37",
-  "notes": "Dynamax Desktop v3.1.9 restores Accounts Officer Post / Pay after sign-in and user switching, refreshes approval-role actions, and keeps accounting buttons visible on narrower screens."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.10.exe",
+  "sha256": "176836c143fd7e255b35787133f4614fb53151cacbef2e667039ad175765d94c",
+  "notes": "Dynamax Desktop v3.1.10 makes historical parent-payment imports responsive and stops safely on uncertain timeouts. It also includes School Library, stock-linked Tuck Shop, class CSV export, timetable, and calendar updates."
 }

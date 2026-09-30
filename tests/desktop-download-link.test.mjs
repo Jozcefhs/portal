@@ -23,7 +23,7 @@ test('desktop download resolves the current public release manifest', () => {
 
 test('public release manifest includes a verified versioned installer', () => {
   assert.equal(releaseManifest.channel, 'stable');
-  assert.equal(releaseManifest.version, '3.1.9');
+  assert.equal(releaseManifest.version, '3.1.10');
   assert.equal(
     releaseManifest.installer_url,
     `https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v${releaseManifest.version}.exe`,
