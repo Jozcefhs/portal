@@ -1,4 +1,4 @@
-import { listCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
+import { batchCommitDocuments, listCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { listSchoolCollection, schoolSectionFor } from '../lib/school-scope.js';
 import { getWalletCardAccount, recordWalletPurchase } from './backend.js';
@@ -15,6 +15,7 @@ import {
   normalizeCommercePaymentMethod,
   recordManualOrganizationCommerceSale
 } from '../lib/organization-commerce.js';
+import { recordTuckShopStaffSale, searchTuckShopCustomers } from '../lib/school-tuck-shop.js';
 
 function clean(value) { return String(value ?? '').trim(); }
 function lower(value) { return clean(value).toLowerCase(); }
@@ -41,6 +42,7 @@ const CONFIG = {
 
 const IDEMPOTENT_ACTIONS = Object.freeze({
   'tuckShop:recordwalletpurchase': 'staff-department-wallet-purchase',
+  'tuckShop:recordsale': 'staff-department-staff-sale',
   'clinic:sendclinicreport': 'staff-department-clinic-report-email',
   'clinic:sendmarketlist': 'staff-department-clinic-market-list-email',
   'kitchen:sendmarketlist': 'staff-department-kitchen-market-list-email',
@@ -94,7 +96,7 @@ async function loadDepartment(env, section, user) {
     listCollection(env, config.inventory),
     listCollection(env, config.movements),
     section === 'clinic' ? listCollection(env, 'clinicRecords') : Promise.resolve([]),
-    section === 'restaurant'
+    ['restaurant', 'tuckShop'].includes(section)
       ? listOrganizationCommerceSales(env, section, user)
       : Promise.resolve([])
   ]);
@@ -124,10 +126,10 @@ async function saveInventory(env, section, body, user) {
     Unit: clean(body.Unit) || config.unit,
     Quantity: Math.max(0, number(body.Quantity)),
     ReorderLevel: Math.max(0, number(body.ReorderLevel)),
-    Price: section === 'restaurant'
+    Price: ['restaurant', 'tuckShop'].includes(section)
       ? Math.max(0, number(body.Price ?? body.SalePrice ?? existing.Price ?? existing.SalePrice))
       : number(existing.Price),
-    Active: section === 'restaurant'
+    Active: ['restaurant', 'tuckShop'].includes(section)
       ? (['no', 'false', '0', 'inactive'].includes(lower(body.Active ?? existing.Active ?? 'yes')) ? 'NO' : 'YES')
       : clean(existing.Active),
     Notes: clean(body.Notes),
@@ -136,7 +138,16 @@ async function saveInventory(env, section, body, user) {
   };
   delete payload.__id;
   delete payload.__name;
-  await upsertDocument(env, config.inventory, existing.__id || safeId(`${scopeFields(user).BranchId}-${scopeFields(user).SchoolSection}-${itemName}`), payload);
+  if (section === 'tuckShop') {
+    if (existing.__id && !existing.__updateTime) {
+      const err = new Error('Tuck-shop stock version is unavailable. Refresh and try again.'); err.status = 409; throw err;
+    }
+    await batchCommitDocuments(env, [{ collectionPath: config.inventory,
+      documentId: existing.__id || safeId(`${scopeFields(user).BranchId}-${scopeFields(user).SchoolSection}-${itemName}`),
+      data: payload, ...(existing.__id ? { updateTime: existing.__updateTime } : { exists: false }) }]);
+  } else {
+    await upsertDocument(env, config.inventory, existing.__id || safeId(`${scopeFields(user).BranchId}-${scopeFields(user).SchoolSection}-${itemName}`), payload);
+  }
   return { ok: true, message: `${config.label} inventory item saved.` };
 }
 
@@ -156,9 +167,8 @@ async function recordMovement(env, section, body, user) {
   const updated = { ...item, Quantity: movementType === 'IN' ? current + quantity : current - quantity, LastUpdated: timestamp, UpdatedBy: user.displayName || user.username };
   delete updated.__id;
   delete updated.__name;
-  await upsertDocument(env, config.inventory, item.__id, updated);
   const movementNo = `${config.prefix}-${Date.now()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
-  await upsertDocument(env, config.movements, movementNo, {
+  const movement = {
     ...scopeFields(user),
     MovementNo: movementNo,
     Date: timestamp,
@@ -167,7 +177,19 @@ async function recordMovement(env, section, body, user) {
     Quantity: quantity,
     Reason: clean(body.Reason),
     RecordedBy: user.displayName || user.username
-  });
+  };
+  if (section === 'tuckShop') {
+    if (!item.__updateTime) {
+      const err = new Error('Tuck-shop stock version is unavailable. Refresh and try again.'); err.status = 409; throw err;
+    }
+    await batchCommitDocuments(env, [
+      { collectionPath: config.inventory, documentId: item.__id, data: updated, updateTime: item.__updateTime },
+      { collectionPath: config.movements, documentId: movementNo, data: movement, exists: false }
+    ]);
+  } else {
+    await upsertDocument(env, config.inventory, item.__id, updated);
+    await upsertDocument(env, config.movements, movementNo, movement);
+  }
   return { ok: true, message: `${config.label} stock ${movementType === 'IN' ? 'receipt' : 'issue'} recorded.` };
 }
 
@@ -249,6 +271,8 @@ async function postWalletPurchase(env, body, user) {
   return recordWalletPurchase(env, {
     AccountRef: studentReference(student),
     Amount: body.Amount,
+    Items: body.Items,
+    SaleRequestId: body.SaleRequestId,
     Description: clean(body.Description) || 'Tuck shop purchase',
     WalletPin: body.WalletPin,
     Department: 'Tuck Shop',
@@ -352,8 +376,8 @@ export async function onRequestPost(context) {
       const err = new Error('This staff account is not allowed to manage that department.'); err.status = 403; throw err;
     }
     const action = lower(body.action || 'list');
-    if (action === 'recordsale' && section !== 'restaurant') {
-      const err = new Error('Direct commerce payments are available only in the Restaurant workspace.');
+    if (action === 'recordsale' && !['restaurant', 'tuckShop'].includes(section)) {
+      const err = new Error('Direct commerce payments are not available in this department.');
       err.status = 403;
       throw err;
     }
@@ -375,9 +399,10 @@ export async function onRequestPost(context) {
     else if (action === 'saveclinicrecord' && section === 'clinic') await saveClinicRecord(env, body, user);
     else if (action === 'lookupclinicstudent' && section === 'clinic') actionResult = { clinicStudent: await lookupClinicStudent(env, body, user) };
     else if (action === 'lookupwallet' && section === 'tuckShop') actionResult = { walletAccount: await lookupWallet(env, body, user) };
+    else if (action === 'searchcustomers' && section === 'tuckShop') actionResult = await searchTuckShopCustomers(env, user, body);
     else if (action === 'recordwalletpurchase' && section === 'tuckShop') {
       const purchase = await postWalletPurchase(env, body, user);
-      actionResult = { walletAccount: purchase.account, walletPurchase: purchase.ledger };
+      actionResult = { walletAccount: purchase.account, walletPurchase: purchase.ledger, sale: purchase.sale };
     }
     else if (action === 'prepareclinicreport' && section === 'clinic') actionResult = { clinicReport: await prepareClinicReport(env, body, user) };
     else if (action === 'sendclinicreport' && section === 'clinic') actionResult = { clinicReport: await sendClinicReport(env, body, user) };
@@ -388,7 +413,13 @@ export async function onRequestPost(context) {
         ? await initializeOnlineOrganizationCommerceSale(env, request, section, body, user)
         : await recordManualOrganizationCommerceSale(env, section, body, user);
     }
+    else if (action === 'recordsale' && section === 'tuckShop') {
+      actionResult = await recordTuckShopStaffSale(env, user, body);
+    }
     else if (action !== 'list') { const err = new Error('Choose a valid department action.'); err.status = 400; throw err; }
+    if (action === 'searchcustomers') {
+      return Response.json(actionResult, { headers: { 'Cache-Control': 'no-store' } });
+    }
     if (action === 'recordsale') {
       await completeIdempotentRequest(env, idempotency, actionResult, 200);
       return Response.json(actionResult, { headers: { 'Cache-Control': 'no-store' } });
@@ -401,6 +432,7 @@ export async function onRequestPost(context) {
       saveclinicrecord: 'Clinic visit saved.',
       lookupclinicstudent: 'Student found. Complete the clinic visit details.',
       lookupwallet: 'Wallet account loaded.',
+      searchcustomers: 'Customers found.',
       recordwalletpurchase: 'Wallet purchase recorded and posted to Finance and Accounting.',
       prepareclinicreport: 'Clinic report prepared for review.',
       sendclinicreport: 'Clinic report sent to the parent email.',

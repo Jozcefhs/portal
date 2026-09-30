@@ -186,8 +186,17 @@ let academicCbtDraft = {
 };
 const organizationCommerceCarts = {
   organizationStore: new Map(),
-  restaurant: new Map()
+  restaurant: new Map(),
+  tuckShop: new Map()
 };
+let tuckShopCustomerType = 'Student';
+let tuckShopStaffCustomer = null;
+let tuckShopWalletAccount = null;
+let tuckShopCatalogSearch = '';
+let tuckShopCustomerSearch = '';
+let tuckShopLastSale = null;
+let tuckShopWorkspaceBranch = '';
+let tuckShopSaleRequestId = '';
 const organizationCommerceSearch = {
   organizationStore: '',
   restaurant: ''
@@ -3832,7 +3841,7 @@ function commerceInventory(section, data = {}) {
 function commerceItemReference(section, item = {}) {
   return clean(section === 'organizationStore'
     ? (item.ItemCode || item.__id)
-    : (item.ItemName || item.__id));
+    : section === 'tuckShop' ? (item.__id || item.ItemName) : (item.ItemName || item.__id));
 }
 
 function commerceItemPrice(item = {}) {
@@ -4812,6 +4821,179 @@ function bindAccountWalletSetupWorkspace() {
   });
 }
 
+function renderTuckShopPOS(data = {}) {
+  const inventory = data.inventory || [];
+  const cart = commerceCart('tuckShop');
+  const entries = [...cart.entries()];
+  const total = entries.reduce((sum, [, row]) => sum + commerceItemPrice(row.item) * row.quantity, 0);
+  const available = inventory.filter((item) => clean(item.Active || 'YES').toUpperCase() !== 'NO'
+    && commerceItemStock(item) > 0 && commerceItemPrice(item) > 0);
+  const wallet = tuckShopWalletAccount;
+  const staff = tuckShopStaffCustomer;
+  return `<section class="config-card department-primary-workflow tuck-shop-pos-workspace" id="tuckShopPOS">
+    <header class="config-card-heading"><div><small>Stock-linked checkout</small><h3>Tuck Shop Point of Sale</h3><p>Select items and quantities. The total is calculated from saved prices; checkout reduces stock automatically.</p></div><span class="workspace-feature-icon" aria-hidden="true">&#128722;</span></header>
+    ${tuckShopLastSale ? commerceReceiptPreview(tuckShopLastSale) : ''}
+    <div class="commerce-pos-layout">
+      <section class="commerce-catalog" aria-label="Tuck shop catalogue">
+        <label class="commerce-search-label">Search items<input id="tuckShopCatalogSearch" type="search" value="${escapeHtml(tuckShopCatalogSearch)}" placeholder="Name, category or unit"></label>
+        <div class="commerce-product-list">${available.map((item, index) => {
+          const ref = commerceItemReference('tuckShop', item);
+          const searchText = [item.ItemName, item.Category, item.Unit, item.Barcode, item.SKU].map(clean).join(' ').toLowerCase();
+          return `<article class="commerce-product" data-tuck-shop-search="${escapeHtml(searchText)}"><div><strong>${escapeHtml(item.ItemName)}</strong><span>${escapeHtml([item.Category, item.Unit].filter(Boolean).join(' · '))}</span><small>${money(commerceItemPrice(item))} · ${commerceItemStock(item)} in stock</small></div><div class="commerce-product-action"><select data-tuck-shop-add-quantity="${index}" aria-label="Quantity for ${escapeHtml(item.ItemName)}">${commerceQuantityOptions(commerceItemStock(item))}</select><button type="button" class="compact-icon-action commerce-add-button" data-tuck-shop-add="${escapeHtml(ref)}" data-tuck-shop-index="${index}" aria-label="Add ${escapeHtml(item.ItemName)} to cart">&#128722;</button></div></article>`;
+        }).join('') || '<p class="muted commerce-empty">No priced items in stock. Add items, prices and stock in Inventory first.</p>'}</div>
+      </section>
+      <section class="commerce-cart" aria-label="Tuck shop cart"><div class="commerce-cart-title"><div><small>Current sale</small><h4>Cart</h4></div><strong>${money(total)}</strong></div>
+        <div class="commerce-cart-lines">${entries.map(([ref, row]) => `<article class="commerce-cart-line"><div><strong>${escapeHtml(row.item.ItemName)}</strong><span>${money(commerceItemPrice(row.item))} each</span></div><select data-tuck-shop-quantity="${escapeHtml(ref)}" aria-label="Quantity for ${escapeHtml(row.item.ItemName)}">${commerceQuantityOptions(commerceItemStock(row.item), row.quantity)}</select><strong>${money(commerceItemPrice(row.item) * row.quantity)}</strong><button type="button" class="compact-icon-action compact-delete-action" data-tuck-shop-remove="${escapeHtml(ref)}" aria-label="Remove ${escapeHtml(row.item.ItemName)}">&#128465;</button></article>`).join('') || '<p class="muted commerce-empty">Select an item to begin.</p>'}</div>
+        <label>Customer type<select id="tuckShopCustomerType"><option value="Student" ${tuckShopCustomerType === 'Student' ? 'selected' : ''}>Student · wallet</option><option value="Staff" ${tuckShopCustomerType === 'Staff' ? 'selected' : ''}>Staff · cash, transfer or POS</option></select></label>
+        ${tuckShopCustomerType === 'Student' ? `<form id="walletLookupForm" class="workflow-form workflow-form-grid config-form"><label>Search student<input id="tuckShopStudentSearch" type="search" list="tuckShopStudentMatches" value="${escapeHtml(tuckShopCustomerSearch)}" placeholder="Name, admission number, card, phone or email" autocomplete="off"><datalist id="tuckShopStudentMatches"></datalist></label><label>Wallet card ID<input name="WalletCardId" autocomplete="off" placeholder="Scan or enter card ID"></label><label>Admission number<input name="AccountRef" autocomplete="off" placeholder="Admission number"></label><div class="config-actionbar"><p class="status" data-department-status></p><div class="inline-action-group"><button type="button" id="tuckShopNfcScan">&#9673; Scan NFC Card</button><button type="button" id="tuckShopFaceLookup" class="student-face-workflow-action">&#128247; Find by face</button><button type="submit">Find Student Wallet</button></div></div></form>
+          ${wallet ? `<div class="wallet-account-result"><div><small>Student</small><strong>${escapeHtml(wallet.DisplayName)}</strong><span>${escapeHtml(wallet.AdmissionNo || wallet.AccountRef)} · ${escapeHtml(wallet.ClassName || '')}</span></div><div><small>Wallet balance</small><strong>${money(wallet.WalletBalance)}</strong><span>Spent today ${money(wallet.WalletSpentToday)}</span></div></div>` : '<p class="muted">Find the student before taking payment.</p>'}
+          <form id="walletPurchaseForm" class="commerce-checkout-form"><input type="hidden" name="AccountRef" value="${escapeHtml(wallet?.AccountRef || '')}"><label>Wallet PIN (when required)<input name="WalletPin" type="password" inputmode="numeric" autocomplete="off"></label><div class="commerce-checkout-total"><span>Calculated total</span><strong>${money(total)}</strong></div><div class="config-actionbar"><p class="status" data-department-status></p><button type="submit" ${wallet && entries.length ? '' : 'disabled'}>Complete wallet sale</button></div></form>` : `<form id="tuckShopStaffLookupForm" class="workflow-form config-form"><label>Search staff<input name="Query" id="tuckShopStaffSearch" type="search" list="tuckShopStaffMatches" value="${escapeHtml(tuckShopCustomerSearch)}" placeholder="Name, username, staff ID, phone or email" autocomplete="off"><datalist id="tuckShopStaffMatches"></datalist></label><div class="config-actionbar"><p class="status" data-department-status></p><button type="submit">Select staff member</button></div></form>
+          ${staff ? `<div class="wallet-account-result"><div><small>Staff customer</small><strong>${escapeHtml(staff.DisplayName || staff.Name)}</strong><span>${escapeHtml(staff.CustomerRef || staff.Username || '')}</span></div></div>` : '<p class="muted">Select a staff customer before taking payment.</p>'}
+          <form id="tuckShopStaffSaleForm" class="commerce-checkout-form"><label>Payment method<select name="PaymentMethod"><option>Cash</option><option>Bank Transfer</option><option>POS / Card</option></select></label><label>Payment reference<input name="PaymentReference" placeholder="Required for transfer or POS"></label><div class="commerce-checkout-total"><span>Calculated total</span><strong>${money(total)}</strong></div><div class="config-actionbar"><p class="status" data-department-status></p><button type="submit" ${staff && entries.length ? '' : 'disabled'}>Complete staff sale</button></div></form>`}
+      </section>
+    </div>
+    ${table('Recent Tuck Shop Sales', (data.sales || []).slice(0, 30), [
+      { label: 'Receipt', value: (row) => row.SaleNo }, { label: 'Customer', value: (row) => row.CustomerName },
+      { label: 'Payment', value: (row) => row.PaymentMethod }, { label: 'Amount', value: (row) => money(row.Amount) },
+      { label: 'Date', value: (row) => row.PaidAt || row.SaleDate },
+      { label: 'Print', render: (row) => `<button type="button" class="compact-icon-action" data-commerce-print="${escapeHtml(row.SaleNo)}" aria-label="Print receipt ${escapeHtml(row.SaleNo)}">&#128424;</button>` }
+    ])}
+  </section>`;
+}
+
+async function searchTuckShopCustomer(type, query) {
+  const response = await staffFetch('/api/staff-departments', {
+    method: 'POST', credentials: 'same-origin', cache: 'no-store',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'searchCustomers', section: 'tuckShop', CustomerType: type, Query: query })
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || !result.ok) throw new Error(result.message || 'Could not search customers.');
+  return result.customers || [];
+}
+
+function tuckShopSaleItems() {
+  return [...commerceCart('tuckShop').entries()].map(([Reference, entry]) => ({ Reference, Quantity: entry.quantity }));
+}
+
+function bindTuckShopPOS(data) {
+  const workspace = document.getElementById('tuckShopPOS');
+  if (!workspace) return;
+  workspace.querySelectorAll('[data-commerce-print]').forEach((button) => button.addEventListener('click', async () => {
+    const sale = clean(tuckShopLastSale?.SaleNo) === clean(button.dataset.commercePrint)
+      ? tuckShopLastSale : (data.sales || []).find((row) => clean(row.SaleNo) === clean(button.dataset.commercePrint));
+    const format = await chooseReceiptPrintFormat();
+    if (format && sale) printOrganizationCommerceReceipt(sale, format);
+  }));
+  const refresh = () => renderDepartmentOperations('tuckShop', data);
+  const search = workspace.querySelector('#tuckShopCatalogSearch');
+  const filter = () => workspace.querySelectorAll('[data-tuck-shop-search]').forEach((row) => {
+    row.hidden = !row.dataset.tuckShopSearch.includes(clean(search?.value).toLowerCase());
+  });
+  search?.addEventListener('input', () => { tuckShopCatalogSearch = search.value; filter(); });
+  filter();
+  workspace.querySelectorAll('[data-tuck-shop-add]').forEach((button) => button.addEventListener('click', () => {
+    const item = (data.inventory || []).filter((row) => clean(row.Active || 'YES').toUpperCase() !== 'NO'
+      && commerceItemStock(row) > 0 && commerceItemPrice(row) > 0)[Number(button.dataset.tuckShopIndex)];
+    if (!item) return;
+    const ref = commerceItemReference('tuckShop', item);
+    const quantity = Number(workspace.querySelector(`[data-tuck-shop-add-quantity="${button.dataset.tuckShopIndex}"]`)?.value || 1);
+    const cart = commerceCart('tuckShop');
+    cart.set(ref, { item, quantity: Math.min(commerceItemStock(item), quantity + (cart.get(ref)?.quantity || 0)) });
+    tuckShopSaleRequestId = '';
+    refresh();
+  }));
+  workspace.querySelectorAll('[data-tuck-shop-quantity]').forEach((input) => input.addEventListener('change', () => {
+    const entry = commerceCart('tuckShop').get(input.dataset.tuckShopQuantity);
+    if (entry) entry.quantity = Number(input.value);
+    tuckShopSaleRequestId = '';
+    refresh();
+  }));
+  workspace.querySelectorAll('[data-tuck-shop-remove]').forEach((button) => button.addEventListener('click', () => {
+    commerceCart('tuckShop').delete(button.dataset.tuckShopRemove);
+    tuckShopSaleRequestId = '';
+    refresh();
+  }));
+  workspace.querySelector('#tuckShopCustomerType')?.addEventListener('change', (event) => {
+    tuckShopCustomerType = event.currentTarget.value;
+    tuckShopCustomerSearch = '';
+    tuckShopWalletAccount = null;
+    tuckShopStaffCustomer = null;
+    tuckShopSaleRequestId = '';
+    refresh();
+  });
+  const customerSearch = workspace.querySelector('#tuckShopStudentSearch, #tuckShopStaffSearch');
+  const list = workspace.querySelector('#tuckShopStudentMatches, #tuckShopStaffMatches');
+  let searchTimer;
+  customerSearch?.addEventListener('input', () => {
+    tuckShopCustomerSearch = customerSearch.value;
+    tuckShopSaleRequestId = '';
+    if (tuckShopCustomerType === 'Student') tuckShopWalletAccount = null;
+    else tuckShopStaffCustomer = null;
+    workspace.querySelector('#walletPurchaseForm button[type="submit"], #tuckShopStaffSaleForm button[type="submit"]')?.setAttribute('disabled', '');
+    clearTimeout(searchTimer);
+    list.replaceChildren();
+    if (clean(customerSearch.value).length < 2) return;
+    searchTimer = setTimeout(async () => {
+      const query = clean(customerSearch.value);
+      try {
+        const matches = await searchTuckShopCustomer(tuckShopCustomerType, query);
+        if (query !== clean(customerSearch.value)) return;
+        list.replaceChildren(...matches.map((row) => {
+          const option = document.createElement('option');
+          option.value = row.CustomerRef;
+          option.label = [row.CustomerName, row.Detail].filter(Boolean).join(' · ');
+          return option;
+        }));
+      } catch (error) { setStatus(workspace.querySelector('[data-department-status]'), error.message, 'bad'); }
+    }, 250);
+  });
+  workspace.querySelectorAll('#walletLookupForm [name="WalletCardId"], #walletLookupForm [name="AccountRef"]')
+    .forEach((input) => input.addEventListener('input', () => {
+      tuckShopWalletAccount = null;
+      tuckShopSaleRequestId = '';
+      workspace.querySelector('#walletPurchaseForm button[type="submit"]')?.setAttribute('disabled', '');
+    }));
+  workspace.querySelector('#tuckShopStaffLookupForm')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const query = clean(form.elements.Query.value);
+    const status = form.querySelector('[data-department-status]');
+    try {
+      const matches = await searchTuckShopCustomer('Staff', query);
+      const selected = matches.find((row) => clean(row.CustomerRef).toLowerCase() === query.toLowerCase())
+        || (matches.length === 1 ? matches[0] : null);
+      if (!selected) throw new Error(matches.length ? 'Choose one staff member from the suggested results.' : 'No matching staff member found.');
+      tuckShopStaffCustomer = { CustomerRef: selected.CustomerRef, DisplayName: selected.CustomerName };
+      tuckShopCustomerSearch = selected.CustomerRef;
+      tuckShopSaleRequestId = '';
+      refresh();
+    } catch (error) { setStatus(status, error.message, 'bad'); }
+  });
+  workspace.querySelector('#tuckShopStaffSaleForm')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const status = form.querySelector('[data-department-status]');
+    const button = form.querySelector('button[type="submit"]');
+    const payload = Object.fromEntries(new FormData(form).entries());
+    if (payload.PaymentMethod !== 'Cash' && !clean(payload.PaymentReference)) {
+      setStatus(status, 'Enter the bank transfer or POS reference.', 'bad'); return;
+    }
+    if (!tuckShopStaffCustomer || !tuckShopSaleItems().length) return;
+    tuckShopSaleRequestId ||= `TUK-SALE-${newIdempotencyKey()}`;
+    try {
+      const result = await runButtonAction(button, 'Completing sale...', () => requestDepartmentAction('tuckShop', 'recordSale', {
+        ...payload, CustomerRef: tuckShopStaffCustomer.CustomerRef, Items: tuckShopSaleItems(),
+        SaleRequestId: tuckShopSaleRequestId
+      }, tuckShopSaleRequestId, { render: false }));
+      tuckShopLastSale = result.sale || result;
+      commerceCart('tuckShop').clear();
+      tuckShopSaleRequestId = '';
+      await loadDepartmentOperations('tuckShop');
+    } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+  });
+}
+
 function renderDepartmentOperations(section, data) {
   if (activeSection !== section) return;
   const labels = { clinic: 'Clinic', kitchen: 'Kitchen', restaurant: 'Restaurant', tuckShop: 'Tuck Shop' };
@@ -4819,12 +5001,24 @@ function renderDepartmentOperations(section, data) {
     clinic: 'Record student visits, maintain medical supplies, and track every stock receipt or issue.',
     kitchen: 'Maintain food and kitchen supplies and track every stock receipt or issue.',
     restaurant: 'Manage restaurant and catering inventory, stock movement, low-stock alerts, and supplier market lists.',
-    tuckShop: 'Maintain tuck-shop stock while wallet purchases remain synchronized with Finance and Accounting.'
+    tuckShop: 'Select stocked items, charge the correct customer and post each sale to Finance and Accounting.'
   };
   const label = labels[section];
   const inventory = data.inventory || [];
   const records = data.records || [];
-  const wallet = data.walletAccount || null;
+  if (section === 'tuckShop') {
+    const branch = clean(selectedBranchId || currentUser?.branchId || 'main');
+    if (tuckShopWorkspaceBranch !== branch) {
+      tuckShopWorkspaceBranch = branch;
+      commerceCart('tuckShop').clear();
+      tuckShopCustomerType = 'Student';
+      tuckShopStaffCustomer = null;
+      tuckShopWalletAccount = null;
+      tuckShopLastSale = null;
+      tuckShopSaleRequestId = '';
+    }
+    syncCommerceCart('tuckShop', inventory);
+  }
   const clinicStudent = data.clinicStudent || null;
   const clinicReport = data.clinicReport || null;
   const purchases = (dashboardData?.departments?.tuckShop || {}).purchases || [];
@@ -4837,32 +5031,12 @@ function renderDepartmentOperations(section, data) {
     <div class="workflow-intro"><div><p class="eyebrow">Department operations</p><h2>${label}</h2><p class="muted">${descriptions[section]}</p></div><button type="button" class="workflow-icon-action" id="refreshDepartmentOperations" aria-label="Refresh ${label}">Refresh</button></div>
     ${section === 'restaurant' ? renderOrganizationCommerceWorkspace(section, data) : ''}
     ${section === 'tuckShop' ? `<nav class="department-workspace-links" aria-label="Tuck shop workspaces">
-      <button type="button" class="active" data-department-jump="tuckShopPOS"><span aria-hidden="true">&#128722;</span> Student Purchase</button>
+      <button type="button" class="active" data-department-jump="tuckShopPOS"><span aria-hidden="true">&#128722;</span> Point of sale</button>
       <button type="button" data-department-jump="departmentInventoryWorkspace"><span aria-hidden="true">&#128230;</span> Inventory</button>
       <button type="button" data-department-jump="departmentStockWorkspace"><span aria-hidden="true">&#8645;</span> Stock In / Out</button>
       <button type="button" data-department-jump="departmentPurchaseHistory"><span aria-hidden="true">&#128203;</span> Purchase History</button>
     </nav>` : ''}
-    ${section === 'tuckShop' ? `
-    <section class="config-card department-primary-workflow tuck-shop-pos-workspace" id="tuckShopPOS"><header class="config-card-heading"><div><small>Student wallet, card or admission lookup</small><h3>Student Purchase</h3><p>Scan a wallet card or enter the student's admission number, confirm the wallet, then record the sale.</p></div><span class="workspace-feature-icon" aria-hidden="true">&#128722;</span></header>
-      <div class="purchase-step-label"><strong>1</strong><span>Find the student wallet</span></div>
-      <form id="walletLookupForm" class="workflow-form workflow-form-grid config-form">
-        <label>Wallet card ID<input name="WalletCardId" autocomplete="off" placeholder="Scan or enter card ID"></label>
-        <label>Admission number<input name="AccountRef" autocomplete="off" placeholder="Or enter admission number"></label>
-        <div class="config-actionbar"><p class="status" data-department-status></p><div class="inline-action-group"><button type="button" id="tuckShopNfcScan">&#9673; Scan NFC Card</button><button type="button" id="tuckShopFaceLookup" class="student-face-workflow-action">&#128247; Find by face</button><button type="submit">&#128269; Find Student Wallet</button></div></div>
-      </form>
-      ${wallet ? `<div class="wallet-account-result">
-        <div><small>Student</small><strong>${escapeHtml(wallet.DisplayName)}</strong><span>${escapeHtml(wallet.AdmissionNo || wallet.AccountRef)} &middot; ${escapeHtml(wallet.ClassName || '')}</span></div>
-        <div><small>Wallet balance</small><strong>${money(wallet.WalletBalance)}</strong><span>${escapeHtml(wallet.WalletCardStatus || 'Active')} &middot; Spent today ${money(wallet.WalletSpentToday)}</span></div>
-      </div>
-      <div class="purchase-step-label"><strong>2</strong><span>Enter the purchase and complete the sale</span></div>
-      <form id="walletPurchaseForm" class="workflow-form workflow-form-grid config-form">
-        <input type="hidden" name="AccountRef" value="${escapeHtml(wallet.AccountRef)}">
-        <label>Purchase amount<input name="Amount" type="number" min="0.01" step="0.01" data-finance-input required placeholder="0.00"></label>
-        <label>Items / description<input name="Description" value="Tuck shop purchase" required placeholder="Describe the items purchased"></label>
-        <label>Wallet PIN (when required)<input name="WalletPin" type="password" inputmode="numeric" autocomplete="off"></label>
-        <div class="config-actionbar"><p class="status" data-department-status></p><button type="submit">&#10003; Complete Wallet Purchase</button></div>
-      </form>` : '<p class="muted">Find the student before recording a purchase. Card limits, balance and PIN rules will be checked automatically.</p>'}
-    </section>` : ''}
+    ${section === 'tuckShop' ? renderTuckShopPOS(data) : ''}
     ${section === 'clinic' ? `
     <section class="config-card"><header class="config-card-heading"><div><small>Patient care</small><h3>Record a clinic visit</h3></div></header>
       <form id="clinicRecordForm" class="workflow-form workflow-form-grid config-form">
@@ -4907,8 +5081,8 @@ function renderDepartmentOperations(section, data) {
         <input type="hidden" name="OriginalItemName">
         <label>Item name<input name="ItemName" required></label><label>Category<input name="Category" value="${section === 'clinic' ? 'Medical Supply' : section === 'kitchen' ? 'Foodstuff' : section === 'restaurant' ? 'Food & Beverage' : 'General Item'}"></label>
         <label>Unit<input name="Unit" value="${section === 'kitchen' ? 'kg' : 'pcs'}" required></label><label>Opening/current quantity<input name="Quantity" type="number" min="0" step="0.01" value="0" required></label>
-        <label>Reorder level<input name="ReorderLevel" type="number" min="0" step="0.01" value="0"></label>${section === 'restaurant' ? '<label>Selling price<input name="SalePrice" type="number" min="0" step="0.01" value="0" data-finance-input required></label>' : ''}<label>Notes<input name="Notes"></label>
-        ${section === 'restaurant' ? '<label class="check-row commerce-inventory-active"><input name="Active" type="checkbox" checked> Available for sale</label>' : ''}
+        <label>Reorder level<input name="ReorderLevel" type="number" min="0" step="0.01" value="0"></label>${['restaurant', 'tuckShop'].includes(section) ? '<label>Selling price<input name="SalePrice" type="number" min="0" step="0.01" value="0" data-finance-input required></label>' : ''}<label>Notes<input name="Notes"></label>
+        ${['restaurant', 'tuckShop'].includes(section) ? '<label class="check-row commerce-inventory-active"><input name="Active" type="checkbox" checked> Available for sale</label>' : ''}
         <div class="config-actionbar"><p class="status" data-department-status></p><button type="submit" data-normal-text="Save item">Save item</button></div>
       </form>
     </section>
@@ -4920,7 +5094,7 @@ function renderDepartmentOperations(section, data) {
         <div class="config-actionbar"><p class="status" data-department-status></p><button type="submit" data-normal-text="Record movement">Record movement</button></div>
       </form>
     </section>
-    ${table(`${label} Inventory`, inventory, [...inventoryColumns(), ...(section === 'restaurant' ? [
+    ${table(`${label} Inventory`, inventory, [...inventoryColumns(), ...(['restaurant', 'tuckShop'].includes(section) ? [
       { label: 'Sale Price', value: (row) => money(pick(row, ['SalePrice', 'Price'])) },
       { label: 'For Sale', value: (row) => clean(row.Active || 'YES').toUpperCase() === 'NO' ? 'No' : 'Yes' }
     ] : []), { label: 'Edit', render: renderInventoryActions }])}
@@ -4945,7 +5119,7 @@ function renderDepartmentOperations(section, data) {
   const departmentCard = (pattern) => departmentCards.find((node) => pattern.test(clean(node.querySelector('h3')?.textContent)));
   const departmentTabs = [];
   if (section === 'restaurant') departmentTabs.push({ key: 'sales', label: 'Point of sale', icon: '\u{1F6D2}', nodes: document.getElementById('organizationCommercePOS') });
-  if (section === 'tuckShop') departmentTabs.push({ key: 'sales', label: 'Student purchase', icon: '\u{1F6D2}', nodes: document.getElementById('tuckShopPOS') });
+  if (section === 'tuckShop') departmentTabs.push({ key: 'sales', label: 'Point of sale', icon: '\u{1F6D2}', nodes: document.getElementById('tuckShopPOS') });
   if (section === 'clinic') {
     departmentTabs.push({ key: 'visits', label: 'Clinic visits', icon: '\u2695', count: records.length, nodes: [departmentCard(/record a clinic visit/i), workspaceTableNodes('Clinic Records')] });
     departmentTabs.push({ key: 'reports', label: 'Parent reports', icon: '\u2709', nodes: departmentCard(/email a clinic report/i) });
@@ -4956,6 +5130,7 @@ function renderDepartmentOperations(section, data) {
   if (section === 'tuckShop') departmentTabs.push({ key: 'history', label: 'Purchase history', icon: '\u{1F5C2}', count: purchases.length, nodes: document.getElementById('departmentPurchaseHistory') });
   mountWorkspaceTabs(section, departmentTabs);
   if (section === 'restaurant') bindOrganizationCommerceWorkspace(section, data);
+  if (section === 'tuckShop') bindTuckShopPOS(data);
   const recordsHandoff = takeRecordsDeskHandoff(section);
   const selectedAccountRef = recordsDeskHandoffReference(recordsHandoff);
   if (selectedAccountRef && section === 'clinic') {
@@ -5064,7 +5239,24 @@ function renderDepartmentOperations(section, data) {
     event.preventDefault();
     const form = event.currentTarget; const status = form.querySelector('[data-department-status]');
     const button = event.submitter || form.querySelector('button[type="submit"]');
-    try { await runButtonAction(button, 'Looking up...', () => requestDepartmentAction(section, 'lookupWallet', Object.fromEntries(new FormData(form).entries()))); }
+    try {
+      await runButtonAction(button, 'Looking up...', async () => {
+        if (section === 'tuckShop' && !clean(form.elements.WalletCardId.value) && !clean(form.elements.AccountRef.value)) {
+          const query = clean(document.getElementById('tuckShopStudentSearch')?.value);
+          const matches = await searchTuckShopCustomer('Student', query);
+          const selected = matches.find((row) => clean(row.CustomerRef).toLowerCase() === query.toLowerCase())
+            || (matches.length === 1 ? matches[0] : null);
+          if (!selected) throw new Error(matches.length ? 'Choose one student from the suggested results.' : 'No matching student found.');
+          form.elements.AccountRef.value = selected.CustomerRef;
+          tuckShopCustomerSearch = selected.CustomerRef;
+        }
+        const result = await requestDepartmentAction(section, 'lookupWallet',
+          Object.fromEntries(new FormData(form).entries()), '', { render: false });
+        if (section === 'tuckShop') tuckShopWalletAccount = result.walletAccount || null;
+        renderDepartmentOperations(section, result);
+        return result;
+      });
+    }
     catch (error) { setStatus(status, error.message || String(error), 'bad'); }
   });
   document.getElementById('tuckShopFaceLookup')?.addEventListener('click', async () => {
@@ -5099,18 +5291,20 @@ function renderDepartmentOperations(section, data) {
     event.preventDefault();
     const form = event.currentTarget; const status = form.querySelector('[data-department-status]');
     const button = event.submitter || form.querySelector('button[type="submit"]');
-    const idempotencyKey = form.dataset.idempotencyKey || newIdempotencyKey();
-    form.dataset.idempotencyKey = idempotencyKey;
+    if (!tuckShopSaleItems().length || !tuckShopWalletAccount) return;
+    tuckShopSaleRequestId ||= `TUK-SALE-${newIdempotencyKey()}`;
     try {
-      await runButtonAction(button, 'Recording purchase...', () => requestDepartmentAction(section, 'recordWalletPurchase', Object.fromEntries(new FormData(form).entries()), idempotencyKey));
-      delete form.dataset.idempotencyKey;
+      const result = await runButtonAction(button, 'Recording purchase...', () => requestDepartmentAction(section, 'recordWalletPurchase', {
+        ...Object.fromEntries(new FormData(form).entries()), Items: tuckShopSaleItems(), SaleRequestId: tuckShopSaleRequestId
+      }, tuckShopSaleRequestId, { render: false }));
+      tuckShopLastSale = result.sale;
+      tuckShopWalletAccount = result.walletAccount || tuckShopWalletAccount;
+      commerceCart('tuckShop').clear();
+      tuckShopSaleRequestId = '';
+      await loadDepartmentOperations('tuckShop');
     } catch (error) {
-      if (error?.responseReceived) delete form.dataset.idempotencyKey;
       setStatus(status, error.message || String(error), 'bad');
     }
-    form.addEventListener('input', () => {
-      if (!button?.disabled) delete form.dataset.idempotencyKey;
-    }, { once: true });
   });
   document.getElementById('prepareClinicReport')?.addEventListener('click', async (event) => {
     const form = document.getElementById('clinicReportForm'); const status = form.querySelector('[data-department-status]');

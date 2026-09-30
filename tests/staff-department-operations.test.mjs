@@ -59,11 +59,13 @@ test('tuck shop web POS reuses the authoritative wallet and accounting workflow'
   assert.match(adminJs, /id="walletPurchaseForm"/);
 });
 
-test('tuck shop exposes an unmistakable student purchase workspace', () => {
+test('tuck shop exposes a stock-linked student and staff POS workspace', () => {
   assert.match(adminJs, /data-department-jump="tuckShopPOS"/);
-  assert.match(adminJs, /<h3>Student Purchase<\/h3>/);
+  assert.match(adminJs, /<h3>Tuck Shop Point of Sale<\/h3>/);
   assert.match(adminJs, /Find Student Wallet/);
-  assert.match(adminJs, /Complete Wallet Purchase/);
+  assert.match(adminJs, /Complete wallet sale/);
+  assert.match(adminJs, /id="tuckShopStaffSaleForm"/);
+  assert.match(adminJs, /data-tuck-shop-add/);
   assert.match(adminJs, /departmentPurchaseHistory/);
 });
 

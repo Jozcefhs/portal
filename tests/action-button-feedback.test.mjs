@@ -54,7 +54,7 @@ test('high-risk staff actions use visible busy guards', () => {
   );
   assert.match(adminJs, /if \(idempotencyKey\) headers\['Idempotency-Key'\] = idempotencyKey/);
   [
-    /walletPurchaseForm[\s\S]*?form\.dataset\.idempotencyKey[\s\S]*?recordWalletPurchase/,
+    /walletPurchaseForm[\s\S]*?tuckShopSaleRequestId \|\|= `TUK-SALE-\$\{newIdempotencyKey\(\)\}`[\s\S]*?recordWalletPurchase/,
     /clinicReportForm[\s\S]*?form\.dataset\.idempotencyKey[\s\S]*?sendClinicReport/,
     /marketListForm[\s\S]*?form\.dataset\.idempotencyKey[\s\S]*?sendMarketList/
   ].forEach((pattern) => assert.match(adminJs, pattern));

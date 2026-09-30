@@ -63,6 +63,8 @@ import {
 import { handleOrganizationDepartmentAction } from '../lib/organization-departments.js';
 import { assertOrganizationDepartmentWorkspaceAccess } from '../lib/organization-department-gate.js';
 import { handleExecutiveOfficeAction } from '../lib/executive-correspondence.js';
+import { prepareTuckShopWalletCart } from '../lib/organization-commerce.js';
+import { getTuckShopCatalog, recordTuckShopStaffSale, searchTuckShopCustomers } from '../lib/school-tuck-shop.js';
 import { handleStudentConductAction } from '../lib/student-conduct.js';
 import { handleSchoolLibraryAction } from '../lib/school-library.js';
 import { handleAcademicManagementAction } from '../lib/academic-management.js';
@@ -879,6 +881,7 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
   'saveBillingCategory', 'deleteBillingCategory', 'updateStudentBillingCategory',
   'generateSchoolFeeInvoices', 'recordManualPayment', 'importHistoricalPayments',
   'saveWalletCard', 'recordWalletPurchase', 'recordCreditAction',
+  'getTuckShopCatalog', 'searchTuckShopCustomers', 'recordTuckShopStaffSale',
   'saveStoreItem', 'saveStoreCategory', 'deleteStoreCategory', 'updateStoreOrderStatus',
   'saveClinicInventoryItem', 'deleteClinicInventoryItem', 'recordClinicStockMovement',
   'saveKitchenInventoryItem', 'deleteKitchenInventoryItem', 'recordKitchenStockMovement',
@@ -944,6 +947,7 @@ const BRANCH_BOUND_DEVICE_ACTIONS = new Set([
   'getAdmissionClasses', 'saveAdmissionClasses', 'resetAdmissionClasses',
   'getAccountsOverview', 'getHistoricalPaymentTemplateAccounts', 'importHistoricalPayments',
   'getWalletCardAccount', 'saveWalletCard', 'recordWalletPurchase',
+  'getTuckShopCatalog', 'searchTuckShopCustomers', 'recordTuckShopStaffSale',
   'getAccountingRequisitionDocument',
   'saveAccountingJournal', 'saveAccountingExpense', 'saveAccountingBudget',
   'submitAccountingImprest', 'reviewAccountingImprest', 'issueAccountingImprest',
@@ -5960,8 +5964,9 @@ export async function saveWalletCard(env, body) {
 export async function recordWalletPurchase(env, body) {
   const cardId = clean(body.WalletCardId || body.CardId || body.cardId).toUpperCase();
   const accountRef = clean(body.AccountRef || body.accountRef || body.AdmissionNo || body.admissionNo);
-  const amount = asMoneyNumber(body.Amount || body.amount);
-  if (amount <= 0) {
+  const tuckShop = normalizeMatchText(body.Department || body.department) === 'tuck shop';
+  let amount = asMoneyNumber(body.Amount || body.amount);
+  if (!tuckShop && amount <= 0) {
     const err = new Error('Enter a wallet purchase amount greater than zero.');
     err.status = 400;
     throw err;
@@ -5976,6 +5981,36 @@ export async function recordWalletPurchase(env, body) {
     throw err;
   }
   const account = await walletAccountPayload(env, student);
+  const saleNo = tuckShop
+    ? safeDocumentId(body.SaleRequestId || body.saleRequestId || `TUK-SALE-${crypto.randomUUID()}`)
+    : '';
+  if (tuckShop) {
+    const existingSale = await getDocument(env, 'organizationCommerceSales', saleNo);
+    if (existingSale) {
+      if (clean(existingSale.CustomerRef) !== clean(account.AccountRef)
+        || clean(existingSale.SaleType) !== 'tuckShop'
+        || normalizeMatchText(existingSale.BranchId) !== normalizeMatchText(account.BranchId || student.BranchId || 'main')) {
+        const err = new Error('This tuck-shop request reference belongs to another sale.'); err.status = 409; throw err;
+      }
+      return { ok: true, replayed: true, message: 'This tuck-shop sale was already recorded.',
+        sale: existingSale, account, balance: account.WalletBalance };
+    }
+  }
+  const saleScope = { branchId: clean(account.BranchId || student.BranchId || 'main'), edition: 'school' };
+  const pricedSale = tuckShop ? await prepareTuckShopWalletCart(env, body, saleScope, {
+    SaleNo: saleNo, BranchId: saleScope.branchId, OrganisationEdition: 'school',
+    SchoolSection: clean(account.SchoolSection || student.SchoolSection),
+    RecordedBy: clean(body.RecordedBy || body.recordedBy) || 'Wallet POS'
+  }) : null;
+  if (pricedSale) {
+    amount = pricedSale.total;
+    if (asMoneyNumber(body.Amount || body.amount) > 0 && asMoneyNumber(body.Amount || body.amount) !== amount) {
+      const err = new Error('Item prices or quantities changed. Refresh the cart and try again.'); err.status = 409; throw err;
+    }
+  }
+  if (amount <= 0) {
+    const err = new Error('Choose at least one priced tuck-shop item.'); err.status = 400; throw err;
+  }
   const cardStatus = normalizeMatchText(account.WalletCardStatus || 'Active');
   if (cardStatus !== 'active') {
     const err = new Error(`This wallet card is ${cardStatus || 'not active'}.`);
@@ -6010,7 +6045,7 @@ export async function recordWalletPurchase(env, body) {
       throw err;
     }
   }
-  const ledgerNo = ledgerDocumentId('WALLET');
+  const ledgerNo = tuckShop ? safeDocumentId(`WALLET-${saleNo}`) : ledgerDocumentId('WALLET');
   const entry = {
     LedgerNo: ledgerNo,
     Date: nowIso(),
@@ -6026,7 +6061,9 @@ export async function recordWalletPurchase(env, body) {
     EntryType: 'Wallet Purchase',
     FeeCategory: 'Wallet',
     Department: clean(body.Department || body.department),
-    Description: clean(body.Description || body.description) || 'Wallet purchase',
+    Description: pricedSale
+      ? pricedSale.cart.map((item) => `${item.Quantity} × ${item.ItemName}`).join(', ').slice(0, 500)
+      : clean(body.Description || body.description) || 'Wallet purchase',
     Debit: amount,
     Credit: 0,
     Currency: 'NGN',
@@ -6035,9 +6072,50 @@ export async function recordWalletPurchase(env, body) {
     Source: clean(body.Terminal || body.terminal) || 'Wallet POS',
     Metadata: JSON.stringify({
       walletCardId: cardId || account.WalletCardId,
-      department: clean(body.Department || body.department)
+      department: clean(body.Department || body.department),
+      ...(pricedSale ? { storeCart: pricedSale.cart.map(({ ItemName, Quantity, UnitPrice, Amount }) =>
+        ({ ItemName, Quantity, UnitPrice, Amount })), saleNo } : {})
     })
   };
+  if (pricedSale) {
+    if (!student.__scopePath || !student.__id || !student.__updateTime) {
+      const err = new Error('Student wallet version is unavailable. Refresh the customer and try again.'); err.status = 409; throw err;
+    }
+    const timestamp = nowIso();
+    const sale = {
+      SaleNo: saleNo, SaleType: 'tuckShop', Department: 'Tuck Shop',
+      BranchId: entry.BranchId, SchoolSection: entry.SchoolSection, OrganisationEdition: 'school',
+      CustomerType: 'Student', CustomerRef: account.AccountRef, CustomerName: account.DisplayName,
+      Items: pricedSale.cart, ItemCount: pricedSale.cart.reduce((total, item) => total + item.Quantity, 0),
+      Amount: amount, GrossAmount: amount, Currency: 'NGN', PaymentMethod: 'Student Wallet',
+      PaymentStatus: 'Paid', Status: 'Paid', InventoryStatus: 'Deducted', LedgerNo: ledgerNo,
+      SaleDate: timestamp, PaidAt: timestamp, CreatedAt: timestamp, UpdatedAt: timestamp,
+      RecordedBy: entry.RecordedBy, CheckoutSource: clean(body.Terminal || body.terminal) || 'Tuck Shop POS'
+    };
+    const journal = buildWalletPurchaseAccountingJournal(entry);
+    const studentData = Object.fromEntries(Object.entries(student).filter(([key]) => !key.startsWith('__')));
+    try {
+      await batchCommitDocuments(env, [
+        ...pricedSale.writes,
+        { collectionPath: student.__scopePath, documentId: student.__id,
+          data: { ...studentData, WalletLastPurchaseAt: timestamp, WalletLastPurchaseNo: saleNo },
+          updateTime: student.__updateTime },
+        { collectionPath: 'ledger', documentId: safeDocumentId(ledgerNo), data: entry, exists: false },
+        { collectionPath: 'accountingJournals', documentId: safeDocumentId(journal.JournalNo), data: journal, exists: false },
+        { collectionPath: 'organizationCommerceSales', documentId: saleNo, data: sale, exists: false }
+      ]);
+    } catch (error) {
+      if ([409, 412].includes(Number(error.status))) {
+        const conflict = new Error('The wallet or item stock changed during checkout. Refresh and try again.');
+        conflict.status = 409;
+        throw conflict;
+      }
+      throw error;
+    }
+    const updatedAccount = await walletAccountPayload(env, student);
+    return { ok: true, message: 'Tuck-shop sale paid from the student wallet; stock updated.',
+      ledger: entry, sale, balance: updatedAccount.WalletBalance, account: updatedAccount };
+  }
   await upsertDocument(env, 'ledger', safeDocumentId(ledgerNo), entry);
   await writeWalletPurchaseAccountingJournal(env, entry);
   const updatedAccount = await walletAccountPayload(env, student);
@@ -10125,7 +10203,43 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
       return getWalletCardAccount(env, body);
     case 'saveWalletCard':
       return saveWalletCard(env, body);
+    case 'getTuckShopCatalog':
+    case 'searchTuckShopCustomers':
+    case 'recordTuckShopStaffSale': {
+      const access = await staffAccessFor(env, {
+        username: clean(body.UserUsername), role: clean(body.UserRole),
+        assignedRole: clean(body.UserAssignedRole || body.UserRole),
+        branchId: clean(body.UserBranchId), tabAccess: body.UserTabAccess,
+        department: clean(body.UserDepartment)
+      });
+      if (clean(deploymentIdentity?.edition || access.edition).toLowerCase() !== 'school'
+        || !(access.allowedSections || []).includes('tuckShop')) {
+        const err = new Error('Tuck Shop is not available for this officer.'); err.status = 403; throw err;
+      }
+      if (action === 'recordTuckShopStaffSale' && (access.subscriptionActive === false || access.subscriptionReadOnly === true)) {
+        const err = new Error('Tuck Shop sales are read-only until the subscription is renewed.'); err.status = 403; throw err;
+      }
+      const actor = { ...access, username: clean(body.UserUsername),
+        displayName: clean(body.RecordedBy || body.UserUsername),
+        branchId: clean(body.UserBranchId), edition: 'school' };
+      if (action === 'getTuckShopCatalog') return getTuckShopCatalog(env, actor);
+      if (action === 'searchTuckShopCustomers') return searchTuckShopCustomers(env, actor, body);
+      return recordTuckShopStaffSale(env, actor, body);
+    }
     case 'recordWalletPurchase':
+      if (normalizeMatchText(body.Department || body.department) === 'tuck shop') {
+        const access = await staffAccessFor(env, {
+          username: clean(body.UserUsername), role: clean(body.UserRole),
+          assignedRole: clean(body.UserAssignedRole || body.UserRole),
+          branchId: clean(body.UserBranchId), tabAccess: body.UserTabAccess,
+          department: clean(body.UserDepartment)
+        });
+        if (clean(deploymentIdentity?.edition || access.edition).toLowerCase() !== 'school'
+          || !(access.allowedSections || []).includes('tuckShop')
+          || access.subscriptionActive === false || access.subscriptionReadOnly === true) {
+          const err = new Error('Tuck Shop checkout is not available for this officer.'); err.status = 403; throw err;
+        }
+      }
       return recordWalletPurchase(env, body);
     case 'recordCreditAction':
       return recordCreditAction(env, body);

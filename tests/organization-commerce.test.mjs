@@ -101,8 +101,8 @@ test('store and restaurant mutations require staff access, stable idempotency an
   assert.match(storeApi, /Item code \$\{itemCode\} is already in use/);
   assert.match(departmentApi, /beginIdempotentRequest/);
   assert.match(departmentApi, /action === 'recordsale'/);
-  assert.match(departmentApi, /section !== 'restaurant'/);
-  assert.match(departmentApi, /Price: section === 'restaurant'/);
+  assert.match(departmentApi, /!\['restaurant', 'tuckShop'\]\.includes\(section\)/);
+  assert.match(departmentApi, /Price: \['restaurant', 'tuckShop'\]\.includes\(section\)/);
   assert.match(commerceSource, /authoritativeCart/);
   assert.match(commerceSource, /requested\.Quantity > available/);
   assert.match(commerceSource, /batchUpsertDocuments/);

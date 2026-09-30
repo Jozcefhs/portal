@@ -156,6 +156,14 @@ export const COMMERCE_CONFIG = Object.freeze({
     sales: 'organizationCommerceSales',
     revenueAccount: '4130',
     itemKey: 'ItemName'
+  }),
+  tuckShop: Object.freeze({
+    label: 'Tuck Shop',
+    inventory: 'tuckShopInventory',
+    movements: 'tuckShopMovements',
+    sales: 'organizationCommerceSales',
+    revenueAccount: '4040',
+    itemKey: 'ItemName'
   })
 });
 
@@ -267,11 +275,14 @@ function findInventoryItem(rows, section, reference) {
   if (section === 'organizationStore') {
     return rows.find((row) => lower(row.ItemCode || row.__id) === wanted);
   }
+  if (section === 'tuckShop') {
+    return rows.find((row) => lower(row.__id) === wanted);
+  }
   return rows.find((row) => lower(row.ItemName || row.__id) === wanted);
 }
 
-async function authoritativeCart(env, section, body, user) {
-  const inventory = await scopedInventory(env, section, user);
+async function authoritativeCart(env, section, body, user, inventoryRows = null) {
+  const inventory = inventoryRows || await scopedInventory(env, section, user);
   const demand = requestedItems(body);
   return demand.map((requested) => {
     const item = findInventoryItem(inventory, section, requested.Reference);
@@ -304,7 +315,7 @@ async function authoritativeCart(env, section, body, user) {
 function saleId(body = {}, section = '') {
   const supplied = safeId(body.SaleRequestId || body.saleRequestId || body.SaleNo || body.saleNo);
   if (supplied) return supplied;
-  const prefix = section === 'restaurant' ? 'RST-SALE' : 'STORE-SALE';
+  const prefix = section === 'restaurant' ? 'RST-SALE' : section === 'tuckShop' ? 'TUK-SALE' : 'STORE-SALE';
   return `${prefix}-${Date.now()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
 }
 
@@ -325,6 +336,8 @@ function baseSale(section, body, user, cart, id, method) {
     Department: config.label,
     ...scope,
     CustomerName: clean(body.CustomerName || body.customerName) || 'Walk-in customer',
+    CustomerType: clean(body.CustomerType || body.customerType),
+    CustomerRef: clean(body.CustomerRef || body.customerRef),
     CustomerEmail: customerEmail,
     CustomerPhone: clean(body.CustomerPhone || body.customerPhone || body.Phone || body.phone),
     Items: cart,
@@ -405,8 +418,12 @@ export function buildOrganizationCommerceJournal(sale = {}, settlement = {}) {
 
 function inventoryWrites(section, cart, inventoryRows, timestamp) {
   return cart.map((line) => {
-    const item = findInventoryItem(inventoryRows, section, line.ItemCode || line.ItemName);
+    const item = findInventoryItem(inventoryRows, section,
+      section === 'tuckShop' ? line.InventoryDocumentId : (line.ItemCode || line.ItemName));
     if (!item) throw error(`${line.ItemName} is no longer in inventory.`, 409);
+    if (section === 'tuckShop' && !clean(item.__updateTime)) {
+      throw error(`${line.ItemName} stock version is unavailable. Refresh inventory and try again.`, 409);
+    }
     const available = Math.floor(money(item.Quantity));
     if (line.Quantity > available) {
       throw error(`${line.ItemName} has only ${available} available.`, 409);
@@ -450,6 +467,21 @@ function movementWrites(section, sale, timestamp) {
   }));
 }
 
+export async function prepareTuckShopWalletCart(env, body = {}, user = {}, sale = {}) {
+  const inventory = await scopedInventory(env, 'tuckShop', user);
+  const cart = await authoritativeCart(env, 'tuckShop', body, user, inventory);
+  const timestamp = nowIso();
+  const stockWrites = inventoryWrites('tuckShop', cart, inventory, timestamp);
+  if (stockWrites.some((item) => !item.updateTime)) {
+    throw error('Tuck-shop stock version is unavailable. Refresh inventory and try again.', 409);
+  }
+  return {
+    cart,
+    total: money(cart.reduce((sum, item) => sum + item.Amount, 0)),
+    writes: [...stockWrites, ...movementWrites('tuckShop', { ...sale, Items: cart }, timestamp)]
+  };
+}
+
 async function existingSale(env, id) {
   return getDocument(env, COMMERCE_CONFIG.organizationStore.sales, safeId(id)).catch(() => null);
 }
@@ -485,13 +517,19 @@ export async function recordManualOrganizationCommerceSale(env, section, body = 
   const id = saleId(body, section);
   const previous = await existingSale(env, id);
   if (previous) {
+    const scope = scopeFor(user);
+    if (clean(previous.SaleType) !== section || lower(previous.BranchId) !== lower(scope.BranchId)
+      || (section === 'tuckShop' && lower(previous.CustomerRef) !== lower(body.CustomerRef))) {
+      throw error('This sale request reference belongs to another checkout.', 409);
+    }
     if (lower(previous.PaymentStatus) === 'paid') {
       const emailDelivery = await scheduleCommerceEmail(env, previous, 'receipt', options);
       return { ok: true, replayed: true, message: 'This sale was already paid and recorded.', sale: previous, emailDelivery };
     }
     throw error('A sale with this request reference already exists.', 409);
   }
-  const cart = await authoritativeCart(env, section, body, user);
+  const inventory = await scopedInventory(env, section, user);
+  const cart = await authoritativeCart(env, section, body, user, inventory);
   const expectedAmount = money(body.ExpectedAmount || body.expectedAmount);
   const currentAmount = money(cart.reduce((sum, item) => sum + item.Amount, 0));
   if (expectedAmount > 0 && currentAmount !== expectedAmount) {
@@ -503,7 +541,6 @@ export async function recordManualOrganizationCommerceSale(env, section, body = 
     throw error('Enter the bank, transfer, or POS payment reference.');
   }
   const timestamp = nowIso();
-  const inventory = await scopedInventory(env, section, user);
   const journal = buildOrganizationCommerceJournal(sale);
   await batchUpsertDocuments(env, [
     ...inventoryWrites(section, cart, inventory, timestamp),
