@@ -1,4 +1,4 @@
-import { batchCommitDocuments, batchUpsertDocuments, createDocumentIfAbsent, deleteDocument, findOneByField, getDocument, listCollection, listCollectionPage, patchDocumentFields, queryCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
+import { batchCommitDocuments, batchUpsertDocuments, createDocumentIfAbsent, deleteDocument, findOneByField, getDocument, listCollection, listCollectionForReport, listCollectionPage, patchDocumentFields, queryCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { getAccountingChartRows, invalidateAccountingChartRows, primeAccountingChartRows } from '../lib/accounting-reference-cache.js';
 import { canonicalSchoolBranchId, deleteSchoolDocument, getSchoolDocumentById, getSchoolStructure, invalidateSchoolStructureCache, listSchoolCollection, normalizeSchoolStructure, querySchoolCollection, safeScopeId, schoolCollectionPaths, schoolSectionFor, upsertSchoolDocument } from '../lib/school-scope.js';
 import { canonicalConfiguredClass, classNamesMatch } from '../lib/class-names.js';
@@ -2206,10 +2206,10 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
   const schoolScope = { branchId };
   const [loadedAccounts, loadedPayments, loadedInvoices, feeItems, loadedLedger, loadedApplications, loadedStudents, schoolProfile, billingCategories] = await Promise.all([
     provided('accounts') ? Promise.resolve(preloaded.accounts) : listCollection(env, 'accounts'),
-    provided('payments') ? Promise.resolve(preloaded.payments) : listCollection(env, 'payments'),
-    provided('invoices') ? Promise.resolve(preloaded.invoices) : listCollection(env, 'invoices'),
+    provided('payments') ? Promise.resolve(preloaded.payments) : listCollectionForReport(env, 'payments'),
+    provided('invoices') ? Promise.resolve(preloaded.invoices) : listCollectionForReport(env, 'invoices'),
     provided('feeItems') ? Promise.resolve(preloaded.feeItems) : listCollection(env, 'feeItems'),
-    provided('ledger') ? Promise.resolve(preloaded.ledger) : listCollection(env, 'ledger'),
+    provided('ledger') ? Promise.resolve(preloaded.ledger) : listCollectionForReport(env, 'ledger'),
     provided('applications') ? Promise.resolve(preloaded.applications) : listSchoolCollection(env, 'applications', schoolScope),
     provided('students') ? Promise.resolve(preloaded.students) : listSchoolCollection(env, 'students', schoolScope),
     preloaded?.schoolProfile
@@ -7270,11 +7270,11 @@ async function syncRevenueToAccounting(env) {
   await seedAccountingChart(env);
   const edition = accountingEditionForRequest(env);
   const [invoices, payments, sales, journals, ledgerRows, legacyGatewayExpenses, gatewayCharges, admissionClasses, churchDonations] = await Promise.all([
-    listCollection(env, 'invoices'),
-    listCollection(env, 'payments'),
+    listCollectionForReport(env, 'invoices'),
+    listCollectionForReport(env, 'payments'),
     listCollection(env, 'formSales').catch(() => []),
-    listCollection(env, 'accountingJournals'),
-    listCollection(env, 'ledger'),
+    listCollectionForReport(env, 'accountingJournals'),
+    listCollectionForReport(env, 'ledger'),
     listCollection(env, 'accountingExpenses').catch(() => []),
     listCollection(env, 'paymentGatewayCharges').catch(() => []),
     listCollection(env, 'settings/admission/classes').catch(() => []),
@@ -8571,7 +8571,7 @@ async function importAccountingBankStatement(env, body) {
   const rows = Array.isArray(body.Rows || body.rows) ? (body.Rows || body.rows) : [];
   if (!bankId || !rows.length) { const err = new Error('Bank account and statement rows are required.'); err.status = 400; throw err; }
   if (rows.length > 500) { const err = new Error('Import at most 500 bank statement rows per request.'); err.status = 413; throw err; }
-  const journals = accountingRowsForBranch(await listCollection(env, 'accountingJournals'), branchId);
+  const journals = accountingRowsForBranch(await listCollectionForReport(env, 'accountingJournals'), branchId);
   const cashMovements = [];
   journals.filter((j) => lower(j.Status) === 'posted').forEach((journal) => accountingLines(journal.Lines).filter((line) => clean(line.AccountCode) === accountCode).forEach((line) => {
     cashMovements.push({ JournalNo: clean(journal.JournalNo), Date: clean(journal.Date).slice(0, 10), Reference: clean(journal.Reference),
@@ -8957,12 +8957,12 @@ async function getAccountingOverview(env, body = {}) {
   // Administrators can still run the explicit "Synchronize Revenue" action.
   const synchronized = 0;
   const [chart, journals, expenses, budgets, banks, reconciliations, periods, audit, vendors, supplierBills, supplierPayments, imprests, assets, adjustments, approvalLimits, closeChecklist, bankStatementItems, invoices, payments, formSales, gatewayCharges, payrollProfiles, payrollRuns, payrollItems, payrollPayments, payrollAudit, payrollTaxProfiles, payrollTaxOverrides, payrollSalaryComponents, payrollTaxBands, payrollTaxReliefs, payrollLedgerMappings, donations] = await Promise.all([
-    listCollection(env, 'chartOfAccounts'), listCollection(env, 'accountingJournals'), listCollection(env, 'accountingExpenses'),
+    listCollection(env, 'chartOfAccounts'), listCollectionForReport(env, 'accountingJournals'), listCollection(env, 'accountingExpenses'),
     listCollection(env, 'accountingBudgets'), listCollection(env, 'accountingBanks'), listCollection(env, 'accountingReconciliations'),
     listCollection(env, 'accountingPeriods'), listCollection(env, 'accountingAudit'), listCollection(env, 'accountingVendors'),
     listCollection(env, 'accountingSupplierBills'), listCollection(env, 'accountingSupplierPayments'), listCollection(env, 'accountingImprests').catch(() => []), listCollection(env, 'accountingAssets'),
     listCollection(env, 'accountingAdjustments'), listCollection(env, 'accountingApprovalLimits'), listCollection(env, 'accountingCloseChecklist'),
-    listCollection(env, 'accountingBankStatementItems'), listCollection(env, 'invoices'), listCollection(env, 'payments'),
+    listCollection(env, 'accountingBankStatementItems'), listCollectionForReport(env, 'invoices'), listCollectionForReport(env, 'payments'),
     listCollection(env, 'formSales').catch(() => []), listCollection(env, 'paymentGatewayCharges').catch(() => []),
     listCollection(env, 'payrollProfiles'), listCollection(env, 'payrollRuns'), listCollection(env, 'payrollItems'),
     listCollection(env, 'payrollPayments'), listCollection(env, 'payrollAudit'), listCollection(env, PAYROLL_TAX_COLLECTIONS.profiles).catch(() => []), listCollection(env, PAYROLL_TAX_COLLECTIONS.overrides).catch(() => []),

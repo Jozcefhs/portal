@@ -617,6 +617,40 @@ export async function listCollection(env, collectionPath, query = '') {
   throw error;
 }
 
+// Financial reports need a complete collection, even after historical imports
+// pass the small default list limit. Keep this separate from listCollection so
+// ordinary workspace reads remain bounded and inexpensive.
+export async function collectCollectionPages(fetchPage, collectionPath, options = {}) {
+  const maxPages = Math.max(1, Math.min(40, Math.floor(Number(options.maxPages) || 40)));
+  const documents = [];
+  const seenTokens = new Set();
+  let pageToken = '';
+  for (let page = 0; page < maxPages; page += 1) {
+    const result = await fetchPage(pageToken);
+    documents.push(...(result.documents || []));
+    const nextPageToken = clean(result.nextPageToken);
+    if (!nextPageToken) return documents;
+    if (nextPageToken === pageToken || seenTokens.has(nextPageToken)) {
+      throw new Error(`The database returned a repeated page token for "${collectionPath}".`);
+    }
+    seenTokens.add(nextPageToken);
+    pageToken = nextPageToken;
+  }
+  const error = new Error(`The database collection "${collectionPath}" exceeds the safe finance-report read limit. Narrow the report period or contact support; no partial totals were shown.`);
+  error.status = 413;
+  error.code = 'FIRESTORE_REPORT_LIMIT';
+  throw error;
+}
+
+export async function listCollectionForReport(env, collectionPath, options = {}) {
+  const { pageSize = DEFAULT_LIST_PAGE_SIZE, maxPages = 40 } = options;
+  return collectCollectionPages(
+    (pageToken) => listCollectionPage(env, collectionPath, { pageSize, pageToken }),
+    collectionPath,
+    { maxPages }
+  );
+}
+
 export async function getDocument(env, collectionPath, documentId) {
   const cleanCollection = String(collectionPath || '').replace(/^\/+|\/+$/g, '');
   const encodedId = encodeURIComponent(String(documentId || '').trim());

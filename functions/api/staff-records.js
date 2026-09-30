@@ -2,6 +2,7 @@ import {
   firestoreDocumentToObject,
   firestoreRequest,
   listCollection,
+  listCollectionForReport,
   requireFirestoreEnv,
   upsertDocument
 } from '../lib/firestore.js';
@@ -432,9 +433,9 @@ async function studentDetail(env, user, row, capabilities) {
   const selectedBranch = lower(row.BranchId || 'main') || 'main';
   const selectedSection = lower(schoolSectionFor(row));
   const [payments, invoices, ledger, clinicRecords, storeOrders, conductRecords] = await Promise.all([
-    capabilities.canViewStudentFinance ? listCollection(env, 'payments') : Promise.resolve([]),
-    capabilities.canViewStudentFinance ? listCollection(env, 'invoices') : Promise.resolve([]),
-    capabilities.canViewStudentFinance || capabilities.canViewStudentWallet ? listCollection(env, 'ledger') : Promise.resolve([]),
+    capabilities.canViewStudentFinance ? listCollectionForReport(env, 'payments') : Promise.resolve([]),
+    capabilities.canViewStudentFinance ? listCollectionForReport(env, 'invoices') : Promise.resolve([]),
+    capabilities.canViewStudentFinance || capabilities.canViewStudentWallet ? listCollectionForReport(env, 'ledger') : Promise.resolve([]),
     capabilities.canViewStudentClinic ? listCollection(env, 'clinicRecords') : Promise.resolve([]),
     ['bookstore', 'uniformStore', 'tuckShop'].some((section) => allowed.has(section))
       ? listCollection(env, 'storeOrders')

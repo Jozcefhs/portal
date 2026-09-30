@@ -1,5 +1,5 @@
 import { getAccountsOverview } from './backend.js';
-import { getDocument, listCollection, requireFirestoreEnv } from '../lib/firestore.js';
+import { getDocument, listCollection, listCollectionForReport, requireFirestoreEnv } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { getSchoolStructure, listSchoolCollection, schoolSectionFor } from '../lib/school-scope.js';
 import { configuredStaffBranches } from '../lib/staff-branch-context.js';
@@ -212,9 +212,9 @@ export async function onRequestPost(context) {
         schoolSectionAccess: user.schoolSectionAccess
       }) : Promise.resolve([]),
       shouldLoad('formPurchases') ? listCollection(env, 'formSales') : Promise.resolve([]),
-      shouldLoad('accounts') ? listCollection(env, 'payments') : Promise.resolve([]),
-      shouldLoad('accounts') ? listCollection(env, 'invoices') : Promise.resolve([]),
-      (shouldLoad('accounts') || shouldLoad('tuckShop')) ? listCollection(env, 'ledger') : Promise.resolve([]),
+      shouldLoad('accounts') ? listCollectionForReport(env, 'payments') : Promise.resolve([]),
+      shouldLoad('accounts') ? listCollectionForReport(env, 'invoices') : Promise.resolve([]),
+      (shouldLoad('accounts') || shouldLoad('tuckShop')) ? listCollectionForReport(env, 'ledger') : Promise.resolve([]),
       shouldLoad('clinic') ? listCollection(env, 'clinicRecords') : Promise.resolve([]),
       shouldLoad('clinic') ? listCollection(env, 'clinicInventory') : Promise.resolve([]),
       shouldLoad('kitchen') ? listCollection(env, 'kitchenInventory') : Promise.resolve([]),

@@ -1,4 +1,4 @@
-import { listCollection, requireFirestoreEnv } from '../lib/firestore.js';
+import { listCollection, listCollectionForReport, requireFirestoreEnv } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { buildIncomeAnalytics, journalMatchesIncomeBranch } from '../lib/income-analytics.js';
 import { actorBranchScope, resolveRequestedBranch } from '../lib/branch-scope.js';
@@ -21,7 +21,7 @@ export async function onRequestPost(context) {
     const body = await readJsonBody(request, { maxBytes: 256 * 1024 });
     const [chart, journals] = await Promise.all([
       listCollection(env, 'chartOfAccounts'),
-      listCollection(env, 'accountingJournals')
+      listCollectionForReport(env, 'accountingJournals')
     ]);
     const privileged = ['Super Admin', 'Accounts Officer', 'Management', 'Treasurer', 'Auditor'].includes(clean(user.role));
     const assignedBranch = actorBranchScope(user);
