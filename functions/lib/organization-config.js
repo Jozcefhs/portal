@@ -12,13 +12,13 @@ const clean = (value) => String(value ?? '').trim();
 export const ORGANIZATION_EDITIONS = Object.freeze(['school', 'faith', 'organization']);
 
 export const SCHOOL_ONLY_SECTION_KEYS = Object.freeze([
-  'admissions', 'formPurchases', 'students', 'academics', 'studentConduct', 'accounts',
+  'admissions', 'formPurchases', 'students', 'academics', 'library', 'studentConduct', 'accounts',
   'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore'
 ]);
 
 export const SCHOOL_ONLY_STAFF_ROLES = Object.freeze([
   'Principal', 'Vice Principal Academics', 'Vice Principal Administration',
-  'Head Teacher', 'Assistant Head Teacher', 'Teacher', 'Admissions Officer', 'Student Welfare Officer',
+  'Head Teacher', 'Assistant Head Teacher', 'Teacher', 'Librarian', 'Admissions Officer', 'Student Welfare Officer',
   'Tuck Shop User', 'Clinic User', 'Kitchen User'
 ]);
 
@@ -56,7 +56,7 @@ const EDITION_STAFF_ROLE_SETS = Object.freeze({
 });
 
 const NON_SCHOOL_DISABLED_FEATURES = new Set([
-  'admissions', 'students', 'academics', 'studentConduct', 'parentPortal',
+  'admissions', 'students', 'academics', 'library', 'studentConduct', 'parentPortal',
   'stores', 'clinic', 'kitchen'
 ]);
 
@@ -74,6 +74,7 @@ export const EDITION_FEATURE_DEFAULTS = Object.freeze({
     admissions: true,
     students: true,
     academics: true,
+    library: true,
     studentConduct: true,
     parentPortal: true,
     stores: true,
@@ -97,6 +98,7 @@ export const EDITION_FEATURE_DEFAULTS = Object.freeze({
     admissions: false,
     students: false,
     academics: false,
+    library: false,
     studentConduct: false,
     parentPortal: false,
     stores: false,
@@ -126,6 +128,7 @@ export const EDITION_FEATURE_DEFAULTS = Object.freeze({
     admissions: false,
     students: false,
     academics: false,
+    library: false,
     studentConduct: false,
     parentPortal: false,
     stores: false,
@@ -382,6 +385,7 @@ const SECTION_FEATURES = Object.freeze({
   formPurchases: 'admissions',
   students: 'students',
   academics: Object.freeze(['students', 'academics']),
+  library: Object.freeze(['students', 'library']),
   studentConduct: 'studentConduct',
   accounts: Object.freeze(['students', 'accounting']),
   incomeAnalytics: 'accounting',

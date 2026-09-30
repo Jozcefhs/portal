@@ -10,6 +10,7 @@ import {
 } from '../lib/school-announcements.js';
 import { processScheduledChurchAnnouncements } from '../lib/church-announcements.js';
 import { processAttendancePresenceNotifications } from '../lib/attendance-presence-notifications.js';
+import { processLibraryDueReminders } from '../lib/school-library.js';
 
 const clean = (value) => String(value ?? '').trim();
 
@@ -59,6 +60,11 @@ async function run(context) {
       today: clean(body.today),
       limit: Number(body.limit || 250)
     });
+    const libraryReminders = announcementsOnly || attendanceOnly || identity.edition !== 'school'
+      ? { skipped: true }
+      : await processLibraryDueReminders(context.env, {
+          today: clean(body.today), limit: Number(body.libraryLimit || 250)
+        });
     const schoolAnnouncements = attendanceOnly || identity.edition !== 'school' ? { skipped: true } : await processScheduledSchoolAnnouncements(context.env, {
         now: clean(body.now),
         limit: Number(body.limit || 100)
@@ -92,6 +98,7 @@ async function run(context) {
       edition: identity.edition,
       schoolFeeCredits,
       reminders,
+      libraryReminders,
       announcements,
       announcementPush,
       attendancePresence,

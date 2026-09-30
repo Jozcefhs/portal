@@ -16,6 +16,7 @@ const entranceResults = document.getElementById('entranceResults');
 const parentAcademicSchedule = document.getElementById('parentAcademicSchedule');
 const parentAcademicAttendance = document.getElementById('parentAcademicAttendance');
 const clinicRecords = document.getElementById('clinicRecords');
+const parentLibraryLoans = document.getElementById('parentLibraryLoans');
 const schoolStores = document.getElementById('schoolStores');
 const storeSearch = document.getElementById('storeSearch');
 const storeSearchSummary = document.getElementById('storeSearchSummary');
@@ -99,6 +100,7 @@ const parentTutorialContexts = Object.freeze({
   documents: { storageKey: 'Parent Portal - Documents', label: 'document upload' },
   wallet: { storageKey: 'Parent Portal - Wallet', label: 'wallet and spending controls' },
   clinic: { storageKey: 'Parent Portal - Clinic', label: 'clinic records' },
+  library: { storageKey: 'Parent Portal - Library', label: 'library loans' },
   stores: { storageKey: 'Parent Portal - School Store', label: 'school store' },
   notifications: { storageKey: 'Parent Portal - Notifications', label: 'notifications' },
   password: { storageKey: 'Parent Portal - Change Password', label: 'password change' }
@@ -262,6 +264,7 @@ function normalizeChildResultMaps(data) {
     'payableErrors',
     'dueNotifications',
     'clinicVisits',
+    'libraryLoans',
     'academicResults',
     'entranceResults',
     'academicSchedules',
@@ -1204,6 +1207,7 @@ async function loadPayablesForSelected(force = false) {
   dashboard.walletActivity = dashboard.walletActivity || {};
   dashboard.paymentRecords = dashboard.paymentRecords || {};
   dashboard.clinicVisits = dashboard.clinicVisits || {};
+  dashboard.libraryLoans = dashboard.libraryLoans || {};
   dashboard.academicResults = dashboard.academicResults || {};
   dashboard.entranceResults = dashboard.entranceResults || {};
   dashboard.academicSchedules = dashboard.academicSchedules || {};
@@ -1218,6 +1222,7 @@ async function loadPayablesForSelected(force = false) {
   renderWallet(child);
   renderPayments(child);
   renderClinic(child);
+  renderLibraryLoans(child);
   renderAcademicResults(child);
   renderEntranceResults(child);
   renderAcademicSchedule(child);
@@ -1284,6 +1289,7 @@ async function loadPayablesForSelected(force = false) {
       }
       setChildResult(dashboard.paymentRecords, child, activityData.paymentRecords || []);
       setChildResult(dashboard.clinicVisits, child, activityData.clinicVisits || []);
+      setChildResult(dashboard.libraryLoans, child, activityData.libraryLoans || []);
       setChildResult(dashboard.academicResults, child, activityData.academicResults || []);
       setChildResult(dashboard.entranceResults, child, activityData.entranceResults || []);
       setChildResult(dashboard.academicSchedules, child, activityData.academicSchedule || []);
@@ -1316,6 +1322,7 @@ async function loadPayablesForSelected(force = false) {
   renderWallet(child);
   renderPayments(child);
   renderClinic(child);
+  renderLibraryLoans(child);
   renderAcademicResults(child);
   renderEntranceResults(child);
   renderAcademicSchedule(child);
@@ -1579,6 +1586,25 @@ function academicResultSubjectRows(record) {
     <td>${escapeHtml(subject.Position ?? subject.AssessedCount ?? '-')}</td>
     <td>${escapeHtml(subject.Remark || '')}</td>
   </tr>`).join('');
+}
+
+function renderLibraryLoans(child) {
+  if (!parentLibraryLoans) return;
+  const records = childResult(dashboard.libraryLoans, child, []);
+  if (!records.length) {
+    parentLibraryLoans.innerHTML = '<p class="muted">No library loans found for this child.</p>';
+    return;
+  }
+  const target = activityTarget(parentLibraryLoans, records, 'library loans');
+  records.slice(0, 100).forEach((record) => {
+    const item = document.createElement('div');
+    item.className = 'activity-item';
+    const overdue = record.Status === 'On Loan' && record.DueDate < new Date().toISOString().slice(0, 10);
+    item.innerHTML = `<strong>${escapeHtml(record.Title || 'Library book')}</strong>
+      <span>${escapeHtml(record.Barcode || '')} · ${escapeHtml(record.Status || '')}${overdue ? ' · Overdue' : ''}</span>
+      <small>Borrowed ${escapeHtml(record.CheckedOutDate || '—')} · Due ${escapeHtml(record.DueDate || '—')}${record.ReturnedDate ? ` · Returned ${escapeHtml(record.ReturnedDate)}` : ''}</small>`;
+    target.appendChild(item);
+  });
 }
 
 function academicResultCriteriaMarkup(record = {}) {
@@ -1994,6 +2020,7 @@ function renderDashboard() {
   renderWallet(child);
   renderPayments(child);
   renderClinic(child);
+  renderLibraryLoans(child);
   renderStores(child);
 }
 

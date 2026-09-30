@@ -50,7 +50,7 @@ function nowIso() {
 
 export const NOTIFICATION_CATEGORIES = Object.freeze([
   'Fees', 'Payments', 'Requisitions', 'Attendance', 'Academics',
-  'Offerings', 'Donations', 'Services', 'Funds', 'Announcements', 'System'
+  'Offerings', 'Donations', 'Services', 'Funds', 'Library', 'Announcements', 'System'
 ]);
 
 export const DEFAULT_NOTIFICATION_SETTINGS = Object.freeze({

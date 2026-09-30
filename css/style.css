@@ -2964,6 +2964,22 @@ html[data-theme="dark"] .records-desk-handoff{border-color:#2b8f80;background:#1
 }
 
 /* Student Conduct & Discipline Committee */
+.school-library-summary{grid-template-columns:repeat(5,minmax(112px,1fr));margin:0 0 14px}
+.school-library-summary>div{display:flex;min-height:84px;flex-direction:column;align-items:center;justify-content:center;text-align:center;background:#eff6fd}
+.school-library-summary strong{font-size:21px;color:#103a65}
+.school-library-panel{min-width:0}
+.school-library-forms{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;align-items:start}
+.school-library-panel .config-card{margin:0 0 18px;padding:18px;overflow:visible}
+.school-library-panel .config-card h3{grid-column:1/-1;margin:0;color:#123b64}
+.school-library-panel .config-card label{min-width:0}
+.school-library-panel .config-card input,.school-library-panel .config-card select,.school-library-panel .config-card textarea{width:100%;max-width:100%}
+.school-library-panel .config-actionbar{grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.school-library-panel .admin-table-wrap{margin-bottom:18px;overflow:auto}
+.school-library-panel .admin-table td:last-child{white-space:nowrap}
+html[data-theme="dark"] .school-library-summary>div{background:#122f49}
+html[data-theme="dark"] .school-library-summary strong,html[data-theme="dark"] .school-library-panel .config-card h3{color:#e6f1ff}
+@media(max-width:980px){.school-library-summary{grid-template-columns:repeat(5,minmax(115px,1fr));overflow-x:auto}.school-library-forms{grid-template-columns:1fr}}
+@media(max-width:680px){.school-library-panel .workflow-form-grid{grid-template-columns:1fr}.school-library-panel .config-card{padding:14px}}
 .student-conduct-summary{grid-template-columns:repeat(5,minmax(112px,1fr));margin:0 0 14px}
 .student-conduct-summary>div{display:flex;min-height:88px;flex-direction:column;align-items:center;justify-content:center;text-align:center}
 .student-conduct-summary>div:nth-child(1){background:linear-gradient(145deg,#123c68,#1c5d96);color:#fff}

@@ -27,7 +27,7 @@ import {
 } from '../lib/document-storage.js';
 import { organizationModulePreferences, organizationProfileDocument, resolveOrganizationConfig } from '../lib/organization-config.js';
 import { loadOrganizationNameProfile } from '../lib/organization-name-format.js';
-import { invalidateStaffAccessCache } from '../lib/staff-auth.js';
+import { invalidateStaffAccessCache, staffAccessFor } from '../lib/staff-auth.js';
 import { mergedProfileText } from '../lib/profile-settings-update.js';
 import {
   applyPublicPortalContent,
@@ -64,6 +64,7 @@ import { handleOrganizationDepartmentAction } from '../lib/organization-departme
 import { assertOrganizationDepartmentWorkspaceAccess } from '../lib/organization-department-gate.js';
 import { handleExecutiveOfficeAction } from '../lib/executive-correspondence.js';
 import { handleStudentConductAction } from '../lib/student-conduct.js';
+import { handleSchoolLibraryAction } from '../lib/school-library.js';
 import { handleAcademicManagementAction } from '../lib/academic-management.js';
 import { saveStudentLoginPassword } from '../lib/student-login-credentials.js';
 import { defaultModulesForRole } from '../lib/role-module-access.js';
@@ -815,6 +816,9 @@ export function requireBackendSecret(env, body) {
 }
 
 const VERIFIED_ACTOR_ACTIONS = new Set([
+  'getSchoolLibrary', 'saveLibraryTitle', 'addLibraryCopy', 'checkoutLibraryCopy',
+  'returnLibraryCopy', 'renewLibraryLoan', 'reserveLibraryTitle',
+  'cancelLibraryReservation', 'saveLibraryPolicy',
   'saveOrganizationModulePreferences',
   'exportBackup', 'prepareRestoreBackup', 'clearRestoreCollection', 'writeRestoreCollection', 'completeRestoreBackup',
   'getAccountingOverview', 'getSystemHealth', 'optimizeFirestoreData', 'getPayrollTaxConfiguration',
@@ -888,6 +892,9 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
 // applyDesktopDeviceBranchScope.  Organisation-wide and legacy credentials
 // retain the existing action surface for backwards compatibility.
 const BRANCH_BOUND_DEVICE_ACTIONS = new Set([
+  'getSchoolLibrary', 'saveLibraryTitle', 'addLibraryCopy', 'checkoutLibraryCopy',
+  'returnLibraryCopy', 'renewLibraryLoan', 'reserveLibraryTitle',
+  'cancelLibraryReservation', 'saveLibraryPolicy',
   'ping',
   'getApplications', 'getStudents',
   'getStudentConductCases', 'saveStudentConductCase', 'deleteStudentConductCase',
@@ -9757,6 +9764,34 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
           students: rows.map((row) => normalizeStudent(row, profile || {}))
         };
       }
+    case 'getSchoolLibrary':
+    case 'saveLibraryTitle':
+    case 'addLibraryCopy':
+    case 'checkoutLibraryCopy':
+    case 'returnLibraryCopy':
+    case 'renewLibraryLoan':
+    case 'reserveLibraryTitle':
+    case 'cancelLibraryReservation':
+    case 'saveLibraryPolicy': {
+      const access = await staffAccessFor(env, {
+        username: clean(body.UserUsername), role: clean(body.UserRole),
+        assignedRole: clean(body.UserAssignedRole || body.UserRole),
+        branchId: clean(body.UserBranchId), tabAccess: body.UserTabAccess,
+        department: clean(body.UserDepartment)
+      });
+      return handleSchoolLibraryAction(env, {
+        ...access, username: clean(body.UserUsername), displayName: clean(body.RecordedBy || body.UserUsername),
+        role: clean(body.UserRole), assignedRole: clean(body.UserAssignedRole || body.UserRole),
+        branchId: clean(body.UserBranchId)
+      }, {
+        ...body,
+        action: ({ getSchoolLibrary: 'list', saveLibraryTitle: 'saveTitle',
+          addLibraryCopy: 'addCopy', checkoutLibraryCopy: 'checkout',
+          returnLibraryCopy: 'return', renewLibraryLoan: 'renew',
+          reserveLibraryTitle: 'reserve', cancelLibraryReservation: 'cancelReservation',
+          saveLibraryPolicy: 'savePolicy' })[action]
+      });
+    }
     case 'getStudentConductCases':
     case 'saveStudentConductCase':
     case 'deleteStudentConductCase':

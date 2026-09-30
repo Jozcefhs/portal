@@ -13,7 +13,7 @@ export const SUBSCRIPTION_PLAN_NAMES = Object.freeze([
 
 const FULL_ACCESS = '*';
 export const FREE_TRIAL_DAYS = 7;
-export const SUBSCRIPTION_MODULE_CATALOG_VERSION = 9;
+export const SUBSCRIPTION_MODULE_CATALOG_VERSION = 10;
 export const SUBSCRIPTION_CURRENCIES = Object.freeze(['NGN', 'USD']);
 export const DEFAULT_USD_TO_NGN_RATE = 1350;
 
@@ -33,6 +33,7 @@ export const SUBSCRIPTION_FLEX_PRICE_ESTIMATES_USD = Object.freeze({
   admissions: 4,
   students: 4,
   academics: 7,
+  library: 3,
   studentConduct: 2,
   parentPortal: 4,
   stores: 3,
@@ -63,6 +64,7 @@ export const SUBSCRIPTION_MODULE_CATALOG = Object.freeze([
   Object.freeze({ Key: 'admissions', Editions: Object.freeze(['school']), Labels: Object.freeze({ school: 'Admissions & form purchases' }), Description: 'Application intake, form sales and admission processing.', Requires: Object.freeze([]) }),
   Object.freeze({ Key: 'students', Editions: Object.freeze(['school']), Labels: Object.freeze({ school: 'Student records & accounts' }), Description: 'Student directory, accounts and academic identity.', Requires: Object.freeze([]) }),
   Object.freeze({ Key: 'academics', Editions: Object.freeze(['school']), Labels: Object.freeze({ school: 'Academic management, scorebook & CBT' }), Description: 'Classes, subjects, timetables, attendance, score recording, CBT, results and academic outcomes.', Requires: Object.freeze(['students']) }),
+  Object.freeze({ Key: 'library', Editions: Object.freeze(['school']), Labels: Object.freeze({ school: 'School library' }), Description: 'Book catalogue, physical copies, lending, reservations and overdue control.', Requires: Object.freeze(['students']) }),
   Object.freeze({ Key: 'studentConduct', Editions: Object.freeze(['school']), Labels: Object.freeze({ school: 'Student conduct & discipline' }), Description: 'Conduct cases, decisions and controlled case history.', Requires: Object.freeze(['students']) }),
   Object.freeze({ Key: 'parentPortal', Editions: Object.freeze(['school']), Labels: Object.freeze({ school: 'Parent portal' }), Description: 'Parent access to payments, records, documents and notifications.', Requires: Object.freeze(['students']) }),
   Object.freeze({ Key: 'stores', Editions: Object.freeze(['school']), Labels: Object.freeze({ school: 'School stores' }), Description: 'Tuck shop, books and supplies, clothing and uniform stores.', Requires: Object.freeze(['students']) }),
@@ -186,7 +188,7 @@ export const SUBSCRIPTION_PLAN_DEFINITIONS = Object.freeze({
     Summary: 'Full operations for a growing organisation',
     Entitlements: Object.freeze({ school: FULL_ACCESS, faith: FULL_ACCESS, organization: FULL_ACCESS }),
     Features: Object.freeze({
-      school: Object.freeze(['Everything in Standard', 'Payroll', 'Student conduct and clinic', 'Kitchen and school stores', 'All school operation modules']),
+      school: Object.freeze(['Everything in Standard', 'Payroll', 'Student conduct, clinic and library', 'Kitchen and school stores', 'All school operation modules']),
       faith: Object.freeze(['Everything in Standard', 'Payroll', 'Organisation store, restaurant and hotel services', 'Programs and all church operation modules']),
       organization: Object.freeze(['Everything in Standard', 'Payroll', 'Inventory, sales and hotel services', 'All organisation operation modules'])
     })
@@ -403,7 +405,10 @@ export function defaultSubscriptionPlanCatalog() {
           edition,
           Object.fromEntries(subscriptionModulesForEdition(edition).map((module) => [
             module.Key,
-            { MonthlyAmount: 0, YearlyAmount: 0 }
+            { MonthlyAmount: name === 'Flex' && module.Key === 'library'
+              ? suggestedFlexModuleAmount('library', 'monthly', 'NGN', DEFAULT_USD_TO_NGN_RATE) : 0,
+              YearlyAmount: name === 'Flex' && module.Key === 'library'
+                ? suggestedFlexModuleAmount('library', 'yearly', 'NGN', DEFAULT_USD_TO_NGN_RATE) : 0 }
           ]))
         ]))
       }];
@@ -482,7 +487,15 @@ export function normalizeSubscriptionPlanCatalog(value = {}) {
             && defaults.Plans[name].EntitlementsByEdition[edition].includes('hotel')
             ? normalizeConfiguredEntitlements(edition, [...restoredCommunicationEntitlements, 'hotel'], [])
             : restoredCommunicationEntitlements;
-          return [edition, hotelMigratedEntitlements];
+          const previousFullSchoolModules = expectedEntitlements.filter((key) => key !== 'library');
+          const libraryMigratedEntitlements = sourceModuleCatalogVersion < 10
+            && edition === 'school'
+            && ['Free', 'Professional', 'Enterprise'].includes(name)
+            && previousFullSchoolModules.length === hotelMigratedEntitlements.length
+            && previousFullSchoolModules.every((key) => hotelMigratedEntitlements.includes(key))
+            ? normalizeConfiguredEntitlements(edition, [...hotelMigratedEntitlements, 'library'], [])
+            : hotelMigratedEntitlements;
+          return [edition, libraryMigratedEntitlements];
         })),
         PaystackMonthlyPlanCode: name === 'Free' ? '' : clean(incoming.PaystackMonthlyPlanCode),
         PaystackYearlyPlanCode: name === 'Free' ? '' : clean(incoming.PaystackYearlyPlanCode),
@@ -498,6 +511,7 @@ export function normalizeSubscriptionPlanCatalog(value = {}) {
             const migrateUnpricedFlexModule = name === 'Flex' && (
               sourceModuleCatalogVersion < 6
               || (sourceModuleCatalogVersion < 8 && module.Key === 'hotel')
+              || (sourceModuleCatalogVersion < 10 && module.Key === 'library')
             );
             return [module.Key, {
               MonthlyAmount: name === 'Flex'

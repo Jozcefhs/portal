@@ -14,6 +14,7 @@ export const WEB_SECTION_CATALOG = Object.freeze([
   Object.freeze({ key: 'formPurchases', label: 'Form Purchases' }),
   Object.freeze({ key: 'students', label: 'Students' }),
   Object.freeze({ key: 'academics', label: 'Academic Management' }),
+  Object.freeze({ key: 'library', label: 'School Library' }),
   Object.freeze({ key: 'studentConduct', label: 'Student Conduct & Discipline' }),
   Object.freeze({ key: 'humanResources', label: 'Human Resources' }),
   Object.freeze({ key: 'members', label: 'Departments & Members' }),
@@ -61,7 +62,7 @@ export const ORGANIZATION_SECTION_LABELS = Object.freeze({
 
 export const STAFF_ROLE_OPTIONS = Object.freeze([
   'Super Admin', 'Director', 'Admin', 'Principal', 'Vice Principal Academics', 'Vice Principal Administration',
-  'Head Teacher', 'Assistant Head Teacher', 'Teacher', 'Senior Pastor', 'Head Minister',
+  'Head Teacher', 'Assistant Head Teacher', 'Teacher', 'Librarian', 'Senior Pastor', 'Head Minister',
   'Admissions Officer', 'Student Welfare Officer', 'Accounts Officer',
   'Management', 'Department User', 'Tuck Shop User', 'Clinic User',
   'Kitchen User', 'Store User', 'Restaurant User', 'Hotel User', 'Front Desk', 'Pastor',
@@ -76,18 +77,19 @@ export const STAFF_ROLE_OPTIONS = Object.freeze([
 ]);
 
 const LEGACY_ROLE_DEFAULTS = Object.freeze({
-  'Super Admin': ['recordsDesk', 'executiveOffice', 'admissions', 'formPurchases', 'students', 'academics', 'studentConduct', 'accounts', 'incomeAnalytics', 'members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore', 'organizationStore', 'restaurant', 'hotel', 'dataBackup', 'securityAudit', 'staffUsers'],
-  Director: ['recordsDesk', 'executiveOffice', 'admissions', 'formPurchases', 'students', 'academics', 'studentConduct', 'accounts', 'incomeAnalytics', 'members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore', 'organizationStore', 'restaurant', 'hotel', 'dataBackup', 'securityAudit', 'staffUsers'],
-  Admin: ['recordsDesk', 'admissions', 'formPurchases', 'students', 'academics', 'studentConduct', 'accounts', 'incomeAnalytics', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore'],
+  'Super Admin': ['recordsDesk', 'executiveOffice', 'admissions', 'formPurchases', 'students', 'academics', 'library', 'studentConduct', 'accounts', 'incomeAnalytics', 'members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore', 'organizationStore', 'restaurant', 'hotel', 'dataBackup', 'securityAudit', 'staffUsers'],
+  Director: ['recordsDesk', 'executiveOffice', 'admissions', 'formPurchases', 'students', 'academics', 'library', 'studentConduct', 'accounts', 'incomeAnalytics', 'members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore', 'organizationStore', 'restaurant', 'hotel', 'dataBackup', 'securityAudit', 'staffUsers'],
+  Admin: ['recordsDesk', 'admissions', 'formPurchases', 'students', 'academics', 'library', 'studentConduct', 'accounts', 'incomeAnalytics', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore'],
   Principal: ['recordsDesk', 'executiveOffice', 'academics', 'studentConduct'],
   'Vice Principal Academics': ['recordsDesk', 'executiveOffice', 'academics', 'studentConduct'],
   'Vice Principal Administration': ['recordsDesk', 'executiveOffice', 'academics', 'studentConduct'],
   'Head Teacher': ['recordsDesk', 'executiveOffice', 'academics', 'studentConduct'],
   'Assistant Head Teacher': ['recordsDesk', 'executiveOffice', 'academics', 'studentConduct'],
   Teacher: ['academics'],
+  Librarian: ['library'],
   'Admissions Officer': ['recordsDesk', 'admissions', 'formPurchases', 'students', 'academics', 'studentConduct', 'financeRequests', 'payroll'],
   'Accounts Officer': ['recordsDesk', 'students', 'academics', 'accounts', 'incomeAnalytics', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore'],
-  Management: ['recordsDesk', 'admissions', 'formPurchases', 'students', 'academics', 'studentConduct', 'accounts', 'incomeAnalytics', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore'],
+  Management: ['recordsDesk', 'admissions', 'formPurchases', 'students', 'academics', 'library', 'studentConduct', 'accounts', 'incomeAnalytics', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore'],
   'Student Welfare Officer': ['recordsDesk', 'students', 'studentConduct'],
   'Tuck Shop User': ['recordsDesk', 'tuckShop', 'financeRequests', 'payroll'],
   'Clinic User': ['recordsDesk', 'clinic', 'financeRequests', 'payroll'],
@@ -136,7 +138,7 @@ export function rolesForEdition(edition) {
 export function modulesForEdition(edition, featureFlags = null) {
   const allowed = new Set(filterSectionsForFeatures(WEB_SECTION_KEYS, featureFlags));
   if (normalizeOrganizationEdition(edition) !== 'school') {
-    ['admissions', 'formPurchases', 'students', 'academics', 'studentConduct', 'accounts', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore']
+    ['admissions', 'formPurchases', 'students', 'academics', 'library', 'studentConduct', 'accounts', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore']
       .forEach((key) => allowed.delete(key));
   }
   return WEB_SECTION_CATALOG
@@ -158,6 +160,7 @@ function departmentUserDefaults(department) {
     return ['academics', 'humanResources', 'financeRequests', 'payroll'];
   }
   if (normalized.includes('clinic')) return ['recordsDesk', 'clinic', 'humanResources', 'financeRequests', 'payroll'];
+  if (normalized.includes('librar')) return ['library', 'humanResources', 'financeRequests', 'payroll'];
   if (normalized.includes('kitchen')) return ['kitchen', 'humanResources', 'financeRequests', 'payroll'];
   if (normalized.includes('restaurant') || normalized.includes('catering')) return ['restaurant', 'humanResources', 'financeRequests', 'payroll'];
   if (normalized.includes('hotel') || normalized.includes('hospitality') || normalized.includes('guest house')) return ['hotel', 'humanResources', 'financeRequests', 'payroll'];

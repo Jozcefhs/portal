@@ -2016,7 +2016,7 @@ async function getChildActivity(env, body, options = {}) {
   child.BranchId = selectedScope.branchId;
   child.SchoolSection = selectedScope.schoolSection;
   const keys = accountKeys(child);
-  const [ledgerRows, invoiceRows, paymentRows, clinicRows, summaryRows, linkedApplication, storeItems, storeOrderRows, academicResultRows, academicClearanceRows, academicMembershipRows, academicAttendanceRows, timetableVersionRows, timetableEntryRows, academicSubjectRows, schoolCalendarRows, academicTermRows] = await Promise.all([
+  const [ledgerRows, invoiceRows, paymentRows, clinicRows, summaryRows, linkedApplication, storeItems, storeOrderRows, academicResultRows, academicClearanceRows, academicMembershipRows, academicAttendanceRows, timetableVersionRows, timetableEntryRows, academicSubjectRows, schoolCalendarRows, academicTermRows, libraryLoanRows] = await Promise.all([
     queryRowsForReferences(env, 'ledger', ['AccountRef', 'AdmissionNo', 'ApplicationReference'], keys),
     queryRowsForReferences(env, 'invoices', ['AccountRef', 'AdmissionNo', 'ApplicationReference'], keys),
     queryRowsForReferences(env, 'payments', ['AccountRef', 'AdmissionNo', 'ApplicationReference'], keys),
@@ -2040,7 +2040,8 @@ async function getChildActivity(env, body, options = {}) {
     listCollection(env, 'academicTimetableEntries').catch(() => []),
     listCollection(env, 'academicSubjects').catch(() => []),
     queryCollection(env, 'academicSchoolCalendars', { filters: [{ field: 'BranchId', op: '==', value: selectedScope.branchId }] }).catch(() => []),
-    queryCollection(env, 'academicTerms', { filters: [{ field: 'BranchId', op: '==', value: selectedScope.branchId }] }).catch(() => [])
+    queryCollection(env, 'academicTerms', { filters: [{ field: 'BranchId', op: '==', value: selectedScope.branchId }] }).catch(() => []),
+    queryRowsForReferences(env, 'libraryLoans', ['BorrowerRef'], keys)
   ]);
   if (linkedApplication && !findScopedChildApplication(applications, child)) {
     applications.push(linkedApplication);
@@ -2154,6 +2155,12 @@ async function getChildActivity(env, body, options = {}) {
     notificationUnreadCount: notificationData.unreadCount,
     unreadCount: notificationData.unreadCount,
     clinicVisits: clinic.filter((record) => financialReferenceMatches(record.AdmissionNo, child)).sort((a, b) => clean(b.Date).localeCompare(clean(a.Date))),
+    libraryLoans: libraryLoanRows.filter((row) => lower(row.BorrowerType) === 'student'
+      && recordMatchesSelectedChildScope(row, selectedScope)
+      && keys.some((key) => lower(key) === lower(row.BorrowerRef)))
+      .map((row) => ({ Title: clean(row.Title), Barcode: clean(row.Barcode), CheckedOutDate: clean(row.CheckedOutDate),
+        DueDate: clean(row.DueDate), ReturnedDate: clean(row.ReturnedDate), Status: clean(row.Status) }))
+      .sort((a, b) => clean(b.CheckedOutDate).localeCompare(clean(a.CheckedOutDate))),
     showResultsOnline: schoolResultsAreVisible(schoolProfile),
     resultDisplayMode: lower(schoolProfile.ResultDisplayMode) === 'percentage' ? 'percentage' : 'subjects',
     academicResults,

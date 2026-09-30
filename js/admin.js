@@ -152,6 +152,7 @@ let executiveDirectoryResults = [];
 let executiveAvailableDirectoryTypes = [];
 let executiveSelectedRecipient = null;
 let studentConductData = null;
+let schoolLibraryData = null;
 let academicManagementData = null;
 let academicManagementView = 'classrooms';
 let academicManagementLoadRequest = 0;
@@ -225,6 +226,7 @@ const tabConfig = [
   ['formPurchases', 'Form Purchases'],
   ['students', 'Students'],
   ['academics', 'Academic Management'],
+  ['library', 'School Library'],
   ['studentConduct', 'Student Conduct & Discipline'],
   ['humanResources', 'Human Resources'],
   ['members', 'Departments & Members'],
@@ -259,6 +261,7 @@ const tutorialStorageKeys = Object.freeze({
   formPurchases: 'Admission Form Sale',
   students: 'Students',
   academics: 'Academic Management',
+  library: 'School Library',
   studentConduct: 'Student Conduct & Discipline',
   humanResources: 'Human Resources',
   members: 'Departments & Members',
@@ -285,13 +288,13 @@ const tutorialStorageKeys = Object.freeze({
 });
 
 const schoolOnlyWebSections = new Set([
-  'admissions', 'formPurchases', 'students', 'academics', 'studentConduct', 'accounts',
+  'admissions', 'formPurchases', 'students', 'academics', 'library', 'studentConduct', 'accounts',
   'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore'
 ]);
 
 const staffRoleOptions = [
   'Super Admin', 'Director', 'Admin', 'Principal', 'Vice Principal Academics', 'Vice Principal Administration',
-  'Head Teacher', 'Assistant Head Teacher', 'Teacher', 'Senior Pastor', 'Head Minister',
+  'Head Teacher', 'Assistant Head Teacher', 'Teacher', 'Librarian', 'Senior Pastor', 'Head Minister',
   'Admissions Officer', 'Student Welfare Officer', 'Accounts Officer',
   'Management', 'Department User', 'Tuck Shop User', 'Clinic User',
   'Kitchen User', 'Store User', 'Restaurant User', 'Hotel User', 'Front Desk', 'Pastor',
@@ -307,7 +310,7 @@ const staffRoleOptions = [
 
 const schoolOnlyStaffRoles = new Set([
   'Principal', 'Vice Principal Academics', 'Vice Principal Administration',
-  'Head Teacher', 'Assistant Head Teacher', 'Teacher', 'Admissions Officer', 'Student Welfare Officer',
+  'Head Teacher', 'Assistant Head Teacher', 'Teacher', 'Librarian', 'Admissions Officer', 'Student Welfare Officer',
   'Tuck Shop User', 'Clinic User', 'Kitchen User'
 ]);
 
@@ -366,6 +369,7 @@ const tabIcons = {
   formPurchases: '\u{1F9FE}',
   students: '\u{1F465}',
   academics: '\u{1F393}',
+  library: '\u{1F4DA}',
   studentConduct: '\u2696',
   humanResources: '\u{1F465}',
   members: '\u{1F465}',
@@ -1836,6 +1840,7 @@ function clearBranchScopedWorkspaceData() {
   executiveAvailableDirectoryTypes = [];
   executiveSelectedRecipient = null;
   studentConductData = null;
+  schoolLibraryData = null;
   academicManagementData = null;
   academicManagementView = 'classrooms';
   academicManagementFilters = { section: '', sessionId: '', termId: '' };
@@ -2826,6 +2831,14 @@ function renderModuleSummary(active, liveData = null) {
       { icon: '\u{1F50D}', label: 'Matches', value: data.totalMatches || 0, note: clean(data.query) ? `Search: ${clean(data.query)}` : 'Enter three or more characters' },
       { icon: '\u2713', label: 'Selected', value: data.detail ? 1 : 0, note: data.detail?.title || 'No record selected' },
       { icon: '\u{1F6E1}', label: 'Scope', value: currentUser?.branchId || 'All', note: currentUser?.schoolSectionAccess || currentUser?.edition || 'Current organisation' }
+    ];
+  } else if (active === 'library' && liveData) {
+    const totals = liveData.summary || {};
+    cards = [
+      { icon, label: 'Titles', value: totals.Titles || 0 },
+      { icon: '\u{1F4DA}', label: 'Copies', value: totals.Copies || 0 },
+      { icon: '\u{1F4D6}', label: 'On loan', value: totals.OnLoan || 0 },
+      { icon: '\u26A0', label: 'Overdue', value: totals.Overdue || 0 }
     ];
   } else if (active === 'admissions') {
     const rows = departments.admissions || [];
@@ -10718,6 +10731,185 @@ function academicSchoolStageLabel(value = '') {
   return ({ primary: 'Primary', 'junior-secondary': 'Junior Secondary', 'senior-secondary': 'Senior Secondary' })[clean(value).toLowerCase()] || 'Not classified';
 }
 
+async function schoolLibraryRequest(action = 'list', payload = {}) {
+  const response = await staffFetch('/api/staff-library', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, BranchId: clean(selectedBranchId || currentUser?.branchId), ...payload })
+  });
+  const data = await response.json().catch(() => ({ ok: false, message: 'The School Library service did not return JSON.' }));
+  if (!response.ok || !data.ok) throw new Error(data.message || 'The School Library request failed.');
+  return data;
+}
+
+function renderSchoolLibrary() {
+  if (activeSection !== 'library' || !schoolLibraryData) return;
+  const data = schoolLibraryData;
+  const summary = data.summary || {};
+  const canManage = data.permissions?.canManage === true;
+  const titleOptions = (data.titles || []).map((row) =>
+    `<option value="${escapeHtml(row.TitleId)}">${escapeHtml(row.Title)}${row.Author ? ` · ${escapeHtml(row.Author)}` : ''}</option>`).join('');
+  const availableOptions = (data.copies || []).filter((row) => row.Status === 'Available').map((row) =>
+    `<option value="${escapeHtml(row.CopyId)}">${escapeHtml(row.Barcode)} · ${escapeHtml(row.Title)}${row.Shelf ? ` · ${escapeHtml(row.Shelf)}` : ''}</option>`).join('');
+  const activeLoans = (data.loans || []).filter((row) => row.Status === 'On Loan');
+  const overdue = activeLoans.filter((row) => clean(row.DueDate) < data.today);
+  const pending = (data.reservations || []).filter((row) => row.Status === 'Pending');
+  panelEl.innerHTML = `
+    <div class="workflow-intro"><div><p class="eyebrow">School operations</p><h2>School Library</h2>
+      <p class="muted">Track each physical copy, issue and return books, manage reservations, and review overdue loans.</p></div>
+      <button type="button" id="refreshSchoolLibrary" class="compact-action">↻ Refresh</button></div>
+    <div class="metric-cards school-library-summary">
+      <div><small>Titles</small><strong>${escapeHtml(summary.Titles || 0)}</strong></div>
+      <div><small>Physical copies</small><strong>${escapeHtml(summary.Copies || 0)}</strong></div>
+      <div><small>Available</small><strong>${escapeHtml(summary.Available || 0)}</strong></div>
+      <div><small>On loan</small><strong>${escapeHtml(summary.OnLoan || 0)}</strong></div>
+      <div><small>Overdue</small><strong>${escapeHtml(summary.Overdue || 0)}</strong></div>
+    </div>
+    <section class="school-library-panel" id="libraryCatalogPanel">
+      ${canManage ? `<div class="school-library-forms">
+        <form id="libraryTitleForm" class="config-card workflow-form workflow-form-grid" data-library-action="saveTitle">
+          <h3>Book title</h3><input type="hidden" name="TitleId">
+          <label>Title *<input name="Title" required maxlength="200"></label>
+          <label>Author<input name="Author" maxlength="160"></label>
+          <label>ISBN<input name="ISBN" maxlength="32"></label>
+          <label>Publisher<input name="Publisher" maxlength="120"></label>
+          <label>Category<input name="Category" maxlength="100"></label>
+          <label>Recommended class<input name="RecommendedClass" maxlength="100" placeholder="e.g. Grade 10"></label>
+          <label class="workflow-wide-field">Description<textarea name="Description" maxlength="1000"></textarea></label>
+          <div class="config-actionbar"><button type="submit">Save title</button><button type="reset" class="secondary">Clear</button><p class="status" data-library-status></p></div>
+        </form>
+        <form class="config-card workflow-form workflow-form-grid" data-library-action="addCopy">
+          <h3>Add a physical copy</h3>
+          <label>Book title *<select name="TitleId" required><option value="">Choose title</option>${titleOptions}</select></label>
+          <label>Unique barcode *<input name="Barcode" required maxlength="80" placeholder="e.g. LIB-0001"></label>
+          <label>Shelf / location<input name="Shelf" maxlength="80"></label>
+          <label>Condition<select name="Condition"><option>New</option><option selected>Good</option><option>Worn</option></select></label>
+          <label>Acquired on<input name="AcquiredAt" type="date"></label>
+          <div class="config-actionbar"><button type="submit">Add copy</button><p class="status" data-library-status></p></div>
+        </form></div>` : ''}
+      ${table('Library titles', data.titles || [], [
+        { label: 'Title', value: (row) => row.Title },
+        { label: 'Author', value: (row) => row.Author },
+        { label: 'ISBN', value: (row) => row.ISBN },
+        { label: 'Category', value: (row) => row.Category },
+        { label: 'Copies', value: (row) => (data.copies || []).filter((copy) => copy.TitleId === row.TitleId).length },
+        { label: 'Available', value: (row) => (data.copies || []).filter((copy) => copy.TitleId === row.TitleId && copy.Status === 'Available').length },
+        { label: 'Actions', render: (row) => canManage ? `<button type="button" class="secondary" data-library-edit-title="${escapeHtml(row.TitleId)}">Edit</button>` : '' }
+      ], { searchable: true, searchLabel: 'titles', searchValue: (row) => [row.Title, row.Author, row.ISBN, row.Category].join(' ') })}
+      ${table('Physical copies', data.copies || [], [
+        { label: 'Barcode', value: (row) => row.Barcode }, { label: 'Title', value: (row) => row.Title },
+        { label: 'Shelf', value: (row) => row.Shelf }, { label: 'Condition', value: (row) => row.Condition },
+        { label: 'Status', value: (row) => row.Status }
+      ], { searchable: true, searchLabel: 'copies', searchValue: (row) => [row.Barcode, row.Title, row.Shelf, row.Status].join(' ') })}
+    </section>
+    <section class="school-library-panel" id="libraryCirculationPanel">
+      ${canManage ? `<form class="config-card workflow-form workflow-form-grid" data-library-action="checkout">
+        <h3>Issue a book</h3><label>Available copy *<select name="CopyId" required><option value="">Choose barcode and title</option>${availableOptions}</select></label>
+        <label>Borrower type *<select name="BorrowerType"><option>Student</option><option>Staff</option></select></label>
+        <label>Admission number or staff username *<input name="BorrowerRef" required autocomplete="off"></label>
+        <div class="config-actionbar"><button type="submit">Check out</button><p class="status" data-library-status></p></div>
+      </form>` : ''}
+      ${table('Active library loans', activeLoans, [
+        { label: 'Barcode / title', value: (row) => `${row.Barcode} · ${row.Title}` },
+        { label: 'Borrower', value: (row) => `${row.BorrowerName} · ${row.BorrowerRef}` },
+        { label: 'Checked out', value: (row) => row.CheckedOutDate },
+        { label: 'Due', render: (row) => `<span class="${clean(row.DueDate) < data.today ? 'status bad' : ''}">${escapeHtml(row.DueDate)}</span>` },
+        { label: 'Actions', render: (row) => canManage ? `<span class="inline-action-group"><button type="button" class="secondary" data-library-renew="${escapeHtml(row.LoanId)}">Renew</button><button type="button" data-library-return="${escapeHtml(row.LoanId)}" data-library-outcome="Returned">Return</button><button type="button" class="secondary" data-library-return="${escapeHtml(row.LoanId)}" data-library-outcome="Damaged">Damaged</button><button type="button" class="secondary" data-library-return="${escapeHtml(row.LoanId)}" data-library-outcome="Lost">Lost</button></span>` : '' }
+      ], { searchable: true, searchLabel: 'active loans', searchValue: (row) => [row.Barcode, row.Title, row.BorrowerName, row.BorrowerRef].join(' ') })}
+    </section>
+    <section class="school-library-panel" id="libraryReservationsPanel">
+      ${canManage ? `<form class="config-card workflow-form workflow-form-grid" data-library-action="reserve">
+        <h3>Reserve a title</h3><label>Book title *<select name="TitleId" required><option value="">Choose title</option>${titleOptions}</select></label>
+        <label>Borrower type *<select name="BorrowerType"><option>Student</option><option>Staff</option></select></label>
+        <label>Admission number or staff username *<input name="BorrowerRef" required autocomplete="off"></label>
+        <div class="config-actionbar"><button type="submit">Reserve</button><p class="status" data-library-status></p></div>
+      </form>` : ''}
+      ${table('Reservation queue', pending, [
+        { label: 'Requested', value: (row) => clean(row.CreatedAt).slice(0, 16).replace('T', ' ') },
+        { label: 'Title', value: (row) => row.Title },
+        { label: 'Borrower', value: (row) => `${row.BorrowerName} · ${row.BorrowerRef}` },
+        { label: 'Actions', render: (row) => canManage ? `<button type="button" class="secondary" data-library-cancel="${escapeHtml(row.ReservationId)}">Cancel</button>` : '' }
+      ], { searchable: true, searchLabel: 'reservations', searchValue: (row) => [row.Title, row.BorrowerName, row.BorrowerRef].join(' ') })}
+    </section>
+    <section class="school-library-panel" id="libraryReportsPanel">
+      <p class="muted">Overdue status is calculated from the due date; a loan stays open until a library officer records its return.</p>
+      ${table('Overdue library loans', overdue, [
+        { label: 'Title', value: (row) => row.Title }, { label: 'Barcode', value: (row) => row.Barcode },
+        { label: 'Borrower', value: (row) => `${row.BorrowerName} · ${row.BorrowerRef}` },
+        { label: 'Due date', value: (row) => row.DueDate }
+      ], { searchable: true, searchLabel: 'overdue loans', searchValue: (row) => [row.Title, row.Barcode, row.BorrowerName, row.BorrowerRef].join(' ') })}
+    </section>
+    <section class="school-library-panel" id="libraryPolicyPanel">
+      <form class="config-card workflow-form workflow-form-grid" data-library-action="savePolicy">
+        <h3>Branch lending rules</h3>
+        ${[['StudentLoanDays', 'Student loan days'], ['StudentLoanLimit', 'Student book limit'], ['StaffLoanDays', 'Staff loan days'], ['StaffLoanLimit', 'Staff book limit'], ['MaxRenewals', 'Maximum renewals']].map(([key, label]) => `<label>${label}<input name="${key}" type="number" min="${key === 'MaxRenewals' ? '0' : '1'}" max="${key.endsWith('Days') ? '365' : '50'}" step="1" value="${escapeHtml(data.policy?.[key] ?? '')}" ${canManage ? '' : 'disabled'} required></label>`).join('')}
+        ${canManage ? '<div class="config-actionbar"><button type="submit">Save lending rules</button><p class="status" data-library-status></p></div>' : ''}
+      </form>
+    </section>`;
+  mountWorkspaceTabs('library', [
+    { key: 'catalog', label: 'Catalogue & copies', icon: '\u{1F4DA}', count: summary.Titles || 0, nodes: document.getElementById('libraryCatalogPanel') },
+    { key: 'circulation', label: 'Loans', icon: '\u{1F4D6}', count: summary.OnLoan || 0, nodes: document.getElementById('libraryCirculationPanel') },
+    { key: 'reservations', label: 'Reservations', icon: '\u{1F516}', count: summary.Reservations || 0, nodes: document.getElementById('libraryReservationsPanel') },
+    { key: 'reports', label: 'Overdue', icon: '\u26A0', count: summary.Overdue || 0, nodes: document.getElementById('libraryReportsPanel') },
+    { key: 'policy', label: 'Lending rules', icon: '\u2699', nodes: document.getElementById('libraryPolicyPanel') }
+  ]);
+  document.getElementById('refreshSchoolLibrary')?.addEventListener('click', (event) =>
+    runButtonAction(event.currentTarget, 'Refreshing...', loadSchoolLibrary));
+  panelEl.querySelectorAll('[data-library-action]').forEach((form) => form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const button = event.submitter;
+    const status = form.querySelector('[data-library-status]');
+    const payload = Object.fromEntries(new FormData(form).entries());
+    const buttonLabel = button.textContent;
+    setButtonLoading(button, true, 'Saving...', buttonLabel);
+    try {
+      const result = await schoolLibraryRequest(form.dataset.libraryAction, payload);
+      setStatus(dashboardStatus, result.message, 'ok');
+      await loadSchoolLibrary();
+    } catch (error) {
+      setStatus(status, error.message || String(error), 'bad');
+      setButtonLoading(button, false, 'Saving...', buttonLabel);
+    }
+  }));
+  panelEl.querySelectorAll('[data-library-edit-title]').forEach((button) => button.addEventListener('click', () => {
+    const title = (data.titles || []).find((row) => row.TitleId === button.dataset.libraryEditTitle);
+    const form = document.getElementById('libraryTitleForm');
+    if (!title || !form) return;
+    ['TitleId', 'Title', 'Author', 'ISBN', 'Publisher', 'Category', 'RecommendedClass', 'Description']
+      .forEach((key) => { form.elements[key].value = title[key] || ''; });
+    form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }));
+  panelEl.querySelectorAll('[data-library-return], [data-library-renew], [data-library-cancel]').forEach((button) => button.addEventListener('click', async () => {
+    const outcome = button.dataset.libraryOutcome;
+    if (outcome && outcome !== 'Returned' && !await window.DynamaxDialogs.confirm({
+      title: `Mark book ${outcome.toLowerCase()}`,
+      message: `This will close the loan and mark the physical copy ${outcome.toLowerCase()}. It will not create an unapproved financial charge.`,
+      tone: 'danger', confirmText: `Mark ${outcome.toLowerCase()}`
+    })) return;
+    const action = button.dataset.libraryReturn ? 'return' : button.dataset.libraryRenew ? 'renew' : 'cancelReservation';
+    const payload = button.dataset.libraryCancel
+      ? { ReservationId: button.dataset.libraryCancel }
+      : { LoanId: button.dataset.libraryReturn || button.dataset.libraryRenew, ...(outcome ? { Outcome: outcome } : {}) };
+    try {
+      const result = await runButtonAction(button, 'Saving...', () => schoolLibraryRequest(action, payload));
+      setStatus(dashboardStatus, result.message, 'ok');
+      await loadSchoolLibrary();
+    } catch (error) { setStatus(dashboardStatus, error.message || String(error), 'bad'); }
+  }));
+}
+
+async function loadSchoolLibrary() {
+  if (activeSection !== 'library') return;
+  try {
+    const data = await schoolLibraryRequest('list');
+    if (activeSection !== 'library') return;
+    schoolLibraryData = data;
+    renderModuleSummary('library', data);
+    renderSchoolLibrary();
+  } catch (error) {
+    if (activeSection === 'library') panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
+  }
+}
+
 function academicIsSeniorClass(row = {}) {
   const stage = clean(row.SchoolStage).toLowerCase().replace(/[\s_]+/g, '-');
   if (['senior', 'sss', 'senior-secondary'].includes(stage)) return true;
@@ -16845,6 +17037,9 @@ function renderSection(active) {
   } else if (active === 'studentConduct') {
     panelEl.innerHTML = `<p class="muted">Loading ${escapeHtml(staffTabLabel('studentConduct', 'Student Conduct & Discipline'))} cases...</p>`;
     loadStudentConduct();
+  } else if (active === 'library') {
+    panelEl.innerHTML = '<p class="muted">Loading School Library...</p>';
+    loadSchoolLibrary();
   } else if (active === 'academics') {
     panelEl.innerHTML = '<p class="muted">Loading Academic Management...</p>';
     loadAcademicManagement();

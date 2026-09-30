@@ -2,7 +2,7 @@
   const identity = document.getElementById('staffIdentity');
   const profile = document.getElementById('staffProfileTrigger');
   if (!identity || !profile) return;
-  const schoolCategories = ['Fees', 'Payments', 'Requisitions', 'Attendance', 'Academics', 'Announcements', 'System'];
+  const schoolCategories = ['Fees', 'Payments', 'Requisitions', 'Attendance', 'Academics', 'Library', 'Announcements', 'System'];
   const churchCategories = ['Offerings', 'Donations', 'Services', 'Funds', 'Attendance', 'Announcements', 'System'];
   const managedCategories = [...new Set([...schoolCategories, ...churchCategories])];
   const initialEdition = document.documentElement.dataset.edition === 'church' ? 'church' : 'school';
