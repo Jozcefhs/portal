@@ -1,5 +1,5 @@
 import { getAccountsOverview } from './backend.js';
-import { getDocument, listCollection, listCollectionForReport, requireFirestoreEnv } from '../lib/firestore.js';
+import { getDocument, listCollection, listCollectionForReport, queryCollectionPages, requireFirestoreEnv } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { getSchoolStructure, listSchoolCollection, schoolSectionFor } from '../lib/school-scope.js';
 import { configuredStaffBranches } from '../lib/staff-branch-context.js';
@@ -106,6 +106,19 @@ function reconcileInvoiceDisplay(invoices, accounts) {
   });
 }
 
+async function currentSessionFinanceRows(env, collection, academicSession) {
+  if (!academicSession) {
+    const error = new Error('Set the current academic session in School Profile before opening finance summaries.');
+    error.status = 409;
+    throw error;
+  }
+  return queryCollectionPages(env, collection, {
+    filters: [{ field: 'AcademicSession', op: 'in', value: [academicSession, '', 'All'] }],
+    pageSize: 500,
+    maxRows: 15000
+  });
+}
+
 export async function onRequestPost(context) {
   try {
     const { request, env } = context;
@@ -182,11 +195,16 @@ export async function onRequestPost(context) {
     };
     const shouldLoadStore = () => ['bookstore', 'uniformStore', 'organizationStore']
       .some((section) => shouldLoad(section));
+    const schoolProfile = (shouldLoad('accounts') || shouldLoad('admissions') || shouldLoad('students'))
+      ? await getDocument(env, 'settings', 'schoolProfile').catch(() => null)
+      : null;
+    const financeSession = clean(schoolProfile?.CurrentAcademicSession);
 
     const [
       applications,
       students,
       formSales,
+      accountSummaries,
       payments,
       invoices,
       ledger,
@@ -201,7 +219,6 @@ export async function onRequestPost(context) {
       tuckShopMovements
       ,storeItems
       ,storeOrders
-      ,schoolProfile
     ] = await Promise.all([
       shouldLoad('admissions') ? listSchoolCollection(env, 'applications', {
         branchId: user.branchId,
@@ -212,9 +229,11 @@ export async function onRequestPost(context) {
         schoolSectionAccess: user.schoolSectionAccess
       }) : Promise.resolve([]),
       shouldLoad('formPurchases') ? listCollection(env, 'formSales') : Promise.resolve([]),
-      shouldLoad('accounts') ? listCollectionForReport(env, 'payments') : Promise.resolve([]),
-      shouldLoad('accounts') ? listCollectionForReport(env, 'invoices') : Promise.resolve([]),
-      (shouldLoad('accounts') || shouldLoad('tuckShop')) ? listCollectionForReport(env, 'ledger') : Promise.resolve([]),
+      shouldLoad('accounts') ? listCollection(env, 'accountSummaries') : Promise.resolve([]),
+      shouldLoad('accounts') ? currentSessionFinanceRows(env, 'payments', financeSession) : Promise.resolve([]),
+      shouldLoad('accounts') ? currentSessionFinanceRows(env, 'invoices', financeSession) : Promise.resolve([]),
+      shouldLoad('accounts') ? currentSessionFinanceRows(env, 'ledger', financeSession)
+        : shouldLoad('tuckShop') ? listCollectionForReport(env, 'ledger') : Promise.resolve([]),
       shouldLoad('clinic') ? listCollection(env, 'clinicRecords') : Promise.resolve([]),
       shouldLoad('clinic') ? listCollection(env, 'clinicInventory') : Promise.resolve([]),
       shouldLoad('kitchen') ? listCollection(env, 'kitchenInventory') : Promise.resolve([]),
@@ -225,10 +244,7 @@ export async function onRequestPost(context) {
       shouldLoad('tuckShop') ? listCollection(env, 'tuckShopInventory') : Promise.resolve([]),
       shouldLoad('tuckShop') ? listCollection(env, 'tuckShopMovements') : Promise.resolve([]),
       shouldLoadStore() ? listCollection(env, 'storeItems') : Promise.resolve([]),
-      shouldLoadStore() ? listCollection(env, 'storeOrders') : Promise.resolve([]),
-      (shouldLoad('admissions') || shouldLoad('students'))
-        ? getDocument(env, 'settings', 'schoolProfile').catch(() => null)
-        : Promise.resolve(null)
+      shouldLoadStore() ? listCollection(env, 'storeOrders') : Promise.resolve([])
     ]);
 
     const staffScope = (rows) => rows.filter((row) => {
@@ -245,6 +261,7 @@ export async function onRequestPost(context) {
     if (shouldLoad('accounts')) {
       try {
         const overviewInputs = {
+          accountSummaries,
           payments: staffScope(payments),
           invoices: staffScope(invoices),
           ledger: staffScope(ledger),
@@ -345,6 +362,7 @@ export async function onRequestPost(context) {
     if (shouldLoad('accounts')) {
       summary.payments = visiblePayments.length;
       summary.invoices = visibleInvoices.length;
+      summary.financeAcademicSession = financeSession;
     }
     if (shouldLoad('clinic')) {
       summary.clinicRecords = visibleClinicRecords.length;

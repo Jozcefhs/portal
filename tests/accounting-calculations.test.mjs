@@ -23,6 +23,7 @@ import {
   calculateInvoiceCreditAllocations,
   financialRowMatchesAccount,
   financialRowMatchesLinkedApplication,
+  financialRowsByIdentity,
   feeMatchesApplication,
   formSaleFinancialAmounts,
   isNewIntakeApplication,
@@ -46,6 +47,17 @@ test('admitted applications without an explicit intake category are new intake',
   assert.equal(isNewIntakeApplication({ ResultStatus: 'Admitted', EnrollmentCategory: 'Returning' }), false);
   assert.equal(isNewIntakeApplication({ Status: 'Active' }), false);
   assert.equal(isNewIntakeApplication({ Status: 'Active', EnrollmentCategory: 'Imported' }), false);
+});
+
+test('indexed finance matching preserves field identity and linked applications', () => {
+  const rows = [
+    { AccountRef: 'DCA/1', AdmissionNo: 'DCA/2', Credit: 10 },
+    { AdmissionNo: 'DCA/2', Credit: 20 },
+    { AccountRef: 'old-ref', ApplicationReference: 'APP/3', Credit: 30 },
+    { AccountRef: 'DCA/2', Credit: 40 }
+  ];
+  const account = { AccountRef: 'DCA/2', AdmissionNo: 'DCA/2', ApplicationReference: 'APP/3' };
+  assert.deepEqual(financialRowsByIdentity(rows)(account), rows.slice(1));
 });
 
 test('new-intake school fee rules apply to admission students', () => {

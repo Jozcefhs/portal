@@ -267,7 +267,7 @@ test('records API requires a live staff session, scopes every type, audits recor
   assert.match(apiSource, /type === 'donors'\) detail = donorDetail/);
   assert.match(apiSource, /query\.length < 3/);
   assert.match(apiSource, /recordsDeskLimit\(body\.limit\)/);
-  assert.match(apiSource, /capabilities\.canViewStudentFinance \? listCollection\(env, 'payments'\)/);
+  assert.match(apiSource, /capabilities\.canViewStudentFinance \? listCollectionForReport\(env, 'payments'\)/);
   assert.match(apiSource, /capabilities\.canViewStudentConduct[\s\S]*?listSchoolCollection\(env, 'studentConductCases'/);
   assert.match(apiSource, /title: 'Conduct & discipline'/);
   assert.match(apiSource, /No conduct cases recorded/);

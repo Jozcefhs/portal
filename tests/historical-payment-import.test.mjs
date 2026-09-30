@@ -44,6 +44,7 @@ test('historical payment rows require student category, fee, amount, date and un
 });
 
 test('historical payment import is role-gated, preflights rows, updates category and suppresses old notifications', () => {
+  assert.match(backendSource, /HISTORICAL_PAYMENT_IMPORT_LIMIT = 5/);
   assert.match(backendSource, /case 'importHistoricalPayments':[\s\S]*?return importHistoricalPayments\(env, body\)/);
   assert.match(backendSource, /requireAccountingRole\(body, \['Super Admin', 'Accounts Officer'\]\)/);
   assert.match(backendSource, /Reference already belongs to a different payment/);

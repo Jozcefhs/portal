@@ -2231,7 +2231,10 @@ async function loadDashboard(options = {}) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ mode, ...(section ? { section } : {}) })
     });
-    const data = await response.json().catch(() => ({ ok: false, message: 'Staff dashboard did not return JSON.' }));
+    const data = await response.json().catch(() => ({
+      ok: false,
+      message: `Staff dashboard returned a non-JSON response (HTTP ${response.status}). Please retry shortly; if it persists, report this status to support.`
+    }));
     if (response.status === 401) {
       showLogin(data.message || 'Your staff session has expired.', 'bad');
       return;

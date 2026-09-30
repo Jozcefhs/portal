@@ -28,13 +28,16 @@ test('finance collection never returns incomplete totals on a repeated cursor or
   );
 });
 
-test('finance screens use complete paged reads for growing payment and journal collections', async () => {
+test('finance screens avoid unbounded dashboard and income collection scans', async () => {
   for (const file of ['admin.js', 'backend.js', 'income-analytics.js', 'staff-records.js']) {
     const source = await readFile(new URL(`../functions/api/${file}`, import.meta.url), 'utf8');
     assert.doesNotMatch(source, /listCollection\(env, '(?:invoices|payments|ledger|accountingJournals)'\)/);
   }
   const admin = await readFile(new URL('../functions/api/admin.js', import.meta.url), 'utf8');
   const income = await readFile(new URL('../functions/api/income-analytics.js', import.meta.url), 'utf8');
-  assert.match(admin, /listCollectionForReport\(env, 'invoices'\)/);
-  assert.match(income, /listCollectionForReport\(env, 'accountingJournals'\)/);
+  assert.match(admin, /currentSessionFinanceRows\(env, 'invoices', financeSession\)/);
+  assert.match(admin, /queryCollectionPages\(env, collection/);
+  assert.match(income, /journalsForPeriod\(env, period\)/);
+  assert.match(income, /queryCollectionPages\(env, 'accountingJournals'/);
+  assert.doesNotMatch(income, /listCollectionForReport\(env, 'accountingJournals'\)/);
 });

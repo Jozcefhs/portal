@@ -359,6 +359,17 @@ export function buildStructuredQuery(collectionPath, options = {}) {
       direction: String(item.direction || 'ASCENDING').toUpperCase() === 'DESCENDING' ? 'DESCENDING' : 'ASCENDING'
     })).filter((item) => item.field.fieldPath);
   }
+  const startAfterName = String(options.startAfterName || '').trim();
+  if (startAfterName) {
+    const orderedFields = (structuredQuery.orderBy || []).map((item) => item.field.fieldPath);
+    if (orderedFields.at(-1) !== '__name__' || orderedFields.length > 2) {
+      throw new Error('A document cursor requires ordering by __name__.');
+    }
+    const values = orderedFields.length === 2
+      ? [toFirestoreValue(options.startAfterFieldValue, orderedFields[0])]
+      : [];
+    structuredQuery.startAt = { values: [...values, { referenceValue: startAfterName }], before: false };
+  }
   const limit = Number(options.limit || 0);
   if (Number.isInteger(limit) && limit > 0) structuredQuery.limit = limit;
   const endpoint = location.parentPath ? `${location.parentPath}:runQuery` : ':runQuery';
@@ -375,6 +386,38 @@ export async function queryCollection(env, collectionPath, options = {}) {
     .map((row) => row && row.document)
     .filter(Boolean)
     .map(firestoreDocumentToObject);
+}
+
+// Query only the requested indexed slice. Never silently return partial finance totals.
+export async function queryCollectionPages(env, collectionPath, options = {}) {
+  const pageSize = Math.max(1, Math.min(1000, Math.floor(Number(options.pageSize) || 500)));
+  const maxRows = Math.max(pageSize, Math.floor(Number(options.maxRows) || 10000));
+  const rows = [];
+  let startAfterName = '';
+  let startAfterFieldValue;
+  const cursorField = String(options.cursorField || '').trim();
+  const orderBy = cursorField ? [{ field: cursorField }, { field: '__name__' }] : [{ field: '__name__' }];
+  while (true) {
+    const limit = Math.min(pageSize, maxRows - rows.length + 1);
+    const page = await queryCollection(env, collectionPath, {
+      ...options,
+      orderBy,
+      limit,
+      ...(startAfterName ? { startAfterName, startAfterFieldValue } : {})
+    });
+    rows.push(...page);
+    if (rows.length > maxRows) {
+      const error = new Error(`The selected ${collectionPath} period is too large for one report. Choose a shorter date range; no partial totals were shown.`);
+      error.status = 413;
+      error.code = 'FIRESTORE_QUERY_REPORT_LIMIT';
+      throw error;
+    }
+    if (page.length < limit) return rows;
+    const nextName = String(page.at(-1)?.__name || '').trim();
+    if (!nextName || nextName === startAfterName) throw new Error(`The database cursor stalled for "${collectionPath}".`);
+    startAfterName = nextName;
+    if (cursorField) startAfterFieldValue = page.at(-1)[cursorField];
+  }
 }
 
 export async function findOneByField(env, collectionPath, field, value) {

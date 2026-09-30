@@ -1,4 +1,4 @@
-import { batchCommitDocuments, batchUpsertDocuments, createDocumentIfAbsent, deleteDocument, findOneByField, getDocument, listCollection, listCollectionForReport, listCollectionPage, patchDocumentFields, queryCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
+import { batchCommitDocuments, batchUpsertDocuments, createDocumentIfAbsent, deleteDocument, findOneByField, getDocument, listCollection, listCollectionForReport, listCollectionPage, patchDocumentFields, queryCollection, queryCollectionPages, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { getAccountingChartRows, invalidateAccountingChartRows, primeAccountingChartRows } from '../lib/accounting-reference-cache.js';
 import { canonicalSchoolBranchId, deleteSchoolDocument, getSchoolDocumentById, getSchoolStructure, invalidateSchoolStructureCache, listSchoolCollection, normalizeSchoolStructure, querySchoolCollection, safeScopeId, schoolCollectionPaths, schoolSectionFor, upsertSchoolDocument } from '../lib/school-scope.js';
 import { canonicalConfiguredClass, classNamesMatch } from '../lib/class-names.js';
@@ -1086,6 +1086,35 @@ export function financialRowMatchesLinkedApplication(row, account) {
 function displayNameFromApplication(app) {
   return clean(pick(app, ['ApplicantName', 'DisplayName', 'Name'])) ||
     [pick(app, ['Surname']), pick(app, ['FirstName']), pick(app, ['MiddleName'])].map(clean).filter(Boolean).join(' ');
+}
+
+export function financialRowsByIdentity(rows) {
+  const index = new Map();
+  rows.forEach((row, position) => {
+    const accountRef = referenceIdentityKey(row.AccountRef);
+    const admissionNo = referenceIdentityKey(row.AdmissionNo);
+    const application = referenceIdentityKey(row.ApplicationReference || row.ApplicationID);
+    const keys = [
+      accountRef && `ref:${accountRef}`,
+      !accountRef && admissionNo && `admission:${admissionNo}`,
+      application && `application:${application}`
+    ].filter(Boolean);
+    keys.forEach((key) => {
+      if (!index.has(key)) index.set(key, []);
+      index.get(key).push(position);
+    });
+  });
+  return (account) => {
+    const keys = [
+      referenceIdentityKey(account.AccountRef) && `ref:${referenceIdentityKey(account.AccountRef)}`,
+      referenceIdentityKey(account.AdmissionNo) && `admission:${referenceIdentityKey(account.AdmissionNo)}`,
+      referenceIdentityKey(account.ApplicationReference || account.ApplicationID) &&
+        `application:${referenceIdentityKey(account.ApplicationReference || account.ApplicationID)}`
+    ].filter(Boolean);
+    const positions = [...new Set(keys.flatMap((key) => index.get(key) || []))].sort((a, b) => a - b);
+    return positions.map((position) => rows[position])
+      .filter((row) => financialRowMatchesLinkedApplication(row, account));
+  };
 }
 
 export function studentMatchesEnrollmentApplication(student = {}, application = {}) {
@@ -2204,18 +2233,32 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
   const branchId = accountingRequestBranch(requestedScope || {});
   const branchRows = (rows) => accountingRowsForBranch(rows, branchId);
   const schoolScope = { branchId };
-  const [loadedAccounts, loadedPayments, loadedInvoices, feeItems, loadedLedger, loadedApplications, loadedStudents, schoolProfile, billingCategories] = await Promise.all([
+  const schoolProfile = preloaded?.schoolProfile || await getDocument(env, 'settings', 'schoolProfile').catch(() => null);
+  const financeSession = clean(schoolProfile?.CurrentAcademicSession);
+  const financeRows = (collection) => {
+    if (!financeSession) {
+      const error = new Error('Set the current academic session in School Profile before opening Accounts.');
+      error.status = 409;
+      throw error;
+    }
+    return queryCollectionPages(env, collection, {
+      filters: [{ field: 'AcademicSession', op: 'in', value: [financeSession, '', 'All'] }],
+      pageSize: 500,
+      maxRows: 15000
+    });
+  };
+  const [loadedAccounts, loadedPayments, loadedInvoices, feeItems, loadedLedger, loadedApplications, loadedStudents, billingCategories, loadedAccountSummaries] = await Promise.all([
     provided('accounts') ? Promise.resolve(preloaded.accounts) : listCollection(env, 'accounts'),
-    provided('payments') ? Promise.resolve(preloaded.payments) : listCollectionForReport(env, 'payments'),
-    provided('invoices') ? Promise.resolve(preloaded.invoices) : listCollectionForReport(env, 'invoices'),
+    provided('payments') ? Promise.resolve(preloaded.payments) : financeRows('payments'),
+    provided('invoices') ? Promise.resolve(preloaded.invoices) : financeRows('invoices'),
     provided('feeItems') ? Promise.resolve(preloaded.feeItems) : listCollection(env, 'feeItems'),
-    provided('ledger') ? Promise.resolve(preloaded.ledger) : listCollectionForReport(env, 'ledger'),
+    provided('ledger') ? Promise.resolve(preloaded.ledger) : financeRows('ledger'),
     provided('applications') ? Promise.resolve(preloaded.applications) : listSchoolCollection(env, 'applications', schoolScope),
     provided('students') ? Promise.resolve(preloaded.students) : listSchoolCollection(env, 'students', schoolScope),
-    preloaded?.schoolProfile
-      ? Promise.resolve(preloaded.schoolProfile)
-      : getDocument(env, 'settings', 'schoolProfile').catch(() => null),
-    provided('billingCategories') ? Promise.resolve(preloaded.billingCategories) : listCollection(env, 'billingCategories')
+    provided('billingCategories') ? Promise.resolve(preloaded.billingCategories) : listCollection(env, 'billingCategories'),
+    provided('accountSummaries') ? Promise.resolve(preloaded.accountSummaries)
+      : provided('payments') && provided('invoices') && provided('ledger') ? Promise.resolve([])
+      : listCollection(env, 'accountSummaries')
   ]);
   const accounts = branchRows(loadedAccounts);
   const payments = branchRows(loadedPayments);
@@ -2386,11 +2429,17 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
     };
   });
   const normalizedFeeItems = feeItems.map(normalizeFeeItem);
+  const accountSummaryByRef = new Map(loadedAccountSummaries.map((row) => [
+    referenceIdentityKey(row.AccountRef || row.__id), row
+  ]));
+  const invoicesForAccount = financialRowsByIdentity(normalizedInvoices);
+  const storedLedgerForAccount = financialRowsByIdentity(normalizedStoredLedger);
+  const ledgerForAccount = financialRowsByIdentity(ledgerRows);
   const accountRows = Array.from(accountMap.values()).map((account) => {
     const refs = accountRefsFrom(account);
     const allPeriodSummary = calculateAccountFinancialSummary(
-      normalizedInvoices.filter((row) => financialRowMatchesLinkedApplication(row, account)),
-      normalizedStoredLedger.filter((row) => financialRowMatchesLinkedApplication(row, account)),
+      invoicesForAccount(account),
+      storedLedgerForAccount(account),
       account.AccountRef
     );
     let totalDebit = 0;
@@ -2402,9 +2451,7 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
     let walletBalance = asMoneyNumber(account.WalletBalance);
     let lastPaymentAt = clean(account.LastPaymentAt);
     const countedLedgerKeys = new Set();
-    ledgerRows.forEach((row) => {
-      const matched = financialRowMatchesLinkedApplication(row, account);
-      if (!matched) return;
+    ledgerForAccount(account).forEach((row) => {
       const ledgerKey = clean(row.LedgerNo || row.Reference || `${row.Date}|${row.AccountRef}|${row.FeeCode}|${row.Debit}|${row.Credit}`);
       if (ledgerKey && countedLedgerKeys.has(ledgerKey)) return;
       if (ledgerKey) countedLedgerKeys.add(ledgerKey);
@@ -2487,7 +2534,7 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
       Balance: netBalance,
       OutstandingBalance: Math.max(0, netBalance),
       SchoolFeeOutstanding: calculateSchoolFeeOutstanding(schoolFeeExpectedDebit, schoolFeeCredit),
-      ExcessCredit: allPeriodSummary.CreditBalance,
+      ExcessCredit: asMoneyNumber(accountSummaryByRef.get(referenceIdentityKey(account.AccountRef))?.CreditBalance ?? allPeriodSummary.CreditBalance),
       WalletBalance: asMoneyNumber(walletBalance),
       LastPaymentAt: lastPaymentAt
     };
@@ -5666,7 +5713,9 @@ async function walletAccountPayload(env, student) {
   };
 }
 
-const HISTORICAL_PAYMENT_IMPORT_LIMIT = 50;
+// Each row performs invoice allocation and journal reconciliation. Keep a
+// request below the Worker deadline, and let the client report each batch.
+const HISTORICAL_PAYMENT_IMPORT_LIMIT = 5;
 
 export function historicalPaymentTemplateAccountRows(studentRows = []) {
   const accountsByReference = new Map();

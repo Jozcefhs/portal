@@ -40,3 +40,24 @@ test('focused query projects only requested fields for lightweight counts', () =
   });
   assert.equal(result.structuredQuery.where.fieldFilter.value.stringValue, 'main');
 });
+
+test('date-range query cursor continues after the last date and document name', () => {
+  const result = buildStructuredQuery('accountingJournals', {
+    filters: [
+      { field: 'Date', op: '>=', value: '2026-09-01' },
+      { field: 'Date', op: '<', value: '2026-10-01' }
+    ],
+    orderBy: [{ field: 'Date' }, { field: '__name__' }],
+    startAfterFieldValue: '2026-09-20',
+    startAfterName: 'projects/test/databases/(default)/documents/accountingJournals/J-1',
+    limit: 500
+  });
+  assert.deepEqual(result.structuredQuery.startAt, {
+    values: [
+      { stringValue: '2026-09-20' },
+      { referenceValue: 'projects/test/databases/(default)/documents/accountingJournals/J-1' }
+    ],
+    before: false
+  });
+  assert.equal(result.structuredQuery.limit, 500);
+});
