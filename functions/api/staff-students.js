@@ -1,9 +1,10 @@
-import { listCollection, requireFirestoreEnv } from '../lib/firestore.js';
+import { listCollection, patchDocumentFieldsIfCurrent, requireFirestoreEnv } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { listSchoolCollection, schoolSectionFor, upsertSchoolDocument } from '../lib/school-scope.js';
 import { canonicalConfiguredClass } from '../lib/class-names.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { saveStudentLoginPassword } from '../lib/student-login-credentials.js';
+import { gradeSevenIntakeFingerprint, gradeSevenIntakePlan } from '../lib/student-intake-bulk.js';
 
 function clean(value) { return String(value ?? '').trim(); }
 function lower(value) { return clean(value).toLowerCase(); }
@@ -29,8 +30,74 @@ export async function onRequestPost(context) {
     }
     const body = await readJsonBody(request, { maxBytes: 256 * 1024 });
     const action = lower(body.action);
-    if (!['update', 'reissueparentonboarding'].includes(action)) {
+    if (!['update', 'reissueparentonboarding', 'previewgrade7intake', 'applygrade7intake'].includes(action)) {
       const err = new Error('Choose a valid student action.'); err.status = 400; throw err;
+    }
+    if (['previewgrade7intake', 'applygrade7intake'].includes(action)) {
+      if (user.role !== 'Super Admin' || user.edition !== 'school' || !clean(user.branchId) ||
+          lower(user.schoolSectionAccess) === 'primary') {
+        const err = new Error('Select a school branch and use a Super Admin account to correct Grade 7 intake.');
+        err.status = 403;
+        throw err;
+      }
+      const rows = await listSchoolCollection(env, 'students', {
+        branchId: user.branchId,
+        schoolSectionAccess: 'secondary'
+      });
+      const plan = gradeSevenIntakePlan(rows, {
+        branchId: user.branchId,
+        academicSession: body.AcademicSession
+      });
+      const previewToken = await gradeSevenIntakeFingerprint(plan);
+      const summary = {
+        ok: true,
+        branchId: plan.branchId,
+        academicSession: plan.academicSession,
+        total: plan.total,
+        alreadyNew: plan.alreadyNew,
+        toChange: plan.toChange.length,
+        excludedOtherSession: plan.excludedOtherSession,
+        missingRevision: plan.missingRevision,
+        previewToken
+      };
+      if (action === 'previewgrade7intake') return Response.json(summary);
+      if (!plan.total || !plan.toChange.length) {
+        return Response.json({ ...summary, updated: 0, remaining: 0 });
+      }
+      if (clean(body.PreviewToken) !== previewToken) {
+        const err = new Error('Grade 7 records changed after preview. Review the count again before applying.');
+        err.status = 409;
+        throw err;
+      }
+      if (plan.missingRevision) {
+        const err = new Error('Some Grade 7 records lack a database revision. No changes were made.');
+        err.status = 409;
+        throw err;
+      }
+      const now = new Date().toISOString();
+      const next = plan.toChange.slice(0, 10);
+      const outcomes = await Promise.allSettled(next.map((row) => patchDocumentFieldsIfCurrent(
+        env,
+        row.__scopePath,
+        clean(row.__id || row.AdmissionNo || row.AccountRef),
+        {
+          EnrollmentCategory: 'New Intake',
+          UpdatedAt: now,
+          UpdatedBy: clean(user.displayName || user.username) || 'Super Admin'
+        },
+        row
+      )));
+      const updated = outcomes.filter((result) => result.status === 'fulfilled').length;
+      const failed = outcomes.length - updated;
+      return Response.json({
+        ...summary,
+        updated,
+        failed,
+        remaining: plan.toChange.length - updated,
+        message: failed
+          ? `${updated} record(s) updated; ${failed} failed. Review the live count before continuing.`
+          : `${updated} Grade 7 record(s) marked New Intake.`
+      });
     }
     const accountRef = clean(body.AccountRef || body.accountRef || body.AdmissionNo);
     const rows = await listSchoolCollection(env, 'students', {

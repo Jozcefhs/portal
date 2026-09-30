@@ -4745,6 +4745,100 @@ function studentClassExportToolbar(students) {
   </div>`;
 }
 
+function studentGradeSevenIntakeToolbar(students) {
+  if (currentUser?.role !== 'Super Admin' || currentUser?.edition !== 'school') return '';
+  const sessions = [...new Set(students
+    .filter((row) => /^Grade\s*7(?:$|[\s/–-])/i.test(studentExportClass(row)))
+    .map((row) => clean(row.AcademicSession))
+    .filter(Boolean))].sort((left, right) => right.localeCompare(left));
+  return `<section class="student-grade7-intake-action" data-grade7-intake-workspace>
+    <h3>Grade 7 intake correction</h3>
+    <p>Review all Grade 7 arms in the working branch, then mark only records not already New Intake. Existing invoices are not rewritten.</p>
+    <label>Academic session
+      <select data-grade7-intake-session aria-label="Grade 7 intake academic session">
+        <option value="">Choose session</option>
+        ${sessions.map((session) => `<option value="${escapeHtml(session)}">${escapeHtml(session)}</option>`).join('')}
+      </select>
+    </label>
+    <button type="button" class="secondary" data-grade7-intake-preview>Review Grade 7</button>
+    <p class="status" data-grade7-intake-status aria-live="polite"></p>
+    <button type="button" data-grade7-intake-apply hidden disabled>Mark as New Intake</button>
+  </section>`;
+}
+
+function bindStudentGradeSevenIntake() {
+  const workspace = panelEl.querySelector('[data-grade7-intake-workspace]');
+  if (!workspace) return;
+  const select = workspace.querySelector('[data-grade7-intake-session]');
+  const previewButton = workspace.querySelector('[data-grade7-intake-preview]');
+  const applyButton = workspace.querySelector('[data-grade7-intake-apply]');
+  const status = workspace.querySelector('[data-grade7-intake-status]');
+  let preview = null;
+  const request = async (action, extra = {}) => {
+    const response = await staffFetch('/api/staff-students', {
+      method: 'POST', credentials: 'same-origin', cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, AcademicSession: select.value, ...extra })
+    });
+    const data = await response.json().catch(() => ({ ok: false, message: 'Student service did not return JSON.' }));
+    if (!response.ok || !data.ok) throw new Error(data.message || 'Could not review Grade 7 intake.');
+    return data;
+  };
+  const showPreview = (data) => {
+    preview = data;
+    applyButton.hidden = !data.toChange;
+    applyButton.disabled = !data.toChange || Boolean(data.missingRevision);
+    applyButton.textContent = `Mark ${data.toChange} as New Intake`;
+    const otherSession = data.excludedOtherSession ? ` ${data.excludedOtherSession} Grade 7 record(s) belong to another or unspecified session and are excluded.` : '';
+    setStatus(status,
+      `${data.total} Grade 7 record(s) in ${data.academicSession}: ${data.alreadyNew} already New Intake; ${data.toChange} need correction.${otherSession}${data.missingRevision ? ' Some records lack a safe revision and cannot be updated.' : ''}`,
+      data.missingRevision ? 'bad' : 'ok');
+  };
+  select.addEventListener('change', () => {
+    preview = null;
+    applyButton.hidden = true;
+    applyButton.disabled = true;
+    setStatus(status, '', '');
+  });
+  previewButton.addEventListener('click', async () => {
+    if (!select.value) { setStatus(status, 'Choose an academic session first.', 'bad'); return; }
+    setButtonLoading(previewButton, true, 'Reviewing...', 'Review Grade 7');
+    try { showPreview(await request('previewGrade7Intake')); }
+    catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+    finally { setButtonLoading(previewButton, false, 'Reviewing...', 'Review Grade 7'); }
+  });
+  applyButton.addEventListener('click', async () => {
+    if (!preview?.toChange || preview.academicSession !== select.value || preview.missingRevision) return;
+    if (!await window.DynamaxDialogs.confirm({
+      title: 'Correct Grade 7 intake',
+      message: `Mark ${preview.toChange} Grade 7 student record(s) in ${preview.academicSession}, ${preview.branchId}, as New Intake? Existing invoices will not be rewritten.`,
+      confirmText: 'Mark as New Intake'
+    })) return;
+    select.disabled = true;
+    previewButton.disabled = true;
+    applyButton.disabled = true;
+    let updated = 0;
+    try {
+      for (let batch = 0; batch < 100 && preview.toChange; batch += 1) {
+        const result = await request('applyGrade7Intake', { PreviewToken: preview.previewToken });
+        updated += Number(result.updated || 0);
+        if (result.failed) throw new Error(`${result.failed} record(s) could not be updated. Review the live count before continuing.`);
+        setStatus(status, `${updated} updated. Checking remaining Grade 7 records...`, 'ok');
+        showPreview(await request('previewGrade7Intake'));
+      }
+      if (preview.toChange) throw new Error('The correction stopped before all Grade 7 records were updated. Review and continue.');
+      await loadDashboard({ mode: 'section', section: 'students', merge: true });
+      setStatus(dashboardStatus, `Verified: ${updated} Grade 7 record(s) marked New Intake in ${select.value}.`, 'ok');
+    } catch (error) {
+      setStatus(status, `${error.message || error} ${updated} record(s) were updated before stopping; review again to continue safely.`, 'bad');
+    } finally {
+      select.disabled = false;
+      previewButton.disabled = false;
+      applyButton.disabled = !preview?.toChange;
+    }
+  });
+}
+
 function studentClassExportCsv(students, className) {
   const headings = [
     'AdmissionNo', 'FirstName', 'MiddleName', 'Surname', 'DisplayName', 'Gender',
@@ -17530,7 +17624,7 @@ function renderSection(active) {
     const learner = staffLearnerTerms();
     const handoff = takeRecordsDeskHandoff('students');
     const reference = recordsDeskHandoffReference(handoff);
-    panelEl.innerHTML = recordsDeskHandoffBanner(handoff, reference) + '<div class="student-onboarding-link-action"><button type="button" class="secondary" data-copy-shared-parent-onboarding>Copy shared parent completion link</button></div>' + studentClassExportToolbar(students) + table(learner.Plural, students, [
+    panelEl.innerHTML = recordsDeskHandoffBanner(handoff, reference) + '<div class="student-onboarding-link-action"><button type="button" class="secondary" data-copy-shared-parent-onboarding>Copy shared parent completion link</button></div>' + studentClassExportToolbar(students) + studentGradeSevenIntakeToolbar(students) + table(learner.Plural, students, [
       { label: 'Admission No', value: (row) => pick(row, ['AdmissionNo', 'AccountRef', '__id']) },
       { label: 'Name', render: studentSearchIdentity },
       { label: 'Class', value: studentExportClass },
@@ -17561,6 +17655,7 @@ function renderSection(active) {
     }) + renderStudentEditor(students);
     bindStudentEditor(students);
     bindStudentClassExport(students);
+    bindStudentGradeSevenIntake();
     hydrateStudentPassportThumbnails(panelEl);
     if (reference) {
       const student = students.find((row) => recordsDeskRowMatches(

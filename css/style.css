@@ -678,6 +678,16 @@ html[data-theme="dark"] .preference-switch-row:has(.preference-switch input:chec
 .student-class-export-action label{display:grid;gap:4px;min-width:min(250px,100%);font-weight:700}
 .student-class-export-action select{min-width:min(250px,100%)}
 .student-class-export-action small{align-self:center;color:#52677e}
+.student-grade7-intake-action{display:flex;align-items:end;flex-wrap:wrap;gap:10px 12px;margin:0 0 16px;padding:14px;border:1px solid #bdd7cc;border-left:4px solid #087d60;border-radius:10px;background:#f5fbf8}
+.student-grade7-intake-action h3,.student-grade7-intake-action p{flex-basis:100%;margin:0}
+.student-grade7-intake-action h3{font-size:16px;color:#0b4f40}
+.student-grade7-intake-action>p:not(.status){color:#4a6270;font-size:13px}
+.student-grade7-intake-action label{display:grid;gap:4px;min-width:min(220px,100%);font-weight:700}
+.student-grade7-intake-action .status{font-size:13px}
+@media(max-width:600px){.student-grade7-intake-action label,.student-grade7-intake-action select,.student-grade7-intake-action button{width:100%}}
+html[data-theme="dark"] .student-grade7-intake-action{border-color:#24594b;background:#10271f}
+html[data-theme="dark"] .student-grade7-intake-action h3{color:#9be0c2}
+html[data-theme="dark"] .student-grade7-intake-action>p:not(.status){color:#bdd2c9}
 @media(max-width:600px){.student-class-export-action label,.student-class-export-action select,.student-class-export-action button{width:100%}}
 html[data-theme="dark"] .student-class-export-action{border-color:#33465c;background:#111f30}
 html[data-theme="dark"] .student-class-export-action label,html[data-theme="dark"] .student-class-export-action small{color:#c2d1df}
