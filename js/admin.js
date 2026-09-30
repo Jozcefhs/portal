@@ -4678,10 +4678,13 @@ async function scanWalletNfc(form, button, options = {}) {
   const submitOnRead = options.submitOnRead !== false;
   if (!('NDEFReader' in window)) {
     setStatus(status, 'Direct NFC scanning is unavailable in this browser. Use Android Chrome, enter the card ID, or tap a USB reader while the card field is focused.', 'bad');
+    form.querySelector('.tuck-shop-manual-lookup')?.setAttribute('open', '');
     form.elements.WalletCardId?.focus();
     return;
   }
   const normalText = button.textContent;
+  const normalMarkup = options.preserveMarkup ? button.innerHTML : '';
+  const restoreMarkup = () => { if (normalMarkup && button.isConnected) button.innerHTML = normalMarkup; };
   const controller = new AbortController();
   try {
     setButtonLoading(button, true, 'Waiting for card...', normalText);
@@ -4694,6 +4697,7 @@ async function scanWalletNfc(form, button, options = {}) {
       const cardId = walletCardIdFromNfc(event);
       controller.abort();
       setButtonLoading(button, false, 'Waiting for card...', normalText);
+      restoreMarkup();
       if (!cardId) {
         setStatus(status, 'The NFC card was detected, but it did not contain a usable card ID.', 'bad');
         return;
@@ -4707,6 +4711,7 @@ async function scanWalletNfc(form, button, options = {}) {
     await reader.scan({ signal: controller.signal });
   } catch (error) {
     setButtonLoading(button, false, 'Waiting for card...', normalText);
+    restoreMarkup();
     if (error?.name === 'AbortError') return;
     setStatus(status, error?.name === 'NotAllowedError'
       ? 'NFC permission was not granted. Allow NFC access or enter the card ID manually.'
@@ -4878,6 +4883,15 @@ function bindAccountWalletSetupWorkspace() {
   });
 }
 
+function tuckShopLookupIcon(kind) {
+  const paths = {
+    search: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/>',
+    card: '<rect x="3" y="5" width="15" height="14" rx="2"/><path d="M6 10h6M6 14h4M20 8c1.5 1.5 1.5 6.5 0 8"/>',
+    face: '<path d="M8 3H5a2 2 0 0 0-2 2v3m13-5h3a2 2 0 0 1 2 2v3M3 16v3a2 2 0 0 0 2 2h3m13-5v3a2 2 0 0 1-2 2h-3"/><circle cx="12" cy="11" r="3"/><path d="M9 17c1.5-1.3 4.5-1.3 6 0"/>'
+  };
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[kind] || ''}</svg>`;
+}
+
 function renderTuckShopPOS(data = {}) {
   const inventory = data.inventory || [];
   const cart = commerceCart('tuckShop');
@@ -4885,10 +4899,11 @@ function renderTuckShopPOS(data = {}) {
   const total = entries.reduce((sum, [, row]) => sum + commerceItemPrice(row.item) * row.quantity, 0);
   const available = inventory.filter((item) => clean(item.Active || 'YES').toUpperCase() !== 'NO'
     && commerceItemStock(item) > 0 && commerceItemPrice(item) > 0);
+  const sales = (data.sales || []).slice(0, 30);
   const wallet = tuckShopWalletAccount;
   const staff = tuckShopStaffCustomer;
   return `<section class="config-card department-primary-workflow tuck-shop-pos-workspace" id="tuckShopPOS">
-    <header class="config-card-heading"><div><small>Stock-linked checkout</small><h3>Tuck Shop Point of Sale</h3><p>Select items and quantities. The total is calculated from saved prices; checkout reduces stock automatically.</p></div><span class="workspace-feature-icon" aria-hidden="true">&#128722;</span></header>
+    <header class="config-card-heading"><div><small>Stock-linked checkout</small><h3>Tuck Shop POS</h3><p>Select items, identify the customer, then complete payment. Stock updates automatically.</p></div><span class="workspace-feature-icon" aria-hidden="true">&#128722;</span></header>
     ${tuckShopLastSale ? commerceReceiptPreview(tuckShopLastSale) : ''}
     <div class="commerce-pos-layout">
       <section class="commerce-catalog" aria-label="Tuck shop catalogue">
@@ -4901,20 +4916,20 @@ function renderTuckShopPOS(data = {}) {
       </section>
       <section class="commerce-cart" aria-label="Tuck shop cart"><div class="commerce-cart-title"><div><small>Current sale</small><h4>Cart</h4></div><strong>${money(total)}</strong></div>
         <div class="commerce-cart-lines">${entries.map(([ref, row]) => `<article class="commerce-cart-line"><div><strong>${escapeHtml(row.item.ItemName)}</strong><span>${money(commerceItemPrice(row.item))} each</span></div><select data-tuck-shop-quantity="${escapeHtml(ref)}" aria-label="Quantity for ${escapeHtml(row.item.ItemName)}">${commerceQuantityOptions(commerceItemStock(row.item), row.quantity)}</select><strong>${money(commerceItemPrice(row.item) * row.quantity)}</strong><button type="button" class="compact-icon-action compact-delete-action" data-tuck-shop-remove="${escapeHtml(ref)}" aria-label="Remove ${escapeHtml(row.item.ItemName)}">&#128465;</button></article>`).join('') || '<p class="muted commerce-empty">Select an item to begin.</p>'}</div>
-        <label>Customer type<select id="tuckShopCustomerType"><option value="Student" ${tuckShopCustomerType === 'Student' ? 'selected' : ''}>Student · wallet</option><option value="Staff" ${tuckShopCustomerType === 'Staff' ? 'selected' : ''}>Staff · cash, transfer or POS</option></select></label>
-        ${tuckShopCustomerType === 'Student' ? `<form id="walletLookupForm" class="workflow-form workflow-form-grid config-form"><label>Search student<input id="tuckShopStudentSearch" type="search" list="tuckShopStudentMatches" value="${escapeHtml(tuckShopCustomerSearch)}" placeholder="Name, admission number, card, phone or email" autocomplete="off"><datalist id="tuckShopStudentMatches"></datalist></label><label>Wallet card ID<input name="WalletCardId" autocomplete="off" placeholder="Scan or enter card ID"></label><label>Admission number<input name="AccountRef" autocomplete="off" placeholder="Admission number"></label><div class="config-actionbar"><p class="status" data-department-status></p><div class="inline-action-group"><button type="button" id="tuckShopNfcScan">&#9673; Scan NFC Card</button><button type="button" id="tuckShopFaceLookup" class="student-face-workflow-action">&#128247; Find by face</button><button type="submit">Find Student Wallet</button></div></div></form>
-          ${wallet ? `<div class="wallet-account-result"><div><small>Student</small><strong>${escapeHtml(wallet.DisplayName)}</strong><span>${escapeHtml(wallet.AdmissionNo || wallet.AccountRef)} · ${escapeHtml(wallet.ClassName || '')}</span></div><div><small>Wallet balance</small><strong>${money(wallet.WalletBalance)}</strong><span>Spent today ${money(wallet.WalletSpentToday)}</span></div></div>` : '<p class="muted">Find the student before taking payment.</p>'}
-          <form id="walletPurchaseForm" class="commerce-checkout-form"><input type="hidden" name="AccountRef" value="${escapeHtml(wallet?.AccountRef || '')}"><label>Wallet PIN (when required)<input name="WalletPin" type="password" inputmode="numeric" autocomplete="off"></label><div class="commerce-checkout-total"><span>Calculated total</span><strong>${money(total)}</strong></div><div class="config-actionbar"><p class="status" data-department-status></p><button type="submit" ${wallet && entries.length ? '' : 'disabled'}>Complete wallet sale</button></div></form>` : `<form id="tuckShopStaffLookupForm" class="workflow-form config-form"><label>Search staff<input name="Query" id="tuckShopStaffSearch" type="search" list="tuckShopStaffMatches" value="${escapeHtml(tuckShopCustomerSearch)}" placeholder="Name, username, staff ID, phone or email" autocomplete="off"><datalist id="tuckShopStaffMatches"></datalist></label><div class="config-actionbar"><p class="status" data-department-status></p><button type="submit">Select staff member</button></div></form>
-          ${staff ? `<div class="wallet-account-result"><div><small>Staff customer</small><strong>${escapeHtml(staff.DisplayName || staff.Name)}</strong><span>${escapeHtml(staff.CustomerRef || staff.Username || '')}</span></div></div>` : '<p class="muted">Select a staff customer before taking payment.</p>'}
-          <form id="tuckShopStaffSaleForm" class="commerce-checkout-form"><label>Payment method<select name="PaymentMethod"><option>Cash</option><option>Bank Transfer</option><option>POS / Card</option></select></label><label>Payment reference<input name="PaymentReference" placeholder="Required for transfer or POS"></label><div class="commerce-checkout-total"><span>Calculated total</span><strong>${money(total)}</strong></div><div class="config-actionbar"><p class="status" data-department-status></p><button type="submit" ${staff && entries.length ? '' : 'disabled'}>Complete staff sale</button></div></form>`}
+        <div class="tuck-shop-step-heading"><span>2</span><div><small>Customer</small><h5>Identify the buyer</h5></div></div>
+        <label class="tuck-shop-customer-type">Customer type<select id="tuckShopCustomerType"><option value="Student" ${tuckShopCustomerType === 'Student' ? 'selected' : ''}>Student · wallet</option><option value="Staff" ${tuckShopCustomerType === 'Staff' ? 'selected' : ''}>Staff · cash, transfer or POS</option></select></label>
+        ${tuckShopCustomerType === 'Student' ? `<form id="walletLookupForm" class="tuck-shop-lookup-form"><label>Find student<input id="tuckShopStudentSearch" type="search" list="tuckShopStudentMatches" value="${escapeHtml(tuckShopCustomerSearch)}" placeholder="Name, admission no., card, phone or email" autocomplete="off"><datalist id="tuckShopStudentMatches"></datalist></label><details class="tuck-shop-manual-lookup"><summary>Enter card ID or admission number manually</summary><div><label>Wallet card ID<input name="WalletCardId" autocomplete="off" placeholder="Scan or enter card ID"></label><label>Admission number<input name="AccountRef" autocomplete="off" placeholder="Admission number"></label></div></details><div class="tuck-shop-lookup-footer"><p class="status" data-department-status></p><div class="tuck-shop-lookup-actions" role="group" aria-label="Student lookup methods"><button type="submit" class="tuck-shop-lookup-action tuck-shop-lookup-primary" aria-label="Find student wallet" title="Find student wallet">${tuckShopLookupIcon('search')}<span>Find wallet</span></button><button type="button" id="tuckShopNfcScan" class="tuck-shop-lookup-action" aria-label="Scan NFC student card" title="Scan NFC student card">${tuckShopLookupIcon('card')}<span>Scan card</span></button><button type="button" id="tuckShopFaceLookup" class="tuck-shop-lookup-action" aria-label="Find student by face" title="Find student by face">${tuckShopLookupIcon('face')}<span>Use face</span></button></div></div></form>
+          ${wallet ? `<div class="wallet-account-result"><div><small>Student</small><strong>${escapeHtml(wallet.DisplayName)}</strong><span>${escapeHtml(wallet.AdmissionNo || wallet.AccountRef)} · ${escapeHtml(wallet.ClassName || '')}</span></div><div><small>Wallet balance</small><strong>${money(wallet.WalletBalance)}</strong><span>Spent today ${money(wallet.WalletSpentToday)}</span></div></div><div class="tuck-shop-step-heading"><span>3</span><div><small>Payment</small><h5>Complete sale</h5></div></div><form id="walletPurchaseForm" class="commerce-checkout-form"><input type="hidden" name="AccountRef" value="${escapeHtml(wallet.AccountRef || '')}"><label>Wallet PIN <small>when required</small><input name="WalletPin" type="password" inputmode="numeric" autocomplete="off"></label><div class="commerce-checkout-total"><span>Calculated total</span><strong>${money(total)}</strong></div><div class="config-actionbar"><p class="status" data-department-status></p><button type="submit" ${entries.length ? '' : 'disabled'}>Complete wallet sale</button></div></form>` : '<p class="tuck-shop-payment-prompt">Find the student wallet to continue to payment.</p>'}` : `<form id="tuckShopStaffLookupForm" class="tuck-shop-lookup-form"><label>Find staff member<input name="Query" id="tuckShopStaffSearch" type="search" list="tuckShopStaffMatches" value="${escapeHtml(tuckShopCustomerSearch)}" placeholder="Name, username, staff ID, phone or email" autocomplete="off"><datalist id="tuckShopStaffMatches"></datalist></label><div class="tuck-shop-lookup-footer"><p class="status" data-department-status></p><button type="submit" class="tuck-shop-staff-select">Select staff member</button></div></form>
+          ${staff ? `<div class="wallet-account-result"><div><small>Staff customer</small><strong>${escapeHtml(staff.DisplayName || staff.Name)}</strong><span>${escapeHtml(staff.CustomerRef || staff.Username || '')}</span></div></div><div class="tuck-shop-step-heading"><span>3</span><div><small>Payment</small><h5>Complete sale</h5></div></div><form id="tuckShopStaffSaleForm" class="commerce-checkout-form"><label>Payment method<select name="PaymentMethod"><option>Cash</option><option>Bank Transfer</option><option>POS / Card</option></select></label><label>Payment reference<input name="PaymentReference" placeholder="Required for transfer or POS"></label><div class="commerce-checkout-total"><span>Calculated total</span><strong>${money(total)}</strong></div><div class="config-actionbar"><p class="status" data-department-status></p><button type="submit" ${entries.length ? '' : 'disabled'}>Complete staff sale</button></div></form>` : '<p class="tuck-shop-payment-prompt">Select a staff member to continue to payment.</p>'}`}
       </section>
     </div>
-    ${table('Recent Tuck Shop Sales', (data.sales || []).slice(0, 30), [
+    <div class="tuck-shop-desktop-history">${table('Recent Tuck Shop Sales', sales, [
       { label: 'Receipt', value: (row) => row.SaleNo }, { label: 'Customer', value: (row) => row.CustomerName },
       { label: 'Payment', value: (row) => row.PaymentMethod }, { label: 'Amount', value: (row) => money(row.Amount) },
       { label: 'Date', value: (row) => row.PaidAt || row.SaleDate },
       { label: 'Print', render: (row) => `<button type="button" class="compact-icon-action" data-commerce-print="${escapeHtml(row.SaleNo)}" aria-label="Print receipt ${escapeHtml(row.SaleNo)}">&#128424;</button>` }
-    ])}
+    ])}</div>
+    <details class="tuck-shop-mobile-history"><summary>Recent sales <span>${sales.length}</span></summary><div class="tuck-shop-mobile-sales">${sales.map((sale) => `<article class="tuck-shop-sale-card"><div><strong>${escapeHtml(sale.CustomerName || 'Customer')}</strong><small>${escapeHtml(sale.SaleNo || '')}</small><span>${escapeHtml(sale.PaymentMethod || '')} · ${escapeHtml(sale.PaidAt || sale.SaleDate || '')}</span></div><div><strong>${money(sale.Amount)}</strong><button type="button" class="compact-icon-action" data-commerce-print="${escapeHtml(sale.SaleNo)}" aria-label="Print receipt ${escapeHtml(sale.SaleNo)}" title="Print receipt">&#128424;</button></div></article>`).join('') || '<p class="tuck-shop-no-sales">No sales recorded yet.</p>'}</div></details>
   </section>`;
 }
 
@@ -5296,6 +5311,7 @@ function renderDepartmentOperations(section, data) {
     event.preventDefault();
     const form = event.currentTarget; const status = form.querySelector('[data-department-status]');
     const button = event.submitter || form.querySelector('button[type="submit"]');
+    const buttonMarkup = section === 'tuckShop' ? button?.innerHTML : '';
     try {
       await runButtonAction(button, 'Looking up...', async () => {
         if (section === 'tuckShop' && !clean(form.elements.WalletCardId.value) && !clean(form.elements.AccountRef.value)) {
@@ -5315,6 +5331,7 @@ function renderDepartmentOperations(section, data) {
       });
     }
     catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+    finally { if (buttonMarkup && button?.isConnected) button.innerHTML = buttonMarkup; }
   });
   document.getElementById('tuckShopFaceLookup')?.addEventListener('click', async () => {
     const form = document.getElementById('walletLookupForm');
@@ -5342,7 +5359,7 @@ function renderDepartmentOperations(section, data) {
     nfcButton.title = 'NDEFReader' in window
       ? 'Scan a compatible NFC student card'
       : 'Direct NFC requires Android Chrome; USB readers and manual entry remain available';
-    nfcButton.addEventListener('click', () => scanWalletNfc(document.getElementById('walletLookupForm'), nfcButton));
+    nfcButton.addEventListener('click', () => scanWalletNfc(document.getElementById('walletLookupForm'), nfcButton, { preserveMarkup: true }));
   }
   document.getElementById('walletPurchaseForm')?.addEventListener('submit', async (event) => {
     event.preventDefault();
