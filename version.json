@@ -1,7 +1,7 @@
 {
-  "version": "3.1.11",
+  "version": "3.1.12",
   "channel": "stable",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.11.exe",
-  "sha256": "af6e25fd5cdc25c8025bfc9d95ba7da394e29ef892fde67d169637a2061565e5",
-  "notes": "Dynamax Desktop v3.1.11 loads Finance & Accounting journals in complete, snapshot-consistent pages and restores accurate reports beyond the former collection limit."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.12.exe",
+  "sha256": "3ae9bcb6deaee1d230ed1742b78f87bf91c74f334eaa7e1374bd12ac8ab33549",
+  "notes": "Dynamax Desktop v3.1.12 connects approved school devices to tenant-specific workspaces while preserving organisation and branch identity checks."
 }
