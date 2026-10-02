@@ -7,6 +7,9 @@ import {
   loadCanonicalSubscriptionPolicy,
   refreshOrganizationPlanPolicy
 } from '../functions/lib/plan-policy-sync.js';
+import { publicPolicy } from '../functions/api/subscription-policy.js';
+import { resolveOrganizationConfig } from '../functions/lib/organization-config.js';
+import { subscriptionModulesForEdition } from '../functions/lib/subscription-plans.js';
 
 test('subscriber deployments load plan entitlements through the canonical bridge', async () => {
   let requestedUrl = '';
@@ -121,6 +124,43 @@ test('a temporary central outage keeps the last tenant subscription snapshot', a
       CANONICAL_API_PROXY_SCOPE: 'platform-subscriptions'
     }, snapshot);
     assert.deepEqual(refreshed, snapshot);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('Owner Demo policy includes every current school module even when its saved registration predates Library', async () => {
+  const fullSchoolSet = subscriptionModulesForEdition('school').map((module) => module.Key);
+  const legacySet = fullSchoolSet.filter((key) => key !== 'library');
+  const registration = {
+    WorkspaceId: 'dynamax-tenant-001', Edition: 'school', Plan: 'Owner Demo',
+    OwnerDemo: true, NonBillable: true, SyntheticDataOnly: true,
+    SubscriptionStatus: 'Active', FeatureEntitlements: legacySet
+  };
+  assert.deepEqual(publicPolicy(registration).FeatureEntitlements, fullSchoolSet);
+  assert.deepEqual(publicPolicy({ ...registration, Plan: 'Starter', OwnerDemo: false }).FeatureEntitlements, legacySet);
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => String(url).endsWith('/api/plan-catalog')
+    ? Response.json({ ok: true, catalog: {} })
+    : Response.json({ ok: true, policy: registration });
+  try {
+    const refreshed = await refreshOrganizationPlanPolicy({
+      FIREBASE_PROJECT_ID: 'demo-policy-test',
+      ALLOW_CANONICAL_API_PROXY: 'true',
+      CANONICAL_PORTAL_URL: 'https://demo-policy-test.example',
+      CANONICAL_API_PROXY_SCOPE: 'platform-subscriptions'
+    }, {
+      WorkspaceId: 'dynamax-tenant-001', Edition: 'school', Plan: 'Owner Demo',
+      OwnerDemo: true, PlanEntitlements: legacySet, SubscriptionStatus: 'Active'
+    });
+    assert.deepEqual(refreshed.PlanEntitlements, fullSchoolSet);
+    assert.equal(refreshed.OwnerDemo, true);
+    assert.equal(refreshed.NonBillable, true);
+    assert.equal(refreshed.SyntheticDataOnly, true);
+    const organization = resolveOrganizationConfig({ organizationProfile: refreshed });
+    assert.equal(organization.FeatureFlags.library, true);
+    assert.equal(organization.EnabledFeatureEntitlements.includes('library'), true);
   } finally {
     globalThis.fetch = originalFetch;
   }

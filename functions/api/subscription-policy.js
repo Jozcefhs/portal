@@ -1,24 +1,28 @@
 import { queryCollection } from '../lib/firestore.js';
 import { requirePlatformFirestoreEnv } from '../lib/platform-firestore.js';
+import { subscriptionModulesForEdition } from '../lib/subscription-plans.js';
 
 const clean = (value) => String(value ?? '').trim();
 
-function publicPolicy(row = {}) {
+export function publicPolicy(row = {}) {
+  const ownerDemo = row.OwnerDemo === true || clean(row.Plan).toLowerCase() === 'owner demo';
   return {
     WorkspaceId: clean(row.WorkspaceId),
     Edition: clean(row.Edition),
     Plan: clean(row.Plan),
     BillingCycle: clean(row.BillingCycle || 'monthly'),
     UserLimit: Math.max(1, Number(row.UserLimit || 5) || 5),
-    FeatureEntitlements: Array.isArray(row.FeatureEntitlements) ? row.FeatureEntitlements.map(clean).filter(Boolean) : [],
+    FeatureEntitlements: ownerDemo
+      ? subscriptionModulesForEdition(row.Edition).map((module) => module.Key)
+      : Array.isArray(row.FeatureEntitlements) ? row.FeatureEntitlements.map(clean).filter(Boolean) : [],
     Price: Number(row.Price || 0),
     Currency: clean(row.Currency || 'NGN'),
     PriceSnapshot: row.PriceSnapshot && typeof row.PriceSnapshot === 'object' ? row.PriceSnapshot : null,
     SubscriptionStatus: clean(row.SubscriptionStatus),
     PaymentStatus: clean(row.PaymentStatus),
-    OwnerDemo: row.OwnerDemo === true,
-    NonBillable: row.NonBillable === true,
-    SyntheticDataOnly: row.SyntheticDataOnly === true,
+    OwnerDemo: ownerDemo,
+    NonBillable: ownerDemo || row.NonBillable === true,
+    SyntheticDataOnly: ownerDemo || row.SyntheticDataOnly === true,
     TrialStartedAt: clean(row.TrialStartedAt),
     TrialEndsAt: clean(row.TrialEndsAt),
     LifecycleStage: clean(row.LifecycleStage),

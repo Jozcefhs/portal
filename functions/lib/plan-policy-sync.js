@@ -3,6 +3,7 @@ import { hasPlatformFirestoreConfiguration, requirePlatformFirestoreEnv } from '
 import {
   normalizeSubscriptionPlanCatalog,
   normalizeSubscriptionPlan,
+  subscriptionModulesForEdition,
   subscriptionPlanEntitlements
 } from './subscription-plans.js';
 
@@ -164,11 +165,7 @@ export async function refreshOrganizationPlanPolicy(env, organizationProfile = {
     : normalizeSubscriptionPlan(registration.Plan || organizationProfile.Plan || 'Starter');
   const edition = clean(organizationProfile.Edition || registration.Edition) || 'school';
   const entitlements = ownerDemo
-    ? Array.isArray(registration.FeatureEntitlements)
-      ? [...registration.FeatureEntitlements]
-      : Array.isArray(organizationProfile.PlanEntitlements)
-        ? [...organizationProfile.PlanEntitlements]
-        : []
+    ? subscriptionModulesForEdition(edition).map((module) => module.Key)
     : plan === 'Flex'
     ? Array.isArray(registration.FeatureEntitlements)
       ? [...registration.FeatureEntitlements]
