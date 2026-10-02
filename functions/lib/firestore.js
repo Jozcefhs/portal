@@ -686,9 +686,10 @@ export async function collectCollectionPages(fetchPage, collectionPath, options 
 }
 
 export async function listCollectionForReport(env, collectionPath, options = {}) {
-  const { pageSize = DEFAULT_LIST_PAGE_SIZE, maxPages = 40 } = options;
+  const { pageSize = DEFAULT_LIST_PAGE_SIZE, maxPages = 40, readTime = '' } = options;
+  const query = readTime ? `readTime=${encodeURIComponent(readTime)}` : '';
   return collectCollectionPages(
-    (pageToken) => listCollectionPage(env, collectionPath, { pageSize, pageToken }),
+    (pageToken) => listCollectionPage(env, collectionPath, { pageSize, pageToken, query }),
     collectionPath,
     { maxPages }
   );

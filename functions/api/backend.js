@@ -823,7 +823,7 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
   'cancelLibraryReservation', 'saveLibraryPolicy',
   'saveOrganizationModulePreferences',
   'exportBackup', 'prepareRestoreBackup', 'clearRestoreCollection', 'writeRestoreCollection', 'completeRestoreBackup',
-  'getAccountingOverview', 'getSystemHealth', 'optimizeFirestoreData', 'getPayrollTaxConfiguration',
+  'getAccountingOverview', 'getAccountingJournalPage', 'getSystemHealth', 'optimizeFirestoreData', 'getPayrollTaxConfiguration',
   'seedTraditionalPayeConfiguration', 'savePayrollSalaryComponent', 'savePayrollTaxProfile',
   'clonePayrollTaxProfile', 'savePayrollTaxBands', 'savePayrollTaxReliefRules',
   'savePayrollLedgerMapping', 'validatePayrollTaxConfiguration', 'migratePayrollTaxPhase2',
@@ -9005,18 +9005,23 @@ async function getAccountingOverview(env, body = {}) {
   // causing Cloudflare Workers to exceed their per-request subrequest quota.
   // Administrators can still run the explicit "Synchronize Revenue" action.
   const synchronized = 0;
+  const pagedJournals = body.JournalPagination === 'paged';
+  // Leave a small clock-skew margin so Firestore never sees a future readTime.
+  const reportReadTime = pagedJournals ? new Date(Date.now() - 2000).toISOString() : '';
+  const snapshotQuery = reportReadTime ? { query: `readTime=${encodeURIComponent(reportReadTime)}` } : undefined;
+  const listSnapshot = (collection) => listCollection(env, collection, snapshotQuery);
   const [chart, journals, expenses, budgets, banks, reconciliations, periods, audit, vendors, supplierBills, supplierPayments, imprests, assets, adjustments, approvalLimits, closeChecklist, bankStatementItems, invoices, payments, formSales, gatewayCharges, payrollProfiles, payrollRuns, payrollItems, payrollPayments, payrollAudit, payrollTaxProfiles, payrollTaxOverrides, payrollSalaryComponents, payrollTaxBands, payrollTaxReliefs, payrollLedgerMappings, donations] = await Promise.all([
-    listCollection(env, 'chartOfAccounts'), listCollectionForReport(env, 'accountingJournals'), listCollection(env, 'accountingExpenses'),
-    listCollection(env, 'accountingBudgets'), listCollection(env, 'accountingBanks'), listCollection(env, 'accountingReconciliations'),
-    listCollection(env, 'accountingPeriods'), listCollection(env, 'accountingAudit'), listCollection(env, 'accountingVendors'),
-    listCollection(env, 'accountingSupplierBills'), listCollection(env, 'accountingSupplierPayments'), listCollection(env, 'accountingImprests').catch(() => []), listCollection(env, 'accountingAssets'),
-    listCollection(env, 'accountingAdjustments'), listCollection(env, 'accountingApprovalLimits'), listCollection(env, 'accountingCloseChecklist'),
-    listCollection(env, 'accountingBankStatementItems'), listCollectionForReport(env, 'invoices'), listCollectionForReport(env, 'payments'),
-    listCollection(env, 'formSales').catch(() => []), listCollection(env, 'paymentGatewayCharges').catch(() => []),
-    listCollection(env, 'payrollProfiles'), listCollection(env, 'payrollRuns'), listCollection(env, 'payrollItems'),
-    listCollection(env, 'payrollPayments'), listCollection(env, 'payrollAudit'), listCollection(env, PAYROLL_TAX_COLLECTIONS.profiles).catch(() => []), listCollection(env, PAYROLL_TAX_COLLECTIONS.overrides).catch(() => []),
-    listCollection(env, PAYROLL_TAX_COLLECTIONS.components).catch(() => []), listCollection(env, PAYROLL_TAX_COLLECTIONS.bands).catch(() => []),
-    listCollection(env, PAYROLL_TAX_COLLECTIONS.reliefs).catch(() => []), listCollection(env, PAYROLL_TAX_COLLECTIONS.mappings).catch(() => []),
+    listSnapshot('chartOfAccounts'), pagedJournals ? [] : listCollectionForReport(env, 'accountingJournals'), listSnapshot('accountingExpenses'),
+    listSnapshot('accountingBudgets'), listSnapshot('accountingBanks'), listSnapshot('accountingReconciliations'),
+    listSnapshot('accountingPeriods'), listSnapshot('accountingAudit'), listSnapshot('accountingVendors'),
+    listSnapshot('accountingSupplierBills'), listSnapshot('accountingSupplierPayments'), listSnapshot('accountingImprests').catch(() => []), listSnapshot('accountingAssets'),
+    listSnapshot('accountingAdjustments'), listSnapshot('accountingApprovalLimits'), listSnapshot('accountingCloseChecklist'),
+    listSnapshot('accountingBankStatementItems'), listCollectionForReport(env, 'invoices', { readTime: reportReadTime }), listCollectionForReport(env, 'payments', { readTime: reportReadTime }),
+    listSnapshot('formSales').catch(() => []), listSnapshot('paymentGatewayCharges').catch(() => []),
+    listSnapshot('payrollProfiles'), listSnapshot('payrollRuns'), listSnapshot('payrollItems'),
+    listSnapshot('payrollPayments'), listSnapshot('payrollAudit'), listSnapshot(PAYROLL_TAX_COLLECTIONS.profiles).catch(() => []), listSnapshot(PAYROLL_TAX_COLLECTIONS.overrides).catch(() => []),
+    listSnapshot(PAYROLL_TAX_COLLECTIONS.components).catch(() => []), listSnapshot(PAYROLL_TAX_COLLECTIONS.bands).catch(() => []),
+    listSnapshot(PAYROLL_TAX_COLLECTIONS.reliefs).catch(() => []), listSnapshot(PAYROLL_TAX_COLLECTIONS.mappings).catch(() => []),
     listChurchDonationsForAccounting(env)
   ]);
   const scopedJournalsByBranch = branchRows(journals);
@@ -9055,10 +9060,11 @@ async function getAccountingOverview(env, body = {}) {
   reports.receivablesAgeing = buildReceivablesAgeing(scopedInvoices, scopedPayments, filter.DateTo || nowIso().slice(0, 10));
   reports.payablesAgeing = buildAgeing(scopedSupplierBills, filter.DateTo || nowIso().slice(0, 10), 'payable');
   const gatewayReport = buildGatewayCollectionsReport(scopedFormSales, scopedGatewayCharges, filter, scopedPayments, scopedDonations);
-  return { ok: true, message: `Finance and accounting records loaded for ${branchId === 'all' ? 'all branches' : `branch ${branchId}`}.`, synchronized, branchId, filter, canEditRequisitions: canEditRequisitions(accountingRequisitionActor(body)), chart: scopedChart, journals: scopedJournals, expenses: scopedExpenses, budgets: scopedBudgets, banks: scopedBanks, reconciliations: scopedReconciliations, periods, audit: scopedAudit,
+  return { ok: true, message: `Finance and accounting records loaded for ${branchId === 'all' ? 'all branches' : `branch ${branchId}`}.`, synchronized, branchId, filter, ...(pagedJournals ? { journalPagination: { readTime: reportReadTime } } : {}), canEditRequisitions: canEditRequisitions(accountingRequisitionActor(body)), chart: scopedChart, journals: scopedJournals, expenses: scopedExpenses, budgets: scopedBudgets, banks: scopedBanks, reconciliations: scopedReconciliations, periods, audit: scopedAudit,
     vendors: scopedVendors, supplierBills: scopedSupplierBills, supplierPayments: scopedSupplierPayments, imprests: scopedImprests, assets: scopedAssets, adjustments: scopedAdjustments, approvalLimits, closeChecklist: scopedCloseChecklist, bankStatementItems: scopedBankStatementItems,
     payrollProfiles: scopedPayrollProfiles, payrollRuns: scopedPayrollRuns, payrollItems: scopedPayrollItems, payrollPayments: scopedPayrollPayments, payrollAudit: scopedPayrollAudit, payrollTaxProfiles: payrollTaxProfilesWithUsage, payrollTaxOverrides: scopedPayrollTaxOverrides,
-    payrollSalaryComponents, payrollTaxBands, payrollTaxReliefs, payrollLedgerMappings, donations: scopedDonations, gatewayReport, reports };
+    payrollSalaryComponents, payrollTaxBands, payrollTaxReliefs, payrollLedgerMappings, donations: scopedDonations, gatewayReport,
+    ...(pagedJournals ? { reportSeed: reports, reports: null } : { reports }) };
 }
 
 async function getAccountingRequisitionDocument(env, body = {}) {
@@ -9554,6 +9560,40 @@ function staffUserIsActive(row) {
 
 function activeStaffSuperAdmins(rows, excluding = '') {
   return rows.filter((row) => !sameText(row.Username || row.__id, excluding) && clean(row.Role) === 'Super Admin' && staffUserIsActive(row));
+}
+
+async function getAccountingJournalPage(env, body = {}) {
+  // One Firestore page per request keeps each read bounded. The desktop only
+  // presents a report after it has successfully consumed the final page.
+  if (isDepartmentAccountingUser(body)) {
+    const error = new Error('Department users cannot browse the accounting journal.');
+    error.status = 403;
+    throw error;
+  }
+  const readTime = clean(body.ReadTime);
+  const readTimeMs = Date.parse(readTime);
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(readTime)
+      || !Number.isFinite(readTimeMs) || readTimeMs > Date.now() + 5000
+      || Date.now() - readTimeMs > 50 * 60 * 1000) {
+    const error = new Error('The finance snapshot expired. Refresh to start a new report.');
+    error.status = 400;
+    throw error;
+  }
+  const pageToken = clean(body.PageToken);
+  if (pageToken.length > 8192) {
+    const error = new Error('The finance page token is invalid.');
+    error.status = 400;
+    throw error;
+  }
+  const page = await listCollectionPage(env, 'accountingJournals', {
+    pageSize: 500,
+    pageToken,
+    query: `readTime=${encodeURIComponent(readTime)}`
+  });
+  const branchId = accountingRequestBranch(body);
+  const edition = accountingEditionForRequest(env, body);
+  const rows = accountingJournalsForEdition(accountingRowsForBranch(page.documents, branchId), edition);
+  return { ok: true, journals: rows, nextPageToken: page.nextPageToken, readTime };
 }
 
 function assignedStaffBranchId(row = {}) {
@@ -10300,6 +10340,8 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
       return getAccountsOverview(env, {}, body);
     case 'getAccountingOverview':
       return getAccountingOverview(env, body);
+    case 'getAccountingJournalPage':
+      return getAccountingJournalPage(env, body);
     case 'getAccountingRequisitionDocument':
       return getAccountingRequisitionDocument(env, body);
     case 'getPayrollTaxConfiguration': {

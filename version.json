@@ -1,7 +1,7 @@
 {
-  "version": "3.1.10",
+  "version": "3.1.11",
   "channel": "stable",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.10.exe",
-  "sha256": "176836c143fd7e255b35787133f4614fb53151cacbef2e667039ad175765d94c",
-  "notes": "Dynamax Desktop v3.1.10 makes historical parent-payment imports responsive and stops safely on uncertain timeouts. It also includes School Library, stock-linked Tuck Shop, class CSV export, timetable, and calendar updates."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.11.exe",
+  "sha256": "af6e25fd5cdc25c8025bfc9d95ba7da394e29ef892fde67d169637a2061565e5",
+  "notes": "Dynamax Desktop v3.1.11 loads Finance & Accounting journals in complete, snapshot-consistent pages and restores accurate reports beyond the former collection limit."
 }
