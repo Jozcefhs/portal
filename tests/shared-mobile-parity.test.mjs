@@ -11,7 +11,7 @@ const pageStyleVersions = new Map([
   ['plan-management.html', '20260830-dual-currency-pricing'],
   ['register-organization.html', '20260918-neutral-plan-cards']
 ]);
-const adminScriptVersion = '20260930-grade7-intake-correction';
+const adminScriptVersion = '20261002-arm-section-edit-fix';
 const parentScriptVersion = '20260930-identifier-search';
 const notificationScriptVersion = '20260927-spoken-alerts';
 const notificationStyleVersion = '20260804-read-efficiency';

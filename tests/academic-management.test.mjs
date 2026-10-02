@@ -195,6 +195,53 @@ test('AM-003 classes and reusable arm templates stay school-section scoped', () 
   assert.throws(() => parseAcademicClassBatch({ ClassLines: 'Grade 7 JSS1 Junior Secondary 200' }, scope), /Line 1 is not in the required format/);
 });
 
+test('editing a legacy arm template retains the selected school section when saving', () => {
+  const elements = {
+    SchoolSection: { value: 'secondary' },
+    RecordId: { value: '' },
+    RevisionToken: { value: '' },
+    Name: { value: '' },
+    Code: { value: '' }
+  };
+  Object.defineProperty(elements, 'namedItem', { value: (name) => elements[name] || null });
+  const form = {
+    elements,
+    dataset: { academicForm: 'armTemplate' },
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    hasAttribute: () => false,
+    scrollIntoView: () => {}
+  };
+  const context = {
+    panelEl: { querySelector: () => form },
+    academicManagementFilters: { section: 'secondary' },
+    academicRecordId: (record) => record.ArmTemplateId,
+    validateAcademicCheckboxFields: () => {},
+    FormData: class {
+      constructor(source) { this.source = source; }
+      entries() { return Object.entries(this.source.elements).map(([name, control]) => [name, control.value]); }
+    }
+  };
+  const populateSource = adminSource.slice(
+    adminSource.indexOf('function populateAcademicForm('),
+    adminSource.indexOf('function academicScorebookRowPayload(')
+  );
+  const payloadSource = adminSource.slice(
+    adminSource.indexOf('function academicFormPayload('),
+    adminSource.indexOf('function academicWorkflowPayload(')
+  );
+  const populate = runInNewContext(`${populateSource}; populateAcademicForm`, context);
+  const payload = runInNewContext(`${payloadSource}; academicFormPayload`, context);
+  populate('armTemplate', {
+    ArmTemplateId: 'arm-template-1', SchoolSection: '', Name: 'Brilliance', Code: 'BRI', RevisionToken: 'revision-1'
+  });
+  assert.equal(elements.SchoolSection.value, 'secondary');
+  assert.equal(elements.Code.value, 'BRI');
+  assert.equal(elements.RecordId.value, 'arm-template-1');
+  elements.SchoolSection.value = '';
+  assert.equal(payload(form).SchoolSection, 'secondary');
+});
+
 test('checking an existing class selects its classroom arms without losing manual choices', () => {
   const selectSource = adminSource.slice(
     adminSource.indexOf('function academicExistingClassroomTemplateIds'),
@@ -1564,7 +1611,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-task-workspace\{display:grid/);
   assert.match(styleSource, /\.academic-register-card/);
   assert.match(adminHtml, /js\/academic-results-analysis\.js\?v=20260918-academic-readability/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260930-grade7-intake-correction/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20261002-arm-section-edit-fix/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {

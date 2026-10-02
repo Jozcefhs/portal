@@ -20,7 +20,7 @@ test('shared register and specialist searches include available identifiers', ()
 });
 
 test('changed search scripts have fresh browser asset versions', () => {
-  assert.match(adminHtml, /js\/admin\.js\?v=20260930-grade7-intake-correction/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20261002-arm-section-edit-fix/);
   assert.match(parentHtml, /js\/parent-dashboard\.js\?v=20260930-identifier-search/);
   assert.match(storeHtml, /js\/store\.js\?v=20260930-identifier-search/);
   assert.match(hotelHtml, /js\/hotel-booking\.js\?v=20260930-identifier-search/);

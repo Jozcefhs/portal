@@ -14874,6 +14874,7 @@ function academicFormPayload(form) {
   validateAcademicCheckboxFields(form);
   const data = new FormData(form);
   const payload = Object.fromEntries(data.entries());
+  if (form.elements.SchoolSection) payload.SchoolSection = academicManagementFilters.section;
   form.querySelectorAll('[data-academic-checkbox-field]').forEach((field) => {
     const name = field.dataset.academicCheckboxName;
     payload[name] = academicCheckedValues(form, name);
@@ -15078,6 +15079,7 @@ function populateAcademicForm(type, record) {
     else if (control.multiple) [...control.options].forEach((option) => { option.selected = (value || []).includes(option.value); });
     else control.value = value ?? '';
   });
+  if (form.elements.SchoolSection) form.elements.SchoolSection.value = academicManagementFilters.section;
   form.elements.RecordId.value = academicRecordId(record);
   form.elements.RevisionToken.value = record.RevisionToken || '';
   if (type === 'offering' && form.elements.SubjectRole) {
