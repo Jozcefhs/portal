@@ -186,6 +186,7 @@ test('large staff imports keep every permission grant and officer update in the 
     getSchoolStructure: async () => ({}), loadOrganizationNameProfile: async () => ({}),
     requiredStaffImportIdentity: row => row, staffImportIdentity: row => ({ ...row, DisplayName: `${row.FirstName} ${row.Surname}` }),
     safeId: value => value, ensureRoleAvailable() {}, assertSubscriptionSeatAvailable() {},
+    EXTERNAL_AUDITOR_ROLE: 'External Auditor',
     resolveStaffAssignmentBranch: () => 'main', assignmentActor: (_env, actor) => actor,
     schoolSectionAccessForRole: () => 'All', activeValue: value => value === true,
     requisitionEditGrant, requisitionEditPermissionAuditWrite, scopedApprovalAccounts: () => [],

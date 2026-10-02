@@ -35,6 +35,7 @@ import { refreshOrganizationPlanPolicy } from '../lib/plan-policy-sync.js';
 import { loadOrganizationNameProfile } from '../lib/organization-name-format.js';
 import { formatPersonName } from '../lib/person-name-format.js';
 import { canEditRequisitions, requisitionEditGrant, requisitionEditPermissionAuditWrite } from '../lib/requisition-edit-permission.js';
+import { EXTERNAL_AUDITOR_ROLE, normalizeExternalAuditGrant } from '../lib/external-audit.js';
 
 function clean(value) { return String(value ?? '').trim(); }
 function lower(value) { return clean(value).toLowerCase(); }
@@ -156,6 +157,9 @@ function publicUser(row, edition = 'school', featureFlags = null, profile = {}) 
     Role: clean(row.Role || row.role) || 'Front Desk',
     Department: clean(row.Department || row.department),
     BranchId: clean(row.BranchId || row.branchId),
+    AuditDateFrom: clean(row.AuditDateFrom || row.auditDateFrom),
+    AuditDateTo: clean(row.AuditDateTo || row.auditDateTo),
+    AuditExpiresAt: clean(row.AuditExpiresAt || row.auditExpiresAt),
     SchoolSectionAccess: normalizedEdition === 'school'
       ? schoolSectionAccessForRole(row.Role || row.role, row.SchoolSectionAccess || row.schoolSectionAccess, normalizedEdition)
       : '',
@@ -255,6 +259,10 @@ async function saveUser(env, actor, body) {
   const role = clean(body.Role || body.role) || 'Front Desk';
   const edition = normalizeOrganizationEdition(actor.edition);
   ensureRoleAvailable(role, edition);
+  const externalAuditor = role === EXTERNAL_AUDITOR_ROLE;
+  const auditGrant = externalAuditor ? normalizeExternalAuditGrant(body) : {
+    AuditDateFrom: '', AuditDateTo: '', AuditExpiresAt: ''
+  };
   const department = clean(body.Department || body.department);
   const active = activeValue(body.Active === undefined ? true : body.Active);
   const subscriptionRows = staffAccountsForSubscription(rows, actor.edition, actor.username);
@@ -301,20 +309,21 @@ async function saveUser(env, actor, body) {
     MiddleName: identity.MiddleName,
     Surname: identity.Surname,
     Role: role,
-    Department: department,
+    Department: externalAuditor ? '' : department,
     OrganisationEdition: clean(actor.edition) || 'school',
     BranchId: branchId,
+    ...auditGrant,
     SchoolSectionAccess: schoolSectionAccessForRole(
       role, body.SchoolSectionAccess || body.schoolSectionAccess, edition
     ),
-    ApprovalEnabled: role === 'Super Admin' ? true : activeValue(body.ApprovalEnabled ?? false),
-    RequisitionEditEnabled: requisitionEditGrant(body.RequisitionEditEnabled ?? existing?.RequisitionEditEnabled, {
+    ApprovalEnabled: externalAuditor ? false : role === 'Super Admin' ? true : activeValue(body.ApprovalEnabled ?? false),
+    RequisitionEditEnabled: externalAuditor ? false : requisitionEditGrant(body.RequisitionEditEnabled ?? existing?.RequisitionEditEnabled, {
       Role: role, ApprovalEnabled: activeValue(body.ApprovalEnabled ?? false)
     }),
-    ApprovalMaxAmount: Math.max(0, Number(body.ApprovalMaxAmount || 0) || 0),
-    ApprovalAccounts: scopedApprovalAccounts(body.ApprovalAccounts, edition),
-    BiometricLookupEnabled: explicitOptIn(body.BiometricLookupEnabled) && edition === 'school',
-    TabAccess: scopedTabAccess(body.TabAccess, actor),
+    ApprovalMaxAmount: externalAuditor ? 0 : Math.max(0, Number(body.ApprovalMaxAmount || 0) || 0),
+    ApprovalAccounts: externalAuditor ? [] : scopedApprovalAccounts(body.ApprovalAccounts, edition),
+    BiometricLookupEnabled: !externalAuditor && explicitOptIn(body.BiometricLookupEnabled) && edition === 'school',
+    TabAccess: externalAuditor ? [] : scopedTabAccess(body.TabAccess, actor),
     Active: active,
     PasswordSetupRequired: password ? false : activeValue(existing?.PasswordSetupRequired ?? false),
     MustChangePassword: password ? activeValue(body.MustChangePassword === undefined ? true : body.MustChangePassword) : activeValue(existing?.MustChangePassword || false),
@@ -384,6 +393,7 @@ async function importUsers(env, actor, body) {
       }, existing, profile || {});
       const role = clean(row.Role || row.role) || clean(existing?.Role || existing?.role) || 'Front Desk';
       ensureRoleAvailable(role, edition);
+      if (role === EXTERNAL_AUDITOR_ROLE) throw new Error('Create external auditor accounts individually and set their audit period and expiry.');
       const department = clean(row.Department || row.department) || clean(existing?.Department || existing?.department);
       const requestedActive = clean(row.Active) === ''
         ? activeValue(existing?.Active ?? true)

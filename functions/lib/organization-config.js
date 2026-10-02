@@ -34,6 +34,7 @@ export const ORGANIZATION_ONLY_STAFF_ROLES = Object.freeze([
 
 export const SHARED_STAFF_ROLES = Object.freeze([
   'Super Admin', 'Director', 'Admin', 'Accounts Officer', 'Management', 'Department User',
+  'External Auditor',
   'Front Desk', 'HR Director', 'HR Manager', 'HR Business Partner',
   'HR Officer', 'HR Assistant', 'Recruitment Officer',
   'Learning & Development Officer', 'Employee Relations Officer',
@@ -389,6 +390,7 @@ const SECTION_FEATURES = Object.freeze({
   studentConduct: 'studentConduct',
   accounts: Object.freeze(['students', 'accounting']),
   incomeAnalytics: 'accounting',
+  externalAudit: 'accounting',
   financeRequests: 'approvals',
   payroll: 'payroll',
   clinic: 'clinic',

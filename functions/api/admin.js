@@ -133,6 +133,11 @@ export async function onRequestPost(context) {
     const body = await readJsonBody(request, { maxBytes: 32 * 1024 });
     const requestedSection = clean(body.section);
     const shellOnly = clean(body.mode).toLowerCase() === 'shell';
+    if (user.role === 'External Auditor' && !shellOnly) {
+      const err = new Error('External auditors may open only the dedicated financial audit workspace.');
+      err.status = 403;
+      throw err;
+    }
     const schoolInsights = requestedSection === 'schoolInsights';
     if (!shellOnly && user.subscriptionActive === false) {
       const err = new Error(user.subscriptionMessage || 'This subscription is not active. Choose a paid subscription to continue.');

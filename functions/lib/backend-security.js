@@ -139,6 +139,12 @@ export function resolveAuthoritativeDesktopActor(body = {}, users = [], env = {}
   }
   const user = users.find((row) => lower(row.Username || row.username || row.__id) === lower(username));
   if (user && isActiveStaffUser(user)) {
+    if (clean(user.Role || user.role) === 'External Auditor') {
+      const error = new Error('External auditors use the read-only web audit workspace.');
+      error.status = 403;
+      error.code = 'BACKEND_AUDITOR_WEB_ONLY';
+      throw error;
+    }
     const authoritativeUsername = clean(user.Username || user.username || user.__id);
     return {
       username: authoritativeUsername,

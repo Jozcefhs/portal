@@ -24,6 +24,7 @@ import { readJsonBody } from '../lib/request-security.js';
 import { loadOrganizationNameProfile } from '../lib/organization-name-format.js';
 import { formatPersonName } from '../lib/person-name-format.js';
 import { loadStaffProfileImage } from '../lib/staff-profile-image.js';
+import { externalAuditAccessExpired } from '../lib/external-audit.js';
 export { staffProfileImageIds } from '../lib/staff-profile-image.js';
 
 function response(data, status = 200, cookies = [], extraHeaders = {}) {
@@ -125,6 +126,9 @@ function authoritativeSessionUser(record, sessionUser, profilePhotoUrl = '', sch
     role,
     department: clean(record.Department || sessionUser.department || inferredDepartment),
     branchId: clean(record.BranchId || sessionUser.branchId),
+    auditDateFrom: clean(record.AuditDateFrom),
+    auditDateTo: clean(record.AuditDateTo),
+    auditExpiresAt: clean(record.AuditExpiresAt),
     schoolSectionAccess: clean(record.SchoolSectionAccess || sessionUser.schoolSectionAccess) || 'All',
     approvalEnabled: !['no', 'false', '0', ''].includes(lower(record.ApprovalEnabled ?? sessionUser.approvalEnabled ?? false)),
     approvalMaxAmount: Number(record.ApprovalMaxAmount || sessionUser.approvalMaxAmount || 0) || 0,
@@ -149,6 +153,11 @@ export async function onRequestGet(context) {
     const authoritativeRecord = stored || environmentAdminProfile(context.env, sessionUser);
     if (!authoritativeRecord || !isActiveStaffRecord(authoritativeRecord)) {
       const error = new Error('This staff account has been disabled or deleted.');
+      error.status = 401;
+      throw error;
+    }
+    if (clean(authoritativeRecord.Role) === 'External Auditor' && externalAuditAccessExpired(authoritativeRecord)) {
+      const error = new Error('This external auditor access has expired. Contact an administrator.');
       error.status = 401;
       throw error;
     }

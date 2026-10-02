@@ -311,6 +311,9 @@ export function evaluateStaffMfaRequirement(policyValue = {}, profile = {}, pass
   const policy = normalizeStaffMfaPolicy(policyValue);
   const totpActive = booleanValue(profile.TotpActive);
   const hasFactor = totpActive || Number(passkeyCount || 0) > 0;
+  if (clean(user.role || user.Role) === 'External Auditor') {
+    return { required: true, enrollmentRequired: !hasFactor, hasFactor, dueAt: '', policyRequired: true };
+  }
   if (policy.Mode === 'DISABLED') {
     return { required: false, enrollmentRequired: false, hasFactor, dueAt: '', policyRequired: false };
   }

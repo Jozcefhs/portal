@@ -20,6 +20,7 @@ function finalizer(record = user, image = photo) {
   const context = vm.createContext({
     TextEncoder, crypto, Date,
     clean, lower: value => clean(value).toLowerCase(),
+    externalAuditAccessExpired: () => false,
     findStaffUserRecord: async () => record,
     publicUser: row => ({ username: row.Username || row.username, displayName: row.DisplayName || row.displayName,
       profilePhotoUrl: row.ProfilePhotoDataUrl || row.profilePhotoUrl || '', role: row.Role || row.role }),

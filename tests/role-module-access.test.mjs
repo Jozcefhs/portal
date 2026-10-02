@@ -54,19 +54,29 @@ test('Super Admin can never lose backup, security audit or permission settings m
   const flags = featureFlagsForEdition('school');
   const scopes = withRoleModules({}, 'main', 'Super Admin', ['students'], 'school', flags);
   assert.deepEqual(scopes.main['Super Admin'], [
-    'students', 'financeRequests', 'payroll', 'dataBackup', 'securityAudit', 'staffUsers'
+    'students', 'financeRequests', 'payroll', 'externalAudit', 'dataBackup', 'securityAudit', 'staffUsers'
   ]);
   assert.deepEqual(
     allowedSectionsFor({ role: 'Super Admin' }, flags, { edition: 'school', roleModules: ['students'] }),
-    ['students', 'financeRequests', 'payroll', 'dataBackup', 'securityAudit', 'staffUsers']
+    ['students', 'financeRequests', 'payroll', 'externalAudit', 'dataBackup', 'securityAudit', 'staffUsers']
   );
 });
 
-test('every staff role receives payroll and finance request self-service', () => {
+test('ordinary staff receive payroll and finance requests, while External Auditors remain audit-only', () => {
   for (const edition of ['school', 'faith', 'organization']) {
     const flags = featureFlagsForEdition(edition);
     for (const role of rolesForEdition(edition)) {
       const defaults = defaultModulesForRole(role, { edition, featureFlags: flags });
+      if (role === 'External Auditor') {
+        assert.deepEqual(defaults, ['externalAudit']);
+        assert.deepEqual(configuredModulesForUser(
+          { Scopes: { global: { [role]: ['accounts', 'payroll', 'staffUsers'] } } }, {}, role, edition, flags
+        ), ['externalAudit']);
+        assert.deepEqual(allowedSectionsFor(
+          { role, TabAccess: ['accounts', 'payroll', 'staffUsers'] }, flags, { edition }
+        ), ['externalAudit']);
+        continue;
+      }
       assert.equal(defaults.includes('payroll'), true, `${edition} ${role} lacks payroll`);
       assert.equal(defaults.includes('financeRequests'), true, `${edition} ${role} lacks finance requests`);
 
@@ -152,7 +162,7 @@ test('staff settings API and interface expose persisted role module controls', (
   assert.match(adminJs, /staffUserRequest\('save-role-access'/);
   assert.match(adminJs, /label: 'Role access'/);
   assert.match(adminJs, /universalStaffModules = new Set\(\['financeRequests', 'payroll'\]\)/);
-  assert.match(adminJs, /My Payroll and Finance Requests &amp; Imprest remain available to every staff account/);
+  assert.match(adminJs, /My Payroll and Finance Requests &amp; Imprest remain available to ordinary staff accounts/);
 });
 
 test('role access settings expose only edition-appropriate roles and modules', () => {

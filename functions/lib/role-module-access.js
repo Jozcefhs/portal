@@ -25,6 +25,7 @@ export const WEB_SECTION_CATALOG = Object.freeze([
   Object.freeze({ key: 'donations', label: 'Donations' }),
   Object.freeze({ key: 'accounts', label: 'Accounts' }),
   Object.freeze({ key: 'incomeAnalytics', label: 'Income Analytics' }),
+  Object.freeze({ key: 'externalAudit', label: 'External Audit' }),
   Object.freeze({ key: 'financeRequests', label: 'Finance Requests & Imprest' }),
   Object.freeze({ key: 'payroll', label: 'My Payroll' }),
   Object.freeze({ key: 'clinic', label: 'Clinic' }),
@@ -67,6 +68,7 @@ export const STAFF_ROLE_OPTIONS = Object.freeze([
   'Management', 'Department User', 'Tuck Shop User', 'Clinic User',
   'Kitchen User', 'Store User', 'Restaurant User', 'Hotel User', 'Front Desk', 'Pastor',
   'Church Administrator', 'Membership Officer', 'Treasurer', 'Auditor',
+  'External Auditor',
   'HR Director', 'HR Manager', 'HR Business Partner', 'HR Officer',
   'HR Assistant', 'Recruitment Officer', 'Learning & Development Officer',
   'Employee Relations Officer', 'Performance Management Officer',
@@ -105,6 +107,7 @@ const LEGACY_ROLE_DEFAULTS = Object.freeze({
   'Membership Officer': ['recordsDesk', 'members', 'services'],
   Treasurer: ['recordsDesk', 'funds', 'offerings', 'donations', 'incomeAnalytics', 'financeRequests', 'payroll'],
   Auditor: ['recordsDesk', 'funds', 'offerings', 'donations', 'incomeAnalytics', 'financeRequests', 'securityAudit'],
+  'External Auditor': ['externalAudit'],
   'HR Director': ['recordsDesk', 'humanResources', 'payroll'],
   'HR Manager': ['recordsDesk', 'humanResources', 'payroll'],
   'HR Business Partner': ['recordsDesk', 'humanResources', 'payroll'],
@@ -184,8 +187,10 @@ export function roleAccessScope(user = {}) {
 }
 
 export function withRequiredRoleModules(role, modules = [], edition = 'school', featureFlags = null) {
+  if (role === 'External Auditor') return normalizeModuleList(['externalAudit'], edition, featureFlags);
   const normalized = [...modules, ...STAFF_SELF_SERVICE_MODULES];
   if (role === 'Super Admin' || role === 'Director') {
+    if (!normalized.includes('externalAudit')) normalized.push('externalAudit');
     if (!normalized.includes('dataBackup')) normalized.push('dataBackup');
     if (!normalized.includes('securityAudit')) normalized.push('securityAudit');
     if (!normalized.includes('staffUsers')) normalized.push('staffUsers');

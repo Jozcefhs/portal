@@ -17,6 +17,7 @@ import { requisitionEditGrant } from './requisition-edit-permission.js';
 import { applyStaffBranchContext } from './staff-branch-context.js';
 import { refreshOrganizationPlanPolicy } from './plan-policy-sync.js';
 import { loadStaffProfileImage } from './staff-profile-image.js';
+import { EXTERNAL_AUDITOR_ROLE, externalAuditAccessExpired } from './external-audit.js';
 
 const encoder = new TextEncoder();
 const SESSION_COOKIE = '__Host-digc_staff_session';
@@ -252,6 +253,9 @@ function publicUser(user) {
     assignedRole,
     department: inferDepartment(user),
     branchId: clean(user.BranchId || user.branchId),
+    auditDateFrom: clean(user.AuditDateFrom || user.auditDateFrom),
+    auditDateTo: clean(user.AuditDateTo || user.auditDateTo),
+    auditExpiresAt: clean(user.AuditExpiresAt || user.auditExpiresAt),
     schoolSectionAccess: clean(user.SchoolSectionAccess || user.schoolSectionAccess) || 'All',
     approvalEnabled: !['no', 'false', '0', ''].includes(lower(user.ApprovalEnabled ?? user.approvalEnabled ?? false)),
     requisitionEditEnabled: requisitionEditGrant(user.RequisitionEditEnabled ?? user.requisitionEditEnabled, user),
@@ -273,6 +277,7 @@ function publicUser(user) {
 
 export function allowedSectionsFor(user = {}, featureFlags = null, options = {}) {
   const role = clean(user.role || user.Role);
+  if (role === EXTERNAL_AUDITOR_ROLE) return filterSectionsForFeatures(['externalAudit'], featureFlags);
   const department = lower(user.department || user.Department);
   const departmentEntitlements = role === 'Department User'
     && (department === 'academic' || department === 'academics' || department.startsWith('academic ') || department.startsWith('academics '))
@@ -441,10 +446,12 @@ export async function staffAccessFor(env, user = {}) {
 
 export function staffUserForAccess(user = {}, access = {}) {
   const edition = clean(access.edition) || 'school';
+  const externalAuditor = clean(user.role || user.Role) === EXTERNAL_AUDITOR_ROLE;
   const list = (value) => Array.isArray(value)
     ? value.map(clean).filter(Boolean)
     : clean(value).split(',').map(clean).filter(Boolean);
-  const biometricLookupEnabled = edition === 'school' && !['no', 'false', '0', ''].includes(
+  const biometricLookupEnabled = !externalAuditor
+    && edition === 'school' && !['no', 'false', '0', ''].includes(
     lower(user.biometricLookupEnabled ?? user.BiometricLookupEnabled ?? false)
   );
   const allowedSections = list(access.allowedSections);
@@ -455,11 +462,14 @@ export function staffUserForAccess(user = {}, access = {}) {
     ...user,
     ...access,
     allowedSections,
+    approvalEnabled: externalAuditor ? false : user.approvalEnabled,
+    requisitionEditEnabled: externalAuditor ? false : user.requisitionEditEnabled,
+    approvalMaxAmount: externalAuditor ? 0 : user.approvalMaxAmount,
     schoolSectionAccess: edition === 'school' ? clean(user.schoolSectionAccess) || 'All' : '',
-    approvalAccounts: list(user.approvalAccounts)
+    approvalAccounts: (externalAuditor ? [] : list(user.approvalAccounts))
       .filter((code) => accountingCodeAllowedForEdition(code, edition)),
     biometricLookupEnabled,
-    tabAccess: filterSectionsForFeatures(list(user.tabAccess), access.featureFlags)
+    tabAccess: externalAuditor ? [] : filterSectionsForFeatures(list(user.tabAccess), access.featureFlags)
   };
 }
 
@@ -477,7 +487,7 @@ export async function authenticateStaff(env, username, password, options = {}) {
   }
   if (user) {
     const active = user.Active === undefined ? true : !['no', 'false', '0', 'inactive', 'disabled'].includes(lower(user.Active));
-    if (active && await verifyDesktopPassword(user, password)) {
+    if (active && !externalAuditAccessExpired(user) && await verifyDesktopPassword(user, password)) {
       if (!recordLogin) return publicUser(user);
       const loginAt = new Date().toISOString();
       const saved = { ...user, LastLoginAt: loginAt };
@@ -547,7 +557,7 @@ export async function finalizeStaffAuthentication(env, username, sourcePlatform 
   let authenticated = null;
   if (user) {
     const active = user.Active === undefined ? true : !['no', 'false', '0', 'inactive', 'disabled'].includes(lower(user.Active));
-    if (!active) return null;
+    if (!active || externalAuditAccessExpired(user)) return null;
     const loginAt = new Date().toISOString();
     const saved = { ...user, LastLoginAt: loginAt };
     delete saved.__id;
@@ -683,6 +693,11 @@ export async function requireStaffSession(env, request) {
     if (!active) {
       const err = new Error('This staff account has been disabled or deleted.');
       err.status = 401;
+      throw err;
+    }
+    if (externalAuditAccessExpired(current)) {
+      const err = new Error('This external audit access has expired. Contact the organisation administrator.');
+      err.status = 403;
       throw err;
     }
     user = publicUser(current);

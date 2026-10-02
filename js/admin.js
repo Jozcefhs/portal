@@ -137,6 +137,11 @@ const dashboardSectionRequests = new Map();
 let incomeAnalyticsData = null;
 let incomeAnalyticsFilter = { period: 'monthly' };
 let incomeAnalyticsRequest = 0;
+let externalAuditState = {
+  scope: null, journals: [], nextCursor: null, cursor: null, page: 1,
+  history: [], findings: [], findingCursor: null, findingNextCursor: null,
+  findingHistory: [], findingPage: 1, findingPageSize: 0, dateFrom: '', dateTo: '', tab: 'journals'
+};
 let recordsDeskRequest = 0;
 let recordsDeskSearchTimer = 0;
 let recordsDeskAbortController = null;
@@ -247,6 +252,7 @@ const tabConfig = [
   ['donations', 'Donations'],
   ['accounts', 'Accounts'],
   ['incomeAnalytics', 'Income Analytics'],
+  ['externalAudit', 'External Audit'],
   ['financeRequests', 'Finance Requests & Imprest'],
   ['payroll', 'My Payroll'],
   ['clinic', 'Clinic'],
@@ -282,6 +288,7 @@ const tutorialStorageKeys = Object.freeze({
   donations: 'Donations',
   accounts: 'Accounts',
   incomeAnalytics: 'Income Analytics',
+  externalAudit: 'External Audit',
   financeRequests: 'Finance & Accounting',
   payroll: 'Payroll',
   clinic: 'Clinic',
@@ -308,7 +315,7 @@ const staffRoleOptions = [
   'Admissions Officer', 'Student Welfare Officer', 'Accounts Officer',
   'Management', 'Department User', 'Tuck Shop User', 'Clinic User',
   'Kitchen User', 'Store User', 'Restaurant User', 'Hotel User', 'Front Desk', 'Pastor',
-  'Church Administrator', 'Membership Officer', 'Treasurer', 'Auditor',
+  'Church Administrator', 'Membership Officer', 'Treasurer', 'Auditor', 'External Auditor',
   'HR Director', 'HR Manager', 'HR Business Partner', 'HR Officer',
   'HR Assistant', 'Recruitment Officer', 'Learning & Development Officer',
   'Employee Relations Officer', 'Performance Management Officer',
@@ -346,6 +353,7 @@ const organizationTabLabels = Object.freeze({
   offerings: 'Income & Receipts',
   donations: 'Grants & Contributions',
   incomeAnalytics: 'Revenue Analytics',
+  externalAudit: 'External Audit',
   organizationStore: 'Inventory & Sales',
   restaurant: 'Catering Operations',
   hotel: 'Hotel Services',
@@ -390,6 +398,7 @@ const tabIcons = {
   donations: '\u{1F381}',
   accounts: '\u{1F9EE}',
   incomeAnalytics: '\u{1F4CA}',
+  externalAudit: '\u{1F50E}',
   financeRequests: '\u{1F4CB}',
   payroll: '\u{1F4B3}',
   clinic: '\u2695',
@@ -1678,6 +1687,7 @@ function clearStaffWorkspaceState() {
   financeDecisionBiometricVerified = false;
   financeDecisionApprovalProof = '';
   profilePhotoState = '';
+  externalAuditState = { tab: 'journals', dateFrom: '', dateTo: '', cursor: null, history: [], page: 1, journals: [], findings: [], nextCursor: null, scope: null, pageSize: 0, findingCursor: null, findingNextCursor: null, findingHistory: [], findingPage: 1, findingPageSize: 0 };
   incomeAnalyticsData = null;
   incomeAnalyticsFilter = { period: 'monthly' };
   organizationDepartmentWorkspaceTab = 'overview';
@@ -2285,12 +2295,13 @@ async function loadDashboard(options = {}) {
     if (mode === 'shell') await refreshStaffSiteProfile();
     const allowed = data.allowedSections || currentUser.allowedSections || [];
     const workspaceSections = [
-      'overview',
+      ...(dashboardUser.role === 'External Auditor' ? [] : ['overview']),
       ...(schoolInsightsAvailable(allowed, data.user || currentUser || {}) ? ['schoolInsights'] : []),
       ...allowed
     ];
     if (!activeSection || !workspaceSections.includes(activeSection)) {
-      activeSection = workspaceSections.includes(requestedSection) ? requestedSection : 'overview';
+      activeSection = workspaceSections.includes(requestedSection) ? requestedSection
+        : dashboardUser.role === 'External Auditor' && workspaceSections.includes('externalAudit') ? 'externalAudit' : 'overview';
     }
     renderTabs(allowed);
     renderWorkspace(activeSection, { loadAttendance: !refreshOverview });
@@ -2318,7 +2329,7 @@ async function loadDashboard(options = {}) {
         allowedSections: allowed,
         summary: {}, charts: {}, departments: {}, summaryDeferred: true
       });
-      activeSection = 'overview';
+      activeSection = currentUser?.role === 'External Auditor' && allowed.includes('externalAudit') ? 'externalAudit' : 'overview';
       renderTabs(allowed);
       renderWorkspace(activeSection);
       renderSection(activeSection);
@@ -3055,6 +3066,7 @@ function renderModuleSummary(active, liveData = null) {
 
 function renderTabs(allowed) {
   const allowedSet = new Set(allowed || []);
+  const externalAuditor = currentUser?.role === 'External Auditor';
   const restrictedSet = new Set(
     dashboardData?.restrictedSections || currentUser?.restrictedSections || []
   );
@@ -3064,12 +3076,12 @@ function renderTabs(allowed) {
     && !insightAllowed
     && restrictedSet.has('accounts');
   const tabs = [
-    ['overview', 'Dashboard'],
+    ...(!externalAuditor ? [['overview', 'Dashboard']] : []),
     ...(insightAllowed ? [['schoolInsights', 'School Insights']] : []),
     ...editionTabs.filter(([key]) => allowedSet.has(key))
   ];
   const visibleTabs = [
-    ['overview', 'Dashboard', false],
+    ...(!externalAuditor ? [['overview', 'Dashboard', false]] : []),
     ...(insightAllowed || insightRestricted ? [['schoolInsights', 'School Insights', insightRestricted]] : []),
     ...editionTabs
       .filter(([key]) => allowedSet.has(key) || restrictedSet.has(key))
@@ -9717,6 +9729,197 @@ function csvCell(value) {
   let text = clean(value).replace(/"/g, '""');
   if (/^[=+\-@]/.test(text)) text = `'${text}`;
   return `"${text}"`;
+}
+
+async function externalAuditRequest(action, payload = {}) {
+  const response = await staffFetch('/api/external-audit', {
+    method: 'POST', credentials: 'same-origin', cache: 'no-store',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      action,
+      ...(externalAuditState.dateFrom ? { dateFrom: externalAuditState.dateFrom } : {}),
+      ...(externalAuditState.dateTo ? { dateTo: externalAuditState.dateTo } : {}),
+      ...payload
+    })
+  });
+  const data = await response.json().catch(() => ({ ok: false, message: 'External Audit did not return JSON.' }));
+  if (response.status === 401) showLogin(data.message || 'Your staff session has expired.', 'bad');
+  if (!response.ok || !data.ok) throw new Error(data.message || 'Could not load financial audit records.');
+  return data;
+}
+
+function externalAuditJournalRows() {
+  const rows = externalAuditState.journals || [];
+  if (!rows.length) return '<tr><td colspan="7">No journals in this branch on this page. Continue to the next page if available.</td></tr>';
+  return rows.map((row) => {
+    const lines = (row.Lines || []).map((line) => `<tr><td>${escapeHtml(line.AccountCode)}</td><td>${escapeHtml(line.Description)}</td><td>${escapeHtml(line.Department)}</td><td>${escapeHtml(Number(line.Debit || 0).toLocaleString('en-NG', { minimumFractionDigits: 2 }))}</td><td>${escapeHtml(Number(line.Credit || 0).toLocaleString('en-NG', { minimumFractionDigits: 2 }))}</td></tr>`).join('');
+    return `<tr><td>${escapeHtml(row.Date)}</td><td><strong>${escapeHtml(row.JournalNo)}</strong><small>${escapeHtml(row.Status)}</small></td><td>${escapeHtml(row.Description || row.SourceType || '—')}</td><td>${escapeHtml(row.BranchId)}</td><td>${escapeHtml(Number(row.TotalDebit || 0).toLocaleString('en-NG', { minimumFractionDigits: 2 }))}</td><td>${escapeHtml(Number(row.TotalCredit || 0).toLocaleString('en-NG', { minimumFractionDigits: 2 }))}</td><td><details><summary>View lines</summary><div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>Account</th><th>Description</th><th>Department</th><th>Debit</th><th>Credit</th></tr></thead><tbody>${lines || '<tr><td colspan="5">No lines recorded.</td></tr>'}</tbody></table></div><small>Source: ${escapeHtml(row.SourceType || '—')} ${escapeHtml(row.SourceId || '')}</small></details>${currentUser?.role === 'External Auditor' ? `<button type="button" class="secondary" data-audit-query-journal="${escapeHtml(row.JournalNo)}">Raise finding</button>` : ''}</td></tr>`;
+  }).join('');
+}
+
+function externalAuditFindingRows() {
+  const admin = currentUser?.role === 'Super Admin';
+  const findings = externalAuditState.findings || [];
+  if (!findings.length) return '<p class="muted">No audit findings are recorded for this access scope.</p>';
+  return findings.map((finding) => `<article class="workflow-card external-audit-finding">
+    <header><div><strong>${escapeHtml(finding.Title)}</strong><small>${escapeHtml(finding.FindingId)} · ${escapeHtml(finding.CreatedAt)} · ${escapeHtml(finding.BranchId || 'All branches')}</small></div><span class="workflow-status ${finding.Status === 'Answered' ? 'status-approved' : 'status-pending'}">${escapeHtml(finding.Status || 'Open')}</span></header>
+    <p>${escapeHtml(finding.Description)}</p><small>Journal reference: ${escapeHtml(finding.JournalNo || 'None provided')} · Raised by ${escapeHtml(finding.AuditorUsername)}</small>
+    ${finding.ManagementResponse ? `<p><strong>Management response:</strong> ${escapeHtml(finding.ManagementResponse)}</p><small>${escapeHtml(finding.RespondedBy)} · ${escapeHtml(finding.RespondedAt)}</small>` : admin ? `<form class="workflow-form" data-audit-response="${escapeHtml(finding.FindingId)}"><label>Management response<textarea name="response" rows="3" maxlength="3000" required></textarea></label><button type="submit">Send response</button></form>` : ''}
+  </article>`).join('');
+}
+
+function renderExternalAudit() {
+  if (activeSection !== 'externalAudit') return;
+  const state = externalAuditState;
+  const scope = state.scope || {};
+  const external = currentUser?.role === 'External Auditor';
+  const grantNote = external
+    ? `Assigned period: ${escapeHtml(scope.auditDateFrom || currentUser.auditDateFrom)} to ${escapeHtml(scope.auditDateTo || currentUser.auditDateTo)} · Access expires ${escapeHtml(scope.auditExpiresAt || currentUser.auditExpiresAt)}`
+    : 'Management review of the financial audit register and auditor findings.';
+  panelEl.innerHTML = `<div class="workflow-intro"><div><p class="eyebrow">Governance &amp; accountability</p><h2>External Financial Audit</h2><p class="muted">Read-only journal evidence, scoped by date and working branch. ${grantNote}</p></div></div>
+    <p class="status" id="externalAuditStatus"></p>
+    <div class="workflow-tabs external-audit-tabs"><button type="button" data-audit-tab="journals" class="${state.tab === 'journals' ? 'active' : ''}">Journal register</button><button type="button" data-audit-tab="findings" class="${state.tab === 'findings' ? 'active' : ''}">Findings (${state.findings.length})</button></div>
+    <section class="external-audit-section" ${state.tab === 'journals' ? '' : 'hidden'}>
+      <form id="externalAuditFilter" class="workflow-form"><div class="config-grid"><label>From<input type="date" name="dateFrom" value="${escapeHtml(state.dateFrom || scope.dateFrom || '')}" ${external ? `min="${escapeHtml(scope.auditDateFrom || '')}" max="${escapeHtml(scope.auditDateTo || '')}"` : ''} required></label><label>To<input type="date" name="dateTo" value="${escapeHtml(state.dateTo || scope.dateTo || '')}" ${external ? `min="${escapeHtml(scope.auditDateFrom || '')}" max="${escapeHtml(scope.auditDateTo || '')}"` : ''} required></label><label>Working branch<input value="${escapeHtml(scope.branchId || currentUser?.activeBranchId || 'all')}" readonly><small>Use the header branch selector to change this scope.</small></label></div><button type="submit">Apply dates</button></form>
+      <div class="workflow-primary-actions"><button type="button" class="secondary" id="externalAuditExport" ${state.journals.length ? '' : 'disabled'}>Download this page CSV</button></div>
+      <p class="muted">Page ${state.page}: ${state.journals.length} visible journal${state.journals.length === 1 ? '' : 's'} from ${state.pageSize || 0} scanned. These are not period totals; continue through all pages for a complete register.</p>
+      <div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>Date</th><th>Journal</th><th>Description</th><th>Branch</th><th>Debit</th><th>Credit</th><th>Detail</th></tr></thead><tbody>${externalAuditJournalRows()}</tbody></table></div>
+      <div class="workflow-primary-actions"><button type="button" class="secondary" id="externalAuditPrevious" ${state.history.length ? '' : 'disabled'}>Previous page</button><button type="button" id="externalAuditNext" ${state.nextCursor ? '' : 'disabled'}>Next page</button></div>
+    </section>
+    <section class="external-audit-section" ${state.tab === 'findings' ? '' : 'hidden'}>
+      ${external ? `<form id="externalAuditFindingForm" class="workflow-form"><h3>Raise a finding</h3><div class="config-grid"><label>Title<input name="title" maxlength="160" required></label><label>Journal reference (optional)<input name="journalNo" maxlength="120"></label></div><label>What needs review?<textarea name="description" rows="4" maxlength="3000" required></textarea></label><button type="submit">Submit finding</button></form>` : '<p class="muted">Auditors raise findings here. Management may respond without changing source records.</p>'}
+      <p class="muted">Findings page ${state.findingPage}: ${state.findings.length} visible finding${state.findings.length === 1 ? '' : 's'} from ${state.findingPageSize || 0} scanned.</p>
+      <div class="external-audit-findings">${externalAuditFindingRows()}</div>
+      <div class="workflow-primary-actions"><button type="button" class="secondary" id="externalAuditFindingPrevious" ${state.findingHistory.length ? '' : 'disabled'}>Previous findings</button><button type="button" id="externalAuditFindingNext" ${state.findingNextCursor ? '' : 'disabled'}>Next findings</button></div>
+    </section>`;
+  bindExternalAuditEvents();
+}
+
+async function loadExternalAudit() {
+  try {
+    const workingBranch = clean(currentUser?.activeBranchId || currentUser?.branchId || 'all');
+    if (externalAuditState.scope && clean(externalAuditState.scope.branchId).toLowerCase() !== workingBranch.toLowerCase()) {
+      externalAuditState.cursor = null;
+      externalAuditState.nextCursor = null;
+      externalAuditState.history = [];
+      externalAuditState.page = 1;
+      externalAuditState.findingCursor = null;
+      externalAuditState.findingNextCursor = null;
+      externalAuditState.findingHistory = [];
+      externalAuditState.findingPage = 1;
+    }
+    if (currentUser?.role === 'External Auditor' && !externalAuditState.dateFrom) {
+      externalAuditState.dateFrom = currentUser.auditDateFrom || '';
+      externalAuditState.dateTo = currentUser.auditDateTo || '';
+    }
+    const [journals, findings] = await Promise.all([
+      externalAuditRequest('list', { ...(externalAuditState.cursor ? { cursor: externalAuditState.cursor } : {}) }),
+      externalAuditRequest('findings', { ...(externalAuditState.findingCursor ? { findingsCursor: externalAuditState.findingCursor } : {}) })
+    ]);
+    if (activeSection !== 'externalAudit') return;
+    externalAuditState = {
+      ...externalAuditState,
+      scope: journals.scope,
+      dateFrom: externalAuditState.dateFrom || journals.scope.dateFrom,
+      dateTo: externalAuditState.dateTo || journals.scope.dateTo,
+      journals: journals.journals || [], nextCursor: journals.nextCursor || null,
+      pageSize: journals.pageSize || 0,
+      findings: findings.findings || [], findingNextCursor: findings.nextCursor || null,
+      findingPageSize: findings.pageSize || 0
+    };
+    renderExternalAudit();
+  } catch (error) {
+    if (activeSection === 'externalAudit') panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
+  }
+}
+
+function bindExternalAuditEvents() {
+  panelEl.querySelectorAll('[data-audit-tab]').forEach((button) => button.addEventListener('click', () => {
+    externalAuditState.tab = button.dataset.auditTab;
+    renderExternalAudit();
+  }));
+  panelEl.querySelectorAll('[data-audit-query-journal]').forEach((button) => button.addEventListener('click', () => {
+    externalAuditState.tab = 'findings';
+    renderExternalAudit();
+    const input = document.querySelector('#externalAuditFindingForm [name="journalNo"]');
+    if (input) { input.value = button.dataset.auditQueryJournal; input.focus(); }
+  }));
+  document.getElementById('externalAuditFilter')?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const values = Object.fromEntries(new FormData(event.currentTarget).entries());
+    externalAuditState.dateFrom = values.dateFrom;
+    externalAuditState.dateTo = values.dateTo;
+    externalAuditState.cursor = null;
+    externalAuditState.history = [];
+    externalAuditState.page = 1;
+    panelEl.innerHTML = '<p class="muted">Applying audit dates...</p>';
+    loadExternalAudit();
+  });
+  document.getElementById('externalAuditNext')?.addEventListener('click', () => {
+    if (!externalAuditState.nextCursor) return;
+    externalAuditState.history.push(externalAuditState.cursor);
+    externalAuditState.cursor = externalAuditState.nextCursor;
+    externalAuditState.page += 1;
+    panelEl.innerHTML = '<p class="muted">Loading the next audit page...</p>';
+    loadExternalAudit();
+  });
+  document.getElementById('externalAuditPrevious')?.addEventListener('click', () => {
+    if (!externalAuditState.history.length) return;
+    externalAuditState.cursor = externalAuditState.history.pop();
+    externalAuditState.page -= 1;
+    panelEl.innerHTML = '<p class="muted">Loading the previous audit page...</p>';
+    loadExternalAudit();
+  });
+  document.getElementById('externalAuditFindingNext')?.addEventListener('click', () => {
+    if (!externalAuditState.findingNextCursor) return;
+    externalAuditState.findingHistory.push(externalAuditState.findingCursor);
+    externalAuditState.findingCursor = externalAuditState.findingNextCursor;
+    externalAuditState.findingPage += 1;
+    panelEl.innerHTML = '<p class="muted">Loading the next findings page...</p>';
+    loadExternalAudit();
+  });
+  document.getElementById('externalAuditFindingPrevious')?.addEventListener('click', () => {
+    if (!externalAuditState.findingHistory.length) return;
+    externalAuditState.findingCursor = externalAuditState.findingHistory.pop();
+    externalAuditState.findingPage -= 1;
+    panelEl.innerHTML = '<p class="muted">Loading the previous findings page...</p>';
+    loadExternalAudit();
+  });
+  document.getElementById('externalAuditExport')?.addEventListener('click', async () => {
+    const status = document.getElementById('externalAuditStatus');
+    try {
+      await externalAuditRequest('recordExport');
+      const headings = ['Date', 'Journal', 'Status', 'Description', 'Source type', 'Source ID', 'Branch', 'Debit', 'Credit', 'Account lines'];
+      const rows = externalAuditState.journals.map((row) => [
+        row.Date, row.JournalNo, row.Status, row.Description, row.SourceType, row.SourceId, row.BranchId,
+        row.TotalDebit, row.TotalCredit,
+        (row.Lines || []).map((line) => `${line.AccountCode}: ${line.Debit} debit / ${line.Credit} credit`).join('; ')
+      ]);
+      downloadCsvFile(`financial-audit-page-${externalAuditState.page}.csv`, [headings, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n'));
+      setStatus(status, 'This page was exported and the action was logged.', 'ok');
+    } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+  });
+  document.getElementById('externalAuditFindingForm')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const status = document.getElementById('externalAuditStatus');
+    try {
+      const created = await externalAuditRequest('createFinding', Object.fromEntries(new FormData(form).entries()));
+      externalAuditState.tab = 'findings';
+      if (created.finding) externalAuditState.findings.unshift(created.finding);
+      renderExternalAudit();
+      setStatus(document.getElementById('externalAuditStatus'), created.message || 'Finding submitted.', 'ok');
+    } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+  });
+  panelEl.querySelectorAll('[data-audit-response]').forEach((form) => form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const status = document.getElementById('externalAuditStatus');
+    try {
+      await externalAuditRequest('respondFinding', { findingId: form.dataset.auditResponse, response: form.elements.response.value });
+      externalAuditState.tab = 'findings';
+      await loadExternalAudit();
+    } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+  }));
 }
 
 function exportIncomeAnalyticsCsv() {
@@ -17599,6 +17802,9 @@ function renderSection(active) {
   } else if (active === 'incomeAnalytics') {
     panelEl.innerHTML = '<p class="muted">Loading posted income analytics...</p>';
     loadIncomeAnalytics();
+  } else if (active === 'externalAudit') {
+    panelEl.innerHTML = '<p class="muted">Loading financial audit records...</p>';
+    loadExternalAudit();
   } else if (active === 'admissions') {
     const handoff = takeRecordsDeskHandoff('admissions');
     const reference = recordsDeskHandoffReference(handoff);
@@ -19773,7 +19979,7 @@ function renderStaffUsers() {
       ${staffUsersData.length ? staffUsersData.map((user) => `
         <article class="staff-user-row">
           <div class="staff-user-avatar">${escapeHtml((user.DisplayName || user.Username || 'U').split(/\s+/).slice(0,2).map((part) => part[0]).join('').toUpperCase())}</div>
-          <div class="staff-user-copy"><strong>${escapeHtml(user.DisplayName || user.LoginUsername || user.Username)}</strong><span>@${escapeHtml(user.LoginUsername || user.Username)} • ${escapeHtml(user.Role)}</span><small>${escapeHtml(user.Department || 'No department')} • ${escapeHtml(user.BranchId || 'All branches')}${schoolEdition ? ` / ${escapeHtml(user.SchoolSectionAccess || 'All sections')}` : ''}${yes(user.PasswordSetupRequired) ? ' • Password setup required' : yes(user.MustChangePassword) ? ' • Password change required' : ''}</small><small class="staff-mfa-account-state">${escapeHtml(staffMfaAccountLabel(user.Username))}</small></div>
+          <div class="staff-user-copy"><strong>${escapeHtml(user.DisplayName || user.LoginUsername || user.Username)}</strong><span>@${escapeHtml(user.LoginUsername || user.Username)} • ${escapeHtml(user.Role)}</span><small>${escapeHtml(user.Department || (user.Role === 'External Auditor' ? 'Financial audit' : 'No department'))} • ${escapeHtml(user.BranchId || 'All branches')}${schoolEdition && user.Role !== 'External Auditor' ? ` / ${escapeHtml(user.SchoolSectionAccess || 'All sections')}` : ''}${user.Role === 'External Auditor' ? ` • Audit ${escapeHtml(user.AuditDateFrom)}–${escapeHtml(user.AuditDateTo)} • Expires ${escapeHtml(user.AuditExpiresAt)}` : ''}${yes(user.PasswordSetupRequired) ? ' • Password setup required' : yes(user.MustChangePassword) ? ' • Password change required' : ''}</small><small class="staff-mfa-account-state">${escapeHtml(staffMfaAccountLabel(user.Username))}</small></div>
           <span class="workflow-status ${yes(user.Active) ? 'status-approved' : 'status-rejected'}">${yes(user.Active) ? 'Active' : 'Disabled'}</span>
           <div class="staff-user-actions"><button type="button" class="compact-icon-action compact-edit-action" data-edit-user="${escapeHtml(user.Username)}" aria-label="Edit ${escapeHtml(user.DisplayName || user.Username)}" title="Edit staff account"><span aria-hidden="true">&#9998;</span></button><button type="button" class="compact-icon-action compact-delete-action" data-delete-user="${escapeHtml(user.Username)}" aria-label="Delete ${escapeHtml(user.DisplayName || user.Username)}" title="Delete staff account"><span aria-hidden="true">&#128465;&#65038;</span></button></div>
         </article>
@@ -19852,13 +20058,18 @@ function renderStaffUsers() {
           <label>Assigned branch<select name="BranchId"${canAssignAnyStaffBranch ? '' : ' disabled'}>${staffBranchOptions}</select><small>${canAssignAnyStaffBranch ? 'Choose any configured branch without changing your working branch.' : 'Your account may create staff only in its assigned branch.'}</small></label>
           ${schoolEdition ? '<label>School section<select name="SchoolSectionAccess"><option>All</option><option>Primary</option><option>Secondary</option></select></label>' : ''}
         </div></section>
-        <section class="config-group"><header><strong>Finance approval</strong><small>Approval is blocked unless explicitly enabled by an administrator.</small></header><div class="config-grid">
+        <section class="config-group" data-audit-grant-group hidden><header><strong>External financial audit access</strong><small>This named, web-only account is read-only. Two-factor sign-in is mandatory regardless of the organisation-wide policy.</small></header><div class="config-grid">
+          <label>Audit from<input name="AuditDateFrom" type="date"></label>
+          <label>Audit to<input name="AuditDateTo" type="date"></label>
+          <label>Access expires<input name="AuditExpiresAt" type="date"><small>The account stops working after this date. Disable it sooner from the account list when needed.</small></label>
+        </div></section>
+        <section class="config-group" data-staff-finance-group><header><strong>Finance approval</strong><small>Approval is blocked unless explicitly enabled by an administrator.</small></header><div class="config-grid">
           <label class="check-row config-switch"><input name="ApprovalEnabled" type="checkbox"> Allow this user to approve finance documents</label>
           <label class="check-row config-switch"><input name="RequisitionEditEnabled" type="checkbox"> Allow this officer to edit and resubmit requisitions</label>
           <small data-requisition-edit-help>Separate from approval authority. Edits restart Accounts review and record the officer's name. Final-approved, paid and posted documents remain locked.</small>
           <label>Maximum approval amount<input name="ApprovalMaxAmount" type="number" min="0" step="0.01" value="0" data-finance-input><small>Zero blocks approval. Super Admin is unrestricted.</small></label>
         </div><div class="approval-account-list config-option-list"><strong>Accounts this user may approve directly from</strong>${staffApprovalAccounts.length ? staffApprovalAccounts.map((account) => `<label class="check-row"><input type="checkbox" name="ApprovalAccountOption" value="${escapeHtml(account.Code)}"> ${escapeHtml(account.Code)} - ${escapeHtml(account.Name || '')}</label>`).join('') : '<small>Create active Chart of Accounts entries in the desktop Finance tab first.</small>'}</div></section>
-        <section class="config-group"><header><strong>Web companion access</strong><small>Optional user-specific override. Leave all clear to inherit the module access saved for the selected role. My Payroll and Finance Requests &amp; Imprest remain available to every staff account.</small></header><div class="approval-account-list config-option-list config-option-grid">${permissionTabs.map(([key, label]) => `<label class="check-row"><input type="checkbox" name="TabAccessOption" value="${escapeHtml(key)}"> ${escapeHtml(label)}</label>`).join('')}</div></section>
+        <section class="config-group" data-staff-tabs-group><header><strong>Web companion access</strong><small>Optional user-specific override. Leave all clear to inherit the module access saved for the selected role. My Payroll and Finance Requests &amp; Imprest remain available to ordinary staff accounts.</small></header><div class="approval-account-list config-option-list config-option-grid">${permissionTabs.map(([key, label]) => `<label class="check-row"><input type="checkbox" name="TabAccessOption" value="${escapeHtml(key)}"> ${escapeHtml(label)}</label>`).join('')}</div></section>
         <section class="config-group"><header><strong>Security</strong><small>Password and account-state controls.</small></header><div class="config-grid">
           <label>New or reset password<input name="Password" type="password" minlength="6" autocomplete="new-password"><small>Required for a new account. Leave blank when editing unless resetting it.</small></label>
           <div class="config-toggle-stack"><label class="check-row"><input name="Active" type="checkbox" checked> Account active</label><label class="check-row"><input name="MustChangePassword" type="checkbox" checked> Require password change at next sign-in</label>${schoolEdition ? '<label class="check-row sensitive-access-toggle"><input name="BiometricLookupEnabled" type="checkbox"> Allow student face-enrollment management</label>' : ''}</div>
@@ -19889,13 +20100,19 @@ function renderRoleAccessEditor(role = staffRoleAccessSelectedRole, roles = staf
   const allowed = new Set(policy.modules || []);
   const universalStaffModules = new Set(['financeRequests', 'payroll']);
   document.querySelectorAll('[name="RoleModuleOption"]').forEach((input) => {
-    input.checked = allowed.has(input.value) || universalStaffModules.has(input.value);
-    input.disabled = universalStaffModules.has(input.value);
-    if (input.disabled) input.closest('label')?.setAttribute('title', 'Available to every staff account for personal self-service.');
+    const external = staffRoleAccessSelectedRole === 'External Auditor';
+    input.checked = external ? input.value === 'externalAudit' : allowed.has(input.value) || universalStaffModules.has(input.value);
+    input.disabled = external || universalStaffModules.has(input.value);
+    if (input.disabled) input.closest('label')?.setAttribute('title', external
+      ? 'External Auditor access is fixed to this workspace.'
+      : 'Available to ordinary staff accounts for personal self-service.');
+    else input.closest('label')?.removeAttribute('title');
   });
   const source = document.getElementById('roleAccessSource');
   if (source) {
-    source.textContent = policy.source === 'default'
+    source.textContent = staffRoleAccessSelectedRole === 'External Auditor'
+      ? 'This role is fixed to the read-only External Audit workspace. Other modules cannot be granted.'
+      : policy.source === 'default'
       ? 'Using the safe system starting policy until you save this role.'
       : policy.locallyConfigured
         ? `Saved specifically for ${policy.source === 'global' ? 'all branches' : `branch ${policy.source}`}.`
@@ -19929,6 +20146,28 @@ function syncSchoolLeadershipSectionForRole(form) {
     form.elements.SchoolSectionAccess.value = 'Secondary';
   }
   syncSchoolLeadershipRoleOptions(form);
+}
+
+function syncExternalAuditUserForm(form) {
+  const external = form.elements.Role?.value === 'External Auditor';
+  const grant = form.querySelector('[data-audit-grant-group]');
+  if (grant) grant.hidden = !external;
+  const finance = form.querySelector('[data-staff-finance-group]');
+  if (finance) finance.hidden = external;
+  const tabs = form.querySelector('[data-staff-tabs-group]');
+  if (tabs) tabs.hidden = external;
+  ['AuditDateFrom', 'AuditDateTo', 'AuditExpiresAt'].forEach((name) => {
+    if (form.elements[name]) form.elements[name].required = external;
+  });
+  form.elements.Department?.closest('label')?.toggleAttribute('hidden', external);
+  form.elements.SchoolSectionAccess?.closest('label')?.toggleAttribute('hidden', external);
+  if (external) {
+    form.elements.ApprovalEnabled.checked = false;
+    form.elements.RequisitionEditEnabled.checked = false;
+    form.elements.MustChangePassword.checked = true;
+  }
+  const heading = document.getElementById('staffUserDialogTitle');
+  if (heading) heading.textContent = external ? 'External Auditor Account' : form.elements.Username.readOnly ? 'Manage Staff Account' : 'New Staff Account';
 }
 
 function syncRequisitionEditPermission(form, roleChanged = false) {
@@ -19966,6 +20205,9 @@ function openStaffUserDialog(username = '') {
     if (form.elements.FirstName.value && form.elements.Surname.value) syncStaffDisplayName(form);
     else form.elements.DisplayName.value = user.DisplayName || user.Username;
     form.elements.Role.value = user.Role;
+    form.elements.AuditDateFrom.value = user.AuditDateFrom || '';
+    form.elements.AuditDateTo.value = user.AuditDateTo || '';
+    form.elements.AuditExpiresAt.value = user.AuditExpiresAt || '';
     form.elements.Department.value = user.Department || '';
     form.elements.BranchId.value = user.BranchId || 'all';
     if (form.elements.SchoolSectionAccess) {
@@ -19996,6 +20238,7 @@ function openStaffUserDialog(username = '') {
   }
   syncSchoolLeadershipRoleOptions(form);
   syncRequisitionEditPermission(form);
+  syncExternalAuditUserForm(form);
   dialog.showModal();
 }
 
@@ -20011,6 +20254,7 @@ function bindStaffUserEvents() {
   document.querySelector('#staffUserForm [name="Role"]')?.addEventListener('change', (event) => {
     syncSchoolLeadershipSectionForRole(event.currentTarget.form);
     syncRequisitionEditPermission(event.currentTarget.form, true);
+    syncExternalAuditUserForm(event.currentTarget.form);
   });
   document.querySelector('#staffUserForm [name="ApprovalEnabled"]')?.addEventListener('change', (event) => {
     syncRequisitionEditPermission(event.currentTarget.form);

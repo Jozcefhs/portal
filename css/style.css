@@ -3902,3 +3902,30 @@ html[data-theme="dark"] .academic-cbt-paper-preview-page figcaption{color:#dceaf
 
 /* Staff-managed learner photographs in profiles and search results. */
 .student-passport-editor>div{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.student-passport-preview,.student-search-passport{display:grid;flex:0 0 auto;place-items:center;overflow:hidden;border:1px solid #b9cad9;background:#eaf1f7 center/cover no-repeat;color:#44617a;font-weight:850}.student-passport-preview{width:92px;height:110px;border-radius:10px}.student-search-identity{display:flex;align-items:center;gap:9px;min-width:170px}.student-search-passport{width:34px;height:40px;border-radius:6px;font-size:9px}.student-search-identity strong{min-width:0;overflow-wrap:anywhere}.student-passport-editor button{width:max-content;margin:0}html[data-theme="dark"] .student-passport-preview,html[data-theme="dark"] .student-search-passport{border-color:#42566d;background-color:#172b3e;color:#c7d8e8}
+
+/* A separate, restrained workspace for time-limited external financial review. */
+.external-audit-tabs{display:flex;flex-wrap:wrap;gap:7px;margin:16px 0;padding:6px;border:1px solid var(--line);border-radius:11px;background:#f1f6fa}
+.external-audit-tabs button{width:auto;margin:0;padding:9px 14px;border:1px solid transparent;border-radius:7px;background:transparent;color:#35516c;font-weight:800}
+.external-audit-tabs button.active{border-color:#087f6d;background:#087f6d;color:#fff}
+.external-audit-section[hidden]{display:none!important}
+.external-audit-section{display:grid;gap:12px;min-width:0}
+.external-audit-section>.workflow-form{display:grid;gap:11px;margin:0}
+.external-audit-section>.workflow-form .config-grid{margin:0}
+.external-audit-section>.workflow-primary-actions{margin:0}
+.external-audit-section>.admin-table-wrap{margin:0}
+.external-audit-section .admin-table td small{display:block;color:var(--muted);font-size:10px}
+.external-audit-section .admin-table td details{min-width:150px}
+.external-audit-section .admin-table td details .admin-table-wrap{max-height:210px;margin:8px 0}
+.external-audit-section .admin-table td button{width:auto;margin:8px 0 0;padding:6px 9px;font-size:11px}
+.external-audit-findings{display:grid;gap:12px}
+.external-audit-finding{padding:16px;border:1px solid var(--line);border-left:4px solid #087f6d;border-radius:11px;background:#fff;box-shadow:0 4px 14px rgba(16,42,67,.05)}
+.external-audit-finding header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.external-audit-finding header>div{display:grid;gap:3px;min-width:0}
+.external-audit-finding strong{color:var(--blue2)}
+.external-audit-finding small{color:var(--muted);overflow-wrap:anywhere}
+.external-audit-finding p{margin:11px 0;overflow-wrap:anywhere;white-space:pre-wrap}
+.external-audit-finding .workflow-form{display:grid;gap:10px;margin-top:13px}
+html[data-theme="dark"] .external-audit-tabs{background:#102032}
+html[data-theme="dark"] .external-audit-tabs button:not(.active){color:#d8e7f6}
+html[data-theme="dark"] .external-audit-finding{background:#0d1a29}
+@media(max-width:680px){.external-audit-tabs{flex-wrap:nowrap;overflow-x:auto}.external-audit-tabs button{flex:0 0 auto}.external-audit-finding header{flex-wrap:wrap}}

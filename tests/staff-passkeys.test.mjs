@@ -100,7 +100,7 @@ test('passkey API requires user verification and validates origin, RP ID and one
 test('passkey authentication still checks the current staff account status', () => {
   assert.match(passkeyApi, /authenticateStaffPasskey\(env, stored\.Username\)/);
   assert.match(staffAuth, /export async function authenticateStaffPasskey/);
-  assert.match(staffAuth, /if \(!active\) return null/);
+  assert.match(staffAuth, /if \(!active \|\| externalAuditAccessExpired\(user\)\) return null/);
 });
 
 test('passkey binary encoding round-trips credential data', () => {
