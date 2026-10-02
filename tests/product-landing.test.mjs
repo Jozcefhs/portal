@@ -27,7 +27,7 @@ test('the company homepage is served only on the Dynamax apex and www hosts', as
   assert.equal(onRequestHead, onRequestGet);
 });
 
-test('the product landing has accessible links to the three live product sites', async () => {
+test('the compact product landing includes trademark, product menu and contact links', async () => {
   const html = await readFile(new URL('products.html', root), 'utf8');
   const routes = JSON.parse(await readFile(new URL('_routes.json', root), 'utf8'));
   assert.ok(routes.include.includes('/'));
@@ -36,4 +36,10 @@ test('the product landing has accessible links to the three live product sites',
   assert.match(html, /href="https:\/\/dynamaxms\.pages\.dev\/"/);
   assert.match(html, /href="https:\/\/vehiclepass\.dynamax\.cc\/"/);
   assert.match(html, /href="https:\/\/vendmac\.dynamax\.cc\/"/);
+  assert.match(html, /Dynamax<sup class="trademark">™<\/sup>/);
+  assert.doesNotMatch(html, /images\/Logo\.png/);
+  assert.match(html, /href="images\/dynamax-mark\.svg"/);
+  assert.match(html, /<details class="products-menu">[\s\S]*?<summary>Products/);
+  assert.match(html, /href="mailto:support@dynamax\.cc"/);
+  assert.match(html, /href="https:\/\/www\.youtube\.com\/@DynamaxVendmac"/);
 });
