@@ -35,11 +35,15 @@ test('the compact product landing includes trademark, product menu and contact l
   assert.ok(routes.include.includes('/api/*'));
   assert.match(html, /<main id="main">/);
   assert.match(html, /href="https:\/\/dynamaxms\.pages\.dev\/"/);
+  assert.equal((html.match(/href="https:\/\/harborkids\.pages\.dev\/"/g) ?? []).length, 3);
+  assert.match(html, /HarborKids \(pilot\)/);
+  assert.match(html, /Live child check-in is not available\./);
   assert.match(html, /href="https:\/\/vehiclepass\.dynamax\.cc\/"/);
   assert.match(html, /href="https:\/\/vendmac\.dynamax\.cc\/"/);
   assert.match(html, /Dynamax<sup class="trademark">™<\/sup>/);
-  assert.doesNotMatch(html, /images\/Logo\.png/);
-  assert.match(html, /href="images\/dynamax-mark\.svg"/);
+  assert.match(html, /<link rel="icon" type="image\/png" href="images\/Logo\.png\?v=20261002-official">/);
+  assert.match(html, /<div class="hero-core"><img class="hero-logo" src="images\/Logo\.png" alt=""><\/div>/);
+  assert.doesNotMatch(html, /href="images\/dynamax-mark\.svg"/);
   assert.match(html, /<details class="products-menu">[\s\S]*?<summary>Products/);
   assert.match(html, /<script src="js\/products\.js\?v=20261002-menu" defer><\/script>/);
   assert.match(html, /href="mailto:support@dynamax\.cc"/);
