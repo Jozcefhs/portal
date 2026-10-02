@@ -48,6 +48,10 @@ h1,h2,h3,p{margin-top:0}.hero h1{margin:24px 0;font-size:clamp(3.2rem,6vw,5.8rem
 .about-link:hover{color:#043f46}
 .footer-connect{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:12px 28px;margin-top:24px;padding-top:22px;border-top:1px solid rgba(255,255,255,.18);font-size:14px;font-weight:650}
 .footer-connect a:hover{color:#7cdece}
+.youtube-link{display:inline-flex;align-items:center;justify-content:center;gap:10px;min-height:44px;padding:10px 16px;border:1px solid #bd2833;border-radius:9px;background:#fff;color:#a51e29;font-weight:750;line-height:1.2;transition:background .2s,color .2s,border-color .2s}
+.youtube-link:hover,.footer-connect .youtube-link:hover{border-color:#a51e29;background:#a51e29;color:#fff}
+.youtube-link span{font-size:17px}
+.footer-youtube{margin-top:-10px;margin-bottom:-10px}
 
 @media(max-width:900px){
   .hero-grid{min-height:330px}

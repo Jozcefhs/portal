@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { runInNewContext } from 'node:vm';
 import { onRequestGet, onRequestHead } from '../functions/index.js';
 
 const root = new URL('../', import.meta.url);
@@ -40,6 +41,62 @@ test('the compact product landing includes trademark, product menu and contact l
   assert.doesNotMatch(html, /images\/Logo\.png/);
   assert.match(html, /href="images\/dynamax-mark\.svg"/);
   assert.match(html, /<details class="products-menu">[\s\S]*?<summary>Products/);
+  assert.match(html, /<script src="js\/products\.js\?v=20261002-menu" defer><\/script>/);
   assert.match(html, /href="mailto:support@dynamax\.cc"/);
   assert.match(html, /href="https:\/\/www\.youtube\.com\/@DynamaxVendmac"/);
+  assert.match(html, /class="about-link youtube-link"/);
+  assert.match(html, /class="youtube-link footer-youtube"/);
+});
+
+test('the Products menu closes outside, on selection, and when returning to the page', async () => {
+  const script = await readFile(new URL('js/products.js', root), 'utf8');
+  const handlers = { document: new Map(), window: new Map(), link: new Map() };
+  const listen = (scope) => (name, handler) => handlers[scope].set(name, handler);
+  const summary = { focusCalled: false, focus() { this.focusCalled = true; } };
+  const link = { addEventListener: listen('link') };
+  const inside = {};
+  const outside = {};
+  const menu = {
+    open: false,
+    contains(target) { return target === summary || target === link || target === inside; },
+    querySelector() { return summary; },
+    querySelectorAll() { return [link]; }
+  };
+  const document = {
+    visibilityState: 'visible',
+    querySelector() { return menu; },
+    addEventListener: listen('document')
+  };
+  runInNewContext(script, { document, window: { addEventListener: listen('window') } });
+
+  menu.open = true;
+  handlers.document.get('click')({ target: inside });
+  assert.equal(menu.open, true);
+  handlers.document.get('click')({ target: outside });
+  assert.equal(menu.open, false);
+
+  menu.open = true;
+  handlers.document.get('focusin')({ target: outside });
+  assert.equal(menu.open, false);
+
+  menu.open = true;
+  handlers.document.get('keydown')({ key: 'Escape' });
+  assert.equal(menu.open, false);
+  assert.equal(summary.focusCalled, true);
+
+  menu.open = true;
+  handlers.link.get('click')();
+  assert.equal(menu.open, false);
+
+  menu.open = true;
+  handlers.window.get('pagehide')();
+  assert.equal(menu.open, false);
+  menu.open = true;
+  handlers.window.get('pageshow')();
+  assert.equal(menu.open, false);
+
+  menu.open = true;
+  document.visibilityState = 'hidden';
+  handlers.document.get('visibilitychange')();
+  assert.equal(menu.open, false);
 });
