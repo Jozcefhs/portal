@@ -39,16 +39,16 @@ const [
   readFile(new URL('functions/api/backend.js', portalRoot), 'utf8')
 ]);
 
-test('Pages Functions routing invokes only API paths and bypasses static assets', () => {
+test('Pages Functions routing invokes the homepage and API paths while bypassing other static assets', () => {
   const routes = JSON.parse(routesSource);
   assert.equal(routes.version, 1);
-  assert.deepEqual(routes.include, ['/api', '/api/*']);
+  assert.deepEqual(routes.include, ['/', '/api', '/api/*']);
   assert.deepEqual(routes.exclude, []);
 
-  const invokesFunction = (pathname) => pathname === '/api' || pathname.startsWith('/api/');
+  const invokesFunction = (pathname) => pathname === '/' || pathname === '/api' || pathname.startsWith('/api/');
   assert.equal(invokesFunction('/api/settings'), true);
   assert.equal(invokesFunction('/api/paystack-webhook'), true);
-  assert.equal(invokesFunction('/'), false);
+  assert.equal(invokesFunction('/'), true);
   assert.equal(invokesFunction('/index.html'), false);
   assert.equal(invokesFunction('/admin.html'), false);
   assert.equal(invokesFunction('/css/style.css'), false);

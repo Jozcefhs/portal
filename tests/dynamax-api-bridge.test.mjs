@@ -25,10 +25,10 @@ test('Dynamax Pages fail closed unless an API proxy is explicitly configured', (
   assert.doesNotMatch(middleware, /PRIVATE_KEY|SHARED_SECRET|SESSION_SECRET/);
 });
 
-test('only real API paths invoke Pages Functions', () => {
+test('only API paths and the host-aware homepage invoke Pages Functions', () => {
   assert.deepEqual(routes, {
     version: 1,
-    include: ['/api', '/api/*'],
+    include: ['/', '/api', '/api/*'],
     exclude: []
   });
   assert.equal(routes.include.some((route) => route.includes('.html')), false);
