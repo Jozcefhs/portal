@@ -218,6 +218,21 @@ test('batch continuation rejects invalid/missing snapshots and cross-collection 
   assert.equal(reads, 0);
 });
 
+test('payroll batches leave room for authorisation and logging within the Worker subrequest budget', async () => {
+  const calls = [];
+  const rows = Array.from({ length: 21 }, (_, index) => ({ __id: String(index), __name: auditRowName('payrollItems', index), BranchId: 'west', RunId: `RUN${index}` }));
+  const backend = evidenceModule({ queryCollection: async (_env, collection, options) => {
+    calls.push({ collection, options });
+    return collection === 'payrollItems' ? rows : [{ BranchId: 'west', PayDate: '2026-09-30' }];
+  } });
+  const page = await backend.exportAuditRegister({ FIREBASE_PROJECT_ID: 'p' }, scope, 'payrollItems', { paged: true });
+  assert.equal(calls[0].options.limit, 21);
+  assert.equal(calls.length, 21);
+  assert.equal(page.records.length, 20);
+  assert.equal(page.done, false);
+  assert.equal(new Set(calls.map(call => call.options.readTime)).size, 1);
+});
+
 test('failed, repeated, changed-scope or cancelled batches never become a complete register', async () => {
   const first = { paged: true, complete: false, done: false, nextCursor: { name: auditRowName('payments', 1) }, scope, register: 'payments', readTime: new Date().toISOString(), scanned: 1, records: [] };
   for (const later of [() => { throw new Error('network failed'); }, () => first,

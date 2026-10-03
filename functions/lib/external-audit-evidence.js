@@ -335,7 +335,9 @@ export async function exportAuditRegister(env, scope, register, input = {}) {
     { field: 'Date', op: '>=', value: scope.dateFrom }, { field: 'Date', op: '<', value: externalAuditNextDate(scope.dateTo) }
   ] } : {};
   if (input.paged === true) {
-    const batch = await auditBatch(env, auditCollection(register, scope), input, options, register === 'payrollItems' ? 100 : 500);
+    // Payroll items may each require a separate parent-run date lookup. Keep
+    // those batches below the Worker subrequest budget, including auth/logging.
+    const batch = await auditBatch(env, auditCollection(register, scope), input, options, register === 'payrollItems' ? 20 : 500);
     await hydrateAuditDates(env, register, batch.rows, batch.readTime);
     const { rows, ...metadata } = batch;
     return { ok: true, scope, register, ...metadata,
