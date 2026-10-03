@@ -140,7 +140,7 @@ let incomeAnalyticsRequest = 0;
 let externalAuditState = {
   scope: null, journals: [], nextCursor: null, cursor: null, page: 1,
   history: [], findings: [], findingCursor: null, findingNextCursor: null,
-  findingHistory: [], findingPage: 1, findingPageSize: 0, dateFrom: '', dateTo: '', tab: 'journals'
+  findingHistory: [], findingPage: 1, findingPageSize: 0, dateFrom: '', dateTo: '', tab: 'payments'
 };
 let recordsDeskRequest = 0;
 let recordsDeskSearchTimer = 0;
@@ -497,6 +497,11 @@ async function desktopPairingRequest(action, payload = {}) {
     body: JSON.stringify({ action, ...payload })
   });
   const data = await response.json().catch(() => ({}));
+  if ([401, 403].includes(response.status)) {
+    stopDesktopSetupRefresh();
+    if (desktopSetupDialog.open) desktopSetupDialog.close();
+    if (response.status === 401) showLogin(data.message || 'Your staff session has expired.', 'bad');
+  }
   if (!response.ok || !data.ok) throw new Error(data.message || 'Desktop setup could not be completed.');
   return data;
 }
@@ -590,6 +595,8 @@ function startDesktopSetupRefresh() {
   stopDesktopSetupRefresh();
   desktopSetupRefreshTimer = window.setInterval(async () => {
     if (!desktopSetupDialog.open || desktopSetupRefreshBusy) return;
+    if (!currentUser || !canManageOrganisationSettings(currentUser)) { stopDesktopSetupRefresh(); return; }
+    if (document.hidden) return;
     if (document.getElementById('staffDesktopRequests')?.contains(document.activeElement)) return;
     desktopSetupRefreshBusy = true;
     try {
@@ -1648,6 +1655,8 @@ function installSidebarSwipeGestures() {
 }
 
 function clearStaffWorkspaceState() {
+  stopDesktopSetupRefresh();
+  if (desktopSetupDialog.open) desktopSetupDialog.close();
   staffSessionAbortController.abort();
   staffSessionAbortController = new AbortController();
   window.clearTimeout(recordsDeskSearchTimer);
@@ -1687,7 +1696,7 @@ function clearStaffWorkspaceState() {
   financeDecisionBiometricVerified = false;
   financeDecisionApprovalProof = '';
   profilePhotoState = '';
-  externalAuditState = { tab: 'journals', dateFrom: '', dateTo: '', cursor: null, history: [], page: 1, journals: [], findings: [], nextCursor: null, scope: null, pageSize: 0, findingCursor: null, findingNextCursor: null, findingHistory: [], findingPage: 1, findingPageSize: 0 };
+  externalAuditState = { tab: 'payments', dateFrom: '', dateTo: '', cursor: null, history: [], page: 1, journals: [], findings: [], nextCursor: null, scope: null, pageSize: 0, findingCursor: null, findingNextCursor: null, findingHistory: [], findingPage: 1, findingPageSize: 0 };
   incomeAnalyticsData = null;
   incomeAnalyticsFilter = { period: 'monthly' };
   organizationDepartmentWorkspaceTab = 'overview';
@@ -9736,10 +9745,10 @@ async function externalAuditRequest(action, payload = {}) {
     method: 'POST', credentials: 'same-origin', cache: 'no-store',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      action,
       ...(externalAuditState.dateFrom ? { dateFrom: externalAuditState.dateFrom } : {}),
       ...(externalAuditState.dateTo ? { dateTo: externalAuditState.dateTo } : {}),
-      ...payload
+      ...payload,
+      action
     })
   });
   const data = await response.json().catch(() => ({ ok: false, message: 'External Audit did not return JSON.' }));
@@ -9753,7 +9762,7 @@ function externalAuditJournalRows() {
   if (!rows.length) return '<tr><td colspan="7">No journals in this branch on this page. Continue to the next page if available.</td></tr>';
   return rows.map((row) => {
     const lines = (row.Lines || []).map((line) => `<tr><td>${escapeHtml(line.AccountCode)}</td><td>${escapeHtml(line.Description)}</td><td>${escapeHtml(line.Department)}</td><td>${escapeHtml(Number(line.Debit || 0).toLocaleString('en-NG', { minimumFractionDigits: 2 }))}</td><td>${escapeHtml(Number(line.Credit || 0).toLocaleString('en-NG', { minimumFractionDigits: 2 }))}</td></tr>`).join('');
-    return `<tr><td>${escapeHtml(row.Date)}</td><td><strong>${escapeHtml(row.JournalNo)}</strong><small>${escapeHtml(row.Status)}</small></td><td>${escapeHtml(row.Description || row.SourceType || '—')}</td><td>${escapeHtml(row.BranchId)}</td><td>${escapeHtml(Number(row.TotalDebit || 0).toLocaleString('en-NG', { minimumFractionDigits: 2 }))}</td><td>${escapeHtml(Number(row.TotalCredit || 0).toLocaleString('en-NG', { minimumFractionDigits: 2 }))}</td><td><details><summary>View lines</summary><div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>Account</th><th>Description</th><th>Department</th><th>Debit</th><th>Credit</th></tr></thead><tbody>${lines || '<tr><td colspan="5">No lines recorded.</td></tr>'}</tbody></table></div><small>Source: ${escapeHtml(row.SourceType || '—')} ${escapeHtml(row.SourceId || '')}</small></details>${currentUser?.role === 'External Auditor' ? `<button type="button" class="secondary" data-audit-query-journal="${escapeHtml(row.JournalNo)}">Raise finding</button>` : ''}</td></tr>`;
+    return `<tr><td>${escapeHtml(row.Date)}</td><td><strong>${escapeHtml(row.JournalNo)}</strong><small>${escapeHtml(row.Status)}</small></td><td>${escapeHtml(row.Description || row.SourceType || '—')}</td><td>${escapeHtml(row.BranchId)}</td><td>${escapeHtml(Number(row.TotalDebit || 0).toLocaleString('en-NG', { minimumFractionDigits: 2 }))}</td><td>${escapeHtml(Number(row.TotalCredit || 0).toLocaleString('en-NG', { minimumFractionDigits: 2 }))}</td><td><details><summary>View lines</summary><div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>Account</th><th>Description</th><th>Department</th><th>Debit</th><th>Credit</th></tr></thead><tbody>${lines || '<tr><td colspan="5">No lines recorded.</td></tr>'}</tbody></table></div><small>Source: ${escapeHtml(row.SourceType || '—')} ${escapeHtml(row.SourceId || '')}</small></details><button type="button" class="secondary" data-audit-journal-evidence="${escapeHtml(row.RecordId || row.JournalNo)}">Inspect source evidence</button>${currentUser?.role === 'External Auditor' ? `<button type="button" class="secondary" data-audit-query-journal="${escapeHtml(row.JournalNo)}">Raise finding</button>` : ''}</td></tr>`;
   }).join('');
 }
 
@@ -9763,7 +9772,7 @@ function externalAuditFindingRows() {
   if (!findings.length) return '<p class="muted">No audit findings are recorded for this access scope.</p>';
   return findings.map((finding) => `<article class="workflow-card external-audit-finding">
     <header><div><strong>${escapeHtml(finding.Title)}</strong><small>${escapeHtml(finding.FindingId)} · ${escapeHtml(finding.CreatedAt)} · ${escapeHtml(finding.BranchId || 'All branches')}</small></div><span class="workflow-status ${finding.Status === 'Answered' ? 'status-approved' : 'status-pending'}">${escapeHtml(finding.Status || 'Open')}</span></header>
-    <p>${escapeHtml(finding.Description)}</p><small>Journal reference: ${escapeHtml(finding.JournalNo || 'None provided')} · Raised by ${escapeHtml(finding.AuditorUsername)}</small>
+    <p>${escapeHtml(finding.Description)}</p><small>${escapeHtml(finding.Category || 'Audit finding')} · Journal: ${escapeHtml(finding.JournalNo || 'None provided')} · Record: ${escapeHtml([finding.RecordType, finding.RecordId].filter(Boolean).join(' / ') || 'None provided')} · Raised by ${escapeHtml(finding.AuditorUsername)}</small>
     ${finding.ManagementResponse ? `<p><strong>Management response:</strong> ${escapeHtml(finding.ManagementResponse)}</p><small>${escapeHtml(finding.RespondedBy)} · ${escapeHtml(finding.RespondedAt)}</small>` : admin ? `<form class="workflow-form" data-audit-response="${escapeHtml(finding.FindingId)}"><label>Management response<textarea name="response" rows="3" maxlength="3000" required></textarea></label><button type="submit">Send response</button></form>` : ''}
   </article>`).join('');
 }
@@ -9776,23 +9785,35 @@ function renderExternalAudit() {
   const grantNote = external
     ? `Assigned period: ${escapeHtml(scope.auditDateFrom || currentUser.auditDateFrom)} to ${escapeHtml(scope.auditDateTo || currentUser.auditDateTo)} · Access expires ${escapeHtml(scope.auditExpiresAt || currentUser.auditExpiresAt)}`
     : 'Management review of the financial audit register and auditor findings.';
-  panelEl.innerHTML = `<div class="workflow-intro"><div><p class="eyebrow">Governance &amp; accountability</p><h2>External Financial Audit</h2><p class="muted">Read-only journal evidence, scoped by date and working branch. ${grantNote}</p></div></div>
+  panelEl.innerHTML = `<div class="workflow-intro"><div><p class="eyebrow">Governance &amp; accountability</p><h2>External Financial Audit</h2><p class="muted">Read-only financial records, source evidence and complete period reports. ${grantNote}</p></div></div>
     <p class="status" id="externalAuditStatus"></p>
-    <div class="workflow-tabs external-audit-tabs"><button type="button" data-audit-tab="journals" class="${state.tab === 'journals' ? 'active' : ''}">Journal register</button><button type="button" data-audit-tab="findings" class="${state.tab === 'findings' ? 'active' : ''}">Findings (${state.findings.length})</button></div>
-    <section class="external-audit-section" ${state.tab === 'journals' ? '' : 'hidden'}>
+    <div class="workflow-tabs external-audit-tabs"><button type="button" data-audit-tab="payments" class="${state.tab === 'payments' ? 'active' : ''}">Payments &amp; receipts</button><button type="button" data-audit-tab="journals" class="${state.tab === 'journals' ? 'active' : ''}">Journal register</button><button type="button" data-audit-tab="records" class="${state.tab === 'records' ? 'active' : ''}">Records &amp; documents</button><button type="button" data-audit-tab="reports" class="${state.tab === 'reports' ? 'active' : ''}">Period reports</button><button type="button" data-audit-tab="findings" class="${state.tab === 'findings' ? 'active' : ''}">Findings (${state.findings.length})</button></div>
       <form id="externalAuditFilter" class="workflow-form"><div class="config-grid"><label>From<input type="date" name="dateFrom" value="${escapeHtml(state.dateFrom || scope.dateFrom || '')}" ${external ? `min="${escapeHtml(scope.auditDateFrom || '')}" max="${escapeHtml(scope.auditDateTo || '')}"` : ''} required></label><label>To<input type="date" name="dateTo" value="${escapeHtml(state.dateTo || scope.dateTo || '')}" ${external ? `min="${escapeHtml(scope.auditDateFrom || '')}" max="${escapeHtml(scope.auditDateTo || '')}"` : ''} required></label><label>Working branch<input value="${escapeHtml(scope.branchId || currentUser?.activeBranchId || 'all')}" readonly><small>Use the header branch selector to change this scope.</small></label></div><button type="submit">Apply dates</button></form>
-      <div class="workflow-primary-actions"><button type="button" class="secondary" id="externalAuditExport" ${state.journals.length ? '' : 'disabled'}>Download this page CSV</button></div>
+    <section class="external-audit-section" ${state.tab === 'journals' ? '' : 'hidden'}>
+      <p class="status">Journal entries include fee allocations, parent-credit applications and adjustments. Use Payments &amp; receipts for the amount received in each payment.</p>
+      <div class="workflow-primary-actions"><button type="button" id="externalAuditPreview">Preview / print complete journal register</button><button type="button" class="secondary" id="externalAuditExport" ${state.journals.length ? '' : 'disabled'}>Download this page CSV</button></div>
       <p class="muted">Page ${state.page}: ${state.journals.length} visible journal${state.journals.length === 1 ? '' : 's'} from ${state.pageSize || 0} scanned. These are not period totals; continue through all pages for a complete register.</p>
       <div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>Date</th><th>Journal</th><th>Description</th><th>Branch</th><th>Debit</th><th>Credit</th><th>Detail</th></tr></thead><tbody>${externalAuditJournalRows()}</tbody></table></div>
       <div class="workflow-primary-actions"><button type="button" class="secondary" id="externalAuditPrevious" ${state.history.length ? '' : 'disabled'}>Previous page</button><button type="button" id="externalAuditNext" ${state.nextCursor ? '' : 'disabled'}>Next page</button></div>
     </section>
+    <section id="externalAuditEvidenceWorkspace" class="external-audit-section" ${['payments', 'records', 'reports'].includes(state.tab) ? '' : 'hidden'}></section>
     <section class="external-audit-section" ${state.tab === 'findings' ? '' : 'hidden'}>
-      ${external ? `<form id="externalAuditFindingForm" class="workflow-form"><h3>Raise a finding</h3><div class="config-grid"><label>Title<input name="title" maxlength="160" required></label><label>Journal reference (optional)<input name="journalNo" maxlength="120"></label></div><label>What needs review?<textarea name="description" rows="4" maxlength="3000" required></textarea></label><button type="submit">Submit finding</button></form>` : '<p class="muted">Auditors raise findings here. Management may respond without changing source records.</p>'}
+      ${external ? `<form id="externalAuditFindingForm" class="workflow-form"><h3>Raise a finding or request evidence</h3><input type="hidden" name="register" value="${escapeHtml(state.pendingFinding?.register || '')}"><input type="hidden" name="recordId" value="${escapeHtml(state.pendingFinding?.recordId || '')}">${state.pendingFinding ? `<p class="muted">Linked record: ${escapeHtml(state.pendingFinding.register)} / ${escapeHtml(state.pendingFinding.recordId)}</p>` : ''}<div class="config-grid"><label>Type<select name="category"><option>Audit finding</option><option>Evidence request</option></select></label><label>Title<input name="title" maxlength="160" required></label><label>Journal reference (optional)<input name="journalNo" maxlength="120"></label></div><label>What needs review?<textarea name="description" rows="4" maxlength="3000" required></textarea></label><button type="submit">Submit finding</button></form>` : '<p class="muted">Auditors raise findings here. Management may respond without changing source records.</p>'}
       <p class="muted">Findings page ${state.findingPage}: ${state.findings.length} visible finding${state.findings.length === 1 ? '' : 's'} from ${state.findingPageSize || 0} scanned.</p>
       <div class="external-audit-findings">${externalAuditFindingRows()}</div>
       <div class="workflow-primary-actions"><button type="button" class="secondary" id="externalAuditFindingPrevious" ${state.findingHistory.length ? '' : 'disabled'}>Previous findings</button><button type="button" id="externalAuditFindingNext" ${state.findingNextCursor ? '' : 'disabled'}>Next findings</button></div>
     </section>`;
   bindExternalAuditEvents();
+  if (['payments', 'records', 'reports'].includes(state.tab)) {
+    const root = document.getElementById('externalAuditEvidenceWorkspace');
+    const initialRecord = state.evidenceRecord;
+    state.evidenceRecord = null;
+    import('./external-audit-workspace.js?v=20261003-complete-audit-evidence').then((module) => {
+      if (!root?.isConnected || activeSection !== 'externalAudit') return;
+      return module.mountAuditEvidenceWorkspace(root, { request: externalAuditRequest, staffFetch, scope, user: currentUser, view: state.tab,
+        initialRecord, raiseFinding: (record) => { externalAuditState.pendingFinding = record; externalAuditState.tab = 'findings'; renderExternalAudit(); } });
+    }).catch((error) => { if (root?.isConnected) root.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`; });
+  }
 }
 
 async function loadExternalAudit() {
@@ -9839,16 +9860,31 @@ function bindExternalAuditEvents() {
     renderExternalAudit();
   }));
   panelEl.querySelectorAll('[data-audit-query-journal]').forEach((button) => button.addEventListener('click', () => {
+    externalAuditState.pendingFinding = null;
     externalAuditState.tab = 'findings';
     renderExternalAudit();
     const input = document.querySelector('#externalAuditFindingForm [name="journalNo"]');
     if (input) { input.value = button.dataset.auditQueryJournal; input.focus(); }
   }));
+  panelEl.querySelectorAll('[data-audit-journal-evidence]').forEach((button) => button.addEventListener('click', () => {
+    externalAuditState.evidenceRecord = { register: 'journals', recordId: button.dataset.auditJournalEvidence };
+    externalAuditState.tab = 'records'; renderExternalAudit();
+  }));
+  document.getElementById('externalAuditPreview')?.addEventListener('click', () => {
+    // Open synchronously from the user's click so the preview is not blocked.
+    const preview = window.open('', '_blank');
+    if (!preview) { setStatus(document.getElementById('externalAuditStatus'), 'Allow pop-ups for this portal to open the audit preview.', 'bad'); return; }
+    preview.opener = null;
+    preview.document.write('<p>Preparing the complete audit register…</p>');
+    import('./external-audit-workspace.js?v=20261003-complete-audit-evidence').then((module) => module.previewAuditRegister(externalAuditRequest, externalAuditState.scope, 'journals', preview))
+      .catch((error) => setStatus(document.getElementById('externalAuditStatus'), error.message || String(error), 'bad'));
+  });
   document.getElementById('externalAuditFilter')?.addEventListener('submit', (event) => {
     event.preventDefault();
     const values = Object.fromEntries(new FormData(event.currentTarget).entries());
     externalAuditState.dateFrom = values.dateFrom;
     externalAuditState.dateTo = values.dateTo;
+    externalAuditState.pendingFinding = null;
     externalAuditState.cursor = null;
     externalAuditState.history = [];
     externalAuditState.page = 1;
@@ -9905,6 +9941,7 @@ function bindExternalAuditEvents() {
     const status = document.getElementById('externalAuditStatus');
     try {
       const created = await externalAuditRequest('createFinding', Object.fromEntries(new FormData(form).entries()));
+      externalAuditState.pendingFinding = null;
       externalAuditState.tab = 'findings';
       if (created.finding) externalAuditState.findings.unshift(created.finding);
       renderExternalAudit();
@@ -19655,7 +19692,7 @@ async function securityAuditRequest(action = 'list', payload = {}) {
   const response = await staffFetch('/api/security-audit', {
     method: 'POST', credentials: 'same-origin', cache: 'no-store',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action, ...payload })
+    body: JSON.stringify({ ...payload, action })
   });
   const data = await response.json().catch(() => ({ ok: false, message: 'Security audit did not return JSON.' }));
   if (response.status === 401) showLogin(data.message || 'Your staff session has expired.', 'bad');
@@ -19740,7 +19777,7 @@ function renderSecurityAudit() {
   panelEl.innerHTML = `
     <section class="security-audit-workspace">
       <div class="workflow-intro security-audit-heading">
-        <div><p class="eyebrow">Governance &amp; accountability</p><h2>Aggregated Security Audit Log</h2><p class="muted">A read-only record of authenticated web and desktop activity, sign-in attempts, approvals and operational changes.</p></div>
+        <div><p class="eyebrow">Governance &amp; accountability</p><h2>Aggregated Security Audit Log</h2><p class="muted">Sign-in attempts, permission violations, approvals and operational changes. Routine page loads and refreshes are excluded.</p></div>
         <div class="security-audit-actions"><button type="button" id="refreshSecurityAudit" class="secondary">Refresh</button><button type="button" id="printSecurityAudit">Print filtered log</button></div>
       </div>
       <div class="security-audit-print-heading">
@@ -19795,7 +19832,10 @@ function renderSecurityAudit() {
   });
   document.getElementById('printSecurityAudit')?.addEventListener('click', async (event) => {
     const button = event.currentTarget;
-    if (!securityAuditFilteredRows().length) return;
+    if (!securityAuditFilteredRows().length) {
+      setStatus(dashboardStatus, 'No audit actions match the selected filters. Adjust the filters before printing.', 'bad');
+      return;
+    }
     setButtonLoading(button, true, 'Preparing...', 'Print filtered log');
     try {
       await securityAuditRequest('print', {
@@ -19805,8 +19845,14 @@ function renderSecurityAudit() {
         toDate: securityAuditData.toDate
       });
       document.body.classList.add('security-audit-print');
-      window.addEventListener('afterprint', () => document.body.classList.remove('security-audit-print'), { once: true });
-      window.print();
+      const finishPrint = () => document.body.classList.remove('security-audit-print');
+      window.addEventListener('afterprint', finishPrint, { once: true });
+      try { window.print(); }
+      catch (error) {
+        window.removeEventListener('afterprint', finishPrint);
+        finishPrint();
+        throw error;
+      }
     } catch (error) {
       setStatus(dashboardStatus, error.message || String(error), 'bad');
     } finally {

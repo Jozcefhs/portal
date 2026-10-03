@@ -285,6 +285,7 @@ async function handleRequest(context, identityLoader) {
       prepared,
       authoritativeActor: context.data?.securityAuditActor,
       authoritativeAction: context.data?.securityAuditAction,
+      auditHandled: context.data?.securityAuditHandled,
       response,
       failure,
       requestId,

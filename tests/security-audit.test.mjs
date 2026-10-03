@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import vm from 'node:vm';
 
 import {
   prepareSecurityAudit,
@@ -9,7 +10,7 @@ import {
   securityAuditOutcome,
   shouldPersistSecurityAudit
 } from '../functions/lib/security-audit.js';
-import { explicitAuditAction, normalizedLegacyAudit } from '../functions/lib/security-audit.js';
+import { explicitAuditAction, normalizedLegacyAudit, securityAuditRowVisible, persistRequestSecurityAudit } from '../functions/lib/security-audit.js';
 
 test('generic audit verbs identify their exact record type and preserve historical actor/reference fields', () => {
   const row = normalizedLegacyAudit({ Action: 'UPDATE', User: 'Ada Officer', ActorUsername: 'ada',
@@ -66,10 +67,93 @@ test('audit preparation retains metadata but never copies request payloads or cr
   assert.equal(JSON.stringify(prepared).includes('secret-value'), false);
 });
 
-test('authenticated reads and all public mutations are auditable while public reads remain write-free', () => {
-  assert.equal(shouldPersistSecurityAudit({ method: 'GET' }, { username: 'admin' }), true);
+test('routine page loads and expired-session polling are write-free; changes and permission violations remain auditable', async () => {
+  assert.equal(shouldPersistSecurityAudit({ method: 'GET' }, { username: 'admin' }), false);
   assert.equal(shouldPersistSecurityAudit({ method: 'POST' }, null), true);
   assert.equal(shouldPersistSecurityAudit({ method: 'GET' }, null), false);
+  for (const [pathname, body] of [
+    ['/api/admin', { mode: 'shell' }], ['/api/settings', {}],
+    ['/api/security-audit', { action: 'list' }], ['/api/staff-attendance', { action: 'quick' }],
+    ['/api/desktop-pairing', { action: 'list' }], ['/api/desktop-pairing', { action: 'status' }],
+    ['/api/staff-notifications', { action: 'list' }], ['/api/backend', { Action: 'getStudents' }]
+  ]) {
+    const prepared = await prepareSecurityAudit(new Request(`https://example.test${pathname}`, {
+      method: pathname === '/api/settings' ? 'GET' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      ...(pathname === '/api/settings' ? {} : { body: JSON.stringify(body) })
+    }), pathname);
+    assert.equal(shouldPersistSecurityAudit(prepared, { username: 'admin' }, 200), false, prepared.action);
+    assert.equal(shouldPersistSecurityAudit(prepared, null, 401), false, prepared.action);
+    assert.equal(shouldPersistSecurityAudit(prepared, { username: 'admin' }, 403), true, prepared.action);
+    // A routine poll must return before attempting any session/database reads.
+    assert.equal(await persistRequestSecurityAudit({ prepared, response: { status: 200 } }), null);
+  }
+  for (const action of ['SAVE SETTINGS', 'APPROVE BILL', 'REVOKE DESKTOP PAIRING', 'PRINT SECURITY AUDIT', 'EXPORT STUDENT']) {
+    assert.equal(shouldPersistSecurityAudit({ method: 'POST', action }, { username: 'admin' }), true, action);
+  }
+  assert.equal(shouldPersistSecurityAudit({ method: 'GET', action: 'EXPORT STUDENT' }, { username: 'admin' }), true);
+});
+
+test('completed sign-ins use their existing authoritative audit; failed sign-ins remain recorded', () => {
+  for (const [pathname, action] of [
+    ['/api/staff-session', 'LOGIN'], ['/api/staff-session', 'SIGN IN'],
+    ['/api/staff-passkey', 'AUTHENTICATION VERIFY'], ['/api/staff-mfa', 'VERIFY LOGIN']
+  ]) {
+    assert.equal(shouldPersistSecurityAudit({ method: 'POST', pathname, action }, null, 200), false);
+    assert.equal(shouldPersistSecurityAudit({ method: 'POST', pathname, action }, null, 401), true);
+  }
+});
+
+test('historical request noise is excluded without suppressing legacy records or permission violations', () => {
+  const source = { collection: 'platformSecurityAudit' };
+  for (const HttpStatus of [200, 401]) {
+    assert.equal(securityAuditRowVisible(normalizedLegacyAudit({
+      Method: 'POST', Route: '/api/desktop-pairing', Action: 'LIST DESKTOP PAIRING', HttpStatus
+    }, source)), false);
+  }
+  assert.equal(securityAuditRowVisible(normalizedLegacyAudit({
+    Method: 'POST', Route: '/api/desktop-pairing', Action: 'LIST DESKTOP PAIRING', HttpStatus: 403
+  }, source)), true);
+  assert.equal(securityAuditRowVisible(normalizedLegacyAudit({ Action: 'LOGIN' }, { collection: 'staffSecurityAudit' })), true);
+  assert.equal(securityAuditRowVisible(normalizedLegacyAudit({ Action: 'APPROVE BILL', HttpStatus: 200 }, source)), true);
+});
+
+test('filtered print sends the print command, preserves filters, invokes printing and restores the page', async () => {
+  const source = await readFile(new URL('../js/admin.js', import.meta.url), 'utf8');
+  const handlers = new Map();
+  const printed = [];
+  const requests = [];
+  const classes = new Set();
+  const rows = [{ Action: 'LOGIN' }];
+  const context = vm.createContext({
+    activeSection: 'securityAudit', panelEl: {}, dashboardStatus: {},
+    securityAuditData: { rows, facets: {}, filters: { action: 'LOGIN', user: 'ada' }, fromDate: '2026-10-01', toDate: '2026-10-03' },
+    clean: (value) => String(value ?? '').trim(), escapeHtml: (value) => String(value ?? ''),
+    securityAuditFilteredRows: () => rows, securityAuditRowsHtml: () => '<tr><td>LOGIN</td></tr>',
+    renderModuleSummary() {}, setButtonLoading() {}, setStatus() {},
+    staffFetch: async (_url, init) => { requests.push(JSON.parse(init.body)); return { status: 200, ok: true, json: async () => ({ ok: true }) }; },
+    document: {
+      querySelector: () => ({ textContent: 'Dynamax' }),
+      getElementById: (id) => id === 'securityAuditFilters' ? null : { addEventListener: (event, handler) => handlers.set(`${id}:${event}`, handler) },
+      body: { classList: { add: (name) => classes.add(name), remove: (name) => classes.delete(name) } }
+    },
+    window: {
+      addEventListener: (event, handler) => handlers.set(`window:${event}`, handler),
+      removeEventListener: (event) => handlers.delete(`window:${event}`),
+      print: () => printed.push(classes.has('security-audit-print'))
+    }
+  });
+  vm.runInContext(source.slice(source.indexOf('async function securityAuditRequest('), source.indexOf('function securityAuditDefaultDate(')), context);
+  vm.runInContext(source.slice(source.indexOf('function renderSecurityAudit('), source.indexOf('async function loadSecurityAudit(')), context);
+  vm.runInContext('renderSecurityAudit()', context);
+  await handlers.get('printSecurityAudit:click')({ currentTarget: { isConnected: true } });
+  assert.deepEqual(requests[0], { action: 'print', user: 'ada', actionFilter: 'LOGIN', fromDate: '2026-10-01', toDate: '2026-10-03' });
+  assert.deepEqual(printed, [true]);
+  handlers.get('window:afterprint')();
+  assert.equal(classes.size, 0);
+  context.window.print = () => { throw new Error('Print unavailable'); };
+  await handlers.get('printSecurityAudit:click')({ currentTarget: { isConnected: true } });
+  assert.equal(classes.size, 0);
 });
 
 test('security audit is a configurable cross-edition module and mandatory for super administrators', () => {

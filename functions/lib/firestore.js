@@ -380,7 +380,7 @@ export async function queryCollection(env, collectionPath, options = {}) {
   const { endpoint, structuredQuery } = buildStructuredQuery(collectionPath, options);
   const rows = await firestoreRequest(env, endpoint, {
     method: 'POST',
-    body: JSON.stringify({ structuredQuery })
+    body: JSON.stringify({ structuredQuery, ...(options.readTime ? { readTime: options.readTime } : {}) })
   });
   return (Array.isArray(rows) ? rows : [])
     .map((row) => row && row.document)

@@ -11,6 +11,7 @@ import {
   externalAuditNextDate,
   externalAuditScope
 } from '../lib/external-audit.js';
+import { AUDIT_REGISTERS, AUDIT_DOCUMENT_CATEGORIES, listAuditRecords, auditRecordEvidence, loadAuditPeriodReports, exportAuditRegister, getAuditRecord } from '../lib/external-audit-evidence.js';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
@@ -41,14 +42,14 @@ function internalScope(user, body) {
   };
 }
 
-function authorizedScope(user, body) {
+export function authorizedScope(user, body) {
   if (!(user.allowedSections || []).includes('externalAudit')) fail('External Audit is not assigned to this account.', 403);
   if (user.role === EXTERNAL_AUDITOR_ROLE) return externalAuditScope(user, body);
   if (user.role === 'Super Admin') return internalScope(user, body);
   fail('This role cannot open the financial audit workspace.', 403);
 }
 
-async function logAccess(env, user, action, branchId, details = '') {
+export async function logAccess(env, user, action, branchId, details = '') {
   const timestamp = new Date().toISOString();
   const id = `FIN-AUD-ACCESS-${crypto.randomUUID()}`;
   await upsertDocument(env, 'staffSecurityAudit', id, {
@@ -75,6 +76,9 @@ function publicFinding(row) {
     Title: clean(row.Title),
     Description: clean(row.Description),
     JournalNo: clean(row.JournalNo),
+    RecordType: clean(row.RecordType),
+    RecordId: clean(row.RecordId),
+    Category: clean(row.Category || 'Audit finding'),
     BranchId: clean(row.BranchId),
     AuditDateFrom: clean(row.AuditDateFrom),
     AuditDateTo: clean(row.AuditDateTo),
@@ -139,6 +143,13 @@ async function createFinding(env, user, body, scope) {
   const title = clean(body.title).slice(0, 160);
   const description = clean(body.description).slice(0, 3000);
   const journalNo = clean(body.journalNo).slice(0, 120);
+  const recordType = clean(body.register);
+  const recordId = clean(body.recordId);
+  if (recordType || recordId) await getAuditRecord(env, scope, recordType, recordId);
+  if (journalNo) {
+    const matching = await queryCollection(env, 'accountingJournals', { filters: [{ field: 'JournalNo', op: '==', value: journalNo }], limit: 2 });
+    if (!matching.some((row) => visibleInBranch(row, scope.branchId) && clean(row.Date).slice(0, 10) >= scope.dateFrom && clean(row.Date).slice(0, 10) <= scope.dateTo)) fail('The referenced journal is outside your audit scope.', 404);
+  }
   if (!title || !description) fail('Enter a title and a description for the finding.');
   const id = `FIN-AUD-${crypto.randomUUID()}`;
   const finding = {
@@ -146,6 +157,9 @@ async function createFinding(env, user, body, scope) {
     Title: title,
     Description: description,
     JournalNo: journalNo,
+    RecordType: recordType,
+    RecordId: recordId,
+    Category: body.category === 'Evidence request' ? 'Evidence request' : 'Audit finding',
     BranchId: scope.branchId,
     AuditDateFrom: scope.dateFrom,
     AuditDateTo: scope.dateTo,
@@ -194,8 +208,19 @@ export async function onRequestPost(context) {
       : action === 'findings' ? await listFindings(env, user, body, scope)
       : action === 'createfinding' ? await createFinding(env, user, body, scope)
       : action === 'respondfinding' ? await respondFinding(env, user, body, scope)
-      : action === 'recordexport' ? (await logAccess(env, user, 'FINANCIAL AUDIT EXPORT', scope.branchId, `${scope.dateFrom}–${scope.dateTo}; current page`), { ok: true })
+      : action === 'catalog' ? { ok: true, scope, registers: Object.entries(AUDIT_REGISTERS).map(([key, entry]) => ({ key, label: entry.label, snapshot: !!entry.snapshot, branchRequired: !!entry.church })), documentCategories: AUDIT_DOCUMENT_CATEGORIES }
+      : action === 'records' ? await listAuditRecords(env, scope, body)
+      : action === 'detail' ? await auditRecordEvidence(env, scope, clean(body.register), clean(body.recordId))
+      : action === 'reports' ? await loadAuditPeriodReports(env, scope)
+      : action === 'exportregister' ? await exportAuditRegister(env, scope, clean(body.register || 'journals'))
+      : action === 'recordexport' ? (await logAccess(env, user, 'FINANCIAL AUDIT EXPORT', scope.branchId, `${scope.dateFrom}–${scope.dateTo}; ${clean(body.report || 'current page').slice(0, 80)}`), { ok: true })
       : fail('Unknown external audit action.');
+    if (['detail', 'reports', 'exportregister'].includes(action)) await logAccess(env, user,
+      action === 'exportregister' ? 'FINANCIAL AUDIT FULL REGISTER EXPORT' : action === 'reports' ? 'FINANCIAL AUDIT PERIOD REPORT' : 'FINANCIAL AUDIT EVIDENCE VIEW',
+      scope.branchId, `${scope.dateFrom}–${scope.dateTo}; ${clean(body.register)} ${clean(body.recordId)}`);
+    // Sensitive reads/exports and findings have their explicit authoritative
+    // audit entry; catalog and record pagination are routine reads.
+    if (context.data) context.data.securityAuditHandled = true;
     return Response.json(result, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     const status = Number(error?.status || 500);

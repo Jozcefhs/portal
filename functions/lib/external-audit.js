@@ -59,6 +59,7 @@ export function externalAuditScope(user = {}, input = {}, today = new Date().toI
 
 export function externalAuditJournal(row = {}) {
   return {
+    RecordId: clean(row.__id || row.JournalNo),
     JournalNo: clean(row.JournalNo || row.__id),
     Date: clean(row.Date),
     Status: clean(row.Status),

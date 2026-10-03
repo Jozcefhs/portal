@@ -171,10 +171,24 @@ export async function prepareSecurityAudit(request, pathname = '') {
   };
 }
 
-export function shouldPersistSecurityAudit(prepared = {}, actor = null) {
-  if (actor) return true;
-  if (['GET', 'HEAD', 'OPTIONS'].includes(clean(prepared.method).toUpperCase())) return false;
-  // Public mutations and login attempts are security-relevant even before a staff session exists.
+export function shouldPersistSecurityAudit(prepared = {}, actor = null, status = 200) {
+  const method = clean(prepared.method).toUpperCase();
+  const action = titleWords(prepared.action);
+  const path = lower(prepared.pathname);
+  if (method === 'OPTIONS' || method === 'HEAD') return false;
+  // Completed password/passkey/MFA sign-ins already have an authoritative LOGIN
+  // entry in staffSecurityAudit. Do not add a second, anonymous success entry.
+  const completedLogin = (path === '/api/staff-session' && ['LOGIN', 'SIGN IN'].includes(action))
+    || (path === '/api/staff-passkey' && action === 'AUTHENTICATION VERIFY')
+    || (path === '/api/staff-mfa' && action === 'VERIFY LOGIN');
+  if (completedLogin && status < 400) return false;
+  const explicitRead = /^(?:PRINT|EXPORT|DOWNLOAD)(?: |$)/.test(action);
+  const routineRead = !explicitRead && (method === 'GET'
+    || /^(?:LIST|GET|VIEW|READ|SEARCH|LOAD|FETCH|CHECK SESSION|SHELL|QUICK|PRESENCE QUICK|STATUS|ADMIN STATUS|STORAGE STATUS)(?: |$)/.test(action)
+    || / OPTIONS$/.test(action));
+  // Refreshes and expired-session polls belong in API diagnostics, not the
+  // business/security action ledger. Permission violations remain auditable.
+  if (routineRead) return Number(status) === 403;
   return true;
 }
 
@@ -211,10 +225,12 @@ export async function writeSecurityAudit(env, event = {}) {
   return payload;
 }
 
-export async function persistRequestSecurityAudit({ env, request, prepared, response, failure, requestId, durationMs, authoritativeActor, authoritativeAction } = {}) {
-  const actor = authoritativeActor || await readStaffSession(env, request).catch(() => null);
-  if (!shouldPersistSecurityAudit(prepared, actor)) return null;
+export async function persistRequestSecurityAudit({ env, request, prepared, response, failure, requestId, durationMs, authoritativeActor, authoritativeAction, auditHandled } = {}) {
   const status = Number(response?.status || failure?.status || 500);
+  if (auditHandled && status < 400) return null;
+  const effectivePrepared = { ...prepared, action: authoritativeAction || prepared.action };
+  if (!shouldPersistSecurityAudit(effectivePrepared, null, status)) return null;
+  const actor = authoritativeActor || await readStaffSession(env, request).catch(() => null);
   const headerBranch = clean(prepared.requestedBranchId);
   const branchId = clean(actor?.branchId || (headerBranch && lower(headerBranch) !== 'all' ? headerBranch : '') || prepared.branchId || 'main');
   return writeSecurityAudit(env, {
@@ -287,6 +303,12 @@ export function normalizedLegacyAudit(row, source) {
   };
 }
 
+export function securityAuditRowVisible(row) {
+  if (row.SourceCollection !== SECURITY_AUDIT_COLLECTION) return true;
+  return shouldPersistSecurityAudit({ method: row.Method, pathname: row.Route, action: row.Action }, null,
+    row.HttpStatus || (lower(row.Outcome) === 'denied' ? 403 : lower(row.Outcome) === 'failed' ? 500 : 200));
+}
+
 export async function loadAggregatedSecurityAudit(env, options = {}) {
   const range = sourceDateRange(options.fromDate, options.toDate);
   const filters = [];
@@ -300,7 +322,8 @@ export async function loadAggregatedSecurityAudit(env, options = {}) {
         orderBy: [{ field: 'Timestamp', direction: 'DESCENDING' }],
         limit: perSourceLimit
       });
-      return { rows: rows.map((row) => normalizedLegacyAudit(row, source)), warning: '' };
+      return { rows: rows.map((row) => normalizedLegacyAudit(row, source)).filter(securityAuditRowVisible),
+        warning: rows.length === perSourceLimit ? `${source.module || source.collection} reached its source limit. Choose a shorter date range to see older actions.` : '' };
     } catch (error) {
       console.warn(JSON.stringify({ event: 'security_audit_source_unavailable', source: source.collection, message: clean(error?.message).slice(0, 200) }));
       return { rows: [], warning: `${source.module || source.collection} audit records could not be loaded.` };
