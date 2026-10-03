@@ -42,6 +42,9 @@ export async function previewAuditRegister(request, scope, register, existingPre
     const data = await request('exportRegister', { register });
     if (preview.closed) return;
     preview.document.open(); preview.document.write(auditRegisterPreviewHtml(data.records, scope, `Financial audit — ${label(register)}`)); preview.document.close();
+    // Closed disclosures are not reliably printable across browsers. Expand
+    // their actual state before printing, including keyboard-initiated prints.
+    preview.addEventListener('beforeprint', () => preview.document.querySelectorAll('details').forEach((item) => { item.open = true; }));
   } catch (error) { if (!preview.closed) { preview.document.open(); preview.document.write(`<p>${esc(error.message || error)}</p>`); preview.document.close(); } throw error; }
 }
 

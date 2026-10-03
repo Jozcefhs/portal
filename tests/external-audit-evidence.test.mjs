@@ -184,12 +184,17 @@ test('receipt preview is complete, escaped, printable and retains one row per or
   assert.match(html, /Amount: 700/);
   assert.match(auditRecordsCsv([{ ...record, fields: { Description: '=HYPERLINK("bad")' } }]), /'=/);
   const events = [];
-  const popup = { closed: false, document: { write: value => events.push(value), open: () => {}, close: () => {} } };
+  let preparePrint;
+  const details = [{ open: false }, { open: false }];
+  const popup = { closed: false, addEventListener: (event, callback) => { if (event === 'beforeprint') preparePrint = callback; },
+    document: { write: value => events.push(value), open: () => {}, close: () => {}, querySelectorAll: () => details } };
   globalThis.window = { open: () => { events.push('opened'); return popup; } };
   try {
     await previewAuditRegister(async (action, payload) => { events.push('request'); assert.equal(action, 'exportRegister'); assert.equal(payload.register, 'payments'); return { records: [record] }; }, scope, 'payments');
     assert.equal(events[0], 'opened');
     assert.equal(popup.opener, null);
     assert.ok(events.indexOf('request') > events.indexOf('opened'));
+    preparePrint();
+    assert.ok(details.every(item => item.open), 'all receipt allocations and source lines must be expanded for printing');
   } finally { delete globalThis.window; }
 });
