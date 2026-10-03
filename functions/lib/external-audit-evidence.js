@@ -291,11 +291,56 @@ export async function auditRecordEvidence(env, scope, register, id) {
     gaps: register === 'journals' && !related.size ? ['No linked source transaction was found. Request supporting evidence from management.'] : [] };
 }
 
-export async function exportAuditRegister(env, scope, register) {
+// Each request is bounded, but a complete export is not limited to an arbitrary
+// number of transactions. A shared read time prevents edits between batches
+// from duplicating/skipping records or changing opening balances mid-report.
+function auditReadTime(input) {
+  if (input.batchCursor && !input.readTime) throw auditError('The audit snapshot is missing. Restart the report.');
+  if (!input.readTime) return new Date(Date.now() - 1000).toISOString();
+  const value = clean(input.readTime);
+  const timestamp = Date.parse(value);
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)
+    || !Number.isFinite(timestamp) || new Date(timestamp).toISOString() !== value
+    || timestamp > Date.now() || timestamp < Date.now() - 55 * 60 * 1000) {
+    throw auditError('The audit snapshot has expired or is invalid. Restart the report.');
+  }
+  return value;
+}
+
+async function auditBatch(env, collection, input, options = {}, size = 500) {
+  const readTime = auditReadTime(input);
+  const cursor = auditRegisterCursor(env, input.batchCursor, collection);
+  const orderedDate = options.filters?.some((filter) => filter.field === 'Date');
+  if (cursor && orderedDate && !externalAuditDate(clean(input.batchCursor.date).slice(0, 10))) {
+    throw auditError('The audit date cursor is invalid. Restart the report.');
+  }
+  const rows = await queryCollection(env, collection, {
+    ...options, readTime, limit: size + 1,
+    orderBy: orderedDate ? [{ field: 'Date' }, { field: '__name__' }] : [{ field: '__name__' }],
+    ...(cursor ? { startAfterName: cursor.name, ...(orderedDate ? { startAfterFieldValue: input.batchCursor.date } : {}) } : {})
+  });
+  const page = rows.slice(0, size);
+  const last = page.at(-1);
+  const nextCursor = rows.length > size ? { name: clean(last?.__name), ...(orderedDate ? { date: last.Date } : {}) } : null;
+  if (nextCursor) {
+    auditRegisterCursor(env, nextCursor, collection);
+    if (nextCursor.name === cursor?.name) throw auditError('The audit cursor stalled. Restart the report.', 409);
+  }
+  return { rows: page, readTime, scanned: page.length, nextCursor, done: !nextCursor, paged: true, complete: false };
+}
+
+export async function exportAuditRegister(env, scope, register, input = {}) {
   const entry = auditRegister(register);
   const options = register === 'journals' ? { cursorField: 'Date', filters: [
     { field: 'Date', op: '>=', value: scope.dateFrom }, { field: 'Date', op: '<', value: externalAuditNextDate(scope.dateTo) }
   ] } : {};
+  if (input.paged === true) {
+    const batch = await auditBatch(env, auditCollection(register, scope), input, options, register === 'payrollItems' ? 100 : 500);
+    await hydrateAuditDates(env, register, batch.rows, batch.readTime);
+    const { rows, ...metadata } = batch;
+    return { ok: true, scope, register, ...metadata,
+      records: rows.filter((row) => auditRecordVisible(row, entry, scope)).map((row) => auditRecordProjection(row, register)) };
+  }
   const readTime = new Date(Date.now() - 1000).toISOString();
   const rows = await queryCollectionPages(env, auditCollection(register, scope), { ...options, pageSize: 500, maxRows: 10000, readTime });
   await hydrateAuditDates(env, register, rows, readTime);
@@ -358,7 +403,15 @@ export function buildAuditPeriodReports(chart, journals, scope) {
     note: 'Ledger-derived reports include every posted journal through the end date. Opening balances are aggregated from earlier posted journals. Master-register balances and bank opening settings are not added again. Classification uses the current chart of accounts.' };
 }
 
-export async function loadAuditPeriodReports(env, scope) {
+export async function loadAuditPeriodReports(env, scope, input = {}) {
+  if (input.paged === true) {
+    const batch = await auditBatch(env, 'accountingJournals', input, {
+      filters: [{ field: 'Date', op: '<', value: externalAuditNextDate(scope.dateTo) }]
+    });
+    const chart = await queryCollectionPages(env, 'chartOfAccounts', { pageSize: 500, maxRows: 5000, readTime: batch.readTime });
+    const { rows, ...metadata } = batch;
+    return { ok: true, scope, generatedAt: new Date().toISOString(), ...buildAuditPeriodReports(chart, rows, scope), ...metadata };
+  }
   const readTime = new Date(Date.now() - 1000).toISOString();
   const [chart, journals] = await Promise.all([
     queryCollectionPages(env, 'chartOfAccounts', { pageSize: 500, maxRows: 5000, readTime }),

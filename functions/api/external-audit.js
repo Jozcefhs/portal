@@ -211,11 +211,12 @@ export async function onRequestPost(context) {
       : action === 'catalog' ? { ok: true, scope, registers: Object.entries(AUDIT_REGISTERS).map(([key, entry]) => ({ key, label: entry.label, snapshot: !!entry.snapshot, branchRequired: !!entry.church })), documentCategories: AUDIT_DOCUMENT_CATEGORIES }
       : action === 'records' ? await listAuditRecords(env, scope, body)
       : action === 'detail' ? await auditRecordEvidence(env, scope, clean(body.register), clean(body.recordId))
-      : action === 'reports' ? await loadAuditPeriodReports(env, scope)
-      : action === 'exportregister' ? await exportAuditRegister(env, scope, clean(body.register || 'journals'))
+      : action === 'reports' ? await loadAuditPeriodReports(env, scope, body)
+      : action === 'exportregister' ? await exportAuditRegister(env, scope, clean(body.register || 'journals'), body)
       : action === 'recordexport' ? (await logAccess(env, user, 'FINANCIAL AUDIT EXPORT', scope.branchId, `${scope.dateFrom}–${scope.dateTo}; ${clean(body.report || 'current page').slice(0, 80)}`), { ok: true })
       : fail('Unknown external audit action.');
-    if (['detail', 'reports', 'exportregister'].includes(action)) await logAccess(env, user,
+    if (['detail', 'reports', 'exportregister'].includes(action)
+      && (action === 'detail' || body.paged !== true || !body.batchCursor)) await logAccess(env, user,
       action === 'exportregister' ? 'FINANCIAL AUDIT FULL REGISTER EXPORT' : action === 'reports' ? 'FINANCIAL AUDIT PERIOD REPORT' : 'FINANCIAL AUDIT EVIDENCE VIEW',
       scope.branchId, `${scope.dateFrom}–${scope.dateTo}; ${clean(body.register)} ${clean(body.recordId)}`);
     // Sensitive reads/exports and findings have their explicit authoritative
@@ -224,6 +225,7 @@ export async function onRequestPost(context) {
     return Response.json(result, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     const status = Number(error?.status || 500);
+    if (error?.code === 'FIRESTORE_QUERY_REPORT_LIMIT') error.message = 'Reload the portal to use the updated, batched audit preview and reports. No partial totals were shown.';
     if (status >= 500) console.error(JSON.stringify({ message: 'Financial audit request failed', error: String(error?.message || error) }));
     return Response.json({ ok: false, message: status >= 500 ? 'The financial audit request could not be completed.' : String(error?.message || error) }, {
       status, headers: { 'Cache-Control': 'no-store' }

@@ -9,11 +9,12 @@ import {
 import { externalAuditDate, externalAuditNextDate } from '../functions/lib/external-audit.js';
 import { recordBranchId } from '../functions/lib/branch-scope.js';
 import { churchCollectionPath } from '../functions/lib/church-foundation.js';
-import { auditRecordsCsv, auditRegisterPreviewHtml, previewAuditRegister } from '../js/external-audit-workspace.js';
+import { auditRecordsCsv, auditRegisterPreviewHtml, previewAuditRegister, loadCompleteAuditRegister, loadCompleteAuditReports } from '../js/external-audit-workspace.js';
 
 const scope = { branchId: 'west', dateFrom: '2026-09-01', dateTo: '2026-09-30' };
 const source = await readFile(new URL('../functions/lib/external-audit-evidence.js', import.meta.url), 'utf8');
 const documentSource = await readFile(new URL('../functions/api/external-audit-document.js', import.meta.url), 'utf8');
+const apiSource = await readFile(new URL('../functions/api/external-audit.js', import.meta.url), 'utf8');
 function isolatedModule(source, exports, mocks) {
   return vm.runInNewContext(`${source.replace(/^import[\s\S]*?;\r?\n/gm, '').replace(/\bexport\s+/g, '')}\n;({${exports.join(',')}})`, mocks);
 }
@@ -133,6 +134,148 @@ test('payroll item parent dates remain separated when different branches share a
   assert.equal(exported.records[0].branchId, 'west');
 });
 
+function batchedEvidence(rows, chart = []) {
+  const calls = [];
+  const module = evidenceModule({
+    queryCollectionPages: async (_env, collection, options) => {
+      assert.equal(collection, 'chartOfAccounts', 'transaction collections must never use the old total-row cap');
+      calls.push({ collection, options }); return chart;
+    },
+    queryCollection: async (_env, collection, options) => {
+      calls.push({ collection, options });
+      assert.ok(options.limit <= 501, 'every transaction request is bounded');
+      assert.ok(options.readTime, 'every batch uses the same database snapshot');
+      const filtered = rows.filter((row) => (options.filters || []).every((filter) => filter.op === '>='
+        ? row[filter.field] >= filter.value : row[filter.field] < filter.value));
+      const previous = options.startAfterName ? filtered.findIndex((row) => row.__name === options.startAfterName) : -1;
+      if (options.startAfterName) {
+        assert.ok(previous >= 0, 'cursor refers to a preceding row');
+        if (options.orderBy[0].field === 'Date') assert.equal(options.startAfterFieldValue, filtered[previous].Date);
+      }
+      return filtered.slice(previous + 1, previous + 1 + options.limit);
+    }
+  });
+  return { ...module, calls };
+}
+const auditRowName = (collection, index) => `projects/p/databases/(default)/documents/${collection}/${String(index).padStart(6, '0')}`;
+
+test('complete journal preview/export passes the old 10,000-row limit even when all entries are on one day', async () => {
+  const rows = Array.from({ length: 12001 }, (_, index) => ({ ...journal('2026-09-30', '1000', '4000', 10), __id: String(index), __name: auditRowName('accountingJournals', index) }));
+  const backend = batchedEvidence(rows);
+  const progress = [];
+  const data = await loadCompleteAuditRegister(async (action, input) => {
+    assert.equal(action, 'exportRegister'); assert.equal(input.dateFrom, scope.dateFrom);
+    return backend.exportAuditRegister({ FIREBASE_PROJECT_ID: 'p' }, scope, input.register, input);
+  }, scope, 'journals', { onProgress: count => progress.push(count) });
+  assert.equal(data.complete, true);
+  assert.equal(data.records.length, 12001);
+  assert.equal(new Set(data.records.map(row => row.id)).size, 12001);
+  assert.equal(progress.at(-1), 12001);
+  assert.equal(new Set(backend.calls.map(call => call.options.readTime)).size, 1);
+  assert.equal(backend.calls.length, 25);
+});
+
+test('a short payment period completes past many empty historical/other-branch batches', async () => {
+  const rows = Array.from({ length: 11005 }, (_, index) => ({ __id: String(index), __name: auditRowName('payments', index),
+    Date: index < 11000 ? '2026-08-01' : '2026-09-30', BranchId: index === 11004 ? 'east' : 'west', Amount: 15 }));
+  const backend = batchedEvidence(rows);
+  const data = await loadCompleteAuditRegister((_action, input) => backend.exportAuditRegister({ FIREBASE_PROJECT_ID: 'p' }, scope, 'payments', input), scope, 'payments');
+  assert.equal(data.scanned, 11005);
+  assert.equal(data.records.length, 4);
+  assert.ok(data.records.every(row => row.branchId === 'west' && row.date === '2026-09-30'));
+});
+
+test('complete period reports include more than 25,000 earlier journals without imposing a total transaction cap', async () => {
+  const chart = [{ Code: '1000', Name: 'Cash', Type: 'Asset' }, { Code: '4000', Name: 'Income', Type: 'Revenue' }];
+  const rows = Array.from({ length: 26006 }, (_, index) => ({ ...journal(index < 26000 ? '2026-08-01' : '2026-09-30', '1000', '4000', index < 26000 ? 0.01 : 100.17,
+    { BranchId: index === 26005 ? 'east' : 'west' }), __id: String(index), __name: auditRowName('accountingJournals', index) }));
+  const backend = batchedEvidence(rows, chart);
+  const data = await loadCompleteAuditReports((action, input) => {
+    assert.equal(action, 'reports'); return backend.loadAuditPeriodReports({ FIREBASE_PROJECT_ID: 'p' }, scope, input);
+  }, scope);
+  assert.equal(data.complete, true);
+  assert.equal(data.scanned, 26006);
+  assert.equal(data.postedJournals, 5);
+  const cash = data.trialBalance.find(row => row.code === '1000');
+  assert.deepEqual([cash.opening, cash.debit, cash.credit, cash.closing], [260, 500.85, 0, 760.85]);
+  assert.equal(data.totals.income, 500.85);
+  assert.equal(data.totals.unclosedEarnings, 760.85);
+  assert.equal(data.totals.balanceSheetDifference, 0);
+  assert.equal(new Set(backend.calls.map(call => call.options.readTime)).size, 1);
+});
+
+test('batch continuation rejects invalid/missing snapshots and cross-collection cursors before reading data', async () => {
+  let reads = 0;
+  const backend = evidenceModule({ queryCollection: async () => { reads++; return []; } });
+  const name = auditRowName('payments', 1);
+  for (const input of [
+    { batchCursor: { name } }, { readTime: 'invalid' }, { readTime: new Date(Date.now() + 60000).toISOString() },
+    { readTime: new Date(Date.now() - 3600000).toISOString() },
+    { batchCursor: { name: name.replace('/payments/', '/staffUsers/') }, readTime: new Date(Date.now() - 1000).toISOString() }
+  ]) {
+    await assert.rejects(() => backend.exportAuditRegister({ FIREBASE_PROJECT_ID: 'p' }, scope, 'payments', { ...input, paged: true }), error => error.status === 400);
+  }
+  assert.equal(reads, 0);
+});
+
+test('failed, repeated, changed-scope or cancelled batches never become a complete register', async () => {
+  const first = { paged: true, complete: false, done: false, nextCursor: { name: auditRowName('payments', 1) }, scope, register: 'payments', readTime: new Date().toISOString(), scanned: 1, records: [] };
+  for (const later of [() => { throw new Error('network failed'); }, () => first,
+    () => ({ ...first, scope: { ...scope, branchId: 'east' } }), () => ({ ...first, readTime: 'different' })]) {
+    let calls = 0;
+    await assert.rejects(() => loadCompleteAuditRegister(async () => ++calls === 1 ? first : later(), scope, 'payments'));
+  }
+  let active = true;
+  await assert.rejects(() => loadCompleteAuditRegister(async () => { active = false; return first; }, scope, 'payments', { active: () => active }), /cancelled/);
+});
+
+test('a corrupt posted journal in a later batch prevents completion rather than exporting partial financial totals', async () => {
+  const rows = Array.from({ length: 501 }, (_, index) => ({ ...journal('2026-09-01', '1000', '4000', 1, index === 500 ? { Lines: 'invalid' } : {}),
+    __id: String(index), __name: auditRowName('accountingJournals', index) }));
+  const backend = batchedEvidence(rows);
+  await assert.rejects(() => loadCompleteAuditReports((_action, input) => backend.loadAuditPeriodReports({ FIREBASE_PROJECT_ID: 'p' }, scope, input), scope), error => error.status === 409);
+});
+
+test('a preview failure after a successful batch never exposes partial printable records', async () => {
+  const output = []; let calls = 0;
+  const popup = { closed: false, document: { write: html => output.push(html), open: () => {}, close: () => {} } };
+  await assert.rejects(() => previewAuditRegister(async () => {
+    if (++calls === 2) throw new Error('The second batch failed.');
+    return { scope, register: 'payments', paged: true, complete: false, done: false,
+      readTime: new Date().toISOString(), nextCursor: { name: 'next' }, scanned: 500,
+      records: [auditRecordProjection({ __id: 'P1', BranchId: 'west', Date: '2026-09-01', Amount: 12 }, 'payments')] };
+  }, scope, 'payments', popup), /second batch failed/);
+  assert.equal(calls, 2);
+  assert.doesNotMatch(output.join(''), /Print \/ save as PDF|<table|<td>P1/);
+  assert.match(output.at(-1), /second batch failed/);
+});
+
+test('API forwards batch parameters and records one logical export, while evidence views cannot bypass their audit entry', async () => {
+  const body = { action: 'exportRegister', register: 'journals', paged: true };
+  const logged = []; const forwarded = [];
+  const handler = vm.runInNewContext(`(${apiSource.slice(apiSource.indexOf('export async function onRequestPost(')).replace('export ', '')})`, {
+    Response, console, requireFirestoreEnv: () => {}, requireStaffSession: async () => ({}), readJsonBody: async () => body,
+    authorizedScope: () => scope, clean: value => String(value ?? '').trim(), lower: value => String(value ?? '').trim().toLowerCase(),
+    exportAuditRegister: async (_env, _scope, register, input) => { forwarded.push({ register, input }); return { ok: true }; },
+    loadAuditPeriodReports: async (_env, _scope, input) => { forwarded.push({ input }); return { ok: true }; },
+    auditRecordEvidence: async () => ({ ok: true }), logAccess: async (_env, _user, action) => logged.push(action)
+  });
+  const context = { env: {}, request: {}, data: {} };
+  assert.equal((await handler(context)).status, 200);
+  assert.equal(logged.length, 1);
+  assert.equal(forwarded[0].input, body);
+  body.batchCursor = { name: 'next' }; body.readTime = new Date().toISOString();
+  assert.equal((await handler(context)).status, 200);
+  assert.equal(logged.length, 1, 'continuation batches are not separate user actions');
+  body.action = 'reports';
+  assert.equal((await handler(context)).status, 200);
+  assert.equal(forwarded.at(-1).input, body);
+  body.action = 'detail'; body.recordId = 'J1';
+  assert.equal((await handler(context)).status, 200);
+  assert.equal(logged.at(-1), 'FINANCIAL AUDIT EVIDENCE VIEW');
+  assert.equal(context.data.securityAuditHandled, true);
+});
+
 test('evidence lookup refuses an out-of-scope parent before querying related records', async () => {
   let lookups = 0;
   const { auditRecordEvidence } = evidenceModule({ getDocument: async () => ({ Date: '2026-09-01', BranchId: 'east' }), queryCollection: async () => { lookups++; return []; } });
@@ -190,7 +333,7 @@ test('receipt preview is complete, escaped, printable and retains one row per or
     document: { write: value => events.push(value), open: () => {}, close: () => {}, querySelectorAll: () => details } };
   globalThis.window = { open: () => { events.push('opened'); return popup; } };
   try {
-    await previewAuditRegister(async (action, payload) => { events.push('request'); assert.equal(action, 'exportRegister'); assert.equal(payload.register, 'payments'); return { records: [record] }; }, scope, 'payments');
+    await previewAuditRegister(async (action, payload) => { events.push('request'); assert.equal(action, 'exportRegister'); assert.equal(payload.register, 'payments'); return { register: 'payments', scope, records: [record], paged: true, complete: false, done: true, nextCursor: null, scanned: 1, readTime: new Date().toISOString() }; }, scope, 'payments');
     assert.equal(events[0], 'opened');
     assert.equal(popup.opener, null);
     assert.ok(events.indexOf('request') > events.indexOf('opened'));

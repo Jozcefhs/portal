@@ -33,13 +33,84 @@ export function auditRegisterPreviewHtml(records, scope, title) {
   return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>@page{size:A4 landscape;margin:12mm}*{box-sizing:border-box}body{font:12px/1.4 Arial,sans-serif;color:#17324d;margin:24px}h1{font-size:21px}table{border-collapse:collapse;width:100%}th,td{border:1px solid #cbd8e3;padding:6px;vertical-align:top;text-align:left;overflow-wrap:anywhere}th{background:#eef4f9}thead{display:table-header-group}tr{break-inside:avoid}.detail-row{font-size:10px}.audit-evidence-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}.audit-evidence-fields>div{padding:4px}.audit-evidence-fields dt{font-weight:bold}.audit-evidence-fields dd{margin:0}button{padding:9px 15px;border:0;border-radius:6px;background:#1769e0;color:white;cursor:pointer}.note{color:#52687c}@media print{body{margin:0}.actions{display:none}details>*{display:block!important}summary{display:none}}</style></head><body><div class="actions"><button type="button" onclick="window.print()">Print / save as PDF</button></div><h1>${esc(title)}</h1><p>${esc(scope.dateFrom)} to ${esc(scope.dateTo)} · Branch ${esc(scope.branchId)} · ${records.length} records</p><p class="note">Payments are the original receipt totals. Fee allocations and credit applications are supporting details, not additional cash received. Master-register records show current values.</p><table><thead><tr><th>Date</th><th>Reference</th><th>Description / payer</th><th>Status</th><th>Branch</th><th>Amount / journal debit</th></tr></thead><tbody>${table || '<tr><td colspan="6">No matching records.</td></tr>'}</tbody></table></body></html>`;
 }
 
-export async function previewAuditRegister(request, scope, register, existingPreview = null) {
+async function loadAuditBatches(request, action, scope, payload, accept, options) {
+  let batchCursor = null; let readTime = ''; let scanned = 0;
+  const seen = new Set();
+  const assertActive = () => { if (options.active && !options.active()) throw new Error('Audit loading cancelled. Restart from the selected dates and branch.'); };
+  while (true) {
+    assertActive();
+    const page = await request(action, { ...payload, paged: true, batchCursor, readTime,
+      dateFrom: scope.dateFrom, dateTo: scope.dateTo, branchId: scope.branchId });
+    assertActive();
+    if (page.paged !== true || page.complete !== false || typeof page.done !== 'boolean' || !page.readTime
+      || (readTime && page.readTime !== readTime)
+      || ['dateFrom', 'dateTo', 'branchId'].some((key) => page.scope?.[key] !== scope[key])
+      || page.done !== !page.nextCursor || !Number.isSafeInteger(page.scanned) || page.scanned < 0) {
+      throw new Error('The audit batch is incomplete or its scope changed. Reload the portal and retry; no partial report was produced.');
+    }
+    readTime = page.readTime;
+    accept(page);
+    scanned += page.scanned;
+    options.onProgress?.(scanned);
+    if (page.done) return { ...page, scanned, readTime, complete: true };
+    const name = page.nextCursor?.name;
+    if (!name || seen.has(name)) throw new Error('The audit cursor stalled. No partial report was produced.');
+    seen.add(name); batchCursor = page.nextCursor;
+  }
+}
+
+export async function loadCompleteAuditRegister(request, scope, register, options = {}) {
+  const records = [];
+  const result = await loadAuditBatches(request, 'exportRegister', scope, { register }, (page) => {
+    if (page.register !== register || !Array.isArray(page.records)) throw new Error('Invalid audit register batch.');
+    records.push(...page.records);
+  }, options);
+  return { ...result, records };
+}
+
+function addAuditMoney(left, right) {
+  const cents = (value) => {
+    const number = Number(value);
+    const amount = Math.round(number * 100);
+    if (!Number.isFinite(number) || !Number.isSafeInteger(amount)) throw new Error('Invalid audit amount. No partial report was produced.');
+    return amount;
+  };
+  const sum = cents(left) + cents(right);
+  if (!Number.isSafeInteger(sum)) throw new Error('The report exceeds supported amount precision. No partial report was produced.');
+  return sum / 100;
+}
+
+export async function loadCompleteAuditReports(request, scope, options = {}) {
+  // Only account aggregates are retained, not all historical journal lines.
+  const accounts = new Map(); const totals = {}; const warnings = new Set(); let postedJournals = 0;
+  const result = await loadAuditBatches(request, 'reports', scope, {}, (page) => {
+    if (!Array.isArray(page.trialBalance) || !page.totals || !Array.isArray(page.warnings)
+      || !Number.isSafeInteger(page.postedJournals) || page.postedJournals < 0) throw new Error('Invalid audit report batch.');
+    for (const row of page.trialBalance) {
+      const account = accounts.get(row.code) || { ...row, opening: 0, debit: 0, credit: 0, closing: 0 };
+      for (const key of ['opening', 'debit', 'credit', 'closing']) account[key] = addAuditMoney(account[key], row[key]);
+      accounts.set(row.code, account);
+    }
+    for (const [key, value] of Object.entries(page.totals)) totals[key] = addAuditMoney(totals[key] || 0, value);
+    for (const warning of page.warnings) warnings.add(warning);
+    postedJournals += page.postedJournals;
+  }, options);
+  return { ...result, trialBalance: [...accounts.values()].sort((a, b) => a.code.localeCompare(b.code)), totals, warnings: [...warnings], postedJournals };
+}
+
+export async function previewAuditRegister(request, scope, register, existingPreview = null, options = {}) {
   const preview = existingPreview || window.open('', '_blank');
   if (!preview) throw new Error('Allow pop-ups for this portal to open the audit preview.');
   preview.opener = null;
   preview.document.write('<p>Preparing the complete audit register…</p>');
   try {
-    const data = await request('exportRegister', { register });
+    const data = await loadCompleteAuditRegister(request, scope, register, {
+      active: () => !preview.closed && (!options.active || options.active()),
+      onProgress: (scanned) => {
+        if (preview.document.body) preview.document.body.textContent = `Preparing the complete audit register… ${scanned.toLocaleString()} records checked. Print becomes available when loading finishes.`;
+        options.onProgress?.(scanned);
+      }
+    });
     if (preview.closed) return;
     preview.document.open(); preview.document.write(auditRegisterPreviewHtml(data.records, scope, `Financial audit — ${label(register)}`)); preview.document.close();
     // Closed disclosures are not reliably printable across browsers. Expand
@@ -117,6 +188,7 @@ export async function mountAuditEvidenceWorkspace(root, options) {
       <div class="workflow-primary-actions"><button type="button" data-audit-record-previous ${state.history.length ? 'data-busy' : 'disabled'}>Previous records</button><button type="button" data-audit-record-next ${state.nextCursor ? 'data-busy' : 'disabled'}>Next records</button></div>
       ${state.detail ? `<section class="audit-evidence-detail"><h3>Transaction evidence</h3>${[...(state.detail.warnings || []), ...(state.detail.gaps || [])].map((message) => `<p class="status bad">${esc(message)}</p>`).join('')}${recordCard(state.detail.record, external)}<h3>Linked source transactions, payments &amp; documents</h3>${state.detail.related.length ? state.detail.related.map((record) => `<details><summary>${esc(record.register)} · ${esc(record.reference)} · ${esc(record.label)}</summary>${recordCard(record, external)}</details>`).join('') : '<p class="muted">No linked records found within this audit scope.</p>'}<h3>Financial record history</h3>${state.detail.auditTrail.length ? `<div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>Time</th><th>Action</th><th>User</th><th>Record</th><th>Details</th></tr></thead><tbody>${state.detail.auditTrail.map((event) => `<tr><td>${esc(event.Timestamp)}</td><td>${esc(event.Action)}</td><td>${esc(event.User || event.ActorUsername)}</td><td>${esc(event.RecordId)}</td><td>${esc(event.Details)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">No financial history entries were found within the selected period.</p>'}</section>` : ''}`}</div>`;
     bind();
+    if (state.busy) root.querySelectorAll('button').forEach((button) => { button.disabled = true; });
   }
   function bind() {
     root.querySelector('[data-audit-register]')?.addEventListener('change', (event) => {
@@ -135,14 +207,18 @@ export async function mountAuditEvidenceWorkspace(root, options) {
       download(await response.blob(), fileName); if (active()) { render(); status('Supporting document downloaded.'); }
     }); }));
     const exportRegister = async (register) => {
-      const data = await request('exportRegister', { register });
+      const data = await loadCompleteAuditRegister(request, scope, register, { active, onProgress: (count) => status(`Preparing complete export… ${count.toLocaleString()} records checked.`) });
       download(auditRecordsCsv(data.records), `audit-${register}-${scope.dateFrom}-${scope.dateTo}.csv`);
       if (active()) { render(); status(`Complete register exported: ${data.records.length} records within your dates and branch.`); }
     };
     root.querySelector('[data-export-audit-register]')?.addEventListener('click', () => { void run(() => exportRegister(state.register)); });
-    root.querySelector('[data-preview-audit-register]')?.addEventListener('click', () => { void run(async () => { await previewAuditRegister(request, scope, state.register); if (active()) { render(); status('Complete register preview opened. Use Print / save as PDF in the preview.'); } }); });
+    root.querySelector('[data-preview-audit-register]')?.addEventListener('click', () => { void run(async () => { await previewAuditRegister(request, scope, state.register, null, { active }); if (active()) { render(); status('Complete register preview opened. Use Print / save as PDF in the preview.'); } }); });
     root.querySelector('[data-export-ledger]')?.addEventListener('click', () => { void run(() => exportRegister('journals')); });
-    root.querySelector('[data-load-audit-report]')?.addEventListener('click', () => { void run(async () => { const report = await request('reports'); if (active()) { state.report = report; state.message = ''; render(); } }); });
+    root.querySelector('[data-load-audit-report]')?.addEventListener('click', () => { void run(async () => {
+      state.report = null; render();
+      const report = await loadCompleteAuditReports(request, scope, { active, onProgress: (count) => status(`Calculating complete period reports… ${count.toLocaleString()} journals checked, including opening balances.`) });
+      if (active()) { state.report = report; state.message = ''; render(); }
+    }); });
     root.querySelector('[data-export-trial]')?.addEventListener('click', () => { void run(async () => { await request('recordExport', { report: 'complete trial balance' }); download(auditTrialBalanceCsv(state.report), `audit-trial-balance-${scope.dateTo}.csv`); if (active()) { render(); status('Complete trial balance exported.'); } }); });
     root.querySelector('[data-print-audit-report]')?.addEventListener('click', () => { void run(async () => {
       await request('recordExport', { report: 'period report print' });

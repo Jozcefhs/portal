@@ -9808,7 +9808,7 @@ function renderExternalAudit() {
     const root = document.getElementById('externalAuditEvidenceWorkspace');
     const initialRecord = state.evidenceRecord;
     state.evidenceRecord = null;
-    import('./external-audit-workspace.js?v=20261003-complete-audit-evidence').then((module) => {
+    import('./external-audit-workspace.js?v=20261003-paged-audit-reports').then((module) => {
       if (!root?.isConnected || activeSection !== 'externalAudit') return;
       return module.mountAuditEvidenceWorkspace(root, { request: externalAuditRequest, staffFetch, scope, user: currentUser, view: state.tab,
         initialRecord, raiseFinding: (record) => { externalAuditState.pendingFinding = record; externalAuditState.tab = 'findings'; renderExternalAudit(); } });
@@ -9876,7 +9876,7 @@ function bindExternalAuditEvents() {
     if (!preview) { setStatus(document.getElementById('externalAuditStatus'), 'Allow pop-ups for this portal to open the audit preview.', 'bad'); return; }
     preview.opener = null;
     preview.document.write('<p>Preparing the complete audit register…</p>');
-    import('./external-audit-workspace.js?v=20261003-complete-audit-evidence').then((module) => module.previewAuditRegister(externalAuditRequest, externalAuditState.scope, 'journals', preview))
+    import('./external-audit-workspace.js?v=20261003-paged-audit-reports').then((module) => module.previewAuditRegister(externalAuditRequest, externalAuditState.scope, 'journals', preview))
       .catch((error) => setStatus(document.getElementById('externalAuditStatus'), error.message || String(error), 'bad'));
   });
   document.getElementById('externalAuditFilter')?.addEventListener('submit', (event) => {
