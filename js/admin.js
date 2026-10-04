@@ -19714,6 +19714,7 @@ function securityAuditFilteredRows() {
   const filters = securityAuditData.filters || {};
   const search = lower(filters.search);
   return (securityAuditData.rows || []).filter((row) => {
+    if (!filters.includeRoutineSystem && securityAuditRoutineSystemSuccess(row)) return false;
     const user = lower(filters.user);
     const userMatch = !user || [row.ActorUsername, row.Actor, row.Subject].some((value) => lower(value) === user);
     const searchMatch = !search || [
@@ -19728,6 +19729,12 @@ function securityAuditFilteredRows() {
       && (!filters.branchId || clean(row.BranchId) === clean(filters.branchId))
       && searchMatch;
   });
+}
+
+function securityAuditRoutineSystemSuccess(row) {
+  return row.ActivityClass === 'Routine system' && row.ActorRole === 'System'
+    && row.ActorUsername === 'system:notification-scheduler' && row.Route === '/api/notification-scheduler'
+    && lower(row.Outcome) === 'success' && Number(row.HttpStatus) >= 200 && Number(row.HttpStatus) < 300;
 }
 
 function securityAuditDateTime(value) {
@@ -19762,10 +19769,25 @@ function updateSecurityAuditTable() {
   const rows = securityAuditFilteredRows();
   const body = panelEl.querySelector('[data-security-audit-rows]');
   const count = panelEl.querySelector('[data-security-audit-count]');
-  if (body) body.innerHTML = securityAuditRowsHtml(rows);
+  const pageSize = 250;
+  const pages = Math.max(1, Math.ceil(rows.length / pageSize));
+  securityAuditData.page = Math.min(pages - 1, Math.max(0, securityAuditData.page || 0));
+  const page = securityAuditData.page;
+  if (body) body.innerHTML = securityAuditRowsHtml(rows.slice(page * pageSize, (page + 1) * pageSize));
   if (count) {
-    count.textContent = `${rows.length.toLocaleString()} matching action${rows.length === 1 ? '' : 's'}${securityAuditData.truncated ? ' (source result limit reached)' : ''}`;
+    count.textContent = `${rows.length.toLocaleString()} matching action${rows.length === 1 ? '' : 's'}${securityAuditData.complete === false ? ' (incomplete)' : ''}`;
   }
+  const pageLabel = panelEl.querySelector('[data-security-audit-page]');
+  const hidden = panelEl.querySelector('[data-security-audit-hidden-system]');
+  if (hidden) {
+    const hiddenCount = securityAuditData.filters?.includeRoutineSystem ? 0 : (securityAuditData.rows || []).filter(securityAuditRoutineSystemSuccess).length;
+    hidden.textContent = hiddenCount ? `${hiddenCount.toLocaleString()} successful routine system runs hidden; their records are retained.` : '';
+  }
+  if (pageLabel) pageLabel.textContent = `Page ${page + 1} of ${pages} · Print includes all matching actions`;
+  const previous = document.getElementById('securityAuditPrevious');
+  const next = document.getElementById('securityAuditNext');
+  if (previous) previous.disabled = page === 0;
+  if (next) next.disabled = page + 1 >= pages;
   renderModuleSummary('securityAudit', { rows });
 }
 
@@ -19778,7 +19800,7 @@ function renderSecurityAudit() {
     <section class="security-audit-workspace">
       <div class="workflow-intro security-audit-heading">
         <div><p class="eyebrow">Governance &amp; accountability</p><h2>Aggregated Security Audit Log</h2><p class="muted">Sign-in attempts, permission violations, approvals and operational changes. Routine page loads and refreshes are excluded.</p></div>
-        <div class="security-audit-actions"><button type="button" id="refreshSecurityAudit" class="secondary">Refresh</button><button type="button" id="printSecurityAudit">Print filtered log</button></div>
+        <div class="security-audit-actions"><button type="button" id="refreshSecurityAudit" class="secondary">Refresh</button><button type="button" id="printSecurityAudit"${securityAuditData.complete === false ? ' disabled' : ''}>Print filtered log</button></div>
       </div>
       <div class="security-audit-print-heading">
         <strong>${escapeHtml(clean(document.querySelector('[data-school-name]')?.textContent) || 'Organisation')}</strong>
@@ -19796,24 +19818,34 @@ function renderSecurityAudit() {
         <label class="security-audit-search">Search<input type="search" name="search" value="${escapeHtml(filters.search)}" placeholder="Action, person, reference or details"></label>
         <div class="security-audit-filter-actions"><button type="submit">Apply dates</button><button type="button" id="resetSecurityAuditFilters" class="secondary">Clear filters</button></div>
       </form>
+      <label class="security-audit-system-toggle"><input type="checkbox" id="includeRoutineSystemAudit"${filters.includeRoutineSystem ? ' checked' : ''}> Show routine system activity</label>
+      <p class="muted" data-security-audit-hidden-system></p>
       ${(securityAuditData.warnings || []).length ? `<p class="status bad security-audit-warning"><strong>Incomplete audit result:</strong> ${escapeHtml(securityAuditData.warnings.join(' '))}</p>` : ''}
       <div class="security-audit-result-bar"><strong data-security-audit-count>${rows.length.toLocaleString()} matching action${rows.length === 1 ? '' : 's'}</strong><span>Audit records are immutable from this page. Sensitive passwords, PINs and tokens are never captured.</span></div>
       <div class="admin-table-wrap security-audit-table-wrap">
         <table class="admin-table security-audit-table">
           <thead><tr><th>Date &amp; time</th><th>Action</th><th>Module</th><th>User</th><th>Subject</th><th>Outcome</th><th>Branch</th><th>Source</th><th>Details</th></tr></thead>
-          <tbody data-security-audit-rows>${securityAuditRowsHtml(rows)}</tbody>
+          <tbody data-security-audit-rows>${securityAuditRowsHtml(rows.slice(0, 250))}</tbody>
         </table>
       </div>
+      <div class="security-audit-actions security-audit-pagination"><button type="button" id="securityAuditPrevious" class="secondary">Previous page</button><span data-security-audit-page></span><button type="button" id="securityAuditNext" class="secondary">Next page</button></div>
     </section>`;
   const form = document.getElementById('securityAuditFilters');
+  document.getElementById('includeRoutineSystemAudit')?.addEventListener('change', (event) => {
+    securityAuditData.filters.includeRoutineSystem = event.currentTarget.checked;
+    securityAuditData.page = 0;
+    updateSecurityAuditTable();
+  });
   form?.querySelectorAll('select').forEach((select) => {
     select.addEventListener('change', () => {
       securityAuditData.filters[select.name] = select.value;
+      securityAuditData.page = 0;
       updateSecurityAuditTable();
     });
   });
   form?.querySelector('[name="search"]')?.addEventListener('input', (event) => {
     securityAuditData.filters.search = event.currentTarget.value;
+    securityAuditData.page = 0;
     updateSecurityAuditTable();
   });
   form?.addEventListener('submit', async (event) => {
@@ -19830,8 +19862,19 @@ function renderSecurityAudit() {
   document.getElementById('refreshSecurityAudit')?.addEventListener('click', (event) => {
     runButtonAction(event.currentTarget, 'Refreshing...', () => loadSecurityAudit(true));
   });
+  for (const [id, direction] of [['securityAuditPrevious', -1], ['securityAuditNext', 1]]) {
+    document.getElementById(id)?.addEventListener('click', () => {
+      securityAuditData.page = (securityAuditData.page || 0) + direction;
+      updateSecurityAuditTable();
+    });
+  }
   document.getElementById('printSecurityAudit')?.addEventListener('click', async (event) => {
     const button = event.currentTarget;
+    const printState = securityAuditData;
+    if (securityAuditData.complete === false || (securityAuditData.warnings || []).length) {
+      setStatus(dashboardStatus, 'Load the complete audit period successfully before printing.', 'bad');
+      return;
+    }
     if (!securityAuditFilteredRows().length) {
       setStatus(dashboardStatus, 'No audit actions match the selected filters. Adjust the filters before printing.', 'bad');
       return;
@@ -19844,8 +19887,14 @@ function renderSecurityAudit() {
         fromDate: securityAuditData.fromDate,
         toDate: securityAuditData.toDate
       });
+      if (activeSection !== 'securityAudit' || securityAuditData !== printState || securityAuditData.complete === false) return;
+      const printBody = panelEl.querySelector('[data-security-audit-rows]');
+      if (printBody) printBody.innerHTML = securityAuditRowsHtml(securityAuditFilteredRows());
       document.body.classList.add('security-audit-print');
-      const finishPrint = () => document.body.classList.remove('security-audit-print');
+      const finishPrint = () => {
+        document.body.classList.remove('security-audit-print');
+        updateSecurityAuditTable();
+      };
       window.addEventListener('afterprint', finishPrint, { once: true });
       try { window.print(); }
       catch (error) {
@@ -19859,7 +19908,7 @@ function renderSecurityAudit() {
       if (button.isConnected) setButtonLoading(button, false, 'Preparing...', 'Print filtered log');
     }
   });
-  renderModuleSummary('securityAudit', { rows });
+  updateSecurityAuditTable();
 }
 
 async function loadSecurityAudit(preserveDates = false) {
@@ -19868,12 +19917,19 @@ async function loadSecurityAudit(preserveDates = false) {
     securityAuditData.fromDate = securityAuditData.fromDate || securityAuditDefaultDate(30);
     securityAuditData.toDate = securityAuditData.toDate || new Date().toISOString().slice(0, 10);
   }
+  const scope = { fromDate: securityAuditData.fromDate, toDate: securityAuditData.toDate };
+  const state = { ...securityAuditData, rows: [], facets: {}, warnings: [], complete: false, page: 0 };
+  securityAuditData = state;
+  panelEl.innerHTML = '<p class="status" role="status" data-security-audit-loading>Loading the complete audit period…</p>';
+  const isCurrent = () => activeSection === 'securityAudit' && securityAuditData === state;
   try {
-    const data = await securityAuditRequest('list', {
-      fromDate: securityAuditData.fromDate,
-      toDate: securityAuditData.toDate,
-      limit: 1500
-    });
+    const { loadCompleteSecurityAudit } = await import('./security-audit-workspace.js?v=20261004-security-audit-batches');
+    if (!isCurrent()) return;
+    const data = await loadCompleteSecurityAudit(securityAuditRequest, scope, ({ scanned, loaded }) => {
+      const progress = panelEl.querySelector('[data-security-audit-loading]');
+      if (progress && isCurrent()) progress.textContent = `Loading the complete audit period… ${scanned.toLocaleString()} records checked; ${loaded.toLocaleString()} relevant actions found.`;
+    }, isCurrent);
+    if (!data || !isCurrent()) return;
     securityAuditData = {
       ...securityAuditData,
       rows: data.rows || [],
@@ -19882,11 +19938,14 @@ async function loadSecurityAudit(preserveDates = false) {
       fromDate: data.fromDate || securityAuditData.fromDate,
       toDate: data.toDate || securityAuditData.toDate,
       totalMatches: Number(data.totalMatches || 0),
-      truncated: data.truncated === true
+      truncated: false, complete: true, page: 0
     };
     renderSecurityAudit();
   } catch (error) {
-    if (activeSection === 'securityAudit') panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
+    if (isCurrent()) {
+      state.warnings = [error.message || String(error)];
+      renderSecurityAudit();
+    }
   }
 }
 

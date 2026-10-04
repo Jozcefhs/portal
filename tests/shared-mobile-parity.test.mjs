@@ -5,13 +5,13 @@ import { readFile } from 'node:fs/promises';
 const portalRoot = new URL('../', import.meta.url);
 const sharedVersion = '20260903-hotel-tabs';
 const pageStyleVersions = new Map([
-  ['admin.html', '20261003-complete-audit-evidence'],
+  ['admin.html', '20261004-security-audit-batches'],
   ['setup.html', '20260923-youtube-tutorials'],
   ['parent-dashboard.html', '20260930-school-library'],
   ['plan-management.html', '20260830-dual-currency-pricing'],
   ['register-organization.html', '20260918-neutral-plan-cards']
 ]);
-const adminScriptVersion = '20261003-paged-audit-reports';
+const adminScriptVersion = '20261004-security-audit-batches';
 const parentScriptVersion = '20260930-identifier-search';
 const notificationScriptVersion = '20260927-spoken-alerts';
 const notificationStyleVersion = '20260804-read-efficiency';

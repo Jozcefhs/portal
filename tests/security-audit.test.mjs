@@ -126,11 +126,12 @@ test('filtered print sends the print command, preserves filters, invokes printin
   const classes = new Set();
   const rows = [{ Action: 'LOGIN' }];
   const context = vm.createContext({
-    activeSection: 'securityAudit', panelEl: {}, dashboardStatus: {},
+    activeSection: 'securityAudit', panelEl: { querySelector: () => null }, dashboardStatus: {},
     securityAuditData: { rows, facets: {}, filters: { action: 'LOGIN', user: 'ada' }, fromDate: '2026-10-01', toDate: '2026-10-03' },
     clean: (value) => String(value ?? '').trim(), escapeHtml: (value) => String(value ?? ''),
     securityAuditFilteredRows: () => rows, securityAuditRowsHtml: () => '<tr><td>LOGIN</td></tr>',
     renderModuleSummary() {}, setButtonLoading() {}, setStatus() {},
+    updateSecurityAuditTable() {},
     staffFetch: async (_url, init) => { requests.push(JSON.parse(init.body)); return { status: 200, ok: true, json: async () => ({ ok: true }) }; },
     document: {
       querySelector: () => ({ textContent: 'Dynamax' }),

@@ -77,7 +77,9 @@ export async function onRequestPost(context) {
       error.status = 400;
       throw error;
     }
-    const aggregate = await loadAggregatedSecurityAudit(env, { fromDate, toDate, perSourceLimit: 300 });
+    const paged = body.paged === true;
+    const aggregate = await loadAggregatedSecurityAudit(env, { fromDate, toDate, perSourceLimit: 300,
+      paged, batchCursor: body.batchCursor });
     const visible = aggregate.rows.filter((row) => branchRecordVisible(row, user));
     const facets = {
       actions: uniqueOptions(visible, (row) => row.Action),
@@ -96,9 +98,11 @@ export async function onRequestPost(context) {
       ok: true,
       fromDate,
       toDate,
-      rows: filtered.slice(0, limit),
+      rows: paged ? filtered : filtered.slice(0, limit),
       totalMatches: filtered.length,
-      truncated: filtered.length > limit,
+      truncated: paged ? !aggregate.done : filtered.length > limit,
+      ...(paged ? { paged: true, done: aggregate.done, nextCursor: aggregate.nextCursor,
+        readTime: aggregate.readTime, scanned: aggregate.scanned } : {}),
       warnings: aggregate.warnings,
       facets
     }, { headers: { 'Cache-Control': 'no-store' } });

@@ -32,6 +32,13 @@ function requireSchedulerAuthorization(env, request) {
 async function run(context) {
   try {
     requireSchedulerAuthorization(context.env, context.request);
+    // Assign a trusted service identity only after verifying the scheduler secret.
+    context.data ||= {};
+    context.data.securityAuditActor = {
+      displayName: 'System — Notification Scheduler',
+      username: 'system:notification-scheduler', role: 'System', sourcePlatform: 'System'
+    };
+    context.data.securityAuditAction = 'RUN NOTIFICATION SCHEDULER';
     const body = context.request.method === 'POST'
       ? await readJsonBody(context.request, { maxBytes: 16 * 1024 })
       : {};
@@ -91,6 +98,16 @@ async function run(context) {
     });
     const pushRetries = announcementsOnly ? { skipped: true } : await retryFailedPushDeliveries(context.env, { limit: 50 });
     const creditRunFailed = schoolFeeCredits.ok === false;
+    const deliveryFailed = [reminders, libraryReminders, announcements, announcementPush, attendancePresence]
+      .some((result) => result.ok === false || Number(result.failed || 0) > 0)
+      || Number(pushRetries.retried || 0) > Number(pushRetries.delivered || 0);
+    const creditedInvoices = Number(schoolFeeCredits.creditedInvoices || 0);
+    // Only successful routine delivery/check runs are hideable. Financial
+    // postings and any reported internal failures remain in the default view.
+    context.data.securityAuditActivityClass = !creditRunFailed && !deliveryFailed && creditedInvoices === 0
+      ? 'Routine system' : 'System activity';
+    context.data.securityAuditOutcome = creditRunFailed || deliveryFailed ? 'Failed' : 'Success';
+    context.data.securityAuditDetails = `Scheduler run; credited invoices: ${creditedInvoices}; announcements sent: ${Number(announcements.sent || 0)}; delivery failures reported: ${deliveryFailed ? 'yes' : 'no'}.`;
     return Response.json({
       ok: !creditRunFailed,
       ...(creditRunFailed ? { message: 'One or more due school-fee credits could not be applied; inspect schoolFeeCredits and retry.' } : {}),

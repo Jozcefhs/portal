@@ -32,6 +32,7 @@ const ROUTE_MODULES = Object.freeze([
   ['/api/accounting', 'Finance & accounting'],
   ['/api/parent-dashboard', 'Parent portal'],
   ['/api/staff-notifications', 'Notifications'],
+  ['/api/notification-scheduler', 'Notifications'],
   ['/api/settings', 'Settings'],
   ['/api/admin', 'Dashboard'],
   ['/api/backend', 'Desktop operations']
@@ -176,6 +177,9 @@ export function shouldPersistSecurityAudit(prepared = {}, actor = null, status =
   const action = titleWords(prepared.action);
   const path = lower(prepared.pathname);
   if (method === 'OPTIONS' || method === 'HEAD') return false;
+  // Scheduler GETs perform work, unlike ordinary page reads. Preserve both
+  // service runs and authorization failures; visibility is a separate concern.
+  if (path === '/api/notification-scheduler') return true;
   // Completed password/passkey/MFA sign-ins already have an authoritative LOGIN
   // entry in staffSecurityAudit. Do not add a second, anonymous success entry.
   const completedLogin = (path === '/api/staff-session' && ['LOGIN', 'SIGN IN'].includes(action))
@@ -207,9 +211,10 @@ export async function writeSecurityAudit(env, event = {}) {
     Method: clean(event.method).slice(0, 12),
     Route: clean(event.route).slice(0, 180),
     RequestId: requestId,
-    Actor: clean(event.actorDisplayName || event.actorUsername || 'External user').slice(0, 180),
-    ActorUsername: clean(event.actorUsername || 'external').slice(0, 180),
-    ActorRole: clean(event.actorRole || 'External').slice(0, 100),
+    Actor: clean(event.actorDisplayName || event.actorUsername || 'Unidentified request').slice(0, 180),
+    ActorUsername: clean(event.actorUsername).slice(0, 180),
+    ActorRole: clean(event.actorRole || 'Unidentified').slice(0, 100),
+    ActivityClass: clean(event.activityClass).slice(0, 80),
     Subject: clean(event.subject).slice(0, 180),
     EntityType: clean(event.entityType).slice(0, 100),
     EntityId: clean(event.entityId).slice(0, 180),
@@ -225,12 +230,13 @@ export async function writeSecurityAudit(env, event = {}) {
   return payload;
 }
 
-export async function persistRequestSecurityAudit({ env, request, prepared, response, failure, requestId, durationMs, authoritativeActor, authoritativeAction, auditHandled } = {}) {
+export async function persistRequestSecurityAudit({ env, request, prepared, response, failure, requestId, durationMs, authoritativeActor, authoritativeAction, authoritativeActivityClass, authoritativeOutcome, authoritativeDetails, auditHandled } = {}) {
   const status = Number(response?.status || failure?.status || 500);
   if (auditHandled && status < 400) return null;
   const effectivePrepared = { ...prepared, action: authoritativeAction || prepared.action };
   if (!shouldPersistSecurityAudit(effectivePrepared, null, status)) return null;
   const actor = authoritativeActor || await readStaffSession(env, request).catch(() => null);
+  const outcome = status >= 400 ? securityAuditOutcome(status) : authoritativeOutcome || securityAuditOutcome(status);
   const headerBranch = clean(prepared.requestedBranchId);
   const branchId = clean(actor?.branchId || (headerBranch && lower(headerBranch) !== 'all' ? headerBranch : '') || prepared.branchId || 'main');
   return writeSecurityAudit(env, {
@@ -238,7 +244,8 @@ export async function persistRequestSecurityAudit({ env, request, prepared, resp
     requestId,
     action: authoritativeAction || prepared.action,
     module: securityAuditModuleForRoute(prepared.pathname),
-    outcome: securityAuditOutcome(status),
+    outcome,
+    activityClass: authoritativeActivityClass,
     status,
     method: prepared.method,
     route: prepared.pathname,
@@ -249,15 +256,15 @@ export async function persistRequestSecurityAudit({ env, request, prepared, resp
     entityType: prepared.entityType,
     entityId: prepared.entityId,
     branchId,
-    sourcePlatform: prepared.sourcePlatform,
+    sourcePlatform: actor?.sourcePlatform || prepared.sourcePlatform,
     clientAddress: prepared.clientAddress,
     country: prepared.country,
     colo: prepared.colo,
     durationMs,
-    details: [authoritativeAction || prepared.action, prepared.entityId ? `Record: ${prepared.entityId}` : '',
+    details: [authoritativeAction || prepared.action, authoritativeDetails, prepared.entityId ? `Record: ${prepared.entityId}` : '',
       !actor && prepared.actorHint ? `Unverified claimed account: ${prepared.actorHint}` : '',
       prepared.subject ? `Subject: ${prepared.subject}` : '',
-      `${securityAuditOutcome(status)} (HTTP ${status}); ${prepared.method} ${prepared.pathname}`
+      `${outcome} (HTTP ${status}); ${prepared.method} ${prepared.pathname}`
     ].filter(Boolean).join('; ')
   });
 }
@@ -276,7 +283,7 @@ export function normalizedLegacyAudit(row, source) {
   const actor = clean(row.Actor || row.UserName || row.User || actorUsername || 'Officer not recorded');
   const module = clean(row.Module || source.module || 'Platform operations');
   const status = Number(row.HttpStatus || 0) || 0;
-  return {
+  const normalized = {
     AuditId: clean(row.AuditId || row.__id),
     Timestamp: clean(row.Timestamp || row.CreatedAt || row.UpdatedAt),
     Action: explicitAuditAction(row.Action, row.EntityType || row.RecordType, module, row.Route),
@@ -290,6 +297,7 @@ export function normalizedLegacyAudit(row, source) {
     Actor: actor,
     ActorUsername: actorUsername,
     ActorRole: clean(row.ActorRole || row.UserRole || row.Role),
+    ActivityClass: clean(row.ActivityClass),
     Subject: clean(row.Subject || row.Username || row.Reference || row.EntityId || row.RecordId),
     EntityType: clean(row.EntityType || row.RecordType),
     EntityId: clean(row.EntityId || row.RecordId || row.Reference || row.CorrespondenceId),
@@ -301,6 +309,20 @@ export function normalizedLegacyAudit(row, source) {
     Details: clean(row.Details || row.Query || row.DeliveryStatus),
     SourceCollection: source.collection
   };
+  // Display-only interpretation: do not rewrite immutable historical records or
+  // claim an old request was secret-verified when that evidence was not recorded.
+  if (source.collection === SECURITY_AUDIT_COLLECTION
+    && lower(normalized.ActorUsername) === 'external' && lower(normalized.Actor) === 'external user') {
+    const scheduler = lower(normalized.Route) === '/api/notification-scheduler';
+    normalized.Actor = scheduler ? 'Notification Scheduler — historical identity not recorded' : 'Unidentified request';
+    normalized.ActorUsername = '';
+    normalized.ActorRole = 'Identity not recorded';
+    if (scheduler) {
+      normalized.Module = 'Notifications';
+      normalized.Details = [normalized.Details, 'Historical scheduler request; service identity was not recorded.'].filter(Boolean).join('; ');
+    }
+  }
+  return normalized;
 }
 
 export function securityAuditRowVisible(row) {
@@ -315,22 +337,66 @@ export async function loadAggregatedSecurityAudit(env, options = {}) {
   if (range.from) filters.push({ field: 'Timestamp', op: '>=', value: range.from });
   if (range.to) filters.push({ field: 'Timestamp', op: '<=', value: range.to });
   const perSourceLimit = Math.min(500, Math.max(50, Number(options.perSourceLimit || 250) || 250));
+  const paged = options.paged === true;
+  const cursor = options.batchCursor;
+  const invalidCursor = () => {
+    const error = new Error('The security audit cursor is invalid or expired. Refresh the audit log.');
+    error.status = 400;
+    return error;
+  };
+  const readTime = paged ? clean(cursor?.readTime) || new Date().toISOString() : '';
+  if (paged && (cursor && (typeof cursor !== 'object' || Array.isArray(cursor)
+    || cursor.fromDate !== options.fromDate || cursor.toDate !== options.toDate || !cursor.readTime
+    || !cursor.sources || typeof cursor.sources !== 'object' || Array.isArray(cursor.sources)
+    || Object.keys(cursor.sources).length !== AUDIT_SOURCES.length)
+    || !Number.isFinite(Date.parse(readTime)) || Date.parse(readTime) > Date.now()
+    || Date.parse(readTime) < Date.now() - 55 * 60 * 1000)) throw invalidCursor();
+  if (paged && cursor) {
+    for (const source of AUDIT_SOURCES) {
+      if (!Object.prototype.hasOwnProperty.call(cursor.sources, source.collection)) throw invalidCursor();
+      const position = cursor.sources[source.collection];
+      if (position === null) continue;
+      const prefix = `projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/${source.collection}/`;
+      if (!position || typeof position !== 'object' || typeof position.name !== 'string'
+        || !position.name.startsWith(prefix) || !position.name.slice(prefix.length)
+        || position.name.slice(prefix.length).includes('/') || typeof position.timestamp !== 'string'
+        || !Number.isFinite(Date.parse(position.timestamp))
+        || range.from && position.timestamp < range.from || range.to && position.timestamp > range.to) throw invalidCursor();
+    }
+  }
   const groups = await Promise.all(AUDIT_SOURCES.map(async (source) => {
+    const position = paged && cursor ? cursor.sources[source.collection] : undefined;
+    if (paged && position === null) return { rows: [], next: null };
     try {
       const rows = await queryCollection(env, source.collection, {
         filters,
-        orderBy: [{ field: 'Timestamp', direction: 'DESCENDING' }],
-        limit: perSourceLimit
+        orderBy: [{ field: 'Timestamp', direction: 'DESCENDING' }, ...(paged ? [{ field: '__name__', direction: 'DESCENDING' }] : [])],
+        limit: perSourceLimit,
+        ...(paged ? { readTime } : {}),
+        ...(position ? { startAfterName: position.name, startAfterFieldValue: position.timestamp } : {})
       });
+      const last = rows.at(-1);
+      const next = paged && rows.length === perSourceLimit ? { name: last?.__name, timestamp: last?.Timestamp } : null;
+      if (next && (!next.name || !next.timestamp || next.name === position?.name)) throw new Error('The audit source cursor did not advance.');
       return { rows: rows.map((row) => normalizedLegacyAudit(row, source)).filter(securityAuditRowVisible),
-        warning: rows.length === perSourceLimit ? `${source.module || source.collection} reached its source limit. Choose a shorter date range to see older actions.` : '' };
+        next, scanned: rows.length,
+        warning: !paged && rows.length === perSourceLimit ? `${source.module || source.collection} has more records to check. Reload the updated portal to load the complete period in batches.` : '' };
     } catch (error) {
       console.warn(JSON.stringify({ event: 'security_audit_source_unavailable', source: source.collection, message: clean(error?.message).slice(0, 200) }));
-      return { rows: [], warning: `${source.module || source.collection} audit records could not be loaded.` };
+      return { rows: [], next: position || null, warning: `${source.module || source.collection} audit records could not be loaded. Refresh to retry; this result is incomplete.` };
     }
   }));
   return {
     rows: groups.flatMap((group) => group.rows).filter((row) => row.Timestamp).sort((a, b) => b.Timestamp.localeCompare(a.Timestamp)),
-    warnings: groups.map((group) => group.warning).filter(Boolean)
+    warnings: groups.map((group) => group.warning).filter(Boolean),
+    ...(paged ? {
+      paged: true, readTime,
+      done: groups.every((group) => group.next === null) && groups.every((group) => !group.warning),
+      scanned: groups.reduce((total, group) => total + (group.scanned || 0), 0),
+      nextCursor: groups.every((group) => group.next === null) ? null : {
+        fromDate: options.fromDate, toDate: options.toDate, readTime,
+        sources: Object.fromEntries(AUDIT_SOURCES.map((source, index) => [source.collection, groups[index].next]))
+      }
+    } : {})
   };
 }
