@@ -379,7 +379,7 @@ test('registration and pricing interfaces expose feature details and recurring c
   assert.match(pricingHtml, /id="planEntitlementMatrix"/);
   assert.match(pricingHtml, /<select id="planPricingCurrency"><option value="NGN">NGN<\/option><option value="USD">USD<\/option><\/select>/);
   assert.match(pricingHtml, /id="planUsdToNgnRate"/);
-  assert.match(pricingHtml, /plan-management\.js\?v=20260924-owner-tutorial-fix/);
+  assert.match(pricingHtml, /plan-management\.js\?v=20261004-provisioning-quota-hold/);
   assert.match(pricingHtml, /id="tenantPoolSummary"/);
   assert.match(pricingHtml, /Other organisation/);
   assert.match(pricingHtml, /Save plans &amp; pricing/);

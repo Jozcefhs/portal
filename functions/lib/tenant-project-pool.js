@@ -15,6 +15,7 @@ import {
   TENANT_RETIREMENT_REQUEST_COLLECTION
 } from './tenant-trial-lifecycle.js';
 import { validTenantControlPublicKey } from './tenant-control-plane.js';
+import { BILLING_QUOTA_BLOCK_CODE, BILLING_QUOTA_BLOCK_MESSAGE, isBillingQuotaBlockedRequest } from './provisioning-failures.js';
 
 export const TENANT_PROJECT_POOL_COLLECTION = 'tenantProjectPool';
 export const TENANT_PROVISIONING_REQUEST_COLLECTION = 'tenantProvisioningRequests';
@@ -199,12 +200,14 @@ export function annotateProvisioningRequests(requestRows = [], slotRows = [], po
   const requests = requestRows
     .map(publicProvisioningRequest)
     .sort((left, right) => left.RequestedAt.localeCompare(right.RequestedAt));
+  const billingQuotaBlocked = requests.some(isBillingQuotaBlockedRequest);
 
   // A running request already covers part of the target. Do not start another
   // request for the same capacity while the first runner still owns it.
   for (const request of requests) {
-    if (request.Mode !== 'pool' || lower(request.Status) !== 'provisioning') continue;
-    if (!Number.isFinite(Date.parse(request.StartedAt)) || Date.parse(request.StartedAt) < staleBefore) continue;
+    if (request.Mode !== 'pool') continue;
+    if (lower(request.Status) !== 'blocked' && (lower(request.Status) !== 'provisioning'
+      || !Number.isFinite(Date.parse(request.StartedAt)) || Date.parse(request.StartedAt) < staleBefore)) continue;
     const outstanding = Math.max(0, request.Count - (registeredByRequest.get(request.Reference) || 0));
     remainingByEdition[request.Edition] = Math.max(0, remainingByEdition[request.Edition] - outstanding);
   }
@@ -220,6 +223,8 @@ export function annotateProvisioningRequests(requestRows = [], slotRows = [], po
     if (outstanding === 0) {
       return { ...request, ActionRequired: retryDue, EffectiveCount: 0 };
     }
+    if (billingQuotaBlocked) return { ...request, ActionRequired: false, EffectiveCount: 0,
+      HoldReason: BILLING_QUOTA_BLOCK_MESSAGE };
     if (request.Mode === 'branded') {
       return { ...request, ActionRequired: retryDue && outstanding > 0, EffectiveCount: outstanding };
     }
@@ -232,7 +237,7 @@ export function annotateProvisioningRequests(requestRows = [], slotRows = [], po
 export async function loadTenantProjectPool(platformEnv) {
   const [slotRows, requestRows, retirementRows, policy] = await Promise.all([
     listCollection(platformEnv, TENANT_PROJECT_POOL_COLLECTION, { pageSize: 1000, maxPages: 10 }).catch(() => []),
-    listCollection(platformEnv, TENANT_PROVISIONING_REQUEST_COLLECTION, { pageSize: 500, maxPages: 10 }).catch(() => []),
+    listCollection(platformEnv, TENANT_PROVISIONING_REQUEST_COLLECTION, { pageSize: 500, maxPages: 10 }),
     listCollection(platformEnv, TENANT_RETIREMENT_REQUEST_COLLECTION, { pageSize: 500, maxPages: 10 }).catch(() => []),
     loadTenantPoolPolicy(platformEnv)
   ]);
@@ -872,6 +877,9 @@ function publicProvisioningRequest(request = {}) {
     CompletedAt: clean(request.CompletedAt),
     LastError: clean(request.LastError),
     NextAttemptAt: clean(request.NextAttemptAt),
+    BlockedCode: clean(request.BlockedCode),
+    BlockedAt: clean(request.BlockedAt),
+    ResumedAt: clean(request.ResumedAt),
     Attempts: Math.max(0, Number(request.Attempts) || 0),
     ProvisioningBatchId: clean(request.ProvisioningBatchId),
     EffectiveCount: Math.max(0, Number(request.EffectiveCount) || 0)
@@ -941,19 +949,32 @@ export async function finishTenantProvisioningRequest(platformEnv, value = {}) {
     throw error;
   }
   const requestedStatus = lower(value.Status);
-  const status = requestedStatus === 'completed' ? 'Completed' : requestedStatus === 'pending' ? 'Pending' : 'Failed';
+  if (lower(request.Status) === 'blocked' && requestedStatus !== 'blocked') {
+    const error = new Error('Resume the blocked request through the administrator action before provisioning again.');
+    error.status = 409;
+    throw error;
+  }
+  const status = requestedStatus === 'completed' ? 'Completed' : requestedStatus === 'pending' ? 'Pending'
+    : requestedStatus === 'blocked' ? 'Blocked' : 'Failed';
+  if (status === 'Blocked' && value.BlockedCode !== BILLING_QUOTA_BLOCK_CODE) {
+    const error = new Error('A verified Google billing quota error is required to block provisioning.');
+    error.status = 400;
+    throw error;
+  }
   const now = new Date().toISOString();
   const completed = {
     ...withoutFirestoreMetadata(request),
     Status: status,
-    CompletedAt: status === 'Pending' ? '' : now,
+    CompletedAt: ['Pending', 'Blocked'].includes(status) ? '' : now,
+    BlockedCode: status === 'Blocked' ? clean(value.BlockedCode) : '',
+    BlockedAt: status === 'Blocked' ? now : '',
     NextAttemptAt: status === 'Pending' && Number.isFinite(Date.parse(value.NextAttemptAt))
       ? new Date(value.NextAttemptAt).toISOString()
       : '',
     LastError: status === 'Completed' ? '' : clean(value.LastError || value.error || 'Provisioning failed.'),
     ProvisionedProjectIds: Array.isArray(value.ProvisionedProjectIds)
       ? value.ProvisionedProjectIds.map(clean).filter(Boolean).slice(0, 20)
-      : [],
+      : request.ProvisionedProjectIds || [],
     UpdatedAt: now
   };
   await patchDocumentFieldsIfCurrent(
@@ -966,13 +987,36 @@ export async function finishTenantProvisioningRequest(platformEnv, value = {}) {
   return publicProvisioningRequest(completed);
 }
 
+export async function resumeTenantProvisioningRequest(platformEnv, reference, quotaResolved = false) {
+  if (quotaResolved !== true) {
+    const error = new Error('Confirm that Google has resolved the billing quota issue before resuming.');
+    error.status = 400;
+    throw error;
+  }
+  const request = await getDocument(platformEnv, TENANT_PROVISIONING_REQUEST_COLLECTION, clean(reference));
+  if (!request || !isBillingQuotaBlockedRequest(request)) {
+    const error = new Error('Only a billing-quota-blocked request can be resumed.');
+    error.status = request ? 409 : 404;
+    throw error;
+  }
+  const now = new Date().toISOString();
+  const resumed = { Status: 'Pending', BlockedCode: '', BlockedAt: '', NextAttemptAt: '',
+    LastBlockedReason: clean(request.LastError), LastError: '', RunnerId: '', StartedAt: '',
+    ResumedAt: now, ResumedBy: 'Dynamax administration', UpdatedAt: now };
+  await patchDocumentFieldsIfCurrent(platformEnv, TENANT_PROVISIONING_REQUEST_COLLECTION,
+    clean(reference), resumed, request);
+  return publicProvisioningRequest({ ...request, ...resumed });
+}
+
 export async function ensureTenantPoolCapacity(platformEnv, selectedEdition = '') {
   const policy = await loadTenantPoolPolicy(platformEnv);
   const [slotRows, requestRows] = await Promise.all([
-    listCollection(platformEnv, TENANT_PROJECT_POOL_COLLECTION, { pageSize: 1000, maxPages: 10 }).catch(() => []),
-    listCollection(platformEnv, TENANT_PROVISIONING_REQUEST_COLLECTION, { pageSize: 500, maxPages: 10 }).catch(() => [])
+    listCollection(platformEnv, TENANT_PROJECT_POOL_COLLECTION, { pageSize: 1000, maxPages: 10 }),
+    listCollection(platformEnv, TENANT_PROVISIONING_REQUEST_COLLECTION, { pageSize: 500, maxPages: 10 })
   ]);
   const editions = selectedEdition ? [poolEdition(selectedEdition)] : ['school', 'faith', 'organization'];
+  // Do not replace a blocked request with a fresh one against the same billing account.
+  if (requestRows.some(isBillingQuotaBlockedRequest)) return [];
   const registeredByRequest = new Map();
   for (const slot of slotRows) {
     const reference = clean(slot.ProvisioningBatchId);
@@ -984,7 +1028,7 @@ export async function ensureTenantPoolCapacity(platformEnv, selectedEdition = ''
   for (const edition of editions) {
     const ready = slotRows.filter((slot) => poolEdition(slot.Edition) === edition && lower(slot.Status) === 'ready').length;
     const inFlight = requestRows
-      .filter((request) => poolEdition(request.Edition) === edition && ['pending', 'provisioning'].includes(lower(request.Status)))
+      .filter((request) => poolEdition(request.Edition) === edition && ['pending', 'provisioning', 'blocked'].includes(lower(request.Status)))
       .reduce((total, request) => total + Math.max(0,
         positiveInteger(request.Count, 1, 20) - (registeredByRequest.get(clean(request.Reference || request.__id)) || 0)
       ), 0);

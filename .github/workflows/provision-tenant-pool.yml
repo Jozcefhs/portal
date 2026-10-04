@@ -88,7 +88,12 @@ jobs:
           fi
           if [[ -z "${request}" || "${request}" == "null" ]]; then
             echo 'has_request=false' >> "${GITHUB_OUTPUT}"
-            echo 'No tenant project request is waiting; no infrastructure validation or provisioning was needed.' >> "${GITHUB_STEP_SUMMARY}"
+            blocked_count="$(jq '[.requests[]? | select((.Status | ascii_downcase) == "blocked")] | length' <<<"${response}")"
+            if (( blocked_count > 0 )); then
+              echo "Blocked—Google quota increase required. ${blocked_count} request(s) retained; no provisioning was attempted. Resume from Plans and pricing -> Ready project pool -> Requests after approval. This run does not confirm successful provisioning." >> "${GITHUB_STEP_SUMMARY}"
+            else
+              echo 'No tenant project request is due; no infrastructure validation or provisioning was needed. This run does not confirm successful provisioning.' >> "${GITHUB_STEP_SUMMARY}"
+            fi
             exit 0
           fi
           echo 'has_request=true' >> "${GITHUB_OUTPUT}"

@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { ensureCloudflareR2Storage } from './cloudflare-r2.mjs';
+import { provisioningFailure } from '../functions/lib/provisioning-failures.js';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
@@ -114,9 +115,11 @@ function command(program, args, options = {}) {
       cwd: options.cwd || process.cwd(),
       env: { ...process.env, ...(options.env || {}) },
       encoding: 'utf8',
-      stdio: options.capture ? ['ignore', 'pipe', options.quiet ? 'ignore' : 'inherit'] : 'inherit'
+      stdio: options.captureErrors ? ['ignore', 'inherit', 'pipe']
+        : options.capture ? ['ignore', 'pipe', options.quiet ? 'ignore' : 'inherit'] : 'inherit'
     }) || '';
   } catch (error) {
+    if (options.captureErrors && error.stderr) process.stderr.write(String(error.stderr));
     if (options.allowFailure) return '';
     throw error;
   }
@@ -129,6 +132,7 @@ function commandWithRetry(program, args, options = {}) {
     try {
       return command(program, args, options);
     } catch (error) {
+      if (provisioningFailure(error).blocked) throw error;
       if (attempt === attempts) throw error;
       const delayMs = Math.min(12000, initialDelayMs * (2 ** (attempt - 1)));
       process.stdout.write(`Command failed on attempt ${attempt}; retrying in ${delayMs}ms.\n`);
@@ -404,7 +408,7 @@ export async function provisionProject(projectId, options = {}) {
   let billingVerified = false;
   if (canLinkBilling) {
     try {
-      commandWithRetry('gcloud', ['billing', 'projects', 'link', projectId, `--billing-account=${billingAccount}`, '--quiet']);
+      commandWithRetry('gcloud', ['billing', 'projects', 'link', projectId, `--billing-account=${billingAccount}`, '--quiet'], { captureErrors: true });
       billingVerified = await verifyProjectBilling(projectId);
     } catch (error) {
       if (billingRequired) throw error;
@@ -524,6 +528,7 @@ async function main() {
     });
     writeFileSync('tenant-provision-result.json', JSON.stringify({ dryRun: false, requestReference, projects: createdProjects }, null, 2));
   } catch (error) {
+    const failure = provisioningFailure(error);
     if (applyChanges && requestReference && platformPassword) {
       const attempt = Math.max(1, Number(request.Attempts) || 1);
       const retryMinutes = Math.min(360, 15 * (2 ** Math.min(5, attempt - 1)));
@@ -531,11 +536,19 @@ async function main() {
         action: 'finish-request',
         request: {
           Reference: requestReference,
-          Status: 'Pending',
-          NextAttemptAt: new Date(Date.now() + retryMinutes * 60000).toISOString(),
-          LastError: error.message || String(error)
+          Status: failure.blocked ? 'Blocked' : 'Pending',
+          BlockedCode: failure.code,
+          NextAttemptAt: failure.blocked ? '' : new Date(Date.now() + retryMinutes * 60000).toISOString(),
+          LastError: failure.message,
+          ProvisionedProjectIds: createdProjects.map((slot) => slot.FirebaseProjectId)
         }
-      }).catch((reportError) => process.stderr.write(`Could not schedule provisioning retry: ${reportError.message || reportError}\n`));
+      });
+      if (failure.blocked) {
+        writeFileSync('tenant-provision-result.json', JSON.stringify({ dryRun: false, requestReference,
+          status: 'Blocked', blockedCode: failure.code, message: failure.message,
+          projects: createdProjects }, null, 2));
+        process.stderr.write(`${failure.message}\n`);
+      }
     }
     throw error;
   } finally {

@@ -193,7 +193,9 @@ test('the tenant pool provisioner is opt-in, uses WIF and creates isolated deplo
   assert.match(tenantProvisioner, /DYNAMAX_PROVISION_SERVICE_ACCOUNT/);
   assert.match(tenantProvisioner, /Inspect next provisioning request/);
   assert.match(tenantProvisioner, /action:\"load\"/);
-  assert.match(tenantProvisioner, /No tenant project request is waiting; no infrastructure validation or provisioning was needed/);
+  assert.match(tenantProvisioner, /No tenant project request is due; no infrastructure validation or provisioning was needed/);
+  assert.match(tenantProvisioner, /Blocked—Google quota increase required/);
+  assert.match(tenantProvisioner, /This run does not confirm successful provisioning/);
   assert.ok(
     tenantProvisioner.indexOf('Inspect next provisioning request') < tenantProvisioner.indexOf('Authenticate to Google Cloud'),
     'the workflow must inspect the queue before starting Google Cloud authentication'

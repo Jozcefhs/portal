@@ -393,11 +393,17 @@ function editionLabel(edition) {
 
 function poolStatusClass(status) {
   const value = String(status || '').toLowerCase();
-  return value === 'ready' || value === 'assigned' ? 'ok' : value === 'failed' ? 'bad' : '';
+  return value === 'ready' || value === 'assigned' ? 'ok' : value === 'failed' || value.startsWith('blocked') || value.startsWith('waiting—') ? 'bad' : '';
 }
 
 function renderTenantPool() {
   if (!tenantPoolState) return;
+  const blockedRequests = (tenantPoolState.requests || []).filter((request) => String(request.Status).toLowerCase() === 'blocked');
+  const alert = document.getElementById('tenantProvisioningAlert');
+  if (alert) {
+    alert.hidden = blockedRequests.length === 0;
+    alert.innerHTML = blockedRequests.length ? `<strong>Blocked—Google quota increase required.</strong> New-project provisioning is on hold; existing ready and assigned projects remain available. Request the increase from <a href="https://support.google.com/code/contact/billing_quota_increase" target="_blank" rel="noopener">Google</a>, then open Requests and choose Resume after approval. ${blockedRequests.length} blocked request${blockedRequests.length === 1 ? '' : 's'} retained.` : '';
+  }
   const editions = ['school', 'faith', 'organization'];
   tenantPoolSummary.innerHTML = editions.map((edition) => {
     const row = tenantPoolState.summary?.[edition] || {};
@@ -408,16 +414,18 @@ function renderTenantPool() {
   `).join('') : '<tr><td colspan="6">No tenant projects have been registered yet.</td></tr>';
   tenantRequestRows.innerHTML = (tenantPoolState.requests || []).length ? tenantPoolState.requests.map((request) => {
     const pending = String(request.Status).toLowerCase() === 'pending';
+    const blocked = String(request.Status).toLowerCase() === 'blocked';
     const retryScheduled = pending && Date.parse(request.NextAttemptAt) > Date.now();
-    const displayStatus = retryScheduled ? 'Retry scheduled'
+    const displayStatus = blocked ? 'Blocked—Google quota increase required'
+      : request.HoldReason ? 'Waiting—billing quota blocked' : retryScheduled ? 'Retry scheduled'
       : pending && request.Mode === 'pool' && request.ActionRequired === false ? 'Capacity met'
         : request.Status;
     const retryDetail = retryScheduled
       ? `Retry after ${new Date(request.NextAttemptAt).toLocaleString()}. ${request.LastError || ''}`
-      : request.LastError || '';
+      : request.HoldReason || request.LastError || '';
     return `
-    <tr><td>${escapeHtml(request.Reference)}</td><td>${escapeHtml(editionLabel(request.Edition))}</td><td>${escapeHtml(request.Mode)}</td><td>${Number(request.ActionRequired ? request.EffectiveCount || request.Count || 1 : request.Count || 1)}</td><td><span class="tenant-pool-status ${poolStatusClass(displayStatus)}">${escapeHtml(displayStatus)}</span>${retryDetail ? `<small>${escapeHtml(retryDetail)}</small>` : ''}</td><td>${request.RequestedAt ? escapeHtml(new Date(request.RequestedAt).toLocaleString()) : '—'}</td></tr>`;
-  }).join('') : '<tr><td colspan="6">No provisioning requests are waiting.</td></tr>';
+    <tr><td>${escapeHtml(request.Reference)}</td><td>${escapeHtml(editionLabel(request.Edition))}</td><td>${escapeHtml(request.Mode)}</td><td>${Number(request.ActionRequired ? request.EffectiveCount || request.Count || 1 : request.Count || 1)}</td><td><span class="tenant-pool-status ${poolStatusClass(displayStatus)}">${escapeHtml(displayStatus)}</span>${retryDetail ? `<small>${escapeHtml(retryDetail)}</small>` : ''}</td><td>${request.RequestedAt ? escapeHtml(new Date(request.RequestedAt).toLocaleString()) : '—'}</td><td>${blocked && request.BlockedCode === 'GOOGLE_BILLING_PROJECT_QUOTA' ? `<button type="button" class="compact-action" data-resume-tenant-request="${escapeHtml(request.Reference)}">Resume after approval</button>` : '—'}</td></tr>`;
+  }).join('') : '<tr><td colspan="7">No provisioning requests are waiting.</td></tr>';
   if (tenantRetirementRows) {
     tenantRetirementRows.innerHTML = (tenantPoolState.retirements || []).length ? tenantPoolState.retirements.map((request) => `
       <tr><td>${escapeHtml(request.FirebaseProjectId)}</td><td>${escapeHtml(editionLabel(request.Edition))}</td><td><span class="tenant-pool-status ${poolStatusClass(request.Status)}">${escapeHtml(request.Status)}</span></td><td>${Number(request.Attempts || 0)}</td><td>${request.RequestedAt ? escapeHtml(new Date(request.RequestedAt).toLocaleString()) : '—'}</td><td>${escapeHtml(request.LastError || '—')}</td></tr>
@@ -457,7 +465,8 @@ async function loadTenantPool(message = '') {
   try {
     tenantPoolState = await tenantPoolRequest({ action: 'load' });
     renderTenantPool();
-    setStatus(tenantPoolStatus, message || 'Tenant project pool loaded.', 'ok');
+    const blocked = (tenantPoolState.requests || []).some((request) => String(request.Status).toLowerCase() === 'blocked');
+    setStatus(tenantPoolStatus, blocked ? 'New-project provisioning is blocked by Google billing quota. See the alert above.' : message || 'Tenant project pool loaded.', blocked ? 'bad' : 'ok');
   } catch (error) {
     setStatus(tenantPoolStatus, error.message || String(error), 'bad');
   }
@@ -996,6 +1005,22 @@ tenantPoolRows?.addEventListener('click', async (event) => {
   if (!window.DynamaxActionFeedback.begin(button, 'Releasing...')) return;
   try {
     const data = await tenantPoolRequest({ action: 'release', slotId: button.dataset.releaseTenantSlot });
+    await loadTenantPool(data.message);
+  } catch (error) {
+    setStatus(tenantPoolStatus, error.message || String(error), 'bad');
+  } finally {
+    window.DynamaxActionFeedback.end(button);
+  }
+});
+
+tenantRequestRows?.addEventListener('click', async (event) => {
+  const button = event.target.closest('[data-resume-tenant-request]');
+  if (!button || !await window.DynamaxDialogs.confirm({ title: 'Resume blocked provisioning',
+    message: 'Has Google approved the required billing project quota increase, or otherwise resolved the quota issue? Resuming allows the scheduled job to create billable resources. If the limit remains, the request will be blocked again.',
+    confirmText: 'Quota resolved—resume' })) return;
+  if (!window.DynamaxActionFeedback.begin(button, 'Resuming...')) return;
+  try {
+    const data = await tenantPoolRequest({ action: 'resume-request', reference: button.dataset.resumeTenantRequest, quotaResolved: true });
     await loadTenantPool(data.message);
   } catch (error) {
     setStatus(tenantPoolStatus, error.message || String(error), 'bad');

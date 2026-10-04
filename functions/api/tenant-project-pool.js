@@ -30,6 +30,7 @@ import {
   saveTenantControlPublicKey,
   releaseTenantProjectSlot,
   requestTenantProjectProvisioning,
+  resumeTenantProvisioningRequest,
   reserveTenantProjectSlot,
   saveTenantPoolPolicy
 } from '../lib/tenant-project-pool.js';
@@ -269,6 +270,12 @@ export async function onRequestPost({ request, env }) {
       return Response.json({ ok: true, message: `Provisioning request marked ${provisioningRequest.Status.toLowerCase()}.`, request: provisioningRequest }, {
         headers: { 'Cache-Control': 'no-store' }
       });
+    }
+    if (action === 'resume-request') {
+      // Not in PROVISIONER_ACTIONS: only the platform administrator may release this hold.
+      const provisioningRequest = await resumeTenantProvisioningRequest(platformEnv, body.reference, body.quotaResolved);
+      return Response.json({ ok: true, message: 'Request resumed. The next scheduled provisioning run will retry it.',
+        request: provisioningRequest }, { headers: { 'Cache-Control': 'no-store' } });
     }
     if (action === 'ensure-capacity') {
       const requests = await ensureTenantPoolCapacity(platformEnv, body.edition);

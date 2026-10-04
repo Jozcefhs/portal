@@ -162,7 +162,7 @@ test('provisioning plans are repeatable and can resume from a user-precreated pr
   assert.match(provisionerSource, /Grant Billing Account User to the provisioner service account/);
   assert.match(provisionerSource, /info\.billingEnabled === true && clean\(info\.billingAccountName\) === expectedAccount/);
   assert.match(provisionerSource, /The tenant was not registered as Ready/);
-  assert.match(provisionerSource, /NextAttemptAt: new Date\(Date\.now\(\) \+ retryMinutes \* 60000\)/);
+  assert.match(provisionerSource, /NextAttemptAt: failure\.blocked \? '' : new Date\(Date\.now\(\) \+ retryMinutes \* 60000\)/);
   assert.match(provisionerSource, /function commandWithRetry/);
   assert.match(provisionerSource, /Using existing tenant runtime account/);
   assert.match(provisionerSource, /Using existing Firestore database/);

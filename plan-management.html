@@ -75,6 +75,7 @@
       <section class="settings-section tenant-pool-section">
         <div class="settings-section-heading"><div><span class="settings-section-icon">T</span></div><div><p class="settings-eyebrow">Fast subscriber onboarding</p><h2>Ready project pool</h2><p>Keep isolated Firebase and Cloudflare projects ready, assign them safely after trial activation or confirmed payment, and replenish capacity before it runs out.</p></div></div>
         <div id="tenantPoolSummary" class="tenant-pool-summary" aria-live="polite"></div>
+        <p id="tenantProvisioningAlert" class="status bad" role="alert" hidden></p>
         <div class="tenant-pool-tabs" role="tablist" aria-label="Tenant project pool sections">
           <button type="button" class="active" data-tenant-pool-tab="projects" aria-pressed="true">Projects</button>
           <button type="button" data-tenant-pool-tab="requests" aria-pressed="false">Requests</button>
@@ -101,7 +102,7 @@
             <label id="tenantBrandedProjectField" hidden>Requested project ID<input id="tenantRequestedProjectId" placeholder="organisation-name"></label>
             <button id="requestTenantProjects" type="button">Queue provisioning</button>
           </div>
-          <div class="tenant-pool-table-wrap"><table class="tenant-pool-table"><thead><tr><th>Reference</th><th>Edition</th><th>Mode</th><th>Count</th><th>Status</th><th>Requested</th></tr></thead><tbody id="tenantRequestRows"></tbody></table></div>
+          <div class="tenant-pool-table-wrap"><table class="tenant-pool-table"><thead><tr><th>Reference</th><th>Edition</th><th>Mode</th><th>Count</th><th>Status</th><th>Requested</th><th>Action</th></tr></thead><tbody id="tenantRequestRows"></tbody></table></div>
         </div>
         <div data-tenant-pool-panel="retirements" hidden>
           <p class="plan-entitlement-help">Expired trials remain isolated for 30 days. Expired paid subscriptions receive a 7-day payment grace period followed by 90 days of retained data. Due projects are destroyed in Firebase and Cloudflare and are never returned to another subscriber.</p>
@@ -162,6 +163,6 @@
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
   <script src="js/app-dialogs.js?v=20260809-custom-dialogs"></script>
   <script src="js/tutorial-module-catalogue.js?v=20260924-owner-tutorials"></script>
-  <script src="js/plan-management.js?v=20260924-owner-tutorial-fix"></script>
+  <script src="js/plan-management.js?v=20261004-provisioning-quota-hold"></script>
 </body>
 </html>
