@@ -17813,7 +17813,6 @@ function renderSection(active) {
   } else if (active === 'dataBackup') {
     renderDataBackup();
   } else if (active === 'securityAudit') {
-    panelEl.innerHTML = '<p class="muted">Loading the aggregated security audit log...</p>';
     loadSecurityAudit();
   } else if (active === 'staffUsers') {
     panelEl.innerHTML = '<p class="muted">Loading staff accounts...</p>';
@@ -19820,6 +19819,7 @@ function renderSecurityAudit() {
       </form>
       <label class="security-audit-system-toggle"><input type="checkbox" id="includeRoutineSystemAudit"${filters.includeRoutineSystem ? ' checked' : ''}> Show routine system activity</label>
       <p class="muted" data-security-audit-hidden-system></p>
+      ${securityAuditData.loadedAt ? `<p class="muted security-audit-snapshot">Snapshot loaded ${escapeHtml(securityAuditDateTime(securityAuditData.loadedAt))}. Use Refresh to check for newer actions.</p>` : ''}
       ${(securityAuditData.warnings || []).length ? `<p class="status bad security-audit-warning"><strong>Incomplete audit result:</strong> ${escapeHtml(securityAuditData.warnings.join(' '))}</p>` : ''}
       <div class="security-audit-result-bar"><strong data-security-audit-count>${rows.length.toLocaleString()} matching action${rows.length === 1 ? '' : 's'}</strong><span>Audit records are immutable from this page. Sensitive passwords, PINs and tokens are never captured.</span></div>
       <div class="admin-table-wrap security-audit-table-wrap">
@@ -19857,6 +19857,7 @@ function renderSecurityAudit() {
   });
   document.getElementById('resetSecurityAuditFilters')?.addEventListener('click', () => {
     securityAuditData.filters = { action: '', user: '', module: '', outcome: '', source: '', branchId: '', search: '' };
+    securityAuditData.page = 0;
     renderSecurityAudit();
   });
   document.getElementById('refreshSecurityAudit')?.addEventListener('click', (event) => {
@@ -19911,42 +19912,64 @@ function renderSecurityAudit() {
   updateSecurityAuditTable();
 }
 
-async function loadSecurityAudit(preserveDates = false) {
+function securityAuditCacheKey() {
+  return JSON.stringify([securityAuditData.fromDate, securityAuditData.toDate,
+    selectedBranchId || 'all', currentUser?.username || '', currentUser?.role || '',
+    currentUser?.assignedRole || '', currentUser?.allowedSections || []]);
+}
+
+function renderSecurityAuditLoading(state) {
+  if (activeSection !== 'securityAudit' || securityAuditData !== state) return;
+  const { scanned = 0, loaded = 0 } = state.progress || {};
+  panelEl.innerHTML = `<p class="status" role="status" data-security-audit-loading>Loading the complete audit period… ${scanned.toLocaleString()} records checked; ${loaded.toLocaleString()} relevant actions found.</p>`;
+}
+
+async function loadSecurityAudit(forceReload = false) {
   if (activeSection !== 'securityAudit') return;
-  if (!preserveDates || !securityAuditData.fromDate || !securityAuditData.toDate) {
-    securityAuditData.fromDate = securityAuditData.fromDate || securityAuditDefaultDate(30);
-    securityAuditData.toDate = securityAuditData.toDate || new Date().toISOString().slice(0, 10);
-  }
-  const scope = { fromDate: securityAuditData.fromDate, toDate: securityAuditData.toDate };
-  const state = { ...securityAuditData, rows: [], facets: {}, warnings: [], complete: false, page: 0 };
-  securityAuditData = state;
-  panelEl.innerHTML = '<p class="status" role="status" data-security-audit-loading>Loading the complete audit period…</p>';
-  const isCurrent = () => activeSection === 'securityAudit' && securityAuditData === state;
-  try {
-    const { loadCompleteSecurityAudit } = await import('./security-audit-workspace.js?v=20261004-security-audit-batches');
-    if (!isCurrent()) return;
-    const data = await loadCompleteSecurityAudit(securityAuditRequest, scope, ({ scanned, loaded }) => {
-      const progress = panelEl.querySelector('[data-security-audit-loading]');
-      if (progress && isCurrent()) progress.textContent = `Loading the complete audit period… ${scanned.toLocaleString()} records checked; ${loaded.toLocaleString()} relevant actions found.`;
-    }, isCurrent);
-    if (!data || !isCurrent()) return;
-    securityAuditData = {
-      ...securityAuditData,
-      rows: data.rows || [],
-      facets: data.facets || {},
-      warnings: data.warnings || [],
-      fromDate: data.fromDate || securityAuditData.fromDate,
-      toDate: data.toDate || securityAuditData.toDate,
-      totalMatches: Number(data.totalMatches || 0),
-      truncated: false, complete: true, page: 0
-    };
-    renderSecurityAudit();
-  } catch (error) {
-    if (isCurrent()) {
-      state.warnings = [error.message || String(error)];
+  securityAuditData.fromDate = securityAuditData.fromDate || securityAuditDefaultDate(30);
+  securityAuditData.toDate = securityAuditData.toDate || new Date().toISOString().slice(0, 10);
+  const cacheKey = securityAuditCacheKey();
+  const sessionSignal = staffSessionAbortController.signal;
+  if (!forceReload && securityAuditData.cacheKey === cacheKey && securityAuditData.sessionSignal === sessionSignal) {
+    if (securityAuditData.complete === true) {
       renderSecurityAudit();
+      return;
+    }
+    if (securityAuditData.loadPromise) {
+      renderSecurityAuditLoading(securityAuditData);
+      return securityAuditData.loadPromise;
     }
   }
+  const scope = { fromDate: securityAuditData.fromDate, toDate: securityAuditData.toDate };
+  const state = { ...securityAuditData, rows: [], facets: {}, warnings: [], complete: false, page: 0,
+    cacheKey, sessionSignal, loadedAt: '', progress: { scanned: 0, loaded: 0 }, loadPromise: null };
+  securityAuditData = state;
+  // Module navigation does not invalidate the load. Session, access, branch and
+  // period changes do, and old requests must never publish into a new workspace.
+  const isCurrent = () => securityAuditData === state && !sessionSignal.aborted && securityAuditCacheKey() === cacheKey;
+  renderSecurityAuditLoading(state);
+  state.loadPromise = (async () => {
+    try {
+      const { loadCompleteSecurityAudit } = await import('./security-audit-workspace.js?v=20261004-security-audit-batches');
+      if (!isCurrent()) return;
+      const data = await loadCompleteSecurityAudit(securityAuditRequest, scope, (progress) => {
+        if (!isCurrent()) return;
+        state.progress = progress;
+        renderSecurityAuditLoading(state);
+      }, isCurrent);
+      if (!data || !isCurrent()) return;
+      Object.assign(state, data, { truncated: false, complete: true, loadedAt: new Date().toISOString() });
+      if (activeSection === 'securityAudit') renderSecurityAudit();
+    } catch (error) {
+      if (isCurrent()) {
+        state.warnings = [error.message || String(error)];
+        if (activeSection === 'securityAudit') renderSecurityAudit();
+      }
+    } finally {
+      state.loadPromise = null;
+    }
+  })();
+  return state.loadPromise;
 }
 
 async function staffUserRequest(action, payload = {}) {
