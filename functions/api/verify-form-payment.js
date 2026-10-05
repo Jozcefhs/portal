@@ -60,9 +60,9 @@ function formatDateOnly(date) {
   return date.toISOString().slice(0, 10);
 }
 
-function makeReceiptNo(reference, schoolCode = 'DCA') {
+function makeReceiptNo(reference, schoolCode = '') {
   const year = new Date().getFullYear();
-  const prefix = String(schoolCode || 'DCA').toUpperCase().replace(/[^A-Z0-9]/g, '') || 'DCA';
+  const prefix = String(schoolCode || '').toUpperCase().replace(/[^A-Z0-9]/g, '') || 'ORG';
   const suffix = String(reference || '').replace(/[^A-Za-z0-9]/g, '').slice(-6).toUpperCase();
   return `${prefix}/FORM/${year}/${suffix || Date.now().toString().slice(-6)}`;
 }

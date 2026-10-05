@@ -886,7 +886,7 @@ function applyProfile(profile = {}, settingsAccess = null) {
   populateBranchOptions(profile);
   applySettingsAccess(settingsAccess);
   setField('schoolName', profile.SchoolName);
-  setField('schoolCode', profile.SchoolCode || 'DCA');
+  setField('schoolCode', profile.SchoolCode || '');
   setField('schoolAddress', profile.SchoolAddress);
   setField('organisationEdition', profile.OrganisationEdition || 'school');
   setField('schoolEmail', profile.SchoolEmail);

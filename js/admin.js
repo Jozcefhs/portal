@@ -137,6 +137,29 @@ const dashboardSectionRequests = new Map();
 let incomeAnalyticsData = null;
 let incomeAnalyticsFilter = { period: 'monthly' };
 let incomeAnalyticsRequest = 0;
+let incomeAnalyticsSnapshot = null;
+const invalidatedDashboardSections = new Set();
+function staffWorkspaceReadScope() {
+  return JSON.stringify([selectedBranchId, currentUser?.username, currentUser?.role,
+    currentUser?.assignedRole, currentUser?.edition, currentUser?.department,
+    currentUser?.schoolSectionAccess, currentUser?.allowedSections, currentUser?.branchIds,
+    currentUser?.tabAccess, currentUser?.approvalEnabled, currentUser?.approvalMaxAmount,
+    currentUser?.approvalAccounts, currentUser?.requisitionEditEnabled,
+    currentUser?.auditDateFrom, currentUser?.auditDateTo, currentUser?.auditExpiresAt,
+    currentUser?.subscriptionActive, currentUser?.subscriptionReadOnly, staffBearerToken]);
+}
+const staffWorkspaceReads = window.DynamaxWorkspaceCache.create({
+  context: () => ({ scope: currentUser ? staffWorkspaceReadScope() : '',
+    signal: staffSessionAbortController.signal, expiresAt: Date.parse(currentUser?.auditExpiresAt || '') || 0 }),
+  onInvalidate: () => {
+    incomeAnalyticsSnapshot = null;
+    legacyDashboardSections.forEach((section) => invalidatedDashboardSections.add(section));
+  }
+});
+
+function invalidateStaffWorkspaceReads() {
+  staffWorkspaceReads.clear();
+}
 let externalAuditState = {
   scope: null, journals: [], nextCursor: null, cursor: null, page: 1,
   history: [], findings: [], findingCursor: null, findingNextCursor: null,
@@ -801,20 +824,26 @@ async function staffFetch(input, init = {}) {
     if (staffBearerToken) headers.set('Authorization', `Bearer ${staffBearerToken}`);
     options.headers = headers;
   }
-  const attempts = retrySafe ? Math.min(3, Math.max(2, requestedAttempts || 2)) : 1;
-  let lastError = null;
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    try {
-      const response = await window.fetch(input, options);
-      if (attempt === attempts - 1 || !transientApiResponse(response)) return response;
-      await response.arrayBuffer().catch(() => null);
-    } catch (error) {
-      lastError = error;
-      if (attempt === attempts - 1) throw error;
+  const network = async () => {
+    const attempts = retrySafe ? Math.min(3, Math.max(2, requestedAttempts || 2)) : 1;
+    let lastError = null;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        const response = await window.fetch(input, options);
+        if (attempt === attempts - 1 || !transientApiResponse(response)) return response;
+        await response.arrayBuffer().catch(() => null);
+      } catch (error) {
+        lastError = error;
+        if (attempt === attempts - 1) throw error;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 400 * (attempt + 1)));
     }
-    await new Promise((resolve) => window.setTimeout(resolve, 400 * (attempt + 1)));
+    throw lastError || new Error('The online service could not complete this request.');
+  };
+  if (requestUrl.origin === window.location.origin && requestUrl.pathname.startsWith('/api/')) {
+    return staffWorkspaceReads.fetch(requestUrl, options, network);
   }
-  throw lastError || new Error('The online service could not complete this request.');
+  return network();
 }
 
 async function refreshStaffSiteProfile() {
@@ -1655,6 +1684,7 @@ function installSidebarSwipeGestures() {
 }
 
 function clearStaffWorkspaceState() {
+  invalidateStaffWorkspaceReads();
   stopDesktopSetupRefresh();
   if (desktopSetupDialog.open) desktopSetupDialog.close();
   staffSessionAbortController.abort();
@@ -1832,6 +1862,7 @@ function paymentSettingsUrl() {
 }
 
 function clearBranchScopedWorkspaceData() {
+  invalidateStaffWorkspaceReads();
   staffSessionAbortController.abort();
   staffSessionAbortController = new AbortController();
   dashboardSectionRequests.clear();
@@ -2299,6 +2330,9 @@ async function loadDashboard(options = {}) {
       // that large data URL, so do not let it erase the hydrated avatar.
       profilePhotoUrl: clean(dashboardUser.profilePhotoUrl) || clean(currentUser?.profilePhotoUrl)
     };
+    // Settle the enriched access scope before marking this section fresh.
+    staffWorkspaceReads.version();
+    if (section) invalidatedDashboardSections.delete(section);
     rememberStaffBranch(currentUser);
     showDashboard(currentUser, { refreshPasskeys: false });
     if (mode === 'shell') await refreshStaffSiteProfile();
@@ -2360,6 +2394,8 @@ async function loadDashboard(options = {}) {
 }
 
 async function refreshDashboard() {
+  invalidateStaffWorkspaceReads();
+  if (activeSection === 'securityAudit') return loadSecurityAudit(true);
   if (activeSection !== 'overview') return loadDashboard();
   return loadDashboard({ mode: 'shell', refreshOverview: true });
 }
@@ -9570,8 +9606,9 @@ function renderIncomeAnalytics(data) {
     <div class="income-analytics" id="incomeAnalyticsReport">
       <div class="workflow-intro income-report-heading">
         <div><p class="eyebrow">Finance & accounting</p><h2>Income Analytics</h2><p class="muted">Posted revenue from the shared accounting ledger, without duplicate operational totals.</p></div>
-        <div class="income-report-actions"><button type="button" class="secondary" id="incomeExportCsv">&#8681; CSV</button><button type="button" id="incomePrintReport">&#9113; Print / PDF</button></div>
+        <div class="income-report-actions"><button type="button" class="secondary" id="refreshIncomeAnalytics">Refresh</button><button type="button" class="secondary" id="incomeExportCsv">&#8681; CSV</button><button type="button" id="incomePrintReport">&#9113; Print / PDF</button></div>
       </div>
+      <p class="muted">Loaded data is retained while you navigate. Use Refresh for newer transactions.</p>
       <section class="income-filter-card" aria-label="Income report filters">
         <div class="income-period-switch">${periodButtons}</div>
         <form id="incomeAnalyticsFilter" class="income-filter-grid">
@@ -9672,7 +9709,24 @@ function combineIncomeAnalyticsPages(pages) {
 }
 
 async function loadIncomeAnalytics(filter = incomeAnalyticsFilter) {
+  const filterKey = JSON.stringify(filter || {});
+  const version = staffWorkspaceReads.version();
+  if (incomeAnalyticsSnapshot?.filterKey === filterKey && incomeAnalyticsSnapshot.version === version) {
+    if (incomeAnalyticsSnapshot.report) {
+      renderIncomeAnalytics(incomeAnalyticsSnapshot.report);
+      return;
+    }
+    if (incomeAnalyticsSnapshot.promise) return incomeAnalyticsSnapshot.promise;
+  }
+  const snapshot = { filterKey, version, report: null, promise: null };
+  incomeAnalyticsSnapshot = snapshot;
+  snapshot.promise = loadIncomeAnalyticsSnapshot(filter, snapshot);
+  return snapshot.promise;
+}
+
+async function loadIncomeAnalyticsSnapshot(filter, snapshot) {
   const requestId = ++incomeAnalyticsRequest;
+  const isCurrent = () => incomeAnalyticsSnapshot === snapshot && snapshot.version === staffWorkspaceReads.version();
   try {
     const implicitMonth = (!clean(filter?.period) || clean(filter.period).toLowerCase() === 'monthly')
       && !clean(filter?.anchorDate) && !clean(filter?.dateFrom) && !clean(filter?.dateTo);
@@ -9691,7 +9745,7 @@ async function loadIncomeAnalytics(filter = incomeAnalyticsFilter) {
           body: JSON.stringify({ ...fixedFilter, ...(cursor ? { cursor } : {}) })
         });
         const data = await response.json().catch(() => ({ ok: false, message: 'Income analytics did not return JSON.' }));
-        if (requestId !== incomeAnalyticsRequest || activeSection !== 'incomeAnalytics') return;
+        if (!isCurrent()) return;
         if (response.status === 401) { showLogin(data.message || 'Your staff session has expired.', 'bad'); return; }
         if (!response.ok || !data.ok) throw new Error(data.message || 'Income analytics could not be loaded.');
         pages.push(data);
@@ -9700,7 +9754,7 @@ async function loadIncomeAnalytics(filter = incomeAnalyticsFilter) {
           const key = `${cursor.date}|${cursor.name}`;
           if (seenCursors.has(key) || pages.length >= 500) throw new Error('The income report could not complete all pages. Choose a shorter date range; no partial totals were shown.');
           seenCursors.add(key);
-          panelEl.innerHTML = `<p class="muted">Loading income report… ${pages.length} page${pages.length === 1 ? '' : 's'} processed.</p>`;
+          if (activeSection === 'incomeAnalytics') panelEl.innerHTML = `<p class="muted">Loading income report… ${pages.length} page${pages.length === 1 ? '' : 's'} processed.</p>`;
         }
       } while (cursor);
       const report = combineIncomeAnalyticsPages(pages);
@@ -9714,23 +9768,30 @@ async function loadIncomeAnalytics(filter = incomeAnalyticsFilter) {
             body: JSON.stringify({ ...filter, findLatest: true })
           });
           const data = await response.json().catch(() => ({ ok: false, message: 'Income analytics did not return JSON.' }));
-          if (requestId !== incomeAnalyticsRequest || activeSection !== 'incomeAnalytics') return;
+          if (!isCurrent()) return;
           if (!response.ok || !data.ok) throw new Error(data.message || 'The latest income period could not be found.');
           latestDate = data.latestAvailableDate || '';
         }
         if (latestDate && latestDate < report.period.dateFrom) {
           fixedFilter.anchorDate = latestDate;
           usedLatestAvailable = true;
-          panelEl.innerHTML = '<p class="muted">Loading the latest month with posted income…</p>';
+          if (activeSection === 'incomeAnalytics') panelEl.innerHTML = '<p class="muted">Loading the latest month with posted income…</p>';
           continue;
         }
       }
       if (usedLatestAvailable) report.period.usedLatestAvailable = true;
+      if (!isCurrent()) return;
+      snapshot.report = report;
+      incomeAnalyticsData = report;
+      incomeAnalyticsFilter = { ...incomeAnalyticsFilter, ...(report.filter || {}) };
+      snapshot.filterKey = JSON.stringify(incomeAnalyticsFilter);
       if (requestId === incomeAnalyticsRequest) renderIncomeAnalytics(report);
       return;
     }
   } catch (error) {
-    if (requestId === incomeAnalyticsRequest && activeSection === 'incomeAnalytics') panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
+    if (isCurrent() && activeSection === 'incomeAnalytics') panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
+  } finally {
+    snapshot.promise = null;
   }
 }
 
@@ -9817,6 +9878,13 @@ function renderExternalAudit() {
 }
 
 async function loadExternalAudit() {
+  const cacheVersion = staffWorkspaceReads.version();
+  const cacheKey = JSON.stringify([externalAuditState.dateFrom, externalAuditState.dateTo,
+    externalAuditState.cursor, externalAuditState.findingCursor]);
+  if (externalAuditState.cacheVersion === cacheVersion && externalAuditState.cacheKey === cacheKey) {
+    renderExternalAudit();
+    return;
+  }
   try {
     const workingBranch = clean(currentUser?.activeBranchId || currentUser?.branchId || 'all');
     if (externalAuditState.scope && clean(externalAuditState.scope.branchId).toLowerCase() !== workingBranch.toLowerCase()) {
@@ -9837,7 +9905,7 @@ async function loadExternalAudit() {
       externalAuditRequest('list', { ...(externalAuditState.cursor ? { cursor: externalAuditState.cursor } : {}) }),
       externalAuditRequest('findings', { ...(externalAuditState.findingCursor ? { findingsCursor: externalAuditState.findingCursor } : {}) })
     ]);
-    if (activeSection !== 'externalAudit') return;
+    if (activeSection !== 'externalAudit' || cacheVersion !== staffWorkspaceReads.version()) return;
     externalAuditState = {
       ...externalAuditState,
       scope: journals.scope,
@@ -9848,9 +9916,12 @@ async function loadExternalAudit() {
       findings: findings.findings || [], findingNextCursor: findings.nextCursor || null,
       findingPageSize: findings.pageSize || 0
     };
+    externalAuditState.cacheVersion = cacheVersion;
+    externalAuditState.cacheKey = JSON.stringify([externalAuditState.dateFrom, externalAuditState.dateTo,
+      externalAuditState.cursor, externalAuditState.findingCursor]);
     renderExternalAudit();
   } catch (error) {
-    if (activeSection === 'externalAudit') panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
+    if (activeSection === 'externalAudit' && cacheVersion === staffWorkspaceReads.version()) panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
   }
 }
 
@@ -9979,6 +10050,9 @@ function exportIncomeAnalyticsCsv() {
 }
 
 function bindIncomeAnalyticsEvents() {
+  document.getElementById('refreshIncomeAnalytics')?.addEventListener('click', (event) => {
+    runButtonAction(event.currentTarget, 'Refreshing...', () => loadIncomeAnalytics());
+  });
   panelEl.querySelectorAll('[data-income-period]').forEach((button) => button.addEventListener('click', () => {
     incomeAnalyticsFilter = {
       period: button.dataset.incomePeriod,
@@ -17794,7 +17868,7 @@ function renderSection(active) {
     return;
   }
   const departments = dashboardData.departments || {};
-  if (legacyDashboardSections.has(active) && !Object.hasOwn(departments, active)) {
+  if (legacyDashboardSections.has(active) && (!Object.hasOwn(departments, active) || invalidatedDashboardSections.has(active))) {
     panelEl.innerHTML = `<p class="muted">Loading ${escapeHtml(staffTabLabel(active, active))} records...</p>`;
     if (!dashboardSectionRequests.has(active)) {
       const request = loadDashboard({ mode: 'section', section: active, merge: true })
@@ -17836,7 +17910,7 @@ function renderSection(active) {
     panelEl.innerHTML = '<p class="muted">Loading bills and requisitions...</p>';
     loadFinanceWorkflow();
   } else if (active === 'incomeAnalytics') {
-    panelEl.innerHTML = '<p class="muted">Loading posted income analytics...</p>';
+    if (!incomeAnalyticsSnapshot?.report) panelEl.innerHTML = '<p class="muted">Loading posted income analytics...</p>';
     loadIncomeAnalytics();
   } else if (active === 'externalAudit') {
     panelEl.innerHTML = '<p class="muted">Loading financial audit records...</p>';
@@ -21411,6 +21485,12 @@ staffBrand.addEventListener('click', (event) => {
   if (!headerRefreshButton.disabled) refreshDashboard();
 });
 headerRefreshButton.addEventListener('click', refreshDashboard);
+// Existing module Refresh buttons must bypass the same cache as the header.
+// Capture runs before their loading handlers and before the button is disabled.
+panelEl.addEventListener('click', (event) => {
+  const button = event.target.closest('button');
+  if (button && !button.disabled && /^refresh/i.test(button.id)) invalidateStaffWorkspaceReads();
+}, true);
 tutorialButton.addEventListener('click', openCurrentTutorial);
 tutorialMenuButton.addEventListener('click', openCurrentTutorial);
 themeToggleButton.addEventListener('click', toggleStaffTheme);
@@ -21418,6 +21498,7 @@ sidebarThemeToggleButton.addEventListener('click', toggleStaffTheme);
 branchSelector.addEventListener('change', () => switchStaffBranch(branchSelector.value));
 window.addEventListener('storage', (event) => {
   if (event.key !== 'dynamax:settings-revision' || !currentUser || dashboardEl.hidden) return;
+  invalidateStaffWorkspaceReads();
   void (async () => {
     await refreshStaffSiteProfile();
     if (activeSection === 'academics') {

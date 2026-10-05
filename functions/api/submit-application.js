@@ -86,9 +86,9 @@ function duplicateKey(application) {
   return first && surname && parentEmail ? `${first}|${surname}|${parentEmail}` : '';
 }
 
-function nextApplicationReference(applications, schoolCode = 'DCA') {
+function nextApplicationReference(applications, schoolCode = '') {
   const yearCode = String(new Date().getFullYear()).slice(-2);
-  const prefix = clean(schoolCode).toUpperCase().replace(/[^A-Z0-9]/g, '') || 'DCA';
+  const prefix = clean(schoolCode).toUpperCase().replace(/[^A-Z0-9]/g, '') || 'ORG';
   let maxNo = 0;
   (applications || []).forEach((row) => {
     const value = clean(row.ApplicationReference || row.ApplicationID || row.__id);

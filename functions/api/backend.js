@@ -197,16 +197,16 @@ function expectedDeploymentIdentityFromRequest(request, body = {}) {
 }
 
 function normalizeSchoolCode(value) {
-  return clean(value).toUpperCase().replace(/[^A-Z0-9]/g, '') || 'DCA';
+  return clean(value).toUpperCase().replace(/[^A-Z0-9]/g, '');
 }
 
 export async function getSchoolCode(env) {
   try {
     requireFirestoreEnv(env);
     const profile = await getDocument(env, 'settings', 'schoolProfile');
-    return normalizeSchoolCode((profile && profile.SchoolCode) || env.SCHOOL_CODE);
+    return normalizeSchoolCode((profile && profile.SchoolCode) || env.SCHOOL_CODE) || 'ORG';
   } catch (_err) {
-    return normalizeSchoolCode(env.SCHOOL_CODE);
+    return normalizeSchoolCode(env.SCHOOL_CODE) || 'ORG';
   }
 }
 
@@ -3488,10 +3488,10 @@ async function deleteApplication(env, body) {
   return { ok: true, message: 'Application deleted.', applicationReference: id };
 }
 
-function nextStudentAdmissionNo(students, session = '', schoolCode = 'DCA') {
+function nextStudentAdmissionNo(students, session = '', schoolCode = '') {
   const yearMatch = clean(session).match(/20(\d{2})/);
   const yearCode = yearMatch ? yearMatch[1] : String(new Date().getFullYear()).slice(-2);
-  const prefix = normalizeSchoolCode(schoolCode);
+  const prefix = normalizeSchoolCode(schoolCode) || 'ORG';
   let maxNo = 0;
   students.forEach((row) => {
     const admissionNo = pick(row, ['AdmissionNo', 'admissionNo', '__id']);

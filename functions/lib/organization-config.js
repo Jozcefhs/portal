@@ -281,7 +281,7 @@ export function resolveOrganizationConfig({ env = {}, organizationProfile = {}, 
     profile.Code || profile.OrganisationCode || profile.OrganizationCode
       || legacy.OrganisationCode || legacy.OrganizationCode || legacy.SchoolCode
       || env.ORGANISATION_CODE || env.ORGANIZATION_CODE || env.SCHOOL_CODE
-  ).toUpperCase().replace(/[^A-Z0-9]/g, '') || (edition === 'school' ? 'DCA' : 'ORG');
+  ).toUpperCase().replace(/[^A-Z0-9]/g, '') || 'ORG';
   // FeatureFlags is the calculated output saved by older releases. Treating
   // that output as an override made a later plan upgrade remain artificially
   // locked. Only the explicit override field is authoritative.

@@ -61,7 +61,7 @@ function clean(value) {
 }
 
 function normalizeSchoolCode(value) {
-  return clean(value).toUpperCase().replace(/[^A-Z0-9]/g, '') || 'DCA';
+  return clean(value).toUpperCase().replace(/[^A-Z0-9]/g, '');
 }
 
 export function emailProviderProfile(env = {}, { legacyBrevoApiKeyConfigured = false } = {}) {
@@ -483,7 +483,7 @@ export async function onRequestPost(context) {
       DisabledFeatureEntitlements: organization.DisabledFeatureEntitlements,
       ModulePreferences: organization.ModulePreferences,
       SchoolName: clean(incoming.SchoolName) || 'Dynamax',
-      SchoolCode: normalizeSchoolCode(incoming.SchoolCode),
+      SchoolCode: normalizeSchoolCode(mergedProfileText(existing, incoming, 'SchoolCode')),
       SchoolAddress: clean(incoming.SchoolAddress),
       SchoolPhone: clean(incoming.SchoolPhone),
       SchoolEmail: clean(incoming.SchoolEmail),
