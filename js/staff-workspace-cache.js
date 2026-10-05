@@ -18,6 +18,7 @@
     '/api/staff-offerings': lists,
     '/api/staff-correspondence': ['bootstrap', 'list', 'search'],
     '/api/staff-academics': ['bootstrap', 'list', 'getacademicmanagement', 'getacademicscorebookcontext'],
+    '/api/staff-homework': ['getcontext'],
     '/api/external-audit': ['list', 'findings', 'catalog', 'records', 'reports'],
     '/api/staff-payroll': ['list'],
     '/api/staff-hotel': ['list']
@@ -26,7 +27,7 @@
   // device status, money-moving checks, attendance and protected files.
   const liveReads = new Set(['list', 'status', 'admin-status', 'quick', 'presencequick', 'search',
     'detail', 'document', 'catalog', 'findings', 'reports', 'exportregister', 'recordexport',
-    'searchcustomers', 'getbalance', 'tax-breakdown']);
+    'searchcustomers', 'getbalance', 'tax-breakdown', 'previewhomework']);
   function stable(value) {
     if (Array.isArray(value)) return value.map(stable);
     if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stable(value[key])]));

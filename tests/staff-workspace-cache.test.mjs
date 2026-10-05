@@ -46,6 +46,13 @@ test('concurrent loads share one network request and each caller can consume its
   assert.deepEqual(await responses[0].json(), await responses[1].json());
 });
 
+test('homework context reuses scoped snapshots but audience preview stays live and sends invalidate reads', async () => {
+  assert.equal(requestPolicy(url('/api/staff-homework'), post('getContext', { SchoolSection: 'primary' })).cacheable, true);
+  const preview = requestPolicy(url('/api/staff-homework'), post('previewHomework'));
+  assert.equal(preview.cacheable, false); assert.equal(preview.mutation, false);
+  assert.equal(requestPolicy(url('/api/staff-homework'), post('sendHomework')).mutation, true);
+});
+
 test('filters, cursors and module request payloads are independently keyed', async () => {
   const { cache } = fixture(); let reads = 0;
   const network = async () => { reads++; return json(); };
@@ -125,7 +132,7 @@ test('memory is bounded and neither records nor credentials are written to brows
 
 test('the shared cache is loaded before the staff workspace and module refresh clears it', async () => {
   const html = await readFile(new URL('../admin.html', import.meta.url), 'utf8');
-  assert.ok(html.indexOf('js/staff-workspace-cache.js?v=20261005-workspace-read-cache') < html.indexOf('js/admin.js?v=20261005-workspace-read-cache'));
+  assert.ok(html.indexOf('js/staff-workspace-cache.js?v=20261005-teacher-homework') < html.indexOf('js/admin.js?v=20261005-teacher-homework'));
   assert.match(admin, /function refreshDashboard\(\) \{\s*invalidateStaffWorkspaceReads\(\)/);
   assert.match(admin, /id="refreshIncomeAnalytics"/);
 });

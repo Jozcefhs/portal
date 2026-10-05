@@ -103,6 +103,22 @@ function invalidTokenResponse(status, data) {
   return status === 404 || ['UNREGISTERED', 'INVALID_ARGUMENT'].includes(code);
 }
 
+export function homeworkPushPreview(notification) {
+  const truncate = (value, bytes) => {
+    const characters = Array.from(clean(value));
+    let size = 0;
+    let result = '';
+    for (const character of characters) {
+      const length = new TextEncoder().encode(character).length;
+      if (size + length > bytes) return `${result}… Open the parent portal for full details.`;
+      result += character; size += length;
+    }
+    return result;
+  };
+  // FCM payloads are byte-limited. Full Unicode homework stays in the in-app record.
+  return { title: truncate(notification.Title, 300), body: truncate(notification.Message, 2200) };
+}
+
 async function sendToFcm(env, token, notification) {
   const accessToken = await getGoogleAccessToken(env, MESSAGING_SCOPE);
   let actionLink = '';
@@ -121,7 +137,8 @@ async function sendToFcm(env, token, notification) {
     body: JSON.stringify({
       message: {
         token,
-        notification: { title: clean(notification.Title), body: clean(notification.Message) },
+        notification: notification.Type === 'Teacher Homework' ? homeworkPushPreview(notification)
+          : { title: clean(notification.Title), body: clean(notification.Message) },
         data: {
           notificationId: clean(notification.NotificationId),
           category: clean(notification.Category || notification.Type),

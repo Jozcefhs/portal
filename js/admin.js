@@ -15039,7 +15039,7 @@ function academicManagementHeader(data, rows, message = '') {
   const views = academicManagementViews(data);
   return `<div class="academic-management-heading">
     <div><p class="eyebrow">AM-002 to AM-011</p><h2>Academic Management</h2><p class="muted">Branch-isolated structure, ${learner.singular} timetables, attendance, assessment and controlled term-result publication.</p></div>
-    <button type="button" id="refreshAcademicManagement" class="secondary">Refresh</button>
+    <div class="academic-homework-actions">${data.permissions?.canEnterScores ? '<button type="button" data-teacher-homework>Homework / parent message</button>' : ''}<button type="button" id="refreshAcademicManagement" class="secondary">Refresh</button></div>
   </div>
   <div class="academic-management-filterbar">
     <label>School section<select id="academicManagementSection">${sections.map((section) => `<option value="${escapeHtml(section)}"${section === academicManagementFilters.section ? ' selected' : ''}>${escapeHtml(section.charAt(0).toUpperCase() + section.slice(1))}</option>`).join('')}</select></label>
@@ -15652,6 +15652,10 @@ function openAcademicCbtRescheduleDialog(record = {}) {
 }
 
 function bindAcademicManagement() {
+  panelEl.querySelector('[data-teacher-homework]')?.addEventListener('click', () => {
+    window.DynamaxTeacherHomework.open({ staffFetch, branchId: selectedBranchId, schoolSection: academicManagementFilters.section })
+      .catch((error) => setStatus(document.getElementById('academicManagementStatus'), error.message, 'bad'));
+  });
   const calendarForm = panelEl.querySelector('[data-academic-school-calendar]');
   if (calendarForm) {
     const term = (academicManagementData?.terms || []).find((row) => row.TermId === academicManagementFilters.termId);

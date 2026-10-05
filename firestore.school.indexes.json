@@ -1,6 +1,24 @@
 {
   "indexes": [
     {
+      "collectionGroup": "academicTeacherAllocations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "BranchId", "order": "ASCENDING" },
+        { "fieldPath": "TeacherUsername", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "academicStudentMemberships",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "BranchId", "order": "ASCENDING" },
+        { "fieldPath": "SessionId", "order": "ASCENDING" },
+        { "fieldPath": "TermId", "order": "ASCENDING" },
+        { "fieldPath": "ClassId", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "payments",
       "queryScope": "COLLECTION",
       "fields": [
