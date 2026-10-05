@@ -12,7 +12,7 @@ const [html, script, css] = await Promise.all([
 test('parent dashboard loads fresh shared and admission-document settings', () => {
   assert.match(html, /<body[^>]*data-fresh-site-profile>/);
   assert.match(html, /js\/site-config\.js\?v=20260923-parent-tutorials/);
-  assert.match(html, /js\/parent-dashboard\.js\?v=20260930-identifier-search/);
+  assert.match(html, /js\/parent-dashboard\.js\?v=20261005-store-grade-matching/);
   assert.match(script, /cacheKey: 'parent-admission-document-settings',[\s\S]*?force: true,[\s\S]*?cache: false,[\s\S]*?fetchCache: 'no-store'/);
   assert.match(script, /fetch\('\/api\/admission-document-settings',[\s\S]*?credentials: 'same-origin',[\s\S]*?cache: 'no-store'/);
   assert.match(script, /button\.dataset\.dashboardTarget === 'documents'[\s\S]*?loadParentDocumentSettings\(\)/);
