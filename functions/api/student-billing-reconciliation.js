@@ -1,4 +1,4 @@
-import { getDocument, listCollectionForReport, requireFirestoreEnv } from '../lib/firestore.js';
+import { getDocument, listCollectionForReport, queryCollectionPages, requireFirestoreEnv } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { schoolCollectionPaths, querySchoolCollection } from '../lib/school-scope.js';
 import { selectStudentBillingProfiles, studentBillingIdentity } from '../lib/student-billing-profile.js';
@@ -23,12 +23,18 @@ export async function onRequestPost({ request, env }) {
     if (['apply', 'applyReversal'].includes(body.action) && user.subscriptionReadOnly) fail('The subscription is read-only.', 403);
     const scope = { branchId: user.branchId, schoolSectionAccess: user.schoolSectionAccess };
     if (['previewAll', 'previewReversalsAll'].includes(body.action)) {
+      const reversalReview = body.action === 'previewReversalsAll';
       const paths = await schoolCollectionPaths(env, 'students', scope);
       const [groups, schoolProfile, feeItems, invoices, accountSummaries] = await Promise.all([
         Promise.all(paths.map(async (path) => (await listCollectionForReport(env, path))
           .map((row) => ({ ...row, __scopePath: path })))),
         getDocument(env, 'settings', 'schoolProfile'), listCollectionForReport(env, 'feeItems'),
-        listCollectionForReport(env, 'invoices'), listCollectionForReport(env, 'accountSummaries')
+        reversalReview ? Promise.all(['FeeCode', 'feeCode'].map((field) => queryCollectionPages(env, 'invoices', {
+          filters: [{ field, op: 'in', value: ['BOW', 'BOw', 'BoW', 'Bow', 'bOW', 'bOw', 'boW', 'bow'] }],
+          pageSize: 1000, maxRows: 20000
+        }))).then((groups) => [...new Map(groups.flat().map((row) => [row.__name || row.__id, row])).values()])
+          : listCollectionForReport(env, 'invoices'),
+        reversalReview ? [] : listCollectionForReport(env, 'accountSummaries')
       ]);
       const students = selectStudentBillingProfiles(groups.flat()).filter((row) => {
         const identity = studentBillingIdentity(row);
@@ -39,7 +45,6 @@ export async function onRequestPost({ request, env }) {
       let matched = 0, incomplete = 0, returning = 0;
       for (const student of students) {
         const identity = studentBillingIdentity(student);
-        const reversalReview = body.action === 'previewReversalsAll';
         if (reversalReview && !/^returning$/i.test(clean(student.EnrollmentCategory))) continue;
         if (reversalReview) returning += 1;
         if (!reversalReview && clean(student.ProfileCompletionStatus).toLowerCase() !== 'complete') { incomplete += 1; continue; }

@@ -47,6 +47,17 @@ test('returning BOW reversal preview separates unpaid, partial and fully allocat
   }
 });
 
+test('school-wide candidates use only the indexed charge slice and cannot authorize posting', async () => {
+  const candidate = await boardingWearReversalPlan(student, dataFor(), { candidateOnly: true });
+  assert.equal(candidate.ready, true);
+  assert.equal(candidate.previewToken, '');
+  assert.deepEqual(candidate.baselineJournals, []);
+  const route = await readFile(new URL('../functions/api/student-billing-reconciliation.js', import.meta.url), 'utf8');
+  assert.match(route, /\['FeeCode', 'feeCode'\].map/);
+  assert.match(route, /field, op: 'in', value: \['BOW'/);
+  assert.match(route, /reversalReview \? \[\] : listCollectionForReport\(env, 'accountSummaries'\)/);
+});
+
 test('new-intake, incomplete, duplicate, mismatched rule/amount/currency and other-term cases cannot post', async () => {
   const cases = [
     [{ ...student, EnrollmentCategory: 'New Intake' }, dataFor()],

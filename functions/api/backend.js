@@ -3368,10 +3368,10 @@ export async function boardingWearReversalPlan(student, data, { candidateOnly = 
   const signature = JSON.stringify({ profile, revision: student.__updateTime, feeItems: data.feeItems,
     invoices: data.invoices, ledger: data.ledger, payments: data.payments, summaries: data.accountSummaries,
     journals: data.journals });
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(signature));
+  const digest = candidateOnly ? null : await crypto.subtle.digest('SHA-256', new TextEncoder().encode(signature));
   return { ok: true, readOnly: true, profile, amount, releasedCredit, outstandingRemoved: asMoneyNumber(amount - releasedCredit),
     invoiceId: invoice?.InvoiceId || '', invoiceDate: invoice?.Date || '', ready: !reason, candidateOnly, reason,
-    previewToken: [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join(''),
+    previewToken: digest ? [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('') : '',
     baselineJournals, message: 'Preview only. No financial changes. Original invoices and receipts are retained; released allocations become available parent credit.' };
 }
 
