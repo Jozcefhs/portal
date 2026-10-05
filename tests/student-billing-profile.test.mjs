@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { studentProfileValue, selectStudentBillingProfiles } from '../functions/lib/student-billing-profile.js';
+import { studentProfileValue, selectStudentBillingProfile, selectStudentBillingProfiles } from '../functions/lib/student-billing-profile.js';
 import { getAccountsOverview, buildStudentBillingPreview } from '../functions/api/backend.js';
 import { billingPreviewStudent } from '../functions/api/student-billing-preview.js';
 
@@ -43,6 +43,20 @@ test('profile selection separates branch and primary/secondary identities', () =
   assert.equal(billingPreviewStudent([student, primary, other], { branchId: 'main', schoolSectionAccess: 'secondary' }, student.AdmissionNo).StudentType, 'Boarding Student');
   assert.throws(() => billingPreviewStudent([primary, other], { branchId: 'main', schoolSectionAccess: 'secondary' }, student.AdmissionNo), /not found/);
   assert.throws(() => billingPreviewStudent([student, primary], { branchId: 'main', schoolSectionAccess: 'All' }, student.AdmissionNo), /more than one/);
+  assert.equal(selectStudentBillingProfile([student, primary, other], { branchId: 'main', schoolSectionAccess: 'secondary' }).StudentType, 'Boarding Student');
+  assert.equal(selectStudentBillingProfile([primary, other], { branchId: 'main', schoolSectionAccess: 'secondary' }), null);
+  assert.throws(() => selectStudentBillingProfile([student, primary], { branchId: 'main' }), /ambiguous/);
+});
+
+test('future invoice lookups use the same completed-profile priority and preserve explicit identity paths', async () => {
+  const source = await readFile(new URL('../functions/api/backend.js', import.meta.url), 'utf8');
+  const lookup = source.slice(source.indexOf('async function findStudentByAccountRef('), source.indexOf('function findStudentByAccountRefInRows'));
+  assert.match(lookup, /selectStudentBillingProfile\(await getSchoolDocumentsById/);
+  assert.match(lookup, /scopePath\s*\? await getDocument\(env, scopePath/);
+  assert.match(lookup, /selectStudentBillingProfile\(rows, requestedScope\)/);
+  assert.doesNotMatch(lookup, /rows\[0\]/);
+  const legacy = { ...student, StudentType: 'Day Student', ProfileCompletionStatus: 'Needs completion', __scopePath: 'students' };
+  assert.equal(selectStudentBillingProfile([legacy, student], { branchId: 'main' }).StudentType, 'Boarding Student');
 });
 
 test('billing preview identifies missing boarding/female charges without changing financial input', async () => {

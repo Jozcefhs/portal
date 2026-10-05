@@ -1,6 +1,6 @@
 import { batchCommitDocuments, batchUpsertDocuments, createDocumentIfAbsent, deleteDocument, findOneByField, getDocument, listCollection, listCollectionForReport, listCollectionPage, patchDocumentFields, queryCollection, queryCollectionPages, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { getAccountingChartRows, invalidateAccountingChartRows, primeAccountingChartRows } from '../lib/accounting-reference-cache.js';
-import { canonicalSchoolBranchId, deleteSchoolDocument, getSchoolDocumentById, getSchoolStructure, invalidateSchoolStructureCache, listSchoolCollection, normalizeSchoolStructure, querySchoolCollection, safeScopeId, schoolCollectionPaths, schoolSectionFor, upsertSchoolDocument } from '../lib/school-scope.js';
+import { canonicalSchoolBranchId, deleteSchoolDocument, getSchoolDocumentById, getSchoolDocumentsById, getSchoolStructure, invalidateSchoolStructureCache, listSchoolCollection, normalizeSchoolStructure, querySchoolCollection, safeScopeId, schoolCollectionPaths, schoolSectionFor, upsertSchoolDocument } from '../lib/school-scope.js';
 import { canonicalConfiguredClass, classNamesMatch } from '../lib/class-names.js';
 import { categoryApplies, deleteStoreCategory, ensureStoreCategories, resolveStoreCategory, saveStoreCategory } from '../lib/store-categories.js';
 import {
@@ -29,7 +29,7 @@ import { organizationModulePreferences, organizationProfileDocument, resolveOrga
 import { loadOrganizationNameProfile } from '../lib/organization-name-format.js';
 import { invalidateStaffAccessCache, staffAccessFor } from '../lib/staff-auth.js';
 import { mergedProfileText } from '../lib/profile-settings-update.js';
-import { selectStudentBillingProfiles, studentProfileValue } from '../lib/student-billing-profile.js';
+import { selectStudentBillingProfile, selectStudentBillingProfiles, studentProfileValue } from '../lib/student-billing-profile.js';
 import {
   applyPublicPortalContent,
   PUBLIC_PORTAL_CONTENT_DOCUMENT
@@ -405,25 +405,10 @@ async function findApplicationForAdmissionDocument(env, body = {}) {
 
 async function findStudent(env, admissionNo, applicationReference = '') {
   if (admissionNo) {
-    const direct = await getSchoolDocumentById(env, 'students', safeDocumentId(admissionNo));
-    if (direct) return direct;
-    for (const field of ['AdmissionNo', 'admissionNo', 'AccountRef']) {
-      const rows = await querySchoolCollection(env, 'students', {
-        filters: [{ field, op: '==', value: clean(admissionNo) }],
-        limit: 1
-      });
-      if (rows[0]) return rows[0];
-    }
+    const found = await findStudentByAccountRef(env, admissionNo);
+    if (found) return found;
   }
-  if (applicationReference) {
-    for (const field of ['ApplicationReference', 'applicationReference']) {
-      const rows = await querySchoolCollection(env, 'students', {
-        filters: [{ field, op: '==', value: clean(applicationReference) }],
-        limit: 1
-      });
-      if (rows[0]) return rows[0];
-    }
-  }
+  if (applicationReference) return findStudentByAccountRef(env, applicationReference);
   return null;
 }
 
@@ -457,15 +442,16 @@ async function findStudentByAccountRef(env, accountRef, requestedScope = null, r
   if (clean(requestedScopePath) && !scopePath) return null;
   const direct = scopePath
     ? await getDocument(env, scopePath, safeDocumentId(wanted)).catch(() => null)
-    : await getSchoolDocumentById(env, 'students', safeDocumentId(wanted), requestedScope);
+    : selectStudentBillingProfile(await getSchoolDocumentsById(env, 'students', safeDocumentId(wanted), requestedScope), requestedScope);
   if (direct) return normalizeStudent(scopePath ? { ...direct, __scopePath: scopePath } : direct);
   for (const field of STUDENT_ACCOUNT_REFERENCE_FIELDS) {
     const rows = await querySchoolCollection(env, 'students', {
       filters: [{ field, op: '==', value: wanted }],
       ...(scopePath ? { scopePath } : { scope: requestedScope }),
-      limit: 1
+      limit: 3
     });
-    if (rows[0]) return normalizeStudent(rows[0]);
+    const selected = selectStudentBillingProfile(rows, requestedScope);
+    if (selected) return normalizeStudent(selected);
   }
   return null;
 }

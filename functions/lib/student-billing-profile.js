@@ -48,3 +48,19 @@ export function selectStudentBillingProfiles(rows = []) {
   }
   return [...selected.values()];
 }
+
+export function selectStudentBillingProfile(rows = [], requestedScope = {}) {
+  const rawBranch = clean(requestedScope?.branchId || requestedScope?.BranchId);
+  const branch = rawBranch && rawBranch.toLowerCase() !== 'all' ? canonicalSchoolBranchId(rawBranch) : '';
+  const section = clean(requestedScope?.schoolSectionAccess || requestedScope?.SchoolSectionAccess || requestedScope?.section).toLowerCase();
+  const selected = selectStudentBillingProfiles(rows).filter((row) => {
+    const identity = studentBillingIdentity(row);
+    return (!branch || identity.branch === branch) && (!['primary', 'secondary'].includes(section) || identity.section === section);
+  });
+  if (selected.length > 1) {
+    const error = new Error('This student reference is ambiguous across school scopes. Select the branch and section before billing.');
+    error.status = 409;
+    throw error;
+  }
+  return selected[0] || null;
+}
