@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import vm from 'node:vm';
 import { prepareBoardingWearBulk, postBoardingWearBulk, reviewedBoardingWearPlan } from '../js/boarding-wear-bulk.js';
 
 const candidate = (ref) => ({ profile: { AccountRef: ref }, ready: true, candidateOnly: true, amount: 60000 });
@@ -58,8 +59,43 @@ test('bulk UI displays aggregate effects and requires one explicit financial app
   assert.match(ui, /data-bulk-reversal-reason/);
   assert.match(ui, /confirmText: 'Approve and post all'/);
   assert.match(ui, /postBoardingWearBulk\(eligible, reason/);
-  assert.match(ui, /finally \{\s+postButton.disabled = true;/);
+  assert.match(ui, /finally \{\s+setButtonLoading\(postButton, false, '', postButton.textContent\);\s+postButton.disabled = true;/);
   assert.match(ui, /Bulk Boarding Wear correction — results/);
   assert.match(ui, /data-refresh-boardwear-review>Run a fresh review/);
   assert.match(ui, /Finished — no corrections confirmed/);
+});
+
+test('completed bulk approval clears the spinner and busy state without allowing duplicate posting', async () => {
+  const ui = await readFile(new URL('../js/admin.js', import.meta.url), 'utf8');
+  const loading = ui.slice(ui.indexOf('function setButtonLoading('), ui.indexOf('async function runButtonAction('));
+  const marker = "content.querySelector('[data-post-boardwear-bulk]')?.addEventListener('click', async (event) => {";
+  const start = ui.indexOf(marker) + marker.length;
+  const body = ui.slice(start, ui.indexOf('\n          });', start));
+  for (const outcome of ['success', 'failed', 'exception']) {
+    const classes = new Set(), attributes = {}, status = {}, heading = {}, freshReview = { addEventListener() {} };
+    const button = { disabled: false, textContent: 'Approve and post all eligible reversals',
+      classList: { toggle: (name, enabled) => enabled ? classes.add(name) : classes.delete(name) },
+      setAttribute: (name, value) => { attributes[name] = value; } };
+    status.insertAdjacentHTML = () => {};
+    const context = { window: { DynamaxDialogs: { confirm: async () => true } }, eligible: [verified('A')], blocked: [],
+      sum: () => 60000, money: (value) => String(value), escapeHtml: (value) => String(value), reconcileRequest() {},
+      setStatus: (target, message) => { target.textContent = message; },
+      content: { querySelector: (selector) => selector === '[data-bulk-reversal-reason]' ? { value: 'New Intake only' }
+        : selector === '[data-reversal-status]' ? status : selector === 'h3' ? heading : freshReview },
+      postBoardingWearBulk: async () => {
+        assert.equal(classes.has('is-loading'), true);
+        assert.equal(attributes['aria-busy'], 'true');
+        if (outcome === 'exception') throw new Error('Request failed');
+        return [{ reference: 'A', ...(outcome === 'success'
+          ? { result: { message: 'Posted', summary: { CreditBalance: 60000, OutstandingBalance: 0 } } }
+          : { error: 'Fresh review required' }) }];
+      } };
+    const handler = vm.runInNewContext(`${loading}\n(async (event) => {${body}\n})`, context);
+    await handler({ currentTarget: button });
+    assert.equal(classes.has('is-loading'), false, outcome);
+    assert.equal(attributes['aria-busy'], 'false', outcome);
+    assert.equal(button.disabled, true, 'completed submissions must remain disabled');
+    assert.match(button.textContent, outcome === 'exception' ? /^Stopped/ : /^Finished/);
+    assert.equal(heading.textContent, 'Bulk Boarding Wear correction — results');
+  }
 });

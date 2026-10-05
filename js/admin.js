@@ -3739,6 +3739,7 @@ function bindStudentEditor(students) {
               postButton.textContent = posted ? 'Finished — review the results above' : 'Finished — no corrections confirmed';
             } catch (error) { setStatus(postStatus, `${error.message} Run a fresh school-wide review before another submission.`, 'bad'); postButton.textContent = 'Stopped — a fresh review is required'; }
             finally {
+              setButtonLoading(postButton, false, '', postButton.textContent);
               postButton.disabled = true;
               content.querySelector('h3').textContent = 'Bulk Boarding Wear correction — results';
               postStatus.insertAdjacentHTML('afterend', '<button type="button" data-refresh-boardwear-review>Run a fresh review</button>');
