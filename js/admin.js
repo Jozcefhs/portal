@@ -3596,6 +3596,8 @@ function openStudentEditor(student) {
         let value = pick(student, [field]);
         if (field === 'DisplayName') value = value || pick(student, ['ApplicantName', 'StudentName']);
         if (field === 'ClassName') value = value || pick(student, ['ClassAdmitted']);
+        if (field === 'BillingCategory') value = value || 'Regular';
+        if (field === 'AcademicProgress' && !value && clean(pick(student, ['EnrollmentCategory'])).toLowerCase() === 'returning') value = 'Promoted';
         if (field === 'ParentLoginCode') value = value || pick(student, ['VerificationCode']);
         if (field === 'StudentLoginPassword' || field === 'StudentLoginPasswordConfirm') value = '';
         return `<label>${escapeHtml(studentFieldLabel(field))}${studentFieldControl(field, value)}${field === 'ParentLoginCode' ? '<button type="button" class="student-code-generator" data-generate-student-code>Generate secure code</button>' : ''}</label>`;
@@ -3606,12 +3608,43 @@ function openStudentEditor(student) {
     const bytes = crypto.getRandomValues(new Uint8Array(8));
     form.elements.ParentLoginCode.value = Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join('');
   });
+  form.elements.EnrollmentCategory?.addEventListener('change', () => {
+    if (form.elements.EnrollmentCategory.value === 'Returning' && !form.elements.AcademicProgress.value) {
+      form.elements.AcademicProgress.value = 'Promoted';
+    }
+  });
   setStatus(form.querySelector('[data-student-form-status]'), '', '');
   loadStudentPassportPreview(student, form.querySelector('[data-student-passport-preview]'));
   dialog.showModal();
 }
 
 function bindStudentEditor(students) {
+  panelEl.querySelector('[data-save-student-profile-defaults]')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    setButtonLoading(button, true, 'Saving missing defaults…');
+    let updated = 0;
+    const requestDefaults = async (payload) => {
+      const response = await staffFetch('/api/staff-students', { method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.message || 'Could not save missing defaults.');
+      return data;
+    };
+    try {
+      for (let batch = 0; batch < 200; batch += 1) {
+        const preview = await requestDefaults({ action: 'previewProfileDefaults' });
+        if (!preview.remaining) {
+          setStatus(dashboardStatus, `${updated} profile record(s) updated. Missing defaults are now saved across this branch. Explicit categories and Repeating selections preserved. No invoices, payments or balances changed. Refresh Students to view the saved records.`, 'ok');
+          return;
+        }
+        const result = await requestDefaults({ action: 'applyProfileDefaults', PreviewToken: preview.previewToken });
+        updated += result.updated || 0;
+        setStatus(dashboardStatus, `${updated} profile record(s) updated; ${result.remaining} remaining.`, '');
+      }
+      throw new Error('The maintenance batch limit was reached. Run this action again to finish remaining profiles.');
+    } catch (error) { setStatus(dashboardStatus, `${updated} profile record(s) updated. ${error.message}`, 'bad'); }
+    finally { setButtonLoading(button, false, '', 'Save missing profile defaults'); }
+  });
   document.querySelector('[data-close-billing-preview]')?.addEventListener('click', () => document.getElementById('studentBillingPreviewDialog')?.close());
   const reconcileRequest = async (payload) => {
     const response = await staffFetch('/api/student-billing-reconciliation', { method: 'POST', credentials: 'same-origin',
@@ -18056,6 +18089,9 @@ function renderSection(active) {
         pick(row, ['Status'])
       ].filter(Boolean).join(' ')
     }) + renderStudentEditor(students);
+    if (currentUser?.role === 'Super Admin' && (currentUser.allowedSections || []).includes('accounts')) {
+      panelEl.querySelector('.student-onboarding-link-action')?.insertAdjacentHTML('beforeend', '<button type="button" class="secondary" data-save-student-profile-defaults>Save missing profile defaults</button>');
+    }
     bindStudentEditor(students);
     bindStudentClassExport(students);
     bindStudentGradeSevenIntake();

@@ -6,6 +6,7 @@ import { configuredStaffBranches } from '../lib/staff-branch-context.js';
 import { normalizeClassKey } from '../lib/class-names.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { loadPublishedTutorials } from '../lib/tutorial-catalog.js';
+import { withStudentProfileDefaults } from '../lib/student-profile-defaults.js';
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -45,6 +46,7 @@ function applicationWithConfiguredName(row = {}, profile = {}) {
 }
 
 function studentWithConfiguredName(row = {}, profile = {}) {
+  row = withStudentProfileDefaults(row);
   const displayName = displayNameForProfile(
     row,
     profile,

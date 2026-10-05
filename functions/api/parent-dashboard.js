@@ -2,6 +2,7 @@
 // Parent-facing dashboard for child activity and wallet restrictions.
 
 import { getPayableFees } from './backend.js';
+import { withStudentProfileDefaults } from '../lib/student-profile-defaults.js';
 import { createDocumentIfAbsent, getDocument, listCollection, queryCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import {
   querySchoolCollection,
@@ -910,6 +911,7 @@ export async function enrichChildrenWithLinkedPassportPhotos(env, children = [],
 }
 
 function normalizeStudent(row, profile = {}) {
+  row = withStudentProfileDefaults(row);
   const displayName = formatPersonName(row, profile, pick(row, ['DisplayName', 'displayName', 'ApplicantName', 'applicantName']));
   const passportPhoto = parentPassportPhotoSource(row);
   return {

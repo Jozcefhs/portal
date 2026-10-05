@@ -1,10 +1,11 @@
-import { listCollection, patchDocumentFieldsIfCurrent, requireFirestoreEnv } from '../lib/firestore.js';
+import { batchCommitDocuments, listCollection, patchDocumentFieldsIfCurrent, requireFirestoreEnv } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { listSchoolCollection, schoolSectionFor, upsertSchoolDocument } from '../lib/school-scope.js';
 import { canonicalConfiguredClass } from '../lib/class-names.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { saveStudentLoginPassword } from '../lib/student-login-credentials.js';
 import { gradeSevenIntakeFingerprint, gradeSevenIntakePlan } from '../lib/student-intake-bulk.js';
+import { studentProfileDefaultsPlan, studentProfileDefaultsFingerprint } from '../lib/student-profile-defaults.js';
 
 function clean(value) { return String(value ?? '').trim(); }
 function lower(value) { return clean(value).toLowerCase(); }
@@ -30,8 +31,43 @@ export async function onRequestPost(context) {
     }
     const body = await readJsonBody(request, { maxBytes: 256 * 1024 });
     const action = lower(body.action);
-    if (!['update', 'reissueparentonboarding', 'previewgrade7intake', 'applygrade7intake'].includes(action)) {
+    if (!['update', 'reissueparentonboarding', 'previewgrade7intake', 'applygrade7intake', 'previewprofiledefaults', 'applyprofiledefaults'].includes(action)) {
       const err = new Error('Choose a valid student action.'); err.status = 400; throw err;
+    }
+    if (['previewprofiledefaults', 'applyprofiledefaults'].includes(action)) {
+      if (user.role !== 'Super Admin' || user.edition !== 'school' || !clean(user.branchId) ||
+        !(user.allowedSections || []).includes('accounts') || user.subscriptionReadOnly) {
+        const err = new Error('Select a school branch and use a writable Super Admin account with Students and Accounts access.'); err.status = 403; throw err;
+      }
+      const scope = { branchId: user.branchId, schoolSectionAccess: user.schoolSectionAccess };
+      const rows = (await listSchoolCollection(env, 'students', scope)).filter((row) => visibleToUser(row, user));
+      const plan = studentProfileDefaultsPlan(rows);
+      const previewToken = await studentProfileDefaultsFingerprint(plan, scope);
+      const summary = { ok: true, total: plan.total, remaining: plan.changes.length,
+        billingCategory: plan.billingCategory, academicProgress: plan.academicProgress, previewToken, branchId: user.branchId };
+      if (action === 'previewprofiledefaults' || !plan.changes.length) return Response.json(summary, { headers: { 'Cache-Control': 'no-store' } });
+      if (clean(body.PreviewToken) !== previewToken) {
+        const err = new Error('Profiles changed after preview. Review the defaults again; no records were changed.'); err.status = 409; throw err;
+      }
+      const next = plan.changes.slice(0, 100);
+      const timestamp = new Date().toISOString();
+      const writes = next.flatMap(({ row, patch }) => {
+        if (!row.__id || !row.__updateTime || !row.__scopePath) { const err = new Error('A profile lacks its database revision. No records were changed.'); err.status = 409; throw err; }
+        const auditId = crypto.randomUUID();
+        return [{ collectionPath: row.__scopePath, documentId: row.__id, updateTime: row.__updateTime,
+          updateMask: [...Object.keys(patch), 'ProfileDefaultsSavedAt', 'ProfileDefaultsSavedBy'],
+          data: { ...patch, ProfileDefaultsSavedAt: timestamp, ProfileDefaultsSavedBy: user.username } },
+          { collectionPath: 'staffRecordsAudit', documentId: auditId, exists: false, data: {
+            AuditId: auditId, Timestamp: timestamp, Action: 'SAVE MISSING STUDENT PROFILE DEFAULTS',
+            EntityType: 'Student profile', EntityId: clean(row.AdmissionNo || row.AccountRef || row.__id),
+            BranchId: user.branchId, ActorUsername: user.username, UserName: user.displayName || user.username,
+            UserRole: user.role, SourcePlatform: 'Web', ScopePath: row.__scopePath,
+            Before: Object.fromEntries(Object.keys(patch).map((field) => [field, row[field] ?? null])), After: patch,
+            Details: 'Missing defaults saved. Existing classifications and all financial records preserved.'
+          } }];
+      });
+      await batchCommitDocuments(env, writes);
+      return Response.json({ ...summary, updated: next.length, remaining: plan.changes.length - next.length }, { headers: { 'Cache-Control': 'no-store' } });
     }
     if (['previewgrade7intake', 'applygrade7intake'].includes(action)) {
       if (user.role !== 'Super Admin' || user.edition !== 'school' || !clean(user.branchId) ||

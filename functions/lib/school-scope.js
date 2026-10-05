@@ -1,5 +1,6 @@
 import { deleteDocument, getDocument, listCollection, queryCollection, upsertDocument } from './firestore.js';
 import { normalizeClassKey } from './class-names.js';
+import { withStudentProfileDefaults } from './student-profile-defaults.js';
 
 function clean(value) { return String(value ?? '').trim(); }
 
@@ -171,7 +172,7 @@ export async function querySchoolCollection(env, collection, options = {}) {
 
 export async function upsertSchoolDocument(env, collection, documentId, data, options = {}) {
   const structure = await getSchoolStructure(env);
-  const copy = { ...(data || {}) };
+  const copy = collection === 'students' ? withStudentProfileDefaults(data || {}) : { ...(data || {}) };
   const existingPath = clean(copy.__scopePath);
   delete copy.__scopePath;
   delete copy.__name;
