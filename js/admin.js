@@ -3498,7 +3498,7 @@ function renderStudentEditor(students) {
   </dialog>
   <dialog id="studentBillingPreviewDialog" class="workflow-dialog student-profile-dialog">
     <div class="workflow-dialog-header"><div><small>Read-only finance review</small><h2>Student billing reconciliation preview</h2></div><button type="button" data-close-billing-preview aria-label="Close billing preview">&times;</button></div>
-    <div class="config-dialog-form" data-billing-preview-content></div>
+    <div class="config-group" data-billing-preview-content></div>
   </dialog>`;
 }
 
@@ -3632,7 +3632,7 @@ function bindStudentEditor(students) {
         <p>${escapeHtml(profile.AcademicSession)} · ${escapeHtml(profile.Term)}</p>
         <p class="status">${escapeHtml(preview.message)}</p>
         <div class="config-grid"><p>Expected standard charges<br><strong>${money(preview.expectedTotal)}</strong></p><p>Existing period invoices<br><strong>${money(preview.invoicedTotal)}</strong></p><p>Charge difference to review<br><strong>${money(preview.difference)}</strong></p><p>Recorded credit (unchanged)<br><strong>${money(preview.recordedCredit)}</strong></p></div>
-        <div class="table-scroll"><table><thead><tr><th>Component</th><th>Expected</th><th>Invoiced</th><th>Difference</th></tr></thead><tbody>${preview.rows.map((row) => `<tr><td>${escapeHtml(row.name || row.code)}<br><small>${escapeHtml(row.code)}</small></td><td>${money(row.expected)}</td><td>${money(row.invoiced)}</td><td>${money(row.difference)}</td></tr>`).join('')}</tbody></table></div>
+        <div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>Component</th><th>Expected</th><th>Invoiced</th><th>Difference</th></tr></thead><tbody>${preview.rows.map((row) => `<tr><td>${escapeHtml(row.name || row.code)}<br><small>${escapeHtml(row.code)}</small></td><td>${money(row.expected)}</td><td>${money(row.invoiced)}</td><td>${money(row.difference)}</td></tr>`).join('')}</tbody></table></div>
         <p>Positive differences may require additional charges. Negative differences may require corrections. Finance must check the source invoices and approvals before posting either. No financial changes are made by this preview.</p>`;
       document.getElementById('studentBillingPreviewDialog').showModal();
     } catch (error) {

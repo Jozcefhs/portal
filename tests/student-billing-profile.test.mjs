@@ -85,3 +85,12 @@ test('billing preview endpoint enforces staff scope and has no posting or financ
   assert.match(source, /schoolSectionAccess: user.schoolSectionAccess/);
   assert.doesNotMatch(source, /upsertDocument|patchDocument|generateSchoolFeeInvoices|recordManualPayment|recalculateAccount/);
 });
+
+test('preview uses the existing padded, scrollable finance table layout', async () => {
+  const source = await readFile(new URL('../js/admin.js', import.meta.url), 'utf8');
+  assert.match(source, /class="config-group" data-billing-preview-content/);
+  const view = source.slice(source.indexOf("document.querySelector('[data-billing-preview-content]')"), source.indexOf("document.getElementById('studentBillingPreviewDialog').showModal()"));
+  assert.match(view, /class="admin-table-wrap"/);
+  assert.match(view, /class="admin-table"/);
+  assert.match(view, /escapeHtml\(row.name \|\| row.code\)/);
+});
