@@ -3689,7 +3689,8 @@ function bindStudentEditor(students) {
       const content = document.querySelector('[data-billing-preview-content]');
       content.innerHTML = `<h3>Returning-student Boarding Wear review</h3>
         <p>${report.total} student profiles checked in this branch, covering both permitted school sections. ${report.returning} explicitly returning students; ${report.affected} with active BOW charges; ${report.unaffected} without an active BOW charge.</p>
-        <p><strong>Flagged invoice total: ${money(report.amount)}.</strong> This is not an approved credit. Each account needs a fresh receipt/journal check and individual approval before posting. New-intake students are excluded. No financial records have changed.</p>
+        <p><strong>Flagged invoice total: ${money(report.amount)}.</strong> This is not an approved credit. Prepare one bulk correction to check receipts and journals for every affected account, then approve the eligible corrections together. New-intake students are excluded. No financial records have changed.</p>
+        ${report.rows.length && !currentUser?.subscriptionReadOnly ? '<button type="button" data-prepare-boardwear-bulk>Prepare bulk correction for all affected students</button>' : ''}
         <div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>Student</th><th>Section / period</th><th>Charge</th><th>Allocated</th><th>Review</th></tr></thead><tbody>${report.rows.map((row) =>
           `<tr><td>${escapeHtml(row.profile.DisplayName || '')}<br>${escapeHtml(row.profile.AccountRef)}</td><td>${escapeHtml(row.profile.SchoolSection || '')}<br>${escapeHtml(row.profile.AcademicSession || '')} · ${escapeHtml(row.profile.Term || '')}</td><td>${money(row.amount || 0)}</td><td>${money(row.releasedCredit || 0)}</td><td>${escapeHtml(row.reason || 'Candidate — receipt and journal checks required.')}<br><button type="button" data-review-bow-account="${escapeHtml(row.profile.AccountRef)}">Review reversal</button></td></tr>`).join('')}</tbody></table></div>
         <p class="status" data-reversal-status></p>`;
@@ -3697,6 +3698,54 @@ function bindStudentEditor(students) {
         try { await reviewBoardingWearReversal(item.dataset.reviewBowAccount); }
         catch (error) { setStatus(content.querySelector('[data-reversal-status]'), error.message, 'bad'); }
       }));
+      content.querySelector('[data-prepare-boardwear-bulk]')?.addEventListener('click', async (event) => {
+        const prepareButton = event.currentTarget;
+        const status = content.querySelector('[data-reversal-status]');
+        setButtonLoading(prepareButton, true, 'Checking all financial evidence…');
+        content.querySelectorAll('[data-review-bow-account]').forEach((item) => { item.disabled = true; });
+        try {
+          const { prepareBoardingWearBulk, postBoardingWearBulk, reviewedBoardingWearPlan } = await import('./boarding-wear-bulk.js?v=20261005-1');
+          const plans = await prepareBoardingWearBulk(report.rows, reconcileRequest, (index, total, ref) =>
+            setStatus(status, `Checking receipts and journals ${index} of ${total}: ${ref}. No changes made.`, ''));
+          const eligible = plans.filter(reviewedBoardingWearPlan);
+          const blocked = plans.filter((plan) => !reviewedBoardingWearPlan(plan));
+          const sum = (field) => eligible.reduce((total, plan) => total + plan[field], 0);
+          content.innerHTML = `<h3>Bulk Boarding Wear correction — ready for approval</h3>
+            <p>${report.returning} returning students checked across the permitted school sections. ${eligible.length} verified corrections ready; ${blocked.length} require finance review; ${report.unaffected} had no active BOW charge.</p>
+            <div class="config-grid"><p>Total charge reversal<br><strong>${money(sum('amount'))}</strong></p><p>Outstanding removed<br><strong>${money(sum('outstandingRemoved'))}</strong></p><p>Existing credit released<br><strong>${money(sum('releasedCredit'))}</strong></p></div>
+            <p>One approval applies every eligible correction below. Original invoices, receipts and journals remain in the audit trail. No cash refund or new payment is created. Accounts are posted separately and atomically; blocked or changed accounts are not forced through.</p>
+            <div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>Student</th><th>Section / period</th><th>Reversal</th><th>Credit released</th><th>Check</th></tr></thead><tbody>${plans.map((plan) =>
+              `<tr><td>${escapeHtml(plan.profile.DisplayName || '')}<br>${escapeHtml(plan.profile.AccountRef)}</td><td>${escapeHtml(plan.profile.SchoolSection || '')}<br>${escapeHtml(plan.profile.AcademicSession || '')} · ${escapeHtml(plan.profile.Term || '')}</td><td>${money(plan.amount || 0)}</td><td>${money(plan.releasedCredit || 0)}</td><td>${escapeHtml(reviewedBoardingWearPlan(plan) ? 'Verified — included in bulk approval' : plan.reason || 'Fresh finance review required')}</td></tr>`).join('')}</tbody></table></div>
+            ${eligible.length ? '<label>Approval reason for all corrections<textarea data-bulk-reversal-reason maxlength="500" required></textarea></label><button type="button" data-post-boardwear-bulk>Approve and post all eligible reversals</button>' : ''}
+            <p class="status" data-reversal-status></p>`;
+          content.querySelector('[data-post-boardwear-bulk]')?.addEventListener('click', async (event) => {
+            const postButton = event.currentTarget;
+            const postStatus = content.querySelector('[data-reversal-status]');
+            const reason = content.querySelector('[data-bulk-reversal-reason]').value.trim();
+            if (!reason) { setStatus(postStatus, 'Enter one approval reason for these corrections.', 'bad'); return; }
+            if (postButton.disabled) return;
+            postButton.disabled = true;
+            if (!await window.DynamaxDialogs.confirm({ title: 'Post all verified Boarding Wear reversals',
+              message: `Approve ${eligible.length} accounts: reverse ${money(sum('amount'))}, remove ${money(sum('outstandingRemoved'))} outstanding and release ${money(sum('releasedCredit'))} existing credit. ${blocked.length} blocked accounts are excluded. No receipt is deleted or cash refund issued. Keep this page open until all results are shown.`, confirmText: 'Approve and post all' })) { postButton.disabled = false; return; }
+            setButtonLoading(postButton, true, 'Posting all verified reversals…');
+            // A submission is attempted once. A lost response requires a fresh
+            // school-wide review rather than retrying an already committed row.
+            try {
+              const outcomes = await postBoardingWearBulk(eligible, reason, reconcileRequest, (index, total, ref) =>
+                setStatus(postStatus, `Posting ${index} of ${total}: ${ref}. Keep this page open.`, ''));
+              const posted = outcomes.filter((row) => row.result).length;
+              postStatus.innerHTML = `<strong>${posted} posted; ${outcomes.length - posted} require a fresh review; ${blocked.length} blocked accounts unchanged.</strong><ul>${outcomes.map((row) =>
+                `<li>${escapeHtml(row.reference)}: ${escapeHtml(row.error || row.result.message)}${row.result ? ` Available credit: ${money(row.result.summary.CreditBalance)}; outstanding: ${money(row.result.summary.OutstandingBalance)}.` : ' Do not assume a failed response means nothing committed; run a fresh review.'}</li>`).join('')}</ul>`;
+              postButton.textContent = 'Finished — refresh Accounts and run a fresh review if needed';
+            } catch (error) { setStatus(postStatus, `${error.message} Run a fresh school-wide review before another submission.`, 'bad'); }
+            finally { postButton.disabled = true; }
+          });
+        } catch (error) {
+          setStatus(status, error.message, 'bad');
+          setButtonLoading(prepareButton, false, '', 'Prepare bulk correction for all affected students');
+          content.querySelectorAll('[data-review-bow-account]').forEach((item) => { item.disabled = false; });
+        }
+      });
       document.getElementById('studentBillingPreviewDialog').showModal();
     } catch (error) { setStatus(dashboardStatus, error.message, 'bad'); }
     finally { setButtonLoading(button, false, '', 'Review returning-student Boarding Wear'); }

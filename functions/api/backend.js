@@ -3319,15 +3319,21 @@ export async function boardingWearReversalPlan(student, data, { candidateOnly = 
   const fees = (data.feeItems || []).map(normalizeFeeItem).filter((fee) => sameText(fee.FeeCode, 'BOW') &&
     yesNo(fee.Active) === 'YES' && feeMatchesAccountPeriod(fee, { ...profile, EnrollmentCategory: 'New Intake' }));
   let reason = '';
-  if (!sameText(profile.EnrollmentCategory, 'Returning')) reason = 'Only explicitly returning students qualify.';
-  else if (!profile.AcademicSession || !profile.Term) reason = 'The student accounting period is missing.';
+  if (!sameText(student.EnrollmentCategory || student.enrollmentCategory, 'Returning')) reason = 'Only explicitly returning students qualify.';
+  else if (!clean(student.AcademicSession || student.academicSession) || !clean(student.Term || student.term)) reason = 'The student accounting period is missing.';
   else if (invoices.length !== 1) reason = invoices.length ? 'Duplicate Boarding Wear invoices require individual finance review.' : 'No active Boarding Wear invoice in this period.';
   else if (fees.length !== 1 || !sameText(fees[0].EnrollmentCategory, 'New Intake') ||
     preview.rows.find((row) => sameText(row.code, 'BOW'))?.expected !== 0) reason = 'Save one applicable New Intake-only Boarding Wear rule before reviewing a reversal.';
   else if (!isSchoolFeeInvoice(invoice) || invoice.Debit <= 0 || invoice.Debit !== fees[0].Amount || invoice.Credit < 0 || invoice.Credit > invoice.Debit) reason = 'Invoice amounts do not match the configured charge; finance review is required.';
   else if (!sameText(invoice.Currency || 'NGN', 'NGN')) reason = 'Foreign-currency invoices require finance review.';
   else if (invoice.SchoolSection && !sameText(invoice.SchoolSection, profile.SchoolSection)) reason = 'Invoice school section differs from the profile.';
-  else if (!candidateOnly && lower(student.ProfileCompletionStatus) !== 'complete') reason = 'Complete and verify the student profile before posting.';
+  // Reversing an erroneous intake-only fee does not depend on unrelated parent
+  // profile fields. Require the saved classifications used by this charge instead.
+  else if (!candidateOnly && (!clean(student.ClassName || student.className) || !clean(student.StudentType || student.studentType) ||
+    [['Gender', 'gender'], ['BillingCategory', 'billingCategory'], ['AcademicProgress', 'academicProgress']].some(([field, alias]) =>
+      clean(fees[0][field]) && !sameText(fees[0][field], 'All') && clean(fees[0][field]) !== '*' && !clean(student[field] || student[alias])))) {
+    reason = 'Save and verify the billing classifications required by this fee rule before posting.';
+  }
   const amount = invoice?.Debit || 0;
   const releasedCredit = invoice?.Credit || 0;
   const sourceCharge = invoice ? buildSchoolInvoiceChargeAccountingJournal(invoice) : null;

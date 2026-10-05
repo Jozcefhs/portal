@@ -58,10 +58,12 @@ test('school-wide candidates use only the indexed charge slice and cannot author
   assert.match(route, /reversalReview \? \[\] : listCollectionForReport\(env, 'accountSummaries'\)/);
 });
 
-test('new-intake, incomplete, duplicate, mismatched rule/amount/currency and other-term cases cannot post', async () => {
+test('new-intake, missing billing classifications, duplicate, mismatched rule/amount/currency and other-term cases cannot post', async () => {
   const cases = [
     [{ ...student, EnrollmentCategory: 'New Intake' }, dataFor()],
-    [{ ...student, ProfileCompletionStatus: 'Needs completion' }, dataFor()],
+    [{ ...student, StudentType: '' }, dataFor()],
+    [{ ...student, EnrollmentCategory: '' }, dataFor()],
+    [{ ...student, AcademicSession: '' }, dataFor()],
     [student, { ...dataFor(), invoices: [invoice, { ...invoice, InvoiceId: 'DUP' }] }],
     [student, { ...dataFor(), feeItems: [{ ...fee, EnrollmentCategory: 'All' }] }],
     [student, { ...dataFor(), invoices: [{ ...invoice, Amount: 50000 }] }],
@@ -70,6 +72,12 @@ test('new-intake, incomplete, duplicate, mismatched rule/amount/currency and oth
     [student, { ...dataFor(), invoices: [{ ...invoice, SchoolSection: 'primary' }] }]
   ];
   for (const [row, data] of cases) assert.equal((await boardingWearReversalPlan(row, data)).ready, false);
+});
+
+test('unrelated profile completion does not block a verified returning-student fee correction', async () => {
+  const plan = await boardingWearReversalPlan({ ...student, ProfileCompletionStatus: 'Needs completion' }, dataFor(60000));
+  assert.equal(plan.ready, true, plan.reason);
+  assert.equal(plan.releasedCredit, 60000);
 });
 
 test('paid reversals block missing receipt evidence, over-allocation and inconsistent source journals', async () => {
