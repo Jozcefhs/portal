@@ -29,6 +29,7 @@ import { organizationModulePreferences, organizationProfileDocument, resolveOrga
 import { loadOrganizationNameProfile } from '../lib/organization-name-format.js';
 import { invalidateStaffAccessCache, staffAccessFor } from '../lib/staff-auth.js';
 import { mergedProfileText } from '../lib/profile-settings-update.js';
+import { selectStudentBillingProfiles, studentProfileValue } from '../lib/student-billing-profile.js';
 import {
   applyPublicPortalContent,
   PUBLIC_PORTAL_CONTENT_DOCUMENT
@@ -608,20 +609,20 @@ function normalizeStudent(row, profile = {}) {
   const displayName = formatPersonName(row, profile, pick(row, ['displayName', 'DisplayName', 'applicantName', 'ApplicantName']));
   return {
     ...row,
-    AdmissionNo: pick(row, ['admissionNo', 'AdmissionNo', '__id']),
+    AdmissionNo: studentProfileValue(row, 'AdmissionNo', ['admissionNo', '__id']),
     ApplicationReference: pick(row, ['applicationReference', 'ApplicationReference']),
     ApplicantName: displayName,
     DisplayName: displayName,
-    ClassAdmitted: pick(row, ['className', 'ClassName', 'classAdmitted', 'ClassAdmitted']),
-    ClassName: pick(row, ['className', 'ClassName', 'classAdmitted', 'ClassAdmitted']),
-    ClassArm: pick(row, ['classArm', 'ClassArm', 'arm', 'Arm']),
-    StudentType: pick(row, ['studentType', 'StudentType'], 'Day Student'),
-    BillingCategory: pick(row, ['billingCategory', 'BillingCategory'], 'Regular'),
-    Gender: pick(row, ['gender', 'Gender', 'sex', 'Sex']),
-    EnrollmentCategory: pick(row, ['enrollmentCategory', 'EnrollmentCategory', 'IntakeCategory', 'StudentEntryType'], 'Returning'),
-    AcademicProgress: pick(row, ['academicProgress', 'AcademicProgress', 'ProgressCategory', 'RepeaterStatus'], 'Promoted'),
-    AcademicSession: pick(row, ['academicSession', 'AcademicSession']),
-    Term: pick(row, ['term', 'Term']),
+    ClassAdmitted: studentProfileValue(row, 'ClassName', ['ClassAdmitted', 'className', 'classAdmitted']),
+    ClassName: studentProfileValue(row, 'ClassName', ['ClassAdmitted', 'className', 'classAdmitted']),
+    ClassArm: studentProfileValue(row, 'ClassArm', ['classArm', 'Arm', 'arm']),
+    StudentType: studentProfileValue(row, 'StudentType', ['studentType'], 'Day Student'),
+    BillingCategory: studentProfileValue(row, 'BillingCategory', ['billingCategory'], 'Regular'),
+    Gender: studentProfileValue(row, 'Gender', ['gender', 'Sex', 'sex']),
+    EnrollmentCategory: studentProfileValue(row, 'EnrollmentCategory', ['enrollmentCategory', 'IntakeCategory', 'StudentEntryType'], 'Returning'),
+    AcademicProgress: studentProfileValue(row, 'AcademicProgress', ['academicProgress', 'ProgressCategory', 'RepeaterStatus'], 'Promoted'),
+    AcademicSession: studentProfileValue(row, 'AcademicSession', ['academicSession']),
+    Term: studentProfileValue(row, 'Term', ['term']),
     ParentEmail: lower(pick(row, ['parentEmail', 'ParentEmail'])),
     ParentPhone: pick(row, ['parentPhone', 'ParentPhone']),
     VerificationCode: clean(pick(row, ['verificationCode', 'VerificationCode', 'parentLoginCode', 'ParentLoginCode', 'loginCode', 'LoginCode'])).toUpperCase(),
@@ -660,12 +661,12 @@ function normalizeAccount(row) {
     ApplicationReference: pick(row, ['applicationReference', 'ApplicationReference']),
     AdmissionNo: pick(row, ['admissionNo', 'AdmissionNo']),
     DisplayName: pick(row, ['displayName', 'DisplayName']),
-    ClassName: pick(row, ['className', 'ClassName']),
-    StudentType: pick(row, ['studentType', 'StudentType']),
-    BillingCategory: pick(row, ['billingCategory', 'BillingCategory'], 'Regular'),
-    Gender: pick(row, ['gender', 'Gender']),
-    EnrollmentCategory: pick(row, ['enrollmentCategory', 'EnrollmentCategory'], 'Returning'),
-    AcademicProgress: pick(row, ['academicProgress', 'AcademicProgress'], 'Promoted'),
+    ClassName: studentProfileValue(row, 'ClassName', ['className']),
+    StudentType: studentProfileValue(row, 'StudentType', ['studentType']),
+    BillingCategory: studentProfileValue(row, 'BillingCategory', ['billingCategory'], 'Regular'),
+    Gender: studentProfileValue(row, 'Gender', ['gender']),
+    EnrollmentCategory: studentProfileValue(row, 'EnrollmentCategory', ['enrollmentCategory'], 'Returning'),
+    AcademicProgress: studentProfileValue(row, 'AcademicProgress', ['academicProgress'], 'Promoted'),
     TotalDebit: asMoneyNumber(pick(row, ['totalDebit', 'TotalDebit'])),
     TotalCredit: asMoneyNumber(pick(row, ['totalCredit', 'TotalCredit'])),
     Balance: asMoneyNumber(pick(row, ['balance', 'Balance'])),
@@ -2232,7 +2233,7 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
   const provided = (key) => Array.isArray(preloaded?.[key]);
   const branchId = accountingRequestBranch(requestedScope || {});
   const branchRows = (rows) => accountingRowsForBranch(rows, branchId);
-  const schoolScope = { branchId };
+  const schoolScope = { branchId, schoolSectionAccess: requestedScope?.UserSchoolSectionAccess || requestedScope?.schoolSectionAccess };
   const schoolProfile = preloaded?.schoolProfile || await getDocument(env, 'settings', 'schoolProfile').catch(() => null);
   const financeSession = clean(schoolProfile?.CurrentAcademicSession);
   const financeRows = (collection) => {
@@ -2333,7 +2334,7 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
       if (key && createdAt) applicationCreatedMap.set(key, createdAt);
     });
   });
-  students.map((row) => normalizeStudent(row, resolvedSchoolProfile)).forEach((student) => putAccount({
+  selectStudentBillingProfiles(students).map((row) => normalizeStudent(row, resolvedSchoolProfile)).forEach((student) => putAccount({
     AccountRef: student.AdmissionNo || student.ApplicationReference,
     ApplicationReference: student.ApplicationReference,
     AdmissionNo: student.AdmissionNo,
@@ -3143,6 +3144,80 @@ async function getSchoolProfile(env, options = {}) {
       TutorialChannelUrl: tutorials.channelUrl
     }
   };
+}
+
+// Inspection only: classifications and configured charges are compared with
+// posted invoices. No invoice generation, credit allocation or summary writes.
+export async function buildStudentBillingPreview(student, data = {}) {
+  const overview = await getAccountsOverview({}, {
+    schoolProfile: data.schoolProfile || {}, students: [student], applications: [], accounts: [],
+    payments: data.payments || [], invoices: data.invoices || [], ledger: data.ledger || [],
+    feeItems: data.feeItems || [], billingCategories: [], accountSummaries: data.accountSummaries || []
+  }, { BranchId: student.BranchId || 'main' });
+  const account = overview.accounts[0];
+  if (!account) throw new Error('No student billing profile was found.');
+  const expected = applyBillingCategoryOverrides(overview.feeItems.filter((fee) =>
+    yesNo(fee.Active) === 'YES' && yesNo(fee.PayableOnline || 'YES') === 'YES' &&
+    !isWalletFee(fee) && !isOptionalSubscriptionFee(fee) && !isAcceptanceFeeLike(fee) &&
+    feeMatchesAccountPeriod(fee, account)), account);
+  const periodInvoices = overview.invoices.filter((invoice) =>
+    financialRowMatchesAccount(invoice, account) && isSchoolFeeInvoice(invoice) &&
+    !['void', 'voided', 'cancelled', 'canceled'].includes(lower(invoice.Status)) &&
+    feeFieldMatches(invoice.AcademicSession || 'All', account.AcademicSession) &&
+    feeFieldMatches(invoice.Term || 'All', account.Term));
+  const components = new Map();
+  for (const fee of expected) {
+    const key = lower(fee.FeeCode);
+    const row = components.get(key) || { code: fee.FeeCode, name: fee.FeeName, expected: 0, invoiced: 0, invoiceIds: [] };
+    row.expected = asMoneyNumber(row.expected + asMoneyNumber(fee.Amount));
+    components.set(key, row);
+  }
+  for (const invoice of periodInvoices) {
+    const key = lower(invoice.FeeCode);
+    const row = components.get(key) || { code: invoice.FeeCode, name: invoice.FeeName, expected: 0, invoiced: 0, invoiceIds: [] };
+    row.invoiced = asMoneyNumber(row.invoiced + invoice.Debit);
+    row.invoiceIds.push(invoice.InvoiceId);
+    components.set(key, row);
+  }
+  const rows = [...components.values()].map((row) => ({ ...row, difference: asMoneyNumber(row.expected - row.invoiced) }));
+  const expectedTotal = asMoneyNumber(expected.reduce((sum, fee) => sum + asMoneyNumber(fee.Amount), 0));
+  const invoicedTotal = asMoneyNumber(periodInvoices.reduce((sum, invoice) => sum + invoice.Debit, 0));
+  return {
+    ok: true, readOnly: true, generatedAt: nowIso(),
+    profile: Object.fromEntries(['AccountRef', 'DisplayName', 'ClassName', 'StudentType', 'Gender', 'BillingCategory',
+      'EnrollmentCategory', 'AcademicProgress', 'AcademicSession', 'Term', 'BranchId', 'SchoolSection', 'StudentScopePath']
+      .map((field) => [field, account[field] || ''])),
+    expectedTotal, invoicedTotal, difference: asMoneyNumber(expectedTotal - invoicedTotal),
+    recordedCredit: account.ExcessCredit, rows,
+    message: 'Preview only. Posted invoices, payments and credit balances have not been changed. Differences need finance review; this is not a final balance.'
+  };
+}
+
+export async function getStudentBillingPreview(env, student) {
+  const profile = normalizeStudent(student);
+  const account = { ...profile, AccountRef: profile.AdmissionNo || profile.AccountRef || profile.ApplicationReference };
+  const references = [...new Set(accountRefsFrom(account))];
+  const load = async (collection) => {
+    const groups = await Promise.all(references.map((reference) => queryCollectionPages(env, collection, {
+      filters: ['AccountRef', 'AdmissionNo', 'ApplicationReference', 'accountRef', 'admissionNo', 'applicationReference'].map((field) => ({ field, op: '==', value: reference })),
+      filterJoin: 'OR', pageSize: 250, maxRows: 2000
+    })));
+    const unique = new Map();
+    groups.flat().forEach((row) => unique.set(row.__name || row.__id, row));
+    return [...unique.values()].filter((row) => financialRowMatchesAccount({
+      ...row, AccountRef: row.AccountRef || row.accountRef, AdmissionNo: row.AdmissionNo || row.admissionNo,
+      ApplicationReference: row.ApplicationReference || row.applicationReference
+    }, account))
+      .filter((row) => canonicalSchoolBranchId(row.BranchId || 'main') === canonicalSchoolBranchId(student.BranchId || 'main'));
+  };
+  const [schoolProfile, feeItems, invoices, payments, ledger, accountSummaries] = await Promise.all([
+    getDocument(env, 'settings', 'schoolProfile'), listCollection(env, 'feeItems'),
+    load('invoices'), load('payments'), load('ledger'), load('accountSummaries')
+  ]);
+  return buildStudentBillingPreview(student, {
+    schoolProfile, invoices, payments, ledger, accountSummaries,
+    feeItems: feeItems.filter((row) => !clean(row.BranchId) || canonicalSchoolBranchId(row.BranchId) === canonicalSchoolBranchId(student.BranchId || 'main'))
+  });
 }
 
 async function saveOrganizationModulePreferences(env, body) {

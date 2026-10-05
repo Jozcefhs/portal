@@ -3493,8 +3493,12 @@ function renderStudentEditor(students) {
       <div class="student-login-guidance"><strong>Separate family and ${learner.singular} access</strong><span>Parents use Parent Email and Parent Login Code. ${learner.Plural} use their admission number and personal password of at least 6 characters for CBT. Leave the ${learner.singular} password blank to keep it unchanged.</span></div>
       <section class="config-group student-passport-editor"><header><strong>${learner.Singular} passport</strong><small>JPG or PNG. The photograph appears in ${learner.singular} searches and on published results.</small></header><div><div class="student-passport-preview" data-student-passport-preview aria-label="${learner.Singular} passport preview">PHOTO</div><input type="file" accept="image/jpeg,image/png" data-student-passport-file hidden><button type="button" class="secondary" data-student-passport-choose>Upload or replace passport</button></div></section>
       <div data-student-form-sections></div>
-      <div class="config-dialog-actions"><p class="status" data-student-form-status></p><button type="submit">Save ${learner.singular} profile</button></div>
+      <div class="config-dialog-actions"><p class="status" data-student-form-status></p>${(currentUser?.allowedSections || []).includes('accounts') ? '<button type="button" class="secondary" data-student-billing-preview>Preview billing reconciliation</button>' : ''}<button type="submit">Save ${learner.singular} profile</button></div>
     </form>
+  </dialog>
+  <dialog id="studentBillingPreviewDialog" class="workflow-dialog student-profile-dialog">
+    <div class="workflow-dialog-header"><div><small>Read-only finance review</small><h2>Student billing reconciliation preview</h2></div><button type="button" data-close-billing-preview aria-label="Close billing preview">&times;</button></div>
+    <div class="config-dialog-form" data-billing-preview-content></div>
   </dialog>`;
 }
 
@@ -3608,6 +3612,35 @@ function openStudentEditor(student) {
 }
 
 function bindStudentEditor(students) {
+  document.querySelector('[data-close-billing-preview]')?.addEventListener('click', () => document.getElementById('studentBillingPreviewDialog')?.close());
+  document.querySelector('[data-student-billing-preview]')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    const form = document.getElementById('studentProfileForm');
+    const status = form.querySelector('[data-student-form-status]');
+    setButtonLoading(button, true, 'Loading preview…');
+    try {
+      const response = await staffFetch('/api/student-billing-preview', {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ AccountRef: form.elements.AccountRef.value })
+      });
+      const preview = await response.json();
+      if (!response.ok || !preview.ok) throw new Error(preview.message || 'Could not load the billing preview.');
+      const profile = preview.profile;
+      document.querySelector('[data-billing-preview-content]').innerHTML = `
+        <p><strong>${escapeHtml(profile.DisplayName)}</strong> · ${escapeHtml(profile.AccountRef)}</p>
+        <p>${escapeHtml(profile.ClassName)} · ${escapeHtml(profile.StudentType)} · ${escapeHtml(profile.Gender || 'Gender not set')} · ${escapeHtml(profile.BillingCategory)}</p>
+        <p>${escapeHtml(profile.AcademicSession)} · ${escapeHtml(profile.Term)}</p>
+        <p class="status">${escapeHtml(preview.message)}</p>
+        <div class="config-grid"><p>Expected standard charges<br><strong>${money(preview.expectedTotal)}</strong></p><p>Existing period invoices<br><strong>${money(preview.invoicedTotal)}</strong></p><p>Charge difference to review<br><strong>${money(preview.difference)}</strong></p><p>Recorded credit (unchanged)<br><strong>${money(preview.recordedCredit)}</strong></p></div>
+        <div class="table-scroll"><table><thead><tr><th>Component</th><th>Expected</th><th>Invoiced</th><th>Difference</th></tr></thead><tbody>${preview.rows.map((row) => `<tr><td>${escapeHtml(row.name || row.code)}<br><small>${escapeHtml(row.code)}</small></td><td>${money(row.expected)}</td><td>${money(row.invoiced)}</td><td>${money(row.difference)}</td></tr>`).join('')}</tbody></table></div>
+        <p>Positive differences may require additional charges. Negative differences may require corrections. Finance must check the source invoices and approvals before posting either. No financial changes are made by this preview.</p>`;
+      document.getElementById('studentBillingPreviewDialog').showModal();
+    } catch (error) {
+      setStatus(status, error.message || String(error), 'bad');
+    } finally {
+      setButtonLoading(button, false, '', 'Preview billing reconciliation');
+    }
+  });
   panelEl.querySelector('[data-copy-shared-parent-onboarding]')?.addEventListener('click', async () => {
     const onboardingUrl = new URL('/parent-dashboard#onboarding=1', window.location.origin).href;
     try {
