@@ -31,6 +31,7 @@ import { invalidateStaffAccessCache, staffAccessFor } from '../lib/staff-auth.js
 import { mergedProfileText } from '../lib/profile-settings-update.js';
 import { selectStudentBillingProfile, selectStudentBillingProfiles, studentProfileValue } from '../lib/student-billing-profile.js';
 import { effectiveInvoiceAfterReversal } from '../lib/invoice-charge-reversal.js';
+import { financialPreviewFingerprint } from '../lib/financial-preview-fingerprint.js';
 import {
   applyPublicPortalContent,
   PUBLIC_PORTAL_CONTENT_DOCUMENT
@@ -3371,13 +3372,12 @@ export async function boardingWearReversalPlan(student, data, { candidateOnly = 
       }
     }
   }
-  const signature = JSON.stringify({ profile, revision: student.__updateTime, feeItems: data.feeItems,
+  const previewToken = candidateOnly ? '' : await financialPreviewFingerprint({ profile, revision: student.__updateTime, feeItems: data.feeItems,
     invoices: data.invoices, ledger: data.ledger, payments: data.payments, summaries: data.accountSummaries,
-    journals: data.journals });
-  const digest = candidateOnly ? null : await crypto.subtle.digest('SHA-256', new TextEncoder().encode(signature));
+    journals: data.journals }, ['feeItems', 'invoices', 'ledger', 'payments', 'summaries', 'journals']);
   return { ok: true, readOnly: true, profile, amount, releasedCredit, outstandingRemoved: asMoneyNumber(amount - releasedCredit),
     invoiceId: invoice?.InvoiceId || '', invoiceDate: invoice?.Date || '', ready: !reason, candidateOnly, reason,
-    previewToken: digest ? [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('') : '',
+    previewToken,
     baselineJournals, message: 'Preview only. No financial changes. Original invoices and receipts are retained; released allocations become available parent credit.' };
 }
 

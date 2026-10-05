@@ -11,7 +11,7 @@ const pageStyleVersions = new Map([
   ['plan-management.html', '20260830-dual-currency-pricing'],
   ['register-organization.html', '20260918-neutral-plan-cards']
 ]);
-const adminScriptVersion = '20261005-student-billing-profile-6';
+const adminScriptVersion = '20261005-student-billing-profile-7';
 const parentScriptVersion = '20261005-store-grade-matching';
 const notificationScriptVersion = '20260927-spoken-alerts';
 const notificationStyleVersion = '20260804-read-efficiency';

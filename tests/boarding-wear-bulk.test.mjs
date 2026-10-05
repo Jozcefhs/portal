@@ -58,5 +58,8 @@ test('bulk UI displays aggregate effects and requires one explicit financial app
   assert.match(ui, /data-bulk-reversal-reason/);
   assert.match(ui, /confirmText: 'Approve and post all'/);
   assert.match(ui, /postBoardingWearBulk\(eligible, reason/);
-  assert.match(ui, /finally \{ postButton.disabled = true; \}/);
+  assert.match(ui, /finally \{\s+postButton.disabled = true;/);
+  assert.match(ui, /Bulk Boarding Wear correction — results/);
+  assert.match(ui, /data-refresh-boardwear-review>Run a fresh review/);
+  assert.match(ui, /Finished — no corrections confirmed/);
 });

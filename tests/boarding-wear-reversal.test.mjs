@@ -35,6 +35,22 @@ const dataFor = (credit = 0) => {
   return { schoolProfile: {}, feeItems: [fee], invoices: [inv], ledger, payments, journals, accountSummaries: [] };
 };
 
+const reorderFields = (value) => Array.isArray(value) ? value.map(reorderFields)
+  : value && typeof value === 'object'
+    ? Object.fromEntries(Object.entries(value).reverse().map(([key, item]) => [key, reorderFields(item)])) : value;
+const reorderRecords = (data) => Object.fromEntries(Object.entries(data).map(([key, value]) =>
+  [key, Array.isArray(value) ? reorderFields(value).reverse() : reorderFields(value)]));
+
+test('unchanged financial snapshots retain preview tokens across field and document ordering', async () => {
+  const data = dataFor(60000), before = JSON.stringify(data);
+  const initial = await boardingWearReversalPlan(student, data);
+  const reordered = await boardingWearReversalPlan(reorderFields(student), reorderRecords(data));
+  assert.equal(initial.ready, true, initial.reason);
+  assert.equal(reordered.ready, true, reordered.reason);
+  assert.equal(reordered.previewToken, initial.previewToken);
+  assert.equal(JSON.stringify(data), before);
+});
+
 test('returning BOW reversal preview separates unpaid, partial and fully allocated amounts without writes', async () => {
   for (const credit of [0, 25000, 60000]) {
     const data = dataFor(credit), before = JSON.stringify(data);
@@ -143,7 +159,7 @@ test('atomic posting preserves original fields, records adjustment/journals/audi
   const posting = source.slice(source.indexOf('export async function reverseBoardingWearCharge'), source.indexOf('async function saveOrganizationModulePreferences')).replace('export ', '');
   let writes = null, closed = false;
   const data = dataFor(60000);
-  const context = { getBoardingWearReversalData: async () => structuredClone(data), boardingWearReversalPlan,
+  const context = { getBoardingWearReversalData: async () => reorderRecords(structuredClone(data)), boardingWearReversalPlan,
     clean: (value) => String(value ?? '').trim(), nowIso: () => '2026-10-05T10:00:00Z',
     sameText: (a, b) => String(a ?? '').toLowerCase() === String(b ?? '').toLowerCase(),
     safeDocumentId: (value) => String(value).replaceAll('/', '_'), accountingPeriodIsClosed: async () => closed,
@@ -156,6 +172,10 @@ test('atomic posting preserves original fields, records adjustment/journals/audi
   const plan = await boardingWearReversalPlan(student, data);
   await assert.rejects(post({}, student, 'stale', actor, 'New Intake only'), /changed/);
   assert.equal(writes, null);
+  data.payments[0].__updateTime += '-changed';
+  await assert.rejects(post({}, student, plan.previewToken, actor, 'New Intake only'), /changed/);
+  assert.equal(writes, null);
+  data.payments[0].__updateTime = 'rev-payment';
   closed = true;
   await assert.rejects(post({}, student, plan.previewToken, actor, 'New Intake only'), /closed/);
   assert.equal(writes, null); closed = false;

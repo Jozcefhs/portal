@@ -3736,9 +3736,17 @@ function bindStudentEditor(students) {
               const posted = outcomes.filter((row) => row.result).length;
               postStatus.innerHTML = `<strong>${posted} posted; ${outcomes.length - posted} require a fresh review; ${blocked.length} blocked accounts unchanged.</strong><ul>${outcomes.map((row) =>
                 `<li>${escapeHtml(row.reference)}: ${escapeHtml(row.error || row.result.message)}${row.result ? ` Available credit: ${money(row.result.summary.CreditBalance)}; outstanding: ${money(row.result.summary.OutstandingBalance)}.` : ' Do not assume a failed response means nothing committed; run a fresh review.'}</li>`).join('')}</ul>`;
-              postButton.textContent = 'Finished — refresh Accounts and run a fresh review if needed';
-            } catch (error) { setStatus(postStatus, `${error.message} Run a fresh school-wide review before another submission.`, 'bad'); }
-            finally { postButton.disabled = true; }
+              postButton.textContent = posted ? 'Finished — review the results above' : 'Finished — no corrections confirmed';
+            } catch (error) { setStatus(postStatus, `${error.message} Run a fresh school-wide review before another submission.`, 'bad'); postButton.textContent = 'Stopped — a fresh review is required'; }
+            finally {
+              postButton.disabled = true;
+              content.querySelector('h3').textContent = 'Bulk Boarding Wear correction — results';
+              postStatus.insertAdjacentHTML('afterend', '<button type="button" data-refresh-boardwear-review>Run a fresh review</button>');
+              content.querySelector('[data-refresh-boardwear-review]').addEventListener('click', () => {
+                document.getElementById('studentBillingPreviewDialog').close();
+                panelEl.querySelector('[data-review-boardwear-all]')?.click();
+              });
+            }
           });
         } catch (error) {
           setStatus(status, error.message, 'bad');
