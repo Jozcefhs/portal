@@ -3,6 +3,7 @@
 
 import { getPayableFees } from './backend.js';
 import { withStudentProfileDefaults } from '../lib/student-profile-defaults.js';
+import { studentWalletProfile } from '../lib/student-wallet-profile.js';
 import { effectiveInvoiceAfterReversal } from '../lib/invoice-charge-reversal.js';
 import { createDocumentIfAbsent, getDocument, listCollection, queryCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import {
@@ -930,7 +931,7 @@ function normalizeStudent(row, profile = {}) {
     ParentEmail: lower(pick(row, ['ParentEmail', 'parentEmail', 'Email', 'email', 'VerificationEmail', 'FatherEmail', 'MotherEmail', 'GuardianEmail'])),
     ParentPhone: pick(row, ['ParentPhone', 'parentPhone']),
     VerificationCode: studentLoginCode(row),
-    WalletCardStatus: pick(row, ['WalletCardStatus', 'walletCardStatus'], 'Active'),
+    ...studentWalletProfile(row),
     WalletDailyLimit: asMoneyNumber(pick(row, ['WalletDailyLimit', 'walletDailyLimit'])),
     WalletTxnLimit: asMoneyNumber(pick(row, ['WalletTxnLimit', 'walletTxnLimit'])),
     WalletPinThreshold: asMoneyNumber(pick(row, ['WalletPinThreshold', 'walletPinThreshold'])),

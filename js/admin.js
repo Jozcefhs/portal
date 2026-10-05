@@ -3594,6 +3594,8 @@ function openStudentEditor(student) {
     <section class="config-group"><header><strong>${escapeHtml(title)}</strong></header><div class="config-grid">
       ${fields.map((field) => {
         let value = pick(student, [field]);
+        if (field === 'WalletCardStatus') value = pick(student, ['WalletCardStatus', 'walletCardStatus']) || 'Active';
+        if (field === 'WalletCardId') value = pick(student, ['WalletCardId', 'walletCardId']);
         if (field === 'DisplayName') value = value || pick(student, ['ApplicantName', 'StudentName']);
         if (field === 'ClassName') value = value || pick(student, ['ClassAdmitted']);
         if (field === 'BillingCategory') value = value || 'Regular';

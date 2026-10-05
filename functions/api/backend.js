@@ -32,6 +32,7 @@ import { mergedProfileText } from '../lib/profile-settings-update.js';
 import { selectStudentBillingProfile, selectStudentBillingProfiles, studentProfileValue } from '../lib/student-billing-profile.js';
 import { effectiveInvoiceAfterReversal } from '../lib/invoice-charge-reversal.js';
 import { financialPreviewFingerprint } from '../lib/financial-preview-fingerprint.js';
+import { studentWalletProfile } from '../lib/student-wallet-profile.js';
 import {
   applyPublicPortalContent,
   PUBLIC_PORTAL_CONTENT_DOCUMENT
@@ -518,6 +519,9 @@ async function updateStudentProfile(env, body) {
   editableFields.forEach((field) => {
     if (body[field] !== undefined) updated[field] = clean(body[field]);
   });
+  if (body.WalletCardStatus !== undefined && !clean(body.WalletCardStatus)) {
+    updated.WalletCardStatus = studentWalletProfile(existing).WalletCardStatus;
+  }
   if (body.ClassName !== undefined) {
     updated.ClassName = canonicalConfiguredClass(body.ClassName, await configuredClassNames(env));
     updated.ClassAdmitted = updated.ClassName;
@@ -615,8 +619,7 @@ function normalizeStudent(row, profile = {}) {
     ParentPhone: pick(row, ['parentPhone', 'ParentPhone']),
     VerificationCode: clean(pick(row, ['verificationCode', 'VerificationCode', 'parentLoginCode', 'ParentLoginCode', 'loginCode', 'LoginCode'])).toUpperCase(),
     ParentLoginCode: clean(pick(row, ['parentLoginCode', 'ParentLoginCode', 'verificationCode', 'VerificationCode', 'loginCode', 'LoginCode'])).toUpperCase(),
-    WalletCardId: pick(row, ['walletCardId', 'WalletCardId']),
-    WalletCardStatus: pick(row, ['walletCardStatus', 'WalletCardStatus']),
+    ...studentWalletProfile(row),
     WalletPinHash: pick(row, ['walletPinHash', 'WalletPinHash']),
     WalletPinSetAt: toDisplayDate(pick(row, ['walletPinSetAt', 'WalletPinSetAt'])),
     WalletDailyLimit: asMoneyNumber(pick(row, ['walletDailyLimit', 'WalletDailyLimit'])),

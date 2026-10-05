@@ -6,6 +6,7 @@ import { readJsonBody } from '../lib/request-security.js';
 import { saveStudentLoginPassword } from '../lib/student-login-credentials.js';
 import { gradeSevenIntakeFingerprint, gradeSevenIntakePlan } from '../lib/student-intake-bulk.js';
 import { studentProfileDefaultsPlan, studentProfileDefaultsFingerprint } from '../lib/student-profile-defaults.js';
+import { studentWalletProfile } from '../lib/student-wallet-profile.js';
 
 function clean(value) { return String(value ?? '').trim(); }
 function lower(value) { return clean(value).toLowerCase(); }
@@ -178,6 +179,11 @@ export async function onRequestPost(context) {
     editableFields.forEach((field) => {
       if (body[field] !== undefined) updated[field] = clean(body[field]);
     });
+    // An old/cached profile form may submit its empty "Select" placeholder.
+    // Do not let an unrelated profile edit clear a saved wallet restriction.
+    if (body.WalletCardStatus !== undefined && !clean(body.WalletCardStatus)) {
+      updated.WalletCardStatus = studentWalletProfile(existing).WalletCardStatus;
+    }
     if (body.ClassName !== undefined) {
       const configuredClasses = await listCollection(env, 'settings/academics/classes').catch(() => []);
       updated.ClassName = canonicalConfiguredClass(body.ClassName, configuredClasses);
