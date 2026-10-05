@@ -3653,6 +3653,54 @@ function bindStudentEditor(students) {
     if (!response.ok || !data.ok) throw new Error(data.message || 'Billing reconciliation failed.');
     return data;
   };
+  const reviewBoardingWearReversal = async (reference) => {
+    const plan = await reconcileRequest({ action: 'previewReversal', AccountRef: reference });
+    const content = document.querySelector('[data-billing-preview-content]');
+    content.innerHTML = `<h3>Review Boarding Wear charge reversal</h3>
+      <p><strong>${escapeHtml(plan.profile.DisplayName)}</strong> · ${escapeHtml(plan.profile.AccountRef)} · ${escapeHtml(plan.profile.EnrollmentCategory)}</p>
+      <p>${escapeHtml(plan.profile.AcademicSession)} · ${escapeHtml(plan.profile.Term)} · ${escapeHtml(plan.profile.SchoolSection)}</p>
+      <p>${escapeHtml(plan.message)}</p>
+      <div class="config-grid"><p>Original invoice<br><strong>${escapeHtml(plan.invoiceId)}</strong></p><p>Charge to reverse<br><strong>${money(plan.amount)}</strong></p>
+      <p>Outstanding charge removed<br><strong>${money(plan.outstandingRemoved)}</strong></p><p>Existing allocation released<br><strong>${money(plan.releasedCredit)}</strong></p></div>
+      <p>Only BOW is corrected. No cash refund or new payment is created. Original invoice amounts, receipts and posted journals remain in the audit trail. Released credit stays available on the parent account; it is not automatically spent on another charge.</p>
+      <p>${escapeHtml(plan.reason || `${plan.baselineJournals.length} missing source journal(s) will be restored before reversal, subject to open-period checks.`)}</p>
+      ${plan.ready && !currentUser?.subscriptionReadOnly ? '<label>Approval reason<textarea data-reversal-reason maxlength="500" required></textarea></label><button type="button" data-post-boardwear-reversal>Approve and post this reversal</button>' : ''}
+      <p class="status" data-reversal-status></p>`;
+    content.querySelector('[data-post-boardwear-reversal]')?.addEventListener('click', async (event) => {
+      const button = event.currentTarget, status = content.querySelector('[data-reversal-status]');
+      const reason = content.querySelector('[data-reversal-reason]').value.trim();
+      if (!reason) { setStatus(status, 'Enter the reason for approving this invoice correction.', 'bad'); return; }
+      if (!await window.DynamaxDialogs.confirm({ title: 'Post Boarding Wear reversal',
+        message: `Confirm reversing ${money(plan.amount)} for ${plan.profile.AccountRef}. This removes ${money(plan.outstandingRemoved)} outstanding and releases ${money(plan.releasedCredit)} existing allocation. No receipt is deleted and no cash refund is issued.`, confirmText: 'Approve and post' })) return;
+      setButtonLoading(button, true, 'Posting reviewed reversal…');
+      try {
+        const result = await reconcileRequest({ action: 'applyReversal', AccountRef: reference, PreviewToken: plan.previewToken, Reason: reason });
+        setStatus(status, `${result.message} Available credit: ${money(result.summary.CreditBalance)}; outstanding: ${money(result.summary.OutstandingBalance)}.`, 'good');
+        button.textContent = 'Posted — refresh Accounts to view the correction'; button.disabled = true;
+      } catch (error) { setStatus(status, error.message, 'bad'); setButtonLoading(button, false, '', 'Approve and post this reversal'); }
+    });
+    document.getElementById('studentBillingPreviewDialog').showModal();
+  };
+  panelEl.querySelector('[data-review-boardwear-all]')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    setButtonLoading(button, true, 'Checking returning students…');
+    try {
+      const report = await reconcileRequest({ action: 'previewReversalsAll' });
+      const content = document.querySelector('[data-billing-preview-content]');
+      content.innerHTML = `<h3>Returning-student Boarding Wear review</h3>
+        <p>${report.total} student profiles checked in this branch, covering both permitted school sections. ${report.returning} explicitly returning students; ${report.affected} with active BOW charges; ${report.unaffected} without an active BOW charge.</p>
+        <p><strong>Flagged invoice total: ${money(report.amount)}.</strong> This is not an approved credit. Each account needs a fresh receipt/journal check and individual approval before posting. New-intake students are excluded. No financial records have changed.</p>
+        <div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>Student</th><th>Section / period</th><th>Charge</th><th>Allocated</th><th>Review</th></tr></thead><tbody>${report.rows.map((row) =>
+          `<tr><td>${escapeHtml(row.profile.DisplayName || '')}<br>${escapeHtml(row.profile.AccountRef)}</td><td>${escapeHtml(row.profile.SchoolSection || '')}<br>${escapeHtml(row.profile.AcademicSession || '')} · ${escapeHtml(row.profile.Term || '')}</td><td>${money(row.amount || 0)}</td><td>${money(row.releasedCredit || 0)}</td><td>${escapeHtml(row.reason || 'Candidate — receipt and journal checks required.')}<br><button type="button" data-review-bow-account="${escapeHtml(row.profile.AccountRef)}">Review reversal</button></td></tr>`).join('')}</tbody></table></div>
+        <p class="status" data-reversal-status></p>`;
+      content.querySelectorAll('[data-review-bow-account]').forEach((item) => item.addEventListener('click', async () => {
+        try { await reviewBoardingWearReversal(item.dataset.reviewBowAccount); }
+        catch (error) { setStatus(content.querySelector('[data-reversal-status]'), error.message, 'bad'); }
+      }));
+      document.getElementById('studentBillingPreviewDialog').showModal();
+    } catch (error) { setStatus(dashboardStatus, error.message, 'bad'); }
+    finally { setButtonLoading(button, false, '', 'Review returning-student Boarding Wear'); }
+  });
   const reconcilePlans = async (plans, button, status) => {
     setButtonLoading(button, true, 'Reconciling…');
     let changed = 0, failed = 0, warnings = 0;
@@ -3715,6 +3763,13 @@ function bindStudentEditor(students) {
         ${canReconcile ? `<p>${escapeHtml(preview.reason || 'Only the missing components will be added; existing credit will be applied without creating another payment.')}</p><p class="status" data-billing-reconcile-status></p>${preview.ready ? '<button type="button" data-apply-billing-plans>Reconcile missing charges and existing credit</button>' : ''}` : ''}`;
       const content = document.querySelector('[data-billing-preview-content]');
       content.querySelector('[data-apply-billing-plans]')?.addEventListener('click', (e) => reconcilePlans([preview], e.currentTarget, content.querySelector('[data-billing-reconcile-status]')));
+      if (canReconcile && profile.EnrollmentCategory === 'Returning' && preview.rows.some((row) => row.code === 'BOW' && row.expected === 0 && row.invoiced > 0)) {
+        content.insertAdjacentHTML('beforeend', '<button type="button" data-review-boardwear-reversal>Review Boarding Wear reversal</button>');
+        content.querySelector('[data-review-boardwear-reversal]').addEventListener('click', async () => {
+          try { await reviewBoardingWearReversal(profile.AccountRef); }
+          catch (error) { setStatus(content.querySelector('[data-billing-reconcile-status]'), error.message, 'bad'); }
+        });
+      }
       document.getElementById('studentBillingPreviewDialog').showModal();
     } catch (error) {
       setStatus(status, error.message || String(error), 'bad');
@@ -18090,7 +18145,7 @@ function renderSection(active) {
       ].filter(Boolean).join(' ')
     }) + renderStudentEditor(students);
     if (currentUser?.role === 'Super Admin' && (currentUser.allowedSections || []).includes('accounts')) {
-      panelEl.querySelector('.student-onboarding-link-action')?.insertAdjacentHTML('beforeend', '<button type="button" class="secondary" data-save-student-profile-defaults>Save missing profile defaults</button>');
+      panelEl.querySelector('.student-onboarding-link-action')?.insertAdjacentHTML('beforeend', '<button type="button" class="secondary" data-save-student-profile-defaults>Save missing profile defaults</button><button type="button" class="secondary" data-review-boardwear-all>Review returning-student Boarding Wear</button>');
     }
     bindStudentEditor(students);
     bindStudentClassExport(students);

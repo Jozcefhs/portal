@@ -30,6 +30,7 @@ import { loadOrganizationNameProfile } from '../lib/organization-name-format.js'
 import { invalidateStaffAccessCache, staffAccessFor } from '../lib/staff-auth.js';
 import { mergedProfileText } from '../lib/profile-settings-update.js';
 import { selectStudentBillingProfile, selectStudentBillingProfiles, studentProfileValue } from '../lib/student-billing-profile.js';
+import { effectiveInvoiceAfterReversal } from '../lib/invoice-charge-reversal.js';
 import {
   applyPublicPortalContent,
   PUBLIC_PORTAL_CONTENT_DOCUMENT
@@ -693,6 +694,7 @@ function normalizeFeeItem(row) {
 }
 
 function normalizeInvoice(row) {
+  row = effectiveInvoiceAfterReversal(row);
   return {
     ...row,
     InvoiceId: pick(row, ['invoiceId', 'InvoiceId', '__id']),
@@ -3305,6 +3307,166 @@ export async function reconcileStudentBilling(env, student, token, actor) {
     message: creditWarning || 'Missing charges reconciled and available existing credit applied. No new payment was created.' };
 }
 
+// A narrowly scoped, reviewed correction for BOW after its intake rule changes.
+// It never deletes a receipt or rewrites a posted invoice's gross fields.
+export async function boardingWearReversalPlan(student, data, { candidateOnly = false } = {}) {
+  const preview = await buildStudentBillingPreview(student, data);
+  const profile = preview.profile;
+  const invoices = (data.invoices || []).map(normalizeInvoice).filter((row) =>
+    sameText(row.FeeCode, 'BOW') && sameFinancialPeriod(row, profile.AcademicSession, profile.Term) &&
+    !['void', 'voided', 'cancelled', 'canceled', 'reversed'].includes(lower(row.Status)));
+  const invoice = invoices[0];
+  const fees = (data.feeItems || []).map(normalizeFeeItem).filter((fee) => sameText(fee.FeeCode, 'BOW') &&
+    yesNo(fee.Active) === 'YES' && feeMatchesAccountPeriod(fee, { ...profile, EnrollmentCategory: 'New Intake' }));
+  let reason = '';
+  if (!sameText(profile.EnrollmentCategory, 'Returning')) reason = 'Only explicitly returning students qualify.';
+  else if (!profile.AcademicSession || !profile.Term) reason = 'The student accounting period is missing.';
+  else if (invoices.length !== 1) reason = invoices.length ? 'Duplicate Boarding Wear invoices require individual finance review.' : 'No active Boarding Wear invoice in this period.';
+  else if (fees.length !== 1 || !sameText(fees[0].EnrollmentCategory, 'New Intake') ||
+    preview.rows.find((row) => sameText(row.code, 'BOW'))?.expected !== 0) reason = 'Save one applicable New Intake-only Boarding Wear rule before reviewing a reversal.';
+  else if (!isSchoolFeeInvoice(invoice) || invoice.Debit <= 0 || invoice.Debit !== fees[0].Amount || invoice.Credit < 0 || invoice.Credit > invoice.Debit) reason = 'Invoice amounts do not match the configured charge; finance review is required.';
+  else if (!sameText(invoice.Currency || 'NGN', 'NGN')) reason = 'Foreign-currency invoices require finance review.';
+  else if (invoice.SchoolSection && !sameText(invoice.SchoolSection, profile.SchoolSection)) reason = 'Invoice school section differs from the profile.';
+  else if (!candidateOnly && lower(student.ProfileCompletionStatus) !== 'complete') reason = 'Complete and verify the student profile before posting.';
+  const amount = invoice?.Debit || 0;
+  const releasedCredit = invoice?.Credit || 0;
+  const sourceCharge = invoice ? buildSchoolInvoiceChargeAccountingJournal(invoice) : null;
+  const journals = data.journals || [];
+  const priorCharge = journals.find((row) => sameText(row.JournalNo || row.__id, sourceCharge?.JournalNo));
+  const baselineJournals = [];
+  if (!reason && !candidateOnly) {
+    if (priorCharge && (lower(priorCharge.Status) !== 'posted' ||
+      journalLineSignature(priorCharge.Lines) !== journalLineSignature(sourceCharge.Lines) ||
+      !sameText(priorCharge.BranchId || 'main', profile.BranchId) || !sameText(priorCharge.Date, sourceCharge.Date))) {
+      reason = 'The posted invoice journal differs from its source; finance review is required.';
+    } else if (!priorCharge) baselineJournals.push(sourceCharge);
+    const gap = schoolInvoiceCreditJournalGap(invoice, journals);
+    if (gap.invalidPostedJournalIds?.length || gap.missing < -0.005 || (gap.missing > 0.005 && gap.baselineExists)) {
+      reason = 'Payment allocations and journals do not reconcile; finance review is required.';
+    } else if (gap.missing > 0.005) baselineJournals.push(buildSchoolInvoiceCreditAccountingJournal(invoice, { amount: gap.missing }));
+    const ledger = (data.ledger || []).map(normalizeLedger);
+    const received = ledger.filter(isAvailableSchoolCreditReceipt).reduce((sum, row) => sum + row.Credit, 0);
+    const withdrawn = ledger.filter((row) => normalizeMatchText(row.FeeCategory) === 'account credit').reduce((sum, row) => sum + row.Debit, 0);
+    const allocated = (data.invoices || []).map(normalizeInvoice).filter(isSchoolFeeInvoice)
+      .reduce((sum, row) => sum + Math.min(row.Debit, row.Credit), 0);
+    if (allocated + withdrawn > received + 0.005) reason = 'Allocated parent credit lacks matching receipt evidence; finance review is required.';
+    const tracedReceipts = (data.payments || []).map(normalizePayment).filter(isAvailableSchoolCreditReceipt)
+      .filter((row) => ['paid', 'success', 'successful', 'completed'].includes(lower(row.Status)))
+      .reduce((sum, row) => sum + paymentCreditedAmount(row), 0);
+    if (releasedCredit > 0 && tracedReceipts + 0.005 < received) reason = 'Paid charge or transferred credit requires traceable successful receipts; finance review is required.';
+    for (const row of (data.payments || []).map(normalizePayment).filter(isAvailableSchoolCreditReceipt)) {
+      const receiptJournal = buildPaymentAccountingJournal(row);
+      if (!receiptJournal) { reason = 'A receipt cannot be traced to its accounting journal.'; break; }
+      const prior = journals.find((journal) => sameText(journal.JournalNo || journal.__id, receiptJournal.JournalNo));
+      if (!prior) baselineJournals.push(receiptJournal);
+      else if (lower(prior.Status) !== 'posted' || journalLineSignature(prior.Lines) !== journalLineSignature(receiptJournal.Lines) ||
+        !sameText(prior.BranchId || 'main', profile.BranchId) || !sameText(prior.Date, receiptJournal.Date)) {
+        reason = 'A legacy receipt journal requires finance review before credit can be released.'; break;
+      }
+    }
+  }
+  const signature = JSON.stringify({ profile, revision: student.__updateTime, feeItems: data.feeItems,
+    invoices: data.invoices, ledger: data.ledger, payments: data.payments, summaries: data.accountSummaries,
+    journals: data.journals });
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(signature));
+  return { ok: true, readOnly: true, profile, amount, releasedCredit, outstandingRemoved: asMoneyNumber(amount - releasedCredit),
+    invoiceId: invoice?.InvoiceId || '', invoiceDate: invoice?.Date || '', ready: !reason, candidateOnly, reason,
+    previewToken: [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join(''),
+    baselineJournals, message: 'Preview only. No financial changes. Original invoices and receipts are retained; released allocations become available parent credit.' };
+}
+
+export async function getBoardingWearReversalData(env, student) {
+  const data = await getStudentBillingData(env, student);
+  const candidates = data.invoices.filter((row) => sameText(row.FeeCode || row.feeCode, 'BOW'));
+  const groups = await Promise.all(candidates.map((row) => queryCollectionPages(env, 'accountingJournals', {
+    filters: [{ field: 'SourceId', op: '==', value: clean(row.InvoiceId || row.invoiceId || row.__id) }], pageSize: 250, maxRows: 2000
+  })));
+  const receipts = await Promise.all(data.payments.map(normalizePayment).filter(isAvailableSchoolCreditReceipt).map((row) => {
+    const journal = buildPaymentAccountingJournal(row);
+    return journal ? getDocument(env, 'accountingJournals', safeDocumentId(journal.JournalNo)) : null;
+  }));
+  data.journals = [...new Map([...groups.flat(), ...receipts.filter(Boolean)].map((row) => [row.__id, row])).values()];
+  return data;
+}
+
+export async function reverseBoardingWearCharge(env, student, token, actor, approvalReason) {
+  if (actor.role !== 'Super Admin' || actor.subscriptionReadOnly || !clean(approvalReason) || clean(approvalReason).length > 500) {
+    const error = new Error('Writable Super Admin approval and a reason (up to 500 characters) are required.'); error.status = 403; throw error;
+  }
+  const data = await getBoardingWearReversalData(env, student);
+  const plan = await boardingWearReversalPlan(student, data);
+  if (!plan.ready || plan.previewToken !== token) { const error = new Error(plan.reason || 'Financial records changed after preview. Review again.'); error.status = 409; throw error; }
+  const date = nowIso().slice(0, 10);
+  if (await accountingPeriodIsClosed(env, date)) { const error = new Error('The reversal posting period is closed.'); error.status = 409; throw error; }
+  for (const journal of plan.baselineJournals) {
+    if (await accountingPeriodIsClosed(env, journal.Date)) { const error = new Error('A missing original journal belongs to a closed period; finance review is required.'); error.status = 409; throw error; }
+  }
+  const invoice = data.invoices.find((row) => sameText(row.InvoiceId || row.invoiceId || row.__id, plan.invoiceId));
+  const reversalId = `BOW-REV-${safeDocumentId(plan.invoiceId)}`;
+  const timestamp = nowIso();
+  const fields = { FeeChargeReversed: 'YES', FeeChargeReversalId: reversalId, FeeChargeReversalAmount: plan.amount,
+    FeeChargeReleasedCredit: plan.releasedCredit, FeeChargeReversedAt: timestamp, FeeChargeReversedBy: actor.username,
+    FeeChargeReversalReason: clean(approvalReason) };
+  const writes = [];
+  const guard = (row, collectionPath) => {
+    const field = ['AdmissionNo', 'AccountRef', 'Amount', 'InvoiceId', 'JournalNo', 'FeeCode', 'Credit', 'accountRef', 'amount'].find((key) => Object.hasOwn(row, key));
+    if (!row.__id || !row.__updateTime || !field) { const error = new Error('A financial source lacks its revision; no reversal was posted.'); error.status = 409; throw error; }
+    writes.push({ collectionPath, documentId: row.__id, updateTime: row.__updateTime, updateMask: [field], data: { [field]: row[field] } });
+  };
+  guard(student, student.__scopePath || 'students');
+  for (const row of data.feeItems.filter((row) => sameText(row.FeeCode || row.feeCode, 'BOW'))) guard(row, 'feeItems');
+  for (const row of data.invoices.filter((row) => row.__id !== invoice.__id)) guard(row, 'invoices');
+  for (const row of data.ledger) guard(row, 'ledger');
+  for (const row of data.payments) guard(row, 'payments');
+  for (const row of data.journals) guard(row, 'accountingJournals');
+  if (!invoice.__id || !invoice.__updateTime) throw new Error('The invoice lacks its database revision.');
+  writes.push({ collectionPath: 'invoices', documentId: invoice.__id, updateTime: invoice.__updateTime,
+    updateMask: Object.keys(fields), data: fields });
+  const sourceCharge = buildSchoolInvoiceChargeAccountingJournal(invoice);
+  const reverseJournal = normalizedJournal({ ...sourceCharge, JournalNo: `SYS-${reversalId}`, Date: date,
+    Description: `Boarding Wear charge reversal: ${plan.profile.AccountRef}`, Source: 'Student Invoice Charge Reversal',
+    SourceId: plan.invoiceId, ReversalId: reversalId, ReversesJournalNo: sourceCharge.JournalNo,
+    RecordedBy: actor.displayName || actor.username, Reason: clean(approvalReason), CreatedAt: timestamp, UpdatedAt: timestamp,
+    Lines: sourceCharge.Lines.map((line) => ({ ...line, Debit: line.Credit, Credit: line.Debit })) });
+  const journals = [...plan.baselineJournals, reverseJournal];
+  if (plan.releasedCredit > 0) journals.push(normalizedJournal({ ...reverseJournal,
+    JournalNo: `SYS-${reversalId}-RELEASE`, Source: 'Student Invoice Credit Release',
+    Description: `Release original parent credit allocation: ${plan.profile.AccountRef}`,
+    ReversesJournalNo: '', ReversesJournalNos: [...data.journals, ...plan.baselineJournals]
+      .filter((row) => sameText(row.Source, 'Student Invoice Credit') && sameText(row.SourceId, plan.invoiceId)).map((row) => row.JournalNo),
+    TotalDebit: plan.releasedCredit, TotalCredit: plan.releasedCredit,
+    Lines: [{ AccountCode: '1100', Debit: plan.releasedCredit, Credit: 0 },
+      { AccountCode: '2310', Debit: 0, Credit: plan.releasedCredit }] }));
+  for (const journal of journals) writes.push({ collectionPath: 'accountingJournals', documentId: safeDocumentId(journal.JournalNo), exists: false, data: journal });
+  const accountRef = plan.profile.AccountRef;
+  const summaryId = safeDocumentId(accountRef);
+  const summarySnapshot = await getDocument(env, 'accountSummaries', summaryId);
+  // A receipt posted since preview must not be overwritten by a stale summary.
+  const previewSummary = data.accountSummaries.find((row) => row.__id === summaryId);
+  if ((summarySnapshot?.__updateTime || '') !== (previewSummary?.__updateTime || '')) {
+    const error = new Error('Account balance changed since preview. No reversal was posted.'); error.status = 409; throw error;
+  }
+  const summary = calculateAccountFinancialSummary(data.invoices.map((row) => row.__id === invoice.__id ? { ...row, ...fields } : row), data.ledger, accountRef, date);
+  writes.push({ collectionPath: 'accountSummaries', documentId: summaryId,
+    ...(summarySnapshot ? { updateTime: summarySnapshot.__updateTime } : { exists: false }),
+    data: { ...summary, LinkedReferences: accountRefsFrom(student).filter((ref) => !sameText(ref, accountRef)) } });
+  const adjustment = { AdjustmentNo: reversalId, Type: 'Student charge reversal', Status: 'Posted', Date: date,
+    AccountRef: accountRef, DisplayName: plan.profile.DisplayName, BranchId: plan.profile.BranchId,
+    SchoolSection: plan.profile.SchoolSection, AcademicSession: plan.profile.AcademicSession, Term: plan.profile.Term,
+    Amount: plan.amount, ReleasedCredit: plan.releasedCredit, Reason: clean(approvalReason), Reference: plan.invoiceId,
+    JournalNo: reverseJournal.JournalNo, PostedBy: actor.username, PostedAt: timestamp, OriginalInvoice: invoice };
+  writes.push({ collectionPath: 'accountingAdjustments', documentId: reversalId, exists: false, data: adjustment });
+  const audit = accountingAuditWrite('REVERSE BOARDING WEAR CHARGE', 'Student invoice', plan.invoiceId,
+    { UserRole: actor.role, UserUsername: actor.username, RecordedBy: actor.displayName || actor.username, BranchId: plan.profile.BranchId }, clean(approvalReason));
+  Object.assign(audit.data, { SourcePlatform: 'Web', ReversalId: reversalId, Before: invoice, After: fields,
+    Amount: plan.amount, ReleasedCredit: plan.releasedCredit, AccountRef: accountRef });
+  writes.push(audit);
+  if (writes.length > 450) throw new Error('Too many source records; use an individual finance-led reversal. No records changed.');
+  await batchCommitDocuments(env, writes);
+  return { ok: true, amount: plan.amount, releasedCredit: plan.releasedCredit, summary,
+    message: 'Boarding Wear charge reversed. Original invoice and receipts retained; released allocations are available parent credit. Refresh Accounts and the parent portal.' };
+}
+
 async function saveOrganizationModulePreferences(env, body) {
   requireAccountingRole(body, ['Super Admin']);
   if (!Array.isArray(body.EnabledModules || body.enabledModules)) {
@@ -4817,7 +4979,7 @@ async function writePaymentAccountingJournal(env, payment, hasMatchingInvoice) {
 export function buildSchoolInvoiceChargeAccountingJournal(row = {}) {
   const invoice = normalizeInvoice(row);
   const sourceId = clean(invoice.InvoiceId || row.__id);
-  const amount = asMoneyNumber(invoice.Debit || invoice.Amount);
+  const amount = asMoneyNumber(invoice.GrossInvoiceAmount ?? (invoice.Debit || invoice.Amount));
   if (!sourceId || amount <= 0 || !isSchoolFeeInvoice(invoice)) return null;
   const revenue = accountingAccountCodeForRevenue(invoice.FeeCategory, invoice.FeeCode);
   return normalizedJournal({
@@ -4913,7 +5075,21 @@ export function schoolInvoiceCreditJournalGap(row = {}, journals = []) {
     return sum + asMoneyNumber(debit.Debit);
   }, 0));
   const baselineJournalNo = `SYS-INVCREDIT-LEGACY-${safeDocumentId(invoiceId)}`;
-  return { invoiceId, expected, posted, missing: asMoneyNumber(expected - posted),
+  const releases = journals.filter((journal) => sameText(journal.Source, 'Student Invoice Credit Release') && sameText(journal.SourceId, invoiceId));
+  let released = 0;
+  for (const journal of releases) {
+    const lines = accountingLines(journal.Lines);
+    const debit = lines.find((line) => line.AccountCode === '1100' && asMoneyNumber(line.Debit) > 0);
+    const credit = lines.find((line) => line.AccountCode === '2310' && asMoneyNumber(line.Credit) > 0);
+    if (lower(journal.Status) !== 'posted' || lines.length !== 2 || !debit || !credit ||
+      asMoneyNumber(debit.Debit) !== asMoneyNumber(credit.Credit) ||
+      !invoice.FeeChargeReversalId || journal.ReversalId !== invoice.FeeChargeReversalId) {
+      invalidPostedJournalIds.push(clean(journal.JournalNo || journal.__id));
+    } else released += asMoneyNumber(debit.Debit);
+  }
+  if (asMoneyNumber(released) !== asMoneyNumber(invoice.FeeChargeReleasedCredit || 0)) invalidPostedJournalIds.push('Credit release does not match the approved reversal.');
+  const netPosted = asMoneyNumber(posted - released);
+  return { invoiceId, expected, posted: netPosted, ...(released > 0 ? { released } : {}), missing: asMoneyNumber(expected - netPosted),
     baselineExists: related.some((journal) => lower(journal.Status) === 'posted' && sameText(journal.JournalNo || journal.__id, baselineJournalNo)),
     ...(invalidPostedJournalIds.length ? { invalidPostedJournalIds } : {}) };
 }

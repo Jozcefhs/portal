@@ -1,3 +1,4 @@
+import { effectiveInvoiceAfterReversal } from '../lib/invoice-charge-reversal.js';
 import {
   firestoreDocumentToObject,
   firestoreRequest,
@@ -466,7 +467,7 @@ async function studentDetail(env, user, row, capabilities) {
     return !selectedSection || itemSection === selectedSection || !itemSection;
   });
   const studentPayments = scoped(payments);
-  const studentInvoices = scoped(invoices);
+  const studentInvoices = scoped(invoices).map(effectiveInvoiceAfterReversal);
   const studentLedger = scoped(ledger);
   const walletRows = studentLedger.filter((item) =>
     lower(item.FeeCategory) === 'wallet' || lower(item.EntryType).includes('wallet'));

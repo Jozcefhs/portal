@@ -4,7 +4,8 @@ import { schoolCollectionPaths, querySchoolCollection } from '../lib/school-scop
 import { selectStudentBillingProfiles, studentBillingIdentity } from '../lib/student-billing-profile.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { billingPreviewStudent } from './student-billing-preview.js';
-import { financialRowMatchesAccount, studentBillingReconciliationPlan, getStudentBillingData, reconcileStudentBilling } from './backend.js';
+import { financialRowMatchesAccount, studentBillingReconciliationPlan, getStudentBillingData, reconcileStudentBilling,
+  boardingWearReversalPlan, getBoardingWearReversalData, reverseBoardingWearCharge } from './backend.js';
 
 const clean = (value) => String(value ?? '').trim();
 function fail(message, status) { const error = new Error(message); error.status = status; throw error; }
@@ -18,9 +19,10 @@ export async function onRequestPost({ request, env }) {
       fail('Select a school branch and use a Super Admin account with Accounts and Students access.', 403);
     }
     const body = await readJsonBody(request, { maxBytes: 4096 });
-    if (!['previewAll', 'preview', 'apply'].includes(body.action)) fail('Choose a reconciliation action.', 400);
+    if (!['previewAll', 'preview', 'apply', 'previewReversalsAll', 'previewReversal', 'applyReversal'].includes(body.action)) fail('Choose a reconciliation action.', 400);
+    if (['apply', 'applyReversal'].includes(body.action) && user.subscriptionReadOnly) fail('The subscription is read-only.', 403);
     const scope = { branchId: user.branchId, schoolSectionAccess: user.schoolSectionAccess };
-    if (body.action === 'previewAll') {
+    if (['previewAll', 'previewReversalsAll'].includes(body.action)) {
       const paths = await schoolCollectionPaths(env, 'students', scope);
       const [groups, schoolProfile, feeItems, invoices, accountSummaries] = await Promise.all([
         Promise.all(paths.map(async (path) => (await listCollectionForReport(env, path))
@@ -34,10 +36,13 @@ export async function onRequestPost({ request, env }) {
           (!['primary', 'secondary'].includes(clean(user.schoolSectionAccess).toLowerCase()) || identity.section === clean(user.schoolSectionAccess).toLowerCase());
       });
       const rows = [];
-      let matched = 0, incomplete = 0;
+      let matched = 0, incomplete = 0, returning = 0;
       for (const student of students) {
         const identity = studentBillingIdentity(student);
-        if (clean(student.ProfileCompletionStatus).toLowerCase() !== 'complete') { incomplete += 1; continue; }
+        const reversalReview = body.action === 'previewReversalsAll';
+        if (reversalReview && !/^returning$/i.test(clean(student.EnrollmentCategory))) continue;
+        if (reversalReview) returning += 1;
+        if (!reversalReview && clean(student.ProfileCompletionStatus).toLowerCase() !== 'complete') { incomplete += 1; continue; }
         if (students.filter((row) => studentBillingIdentity(row).reference === identity.reference).length !== 1) {
           rows.push({ profile: { AccountRef: student.AdmissionNo, DisplayName: student.DisplayName }, ready: false, reason: 'Ambiguous admission number across school sections.', difference: 0 }); continue;
         }
@@ -45,14 +50,23 @@ export async function onRequestPost({ request, env }) {
         const matches = (row) => financialRowMatchesAccount({ ...row, AccountRef: row.AccountRef || row.accountRef,
           AdmissionNo: row.AdmissionNo || row.admissionNo, ApplicationReference: row.ApplicationReference || row.applicationReference }, account) &&
           clean(row.BranchId || 'main').toLowerCase() === identity.branch;
-        const plan = await studentBillingReconciliationPlan({ ...student, BranchId: identity.branch, SchoolSection: identity.section }, {
+        const inputs = {
           schoolProfile, feeItems: feeItems.filter((row) => !clean(row.BranchId) || clean(row.BranchId).toLowerCase() === identity.branch),
           invoices: invoices.filter(matches), accountSummaries: accountSummaries.filter(matches), payments: [], ledger: []
-        });
+        };
+        if (reversalReview) {
+          const plan = await boardingWearReversalPlan({ ...student, BranchId: identity.branch, SchoolSection: identity.section }, inputs, { candidateOnly: true });
+          if (plan.invoiceId) rows.push(plan);
+          else matched += 1;
+          continue;
+        }
+        const plan = await studentBillingReconciliationPlan({ ...student, BranchId: identity.branch, SchoolSection: identity.section }, inputs);
         if (plan.rows.every((row) => Math.abs(row.difference) < 0.005 && row.invoiceIds.length <= 1)) matched += 1;
         else rows.push(plan);
       }
       rows.sort((a, b) => String(a.profile.AccountRef).localeCompare(String(b.profile.AccountRef)));
+      if (body.action === 'previewReversalsAll') return Response.json({ ok: true, readOnly: true, total: students.length,
+        returning, unaffected: matched, affected: rows.length, amount: rows.reduce((sum, row) => sum + (row.amount || 0), 0), rows }, { headers: { 'Cache-Control': 'no-store' } });
       return Response.json({ ok: true, readOnly: true, total: students.length, matched, incomplete,
         ready: rows.filter((row) => row.ready).length, review: rows.filter((row) => !row.ready).length, rows }, { headers: { 'Cache-Control': 'no-store' } });
     }
@@ -61,6 +75,12 @@ export async function onRequestPost({ request, env }) {
     const groups = await Promise.all(['AdmissionNo', 'admissionNo', 'AccountRef', 'accountRef'].map((field) =>
       querySchoolCollection(env, 'students', { filters: [{ field, op: '==', value: reference }], limit: 3, scope })));
     const student = billingPreviewStudent(groups.flat(), user, reference);
+    if (['previewReversal', 'applyReversal'].includes(body.action)) {
+      const result = body.action === 'applyReversal'
+        ? await reverseBoardingWearCharge(env, student, clean(body.PreviewToken), user, clean(body.Reason))
+        : await boardingWearReversalPlan(student, await getBoardingWearReversalData(env, student));
+      return Response.json(result, { headers: { 'Cache-Control': 'no-store' } });
+    }
     const result = body.action === 'apply'
       ? await reconcileStudentBilling(env, student, clean(body.PreviewToken), user)
       : await studentBillingReconciliationPlan(student, await getStudentBillingData(env, student));

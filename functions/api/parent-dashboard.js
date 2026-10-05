@@ -3,6 +3,7 @@
 
 import { getPayableFees } from './backend.js';
 import { withStudentProfileDefaults } from '../lib/student-profile-defaults.js';
+import { effectiveInvoiceAfterReversal } from '../lib/invoice-charge-reversal.js';
 import { createDocumentIfAbsent, getDocument, listCollection, queryCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import {
   querySchoolCollection,
@@ -1009,6 +1010,7 @@ function normalizeLedger(row) {
 }
 
 function normalizeInvoice(row) {
+  row = effectiveInvoiceAfterReversal(row);
   return {
     Date: toDisplayDate(pick(row, ['Date', 'date', 'CreatedAt', 'createdAt'])),
     CreatedAt: pick(row, ['CreatedAt', 'createdAt', 'Date', 'date']),
