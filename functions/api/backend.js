@@ -3179,7 +3179,7 @@ export async function buildStudentBillingPreview(student, data = {}) {
   };
 }
 
-export async function getStudentBillingPreview(env, student) {
+export async function getStudentBillingData(env, student) {
   const profile = normalizeStudent(student);
   const account = { ...profile, AccountRef: profile.AdmissionNo || profile.AccountRef || profile.ApplicationReference };
   const references = [...new Set(accountRefsFrom(account))];
@@ -3200,10 +3200,109 @@ export async function getStudentBillingPreview(env, student) {
     getDocument(env, 'settings', 'schoolProfile'), listCollection(env, 'feeItems'),
     load('invoices'), load('payments'), load('ledger'), load('accountSummaries')
   ]);
-  return buildStudentBillingPreview(student, {
+  return {
     schoolProfile, invoices, payments, ledger, accountSummaries,
     feeItems: feeItems.filter((row) => !clean(row.BranchId) || canonicalSchoolBranchId(row.BranchId) === canonicalSchoolBranchId(student.BranchId || 'main'))
-  });
+  };
+}
+
+export async function getStudentBillingPreview(env, student) {
+  return buildStudentBillingPreview(student, await getStudentBillingData(env, student));
+}
+
+export async function studentBillingReconciliationPlan(student, data) {
+  const preview = await buildStudentBillingPreview(student, data);
+  const conflicts = preview.rows.filter((row) => row.difference < -0.005 ||
+    (row.difference > 0.005 && row.invoiced > 0.005) || row.invoiceIds.length > 1);
+  const missing = preview.rows.filter((row) => row.expected > 0 && row.invoiced === 0 && !row.invoiceIds.length);
+  let reason = '';
+  if (conflicts.length) reason = 'Existing amounts or duplicate invoices need finance review.';
+  else if (!missing.length) reason = 'Charges already match the saved profile.';
+  else if (lower(student.ProfileCompletionStatus) !== 'complete') reason = 'Parent profile is not marked complete.';
+  else if (!preview.invoicedTotal) reason = 'No existing period billing; use the normal first-time billing process.';
+  else if (!preview.profile.AcademicSession || !preview.profile.Term) reason = 'Academic period is not set.';
+  else if (data.invoices.some((row) => missing.some((fee) => sameText(fee.code, row.FeeCode || row.feeCode)) &&
+    sameFinancialPeriod(normalizeInvoice(row), preview.profile.AcademicSession, preview.profile.Term))) {
+    reason = 'A missing component has a cancelled or legacy invoice; finance review is required.';
+  }
+  const signature = JSON.stringify({ profile: preview.profile, revision: student.__updateTime || '',
+    rows: preview.rows.map(({ code, expected, invoiced, invoiceIds }) => ({ code, expected, invoiced, invoiceIds: [...invoiceIds].sort() }))
+      .sort((a, b) => a.code.localeCompare(b.code)) });
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(signature));
+  const previewToken = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+  return { ...preview, ready: !reason, reason, missing, previewToken };
+}
+
+// Only absent components are added. Posted amounts and receipts are never rewritten.
+export async function reconcileStudentBilling(env, student, token, actor) {
+  let data = await getStudentBillingData(env, student);
+  let plan = await studentBillingReconciliationPlan(student, data);
+  if (token !== plan.previewToken) { const error = new Error('Billing changed since preview. Review again before applying.'); error.status = 409; throw error; }
+  if (!plan.ready) { const error = new Error(plan.reason); error.status = 409; throw error; }
+  const accountRef = plan.profile.AccountRef;
+  const linkedReferences = accountRefsFrom(student).filter((ref) => !sameText(ref, accountRef));
+  const today = nowIso().slice(0, 10);
+  if (await accountingPeriodIsClosed(env, today)) { const error = new Error('The posting date belongs to a closed accounting period.'); error.status = 409; throw error; }
+  // Trace existing receipts and allocations before extending billing. This
+  // established routine refuses inconsistent legacy credit instead of inventing it.
+  const preflight = await syncSchoolAccountCreditJournals(env, accountRef, linkedReferences);
+  if (preflight.unreconciledLegacyActions?.length || preflight.unreconciledAllocation) {
+    const error = new Error('Existing payment or credit journals need finance review. No missing charges were added.'); error.status = 409; throw error;
+  }
+  data = await getStudentBillingData(env, student);
+  plan = await studentBillingReconciliationPlan(student, data);
+  if (token !== plan.previewToken || !plan.ready) { const error = new Error('Invoices changed during reconciliation. Preview again.'); error.status = 409; throw error; }
+  const writes = [];
+  const guard = (row, collectionPath, field) => {
+    if (!row.__id || !row.__updateTime || !Object.hasOwn(row, field)) {
+      const error = new Error('A source record lacks its database revision. No charges were added.'); error.status = 409; throw error;
+    }
+    writes.push({ collectionPath, documentId: row.__id, updateTime: row.__updateTime,
+      updateMask: [field], data: { [field]: row[field] } });
+  };
+  guard(student, student.__scopePath || 'students', Object.hasOwn(student, 'AdmissionNo') ? 'AdmissionNo' : 'admissionNo');
+  for (const invoice of data.invoices) guard(invoice, 'invoices', Object.hasOwn(invoice, 'InvoiceId') ? 'InvoiceId' : 'AccountRef');
+  const stamp = nowIso();
+  const createdInvoices = [];
+  for (const missing of plan.missing) {
+    const fees = data.feeItems.map(normalizeFeeItem).filter((fee) => sameText(fee.FeeCode, missing.code) &&
+      yesNo(fee.Active) === 'YES' && feeMatchesAccountPeriod(fee, plan.profile));
+    const fee = applyBillingCategoryOverrides(fees, plan.profile)[0];
+    if (!fee || asMoneyNumber(fee.Amount) !== missing.expected) throw new Error('Ambiguous fee configuration; finance review is required.');
+    const original = data.feeItems.find((row) => row.__id === fee.__id);
+    guard(original, 'feeItems', Object.hasOwn(original, 'Amount') ? 'Amount' : 'amount');
+    const idDigest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify([
+      plan.profile.BranchId, plan.profile.SchoolSection, lower(accountRef), plan.profile.AcademicSession, plan.profile.Term, lower(fee.FeeCode)
+    ])));
+    const invoiceId = `INV-PROFILE-${[...new Uint8Array(idDigest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+    const invoice = { ...plan.profile, InvoiceId: invoiceId, AdmissionNo: accountRef,
+      AccountRefNormalized: normalizeReferenceText(accountRef), ApplicationReference: student.ApplicationReference || '',
+      ParentEmail: clean(student.ParentEmail || student.VerificationEmail || student.Email).toLowerCase(),
+      ParentEmails: [...new Set([...(student.ParentEmails || []), student.ParentEmail, student.FatherEmail, student.MotherEmail, student.GuardianEmail].map(lower).filter(Boolean))],
+      FeeCode: fee.FeeCode, FeeName: fee.FeeName, FeeCategory: fee.FeeCategory, Currency: fee.Currency || 'NGN',
+      Amount: missing.expected, Debit: missing.expected, Credit: 0, Balance: missing.expected,
+      DueDate: feeDueDate(fee.DueDate) || fee.DueDate || '', Status: 'Unpaid', Date: stamp, CreatedAt: stamp, UpdatedAt: stamp,
+      RecordedBy: actor.displayName || actor.username, Source: 'Student profile reconciliation' };
+    writes.push({ collectionPath: 'invoices', documentId: invoiceId, exists: false, data: invoice });
+    const journal = buildSchoolInvoiceChargeAccountingJournal(invoice);
+    writes.push({ collectionPath: 'accountingJournals', documentId: safeDocumentId(journal.JournalNo), exists: false, data: journal });
+    createdInvoices.push(invoice);
+  }
+  const audit = accountingAuditWrite('RECONCILE STUDENT PROFILE BILLING', 'Student account', accountRef, {
+    UserRole: actor.role, UserUsername: actor.username, RecordedBy: actor.displayName || actor.username, BranchId: plan.profile.BranchId
+  }, `${createdInvoices.length} missing components added; ${plan.difference}. Existing payments and invoice amounts preserved.`);
+  audit.data.SourcePlatform = 'Web';
+  audit.data.Before = { profile: plan.profile, invoices: data.invoices, summaries: data.accountSummaries };
+  audit.data.CreatedInvoiceIds = createdInvoices.map((row) => row.InvoiceId);
+  writes.push(audit);
+  if (writes.length > 450) throw new Error('This account requires a finance-led reconciliation; no charges were added.');
+  await batchCommitDocuments(env, writes);
+  let creditWarning = '';
+  try { await applyDueSchoolFeeCreditsForAccount(env, accountRef, linkedReferences); }
+  catch (error) { creditWarning = `Charges posted, but existing credit still needs review: ${error.message}`; }
+  const after = await getStudentBillingPreview(env, student);
+  return { ok: true, created: createdInvoices.length, added: plan.difference, creditWarning, after,
+    message: creditWarning || 'Missing charges reconciled and available existing credit applied. No new payment was created.' };
 }
 
 async function saveOrganizationModulePreferences(env, body) {

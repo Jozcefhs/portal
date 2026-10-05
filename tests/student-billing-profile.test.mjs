@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { studentProfileValue, selectStudentBillingProfile, selectStudentBillingProfiles } from '../functions/lib/student-billing-profile.js';
-import { getAccountsOverview, buildStudentBillingPreview } from '../functions/api/backend.js';
+import { getAccountsOverview, buildStudentBillingPreview, studentBillingReconciliationPlan } from '../functions/api/backend.js';
 import { billingPreviewStudent } from '../functions/api/student-billing-preview.js';
 
 const student = { AdmissionNo: 'DCA/24/1874', DisplayName: 'Test student', ClassName: 'Grade 12',
@@ -103,8 +103,81 @@ test('billing preview endpoint enforces staff scope and has no posting or financ
 test('preview uses the existing padded, scrollable finance table layout', async () => {
   const source = await readFile(new URL('../js/admin.js', import.meta.url), 'utf8');
   assert.match(source, /class="config-group" data-billing-preview-content/);
-  const view = source.slice(source.indexOf("document.querySelector('[data-billing-preview-content]')"), source.indexOf("document.getElementById('studentBillingPreviewDialog').showModal()"));
+  const start = source.indexOf('const profile = preview.profile;');
+  const view = source.slice(start, source.indexOf("document.getElementById('studentBillingPreviewDialog').showModal()", start));
   assert.match(view, /class="admin-table-wrap"/);
   assert.match(view, /class="admin-table"/);
   assert.match(view, /escapeHtml\(row.name \|\| row.code\)/);
+});
+
+const reconciliationData = () => ({ feeItems: ['TUITION', 'BOARD'].map((code, index) => ({
+  FeeCode: code, FeeName: code, FeeCategory: 'School Fee', Active: 'YES', Amount: index ? 200 : 100,
+  StudentType: index ? 'Boarding Student' : 'All', Gender: 'All', ClassName: 'All', BillingCategory: 'All',
+  AcademicSession: '2026/2027', Term: 'First Term'
+})), invoices: [{ InvoiceId: 'INV-1', AccountRef: student.AdmissionNo, FeeCategory: 'School Fee',
+  FeeCode: 'TUITION', Amount: 100, Credit: 100, AcademicSession: '2026/2027', Term: 'First Term' }] });
+
+test('missing-only reconciliation applies to completed primary and secondary students without changing input', async () => {
+  for (const section of ['primary', 'secondary']) {
+    const row = { ...student, SchoolSection: section, ClassName: section === 'primary' ? 'Primary 5' : 'Grade 12',
+      __scopePath: `schoolBranches/main/sections/${section}/students` };
+    const data = reconciliationData();
+    const before = JSON.stringify(data);
+    const plan = await studentBillingReconciliationPlan(row, data);
+    assert.equal(plan.ready, true);
+    assert.equal(plan.missing.length, 1);
+    assert.equal(plan.difference, 200);
+    assert.equal(plan.previewToken.length, 64);
+    assert.equal(JSON.stringify(data), before);
+  }
+});
+
+test('reconciliation excludes incomplete profiles, unbilled accounts, changed amounts and duplicates', async () => {
+  assert.equal((await studentBillingReconciliationPlan({ ...student, ProfileCompletionStatus: '' }, reconciliationData())).ready, false);
+  assert.equal((await studentBillingReconciliationPlan(student, { ...reconciliationData(), invoices: [] })).ready, false);
+  const changed = reconciliationData();
+  changed.invoices[0].Amount = 90;
+  assert.equal((await studentBillingReconciliationPlan(student, changed)).ready, false);
+  const duplicates = reconciliationData();
+  duplicates.invoices.push({ ...duplicates.invoices[0], InvoiceId: 'INV-2' });
+  assert.equal((await studentBillingReconciliationPlan(student, duplicates)).ready, false);
+});
+
+test('obsolete day charges and cancelled components need finance review, not automatic reversal or rebilling', async () => {
+  const data = reconciliationData();
+  data.invoices.push({ ...data.invoices[0], InvoiceId: 'CANCELLED-BOARD', FeeCode: 'BOARD', Status: 'Cancelled', Amount: 200 });
+  const cancelled = await studentBillingReconciliationPlan(student, data);
+  assert.equal(cancelled.ready, false);
+  assert.match(cancelled.reason, /cancelled/);
+  data.invoices[1] = { ...data.invoices[0], InvoiceId: 'OLD-DAY', FeeCode: 'DAY', Amount: 50 };
+  assert.equal((await studentBillingReconciliationPlan(student, data)).ready, false);
+});
+
+test('preview token changes on profile or charge changes but permits newly received real payments', async () => {
+  const data = reconciliationData();
+  const first = await studentBillingReconciliationPlan(student, data);
+  assert.notEqual((await studentBillingReconciliationPlan({ ...student, __updateTime: 'new-revision' }, data)).previewToken, first.previewToken);
+  data.feeItems[1].Amount += 1;
+  assert.notEqual((await studentBillingReconciliationPlan(student, data)).previewToken, first.previewToken);
+  data.feeItems[1].Amount -= 1;
+  data.accountSummaries = [{ AccountRef: student.AdmissionNo, CreditBalance: 500 }];
+  assert.equal((await studentBillingReconciliationPlan(student, data)).previewToken, first.previewToken);
+});
+
+test('reconciliation route requires branch-scoped school finance authority and complete reports', async () => {
+  const route = await readFile(new URL('../functions/api/student-billing-reconciliation.js', import.meta.url), 'utf8');
+  assert.match(route, /user.role !== 'Super Admin'/);
+  assert.match(route, /user.edition !== 'school'/);
+  assert.match(route, /includes\('accounts'\)/);
+  assert.match(route, /includes\('students'\)/);
+  assert.match(route, /listCollectionForReport/);
+  assert.match(route, /PreviewToken/);
+  const backend = await readFile(new URL('../functions/api/backend.js', import.meta.url), 'utf8');
+  const source = backend.slice(backend.indexOf('export async function reconcileStudentBilling'), backend.indexOf('async function saveOrganizationModulePreferences'));
+  assert.match(source, /exists: false/);
+  assert.match(source, /updateTime: row.__updateTime/);
+  assert.match(source, /updateMask: \[field\]/);
+  assert.match(source, /audit.data.Before/);
+  assert.match(source, /await batchCommitDocuments/);
+  assert.doesNotMatch(source, /recordManualPayment|deleteDocument|generateSchoolFeeInvoicesForAccount/);
 });

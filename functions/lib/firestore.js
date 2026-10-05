@@ -483,6 +483,7 @@ export async function batchCommitDocuments(env, writes) {
           };
       const precondition = batchWritePrecondition(item);
       if (precondition) write.currentDocument = precondition;
+      if (Array.isArray(item.updateMask) && write.update) write.updateMask = { fieldPaths: item.updateMask };
       return write;
     })
   };

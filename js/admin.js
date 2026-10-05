@@ -3613,15 +3613,60 @@ function openStudentEditor(student) {
 
 function bindStudentEditor(students) {
   document.querySelector('[data-close-billing-preview]')?.addEventListener('click', () => document.getElementById('studentBillingPreviewDialog')?.close());
+  const reconcileRequest = async (payload) => {
+    const response = await staffFetch('/api/student-billing-reconciliation', { method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.message || 'Billing reconciliation failed.');
+    return data;
+  };
+  const reconcilePlans = async (plans, button, status) => {
+    setButtonLoading(button, true, 'Reconciling…');
+    let changed = 0, failed = 0, warnings = 0;
+    const outcomes = [];
+    for (const plan of plans) {
+      setStatus(status, `Checking ${outcomes.length + 1} of ${plans.length}: ${plan.profile.AccountRef}. Keep this page open.`, '');
+      try {
+        const result = await reconcileRequest({ action: 'apply', AccountRef: plan.profile.AccountRef, PreviewToken: plan.previewToken });
+        changed += 1;
+        if (result.creditWarning) warnings += 1;
+        outcomes.push({ reference: plan.profile.AccountRef, result });
+      } catch (error) { failed += 1; outcomes.push({ reference: plan.profile.AccountRef, error: error.message }); }
+    }
+    status.innerHTML = `<strong>${changed} accounts reconciled; ${failed} require another review; ${warnings} credit-allocation warnings.</strong><ul>${outcomes.map((row) =>
+      `<li>${escapeHtml(row.reference)}: ${escapeHtml(row.error || row.result.message)}${row.result ? ` Recorded credit: ${money(row.result.after.recordedCredit)}; remaining charge difference: ${money(row.result.after.difference)}.` : ''}</li>`).join('')}</ul>`;
+    button.disabled = true;
+    button.textContent = 'Review complete — load a fresh preview before retrying';
+  };
+  panelEl.querySelector('[data-review-all-student-billing]')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    setButtonLoading(button, true, 'Checking all student billing…');
+    try {
+      const report = await reconcileRequest({ action: 'previewAll' });
+      const content = document.querySelector('[data-billing-preview-content]');
+      const ready = report.rows.filter((row) => row.ready);
+      content.innerHTML = `<h3>School-wide student billing review</h3>
+        <p>${report.total} student profiles checked in this branch (primary and secondary where permitted). ${report.matched} completed profiles already match; ${report.incomplete} incomplete profiles excluded.</p>
+        <p><strong>${report.ready} accounts have missing components; ${report.review} need finance review.</strong></p>
+        <p>Only absent charges are added. Existing amounts and payments are preserved. Available credit is applied through the audited allocation process. Conflicts and incomplete profiles are not changed.</p>
+        <div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>Student</th><th>Classification</th><th>Difference</th><th>Review</th></tr></thead><tbody>${report.rows.map((row) =>
+          `<tr><td>${escapeHtml(row.profile.DisplayName || '')}<br>${escapeHtml(row.profile.AccountRef)}</td><td>${escapeHtml(row.profile.StudentType || '')} · ${escapeHtml(row.profile.Gender || '')}</td><td>${money(row.difference)}</td><td>${escapeHtml(row.reason || `${row.missing.length} missing component(s)`)}</td></tr>`).join('')}</tbody></table></div>
+        <p class="status" data-billing-reconcile-status></p>${ready.length ? `<button type="button" data-apply-billing-plans>Reconcile ${ready.length} reviewed accounts (${money(ready.reduce((sum, row) => sum + row.difference, 0))} missing charges)</button>` : ''}`;
+      content.querySelector('[data-apply-billing-plans]')?.addEventListener('click', (e) => reconcilePlans(ready, e.currentTarget, content.querySelector('[data-billing-reconcile-status]')));
+      document.getElementById('studentBillingPreviewDialog').showModal();
+    } catch (error) { setStatus(dashboardStatus, error.message, 'bad'); }
+    finally { setButtonLoading(button, false, '', 'Review all student billing'); }
+  });
   document.querySelector('[data-student-billing-preview]')?.addEventListener('click', async (event) => {
     const button = event.currentTarget;
     const form = document.getElementById('studentProfileForm');
     const status = form.querySelector('[data-student-form-status]');
     setButtonLoading(button, true, 'Loading preview…');
     try {
-      const response = await staffFetch('/api/student-billing-preview', {
+      const canReconcile = currentUser?.role === 'Super Admin';
+      const response = await staffFetch(canReconcile ? '/api/student-billing-reconciliation' : '/api/student-billing-preview', {
         method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ AccountRef: form.elements.AccountRef.value })
+        body: JSON.stringify({ action: 'preview', AccountRef: form.elements.AccountRef.value })
       });
       const preview = await response.json();
       if (!response.ok || !preview.ok) throw new Error(preview.message || 'Could not load the billing preview.');
@@ -3633,7 +3678,10 @@ function bindStudentEditor(students) {
         <p class="status">${escapeHtml(preview.message)}</p>
         <div class="config-grid"><p>Expected standard charges<br><strong>${money(preview.expectedTotal)}</strong></p><p>Existing period invoices<br><strong>${money(preview.invoicedTotal)}</strong></p><p>Charge difference to review<br><strong>${money(preview.difference)}</strong></p><p>Recorded credit (unchanged)<br><strong>${money(preview.recordedCredit)}</strong></p></div>
         <div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>Component</th><th>Expected</th><th>Invoiced</th><th>Difference</th></tr></thead><tbody>${preview.rows.map((row) => `<tr><td>${escapeHtml(row.name || row.code)}<br><small>${escapeHtml(row.code)}</small></td><td>${money(row.expected)}</td><td>${money(row.invoiced)}</td><td>${money(row.difference)}</td></tr>`).join('')}</tbody></table></div>
-        <p>Positive differences may require additional charges. Negative differences may require corrections. Finance must check the source invoices and approvals before posting either. No financial changes are made by this preview.</p>`;
+        <p>Positive differences may require additional charges. Negative differences may require corrections. Finance must check the source invoices and approvals before posting either. No financial changes are made by this preview.</p>
+        ${canReconcile ? `<p>${escapeHtml(preview.reason || 'Only the missing components will be added; existing credit will be applied without creating another payment.')}</p><p class="status" data-billing-reconcile-status></p>${preview.ready ? '<button type="button" data-apply-billing-plans>Reconcile missing charges and existing credit</button>' : ''}` : ''}`;
+      const content = document.querySelector('[data-billing-preview-content]');
+      content.querySelector('[data-apply-billing-plans]')?.addEventListener('click', (e) => reconcilePlans([preview], e.currentTarget, content.querySelector('[data-billing-reconcile-status]')));
       document.getElementById('studentBillingPreviewDialog').showModal();
     } catch (error) {
       setStatus(status, error.message || String(error), 'bad');
@@ -17979,7 +18027,7 @@ function renderSection(active) {
     const learner = staffLearnerTerms();
     const handoff = takeRecordsDeskHandoff('students');
     const reference = recordsDeskHandoffReference(handoff);
-    panelEl.innerHTML = recordsDeskHandoffBanner(handoff, reference) + '<div class="student-onboarding-link-action"><button type="button" class="secondary" data-copy-shared-parent-onboarding>Copy shared parent completion link</button></div>' + studentClassExportToolbar(students) + studentGradeSevenIntakeToolbar(students) + table(learner.Plural, students, [
+    panelEl.innerHTML = recordsDeskHandoffBanner(handoff, reference) + `<div class="student-onboarding-link-action"><button type="button" class="secondary" data-copy-shared-parent-onboarding>Copy shared parent completion link</button>${currentUser?.role === 'Super Admin' && (currentUser.allowedSections || []).includes('accounts') ? '<button type="button" class="secondary" data-review-all-student-billing>Review all student billing</button>' : ''}</div>` + studentClassExportToolbar(students) + studentGradeSevenIntakeToolbar(students) + table(learner.Plural, students, [
       { label: 'Admission No', value: (row) => pick(row, ['AdmissionNo', 'AccountRef', '__id']) },
       { label: 'Name', render: studentSearchIdentity },
       { label: 'Class', value: studentExportClass },
