@@ -8362,6 +8362,7 @@ async function loadStaffAttendance() {
         <div><p class="eyebrow">People & attendance</p><h2>Staff attendance</h2><p class="muted">Verified clock-in/out with automatic lateness, absence, early-departure and overtime calculations.</p></div>
         <button type="button" id="refreshStaffAttendance">Refresh</button>
       </div>
+      ${(data.processingWarnings || []).map((warning) => `<p class="status bad" role="alert">${escapeHtml(warning)}</p>`).join('')}
       <div class="workflow-kpis">
         <div><small>Current state</small><strong>${stateComplete ? 'Completed' : stateIn ? 'Clocked in' : 'Clocked out'}</strong><span>${data.myEvents?.[0]?.Timestamp ? escapeHtml(new Date(data.myEvents[0].Timestamp).toLocaleString()) : 'No attendance event yet'}</span></div>
         <div><small>Today's status</small><strong>${escapeHtml(latestDaily?.AttendanceStatus || 'No record')}</strong><span>${latestDaily?.Date ? escapeHtml(latestDaily.Date) : scheduleActive ? 'Awaiting today’s clock-in' : 'Work-hours policy not enabled'}</span></div>

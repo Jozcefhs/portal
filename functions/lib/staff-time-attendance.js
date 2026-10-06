@@ -485,6 +485,56 @@ function activeStaffValue(value) {
   return !['no', 'false', '0', 'inactive', 'disabled'].includes(lower(value));
 }
 
+export function staffAttendanceDirectoryFor(staffUsers = [], employees = [], user = {}, branchId = 'main') {
+  const exited = new Set(employees.filter((row) => /exited|terminated/i.test(clean(row.Status))).map((row) => lower(row.Username)));
+  const identities = new Map();
+  for (const row of staffUsers) {
+    const username = lower(row.Username || row.__id);
+    if (!username || identities.has(username) || !staffRecordMatchesEdition(row, user)
+      || !staffBranchMatches(row, branchId)
+      || !activeStaffValue(row.Active === undefined ? true : row.Active) || exited.has(username)) continue;
+    identities.set(username, {
+      Username: username,
+      DisplayName: clean(row.DisplayName || row.Username || row.__id),
+      Role: clean(row.Role),
+      Department: clean(row.Department)
+    });
+  }
+  return [...identities.values()].sort((a, b) => a.DisplayName.localeCompare(b.DisplayName));
+}
+
+export function automaticAbsenceCandidates(directory = [], dailyRows = [], date = '') {
+  const current = dailyRows.filter((row) => clean(row.Date) === date);
+  const currentUsernames = new Set(current.map((row) => lower(row.Username)));
+  const occupiedIds = new Set(current.map((row) => clean(row.DailyId || row.__id) || dailyAttendanceId(date, row.Username)));
+  const groups = new Map();
+  for (const row of directory) {
+    const username = lower(row.Username);
+    if (!username) continue;
+    const id = dailyAttendanceId(date, username);
+    if (!groups.has(id)) groups.set(id, new Map());
+    if (!groups.get(id).has(username)) groups.get(id).set(username, { ...row, Username: username });
+  }
+  const candidates = [];
+  const processingWarnings = [];
+  for (const [id, identities] of groups) {
+    // Legacy sanitization can map different usernames to one ID. Never merge
+    // those people or pick one arbitrarily; leave their records for HR review.
+    if (identities.size > 1) {
+      processingWarnings.push(`Automatic absence skipped for conflicting staff record IDs: ${[...identities.keys()].join(', ')}. Ask HR to review these usernames; existing attendance is unchanged.`);
+      continue;
+    }
+    const row = identities.values().next().value;
+    if (currentUsernames.has(row.Username)) continue;
+    if (occupiedIds.has(id)) {
+      processingWarnings.push(`Automatic absence skipped for ${row.Username}: the stored daily record ID belongs to another staff identity. Ask HR to review this username; existing attendance is unchanged.`);
+      continue;
+    }
+    candidates.push(row);
+  }
+  return { candidates, processingWarnings };
+}
+
 function attendancePolicySnapshot(policy = {}, day = '') {
   const schedule = policy.DaySchedules?.[clean(day).slice(0, 3).toUpperCase()] || {};
   return {
@@ -551,15 +601,17 @@ function approvedLeaveForDate(leaveRows = [], username, date) {
     && clean(row.EndDate) >= date);
 }
 
-async function synchronizeAutomaticAbsences(env, branchId, policy, now, directory, leaveRows, dailyRows) {
-  if (lower(policy.Active) === 'no' || lower(policy.AutoRecordAbsence) === 'no') return dailyRows;
+export async function synchronizeAutomaticAbsences(env, branchId, policy, now, directory, leaveRows, dailyRows, dependencies = {}) {
+  const commit = dependencies.batchCommitDocuments || batchCommitDocuments;
+  const query = dependencies.queryStaffAttendanceCollection || queryStaffAttendanceCollection;
+  if (lower(policy.Active) === 'no' || lower(policy.AutoRecordAbsence) === 'no') return { dailyRows, processingWarnings: [] };
   const local = localAttendanceParts(now, policy.TimeZone);
   const schedule = policy.DaySchedules?.[local.day];
-  if (!schedule?.Enabled || local.minuteOfDay < timeMinutes(schedule.ClosingTime, 'Closing time')) return dailyRows;
+  if (!schedule?.Enabled || local.minuteOfDay < timeMinutes(schedule.ClosingTime, 'Closing time')) return { dailyRows, processingWarnings: [] };
   const current = dailyRows.filter((row) => clean(row.Date) === local.date);
-  const currentUsernames = new Set(current.map((row) => lower(row.Username)));
+  const { candidates, processingWarnings } = automaticAbsenceCandidates(directory, dailyRows, local.date);
   const timestamp = now instanceof Date ? now.toISOString() : new Date(now).toISOString();
-  const created = directory.filter((row) => !currentUsernames.has(lower(row.Username))).map((row) => {
+  const created = candidates.map((row) => {
     const onLeave = approvedLeaveForDate(leaveRows, row.Username, local.date);
     const id = dailyAttendanceId(local.date, row.Username);
     return {
@@ -585,12 +637,12 @@ async function synchronizeAutomaticAbsences(env, branchId, policy, now, director
       UpdatedBy: 'Automatic attendance processing'
     };
   });
-  if (!created.length) return dailyRows;
+  if (!created.length) return { dailyRows, processingWarnings };
   let conflict = false;
   for (let index = 0; index < created.length; index += 400) {
     const chunk = created.slice(index, index + 400);
     try {
-      await batchCommitDocuments(env, chunk.map((row) => ({
+      await commit(env, chunk.map((row) => ({
         collectionPath: dailyAttendancePath(env, branchId),
         documentId: row.DailyId,
         data: row,
@@ -601,12 +653,12 @@ async function synchronizeAutomaticAbsences(env, branchId, policy, now, director
       conflict = true;
     }
   }
-  if (!conflict) return [...created, ...dailyRows];
-  const refreshed = await queryStaffAttendanceCollection(env, 'daily', branchId, {
+  if (!conflict) return { dailyRows: [...created, ...dailyRows], processingWarnings };
+  const refreshed = await query(env, 'daily', branchId, {
     filters: [{ field: 'Date', op: '==', value: local.date }],
     limit: 500
   }).catch(() => current);
-  return [...refreshed, ...dailyRows.filter((row) => clean(row.Date) !== local.date)];
+  return { dailyRows: [...refreshed, ...dailyRows.filter((row) => clean(row.Date) !== local.date)], processingWarnings };
 }
 
 async function ensurePresenceNotificationSchedule(env, statePath, username, policy = {}, state = {}, presenceCheck = {}) {
@@ -708,18 +760,8 @@ export async function listStaffAttendance(env, user, body = {}) {
     listCollection(env, 'hrLeaveRequests').catch(() => [])
   ]);
   const policy = normalizeAttendancePolicy(storedPolicy || { Active: 'NO' });
-  const exited = new Set(employees.filter((row) => /exited|terminated/i.test(clean(row.Status))).map((row) => lower(row.Username)));
-  const directory = staffUsers.filter((row) => staffRecordMatchesEdition(row, user)
-    && staffBranchMatches(row, branchId)
-    && activeStaffValue(row.Active === undefined ? true : row.Active)
-    && !exited.has(lower(row.Username || row.__id)))
-    .map((row) => ({
-      Username: lower(row.Username || row.__id),
-      DisplayName: clean(row.DisplayName || row.Username || row.__id),
-      Role: clean(row.Role),
-      Department: clean(row.Department)
-    })).filter((row) => row.Username).sort((a, b) => a.DisplayName.localeCompare(b.DisplayName));
-  const dailyRows = await synchronizeAutomaticAbsences(env, branchId, policy, new Date(), directory, leaveRows, dailySource);
+  const directory = staffAttendanceDirectoryFor(staffUsers, employees, user, branchId);
+  const { dailyRows, processingWarnings } = await synchronizeAutomaticAbsences(env, branchId, policy, new Date(), directory, leaveRows, dailySource);
   const sorted = events.sort((a, b) => clean(b.Timestamp).localeCompare(clean(a.Timestamp)));
   const sortedDaily = dailyRows.sort((a, b) => clean(b.Date).localeCompare(clean(a.Date)) || clean(a.DisplayName).localeCompare(clean(b.DisplayName)));
   let reportDailyRows = sortedDaily;
@@ -765,6 +807,7 @@ export async function listStaffAttendance(env, user, body = {}) {
     todayAttendanceDay: todayLocal.day,
     todaySchedule: policy.DaySchedules?.[todayLocal.day] || null,
     staffDirectory: canManage ? directory : [],
+    processingWarnings: canReport ? processingWarnings : [],
     myEvents: own,
     myDailyRecords: ownDaily,
     recentEvents: canReport ? sorted.slice(0, 250) : [],
