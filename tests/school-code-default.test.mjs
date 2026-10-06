@@ -46,7 +46,7 @@ test('setup displays a blank school code instead of injecting a value or a schoo
   for (const profile of [{}, { SchoolCode: '' }, { SchoolCode: 'BPS' }, { SchoolCode: 'DCA' }]) {
     const fields = new Map(); const stop = new Error('Stop after school-code field');
     const applyProfile = extract('js/setup.js', 'applyProfile', {
-      populateBranchOptions: () => {}, applySettingsAccess: () => {},
+      populateBranchOptions: () => {}, populateBranchTerminology: () => {}, applySettingsAccess: () => {},
       setField: (id, value) => { if (id === 'schoolAddress') throw stop; fields.set(id, value); }
     });
     assert.throws(() => applyProfile(profile), error => error === stop);

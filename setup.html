@@ -79,6 +79,16 @@
       </aside>
 
       <div class="settings-content">
+        <section id="branch-school-terminology" class="settings-section" data-school-settings-only>
+          <div class="settings-section-heading"><div><h2>Branch school terminology</h2><p>Choose the section type by stable branch ID. Names do not determine the type. Records and staff permissions are unchanged.</p></div></div>
+          <div class="settings-fields two-column">
+            <div class="settings-field"><label for="terminologyBranch">Branch</label><select id="terminologyBranch"></select><small id="terminologyBranchId" class="settings-help"></small></div>
+            <div class="settings-field"><label for="branchSchoolSectionMode">School section type</label><select id="branchSchoolSectionMode"><option value="">Existing terminology (not configured)</option><option value="primary">Primary / Nursery</option><option value="secondary">Secondary</option><option value="mixed">Mixed primary and secondary</option></select></div>
+          </div>
+          <p class="settings-help">Primary uses Pupils and Head Teacher's Office; Secondary uses Students and Principal's Office. Mixed uses the staff member's assigned section, or neutral Learners and Executive Office when both are accessible.</p>
+          <button id="saveBranchSchoolSection" type="button" class="settings-text-button">Save branch terminology</button>
+          <p id="branchSchoolSectionStatus" class="status"></p>
+        </section>
         <section id="general-settings" class="settings-section">
           <div class="settings-section-heading">
             <div><span class="settings-section-icon">G</span></div>
@@ -564,6 +574,6 @@
   <script src="js/password-toggle.js?v=20260718-password-toggle"></script>
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
   <script src="js/app-dialogs.js?v=20260809-custom-dialogs"></script>
-  <script src="js/setup.js?v=20261003-no-school-code-default"></script>
+  <script src="js/setup.js?v=20261003-no-school-code-default-20261006-branch-school-terminology"></script>
 </body>
 </html>

@@ -7,11 +7,11 @@ import { normalizeSchoolStructure } from '../functions/lib/school-scope.js';
 const backendSource = await readFile(new URL('../functions/api/backend.js', import.meta.url), 'utf8');
 
 test('desktop structure has a dedicated backend action that refreshes the shared branch registry', () => {
-  assert.match(backendSource, /async function saveOrganisationStructure\(env, body\)/);
+  assert.match(backendSource, /async function saveOrganisationStructure\(env, body, deploymentIdentity = null\)/);
   assert.match(backendSource, /getDocument\(env, 'settings', 'schoolStructure'\)/);
   assert.match(backendSource, /upsertDocument\(env, 'settings', 'schoolStructure'/);
   assert.match(backendSource, /invalidateSchoolStructureCache\(\)/);
-  assert.match(backendSource, /case 'saveOrganisationStructure':\s*return saveOrganisationStructure\(env, body\)/);
+  assert.match(backendSource, /case 'saveOrganisationStructure':\s*return saveOrganisationStructure\(env, body, deploymentIdentity\)/);
 });
 
 test('installed desktop clients also synchronize structure while saving branch overrides', () => {

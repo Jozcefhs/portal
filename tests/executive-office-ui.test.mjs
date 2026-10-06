@@ -9,7 +9,7 @@ const portalCss = fs.readFileSync(new URL('../css/style.css', import.meta.url), 
 test('executive office is an edition-aware staff workspace', () => {
   assert.match(adminJs, /\['executiveOffice', 'Executive Office'\]/);
   assert.match(adminJs, /function executiveOfficeTitle\(\)/);
-  assert.match(adminJs, /primaryWorkspace \|\| \['Head Teacher', 'Assistant Head Teacher'\]\.includes\(role\)/);
+  assert.match(adminJs, /section === 'primary' \|\| \(!branch\?\.schoolSectionMode && \['Head Teacher', 'Assistant Head Teacher'\]\.includes\(role\)\)/);
   assert.match(adminJs, /return "Principal's Office"/);
   assert.match(adminJs, /"Head Teacher's Office"/);
   assert.match(adminJs, /return "Senior Pastor's Office"/);
@@ -87,5 +87,5 @@ test('executive office remains responsive and readable in dark mode', () => {
   assert.match(portalCss, /html\[data-theme="dark"\] \.executive-empty-chart\{[^}]*background:#112438;[^}]*color:#edf5ff\}/);
   assert.match(portalCss, /html\[data-theme="dark"\] \.executive-empty-chart \.muted\{color:#b8cada!important\}/);
   assert.match(portalCss, /@media\(max-width:680px\)\{[\s\S]*?\.executive-directory-layout\{grid-template-columns:1fr/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20261005-student-billing-profile/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20261005-student-billing-profile-9-20261006-branch-school-terminology/);
 });

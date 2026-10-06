@@ -38,6 +38,42 @@ const requestedEmailMessage = String(
   requestedSettingsParams.get('emailMessage') || requestedSettingsParams.get('emailCode') || ''
 ).trim().slice(0, 240);
 let unlockedPassword = '';
+let terminologyBranches = [];
+const terminologyBranchField = document.getElementById('terminologyBranch');
+const branchSchoolSectionModeField = document.getElementById('branchSchoolSectionMode');
+function populateBranchTerminology(profile = {}) {
+  terminologyBranches = Array.isArray(profile.AvailableBranches) ? profile.AvailableBranches : [];
+  const previous = terminologyBranchField.value;
+  terminologyBranchField.replaceChildren(...terminologyBranches.map((branch) => new Option(branch.Name || branch.Id, branch.Id)));
+  if (terminologyBranches.some((branch) => branch.Id === previous)) terminologyBranchField.value = previous;
+  updateBranchTerminologySelection();
+}
+function updateBranchTerminologySelection() {
+  const branch = terminologyBranches.find((row) => row.Id === terminologyBranchField.value);
+  branchSchoolSectionModeField.value = branch?.SchoolSectionMode || '';
+  document.getElementById('terminologyBranchId').textContent = branch ? `Branch ID: ${branch.Id}` : '';
+}
+terminologyBranchField.addEventListener('change', updateBranchTerminologySelection);
+document.getElementById('saveBranchSchoolSection').addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  if (!window.DynamaxActionFeedback.begin(button, 'Saving terminology...')) return;
+  const status = document.getElementById('branchSchoolSectionStatus');
+  try {
+    const response = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+      action: 'saveBranchSchoolSection', password: unlockedPassword, SettingsScope: settingsScopeField.value,
+      BranchId: settingsScopeField.value === 'branch' ? settingsBranchField.value : '',
+      BranchSchoolSectionUpdate: { Id: terminologyBranchField.value, SchoolSectionMode: branchSchoolSectionModeField.value }
+    }) });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.message || 'Could not save branch terminology.');
+    populateBranchTerminology(data.profile);
+    status.textContent = `${data.message} Return to the staff portal and refresh its dashboard to load the new setting.`;
+    status.className = 'status ok';
+  } catch (error) {
+    status.textContent = error.message;
+    status.className = 'status bad';
+  } finally { if (button.isConnected) window.DynamaxActionFeedback.end(button); }
+});
 let webLogoDataUrl = '';
 let webLogoChanged = false;
 let activeSettingsEdition = 'school';
@@ -884,6 +920,7 @@ function applySettingsAccess(access = null) {
 
 function applyProfile(profile = {}, settingsAccess = null) {
   populateBranchOptions(profile);
+  populateBranchTerminology(profile);
   applySettingsAccess(settingsAccess);
   setField('schoolName', profile.SchoolName);
   setField('schoolCode', profile.SchoolCode || '');
@@ -949,6 +986,7 @@ function updateSettingsScopeUI(profile = {}) {
     if (activeSettingsAccess.branchId) settingsBranchField.value = activeSettingsAccess.branchId;
   }
   const branchMode = settingsScopeField.value === 'branch';
+  document.getElementById('branch-school-terminology').hidden = activeSettingsEdition !== 'school' || branchMode || scopeLocked;
   if (academicPolicyScopeMode) academicPolicyScopeMode.hidden = !branchMode;
   settingsScopeField.disabled = scopeLocked;
   settingsBranchField.disabled = !branchMode || scopeLocked;

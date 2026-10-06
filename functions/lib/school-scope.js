@@ -30,7 +30,9 @@ export function normalizeSchoolStructure(saved = {}) {
     const name = clean(objectRow ? objectRow.Name || objectRow.name || objectRow.Id || objectRow.id : row);
     const rawId = clean(objectRow ? objectRow.Id || objectRow.id || name : name);
     if (!rawId) return null;
-    return { Id: canonicalSchoolBranchId(rawId), Name: name || rawId };
+    const mode = clean(objectRow?.SchoolSectionMode || objectRow?.schoolSectionMode).toLowerCase();
+    return { Id: canonicalSchoolBranchId(rawId), Name: name || rawId,
+      ...(['primary', 'secondary', 'mixed'].includes(mode) ? { SchoolSectionMode: mode } : {}) };
   }).filter((row, index, rows) => row?.Id && rows.findIndex((candidate) => candidate?.Id === row.Id) === index);
   if (!branches.length) branches.push({ Id: 'main', Name: 'Main Branch' });
 

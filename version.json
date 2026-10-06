@@ -1,7 +1,7 @@
 {
-  "version": "3.1.15",
+  "version": "3.1.16",
   "channel": "stable",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.15.exe",
-  "sha256": "02d1103700d60a158aa57626fa65fae10d147f037eca609bdd2c8914e5046eb1",
-  "notes": "Dynamax Desktop v3.1.15 loads finance journals, invoices and payments in bounded batches from one snapshot across all editions, verifies complete receivables and online-payment reports before replacing cached totals, and retains the targeted Accounts refresh and safe fee-batch repairs. Acceptance remains a deposit and genuine parent credit is preserved. Requires the matching getAccountingFinancePage and getAccountSnapshot backend release."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.16.exe",
+  "sha256": "9203476e80bf420e30e4e5d7ada3649af339b5dd560cd163664c37c8f54d1132",
+  "notes": "Dynamax Desktop v3.1.16 adds explicit Primary/Nursery, Secondary or Mixed school terminology per stable branch ID, preserves saved IDs and section metadata, and refreshes sidebar, student register and executive-office labels when branches switch. Records, permissions and non-school edition vocabulary are unchanged. Requires the matching branch terminology backend."
 }

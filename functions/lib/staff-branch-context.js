@@ -11,7 +11,9 @@ export function configuredStaffBranches(structure = {}) {
   const branches = rows.map((row) => {
     const id = clean(typeof row === 'string' ? row : row?.Id || row?.id || row?.Name || row?.name);
     const name = clean(typeof row === 'string' ? row : row?.Name || row?.name || id);
-    return id ? { id, name: name || id } : null;
+    const mode = lower(row?.SchoolSectionMode || row?.schoolSectionMode);
+    return id ? { id, name: name || id,
+      ...(['primary', 'secondary', 'mixed'].includes(mode) ? { schoolSectionMode: mode } : {}) } : null;
   }).filter(Boolean);
   return branches.length ? branches : [{ id: 'main', name: 'Main Branch' }];
 }

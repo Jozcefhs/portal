@@ -12,6 +12,7 @@ import { finishRequestMetric, startRequestMetric } from '../lib/request-metrics.
 import { readJsonBody } from '../lib/request-security.js';
 import { getWebBranding, saveWebBranding } from '../lib/web-branding.js';
 import { getSchoolStructure } from '../lib/school-scope.js';
+import { saveBranchSchoolSection } from '../lib/branch-school-presentation.js';
 import {
   assertConfiguredProfileBranch,
   effectiveBranchProfile,
@@ -281,6 +282,7 @@ async function loadProfile(env, options = {}) {
       profile.WebLogoUrl = `/api/web-logo?v=${encodeURIComponent(clean(branding.UpdatedAt))}`;
     }
     profile.AvailableBranches = (structure.Branches || []).map((row) => ({
+      ...row,
       Id: clean(row.Id),
       Name: clean(row.Name || row.Id)
     }));
@@ -387,6 +389,20 @@ export async function onRequestPost(context) {
     );
     const settingsScope = settingsAccess.scope;
     const branchId = settingsAccess.branchId;
+    if (clean(body.action || body.Action) === 'saveBranchSchoolSection') {
+      if (settingsAccess.scopeLocked || settingsScope === 'branch') {
+        throw Object.assign(new Error('Only an organisation-wide Super Administrator can change branch terminology.'), { status: 403 });
+      }
+      if (deployment.edition !== 'school') {
+        throw Object.assign(new Error('School section terminology applies only to the School edition.'), { status: 400 });
+      }
+      requireFirestoreEnv(env);
+      await saveBranchSchoolSection(env, body.BranchSchoolSectionUpdate, actor.username);
+      invalidateProfileCache();
+      const profile = await getProfile(env, { fresh: true });
+      finishRequestMetric(metric, { status: 200, action: 'save-branch-school-section' });
+      return Response.json({ ok: true, message: 'Branch terminology saved; records and permissions are unchanged.', profile, settingsAccess }, { headers: { 'Cache-Control': 'no-store' } });
+    }
     if (clean(body.action || body.Action) === 'load') {
       action = 'load-private-profile';
       const profile = profileForSettingsAccess(await getProfile(env, {

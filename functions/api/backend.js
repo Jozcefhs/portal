@@ -1,5 +1,6 @@
 import { batchCommitDocuments, batchUpsertDocuments, createDocumentIfAbsent, deleteDocument, findOneByField, getDocument, listCollection, listCollectionForReport, listCollectionPage, patchDocumentFields, queryCollection, queryCollectionPages, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { getAccountingChartRows, invalidateAccountingChartRows, primeAccountingChartRows } from '../lib/accounting-reference-cache.js';
+import { mergeSchoolBranchMetadata, saveBranchSchoolSection } from '../lib/branch-school-presentation.js';
 import { canonicalSchoolBranchId, deleteSchoolDocument, getSchoolDocumentById, getSchoolDocumentsById, getSchoolStructure, invalidateSchoolStructureCache, listSchoolCollection, normalizeSchoolStructure, querySchoolCollection, safeScopeId, schoolCollectionPaths, schoolSectionFor, upsertSchoolDocument } from '../lib/school-scope.js';
 import { canonicalConfiguredClass, classNamesMatch } from '../lib/class-names.js';
 import { categoryApplies, deleteStoreCategory, ensureStoreCategories, resolveStoreCategory, saveStoreCategory } from '../lib/store-categories.js';
@@ -2821,10 +2822,11 @@ async function saveSchoolProfile(env, body, deploymentIdentity) {
       ].filter(Boolean).join(' ')
     };
   }
-  const [storedProfile, savedOrganization, savedPublicContent] = await Promise.all([
+  const [storedProfile, savedOrganization, savedPublicContent, storedStructure] = await Promise.all([
     getDocument(env, 'settings', 'schoolProfile').catch(() => null),
     getDocument(env, 'settings', 'organisationProfile').catch(() => null),
-    getDocument(env, 'settings', PUBLIC_PORTAL_CONTENT_DOCUMENT).catch(() => null)
+    getDocument(env, 'settings', PUBLIC_PORTAL_CONTENT_DOCUMENT).catch(() => null),
+    getDocument(env, 'settings', 'schoolStructure')
   ]);
   const existingOrganization = savedOrganization
     ? await refreshOrganizationPlanPolicy(env, savedOrganization)
@@ -2835,14 +2837,18 @@ async function saveSchoolProfile(env, body, deploymentIdentity) {
     organizationProfile: existingOrganization,
     legacyProfile: existingProfile
   });
-  const branchValues = Array.isArray(body.SchoolBranches) ? body.SchoolBranches : clean(body.SchoolBranches || body.schoolBranches || 'Main Branch').split(',');
+  const branchValues = mergeSchoolBranchMetadata(
+    Array.isArray(body.SchoolBranches) ? body.SchoolBranches
+      : body.SchoolBranches || body.schoolBranches ? clean(body.SchoolBranches || body.schoolBranches).split(',') : null,
+    storedStructure?.Branches || []
+  );
   const sections = [];
   if (yesNo(body.EnablePrimarySection ?? body.enablePrimarySection ?? 'YES') === 'YES') sections.push('primary');
   if (yesNo(body.EnableSecondarySection ?? body.enableSecondarySection ?? 'YES') === 'YES') sections.push('secondary');
   if (!sections.length) sections.push('primary', 'secondary');
   const structure = normalizeSchoolStructure({
     Branches: branchValues,
-    ActiveBranchId: body.ActiveBranchId || body.activeBranchId || 'main',
+    ActiveBranchId: body.ActiveBranchId || body.activeBranchId || storedStructure?.ActiveBranchId || 'main',
     Sections: sections
   });
   const branches = structure.Branches;
@@ -2958,7 +2964,7 @@ async function saveSchoolProfile(env, body, deploymentIdentity) {
   await upsertDocument(env, 'settings', 'schoolStructure', {
     Branches: branches.length ? branches : [{ Id: 'main', Name: 'Main Branch' }], ActiveBranchId: activeBranchId,
     Sections: sections, UpdatedAt: nowIso(), UpdatedBy: profile.UpdatedBy
-  });
+  }, storedStructure?.__updateTime ? { updateTime: storedStructure.__updateTime } : { exists: false });
   invalidateSchoolStructureCache();
   await upsertDocument(env, 'settings', 'admissionDocuments', {
     Enabled: documentRequirements, UpdatedAt: nowIso(), UpdatedBy: profile.UpdatedBy
@@ -2984,19 +2990,30 @@ async function saveSchoolProfile(env, body, deploymentIdentity) {
 function normalizedOrganisationStructure(body = {}, existing = {}) {
   const rawBranches = Array.isArray(body.SchoolBranches)
     ? body.SchoolBranches
-    : clean(body.SchoolBranches || body.schoolBranches || 'Main Branch').split(',');
+    : body.SchoolBranches || body.schoolBranches ? clean(body.SchoolBranches || body.schoolBranches).split(',') : null;
   const savedSections = Array.isArray(existing.Sections) && existing.Sections.length
     ? existing.Sections
     : ['primary', 'secondary'];
   return normalizeSchoolStructure({
-    Branches: rawBranches,
+    Branches: mergeSchoolBranchMetadata(rawBranches, existing.Branches || []),
     ActiveBranchId: body.ActiveBranchId || body.activeBranchId || existing.ActiveBranchId || 'main',
     Sections: savedSections
   });
 }
 
-async function saveOrganisationStructure(env, body) {
-  const existing = await getDocument(env, 'settings', 'schoolStructure').catch(() => null) || {};
+async function saveOrganisationStructure(env, body, deploymentIdentity = null) {
+  if (Object.hasOwn(body, 'BranchSchoolSectionUpdate')) {
+    if (deploymentIdentity && deploymentIdentity.edition !== 'school') {
+      throw Object.assign(new Error('School section terminology applies only to the School edition.'), { status: 400 });
+    }
+    const actor = await resolveAuthoritativeDesktopActorForEnv(env, body);
+    if (clean(actor.Role || actor.role) !== 'Super Admin' || clean(actor.BranchId || actor.branchId || actor.assignedBranchId)) {
+      throw Object.assign(new Error('Only an organisation-wide Super Administrator can change branch terminology.'), { status: 403 });
+    }
+    const structure = await saveBranchSchoolSection(env, body.BranchSchoolSectionUpdate, actor.Username || actor.username);
+    return { ok: true, message: 'Branch school terminology saved. Records and access permissions are unchanged.', structure };
+  }
+  const existing = await getDocument(env, 'settings', 'schoolStructure') || {};
   const structure = normalizedOrganisationStructure(body, existing);
   const updatedBy = clean(body.UserRole || body.UpdatedBy || body.updatedBy) || 'Super Admin';
   await upsertDocument(env, 'settings', 'schoolStructure', {
@@ -3004,7 +3021,7 @@ async function saveOrganisationStructure(env, body) {
     ...structure,
     UpdatedAt: nowIso(),
     UpdatedBy: updatedBy
-  });
+  }, existing.__updateTime ? { updateTime: existing.__updateTime } : { exists: false });
   invalidateSchoolStructureCache();
   return {
     ok: true,
@@ -3124,7 +3141,7 @@ async function getSchoolProfile(env, options = {}) {
       EnableMedicalReport: enabledDocuments.MedicalReport === false ? 'NO' : 'YES',
       EnableTransferCertificateDoc: enabledDocuments.TransferCertificateDoc === false ? 'NO' : 'YES',
       EnableAcceptanceForm: enabledDocuments.AcceptanceForm === false ? 'NO' : 'YES',
-      AvailableBranches: (structure.Branches || []).map((row) => ({ Id: clean(row.Id), Name: clean(row.Name || row.Id) })),
+      AvailableBranches: (structure.Branches || []).map((row) => ({ ...row, Id: clean(row.Id), Name: clean(row.Name || row.Id) })),
       WebLogoConfigured: Boolean(branding && clean(branding.WebLogoDataUrl)), WebLogoUrl: branding && clean(branding.WebLogoDataUrl) ? '/api/web-logo' : '' };
   const scopedProfile = await effectiveBranchProfile(env, baseProfile, options.branchId || options.BranchId);
   if (!options.includeTutorials) return { ok: true, profile: scopedProfile };
@@ -10954,7 +10971,7 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     case 'saveOrganizationModulePreferences':
       return saveOrganizationModulePreferences(env, body);
     case 'saveOrganisationStructure':
-      return saveOrganisationStructure(env, body);
+      return saveOrganisationStructure(env, body, deploymentIdentity);
     case 'getSchoolProfile':
       return getSchoolProfile(env, { ...body, includeTutorials: true });
     case 'resetBranchProfileOverrides': {

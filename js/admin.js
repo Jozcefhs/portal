@@ -1983,13 +1983,26 @@ function resolveDashboardEdition(user = {}) {
   return 'school';
 }
 
+function schoolPresentationSection() {
+  const branch = availableBranches.find((row) => row.id.toLowerCase() === clean(selectedBranchId || currentUser?.activeBranchId || currentUser?.branchId).toLowerCase());
+  const mode = clean(branch?.schoolSectionMode).toLowerCase();
+  if (mode === 'primary' || mode === 'secondary') return mode;
+  const assigned = clean(currentUser?.schoolSectionAccess).toLowerCase();
+  if (mode === 'mixed') return ['primary', 'secondary'].includes(assigned) ? assigned : 'mixed';
+  // Legacy branches retain existing terminology until explicitly configured.
+  // This setting is presentation only; it does not change data permissions.
+  return assigned === 'primary' ? 'primary' : 'secondary';
+}
+
 function executiveOfficeTitle() {
   const role = clean(currentUser?.role);
   const faithEdition = document.documentElement.dataset.edition === 'church'
     || ['church', 'faith', 'organization'].includes(resolveDashboardEdition(currentUser || {}));
   if (!faithEdition) {
-    const primaryWorkspace = clean(currentUser?.schoolSectionAccess).toLowerCase() === 'primary';
-    if (primaryWorkspace || ['Head Teacher', 'Assistant Head Teacher'].includes(role)) return "Head Teacher's Office";
+    const section = schoolPresentationSection();
+    if (section === 'mixed') return 'Executive Office';
+    const branch = availableBranches.find((row) => row.id === selectedBranchId);
+    if (section === 'primary' || (!branch?.schoolSectionMode && ['Head Teacher', 'Assistant Head Teacher'].includes(role))) return "Head Teacher's Office";
     if (['Vice Principal Academics', 'Vice Principal Administration'].includes(role)) return `${role}'s Office`;
     return "Principal's Office";
   }
@@ -2001,9 +2014,13 @@ function staffTabLabel(key, fallback = '') {
   if (key === 'schoolInsights') return 'School Insights';
   if (key === 'executiveOffice') return executiveOfficeTitle();
   const primaryWorkspace = resolveDashboardEdition(currentUser || {}) === 'school'
-    && clean(currentUser?.schoolSectionAccess).toLowerCase() === 'primary';
+    && schoolPresentationSection() === 'primary';
   if (primaryWorkspace && key === 'students') return 'Pupils';
   if (primaryWorkspace && key === 'studentConduct') return 'Pupil Conduct & Discipline';
+  if (resolveDashboardEdition(currentUser || {}) === 'school' && schoolPresentationSection() === 'mixed') {
+    if (key === 'students') return 'Learners';
+    if (key === 'studentConduct') return 'Learner Conduct & Discipline';
+  }
   if (resolveDashboardEdition(currentUser || {}) === 'organization') {
     return organizationTabLabels[key] || fallback;
   }
@@ -2012,7 +2029,10 @@ function staffTabLabel(key, fallback = '') {
 
 function staffLearnerTerms() {
   const primaryWorkspace = resolveDashboardEdition(currentUser || {}) === 'school'
-    && clean(currentUser?.schoolSectionAccess).toLowerCase() === 'primary';
+    && schoolPresentationSection() === 'primary';
+  if (resolveDashboardEdition(currentUser || {}) === 'school' && schoolPresentationSection() === 'mixed') {
+    return { singular: 'learner', plural: 'learners', Singular: 'Learner', Plural: 'Learners' };
+  }
   return primaryWorkspace
     ? { singular: 'pupil', plural: 'pupils', Singular: 'Pupil', Plural: 'Pupils' }
     : { singular: 'student', plural: 'students', Singular: 'Student', Plural: 'Students' };
@@ -2294,7 +2314,8 @@ async function loadDashboard(options = {}) {
     if (Array.isArray(data.branches)) {
       availableBranches = data.branches.map((branch) => ({
         id: clean(branch.id || branch.Id),
-        name: clean(branch.name || branch.Name || branch.id || branch.Id)
+        name: clean(branch.name || branch.Name || branch.id || branch.Id),
+        schoolSectionMode: clean(branch.schoolSectionMode || branch.SchoolSectionMode)
       })).filter((branch) => branch.id);
     }
     if (data.user?.canSwitchBranches === true && requestedBranchId === 'all') {
@@ -10315,9 +10336,7 @@ const recordsDeskTypeLabels = {
 };
 
 function recordsDeskTypeLabel(type) {
-  if (type === 'students'
-    && resolveDashboardEdition(currentUser || {}) === 'school'
-    && clean(currentUser?.schoolSectionAccess).toLowerCase() === 'primary') return 'Pupils';
+  if (type === 'students' && resolveDashboardEdition(currentUser || {}) === 'school') return staffLearnerTerms().Plural;
   return recordsDeskTypeLabels[type] || type;
 }
 
@@ -21073,7 +21092,8 @@ async function loadStaffUsers() {
     if (Array.isArray(data.branches) && data.branches.length) {
       availableBranches = data.branches.map((branch) => ({
         id: clean(branch.id || branch.Id),
-        name: clean(branch.name || branch.Name || branch.id || branch.Id)
+        name: clean(branch.name || branch.Name || branch.id || branch.Id),
+        schoolSectionMode: clean(branch.schoolSectionMode || branch.SchoolSectionMode)
       })).filter((branch) => branch.id);
     }
     canAssignStaffBranches = data.canAssignStaffBranches === true;
