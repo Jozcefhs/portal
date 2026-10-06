@@ -811,12 +811,13 @@ export function requireBackendSecret(env, body) {
 }
 
 const VERIFIED_ACTOR_ACTIONS = new Set([
+  'getAccountSnapshot',
   'getSchoolLibrary', 'searchLibraryBorrowers', 'saveLibraryTitle', 'addLibraryCopy', 'restoreLibraryCopy', 'checkoutLibraryCopy',
   'returnLibraryCopy', 'renewLibraryLoan', 'reserveLibraryTitle',
   'cancelLibraryReservation', 'saveLibraryPolicy',
   'saveOrganizationModulePreferences',
   'exportBackup', 'prepareRestoreBackup', 'clearRestoreCollection', 'writeRestoreCollection', 'completeRestoreBackup',
-  'getAccountingOverview', 'getAccountingJournalPage', 'getSystemHealth', 'optimizeFirestoreData', 'getPayrollTaxConfiguration',
+  'getAccountingOverview', 'getAccountingJournalPage', 'getAccountingFinancePage', 'getSystemHealth', 'optimizeFirestoreData', 'getPayrollTaxConfiguration',
   'seedTraditionalPayeConfiguration', 'savePayrollSalaryComponent', 'savePayrollTaxProfile',
   'clonePayrollTaxProfile', 'savePayrollTaxBands', 'savePayrollTaxReliefRules',
   'savePayrollLedgerMapping', 'validatePayrollTaxConfiguration', 'migratePayrollTaxPhase2',
@@ -938,7 +939,7 @@ const BRANCH_BOUND_DEVICE_ACTIONS = new Set([
   'updateStudentProfile', 'reissueParentOnboarding',
   'getSchoolClasses', 'saveSchoolClasses', 'resetSchoolClasses',
   'getAdmissionClasses', 'saveAdmissionClasses', 'resetAdmissionClasses',
-  'getAccountsOverview', 'getHistoricalPaymentTemplateAccounts', 'importHistoricalPayments',
+  'getAccountsOverview', 'getAccountSnapshot', 'getHistoricalPaymentTemplateAccounts', 'importHistoricalPayments',
   'getWalletCardAccount', 'saveWalletCard', 'recordWalletPurchase',
   'getTuckShopCatalog', 'searchTuckShopCustomers', 'recordTuckShopStaffSale',
   'getAccountingRequisitionDocument',
@@ -3185,9 +3186,9 @@ export async function buildStudentBillingPreview(student, data = {}) {
   };
 }
 
-export async function getStudentBillingData(env, student) {
+export async function getStudentBillingData(env, student, options = {}) {
   const profile = normalizeStudent(student);
-  const account = { ...profile, AccountRef: profile.AdmissionNo || profile.AccountRef || profile.ApplicationReference };
+  const account = { ...profile, AccountRef: options.accountRef || profile.AdmissionNo || profile.AccountRef || profile.ApplicationReference };
   const references = [...new Set(accountRefsFrom(account))];
   const load = async (collection) => {
     const groups = await Promise.all(references.map((reference) => queryCollectionPages(env, collection, {
@@ -3199,8 +3200,12 @@ export async function getStudentBillingData(env, student) {
     return [...unique.values()].filter((row) => financialRowMatchesAccount({
       ...row, AccountRef: row.AccountRef || row.accountRef, AdmissionNo: row.AdmissionNo || row.admissionNo,
       ApplicationReference: row.ApplicationReference || row.applicationReference
-    }, account))
-      .filter((row) => canonicalSchoolBranchId(row.BranchId || 'main') === canonicalSchoolBranchId(student.BranchId || 'main'));
+    }, account) || (options.includeLinkedApplication === true &&
+      sameReferenceIdentity(row.AccountRef || row.accountRef, account.ApplicationReference) &&
+      (!clean(row.AdmissionNo || row.admissionNo) || sameReferenceIdentity(row.AdmissionNo || row.admissionNo, account.AdmissionNo))))
+      .filter((row) => canonicalSchoolBranchId(row.BranchId || 'main') === canonicalSchoolBranchId(student.BranchId || 'main'))
+      .filter((row) => !options.section || !clean(row.SchoolSection || row.schoolSection) ||
+        sameText(row.SchoolSection || row.schoolSection, options.section));
   };
   const [schoolProfile, feeItems, invoices, payments, ledger, accountSummaries] = await Promise.all([
     getDocument(env, 'settings', 'schoolProfile'), listCollection(env, 'feeItems'),
@@ -3210,6 +3215,71 @@ export async function getStudentBillingData(env, student) {
     schoolProfile, invoices, payments, ledger, accountSummaries,
     feeItems: feeItems.filter((row) => !clean(row.BranchId) || canonicalSchoolBranchId(row.BranchId) === canonicalSchoolBranchId(student.BranchId || 'main'))
   };
+}
+
+// A read-only, bounded replacement for downloading the whole school after a
+// desktop mutation. Resolve the authorized identity before reading its finances.
+export async function getAccountSnapshot(env, body = {}) {
+  requireAccountingRole(body, ['Super Admin', 'Accounts Officer', 'Management']);
+  const accountRef = clean(body.AccountRef);
+  if (!accountRef) { const error = new Error('AccountRef is required.'); error.status = 400; throw error; }
+  const scope = requestedStudentScope(body);
+  // A posted section may narrow, never broaden, authoritative staff access.
+  if (!['primary', 'secondary'].includes(lower(scope.schoolSectionAccess)) &&
+      ['primary', 'secondary'].includes(lower(body.SchoolSection))) scope.schoolSectionAccess = body.SchoolSection;
+  const student = await findStudentByAccountRef(env, accountRef, scope);
+  let application = null;
+  const applicationRef = student?.ApplicationReference || (!student ? accountRef : '');
+  if (applicationRef) {
+    for (const field of ['ApplicationReference', 'ApplicationID', 'AdmissionNo']) {
+      const candidates = (await querySchoolCollection(env, 'applications', {
+        scope, filters: [{ field, op: '==', value: applicationRef }], limit: 3
+      })).filter((row) => (!scope.branchId || lower(scope.branchId) === 'all' ||
+        identityRecordBranch(row) === canonicalSchoolBranchId(scope.branchId)) &&
+        (!['primary', 'secondary'].includes(lower(scope.schoolSectionAccess)) ||
+          identityRecordSection(row) === lower(scope.schoolSectionAccess)));
+      // Legacy root and scoped copies of the same application are not two
+      // accounts. Prefer its latest saved copy, while retaining real ambiguity.
+      const unique = new Map();
+      for (const candidate of candidates) {
+        const key = JSON.stringify([identityRecordBranch(candidate), identityRecordSection(candidate),
+          referenceIdentityKey(candidate.ApplicationReference || candidate.ApplicationID || candidate.AdmissionNo || candidate.__id)]);
+        const previous = unique.get(key);
+        if (!previous || timestampMs(candidate.UpdatedAt || candidate.SubmittedAt) > timestampMs(previous.UpdatedAt || previous.SubmittedAt) ||
+          (timestampMs(candidate.UpdatedAt || candidate.SubmittedAt) === timestampMs(previous.UpdatedAt || previous.SubmittedAt) &&
+            clean(candidate.__scopePath).startsWith('schoolBranches/'))) unique.set(key, candidate);
+      }
+      if (unique.size > 1) {
+        const error = new Error('Select a unique branch and section before refreshing this account.'); error.status = 409; throw error;
+      }
+      if (unique.size) { application = [...unique.values()][0]; break; }
+    }
+  }
+  const identity = student || application;
+  if (!identity) { const error = new Error('Account not found in your authorized school scope.'); error.status = 404; throw error; }
+  const branchId = identityRecordBranch(identity);
+  const section = identityRecordSection(identity);
+  if ((scope.branchId && lower(scope.branchId) !== 'all' && canonicalSchoolBranchId(scope.branchId) !== branchId) ||
+      (['primary', 'secondary'].includes(lower(scope.schoolSectionAccess)) && lower(scope.schoolSectionAccess) !== section)) {
+    const error = new Error('Account not found in your authorized school scope.'); error.status = 404; throw error;
+  }
+  const canonicalRef = clean(student?.AdmissionNo || student?.AccountRef || application?.AdmissionNo || application?.ApplicationReference || application?.ApplicationID);
+  const scopedIdentity = { ...identity, AccountRef: canonicalRef, BranchId: branchId, SchoolSection: section };
+  const data = await getStudentBillingData(env, scopedIdentity, { includeLinkedApplication: true, section, accountRef: canonicalRef });
+  const legacy = await getDocument(env, 'accounts', safeDocumentId(canonicalRef));
+  const overview = await getAccountsOverview(env, {
+    ...data,
+    accounts: legacy && identityRecordBranch(legacy) === branchId &&
+      (!clean(legacy.SchoolSection) || sameText(legacy.SchoolSection, section)) ? [legacy] : [],
+    students: student ? [scopedIdentity] : [], applications: application ? [application] : [],
+    billingCategories: []
+  }, { BranchId: branchId, UserSchoolSectionAccess: section });
+  const account = overview.accounts.find((row) => sameReferenceIdentity(row.AccountRef, canonicalRef));
+  if (!account) throw new Error('The account snapshot could not be confirmed.');
+  // Linked application rows can create a second overview identity; expose only
+  // the requested student's account and records, never that additional row.
+  return { ...overview, accounts: [account], accountRef: canonicalRef,
+    requestedAccountRef: accountRef, message: 'Affected account refreshed.', readOnly: true };
 }
 
 export async function getStudentBillingPreview(env, student) {
@@ -4800,7 +4870,8 @@ async function seedDefaultFeeItems(env) {
     });
     added += 1;
   }
-  return { ok: true, message: added ? 'Default fee items created in the database.' : 'Default fee items already exist in the database.', added };
+  return { ok: true, message: added ? 'Default fee items created in the database.' : 'Default fee items already exist in the database.', added,
+    feeItems: (await listCollection(env, 'feeItems')).map(normalizeFeeItem) };
 }
 
 async function queryAccountRows(env, collection, accountRef) {
@@ -7309,7 +7380,7 @@ function accountingCashAccountFor(method, gateway = '') {
   return '1020';
 }
 
-async function listChurchDonationsForAccounting(env) {
+async function listChurchDonationsForAccounting(env, options = {}) {
   const [organizationProfile, legacyProfile, structure] = await Promise.all([
     getDocument(env, 'settings', 'organisationProfile').catch(() => null),
     getDocument(env, 'settings', 'schoolProfile').catch(() => null),
@@ -7320,9 +7391,12 @@ async function listChurchDonationsForAccounting(env) {
     return [];
   }
   const branchIds = [...new Set((structure.Branches || [{ Id: 'main' }])
-    .map((branch) => clean(branch.Id || branch.id || branch.Name || branch.name).toLowerCase() || 'main'))];
+    .map((branch) => clean(branch.Id || branch.id || branch.Name || branch.name).toLowerCase() || 'main'))]
+    .filter((branch) => !options.branchId || options.branchId === 'all' || options.branchId === branch);
   const groups = await Promise.all(branchIds.map((branchId) =>
-    listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.donations, branchId)).catch(() => [])
+    listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.donations, branchId),
+      options.readTime ? { query: `readTime=${encodeURIComponent(options.readTime)}` } : undefined)
+      .catch((error) => { if (options.readTime) throw error; return []; })
   ));
   return groups.flatMap((rows, index) => rows.map((row) => ({
     ...row,
@@ -9350,24 +9424,29 @@ async function getAccountingOverview(env, body = {}) {
   // causing Cloudflare Workers to exceed their per-request subrequest quota.
   // Administrators can still run the explicit "Synchronize Revenue" action.
   const synchronized = 0;
-  const pagedJournals = body.JournalPagination === 'paged';
+  const pagedFinance = body.FinancePagination === 'paged';
+  const pagedJournals = pagedFinance || body.JournalPagination === 'paged';
   // Leave a small clock-skew margin so Firestore never sees a future readTime.
   const reportReadTime = pagedJournals ? new Date(Date.now() - 2000).toISOString() : '';
   const snapshotQuery = reportReadTime ? { query: `readTime=${encodeURIComponent(reportReadTime)}` } : undefined;
   const listSnapshot = (collection) => listCollection(env, collection, snapshotQuery);
+  const optionalSnapshot = (collection) => listSnapshot(collection).catch((error) => {
+    if (pagedFinance) throw error; // Never silently omit a financial source in a complete snapshot.
+    return [];
+  });
   const [chart, journals, expenses, budgets, banks, reconciliations, periods, audit, vendors, supplierBills, supplierPayments, imprests, assets, adjustments, approvalLimits, closeChecklist, bankStatementItems, invoices, payments, formSales, gatewayCharges, payrollProfiles, payrollRuns, payrollItems, payrollPayments, payrollAudit, payrollTaxProfiles, payrollTaxOverrides, payrollSalaryComponents, payrollTaxBands, payrollTaxReliefs, payrollLedgerMappings, donations] = await Promise.all([
     listSnapshot('chartOfAccounts'), pagedJournals ? [] : listCollectionForReport(env, 'accountingJournals'), listSnapshot('accountingExpenses'),
     listSnapshot('accountingBudgets'), listSnapshot('accountingBanks'), listSnapshot('accountingReconciliations'),
     listSnapshot('accountingPeriods'), listSnapshot('accountingAudit'), listSnapshot('accountingVendors'),
-    listSnapshot('accountingSupplierBills'), listSnapshot('accountingSupplierPayments'), listSnapshot('accountingImprests').catch(() => []), listSnapshot('accountingAssets'),
+    listSnapshot('accountingSupplierBills'), listSnapshot('accountingSupplierPayments'), optionalSnapshot('accountingImprests'), listSnapshot('accountingAssets'),
     listSnapshot('accountingAdjustments'), listSnapshot('accountingApprovalLimits'), listSnapshot('accountingCloseChecklist'),
-    listSnapshot('accountingBankStatementItems'), listCollectionForReport(env, 'invoices', { readTime: reportReadTime }), listCollectionForReport(env, 'payments', { readTime: reportReadTime }),
-    listSnapshot('formSales').catch(() => []), listSnapshot('paymentGatewayCharges').catch(() => []),
+    listSnapshot('accountingBankStatementItems'), pagedFinance ? [] : listCollectionForReport(env, 'invoices', { readTime: reportReadTime }), pagedFinance ? [] : listCollectionForReport(env, 'payments', { readTime: reportReadTime }),
+    optionalSnapshot('formSales'), optionalSnapshot('paymentGatewayCharges'),
     listSnapshot('payrollProfiles'), listSnapshot('payrollRuns'), listSnapshot('payrollItems'),
-    listSnapshot('payrollPayments'), listSnapshot('payrollAudit'), listSnapshot(PAYROLL_TAX_COLLECTIONS.profiles).catch(() => []), listSnapshot(PAYROLL_TAX_COLLECTIONS.overrides).catch(() => []),
-    listSnapshot(PAYROLL_TAX_COLLECTIONS.components).catch(() => []), listSnapshot(PAYROLL_TAX_COLLECTIONS.bands).catch(() => []),
-    listSnapshot(PAYROLL_TAX_COLLECTIONS.reliefs).catch(() => []), listSnapshot(PAYROLL_TAX_COLLECTIONS.mappings).catch(() => []),
-    listChurchDonationsForAccounting(env)
+    listSnapshot('payrollPayments'), listSnapshot('payrollAudit'), optionalSnapshot(PAYROLL_TAX_COLLECTIONS.profiles), optionalSnapshot(PAYROLL_TAX_COLLECTIONS.overrides),
+    optionalSnapshot(PAYROLL_TAX_COLLECTIONS.components), optionalSnapshot(PAYROLL_TAX_COLLECTIONS.bands),
+    optionalSnapshot(PAYROLL_TAX_COLLECTIONS.reliefs), optionalSnapshot(PAYROLL_TAX_COLLECTIONS.mappings),
+    listChurchDonationsForAccounting(env, pagedFinance ? { readTime: reportReadTime, branchId } : {})
   ]);
   const scopedJournalsByBranch = branchRows(journals);
   const scopedExpenses = branchRows(expenses);
@@ -9408,7 +9487,13 @@ async function getAccountingOverview(env, body = {}) {
   return { ok: true, message: `Finance and accounting records loaded for ${branchId === 'all' ? 'all branches' : `branch ${branchId}`}.`, synchronized, branchId, filter, ...(pagedJournals ? { journalPagination: { readTime: reportReadTime } } : {}), canEditRequisitions: canEditRequisitions(accountingRequisitionActor(body)), chart: scopedChart, journals: scopedJournals, expenses: scopedExpenses, budgets: scopedBudgets, banks: scopedBanks, reconciliations: scopedReconciliations, periods, audit: scopedAudit,
     vendors: scopedVendors, supplierBills: scopedSupplierBills, supplierPayments: scopedSupplierPayments, imprests: scopedImprests, assets: scopedAssets, adjustments: scopedAdjustments, approvalLimits, closeChecklist: scopedCloseChecklist, bankStatementItems: scopedBankStatementItems,
     payrollProfiles: scopedPayrollProfiles, payrollRuns: scopedPayrollRuns, payrollItems: scopedPayrollItems, payrollPayments: scopedPayrollPayments, payrollAudit: scopedPayrollAudit, payrollTaxProfiles: payrollTaxProfilesWithUsage, payrollTaxOverrides: scopedPayrollTaxOverrides,
-    payrollSalaryComponents, payrollTaxBands, payrollTaxReliefs, payrollLedgerMappings, donations: scopedDonations, gatewayReport,
+    payrollSalaryComponents, payrollTaxBands, payrollTaxReliefs, payrollLedgerMappings, donations: scopedDonations,
+    ...(pagedFinance ? {
+      financePagination: { readTime: reportReadTime, collections: ['journals', 'invoices', 'payments'],
+        asOf: filter.DateTo || reportReadTime.slice(0, 10) },
+      gatewayReport: null, gatewayReportSeed: gatewayReport,
+      gatewayDonationSeed: buildGatewayCollectionsReport([], scopedGatewayCharges, filter, [], scopedDonations)
+    } : { gatewayReport }),
     ...(pagedJournals ? { reportSeed: reports, reports: null } : { reports }) };
 }
 
@@ -9907,7 +9992,7 @@ function activeStaffSuperAdmins(rows, excluding = '') {
   return rows.filter((row) => !sameText(row.Username || row.__id, excluding) && clean(row.Role) === 'Super Admin' && staffUserIsActive(row));
 }
 
-async function getAccountingJournalPage(env, body = {}) {
+function validateAccountingReportPage(body = {}) {
   // One Firestore page per request keeps each read bounded. The desktop only
   // presents a report after it has successfully consumed the final page.
   if (isDepartmentAccountingUser(body)) {
@@ -9930,6 +10015,11 @@ async function getAccountingJournalPage(env, body = {}) {
     error.status = 400;
     throw error;
   }
+  return { readTime, pageToken };
+}
+
+async function getAccountingJournalPage(env, body = {}) {
+  const { readTime, pageToken } = validateAccountingReportPage(body);
   const page = await listCollectionPage(env, 'accountingJournals', {
     pageSize: 500,
     pageToken,
@@ -9939,6 +10029,40 @@ async function getAccountingJournalPage(env, body = {}) {
   const edition = accountingEditionForRequest(env, body);
   const rows = accountingJournalsForEdition(accountingRowsForBranch(page.documents, branchId), edition);
   return { ok: true, journals: rows, nextPageToken: page.nextPageToken, readTime };
+}
+
+// Normalize financial facts on the server so every edition uses the same
+// reversal, payment-credit and identity rules when rebuilding a complete report.
+export function accountingFinanceReportRows(collection, rows = [], filter = {}) {
+  return rows.map((raw) => {
+    const row = collection === 'invoices' ? normalizeInvoice(raw) : normalizePayment(raw);
+    const reportIdentity = referenceIdentityKey(row.ApplicationReference || row.ApplicationID || row.AccountRef);
+    if (collection === 'invoices') return { ...row, ReportIdentity: reportIdentity,
+      ReportTimestamp: timestampMs(row.Date || row.CreatedAt),
+      ReportDueTimestamp: timestampMs(row.DueDate || row.Date || row.CreatedAt) };
+    return { ...row, ReportIdentity: reportIdentity, ReportCredit: paymentCreditedAmount(row),
+      ReportGeneralSchoolCredit: isSchoolFeesTotalPayment(row) || isAcceptanceFeeLike(row),
+      ReportExcludedFromAgeing: isWalletLedger(row) || isStorePurchase(row),
+      ReportGatewayMatch: accountingRowMatches({ ...raw,
+        Date: raw.PaidAt || raw.PaymentDate || raw.Date || raw.CreatedAt }, filter) };
+  });
+}
+
+export async function getAccountingFinancePage(env, body = {}) {
+  requireAccountingRole(body, ['Super Admin', 'Accounts Officer', 'Management']);
+  const { readTime, pageToken } = validateAccountingReportPage(body);
+  const collection = clean(body.Collection);
+  if (!['invoices', 'payments'].includes(collection)) {
+    const error = new Error('The finance report collection is invalid.'); error.status = 400; throw error;
+  }
+  const branchId = accountingRequestBranch(body);
+  const page = await listCollectionPage(env, collection, {
+    pageSize: 500, pageToken, query: `readTime=${encodeURIComponent(readTime)}`
+  });
+  const rows = accountingFinanceReportRows(collection,
+    accountingRowsForBranch(page.documents, branchId), accountingFilter(body));
+  return { ok: true, collection, rows, nextPageToken: page.nextPageToken, readTime,
+    scanned: page.documents.length };
 }
 
 function assignedStaffBranchId(row = {}) {
@@ -10683,10 +10807,14 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
       return updateStudentStatus(env, body);
     case 'getAccountsOverview':
       return getAccountsOverview(env, {}, body);
+    case 'getAccountSnapshot':
+      return getAccountSnapshot(env, body);
     case 'getAccountingOverview':
       return getAccountingOverview(env, body);
     case 'getAccountingJournalPage':
       return getAccountingJournalPage(env, body);
+    case 'getAccountingFinancePage':
+      return getAccountingFinancePage(env, body);
     case 'getAccountingRequisitionDocument':
       return getAccountingRequisitionDocument(env, body);
     case 'getPayrollTaxConfiguration': {

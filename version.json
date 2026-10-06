@@ -1,7 +1,7 @@
 {
-  "version": "3.1.12",
+  "version": "3.1.15",
   "channel": "stable",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.12.exe",
-  "sha256": "3ae9bcb6deaee1d230ed1742b78f87bf91c74f334eaa7e1374bd12ac8ab33549",
-  "notes": "Dynamax Desktop v3.1.12 connects approved school devices to tenant-specific workspaces while preserving organisation and branch identity checks."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.15.exe",
+  "sha256": "02d1103700d60a158aa57626fa65fae10d147f037eca609bdd2c8914e5046eb1",
+  "notes": "Dynamax Desktop v3.1.15 loads finance journals, invoices and payments in bounded batches from one snapshot across all editions, verifies complete receivables and online-payment reports before replacing cached totals, and retains the targeted Accounts refresh and safe fee-batch repairs. Acceptance remains a deposit and genuine parent credit is preserved. Requires the matching getAccountingFinancePage and getAccountSnapshot backend release."
 }
