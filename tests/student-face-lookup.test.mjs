@@ -392,7 +392,7 @@ test('the endpoint stores only encrypted templates, supports deletion, audits us
   assert.doesNotMatch(endpointSource, /ProfilePhotoDataUrl|ParentLoginCode|PasswordHash/);
 });
 
-test('the browser UI keeps frames on-device, requires a live action and always stops camera tracks', () => {
+test('the browser UI keeps frames on-device, preserves guided enrollment and always stops camera tracks', () => {
   assert.match(uiSource, /typeof window\.DynamaxStaffFetch === 'function'/);
   assert.match(uiSource, /window\.fetch\.bind\(window\)/);
   assert.match(uiSource, /navigator\.mediaDevices\.getUserMedia/);
@@ -420,8 +420,8 @@ test('front and back camera selection covers staff enrollment and every student 
   assert.match(uiSource, /Choose camera for face capture/);
   assert.match(uiSource, /Front camera/);
   assert.match(uiSource, /Back camera/);
-  assert.match(uiSource, /const allowCameraSelection = options\.allowCameraSelection !== false/);
-  assert.match(uiSource, /if \(allowCameraSelection\) bindCameraSelector\(dialog, captureButton\)/);
+  assert.match(uiSource, /const allowCameraSelection = mode === 'lookup' \|\| options\.allowCameraSelection !== false/);
+  assert.match(uiSource, /if \(allowCameraSelection\) bindCameraSelector\(dialog, captureButton, \{ quickLookup: mode === 'lookup' \}\)/);
   assert.match(adminSource, /purpose: 'tuck-shop-purchase',[\s\S]*?allowCameraSelection: true/);
   assert.match(adminSource, /purpose: 'clinic-visit',[\s\S]*?allowCameraSelection: true/);
   assert.match(adminSource, /purpose: section === 'bookstore' \? 'bookstore-collection' : 'uniform-store-collection',[\s\S]*?allowCameraSelection: true/);

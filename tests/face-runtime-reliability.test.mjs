@@ -13,6 +13,22 @@ test('deleted or absent student enrollments have actionable lookup feedback',()=
 test('every shared face import requests the repaired module',()=>{
   const imports=[...admin.matchAll(/student-face-lookup\.js\?v=([^']+)/g)];
   assert.equal(imports.length,3);
-  imports.forEach((match)=>assert.match(match[1],/20261007-human-directions$/));
-  assert.match(html,/js\/admin\.js\?v=[^"]*20261007-face-directions/);
+  imports.forEach((match)=>assert.match(match[1],/20261007-human-directions-quick-lookup$/));
+  assert.match(html,/js\/admin\.js\?v=[^"]*20261007-face-directions-quick-lookup/);
+});
+test('only assisted lookup uses quick capture; enrollment and attendance retain guided capture and manual confirmation',()=>{
+  const lookup = ui.slice(ui.indexOf('export async function openStudentFaceLookup'), ui.indexOf('async function staffAttendanceFaceRequest'));
+  const attendance = ui.slice(ui.indexOf('export function captureStaffAttendanceFace'));
+  assert.match(lookup,/const descriptor = mode === 'lookup'\s*\? await captureLookupDescriptor\(dialog, human\)\s*: await captureDescriptor\(dialog, human, sampleCount\)/);
+  assert.match(lookup,/renderPossibleMatch\(dialog, result\.match, options\.onMatch, options\.confirmText\)/);
+  assert.match(lookup,/mode === 'lookup' \|\| options\.allowCameraSelection !== false/);
+  assert.match(attendance,/await captureDescriptor\(dialog, human, sampleCount, \{/);
+  assert.match(attendance,/onLivenessEvidence: \(evidence\) => \{ livenessEvidence = evidence; \}/);
+  assert.match(attendance,/LivenessChallengeToken: activeChallenge\?\.challengeToken/);
+  assert.match(attendance,/LivenessEvidence: livenessEvidence/);
+  assert.doesNotMatch(attendance,/captureLookupDescriptor|quickLookup: true/);
+  const quick = ui.slice(ui.indexOf('export async function captureLookupDescriptor'),ui.indexOf('export async function captureDescriptor'));
+  assert.doesNotMatch(quick,/onLivenessEvidence|livenessConfirmed|actionObserved|staffAttendanceFaceRequest/);
+  assert.match(ui,/not a live-person check\. Staff must confirm the possible match/);
+  assert.match(ui,/\[data-face-confirm\]'\)\?\.addEventListener\('click'/);
 });

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { runInNewContext } from 'node:vm';
-import { eyeOpenness, blinkFrameState, waitForCameraFrames, captureReadiness, captureDescriptor, faceGuideSize } from '../js/student-face-lookup.js';
+import { eyeOpenness, blinkFrameState, waitForCameraFrames, captureReadiness, captureDescriptor, captureLookupDescriptor, faceGuideSize } from '../js/student-face-lookup.js';
 import { randomLivenessChallenge, validateLivenessEvidence } from '../functions/api/staff-attendance-face.js';
 
 function faceEyes(gap, rotation = 0) {
@@ -60,6 +60,57 @@ test('camera playback errors are returned rather than hanging capture', async ()
   await assert.rejects(waitForCameraFrames(video, {}), /camera busy/);
 });
 
+test('front and back selections request their own camera and use the actual stream orientation', async () => {
+  const source = await readFile(new URL('../js/student-face-lookup.js', import.meta.url), 'utf8');
+  const cameraCode = source.slice(source.indexOf('function selectedCameraFacingMode'), source.indexOf('export function faceGuideSize'));
+  for (const facingMode of ['user', 'environment']) {
+    let constraints;
+    let orientation;
+    const stream = { getTracks: () => [], getVideoTracks: () => [{ getSettings: () => ({ facingMode }) }] };
+    const video = { srcObject: null };
+    const select = { value: facingMode };
+    const start = { hidden: false };
+    const camera = { setAttribute: (name, value) => { if (name === 'data-facing-mode') orientation = value; } };
+    const dialog = { open: true, isConnected: true, cameraGeneration: 1,
+      querySelector: key => ({ '[data-face-video]': video, '[data-face-camera-select]': select,
+        '[data-face-start]': start, '.student-face-camera': camera })[key] || null };
+    const startCamera = runInNewContext(`${cameraCode}; startCamera`, {
+      navigator: { mediaDevices: { getUserMedia: async value => { constraints = value; return stream; } } },
+      clean: value => String(value ?? '').trim(), activeStream: null,
+      stopCamera: () => {}, setStatus: () => {}, updateCameraLayout: () => {},
+      waitForCameraFrames: async (target, value) => { target.srcObject = value; }
+    });
+    await startCamera(dialog);
+    assert.equal(constraints.video.facingMode.ideal, facingMode);
+    assert.equal(constraints.audio, false);
+    assert.equal(orientation, facingMode);
+    assert.equal(video.srcObject, stream);
+    assert.equal(start.hidden, true);
+  }
+});
+
+test('a possible lookup match cannot open a record until staff press confirm', async () => {
+  const source = await readFile(new URL('../js/student-face-lookup.js', import.meta.url), 'utf8');
+  const rendererCode = source.slice(source.indexOf('function renderPossibleMatch'), source.indexOf('export async function openStudentFaceLookup'));
+  const render = runInNewContext(`${rendererCode}; renderPossibleMatch`, {
+    clean: value => String(value ?? '').trim(), escapeHtml: value => String(value)
+  });
+  const confirm = new EventTarget();
+  const container = { hidden: true, querySelector: () => confirm };
+  let opened = 0;
+  let closed = 0;
+  const dialog = { querySelector: () => container, close: () => { closed++; } };
+  const match = { id: 'TEST-STUDENT', title: 'Synthetic test student', scoreBand: 'very-high' };
+  render(dialog, match, value => { assert.equal(value, match); opened++; });
+  assert.equal(container.hidden, false);
+  assert.match(container.innerHTML, /Confirm the student visually/);
+  assert.equal(opened, 0);
+  assert.equal(closed, 0);
+  confirm.dispatchEvent(new Event('click'));
+  assert.equal(opened, 1);
+  assert.equal(closed, 1);
+});
+
 test('face guidance refuses low confidence, tiny, clipped and off-centre captures', () => {
   const video = { videoWidth: 640, videoHeight: 480 };
   const good = { faceScore: 0.9, box: [240, 100, 160, 230] };
@@ -103,12 +154,12 @@ function liveFrame({ yaw = 0, pitch = 0.32, gap = 2.4, gesture = '', count = 1 }
     gesture: gesture ? [{ face: 0, gesture }] : [] };
 }
 
-function captureHarness(t, frames, { inferenceMs = 350 } = {}) {
+function captureHarness(t, frames, { inferenceMs = 350, videoSize = [480, 640], facingMode = 'user', embedding = Array(1024).fill(0.25) } = {}) {
   let now = 10000;
   t.mock.method(Date, 'now', () => now);
   globalThis.window = { setTimeout: callback => { now += 50; queueMicrotask(callback); } };
   t.after(() => { delete globalThis.window; });
-  const video = { videoWidth: 480, videoHeight: 640, srcObject: { getVideoTracks: () => [{ readyState: 'live' }] } };
+  const video = { videoWidth: videoSize[0], videoHeight: videoSize[1], srcObject: { getVideoTracks: () => [{ readyState: 'live', getSettings: () => ({ facingMode }) }] } };
   const elements = { '[data-face-video]': video, '[data-face-progress]': {}, '[data-face-status]': {}, '.student-face-guide': {} };
   const dialog = { open: true, isConnected: true, cameraGeneration: 1, querySelector: key => elements[key] || null };
   let index = 0;
@@ -117,10 +168,10 @@ function captureHarness(t, frames, { inferenceMs = 350 } = {}) {
     now += inferenceMs;
     const frame = structuredClone(frames[Math.min(index++, frames.length - 1)]);
     detections.push(options.face.description.enabled);
-    if (options.face.description.enabled) for (const face of frame.face) face.embedding = Array(1024).fill(0.25);
+    if (options.face.description.enabled) for (const face of frame.face) face.embedding = embedding;
     return frame;
   } };
-  return { dialog, human, detections };
+  return { dialog, human, detections, video, elements };
 }
 
 test('slow portrait capture finishes with a gentle turn, natural narrow eyes and no blink', async t => {
@@ -225,4 +276,100 @@ test('Human error results fail immediately and do not poison the next capture', 
   await assert.rejects(captureDescriptor(dialog, human, 1), /Face detection could not run.*Camera frame unavailable/);
   const retry = captureHarness(t, [still, still, still, liveFrame({yaw:-0.3}), still, still, still]);
   assert.equal((await captureDescriptor(retry.dialog, retry.human, 1)).length, 1024);
+});
+
+test('assisted lookup succeeds with three straight-facing frames on front and back cameras, without movement or eye landmarks', async t => {
+  for (const [facingMode, videoSize, box] of [
+    ['user', [480, 640], [100, 100, 270, 430]],
+    ['environment', [640, 480], [180, 80, 230, 300]]
+  ]) {
+    const still = liveFrame();
+    still.face[0].box = box;
+    still.face[0].mesh = [];
+    const { dialog, human, detections, elements } = captureHarness(t, [still], { facingMode, videoSize });
+    const descriptor = await captureLookupDescriptor(dialog, human);
+    assert.equal(descriptor.length, 1024);
+    assert.equal(descriptor[0], 0.25);
+    assert.deepEqual(detections, [false, false, true]);
+    assert.equal(elements['[data-face-progress]'].value, 1);
+    assert.equal(elements['[data-face-progress]'].hidden, true);
+    assert.match(elements['[data-face-status]'].textContent, /possible match/);
+    assert.doesNotMatch(elements['[data-face-status]'].textContent, /Live check|verified/);
+  }
+});
+
+test('lookup resets steady-frame calibration when another person enters, then can safely retry', async t => {
+  const still = liveFrame();
+  const { dialog, human, detections } = captureHarness(t, [still, still, liveFrame({ count: 2 }), still, still, still]);
+  assert.equal((await captureLookupDescriptor(dialog, human)).length, 1024);
+  assert.deepEqual(detections, [false, false, true, false, false, true]);
+});
+
+test('lookup rejects missing, multiple, low-quality, tiny, clipped, off-centre or non-frontal faces', async t => {
+  const badFrames = [liveFrame({ count: 0 }), liveFrame({ count: 2 }), liveFrame({ yaw: 0.6 })];
+  for (const change of [{ faceScore: 0.3 }, { box: [210, 260, 30, 40] },
+    { box: [-10, 100, 270, 430] }, { box: [0, 0, 140, 130] }, { rotation: {} }]) {
+    const frame = liveFrame();
+    Object.assign(frame.face[0], change);
+    badFrames.push(frame);
+  }
+  for (const badFrame of badFrames) {
+    const { dialog, human, detections, elements } = captureHarness(t, [badFrame], { inferenceMs: 6000 });
+    await assert.rejects(captureLookupDescriptor(dialog, human), /Capture paused/);
+    assert.ok(detections.every(value => value === false));
+    assert.equal(elements['[data-face-progress]'].hidden, true);
+  }
+});
+
+test('lookup requires a finite 1024-value descriptor even when the pose and face are good', async t => {
+  for (const embedding of [null, Array(1023).fill(0.25), Array(1024).fill(NaN), Array(1024).fill(Infinity), Array(1024).fill('0.25')]) {
+    const { dialog, human, elements } = captureHarness(t, [liveFrame()], { embedding, inferenceMs: 6000 });
+    await assert.rejects(captureLookupDescriptor(dialog, human), /Capture paused/);
+    assert.equal(elements['[data-face-progress]'].value, 0);
+  }
+});
+
+test('lookup cannot combine unstable poses or good frames separated by poor framing', async t => {
+  for (const alternate of [liveFrame({ yaw: 0.15 }), liveFrame({ count: 0 })]) {
+    const frames = Array.from({ length: 80 }, (_, index) => index % 2 ? alternate : liveFrame());
+    const { dialog, human, detections } = captureHarness(t, frames, { inferenceMs: 1000 });
+    await assert.rejects(captureLookupDescriptor(dialog, human), /Capture paused/);
+    assert.ok(detections.every(value => value === false));
+  }
+});
+
+test('lookup cancels a pending inference when the dialog closes, camera changes or track ends', async t => {
+  for (const cancel of [
+    ({ dialog }) => { dialog.open = false; },
+    ({ dialog }) => { dialog.isConnected = false; },
+    ({ dialog }) => { dialog.cameraGeneration += 1; },
+    ({ video }) => { video.srcObject = {}; },
+    ({ video }) => { video.srcObject.getVideoTracks = () => [{ readyState: 'ended' }]; }
+  ]) {
+    const harness = captureHarness(t, [liveFrame()]);
+    const detect = harness.human.detect;
+    harness.human.detect = async (...args) => {
+      const frame = await detect(...args);
+      cancel(harness);
+      return frame;
+    };
+    await assert.rejects(captureLookupDescriptor(harness.dialog, harness.human), /lookup was cancelled/);
+    assert.equal(harness.elements['[data-face-progress]'].hidden, true);
+    assert.equal(harness.elements['[data-face-progress]'].value, 0);
+  }
+});
+
+test('lookup reports Human errors immediately and the next quick capture can recover', async t => {
+  const failed = captureHarness(t, [{ error: 'Camera frame unavailable', face: [] }]);
+  await assert.rejects(captureLookupDescriptor(failed.dialog, failed.human), /Face detection could not run.*Camera frame unavailable/);
+  assert.equal(failed.elements['[data-face-progress]'].hidden, true);
+  const retry = captureHarness(t, [liveFrame()]);
+  assert.equal((await captureLookupDescriptor(retry.dialog, retry.human)).length, 1024);
+});
+
+test('lookup refuses to capture before a camera stream is started', async t => {
+  const { dialog, human, video, detections } = captureHarness(t, [liveFrame()]);
+  video.srcObject = null;
+  await assert.rejects(captureLookupDescriptor(dialog, human), /Start the camera first/);
+  assert.equal(detections.length, 0);
 });

@@ -424,7 +424,7 @@ async function previewFace(dialog, human) {
   }
 }
 
-function bindCameraSelector(dialog, captureButton) {
+function bindCameraSelector(dialog, captureButton, { quickLookup = false } = {}) {
   const select = dialog?.querySelector('[data-face-camera-select]');
   const video = dialog?.querySelector('[data-face-video]');
   if (!select || !video) return;
@@ -443,7 +443,9 @@ function bindCameraSelector(dialog, captureButton) {
       await startCamera(dialog);
       const human = await loadHuman(dialog);
       captureButton.disabled = false;
-      setStatus(dialog, `${cameraFacingLabel(facingMode)} is ready. Continue with the live face check.`, 'good');
+      setStatus(dialog, quickLookup
+        ? `${cameraFacingLabel(facingMode)} is ready. Look straight at the camera and tap Capture face. No head turn is needed.`
+        : `${cameraFacingLabel(facingMode)} is ready. Continue with the live face check.`, 'good');
       void previewFace(dialog, human);
     } catch (failure) {
       stopCamera(video);
@@ -562,6 +564,77 @@ function averageDescriptors(samples) {
     average[index] += Number(value);
   }));
   return average.map((value) => Math.round((value / samples.length) * 1e6) / 1e6);
+}
+
+// Assisted search is not authentication or attendance verification. It uses a
+// clear, steady frontal sample and still requires staff to confirm the match.
+// Keep this separate from captureDescriptor's live movement/evidence pipeline.
+export async function captureLookupDescriptor(dialog, human) {
+  const video = dialog.querySelector('[data-face-video]');
+  const progress = dialog.querySelector('[data-face-progress]');
+  if (!video.srcObject) throw new Error('Start the camera first.');
+  const stream = video.srcObject;
+  const generation = dialog.cameraGeneration;
+  const ensureActive = () => {
+    if (!dialog.open || !dialog.isConnected || video.srcObject !== stream || dialog.cameraGeneration !== generation || stream.getVideoTracks().some((track) => track.readyState === 'ended')) {
+      throw new Error('Face lookup was cancelled.');
+    }
+  };
+  const started = Date.now();
+  let stableFrames = 0;
+  let previousPose = null;
+  let lastGuidance = 'Look straight at the camera and hold still. No head turn is needed.';
+  progress.hidden = false;
+  progress.max = ROUTINE_SAMPLE_COUNT;
+  progress.value = 0;
+  setGuideState(dialog, 'searching');
+  setStatus(dialog, lastGuidance);
+  try {
+    while (Date.now() - started < CAPTURE_TIMEOUT_MS) {
+      ensureActive();
+      const result = await detectFrame(human, video, {
+        face: { description: { enabled: stableFrames >= NEUTRAL_POSE_FRAMES - 1 } }
+      });
+      ensureActive();
+      const faces = result?.face || [];
+      const face = faces.length === 1 ? faces[0] : null;
+      const readiness = face ? captureReadiness(face, video) : {
+        ready: false, state: 'searching', message: faces.length
+          ? 'Only one person may be in the camera frame.'
+          : 'Move your face into the camera frame.'
+      };
+      const pose = facePose(face);
+      if (!readiness.ready || !frontalPose(pose)) {
+        stableFrames = 0;
+        previousPose = null;
+        lastGuidance = readiness.ready ? 'Look straight at the camera for a clear sample.' : readiness.message;
+        setGuideState(dialog, readiness.ready ? 'warning' : readiness.state);
+        setStatus(dialog, lastGuidance, 'warn');
+      } else {
+        const steady = !previousPose || (Math.abs(pose.yaw - previousPose.yaw) < 0.08
+          && Math.abs(pose.pitch - previousPose.pitch) < 0.08
+          && Math.abs(pose.roll - previousPose.roll) < 0.08);
+        stableFrames = steady ? stableFrames + 1 : 1;
+        previousPose = { ...pose };
+        const embeddingReady = Array.isArray(face.embedding) && face.embedding.length === DESCRIPTOR_LENGTH && face.embedding.every(Number.isFinite);
+        if (stableFrames >= NEUTRAL_POSE_FRAMES && embeddingReady) {
+          progress.value = ROUTINE_SAMPLE_COUNT;
+          setGuideState(dialog, 'capture');
+          setStatus(dialog, 'Clear face sample captured. Searching for a possible match...', 'good');
+          return averageDescriptors([face.embedding.map(Number)]);
+        }
+        lastGuidance = 'Look straight at the camera and hold still. No head turn is needed.';
+        setGuideState(dialog, 'ready');
+        setStatus(dialog, lastGuidance, 'good');
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 50));
+    }
+    ensureActive();
+    setGuideState(dialog, 'warning');
+    throw new Error(`Capture paused. ${lastGuidance} Tap Capture face to retry.`);
+  } finally {
+    progress.hidden = true;
+  }
 }
 
 export async function captureDescriptor(dialog, human, sampleCount = ENROLLMENT_SAMPLE_COUNT, options = {}) {
@@ -778,7 +851,7 @@ function dialogMarkup(mode, student = {}, allowCameraSelection = false) {
     </header>
     <div class="student-face-notice">
       <span aria-hidden="true">🛡️</span>
-      <p><strong>Private assisted lookup</strong><small>Camera frames stay on this device. A mathematical face template is sent securely for comparison within this school scope. This does not authenticate a student or make an automatic decision.</small></p>
+      <p><strong>Private assisted lookup</strong><small>Camera frames stay on this device. A mathematical face template is sent securely for comparison within this school scope. This does not authenticate a student or make an automatic decision.${enrollment ? '' : ' Quick search uses a straight-facing capture, not a live-person check. Staff must confirm the possible match.'}</small></p>
     </div>
     <div class="student-face-camera-toolbar">
       ${allowCameraSelection ? '<label class="student-face-camera-field"><span>Camera</span><select data-face-camera-select aria-label="Choose camera for face capture"><option value="user">Front camera</option><option value="environment">Back camera</option></select></label>' : ''}
@@ -819,7 +892,7 @@ function renderPossibleMatch(dialog, match, onMatch, confirmText = 'Confirm and 
 export async function openStudentFaceLookup(options = {}) {
   const mode = options.mode === 'enroll' ? 'enroll' : 'lookup';
   const sampleCount = mode === 'enroll' ? ENROLLMENT_SAMPLE_COUNT : ROUTINE_SAMPLE_COUNT;
-  const allowCameraSelection = options.allowCameraSelection !== false;
+  const allowCameraSelection = mode === 'lookup' || options.allowCameraSelection !== false;
   if (activeDialog?.open) activeDialog.close();
   document.body.insertAdjacentHTML('beforeend', dialogMarkup(mode, options.student || {}, allowCameraSelection));
   const dialog = document.body.lastElementChild;
@@ -833,7 +906,7 @@ export async function openStudentFaceLookup(options = {}) {
   const purpose = mode === 'enroll' ? 'records-desk' : (clean(options.purpose) || 'records-desk');
   let status = null;
   initializeAudioGuidance(dialog);
-  if (allowCameraSelection) bindCameraSelector(dialog, captureButton);
+  if (allowCameraSelection) bindCameraSelector(dialog, captureButton, { quickLookup: mode === 'lookup' });
 
   const close = () => {
     dialog.cameraGeneration = (dialog.cameraGeneration || 0) + 1;
@@ -865,7 +938,9 @@ export async function openStudentFaceLookup(options = {}) {
         return;
       }
       captureButton.disabled = false;
-      setStatus(dialog, 'Camera ready. Tap Capture face and follow one simple head movement.', 'good');
+      setStatus(dialog, mode === 'lookup'
+        ? 'Camera ready. Look straight at the camera and tap Capture face. No head turn is needed.'
+        : 'Camera ready. Tap Capture face and follow one simple head movement.', 'good');
       void previewFace(dialog, human);
     } catch (failure) {
       dialog.cameraGeneration = (dialog.cameraGeneration || 0) + 1;
@@ -886,7 +961,9 @@ export async function openStudentFaceLookup(options = {}) {
     dialog.querySelector('[data-face-match]').hidden = true;
     try {
       const human = await loadHuman(dialog);
-      const descriptor = await captureDescriptor(dialog, human, sampleCount);
+      const descriptor = mode === 'lookup'
+        ? await captureLookupDescriptor(dialog, human)
+        : await captureDescriptor(dialog, human, sampleCount);
       stopCamera(video);
       startButton.hidden = false;
       if (mode === 'enroll') {
@@ -953,6 +1030,7 @@ export async function openStudentFaceLookup(options = {}) {
     else if (!status.canLookup) setStatus(dialog, 'This staff account cannot use face lookup in this workspace.', 'bad');
     else if (mode === 'enroll' && !status.canManage) setStatus(dialog, 'This staff account cannot manage face enrollment.', 'bad');
     else if (status.expired) setStatus(dialog, status.enrollmentMessage, 'warn');
+    else if (mode === 'lookup') setStatus(dialog, 'Ready. Choose the front or back camera, then Start camera. Look straight ahead; no head turn is needed.', 'good');
     else setStatus(dialog, status.enrolled ? 'A face template is already enrolled. A new enrollment will replace it.' : 'Ready. Start the camera when the student is present.', 'good');
   } catch (failure) {
     startButton.disabled = true;
