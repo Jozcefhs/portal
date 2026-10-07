@@ -481,7 +481,9 @@ async function match(env, user, body, purpose) {
       match: null,
       message: result.outcome === 'ambiguous'
         ? 'The scan was too close to more than one enrolled student. Use manual search.'
-        : 'No confident student match was found. Use manual search.'
+        : !candidates.length
+          ? 'No active student face enrollments are available in this branch and section. Enroll the student in Records Desk first, or use manual search.'
+          : 'No confident student match was found. Use manual search.'
     };
   }
   const card = studentSearchCard(matched);

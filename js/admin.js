@@ -1175,7 +1175,7 @@ async function attendancePasskeyProof(siteId, direction) {
 
 function attendanceFaceModule() {
   if (!attendanceFaceModulePromise) {
-    attendanceFaceModulePromise = import('./student-face-lookup.js?v=20260928-reliable-turn-capture').catch((error) => {
+    attendanceFaceModulePromise = import('./student-face-lookup.js?v=20260928-reliable-turn-capture-20261007-human-directions').catch((error) => {
       attendanceFaceModulePromise = null;
       throw error;
     });
@@ -10375,7 +10375,7 @@ function preloadRecordsDeskFaceRecognition() {
   recordsDeskFacePreloadScheduled = true;
   const preload = () => {
     recordsDeskFacePreloadScheduled = false;
-    recordsDeskFacePreloadPromise = import('./student-face-lookup.js?v=20260928-reliable-turn-capture')
+    recordsDeskFacePreloadPromise = import('./student-face-lookup.js?v=20260928-reliable-turn-capture-20261007-human-directions')
       .then((module) => module.preloadFaceRecognitionModel())
       .catch(() => {
         recordsDeskFacePreloadPromise = null;
@@ -10389,7 +10389,7 @@ function preloadRecordsDeskFaceRecognition() {
 }
 
 async function openStudentFaceLookupDialog(options = {}) {
-  const module = await import('./student-face-lookup.js?v=20260928-reliable-turn-capture');
+  const module = await import('./student-face-lookup.js?v=20260928-reliable-turn-capture-20261007-human-directions');
   return module.openStudentFaceLookup(options);
 }
 

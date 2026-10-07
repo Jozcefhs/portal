@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { runInNewContext } from 'node:vm';
 import { eyeOpenness, blinkFrameState, waitForCameraFrames, captureReadiness, captureDescriptor, faceGuideSize } from '../js/student-face-lookup.js';
 import { randomLivenessChallenge, validateLivenessEvidence } from '../functions/api/staff-attendance-face.js';
 
@@ -23,6 +25,21 @@ test('blink uses eye corners and is invariant to head roll', () => {
   assert.deepEqual(blinkFrameState(faceEyes(1), baseline), { open: false, closed: true });
   assert.deepEqual(blinkFrameState({}), { open: false, closed: false });
   assert.equal(blinkFrameState(faceEyes(1)).closed, false, 'cannot pass a blink without an open-eye baseline');
+});
+
+test('capture directions agree with the bundled Human rotation implementation', async () => {
+  const source = await readFile(new URL('../vendor/human/human.esm.js', import.meta.url), 'utf8');
+  const start = source.indexOf('var calculateFaceAngle =');
+  const end = source.indexOf('// src/face/anthropometry.ts', start);
+  assert.ok(start >= 0 && end > start);
+  const calculate = runInNewContext(`${source.slice(start, end)}; calculateFaceAngle`);
+  for (const [depth, direction] of [[0.2, 'left'], [-0.2, 'right']]) {
+    const mesh = Array.from({length:468}, () => [0.5, 0.5, 0]);
+    mesh[10] = [0.5, 0.2, 0]; mesh[152] = [0.5, 0.8, 0];
+    mesh[234] = [0.2, 0.5, -depth]; mesh[454] = [0.8, 0.5, depth];
+    const angle = calculate({meshRaw:mesh, boxRaw:[0.2,0.2,0.6,0.6]}, [640,480]).angle;
+    assert.ok(direction === 'left' ? angle.yaw < -0.22 : angle.yaw > 0.22);
+  }
 });
 
 test('camera readiness handles an immediate first frame without missing the event', async () => {
@@ -109,7 +126,7 @@ function captureHarness(t, frames, { inferenceMs = 350 } = {}) {
 test('slow portrait capture finishes with a gentle turn, natural narrow eyes and no blink', async t => {
   const still = liveFrame();
   const { dialog, human, detections } = captureHarness(t, [still, still, still,
-    liveFrame({ yaw: 0.3, gesture: 'facing left' }), still, still, still, still, still]);
+    liveFrame({ yaw: -0.3, gesture: 'facing left' }), still, still, still, still, still]);
   let evidence;
   const descriptor = await captureDescriptor(dialog, human, 3, { onLivenessEvidence: value => { evidence = value; } });
   assert.equal(descriptor.length, 1024);
@@ -123,7 +140,7 @@ test('slow portrait capture finishes with a gentle turn, natural narrow eyes and
 });
 
 test('head-turn enrollment works when a phone omits gesture labels and eye landmarks', async t => {
-  const frames = [liveFrame(), liveFrame(), liveFrame(), liveFrame({ yaw: 0.3 }),
+  const frames = [liveFrame(), liveFrame(), liveFrame(), liveFrame({ yaw: -0.3 }),
     liveFrame(), liveFrame(), liveFrame(), liveFrame(), liveFrame()];
   frames.forEach((frame) => frame.face.forEach((face) => { face.mesh = []; }));
   const { dialog, human } = captureHarness(t, frames);
@@ -138,7 +155,7 @@ test('head-turn enrollment works when a phone omits gesture labels and eye landm
 
 test('slow mobile inference has enough time for a complete live action and samples', async t => {
   const still = liveFrame();
-  const { dialog, human } = captureHarness(t, [still, still, still, liveFrame({ yaw: 0.3 }),
+  const { dialog, human } = captureHarness(t, [still, still, still, liveFrame({ yaw: -0.3 }),
     still, still, still, still, still], { inferenceMs: 3500 });
   const descriptor = await captureDescriptor(dialog, human, 3);
   assert.equal(descriptor.length, 1024);
@@ -147,7 +164,7 @@ test('slow mobile inference has enough time for a complete live action and sampl
 test('signed right-turn and legacy blink challenges require their own movement sequence', async t => {
   const still = liveFrame();
   for (const [challenge, action] of [
-    [{ action: 'TURN_RIGHT' }, liveFrame({ yaw: -0.3 })],
+    [{ action: 'TURN_RIGHT' }, liveFrame({ yaw: 0.3 })],
     [{ action: 'BLINK' }, liveFrame({ gap: 0.7 })]
   ]) {
     const { dialog, human } = captureHarness(t, [still, still, still, action, action, still, still, still]);
@@ -163,8 +180,8 @@ test('static frames, a wrong direction and a face that never returns cannot pass
   const still = liveFrame();
   for (const frames of [
     [still],
-    [still, still, still, liveFrame({ yaw: -0.3, gesture: 'facing right' }), still],
-    [still, still, still, liveFrame({ yaw: 0.3, gesture: 'facing left' })]
+    [still, still, still, liveFrame({ yaw: 0.3, gesture: 'facing right' }), still],
+    [still, still, still, liveFrame({ yaw: -0.3, gesture: 'facing left' })]
   ]) {
     const { dialog, human } = captureHarness(t, frames, { inferenceMs: 600 });
     let evidence;
@@ -176,7 +193,7 @@ test('static frames, a wrong direction and a face that never returns cannot pass
 test('another person entering the frame invalidates the observed live action', async t => {
   const still = liveFrame();
   const { dialog, human } = captureHarness(t, [still, still, still,
-    liveFrame({ yaw: 0.3, gesture: 'facing left' }), liveFrame({ count: 2 }), still]);
+    liveFrame({ yaw: -0.3, gesture: 'facing left' }), liveFrame({ count: 2 }), still]);
   await assert.rejects(captureDescriptor(dialog, human, 1), /Capture paused/);
 });
 
@@ -200,4 +217,12 @@ test('closing the dialog during inference cancels before evidence or a descripto
   await assert.rejects(capture, /cancelled/);
   assert.equal(evidence, false);
   delete globalThis.window;
+});
+
+test('Human error results fail immediately and do not poison the next capture', async t => {
+  const still = liveFrame();
+  const { dialog, human } = captureHarness(t, [{error:'Camera frame unavailable', face:[]}]);
+  await assert.rejects(captureDescriptor(dialog, human, 1), /Face detection could not run.*Camera frame unavailable/);
+  const retry = captureHarness(t, [still, still, still, liveFrame({yaw:-0.3}), still, still, still]);
+  assert.equal((await captureDescriptor(retry.dialog, retry.human, 1)).length, 1024);
 });

@@ -363,7 +363,10 @@ function updateCameraLayout(camera, video) {
 
 export async function waitForCameraFrames(video, stream) {
   await new Promise((resolve, reject) => {
+    let settled = false;
     const finish = (error) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timeout);
       video.removeEventListener('loadeddata', ready);
       video.removeEventListener('canplay', ready);
@@ -381,7 +384,13 @@ export async function waitForCameraFrames(video, stream) {
 function detectFrame(human, video, options) {
   // Human owns reusable tensors; overlapping preview/capture calls can corrupt
   // results, especially when a dialog is closed and immediately reopened.
-  const detection = detectionQueue.then(() => human.detect(video, options));
+  const detection = detectionQueue.then(async () => {
+    const result = await human.detect(video, options);
+    // Human can return an error result rather than reject. Treating that as
+    // "no face" used to repeat positioning instructions until capture timed out.
+    if (result?.error) throw new Error(`Face detection could not run. ${clean(result.error)}`);
+    return result;
+  });
   detectionQueue = detection.catch(() => {});
   return detection;
 }
@@ -662,11 +671,13 @@ export async function captureDescriptor(dialog, human, sampleCount = ENROLLMENT_
             : 'head up';
         // Human's gesture label is intermittent on mobile even when the
         // measured head rotation is clear. Use signed pose movement instead.
+        // Human 3.3.6 reports a left turn as negative yaw and a right turn as
+        // positive yaw (independent of the CSS-mirrored front-camera preview).
         const movementDetected = challenge.action === 'CHIN_UP'
           ? pitchDelta >= CHIN_UP_PITCH_THRESHOLD
           : challenge.action === 'TURN_LEFT'
-            ? yawDelta >= TURN_YAW_THRESHOLD
-            : yawDelta <= -TURN_YAW_THRESHOLD;
+            ? yawDelta <= -TURN_YAW_THRESHOLD
+            : yawDelta >= TURN_YAW_THRESHOLD;
         if (movementDetected) {
           actionObserved = true;
           observedGesture = wantedGesture;
