@@ -197,6 +197,12 @@ function normalizeEmail(value) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : '';
 }
 
+export function staffDeliveryEmail(row = {}) {
+  // Email-style usernames are a fallback, never a replacement for a saved email.
+  return [row.Email, row.email, row.StaffEmail, row.staffEmail, row.Username, row.username]
+    .map(normalizeEmail).find(Boolean) || '';
+}
+
 function normalizeTokenValues(input = {}) {
   const values = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
   const result = {};
@@ -734,7 +740,7 @@ async function searchDirectory(env, body, capabilities, scope, user = {}) {
           row.Username || row.__id,
           row.DisplayName || row.Username || row.__id,
           [row.Role, row.Department, row.Position].map(clean).filter(Boolean).join(' · '),
-          row.Email || row.StaffEmail,
+          staffDeliveryEmail(row),
           row.Address,
           row,
           { RECIPIENT_NAME: row.DisplayName, RECIPIENT_TITLE: row.Position || row.Role, DEPARTMENT: row.Department, POSITION: row.Position }
