@@ -424,7 +424,7 @@ async function previewFace(dialog, human) {
   }
 }
 
-function bindCameraSelector(dialog, captureButton, { quickLookup = false } = {}) {
+function bindCameraSelector(dialog, captureButton, { quickLookup = false, onCameraReady = null } = {}) {
   const select = dialog?.querySelector('[data-face-camera-select]');
   const video = dialog?.querySelector('[data-face-video]');
   if (!select || !video) return;
@@ -433,7 +433,9 @@ function bindCameraSelector(dialog, captureButton, { quickLookup = false } = {})
     const facingMode = selectedCameraFacingMode(dialog);
     dialog.querySelector('.student-face-camera')?.setAttribute('data-facing-mode', facingMode);
     if (!activeStream || !video.srcObject) {
-      setStatus(dialog, `${cameraFacingLabel(facingMode)} selected. Choose Start camera when ready.`, 'good');
+      setStatus(dialog, quickLookup
+        ? `${cameraFacingLabel(facingMode)} selected. Choose Start camera to begin scanning.`
+        : `${cameraFacingLabel(facingMode)} selected. Choose Start camera when ready.`, 'good');
       return;
     }
     select.disabled = true;
@@ -444,9 +446,10 @@ function bindCameraSelector(dialog, captureButton, { quickLookup = false } = {})
       const human = await loadHuman(dialog);
       captureButton.disabled = false;
       setStatus(dialog, quickLookup
-        ? `${cameraFacingLabel(facingMode)} is ready. Look straight at the camera and tap Capture face. No head turn is needed.`
+        ? `${cameraFacingLabel(facingMode)} is ready. Scanning automatically; look straight at the camera. No head turn is needed.`
         : `${cameraFacingLabel(facingMode)} is ready. Continue with the live face check.`, 'good');
-      void previewFace(dialog, human);
+      if (quickLookup && onCameraReady) await onCameraReady(human);
+      else void previewFace(dialog, human);
     } catch (failure) {
       stopCamera(video);
       dialog.querySelector('[data-face-start]').hidden = false;
@@ -631,7 +634,7 @@ export async function captureLookupDescriptor(dialog, human) {
     }
     ensureActive();
     setGuideState(dialog, 'warning');
-    throw new Error(`Capture paused. ${lastGuidance} Tap Capture face to retry.`);
+    throw new Error(`Capture paused. ${lastGuidance} Tap Retry scan to retry.`);
   } finally {
     progress.hidden = true;
   }
@@ -866,7 +869,7 @@ function dialogMarkup(mode, student = {}, allowCameraSelection = false) {
     <div class="student-face-match" data-face-match hidden></div>
     <footer>
       <button type="button" class="secondary" data-face-start disabled>Start camera</button>
-      <button type="button" data-face-capture disabled>Capture face</button>
+      <button type="button" data-face-capture${enrollment ? '' : ' hidden'} disabled>${enrollment ? 'Capture face' : 'Retry scan'}</button>
       ${enrollment ? '<button type="button" class="danger" data-face-revoke hidden>Remove enrollment</button>' : ''}
       <button type="button" class="secondary" data-face-close>${enrollment ? 'Close' : 'Use manual search'}</button>
     </footer>
@@ -906,7 +909,9 @@ export async function openStudentFaceLookup(options = {}) {
   const purpose = mode === 'enroll' ? 'records-desk' : (clean(options.purpose) || 'records-desk');
   let status = null;
   initializeAudioGuidance(dialog);
-  if (allowCameraSelection) bindCameraSelector(dialog, captureButton, { quickLookup: mode === 'lookup' });
+  if (allowCameraSelection) bindCameraSelector(dialog, captureButton, {
+    quickLookup: mode === 'lookup', onCameraReady: (human) => captureAndSubmit(human)
+  });
 
   const close = () => {
     dialog.cameraGeneration = (dialog.cameraGeneration || 0) + 1;
@@ -939,9 +944,10 @@ export async function openStudentFaceLookup(options = {}) {
       }
       captureButton.disabled = false;
       setStatus(dialog, mode === 'lookup'
-        ? 'Camera ready. Look straight at the camera and tap Capture face. No head turn is needed.'
+        ? 'Camera ready. Scanning automatically; look straight at the camera. No head turn is needed.'
         : 'Camera ready. Tap Capture face and follow one simple head movement.', 'good');
-      void previewFace(dialog, human);
+      if (mode === 'lookup') await captureAndSubmit(human);
+      else void previewFace(dialog, human);
     } catch (failure) {
       dialog.cameraGeneration = (dialog.cameraGeneration || 0) + 1;
       stopCamera(video);
@@ -954,13 +960,14 @@ export async function openStudentFaceLookup(options = {}) {
     }
   });
 
-  captureButton.addEventListener('click', async () => {
-    if (captureButton.disabled) return;
+  const captureAndSubmit = async (readyHuman = null) => {
+    if (captureButton.disabled || dialog.captureRunning || !dialog.open || !dialog.isConnected) return;
+    captureButton.hidden = false;
     setBusy(captureButton, true, mode === 'enroll' ? 'Enrolling...' : 'Scanning...');
     lockCaptureControls(dialog, true);
     dialog.querySelector('[data-face-match]').hidden = true;
     try {
-      const human = await loadHuman(dialog);
+      const human = readyHuman || await loadHuman(dialog);
       const descriptor = mode === 'lookup'
         ? await captureLookupDescriptor(dialog, human)
         : await captureDescriptor(dialog, human, sampleCount);
@@ -999,8 +1006,10 @@ export async function openStudentFaceLookup(options = {}) {
       lockCaptureControls(dialog, false);
       setBusy(captureButton, false);
       captureButton.disabled = !activeStream;
+      if (mode === 'lookup') captureButton.hidden = !activeStream;
     }
-  });
+  };
+  captureButton.addEventListener('click', () => captureAndSubmit());
 
   revokeButton?.addEventListener('click', async () => {
     if (!await window.DynamaxDialogs.confirm({ title: 'Remove face enrollment', message: `Remove face enrollment for ${studentId}? The encrypted face template will be deleted.`, tone: 'danger', confirmText: 'Remove enrollment' })) return;
@@ -1030,7 +1039,7 @@ export async function openStudentFaceLookup(options = {}) {
     else if (!status.canLookup) setStatus(dialog, 'This staff account cannot use face lookup in this workspace.', 'bad');
     else if (mode === 'enroll' && !status.canManage) setStatus(dialog, 'This staff account cannot manage face enrollment.', 'bad');
     else if (status.expired) setStatus(dialog, status.enrollmentMessage, 'warn');
-    else if (mode === 'lookup') setStatus(dialog, 'Ready. Choose the front or back camera, then Start camera. Look straight ahead; no head turn is needed.', 'good');
+    else if (mode === 'lookup') setStatus(dialog, 'Ready. Choose the front or back camera, then Start camera. Scanning starts automatically. Look straight ahead; no head turn is needed.', 'good');
     else setStatus(dialog, status.enrolled ? 'A face template is already enrolled. A new enrollment will replace it.' : 'Ready. Start the camera when the student is present.', 'good');
   } catch (failure) {
     startButton.disabled = true;

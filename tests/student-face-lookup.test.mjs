@@ -421,7 +421,7 @@ test('front and back camera selection covers staff enrollment and every student 
   assert.match(uiSource, /Front camera/);
   assert.match(uiSource, /Back camera/);
   assert.match(uiSource, /const allowCameraSelection = mode === 'lookup' \|\| options\.allowCameraSelection !== false/);
-  assert.match(uiSource, /if \(allowCameraSelection\) bindCameraSelector\(dialog, captureButton, \{ quickLookup: mode === 'lookup' \}\)/);
+  assert.match(uiSource, /if \(allowCameraSelection\) bindCameraSelector\(dialog, captureButton, \{\s*quickLookup: mode === 'lookup', onCameraReady: \(human\) => captureAndSubmit\(human\)/);
   assert.match(adminSource, /purpose: 'tuck-shop-purchase',[\s\S]*?allowCameraSelection: true/);
   assert.match(adminSource, /purpose: 'clinic-visit',[\s\S]*?allowCameraSelection: true/);
   assert.match(adminSource, /purpose: section === 'bookstore' \? 'bookstore-collection' : 'uniform-store-collection',[\s\S]*?allowCameraSelection: true/);
