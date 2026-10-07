@@ -99,6 +99,8 @@ test('compact page styles cover header, search, buyer, checkout, history and wor
   assert.match(css, /\.tuck-shop-mobile-history>summary\{[^}]*padding:9px 10px/);
   assert.match(css, /#adminPanel:has\(\[data-workspace-section="organizationStore"\]\)\{min-height:0;padding:8px\}/);
   assert.match(css, /#adminPanel:has\(\.commerce-pos-layout\) \.module-workspace-panel\{padding:6px 0 0\}/);
+  assert.match(css, /#adminPanel:has\(\.commerce-pos-layout\)>\.workflow-intro h2\{margin:0;font-size:17px;line-height:1\.25\}/);
+  assert.match(css, /\.commerce-product-list>\.commerce-empty\{margin:2px 0;padding:8px;font-size:11px;line-height:1\.35\}/);
   assert.match(css, /\.staff-main-content:has\(\.commerce-pos-layout\) \.staff-summary>\.module-summary-card\{gap:1px;min-height:0;padding:7px 9px\}/);
   assert.match(css, /html\[data-theme="dark"\][^\n]+\.tuck-shop-pos-workspace \.commerce-checkout-form>label\{color:#edf4ff\}/);
 });
