@@ -857,7 +857,7 @@ function dialogMarkup(mode, student = {}, allowCameraSelection = false) {
       <p><strong>Private assisted lookup</strong><small>Camera frames stay on this device. A mathematical face template is sent securely for comparison within this school scope. This does not authenticate a student or make an automatic decision.${enrollment ? '' : ' Quick search uses a straight-facing capture, not a live-person check. Staff must confirm the possible match.'}</small></p>
     </div>
     <div class="student-face-camera-toolbar">
-      ${allowCameraSelection ? '<label class="student-face-camera-field"><span>Camera</span><select data-face-camera-select aria-label="Choose camera for face capture"><option value="user">Front camera</option><option value="environment">Back camera</option></select></label>' : ''}
+      ${allowCameraSelection ? `<label class="student-face-camera-field"><span>Camera</span><select data-face-camera-select aria-label="Choose camera for face capture"><option value="user"${enrollment ? ' selected' : ''}>Front camera</option><option value="environment"${enrollment ? '' : ' selected'}>Back camera</option></select></label>` : ''}
       <button type="button" class="student-face-audio-toggle" data-face-audio aria-pressed="true"><span data-face-audio-icon aria-hidden="true">🔊</span><span data-face-audio-label>Audio guidance on</span></button>
     </div>
     <div class="student-face-camera">
@@ -1087,7 +1087,7 @@ function attendanceFaceDialogMarkup(mode) {
       <p><strong>Private face capture</strong><small>Camera frames stay on this device. Follow one gentle head movement, then we capture automatically. Only an encrypted face template is saved.</small></p>
     </div>
     <div class="student-face-camera-toolbar">
-      <label class="student-face-camera-field"><span>Camera</span><select data-face-camera-select aria-label="Choose camera for face capture"><option value="user">Front camera</option><option value="environment">Back camera</option></select></label>
+      <label class="student-face-camera-field"><span>Camera</span><select data-face-camera-select aria-label="Choose camera for face capture"><option value="user" selected>Front camera</option><option value="environment">Back camera</option></select></label>
       <button type="button" class="student-face-audio-toggle" data-face-audio aria-pressed="true"><span data-face-audio-icon aria-hidden="true">🔊</span><span data-face-audio-label>Audio guidance on</span></button>
     </div>
     <div class="student-face-camera">

@@ -416,7 +416,7 @@ test('front and back camera selection covers staff enrollment and every student 
   assert.match(cssSource, /data-facing-mode="environment"/);
   assert.match(uiSource, /<label class="student-face-camera-field"/);
   assert.match(uiSource, /bindCameraSelector\(dialog, captureButton\)/);
-  assert.match(uiSource, /allowCameraSelection \? '<label class="student-face-camera-field"/);
+  assert.match(uiSource, /allowCameraSelection \? `<label class="student-face-camera-field"/);
   assert.match(uiSource, /Choose camera for face capture/);
   assert.match(uiSource, /Front camera/);
   assert.match(uiSource, /Back camera/);

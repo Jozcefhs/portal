@@ -1175,7 +1175,7 @@ async function attendancePasskeyProof(siteId, direction) {
 
 function attendanceFaceModule() {
   if (!attendanceFaceModulePromise) {
-    attendanceFaceModulePromise = import('./student-face-lookup.js?v=20260928-reliable-turn-capture-20261007-human-directions-quick-lookup-auto-start').catch((error) => {
+    attendanceFaceModulePromise = import('./student-face-lookup.js?v=20260928-reliable-turn-capture-20261007-human-directions-quick-lookup-auto-start-camera-defaults').catch((error) => {
       attendanceFaceModulePromise = null;
       throw error;
     });
@@ -10375,7 +10375,7 @@ function preloadRecordsDeskFaceRecognition() {
   recordsDeskFacePreloadScheduled = true;
   const preload = () => {
     recordsDeskFacePreloadScheduled = false;
-    recordsDeskFacePreloadPromise = import('./student-face-lookup.js?v=20260928-reliable-turn-capture-20261007-human-directions-quick-lookup-auto-start')
+    recordsDeskFacePreloadPromise = import('./student-face-lookup.js?v=20260928-reliable-turn-capture-20261007-human-directions-quick-lookup-auto-start-camera-defaults')
       .then((module) => module.preloadFaceRecognitionModel())
       .catch(() => {
         recordsDeskFacePreloadPromise = null;
@@ -10389,7 +10389,7 @@ function preloadRecordsDeskFaceRecognition() {
 }
 
 async function openStudentFaceLookupDialog(options = {}) {
-  const module = await import('./student-face-lookup.js?v=20260928-reliable-turn-capture-20261007-human-directions-quick-lookup-auto-start');
+  const module = await import('./student-face-lookup.js?v=20260928-reliable-turn-capture-20261007-human-directions-quick-lookup-auto-start-camera-defaults');
   return module.openStudentFaceLookup(options);
 }
 

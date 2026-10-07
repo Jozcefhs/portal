@@ -180,6 +180,26 @@ test('lookup hides the extra capture button until a scan or retry needs it, even
   assert.match(css,/\.student-face-dialog>footer button\[hidden\]\{display:none\}/);
 });
 
+test('search defaults to the back camera, while enrollment and staff clock-in/out default to the front camera', () => {
+  const studentMarkup = source.slice(source.indexOf('function dialogMarkup'), source.indexOf('function renderPossibleMatch'));
+  const attendanceMarkup = source.slice(source.indexOf('function attendanceFaceDialogMarkup'), source.indexOf('export function captureStaffAttendanceFace'));
+  const markup = runInNewContext(`${studentMarkup}\n${attendanceMarkup}; ({student: dialogMarkup, attendance: attendanceFaceDialogMarkup})`, {
+    ENROLLMENT_SAMPLE_COUNT: 3, ROUTINE_SAMPLE_COUNT: 1,
+    clean: value => String(value ?? '').trim(), escapeHtml: value => String(value)
+  });
+  for (const [html, expected] of [
+    [markup.student('lookup', {}, true), 'environment'],
+    [markup.student('enroll', {}, true), 'user'],
+    [markup.attendance('verify'), 'user'],
+    [markup.attendance('enroll'), 'user']
+  ]) {
+    const selected = [...html.matchAll(/<option value="(user|environment)" selected>/g)].map(x => x[1]);
+    assert.deepEqual(selected, [expected]);
+    assert.match(html, /value="user"/);
+    assert.match(html, /value="environment"/);
+  }
+});
+
 test('enrollment still previews first and waits for its explicit guided capture click', async () => {
   const f = fixture();
   await f.open({ mode: 'enroll', student: { id: 'SYNTHETIC-STUDENT' } });
