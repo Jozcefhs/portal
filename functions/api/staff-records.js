@@ -3,7 +3,6 @@ import {
   firestoreDocumentToObject,
   firestoreRequest,
   listCollection,
-  listCollectionForReport,
   requireFirestoreEnv,
   upsertDocument
 } from '../lib/firestore.js';
@@ -34,6 +33,7 @@ import {
 import { listSchoolCollection, schoolCollectionPaths, schoolSectionFor } from '../lib/school-scope.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { readJsonBody } from '../lib/request-security.js';
+import { loadRecordsDeskStudentFinance } from '../lib/records-desk-finance.js';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
@@ -343,10 +343,17 @@ function referenceKeys(row = {}) {
 function rowMatchesKeys(row, keys) {
   return keys.some((key) => [
     row.AccountRef,
+    row.accountRef,
     row.AdmissionNo,
+    row.admissionNo,
     row.ApplicationReference,
+    row.applicationReference,
     row.ApplicationID,
+    row.applicationID,
     row.StudentRef,
+    row.studentRef,
+    row.AccountRefNormalized,
+    row.accountRefNormalized,
     row.__id
   ].some((candidate) => recordReferencesMatch(candidate, { __id: key })));
 }
@@ -433,10 +440,11 @@ async function studentDetail(env, user, row, capabilities) {
   const allowed = new Set(user.allowedSections || []);
   const selectedBranch = lower(row.BranchId || 'main') || 'main';
   const selectedSection = lower(schoolSectionFor(row));
-  const [payments, invoices, ledger, clinicRecords, storeOrders, conductRecords] = await Promise.all([
-    capabilities.canViewStudentFinance ? listCollectionForReport(env, 'payments') : Promise.resolve([]),
-    capabilities.canViewStudentFinance ? listCollectionForReport(env, 'invoices') : Promise.resolve([]),
-    capabilities.canViewStudentFinance || capabilities.canViewStudentWallet ? listCollectionForReport(env, 'ledger') : Promise.resolve([]),
+  const [finance, clinicRecords, storeOrders, conductRecords] = await Promise.all([
+    loadRecordsDeskStudentFinance(env, row, capabilities).catch((failure) => {
+      console.warn(JSON.stringify({ event: 'records_desk_finance_unavailable', code: clean(failure.code || 'RECORD_FINANCE_READ_FAILED') }));
+      return { payments: [], invoices: [], ledger: [], unavailable: true };
+    }),
     capabilities.canViewStudentClinic ? listCollection(env, 'clinicRecords') : Promise.resolve([]),
     ['bookstore', 'uniformStore', 'tuckShop'].some((section) => allowed.has(section))
       ? listCollection(env, 'storeOrders')
@@ -448,6 +456,11 @@ async function studentDetail(env, user, row, capabilities) {
       })
       : Promise.resolve([])
   ]);
+  const { payments, invoices, ledger } = finance;
+  if (finance.unavailable) detail.sections.push({
+    key: 'finance-unavailable', title: 'Finance unavailable',
+    items: [{ label: 'Account totals', value: 'Financial records could not be loaded completely. No totals are shown. The profile and face enrollment remain available; open Accounts to review or retry.' }]
+  });
   const activityRows = [...payments, ...invoices, ...ledger, ...clinicRecords, ...storeOrders, ...conductRecords];
   const hasLegacyActivity = activityRows.some((item) =>
     (!clean(item.BranchId) || !clean(item.SchoolSection || item.schoolSection)) &&
@@ -457,7 +470,7 @@ async function studentDetail(env, user, row, capabilities) {
     : false;
   const scoped = (rows) => rows.filter((item) => {
     if (!rowMatchesKeys(item, keys)) return false;
-    const itemBranch = lower(item.BranchId);
+    const itemBranch = lower(item.BranchId || item.branchId);
     if (itemBranch && itemBranch !== selectedBranch) return false;
     if (!itemBranch && !legacyReferenceIsSafe) return false;
     const itemSection = clean(item.SchoolSection || item.schoolSection)
@@ -473,7 +486,7 @@ async function studentDetail(env, user, row, capabilities) {
     lower(item.FeeCategory) === 'wallet' || lower(item.EntryType).includes('wallet'));
   const metrics = [];
   const activities = [];
-  if (capabilities.canViewStudentFinance) {
+  if (capabilities.canViewStudentFinance && !finance.unavailable) {
     const billed = studentInvoices.reduce((sum, item) => sum + number(item.Debit || item.Amount), 0);
     const paid = studentPayments.reduce((sum, item) => sum + number(item.Amount || item.Credit), 0);
     const outstanding = studentInvoices.reduce((sum, item) => {
@@ -492,7 +505,7 @@ async function studentDetail(env, user, row, capabilities) {
       status: clean(item.Status || 'Paid')
     }))));
   }
-  if (capabilities.canViewStudentWallet) {
+  if (capabilities.canViewStudentWallet && !finance.unavailable) {
     const balance = walletRows.reduce((sum, item) => sum + number(item.Credit) - number(item.Debit), 0);
     metrics.push({ label: 'Wallet balance', value: balance, format: 'money' });
     activities.push(activity('Wallet activity', recent(walletRows, ['Date', 'CreatedAt']).map((item) => ({
