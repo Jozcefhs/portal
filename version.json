@@ -1,7 +1,7 @@
 {
-  "version": "3.1.16",
+  "version": "3.1.17",
   "channel": "stable",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.16.exe",
-  "sha256": "9203476e80bf420e30e4e5d7ada3649af339b5dd560cd163664c37c8f54d1132",
-  "notes": "Dynamax Desktop v3.1.16 adds explicit Primary/Nursery, Secondary or Mixed school terminology per stable branch ID, preserves saved IDs and section metadata, and refreshes sidebar, student register and executive-office labels when branches switch. Records, permissions and non-school edition vocabulary are unchanged. Requires the matching branch terminology backend."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.17.exe",
+  "sha256": "d4dbcac1cdafe295db553db0c8d50164b8d2f3c24b7a89954b91ded362a47012",
+  "notes": "Dynamax Desktop v3.1.17 automatically fills staff correspondence delivery email from a valid email-style username when no valid saved staff email is available. Saved email addresses take priority; ordinary usernames are not treated as email addresses. Applies to School, Church and Other Organisation editions; login credentials, student/parent email addresses and issued documents remain unchanged."
 }
