@@ -1,6 +1,7 @@
 import { deleteDocument, getDocument, listCollection, queryCollection, upsertDocument } from './firestore.js';
 import { normalizeClassKey } from './class-names.js';
 import { withStudentProfileDefaults } from './student-profile-defaults.js';
+import { withStudentDisplayName } from './student-display-name.js';
 
 function clean(value) { return String(value ?? '').trim(); }
 
@@ -100,10 +101,14 @@ function legacyRowAllowed(row, scope) {
 export async function listSchoolCollection(env, collection, requestedScope = null) {
   const scope = accessScope(requestedScope || {});
   const uniquePaths = await schoolCollectionPaths(env, collection, scope);
-  const groups = await Promise.all(uniquePaths.map((path) => listCollection(env, path)));
-  return groups.flatMap((rows, index) => rows
+  const [groups, nameProfile] = await Promise.all([
+    Promise.all(uniquePaths.map((path) => listCollection(env, path))),
+    collection === 'students' ? getDocument(env, 'settings', 'schoolProfile').catch(() => null) : null
+  ]);
+  const rows = groups.flatMap((rows, index) => rows
     .filter((row) => index !== 0 || legacyRowAllowed(row, scope))
     .map((row) => ({ ...row, __scopePath: uniquePaths[index] })));
+  return collection === 'students' ? rows.map((row) => withStudentDisplayName(row, nameProfile || {})) : rows;
 }
 
 export async function schoolCollectionPaths(env, collection, requestedScope = null) {
@@ -122,11 +127,15 @@ export async function schoolCollectionPaths(env, collection, requestedScope = nu
 
 export async function getSchoolDocumentsById(env, collection, documentId, requestedScope = null) {
   const paths = await schoolCollectionPaths(env, collection, requestedScope);
-  const groups = await Promise.all(paths.map(async (path) => {
-    const row = await getDocument(env, path, documentId).catch(() => null);
-    return row ? { ...row, __scopePath: path } : null;
-  }));
-  return groups.filter(Boolean);
+  const [groups, nameProfile] = await Promise.all([
+    Promise.all(paths.map(async (path) => {
+      const row = await getDocument(env, path, documentId).catch(() => null);
+      return row ? { ...row, __scopePath: path } : null;
+    })),
+    collection === 'students' ? getDocument(env, 'settings', 'schoolProfile').catch(() => null) : null
+  ]);
+  const rows = groups.filter(Boolean);
+  return collection === 'students' ? rows.map((row) => withStudentDisplayName(row, nameProfile || {})) : rows;
 }
 
 export async function getSchoolDocumentById(env, collection, documentId, requestedScope = null) {
