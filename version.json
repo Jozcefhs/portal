@@ -1,7 +1,7 @@
 {
-  "version": "3.1.18",
+  "version": "3.1.19",
   "channel": "stable",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.18.exe",
-  "sha256": "1390623fe8a70a0102e5e0e2aacc293fb379e764ccd61c7f21df962034722260",
-  "notes": "Dynamax Desktop v3.1.18 adds read-only staff sign-in cache recovery and Full Scholarship fee eligibility. The matching shared portal release repairs scholarship result access, repeated notification-archive audit entries, the responsive parent store and organisation-aware payment references. Shared identity and authorization rules apply across School, Church and Other Organisation editions. Existing invoices, payments, credit balances and historical references are preserved."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.19.exe",
+  "sha256": "c648a0d5494bfe5b629c3f7ac5ad42f7c2934841e1798e9525d7801d51a4dc50",
+  "notes": "Dynamax Desktop v3.1.19 repairs previous-payment import approval: the password confirmation is owned by the import window, is raised and focused, and shows clear approval, cancellation and startup status. Imports retain finance authorization, five-row batches, original tenant context, duplicate-reference checks and timeout reconciliation. The shared desktop repair applies across School, Church and Other Organisation editions. No existing payments or balances are changed by installing this update."
 }
