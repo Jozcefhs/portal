@@ -113,6 +113,6 @@ The available rule choices are agreed, but no actual commission rate or fixed am
 
 The automated acceptance suite covers all three editions, actual checkout paths, partial and full payment, retries and conflicts, fixed-charge redistribution after refunds, direct collection, bank changes, data isolation and historical openings. Desktop tests cover shared request handling, role access, form construction and stale-workspace protection. Responsive web checks use sample records only.
 
-Verification on 8 October 2026: 1,832 top-level web tests, 64 payroll tests and 586 desktop tests passed; the Pages Functions bundle compiled successfully. The vendor acceptance suite contains 41 tests, and the desktop vendor suite contains eight tests.
+Verification on 8 October 2026: 1,832 top-level web tests, 64 payroll tests and 588 desktop tests passed; the Pages Functions bundle compiled successfully. The vendor acceptance suite contains 41 tests, and the desktop vendor suite contains ten tests, including stale statement protection when filters change.
 
 Live product ownership, vendor rules, account mappings and opening balances still require Accounts review and a controlled pilot. Leave vendor sales disabled during this review. Existing financial records and student wallets are not migrated or altered by publishing the feature.

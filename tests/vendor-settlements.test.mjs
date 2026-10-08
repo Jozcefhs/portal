@@ -336,6 +336,9 @@ test('web shell caches vendor assets and printable requisitions retain the compl
   assert.match(shell,/\/js\/vendor-settlements\.js/);
   assert.match(client,/s\.RuleLabel \|\| JSON\.stringify\(s\.RuleSnapshot/);
   assert.match(client,/mounted\?\.destroy\(\)/);
+  assert.match(client,/generation === statementGeneration && vendorId === selected/);
+  assert.match(client,/filter\.onchange[\s\S]{0,180}statement = null; statementGeneration\+\+/);
+  assert.match(client,/if \(!replaced && !currentStatement\)/);
 });
 
 for (const [edition,section] of [['school','tuckShop'],['faith','restaurant'],['organization','organizationStore']]) {

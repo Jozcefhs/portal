@@ -33,7 +33,7 @@
   let mounted;
   function mount(root, request) {
     mounted?.destroy();
-    let data, tab = 'balances', statement, selected = '', busy = false, notice = '', disposed = false, dialog;
+    let data, tab = 'balances', statement, selected = '', busy = false, notice = '', disposed = false, dialog, statementGeneration = 0;
     const pending = new Set();
     const status = (message, error = false) => { const el = root.querySelector('.vendor-status'); if (el) { el.textContent = message; el.classList.toggle('error', error); } };
     async function call(action, body = {}, form) {
@@ -120,13 +120,18 @@
     async function loadStatement() {
       if (!selected || !data) return;
       const form = root.querySelector('[data-statement-filter]'), range = form ? formBody(form) : { From:today().slice(0,7) + '-01', To:today() };
-      const result = await call('statement',{ VendorId:selected, ...range });
-      if (result && !disposed && root.querySelector('[data-statement-result]')) { statement = result; root.querySelector('[data-statement-result]').innerHTML = statementHTML(result); }
+      const generation = ++statementGeneration, vendorId = selected;
+      const result = await call('statement',{ ...range, VendorId:vendorId });
+      if (result && !disposed && generation === statementGeneration && vendorId === selected && root.querySelector('[data-statement-result]')) {
+        statement = result; root.querySelector('[data-statement-result]').innerHTML = statementHTML(result);
+      }
     }
     function requestForm(replaced) {
       if (!selected) return status('Register or select a vendor first.',true);
-      showDialog('Submit vendor requisition', `${input('From','From',replaced?.From || statement?.from || today().slice(0,7) + '-01','date','required')}
-        ${input('To','To',replaced?.To || statement?.to || today(),'date','required')}${input('Amount','Amount requested',statement?.availableInPeriod || 0,'number','min="0.01" step="0.01" required')}${notes()}
+      const currentStatement = statement?.vendor.VendorId === selected ? statement : null;
+      if (!replaced && !currentStatement) return status('Load a fresh statement for the selected vendor and period before requesting payment.',true);
+      showDialog('Submit vendor requisition', `${input('From','From',replaced?.From || currentStatement?.from || today().slice(0,7) + '-01','date','required')}
+        ${input('To','To',replaced?.To || currentStatement?.to || today(),'date','required')}${input('Amount','Amount requested',currentStatement?.availableInPeriod ?? replaced?.Amount ?? 0,'number','min="0.01" step="0.01" required')}${notes()}
         <small class="vendor-full">Confirmed unclaimed earnings are reserved on submission. Approval does not send money. Revisions require the complete approval chain again.</small>`,
         'requestSettlement', b => ({ ...b, VendorId:selected, ...(replaced ? { ReplacesSettlementId:replaced.SettlementId, RecordVersion:replaced.RecordVersion } : {}) }));
     }
@@ -167,7 +172,7 @@
         };
       }
       root.querySelector('[data-refresh]').onclick = reload;
-      root.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { tab = b.dataset.tab; statement = null; draw(); if (tab === 'statement') loadStatement(); });
+      root.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { tab = b.dataset.tab; statement = null; statementGeneration++; draw(); if (tab === 'statement') loadStatement(); });
       root.querySelector('[data-add-vendor]')?.addEventListener('click', () => vendorForm());
       root.querySelectorAll('[data-edit-vendor]').forEach(b => b.onclick = () => vendorForm(data.vendors.find(v => v.VendorId === b.dataset.editVendor)));
       root.querySelectorAll('[data-view-vendor]').forEach(b => b.onclick = () => { selected = b.dataset.viewVendor; tab = 'statement'; draw(); loadStatement(); });
@@ -175,7 +180,13 @@
       root.querySelectorAll('[data-edit-product]').forEach(b => b.onclick = () => productForm(data.products[Number(b.dataset.editProduct)]));
       root.querySelector('[data-request-new]')?.addEventListener('click', () => requestForm());
       root.querySelector('[data-print-statement]')?.addEventListener('click', () => statement ? print(`Vendor statement — ${statement.vendor.Name}`,statementHTML(statement)) : status('Load a statement first.',true));
-      const filter = root.querySelector('[data-statement-filter]'); if (filter) filter.onsubmit = e => { e.preventDefault(); selected = filter.elements.VendorId.value; loadStatement(); };
+      const filter = root.querySelector('[data-statement-filter]'); if (filter) {
+        filter.onchange = () => {
+          selected = filter.elements.VendorId.value; statement = null; statementGeneration++;
+          root.querySelector('[data-statement-result]').textContent = 'Filters changed. Load a fresh statement before requesting payment.';
+        };
+        filter.onsubmit = e => { e.preventDefault(); selected = filter.elements.VendorId.value; loadStatement(); };
+      }
       const settings = root.querySelector('[data-settings]'); if (settings) { ruleVisibility(settings); settings.onchange = () => ruleVisibility(settings); settings.onsubmit = async e => { e.preventDefault();
         const result = await call('saveSettings',{ ...formBody(settings), RecordVersion:data.settings.RecordVersion, AccountingConfirmed:settings.elements.AccountingConfirmed.checked, Enabled:settings.elements.Enabled.checked },settings);
         if (result) { notice = result.message; await reload(); } }; }
