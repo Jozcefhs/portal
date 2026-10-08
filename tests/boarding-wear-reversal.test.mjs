@@ -71,7 +71,8 @@ test('school-wide candidates use only the indexed charge slice and cannot author
   const route = await readFile(new URL('../functions/api/student-billing-reconciliation.js', import.meta.url), 'utf8');
   assert.match(route, /\['FeeCode', 'feeCode'\].map/);
   assert.match(route, /field, op: 'in', value: \['BOW'/);
-  assert.match(route, /reversalReview \? \[\] : listCollectionForReport\(env, 'accountSummaries'\)/);
+  assert.match(route, /invoices: invoices\.filter\(matches\), accountSummaries: \[\]/);
+  assert.doesNotMatch(route, /listCollectionForReport\(env, '(?:invoices|accountSummaries)'\)/);
 });
 
 test('new-intake, missing billing classifications, duplicate, mismatched rule/amount/currency and other-term cases cannot post', async () => {

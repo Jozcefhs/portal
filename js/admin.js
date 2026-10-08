@@ -3642,30 +3642,34 @@ function openStudentEditor(student) {
 }
 
 function bindStudentEditor(students) {
+  const maintenanceStatus = panelEl.querySelector('[data-student-maintenance-status]');
+  const defaultsRefresh = panelEl.querySelector('[data-refresh-student-defaults]');
+  defaultsRefresh?.addEventListener('click', () => headerRefreshButton?.click());
   panelEl.querySelector('[data-save-student-profile-defaults]')?.addEventListener('click', async (event) => {
     const button = event.currentTarget;
+    if (button.disabled || button.getAttribute('aria-busy') === 'true') return;
+    const user = currentUser, branch = selectedBranchId, sessionSignal = staffSessionAbortController.signal;
+    const isCurrent = () => currentUser === user && selectedBranchId === branch && button.isConnected;
     setButtonLoading(button, true, 'Saving missing defaults…');
-    let updated = 0;
-    const requestDefaults = async (payload) => {
-      const response = await staffFetch('/api/staff-students', { method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      const data = await response.json();
-      if (!response.ok || !data.ok) throw new Error(data.message || 'Could not save missing defaults.');
-      return data;
-    };
+    if (defaultsRefresh) defaultsRefresh.hidden = true;
+    setStatus(maintenanceStatus, 'Checking missing profile defaults in this branch… No invoices, payments or balances will be changed.', '');
     try {
-      for (let batch = 0; batch < 200; batch += 1) {
-        const preview = await requestDefaults({ action: 'previewProfileDefaults' });
-        if (!preview.remaining) {
-          setStatus(dashboardStatus, `${updated} profile record(s) updated. Missing defaults are now saved across this branch. Explicit categories and Repeating selections preserved. No invoices, payments or balances changed. Refresh Students to view the saved records.`, 'ok');
-          return;
-        }
-        const result = await requestDefaults({ action: 'applyProfileDefaults', PreviewToken: preview.previewToken });
-        updated += result.updated || 0;
-        setStatus(dashboardStatus, `${updated} profile record(s) updated; ${result.remaining} remaining.`, '');
+      const { studentMaintenanceRequest, saveStudentProfileDefaults } = await import('./student-maintenance.js?v=20261008-student-maintenance');
+      const request = studentMaintenanceRequest(staffFetch, { sessionSignal, isCurrent });
+      const result = await saveStudentProfileDefaults(request, ({ updated, remaining }) =>
+        setStatus(maintenanceStatus, `${updated} profile record(s) saved; ${remaining} remaining. Existing choices and financial records are preserved.`, ''));
+      if (isCurrent()) {
+        setStatus(maintenanceStatus, result.updated
+          ? `${result.updated} profile record(s) updated. Missing defaults are now saved. Explicit categories and Repeating selections were preserved. No invoices, payments or balances changed.`
+          : 'No missing profile defaults were found. All saved categories and academic progress choices are already in place. No records changed.', 'ok');
+        if (defaultsRefresh) defaultsRefresh.hidden = !result.updated;
       }
-      throw new Error('The maintenance batch limit was reached. Run this action again to finish remaining profiles.');
-    } catch (error) { setStatus(dashboardStatus, `${updated} profile record(s) updated. ${error.message}`, 'bad'); }
+    } catch (error) {
+      if (isCurrent()) {
+        setStatus(maintenanceStatus, `${error.updated || 0} profile record(s) confirmed saved. ${error.message} No financial records were changed by this action.`, 'bad');
+        if (defaultsRefresh) defaultsRefresh.hidden = !(error.updated > 0);
+      }
+    }
     finally { setButtonLoading(button, false, '', 'Save missing profile defaults'); }
   });
   document.querySelector('[data-close-billing-preview]')?.addEventListener('click', () => document.getElementById('studentBillingPreviewDialog')?.close());
@@ -3813,22 +3817,51 @@ function bindStudentEditor(students) {
   };
   panelEl.querySelector('[data-review-all-student-billing]')?.addEventListener('click', async (event) => {
     const button = event.currentTarget;
+    if (button.disabled || button.getAttribute('aria-busy') === 'true') return;
+    const user = currentUser, branch = selectedBranchId, sessionSignal = staffSessionAbortController.signal;
+    const isCurrent = () => currentUser === user && selectedBranchId === branch && button.isConnected;
+    const dialog = document.getElementById('studentBillingPreviewDialog');
+    const content = document.querySelector('[data-billing-preview-content]');
+    const controller = new AbortController();
+    const cancel = () => controller.abort();
     setButtonLoading(button, true, 'Checking all student billing…');
+    content.innerHTML = '<h3>School-wide student billing review</h3><p>This is a read-only check. No invoices, payments or balances are changed by reviewing.</p><p class="status" role="status" aria-live="polite" data-billing-review-progress>Loading the branch roster…</p>';
+    content.setAttribute('aria-busy', 'true');
+    setStatus(maintenanceStatus, 'Billing review started. Progress and results appear in the review window.', '');
+    dialog.addEventListener('close', cancel);
     try {
-      const report = await reconcileRequest({ action: 'previewAll' });
-      const content = document.querySelector('[data-billing-preview-content]');
+      if (!dialog.open) dialog.showModal();
+      const { studentMaintenanceRequest, reviewAllStudentBilling } = await import('./student-maintenance.js?v=20261008-student-maintenance');
+      const request = studentMaintenanceRequest(staffFetch, { signal: controller.signal, sessionSignal, isCurrent });
+      const report = await reviewAllStudentBilling(request, ({ checked, total }) => {
+        if (isCurrent() && !controller.signal.aborted) setStatus(content.querySelector('[data-billing-review-progress]'),
+          `Checked ${checked} of ${total} profiles. Loading small billing batches… No financial records changed.`, '');
+      });
+      if (!isCurrent() || controller.signal.aborted) return;
       const ready = report.rows.filter((row) => row.ready);
       content.innerHTML = `<h3>School-wide student billing review</h3>
+        <p>Review complete. No invoices, payments or balances have changed. Posting missing charges is a separate action below.</p>
         <p>${report.total} student profiles checked in this branch (primary and secondary where permitted). ${report.matched} completed profiles already match; ${report.incomplete} incomplete profiles excluded.</p>
         <p><strong>${report.ready} accounts have missing components; ${report.review} need finance review.</strong></p>
         <p>Only absent charges are added. Existing amounts and payments are preserved. Available credit is applied through the audited allocation process. Conflicts and incomplete profiles are not changed.</p>
         <div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>Student</th><th>Classification</th><th>Difference</th><th>Review</th></tr></thead><tbody>${report.rows.map((row) =>
           `<tr><td>${escapeHtml(row.profile.DisplayName || '')}<br>${escapeHtml(row.profile.AccountRef)}</td><td>${escapeHtml(row.profile.StudentType || '')} · ${escapeHtml(row.profile.Gender || '')}</td><td>${money(row.difference)}</td><td>${escapeHtml(row.reason || `${row.missing.length} missing component(s)`)}</td></tr>`).join('')}</tbody></table></div>
-        <p class="status" data-billing-reconcile-status></p>${ready.length ? `<button type="button" data-apply-billing-plans>Reconcile ${ready.length} reviewed accounts (${money(ready.reduce((sum, row) => sum + row.difference, 0))} missing charges)</button>` : ''}`;
+        <p class="status" data-billing-reconcile-status></p>${ready.length && !currentUser?.subscriptionReadOnly ? `<button type="button" data-apply-billing-plans>Reconcile ${ready.length} reviewed accounts (${money(ready.reduce((sum, row) => sum + row.difference, 0))} missing charges)</button>` : ''}`;
       content.querySelector('[data-apply-billing-plans]')?.addEventListener('click', (e) => reconcilePlans(ready, e.currentTarget, content.querySelector('[data-billing-reconcile-status]')));
-      document.getElementById('studentBillingPreviewDialog').showModal();
-    } catch (error) { setStatus(dashboardStatus, error.message, 'bad'); }
-    finally { setButtonLoading(button, false, '', 'Review all student billing'); }
+      setStatus(maintenanceStatus, `Billing review complete: ${report.total} profiles checked; ${report.ready} with missing components; ${report.review} need finance review. No financial records changed by the review.`, 'ok');
+    } catch (error) {
+      if (isCurrent()) {
+        if (controller.signal.aborted) setStatus(maintenanceStatus, 'Billing review cancelled. No financial records changed. You can run a fresh review.', '');
+        else {
+          setStatus(content.querySelector('[data-billing-review-progress]'), `${error.message} No partial report or posting controls are shown.`, 'bad');
+          setStatus(maintenanceStatus, `Billing review stopped: ${error.message}`, 'bad');
+        }
+      }
+    } finally {
+      dialog.removeEventListener('close', cancel);
+      content.setAttribute('aria-busy', 'false');
+      setButtonLoading(button, false, '', 'Review all student billing');
+    }
   });
   document.querySelector('[data-student-billing-preview]')?.addEventListener('click', async (event) => {
     const button = event.currentTarget;
@@ -18252,7 +18285,7 @@ function renderSection(active) {
     const learner = staffLearnerTerms();
     const handoff = takeRecordsDeskHandoff('students');
     const reference = recordsDeskHandoffReference(handoff);
-    panelEl.innerHTML = recordsDeskHandoffBanner(handoff, reference) + `<div class="student-onboarding-link-action"><button type="button" class="secondary" data-copy-shared-parent-onboarding>Copy shared parent completion link</button>${currentUser?.role === 'Super Admin' && (currentUser.allowedSections || []).includes('accounts') ? '<button type="button" class="secondary" data-review-all-student-billing>Review all student billing</button>' : ''}</div>` + studentClassExportToolbar(students) + studentGradeSevenIntakeToolbar(students) + table(learner.Plural, students, [
+    panelEl.innerHTML = recordsDeskHandoffBanner(handoff, reference) + `<div class="student-onboarding-link-action"><button type="button" class="secondary" data-copy-shared-parent-onboarding>Copy shared parent completion link</button>${currentUser?.role === 'Super Admin' && (currentUser.allowedSections || []).includes('accounts') ? '<button type="button" class="secondary" data-review-all-student-billing>Review all student billing</button>' : ''}</div><p class="status" role="status" aria-live="polite" data-student-maintenance-status></p><button type="button" class="secondary" data-refresh-student-defaults hidden>Refresh Students to view saved defaults</button>` + studentClassExportToolbar(students) + studentGradeSevenIntakeToolbar(students) + table(learner.Plural, students, [
       { label: 'Admission No', value: (row) => pick(row, ['AdmissionNo', 'AccountRef', '__id']) },
       { label: 'Name', render: studentSearchIdentity },
       { label: 'Class', value: studentExportClass },
