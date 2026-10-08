@@ -87,5 +87,5 @@ test('executive office remains responsive and readable in dark mode', () => {
   assert.match(portalCss, /html\[data-theme="dark"\] \.executive-empty-chart\{[^}]*background:#112438;[^}]*color:#edf5ff\}/);
   assert.match(portalCss, /html\[data-theme="dark"\] \.executive-empty-chart \.muted\{color:#b8cada!important\}/);
   assert.match(portalCss, /@media\(max-width:680px\)\{[\s\S]*?\.executive-directory-layout\{grid-template-columns:1fr/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20261005-student-billing-profile-9-20261006-branch-school-terminology/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20261008-wallet-card-setup/);
 });

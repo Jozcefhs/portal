@@ -132,7 +132,7 @@ test('memory is bounded and neither records nor credentials are written to brows
 
 test('the shared cache is loaded before the staff workspace and module refresh clears it', async () => {
   const html = await readFile(new URL('../admin.html', import.meta.url), 'utf8');
-  assert.ok(html.indexOf('js/staff-workspace-cache.js?v=20261005-teacher-homework') < html.indexOf('js/admin.js?v=20261005-student-billing-profile'));
+  assert.ok(html.indexOf('js/staff-workspace-cache.js?v=20261005-teacher-homework') < html.indexOf('js/admin.js?v=20261008-wallet-card-setup-billing-review-completion'));
   assert.match(admin, /function refreshDashboard\(\) \{\s*invalidateStaffWorkspaceReads\(\)/);
   assert.match(admin, /id="refreshIncomeAnalytics"/);
 });

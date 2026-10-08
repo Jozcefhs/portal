@@ -11,7 +11,7 @@ const pageStyleVersions = new Map([
   ['plan-management.html', '20260830-dual-currency-pricing'],
   ['register-organization.html', '20260918-neutral-plan-cards']
 ]);
-const adminScriptVersion = '20261005-student-billing-profile-9';
+const adminScriptVersion = '20261008-wallet-card-setup-billing-review-completion';
 const parentScriptVersion = '20261008-stock-dropdown';
 const notificationScriptVersion = '20260927-spoken-alerts';
 const notificationStyleVersion = '20260804-read-efficiency';
@@ -120,7 +120,7 @@ test('all portal pages reference the current shared stylesheet version', () => {
 });
 
 test('service worker refreshes the shared school, church, and parent assets', () => {
-  assert.match(serviceWorker, /dynamax-v331-parent-store-stock-dropdown/);
+  assert.match(serviceWorker, /dynamax-v333-wallet-card-setup-billing-review-completion/);
   assert.match(serviceWorker, /'\/verify-result\.html'/);
   assert.match(serviceWorker, /'\/js\/verify-result\.js'/);
   assert.match(serviceWorker, /'\/css\/school-landing\.css'/);

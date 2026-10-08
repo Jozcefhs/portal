@@ -3699,7 +3699,8 @@ function bindStudentEditor(students) {
       try {
         const result = await reconcileRequest({ action: 'applyReversal', AccountRef: reference, PreviewToken: plan.previewToken, Reason: reason });
         setStatus(status, `${result.message} Available credit: ${money(result.summary.CreditBalance)}; outstanding: ${money(result.summary.OutstandingBalance)}.`, 'good');
-        button.textContent = 'Posted — refresh Accounts to view the correction'; button.disabled = true;
+        setButtonLoading(button, false, '', 'Posted — refresh Accounts to view the correction');
+        button.disabled = true;
       } catch (error) { setStatus(status, error.message, 'bad'); setButtonLoading(button, false, '', 'Approve and post this reversal'); }
     });
     document.getElementById('studentBillingPreviewDialog').showModal();
@@ -3783,22 +3784,32 @@ function bindStudentEditor(students) {
     finally { setButtonLoading(button, false, '', 'Review returning-student Boarding Wear'); }
   });
   const reconcilePlans = async (plans, button, status) => {
+    if (!button || button.disabled || button.getAttribute('aria-busy') === 'true') return;
     setButtonLoading(button, true, 'Reconciling…');
     let changed = 0, failed = 0, warnings = 0;
     const outcomes = [];
-    for (const plan of plans) {
-      setStatus(status, `Checking ${outcomes.length + 1} of ${plans.length}: ${plan.profile.AccountRef}. Keep this page open.`, '');
-      try {
-        const result = await reconcileRequest({ action: 'apply', AccountRef: plan.profile.AccountRef, PreviewToken: plan.previewToken });
-        changed += 1;
-        if (result.creditWarning) warnings += 1;
-        outcomes.push({ reference: plan.profile.AccountRef, result });
-      } catch (error) { failed += 1; outcomes.push({ reference: plan.profile.AccountRef, error: error.message }); }
+    let completionText = 'Stopped — load a fresh preview before retrying';
+    try {
+      for (const plan of plans) {
+        setStatus(status, `Checking ${outcomes.length + 1} of ${plans.length}: ${plan.profile.AccountRef}. Keep this page open.`, '');
+        try {
+          const result = await reconcileRequest({ action: 'apply', AccountRef: plan.profile.AccountRef, PreviewToken: plan.previewToken });
+          changed += 1;
+          if (result.creditWarning) warnings += 1;
+          outcomes.push({ reference: plan.profile.AccountRef, result });
+        } catch (error) { failed += 1; outcomes.push({ reference: plan.profile.AccountRef, error: error.message }); }
+      }
+      status.innerHTML = `<strong>${changed} accounts reconciled; ${failed} require another review; ${warnings} credit-allocation warnings.</strong><ul>${outcomes.map((row) =>
+        `<li>${escapeHtml(row.reference)}: ${escapeHtml(row.error || row.result.message)}${row.result ? ` Recorded credit: ${money(row.result.after.recordedCredit)}; remaining charge difference: ${money(row.result.after.difference)}.` : ''}</li>`).join('')}</ul>`;
+      completionText = 'Review complete — load a fresh preview before retrying';
+    } catch (error) {
+      setStatus(status, `${error.message} Some changes may already be saved. Load a fresh preview before another submission.`, 'bad');
+    } finally {
+      // Finished does not mean retryable: clear the visual busy state, but keep
+      // this reviewed submission disabled to avoid posting it a second time.
+      setButtonLoading(button, false, '', completionText);
+      button.disabled = true;
     }
-    status.innerHTML = `<strong>${changed} accounts reconciled; ${failed} require another review; ${warnings} credit-allocation warnings.</strong><ul>${outcomes.map((row) =>
-      `<li>${escapeHtml(row.reference)}: ${escapeHtml(row.error || row.result.message)}${row.result ? ` Recorded credit: ${money(row.result.after.recordedCredit)}; remaining charge difference: ${money(row.result.after.difference)}.` : ''}</li>`).join('')}</ul>`;
-    button.disabled = true;
-    button.textContent = 'Review complete — load a fresh preview before retrying';
   };
   panelEl.querySelector('[data-review-all-student-billing]')?.addEventListener('click', async (event) => {
     const button = event.currentTarget;
@@ -5189,7 +5200,7 @@ function renderAccountWalletSetupWorkspace() {
   const learner = staffLearnerTerms();
   const account = accountWalletSetupState.account;
   const lookupRef = account?.AccountRef || accountWalletSetupState.accountRef;
-  const lookupCard = account?.WalletCardId || accountWalletSetupState.cardId;
+  const assignedCard = clean(account?.WalletCardId);
   const statuses = ['Active', 'Blocked', 'Lost', 'Replaced'];
   const selectedStatus = clean(account?.WalletCardStatus || 'Active');
   return `<section class="config-card account-wallet-setup" id="accountWalletSetupWorkspace">
@@ -5200,7 +5211,7 @@ function renderAccountWalletSetupWorkspace() {
       <label>Existing wallet card ID <small>Place the cursor here before tapping a keyboard-mode reader.</small><input name="WalletCardId" value="${escapeHtml(accountWalletSetupState.cardId)}" autocomplete="off" placeholder="Enter or read an assigned card"></label>
       <div class="config-actionbar"><p class="status" data-wallet-status></p><div></div><button type="submit">&#128269; Find ${learner.Singular}</button></div>
     </form>
-    ${account ? `<div class="wallet-account-result wallet-setup-summary">
+    ${account ? `<div data-wallet-loaded-account><div class="wallet-account-result wallet-setup-summary">
       <div><small>${learner.Singular}</small><strong>${escapeHtml(account.DisplayName)}</strong><span>${escapeHtml(account.AdmissionNo || account.AccountRef)} &middot; ${escapeHtml(account.ClassName || '')}</span></div>
       <div><small>Current card</small><strong>${escapeHtml(account.WalletCardId || 'Not assigned')}</strong><span>${escapeHtml(account.WalletCardStatus || 'Active')}</span></div>
       <div><small>Wallet activity</small><strong>${money(account.WalletBalance)}</strong><span>Spent today ${money(account.WalletSpentToday)}</span></div>
@@ -5208,7 +5219,7 @@ function renderAccountWalletSetupWorkspace() {
     <div class="purchase-step-label"><strong>2</strong><span>Assign the card and spending controls</span></div>
     <form id="accountWalletSetupForm" class="workflow-form workflow-form-grid config-form">
       <input type="hidden" name="AccountRef" value="${escapeHtml(account.AccountRef)}">
-      <label>Wallet card ID <span class="required">*</span><small>Focus this field, then tap the card; keyboard-mode readers enter the number automatically.</small><input name="WalletCardId" value="${escapeHtml(lookupCard)}" autocomplete="off" required placeholder="Enter or read card ID"></label>
+      <label>Wallet card ID <span class="required">*</span><small>Focus this field, then tap the card; keyboard-mode readers enter the number automatically.</small><input name="WalletCardId" value="${escapeHtml(assignedCard)}" autocomplete="off" required placeholder="Enter or read card ID"></label>
       <label>Card status<select name="WalletCardStatus">${statuses.map((status) => `<option${status.toLowerCase() === selectedStatus.toLowerCase() ? ' selected' : ''}>${status}</option>`).join('')}</select></label>
       <label>New PIN <small>Leave blank to keep the current PIN.</small><input name="WalletPin" type="password" inputmode="numeric" pattern="[0-9]{4,8}" minlength="4" maxlength="8" autocomplete="new-password" placeholder="4 to 8 digits"></label>
       <label>Confirm new PIN<input name="WalletPinConfirm" type="password" inputmode="numeric" pattern="[0-9]{4,8}" minlength="4" maxlength="8" autocomplete="new-password" placeholder="Repeat the new PIN"></label>
@@ -5216,7 +5227,8 @@ function renderAccountWalletSetupWorkspace() {
       <label>Maximum per purchase <small>Leave blank for no transaction limit.</small><input name="WalletTxnLimit" type="number" min="0" step="0.01" inputmode="decimal" value="${escapeHtml(walletAmountValue(account.WalletTxnLimit))}" placeholder="No limit"></label>
       <label>Maximum per day <small>Leave blank for no daily limit.</small><input name="WalletDailyLimit" type="number" min="0" step="0.01" inputmode="decimal" value="${escapeHtml(walletAmountValue(account.WalletDailyLimit))}" placeholder="No limit"></label>
       <div class="config-actionbar"><p class="status" data-wallet-status></p><div></div><button type="submit">Save wallet setup</button></div>
-    </form>` : `<p class="wallet-setup-empty muted">Load an enrolled ${learner.singular} to assign or update a wallet card.</p>`}
+    </form></div>` : ''}
+    <p class="wallet-setup-empty muted" data-wallet-empty${account ? ' hidden' : ''}>Load an enrolled ${learner.singular} to assign or update a wallet card.</p>
   </section>`;
 }
 
@@ -5241,49 +5253,91 @@ function refreshAccountWalletSetupWorkspace() {
 }
 
 function bindAccountWalletSetupWorkspace() {
+  const workspace = document.getElementById('accountWalletSetupWorkspace');
+  if (!workspace) return;
+  const walletState = accountWalletSetupState;
+  let busy = false;
+  const clearLoadedAccount = () => {
+    walletState.account = null;
+    workspace.querySelector('[data-wallet-loaded-account]')?.remove();
+    const empty = workspace.querySelector('[data-wallet-empty]');
+    if (empty) empty.hidden = false;
+  };
+  const setBusy = (loading, activeButton) => {
+    busy = loading;
+    workspace.querySelectorAll('input, select, button').forEach((control) => {
+      if (control !== activeButton) control.disabled = loading;
+    });
+  };
   const lookupForm = document.getElementById('accountWalletLookupForm');
+  ['AccountRef', 'WalletCardId'].forEach((name) => {
+    lookupForm?.elements[name]?.addEventListener('input', () => {
+      if (busy || walletState !== accountWalletSetupState) return;
+      const otherName = name === 'AccountRef' ? 'WalletCardId' : 'AccountRef';
+      lookupForm.elements[otherName].value = '';
+      walletState.accountRef = clean(lookupForm.elements.AccountRef.value);
+      walletState.cardId = clean(lookupForm.elements.WalletCardId.value);
+      clearLoadedAccount();
+    });
+  });
   lookupForm?.addEventListener('submit', async (event) => {
     event.preventDefault();
+    if (busy || walletState !== accountWalletSetupState) return;
     const form = event.currentTarget;
     const status = form.querySelector('[data-wallet-status]');
     const button = event.submitter || form.querySelector('button[type="submit"]');
     const payload = Object.fromEntries(new FormData(form).entries());
-    accountWalletSetupState.accountRef = clean(payload.AccountRef);
-    accountWalletSetupState.cardId = clean(payload.WalletCardId);
+    walletState.accountRef = clean(payload.AccountRef);
+    walletState.cardId = clean(payload.WalletCardId);
+    clearLoadedAccount();
+    setBusy(true, button);
     try {
       const data = await runButtonAction(button, 'Finding...', () => requestStaffWallet('lookup', payload));
-      accountWalletSetupState.account = data.account;
-      accountWalletSetupState.accountRef = clean(data.account?.AccountRef);
-      accountWalletSetupState.cardId = '';
+      if (walletState !== accountWalletSetupState || !form.isConnected) return;
+      walletState.account = data.account;
+      walletState.accountRef = clean(data.account?.AccountRef);
+      walletState.cardId = '';
       refreshAccountWalletSetupWorkspace();
       setStatus(dashboardStatus, data.message || 'Wallet account loaded.', 'ok');
     } catch (error) {
-      accountWalletSetupState.account = null;
+      if (walletState !== accountWalletSetupState || !form.isConnected) return;
       setStatus(status, error.message || String(error), 'bad');
+    } finally {
+      setBusy(false, button);
     }
   });
   const setupForm = document.getElementById('accountWalletSetupForm');
   setupForm?.addEventListener('submit', async (event) => {
     event.preventDefault();
+    if (busy || walletState !== accountWalletSetupState) return;
     const form = event.currentTarget;
     const status = form.querySelector('[data-wallet-status]');
     const button = event.submitter || form.querySelector('button[type="submit"]');
     const payload = Object.fromEntries(new FormData(form).entries());
+    if (!form.isConnected || !walletState.account || clean(payload.AccountRef) !== clean(walletState.account.AccountRef)) {
+      setStatus(status, 'Load the selected student before saving their wallet card.', 'bad');
+      return;
+    }
     if (clean(payload.WalletPin) !== clean(payload.WalletPinConfirm)) {
       setStatus(status, 'The new wallet PIN entries do not match.', 'bad');
       form.elements.WalletPinConfirm?.focus();
       return;
     }
     delete payload.WalletPinConfirm;
+    setBusy(true, button);
     try {
       const data = await runButtonAction(button, 'Saving...', () => requestStaffWallet('save', payload));
-      accountWalletSetupState.account = data.account;
-      accountWalletSetupState.accountRef = clean(data.account?.AccountRef);
-      accountWalletSetupState.cardId = '';
+      if (walletState !== accountWalletSetupState || !form.isConnected) return;
+      walletState.account = data.account;
+      walletState.accountRef = clean(data.account?.AccountRef);
+      walletState.cardId = '';
       refreshAccountWalletSetupWorkspace();
       setStatus(dashboardStatus, data.message || 'Wallet card saved.', 'ok');
     } catch (error) {
+      if (walletState !== accountWalletSetupState || !form.isConnected) return;
       setStatus(status, error.message || String(error), 'bad');
+    } finally {
+      setBusy(false, button);
     }
   });
 }
