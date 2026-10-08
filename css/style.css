@@ -4022,3 +4022,19 @@ html[data-theme="dark"] .external-audit-tabs{background:#102032}
 html[data-theme="dark"] .external-audit-tabs button:not(.active){color:#d8e7f6}
 html[data-theme="dark"] .external-audit-finding{background:#0d1a29}
 @media(max-width:680px){.external-audit-tabs{flex-wrap:nowrap;overflow-x:auto}.external-audit-tabs button{flex:0 0 auto}.external-audit-finding header{flex-wrap:wrap}}
+/* Timetable generation: compact classroom rules and bounded preview scrolling. */
+[data-academic-timetable-generator] { grid-template-columns: minmax(0, 1fr); }
+[data-academic-timetable-generator] > * { min-width: 0; }
+.academic-generator-rules { max-height: 480px; overflow: auto; padding: 3px; }
+.academic-generator-rule { display: grid; grid-template-columns: minmax(190px, 2fr) repeat(4, minmax(75px, 1fr)) minmax(90px, 1fr) minmax(110px, 1fr); gap: 9px; align-items: end; padding: 12px; margin-bottom: 8px; border: 1px solid #cbddec; border-radius: 8px; background: #f4f9ff; }
+.academic-generator-rule[hidden] { display: none; }
+.academic-generator-rule label { min-width: 0; font-size: .8rem; }
+.academic-generator-subject small { display: block; margin: 3px 0 7px; }
+.academic-generator-rule input, .academic-generator-rule select { width: 100%; min-width: 0; }
+.academic-generator-preview { max-height: 390px; overflow: auto; border: 1px solid #cbddec; }
+.academic-generator-preview table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+.academic-generator-preview th, .academic-generator-preview td { padding: 8px; text-align: left; border-bottom: 1px solid #dce8f3; }
+.academic-generator-preview th { position: sticky; top: 0; background: #eaf3fc; }
+[data-academic-timetable-generator] progress { width: 100%; }
+@media (max-width: 1050px) { .academic-generator-rule { grid-template-columns: repeat(3, minmax(0, 1fr)); } .academic-generator-subject { grid-column: 1 / -1; } }
+@media (max-width: 600px) { .academic-generator-rule { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 9px; } .academic-generator-rules { max-height: 420px; } .academic-generator-preview table { min-width: 540px; } }

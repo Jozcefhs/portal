@@ -187,7 +187,9 @@ export function normalizeAcademicTimetableEntry(input = {}, settings = {}, exist
     ...(existing || {}), DayCode: dayCode, StartPeriodCode: startPeriodCode,
     DurationPeriods: durationPeriods, PeriodCodes: periodCodes, ClassId: classId, ArmId: armId,
     SubjectId: subjectId, TeacherUsername: teacherUsername, Room: clean(input.Room ?? existing?.Room),
-    LessonType: lessonType, Notes: clean(input.Notes ?? existing?.Notes).slice(0, 500)
+    LessonType: lessonType, Notes: clean(input.Notes ?? existing?.Notes).slice(0, 500),
+    GeneratorLocked: input.GeneratorLocked === undefined ? existing?.GeneratorLocked === true
+      : input.GeneratorLocked === true || lower(input.GeneratorLocked) === 'yes'
   };
 }
 

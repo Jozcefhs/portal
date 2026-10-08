@@ -4,6 +4,10 @@ import { normalizeClassKey } from './class-names.js';
 import { staffRecordMatchesEdition } from './records-desk.js';
 import { createNotification } from './notifications.js';
 import { normalizeSchoolCalendar, schoolCalendarDayIsOpen, schoolCalendarSummary } from './academic-school-calendar.js';
+import {
+  advanceAcademicTimetableGeneration, buildAcademicGenerationProblem,
+  normalizeAcademicGenerationRules, validateAcademicGeneratedEntries
+} from './academic-timetable-generator.js';
 import { academicCumulativePolicyIssues, academicPolicyIssues, academicPolicyScopeChain, normalizeAcademicPolicy } from './academic-policy.js';
 import { loadAcademicPolicyView } from './academic-policy-store.js';
 import { deleteStoredDocument, getStoredDocument } from './document-storage.js';
@@ -583,6 +587,7 @@ function publicRecord(row = {}) {
   delete copy.__createTime;
   delete copy.__updateTime;
   delete copy.__scopePath;
+  delete copy.GenerationPlan;
   return copy;
 }
 
@@ -3766,6 +3771,129 @@ export async function createAcademicTimetableVersion(env, user = {}, input = {})
   return academicOperationalResponse(env, user, input, scope, `${name} created as a draft timetable.`);
 }
 
+function generationSourceVersion(context, id) {
+  const version = findById(context.state.timetableVersions, id);
+  if (!version || version.SessionId !== context.session.SessionId || version.TermId !== context.term.TermId
+      || !['draft', 'approved', 'published', 'withdrawn'].includes(lower(version.Status))) {
+    throw failure('Choose an available timetable version from this branch, section and term.', 409);
+  }
+  return version;
+}
+
+async function generationDigest(value) {
+  const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(value)));
+  return Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+export function academicGenerationSnapshot(state, version) {
+  const rows = (key) => (state[key] || []).filter((row) => (!row.SessionId || row.SessionId === version.SessionId)
+    && (!row.TermId || row.TermId === version.TermId)).map(withoutMetadata)
+    .sort((a, b) => recordId(a).localeCompare(recordId(b)));
+  return {
+    Version: withoutMetadata(version), Classes: rows('classes'), Arms: rows('arms'), Subjects: rows('subjects'),
+    Allocations: rows('teacherAllocations'), Constraints: rows('timetableConstraints'),
+    Entries: (state.timetableEntries || []).filter((row) => row.VersionId === version.VersionId).map(withoutMetadata)
+      .sort((a, b) => recordId(a).localeCompare(recordId(b)))
+  };
+}
+
+export async function saveAcademicTimetableGenerationRules(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canManageTimetables', { view: 'timetable' });
+  const version = generationSourceVersion(context, input.VersionId);
+  if (lower(version.Status) !== 'draft') throw failure('Generator requirements can be changed only on a Draft version.', 409);
+  const updated = { ...version, GenerationRules: normalizeAcademicGenerationRules(input, version), UpdatedAt: nowIso(), UpdatedBy: actorName(user) };
+  buildAcademicGenerationProblem(context.state, updated, { includeTasks: false });
+  await commitAcademicBatch(env, [
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableVersions, documentId: version.VersionId,
+      data: withoutMetadata(updated), ...writePrecondition(version, input.RevisionToken) },
+    auditWrite(user, 'CONFIGURE_GENERATOR', 'timetableVersion', updated, `${updated.GenerationRules.Requirements.length} classroom-subject requirements`)
+  ], 'The generator requirements changed. Reload before saving.');
+  return academicOperationalResponse(env, user, input, context.scope, 'Weekly periods, subject cutoffs and generator rules saved.', 'timetable');
+}
+
+export async function previewAcademicTimetableGeneration(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canManageTimetables', { view: 'timetable' });
+  const version = generationSourceVersion(context, input.VersionId);
+  const signature = await generationDigest(academicGenerationSnapshot(context.state, version));
+  if (input.Checkpoint && clean(input.SourceSignature) !== signature) {
+    throw failure('Allocations, limits, requirements or source lessons changed during generation. Start a fresh preview.', 409, 'ACADEMIC_GENERATOR_STALE');
+  }
+  const problem = buildAcademicGenerationProblem(context.state, version);
+  const generation = advanceAcademicTimetableGeneration(problem, input.Checkpoint || null);
+  return { ok: true, generation: { ...generation, SourceSignature: signature, SourceVersionId: version.VersionId, VersionName: version.Name } };
+}
+
+// Previews are not trusted. Every plan is normalized and checked again before
+// persistence. Intermediate batches cannot be edited, approved or published.
+export async function saveAcademicTimetableGeneration(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canManageTimetables', { view: 'timetable' });
+  const { state, scope } = context;
+  let target;
+  if (clean(input.TargetVersionId)) {
+    target = findById(state.timetableVersions, input.TargetVersionId);
+    if (!target || target.SessionId !== context.session.SessionId || target.TermId !== context.term.TermId
+        || !target.GenerationSourceVersionId) throw failure('The generated draft was not found in this academic period.', 404);
+    if (lower(target.Status) === 'draft' && !target.GenerationPlan) {
+      return { ...await academicOperationalResponse(env, user, input, scope, 'The generated draft is already saved.', 'timetable'), generationSave: { Complete: true, VersionId: target.VersionId } };
+    }
+    if (lower(target.Status) !== 'generating') throw failure('Only an unfinished generated draft can resume saving.', 409);
+  } else {
+    if (!/^[a-z0-9-]{16,64}$/i.test(clean(input.SaveRequestId))) throw failure('Start saving with a unique request identifier.');
+    const source = generationSourceVersion(context, input.VersionId);
+    const signature = await generationDigest(academicGenerationSnapshot(state, source));
+    if (signature !== clean(input.SourceSignature)) throw failure('The source timetable or its allocations changed. Generate a fresh preview before saving.', 409, 'ACADEMIC_GENERATOR_STALE');
+    const problem = buildAcademicGenerationProblem(state, source, { includeTasks: false });
+    const entries = validateAcademicGeneratedEntries(problem, input.Entries, true);
+    const name = clean(input.Name).slice(0, 120);
+    if (!name) throw failure('Enter a name for the generated draft.');
+    const versionId = academicId('generated-timetable', scope.branchId, scope.section, context.session.SessionId, context.term.TermId, input.SaveRequestId);
+    const previewDigest = await generationDigest(entries);
+    target = findById(state.timetableVersions, versionId);
+    if (target && (target.GenerationSourceSignature !== signature || target.GenerationPreviewDigest !== previewDigest || target.Name !== name)) throw failure('This save identifier belongs to another preview. Start a fresh save.', 409);
+    if (!target) {
+      if (state.timetableVersions.some((row) => row.SessionId === source.SessionId && row.TermId === source.TermId && lower(row.Name) === lower(name))) throw failure('A timetable with this name already exists. Choose a new draft name.');
+      const timestamp = nowIso();
+      const record = {
+        RecordId: versionId, VersionId: versionId, Name: name, Status: 'Generating',
+        SessionId: source.SessionId, TermId: source.TermId, BranchId: scope.branchId, SchoolSection: scope.section,
+        Days: source.Days, Periods: source.Periods, GenerationRules: normalizeAcademicGenerationRules(source.GenerationRules, source),
+        GenerationSourceVersionId: source.VersionId, GenerationSourceSignature: signature, GenerationPreviewDigest: previewDigest,
+        GenerationPlan: entries, GenerationWritten: 0, GenerationTotal: entries.length,
+        CreatedAt: timestamp, CreatedBy: actorName(user), UpdatedAt: timestamp, UpdatedBy: actorName(user)
+      };
+      if (new TextEncoder().encode(JSON.stringify(record)).length > 850000) throw failure('This generated draft is too large to save safely. Use a smaller timetable scope.');
+      await commitAcademicBatch(env, [{ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableVersions, documentId: versionId, data: record, exists: false }], 'Saving already started. Retry the same request to resume.');
+      target = await getDocument(env, ACADEMIC_MANAGEMENT_COLLECTIONS.timetableVersions, versionId);
+    }
+    if (lower(target.Status) === 'draft' && !target.GenerationPlan) {
+      return { ...await academicOperationalResponse(env, user, input, scope, 'The generated draft is already saved.', 'timetable'), generationSave: { Complete: true, VersionId: target.VersionId } };
+    }
+    if (lower(target.Status) !== 'generating') throw failure('This generated timetable is no longer awaiting completion.', 409);
+  }
+  const source = generationSourceVersion(context, target.GenerationSourceVersionId);
+  if (await generationDigest(academicGenerationSnapshot(state, source)) !== target.GenerationSourceSignature) throw failure('The source or scheduling rules changed while saving. Delete the unfinished generated draft and generate a fresh preview.', 409, 'ACADEMIC_GENERATOR_STALE');
+  const problem = buildAcademicGenerationProblem(state, source, { includeTasks: false });
+  const entries = validateAcademicGeneratedEntries(problem, target.GenerationPlan, true);
+  const offset = Number(target.GenerationWritten || 0), chunk = entries.slice(offset, offset + 60);
+  const timestamp = nowIso();
+  const writes = chunk.map((entry, index) => {
+    const entryId = academicId('generated-lesson', target.VersionId, offset + index);
+    return { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableEntries, documentId: entryId, exists: false,
+      data: { ...entry, RecordId: entryId, EntryId: entryId, VersionId: target.VersionId,
+        SessionId: target.SessionId, TermId: target.TermId, BranchId: scope.branchId, SchoolSection: scope.section,
+        Status: 'Active', CreatedAt: timestamp, CreatedBy: actorName(user), UpdatedAt: timestamp, UpdatedBy: actorName(user) } };
+  });
+  const complete = offset + chunk.length === entries.length;
+  const updated = { ...target, GenerationWritten: offset + chunk.length, UpdatedAt: timestamp, UpdatedBy: actorName(user) };
+  if (complete) { updated.Status = 'Draft'; delete updated.GenerationPlan; updated.GenerationCompletedAt = timestamp; }
+  writes.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableVersions, documentId: target.VersionId, data: withoutMetadata(updated), updateTime: target.__updateTime });
+  if (complete) writes.push(auditWrite(user, 'GENERATE_DRAFT', 'timetableVersion', updated, `${entries.length} validated lessons; published timetables unchanged`));
+  await commitAcademicBatch(env, writes, 'This save step changed concurrently. Resume saving the same generated draft.');
+  const progress = { Complete: complete, VersionId: target.VersionId, Written: updated.GenerationWritten, Total: entries.length };
+  return complete ? { ...await academicOperationalResponse(env, user, input, scope, `${target.Name} saved as a new Draft. Review before approval and publication.`, 'timetable'), generationSave: progress }
+    : { ok: true, generationSave: progress };
+}
+
 export async function updateAcademicTimetableVersion(env, user = {}, input = {}) {
   const context = await academicOperationalContext(env, user, input, 'canManageTimetables');
   const { scope, state, session, term } = context;
@@ -3800,7 +3928,7 @@ export async function deleteAcademicTimetableVersion(env, user = {}, input = {})
   if (!version || version.SessionId !== session.SessionId || version.TermId !== term.TermId) {
     throw failure('The timetable version was not found.', 404);
   }
-  if (!['draft', 'deleting'].includes(lower(version.Status))) {
+  if (!['draft', 'generating', 'deleting'].includes(lower(version.Status))) {
     throw failure('Only a Draft timetable version can be deleted.', 409, 'ACADEMIC_TIMETABLE_LOCKED');
   }
   const versionEntries = state.timetableEntries.filter((row) => row.VersionId === version.VersionId);
@@ -3810,7 +3938,7 @@ export async function deleteAcademicTimetableVersion(env, user = {}, input = {})
     throw failure('This timetable version has attendance or substitution history and cannot be deleted.', 409, 'ACADEMIC_TIMETABLE_IN_USE');
   }
 
-  if (lower(version.Status) === 'draft') {
+  if (['draft', 'generating'].includes(lower(version.Status))) {
     const revisionToken = clean(input.RevisionToken);
     if (!revisionToken || revisionToken !== clean(version.__updateTime)) {
       throw failure('This timetable version changed after it was loaded. Reload and try again.', 409, 'ACADEMIC_WRITE_CONFLICT');
@@ -3866,6 +3994,7 @@ export async function deleteAcademicTimetableVersion(env, user = {}, input = {})
 }
 
 function assertAcademicTimetableVersionLessons(state, version, entries) {
+  if (version.GenerationRules) validateAcademicGeneratedEntries(buildAcademicGenerationProblem(state, version, { includeTasks: false }), entries, true);
   entries.forEach((entry) => {
     if (!academicSubjectTeacherAllocation(state, entry)) {
       throw failure(`The ${entry.DayCode} ${entry.StartPeriodCode} lesson cannot be used because its subject-teacher allocation is no longer active.`, 409, 'ACADEMIC_TIMETABLE_ALLOCATION_INVALID');
@@ -3886,7 +4015,9 @@ export async function copyAcademicTimetableVersion(env, user = {}, input = {}) {
   if (!source || source.SessionId !== session.SessionId || source.TermId !== term.TermId) {
     throw failure('Choose a timetable version from the selected academic period to copy.');
   }
-  if (lower(source.Status) === 'copying') throw failure('Wait for the source timetable copy to finish before copying it again.');
+  if (!['draft', 'approved', 'published', 'withdrawn'].includes(lower(source.Status))) {
+    throw failure('Finish or remove the unfinished source timetable before copying it.');
+  }
   const sourceEntries = state.timetableEntries.filter((row) => row.VersionId === source.VersionId && statusActive(row));
   if (!sourceEntries.length) throw failure('Add at least one lesson to the source timetable before copying it.');
   assertAcademicTimetableVersionLessons(state, source, sourceEntries);
@@ -3904,6 +4035,7 @@ export async function copyAcademicTimetableVersion(env, user = {}, input = {}) {
       RecordId: versionId, VersionId: versionId, Name: name, Status: 'Copying',
       CopySourceVersionId: source.VersionId, SessionId: session.SessionId, TermId: term.TermId,
       BranchId: scope.branchId, SchoolSection: scope.section, Days: source.Days, Periods: source.Periods,
+      ...(source.GenerationRules ? { GenerationRules: source.GenerationRules } : {}),
       CreatedAt: timestamp, CreatedBy: actorName(user), UpdatedAt: timestamp, UpdatedBy: actorName(user)
     };
     await commitAcademicBatch(env, [{
@@ -3949,7 +4081,7 @@ export async function copyAcademicTimetableVersion(env, user = {}, input = {}) {
 export function academicTimetableTargetCopyPlan(state = {}, input = {}, context = {}) {
   const source = findById(state.timetableVersions, input.SourceVersionId);
   const target = findById(state.timetableVersions, input.TargetVersionId);
-  if (!source || lower(source.Status) === 'copying') throw failure('Choose an available source timetable version.');
+  if (!source || !['draft', 'approved', 'published', 'withdrawn'].includes(lower(source.Status))) throw failure('Choose an available source timetable version.');
   if (!target || target.SessionId !== context.session?.SessionId || target.TermId !== context.term?.TermId) {
     throw failure('Choose a target timetable version from the selected academic period.');
   }
@@ -3991,6 +4123,8 @@ export function academicTimetableTargetCopyPlan(state = {}, input = {}, context 
         throw failure(`The copied lesson has a ${types} conflict in the target timetable.`);
       }
       assertAcademicTeacherScheduleRules(state, candidate, combined);
+      if (target.GenerationRules) validateAcademicGeneratedEntries(buildAcademicGenerationProblem(state, target, { includeTasks: false }),
+        [...combined.filter((entry) => entry.EntryId !== candidate.EntryId), candidate]);
       planned.push({ Entry: candidate, Existing: Boolean(findById(existingTargetEntries, entryId)) });
     } catch (error) {
       issues.push({
@@ -4078,6 +4212,8 @@ export async function saveAcademicTimetableEntry(env, user = {}, input = {}) {
     SessionId: session.SessionId, TermId: term.TermId, BranchId: scope.branchId, SchoolSection: scope.section
   };
   const schoolClass = assertReference(findById(state.classes, record.ClassId), 'Choose an active class.');
+  record.GeneratorLocked = input.GeneratorLocked === undefined ? existing?.GeneratorLocked === true
+    : input.GeneratorLocked === true || lower(input.GeneratorLocked) === 'yes';
   const arm = assertReference(findById(state.arms, record.ArmId), 'Choose an active classroom arm.');
   if (arm.ClassId !== schoolClass.ClassId) throw failure('The selected arm does not belong to this class.');
   assertReference(findById(state.subjects, record.SubjectId), 'Choose an active subject.');
@@ -4090,6 +4226,10 @@ export async function saveAcademicTimetableEntry(env, user = {}, input = {}) {
     throw failure(`Resolve the ${types.toLowerCase()} timetable conflict before saving.`, 409, 'ACADEMIC_TIMETABLE_CONFLICT');
   }
   assertAcademicTeacherScheduleRules(state, record);
+  if (version.GenerationRules) {
+    const projected = state.timetableEntries.filter((row) => statusActive(row) && row.VersionId === version.VersionId && row.EntryId !== record.EntryId);
+    validateAcademicGeneratedEntries(buildAcademicGenerationProblem({ ...state, timetableEntries: projected }, version, { includeTasks: false }), [...projected, record]);
+  }
   const timestamp = nowIso();
   record.Status = 'Active';
   record.CreatedAt = clean(existing?.CreatedAt) || timestamp;
@@ -4121,6 +4261,7 @@ export function academicTimetableBatchPlan(state = {}, input = {}, context = {})
       const entryId = academicId('timetable-entry', version.VersionId, globalThis.crypto.randomUUID());
       const record = {
         ...normalizeAcademicTimetableEntry(lesson, version),
+        GeneratorLocked: lesson.GeneratorLocked === true || lower(lesson.GeneratorLocked) === 'yes',
         RecordId: entryId, EntryId: entryId, VersionId: version.VersionId,
         SessionId: context.session.SessionId, TermId: context.term.TermId,
         BranchId: context.scope.branchId, SchoolSection: context.scope.section,
@@ -4139,6 +4280,8 @@ export function academicTimetableBatchPlan(state = {}, input = {}, context = {})
         throw failure(`Resolve the ${types} timetable conflict before saving.`, 409, 'ACADEMIC_TIMETABLE_CONFLICT');
       }
       assertAcademicTeacherScheduleRules(state, record, projectedEntries);
+      if (version.GenerationRules) validateAcademicGeneratedEntries(buildAcademicGenerationProblem(state, version, { includeTasks: false }),
+        [...projectedEntries.filter((row) => row.VersionId === version.VersionId), record]);
       projectedEntries.push(record);
       return record;
     } catch (error) {
@@ -7299,6 +7442,9 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
   if (['saveacademictimetableconstraint', 'savetimetableconstraint'].includes(action)) return saveAcademicTimetableConstraint(env, user, input);
   if (['deleteacademictimetableconstraint', 'deletetimetableconstraint'].includes(action)) return deleteAcademicTimetableConstraint(env, user, input);
   if (['createacademictimetableversion', 'createtimetableversion'].includes(action)) return createAcademicTimetableVersion(env, user, input);
+  if (action === 'saveacademictimetablegenerationrules') return saveAcademicTimetableGenerationRules(env, user, input);
+  if (action === 'previewacademictimetablegeneration') return previewAcademicTimetableGeneration(env, user, input);
+  if (action === 'saveacademictimetablegeneration') return saveAcademicTimetableGeneration(env, user, input);
   if (['updateacademictimetableversion', 'updatetimetableversion'].includes(action)) return updateAcademicTimetableVersion(env, user, input);
   if (['deleteacademictimetableversion', 'deletetimetableversion'].includes(action)) return deleteAcademicTimetableVersion(env, user, input);
   if (['copyacademictimetableversion', 'copytimetableversion'].includes(action)) return copyAcademicTimetableVersion(env, user, input);

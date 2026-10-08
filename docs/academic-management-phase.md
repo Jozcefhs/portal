@@ -476,6 +476,59 @@ The timetable module must support:
 
 Draft timetables do not become operational until approved and published.
 
+### 7.1 Weekly timetable generator (AM-TT-GEN)
+
+Implemented on 2026-10-09. Desktop packaging and live-school acceptance testing
+remain separate rollout steps.
+Both clients use the shared, permission-checked backend; the module remains
+school-edition only and isolated by branch, Primary/Secondary section, session
+and term. No existing published timetable or financial record is migrated.
+
+Open Timetable > Generate timetable on web/mobile, or select a timetable
+version and choose Generate Timetable on desktop. Configure days and periods,
+active classrooms, subjects and teacher allocations first. Save these rules
+on a Draft before generating:
+
+- required periods per week for each classroom/subject (0 excludes it);
+- double lessons per week, counted within the weekly period total;
+- maximum subject periods per day and last permitted lesson number;
+- optional teacher selection, room and allowed school days; and
+- maximum consecutive teacher periods (0 means unrestricted).
+
+Cutoffs count lesson periods only, not breaks or assemblies. The whole double
+lesson must finish by the cutoff and cannot cross a break. Existing teacher
+unavailable slots and daily/weekly load limits are enforced. Lessons marked
+Keep during generation remain fixed and count towards weekly requirements.
+The search prefers spreading subjects across days and rejects teacher, room
+and classroom conflicts; it does not silently relax hard rules.
+
+Generation is a bounded, cancellable read-only preview. It supports up to
+1,000 classroom-subject requirements and 2,500 lesson periods per version.
+The search stops after 120,000 candidate checks and reports unscheduled
+requirements if it cannot find a complete solution within that bound. This
+is not proof that a mathematically possible timetable does not exist.
+Oversized requirements must be reduced or split into non-overlapping scopes;
+teachers shared between independently generated scopes need a combined
+conflict review before publication.
+
+Only a fully validated preview can be saved as a new Draft. The server checks
+the current source snapshot and revalidates every lesson before writing.
+Changed allocations, rules, fixed lessons or school periods require a fresh
+preview. Saving proceeds in atomic batches of at most 60 lessons, with a
+stable request identity and resumable Generating status. An interrupted
+draft cannot be copied, approved or published; resume it or remove only that
+unfinished draft. Retries do not create duplicate lessons. The normal
+review, approval and publication process still applies to the completed
+Draft, including validation of its weekly quotas and cutoff rules after
+manual edits. Class and teacher previews remain printable.
+
+Regression coverage includes allocation/scope permissions, locked lessons,
+doubles/cutoffs, teacher availability/load, room conflicts, tampered/stale
+previews, impossible schedules, checkpoint resume, interrupted atomic saves,
+duplicate retries and an 800-period/20-arm sample week. The local browser
+fixture uses in-memory sample data only; live-school acceptance testing is a
+separate rollout step.
+
 ## 8. Student attendance
 
 Student attendance is separate from existing staff time-and-attendance. It

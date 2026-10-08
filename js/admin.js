@@ -12937,6 +12937,7 @@ function academicTaskDefinitions(view, root) {
       { key: 'history', label: 'Movement history', title: `${learner.Singular} movement history`, description: 'Review the permanent audit trail for allocations, transfers and withdrawals.', nodes: nodes(register(movementRegister)) }
     ],
     timetable: [
+      { key: 'generator', label: 'Generate timetable', title: 'Automatic weekly timetable', description: 'Set weekly subject requirements and cutoffs, generate a conflict-free preview, then save a new Draft for review.', nodes: nodes(form('[data-academic-timetable-generator]')) },
       { key: 'builder', label: 'Build timetable', title: 'Schedule lessons', description: 'Add lessons to a draft version with automatic classroom, teacher and room conflict checks.', nodes: nodes(form('[data-academic-timetable-entry]')) },
       { key: 'schedule', label: 'Lesson register', title: 'Scheduled lessons', description: 'Review the exact lessons in the selected timetable version and correct draft entries.', nodes: nodes(register('Timetable Lessons')) },
       { key: 'versions', label: 'Versions', title: 'Create, copy and publish', description: 'Create a blank draft or safely copy an existing version before approval and publication.', nodes: nodes(form('[data-academic-timetable-version]'), form('[data-academic-timetable-copy]'), register('Timetable Versions')) },
@@ -13991,6 +13992,49 @@ function academicTimetableBatchEntries(versionId) {
   return academicTimetableBatches.get(key);
 }
 
+function academicTimetableGeneratorWorkspace(data, rows, version) {
+  if (!data.permissions?.canManageTimetables) return '';
+  const scope = `<input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}"><input type="hidden" name="SessionId" value="${escapeHtml(academicManagementFilters.sessionId)}"><input type="hidden" name="TermId" value="${escapeHtml(academicManagementFilters.termId)}"><input type="hidden" name="VersionId" value="${escapeHtml(version?.VersionId || '')}"><input type="hidden" name="RevisionToken" value="${escapeHtml(version?.RevisionToken || '')}">`;
+  const versions = rows.timetableVersions.filter((row) => row.SessionId === academicManagementFilters.sessionId && row.TermId === academicManagementFilters.termId);
+  const selector = `<label>Source version<select data-academic-timetable-version-select>${academicSelectOptions(versions, version?.VersionId || '', (row) => `${row.Name} · ${row.Status}`, 'Choose version')}</select></label>`;
+  if (!version) return `<section class="academic-management-editor academic-management-editor-wide" data-academic-timetable-generator><h3>Timetable generator</h3><p>Create a Draft version with school days and periods first, then configure its weekly subject requirements.</p>${selector}</section>`;
+  if (version.Status === 'Generating') return `<section class="academic-management-editor academic-management-editor-wide" data-academic-timetable-generator>${selector}<h3>Finish saving ${escapeHtml(version.Name)}</h3><p>${Number(version.GenerationWritten || 0)} of ${Number(version.GenerationTotal || 0)} lessons saved. This version cannot be approved or published until saving finishes.</p><button type="button" data-academic-generation-resume="${escapeHtml(version.VersionId)}">Resume saving draft</button><p data-academic-generation-result role="status"></p></section>`;
+  const requirements = version.GenerationRules?.Requirements || [];
+  const pairs = new Map(requirements.map((row) => [JSON.stringify([row.ClassId, row.ArmId, row.SubjectId]), { ...row }]));
+  const allocations = rows.teacherAllocations.filter((row) => academicIsActive(row) && row.AllocationRole === 'Subject Teacher'
+    && row.SessionId === version.SessionId && row.TermId === version.TermId);
+  for (const arm of rows.arms.filter(academicIsActive)) for (const allocation of allocations.filter((row) => row.ClassId === arm.ClassId && (!row.ArmId || row.ArmId === arm.ArmId))) {
+    const id = JSON.stringify([arm.ClassId, arm.ArmId, allocation.SubjectId]);
+    if (!pairs.has(id)) pairs.set(id, { ClassId: arm.ClassId, ArmId: arm.ArmId, SubjectId: allocation.SubjectId, PeriodsPerWeek: 0 });
+  }
+  const rules = [...pairs.values()];
+  const editable = version.Status === 'Draft';
+  const number = (row, name, title, max) => `<label>${title}<input type="number" data-generation-field="${name}" min="0" max="${max}" step="1" value="${Number(row[name] || 0)}"></label>`;
+  const cards = rules.map((row) => {
+    const teachers = [...new Set(allocations.filter((item) => item.ClassId === row.ClassId && (!item.ArmId || item.ArmId === row.ArmId) && item.SubjectId === row.SubjectId).map((item) => item.TeacherUsername))];
+    return `<div class="academic-generator-rule" data-academic-generation-rule data-class-id="${escapeHtml(row.ClassId)}" data-arm-id="${escapeHtml(row.ArmId)}" data-subject-id="${escapeHtml(row.SubjectId)}">
+      <div class="academic-generator-subject"><strong>${escapeHtml(academicLabel(rows.subjects, row.SubjectId))}</strong><small>${escapeHtml(`${academicLabel(rows.classes, row.ClassId)} / ${academicLabel(rows.arms, row.ArmId)}`)}</small><label>Allocated teacher<select data-generation-field="TeacherUsername"><option value="">Any allocated teacher</option>${teachers.map((teacher) => `<option value="${escapeHtml(teacher)}"${row.TeacherUsername === teacher ? ' selected' : ''}>${escapeHtml(academicLabel(data.staff, teacher, teacher))}</option>`).join('')}</select></label></div>
+      ${number(row, 'PeriodsPerWeek', 'Periods / week', 100)}${number(row, 'DoubleLessonsPerWeek', 'Doubles / week', 50)}${number(row, 'MaxPeriodsPerDay', 'Maximum / day', 100)}${number(row, 'LatestLessonNumber', 'Finish by period', 100)}
+      <label>Room<input data-generation-field="Room" maxlength="100" value="${escapeHtml(row.Room || '')}" placeholder="Optional"></label><label>Allowed days<input data-generation-field="AllowedDayCodes" value="${escapeHtml((row.AllowedDayCodes || []).join(','))}" placeholder="All, or MON,TUE"></label>
+    </div>`;
+  }).join('');
+  const arms = rows.arms.filter((arm) => rules.some((row) => row.ArmId === arm.ArmId));
+  return `<section class="academic-management-editor academic-management-editor-wide" data-academic-timetable-generator>
+    <div class="academic-management-editor-heading"><div><small>Constraint-checked scheduling</small><h3>Generate a weekly timetable</h3><p class="muted">Generation is a preview only. Save it into a new Draft, then review, approve and publish separately. The current timetable stays unchanged.</p></div></div>${selector}
+    <form data-academic-workflow="saveAcademicTimetableGenerationRules">${scope}
+      <p class="muted">Set periods/week for every subject to include. <strong>0 excludes that subject.</strong> Doubles are two consecutive lesson periods and count towards the weekly total. A cutoff of 4 means the entire lesson must finish by the fourth lesson period; breaks are not counted. Other 0 limits mean unrestricted.</p>
+      <label>Show classroom<select data-academic-generation-class-filter><option value="">All classrooms</option>${academicSelectOptions(arms, '', (arm) => `${academicLabel(rows.classes, arm.ClassId)} / ${arm.Name}`, '')}</select></label>
+      <fieldset${editable ? '' : ' disabled'}><legend>Weekly requirements for ${escapeHtml(version.Name)}</legend><div class="academic-generator-rules">${cards || '<p>Assign subject teachers to classrooms first.</p>'}</div><label>Maximum consecutive teacher periods<input type="number" name="MaxConsecutiveTeacherPeriods" min="0" max="100" value="${Number(version.GenerationRules?.MaxConsecutiveTeacherPeriods || 0)}"><small>0 means unrestricted; a break resets the consecutive count.</small></label></fieldset>
+      <button type="submit"${editable && rules.length ? '' : ' disabled'}>Save generator requirements</button>${editable ? '' : '<p class="muted">To change these requirements, copy this version into a new Draft.</p>'}
+    </form>
+    <p class="muted">To fix a lesson in place, edit it in Build timetable and set “Keep during generation” to Yes. Other source lessons are rearranged in the new preview.</p>
+    <div class="academic-attendance-bulk-actions"><button type="button" data-academic-generation-start${version.GenerationRules ? '' : ' disabled'}>Generate preview</button><button type="button" class="secondary" data-academic-generation-cancel disabled>Stop</button></div>
+    <div data-academic-generation-result role="status" aria-live="polite">Save requirements, then generate a preview.</div>
+    <label>New draft name<input data-academic-generation-name maxlength="120" placeholder="For example First Term — generated draft"></label>
+    <div class="academic-attendance-bulk-actions"><button type="button" data-academic-generation-save disabled>Save preview as new Draft</button><button type="button" class="secondary" data-academic-generation-print="class" disabled>Preview class schedules</button><button type="button" class="secondary" data-academic-generation-print="teacher" disabled>Preview teacher schedules</button></div>
+  </section>`;
+}
+
 function academicTimetableWorkspace(data, rows) {
   const canManage = data.permissions?.canManageTimetables;
   const canPublish = data.permissions?.canPublishTimetables;
@@ -14007,7 +14051,7 @@ function academicTimetableWorkspace(data, rows) {
         - ({ Published: 0, Approved: 1, Draft: 2 }[right.Status] ?? 3)
         || clean(right.PublishedAt || right.UpdatedAt || right.CreatedAt).localeCompare(clean(left.PublishedAt || left.UpdatedAt || left.CreatedAt))
       : 0);
-  const allVersions = (data.timetableVersions || []).filter((row) => !['Copying', 'Deleting'].includes(row.Status));
+  const allVersions = (data.timetableVersions || []).filter((row) => !['Copying', 'Generating', 'Deleting'].includes(row.Status));
   const staff = academicManagementStaffCandidates(data.staff || [], academicManagementFilters.section);
   let version = academicFind(versions, academicTimetableDraft.versionId)
     || (teacherView ? versions[0] : versions.find((row) => row.Status === 'Draft')
@@ -14070,7 +14114,7 @@ function academicTimetableWorkspace(data, rows) {
   const copyForm = canManage ? `<form class="academic-management-editor" data-academic-workflow="copyAcademicTimetableVersion" data-academic-timetable-copy>
     <div class="academic-management-editor-heading"><div><small>Safe reuse</small><h3>Copy an existing version</h3><p class="muted">All lessons are revalidated against current allocations, conflicts and teacher limits before the new Draft is finalized.</p></div></div>
     <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}"><input type="hidden" name="SessionId" value="${escapeHtml(sessionId)}"><input type="hidden" name="TermId" value="${escapeHtml(termId)}">
-    <label>Source version<select name="SourceVersionId" required>${academicSelectOptions(versions.filter((row) => row.Status !== 'Copying'), '', (row) => `${row.Name} · ${row.Status}`, 'Choose version to copy')}</select></label>
+    <label>Source version<select name="SourceVersionId" required>${academicSelectOptions(versions.filter((row) => !['Copying', 'Generating', 'Deleting'].includes(row.Status)), '', (row) => `${row.Name} · ${row.Status}`, 'Choose version to copy')}</select></label>
     <label>New draft name<input name="Name" required placeholder="For example Revised timetable"></label>
     <button type="submit" ${versions.some((row) => row.Status !== 'Copying') ? '' : 'disabled'}>Copy into new Draft</button>
   </form>` : '';
@@ -14145,7 +14189,7 @@ function academicTimetableWorkspace(data, rows) {
     const open = `<button type="button" class="compact-icon-action compact-edit-action" data-academic-timetable-open-version="${escapeHtml(row.VersionId)}" title="Open this version" aria-label="Open ${escapeHtml(row.Name)}">&#128065;</button>`;
     const edit = canManage && row.Status === 'Draft'
       ? `<button type="button" class="compact-icon-action compact-edit-action" data-academic-timetable-version-edit="${escapeHtml(row.VersionId)}" title="Edit draft name" aria-label="Edit ${escapeHtml(row.Name)} draft name">&#9998;</button>` : '';
-    const remove = canManage && ['Draft', 'Deleting'].includes(row.Status)
+    const remove = canManage && ['Draft', 'Generating', 'Deleting'].includes(row.Status)
       ? `<button type="button" class="compact-icon-action academic-archive-action" data-academic-timetable-version-delete="${escapeHtml(row.VersionId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="${row.Status === 'Deleting' ? 'Resume deleting draft' : 'Delete draft'}" aria-label="Delete ${escapeHtml(row.Name)} draft">&#128465;</button>` : '';
     if (!canPublish) return `<div class="academic-management-row-actions">${open}${edit}${remove}</div>`;
     const statuses = row.Status === 'Draft' ? ['Approved']
@@ -14172,6 +14216,7 @@ function academicTimetableWorkspace(data, rows) {
       <label>Lesson type<select name="LessonType"><option>Single</option><option${existingEntry?.LessonType === 'Double' ? ' selected' : ''}>Double</option><option${existingEntry?.LessonType === 'Practical' ? ' selected' : ''}>Practical</option></select></label>
       <label>Room or location<input name="Room" value="${escapeHtml(existingEntry?.Room || '')}" placeholder="Optional"></label>
       <label>Notes<input name="Notes" value="${escapeHtml(existingEntry?.Notes || '')}" placeholder="Optional"></label>
+      <label>Keep during generation<select name="GeneratorLocked"><option value="NO">No — allow rearrangement</option><option value="YES"${existingEntry?.GeneratorLocked ? ' selected' : ''}>Yes — keep this lesson in place</option></select></label>
     </div>
     <div class="academic-timetable-builder-actions"><button type="submit">${existingEntry ? 'Update lesson' : 'Save this lesson now'}</button>${existingEntry ? '' : '<button type="button" class="secondary" data-academic-timetable-queue>Add to batch</button>'}</div>
     ${existingEntry ? '' : `<section class="academic-timetable-batch" aria-label="Unsubmitted timetable lessons"><div class="academic-timetable-batch-heading"><h4>Lesson batch <span>${batchEntries.length}/50</span></h4><p class="muted">Prepare several lessons, then save them together. Nothing in this list is saved yet.</p></div>${batchEntries.length ? `<ol>${batchEntries.map((item, index) => `<li><span>${escapeHtml(item.label)}</span><button type="button" class="secondary" data-academic-timetable-batch-remove="${index}" aria-label="Remove lesson ${index + 1} from batch">Remove</button></li>`).join('')}</ol>` : '<p class="muted academic-timetable-batch-empty">No lessons added to the batch.</p>'}<button type="button" data-academic-timetable-save-batch ${batchEntries.length ? '' : 'disabled'}>Save all ${batchEntries.length} lesson${batchEntries.length === 1 ? '' : 's'}</button></section>`}
@@ -14187,7 +14232,7 @@ function academicTimetableWorkspace(data, rows) {
     { label: 'Teacher', value: (row) => academicLabel(data.staff, row.TeacherUsername, row.TeacherUsername) },
     { label: 'Room', value: (row) => row.Room || '-' }, { label: 'Action', render: entryActions }
   ]);
-  return `${entryForm}${entryTable}${versionForm}${copyForm}${versionTable}${targetCopyForm}${substitutionForm}${substitutionTable}${constraintForm}${constraintTable}${previewForm}${settingsForm}${calendarForm}`;
+  return `${academicTimetableGeneratorWorkspace(data, rows, version)}${entryForm}${entryTable}${versionForm}${copyForm}${versionTable}${targetCopyForm}${substitutionForm}${substitutionTable}${constraintForm}${constraintTable}${previewForm}${settingsForm}${calendarForm}`;
 }
 
 const ACADEMIC_ATTENDANCE_DRAFT_PREFIX = 'dynamax:academic-attendance-draft:v1:';
@@ -15490,7 +15535,7 @@ function renderAcademicManagement(data = academicManagementData || {}, message =
   if (academicManagementView === 'scorebook') queueMicrotask(() => { void loadAcademicScorebookContext(); });
 }
 
-async function academicManagementRequest(action, payload = {}) {
+async function academicManagementRequest(action, payload = {}, requestOptions = {}) {
   const branchId = clean(selectedBranchId || currentUser?.branchId);
   if (!branchId || branchId === 'all') throw new Error('Select one school branch before using Academic Management.');
   const normalizedAction = clean(action).toLowerCase();
@@ -15500,6 +15545,7 @@ async function academicManagementRequest(action, payload = {}) {
   const response = await staffFetch('/api/staff-academics', {
     method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
     dynamaxRetrySafe: retrySafe,
+    ...(requestOptions.signal ? { signal: requestOptions.signal } : {}),
     body: JSON.stringify({ action, BranchId: branchId, View: academicManagementView, ...payload })
   });
   const data = await response.json().catch(() => ({
@@ -15600,6 +15646,14 @@ function academicFormPayload(form) {
 }
 
 function academicWorkflowPayload(form) {
+  if (form.dataset.academicWorkflow === 'saveAcademicTimetableGenerationRules') {
+    const payload = Object.fromEntries(new FormData(form).entries());
+    return { ...payload, Requirements: [...form.querySelectorAll('[data-academic-generation-rule]')].map((row) => ({
+      ClassId: row.dataset.classId, ArmId: row.dataset.armId, SubjectId: row.dataset.subjectId,
+      ...Object.fromEntries([...row.querySelectorAll('[data-generation-field]')].map((input) => [input.dataset.generationField,
+        input.dataset.generationField === 'AllowedDayCodes' ? input.value.split(',').map(clean).filter(Boolean) : input.value]))
+    })) };
+  }
   if (form.dataset.academicWorkflow === 'saveAcademicSchoolCalendar') {
     const weekdays = [...form.querySelectorAll('[name="OperatingWeekdays"]:checked')].map((input) => input.value);
     if (!weekdays.length) throw new Error('Choose at least one normal school operating day.');
@@ -16039,7 +16093,135 @@ function openAcademicCbtRescheduleDialog(record = {}) {
   dialog.showModal();
 }
 
+async function boundedAcademicGenerationRequest(action, payload) {
+  const controller = new AbortController();
+  const sessionSignal = staffSessionAbortController.signal;
+  const abort = () => controller.abort();
+  sessionSignal.addEventListener('abort', abort, { once: true });
+  if (sessionSignal.aborted) abort();
+  const timer = setTimeout(abort, 30000);
+  try { return await academicManagementRequest(action, payload, { signal: controller.signal }); }
+  catch (error) {
+    if (controller.signal.aborted) throw new Error('This generation step timed out or the session ended. No timetable was published. Retry the preview or resume saving the same draft.');
+    throw error;
+  } finally { clearTimeout(timer); sessionSignal.removeEventListener('abort', abort); }
+}
+
+function bindAcademicTimetableGenerator(panel) {
+  const root = panel.querySelector('[data-academic-timetable-generator]');
+  if (!root) return;
+  const source = academicFind(academicManagementData?.timetableVersions || [], academicTimetableDraft.versionId);
+  if (!source) return;
+  const base = { BranchId: selectedBranchId, SchoolSection: academicManagementFilters.section,
+    SessionId: source.SessionId, TermId: source.TermId, VersionId: source.VersionId, View: 'timetable' };
+  const result = root.querySelector('[data-academic-generation-result]');
+  const start = root.querySelector('[data-academic-generation-start]'), stop = root.querySelector('[data-academic-generation-cancel]');
+  const save = root.querySelector('[data-academic-generation-save]');
+  let preview = null, cancelled = false, savingTarget = '', requestId = '', saveName = '', dirty = false;
+  const rulesForm = root.querySelector('[data-academic-workflow="saveAcademicTimetableGenerationRules"]');
+  const invalidate = (event) => {
+    if (!event.target.matches('[data-generation-field], [name="MaxConsecutiveTeacherPeriods"]')) return;
+    dirty = true; cancelled = true; preview = null;
+    if (start) start.disabled = true;
+    if (save) save.disabled = true;
+    root.querySelectorAll('[data-academic-generation-print]').forEach((button) => { button.disabled = true; });
+    result.textContent = 'Requirements changed. Save them before generating another preview.';
+  };
+  rulesForm?.addEventListener('input', invalidate);
+  rulesForm?.addEventListener('change', invalidate);
+  const lockRules = (locked) => {
+    if (!rulesForm) return;
+    rulesForm.querySelector('fieldset').disabled = locked || source.Status !== 'Draft';
+    rulesForm.querySelector('[type="submit"]').disabled = locked || source.Status !== 'Draft'
+      || !rulesForm.querySelector('[data-academic-generation-rule]');
+  };
+  const active = () => root.isConnected && base.BranchId === selectedBranchId && base.SchoolSection === academicManagementFilters.section
+    && base.SessionId === academicManagementFilters.sessionId && base.TermId === academicManagementFilters.termId;
+  root.querySelector('[data-academic-generation-class-filter]')?.addEventListener('change', (event) => {
+    root.querySelectorAll('[data-academic-generation-rule]').forEach((row) => { row.hidden = Boolean(event.target.value && row.dataset.armId !== event.target.value); });
+  });
+  stop?.addEventListener('click', () => { cancelled = true; stop.disabled = true; result.textContent = 'Stopping after the current read-only step. No lessons have been saved.'; });
+  const show = (generation) => {
+    const issues = [...(generation.Issues || []), ...(generation.Unscheduled || []).map((row) => `${row.Label}: ${row.Remaining} of ${row.Required} periods remain unscheduled.`)];
+    result.innerHTML = `<p><strong>${Number(generation.ScheduledPeriods || 0)} / ${Number(generation.RequiredPeriods || 0)} periods scheduled</strong> · ${Number(generation.Checks || 0)} search checks</p><progress value="${Number(generation.ScheduledPeriods || 0)}" max="${Number(generation.RequiredPeriods || 1)}" aria-label="Scheduled periods"></progress><p>${escapeHtml(generation.Message)}</p>${issues.length ? `<details${generation.Done ? ' open' : ''}><summary>${issues.length} scheduling details</summary><ul>${issues.map((issue) => `<li>${escapeHtml(issue)}</li>`).join('')}</ul></details>` : ''}${generation.Done && generation.Entries?.length ? `<div class="academic-generator-preview"><table><thead><tr><th>Day</th><th>Periods</th><th>Classroom</th><th>Subject</th><th>Teacher</th></tr></thead><tbody>${generation.Entries.map((entry) => `<tr><td>${escapeHtml(entry.DayCode)}</td><td>${escapeHtml(entry.PeriodCodes.join('+'))}${entry.GeneratorLocked ? ' · fixed' : ''}</td><td>${escapeHtml(`${academicLabel(academicManagementData.classes, entry.ClassId)} / ${academicLabel(academicManagementData.arms, entry.ArmId)}`)}</td><td>${escapeHtml(academicLabel(academicManagementData.subjects, entry.SubjectId))}</td><td>${escapeHtml(academicLabel(academicManagementData.staff, entry.TeacherUsername, entry.TeacherUsername))}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
+  };
+  start?.addEventListener('click', async () => {
+    if (dirty) return;
+    cancelled = false; preview = null; requestId = ''; savingTarget = ''; saveName = '';
+    save.disabled = true;
+    root.querySelectorAll('[data-academic-generation-print]').forEach((button) => { button.disabled = true; });
+    stop.disabled = false;
+    lockRules(true);
+    await runButtonAction(start, 'Generating...', async () => {
+      let checkpoint = null, signature = '';
+      const deadline = Date.now() + 180000;
+      try {
+        for (let step = 0; step < 120; step++) {
+          if (cancelled || !active()) return;
+          if (Date.now() >= deadline) throw new Error('Generation reached its time limit. No timetable was saved; adjust the requirements and try again.');
+          const response = await boundedAcademicGenerationRequest('previewAcademicTimetableGeneration', { ...base, Checkpoint: checkpoint, SourceSignature: signature });
+          if (cancelled || !active()) return;
+          preview = response.generation; show(preview);
+          if (preview.Done) {
+            save.disabled = !preview.Complete;
+            root.querySelectorAll('[data-academic-generation-print]').forEach((button) => { button.disabled = !preview.Complete; });
+            return;
+          }
+          checkpoint = preview.Checkpoint; signature = preview.SourceSignature;
+        }
+        throw new Error('Generation paused at its step limit. No timetable was saved. Adjust the requirements or locked lessons and try again.');
+      } catch (error) { if (active()) result.textContent = error.message || String(error); }
+      finally { if (active()) { stop.disabled = true; lockRules(false); if (cancelled && !dirty) result.textContent = 'Generation stopped. No lessons were saved.'; } }
+    });
+    if (active()) start.disabled = dirty;
+  });
+  const persist = async (button, target = '') => {
+    if (!target && !preview?.Complete) return;
+    if (dirty) return;
+    const name = saveName || clean(root.querySelector('[data-academic-generation-name]')?.value);
+    if (!target && !name) { result.textContent = 'Enter a new draft name first.'; return; }
+    if (!target && !requestId) { requestId = crypto.randomUUID(); saveName = name; }
+    lockRules(true);
+    await runButtonAction(button, 'Saving draft...', async () => {
+      if (start) start.disabled = true;
+      const deadline = Date.now() + 180000;
+      try {
+        for (let step = 0; step < 45; step++) {
+          if (!active()) return;
+          if (Date.now() >= deadline) throw new Error('Saving reached its time limit. Refresh and resume the same unfinished draft.');
+          const response = await boundedAcademicGenerationRequest('saveAcademicTimetableGeneration', {
+            ...base, ...(target || savingTarget ? { TargetVersionId: target || savingTarget }
+              : { Name: name, Entries: preview.Entries, SourceSignature: preview.SourceSignature, SaveRequestId: requestId })
+          });
+          savingTarget = response.generationSave.VersionId;
+          if (!active()) return;
+          result.textContent = `${response.generationSave.Written || 0} / ${response.generationSave.Total || 0} lessons saved. Published timetables are unchanged.`;
+          if (response.generationSave.Complete) {
+            academicTimetableDraft.versionId = savingTarget;
+            academicManagementTaskViews.timetable = 'schedule';
+            renderAcademicManagement(response, response.message);
+            return;
+          }
+          target = savingTarget;
+        }
+        throw new Error('Saving paused. Use Resume saving draft to finish the remaining lessons.');
+      } catch (error) { if (active()) result.textContent = `${error.message || error} Retry this save or refresh and resume the unfinished draft; it cannot be published yet.`; }
+      finally { if (active()) { lockRules(false); if (start) start.disabled = dirty; } }
+    });
+  };
+  save?.addEventListener('click', () => persist(save));
+  const resume = root.querySelector('[data-academic-generation-resume]');
+  resume?.addEventListener('click', () => persist(resume, resume.dataset.academicGenerationResume));
+  root.querySelectorAll('[data-academic-generation-print]').forEach((button) => button.addEventListener('click', () => {
+    if (!preview?.Complete) return;
+    const version = { ...source, Name: `${source.Name} — generated preview`, Status: 'Unsaved preview' };
+    printAcademicTimetableSchedule(button.dataset.academicGenerationPrint, version, preview.Entries, academicManagementData,
+      { classes: academicManagementData.classes, arms: academicManagementData.arms, subjects: academicManagementData.subjects });
+  }));
+}
+
 function bindAcademicManagement() {
+  bindAcademicTimetableGenerator(panelEl);
   panelEl.querySelector('[data-teacher-homework]')?.addEventListener('click', () => {
     window.DynamaxTeacherHomework.open({ staffFetch, branchId: selectedBranchId, schoolSection: academicManagementFilters.section })
       .catch((error) => setStatus(document.getElementById('academicManagementStatus'), error.message, 'bad'));

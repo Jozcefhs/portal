@@ -10548,6 +10548,9 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     case 'bulkImportAcademicStudentMemberships':
     case 'bulkAssignAcademicArmStudentSubjects':
     case 'saveAcademicTimetableSettings':
+    case 'saveAcademicTimetableGenerationRules':
+    case 'previewAcademicTimetableGeneration':
+    case 'saveAcademicTimetableGeneration':
     case 'saveAcademicTimetableConstraint':
     case 'deleteAcademicTimetableConstraint':
     case 'createAcademicTimetableVersion':
