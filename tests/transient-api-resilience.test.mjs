@@ -23,5 +23,5 @@ test('a transient dashboard shell failure does not deny an authenticated user ac
   ]);
   assert.match(admin, /mode === 'shell' && Array\.isArray\(currentUser\?\.allowedSections\)/);
   assert.match(admin, /Workspace opened from your verified sign-in/);
-  assert.match(serviceWorker, /dynamax-v330-parent-store-sticky-controls/);
+  assert.match(serviceWorker, /dynamax-v331-parent-store-stock-dropdown/);
 });

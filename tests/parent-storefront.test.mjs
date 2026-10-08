@@ -180,6 +180,59 @@ test('quantities are clamped to stock and sold-out products cannot be added', ()
   assert.equal(context.storeCart.size, 1);
 });
 
+test('quantity dropdown lists every available unit including large stock counts', () => {
+  for (const available of [1, 2, 150, 500]) {
+    const { controls } = storefront([{ ...catalog[0], Quantity: available }]);
+    const [quantity] = controls();
+    assert.equal(quantity.tagName, 'select');
+    assert.equal(quantity.value, '1');
+    assert.equal(quantity.children.length, available);
+    assert.deepEqual(quantity.children.map((option) => option.value), Array.from({ length: available }, (_, index) => String(index + 1)));
+    assert.deepEqual(quantity.children.map((option) => option.textContent), quantity.children.map((option) => option.value));
+    assert.equal(quantity.attributes['aria-label'], 'Quantity for Book 1');
+  }
+});
+
+test('narrow phones retain room for the native quantity arrow and cart button labels', () => {
+  assert.match(css, /grid-template-columns: 54px minmax\(0, 1fr\)/);
+  assert.match(css, /@media \(max-width: 360px\)\s*\{\s*\.parent-store \.store-cart-action \{ padding: 5px 0; font-size: 10px;/);
+});
+
+test('unavailable and invalid stock produce a disabled zero option rather than selectable quantities', () => {
+  for (const stock of [0, -2, '', 'invalid', Infinity, NaN]) {
+    const { context, controls } = storefront([{ ...catalog[0], Quantity: stock }]);
+    const [quantity, add] = controls();
+    assert.equal(quantity.children.length, 1);
+    assert.equal(quantity.children[0].value, '0');
+    assert.equal(quantity.value, '0');
+    assert.equal(quantity.disabled, true);
+    assert.equal(add.disabled, true);
+    add.fire('click');
+    assert.equal(context.storeCart.size, 0);
+  }
+});
+
+test('selecting the highest available quantity adds exactly that quantity and locks the dropdown', () => {
+  const { context, elements, controls } = storefront([{ ...catalog[0], Quantity: 500 }]);
+  const [quantity, add] = controls();
+  quantity.value = quantity.children.at(-1).value;
+  add.fire('click');
+  assert.equal(context.storeCart.get('Bookstore|BOOK-1').quantity, 500);
+  assert.equal(elements.storeCartTotal.textContent, '₦50000.00');
+  assert.equal(quantity.disabled, true);
+  context.renderStores(child);
+  assert.equal(controls()[0].value, '500');
+  assert.equal(controls()[0].disabled, true);
+  elements.storeCartEl.children[0].children[0].fire('click');
+  assert.equal(controls()[0].disabled, false);
+  assert.equal(controls()[0].value, '1');
+});
+
+test('fractional stock only lists available whole units', () => {
+  const { controls } = storefront([{ ...catalog[0], Quantity: 2.9 }]);
+  assert.deepEqual(controls()[0].children.map((option) => option.value), ['1', '2']);
+});
+
 test('mobile cart starts collapsed and its shortcut opens it', () => {
   const { elements } = storefront(catalog, { mobile: true });
   assert.equal(elements.storeCartPanel.open, false);
@@ -249,7 +302,8 @@ test('product and category content remains escaped in the new storefront', () =>
 });
 
 test('responsive cards, pagination, cart and order history use scoped accessible markup', () => {
-  assert.match(html, /css\/parent-store\.css\?v=20261008-sticky-controls/);
+  assert.match(html, /css\/parent-store\.css\?v=20261008-stock-dropdown/);
+  assert.match(html, /js\/parent-dashboard\.js\?v=20261008-stock-dropdown/);
   assert.match(html, /id="storePagination"[^>]*aria-label="Store pages" hidden/);
   assert.match(html, /<details id="storeCartPanel"[^>]*open>/);
   assert.match(html, /<details class="parent-store-orders">/);

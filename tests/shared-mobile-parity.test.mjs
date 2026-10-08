@@ -12,7 +12,7 @@ const pageStyleVersions = new Map([
   ['register-organization.html', '20260918-neutral-plan-cards']
 ]);
 const adminScriptVersion = '20261005-student-billing-profile-9';
-const parentScriptVersion = '20261005-store-grade-matching';
+const parentScriptVersion = '20261008-stock-dropdown';
 const notificationScriptVersion = '20260927-spoken-alerts';
 const notificationStyleVersion = '20260804-read-efficiency';
 const pageNames = [
@@ -120,7 +120,7 @@ test('all portal pages reference the current shared stylesheet version', () => {
 });
 
 test('service worker refreshes the shared school, church, and parent assets', () => {
-  assert.match(serviceWorker, /dynamax-v330-parent-store-sticky-controls/);
+  assert.match(serviceWorker, /dynamax-v331-parent-store-stock-dropdown/);
   assert.match(serviceWorker, /'\/verify-result\.html'/);
   assert.match(serviceWorker, /'\/js\/verify-result\.js'/);
   assert.match(serviceWorker, /'\/css\/school-landing\.css'/);

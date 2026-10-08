@@ -7,7 +7,7 @@ The parent dashboard School Store uses a responsive product-card catalog instead
 - The heading, Cart shortcut, search and filters stay together in a sticky bar while scrolling the store. Its measured height keeps cart/page scroll targets visible; on wider screens it sits below the top dashboard navigation, and on phones the bottom navigation is unchanged. Hidden panels and resized/rotated screens are remeasured without reading or changing any account data.
 - The cart stays beside the catalog on larger screens. On screens up to 900px it moves above the products and starts collapsed; the Cart shortcut opens it. Phones show two product columns.
 - Cart items persist when filtering, sorting or changing catalog pages. Switching children retains the dashboard's existing cart-clearing behavior.
-- Quantity inputs accept whole units bounded by available stock, replacing one select option per stock unit. Added items remain locked until removed from the cart, preventing duplicate clicks.
+- Quantity dropdowns list every whole number from 1 through the available stock (for example, 1–500 when 500 units are available). Sold-out items show a disabled zero quantity. The compact controls retain the native mobile picker and a visible dropdown arrow. Added items remain locked until removed from the cart, preventing duplicate clicks; their selected quantities survive filtering and pagination.
 - Order and collection history stays available in a collapsed section below the catalog.
 
 This is a presentation-only change. Prices, branch/section eligibility, fee-included collection records, order creation, payment verification, and checkout authorization/idempotency remain on the existing backend. The service worker precaches the new scoped stylesheet.

@@ -2406,13 +2406,22 @@ function renderStores(child) {
       row.className = `parent-store-product ${item.StoreType === 'Uniform Store' ? 'is-clothing' : 'is-books'}`;
       const details = [item.Size, item.Gender, item.ClassName].filter((value) => value && !['all', '*'].includes(String(value).trim().toLowerCase())).join(' · ');
       row.innerHTML = `<span class="parent-store-product-category">${escapeHtml(item.Category || (item.StoreType === 'Bookstore' ? 'Books & supplies' : 'Clothing & supplies'))}</span><h3>${escapeHtml(item.ItemName)}</h3><p class="parent-store-product-details">${escapeHtml(details || item.Unit || 'School essentials')}</p><strong class="parent-store-product-price">${money(item.Price)}</strong><small class="parent-store-product-stock">${escapeHtml(item.Quantity)} available</small>`;
-      const available = Math.max(0, Math.floor(Number(item.Quantity) || 0));
-      const qty = document.createElement('input');
-      qty.type = 'number';
-      qty.min = '1';
-      qty.max = String(Math.max(1, available));
-      qty.step = '1';
-      qty.value = '1';
+      const stock = Number(item.Quantity);
+      const available = Number.isFinite(stock) ? Math.max(0, Math.floor(stock)) : 0;
+      const qty = document.createElement('select');
+      for (let quantity = 1; quantity <= available; quantity += 1) {
+        const option = document.createElement('option');
+        option.value = String(quantity);
+        option.textContent = String(quantity);
+        qty.appendChild(option);
+      }
+      if (!available) {
+        const option = document.createElement('option');
+        option.value = '0';
+        option.textContent = '0';
+        qty.appendChild(option);
+      }
+      qty.value = available ? '1' : '0';
       qty.className = 'store-quantity';
       qty.setAttribute('aria-label', `Quantity for ${item.ItemName}`);
       const buy = document.createElement('button');

@@ -442,16 +442,16 @@ test('parents can search the eligible school-store catalog', () => {
   assert.match(portalCss, /\.store-search-control input\{height:36px;min-height:36px;[^}]*font-size:12px/);
 });
 
-test('parent storefront uses a bounded compact quantity input and labelled add button', () => {
-  assert.match(parentDashboardJs, /const qty = document\.createElement\('input'\)/);
-  assert.match(parentDashboardJs, /qty\.type = 'number'/);
-  assert.match(parentDashboardJs, /qty\.max = String\(Math\.max\(1, available\)\)/);
-  assert.doesNotMatch(parentDashboardJs, /Array\.from\(\{ length: available \}/);
+test('parent storefront uses a stock-sized quantity dropdown and labelled add button', () => {
+  assert.match(parentDashboardJs, /const qty = document\.createElement\('select'\)/);
+  assert.match(parentDashboardJs, /quantity = 1; quantity <= available; quantity \+= 1/);
+  assert.match(parentDashboardJs, /qty\.appendChild\(option\)/);
+  assert.doesNotMatch(parentDashboardJs, /qty\.type = 'number'/);
   assert.match(parentDashboardJs, /qty\.setAttribute\('aria-label', `Quantity for \$\{item\.ItemName\}`\)/);
   assert.match(parentDashboardJs, /buy\.className = 'store-cart-action'/);
   assert.match(parentDashboardJs, /buy\.setAttribute\('aria-label', `Add \$\{item\.ItemName\} to cart`\)/);
-  assert.match(parentStoreCss, /\.parent-store \.store-purchase-controls\s*\{[^}]*grid-template-columns: 52px minmax\(0, 1fr\)/);
-  assert.match(parentStoreCss, /@media \(max-width: 540px\)[\s\S]*?grid-template-columns: 43px minmax\(0, 1fr\)/);
+  assert.match(parentStoreCss, /\.parent-store \.store-purchase-controls\s*\{[^}]*grid-template-columns: 60px minmax\(0, 1fr\)/);
+  assert.match(parentStoreCss, /@media \(max-width: 540px\)[\s\S]*?grid-template-columns: 54px minmax\(0, 1fr\)/);
   assert.match(parentStoreCss, /\.parent-store \.store-cart-action\s*\{[^}]*min-height: 36px/);
 });
 
