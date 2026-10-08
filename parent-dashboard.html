@@ -8,7 +8,8 @@
   <script src="js/preferences.js?v=20260726-biometric"></script>
   <link rel="stylesheet" href="css/style.css?v=20260930-school-library">
   <link rel="stylesheet" href="css/notifications.css?v=20260804-read-efficiency">
-  <link rel="stylesheet" href="css/parent-store.css?v=20261008-storefront">
+  <link rel="stylesheet" href="css/parent-store.css?v=20261008-sticky-controls">
+  <script src="js/parent-store-layout.js?v=20261008-sticky-controls" defer></script>
 </head>
 <body class="parent-dashboard-page" data-fresh-site-profile>
   <dialog id="changeParentPasswordDialog" class="notification-history-dialog parent-password-dialog">
@@ -319,15 +320,17 @@
           </section>
 
           <section class="panel full-panel dashboard-view-panel parent-store" data-dashboard-view="stores" hidden>
-            <header class="parent-store-header">
-              <div><h2>School Store</h2><p class="muted">Replacements and extras for your child.</p></div>
-              <button type="button" id="storeCartShortcut" class="parent-store-cart-shortcut" aria-controls="storeCartPanel">Cart <span id="storeCartCount">0</span></button>
-            </header>
-            <div class="parent-store-toolbar">
-              <label class="store-search-control" for="storeSearch"><span>Search items</span><input id="storeSearch" type="search" placeholder="Item, code, category or size" autocomplete="off"></label>
-              <label for="storeTypeFilter"><span>Shop</span><select id="storeTypeFilter"><option value="">All items</option><option value="Bookstore">Books &amp; supplies</option><option value="Uniform Store">Clothing &amp; supplies</option></select></label>
-              <label for="storeCategoryFilter"><span>Category</span><select id="storeCategoryFilter"><option value="">All categories</option></select></label>
-              <label for="storeSort"><span>Sort by</span><select id="storeSort"><option value="name">Name: A–Z</option><option value="price-low">Price: low to high</option><option value="price-high">Price: high to low</option></select></label>
+            <div class="parent-store-controls">
+              <header class="parent-store-header">
+                <div><h2>School Store</h2><p class="muted">Replacements and extras for your child.</p></div>
+                <button type="button" id="storeCartShortcut" class="parent-store-cart-shortcut" aria-controls="storeCartPanel">Cart <span id="storeCartCount">0</span></button>
+              </header>
+              <div class="parent-store-toolbar">
+                <label class="store-search-control" for="storeSearch"><span>Search items</span><input id="storeSearch" type="search" placeholder="Item, code, category or size" autocomplete="off"></label>
+                <label for="storeTypeFilter"><span>Shop</span><select id="storeTypeFilter"><option value="">All items</option><option value="Bookstore">Books &amp; supplies</option><option value="Uniform Store">Clothing &amp; supplies</option></select></label>
+                <label for="storeCategoryFilter"><span>Category</span><select id="storeCategoryFilter"><option value="">All categories</option></select></label>
+                <label for="storeSort"><span>Sort by</span><select id="storeSort"><option value="name">Name: A–Z</option><option value="price-low">Price: low to high</option><option value="price-high">Price: high to low</option></select></label>
+              </div>
             </div>
             <div class="parent-store-layout">
               <div class="parent-store-catalog">

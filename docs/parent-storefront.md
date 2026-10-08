@@ -4,6 +4,7 @@ The parent dashboard School Store uses a responsive product-card catalog instead
 
 - Products have image-free, coloured cards: blue for books/supplies and warm neutral for clothing/supplies.
 - Search, shop/category filters and name/price sorting operate on the selected child's existing authorized catalog. Twelve products appear per page. Changing filters or children resets pagination.
+- The heading, Cart shortcut, search and filters stay together in a sticky bar while scrolling the store. Its measured height keeps cart/page scroll targets visible; on wider screens it sits below the top dashboard navigation, and on phones the bottom navigation is unchanged. Hidden panels and resized/rotated screens are remeasured without reading or changing any account data.
 - The cart stays beside the catalog on larger screens. On screens up to 900px it moves above the products and starts collapsed; the Cart shortcut opens it. Phones show two product columns.
 - Cart items persist when filtering, sorting or changing catalog pages. Switching children retains the dashboard's existing cart-clearing behavior.
 - Quantity inputs accept whole units bounded by available stock, replacing one select option per stock unit. Added items remain locked until removed from the cart, preventing duplicate clicks.
