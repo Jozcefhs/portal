@@ -15,6 +15,7 @@ import {
   createDirectTransferRequest,
   withPaystackBranchRouting
 } from './direct-bank-transfer.js';
+import { prepareVendorSale, snapshotVendorCart } from './vendor-settlements.js';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
@@ -278,13 +279,17 @@ function findInventoryItem(rows, section, reference) {
   if (section === 'tuckShop') {
     return rows.find((row) => lower(row.__id) === wanted);
   }
-  return rows.find((row) => lower(row.ItemName || row.__id) === wanted);
+  const exact = rows.find((row) => lower(row.__id) === wanted);
+  if (exact) return exact;
+  const named = rows.filter((row) => lower(row.ItemName || row.__id) === wanted);
+  if (named.length > 1) throw error('More than one vendor sells this item. Select the exact stock record.', 409);
+  return named[0];
 }
 
 async function authoritativeCart(env, section, body, user, inventoryRows = null) {
   const inventory = inventoryRows || await scopedInventory(env, section, user);
   const demand = requestedItems(body);
-  return demand.map((requested) => {
+  const cart = demand.map((requested) => {
     const item = findInventoryItem(inventory, section, requested.Reference);
     if (!item) throw error(`${requested.Reference} was not found in this branch.`, 404);
     if (clean(item.Active || 'YES').toUpperCase() === 'NO') {
@@ -302,6 +307,8 @@ async function authoritativeCart(env, section, body, user, inventoryRows = null)
       ItemCode: clean(item.ItemCode),
       ItemName: clean(item.ItemName || item.__id),
       Category: clean(item.Category),
+      VendorId: clean(item.VendorId),
+      SchoolSection: clean(item.SchoolSection),
       Unit: clean(item.Unit || 'pcs'),
       Variant: clean(item.Size),
       Quantity: requested.Quantity,
@@ -310,6 +317,7 @@ async function authoritativeCart(env, section, body, user, inventoryRows = null)
       AvailableBeforeSale: available
     };
   });
+  return snapshotVendorCart(env, cart, user);
 }
 
 function saleId(body = {}, section = '') {
@@ -346,6 +354,8 @@ function baseSale(section, body, user, cart, id, method) {
     GrossAmount: total,
     Currency: 'NGN',
     PaymentMethod: method,
+    CollectionMode: clean(body.CollectionMode) === 'Vendor collected' && lower(body.CheckoutSource) !== 'public store'
+      ? 'Vendor collected' : 'School collected',
     PaymentReference: paymentReference(body),
     PaymentStatus: method === 'Paystack Online' ? 'Pending' : 'Paid',
     Status: method === 'Paystack Online' ? 'Pending Payment' : 'Paid',
@@ -360,6 +370,7 @@ function baseSale(section, body, user, cart, id, method) {
 }
 
 export function buildOrganizationCommerceJournal(sale = {}, settlement = {}) {
+  if (Array.isArray(sale.VendorJournalLines) && !sale.VendorJournalLines.length) return null;
   const section = clean(sale.SaleType);
   const config = configFor(section);
   const gross = money(settlement.GrossAmount ?? sale.GrossAmount ?? sale.Amount);
@@ -408,9 +419,9 @@ export function buildOrganizationCommerceJournal(sale = {}, settlement = {}) {
     Department: department,
     BranchId: clean(sale.BranchId) || 'main',
     OrganisationEdition: clean(sale.OrganisationEdition),
-    Lines: lines,
-    TotalDebit: gross,
-    TotalCredit: gross,
+    Lines: Array.isArray(sale.VendorJournalLines) ? sale.VendorJournalLines : lines,
+    TotalDebit: Array.isArray(sale.VendorJournalLines) ? money(sale.VendorJournalLines.reduce((sum, line) => sum + money(line.Debit), 0)) : gross,
+    TotalCredit: Array.isArray(sale.VendorJournalLines) ? money(sale.VendorJournalLines.reduce((sum, line) => sum + money(line.Credit), 0)) : gross,
     CreatedAt: clean(sale.CreatedAt) || nowIso(),
     UpdatedAt: nowIso()
   };
@@ -419,9 +430,9 @@ export function buildOrganizationCommerceJournal(sale = {}, settlement = {}) {
 function inventoryWrites(section, cart, inventoryRows, timestamp) {
   return cart.map((line) => {
     const item = findInventoryItem(inventoryRows, section,
-      section === 'tuckShop' ? line.InventoryDocumentId : (line.ItemCode || line.ItemName));
+      section === 'organizationStore' ? (line.ItemCode || line.ItemName) : line.InventoryDocumentId || line.ItemName);
     if (!item) throw error(`${line.ItemName} is no longer in inventory.`, 409);
-    if (section === 'tuckShop' && !clean(item.__updateTime)) {
+    if (!clean(item.__updateTime)) {
       throw error(`${line.ItemName} stock version is unavailable. Refresh inventory and try again.`, 409);
     }
     const available = Math.floor(money(item.Quantity));
@@ -541,8 +552,12 @@ export async function recordManualOrganizationCommerceSale(env, section, body = 
     throw error('Enter the bank, transfer, or POS payment reference.');
   }
   const timestamp = nowIso();
-  const journal = buildOrganizationCommerceJournal(sale);
+  const vendorPosting = await prepareVendorSale(env, sale, buildOrganizationCommerceJournal(sale));
+  const journal = vendorPosting.journal;
+  sale.VendorSettlements = vendorPosting.settlements;
+  sale.VendorJournalLines = journal?.Lines || [];
   await batchUpsertDocuments(env, [
+    ...vendorPosting.writes,
     ...inventoryWrites(section, cart, inventory, timestamp),
     ...movementWrites(section, sale, timestamp),
     {
@@ -551,19 +566,40 @@ export async function recordManualOrganizationCommerceSale(env, section, body = 
       data: sale,
       exists: false
     },
-    {
+    ...(journal ? [{
       collectionPath: 'accountingJournals',
       documentId: safeId(journal.JournalNo),
       data: journal,
       exists: false
-    }
+    }] : [])
   ]);
   const emailDelivery = await scheduleCommerceEmail(env, sale, 'receipt', options);
   const emailMessage = sale.CustomerEmail ? commerceEmailNotice(emailDelivery, 'Receipt email') : '';
   return { ok: true, message: `${configFor(section).label} payment received and sale recorded.${emailMessage}`, sale, journal, emailDelivery };
 }
 
+export async function previewOrganizationCommerceSale(env, section, body, user) {
+  const cart = await authoritativeCart(env, section, body, user);
+  return { ok:true, items:cart, Amount:money(cart.reduce((sum, item) => sum + item.Amount, 0)),
+    message:'Read-only sale preview. Stock and prices are rechecked at checkout.' };
+}
+
+// Side-effect-free stock repair for a confirmed online sale whose stock issue failed.
+// The vendor workflow joins these writes to hold releases in one conditional commit.
+export async function preparePaidCommerceInventoryCompletion(env, saleNo, user, timestamp) {
+  const sale = await existingSale(env, saleNo);
+  if (!sale || !visibleInScope(sale, user) || lower(sale.PaymentStatus) !== 'paid' || sale.InventoryStatus !== 'Review Required') {
+    throw error('This paid sale does not have an inventory review in your workspace.',409);
+  }
+  const section = clean(sale.SaleType), inventory = await scopedInventory(env, section, user);
+  const updated = {...withoutMetadata(sale), InventoryStatus:'Deducted', InventoryIssue:'', InventoryReviewedAt:timestamp,
+    InventoryReviewedBy:clean(user.displayName || user.username), UpdatedAt:timestamp};
+  return {sale:updated, writes:[...inventoryWrites(section,sale.Items || [],inventory,timestamp), ...movementWrites(section,sale,timestamp),
+    {collectionPath:COMMERCE_CONFIG.organizationStore.sales,documentId:safeId(saleNo),data:updated,updateTime:clean(sale.__updateTime)}]};
+}
+
 export async function initializeOnlineOrganizationCommerceSale(env, request, section, body = {}, user = {}, options = {}) {
+  if (clean(body.CollectionMode) === 'Vendor collected') throw error('Online payments are collected by the organisation, not directly by the vendor.');
   const email = lower(body.CustomerEmail || body.customerEmail || body.Email || body.email);
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     throw error('Enter the customer email for the Paystack receipt and payment confirmation.');
@@ -755,13 +791,15 @@ export async function finalizeOnlineOrganizationCommerceSale(env, intent = {}, s
     UpdatedAt: nowIso(),
     InventoryStatus: 'Deducted'
   };
-  const journal = buildOrganizationCommerceJournal(paidSale, settlement);
+  let journal = buildOrganizationCommerceJournal(paidSale, settlement);
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const userScope = {
       branchId: paidSale.BranchId,
       edition: paidSale.OrganisationEdition
     };
     const inventory = await scopedInventory(env, section, userScope);
+    paidSale.InventoryStatus = 'Deducted';
+    delete paidSale.InventoryIssue;
     let stockWrites;
     try {
       stockWrites = inventoryWrites(section, paidSale.Items || [], inventory, timestamp);
@@ -771,7 +809,12 @@ export async function finalizeOnlineOrganizationCommerceSale(env, intent = {}, s
       stockWrites = [];
     }
     try {
+      const vendorPosting = await prepareVendorSale(env, paidSale, buildOrganizationCommerceJournal({ ...paidSale, VendorJournalLines: undefined }, settlement));
+      journal = vendorPosting.journal;
+      paidSale.VendorSettlements = vendorPosting.settlements;
+      paidSale.VendorJournalLines = journal?.Lines || [];
       await batchUpsertDocuments(env, [
+        ...vendorPosting.writes,
         ...stockWrites,
         ...(stockWrites.length ? movementWrites(section, paidSale, timestamp) : []),
         {
@@ -780,12 +823,12 @@ export async function finalizeOnlineOrganizationCommerceSale(env, intent = {}, s
           data: paidSale,
           updateTime: clean(sale.__updateTime)
         },
-        {
+        ...(journal ? [{
           collectionPath: 'accountingJournals',
           documentId: safeId(journal.JournalNo),
           data: journal,
           exists: false
-        }
+        }] : [])
       ]);
       const emailDelivery = await scheduleCommerceEmail(env, paidSale, 'receipt', options);
       const receiptNotice = commerceEmailNotice(emailDelivery, 'Receipt email');

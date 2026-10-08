@@ -67,6 +67,11 @@ test('ordinary staff receive payroll and finance requests, while External Audito
     const flags = featureFlagsForEdition(edition);
     for (const role of rolesForEdition(edition)) {
       const defaults = defaultModulesForRole(role, { edition, featureFlags: flags });
+      if (role === 'Vendor User') {
+        assert.deepEqual(defaults, ['vendorSettlements']);
+        assert.deepEqual(allowedSectionsFor({ role, TabAccess: ['students', 'accounts', 'payroll'] }, flags, { edition }), ['vendorSettlements']);
+        continue;
+      }
       if (role === 'External Auditor') {
         assert.deepEqual(defaults, ['externalAudit']);
         assert.deepEqual(configuredModulesForUser(

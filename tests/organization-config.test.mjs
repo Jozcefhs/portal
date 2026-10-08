@@ -82,7 +82,7 @@ test('church is canonicalized to faith while retaining shared finance modules', 
   );
   assert.deepEqual(
     allowedSectionsFor({ role: 'Super Admin' }, flags),
-    ['recordsDesk', 'executiveOffice', 'incomeAnalytics', 'members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'organizationStore', 'restaurant', 'hotel', 'dataBackup', 'securityAudit', 'staffUsers', 'humanResources', 'staffAttendance', 'externalAudit']
+    ['recordsDesk', 'executiveOffice', 'incomeAnalytics', 'members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'organizationStore', 'restaurant', 'hotel', 'dataBackup', 'securityAudit', 'staffUsers', 'humanResources', 'staffAttendance', 'vendorSettlements', 'externalAudit']
   );
 });
 

@@ -70,6 +70,7 @@ import { handleOrganizationDepartmentAction } from '../lib/organization-departme
 import { assertOrganizationDepartmentWorkspaceAccess } from '../lib/organization-department-gate.js';
 import { handleExecutiveOfficeAction } from '../lib/executive-correspondence.js';
 import { prepareTuckShopWalletCart } from '../lib/organization-commerce.js';
+import { handleVendorSettlementAction, prepareVendorSale } from '../lib/vendor-settlements.js';
 import { getTuckShopCatalog, recordTuckShopStaffSale, searchTuckShopCustomers } from '../lib/school-tuck-shop.js';
 import { handleStudentConductAction } from '../lib/student-conduct.js';
 import { handleSchoolLibraryAction } from '../lib/school-library.js';
@@ -836,6 +837,7 @@ export function requireBackendSecret(env, body) {
 }
 
 const VERIFIED_ACTOR_ACTIONS = new Set([
+  'vendorSettlements',
   'getAccountSnapshot',
   'getSchoolLibrary', 'searchLibraryBorrowers', 'saveLibraryTitle', 'addLibraryCopy', 'restoreLibraryCopy', 'repairLibraryCopyStatus', 'checkoutLibraryCopy',
   'returnLibraryCopy', 'renewLibraryLoan', 'reserveLibraryTitle',
@@ -914,6 +916,7 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
 // applyDesktopDeviceBranchScope.  Organisation-wide and legacy credentials
 // retain the existing action surface for backwards compatibility.
 const BRANCH_BOUND_DEVICE_ACTIONS = new Set([
+  'vendorSettlements',
   'getSchoolLibrary', 'searchLibraryBorrowers', 'saveLibraryTitle', 'addLibraryCopy', 'restoreLibraryCopy', 'repairLibraryCopyStatus', 'checkoutLibraryCopy',
   'returnLibraryCopy', 'renewLibraryLoan', 'reserveLibraryTitle',
   'cancelLibraryReservation', 'saveLibraryPolicy',
@@ -6608,11 +6611,16 @@ export async function recordWalletPurchase(env, body) {
       SaleDate: timestamp, PaidAt: timestamp, CreatedAt: timestamp, UpdatedAt: timestamp,
       RecordedBy: entry.RecordedBy, CheckoutSource: clean(body.Terminal || body.terminal) || 'Tuck Shop POS'
     };
-    const journal = buildWalletPurchaseAccountingJournal(entry);
+    const vendorPosting = await prepareVendorSale(env, sale, buildWalletPurchaseAccountingJournal(entry));
+    const journal = vendorPosting.journal;
+    sale.VendorSettlements = vendorPosting.settlements;
+    sale.VendorJournalLines = journal.Lines;
+    entry.VendorJournalLines = journal.Lines;
     const studentData = Object.fromEntries(Object.entries(student).filter(([key]) => !key.startsWith('__')));
     try {
       await batchCommitDocuments(env, [
         ...pricedSale.writes,
+        ...vendorPosting.writes,
         { collectionPath: student.__scopePath, documentId: student.__id,
           data: { ...studentData, WalletLastPurchaseAt: timestamp, WalletLastPurchaseNo: saleNo },
           updateTime: student.__updateTime },
@@ -7387,7 +7395,7 @@ export function buildWalletPurchaseAccountingJournal(row = {}) {
     Term: clean(row.Term || row.term),
     Department: department,
     BranchId: clean(row.BranchId || row.branchId || 'main').toLowerCase() || 'main',
-    Lines: [
+    Lines: Array.isArray(row.VendorJournalLines) && row.VendorJournalLines.length ? row.VendorJournalLines : [
       { AccountCode: '2200', Debit: amount, Credit: 0, Description: clean(row.DisplayName || row.AccountRef) || 'Student wallet liability', Department: department },
       { AccountCode: destination, Debit: 0, Credit: amount, Description: description, Department: department }
     ],
@@ -10368,6 +10376,20 @@ async function getSystemHealth(env, body) {
 
 async function routeAction(env, action, body = {}, deploymentIdentity = null, publicOrigin = '') {
   switch (action) {
+    case 'vendorSettlements': {
+      const access = await staffAccessFor(env, {
+        username: clean(body.UserUsername), role: clean(body.UserRole),
+        assignedRole: clean(body.UserAssignedRole || body.UserRole),
+        branchId: clean(body.UserBranchId), schoolSectionAccess: clean(body.UserSchoolSectionAccess),
+        tabAccess: body.UserTabAccess, department: clean(body.UserDepartment)
+      });
+      return handleVendorSettlementAction(env, { ...access,
+        username: clean(body.UserUsername), displayName: clean(body.RecordedBy || body.UserUsername),
+        role: clean(body.UserRole), assignedRole: clean(body.UserAssignedRole || body.UserRole),
+        branchId: clean(body.UserBranchId || body.BranchId), schoolSectionAccess: clean(body.UserSchoolSectionAccess || 'All'),
+        edition: deploymentIdentity?.edition || access.edition, sourcePlatform: 'Desktop'
+      }, { ...body, action: body.Command || 'bootstrap' });
+    }
     case 'ping': {
       const identity = {
         workspaceKey: deploymentIdentity?.edition || '',
@@ -11111,6 +11133,9 @@ export async function onRequestPost(context) {
     requireFirestoreEnv(env);
     const deploymentIdentity = await loadDeploymentIdentity(env, { identity: configuredIdentity });
     body = await verifyDesktopActor(env, action, body);
+    if (clean(body.UserAssignedRole || body.UserRole) === 'Vendor User' && action !== 'vendorSettlements') {
+      const error = new Error('Vendor accounts may access only their own sales and settlements.'); error.status = 403; throw error;
+    }
     if (context.data) {
       // Shared with middleware only after authoritative authentication; never trust a posted name.
       if (VERIFIED_ACTOR_ACTIONS.has(action)) context.data.securityAuditActor = {

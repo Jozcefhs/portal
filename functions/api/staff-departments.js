@@ -117,7 +117,11 @@ async function saveInventory(env, section, body, user) {
   if (!itemName) { const err = new Error('Item name is required.'); err.status = 400; throw err; }
   const rows = visible(await listCollection(env, config.inventory), user);
   const originalName = clean(body.OriginalItemName || itemName);
-  const existing = rows.find((row) => lower(row.ItemName || row.__id) === lower(originalName)) || {};
+  const matching = rows.filter((row) => lower(row.ItemName || row.__id) === lower(originalName));
+  const inventoryId = clean(body.InventoryId);
+  if (!inventoryId && matching.length > 1) { const error = new Error('Several vendors sell this item. Select the exact stock record.'); error.status = 409; throw error; }
+  const existing = (inventoryId ? rows.find(row => clean(row.__id) === inventoryId) : matching[0]) || {};
+  if (inventoryId && !existing.__id) { const error = new Error('The stock record is outside your workspace.'); error.status = 404; throw error; }
   const payload = {
     ...existing,
     ...scopeFields(user),
@@ -138,9 +142,11 @@ async function saveInventory(env, section, body, user) {
   };
   delete payload.__id;
   delete payload.__name;
-  if (section === 'tuckShop') {
+  delete payload.__updateTime;
+  delete payload.__createTime;
+  if (['restaurant', 'tuckShop'].includes(section)) {
     if (existing.__id && !existing.__updateTime) {
-      const err = new Error('Tuck-shop stock version is unavailable. Refresh and try again.'); err.status = 409; throw err;
+      const err = new Error('Stock version is unavailable. Refresh and try again.'); err.status = 409; throw err;
     }
     await batchCommitDocuments(env, [{ collectionPath: config.inventory,
       documentId: existing.__id || safeId(`${scopeFields(user).BranchId}-${scopeFields(user).SchoolSection}-${itemName}`),
@@ -153,13 +159,16 @@ async function saveInventory(env, section, body, user) {
 
 async function recordMovement(env, section, body, user) {
   const config = CONFIG[section];
-  const itemName = clean(body.ItemName);
+  const itemName = clean(body.ItemName || body.InventoryId);
   const movementType = clean(body.MovementType).toUpperCase();
   const quantity = number(body.Quantity);
   if (!itemName) { const err = new Error('Choose an inventory item.'); err.status = 400; throw err; }
   if (!['IN', 'OUT'].includes(movementType)) { const err = new Error('Choose Stock In or Stock Out.'); err.status = 400; throw err; }
   if (quantity <= 0) { const err = new Error('Quantity must be greater than zero.'); err.status = 400; throw err; }
-  const item = visible(await listCollection(env, config.inventory), user).find((row) => lower(row.ItemName || row.__id) === lower(itemName));
+  const matching = visible(await listCollection(env, config.inventory), user).filter((row) => body.InventoryId
+    ? clean(row.__id) === clean(body.InventoryId) : lower(row.ItemName || row.__id) === lower(itemName));
+  if (matching.length > 1) { const error = new Error('Select the exact vendor stock record.'); error.status = 409; throw error; }
+  const item = matching[0];
   if (!item) { const err = new Error('Inventory item not found. Create it first.'); err.status = 404; throw err; }
   const current = number(item.Quantity);
   if (movementType === 'OUT' && quantity > current) { const err = new Error(`Only ${current} ${clean(item.Unit) || 'units'} are currently available.`); err.status = 409; throw err; }
@@ -167,6 +176,8 @@ async function recordMovement(env, section, body, user) {
   const updated = { ...item, Quantity: movementType === 'IN' ? current + quantity : current - quantity, LastUpdated: timestamp, UpdatedBy: user.displayName || user.username };
   delete updated.__id;
   delete updated.__name;
+  delete updated.__updateTime;
+  delete updated.__createTime;
   const movementNo = `${config.prefix}-${Date.now()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
   const movement = {
     ...scopeFields(user),
@@ -178,9 +189,9 @@ async function recordMovement(env, section, body, user) {
     Reason: clean(body.Reason),
     RecordedBy: user.displayName || user.username
   };
-  if (section === 'tuckShop') {
+  if (['restaurant', 'tuckShop'].includes(section)) {
     if (!item.__updateTime) {
-      const err = new Error('Tuck-shop stock version is unavailable. Refresh and try again.'); err.status = 409; throw err;
+      const err = new Error('Stock version is unavailable. Refresh and try again.'); err.status = 409; throw err;
     }
     await batchCommitDocuments(env, [
       { collectionPath: config.inventory, documentId: item.__id, data: updated, updateTime: item.__updateTime },

@@ -137,6 +137,9 @@ export async function onRequestPost(context) {
     const body = await readJsonBody(request, { maxBytes: 32 * 1024 });
     const requestedSection = clean(body.section);
     const shellOnly = clean(body.mode).toLowerCase() === 'shell';
+    if (user.role === 'Vendor User' && !shellOnly) {
+      return Response.json({ ok:false, message:'Vendor accounts use the dedicated sales and settlements workspace.' }, { status:403 });
+    }
     if (user.role === 'External Auditor' && !shellOnly) {
       const err = new Error('External auditors may open only the dedicated financial audit workspace.');
       err.status = 403;

@@ -277,6 +277,7 @@ function publicUser(user) {
 
 export function allowedSectionsFor(user = {}, featureFlags = null, options = {}) {
   const role = clean(user.role || user.Role);
+  if (role === 'Vendor User') return filterSectionsForFeatures(['vendorSettlements'], featureFlags);
   if (role === EXTERNAL_AUDITOR_ROLE) return filterSectionsForFeatures(['externalAudit'], featureFlags);
   const department = lower(user.department || user.Department);
   const departmentEntitlements = role === 'Department User'
@@ -450,7 +451,7 @@ export function staffUserForAccess(user = {}, access = {}) {
   const list = (value) => Array.isArray(value)
     ? value.map(clean).filter(Boolean)
     : clean(value).split(',').map(clean).filter(Boolean);
-  const biometricLookupEnabled = !externalAuditor
+  const biometricLookupEnabled = !externalAuditor && clean(user.role || user.Role) !== 'Vendor User'
     && edition === 'school' && !['no', 'false', '0', ''].includes(
     lower(user.biometricLookupEnabled ?? user.BiometricLookupEnabled ?? false)
   );
@@ -713,6 +714,10 @@ export async function requireStaffSession(env, request) {
   }
   const access = await staffAccessFor(env, user);
   const requestedBranch = request.headers.get('X-Dynamax-Branch') || '';
+  if (user.role === 'Vendor User' && !['/api/staff-vendor-settlements', '/api/admin', '/api/staff-session',
+    '/api/staff-passkey', '/api/staff-mfa', '/api/staff-approval-profile'].includes(new URL(request.url).pathname)) {
+    const error = new Error('Vendor accounts may access only their own sales, settlements and sign-in settings.'); error.status = 403; throw error;
+  }
   const needsConfiguredBranchValidation = !clean(user.branchId)
     && clean(requestedBranch)
     && lower(requestedBranch) !== 'all';

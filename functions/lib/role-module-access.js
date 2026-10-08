@@ -27,6 +27,7 @@ export const WEB_SECTION_CATALOG = Object.freeze([
   Object.freeze({ key: 'incomeAnalytics', label: 'Income Analytics' }),
   Object.freeze({ key: 'externalAudit', label: 'External Audit' }),
   Object.freeze({ key: 'financeRequests', label: 'Finance Requests & Imprest' }),
+  Object.freeze({ key: 'vendorSettlements', label: 'Vendor Sales & Settlements' }),
   Object.freeze({ key: 'payroll', label: 'My Payroll' }),
   Object.freeze({ key: 'clinic', label: 'Clinic' }),
   Object.freeze({ key: 'kitchen', label: 'Kitchen' }),
@@ -62,6 +63,7 @@ export const ORGANIZATION_SECTION_LABELS = Object.freeze({
 });
 
 export const STAFF_ROLE_OPTIONS = Object.freeze([
+  'Vendor User',
   'Super Admin', 'Director', 'Admin', 'Principal', 'Vice Principal Academics', 'Vice Principal Administration',
   'Head Teacher', 'Assistant Head Teacher', 'Teacher', 'Librarian', 'Senior Pastor', 'Head Minister',
   'Admissions Officer', 'Student Welfare Officer', 'Accounts Officer',
@@ -179,6 +181,7 @@ export function defaultModulesForRole(role, { edition = 'school', featureFlags =
     ? departmentUserDefaults(department)
     : [...(LEGACY_ROLE_DEFAULTS[name] || []), ...(name ? ['humanResources'] : [])];
   if (name) base.push('staffAttendance');
+  if (['Super Admin', 'Director', 'Admin', 'Management', 'Accounts Officer', 'Tuck Shop User', 'Store User', 'Restaurant User', 'Operations Manager'].includes(name)) base.push('vendorSettlements');
   return withRequiredRoleModules(name, base, edition, featureFlags);
 }
 
@@ -187,6 +190,7 @@ export function roleAccessScope(user = {}) {
 }
 
 export function withRequiredRoleModules(role, modules = [], edition = 'school', featureFlags = null) {
+  if (role === 'Vendor User') return normalizeModuleList(['vendorSettlements'], edition, featureFlags);
   if (role === 'External Auditor') return normalizeModuleList(['externalAudit'], edition, featureFlags);
   const normalized = [...modules, ...STAFF_SELF_SERVICE_MODULES];
   if (role === 'Super Admin' || role === 'Director') {
