@@ -227,6 +227,46 @@ async function policyFor(env, branchId) {
   return { ...DEFAULT_POLICY, ...(saved || {}) };
 }
 
+async function lendingRows(env, branchId, copies, loans) {
+  const found = new Map(loans.map((row) => [row.LoanId, row]));
+  // Older linked loans can lack BranchId and are missed by the branch query.
+  // Resolve only IDs referenced by this branch's copies, never another branch's loans.
+  const ids = [...new Set(copies.map((row) => clean(row.CurrentLoanId)).filter((value) => value && !found.has(value)))];
+  for (let start = 0; start < ids.length; start += 10) {
+    await Promise.all(ids.slice(start, start + 10).map(async (loanId) => {
+      const loan = await getDocument(env, COLLECTIONS.loans, loanId);
+      if (loan && safeScopeId(loan.BranchId) === branchId
+          && copies.some((copy) => copy.CurrentLoanId === loanId && copy.CopyId === loan.CopyId)) found.set(loanId, loan);
+    }));
+  }
+  return [...found.values()];
+}
+
+export function libraryCopyViews(copies, loans, reservations) {
+  return copies.map((copy) => {
+    const active = loans.filter((loan) => loan.CopyId === copy.CopyId && loan.Status === 'On Loan');
+    const loan = active.length === 1 && active[0].LoanId === copy.CurrentLoanId ? active[0] : null;
+    const pending = reservations.filter((row) => row.TitleId === copy.TitleId && row.Status === 'Pending').length;
+    const issue = active.length > 1 || (active.length && !loan) || (loan && copy.Status !== 'On Loan')
+      || (copy.Status === 'On Loan' && !loan) || (!loan && clean(copy.CurrentLoanId));
+    return { ...copy, DisplayStatus: issue ? 'Status needs review' : copy.Status === 'Available' && pending ? 'Reserved' : copy.Status,
+      ReservationCount: pending, ActiveLoanId: issue ? '' : loan?.LoanId || '',
+      StatusIssue: issue ? 'The copy status and its active loan do not agree. Review the lending record before issuing or returning it.' : '' };
+  });
+}
+
+async function indexedLibraryRecord(env, collection, field, recordId, branchId) {
+  // Batch-written IDs containing admission-number escapes need an indexed lookup:
+  // a URL document lookup can address a different escaped document name.
+  const rows = branchRows(await queryCollection(env, COLLECTIONS[collection], {
+    filters: [{ field, op: '==', value: recordId }]
+  }), branchId).filter((row) => row[field] === recordId);
+  if (rows.length > 1) throw failure('Duplicate library records require an administrator review.', 409);
+  const row = rows[0] || await getDocument(env, COLLECTIONS[collection], recordId);
+  if (row && (safeScopeId(row.BranchId) !== branchId || row[field] !== recordId)) throw failure('The library record does not belong to this branch.', 409);
+  return row;
+}
+
 async function load(env, user, body) {
   requireAccess(user);
   const branchId = await branchFor(env, user, body);
@@ -240,8 +280,9 @@ async function load(env, user, body) {
   const scopedCopies = branchRows(copies, branchId).map((row) => ({
     ...row, Title: titleById.get(row.TitleId) || row.Title
   }));
-  const scopedLoans = branchRows(loans, branchId);
+  const scopedLoans = await lendingRows(env, branchId, scopedCopies, branchRows(loans, branchId));
   const scopedReservations = branchRows(reservations, branchId);
+  const copyViews = libraryCopyViews(scopedCopies, scopedLoans, scopedReservations);
   const today = localDate();
   return {
     ok: true, branchId,
@@ -249,7 +290,7 @@ async function load(env, user, body) {
       && MANAGERS.has(clean(user.assignedRole || user.AssignedRole || user.role || user.Role)) },
     policy: normalizeLibraryPolicy(policy),
     titles: scopedTitles.sort((a, b) => clean(a.Title).localeCompare(clean(b.Title))),
-    copies: scopedCopies.sort((a, b) => clean(a.Barcode).localeCompare(clean(b.Barcode))),
+    copies: copyViews.sort((a, b) => clean(a.Barcode).localeCompare(clean(b.Barcode))),
     loans: scopedLoans.sort((a, b) => clean(b.CheckedOutAt).localeCompare(clean(a.CheckedOutAt))),
     reservations: scopedReservations.sort((a, b) => clean(a.CreatedAt).localeCompare(clean(b.CreatedAt))),
     summary: {
@@ -257,7 +298,8 @@ async function load(env, user, body) {
       Available: scopedCopies.filter((row) => row.Status === 'Available').length,
       OnLoan: scopedLoans.filter((row) => row.Status === 'On Loan').length,
       Overdue: scopedLoans.filter((row) => row.Status === 'On Loan' && clean(row.DueDate) < today).length,
-      Reservations: scopedReservations.filter((row) => row.Status === 'Pending').length
+      Reservations: scopedReservations.filter((row) => row.Status === 'Pending').length,
+      StatusWarnings: copyViews.filter((row) => row.StatusIssue).length
     },
     today
   };
@@ -340,7 +382,7 @@ async function checkout(env, user, body, branchId) {
   const borrower = borrowerFrom(body.BorrowerRef, type, directory.students, directory.staff);
   const policy = normalizeLibraryPolicy(await policyFor(env, branchId));
   const borrowerId = borrowerKey(branchId, type, borrower.BorrowerRef);
-  const state = await getDocument(env, COLLECTIONS.borrowers, borrowerId);
+  const state = await indexedLibraryRecord(env, 'borrowers', 'BorrowerId', borrowerId, branchId);
   const limit = type === 'Student' ? policy.StudentLoanLimit : policy.StaffLoanLimit;
   if (Number(state?.ActiveLoans || 0) >= limit) throw failure(`${borrower.BorrowerName} has reached the ${limit}-book borrowing limit.`, 409);
   const reservations = branchRows(await branchCollection(env, 'reservations', branchId), branchId)
@@ -371,8 +413,8 @@ async function checkout(env, user, body, branchId) {
     await batchCommitDocuments(env, [
       write('copies', copy.CopyId, nextCopy, current(copy)),
       write('loans', LoanId, loan, { exists: false }),
-      write('borrowers', borrowerId, nextState, state ? current(state) : { exists: false }),
-      ...(first ? [write('reservations', first.ReservationId, {
+      write('borrowers', state?.__id || borrowerId, nextState, state ? current(state) : { exists: false }),
+      ...(first ? [write('reservations', first.__id || first.ReservationId, {
         ...first, Status: 'Fulfilled', FulfilledAt: nowIso(), LoanId
       }, current(first))] : []),
       audit(user, branchId, 'Check out book copy', { LoanId, CopyId: copy.CopyId, BorrowerRef: borrower.BorrowerRef, DueDate: loan.DueDate })
@@ -438,7 +480,7 @@ async function returnCopy(env, user, body, branchId) {
   const outcome = clean(body.Outcome || 'Returned');
   if (!['Returned', 'Damaged', 'Lost'].includes(outcome)) throw failure('Choose Returned, Damaged or Lost.');
   const borrowerId = borrowerKey(branchId, loan.BorrowerType, loan.BorrowerRef);
-  const state = await getDocument(env, COLLECTIONS.borrowers, borrowerId);
+  const state = await indexedLibraryRecord(env, 'borrowers', 'BorrowerId', borrowerId, branchId);
   if (!state || Number(state.ActiveLoans) < 1) throw failure('The borrower loan count is inconsistent. Contact an administrator.', 409);
   const closed = {
     ...loan, Status: outcome, ReturnedAt: nowIso(), ReturnedDate: localDate(),
@@ -454,11 +496,33 @@ async function returnCopy(env, user, body, branchId) {
     await batchCommitDocuments(env, [
       write('loans', loan.LoanId, closed, current(loan)),
       write('copies', copy.CopyId, nextCopy, current(copy)),
-      write('borrowers', borrowerId, { ...state, ActiveLoans: Number(state.ActiveLoans) - 1, UpdatedAt: nowIso() }, current(state)),
+      write('borrowers', state.__id || borrowerId, { ...state, ActiveLoans: Number(state.ActiveLoans) - 1, UpdatedAt: nowIso() }, current(state)),
       audit(user, branchId, `${outcome} book copy`, { LoanId: loan.LoanId, CopyId: copy.CopyId, BorrowerRef: loan.BorrowerRef })
     ]);
   } catch (error) { conflict(error); }
   return { ok: true, message: `Book marked ${outcome.toLowerCase()}.`, loan: closed };
+}
+
+async function repairCopyStatus(env, user, body, branchId) {
+  if (body.ConfirmNoActiveLoan !== true || !clean(body.Note)) throw failure('Confirm that this is a stale checkout status and record the reason.');
+  const copy = await getDocument(env, COLLECTIONS.copies, clean(body.CopyId));
+  if (!copy || safeScopeId(copy.BranchId) !== branchId) throw failure('The copy was not found in this branch.', 404);
+  if (copy.Status !== 'On Loan') throw failure('Only a stale On Loan copy status can be repaired here.', 409);
+  const linked = clean(copy.CurrentLoanId) ? await getDocument(env, COLLECTIONS.loans, copy.CurrentLoanId) : null;
+  const related = await queryCollection(env, COLLECTIONS.loans, { filters: [{ field: 'CopyId', op: '==', value: copy.CopyId }] });
+  if (linked && (linked.Status !== 'Returned' || linked.CopyId !== copy.CopyId || safeScopeId(linked.BranchId) !== branchId)
+      || related.some((loan) => loan.Status === 'On Loan')) {
+    throw failure('This copy has a lending record that needs review. Use Return for an active loan; its status cannot be reset.', 409);
+  }
+  const stamp = nowIso();
+  const repaired = { ...copy, Status: 'Available', CurrentLoanId: '', PreviousLoanId: clean(copy.CurrentLoanId),
+    StatusRepairNote: clean(body.Note).slice(0, 500), StatusRepairedAt: stamp, UpdatedAt: stamp };
+  try {
+    await batchCommitDocuments(env, [write('copies', copy.__id || copy.CopyId, repaired, current(copy)),
+      audit(user, branchId, 'Repair stale copy checkout status', { CopyId: copy.CopyId,
+        PreviousLoanId: clean(copy.CurrentLoanId), Note: repaired.StatusRepairNote })]);
+  } catch (error) { conflict(error); }
+  return { ok: true, message: 'Stale checkout status corrected. Reservations were preserved.', copy: repaired };
 }
 
 async function renew(env, user, body, branchId) {
@@ -491,7 +555,7 @@ async function reserve(env, user, body, branchId) {
   const directory = await readerDirectory(env, branchId);
   const borrower = borrowerFrom(body.BorrowerRef, type, directory.students, directory.staff);
   const reservationId = `${branchId}--${encodeURIComponent(title.TitleId)}--${borrowerKey(branchId, type, borrower.BorrowerRef)}`;
-  const prior = await getDocument(env, COLLECTIONS.reservations, reservationId);
+  const prior = await indexedLibraryRecord(env, 'reservations', 'ReservationId', reservationId, branchId);
   if (prior?.Status === 'Pending') throw failure('This borrower already has a reservation for the title.', 409);
   const reservation = {
     ReservationId: reservationId, TitleId: title.TitleId, Title: title.Title,
@@ -499,7 +563,7 @@ async function reserve(env, user, body, branchId) {
   };
   try {
     await batchCommitDocuments(env, [
-      write('reservations', reservationId, reservation, prior ? current(prior) : { exists: false }),
+      write('reservations', prior?.__id || reservationId, reservation, prior ? current(prior) : { exists: false }),
       audit(user, branchId, 'Reserve book title', { ReservationId: reservationId, TitleId: title.TitleId, BorrowerRef: borrower.BorrowerRef })
     ]);
   } catch (error) { conflict(error); }
@@ -507,12 +571,12 @@ async function reserve(env, user, body, branchId) {
 }
 
 async function cancelReservation(env, user, body, branchId) {
-  const row = await getDocument(env, COLLECTIONS.reservations, clean(body.ReservationId));
+  const row = await indexedLibraryRecord(env, 'reservations', 'ReservationId', clean(body.ReservationId), branchId);
   if (!row || safeScopeId(row.BranchId) !== branchId) throw failure('The reservation was not found in this branch.', 404);
   if (row.Status !== 'Pending') throw failure('This reservation is no longer pending.', 409);
   try {
     await batchCommitDocuments(env, [
-      write('reservations', row.ReservationId, { ...row, Status: 'Cancelled', CancelledAt: nowIso() }, current(row)),
+      write('reservations', row.__id || row.ReservationId, { ...row, Status: 'Cancelled', CancelledAt: nowIso() }, current(row)),
       audit(user, branchId, 'Cancel book reservation', { ReservationId: row.ReservationId, BorrowerRef: row.BorrowerRef })
     ]);
   } catch (error) { conflict(error); }
@@ -546,6 +610,7 @@ export async function handleSchoolLibraryAction(env, user, body = {}) {
   if (action === 'savetitle') return saveTitle(env, user, body, branchId);
   if (action === 'addcopy') return addCopy(env, user, body, branchId);
   if (action === 'restorecopy') return restoreCopy(env, user, body, branchId);
+  if (action === 'repaircopystatus') return repairCopyStatus(env, user, body, branchId);
   if (action === 'checkout') return checkout(env, user, body, branchId);
   if (action === 'return') return returnCopy(env, user, body, branchId);
   if (action === 'renew') return renew(env, user, body, branchId);

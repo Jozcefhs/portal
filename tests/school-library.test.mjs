@@ -92,7 +92,7 @@ test('library mutations are authenticated, branch-scoped, versioned and atomic',
   assert.match(service, /batchCommitDocuments\(env, \[/);
   assert.match(service, /write\('copies', copy\.CopyId, nextCopy, current\(copy\)\)/);
   assert.match(service, /write\('loans', LoanId, loan, \{ exists: false \}\)/);
-  assert.match(service, /write\('borrowers', borrowerId, nextState, state \? current\(state\) : \{ exists: false \}\)/);
+  assert.match(service, /write\('borrowers', state\?\.__id \|\| borrowerId, nextState, state \? current\(state\) : \{ exists: false \}\)/);
   assert.match(service, /if \(copy\.Status !== 'Available'\)/);
   assert.match(service, /if \(loan\.Status !== 'On Loan'\)/);
   assert.match(service, /audit\(user, branchId, 'Check out book copy'/);
@@ -105,6 +105,11 @@ test('staff and parent surfaces show the same scoped loans with due reminders', 
   assert.match(admin, /data-library-action="checkout"/);
   assert.match(admin, /data-library-borrower-search/);
   assert.match(admin, /data-library-return=/);
+  assert.match(admin, /id="libraryOpenReturns"/);
+  assert.match(admin, /label: 'Loans & returns'/);
+  assert.match(admin, /row\.DisplayStatus \|\| row\.Status/);
+  assert.match(admin, /data-library-repair=/);
+  assert.match(admin, /Closed library loans \/ return history/);
   assert.match(admin, /loadSchoolLibrary\(\)/);
   assert.match(css, /\.school-library-summary/);
   assert.match(parentApi, /queryRowsForReferences\(env, 'libraryLoans', \['BorrowerRef'\], keys\)/);

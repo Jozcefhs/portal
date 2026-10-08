@@ -837,7 +837,7 @@ export function requireBackendSecret(env, body) {
 
 const VERIFIED_ACTOR_ACTIONS = new Set([
   'getAccountSnapshot',
-  'getSchoolLibrary', 'searchLibraryBorrowers', 'saveLibraryTitle', 'addLibraryCopy', 'restoreLibraryCopy', 'checkoutLibraryCopy',
+  'getSchoolLibrary', 'searchLibraryBorrowers', 'saveLibraryTitle', 'addLibraryCopy', 'restoreLibraryCopy', 'repairLibraryCopyStatus', 'checkoutLibraryCopy',
   'returnLibraryCopy', 'renewLibraryLoan', 'reserveLibraryTitle',
   'cancelLibraryReservation', 'saveLibraryPolicy',
   'saveOrganizationModulePreferences',
@@ -914,7 +914,7 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
 // applyDesktopDeviceBranchScope.  Organisation-wide and legacy credentials
 // retain the existing action surface for backwards compatibility.
 const BRANCH_BOUND_DEVICE_ACTIONS = new Set([
-  'getSchoolLibrary', 'searchLibraryBorrowers', 'saveLibraryTitle', 'addLibraryCopy', 'restoreLibraryCopy', 'checkoutLibraryCopy',
+  'getSchoolLibrary', 'searchLibraryBorrowers', 'saveLibraryTitle', 'addLibraryCopy', 'restoreLibraryCopy', 'repairLibraryCopyStatus', 'checkoutLibraryCopy',
   'returnLibraryCopy', 'renewLibraryLoan', 'reserveLibraryTitle',
   'cancelLibraryReservation', 'saveLibraryPolicy',
   'ping',
@@ -10456,6 +10456,7 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     case 'saveLibraryTitle':
     case 'addLibraryCopy':
     case 'restoreLibraryCopy':
+    case 'repairLibraryCopyStatus':
     case 'checkoutLibraryCopy':
     case 'returnLibraryCopy':
     case 'renewLibraryLoan':
@@ -10475,7 +10476,7 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
       }, {
         ...body,
         action: ({ getSchoolLibrary: 'list', searchLibraryBorrowers: 'searchBorrowers', saveLibraryTitle: 'saveTitle',
-          addLibraryCopy: 'addCopy', restoreLibraryCopy: 'restoreCopy', checkoutLibraryCopy: 'checkout',
+          addLibraryCopy: 'addCopy', restoreLibraryCopy: 'restoreCopy', repairLibraryCopyStatus: 'repairCopyStatus', checkoutLibraryCopy: 'checkout',
           returnLibraryCopy: 'return', renewLibraryLoan: 'renew',
           reserveLibraryTitle: 'reserve', cancelLibraryReservation: 'cancelReservation',
           saveLibraryPolicy: 'savePolicy' })[action]

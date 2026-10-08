@@ -11883,7 +11883,7 @@ function renderSchoolLibrary() {
   const canManage = data.permissions?.canManage === true;
   const titleOptions = (data.titles || []).map((row) =>
     `<option value="${escapeHtml(row.TitleId)}">${escapeHtml(row.Title)}${row.Author ? ` · ${escapeHtml(row.Author)}` : ''}</option>`).join('');
-  const availableOptions = (data.copies || []).filter((row) => row.Status === 'Available').map((row) =>
+  const availableOptions = (data.copies || []).filter((row) => row.Status === 'Available' && !row.StatusIssue).map((row) =>
     `<option value="${escapeHtml(row.CopyId)}">${escapeHtml(row.Barcode)} · ${escapeHtml(row.Title)}${row.Shelf ? ` · ${escapeHtml(row.Shelf)}` : ''}</option>`).join('');
   const activeLoans = (data.loans || []).filter((row) => row.Status === 'On Loan');
   const overdue = activeLoans.filter((row) => clean(row.DueDate) < data.today);
@@ -11891,7 +11891,9 @@ function renderSchoolLibrary() {
   panelEl.innerHTML = `
     <div class="workflow-intro"><div><p class="eyebrow">School operations</p><h2>School Library</h2>
       <p class="muted">Track each physical copy, issue and return books, manage reservations, and review overdue loans.</p></div>
-      <button type="button" id="refreshSchoolLibrary" class="compact-action">↻ Refresh</button></div>
+      <div class="inline-action-group"><button type="button" id="libraryOpenReturns">Record a return</button>
+      <button type="button" id="refreshSchoolLibrary" class="compact-action">↻ Refresh</button></div></div>
+    ${summary.StatusWarnings ? '<p class="status bad" role="status">Some copies have a stale or inconsistent checkout status. See Physical copies; no book is automatically marked returned.</p>' : ''}
     <div class="metric-cards school-library-summary">
       <div><small>Titles</small><strong>${escapeHtml(summary.Titles || 0)}</strong></div>
       <div><small>Physical copies</small><strong>${escapeHtml(summary.Copies || 0)}</strong></div>
@@ -11928,17 +11930,24 @@ function renderSchoolLibrary() {
         { label: 'Category', value: (row) => row.Category },
         { label: 'Copies', value: (row) => (data.copies || []).filter((copy) => copy.TitleId === row.TitleId).length },
         { label: 'Available', value: (row) => (data.copies || []).filter((copy) => copy.TitleId === row.TitleId && copy.Status === 'Available').length },
+        { label: 'Reservations', value: (row) => pending.filter((reservation) => reservation.TitleId === row.TitleId).length },
         { label: 'Actions', render: (row) => canManage ? `<button type="button" class="secondary" data-library-edit-title="${escapeHtml(row.TitleId)}">Edit</button>` : '' }
       ], { searchable: true, searchLabel: 'titles', searchValue: (row) => [row.Title, row.Author, row.ISBN, row.Category].join(' ') })}
       ${table('Physical copies', data.copies || [], [
         { label: 'Barcode', value: (row) => row.Barcode }, { label: 'Title', value: (row) => row.Title },
         { label: 'Shelf', value: (row) => row.Shelf }, { label: 'Condition', value: (row) => row.Condition },
-        { label: 'Status', value: (row) => row.Status },
-        { label: 'Actions', render: (row) => canManage && ['Damaged', 'Lost'].includes(row.Status)
-          ? `<button type="button" class="secondary" data-library-restore="${escapeHtml(row.CopyId)}">Restore to stock</button>` : '' }
-      ], { searchable: true, searchLabel: 'copies', searchValue: (row) => [row.Barcode, row.Title, row.Shelf, row.Status].join(' ') })}
+        { label: 'Status', render: (row) => `<span class="${row.StatusIssue ? 'status bad' : ''}">${escapeHtml(row.DisplayStatus || row.Status)}</span>${row.StatusIssue ? `<small>${escapeHtml(row.StatusIssue)}</small>` : ''}` },
+        { label: 'Reservation queue', value: (row) => Number(row.ReservationCount || 0) ? `${row.ReservationCount} waiting` : '—' },
+        { label: 'Actions', render: (row) => !canManage ? '' : row.ActiveLoanId
+          ? `<button type="button" data-library-return="${escapeHtml(row.ActiveLoanId)}" data-library-outcome="Returned">Return book</button>`
+          : row.StatusIssue && row.Status === 'On Loan'
+            ? `<button type="button" class="secondary" data-library-repair="${escapeHtml(row.CopyId)}">Review stale status</button>`
+            : ['Damaged', 'Lost'].includes(row.Status)
+              ? `<button type="button" class="secondary" data-library-restore="${escapeHtml(row.CopyId)}">Restore to stock</button>` : '' }
+      ], { searchable: true, searchLabel: 'copies', searchValue: (row) => [row.Barcode, row.Title, row.Shelf, row.DisplayStatus || row.Status].join(' ') })}
     </section>
     <section class="school-library-panel" id="libraryCirculationPanel">
+      <h3>Record a returned book</h3><p class="muted">Find the barcode or borrower in Active library loans, then choose Return. A reservation is a waiting-list request, not a loan.</p>
       ${canManage ? `<form class="config-card workflow-form workflow-form-grid" data-library-action="checkout">
         <h3>Issue a book</h3><label>Available copy *<select name="CopyId" required><option value="">Choose barcode and title</option>${availableOptions}</select></label>
         <label>Borrower type *<select name="BorrowerType"><option>Student</option><option>Staff</option></select></label>
@@ -11955,8 +11964,16 @@ function renderSchoolLibrary() {
         { label: 'Due', render: (row) => `<span class="${clean(row.DueDate) < data.today ? 'status bad' : ''}">${escapeHtml(row.DueDate)}</span>` },
         { label: 'Actions', render: (row) => canManage ? `<span class="inline-action-group"><button type="button" class="secondary" data-library-renew="${escapeHtml(row.LoanId)}">Renew</button><button type="button" data-library-return="${escapeHtml(row.LoanId)}" data-library-outcome="Returned">Return</button><button type="button" class="secondary" data-library-return="${escapeHtml(row.LoanId)}" data-library-outcome="Damaged">Damaged</button><button type="button" class="secondary" data-library-return="${escapeHtml(row.LoanId)}" data-library-outcome="Lost">Lost</button></span>` : '' }
       ], { searchable: true, searchLabel: 'active loans', searchValue: (row) => [row.Barcode, row.Title, row.BorrowerName, row.BorrowerRef].join(' ') })}
+      ${table('Closed library loans / return history', (data.loans || []).filter((row) => row.Status !== 'On Loan'), [
+        { label: 'Barcode / title', value: (row) => `${row.Barcode} · ${row.Title}` },
+        { label: 'Borrower', value: (row) => `${row.BorrowerName} · ${row.BorrowerRef}` },
+        { label: 'Outcome', value: (row) => row.Status },
+        { label: 'Recorded on', value: (row) => row.ReturnedDate || clean(row.ReturnedAt).slice(0, 10) },
+        { label: 'Received by', value: (row) => row.ReceivedBy }
+      ], { searchable: true, searchLabel: 'closed loans' })}
     </section>
     <section class="school-library-panel" id="libraryReservationsPanel">
+      <p class="muted">Reservations are a title-level waiting list. They do not issue a book or set a copy to On Loan. The first waiting borrower has priority when a copy is checked out.</p>
       ${canManage ? `<form class="config-card workflow-form workflow-form-grid" data-library-action="reserve">
         <h3>Reserve a title</h3><label>Book title *<select name="TitleId" required><option value="">Choose title</option>${titleOptions}</select></label>
         <label>Borrower type *<select name="BorrowerType"><option>Student</option><option>Staff</option></select></label>
@@ -11988,13 +12005,14 @@ function renderSchoolLibrary() {
         ${canManage ? '<div class="config-actionbar"><button type="submit">Save lending rules</button><p class="status" data-library-status></p></div>' : ''}
       </form>
     </section>`;
-  mountWorkspaceTabs('library', [
+  const libraryTabs = mountWorkspaceTabs('library', [
     { key: 'catalog', label: 'Catalogue & copies', icon: '\u{1F4DA}', count: summary.Titles || 0, nodes: document.getElementById('libraryCatalogPanel') },
-    { key: 'circulation', label: 'Loans', icon: '\u{1F4D6}', count: summary.OnLoan || 0, nodes: document.getElementById('libraryCirculationPanel') },
+    { key: 'circulation', label: 'Loans & returns', icon: '\u{1F4D6}', count: summary.OnLoan || 0, nodes: document.getElementById('libraryCirculationPanel') },
     { key: 'reservations', label: 'Reservations', icon: '\u{1F516}', count: summary.Reservations || 0, nodes: document.getElementById('libraryReservationsPanel') },
     { key: 'reports', label: 'Overdue', icon: '\u26A0', count: summary.Overdue || 0, nodes: document.getElementById('libraryReportsPanel') },
     { key: 'policy', label: 'Lending rules', icon: '\u2699', nodes: document.getElementById('libraryPolicyPanel') }
   ]);
+  document.getElementById('libraryOpenReturns')?.addEventListener('click', () => libraryTabs?.activate('circulation'));
   document.getElementById('refreshSchoolLibrary')?.addEventListener('click', (event) =>
     runButtonAction(event.currentTarget, 'Refreshing...', loadSchoolLibrary));
   panelEl.querySelectorAll('[data-library-borrower-search]').forEach((input) => {
@@ -12063,10 +12081,11 @@ function renderSchoolLibrary() {
   }));
   panelEl.querySelectorAll('[data-library-return], [data-library-renew], [data-library-cancel]').forEach((button) => button.addEventListener('click', async () => {
     const outcome = button.dataset.libraryOutcome;
-    if (outcome && outcome !== 'Returned' && !await window.DynamaxDialogs.confirm({
-      title: `Mark book ${outcome.toLowerCase()}`,
-      message: `This will close the loan and mark the physical copy ${outcome.toLowerCase()}. It will not create an unapproved financial charge.`,
-      tone: 'danger', confirmText: `Mark ${outcome.toLowerCase()}`
+    if (outcome && !await window.DynamaxDialogs.confirm({
+      title: outcome === 'Returned' ? 'Record returned book' : `Mark book ${outcome.toLowerCase()}`,
+      message: outcome === 'Returned' ? 'Confirm that this physical copy has been received back into the library. This closes its loan and keeps pending reservations.'
+        : `This will close the loan and mark the physical copy ${outcome.toLowerCase()}. It will not create an unapproved financial charge.`,
+      tone: outcome === 'Returned' ? 'normal' : 'danger', confirmText: outcome === 'Returned' ? 'Record return' : `Mark ${outcome.toLowerCase()}`
     })) return;
     const action = button.dataset.libraryReturn ? 'return' : button.dataset.libraryRenew ? 'renew' : 'cancelReservation';
     const payload = button.dataset.libraryCancel
@@ -12074,6 +12093,19 @@ function renderSchoolLibrary() {
       : { LoanId: button.dataset.libraryReturn || button.dataset.libraryRenew, ...(outcome ? { Outcome: outcome } : {}) };
     try {
       const result = await runButtonAction(button, 'Saving...', () => schoolLibraryRequest(action, payload));
+      setStatus(dashboardStatus, result.message, 'ok');
+      await loadSchoolLibrary();
+    } catch (error) { setStatus(dashboardStatus, error.message || String(error), 'bad'); }
+  }));
+  panelEl.querySelectorAll('[data-library-repair]').forEach((button) => button.addEventListener('click', async () => {
+    const note = await window.DynamaxDialogs.prompt({ title: 'Review stale checkout status',
+      message: 'Only continue if this copy is not with a borrower. The server will refuse to reset an active loan. No loan or reservation will be deleted.',
+      label: 'Reason for correcting this stale status', required: true, confirmText: 'Confirm copy available' });
+    if (!clean(note)) return;
+    try {
+      const result = await runButtonAction(button, 'Checking...', () => schoolLibraryRequest('repairCopyStatus', {
+        CopyId: button.dataset.libraryRepair, ConfirmNoActiveLoan: true, Note: clean(note)
+      }));
       setStatus(dashboardStatus, result.message, 'ok');
       await loadSchoolLibrary();
     } catch (error) { setStatus(dashboardStatus, error.message || String(error), 'bad'); }
