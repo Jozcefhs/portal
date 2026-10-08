@@ -18294,6 +18294,8 @@ function renderSection(active) {
     panelEl.innerHTML = '<p class="muted">Loading School Library...</p>';
     loadSchoolLibrary();
   } else if (active === 'vendorSettlements') {
+    // This workspace owns its summaries; do not leave the generic Loading card above it.
+    summaryEl.replaceChildren();
     window.DynamaxVendors?.mount(panelEl, async (action, payload = {}, signal) => {
       const response = await staffFetch('/api/staff-vendor-settlements', { method: 'POST', signal,
         headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, ...payload }) });

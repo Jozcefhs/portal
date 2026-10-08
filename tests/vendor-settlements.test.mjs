@@ -328,9 +328,10 @@ for (const [edition,section] of [['school','tuckShop'],['faith','restaurant'],['
 }
 
 test('web shell caches vendor assets and printable requisitions retain the complete rule label', async () => {
-  const [shell,client] = await Promise.all([
+  const [shell,client,admin] = await Promise.all([
     readFile(new URL('../sw.js',import.meta.url),'utf8'),
-    readFile(new URL('../js/vendor-settlements.js',import.meta.url),'utf8')
+    readFile(new URL('../js/vendor-settlements.js',import.meta.url),'utf8'),
+    readFile(new URL('../js/admin.js',import.meta.url),'utf8')
   ]);
   assert.match(shell,/\/css\/vendor-settlements\.css/);
   assert.match(shell,/\/js\/vendor-settlements\.js/);
@@ -339,6 +340,7 @@ test('web shell caches vendor assets and printable requisitions retain the compl
   assert.match(client,/generation === statementGeneration && vendorId === selected/);
   assert.match(client,/filter\.onchange[\s\S]{0,180}statement = null; statementGeneration\+\+/);
   assert.match(client,/if \(!replaced && !currentStatement\)/);
+  assert.match(admin,/active === 'vendorSettlements'\)[\s\S]{0,180}summaryEl\.replaceChildren\(\)/);
 });
 
 for (const [edition,section] of [['school','tuckShop'],['faith','restaurant'],['organization','organizationStore']]) {
