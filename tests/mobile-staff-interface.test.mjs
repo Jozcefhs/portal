@@ -11,6 +11,7 @@ const [adminHtml, adminJs, portalCss, indexHtml] = await Promise.all([
 ]);
 const parentDashboardJs = await readFile(new URL('js/parent-dashboard.js', portalRoot), 'utf8');
 const parentDashboardHtml = await readFile(new URL('parent-dashboard.html', portalRoot), 'utf8');
+const parentStoreCss = await readFile(new URL('css/parent-store.css', portalRoot), 'utf8');
 
 test('mobile staff header no longer renders the drawer toggle button', () => {
   assert.doesNotMatch(adminHtml, /id="staffMenuToggle"/);
@@ -441,16 +442,17 @@ test('parents can search the eligible school-store catalog', () => {
   assert.match(portalCss, /\.store-search-control input\{height:36px;min-height:36px;[^}]*font-size:12px/);
 });
 
-test('parent store uses a compact quantity selector and cart icon', () => {
-  assert.match(parentDashboardJs, /const qty = document\.createElement\('select'\)/);
-  assert.match(parentDashboardJs, /Array\.from\(\{ length: available \}/);
+test('parent storefront uses a bounded compact quantity input and labelled add button', () => {
+  assert.match(parentDashboardJs, /const qty = document\.createElement\('input'\)/);
+  assert.match(parentDashboardJs, /qty\.type = 'number'/);
+  assert.match(parentDashboardJs, /qty\.max = String\(Math\.max\(1, available\)\)/);
+  assert.doesNotMatch(parentDashboardJs, /Array\.from\(\{ length: available \}/);
   assert.match(parentDashboardJs, /qty\.setAttribute\('aria-label', `Quantity for \$\{item\.ItemName\}`\)/);
-  assert.match(parentDashboardJs, /buy\.className = 'compact-icon-action store-cart-action'/);
+  assert.match(parentDashboardJs, /buy\.className = 'store-cart-action'/);
   assert.match(parentDashboardJs, /buy\.setAttribute\('aria-label', `Add \$\{item\.ItemName\} to cart`\)/);
-  assert.match(portalCss, /\.store-purchase-controls\{display:flex;[^}]*gap:6px/);
-  assert.match(portalCss, /\.store-quantity\{width:78px;max-width:78px;height:30px;min-height:30px/);
-  assert.match(portalCss, /@media \(max-width:780px\)[\s\S]*?\.store-quantity\{width:58px;max-width:58px/);
-  assert.match(portalCss, /\.activity-item \.store-cart-action\{width:30px!important;[^}]*border-radius:50%/);
+  assert.match(parentStoreCss, /\.parent-store \.store-purchase-controls\s*\{[^}]*grid-template-columns: 52px minmax\(0, 1fr\)/);
+  assert.match(parentStoreCss, /@media \(max-width: 540px\)[\s\S]*?grid-template-columns: 43px minmax\(0, 1fr\)/);
+  assert.match(parentStoreCss, /\.parent-store \.store-cart-action\s*\{[^}]*min-height: 36px/);
 });
 
 test('parent store confirms added items and prevents repeated cart clicks', () => {
@@ -461,17 +463,15 @@ test('parent store confirms added items and prevents repeated cart clicks', () =
   assert.match(parentDashboardJs, /buy\.disabled = true/);
   assert.match(parentDashboardJs, /buy\.classList\.add\('is-added'\)/);
   assert.match(parentDashboardJs, /buy\.title = 'Added to cart'/);
-  assert.match(parentDashboardJs, /buy\.innerHTML = '<span aria-hidden="true">&#10003;<\/span>'/);
+  assert.match(parentDashboardJs, /buy\.innerHTML = '<span aria-hidden="true">&#10003;<\/span> Added'/);
   assert.match(parentDashboardJs, /storeCart\.delete\(key\); renderStores\(child\)/);
   assert.match(portalCss, /\.store-cart-action\.is-added\{background:#e7f7ef;[^}]*opacity:1/);
   assert.match(portalCss, /\.store-quantity\.is-locked\{pointer-events:none;opacity:1;color:#102a43;-webkit-text-fill-color:#102a43/);
-  assert.match(portalCss, /\.store-catalog-section \.store-item-row\{gap:2px 6px\}/);
-  assert.match(portalCss, /\.store-catalog-section \.store-item-row>span\{margin:0;font-size:12px/);
-  assert.match(portalCss, /\.store-catalog-section \.store-item-row>small\{margin:0;font-size:11px/);
-  assert.match(portalCss, /\.store-cart-panel\{margin:10px 0;padding:10px/);
+  assert.match(parentStoreCss, /\.parent-store-product\s*\{[^}]*display: flex;[^}]*margin: 0/);
+  assert.match(parentStoreCss, /\.parent-store \.store-cart-panel\s*\{[^}]*margin: 0/);
 });
 
-test('parent store checkout button fits its content', () => {
+test('parent store checkout button fills its compact cart panel', () => {
   assert.match(parentDashboardHtml, /id="checkoutStoreCartBtn"/);
-  assert.match(portalCss, /\.store-cart-panel>button\{[^}]*width:fit-content;[^}]*max-width:100%;[^}]*min-height:38px/);
+  assert.match(parentStoreCss, /\.parent-store \.store-cart-panel\s*>\s*button\s*\{[^}]*width: 100%;[^}]*min-height: 40px/);
 });

@@ -1,7 +1,8 @@
 // Cloudflare Pages Function: /api/parent-dashboard
 // Parent-facing dashboard for child activity and wallet restrictions.
 
-import { getPayableFees } from './backend.js';
+import { getPayableFees, matchingFullScholarshipFeeItems } from './backend.js';
+import { isFullScholarship } from '../lib/full-scholarship.js';
 import { withStudentProfileDefaults } from '../lib/student-profile-defaults.js';
 import { studentWalletProfile } from '../lib/student-wallet-profile.js';
 import { effectiveInvoiceAfterReversal } from '../lib/invoice-charge-reversal.js';
@@ -46,8 +47,8 @@ import { academicPolicyIssues, academicPolicyScopeChain } from '../lib/academic-
 import { schoolCalendarDayIsOpen, schoolCalendarSummary } from '../lib/academic-school-calendar.js';
 import { loadAcademicPolicyView } from '../lib/academic-policy-store.js';
 import {
-  academicFeeCategoryBalances,
   academicFinancialSummary,
+  academicFullScholarshipFinancialSummary,
   evaluateAcademicResultAccess,
   publicAcademicResult
 } from '../lib/academic-result-access.js';
@@ -1347,6 +1348,15 @@ async function auditParentAcademicResultAccess(env, {
   }
 }
 
+export function parentAcademicScholarshipFees(child = {}, result = {}, feeItems = null) {
+  if (!isFullScholarship(child.BillingCategory) || !Array.isArray(feeItems)) return null;
+  const className = clean(result.ClassName) || child.ClassName;
+  const account = { ...child, ClassName: className, ClassApplyingFor: className, ClassAdmitted: className,
+    AcademicSession: clean(result.AcademicSession || result.SessionName) || child.AcademicSession,
+    Term: clean(result.Term || result.TermName) || child.Term };
+  return matchingFullScholarshipFeeItems(feeItems, account);
+}
+
 async function parentAcademicResults(env, {
   email,
   child,
@@ -1357,6 +1367,7 @@ async function parentAcademicResults(env, {
   accountSummary = {},
   invoices = [],
   ledger = [],
+  feeItems = null,
   purpose = 'View',
   requestedResultId = ''
 } = {}) {
@@ -1371,6 +1382,7 @@ async function parentAcademicResults(env, {
   const financialSummary = academicFinancialSummary(invoices, ledger);
   const output = [];
   for (const result of rows) {
+    const scholarshipFees = parentAcademicScholarshipFees(child, result, feeItems);
     const period = academicResultPeriod(result);
     const chain = academicPolicyScopeChain({
       BranchId: selectedScope.branchId,
@@ -1398,9 +1410,13 @@ async function parentAcademicResults(env, {
       },
       finance: {
         ...accountSummary,
-        ...financialSummary,
-        FeeCategoryBalances: academicFeeCategoryBalances(invoices, ledger)
+        ...(scholarshipFees ? academicFullScholarshipFinancialSummary(scholarshipFees, invoices, ledger, {
+          AcademicSession: clean(result.AcademicSession || result.SessionName) || child.AcademicSession,
+          Term: clean(result.Term || result.TermName) || child.Term
+        }) : financialSummary)
       },
+      student: child,
+      scholarshipFees,
       clearance: academicClearanceForResult(scopedClearances, result)
     });
     output.push(publicAcademicResult(result, access, activePolicy));
@@ -2021,7 +2037,7 @@ async function getChildActivity(env, body, options = {}) {
   child.BranchId = selectedScope.branchId;
   child.SchoolSection = selectedScope.schoolSection;
   const keys = accountKeys(child);
-  const [ledgerRows, invoiceRows, paymentRows, clinicRows, summaryRows, linkedApplication, storeItems, storeOrderRows, academicResultRows, academicClearanceRows, academicMembershipRows, academicAttendanceRows, timetableVersionRows, timetableEntryRows, academicSubjectRows, schoolCalendarRows, academicTermRows, libraryLoanRows] = await Promise.all([
+  const [ledgerRows, invoiceRows, paymentRows, clinicRows, summaryRows, linkedApplication, storeItems, storeOrderRows, academicResultRows, academicClearanceRows, academicMembershipRows, academicAttendanceRows, timetableVersionRows, timetableEntryRows, academicSubjectRows, schoolCalendarRows, academicTermRows, libraryLoanRows, scholarshipFeeItems] = await Promise.all([
     queryRowsForReferences(env, 'ledger', ['AccountRef', 'AdmissionNo', 'ApplicationReference'], keys),
     queryRowsForReferences(env, 'invoices', ['AccountRef', 'AdmissionNo', 'ApplicationReference'], keys),
     queryRowsForReferences(env, 'payments', ['AccountRef', 'AdmissionNo', 'ApplicationReference'], keys),
@@ -2046,7 +2062,9 @@ async function getChildActivity(env, body, options = {}) {
     listCollection(env, 'academicSubjects').catch(() => []),
     queryCollection(env, 'academicSchoolCalendars', { filters: [{ field: 'BranchId', op: '==', value: selectedScope.branchId }] }).catch(() => []),
     queryCollection(env, 'academicTerms', { filters: [{ field: 'BranchId', op: '==', value: selectedScope.branchId }] }).catch(() => []),
-    queryRowsForReferences(env, 'libraryLoans', ['BorrowerRef'], keys)
+    queryRowsForReferences(env, 'libraryLoans', ['BorrowerRef'], keys),
+    // Never swallow a fee read failure: that could grant an unverified exemption.
+    isFullScholarship(child.BillingCategory) ? listCollection(env, 'feeItems') : Promise.resolve(null)
   ]);
   if (linkedApplication && !findScopedChildApplication(applications, child)) {
     applications.push(linkedApplication);
@@ -2086,6 +2104,7 @@ async function getChildActivity(env, body, options = {}) {
     accountSummary,
     invoices,
     ledger,
+    feeItems: scholarshipFeeItems,
     purpose: options.academicResultPurpose || 'View',
     requestedResultId: options.requestedAcademicResultId
   });
@@ -2399,7 +2418,7 @@ async function markParentNotificationRead(env, body) {
   };
 }
 
-async function updateParentNotificationState(env, body) {
+async function updateParentNotificationState(env, body, requestContext) {
   const context = await getParentNotificationContext(env, body);
   const notificationId = clean(body.notificationId || body.NotificationId);
   const notification = await getDocument(env, 'notifications', notificationId);
@@ -2410,7 +2429,11 @@ async function updateParentNotificationState(env, body) {
   }
   const action = lower(body.action || body.Action);
   if (action === 'archivenotification' || action === 'unarchivenotification') {
-    await archiveNotification(env, notificationId, context.email, action === 'archivenotification');
+    const state = await archiveNotification(env, notificationId, context.email, action === 'archivenotification');
+    requestContext.data ||= {};
+    requestContext.data.securityAuditNoChange = state.changed === false;
+    requestContext.data.securityAuditAction = action === 'archivenotification' ? 'ARCHIVE NOTIFICATION' : 'RESTORE NOTIFICATION';
+    requestContext.data.securityAuditDetails = `Notification: ${notificationId}; recipient archive state ${state.changed ? 'changed' : 'unchanged'}`;
   } else {
     await markNotificationRead(env, notificationId, context.email);
   }
@@ -2573,9 +2596,9 @@ export async function onRequestPost(context) {
     } else if (action === 'markAllNotificationsRead') {
       data = await markParentNotificationRead(env, body);
     } else if (action === 'markNotificationRead') {
-      data = await updateParentNotificationState(env, body);
+      data = await updateParentNotificationState(env, body, context);
     } else if (action === 'archiveNotification' || action === 'unarchiveNotification') {
-      data = await updateParentNotificationState(env, body);
+      data = await updateParentNotificationState(env, body, context);
     } else if (['subscribePush', 'unsubscribePush', 'testPush'].includes(action)) {
       data = await updateParentNotificationConfiguration(env, body, request);
     } else if (action === 'getAcademicResultForPrint') {

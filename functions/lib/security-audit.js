@@ -150,9 +150,9 @@ async function requestAuditInput(request, pathname) {
     body,
     action: securityAuditAction({ pathname, method, body }),
     actorHint: safeField(body, ['ActorUsername', 'actorUsername', 'RecordedBy', 'recordedBy', 'UpdatedBy', 'updatedBy', 'Username', 'username', 'Email', 'email']),
-    subject: safeField(body, ['TargetUsername', 'targetUsername', 'Username', 'username', 'AdmissionNo', 'admissionNo', 'Reference', 'reference']),
+    subject: safeField(body, ['TargetUsername', 'targetUsername', 'Username', 'username', 'AdmissionNo', 'admissionNo', 'Reference', 'reference', 'NotificationId', 'notificationId']),
     entityType: safeField(body, ['EntityType', 'entityType', 'RecordType', 'recordType', 'section', 'Section']),
-    entityId: safeField(body, ['EntityId', 'entityId', 'RecordId', 'recordId', 'ExpenseNo', 'expenseNo', 'BillNo', 'billNo', 'JournalNo', 'journalNo', 'ImprestNo', 'AccountRef', 'AdmissionNo', 'StaffId', 'Reference', 'reference', 'id', 'Id']),
+    entityId: safeField(body, ['EntityId', 'entityId', 'RecordId', 'recordId', 'ExpenseNo', 'expenseNo', 'BillNo', 'billNo', 'JournalNo', 'ImprestNo', 'AccountRef', 'AdmissionNo', 'StaffId', 'Reference', 'reference', 'NotificationId', 'notificationId', 'id', 'Id']),
     requestedStatus: safeField(body, ['decision', 'Decision', 'Status', 'status']),
     branchId: safeField(body, ['BranchId', 'branchId'])
   };
@@ -230,10 +230,15 @@ export async function writeSecurityAudit(env, event = {}) {
   return payload;
 }
 
-export async function persistRequestSecurityAudit({ env, request, prepared, response, failure, requestId, durationMs, authoritativeActor, authoritativeAction, authoritativeActivityClass, authoritativeOutcome, authoritativeDetails, auditHandled } = {}) {
+export async function persistRequestSecurityAudit({ env, request, prepared, response, failure, requestId, durationMs, authoritativeActor, authoritativeAction, authoritativeActivityClass, authoritativeOutcome, authoritativeDetails, auditHandled, auditNoChange } = {}) {
   const status = Number(response?.status || failure?.status || 500);
   if (auditHandled && status < 400) return null;
   const effectivePrepared = { ...prepared, action: authoritativeAction || prepared.action };
+  // Only the authenticated notification handlers can attest this no-op. Keep
+  // failed/denied attempts and all other mutations in the security ledger.
+  if (auditNoChange === true && status >= 200 && status < 300
+    && ['/api/staff-notifications', '/api/parent-dashboard'].includes(lower(prepared.pathname))
+    && ['ARCHIVE NOTIFICATION', 'RESTORE NOTIFICATION'].includes(titleWords(effectivePrepared.action))) return null;
   if (!shouldPersistSecurityAudit(effectivePrepared, null, status)) return null;
   const actor = authoritativeActor || await readStaffSession(env, request).catch(() => null);
   const outcome = status >= 400 ? securityAuditOutcome(status) : authoritativeOutcome || securityAuditOutcome(status);

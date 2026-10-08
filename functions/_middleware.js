@@ -289,6 +289,7 @@ async function handleRequest(context, identityLoader) {
       authoritativeOutcome: context.data?.securityAuditOutcome,
       authoritativeDetails: context.data?.securityAuditDetails,
       auditHandled: context.data?.securityAuditHandled,
+      auditNoChange: context.data?.securityAuditNoChange,
       response,
       failure,
       requestId,

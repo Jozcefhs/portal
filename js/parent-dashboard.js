@@ -20,6 +20,18 @@ const parentLibraryLoans = document.getElementById('parentLibraryLoans');
 const schoolStores = document.getElementById('schoolStores');
 const storeSearch = document.getElementById('storeSearch');
 const storeSearchSummary = document.getElementById('storeSearchSummary');
+const storeTypeFilter = document.getElementById('storeTypeFilter');
+const storeCategoryFilter = document.getElementById('storeCategoryFilter');
+const storeSort = document.getElementById('storeSort');
+const storePagination = document.getElementById('storePagination');
+const storePreviousPage = document.getElementById('storePreviousPage');
+const storeNextPage = document.getElementById('storeNextPage');
+const storePageStatus = document.getElementById('storePageStatus');
+const storeCartPanel = document.getElementById('storeCartPanel');
+const storeCartShortcut = document.getElementById('storeCartShortcut');
+const storeCartCount = document.getElementById('storeCartCount');
+const storeCartSummaryCount = document.getElementById('storeCartSummaryCount');
+const storeCartTotal = document.getElementById('storeCartTotal');
 const storeOrders = document.getElementById('storeOrders');
 const storeCartEl = document.getElementById('storeCart');
 const checkoutStoreCartBtn = document.getElementById('checkoutStoreCartBtn');
@@ -75,6 +87,9 @@ if (['overview', 'payments', 'optional', 'results', 'academics', 'documents', 'w
 const loadedPayables = new Set();
 const passportPhotoCache = new Map();
 const storeCart = new Map();
+const storePageSize = 12;
+let storePage = 1;
+let storeCatalogIdentity = '';
 const parentDocumentIdempotencyKeys = new Map();
 let selectedChildLoadController = null;
 let dashboardLoadController = null;
@@ -722,10 +737,11 @@ function renderParentNotifications() {
     remove.setAttribute('aria-label', `Delete ${title} from tray`);
     remove.addEventListener('click', async () => {
       try {
-        const data = await parentNotificationRequest('archiveNotification', { notificationId: parentNotificationId(notification) });
-        parentNotifications = data.notifications || [];
-        renderParentNotifications();
-        setParentNotificationStatus('Notification removed from the tray.', 'good');
+        await runParentNotificationArchive(parentNotificationId(notification), remove, 'archiveNotification', (data) => {
+          parentNotifications = data.notifications || [];
+          renderParentNotifications();
+          setParentNotificationStatus('Notification removed from the tray.', 'good');
+        });
       } catch (error) { setParentNotificationStatus(error.message, 'bad'); }
     });
     item.append(row, remove);
@@ -787,6 +803,21 @@ async function loadParentNotifications() {
     parentNotifications = [];
     renderParentNotifications();
     setParentNotificationStatus(parentNotificationErrorMessage(error), 'bad');
+  }
+}
+
+const pendingParentArchiveActions = new Set();
+
+async function runParentNotificationArchive(notificationId, button, action, afterChange) {
+  if (!notificationId || pendingParentArchiveActions.has(notificationId)) return;
+  pendingParentArchiveActions.add(notificationId);
+  button.disabled = true;
+  try {
+    const data = await parentNotificationRequest(action, { notificationId });
+    await afterChange(data);
+  } finally {
+    pendingParentArchiveActions.delete(notificationId);
+    button.disabled = false;
   }
 }
 
@@ -2305,14 +2336,11 @@ function normalizePortalClass(value) {
   return text.replace(/[^a-z0-9]/g, '');
 }
 
-function renderStores(child) {
-  if (!schoolStores || !storeOrders) return;
-  const identity = childIdentity(child);
-  const eligibleCatalog = (dashboard.storeCatalogByChild?.[identity] || []).filter((item) => storeItemMatchesChild(item, child));
-  const query = String(storeSearch?.value || '').trim().toLowerCase();
+function parentStoreCatalogView(eligibleCatalog, { query = '', storeType = '', category = '', sort = 'name', page = 1, pageSize = 12 } = {}) {
+  query = String(query).trim().toLowerCase();
   const terms = query.split(/\s+/).filter(Boolean);
-  const catalog = query
-    ? eligibleCatalog.filter((item) => {
+  const catalog = eligibleCatalog.filter((item) => {
+      if ((storeType && item.StoreType !== storeType) || (category && item.Category !== category)) return false;
       const searchable = [
         item.ItemName,
         item.ItemCode,
@@ -2326,61 +2354,98 @@ function renderStores(child) {
         item.StoreType
       ].filter(Boolean).join(' ').toLowerCase();
       return terms.every((term) => searchable.includes(term));
-    })
-    : eligibleCatalog;
-  if (storeSearchSummary) {
-    storeSearchSummary.textContent = query
-      ? `${catalog.length} of ${eligibleCatalog.length} item${eligibleCatalog.length === 1 ? '' : 's'} found`
-      : `${eligibleCatalog.length} item${eligibleCatalog.length === 1 ? '' : 's'} available`;
+    }).sort((left, right) => {
+      const priceDifference = Number(left.Price || 0) - Number(right.Price || 0);
+      if (sort === 'price-low' && priceDifference) return priceDifference;
+      if (sort === 'price-high' && priceDifference) return -priceDifference;
+      return String(left.ItemName || '').localeCompare(String(right.ItemName || ''), undefined, { numeric: true, sensitivity: 'base' })
+        || String(left.ItemCode || '').localeCompare(String(right.ItemCode || ''));
+    });
+  const size = Math.max(1, Math.floor(Number(pageSize) || 12));
+  const pageCount = Math.max(1, Math.ceil(catalog.length / size));
+  const currentPage = Math.min(pageCount, Math.max(1, Math.floor(Number(page) || 1)));
+  const start = (currentPage - 1) * size;
+  return { items: catalog.slice(start, start + size), total: catalog.length, page: currentPage, pageCount,
+    first: catalog.length ? start + 1 : 0, last: Math.min(start + size, catalog.length) };
+}
+
+function renderStores(child) {
+  if (!schoolStores || !storeOrders) return;
+  const identity = childIdentity(child);
+  if (identity !== storeCatalogIdentity) {
+    storePage = 1;
+    storeCatalogIdentity = identity;
+    if (storeSearch) storeSearch.value = '';
+    if (storeTypeFilter) storeTypeFilter.value = '';
+    if (storeCategoryFilter) storeCategoryFilter.value = '';
   }
-  schoolStores.innerHTML = catalog.length
+  const eligibleCatalog = (dashboard.storeCatalogByChild?.[identity] || []).filter((item) => storeItemMatchesChild(item, child));
+  const query = String(storeSearch?.value || '').trim().toLowerCase();
+  const selectedType = storeTypeFilter?.value || '';
+  if (storeCategoryFilter) {
+    const selectedCategory = storeCategoryFilter.value;
+    const categories = [...new Set(eligibleCatalog.filter((item) => !selectedType || item.StoreType === selectedType)
+      .map((item) => item.Category).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+    storeCategoryFilter.innerHTML = '<option value="">All categories</option>'
+      + categories.map((category) => `<option value="${escapeHtml(category)}">${escapeHtml(category)}</option>`).join('');
+    storeCategoryFilter.value = categories.includes(selectedCategory) ? selectedCategory : '';
+  }
+  const view = parentStoreCatalogView(eligibleCatalog, { query, storeType: selectedType,
+    category: storeCategoryFilter?.value || '', sort: storeSort?.value || 'name', page: storePage, pageSize: storePageSize });
+  storePage = view.page;
+  if (storeSearchSummary) {
+    storeSearchSummary.textContent = view.total
+      ? `Showing ${view.first}–${view.last} of ${view.total} item${view.total === 1 ? '' : 's'}`
+      : '0 items found';
+  }
+  schoolStores.innerHTML = view.total
     ? ''
-    : `<p class="muted">${query ? `No store items match “${escapeHtml(query)}”.` : 'No school-store items are currently available.'}</p>`;
-  const groups = ['Bookstore', 'Uniform Store'];
-  groups.forEach((storeType) => {
-    const items = catalog.filter((item) => item.StoreType === storeType);
-    if (!items.length) return;
-    const section = document.createElement('section');
-    section.className = 'store-catalog-section';
-    section.innerHTML = `<h3>${escapeHtml(storeType === 'Bookstore' ? 'Books & General Supplies' : 'Clothing & General Supplies')}</h3>`;
-    items.forEach((item) => {
-      const row = document.createElement('div');
-      row.className = 'activity-item store-item-row';
-      row.innerHTML = `<strong>${escapeHtml(item.ItemName)}</strong><span>${escapeHtml([item.Category, item.Size, item.Gender].filter(Boolean).join(' | '))}</span><small>${money(item.Price)} | ${escapeHtml(item.Quantity)} available</small>`;
-      const available = Math.max(1, Math.floor(Number(item.Quantity || 1) || 1));
-      const qty = document.createElement('select');
+    : `<div class="parent-store-empty"><strong>${query ? `No store items match “${escapeHtml(query)}”.` : 'No items in this selection.'}</strong><p>Try another search or category.</p></div>`;
+  view.items.forEach((item) => {
+      const row = document.createElement('article');
+      row.className = `parent-store-product ${item.StoreType === 'Uniform Store' ? 'is-clothing' : 'is-books'}`;
+      const details = [item.Size, item.Gender, item.ClassName].filter((value) => value && !['all', '*'].includes(String(value).trim().toLowerCase())).join(' · ');
+      row.innerHTML = `<span class="parent-store-product-category">${escapeHtml(item.Category || (item.StoreType === 'Bookstore' ? 'Books & supplies' : 'Clothing & supplies'))}</span><h3>${escapeHtml(item.ItemName)}</h3><p class="parent-store-product-details">${escapeHtml(details || item.Unit || 'School essentials')}</p><strong class="parent-store-product-price">${money(item.Price)}</strong><small class="parent-store-product-stock">${escapeHtml(item.Quantity)} available</small>`;
+      const available = Math.max(0, Math.floor(Number(item.Quantity) || 0));
+      const qty = document.createElement('input');
+      qty.type = 'number';
+      qty.min = '1';
+      qty.max = String(Math.max(1, available));
+      qty.step = '1';
+      qty.value = '1';
       qty.className = 'store-quantity';
       qty.setAttribute('aria-label', `Quantity for ${item.ItemName}`);
-      Array.from({ length: available }, (_, index) => index + 1).forEach((quantity) => {
-        const option = document.createElement('option');
-        option.value = String(quantity);
-        option.textContent = String(quantity);
-        qty.appendChild(option);
-      });
       const buy = document.createElement('button');
       buy.type = 'button';
-      buy.className = 'compact-icon-action store-cart-action';
+      buy.className = 'store-cart-action';
       buy.setAttribute('aria-label', `Add ${item.ItemName} to cart`);
       buy.title = 'Add to cart';
-      buy.innerHTML = '<span aria-hidden="true">&#128722;</span>';
+      buy.innerHTML = '<span aria-hidden="true">+</span> Add';
       const key = `${item.StoreType}|${item.ItemCode}`;
       const markAdded = () => {
         qty.classList.add('is-locked');
+        qty.disabled = true;
         qty.setAttribute('aria-disabled', 'true');
         qty.tabIndex = -1;
         buy.disabled = true;
         buy.classList.add('is-added');
         buy.setAttribute('aria-label', `${item.ItemName} added to cart`);
         buy.title = 'Added to cart';
-        buy.innerHTML = '<span aria-hidden="true">&#10003;</span>';
+        buy.innerHTML = '<span aria-hidden="true">&#10003;</span> Added';
       };
       const existingCartItem = storeCart.get(key);
       if (existingCartItem) {
         qty.value = String(Math.min(available, existingCartItem.quantity));
         markAdded();
       }
+      if (!available) {
+        qty.disabled = true;
+        buy.disabled = true;
+        buy.textContent = 'Sold out';
+      }
       buy.addEventListener('click', () => {
-        const quantity = Math.max(1, Math.min(available, Number(qty.value || 1)));
+        if (!available || buy.disabled) return;
+        const quantity = Math.max(1, Math.min(available, Math.floor(Number(qty.value) || 1)));
         storeCart.set(key, { item, quantity });
         markAdded();
         renderStoreCart(child);
@@ -2389,10 +2454,12 @@ function renderStores(child) {
       purchaseControls.className = 'store-purchase-controls';
       purchaseControls.append(qty, buy);
       row.appendChild(purchaseControls);
-      section.appendChild(row);
-    });
-    schoolStores.appendChild(section);
+      schoolStores.appendChild(row);
   });
+  if (storePagination) storePagination.hidden = view.pageCount <= 1;
+  if (storePreviousPage) storePreviousPage.disabled = view.page <= 1;
+  if (storeNextPage) storeNextPage.disabled = view.page >= view.pageCount;
+  if (storePageStatus) storePageStatus.textContent = `Page ${view.page} of ${view.pageCount}`;
   renderStoreCart(child);
   const orders = dashboard.storeOrdersByChild?.[identity] || [];
   storeOrders.innerHTML = orders.length ? '' : '<p class="muted">No store orders recorded for this student.</p>';
@@ -2404,8 +2471,30 @@ function renderStores(child) {
 }
 
 storeSearch?.addEventListener('input', () => {
+  storePage = 1;
   const child = selectedChild();
   if (child) renderStores(child);
+});
+
+[storeTypeFilter, storeCategoryFilter, storeSort].forEach((control) => control?.addEventListener('change', () => {
+  storePage = 1;
+  const child = selectedChild();
+  if (child) renderStores(child);
+}));
+
+function changeStorePage(direction) {
+  storePage += direction;
+  const child = selectedChild();
+  if (child) renderStores(child);
+  schoolStores?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+storePreviousPage?.addEventListener('click', () => changeStorePage(-1));
+storeNextPage?.addEventListener('click', () => changeStorePage(1));
+if (storeCartPanel && window.matchMedia('(max-width: 900px)').matches) storeCartPanel.open = false;
+storeCartShortcut?.addEventListener('click', () => {
+  if (!storeCartPanel) return;
+  storeCartPanel.open = true;
+  storeCartPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
 });
 
 function renderStoreCart(child) {
@@ -2421,6 +2510,11 @@ function renderStoreCart(child) {
     remove.addEventListener('click', () => { storeCart.delete(key); renderStores(child); });
     row.appendChild(remove); storeCartEl.appendChild(row);
   });
+  const itemCount = entries.reduce((sum, [, entry]) => sum + entry.quantity, 0);
+  if (storeCartCount) storeCartCount.textContent = String(itemCount);
+  if (storeCartSummaryCount) storeCartSummaryCount.textContent = String(itemCount);
+  if (storeCartTotal) storeCartTotal.textContent = money(total);
+  if (storeCartShortcut) storeCartShortcut.setAttribute('aria-label', `View cart: ${itemCount} item${itemCount === 1 ? '' : 's'}, ${money(total)}`);
   checkoutStoreCartBtn.disabled = !entries.length;
   checkoutStoreCartBtn.textContent = entries.length ? `Checkout ${money(total)}` : 'Checkout Cart';
   const cartFingerprint = entries.map(([key, entry]) => `${key}:${entry.quantity}`).join('|');
@@ -2754,9 +2848,10 @@ parentNotificationHistory?.addEventListener('click', async (event) => {
   if (!item) return;
   const row = parentNotificationHistoryRows.find((record) => parentNotificationId(record) === item.dataset.parentNotificationId);
   try {
-    if (event.target.closest('[data-parent-archive]')) {
-      await parentNotificationRequest(row?.Archived ? 'unarchiveNotification' : 'archiveNotification', { notificationId: item.dataset.parentNotificationId });
-      await loadParentNotificationHistory(false);
+    const archiveButton = event.target.closest('[data-parent-archive]');
+    if (archiveButton) {
+      await runParentNotificationArchive(item.dataset.parentNotificationId, archiveButton,
+        row?.Archived ? 'unarchiveNotification' : 'archiveNotification', () => loadParentNotificationHistory(false));
     } else {
       if (row && !parentNotificationIsRead(row)) await parentNotificationRequest('markNotificationRead', { notificationId: item.dataset.parentNotificationId });
       openParentNotificationAction(row?.ActionUrl || row?.actionUrl);

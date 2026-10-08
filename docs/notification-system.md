@@ -86,6 +86,7 @@ Staff and parent portals provide:
 - Notification bell, unread badge, latest items, timestamps, and deep links.
 - Full history with category, unread, archived, and cursor-based older-item filtering.
 - Mark one or all as read, archive, and restore.
+- Archive/restore controls block repeat clicks while a request is pending. Recipient-state writes use database version checks; repeated requests for an already-completed state do not write or create another successful action audit. Failed/denied attempts remain audited, request diagnostics are retained, and real state changes record the notification ID. Existing audit records are never removed. The shared handlers cover all three editions and their web/mobile/desktop-launched portals.
 - Category/channel preferences, timezone, and quiet hours.
 - Browser push opt-in, current-device status, device removal, and staff test notification.
 - Super Admin settings for reminder intervals and templates.

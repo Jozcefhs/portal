@@ -111,6 +111,7 @@
   let loading = false;
   let pushRefreshPending = false;
   let loadGeneration = 0;
+  const pendingArchiveActions = new Set();
   let lastLoadedAt = 0;
   let activeEdition = '';
   const notificationPollIntervalMs = 5 * 60 * 1000;
@@ -486,13 +487,30 @@
     const item = event.target.closest('[data-notification-id]');
     if (!item) return;
     const row = sourceRecords.find((entry) => entry.NotificationId === item.dataset.notificationId);
-    if (event.target.closest('[data-delete-notification]')) {
-      await update('archive', { notificationId: item.dataset.notificationId });
-      return;
-    }
-    if (event.target.closest('[data-archive-notification]')) {
-      await update(row?.Archived ? 'unarchive' : 'archive', { notificationId: item.dataset.notificationId });
-      await loadHistory(false);
+    const deleteButton = event.target.closest('[data-delete-notification]');
+    const archiveButton = deleteButton || event.target.closest('[data-archive-notification]');
+    if (archiveButton) {
+      const pendingKey = `${loadGeneration}:${item.dataset.notificationId}`;
+      if (pendingArchiveActions.has(pendingKey)) return;
+      pendingArchiveActions.add(pendingKey);
+      archiveButton.disabled = true;
+      try {
+        item.querySelector('.notification-action-status')?.remove();
+        if (deleteButton) await update('archive', { notificationId: item.dataset.notificationId });
+        else {
+          await update(row?.Archived ? 'unarchive' : 'archive', { notificationId: item.dataset.notificationId });
+          await loadHistory(false);
+        }
+      } catch (error) {
+        const status = document.createElement('p');
+        status.className = 'notification-action-status';
+        status.setAttribute('role', 'alert');
+        status.textContent = error.message || 'Could not update this notification. Try again.';
+        item.appendChild(status);
+      } finally {
+        pendingArchiveActions.delete(pendingKey);
+        archiveButton.disabled = false;
+      }
       return;
     }
     if (row && !row.Read) await update('markRead', { notificationId: row.NotificationId }).catch(() => {});

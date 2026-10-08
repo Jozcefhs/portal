@@ -325,10 +325,10 @@ export async function onRequestPost(context) {
       });
     }
     const origin = new URL(request.url).origin;
-    const schoolCode = await getSchoolCode(env);
+    const paymentBranchId = String(account.BranchId || 'main').trim().toLowerCase() || 'main';
+    const schoolCode = await getSchoolCode(env, paymentBranchId);
     const reference = cleanReference(`${schoolCode}-${feeCode}-${account.ApplicationReference || account.AccountRef}-${Date.now()}`);
     const callbackUrl = `${origin}/payment-success.html?reference=${encodeURIComponent(reference)}`;
-    const paymentBranchId = String(account.BranchId || 'main').trim().toLowerCase() || 'main';
     let paymentConfiguration = null;
     if (paymentMethod === 'paystack') {
       if (!env.PAYSTACK_SECRET_KEY) {

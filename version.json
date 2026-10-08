@@ -1,7 +1,7 @@
 {
-  "version": "3.1.17",
+  "version": "3.1.18",
   "channel": "stable",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.17.exe",
-  "sha256": "d4dbcac1cdafe295db553db0c8d50164b8d2f3c24b7a89954b91ded362a47012",
-  "notes": "Dynamax Desktop v3.1.17 automatically fills staff correspondence delivery email from a valid email-style username when no valid saved staff email is available. Saved email addresses take priority; ordinary usernames are not treated as email addresses. Applies to School, Church and Other Organisation editions; login credentials, student/parent email addresses and issued documents remain unchanged."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.18.exe",
+  "sha256": "1390623fe8a70a0102e5e0e2aacc293fb379e764ccd61c7f21df962034722260",
+  "notes": "Dynamax Desktop v3.1.18 adds read-only staff sign-in cache recovery and Full Scholarship fee eligibility. The matching shared portal release repairs scholarship result access, repeated notification-archive audit entries, the responsive parent store and organisation-aware payment references. Shared identity and authorization rules apply across School, Church and Other Organisation editions. Existing invoices, payments, credit balances and historical references are preserved."
 }

@@ -3,6 +3,7 @@ import { getAccountingChartRows, invalidateAccountingChartRows, primeAccountingC
 import { mergeSchoolBranchMetadata, saveBranchSchoolSection } from '../lib/branch-school-presentation.js';
 import { canonicalSchoolBranchId, deleteSchoolDocument, getSchoolDocumentById, getSchoolDocumentsById, getSchoolStructure, invalidateSchoolStructureCache, listSchoolCollection, normalizeSchoolStructure, querySchoolCollection, safeScopeId, schoolCollectionPaths, schoolSectionFor, upsertSchoolDocument } from '../lib/school-scope.js';
 import { canonicalConfiguredClass, classNamesMatch } from '../lib/class-names.js';
+import { explicitlyIncludesFullScholarship, isFullScholarship } from '../lib/full-scholarship.js';
 import { categoryApplies, deleteStoreCategory, ensureStoreCategories, resolveStoreCategory, saveStoreCategory } from '../lib/store-categories.js';
 import {
   clonePayrollTaxProfile, getPayrollTaxConfiguration, migratePayrollTaxPhase2,
@@ -170,6 +171,19 @@ function feeBillingCategoryText(value) {
   return normalizeFeeBillingCategories(value).join(', ');
 }
 
+function feeBillingCategoryMatches(fee, app = {}) {
+  const category = app.BillingCategory || 'Regular';
+  const categories = feeBillingCategories(fee);
+  if (isFullScholarship(category)) {
+    const sameScope = (rule, actual) => !clean(rule) || ['all', '*'].includes(normalizeMatchText(rule)) ||
+      normalizeMatchText(rule) === normalizeMatchText(actual);
+    return explicitlyIncludesFullScholarship(categories) &&
+      sameScope(fee.BranchId || fee.branchId, app.BranchId || app.branchId || 'main') &&
+      sameScope(fee.SchoolSection || fee.schoolSection, app.SchoolSection || app.schoolSection || schoolSectionFor(app));
+  }
+  return feeFieldMatches(categories, category, true);
+}
+
 function accountingEditionForRequest(env, body = {}) {
   return resolveOrganizationConfig({
     env,
@@ -205,14 +219,24 @@ function normalizeSchoolCode(value) {
   return clean(value).toUpperCase().replace(/[^A-Z0-9]/g, '');
 }
 
-export async function getSchoolCode(env) {
+export async function getSchoolCode(env, branchId = '') {
+  let schoolProfile = null;
+  let organizationProfile = null;
+  let branchProfile = null;
   try {
     requireFirestoreEnv(env);
-    const profile = await getDocument(env, 'settings', 'schoolProfile');
-    return normalizeSchoolCode((profile && profile.SchoolCode) || env.SCHOOL_CODE) || 'ORG';
+    [schoolProfile, organizationProfile, branchProfile] = await Promise.all([
+      getDocument(env, 'settings', 'schoolProfile').catch(() => null),
+      getDocument(env, 'settings', 'organisationProfile').catch(() => null),
+      // Only explicit branch overrides may supersede the organisation code.
+      // Inheriting the legacy SchoolCode here could revive a stale prefix.
+      effectiveBranchProfile(env, {}, branchId)
+    ]);
   } catch (_err) {
-    return normalizeSchoolCode(env.SCHOOL_CODE) || 'ORG';
+    // Deployments without a readable profile retain their configured code.
   }
+  const organization = resolveOrganizationConfig({ env, organizationProfile, legacyProfile: schoolProfile });
+  return normalizeSchoolCode(branchProfile?.SchoolCode) || organization.Code;
 }
 
 function lower(value) {
@@ -1183,7 +1207,6 @@ function feeClassRuleMatches(ruleValue, actualValue) {
 export function feeMatchesApplication(fee, app) {
   const appClass = app.ClassApplyingFor || app.ClassAdmitted || app.ClassName || '';
   const appType = app.StudentType || '';
-  const appBillingCategory = app.BillingCategory || 'Regular';
   const appSession = app.AcademicSession || '';
   const appTerm = app.Term || '';
   const appGender = app.Gender || '';
@@ -1193,7 +1216,7 @@ export function feeMatchesApplication(fee, app) {
   if (normalizeMatchText(academicProgress) === 'repeating' && /book|uniform|school wear/.test(normalizeMatchText(`${fee.FeeCategory || ''} ${fee.FeeName || ''}`))) return false;
   return feeClassRuleMatches(fee.ClassName, appClass) &&
     feeFieldMatches(fee.StudentType, appType) &&
-    feeFieldMatches(feeBillingCategories(fee), appBillingCategory, true) &&
+    feeBillingCategoryMatches(fee, app) &&
     feeFieldMatches(fee.Gender || 'All', appGender) &&
     feeFieldMatches(fee.EnrollmentCategory || 'All', enrollmentCategory, true) &&
     feeFieldMatches(fee.AcademicProgress || 'All', academicProgress, true) &&
@@ -1253,13 +1276,12 @@ function termRank(value) {
 function feeMatchesAccountPeriod(fee, app) {
   const appClass = app.ClassApplyingFor || app.ClassAdmitted || app.ClassName || '';
   const appType = app.StudentType || '';
-  const appBillingCategory = app.BillingCategory || 'Regular';
   const appSession = app.AcademicSession || '';
   const appTerm = app.Term || '';
   if (normalizeMatchText(app.AcademicProgress || 'Promoted') === 'repeating' && /book|uniform|school wear/.test(normalizeMatchText(`${fee.FeeCategory || ''} ${fee.FeeName || ''}`))) return false;
   if (!feeClassRuleMatches(fee.ClassName, appClass)) return false;
   if (!feeFieldMatches(fee.StudentType, appType)) return false;
-  if (!feeFieldMatches(feeBillingCategories(fee), appBillingCategory, true)) return false;
+  if (!feeBillingCategoryMatches(fee, app)) return false;
   if (!feeFieldMatches(fee.Gender || 'All', app.Gender || '')) return false;
   const enrollmentCategory = app.EnrollmentCategory || app.IntakeCategory ||
     (isNewIntakeApplication(app) ? 'New Intake' : 'Returning');
@@ -1295,6 +1317,7 @@ function feeOverrideKey(fee) {
 export function applyBillingCategoryOverrides(fees, app) {
   const grouped = {};
   fees.forEach((fee) => {
+    if (isFullScholarship(app.BillingCategory) && !feeBillingCategoryMatches(fee, app)) return;
     const key = feeOverrideKey(fee);
     grouped[key] = grouped[key] || [];
     grouped[key].push(fee);
@@ -1307,6 +1330,14 @@ export function applyBillingCategoryOverrides(fees, app) {
     });
   });
   return result;
+}
+
+export function matchingFullScholarshipFeeItems(feeRows, account = {}) {
+  if (!isFullScholarship(account.BillingCategory)) return [];
+  return applyBillingCategoryOverrides(feeRows.map(normalizeFeeItem).filter((fee) =>
+    yesNo(fee.Active) === 'YES' && asMoneyNumber(fee.Amount) > 0 &&
+    !isWalletFee(fee) && !isAcceptanceFeeLike(fee) && feeMatchesApplication(fee, account)
+  ), account);
 }
 
 function isWalletFee(fee) {
@@ -1416,12 +1447,11 @@ function periodMatchesFee(row, fee) {
 function feeMatchesAccountBase(fee, app) {
   const appClass = app.ClassApplyingFor || app.ClassAdmitted || app.ClassName || '';
   const appType = app.StudentType || '';
-  const appBillingCategory = app.BillingCategory || 'Regular';
   const appSession = app.AcademicSession || '';
   if (normalizeMatchText(app.AcademicProgress || 'Promoted') === 'repeating' && /book|uniform|school wear/.test(normalizeMatchText(`${fee.FeeCategory || ''} ${fee.FeeName || ''}`))) return false;
   return feeClassRuleMatches(fee.ClassName, appClass) &&
     feeFieldMatches(fee.StudentType, appType) &&
-    feeFieldMatches(feeBillingCategories(fee), appBillingCategory, true) &&
+    feeBillingCategoryMatches(fee, app) &&
     feeFieldMatches(fee.Gender || 'All', app.Gender || '') &&
     feeFieldMatches(fee.EnrollmentCategory || 'All', app.EnrollmentCategory || 'Returning', true) &&
     feeFieldMatches(fee.AcademicProgress || 'All', app.AcademicProgress || 'Promoted', true) &&
@@ -5964,6 +5994,10 @@ async function generateSchoolFeeInvoicesForAccount(env, body, accountRef) {
       feeMatchesApplication(fee, billingApp);
   }), billingApp);
   if (!fees.length) {
+    if (isFullScholarship(billingApp.BillingCategory)) {
+      return { ok: true, message: 'Full Scholarship: no school fee components are explicitly assigned for this period.',
+        created: 0, updated: 0, exempt: true };
+    }
     const err = new Error('No matching school fee items found for this class/student type.');
     err.status = 400;
     throw err;

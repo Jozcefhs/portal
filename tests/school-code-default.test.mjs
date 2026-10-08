@@ -66,16 +66,19 @@ test('school organisation fallback is generic while saved school/organisation co
 test('payment references use saved or deployed codes, otherwise a generic prefix, including database-error fallback', async () => {
   const normalizeSchoolCode = extract('functions/api/backend.js', 'normalizeSchoolCode');
   const getSchoolCode = extract('functions/api/backend.js', 'getSchoolCode', {
-    normalizeSchoolCode, requireFirestoreEnv: () => {}, getDocument: async () => ({ SchoolCode: 'BPS' })
+    normalizeSchoolCode, resolveOrganizationConfig, effectiveBranchProfile: async () => ({}),
+    requireFirestoreEnv: () => {}, getDocument: async () => ({ SchoolCode: 'BPS' })
   });
   assert.equal(await getSchoolCode({ SCHOOL_CODE: 'OTHER' }), 'BPS');
   const empty = extract('functions/api/backend.js', 'getSchoolCode', {
-    normalizeSchoolCode, requireFirestoreEnv: () => {}, getDocument: async () => null
+    normalizeSchoolCode, resolveOrganizationConfig, effectiveBranchProfile: async () => ({}),
+    requireFirestoreEnv: () => {}, getDocument: async () => null
   });
   assert.equal(await empty({ SCHOOL_CODE: 'ABC' }), 'ABC');
   assert.equal(await empty({}), 'ORG');
   const unavailable = extract('functions/api/backend.js', 'getSchoolCode', {
-    normalizeSchoolCode, requireFirestoreEnv: () => { throw new Error('Unavailable'); }
+    normalizeSchoolCode, resolveOrganizationConfig,
+    requireFirestoreEnv: () => { throw new Error('Unavailable'); }
   });
   assert.equal(await unavailable({}), 'ORG');
   assert.equal(await unavailable({ SCHOOL_CODE: 'ABC' }), 'ABC');

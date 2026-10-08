@@ -233,7 +233,11 @@ export async function onRequestPost(context) {
         error.status = 404;
         throw error;
       }
-      await archiveNotification(env, notificationId, user.username, action === 'archive');
+      const state = await archiveNotification(env, notificationId, user.username, action === 'archive');
+      context.data ||= {};
+      context.data.securityAuditNoChange = state.changed === false;
+      context.data.securityAuditAction = action === 'archive' ? 'ARCHIVE NOTIFICATION' : 'RESTORE NOTIFICATION';
+      context.data.securityAuditDetails = `Notification: ${notificationId}; recipient archive state ${state.changed ? 'changed' : 'unchanged'}`;
     } else if (action === 'savesettings') {
       await saveNotificationSettings(env, 'Staff', user.username, body.settings || body.Settings || {});
     } else if (action === 'savesystemsettings') {

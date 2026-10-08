@@ -8,6 +8,7 @@
   <script src="js/preferences.js?v=20260726-biometric"></script>
   <link rel="stylesheet" href="css/style.css?v=20260930-school-library">
   <link rel="stylesheet" href="css/notifications.css?v=20260804-read-efficiency">
+  <link rel="stylesheet" href="css/parent-store.css?v=20261008-storefront">
 </head>
 <body class="parent-dashboard-page" data-fresh-site-profile>
   <dialog id="changeParentPasswordDialog" class="notification-history-dialog parent-password-dialog">
@@ -317,23 +318,32 @@
             <div id="parentLibraryLoans" class="activity-list"></div>
           </section>
 
-          <section class="panel full-panel dashboard-view-panel" data-dashboard-view="stores" hidden>
-            <h2>School Store</h2>
-            <p class="muted">Buy replacements or extra items. First-term items already included in school fees appear in your collection records after payment is confirmed.</p>
-            <label class="store-search-control" for="storeSearch">
-              <span>Search store</span>
-              <input id="storeSearch" type="search" placeholder="Item, code, barcode, category, size or class" autocomplete="off">
-            </label>
-            <p id="storeSearchSummary" class="store-search-summary muted" aria-live="polite"></p>
-            <div id="schoolStores" class="activity-list"></div>
-            <section class="store-cart-panel">
-              <h3>Shopping Cart</h3>
-              <div id="storeCart" class="activity-list"><p class="muted">Your cart is empty.</p></div>
-              <button type="button" id="checkoutStoreCartBtn" disabled>Checkout Cart</button>
-              <p id="storeCheckoutStatus" class="status" role="status" aria-live="polite"></p>
-            </section>
-            <h3>My Orders & Collection</h3>
-            <div id="storeOrders" class="activity-list"></div>
+          <section class="panel full-panel dashboard-view-panel parent-store" data-dashboard-view="stores" hidden>
+            <header class="parent-store-header">
+              <div><h2>School Store</h2><p class="muted">Replacements and extras for your child.</p></div>
+              <button type="button" id="storeCartShortcut" class="parent-store-cart-shortcut" aria-controls="storeCartPanel">Cart <span id="storeCartCount">0</span></button>
+            </header>
+            <div class="parent-store-toolbar">
+              <label class="store-search-control" for="storeSearch"><span>Search items</span><input id="storeSearch" type="search" placeholder="Item, code, category or size" autocomplete="off"></label>
+              <label for="storeTypeFilter"><span>Shop</span><select id="storeTypeFilter"><option value="">All items</option><option value="Bookstore">Books &amp; supplies</option><option value="Uniform Store">Clothing &amp; supplies</option></select></label>
+              <label for="storeCategoryFilter"><span>Category</span><select id="storeCategoryFilter"><option value="">All categories</option></select></label>
+              <label for="storeSort"><span>Sort by</span><select id="storeSort"><option value="name">Name: A–Z</option><option value="price-low">Price: low to high</option><option value="price-high">Price: high to low</option></select></label>
+            </div>
+            <div class="parent-store-layout">
+              <div class="parent-store-catalog">
+                <p id="storeSearchSummary" class="store-search-summary muted" role="status" aria-live="polite"></p>
+                <div id="schoolStores" class="parent-store-grid"></div>
+                <nav id="storePagination" class="parent-store-pagination" aria-label="Store pages" hidden><button type="button" id="storePreviousPage" class="secondary">Previous</button><span id="storePageStatus" aria-live="polite"></span><button type="button" id="storeNextPage" class="secondary">Next</button></nav>
+              </div>
+              <details id="storeCartPanel" class="store-cart-panel" open>
+                <summary><strong>Shopping cart <span id="storeCartSummaryCount">0</span></strong><span id="storeCartTotal">₦0.00</span></summary>
+                <div id="storeCart" class="activity-list"><p class="muted">Your cart is empty.</p></div>
+                <button type="button" id="checkoutStoreCartBtn" disabled>Checkout Cart</button>
+                <p id="storeCheckoutStatus" class="status" role="status" aria-live="polite"></p>
+              </details>
+            </div>
+            <p class="parent-store-fee-note muted">Items already included in school fees appear in collection records once payment is confirmed.</p>
+            <details class="parent-store-orders"><summary>My orders &amp; collection</summary><div id="storeOrders" class="activity-list"></div></details>
           </section>
         </div>
       </section>

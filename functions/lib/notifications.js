@@ -2,6 +2,7 @@ import {
   createDocumentIfAbsent,
   getDocument,
   listCollection,
+  patchDocumentFields,
   queryCollection,
   upsertDocument
 } from './firestore.js';
@@ -654,7 +655,7 @@ export async function listNotifications(env, recipient, options = {}) {
 
 export async function markNotificationRead(env, notificationId, recipientKey, options = {}) {
   const get = options.getDocument || getDocument;
-  const upsert = options.upsertDocument || upsertDocument;
+  const patch = options.patchDocumentFields || options.upsertDocument || patchDocumentFields;
   const id = clean(notificationId);
   const key = lower(recipientKey);
   const notification = await get(env, 'notifications', id);
@@ -664,14 +665,14 @@ export async function markNotificationRead(env, notificationId, recipientKey, op
     throw error;
   }
   const readAt = clean(options.now || nowIso());
-  const existing = await get(env, 'notificationReads', notificationReadDocumentId(id, key)).catch(() => null);
   const read = {
-    ...(existing || {}),
     NotificationId: id,
     RecipientKey: key,
     ReadAt: readAt
   };
-  await upsert(env, 'notificationReads', notificationReadDocumentId(id, key), read);
+  // Update only read fields: a full-document write could undo an archive made
+  // by another request while this notification was being opened.
+  await patch(env, 'notificationReads', notificationReadDocumentId(id, key), read);
   return read;
 }
 
@@ -687,16 +688,35 @@ export async function archiveNotification(env, notificationId, recipientKey, arc
     throw error;
   }
   const documentId = notificationReadDocumentId(id, key);
-  const existing = await get(env, 'notificationReads', documentId).catch(() => null);
-  const state = {
-    ...(existing || {}),
-    NotificationId: id,
-    RecipientKey: key,
-    ReadAt: clean(existing?.ReadAt || nowIso()),
-    ArchivedAt: archived ? nowIso() : ''
-  };
-  await upsert(env, 'notificationReads', documentId, state);
-  return state;
+  // Re-read on a version conflict: another tab/device may have completed the
+  // same action. Never treat a failed read as an absent recipient state.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const existing = await get(env, 'notificationReads', documentId);
+    if (Boolean(clean(existing?.ArchivedAt)) === Boolean(archived)) {
+      return { ...(existing || {}), NotificationId: id, RecipientKey: key, changed: false };
+    }
+    const timestamp = clean(options.now || nowIso());
+    const state = {
+      ...(existing || {}),
+      NotificationId: id,
+      RecipientKey: key,
+      ReadAt: clean(existing?.ReadAt || timestamp),
+      ArchivedAt: archived ? timestamp : ''
+    };
+    const updateTime = clean(existing?.__updateTime || existing?.updateTime);
+    if (existing && !updateTime) {
+      const error = new Error('Reload this notification before changing its archive state.');
+      error.status = 428;
+      throw error;
+    }
+    try {
+      await upsert(env, 'notificationReads', documentId, state,
+        existing ? { updateTime } : { exists: false });
+      return { ...state, changed: true };
+    } catch (error) {
+      if (![409, 412].includes(Number(error?.status)) || attempt === 2) throw error;
+    }
+  }
 }
 
 export async function markAllNotificationsRead(env, notifications, recipientKey, options = {}) {

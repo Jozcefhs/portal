@@ -1,4 +1,5 @@
 import { normalizeAcademicPolicy } from './academic-policy.js';
+import { isFullScholarship } from './full-scholarship.js';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
@@ -77,6 +78,23 @@ export function academicFinancialSummary(invoiceRows = [], ledgerRows = []) {
   };
 }
 
+export function academicFullScholarshipFinancialSummary(fees = [], invoiceRows = [], ledgerRows = [], period = {}) {
+  const codes = new Set(fees.map((fee) => lower(fee.FeeCode)).filter(Boolean));
+  const applicable = (row) => codes.has(lower(row.FeeCode)) &&
+    !['cancelled', 'canceled', 'void', 'reversed'].includes(lower(row.Status)) &&
+    (!clean(period.AcademicSession) || lower(row.AcademicSession) === lower(period.AcademicSession)) &&
+    (!clean(period.Term) || lower(row.Term) === lower(period.Term));
+  const invoices = invoiceRows.filter(applicable);
+  // Invoice allocations, including pooled school-fee receipts, are authoritative.
+  // Do not count the same receipt again from its ledger entry or spend parent credit.
+  const allocatedCredits = invoices.map((row) => ({ ...row, Debit: 0,
+    Credit: Math.max(0, Math.min(money(row.Debit ?? row.Amount), money(row.Credit ?? row.PaidAmount))) }));
+  const ledgerOnly = ledgerRows.filter((row) => applicable(row) &&
+    !invoices.some((invoice) => lower(invoice.FeeCode) === lower(row.FeeCode)));
+  return academicFinancialSummary([...invoices, ...ledgerOnly.filter((row) => money(row.Debit) > 0)],
+    [...allocatedCredits, ...ledgerOnly]);
+}
+
 function accessDecision(allowed, code, message, extra = {}) {
   return { Allowed: allowed, Code: code, Message: message, ...extra };
 }
@@ -87,6 +105,8 @@ export function evaluateAcademicResultAccess({
   hasActivePolicy = false,
   currentPeriod = {},
   finance = {},
+  student = {},
+  scholarshipFees = null,
   clearance = null,
   now = new Date()
 } = {}) {
@@ -110,6 +130,11 @@ export function evaluateAcademicResultAccess({
   }
 
   const financial = policy.ResultAccess.FinancialClearance;
+  // The fee configuration must have been loaded successfully. A missing snapshot
+  // must not accidentally be interpreted as an empty scholarship assignment.
+  if (isFullScholarship(student.BillingCategory) && Array.isArray(scholarshipFees) && !scholarshipFees.length) {
+    return accessDecision(true, 'ELIGIBLE_BY_FULL_SCHOLARSHIP', 'Result access approved.', { UsedExemption: true });
+  }
   const activeClearance = academicResultClearanceIsActive(clearance, now);
   if (activeClearance && financial.AllowManualExemptions) {
     return accessDecision(true, 'ELIGIBLE_BY_EXEMPTION', 'Result access approved.', { UsedExemption: true });

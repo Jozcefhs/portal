@@ -258,6 +258,14 @@ finance officer may grant an exemption with a reason, expiry, approving user
 and audit record. Financial eligibility is calculated server-side for the
 requested student and result period.
 
+Full Scholarship is a billing-category exemption, not an optional accountant
+clearance. General/All fees do not apply to this category. When no active,
+chargeable component explicitly selecting Full Scholarship matches the learner
+and result period, financial policy cannot block parent access. With an explicit
+exception, financial policy considers only that component's posted charges and
+allocated payments. This does not bypass publication or visibility rules, parent
+ownership, or branch/section isolation, and does not reverse historical invoices.
+
 Result-visibility choices must include:
 
 - current published term only;
