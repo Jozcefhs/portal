@@ -7,7 +7,8 @@ import {
   queryStaffAttendanceCollection,
   safeStaffAttendanceDocumentId,
   staffAttendanceCollectionPath,
-  staffAttendanceDocumentData
+  staffAttendanceDocumentData,
+  staffAttendanceWriteDocumentId
 } from './staff-attendance-storage.js';
 import { normalizeAttendancePolicy } from './staff-time-attendance.js';
 
@@ -109,7 +110,7 @@ export async function processAttendancePresenceNotifications(env, options = {}) 
       if (!candidate.eligible) {
         // Retire stale due markers so yesterday's clock-ins cannot starve today's
         // limited query. The precondition protects a concurrent clock-in/update.
-        const stateId = safeStaffAttendanceDocumentId(state.Username || state.__id);
+        const stateId = staffAttendanceWriteDocumentId(state, safeStaffAttendanceDocumentId(state.Username || state.__id));
         if (stateId && state.__updateTime && !state.__legacyStorage) {
           await patch(env, statePath, stateId, { NextPresenceNotificationAt: '' }, { updateTime: state.__updateTime })
             .catch((error) => { if (![409, 412].includes(Number(error?.status))) throw error; });
@@ -143,7 +144,7 @@ export async function processAttendancePresenceNotifications(env, options = {}) 
       else duplicates += 1;
       delivered += (result.pushDeliveries || []).filter((row) => row.status === 'Delivered').length;
       failed += (result.pushDeliveries || []).filter((row) => ['Failed', 'Invalid subscription'].includes(row.status)).length;
-      const stateId = safeStaffAttendanceDocumentId(username);
+      const stateId = staffAttendanceWriteDocumentId(state, safeStaffAttendanceDocumentId(username));
       const fields = {
         NextPresenceNotificationAt: '',
         PresenceNotificationSentForDueAt: candidate.dueAt,

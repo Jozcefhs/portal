@@ -1,4 +1,4 @@
-import { batchCommitDocuments, listCollection, patchDocumentFields, upsertDocument } from './firestore.js';
+import { batchCommitLiteralDocuments as batchCommitDocuments, listCollection, patchDocumentFields, upsertDocument } from './firestore.js';
 import {
   cleanupLegacyStaffAttendanceStorage,
   getCanonicalStaffAttendanceDocument,
@@ -10,6 +10,7 @@ import {
   safeStaffAttendanceDocumentId,
   staffAttendanceCollectionPath,
   staffAttendanceDocumentData,
+  staffAttendanceWriteDocumentId,
   staffAttendanceReadPaths,
   staffAttendanceStorageMigrationStatus
 } from './staff-attendance-storage.js';
@@ -672,7 +673,7 @@ async function ensurePresenceNotificationSchedule(env, statePath, username, poli
   };
   const write = state.__legacyStorage
     ? upsertDocument(env, statePath, safeStaffAttendanceDocumentId(username), { ...staffAttendanceDocumentData(state), ...fields })
-    : patchDocumentFields(env, statePath, safeStaffAttendanceDocumentId(username), fields, state.__updateTime ? { updateTime: state.__updateTime } : {});
+    : patchDocumentFields(env, statePath, staffAttendanceWriteDocumentId(state, safeStaffAttendanceDocumentId(username)), fields, state.__updateTime ? { updateTime: state.__updateTime } : {});
   await write.catch((error) => {
     if (![409, 412].includes(Number(error?.status))) throw error;
   });
@@ -839,7 +840,7 @@ export async function saveAttendanceSite(env, user, body = {}) {
     UpdatedAt: nowIso(),
     UpdatedBy: actorName(user)
   };
-  await upsertDocument(env, collectionPath, id, site);
+  await upsertDocument(env, collectionPath, staffAttendanceWriteDocumentId(existing, id), site);
   return { ok: true, site, message: 'Attendance location saved.' };
 }
 
@@ -852,7 +853,7 @@ export async function deleteAttendanceSite(env, user, body = {}) {
   if (!existing) fail('The attendance location no longer exists.', 404);
   await batchCommitDocuments(env, staffAttendanceReadPaths(env, 'sites', branchId).map((collectionPath) => ({
     collectionPath,
-    documentId: id,
+    documentId: existing.__storagePath === collectionPath ? clean(existing.__id) || id : id,
     operation: 'delete'
   })));
   return {
@@ -1023,13 +1024,13 @@ export async function clockStaffAttendance(env, user, body = {}, requestContext 
     { collectionPath: eventPath, documentId: eventId, data: event, exists: false },
     {
       collectionPath: workspace.statePath,
-      documentId: safeStaffAttendanceDocumentId(username),
+      documentId: staffAttendanceWriteDocumentId(workspace.storedState, safeStaffAttendanceDocumentId(username)),
       data: stateDocument,
       ...canonicalWritePrecondition(workspace.storedState)
     },
     {
       collectionPath: workspace.dailyPath,
-      documentId: daily.DailyId,
+      documentId: staffAttendanceWriteDocumentId(existingDaily, daily.DailyId),
       data: daily,
       ...canonicalWritePrecondition(existingDaily)
     }
@@ -1127,13 +1128,13 @@ export async function recordPresenceCheck(env, user, body = {}, requestContext =
     },
     {
       collectionPath: workspace.statePath,
-      documentId: safeStaffAttendanceDocumentId(username),
+      documentId: staffAttendanceWriteDocumentId(storedState, safeStaffAttendanceDocumentId(username)),
       data: state,
       ...canonicalWritePrecondition(storedState)
     },
     {
       collectionPath: workspace.dailyPath,
-      documentId: workspace.dailyId,
+      documentId: staffAttendanceWriteDocumentId(existingDaily, workspace.dailyId),
       data: daily,
       ...canonicalWritePrecondition(existingDaily)
     }
@@ -1203,13 +1204,13 @@ export async function recordManualAttendance(env, user, body = {}) {
     { collectionPath: auditPath, documentId: eventId, data: { ...event, Action: 'MANUAL_ATTENDANCE_CORRECTION' }, exists: false },
     {
       collectionPath: dailyAttendancePath(env, branchId),
-      documentId: daily.DailyId,
+      documentId: staffAttendanceWriteDocumentId(existingDaily, daily.DailyId),
       data: daily,
       ...canonicalWritePrecondition(existingDaily)
     },
     ...(!currentState?.LastTimestamp || timestamp >= currentState.LastTimestamp ? [{
       collectionPath: statePath,
-      documentId: stateId,
+      documentId: staffAttendanceWriteDocumentId(currentState, stateId),
       data: {
         Username: username,
         BranchId: branchId,

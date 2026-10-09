@@ -1,4 +1,4 @@
-import { batchCommitDocuments, getDocument, listCollection, queryCollection, upsertDocument } from './firestore.js';
+import { batchCommitLiteralDocuments as batchCommitDocuments, getDocument, listCollection, queryCollection, upsertDocument } from './firestore.js';
 import { requiredDeploymentIdentity } from './deployment-identity.js';
 import { safeScopeId } from './school-scope.js';
 
@@ -117,18 +117,54 @@ function storedRow(row, path, legacy = false) {
   return row ? { ...row, __storagePath: path, __legacyStorage: legacy } : null;
 }
 
+function attendanceRecordIdentityId(key, row) {
+  const username = clean(row?.Username).toLowerCase();
+  if (!username) return '';
+  if (key === 'state') return safeStaffAttendanceDocumentId(username);
+  if (key === 'daily') return safeStaffAttendanceDocumentId(`DAY-${clean(row.Date)}-${username}`);
+  if (key === 'faceTemplates') return safeStaffAttendanceDocumentId(`STAFF-FACE-${username}`);
+  return '';
+}
+
+async function getCompatibleAttendanceDocument(env, path, key, documentId) {
+  const record = await getDocument(env, path, documentId);
+  if (record) {
+    const identityId = attendanceRecordIdentityId(key, record);
+    if (identityId && identityId !== documentId) {
+      const error = new Error('This attendance record belongs to another staff identity. Ask HR to review the account; existing attendance is unchanged.');
+      error.status = 409;
+      throw error;
+    }
+    return record;
+  }
+  // Older atomic commits persisted URL-escaped characters as literal ID text.
+  // Recover those records without renaming/deleting them or scanning a branch.
+  const encodedId = encodeURIComponent(documentId);
+  if (encodedId === documentId) return null;
+  const encoded = await getDocument(env, path, encodedId);
+  if (!encoded) return null;
+  // A literal "%40" username is a different account from an "@" username.
+  // Never use an encoded alias belonging to another staff identity.
+  if (['state', 'daily', 'faceTemplates'].includes(key) && attendanceRecordIdentityId(key, encoded) !== documentId) return null;
+  return encoded;
+}
+
+export function staffAttendanceWriteDocumentId(record, documentId) {
+  return !record?.__legacyStorage && clean(record?.__id) ? clean(record.__id) : clean(documentId);
+}
+
 export async function getStaffAttendanceDocument(env, key, branchId, documentId) {
   const [canonicalPath, legacyPath] = await activeStaffAttendanceReadPaths(env, key, branchId);
-  const canonical = await getDocument(env, canonicalPath, documentId);
+  const canonical = await getCompatibleAttendanceDocument(env, canonicalPath, key, documentId);
   if (canonical) return storedRow(canonical, canonicalPath, false);
   if (!legacyPath) return null;
-  const legacy = await getDocument(env, legacyPath, documentId);
+  const legacy = await getCompatibleAttendanceDocument(env, legacyPath, key, documentId);
   return storedRow(legacy, legacyPath, true);
 }
 
 export async function getCanonicalStaffAttendanceDocument(env, key, branchId, documentId) {
   const canonicalPath = staffAttendanceCollectionPath(env, key, branchId);
-  const canonical = await getDocument(env, canonicalPath, documentId);
+  const canonical = await getCompatibleAttendanceDocument(env, canonicalPath, key, documentId);
   return storedRow(canonical, canonicalPath, false);
 }
 

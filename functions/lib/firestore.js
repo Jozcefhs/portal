@@ -457,7 +457,7 @@ function batchWritePrecondition(item = {}) {
   return null;
 }
 
-export async function batchCommitDocuments(env, writes) {
+export async function batchCommitDocuments(env, writes, options = {}) {
   const items = Array.isArray(writes) ? writes : [];
   if (!items.length) return { writeResults: [] };
   if (items.length > 500) throw new Error('A database batch may contain at most 500 writes.');
@@ -469,8 +469,14 @@ export async function batchCommitDocuments(env, writes) {
   const body = {
     writes: items.map((item) => {
       const collection = String(item.collectionPath || '').replace(/^\/+|\/+$/g, '');
-      const id = encodeURIComponent(String(item.documentId || '').trim());
+      const documentId = String(item.documentId || '').trim();
+      // Keep legacy callers' persisted IDs stable. New/compatible storage uses
+      // literal resource IDs: URL encoding belongs only in the HTTP URL.
+      const id = options.literalDocumentIds === true ? documentId : encodeURIComponent(documentId);
       if (!collection || !id) throw new Error('Every batch write requires a collection path and document ID.');
+      if (options.literalDocumentIds === true && (id.includes('/') || id === '.' || id === '..')) {
+        throw new Error('A literal batch document ID must be a single document path segment.');
+      }
       const resourceName = `${resourceBase}/${collection}/${id}`;
       const operation = clean(item.operation || item.type).toLowerCase();
       const write = operation === 'delete' || item.delete === true
@@ -502,6 +508,10 @@ export async function batchCommitDocuments(env, writes) {
     throw error;
   }
   return data;
+}
+
+export async function batchCommitLiteralDocuments(env, writes) {
+  return batchCommitDocuments(env, writes, { literalDocumentIds: true });
 }
 
 export async function batchUpsertDocuments(env, writes) {
