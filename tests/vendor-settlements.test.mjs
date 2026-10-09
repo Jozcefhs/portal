@@ -4,6 +4,16 @@ import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 import { webcrypto } from 'node:crypto';
 import * as rules from '../functions/lib/vendor-settlement-rules.js';
+import { buildWalletPurchaseAccountingJournal } from '../functions/api/backend.js';
+
+const withoutImports = source => source.replace(/^import[\s\S]*?from '[^']+';\r?\n/gm,'').replace(/export /g,'');
+const accessSource = withoutImports(await readFile(new URL('../functions/lib/vendor-sales-access.js',import.meta.url),'utf8'));
+const posSource = withoutImports(await readFile(new URL('../functions/lib/vendor-sales.js',import.meta.url),'utf8'))
+  .replace(/const \{getWalletCardAccount\} = await import\('[^']+'\);/g,'')
+  .replace(/const \{recordWalletPurchase\} = await import\('[^']+'\);/g,'');
+const backendSource = await readFile(new URL('../functions/api/backend.js',import.meta.url),'utf8');
+const walletSource = backendSource.slice(backendSource.indexOf('export async function recordWalletPurchase('),backendSource.indexOf('export function buildCreditActionAccountingJournal('))
+  .replace('export ','').replace(/const \{ assertVendorSaleReplay \} = await import\('[^']+'\);/g,'');
 import { handleProductImport } from '../functions/lib/vendor-product-import.js';
 import { assertRequisitionTransition } from '../functions/lib/requisition-workflow.js';
 import { validateRequisitionPosting } from '../functions/lib/requisition-posting.js';
@@ -85,7 +95,8 @@ test('period boundaries use the business timezone, weekly Monday and fixed-charg
 test('vendor role is available in every edition and custom modules cannot expand it', () => {
   for (const edition of ['school','faith','organization']) {
     assert.ok(rolesForEdition(edition).includes('Vendor User'));
-    assert.deepEqual(allowedSectionsFor({role:'Vendor User',tabAccess:['students','accounts','staffUsers']},null,{edition}),['vendorSettlements']);
+    assert.deepEqual(allowedSectionsFor({role:'Vendor User',tabAccess:['students','accounts','staffUsers']},null,{edition}),
+      ['vendorSettlements',...(edition === 'school' ? ['tuckShop'] : ['organizationStore','restaurant'])]);
   }
 });
 test('school-owned carts use no vendor reads or extra mutations', async () => {
@@ -306,7 +317,9 @@ function commerceFixture(edition = 'school', section = 'tuckShop') {
   const f = fixture([['commerceVendors','v1',vendor('v1',scoped)],['settings',`vendor-settlement-${edition}--main`,{...settings,...scoped}]]);
   const collection = ({tuckShop:'tuckShopInventory',organizationStore:'storeItems',restaurant:'restaurantInventory'})[section];
   for (const stockId of ['stock1','stock2']) f.put(collection,stockId,{...scoped,ItemCode:stockId,StoreType:'Organisation Store',ItemName:'Water',VendorId:'v1',Price:50,Quantity:5,Active:'YES'});
-  const context = {...f.functions,crypto:webcrypto,Date,console,URL,URLSearchParams,
+  const access = vm.runInNewContext(`${accessSource}\n({linkedSalesVendors,restrictVendorInventory,assertVendorSaleReplay})`,{
+    ...rules,queryCollectionPages:async (_env,c,opts) => f.list(c).filter(row => opts.filters.every(q => row[q.field] === q.value))});
+  const context = {...f.functions,...access,crypto:webcrypto,Date,console,URL,URLSearchParams,
     batchUpsertDocuments:f.commit,getDocument:async (_env,c,id) => structuredClone(f.get(c,id) || null),listCollection:async (_env,c) => f.list(c),
     upsertDocument:async (_env,c,id,row) => f.put(c,id,row),patchDocumentFields:async (_env,c,id,row) => f.put(c,id,{...f.get(c,id),...row}),
     createDocumentIfAbsent:async (_env,c,id,row) => { const previous = f.get(c,id); if (!previous) f.put(c,id,row); return {created:!previous,document:previous || f.get(c,id)}; },
@@ -314,8 +327,20 @@ function commerceFixture(edition = 'school', section = 'tuckShop') {
     sendOrganizationCommercePaymentLinkEmail:async () => ({ok:true}),sendOrganizationCommerceReceiptEmail:async () => ({ok:true}),
     fetch:async (_url,options) => { const body = JSON.parse(options.body); return {ok:true,json:async () => ({status:true,data:{authorization_url:'https://payment.example.test',reference:body.reference}})}; }
   };
-  const commerce = vm.runInNewContext(`${commerceSource}\n({recordManualOrganizationCommerceSale,initializeOnlineOrganizationCommerceSale,finalizeOnlineOrganizationCommerceSale,previewOrganizationCommerceSale,preparePaidCommerceInventoryCompletion})`,context);
-  return {...f,commerce,section,collection,actor:{...user,edition},body:{SaleRequestId:'sale1',PaymentMethod:'Cash',Items:[{Reference:'stock1',Quantity:2}]}};
+  const commerce = vm.runInNewContext(`${commerceSource}\n({COMMERCE_CONFIG,recordManualOrganizationCommerceSale,initializeOnlineOrganizationCommerceSale,finalizeOnlineOrganizationCommerceSale,previewOrganizationCommerceSale,preparePaidCommerceInventoryCompletion,prepareTuckShopWalletCart})`,context);
+  const sha256Hex = async value => [...new Uint8Array(await webcrypto.subtle.digest('SHA-256',new TextEncoder().encode(value)))].map(v => v.toString(16).padStart(2,'0')).join('');
+  const findStudent = async () => structuredClone(f.get('students','child') || null);
+  const walletAccountPayload = async (_env,student) => ({...student,WalletBalance:Number(student.OpeningWallet || 0)-f.list('ledger').reduce((sum,r) => sum+Number(r.Debit || 0),0),WalletSpentToday:f.list('ledger').reduce((sum,r) => sum+Number(r.Debit || 0),0)});
+  const wallet = vm.runInNewContext(`${walletSource}\nrecordWalletPurchase`,{...context,...rules,...commerce,
+    normalizeMatchText:rules.lower,asMoneyNumber:v => Math.round(Number(v || 0)*100)/100,
+    requestedStudentScope:b => ({branchId:b.UserBranchId,schoolSection:b.UserSchoolSectionAccess}),
+    findStudentByWalletCard:findStudent,findStudentByAccountRef:findStudent,walletAccountPayload,
+    safeDocumentId:v => String(v).replace(/[^a-zA-Z0-9_-]/g,'_'),schoolSectionFor:r => r.SchoolSection,
+    nowIso:() => timestamp,sha256Hex,requireConfiguredDesktopSecret:() => 'fixture-secret',
+    buildWalletPurchaseAccountingJournal,batchCommitDocuments:f.commit});
+  const pos = vm.runInNewContext(`${posSource}\nhandleVendorSalesAction`,{...context,...rules,...commerce,TextEncoder,
+    recordWalletPurchase:wallet,getWalletCardAccount:async () => ({account:await walletAccountPayload({},await findStudent())})});
+  return {...f,commerce,pos,wallet,sha256Hex,section,collection,actor:{...user,edition},body:{SaleRequestId:'sale1',PaymentMethod:'Cash',Items:[{Reference:'stock1',Quantity:2}]}};
 }
 for (const [edition,section] of [['school','tuckShop'],['faith','restaurant'],['organization','organizationStore']]) {
   test(`${edition} checkout refuses unversioned stock without any financial or stock mutation`, async () => {
@@ -327,6 +352,90 @@ for (const [edition,section] of [['school','tuckShop'],['faith','restaurant'],['
     assert.equal(f.list('accountingJournals').length,0);
   });
 }
+
+for (const [edition,section] of [['school','tuckShop'],['faith','restaurant'],['organization','organizationStore']]) {
+  test(`${edition} restricted vendor POS scopes stock and posts/retries the same balanced sale only once`,async () => {
+    const f = commerceFixture(edition,section);
+    f.put('commerceVendors','v1',{...f.get('commerceVendors','v1'),LoginUsername:'seller'});
+    f.put(f.collection,'stock2',{...f.get(f.collection,'stock2'),VendorId:''});
+    const actor = {...f.actor,role:'Vendor User',username:'seller',allowedSections:['vendorSettlements',section]};
+    const run = (action,body={}) => f.pos({},actor,{action,Section:section,...body});
+    const boot = await run('salesBootstrap');
+    assert.equal(boot.products.length,1); assert.equal(boot.sellingEnabled,true);
+    await assert.rejects(run('previewVendorSale',{Items:[{Reference:'stock2',Quantity:1}]}),/available|stock|found/i);
+    await assert.rejects(run('previewVendorSale',{Items:[{Reference:'stock1',Quantity:1.5}]}),/whole-number/);
+    const body = {Items:[{Reference:'stock1',Quantity:2}],SaleRequestId:'same-checkout-001',PaymentMethod:'Cash',ExpectedAmount:100,Confirmed:true};
+    const preview = await run('previewVendorSale',body); assert.equal(preview.Amount,100);
+    const result = await run('recordVendorSale',body);
+    assert.equal(f.get(f.collection,'stock1').Quantity,3);
+    assert.equal(f.get('vendorBalances','v1').NetCents,10000);
+    const journal = f.list('accountingJournals')[0];
+    assert.equal(journal.TotalDebit,journal.TotalCredit);
+    assert.ok(journal.Lines.some(l => l.AccountCode === '2000' && l.Credit === 100));
+    assert.equal((await run('recordVendorSale',body)).replayed,true);
+    assert.equal(f.list('vendorEarnings').length,1);
+    await assert.rejects(run('recordVendorSale',{...body,Items:[{Reference:'stock1',Quantity:1}],ExpectedAmount:50}),/different cart/);
+    assert.equal(f.get(f.collection,'stock1').Quantity,3);
+    assert.equal(result.sale.RecordedByUsername,undefined); assert.equal(result.sale.Items[0].VendorRule,undefined);
+    f.put('commerceVendors','v1',{...f.get('commerceVendors','v1'),PosEnabled:false});
+    assert.equal((await run('salesBootstrap')).sellingEnabled,false);
+    await assert.rejects(run('recordVendorSale',{...body,SaleRequestId:'disabled-checkout'}),/No active/);
+  });
+}
+
+test('vendor selling fails closed for another login, section, subscription and wallet limits',async () => {
+  const f = commerceFixture();
+  f.put('commerceVendors','v1',{...f.get('commerceVendors','v1'),LoginUsername:'seller'});
+  const actor = {...f.actor,role:'Vendor User',username:'seller',schoolSectionAccess:'Secondary',allowedSections:['vendorSettlements','tuckShop']};
+  const body = {action:'recordVendorWalletPurchase',Section:'tuckShop',Items:[{Reference:'stock1',Quantity:2}],SaleRequestId:'wallet-limit-checkout',
+    PaymentMethod:'Student Wallet',AccountRef:'CHILD/001',ExpectedAmount:100,Confirmed:true};
+  for (const changed of [{username:'other'},{allowedSections:['vendorSettlements']},{subscriptionReadOnly:true},{branchId:'other'},{schoolSectionAccess:'Primary'}])
+    await assert.rejects(f.pos({}, {...actor,...changed},body));
+  for (const [limits,message] of [[{OpeningWallet:50},/Insufficient/],[{WalletTxnLimit:50},/transaction limit/],
+    [{WalletDailyLimit:50},/daily wallet limit/],[{WalletCardStatus:'Blocked'},/blocked/]]) {
+    f.put('students','child',{AccountRef:'CHILD/001',DisplayName:'Fixture child',BranchId:'main',SchoolSection:'Secondary',
+      WalletCardStatus:'Active',OpeningWallet:1000,__scopePath:'students',...limits});
+    await assert.rejects(f.pos({},actor,body),message);
+  }
+  assert.equal(f.list('ledger').length,0); assert.equal(f.list('vendorEarnings').length,0);
+  assert.equal(f.get(f.collection,'stock1').Quantity,5);
+});
+
+test('vendor wallet checkout atomically links stock, wallet liability, commission, payable and approved settlement',async () => {
+  const f = commerceFixture();
+  f.put('commerceVendors','v1',{...f.get('commerceVendors','v1'),LoginUsername:'seller',RuleHistory:[rules.normalizeRule({Mode:'Percentage',Rate:10},timestamp)]});
+  f.put('students','child',{AccountRef:'CHILD/001',DisplayName:'Fixture child',BranchId:'main',SchoolSection:'Secondary',
+    WalletCardId:'CARD-1',WalletCardStatus:'Active',OpeningWallet:1000,WalletPinThreshold:10,
+    WalletPinHash:await f.sha256Hex('fixture-secret:1234'),__scopePath:'students'});
+  const actor = {...f.actor,role:'Vendor User',username:'seller',allowedSections:['vendorSettlements','tuckShop']};
+  const run = (action,body={}) => f.pos({},actor,{action,Section:'tuckShop',...body});
+  const lookup = await run('vendorWalletLookup',{AccountRef:'CHILD/001'});
+  for (const field of ['WalletBalance','WalletPinHash','OpeningWallet','__scopePath']) assert.equal(lookup.account[field],undefined);
+  const body = {Items:[{Reference:'stock1',Quantity:2}],SaleRequestId:'wallet-checkout-001',PaymentMethod:'Student Wallet',
+    AccountRef:'CHILD/001',ExpectedAmount:100,Confirmed:true,WalletPin:'1234'};
+  await assert.rejects(run('recordVendorWalletPurchase',{...body,WalletPin:'bad'}),/Invalid wallet PIN/);
+  assert.equal(f.list('ledger').length,0); assert.equal(f.get(f.collection,'stock1').Quantity,5);
+  f.conflict(); await assert.rejects(run('recordVendorWalletPurchase',body),/changed during checkout/);
+  assert.equal(f.list('ledger').length,0); assert.equal(f.list('vendorEarnings').length,0);
+  const result = await run('recordVendorWalletPurchase',body);
+  assert.equal(result.account,undefined); assert.equal(result.balance,undefined);
+  assert.equal(f.get(f.collection,'stock1').Quantity,3); assert.equal(f.list('ledger')[0].Debit,100);
+  assert.equal(f.get('vendorBalances','v1').NetCents,9000);
+  const journal = f.list('accountingJournals')[0];
+  assert.equal(journal.TotalDebit,100); assert.equal(journal.TotalCredit,100);
+  assert.ok(journal.Lines.some(l => l.AccountCode === '2200' && l.Debit === 100));
+  assert.ok(journal.Lines.some(l => l.AccountCode === '2000' && l.Credit === 90));
+  assert.ok(journal.Lines.some(l => l.AccountCode === '4090' && l.Credit === 10));
+  assert.equal((await run('recordVendorWalletPurchase',body)).replayed,true);
+  assert.equal(f.list('ledger').length,1); assert.equal(f.list('vendorEarnings').length,1);
+  await f.run('requestSettlement',{VendorId:'v1',RequestId:'wallet-claim',From:'1970-01-01',To:'2099-12-31',Amount:90},actor);
+  for (const [status,role] of [['Accounts Confirmed','Accounts Officer'],['Admin Reviewed','Admin'],['Approved','Director']]) await f.decision(status,role,'wallet-claim');
+  const request = f.get('vendorSettlementRequests','VREQ-wallet-claim');
+  await f.run('pay',{VendorId:'v1',SettlementId:request.SettlementId,RecordVersion:request.__updateTime,RequestId:'wallet-settle',
+    Amount:90,Date:'2026-10-08',Reference:'BANK-SETTLE',EvidenceReference:'SLIP',approvalPassword:'test-confirmation'});
+  assert.equal(f.get('vendorBalances','v1').PaidCents,9000); assert.equal(f.get('vendorBalances','v1').ReservedCents,0);
+  assert.equal(f.list('ledger').length,1,'Paying vendor never debits the child wallet again');
+});
 
 test('web shell caches vendor assets and printable requisitions retain the complete rule label', async () => {
   const [shell,client,admin] = await Promise.all([

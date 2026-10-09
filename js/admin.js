@@ -18437,6 +18437,18 @@ async function loadHotelServices() {
 function renderSection(active) {
   if (!dashboardData) return;
   window.DynamaxVendors?.unmount();
+  window.DynamaxVendorPOS?.unmount();
+  if (currentUser?.role === 'Vendor User' && ['tuckShop','organizationStore','restaurant'].includes(active)) {
+    summaryEl.replaceChildren();
+    window.DynamaxVendorPOS?.mount(panelEl,async (action,payload,signal) => {
+      const response = await staffFetch('/api/staff-vendor-settlements',{method:'POST',signal,
+        headers:{'Content-Type':'application/json'},body:JSON.stringify({action,...payload})});
+      const result = await response.json();
+      if (!response.ok || !result.ok) throw new Error(result.message || 'Vendor checkout failed.');
+      return result;
+    },active);
+    return;
+  }
   panelEl.classList.toggle('school-store-panel', active === 'bookstore' || active === 'uniformStore' || active === 'organizationStore');
   if (active === 'overview') {
     panelEl.innerHTML = '';

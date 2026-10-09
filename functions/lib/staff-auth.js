@@ -277,7 +277,10 @@ function publicUser(user) {
 
 export function allowedSectionsFor(user = {}, featureFlags = null, options = {}) {
   const role = clean(user.role || user.Role);
-  if (role === 'Vendor User') return filterSectionsForFeatures(['vendorSettlements'], featureFlags);
+  if (role === 'Vendor User') {
+    const edition = clean(options.edition || user.edition || user.Edition || 'school');
+    return filterSectionsForFeatures(['vendorSettlements', ...(edition === 'school' ? ['tuckShop'] : ['organizationStore', 'restaurant'])], featureFlags);
+  }
   if (role === EXTERNAL_AUDITOR_ROLE) return filterSectionsForFeatures(['externalAudit'], featureFlags);
   const department = lower(user.department || user.Department);
   const departmentEntitlements = role === 'Department User'

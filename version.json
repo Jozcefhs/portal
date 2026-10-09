@@ -1,7 +1,7 @@
 {
-  "version": "3.1.19",
+  "version": "3.1.20",
   "channel": "stable",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.19.exe",
-  "sha256": "c648a0d5494bfe5b629c3f7ac5ad42f7c2934841e1798e9525d7801d51a4dc50",
-  "notes": "Dynamax Desktop v3.1.19 repairs previous-payment import approval: the password confirmation is owned by the import window, is raised and focused, and shows clear approval, cancellation and startup status. Imports retain finance authorization, five-row batches, original tenant context, duplicate-reference checks and timeout reconciliation. The shared desktop repair applies across School, Church and Other Organisation editions. No existing payments or balances are changed by installing this update."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.20.exe",
+  "sha256": "3a72f930da6ec92c2426b466c75898f02fb1ecf1daf851deb71f6c2a9197d0d3",
+  "notes": "Dynamax Desktop v3.1.20 adds one-login vendor selling and statements, with server-enforced stock ownership, atomic wallet/vendor journals and duplicate-safe checkout. Applies across School, Faith and Organisation editions where the relevant stores are enabled. Accounts retains ownership, commission, approval and payment controls; vendor sales remain disabled until reviewed and enabled. Includes the tested timetable generator, vendor ownership batch import, library fixes and wallet-card repairs. Timetables respect teachers, arms, weekly quotas, subject cutoffs, availability, breaks and conflict checks, and are saved as reviewed drafts. Installing the update does not rewrite existing financial records."
 }

@@ -1,0 +1,15 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Vendor POS fixture</title>
+<link rel="stylesheet" href="../../css/vendor-settlements.css"><style>body{margin:12px;font:14px Arial;color:#153952}#root{max-width:1100px;margin:auto}input,select{box-sizing:border-box}button{cursor:pointer}</style>
+<main id="root"></main><script src="../../js/vendor-pos.js"></script><script>
+let quantity=5,posted=false;
+DynamaxVendorPOS.mount(document.querySelector('#root'),async(action,body)=>{
+ await new Promise(resolve=>setTimeout(resolve,80));
+ if(action==='salesBootstrap')return {sellingEnabled:true,message:'LOCAL FIXTURE — no real payment or stock.',products:[
+  {InventoryId:'stock-1',ItemName:'Water',Category:'Drinks',Price:100,Quantity:quantity},
+  {InventoryId:'stock-2',ItemName:'Bread',Category:'Food',Price:200,Quantity:10}]};
+ if(action==='vendorWalletLookup')return {account:{AccountRef:'FIXTURE/001',DisplayName:'Fixture child'}};
+ if(action==='previewVendorSale')return {Amount:body.Items.reduce((n,i)=>n+i.Quantity*(i.Reference==='stock-1'?100:200),0)};
+ if(action.startsWith('record')){if(!posted){quantity-=body.Items[0].Quantity;posted=true;}return {message:'Fixture sale recorded.',sale:{SaleNo:'FIXTURE-RECEIPT',Amount:body.ExpectedAmount}};}
+ throw new Error('Unexpected fixture action');
+},'tuckShop');
+</script></html>

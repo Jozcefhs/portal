@@ -16,6 +16,7 @@ import {
   withPaystackBranchRouting
 } from './direct-bank-transfer.js';
 import { prepareVendorSale, snapshotVendorCart } from './vendor-settlements.js';
+import { restrictVendorInventory, assertVendorSaleReplay } from './vendor-sales-access.js';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
@@ -234,8 +235,8 @@ function itemReference(entry = {}) {
 }
 
 function requestedQuantity(entry = {}) {
-  const quantity = Math.floor(money(entry.Quantity || entry.quantity || 1));
-  if (quantity <= 0) throw error('Every sale item must have a quantity greater than zero.');
+  const quantity = Number(entry.Quantity ?? entry.quantity ?? 1);
+  if (!Number.isSafeInteger(quantity) || quantity <= 0) throw error('Every sale item must have a positive whole-number quantity.');
   return quantity;
 }
 
@@ -264,7 +265,11 @@ function requestedItems(body = {}) {
 
 async function scopedInventory(env, section, user) {
   const config = configFor(section);
-  const rows = (await listCollection(env, config.inventory)).filter((row) => visibleInScope(row, user));
+  const schoolSection = lower(user.schoolSectionAccess || user.SchoolSectionAccess || 'All');
+  let rows = (await listCollection(env, config.inventory)).filter((row) => visibleInScope(row, user)
+    && (scopeFor(user).OrganisationEdition !== 'school' || schoolSection === 'all'
+      || lower(row.SchoolSection || 'Secondary') === schoolSection));
+  rows = await restrictVendorInventory(env, user, section, rows);
   if (section === 'organizationStore') {
     return rows.filter((row) => clean(row.StoreType) === 'Organisation Store');
   }
@@ -364,6 +369,7 @@ function baseSale(section, body, user, cart, id, method) {
     SaleDate: clean(body.SaleDate || body.saleDate) || nowIso(),
     RecordedBy: clean(user.displayName || user.DisplayName || user.username || user.Username),
     RecordedByUsername: clean(user.username || user.Username),
+    ...(body.VendorCheckoutDigest ? {VendorCheckoutDigest:body.VendorCheckoutDigest} : {}),
     CreatedAt: nowIso(),
     UpdatedAt: nowIso()
   };
@@ -494,7 +500,7 @@ export async function prepareTuckShopWalletCart(env, body = {}, user = {}, sale 
 }
 
 async function existingSale(env, id) {
-  return getDocument(env, COMMERCE_CONFIG.organizationStore.sales, safeId(id)).catch(() => null);
+  return getDocument(env, COMMERCE_CONFIG.organizationStore.sales, safeId(id));
 }
 
 export async function listOrganizationCommerceSales(env, section, user) {
@@ -528,6 +534,7 @@ export async function recordManualOrganizationCommerceSale(env, section, body = 
   const id = saleId(body, section);
   const previous = await existingSale(env, id);
   if (previous) {
+    await assertVendorSaleReplay(env, user, section, previous, body.VendorCheckoutDigest);
     const scope = scopeFor(user);
     if (clean(previous.SaleType) !== section || lower(previous.BranchId) !== lower(scope.BranchId)
       || (section === 'tuckShop' && lower(previous.CustomerRef) !== lower(body.CustomerRef))) {

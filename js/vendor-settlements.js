@@ -193,9 +193,10 @@
         ${select('SupplierId','Link existing supplier (optional)',[['','Separate sales vendor'],...(data.suppliers || []).map(s => [s.SupplierId,s.Name])],v.SupplierId)}
         ${data.capabilities.edition === 'school' ? select('SchoolSection','School section',['Primary','Secondary'],v.SchoolSection || (data.capabilities.section === 'Primary' ? 'Primary' : 'Secondary')) : ''}
         ${select('Active','Active',['YES','NO'],v.Active || 'YES')}${input('BankName','Bank name',v.BankName)}${input('BankAccountName','Account name',v.BankAccountName)}
+        <label class="vendor-check vendor-full"><input name="PosEnabled" type="checkbox" ${v.PosEnabled !== false ? 'checked' : ''}> Allow this vendor login to sell its assigned products at the counter</label>
         ${input('BankAccountNumber',`Account number${v.BankAccountMasked ? ` (saved ${v.BankAccountMasked}; blank keeps it)` : ''}`,'','text','inputmode="numeric" pattern="[0-9]{6,34}"')}
         ${v.VendorId ? '<label class="vendor-check vendor-full"><input name="ChangeRule" type="checkbox"> Change the payment arrangement prospectively (leave unchecked for contact or bank changes only)</label>' : ''}${ruleFields(chosen,true)}`,
-        'saveVendor', b => { if (v.VendorId && !b.ChangeRule) delete b.Rule; delete b.ChangeRule; return { ...b, VendorId:vendorId, RecordVersion:v.RecordVersion }; });
+        'saveVendor', b => { if (v.VendorId && !b.ChangeRule) delete b.Rule; delete b.ChangeRule; return { ...b, PosEnabled:!!b.PosEnabled, VendorId:vendorId, RecordVersion:v.RecordVersion }; });
     }
     function productForm(p = {}) {
       const stockId = p.InventoryId || `ITEM-${crypto.randomUUID()}`;

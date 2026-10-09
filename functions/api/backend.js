@@ -6484,7 +6484,7 @@ export async function saveWalletCard(env, body) {
   return { ok: true, message: 'Wallet card saved.', account: await walletAccountPayload(env, saved) };
 }
 
-export async function recordWalletPurchase(env, body) {
+export async function recordWalletPurchase(env, body, options = {}) {
   const cardId = clean(body.WalletCardId || body.CardId || body.cardId).toUpperCase();
   const accountRef = clean(body.AccountRef || body.accountRef || body.AdmissionNo || body.admissionNo);
   const tuckShop = normalizeMatchText(body.Department || body.department) === 'tuck shop';
@@ -6510,6 +6510,10 @@ export async function recordWalletPurchase(env, body) {
   if (tuckShop) {
     const existingSale = await getDocument(env, 'organizationCommerceSales', saleNo);
     if (existingSale) {
+      if (options.vendorUser) {
+        const { assertVendorSaleReplay } = await import('../lib/vendor-sales-access.js');
+        await assertVendorSaleReplay(env, options.vendorUser, 'tuckShop', existingSale, options.vendorCheckoutDigest);
+      }
       if (clean(existingSale.CustomerRef) !== clean(account.AccountRef)
         || clean(existingSale.SaleType) !== 'tuckShop'
         || normalizeMatchText(existingSale.BranchId) !== normalizeMatchText(account.BranchId || student.BranchId || 'main')) {
@@ -6519,7 +6523,8 @@ export async function recordWalletPurchase(env, body) {
         sale: existingSale, account, balance: account.WalletBalance };
     }
   }
-  const saleScope = { branchId: clean(account.BranchId || student.BranchId || 'main'), edition: 'school' };
+  const saleScope = { ...(options.vendorUser || {}), branchId: clean(account.BranchId || student.BranchId || 'main'),
+    schoolSectionAccess: clean(account.SchoolSection || student.SchoolSection || schoolSectionFor(student)), edition: 'school' };
   const pricedSale = tuckShop ? await prepareTuckShopWalletCart(env, body, saleScope, {
     SaleNo: saleNo, BranchId: saleScope.branchId, OrganisationEdition: 'school',
     SchoolSection: clean(account.SchoolSection || student.SchoolSection),
@@ -6613,7 +6618,9 @@ export async function recordWalletPurchase(env, body) {
       Amount: amount, GrossAmount: amount, Currency: 'NGN', PaymentMethod: 'Student Wallet',
       PaymentStatus: 'Paid', Status: 'Paid', InventoryStatus: 'Deducted', LedgerNo: ledgerNo,
       SaleDate: timestamp, PaidAt: timestamp, CreatedAt: timestamp, UpdatedAt: timestamp,
-      RecordedBy: entry.RecordedBy, CheckoutSource: clean(body.Terminal || body.terminal) || 'Tuck Shop POS'
+      RecordedBy: entry.RecordedBy, RecordedByUsername: clean(options.vendorUser?.username || body.UserUsername),
+      ...(options.vendorCheckoutDigest ? {VendorCheckoutDigest:options.vendorCheckoutDigest} : {}),
+      CheckoutSource: clean(body.Terminal || body.terminal) || 'Tuck Shop POS'
     };
     const vendorPosting = await prepareVendorSale(env, sale, buildWalletPurchaseAccountingJournal(entry));
     const journal = vendorPosting.journal;

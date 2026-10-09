@@ -190,7 +190,7 @@ export function roleAccessScope(user = {}) {
 }
 
 export function withRequiredRoleModules(role, modules = [], edition = 'school', featureFlags = null) {
-  if (role === 'Vendor User') return normalizeModuleList(['vendorSettlements'], edition, featureFlags);
+  if (role === 'Vendor User') return normalizeModuleList(['vendorSettlements', ...(edition === 'school' ? ['tuckShop'] : ['organizationStore', 'restaurant'])], edition, featureFlags);
   if (role === 'External Auditor') return normalizeModuleList(['externalAudit'], edition, featureFlags);
   const normalized = [...modules, ...STAFF_SELF_SERVICE_MODULES];
   if (role === 'Super Admin' || role === 'Director') {

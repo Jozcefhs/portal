@@ -7,6 +7,7 @@ import {
   configuredModulesForUser,
   defaultModulesForRole,
   modulesForEdition,
+  normalizeModuleList,
   roleAccessView,
   rolesForEdition,
   withRoleModules,
@@ -68,8 +69,9 @@ test('ordinary staff receive payroll and finance requests, while External Audito
     for (const role of rolesForEdition(edition)) {
       const defaults = defaultModulesForRole(role, { edition, featureFlags: flags });
       if (role === 'Vendor User') {
-        assert.deepEqual(defaults, ['vendorSettlements']);
-        assert.deepEqual(allowedSectionsFor({ role, TabAccess: ['students', 'accounts', 'payroll'] }, flags, { edition }), ['vendorSettlements']);
+        const vendorModules = normalizeModuleList(['vendorSettlements', ...(edition === 'school' ? ['tuckShop'] : ['organizationStore', 'restaurant'])], edition, flags);
+        assert.deepEqual(defaults, vendorModules);
+        assert.deepEqual(allowedSectionsFor({ role, TabAccess: ['students', 'accounts', 'payroll'] }, flags, { edition }), vendorModules);
         continue;
       }
       if (role === 'External Auditor') {

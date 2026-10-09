@@ -62,7 +62,7 @@ function requireAccess(user, action) {
   if (!clean(user.username)) fail('Sign in to manage vendor settlements.', 401);
   if (!(user.allowedSections || []).includes('vendorSettlements')) fail('Vendor settlements are not available for this account.', 403);
   if (!operators.has(role(user)) && role(user) !== 'Vendor User') fail('Your role cannot access vendor settlements.', 403);
-  if (!['bootstrap', 'statement', 'previewHistorical', 'previewSale', 'previewProductImport'].includes(action)
+  if (!['bootstrap', 'statement', 'previewHistorical', 'previewSale', 'previewProductImport', 'salesBootstrap', 'previewVendorSale', 'vendorWalletLookup'].includes(action)
     && (user.subscriptionActive === false || user.subscriptionReadOnly === true)) fail('This workspace is read-only until the subscription is renewed.', 403);
 }
 async function ownVendor(env, user, scope, vendorId) {
@@ -288,7 +288,8 @@ async function saveVendor(env, user, scope, body) {
     ContactPerson: clean(body.ContactPerson), Phone: clean(body.Phone), Email: clean(body.Email), SupplierId: clean(body.SupplierId),
     LoginUsername: lower(body.LoginUsername), BankName: clean(body.BankName), BankAccountName: clean(body.BankAccountName), BankAccountNumber: account,
     BankDetailsVersion: bankChanged || !original ? crypto.randomUUID() : original.BankDetailsVersion,
-    Active: body.Active === 'NO' ? 'NO' : 'YES', RuleHistory: history, CreatedAt: original?.CreatedAt || timestamp, UpdatedAt: timestamp, UpdatedBy: actor(user) };
+    Active: body.Active === 'NO' ? 'NO' : 'YES', PosEnabled: body.PosEnabled == null ? original?.PosEnabled ?? true : body.PosEnabled === true,
+    RuleHistory: history, CreatedAt: original?.CreatedAt || timestamp, UpdatedAt: timestamp, UpdatedBy: actor(user) };
   if (vendor.LoginUsername) {
     const linked = await findStaffUserRecord(env, vendor.LoginUsername);
     if (!linked || clean(linked.AssignedRole || linked.Role) !== 'Vendor User'
@@ -715,6 +716,14 @@ export async function handleVendorSettlementAction(env, user, body = {}, options
   const action = clean(body.action || body.Action || 'bootstrap'), scope = settlementScope(user);
   requireAccess(user, action);
   switch (action) {
+    case 'salesBootstrap':
+    case 'previewVendorSale':
+    case 'recordVendorSale':
+    case 'vendorWalletLookup':
+    case 'recordVendorWalletPurchase': {
+      const {handleVendorSalesAction} = await import('./vendor-sales.js');
+      return handleVendorSalesAction(env,user,{...body,action});
+    }
     case 'previewSale':
     case 'recordSale': {
       requireRole(user, operators);

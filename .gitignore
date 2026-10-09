@@ -13,3 +13,4 @@ node_modules/.mf/
 dist/
 .pages-deploy/
 *.log
+.tmp-vendor-worker-build/
