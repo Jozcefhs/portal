@@ -63,7 +63,7 @@ async function fixture(section = 'tuckShop', options = {}) {
     calls.push({action,body:structuredClone(body)});
     if (action === 'salesBootstrap') return {products,sellingEnabled:options.enabled !== false,message:'Linked vendor products only.'};
     if (action === 'vendorCustomerSearch') return {customers:options.customers || [{CustomerRef:'FIXTURE/001',CustomerName:'Fixture child',Detail:'Grade 7'}]};
-    if (action === 'vendorWalletLookup') {if(options.lookupError) throw new Error(options.lookupError); return {account:{AccountRef:'FIXTURE/001',DisplayName:'Fixture child'}};}
+    if (action === 'vendorWalletLookup') {if(options.lookupError) throw new Error(options.lookupError); return {account:{AccountRef:'FIXTURE/001',DisplayName:'Fixture child',WalletBalance:30900,WalletSpentToday:200,...options.walletSummary}};}
     if (action === 'previewVendorSale') return {Amount:333};
     if (failSale) throw new Error('Fixture response interrupted; retry the same checkout.');
     return {message:'Fixture sale recorded.',sale:{SaleNo:'FIXTURE-SALE',Amount:body.ExpectedAmount}};
@@ -89,6 +89,7 @@ test('vendor counter uses the original shared POS structure, colours and compact
   assert.match(sharedCss,/\.commerce-product:nth-child\(3n\+2\)\{background:#edf8f3\}/);
   assert.match(sharedCss,/@media\(max-width:680px\)\{\s*\.commerce-product-list\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
   assert.doesNotMatch(css,/\.vendor-pos-products\{display:grid|\.vendor-pos-layout\{/);
+  assert.doesNotMatch(css,/\.vendor-pos-customer\{grid-template-columns:/);
   assert.match(css,/\.staff-page:has\(\.vendor-workspace\) \.staff-sidebar>\.staff-tabs\{align-content:start\}/);
   f.mounted.destroy();
 });
@@ -129,7 +130,7 @@ test('product search persists after cart redraws and includes units',async () =>
   f.mounted.destroy();
 });
 
-test('wallet checkout exposes identity only and clears previous customer and PIN when identity changes',async () => {
+test('wallet checkout shows a limited summary and clears previous customer and PIN when identity changes',async () => {
   const f = await fixture();
   f.root.querySelector('[data-add]').onclick();
   assert.equal(f.root.querySelector('[data-payment]').hidden,true);
@@ -201,6 +202,33 @@ test('Enter submits the separate lookup form, not a payment, and accepts the sav
   assert.match(f.root.innerHTML,/Fixture child/); f.mounted.destroy();
 });
 
+test('selected student shows the original wallet balance and spent-today summary without an extra request',async () => {
+  const f=await fixture();
+  assert.equal(f.root.querySelector('[data-wallet-summary]'),null);
+  f.input('AccountRef','FIXTURE/001'); await f.find();
+  assert.match(f.root.innerHTML,/<small>Wallet balance<\/small><strong>₦30,900\.00<\/strong><span>Spent today ₦200\.00<\/span>/);
+  assert.ok(f.root.querySelector('[data-wallet-summary]'));
+  assert.deepEqual(f.calls.map(row=>row.action),['salesBootstrap','vendorWalletLookup']);
+  f.input('Query','Another child');
+  assert.equal(f.root.querySelector('[data-customer]'),null);
+  assert.equal(f.root.querySelector('[data-payment-form]').hidden,true);
+  f.mounted.destroy();
+});
+
+test('zero wallet balances remain visible and the summary clears after checkout or customer-type changes',async () => {
+  const f=await fixture('tuckShop',{walletSummary:{WalletBalance:0,WalletSpentToday:0}});
+  f.input('AccountRef','FIXTURE/001'); await f.find();
+  assert.match(f.root.innerHTML,/<small>Wallet balance<\/small><strong>₦0\.00<\/strong><span>Spent today ₦0\.00<\/span>/);
+  f.root.querySelector('[data-add]').onclick();
+  await f.root.querySelector('[data-payment-form]').requestSubmit();
+  assert.equal(f.root.querySelector('[data-wallet-summary]'),null);
+  f.input('AccountRef','FIXTURE/001'); await f.find();
+  f.root.querySelector('[data-customer-type]').onchange({target:{value:'Staff'}});
+  assert.equal(f.root.querySelector('[data-wallet-summary]'),null);
+  assert.doesNotMatch(f.root.innerHTML,/Wallet balance|Spent today/);
+  f.mounted.destroy();
+});
+
 test('search by name selects one result, while ambiguous names never choose a wallet',async () => {
   const f=await fixture(); f.input('Query','Fixture child'); await f.find();
   assert.equal(f.calls.find(row=>row.action==='vendorWalletLookup').body.AccountRef,'FIXTURE/001'); f.mounted.destroy();
@@ -245,6 +273,7 @@ test('Staff customer mode uses the same directory selector and cannot debit a st
   f.input('Query','Staff One'); await f.find();
   assert.equal(f.calls.find(row=>row.action==='vendorCustomerSearch').body.CustomerType,'Staff');
   assert.match(f.root.innerHTML,/Staff One/);
+  assert.equal(f.root.querySelector('[data-wallet-summary]'),null);
   f.root.querySelector('[data-add]').onclick();
   await f.root.querySelector('[data-payment-form]').requestSubmit();
   assert.equal(f.calls.some(row=>row.action==='recordVendorWalletPurchase'),false);

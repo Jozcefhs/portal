@@ -14,6 +14,7 @@ const stripped = source => source.replace(/^import[\s\S]*?from '[^']+';\r?\n/gm,
 const [customerSource,accessSource,salesSource,faceSource] = await Promise.all(['functions/lib/school-tuck-shop.js','functions/lib/vendor-sales-access.js','functions/lib/vendor-sales.js','functions/api/staff-face-lookup.js'].map(p=>readFile(new URL(`../${p}`,import.meta.url),'utf8')));
 const actor = {username:'seller',role:'Vendor User',edition:'school',branchId:'main',schoolSectionAccess:'All',allowedSections:['vendorSettlements','tuckShop']};
 function fixture() {
+  const activity = {balance:1000,spentToday:200};
   const students = [
     {AdmissionNo:'DNX-26-006',DisplayName:'Sample Child',ClassName:'Grade 7',WalletCardId:'CARD-6',ParentEmail:'parent@example.test',WalletPinHash:'private',BranchId:'main',SchoolSection:'secondary'},
     {AdmissionNo:'PRI/001',DisplayName:'Primary Child',ClassName:'Primary 1',BranchId:'main',SchoolSection:'primary'},
@@ -30,22 +31,37 @@ function fixture() {
     const student = students.find(row=>row.BranchId===body.UserBranchId && (body.UserSchoolSectionAccess==='All' || row.SchoolSection===body.UserSchoolSectionAccess)
       && (body.WalletCardId ? row.WalletCardId===body.WalletCardId.toUpperCase() : row.AdmissionNo===body.AccountRef));
     if(!student) throw Object.assign(new Error('Not found'),{status:404});
-    return {account:{...student,AccountRef:student.AdmissionNo,WalletBalance:1000,WalletSpentToday:200}};
+    return {account:{...student,AccountRef:student.AdmissionNo,WalletBalance:activity.balance,WalletSpentToday:activity.spentToday}};
   };
   const source = stripped(salesSource).replace(/const \{getWalletCardAccount\} = await import\('[^']+'\);/,'');
   const handle = runInNewContext(`${source}\nhandleVendorSalesAction`,{...rules,...access,...customers,getWalletCardAccount});
-  return {students,calls,access,customers,handle,disable:()=>{vendors=[];},run:(action,body={},user=actor)=>handle({},user,{action,Section:'tuckShop',...body})};
+  return {students,calls,activity,access,customers,handle,disable:()=>{vendors=[];},run:(action,body={},user=actor)=>handle({},user,{action,Section:'tuckShop',...body})};
 }
 
-test('vendor admission lookup canonicalizes formatting/case and returns the saved identity only',async()=>{
+test('vendor admission lookup canonicalizes formatting/case and returns only identity and checkout wallet summary',async()=>{
   const f=fixture();
   for(const ref of ['DNX26/006','dnx-26-006','DNX-26-006']) {
     const result=await f.run('vendorWalletLookup',{AccountRef:ref});
     assert.equal(result.account.AccountRef,'DNX-26-006');
     assert.equal(result.account.DisplayName,'Sample Child');
-    for(const field of ['WalletBalance','WalletSpentToday','WalletPinHash','ParentEmail','WalletCardId']) assert.equal(result.account[field],undefined);
+    assert.equal(result.account.WalletBalance,1000);
+    assert.equal(result.account.WalletSpentToday,200);
+    assert.deepEqual(Object.keys(result.account).sort(),['AccountRef','BranchId','ClassName','DisplayName','SchoolSection','WalletBalance','WalletCardStatus','WalletSpentToday']);
+    for(const field of ['WalletPinHash','ParentEmail','WalletCardId','ledger','WalletDailyLimit','WalletTxnLimit','WalletPinThreshold']) assert.equal(result.account[field],undefined);
   }
   assert.equal(f.calls.at(-1).UserSchoolSectionAccess,'secondary');
+});
+
+test('wallet summary is refreshed for exact card lookup, preserves zero and cannot override linked vendor scope',async()=>{
+  const f=fixture();
+  const first=await f.run('vendorWalletLookup',{WalletCardId:'card-6',UserBranchId:'other',UserSchoolSectionAccess:'primary'});
+  assert.equal(first.account.WalletBalance,1000);
+  assert.equal(f.calls.at(-1).UserBranchId,'main');
+  assert.equal(f.calls.at(-1).UserSchoolSectionAccess,'secondary');
+  f.activity.balance=0; f.activity.spentToday=1200;
+  const refreshed=await f.run('vendorWalletLookup',{WalletCardId:'card-6'});
+  assert.equal(refreshed.account.WalletBalance,0);
+  assert.equal(refreshed.account.WalletSpentToday,1200);
 });
 
 test('partial admission IDs and duplicate normalized IDs cannot select an arbitrary wallet',async()=>{

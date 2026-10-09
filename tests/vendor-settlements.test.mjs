@@ -428,7 +428,8 @@ test('vendor wallet checkout atomically links stock, wallet liability, commissio
   const actor = {...f.actor,role:'Vendor User',username:'seller',allowedSections:['vendorSettlements','tuckShop']};
   const run = (action,body={}) => f.pos({},actor,{action,Section:'tuckShop',...body});
   const lookup = await run('vendorWalletLookup',{AccountRef:'CHILD/001'});
-  for (const field of ['WalletBalance','WalletPinHash','OpeningWallet','__scopePath']) assert.equal(lookup.account[field],undefined);
+  assert.equal(lookup.account.WalletBalance,1000); assert.equal(lookup.account.WalletSpentToday,0);
+  for (const field of ['WalletPinHash','OpeningWallet','__scopePath','WalletCardId','WalletPinThreshold']) assert.equal(lookup.account[field],undefined);
   const body = {Items:[{Reference:'stock1',Quantity:2}],SaleRequestId:'wallet-checkout-001',PaymentMethod:'Student Wallet',
     AccountRef:'CHILD/001',ExpectedAmount:100,Confirmed:true,WalletPin:'1234'};
   await assert.rejects(run('recordVendorWalletPurchase',{...body,WalletPin:'bad'}),/Invalid wallet PIN/);
@@ -446,6 +447,9 @@ test('vendor wallet checkout atomically links stock, wallet liability, commissio
   assert.ok(journal.Lines.some(l => l.AccountCode === '4090' && l.Credit === 10));
   assert.equal((await run('recordVendorWalletPurchase',body)).replayed,true);
   assert.equal(f.list('ledger').length,1); assert.equal(f.list('vendorEarnings').length,1);
+  const refreshed = await run('vendorWalletLookup',{AccountRef:'CHILD/001'});
+  assert.equal(refreshed.account.WalletBalance,900); assert.equal(refreshed.account.WalletSpentToday,100);
+  assert.equal(f.list('ledger').length,1,'Reading the checkout balance never posts another payment');
   await f.run('requestSettlement',{VendorId:'v1',RequestId:'wallet-claim',From:'1970-01-01',To:'2099-12-31',Amount:90},actor);
   for (const [status,role] of [['Accounts Confirmed','Accounts Officer'],['Admin Reviewed','Admin'],['Approved','Director']]) await f.decision(status,role,'wallet-claim');
   const request = f.get('vendorSettlementRequests','VREQ-wallet-claim');

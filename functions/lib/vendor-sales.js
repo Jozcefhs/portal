@@ -4,8 +4,14 @@ import { clean, lower, fail, settlementScope } from './vendor-settlement-rules.j
 import { linkedSalesVendors, restrictVendorInventory, vendorCustomerScope } from './vendor-sales-access.js';
 import { searchTuckShopCustomers, canonicalTuckShopStudentReference } from './school-tuck-shop.js';
 
-const publicAccount = account => Object.fromEntries(['AccountRef', 'DisplayName', 'ClassName', 'BranchId', 'SchoolSection', 'WalletCardStatus']
-  .map(key => [key, account[key] || '']));
+// Only the selected, scope-checked customer's checkout summary is exposed.
+// Never return the full wallet payload, ledger, limits, contacts or PIN data.
+const publicAccount = account => ({
+  ...Object.fromEntries(['AccountRef', 'DisplayName', 'ClassName', 'BranchId', 'SchoolSection', 'WalletCardStatus']
+    .map(key => [key, account[key] || ''])),
+  WalletBalance:Number(account.WalletBalance || 0),
+  WalletSpentToday:Number(account.WalletSpentToday || 0)
+});
 export function publicVendorSale(sale = {}) {
   return { SaleNo:sale.SaleNo, SaleType:sale.SaleType, SaleDate:sale.SaleDate, Amount:sale.Amount,
     PaymentMethod:sale.PaymentMethod, PaymentStatus:sale.PaymentStatus, CollectionMode:sale.CollectionMode || 'School collected',
