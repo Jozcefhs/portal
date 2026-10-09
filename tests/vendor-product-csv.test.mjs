@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { parseProductCsv, normalizeProductRow, productCsv, productChunks, duplicatePreviewRows } from '../js/vendor-product-import.js';
 
 test('assignment CSV requires stable stock IDs, not names or quantities', () => {
@@ -41,4 +42,11 @@ test('chunks remain bounded and duplicate checks span the entire file, including
   const previews = [{rows:[{InventoryId:'s1',Section:'tuckShop',RowNumber:2,Errors:[]}]},
     {rows:[{InventoryId:'s1',Section:'tuckShop',RowNumber:23,Errors:[]},{InventoryId:'s1',Section:'restaurant',RowNumber:24,Errors:[]}]}];
   assert.deepEqual([...duplicatePreviewRows(previews)],[2,23]);
+});
+test('CSV controls are direct browser download links, with object URLs cleaned up on close', async () => {
+  const source = await readFile(new URL('../js/vendor-settlements.js',import.meta.url),'utf8');
+  assert.match(source,/<a class="vendor-download" data-template download>/);
+  assert.match(source,/<a class="vendor-download" data-owners download>/);
+  assert.match(source,/el\.href = url; el\.download = filename/);
+  assert.match(source,/modal\.addEventListener\('close',[\s\S]*URL\.revokeObjectURL/);
 });

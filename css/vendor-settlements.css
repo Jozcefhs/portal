@@ -42,6 +42,8 @@
 .vendor-import-dialog .vendor-table th { position:sticky; top:0; }
 .vendor-import-error { background:#fff0ee; color:#8e2020; }
 .vendor-import-dialog input[type=file] { max-width:100%; }
+.vendor-download { display:inline-flex; align-items:center; min-height:40px; padding:10px 14px; border-radius:7px; background:#1768e8; color:white; font-size:13px; font-weight:600; text-decoration:none; }
+.vendor-download:focus-visible { outline:3px solid #143652; outline-offset:3px; }
 .vendor-dialog h3 { margin:0; }
 .vendor-dialog .vendor-header { padding-bottom:12px; border-bottom:1px solid #d4e3ed; }
 .vendor-workspace details summary { cursor:pointer; padding:10px 0; }

@@ -73,7 +73,7 @@
           ${select('Mode','What would you like to do?',[['assign','Assign owners to existing products'],['create','Create new products']],'assign')}
           <label>Completed CSV<input name="File" type="file" accept=".csv,text/csv"></label>
           <p class="vendor-full" data-help></p>
-          <div class="vendor-actions vendor-full"><button type="button" data-template></button><button type="button" data-owners>Download vendor IDs</button><button type="button" data-preview>Preview CSV</button></div>
+          <div class="vendor-actions vendor-full"><a class="vendor-download" data-template download></a><a class="vendor-download" data-owners download>Download vendor IDs</a><button type="button" data-preview>Preview CSV</button></div>
           <p class="vendor-full vendor-status" role="status" aria-live="polite"></p>
           <div class="vendor-table-wrap vendor-full" data-preview-table></div>
           <label class="vendor-check vendor-full"><input type="checkbox" name="Confirmed" disabled> I have checked the products and owners shown in this preview.</label>
@@ -83,6 +83,7 @@
       const form = modal.querySelector('form'), progress = form.querySelector('[role=status]'), table = form.querySelector('[data-preview-table]');
       const submit = form.querySelector('[type=submit]'), previewButton = form.querySelector('[data-preview]');
       let batches = [], previews = [], requestIds = [], next = 0, running = false, complete = false, changed = false;
+      let downloadUrls = [];
       const totals = { created:0, assigned:0, skipped:0 };
       const say = message => { progress.textContent = message; };
       function controls() {
@@ -101,22 +102,22 @@
         form.querySelector('[data-help]').textContent = assign
           ? 'Download existing products, fill in Owner using a registered vendor ID / name (or ORGANISATION), and upload. Keep stock IDs unchanged. Stock, prices, and past sales are not changed.'
           : 'Enter new products and registered owners. Existing matching stock is skipped, never overwritten. Identical products from different owners receive separate stock records.';
+        setDownloadLinks(assign);
       }
-      function download(filename, contents) {
+      function downloadLink(el, filename, contents) {
         const url = URL.createObjectURL(new Blob([contents],{type:'text/csv;charset=utf-8'}));
-        const link = document.createElement('a'); link.href = url; link.download = filename; document.body.append(link); link.click(); link.remove();
-        setTimeout(() => URL.revokeObjectURL(url),1000);
+        downloadUrls.push(url); el.href = url; el.download = filename;
       }
-      form.querySelector('[data-template]').onclick = () => {
-        const assign = form.elements.Mode.value === 'assign';
+      function setDownloadLinks(assign) {
+        downloadUrls.forEach(url => URL.revokeObjectURL(url)); downloadUrls = [];
         const rows = assign ? data.products.map(p => ({ ...p, Store:p.Section, Owner:p.VendorId || 'ORGANISATION',
           CurrentOwner:data.vendors.find(v => v.VendorId === p.VendorId)?.Name || p.VendorId || 'Organisation' })) : [];
-        download(assign ? 'existing-product-owners.csv' : 'new-products.csv',csv.productCsv(assign
+        downloadLink(form.querySelector('[data-template]'),assign ? 'existing-product-owners.csv' : 'new-products.csv',csv.productCsv(assign
           ? ['InventoryId','ItemCode','ItemName','Store','SchoolSection','CurrentOwner','Owner']
           : ['ItemCode','ItemName','Owner','Store','Quantity','Price','Category','Unit','Active','SchoolSection'],rows));
-      };
-      form.querySelector('[data-owners]').onclick = () => download('registered-vendor-ids.csv',csv.productCsv(['Owner','Name','SchoolSection'],
-        data.vendors.filter(v => v.Active !== 'NO').map(v => ({Owner:v.VendorId,Name:v.Name,SchoolSection:v.SchoolSection}))));
+        downloadLink(form.querySelector('[data-owners]'),'registered-vendor-ids.csv',csv.productCsv(['Owner','Name','SchoolSection'],
+          data.vendors.filter(v => v.Active !== 'NO').map(v => ({Owner:v.VendorId,Name:v.Name,SchoolSection:v.SchoolSection}))));
+      }
       form.elements.Mode.onchange = reset; form.elements.File.onchange = reset;
       form.elements.Confirmed.onchange = controls;
       previewButton.onclick = async () => {
@@ -166,7 +167,7 @@
       };
       modal.querySelector('[data-close]').onclick = () => { if (!running) modal.close(); };
       modal.addEventListener('cancel',event => { if (running) event.preventDefault(); });
-      modal.addEventListener('close',() => { modal.remove(); if (changed && !disposed) reload(); });
+      modal.addEventListener('close',() => { downloadUrls.forEach(url => URL.revokeObjectURL(url)); modal.remove(); if (changed && !disposed) reload(); });
       reset();
     }
     function showDialog(title, html, action, transform = b => b) {
@@ -319,7 +320,7 @@
         <small class="vendor-full">Commission returned records money already returned to a vendor after a refund reduces an earlier collected charge. No transfer is initiated.</small>`, 'recordRecovery', b => ({ ...b, VendorId:selected })));
     }
     root.innerHTML = '<p class="vendor-status" role="status">Loading vendor workspace…</p>'; reload();
-    mounted = { destroy() { disposed = true; for (const c of pending) c.abort(); dialog?.remove(); } };
+    mounted = { destroy() { disposed = true; for (const c of pending) c.abort(); dialog?.close(); dialog?.remove(); } };
     return mounted;
   }
   window.DynamaxVendors = Object.freeze({ mount, unmount() { mounted?.destroy(); mounted = undefined; } });
