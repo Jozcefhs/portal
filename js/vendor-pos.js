@@ -14,7 +14,7 @@
   let mounted;
   function mount(root, request, section, tools = {}) {
     mounted?.destroy();
-    let data, disposed = false, busy = false, preview = null, checkoutId = '', customer = null, notice = '', failed = false;
+    let data, disposed = false, busy = false, checkoutId = '', customer = null, notice = '', failed = false;
     let draft = {PaymentMethod:section === 'tuckShop' ? 'Student Wallet' : 'Cash', CollectionMode:'School collected', CustomerName:''};
     const cart = new Map(), addQuantities = new Map(), pending = new Set();
     let search = '', manualLookupOpen = false, customerType = 'Student', customerSearch = '', searchTimer = 0, searchGeneration = 0, searchController = null, scanController = null, faceController = null;
@@ -29,7 +29,7 @@
     }
     function stopSearch() {clearTimeout(searchTimer); searchGeneration++; searchController?.abort(); searchController = null;}
     function clearCustomer() {
-      customer = null; draft.WalletPin = ''; draft.CustomerName = ''; preview = null; checkoutId = '';
+      customer = null; draft.WalletPin = ''; draft.CustomerName = ''; checkoutId = '';
       root.querySelector('[data-customer]')?.remove();
       root.querySelector('[name="WalletPin"]')?.closest('label')?.remove();
       root.querySelector('[data-payment-heading]')?.remove();
@@ -37,9 +37,6 @@
       const paymentForm = root.querySelector('[data-payment-form]'); if (paymentForm) paymentForm.hidden = true;
       const prompt = root.querySelector('[data-wallet-prompt]'); if (prompt) prompt.hidden = false;
       root.querySelector('[data-complete]')?.remove();
-      root.querySelector('[name="Confirmed"]')?.closest('label')?.remove();
-      root.querySelector('[data-confirmed-total]')?.remove();
-      const previewButton = root.querySelector('[data-preview]'); if (previewButton) previewButton.disabled = true;
     }
     async function suggestCustomers(query, field) {
       stopSearch();
@@ -54,7 +51,7 @@
         if (!disposed && generation === searchGeneration && error.name !== 'AbortError') status(error.message,true);
       } finally {clearTimeout(timer); pending.delete(controller); if (searchController === controller) searchController = null;}
     }
-    function invalidate() {preview = null; checkoutId = ''; draw();}
+    function invalidate() {checkoutId = ''; draw();}
     async function call(action, body = {}) {
       if (busy || disposed) return null;
       busy = true;
@@ -79,7 +76,7 @@
     async function load() {
       const result = await call('salesBootstrap');
       if (!result) return;
-      data = result; cart.clear(); addQuantities.clear(); preview = null; checkoutId = ''; customer = null;
+      data = result; cart.clear(); addQuantities.clear(); checkoutId = ''; customer = null;
       draft.WalletPin = ''; draft.WalletCardId = ''; draft.AccountRef = ''; customerSearch = '';
       status(result.message); draw();
     }
@@ -93,7 +90,7 @@
       const school = section === 'tuckShop', wallet = draft.PaymentMethod === 'Student Wallet';
       const products = data.products.filter(p => p.Active !== 'NO');
       const entries = [...cart].map(([ref,qty]) => ({ref,qty,product:data.products.find(p => reference(p) === ref)}));
-      const total = entries.reduce((sum,row) => sum + Number(row.product.Price || 0) * row.qty,0);
+      const total = entries.reduce((sum,row) => sum + Math.round((Number(row.product.Price || 0) + Number.EPSILON) * 100) * row.qty,0) / 100;
       root.innerHTML = `<section class="vendor-workspace vendor-pos"><header class="vendor-header workflow-intro"><div><h2>${label}</h2><p>Sell your linked vendors’ products. Stock, payment and earnings are posted together.</p></div><button type="button" data-refresh>Refresh</button></header>
         <p class="vendor-status${failed ? ' error' : ''}" data-status role="status">${esc(notice)}</p>
         ${!data.sellingEnabled ? '<p class="vendor-notice">Selling is unavailable until Accounts confirms the setup, links this login and enables counter sales. Statements remain separate.</p>' : ''}
@@ -115,8 +112,8 @@
         <form class="vendor-pos-form" data-payment-form${school && !customer ? ' hidden' : ''}><div class="commerce-checkout-form vendor-pos-payment" data-payment${school && !customer ? ' hidden' : ''}>
         ${!wallet ? `<label>Payment method<select name="PaymentMethod">${['Cash','Bank Transfer','POS / Card'].map(method => `<option${method === draft.PaymentMethod ? ' selected' : ''}>${method}</option>`).join('')}</select></label>${!school ? `<label>Customer name<input name="CustomerName" value="${esc(draft.CustomerName)}" maxlength="160" placeholder="Walk-in customer"></label>` : ''}<label>Who receives the money?<select name="CollectionMode"><option${draft.CollectionMode === 'School collected' ? ' selected' : ''}>School collected</option><option${draft.CollectionMode === 'Vendor collected' ? ' selected' : ''}>Vendor collected</option></select></label>${draft.PaymentMethod !== 'Cash' ? `<label>Payment reference<input name="PaymentReference" value="${esc(draft.PaymentReference)}" required maxlength="200"></label>` : ''}` : ''}
         ${wallet && customer ? `<label>Wallet PIN <small>(when required)</small><input name="WalletPin" type="password" inputmode="numeric" autocomplete="off" value="${esc(draft.WalletPin)}"></label>` : ''}
-        <button type="button" data-preview ${!data.sellingEnabled || !cart.size || school && !customer ? 'disabled' : ''}>Preview total</button>
-        ${preview ? `<div class="commerce-checkout-total" data-confirmed-total><span>Server-confirmed total</span><strong>${money(preview.Amount)}</strong></div><label class="vendor-check"><input name="Confirmed" type="checkbox" required> ${wallet ? 'Customer has authorised this wallet purchase.' : 'I have received / confirmed the payment.'}</label><button type="submit" data-complete>Complete sale</button>` : ''}</div></form></section></div></section></section>`;
+        <div class="commerce-checkout-total"><span>Calculated total</span><strong>${money(total)}</strong></div>
+        <div class="config-actionbar"><button type="submit" data-complete ${!data.sellingEnabled || !cart.size || school && !customer ? 'disabled' : ''}>${wallet ? 'Complete wallet sale' : school ? 'Complete staff sale' : 'Complete sale'}</button></div></div></form></section></div></section></section>`;
       root.querySelector('[data-refresh]').onclick = load;
       root.querySelector('[data-pos-tab]').onclick = () => root.querySelector('[data-search]').focus();
       function filterProducts() {
@@ -162,12 +159,10 @@
         }
       };
       form.oninput = event => {
-        if (event.target.name === 'Confirmed') return;
-        draft[event.target.name] = event.target.value; preview = null; checkoutId = '';
+        draft[event.target.name] = event.target.value;
+        // Correcting a PIN is a retry of the same sale, not a new checkout.
+        if (event.target.name !== 'WalletPin') checkoutId = '';
         if (event.target.tagName === 'SELECT') draw();
-        else {form.querySelector('[data-complete]')?.remove(); form.querySelector('[name="Confirmed"]')?.closest('label')?.remove();
-          form.querySelector('[data-confirmed-total]')?.remove();
-          const btn = form.querySelector('[data-preview]'); if (btn) btn.disabled = !data.sellingEnabled || !cart.size || wallet && !customer;}
       };
       async function findCustomer() {
         if (busy || disposed) return;
@@ -193,7 +188,7 @@
         }
         const result = await call('vendorWalletLookup',{AccountRef:ref,WalletCardId:draft.WalletCardId});
         if (result) {customer = result.account; draft.AccountRef = customer.AccountRef; draft.WalletCardId = ''; customerSearch = customer.AccountRef;
-          status('Customer found. Preview the cart before completing payment.'); draw();}
+          status('Customer found. Ready to complete the sale.'); draw();}
       }
       if (lookupForm) lookupForm.onsubmit = async event => {event.preventDefault(); await findCustomer();};
       const scanButton = root.querySelector('[data-scan]');
@@ -224,16 +219,16 @@
             }});
         } catch (error) {if (!disposed) status(error.message,true);}
       };
-      root.querySelector('[data-preview]').onclick = async () => {
-        const result = await call('previewVendorSale',payload());
-        if (result) {preview = result; checkoutId ||= crypto.randomUUID(); status('Review the server-confirmed total and payment before completing the sale.'); draw();}
-      };
       form.onsubmit = async event => {
-        event.preventDefault(); if (!preview || !form.elements.Confirmed.checked || busy || school && !customer) return;
-        const body = {...payload(),ExpectedAmount:preview.Amount,Confirmed:true,SaleRequestId:checkoutId};
+        event.preventDefault(); if (disposed || busy || !data.sellingEnabled || !cart.size || school && !customer) return;
+        checkoutId ||= crypto.randomUUID();
+        // The deliberate Complete sale action replaces the extra checkbox.
+        // The server still recalculates prices, validates stock/wallet/PIN and
+        // atomically posts the sale. A changed price is rejected, not charged.
+        const body = {...payload(),ExpectedAmount:total,Confirmed:true,SaleRequestId:checkoutId};
         const result = await call(wallet ? 'recordVendorWalletPurchase' : 'recordVendorSale',body);
         if (!result) return;
-        draft.WalletPin = ''; draft.WalletCardId = ''; draft.AccountRef = ''; cart.clear(); preview = null; checkoutId = ''; customer = null; draw(); await load();
+        draft.WalletPin = ''; draft.WalletCardId = ''; draft.AccountRef = ''; cart.clear(); checkoutId = ''; customer = null; draw(); await load();
         status(`${result.message} Receipt ${result.sale.SaleNo}; total ${money(result.sale.Amount)}.`,false);
       };
     }

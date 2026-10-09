@@ -93,17 +93,23 @@ test('vendor counter uses the original shared POS structure, colours and compact
   f.mounted.destroy();
 });
 
-test('quantity dropdowns respect stock and changing quantities never sends client prices',async () => {
+test('quantity dropdowns respect stock and checkout submits once without preview or extra confirmation',async () => {
   const f = await fixture('restaurant');
   const addQty=f.root.querySelector('[data-add-quantity]'); addQty.value='3'; addQty.onchange();
   f.root.querySelector('[data-add]').onclick();
   assert.match(f.root.innerHTML,/<select data-quantity="stock-1"[^>]*>[^]*?<option value="3" selected>/);
   assert.match(f.root.innerHTML,/₦300\.00/);
-  await f.root.querySelector('[data-preview]').onclick();
-  const body=f.calls.find(row=>row.action==='previewVendorSale').body;
+  assert.equal(f.root.querySelector('[data-preview]'),null);
+  assert.equal(f.root.querySelector('[name="Confirmed"]'),null);
+  await f.root.querySelector('[data-payment-form]').requestSubmit();
+  const body=f.calls.find(row=>row.action==='recordVendorSale').body;
   assert.deepEqual(body.Items,[{Reference:'stock-1',Quantity:3}]);
   assert.equal(body.Section,'restaurant'); assert.equal(body.Price,undefined);
-  assert.match(f.root.innerHTML,/Server-confirmed total<\/span><strong>₦333\.00/);
+  assert.equal(body.ExpectedAmount,300);
+  assert.equal(f.calls.some(row=>row.action==='previewVendorSale'),false);
+  // A new cart still rejects quantities above stock before any write.
+  f.root.querySelector('[data-add-quantity]').value='3'; f.root.querySelector('[data-add-quantity]').onchange();
+  f.root.querySelector('[data-add]').onclick();
   f.root.querySelector('[data-add]').onclick(); // 3 + 3 exceeds available 5.
   assert.match(f.root.querySelector('[data-status]').textContent,/exceeds available stock/);
   f.mounted.destroy();
@@ -115,8 +121,8 @@ test('product search persists after cart redraws and includes units',async () =>
   f.root.querySelector('[data-add]').onclick();
   assert.match(f.root.innerHTML,/data-search type="search" value="bottle"/);
   assert.equal(f.root.querySelector('[data-product]').hidden,false);
-  await f.root.querySelector('[data-preview]').onclick();
-  assert.equal(f.calls.find(row=>row.action==='previewVendorSale').body.Items[0].Reference,'WATER');
+  assert.equal(f.root.querySelector('[data-complete]').disabled,false);
+  assert.match(f.root.innerHTML,/Calculated total<\/span><strong>₦100\.00/);
   f.root.querySelector('[data-search]').oninput({target:{value:'nonexistent'}});
   assert.equal(f.root.querySelector('[data-product]').hidden,true);
   assert.equal(f.root.querySelector('[data-search-empty]').hidden,false);
@@ -137,18 +143,16 @@ test('wallet checkout exposes identity only and clears previous customer and PIN
   assert.equal(f.root.querySelector('[data-customer]'),null);
   assert.equal(f.root.querySelector('[name="WalletPin"]'),null);
   assert.equal(f.root.querySelector('[data-payment]').hidden,true);
-  assert.equal(f.root.querySelector('[data-preview]').disabled,true);
+  assert.equal(f.root.querySelector('[data-complete]'),null);
   await f.find();
   assert.equal(f.root.querySelector('[name="WalletPin"]').value,'');
   assert.equal(f.root.querySelector('[data-lookup-form]').elements.WalletCardId.value,'');
   f.mounted.destroy();
 });
 
-test('failed checkout keeps the same request ID and confirmation, success clears the cart',async () => {
+test('failed checkout keeps the same request ID without another confirmation, success clears the cart',async () => {
   const f = await fixture('restaurant');
   f.root.querySelector('[data-add]').onclick();
-  await f.root.querySelector('[data-preview]').onclick();
-  f.root.querySelector('form').elements.Confirmed.checked=true;
   f.setFailure(true);
   await f.root.querySelector('form').onsubmit({preventDefault(){}});
   f.setFailure(false);
@@ -156,10 +160,10 @@ test('failed checkout keeps the same request ID and confirmation, success clears
   const sales=f.calls.filter(row=>row.action==='recordVendorSale');
   assert.equal(sales.length,2);
   assert.equal(sales[0].body.SaleRequestId,sales[1].body.SaleRequestId);
-  assert.equal(sales[0].body.ExpectedAmount,333);
+  assert.equal(sales[0].body.ExpectedAmount,100);
   assert.equal(sales[0].body.Confirmed,true);
   assert.match(f.root.innerHTML,/Select an item to begin/);
-  assert.equal(f.root.querySelector('[data-preview]').disabled,true);
+  assert.equal(f.root.querySelector('[data-complete]').disabled,true);
   f.mounted.destroy();
 });
 
@@ -167,7 +171,8 @@ test('disabled sales and out-of-stock products retain stock and permission guard
   const f=await fixture('organizationStore',{enabled:false,products:[{InventoryId:'empty',ItemCode:'EMPTY',ItemName:'Empty item',Quantity:0,Price:100}]});
   assert.equal(f.root.querySelector('[data-add]').disabled,true);
   assert.equal(f.root.querySelector('[data-add-quantity]').disabled,true);
-  assert.equal(f.root.querySelector('[data-preview]').disabled,true);
+  assert.equal(f.root.querySelector('[data-complete]').disabled,true);
+  await f.root.querySelector('[data-payment-form]').requestSubmit();
   assert.match(f.root.innerHTML,/Selling is unavailable until Accounts confirms/);
   assert.equal(f.calls.length,1);
   f.mounted.destroy();
@@ -240,9 +245,43 @@ test('Staff customer mode uses the same directory selector and cannot debit a st
   f.input('Query','Staff One'); await f.find();
   assert.equal(f.calls.find(row=>row.action==='vendorCustomerSearch').body.CustomerType,'Staff');
   assert.match(f.root.innerHTML,/Staff One/);
-  f.root.querySelector('[data-add]').onclick(); await f.root.querySelector('[data-preview]').onclick();
-  f.root.querySelector('[data-payment-form]').elements.Confirmed.checked=true;
+  f.root.querySelector('[data-add]').onclick();
   await f.root.querySelector('[data-payment-form]').requestSubmit();
   assert.equal(f.calls.some(row=>row.action==='recordVendorWalletPurchase'),false);
   assert.equal(f.calls.find(row=>row.action==='recordVendorSale').body.CustomerName,'Staff One'); f.mounted.destroy();
+});
+
+test('wallet sale completes directly after lookup and PIN retries keep the same checkout identity',async () => {
+  const f=await fixture();
+  f.root.querySelector('[data-add]').onclick();
+  f.input('AccountRef','FIXTURE/001'); await f.find();
+  assert.equal(f.root.querySelector('[data-preview]'),null);
+  assert.equal(f.root.querySelector('[name="Confirmed"]'),null);
+  assert.equal(f.root.querySelector('[data-complete]').disabled,false);
+  f.input('WalletPin','1234'); f.setFailure(true);
+  await f.root.querySelector('[data-payment-form]').requestSubmit();
+  f.input('WalletPin','4321'); f.setFailure(false);
+  await f.root.querySelector('[data-payment-form]').requestSubmit();
+  const sales=f.calls.filter(row=>row.action==='recordVendorWalletPurchase');
+  assert.equal(sales.length,2);
+  assert.equal(sales[0].body.SaleRequestId,sales[1].body.SaleRequestId);
+  assert.equal(sales[1].body.WalletPin,'4321');
+  assert.equal(sales[1].body.ExpectedAmount,100);
+  assert.equal(f.calls.some(row=>row.action==='previewVendorSale'),false);
+  assert.match(f.root.innerHTML,/Select an item to begin/);
+  f.mounted.destroy();
+});
+
+test('all stores round the displayed total to currency precision and cannot submit an empty cart',async () => {
+  for(const section of ['tuckShop','restaurant','organizationStore']) {
+    const f=await fixture(section,{products:[{InventoryId:'small',ItemCode:'SMALL',ItemName:'Small',Quantity:5,Price:.1}]});
+    await f.root.querySelector('[data-payment-form]').requestSubmit();
+    assert.equal(f.calls.some(row=>row.action.startsWith('record')),false);
+    const qty=f.root.querySelector('[data-add-quantity]'); qty.value='3'; qty.onchange();
+    f.root.querySelector('[data-add]').onclick();
+    if(section==='tuckShop') {f.input('AccountRef','FIXTURE/001'); await f.find();}
+    await f.root.querySelector('[data-payment-form]').requestSubmit();
+    assert.equal(f.calls.find(row=>row.action.startsWith('record')).body.ExpectedAmount,.3);
+    f.mounted.destroy();
+  }
 });

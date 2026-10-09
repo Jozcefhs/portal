@@ -65,6 +65,24 @@ test('posted section cannot broaden authoritative staff section access', async (
   assert.equal(calls.find(call => call.operation === 'student').scope.schoolSectionAccess, 'secondary');
 });
 
+test('targeted finance refresh retains the current student card, not a stale accounting card', async () => {
+  const { handler } = snapshotHandler({
+    findStudentByAccountRef: async () => ({ ...student,
+      WalletCardId: '0371312330', WalletCardStatus: 'Blocked', WalletPinHash: 'not-for-account-search'
+    }),
+    getDocument: async () => ({ AccountRef: student.AccountRef, BranchId: 'main', SchoolSection: 'secondary',
+      WalletCardId: 'OLD-CARD', walletCardId: 'OLDER-CARD', WalletCardStatus: 'Active'
+    })
+  });
+  const result = await handler({}, { AccountRef: student.AccountRef, BranchId: 'main', SchoolSection: 'secondary' });
+  assert.equal(result.accounts[0].WalletCardId, '0371312330');
+  assert.equal(result.accounts[0].WalletCardStatus, 'Blocked');
+  assert.equal(result.accounts[0].walletCardId, undefined);
+  assert.equal(result.accounts[0].WalletPinHash, undefined);
+  assert.equal(result.accounts[0].WalletBalance, 2000);
+  assert.equal(result.readOnly, true);
+});
+
 test('unresolved identity fails before any financial reads', async () => {
   const { handler, calls } = snapshotHandler({ findStudentByAccountRef: async () => null });
   await assert.rejects(handler({}, { AccountRef: student.AccountRef, BranchId: 'main' }), error => error.status === 404);

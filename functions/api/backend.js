@@ -2303,6 +2303,7 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
   const normalizedStoredLedger = storedLedger.map(normalizeLedger);
   const accountMap = new Map();
   const accountAliasMap = new Map();
+  const studentWalletProfiles = new Map();
   const accountKeyForRefs = (refs, fallback) => {
     // Admission/account reference is the primary identity. Do not merge two
     // students merely because a bad import reused an application reference.
@@ -2316,13 +2317,14 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
       if (alias) accountAliasMap.set(alias, key);
     });
   };
-  const putAccount = (row) => {
+  const putAccount = (row, studentWallet = null) => {
     const normalized = normalizeAccount(row || {});
     const refs = accountRefsFrom(normalized);
     const accountRef = clean(normalized.AccountRef || refs[0]);
     if (!accountRef) return;
     const key = accountKeyForRefs(refs, accountRef);
     const existing = accountMap.get(key) || {};
+    if (studentWallet) studentWalletProfiles.set(key, studentWallet);
     accountMap.set(key, {
       ...existing,
       ...normalized,
@@ -2347,6 +2349,16 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
       Enrolled: clean(existing.Enrolled || normalized.Enrolled),
       AdmissionLetterSent: clean(existing.AdmissionLetterSent || normalized.AdmissionLetterSent)
     });
+    // Cards live on the student register, not legacy accounting snapshots.
+    // Preserve an explicitly unassigned card too, and remove stale aliases so
+    // the desktop's all-field search cannot match a replaced card.
+    const walletProfile = studentWalletProfiles.get(key);
+    if (walletProfile) {
+      const account = accountMap.get(key);
+      Object.assign(account, walletProfile);
+      delete account.walletCardId;
+      delete account.walletCardStatus;
+    }
     registerAccountAliases(key, accountRefsFrom(accountMap.get(key)));
   };
   const applicationCreatedMap = new Map();
@@ -2385,10 +2397,10 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
     StudentScopePath: student.__scopePath,
     Status: student.Status || 'Active',
     Enrolled: 'YES'
-  }));
+  }, studentWalletProfile(student)));
   // Student register identity and eligibility fields are authoritative. Legacy
   // account rows may still say New Intake after a CSV import, so merge them second.
-  accounts.map(normalizeAccount).forEach(putAccount);
+  accounts.map(normalizeAccount).forEach((row) => putAccount(row));
   normalizedApplications.forEach((app) => putAccount({
     AccountRef: app.AdmissionNo || app.AdmissionNumber || app.ApplicationReference || app.ApplicationID,
     ApplicationReference: app.ApplicationReference || app.ApplicationID,

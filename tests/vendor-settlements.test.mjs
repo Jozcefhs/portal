@@ -343,6 +343,24 @@ function commerceFixture(edition = 'school', section = 'tuckShop') {
   return {...f,commerce,pos,wallet,sha256Hex,section,collection,actor:{...user,edition},body:{SaleRequestId:'sale1',PaymentMethod:'Cash',Items:[{Reference:'stock1',Quantity:2}]}};
 }
 for (const [edition,section] of [['school','tuckShop'],['faith','restaurant'],['organization','organizationStore']]) {
+  test(`${edition} direct vendor checkout needs no preview request but still reprices and prevents double posting`,async () => {
+    const f = commerceFixture(edition,section);
+    f.put('commerceVendors','v1',{...f.get('commerceVendors','v1'),LoginUsername:'seller'});
+    const actor = {...f.actor,role:'Vendor User',username:'seller',allowedSections:['vendorSettlements',section]};
+    const body = {action:'recordVendorSale',Section:section,Items:[{Reference:'stock1',Quantity:2}],
+      SaleRequestId:'direct-checkout-001',PaymentMethod:'Cash',ExpectedAmount:100,Confirmed:true};
+    await assert.rejects(f.pos({},actor,{...body,ExpectedAmount:1}),/changed|total|amount/i);
+    assert.equal(f.commits.length,0);
+    const result = await f.pos({},actor,body);
+    assert.equal(result.sale.Amount,100);
+    assert.equal(f.get(f.collection,'stock1').Quantity,3);
+    assert.equal(f.get('vendorBalances','v1').NetCents,10000);
+    const journal = f.list('accountingJournals')[0];
+    assert.equal(journal.TotalDebit,journal.TotalCredit);
+    assert.equal((await f.pos({},actor,body)).replayed,true);
+    assert.equal(f.list('vendorEarnings').length,1);
+  });
+
   test(`${edition} checkout refuses unversioned stock without any financial or stock mutation`, async () => {
     const f = commerceFixture(edition,section);
     f.get(f.collection,'stock1').__updateTime = '';
