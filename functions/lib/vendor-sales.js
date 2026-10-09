@@ -1,9 +1,10 @@
 import { getDocument, listCollection } from './firestore.js';
 import { COMMERCE_CONFIG, previewOrganizationCommerceSale, recordManualOrganizationCommerceSale } from './organization-commerce.js';
 import { clean, lower, fail, settlementScope } from './vendor-settlement-rules.js';
-import { linkedSalesVendors, restrictVendorInventory } from './vendor-sales-access.js';
+import { linkedSalesVendors, restrictVendorInventory, vendorCustomerScope } from './vendor-sales-access.js';
+import { searchTuckShopCustomers, canonicalTuckShopStudentReference } from './school-tuck-shop.js';
 
-const publicAccount = account => Object.fromEntries(['AccountRef', 'DisplayName', 'BranchId', 'SchoolSection', 'WalletCardStatus']
+const publicAccount = account => Object.fromEntries(['AccountRef', 'DisplayName', 'ClassName', 'BranchId', 'SchoolSection', 'WalletCardStatus']
   .map(key => [key, account[key] || '']));
 export function publicVendorSale(sale = {}) {
   return { SaleNo:sale.SaleNo, SaleType:sale.SaleType, SaleDate:sale.SaleDate, Amount:sale.Amount,
@@ -49,11 +50,22 @@ export async function handleVendorSalesAction(env, user, body) {
   }
   if (!vendors.length) fail('No active selling vendor is linked to this login in this branch/section.',403);
   if (user.subscriptionActive === false || user.subscriptionReadOnly === true) fail('Selling is disabled for this subscription.',403);
-  if (body.action === 'vendorWalletLookup') {
+  if (body.action === 'vendorCustomerSearch' || body.action === 'vendorWalletLookup') {
     if (section !== 'tuckShop') fail('Student wallet payments are available only in the school Tuck Shop.',403);
+    const actor = vendorCustomerScope(user,vendors);
+    if (body.action === 'vendorCustomerSearch') return searchTuckShopCustomers(env,actor,{
+      CustomerType:clean(body.CustomerType || 'Student'),Query:clean(body.Query).slice(0,120)});
     const {getWalletCardAccount} = await import('../api/backend.js');
-    const result = await getWalletCardAccount(env,{AccountRef:clean(body.AccountRef),WalletCardId:clean(body.WalletCardId),
-      UserBranchId:scope.BranchId,UserSchoolSectionAccess:scope.SchoolSection});
+    const lookup = {AccountRef:clean(body.AccountRef),WalletCardId:clean(body.WalletCardId),
+      UserBranchId:actor.branchId,UserSchoolSectionAccess:actor.schoolSectionAccess};
+    if (!lookup.AccountRef && !lookup.WalletCardId) fail('Enter a card ID or admission number, or select a student from Find student.');
+    let result;
+    try {result = await getWalletCardAccount(env,lookup);}
+    catch (error) {
+      if (Number(error.status) !== 404 || lookup.WalletCardId) throw error;
+      lookup.AccountRef = await canonicalTuckShopStudentReference(env,actor,lookup.AccountRef);
+      result = await getWalletCardAccount(env,lookup);
+    }
     return {ok:true,account:publicAccount(result.account)};
   }
   const payload = saleBody(body,user,body.action === 'previewVendorSale' ? '' : await saleReference(user,body.SaleRequestId));
@@ -71,10 +83,11 @@ export async function handleVendorSalesAction(env, user, body) {
   payload.VendorCheckoutDigest = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2,'0')).join('');
   if (body.action === 'recordVendorWalletPurchase') {
     if (section !== 'tuckShop' || payload.CollectionMode === 'Vendor collected') fail('Student wallets are school-collected Tuck Shop payments.',403);
+    const actor = vendorCustomerScope(user,vendors);
     const {recordWalletPurchase} = await import('../api/backend.js');
     const result = await recordWalletPurchase(env,{Items:payload.Items,SaleRequestId:payload.SaleRequestId,
       Amount:payload.ExpectedAmount,AccountRef:clean(body.AccountRef),WalletCardId:clean(body.WalletCardId),WalletPin:clean(body.WalletPin),
-      UserBranchId:scope.BranchId,UserSchoolSectionAccess:scope.SchoolSection,Department:'Tuck Shop',
+      UserBranchId:actor.branchId,UserSchoolSectionAccess:actor.schoolSectionAccess,Department:'Tuck Shop',
       Terminal:'Vendor Tuck Shop POS',RecordedBy:user.displayName || user.username}, {vendorUser:user,vendorCheckoutDigest:payload.VendorCheckoutDigest});
     return {ok:true,replayed:result.replayed === true,message:result.message,sale:publicVendorSale(result.sale)};
   }

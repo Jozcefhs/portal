@@ -62,7 +62,7 @@ function requireAccess(user, action) {
   if (!clean(user.username)) fail('Sign in to manage vendor settlements.', 401);
   if (!(user.allowedSections || []).includes('vendorSettlements')) fail('Vendor settlements are not available for this account.', 403);
   if (!operators.has(role(user)) && role(user) !== 'Vendor User') fail('Your role cannot access vendor settlements.', 403);
-  if (!['bootstrap', 'statement', 'previewHistorical', 'previewSale', 'previewProductImport', 'salesBootstrap', 'previewVendorSale', 'vendorWalletLookup'].includes(action)
+  if (!['bootstrap', 'statement', 'previewHistorical', 'previewSale', 'previewProductImport', 'salesBootstrap', 'previewVendorSale', 'vendorWalletLookup', 'vendorCustomerSearch'].includes(action)
     && (user.subscriptionActive === false || user.subscriptionReadOnly === true)) fail('This workspace is read-only until the subscription is renewed.', 403);
 }
 async function ownVendor(env, user, scope, vendorId) {
@@ -720,6 +720,7 @@ export async function handleVendorSettlementAction(env, user, body = {}, options
     case 'previewVendorSale':
     case 'recordVendorSale':
     case 'vendorWalletLookup':
+    case 'vendorCustomerSearch':
     case 'recordVendorWalletPurchase': {
       const {handleVendorSalesAction} = await import('./vendor-sales.js');
       return handleVendorSalesAction(env,user,{...body,action});

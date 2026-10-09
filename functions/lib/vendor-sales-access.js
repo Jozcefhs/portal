@@ -5,6 +5,14 @@ export const isVendorSeller = user => clean(user.assignedRole || user.UserAssign
 export const vendorStoreSections = edition => edition === 'school' ? ['tuckShop'] : ['organizationStore', 'restaurant'];
 export const vendorPosEnabled = row => !['no', 'false', '0', 'disabled'].includes(lower(row.PosEnabled ?? true));
 
+export function vendorCustomerScope(user, vendors) {
+  const scope = settlementScope(user);
+  const sections = [...new Set(vendors.map(row => lower(row.SchoolSection || 'Secondary')))];
+  if (scope.OrganisationEdition !== 'school' || !sections.length || sections.some(value => !['primary','secondary'].includes(value)))
+    fail('No school selling vendor is linked in this branch/section.',403);
+  return {...user, branchId:scope.BranchId, schoolSectionAccess:sections.length === 1 ? sections[0] : 'All'};
+}
+
 export async function linkedSalesVendors(env, user, section) {
   const scope = settlementScope(user);
   if (!isVendorSeller(user) || !clean(user.username) || !(user.allowedSections || []).includes('vendorSettlements')

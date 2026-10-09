@@ -68,7 +68,6 @@
 .vendor-pos-form{display:grid;gap:10px;margin:0;min-width:0}
 .vendor-pos .vendor-pos-payment{margin:0}
 .vendor-pos .vendor-pos-payment>button{width:100%;min-height:43px;margin:0;font-size:12px}
-.vendor-pos .vendor-pos-lookup-actions{grid-template-columns:minmax(0,1fr)}
 .vendor-pos .vendor-pos-customer{grid-template-columns:minmax(0,1fr)}
 .vendor-pos .vendor-pos-guidance{margin:0;padding:10px;border:1px dashed #cad8e6;border-radius:9px;font-size:11px}
 .vendor-pos .vendor-pos-search-empty{margin:8px 0 0;font-size:12px}

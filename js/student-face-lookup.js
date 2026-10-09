@@ -893,6 +893,7 @@ function renderPossibleMatch(dialog, match, onMatch, confirmText = 'Confirm and 
 }
 
 export async function openStudentFaceLookup(options = {}) {
+  if (options.signal?.aborted) return;
   const mode = options.mode === 'enroll' ? 'enroll' : 'lookup';
   const sampleCount = mode === 'enroll' ? ENROLLMENT_SAMPLE_COUNT : ROUTINE_SAMPLE_COUNT;
   const allowCameraSelection = mode === 'lookup' || options.allowCameraSelection !== false;
@@ -924,6 +925,7 @@ export async function openStudentFaceLookup(options = {}) {
     close();
   });
   dialog.addEventListener('close', () => {
+    options.signal?.removeEventListener('abort', close);
     stopAudioGuidance(dialog);
     stopCamera(video);
     dialog.remove();
@@ -971,6 +973,7 @@ export async function openStudentFaceLookup(options = {}) {
       const descriptor = mode === 'lookup'
         ? await captureLookupDescriptor(dialog, human)
         : await captureDescriptor(dialog, human, sampleCount);
+      if (!dialog.open || options.signal?.aborted) return;
       stopCamera(video);
       startButton.hidden = false;
       if (mode === 'enroll') {
@@ -988,6 +991,7 @@ export async function openStudentFaceLookup(options = {}) {
         options.onEnrollmentChange?.(true);
       } else {
         const result = await faceLookupRequest('match', { modelId: MODEL_ID, descriptor, purpose });
+        if (!dialog.open || options.signal?.aborted) return;
         if (!result.match) {
           setStatus(dialog, result.message, result.outcome === 'ambiguous' ? 'warn' : 'bad');
         } else {
@@ -1028,6 +1032,8 @@ export async function openStudentFaceLookup(options = {}) {
   });
 
   dialog.showModal();
+  options.signal?.addEventListener('abort', close, {once:true});
+  if (options.signal?.aborted) {close(); return;}
   try {
     status = await faceLookupRequest('status', { studentId, branchId, purpose });
     const allowed = status.enabled && status.configured && status.canLookup &&

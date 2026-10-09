@@ -13,7 +13,7 @@ test('deleted or absent student enrollments have actionable lookup feedback',()=
 test('every shared face import requests the repaired module',()=>{
   const imports=[...admin.matchAll(/student-face-lookup\.js\?v=([^']+)/g)];
   assert.equal(imports.length,3);
-  imports.forEach((match)=>assert.match(match[1],/20261007-human-directions-quick-lookup-auto-start-camera-defaults$/));
+  imports.forEach((match)=>assert.match(match[1],/20261007-human-directions-quick-lookup-auto-start-camera-defaults-vendor-pos-lookup$/));
   assert.match(html,/js\/admin\.js\?v=20261008-wallet-card-setup/);
 });
 test('only assisted lookup uses quick capture; enrollment and attendance retain guided capture and manual confirmation',()=>{

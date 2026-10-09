@@ -23,10 +23,10 @@ function rootHarness() {
     get innerHTML() {return html;},
     set innerHTML(value) {
       nodes.forEach(node => {node.isConnected = false;}); html = value; nodes = [];
-      for (const match of html.matchAll(/<(button|input|select|article|p|form|details|div)\b([^>]*)>/g)) {
+      for (const match of html.matchAll(/<(button|input|select|article|p|form|details|div|datalist)\b([^>]*)>/g)) {
         const attrs = {};
         for (const attr of match[2].matchAll(/([\w-]+)(?:="([^"]*)")?/g)) attrs[attr[1]] = decode(attr[2]);
-        const node = {attrs,tagName:match[1].toUpperCase(),dataset:{},name:attrs.name,
+        const node = {attrs,position:match.index,tagName:match[1].toUpperCase(),dataset:{},name:attrs.name,
           value:attrs.value || '',disabled:Object.hasOwn(attrs,'disabled'),hidden:Object.hasOwn(attrs,'hidden'),
           open:Object.hasOwn(attrs,'open'),isConnected:true,checked:false,classList:{toggle(){}},
           addEventListener(event,handler) {this[`on${event}`] = handler;},
@@ -41,8 +41,13 @@ function rootHarness() {
         }
         nodes.push(node);
       }
-      const form = root.querySelector('form');
-      if (form) form.elements = Object.fromEntries(nodes.filter(node=>node.name).map(node=>[node.name,node]));
+      for (const form of root.querySelectorAll('form')) {
+        const end = html.indexOf('</form>',form.position);
+        const children = nodes.filter(node => node.position > form.position && node.position < end);
+        form.elements = Object.fromEntries(children.filter(node=>node.name).map(node=>[node.name,node]));
+        form.querySelector = selector => children.find(node=>matches(node,selector)) || null;
+        form.requestSubmit = () => form.onsubmit({preventDefault(){}});
+      }
     },
     querySelector:selector => nodes.find(node=>matches(node,selector)) || null,
     querySelectorAll:selector => nodes.filter(node=>matches(node,selector))
@@ -57,16 +62,18 @@ async function fixture(section = 'tuckShop', options = {}) {
   const request = async(action,body) => {
     calls.push({action,body:structuredClone(body)});
     if (action === 'salesBootstrap') return {products,sellingEnabled:options.enabled !== false,message:'Linked vendor products only.'};
-    if (action === 'vendorWalletLookup') return {account:{AccountRef:'FIXTURE/001',DisplayName:'Fixture child'}};
+    if (action === 'vendorCustomerSearch') return {customers:options.customers || [{CustomerRef:'FIXTURE/001',CustomerName:'Fixture child',Detail:'Grade 7'}]};
+    if (action === 'vendorWalletLookup') {if(options.lookupError) throw new Error(options.lookupError); return {account:{AccountRef:'FIXTURE/001',DisplayName:'Fixture child'}};}
     if (action === 'previewVendorSale') return {Amount:333};
     if (failSale) throw new Error('Fixture response interrupted; retry the same checkout.');
     return {message:'Fixture sale recorded.',sale:{SaleNo:'FIXTURE-SALE',Amount:body.ExpectedAmount}};
   };
   runInNewContext(source,{window,Intl,AbortController,setTimeout,clearTimeout,crypto:webcrypto});
-  const mounted = window.DynamaxVendorPOS.mount(root,request,section);
+  const mounted = window.DynamaxVendorPOS.mount(root,request,section,options.tools);
   await new Promise(resolve=>setImmediate(resolve));
-  const input = (name,value) => {const form=root.querySelector('form'),field=form.elements[name]; field.value=value; form.oninput({target:field});};
-  return {root,calls,input,mounted,setFailure:value=>{failSale=value;}};
+  const input = (name,value) => {const field=root.querySelector(`[name="${name}"]`),form=root.querySelectorAll('form').find(form=>form.elements[name]===field); field.value=value; form.oninput({target:field});};
+  const find = () => root.querySelector('[data-lookup-form]').requestSubmit();
+  return {root,calls,input,find,mounted,setFailure:value=>{failSale=value;}};
 }
 
 test('vendor counter uses the original shared POS structure, colours and compact mobile catalogue',async () => {
@@ -76,7 +83,9 @@ test('vendor counter uses the original shared POS structure, colours and compact
   assert.match(f.root.innerHTML,/Drinks · bottle/);
   assert.match(f.root.innerHTML,/aria-label="Quantity for Water"/);
   assert.match(f.root.innerHTML,/aria-label="Add Water to cart"/);
-  assert.doesNotMatch(f.root.innerHTML,/Stock in \/ out|Purchase history|Save product ownership|Wallet balance|Use face|Inventory<\/strong>/);
+  assert.doesNotMatch(f.root.innerHTML,/Stock in \/ out|Purchase history|Save product ownership|Wallet balance|Inventory<\/strong>/);
+  for(const label of ['Find student','Find wallet','Scan card','Use face','Student · wallet','Staff · cash, transfer or POS']) assert.ok(f.root.innerHTML.includes(label));
+  assert.equal(f.root.querySelector('[data-manual-lookup]').open,false);
   assert.match(sharedCss,/\.commerce-product:nth-child\(3n\+2\)\{background:#edf8f3\}/);
   assert.match(sharedCss,/@media\(max-width:680px\)\{\s*\.commerce-product-list\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
   assert.doesNotMatch(css,/\.vendor-pos-products\{display:grid|\.vendor-pos-layout\{/);
@@ -120,7 +129,7 @@ test('wallet checkout exposes identity only and clears previous customer and PIN
   assert.equal(f.root.querySelector('[data-payment]').hidden,true);
   assert.equal(f.root.querySelector('[name="WalletPin"]'),null);
   f.input('WalletCardId','FIXTURE-CARD');
-  await f.root.querySelector('[data-find]').onclick();
+  await f.find();
   assert.match(f.root.innerHTML,/Fixture child/);
   assert.equal(f.root.querySelector('[data-payment]').hidden,false);
   f.input('WalletPin','1234');
@@ -129,9 +138,9 @@ test('wallet checkout exposes identity only and clears previous customer and PIN
   assert.equal(f.root.querySelector('[name="WalletPin"]'),null);
   assert.equal(f.root.querySelector('[data-payment]').hidden,true);
   assert.equal(f.root.querySelector('[data-preview]').disabled,true);
-  await f.root.querySelector('[data-find]').onclick();
+  await f.find();
   assert.equal(f.root.querySelector('[name="WalletPin"]').value,'');
-  assert.equal(f.root.querySelector('form').elements.WalletCardId.value,'');
+  assert.equal(f.root.querySelector('[data-lookup-form]').elements.WalletCardId.value,'');
   f.mounted.destroy();
 });
 
@@ -176,6 +185,64 @@ test('oversized stock cannot generate an unbounded quantity menu',async () => {
 test('unmount cancels pending requests and cannot post a checkout after navigation',async () => {
   const f=await fixture();
   f.mounted.destroy();
-  await f.root.querySelector('[data-find]').onclick();
+  await f.find();
   assert.equal(f.calls.length,1);
+});
+
+test('Enter submits the separate lookup form, not a payment, and accepts the saved admission identity',async () => {
+  const f=await fixture(); f.input('AccountRef','DNX26/006'); await f.find();
+  assert.equal(f.calls.find(row=>row.action==='vendorWalletLookup').body.AccountRef,'DNX26/006');
+  assert.equal(f.calls.some(row=>row.action.startsWith('record')),false);
+  assert.match(f.root.innerHTML,/Fixture child/); f.mounted.destroy();
+});
+
+test('search by name selects one result, while ambiguous names never choose a wallet',async () => {
+  const f=await fixture(); f.input('Query','Fixture child'); await f.find();
+  assert.equal(f.calls.find(row=>row.action==='vendorWalletLookup').body.AccountRef,'FIXTURE/001'); f.mounted.destroy();
+  const many=await fixture('tuckShop',{customers:[{CustomerRef:'A/001',CustomerName:'James'},{CustomerRef:'A/002',CustomerName:'James'}]});
+  many.input('Query','James'); await many.find();
+  assert.equal(many.calls.some(row=>row.action==='vendorWalletLookup'),false);
+  assert.match(many.root.querySelector('[data-department-status]').textContent,/Choose one/); many.mounted.destroy();
+});
+
+test('lookup errors appear by the controls and leave payment disabled',async () => {
+  const f=await fixture('tuckShop',{lookupError:'Account not found in this branch.'});
+  f.input('AccountRef','unknown'); await f.find();
+  assert.match(f.root.querySelector('[data-department-status]').textContent,/Account not found/);
+  assert.equal(f.root.querySelector('[data-payment]').hidden,true); f.mounted.destroy();
+});
+
+test('scan uses the original NFC helper, clears old identity and aborts on navigation',async () => {
+  let scanSignal;
+  const f=await fixture('tuckShop',{tools:{scanNfc:async(form,_button,options)=>{
+    scanSignal=options.signal; form.elements.WalletCardId.value='CARD-FIXTURE';
+    form.oninput({target:form.elements.WalletCardId}); await form.requestSubmit();
+  }}});
+  f.input('AccountRef','old'); await f.root.querySelector('[data-scan]').onclick();
+  assert.equal(f.calls.find(row=>row.action==='vendorWalletLookup').body.WalletCardId,'CARD-FIXTURE');
+  assert.equal(f.calls.find(row=>row.action==='vendorWalletLookup').body.AccountRef,'');
+  f.mounted.destroy(); assert.equal(scanSignal.aborted,true);
+});
+
+test('face confirmation resolves the wallet and stops the camera on navigation',async () => {
+  let faceOptions;
+  const f=await fixture('tuckShop',{tools:{openFaceLookup:async options=>{faceOptions=options; await options.onMatch({id:'FIXTURE/001'});}}});
+  await f.root.querySelector('[data-face]').onclick();
+  assert.equal(faceOptions.purpose,'tuck-shop-purchase'); assert.equal(faceOptions.allowCameraSelection,true);
+  assert.equal(f.calls.find(row=>row.action==='vendorWalletLookup').body.AccountRef,'FIXTURE/001');
+  f.mounted.destroy(); assert.equal(faceOptions.signal.aborted,true);
+});
+
+test('Staff customer mode uses the same directory selector and cannot debit a student wallet',async () => {
+  const f=await fixture('tuckShop',{customers:[{CustomerRef:'staff.one',CustomerName:'Staff One'}]});
+  f.root.querySelector('[data-customer-type]').onchange({target:{value:'Staff'}});
+  assert.match(f.root.innerHTML,/Find staff member/); assert.equal(f.root.querySelector('[data-scan]'),null);
+  f.input('Query','Staff One'); await f.find();
+  assert.equal(f.calls.find(row=>row.action==='vendorCustomerSearch').body.CustomerType,'Staff');
+  assert.match(f.root.innerHTML,/Staff One/);
+  f.root.querySelector('[data-add]').onclick(); await f.root.querySelector('[data-preview]').onclick();
+  f.root.querySelector('[data-payment-form]').elements.Confirmed.checked=true;
+  await f.root.querySelector('[data-payment-form]').requestSubmit();
+  assert.equal(f.calls.some(row=>row.action==='recordVendorWalletPurchase'),false);
+  assert.equal(f.calls.find(row=>row.action==='recordVendorSale').body.CustomerName,'Staff One'); f.mounted.destroy();
 });

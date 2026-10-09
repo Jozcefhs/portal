@@ -47,6 +47,19 @@ export async function searchTuckShopCustomers(env, user = {}, body = {}) {
   return { ok: true, customers };
 }
 
+// Formatting differences may resolve to the saved ID, but fuzzy/partial
+// references must never silently choose a wallet for a financial transaction.
+export async function canonicalTuckShopStudentReference(env, user, reference) {
+  const key = value => lower(value).replace(/[^a-z0-9]/g, '');
+  const wanted = key(reference);
+  if (!wanted) throw failure('Enter a card ID or admission number.');
+  const result = await searchTuckShopCustomers(env, user, {CustomerType:'Student', Query:clean(reference)});
+  const exact = result.customers.filter(row => key(row.CustomerRef) === wanted);
+  if (exact.length > 1) throw failure('More than one student uses this admission reference. Ask Accounts to resolve the duplicate.', 409);
+  if (!exact.length) throw failure('Student wallet account not found in your permitted branch and section. Check the admission number or use Find student.', 404);
+  return exact[0].CustomerRef;
+}
+
 export async function getTuckShopCatalog(env, user = {}) {
   const branch = branchId(user);
   const inventory = (await listCollection(env, 'tuckShopInventory'))

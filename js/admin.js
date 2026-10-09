@@ -1178,7 +1178,7 @@ async function attendancePasskeyProof(siteId, direction) {
 
 function attendanceFaceModule() {
   if (!attendanceFaceModulePromise) {
-    attendanceFaceModulePromise = import('./student-face-lookup.js?v=20260928-reliable-turn-capture-20261007-human-directions-quick-lookup-auto-start-camera-defaults').catch((error) => {
+    attendanceFaceModulePromise = import('./student-face-lookup.js?v=20260928-reliable-turn-capture-20261007-human-directions-quick-lookup-auto-start-camera-defaults-vendor-pos-lookup').catch((error) => {
       attendanceFaceModulePromise = null;
       throw error;
     });
@@ -5038,6 +5038,7 @@ function walletCardIdFromNfc(event) {
 }
 
 async function scanWalletNfc(form, button, options = {}) {
+  if (!form?.isConnected || options.signal?.aborted) return;
   const status = form.querySelector('[data-wallet-status], [data-department-status]');
   const submitOnRead = options.submitOnRead !== false;
   if (!('NDEFReader' in window)) {
@@ -5050,6 +5051,18 @@ async function scanWalletNfc(form, button, options = {}) {
   const normalMarkup = options.preserveMarkup ? button.innerHTML : '';
   const restoreMarkup = () => { if (normalMarkup && button.isConnected) button.innerHTML = normalMarkup; };
   const controller = new AbortController();
+  const cancel = () => {
+    controller.abort();
+    setButtonLoading(button, false, 'Waiting for card...', normalText);
+    restoreMarkup();
+  };
+  options.signal?.addEventListener('abort', cancel, {once:true});
+  const timer = window.setTimeout(() => {
+    cancel();
+    setStatus(status, 'No NFC card was read. Try Scan card again, or enter the card ID manually.', 'bad');
+  }, 45000);
+  const finish = () => {window.clearTimeout(timer); options.signal?.removeEventListener('abort', cancel); cancel();};
+  options.signal?.addEventListener('abort', () => window.clearTimeout(timer), {once:true});
   try {
     setButtonLoading(button, true, 'Waiting for card...', normalText);
     setStatus(status, 'Allow NFC access if prompted, then hold the student card near this device.', 'ok');
@@ -5059,14 +5072,15 @@ async function scanWalletNfc(form, button, options = {}) {
     }, { once: true });
     reader.addEventListener('reading', (event) => {
       const cardId = walletCardIdFromNfc(event);
-      controller.abort();
-      setButtonLoading(button, false, 'Waiting for card...', normalText);
-      restoreMarkup();
+      finish();
+      if (!form.isConnected || options.signal?.aborted) return;
       if (!cardId) {
         setStatus(status, 'The NFC card was detected, but it did not contain a usable card ID.', 'bad');
         return;
       }
       form.elements.WalletCardId.value = cardId;
+      if (form.elements.AccountRef) form.elements.AccountRef.value = '';
+      form.elements.WalletCardId.dispatchEvent(new Event('input', {bubbles:true}));
       setStatus(status, submitOnRead
         ? `Card ${cardId} scanned. Looking up the student wallet...`
         : `Card ${cardId} scanned. Review the wallet settings, then save.`, 'ok');
@@ -5074,8 +5088,7 @@ async function scanWalletNfc(form, button, options = {}) {
     }, { once: true });
     await reader.scan({ signal: controller.signal });
   } catch (error) {
-    setButtonLoading(button, false, 'Waiting for card...', normalText);
-    restoreMarkup();
+    finish();
     if (error?.name === 'AbortError') return;
     setStatus(status, error?.name === 'NotAllowedError'
       ? 'NFC permission was not granted. Allow NFC access or enter the card ID manually.'
@@ -10482,7 +10495,7 @@ function preloadRecordsDeskFaceRecognition() {
   recordsDeskFacePreloadScheduled = true;
   const preload = () => {
     recordsDeskFacePreloadScheduled = false;
-    recordsDeskFacePreloadPromise = import('./student-face-lookup.js?v=20260928-reliable-turn-capture-20261007-human-directions-quick-lookup-auto-start-camera-defaults')
+    recordsDeskFacePreloadPromise = import('./student-face-lookup.js?v=20260928-reliable-turn-capture-20261007-human-directions-quick-lookup-auto-start-camera-defaults-vendor-pos-lookup')
       .then((module) => module.preloadFaceRecognitionModel())
       .catch(() => {
         recordsDeskFacePreloadPromise = null;
@@ -10496,7 +10509,7 @@ function preloadRecordsDeskFaceRecognition() {
 }
 
 async function openStudentFaceLookupDialog(options = {}) {
-  const module = await import('./student-face-lookup.js?v=20260928-reliable-turn-capture-20261007-human-directions-quick-lookup-auto-start-camera-defaults');
+  const module = await import('./student-face-lookup.js?v=20260928-reliable-turn-capture-20261007-human-directions-quick-lookup-auto-start-camera-defaults-vendor-pos-lookup');
   return module.openStudentFaceLookup(options);
 }
 
@@ -18446,7 +18459,7 @@ function renderSection(active) {
       const result = await response.json();
       if (!response.ok || !result.ok) throw new Error(result.message || 'Vendor checkout failed.');
       return result;
-    },active);
+    },active,{lookupIcon:tuckShopLookupIcon,scanNfc:scanWalletNfc,openFaceLookup:openStudentFaceLookupDialog});
     return;
   }
   panelEl.classList.toggle('school-store-panel', active === 'bookstore' || active === 'uniformStore' || active === 'organizationStore');

@@ -12,17 +12,47 @@
   };
   const lookupIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>';
   let mounted;
-  function mount(root, request, section) {
+  function mount(root, request, section, tools = {}) {
     mounted?.destroy();
     let data, disposed = false, busy = false, preview = null, checkoutId = '', customer = null, notice = '', failed = false;
     let draft = {PaymentMethod:section === 'tuckShop' ? 'Student Wallet' : 'Cash', CollectionMode:'School collected', CustomerName:''};
     const cart = new Map(), addQuantities = new Map(), pending = new Set();
-    let search = '', manualLookupOpen = true;
+    let search = '', manualLookupOpen = false, customerType = 'Student', customerSearch = '', searchTimer = 0, searchGeneration = 0, searchController = null, scanController = null, faceController = null;
+    const icon = kind => tools.lookupIcon?.(kind) || lookupIcon;
     const label = section === 'tuckShop' ? 'Tuck Shop' : section === 'restaurant' ? 'Restaurant' : 'Organisation Store';
     function status(message,error = false) {
       notice = message; failed = error;
       const el = root.querySelector('[data-status]');
       if (el) {el.textContent = message; el.classList.toggle('error',error);}
+      const lookupStatus = root.querySelector('[data-department-status]');
+      if (lookupStatus) {lookupStatus.textContent = message; lookupStatus.classList.toggle('bad',error);}
+    }
+    function stopSearch() {clearTimeout(searchTimer); searchGeneration++; searchController?.abort(); searchController = null;}
+    function clearCustomer() {
+      customer = null; draft.WalletPin = ''; draft.CustomerName = ''; preview = null; checkoutId = '';
+      root.querySelector('[data-customer]')?.remove();
+      root.querySelector('[name="WalletPin"]')?.closest('label')?.remove();
+      root.querySelector('[data-payment-heading]')?.remove();
+      const payment = root.querySelector('[data-payment]'); if (payment) payment.hidden = true;
+      const paymentForm = root.querySelector('[data-payment-form]'); if (paymentForm) paymentForm.hidden = true;
+      const prompt = root.querySelector('[data-wallet-prompt]'); if (prompt) prompt.hidden = false;
+      root.querySelector('[data-complete]')?.remove();
+      root.querySelector('[name="Confirmed"]')?.closest('label')?.remove();
+      root.querySelector('[data-confirmed-total]')?.remove();
+      const previewButton = root.querySelector('[data-preview]'); if (previewButton) previewButton.disabled = true;
+    }
+    async function suggestCustomers(query, field) {
+      stopSearch();
+      if (query.trim().length < 2) return;
+      const generation = searchGeneration, controller = new AbortController(); searchController = controller; pending.add(controller);
+      const timer = setTimeout(() => controller.abort(),20000);
+      try {
+        const result = await request('vendorCustomerSearch',{Section:section,CustomerType:customerType,Query:query},controller.signal);
+        if (disposed || generation !== searchGeneration || !field.isConnected || field.value !== query) return;
+        root.querySelector('[data-customer-matches]').innerHTML = (result.customers || []).map(row => `<option value="${esc(row.CustomerRef)}">${esc([row.CustomerName,row.Detail].filter(Boolean).join(' · '))}</option>`).join('');
+      } catch (error) {
+        if (!disposed && generation === searchGeneration && error.name !== 'AbortError') status(error.message,true);
+      } finally {clearTimeout(timer); pending.delete(controller); if (searchController === controller) searchController = null;}
     }
     function invalidate() {preview = null; checkoutId = ''; draw();}
     async function call(action, body = {}) {
@@ -38,7 +68,8 @@
         return disposed ? null : result;
       } catch (error) {
         if (!disposed) status(error.name === 'AbortError'
-          ? 'No response was confirmed. Keep this cart and retry the same checkout; the server prevents duplicate posting.' : error.message,true);
+          ? action.startsWith('record') ? 'No response was confirmed. Keep this cart and retry the same checkout; the server prevents duplicate posting.'
+            : 'This request timed out. Try again; no sale was submitted.' : error.message,true);
         return null;
       } finally {
         clearTimeout(timer); pending.delete(controller); busy = false;
@@ -49,6 +80,7 @@
       const result = await call('salesBootstrap');
       if (!result) return;
       data = result; cart.clear(); addQuantities.clear(); preview = null; checkoutId = ''; customer = null;
+      draft.WalletPin = ''; draft.WalletCardId = ''; draft.AccountRef = ''; customerSearch = '';
       status(result.message); draw();
     }
     function payload() {
@@ -57,6 +89,7 @@
     }
     function draw() {
       if (!data || disposed) return;
+      stopSearch(); scanController?.abort();
       const school = section === 'tuckShop', wallet = draft.PaymentMethod === 'Student Wallet';
       const products = data.products.filter(p => p.Active !== 'NO');
       const entries = [...cart].map(([ref,qty]) => ({ref,qty,product:data.products.find(p => reference(p) === ref)}));
@@ -73,14 +106,17 @@
         <section class="commerce-cart vendor-pos-checkout" aria-label="Vendor sales cart"><div class="commerce-cart-title"><div><small>Current sale</small><h4>Cart</h4></div><strong>${money(total)}</strong></div>
         <div class="commerce-cart-lines">${entries.map(({ref,qty,product:p}) => `<article class="commerce-cart-line"><div><strong>${esc(p.ItemName)}</strong><span>${money(p.Price)} each</span></div><select data-quantity="${esc(ref)}" aria-label="Cart quantity for ${esc(p.ItemName)}">${quantityOptions(p.Quantity,qty)}</select><strong>${money(Number(p.Price) * qty)}</strong><button type="button" class="compact-icon-action compact-delete-action" data-remove="${esc(ref)}" aria-label="Remove ${esc(p.ItemName)}">&#128465;</button></article>`).join('') || '<p class="muted commerce-empty">Select an item to begin.</p>'}</div>
         <div class="tuck-shop-step-heading"><span>2</span><div><small>Customer</small><h5>Identify the buyer</h5></div></div>
-        <form class="vendor-pos-form"><label class="tuck-shop-customer-type">Payment method<select name="PaymentMethod">${[...(school ? ['Student Wallet'] : []),'Cash','Bank Transfer','POS / Card'].map(method => `<option${method === draft.PaymentMethod ? ' selected' : ''}>${method}</option>`).join('')}</select></label>
-        ${wallet ? `<div class="tuck-shop-lookup-form"><details class="tuck-shop-manual-lookup" data-manual-lookup${manualLookupOpen ? ' open' : ''}><summary>Enter card ID or admission number</summary><div><label>Wallet card ID<input name="WalletCardId" value="${esc(draft.WalletCardId)}" autocomplete="off" placeholder="Scan or enter NFC card ID"></label><label>Admission number<input name="AccountRef" value="${esc(draft.AccountRef)}" autocomplete="off" placeholder="Admission number"></label></div></details><div class="tuck-shop-lookup-actions vendor-pos-lookup-actions" role="group" aria-label="Student wallet lookup"><button type="button" data-find class="tuck-shop-lookup-action tuck-shop-lookup-primary">${lookupIcon}<span>Find wallet</span></button></div><small class="muted">Use the exact card ID or admission number. Only the customer identity is shown.</small></div>
-        ${customer ? `<div class="wallet-account-result vendor-pos-customer" data-customer><div><small>Student</small><strong>${esc(customer.DisplayName)}</strong><span>${esc(customer.AccountRef)}</span></div></div>` : ''}<p class="vendor-pos-guidance muted" data-wallet-prompt${customer ? ' hidden' : ''}>Find the student wallet to continue to payment.</p>`
-        : `<div class="commerce-checkout-form vendor-pos-payment"><label>Customer name<input name="CustomerName" value="${esc(draft.CustomerName)}" maxlength="160" placeholder="Walk-in customer"></label><label>Who receives the money?<select name="CollectionMode"><option${draft.CollectionMode === 'School collected' ? ' selected' : ''}>School collected</option><option${draft.CollectionMode === 'Vendor collected' ? ' selected' : ''}>Vendor collected</option></select></label>${draft.PaymentMethod !== 'Cash' ? `<label>Payment reference<input name="PaymentReference" value="${esc(draft.PaymentReference)}" required maxlength="200"></label>` : ''}</div>`}
-        ${!wallet || customer ? `<div class="tuck-shop-step-heading" data-payment-heading><span>3</span><div><small>Payment</small><h5>Complete sale</h5></div></div>` : ''}
-        <div class="commerce-checkout-form vendor-pos-payment" data-payment${wallet && !customer ? ' hidden' : ''}>${wallet && customer ? `<label>Wallet PIN <small>(when required)</small><input name="WalletPin" type="password" inputmode="numeric" autocomplete="off" value="${esc(draft.WalletPin)}"></label>` : ''}
-        <button type="button" data-preview ${!data.sellingEnabled || !cart.size || wallet && !customer ? 'disabled' : ''}>Preview total</button>
-        ${preview ? `<div class="commerce-checkout-total" data-confirmed-total><span>Server-confirmed total</span><strong>${money(preview.Amount)}</strong></div><label class="vendor-check"><input name="Confirmed" type="checkbox" required> ${wallet ? 'Customer has authorised this wallet purchase.' : 'I have received / confirmed the payment.'}</label><button type="submit">Complete sale</button>` : ''}</div></form></section></div></section></section>`;
+        ${school ? `<label class="tuck-shop-customer-type">Customer type<select data-customer-type><option value="Student"${customerType === 'Student' ? ' selected' : ''}>Student · wallet</option><option value="Staff"${customerType === 'Staff' ? ' selected' : ''}>Staff · cash, transfer or POS</option></select></label>
+        <form data-lookup-form class="tuck-shop-lookup-form"><label>${wallet ? 'Find student' : 'Find staff member'}<input name="Query" data-customer-search type="search" list="vendorCustomerMatches" value="${esc(customerSearch)}" placeholder="${wallet ? 'Name, admission no., card, phone or email' : 'Name, username, staff ID, phone or email'}" autocomplete="off"><datalist id="vendorCustomerMatches" data-customer-matches></datalist></label>
+        ${wallet ? `<details class="tuck-shop-manual-lookup" data-manual-lookup${manualLookupOpen ? ' open' : ''}><summary>Enter card ID or admission number manually</summary><div><label>Wallet card ID<input name="WalletCardId" value="${esc(draft.WalletCardId)}" autocomplete="off" placeholder="Scan or enter card ID"></label><label>Admission number<input name="AccountRef" value="${esc(draft.AccountRef)}" autocomplete="off" placeholder="Admission number"></label></div></details>` : ''}
+        <div class="tuck-shop-lookup-footer"><p class="status" data-department-status role="status"></p>${wallet ? `<div class="tuck-shop-lookup-actions" role="group" aria-label="Student lookup methods"><button type="submit" data-find class="tuck-shop-lookup-action tuck-shop-lookup-primary" aria-label="Find student wallet" title="Find student wallet">${icon('search')}<span>Find wallet</span></button><button type="button" data-scan class="tuck-shop-lookup-action" aria-label="Scan NFC student card" title="Scan NFC student card">${icon('card')}<span>Scan card</span></button><button type="button" data-face class="tuck-shop-lookup-action" aria-label="Find student by face" title="Find student by face">${icon('face')}<span>Use face</span></button></div>` : '<button type="submit" data-find class="tuck-shop-staff-select">Select staff member</button>'}</div></form>
+        ${customer ? `<div class="wallet-account-result vendor-pos-customer" data-customer><div><small>${wallet ? 'Student' : 'Staff customer'}</small><strong>${esc(customer.DisplayName)}</strong><span>${esc([customer.AccountRef,customer.ClassName].filter(Boolean).join(' · '))}</span></div></div>` : ''}<p class="tuck-shop-payment-prompt" data-wallet-prompt${customer ? ' hidden' : ''}>${wallet ? 'Find the student wallet' : 'Select a staff member'} to continue to payment.</p>` : ''}
+        ${!school || customer ? `<div class="tuck-shop-step-heading" data-payment-heading><span>3</span><div><small>Payment</small><h5>Complete sale</h5></div></div>` : ''}
+        <form class="vendor-pos-form" data-payment-form${school && !customer ? ' hidden' : ''}><div class="commerce-checkout-form vendor-pos-payment" data-payment${school && !customer ? ' hidden' : ''}>
+        ${!wallet ? `<label>Payment method<select name="PaymentMethod">${['Cash','Bank Transfer','POS / Card'].map(method => `<option${method === draft.PaymentMethod ? ' selected' : ''}>${method}</option>`).join('')}</select></label>${!school ? `<label>Customer name<input name="CustomerName" value="${esc(draft.CustomerName)}" maxlength="160" placeholder="Walk-in customer"></label>` : ''}<label>Who receives the money?<select name="CollectionMode"><option${draft.CollectionMode === 'School collected' ? ' selected' : ''}>School collected</option><option${draft.CollectionMode === 'Vendor collected' ? ' selected' : ''}>Vendor collected</option></select></label>${draft.PaymentMethod !== 'Cash' ? `<label>Payment reference<input name="PaymentReference" value="${esc(draft.PaymentReference)}" required maxlength="200"></label>` : ''}` : ''}
+        ${wallet && customer ? `<label>Wallet PIN <small>(when required)</small><input name="WalletPin" type="password" inputmode="numeric" autocomplete="off" value="${esc(draft.WalletPin)}"></label>` : ''}
+        <button type="button" data-preview ${!data.sellingEnabled || !cart.size || school && !customer ? 'disabled' : ''}>Preview total</button>
+        ${preview ? `<div class="commerce-checkout-total" data-confirmed-total><span>Server-confirmed total</span><strong>${money(preview.Amount)}</strong></div><label class="vendor-check"><input name="Confirmed" type="checkbox" required> ${wallet ? 'Customer has authorised this wallet purchase.' : 'I have received / confirmed the payment.'}</label><button type="submit" data-complete>Complete sale</button>` : ''}</div></form></section></div></section></section>`;
       root.querySelector('[data-refresh]').onclick = load;
       root.querySelector('[data-pos-tab]').onclick = () => root.querySelector('[data-search]').focus();
       function filterProducts() {
@@ -104,35 +140,96 @@
         if (!Number.isSafeInteger(qty) || qty < 1 || qty > Number(p.Quantity)) {draw(); return status('Enter a whole-number quantity within available stock.',true);}
         cart.set(input.dataset.quantity,qty); invalidate();
       });
-      const form = root.querySelector('form');
+      const form = root.querySelector('[data-payment-form]'), lookupForm = root.querySelector('[data-lookup-form]');
+      root.querySelector('[data-customer-type]')?.addEventListener('change',event => {
+        customerType = event.target.value; scanController?.abort(); faceController?.abort();
+        clearCustomer(); customerSearch = ''; draft.AccountRef = ''; draft.WalletCardId = ''; draft.PaymentReference = '';
+        draft.PaymentMethod = customerType === 'Student' ? 'Student Wallet' : 'Cash'; draw();
+      });
       root.querySelector('[data-manual-lookup]')?.addEventListener('toggle',event => {manualLookupOpen = event.target.open;});
+      if (lookupForm) lookupForm.oninput = event => {
+        const field = event.target; clearCustomer();
+        if (field.name === 'Query') {
+          customerSearch = field.value; draft.AccountRef = ''; draft.WalletCardId = '';
+          if (lookupForm.elements.AccountRef) lookupForm.elements.AccountRef.value = '';
+          if (lookupForm.elements.WalletCardId) lookupForm.elements.WalletCardId.value = '';
+          stopSearch(); root.querySelector('[data-customer-matches]').innerHTML = '';
+          searchTimer = setTimeout(() => {void suggestCustomers(customerSearch,field);},350);
+        } else {
+          stopSearch(); customerSearch = ''; lookupForm.elements.Query.value = ''; draft[field.name] = field.value;
+          const other = field.name === 'WalletCardId' ? 'AccountRef' : 'WalletCardId';
+          draft[other] = ''; lookupForm.elements[other].value = '';
+        }
+      };
       form.oninput = event => {
         if (event.target.name === 'Confirmed') return;
         draft[event.target.name] = event.target.value; preview = null; checkoutId = '';
-        if (event.target.name === 'WalletCardId') {draft.AccountRef = ''; form.elements.AccountRef.value = '';}
-        if (event.target.name === 'AccountRef') {draft.WalletCardId = ''; form.elements.WalletCardId.value = '';}
-        if (['AccountRef','WalletCardId'].includes(event.target.name)) {
-          customer = null; draft.WalletPin = ''; form.querySelector('[data-customer]')?.remove();
-          form.querySelector('[name="WalletPin"]')?.closest('label')?.remove();
-          form.querySelector('[data-payment-heading]')?.remove();
-          form.querySelector('[data-payment]').hidden = true;
-          form.querySelector('[data-wallet-prompt]').hidden = false;
-        }
         if (event.target.tagName === 'SELECT') draw();
-        else {form.querySelector('[type="submit"]')?.remove(); form.querySelector('[name="Confirmed"]')?.closest('label')?.remove();
+        else {form.querySelector('[data-complete]')?.remove(); form.querySelector('[name="Confirmed"]')?.closest('label')?.remove();
           form.querySelector('[data-confirmed-total]')?.remove();
           const btn = form.querySelector('[data-preview]'); if (btn) btn.disabled = !data.sellingEnabled || !cart.size || wallet && !customer;}
       };
-      root.querySelector('[data-find]')?.addEventListener('click',async () => {
-        const result = await call('vendorWalletLookup',{AccountRef:draft.AccountRef,WalletCardId:draft.WalletCardId});
-        if (result) {customer = result.account; draft.AccountRef = customer.AccountRef; preview = null; checkoutId = ''; status('Customer found. Preview the cart before completing payment.'); draw();}
-      });
+      async function findCustomer() {
+        if (busy || disposed) return;
+        stopSearch(); scanController?.abort(); clearCustomer();
+        let ref = draft.AccountRef;
+        if (!wallet || !ref && !draft.WalletCardId) {
+          const query = customerSearch.trim();
+          if (query.length < 2) return status('Enter a name or reference, or scan a student card.',true);
+          const result = await call('vendorCustomerSearch',{Query:query,CustomerType:customerType});
+          if (!result) return;
+          const matches = result.customers || [], key = value => String(value || '').toLowerCase().replace(/[^a-z0-9]/g,'');
+          const exact = matches.filter(row => key(row.CustomerRef) === key(query));
+          const selected = exact.length === 1 ? exact[0] : !exact.length && matches.length === 1 ? matches[0] : null;
+          if (!selected) {
+            root.querySelector('[data-customer-matches]').innerHTML = matches.map(row => `<option value="${esc(row.CustomerRef)}">${esc(row.CustomerName)}</option>`).join('');
+            return status(matches.length ? 'Choose one customer from the suggested results, then select again.' : 'No matching customer found in your permitted branch and section.',true);
+          }
+          ref = selected.CustomerRef;
+          if (!wallet) {
+            customer = {AccountRef:ref,DisplayName:selected.CustomerName,ClassName:selected.Detail};
+            draft.CustomerName = selected.CustomerName; draft.AccountRef = ref; status('Staff customer selected.'); draw(); return;
+          }
+        }
+        const result = await call('vendorWalletLookup',{AccountRef:ref,WalletCardId:draft.WalletCardId});
+        if (result) {customer = result.account; draft.AccountRef = customer.AccountRef; draft.WalletCardId = ''; customerSearch = customer.AccountRef;
+          status('Customer found. Preview the cart before completing payment.'); draw();}
+      }
+      if (lookupForm) lookupForm.onsubmit = async event => {event.preventDefault(); await findCustomer();};
+      const scanButton = root.querySelector('[data-scan]');
+      if (scanButton) {
+        scanButton.classList.toggle('nfc-unavailable',!('NDEFReader' in window));
+        scanButton.title = 'NDEFReader' in window ? 'Scan a compatible NFC student card' : 'Direct NFC requires Android Chrome; USB readers and manual entry remain available';
+        scanButton.onclick = async () => {
+          stopSearch(); clearCustomer(); scanController?.abort(); scanController = new AbortController();
+          draft.AccountRef = ''; draft.WalletCardId = ''; customerSearch = '';
+          lookupForm.elements.AccountRef.value = ''; lookupForm.elements.WalletCardId.value = ''; lookupForm.elements.Query.value = '';
+          if (!tools.scanNfc) return status('Card scanning is unavailable. Refresh the page or enter the card ID manually.',true);
+          await tools.scanNfc(lookupForm,scanButton,{preserveMarkup:true,signal:scanController.signal});
+        };
+      }
+      const faceButton = root.querySelector('[data-face]');
+      if (faceButton) faceButton.onclick = async () => {
+        stopSearch(); scanController?.abort(); clearCustomer(); faceController?.abort(); faceController = new AbortController();
+        const controller = faceController;
+        draft.AccountRef = ''; draft.WalletCardId = ''; customerSearch = '';
+        lookupForm.elements.AccountRef.value = ''; lookupForm.elements.WalletCardId.value = ''; lookupForm.elements.Query.value = '';
+        if (!tools.openFaceLookup) return status('Face lookup is unavailable. Refresh the page or use manual search.',true);
+        try {
+          await tools.openFaceLookup({purpose:'tuck-shop-purchase',allowCameraSelection:true,confirmText:'Use for this purchase',signal:controller.signal,
+            onMatch:async match => {
+              if (disposed || !wallet || controller.signal.aborted) return;
+              draft.WalletCardId = ''; draft.AccountRef = match.id; customerSearch = '';
+              await findCustomer();
+            }});
+        } catch (error) {if (!disposed) status(error.message,true);}
+      };
       root.querySelector('[data-preview]').onclick = async () => {
         const result = await call('previewVendorSale',payload());
         if (result) {preview = result; checkoutId ||= crypto.randomUUID(); status('Review the server-confirmed total and payment before completing the sale.'); draw();}
       };
       form.onsubmit = async event => {
-        event.preventDefault(); if (!preview || !form.elements.Confirmed.checked || busy) return;
+        event.preventDefault(); if (!preview || !form.elements.Confirmed.checked || busy || school && !customer) return;
         const body = {...payload(),ExpectedAmount:preview.Amount,Confirmed:true,SaleRequestId:checkoutId};
         const result = await call(wallet ? 'recordVendorWalletPurchase' : 'recordVendorSale',body);
         if (!result) return;
@@ -142,7 +239,7 @@
     }
     const reference = p => section === 'organizationStore' ? p.ItemCode || p.InventoryId : p.InventoryId;
     root.innerHTML = '<p class="vendor-status" data-status role="status">Loading vendor point of sale…</p>'; load();
-    mounted = {destroy() {disposed = true; for (const controller of pending) controller.abort(); draft.WalletPin = ''; cart.clear();}};
+    mounted = {destroy() {disposed = true; stopSearch(); scanController?.abort(); faceController?.abort(); for (const controller of pending) controller.abort(); draft.WalletPin = ''; cart.clear();}};
     return mounted;
   }
   window.DynamaxVendorPOS = Object.freeze({mount,unmount() {mounted?.destroy(); mounted = undefined;}});

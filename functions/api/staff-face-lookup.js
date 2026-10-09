@@ -19,6 +19,7 @@ import {
 } from '../lib/school-scope.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { readJsonBody } from '../lib/request-security.js';
+import { isVendorSeller, linkedSalesVendors, vendorCustomerScope } from '../lib/vendor-sales-access.js';
 import {
   STUDENT_FACE_MODEL_ID,
   STUDENT_FACE_TEMPLATE_VERSION,
@@ -115,6 +116,7 @@ export function normalizeStudentFaceLookupPurpose(value) {
 export function staffCanUseStudentFaceLookup(user = {}, purpose = 'records-desk') {
   const normalizedPurpose = normalizeStudentFaceLookupPurpose(purpose);
   if (lower(user.edition) !== 'school') return false;
+  if (isVendorSeller(user) && normalizedPurpose !== 'tuck-shop-purchase') return false;
   const allowed = new Set((user.allowedSections || []).map(clean).filter(Boolean));
   if (normalizedPurpose === 'records-desk') {
     const capabilities = recordsDeskCapabilities(user);
@@ -506,11 +508,16 @@ async function match(env, user, body, purpose) {
 export async function onRequestPost({ request, env }) {
   try {
     requireFirestoreEnv(env);
-    const user = await requireStaffSession(env, request);
+    let user = await requireStaffSession(env, request);
     const body = await readJsonBody(request, { maxBytes: 128 * 1024 });
     const purpose = normalizeStudentFaceLookupPurpose(body.purpose);
     ensureSchoolFaceAccess(user, purpose);
     const action = lower(body.action || 'status');
+    if (isVendorSeller(user)) {
+      if (!['status','match'].includes(action)) throw error('Vendors can identify a customer for a Tuck Shop purchase only.',403);
+      if (user.subscriptionActive === false || user.subscriptionReadOnly === true) throw error('Selling is disabled for this subscription.',403);
+      user = vendorCustomerScope(user,await linkedSalesVendors(env,user,'tuckShop'));
+    }
     let result;
     if (action === 'status') result = await status(env, user, body, purpose);
     else if (action === 'enroll') {

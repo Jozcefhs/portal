@@ -122,6 +122,16 @@ Use **Product ownership → Batch products & owners**. The workflow is shared ac
 
 ## Verification and release controls
 
+### Original customer lookup in the vendor counter
+
+School vendors use the original Tuck Shop customer layout and shared NFC / face adapters: **Find student**, a collapsed manual card / admission panel, and **Find wallet**, **Scan card** and **Use face**. Enter in the lookup form identifies a customer only; it cannot submit a sale. Staff can be selected for cash, transfer or POS sales. Payment controls appear only after a customer is identified.
+
+Customer searches and face matches are restricted by the active branch and the Primary / Secondary sections of this login's linked, active selling vendors. Returned information contains identity details only, not wallet balances, credentials or contact details. Vendors cannot enrol or revoke faces, use Records Desk face lookup, or access general student / wallet administration. Admission-number formatting differences resolve only to an exact normalised saved reference; partial or ambiguous references cannot silently select a wallet.
+
+Direct phone NFC uses the original Android Chrome Web NFC flow. Unsupported browsers retain USB-reader / manual entry, with a visible explanation instead of a stuck scan button. Scan cancellation, no-card timeouts and navigation stop the reader. Face lookup uses the original camera selector and quick-match flow; navigation closes the dialog and camera. Changing a customer clears the previous identity, PIN and checkout preview. Server pricing, wallet authorisation, duplicate-sale protection and financial posting remain authoritative.
+
+Verification on 9 October 2026 for this repair: 1,926 top-level web / backend tests and 64 payroll tests passed; the Pages Functions bundle compiled successfully. Tests execute the original NFC reader lifecycle, the vendor admission / directory actions, the real staff-session guard and scoped face-match endpoint, including blocked access outside the linked branch / section. Local desktop and 390-pixel mobile checks confirmed the original three-button layout, Enter-to-lookup, inline errors and camera selector. Physical NFC cards and live biometric capture still require an on-device check; no live sale or wallet debit was used for verification.
+
 The automated acceptance suite covers all three editions, actual checkout paths, partial and full payment, retries and conflicts, fixed-charge redistribution after refunds, direct collection, bank changes, data isolation and historical openings. Desktop tests cover shared request handling, role access, form construction and stale-workspace protection. Responsive web checks use sample records only.
 
 Verification on 8 October 2026: 1,832 top-level web tests, 64 payroll tests and 588 desktop tests passed; the Pages Functions bundle compiled successfully. The vendor acceptance suite contains 41 tests, and the desktop vendor suite contains ten tests, including stale statement protection when filters change.

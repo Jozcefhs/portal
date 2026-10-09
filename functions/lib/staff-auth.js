@@ -717,7 +717,9 @@ export async function requireStaffSession(env, request) {
   }
   const access = await staffAccessFor(env, user);
   const requestedBranch = request.headers.get('X-Dynamax-Branch') || '';
-  if (user.role === 'Vendor User' && !['/api/staff-vendor-settlements', '/api/admin', '/api/staff-session',
+  // Face endpoint independently checks purchase-only purpose and active vendor
+  // linkage. No Records Desk, enrollment or general student access is granted.
+  if (user.role === 'Vendor User' && !['/api/staff-vendor-settlements', '/api/staff-face-lookup', '/api/admin', '/api/staff-session',
     '/api/staff-passkey', '/api/staff-mfa', '/api/staff-approval-profile'].includes(new URL(request.url).pathname)) {
     const error = new Error('Vendor accounts may access only their own sales, settlements and sign-in settings.'); error.status = 403; throw error;
   }

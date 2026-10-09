@@ -1,6 +1,7 @@
 <!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Vendor POS fixture</title>
 <link rel="stylesheet" href="../../css/style.css"><link rel="stylesheet" href="../../css/vendor-settlements.css"><style>body{padding:12px}#root{max-width:1540px;margin:auto;padding:16px;background:#fff;border:1px solid #d4e3ed;border-radius:12px}input,select{box-sizing:border-box}button{cursor:pointer}@media(max-width:680px){body{padding:6px}#root{padding:8px}}</style>
-<main id="root"></main><script src="../../js/vendor-pos.js"></script><script>
+<main id="root"></main><script src="vendor-pos-shared-helpers.js"></script><script src="../../js/vendor-pos.js"></script><script>
+window.DynamaxStaffFetch=async()=>new Response(JSON.stringify({ok:true,enabled:true,configured:true,canLookup:true,canManage:false,canErase:false}));
 let quantity=5,posted=false;
 const options=new URLSearchParams(location.search);
 const section=['tuckShop','restaurant','organizationStore'].includes(options.get('section'))?options.get('section'):'tuckShop';
@@ -11,9 +12,10 @@ DynamaxVendorPOS.mount(document.querySelector('#root'),async(action,body)=>{
   {InventoryId:'stock-1',ItemCode:'WATER',ItemName:'Water',Category:'Drinks',Unit:'bottle',Price:100,Quantity:quantity},
   {InventoryId:'stock-2',ItemCode:'BREAD',ItemName:'Bread',Category:'Food',Unit:'loaf',Price:200,Quantity:10},
   ...(dense?Array.from({length:24},(_,i)=>({InventoryId:'sample-'+i,ItemCode:'SAMPLE-'+i,ItemName:'Sample product '+(i+1),Category:['Stationeries','Toiletries','Snacks'][i%3],Unit:'pcs',Price:200,Quantity:20+i})):[])]};
- if(action==='vendorWalletLookup')return {account:{AccountRef:'FIXTURE/001',DisplayName:'Fixture child'}};
+ if(action==='vendorCustomerSearch')return {customers:body.Query.toLowerCase().includes('missing')?[]:[{CustomerRef:'FIXTURE/001',CustomerName:'Fixture child',Detail:'Grade 7'}]};
+ if(action==='vendorWalletLookup'){if(String(body.AccountRef).includes('missing'))throw new Error('Fixture account not found.');return {account:{AccountRef:'FIXTURE/001',DisplayName:'Fixture child',ClassName:'Grade 7'}};}
  if(action==='previewVendorSale')return {Amount:body.Items.reduce((n,i)=>n+i.Quantity*(i.Reference==='stock-1'?100:200),0)};
  if(action.startsWith('record')){if(!posted){quantity-=body.Items[0].Quantity;posted=true;}return {message:'Fixture sale recorded.',sale:{SaleNo:'FIXTURE-RECEIPT',Amount:body.ExpectedAmount}};}
  throw new Error('Unexpected fixture action');
-},section);
+},section,window.vendorFixtureTools);
 </script></html>
