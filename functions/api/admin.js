@@ -8,6 +8,7 @@ import { readJsonBody } from '../lib/request-security.js';
 import { loadPublishedTutorials } from '../lib/tutorial-catalog.js';
 import { withStudentProfileDefaults } from '../lib/student-profile-defaults.js';
 import { studentWalletProfile } from '../lib/student-wallet-profile.js';
+import { loadFinanceSchoolProfile } from '../lib/finance-school-profile.js';
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -207,9 +208,11 @@ export async function onRequestPost(context) {
     };
     const shouldLoadStore = () => ['bookstore', 'uniformStore', 'organizationStore']
       .some((section) => shouldLoad(section));
-    const schoolProfile = (shouldLoad('accounts') || shouldLoad('admissions') || shouldLoad('students'))
-      ? await getDocument(env, 'settings', 'schoolProfile').catch(() => null)
-      : null;
+    const schoolProfile = shouldLoad('accounts')
+      ? await loadFinanceSchoolProfile(env, user.branchId)
+      : (shouldLoad('admissions') || shouldLoad('students'))
+        ? await getDocument(env, 'settings', 'schoolProfile').catch(() => null)
+        : null;
     const financeSession = clean(schoolProfile?.CurrentAcademicSession);
 
     const [
@@ -465,6 +468,9 @@ export async function onRequestPost(context) {
       departments
     }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (err) {
-    return Response.json({ ok: false, message: err.message || String(err) }, { status: err.status || 500 });
+    return Response.json({ ok: false, message: err.message || String(err), ...(err.code ? { code: err.code } : {}) }, {
+      status: err.status || 500,
+      headers: { 'Cache-Control': 'no-store' }
+    });
   }
 }

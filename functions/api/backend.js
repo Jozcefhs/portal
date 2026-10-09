@@ -29,6 +29,7 @@ import {
 } from '../lib/document-storage.js';
 import { organizationModulePreferences, organizationProfileDocument, resolveOrganizationConfig } from '../lib/organization-config.js';
 import { loadOrganizationNameProfile } from '../lib/organization-name-format.js';
+import { loadFinanceSchoolProfile } from '../lib/finance-school-profile.js';
 import { invalidateStaffAccessCache, staffAccessFor } from '../lib/staff-auth.js';
 import { mergedProfileText } from '../lib/profile-settings-update.js';
 import { selectStudentBillingProfile, selectStudentBillingProfiles, studentProfileValue } from '../lib/student-billing-profile.js';
@@ -2261,7 +2262,9 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
   const branchId = accountingRequestBranch(requestedScope || {});
   const branchRows = (rows) => accountingRowsForBranch(rows, branchId);
   const schoolScope = { branchId, schoolSectionAccess: requestedScope?.UserSchoolSectionAccess || requestedScope?.schoolSectionAccess };
-  const schoolProfile = preloaded?.schoolProfile || await getDocument(env, 'settings', 'schoolProfile').catch(() => null);
+  // Preloaded inputs are an already resolved snapshot (including one-account
+  // calculations); live desktop reads resolve the authoritative branch here.
+  const schoolProfile = preloaded?.schoolProfile || await loadFinanceSchoolProfile(env, branchId);
   const financeSession = clean(schoolProfile?.CurrentAcademicSession);
   const financeRows = (collection) => {
     if (!financeSession) {
@@ -2580,6 +2583,7 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
   return {
     ok: true,
     message: 'Accounts loaded from the database.',
+    financeAcademicSession: financeSession,
     accounts: accountRows,
     payments: normalizedPayments,
     invoices: visibleInvoices,
