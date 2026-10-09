@@ -281,6 +281,23 @@ test('collected direct commission can be returned after a refund; limits and ret
   assert.ok(journal.Lines.some(l => l.AccountCode === '1020' && l.Credit === 5));
   await assert.rejects(f.run('recordRecovery',{...receipt,RequestId:'wrong-kind',Kind:'Made up'}),/valid vendor/);
 });
+for (const edition of ['school','faith','organization']) {
+  test(`${edition} vendor registration requires a name and saves inherited-rule vendors without financial posting`, async () => {
+    const f = fixture(), actor = {...user,edition};
+    const body = {VendorId:`VND-fixture-${edition}`,Name:'',SchoolSection:'Secondary',BankAccountNumber:'0012345678',PosEnabled:true,
+      Rule:{Mode:'Inherit default',EffectiveDate:new Date().toISOString().slice(0,10)}};
+    await assert.rejects(f.run('saveVendor',body,actor),/Enter a vendor name/);
+    assert.equal(f.commits.length,0);
+    const result = await f.run('saveVendor',{...body,Name:'Fixture registered vendor'},actor);
+    const saved = f.get('commerceVendors',result.VendorId);
+    assert.equal(saved.Name,'Fixture registered vendor'); assert.equal(saved.OrganisationEdition,edition);
+    assert.equal(saved.BankAccountNumber,'0012345678'); assert.equal(saved.RuleHistory[0].Mode,'Inherit default');
+    assert.equal(saved.SchoolSection,edition === 'school' ? 'Secondary' : 'All');
+    assert.equal(f.list('accountingJournals').length,0); assert.equal(f.list('ledger').length,0); assert.equal(f.list('vendorBalances').length,0);
+    assert.ok((await f.run('bootstrap',{},actor)).vendors.some(v=>v.VendorId===result.VendorId));
+  });
+}
+
 test('bank-only vendor updates preserve rule history and canonical vendor email usernames', async () => {
   const f = fixture([['staffUsers','staff-unique-id',{Username:'vendor-canonical',LoginUsername:'owner@example.test',Role:'Vendor User',Active:true,BranchId:'main',SchoolSectionAccess:'Secondary'}]]);
   const v = f.get('commerceVendors','v1');

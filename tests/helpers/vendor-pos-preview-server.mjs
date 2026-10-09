@@ -1,12 +1,14 @@
-/* Isolated local preview: only fixture and public POS assets; no API or credentials. */
+/* Isolated local previews: only fixtures and public vendor assets; no API or credentials. */
 import {createServer} from 'node:http';
 import {readFile} from 'node:fs/promises';
 
 const files = new Map([
   ['/tests/fixtures/vendor-pos.html',new URL('../fixtures/vendor-pos.html',import.meta.url)],
+  ['/tests/fixtures/vendor-registration.html',new URL('../fixtures/vendor-registration.html',import.meta.url)],
   ['/css/style.css',new URL('../../css/style.css',import.meta.url)],
   ['/css/vendor-settlements.css',new URL('../../css/vendor-settlements.css',import.meta.url)],
   ['/js/vendor-pos.js',new URL('../../js/vendor-pos.js',import.meta.url)],
+  ['/js/vendor-settlements.js',new URL('../../js/vendor-settlements.js',import.meta.url)],
   ['/js/student-face-lookup.js',new URL('../../js/student-face-lookup.js',import.meta.url)]
 ]);
 createServer(async(req,res) => {

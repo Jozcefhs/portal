@@ -27,8 +27,29 @@
   function ruleVisibility(form) {
     if (!form.elements.RuleMode) return;
     const mode = form.elements.RuleMode.value;
-    form.querySelectorAll('[data-rule]').forEach(el => { el.closest('label').hidden = el.dataset.rule !== mode; });
-    ['Basis','Cycle'].forEach(name => { form.elements[name].closest('label').hidden = mode !== 'Fixed charge' || name === 'Cycle' && form.elements.Basis.value !== 'Per period'; });
+    const enabled = !form.elements.ChangeRule || form.elements.ChangeRule.checked;
+    ['RuleMode','EffectiveDate'].forEach(name => { form.elements[name].disabled = !enabled; });
+    form.querySelectorAll('[data-rule]').forEach(el => {
+      const applicable = el.dataset.rule === mode;
+      el.closest('label').hidden = !applicable; el.disabled = !enabled || !applicable;
+    });
+    ['Basis','Cycle'].forEach(name => {
+      const applicable = mode === 'Fixed charge' && (name !== 'Cycle' || form.elements.Basis.value === 'Per period');
+      form.elements[name].closest('label').hidden = !applicable; form.elements[name].disabled = !enabled || !applicable;
+    });
+  }
+  async function submitForm(form, save, transform = body => body) {
+    const progress = form.querySelector('[role=status]');
+    if (!form.checkValidity()) {
+      const field = Array.from(form.elements).find(el => el.willValidate && !el.validity.valid);
+      const label = field?.labels?.[0]?.firstChild?.textContent.trim() || field?.name || 'Required field';
+      if (progress) progress.textContent = `${label}: ${field?.validationMessage || 'Check this field before saving.'}`;
+      field?.focus(); field?.reportValidity();
+      return null;
+    }
+    if (progress) progress.textContent = '';
+    try { return await save(transform(formBody(form))); }
+    catch (error) { if (progress) progress.textContent = error.message || 'Could not prepare this form. Your entries have been kept; please try again.'; return null; }
   }
   let mounted;
   function mount(root, request) {
@@ -37,7 +58,11 @@
     const pending = new Set();
     const status = (message, error = false) => { const el = root.querySelector('.vendor-status'); if (el) { el.textContent = message; el.classList.toggle('error', error); } };
     async function call(action, body = {}, form) {
-      if (busy || disposed) return null;
+      if (busy || disposed) {
+        const target = form?.querySelector('[role=status]');
+        if (target && !disposed) target.textContent = 'Another request is still processing. Please wait, then save again.';
+        return null;
+      }
       busy = true;
       const controller = new AbortController(); pending.add(controller);
       const submit = form?.querySelector('[type=submit]'); if (submit) { submit.disabled = true; submit.textContent = 'Processing…'; }
@@ -172,12 +197,12 @@
     }
     function showDialog(title, html, action, transform = b => b) {
       dialog?.remove(); const modal = document.createElement('dialog'); dialog = modal; modal.className = 'vendor-dialog';
-      modal.innerHTML = `<div class="vendor-header"><h3>${esc(title)}</h3><button type="button" data-close aria-label="Close">×</button></div><form class="vendor-form">${html}
-        <p class="vendor-full vendor-status" role="status"></p><button type="submit" class="vendor-full" data-label="${esc(title)}">${esc(title)}</button></form>`;
+      modal.innerHTML = `<div class="vendor-header"><h3>${esc(title)}</h3><button type="button" data-close aria-label="Close">×</button></div><form class="vendor-form" novalidate>${html}
+        <div class="vendor-full vendor-dialog-footer"><p class="vendor-status" role="status" aria-live="polite"></p><button type="submit" data-label="${esc(title)}">${esc(title)}</button></div></form>`;
       document.body.append(modal); modal.showModal(); modal.querySelector('[data-close]').onclick = () => modal.close();
       modal.addEventListener('close', () => modal.remove());
       const form = modal.querySelector('form'); ruleVisibility(form); form.onchange = () => ruleVisibility(form);
-      form.onsubmit = async event => { event.preventDefault(); const result = await call(action, transform(formBody(form)), form);
+      form.onsubmit = async event => { event.preventDefault(); const result = await submitForm(form, body => call(action, body, form), transform);
         if (result && !disposed) { notice = result.message; modal.close(); await reload(); } };
     }
     const auth = () => input('approvalPassword','Confirm with your current password','','password','autocomplete="current-password" required');
@@ -252,7 +277,8 @@
         ${select('OffsetAccount','Reviewed revenue / equity offset',(data.chart || []).filter(a => ['Revenue','Equity'].includes(a.Type)).map(a => [a.Code,`${a.Code} · ${a.Name}`]))}
         ${input('EvidenceReference','Reviewed statement / evidence reference','','text','required')}${notes()}`, 'previewHistorical',b => ({ ...b, VendorId:selected }));
       const form = dialog.querySelector('form');
-      form.onsubmit = async event => { event.preventDefault(); const body = { ...formBody(form), VendorId:selected }, result = await call('previewHistorical',body,form); if (!result || disposed) return;
+      form.onsubmit = async event => { event.preventDefault(); let body;
+        const result = await submitForm(form, payload => { body = { ...payload, VendorId:selected }; return call('previewHistorical',body,form); }); if (!result || disposed) return;
         dialog.close();
         showDialog('Confirm historical opening', `<p class="vendor-full">Outstanding vendor opening: <strong>${money(result.Outstanding)}</strong>. ${esc(result.message)}</p>
           <label class="vendor-check vendor-full"><input name="Confirmed" type="checkbox" required> Accounts has reviewed ownership, sales, prior payments, the statement and the accounting offset.</label>${auth()}`, 'recordOpening', b => ({ ...body, ...b, Confirmed:true, PreviewDigest:result.PreviewDigest }));

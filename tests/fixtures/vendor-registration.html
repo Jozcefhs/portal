@@ -1,0 +1,18 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Isolated vendor registration fixture</title>
+<link rel="stylesheet" href="../../css/style.css"><link rel="stylesheet" href="../../css/vendor-settlements.css">
+<style>body{padding:12px}main{max-width:1100px;margin:auto}#fixture-state{white-space:pre-wrap;overflow-wrap:anywhere}button{cursor:pointer}</style>
+<main><p>LOCAL FIXTURE ONLY — no live accounts, bank records, payments or API calls.</p><div id="root"></div><pre id="fixture-state">No save requests.</pre></main>
+<script src="../../js/vendor-settlements.js"></script><script>
+const requestedEdition=new URLSearchParams(location.search).get('edition');
+const edition=['school','faith','organization'].includes(requestedEdition)?requestedEdition:'school';
+const vendors=[]; let saves=0;
+DynamaxVendors.mount(document.querySelector('#root'),async(action,body)=>{
+ if(action==='bootstrap')return {vendors,balances:[],requests:[],products:[],suppliers:[],chart:[],settings:{Enabled:false},capabilities:{manage:true,operate:true,edition,section:'All',branchId:'main'}};
+ if(action!=='saveVendor')throw new Error('Unsupported fixture action');
+ document.querySelector('#fixture-state').textContent=JSON.stringify({saves:++saves,body},null,2);
+ if(body.Name==='Fixture rejected')throw new Error('Fixture validation error. Correct the vendor name and retry.');
+ const vendor={...body,RecordVersion:'fixture-version'}; const i=vendors.findIndex(v=>v.VendorId===body.VendorId);
+ if(i<0)vendors.push(vendor);else vendors[i]=vendor;
+ return {ok:true,message:'Fixture vendor saved. No production records were changed.'};
+});
+</script></html>
