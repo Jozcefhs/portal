@@ -2,6 +2,6 @@
   "version": "3.1.20",
   "channel": "stable",
   "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.20.exe",
-  "sha256": "3a72f930da6ec92c2426b466c75898f02fb1ecf1daf851deb71f6c2a9197d0d3",
+  "sha256": "f8ce9b90a6dfe3f13366c31b0ecd2910045054af2cf08698404d7601608c6db3",
   "notes": "Dynamax Desktop v3.1.20 adds one-login vendor selling and statements, with server-enforced stock ownership, atomic wallet/vendor journals and duplicate-safe checkout. Applies across School, Faith and Organisation editions where the relevant stores are enabled. Accounts retains ownership, commission, approval and payment controls; vendor sales remain disabled until reviewed and enabled. Includes the tested timetable generator, vendor ownership batch import, library fixes and wallet-card repairs. Timetables respect teachers, arms, weekly quotas, subject cutoffs, availability, breaks and conflict checks, and are saved as reviewed drafts. Installing the update does not rewrite existing financial records."
 }
