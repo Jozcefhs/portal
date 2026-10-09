@@ -36,6 +36,12 @@
 .vendor-badge { display:inline-block; padding:4px 8px; border-radius:12px; font-size:12px; background:#dff3ee; color:#126a67; }
 .vendor-dialog { max-width:760px; width:calc(100% - 24px); max-height:90vh; overflow:auto; padding:18px; border:1px solid #c3d8e7; border-radius:14px; }
 .vendor-dialog::backdrop { background:rgba(10,33,53,.55); }
+.vendor-import-dialog { max-width:1050px; }
+.vendor-import-dialog [data-help] { margin:0; line-height:1.5; }
+.vendor-import-dialog .vendor-table-wrap { max-height:42vh; margin:0; }
+.vendor-import-dialog .vendor-table th { position:sticky; top:0; }
+.vendor-import-error { background:#fff0ee; color:#8e2020; }
+.vendor-import-dialog input[type=file] { max-width:100%; }
 .vendor-dialog h3 { margin:0; }
 .vendor-dialog .vendor-header { padding-bottom:12px; border-bottom:1px solid #d4e3ed; }
 .vendor-workspace details summary { cursor:pointer; padding:10px 0; }

@@ -4,6 +4,7 @@ import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 import { webcrypto } from 'node:crypto';
 import * as rules from '../functions/lib/vendor-settlement-rules.js';
+import { handleProductImport } from '../functions/lib/vendor-product-import.js';
 import { assertRequisitionTransition } from '../functions/lib/requisition-workflow.js';
 import { validateRequisitionPosting } from '../functions/lib/requisition-posting.js';
 import { accountingChartForEdition } from '../functions/lib/accounting-edition-scope.js';
@@ -37,11 +38,11 @@ function fixture(initial = []) {
     commits.push(structuredClone(writes)); for (const w of writes) put(w.collectionPath,w.documentId,w.data);
   };
   const functions = vm.runInNewContext(`${source}\n({ handleVendorSettlementAction, prepareVendorSale, snapshotVendorCart })`, {
-    ...rules, crypto:webcrypto, Intl, Date, TextEncoder, console, assertRequisitionTransition, validateRequisitionPosting, accountingChartForEdition,
+    ...rules, handleProductImport, crypto:webcrypto, Intl, Date, TextEncoder, console, assertRequisitionTransition, validateRequisitionPosting, accountingChartForEdition,
     getDocument:async (_env,c,id) => structuredClone(get(c,id) || null), listCollection:async (_env,c) => c === 'accountingPeriods' ? list(c) : list(c),
     getAccountingChartRows:async () => chart, verifyStaffApprovalPassword:async (_env,username,password) => password === 'test-confirmation',
     findStaffUserRecord:async (_env,username) => list('staffUsers').find(r => [r.Username,r.LoginUsername,r.__id].some(v => String(v || '').toLowerCase() === username.toLowerCase())),
-    queryCollectionPages:async (_env,c,opts) => list(c).filter(row => opts.filters.every(f => row[f.field] === f.value)), batchCommitDocuments:commit
+    queryCollectionPages:async (_env,c,opts) => list(c).filter(row => opts.filters.every(f => f.op === 'in' ? f.value.includes(row[f.field]) : row[f.field] === f.value)), batchCommitDocuments:commit
   });
   const run = (action,body = {},actor = user,options = {}) => functions.handleVendorSettlementAction({},actor,{action,...body},options);
   async function sale(id = 'sale1', gross = 100, extra = {}, items = null) {
@@ -58,7 +59,7 @@ function fixture(initial = []) {
       RecordVersion:row.__updateTime,approvalPassword:'test-confirmation',Notes:'Reviewed'}, {...user,role:assignedRole,username:assignedRole});
   }
   const approve = async () => { await decision('Accounts Confirmed','Accounts Officer'); await decision('Admin Reviewed','Admin'); await decision('Approved','Director'); };
-  const pay = async (amount,id = 'pay1') => { const r = get('vendorSettlementRequests','VREQ-claim1'); return run('pay',{
+const pay = async (amount,id = 'pay1') => { const r = get('vendorSettlementRequests','VREQ-claim1'); return run('pay',{
     SettlementId:r.SettlementId,VendorId:'v1',RequestId:id,RecordVersion:r.__updateTime,Amount:amount,Date:'2026-10-08',
     Reference:'BANK-1',EvidenceReference:'Slip-1',approvalPassword:'test-confirmation'}); };
   const refund = async (value,id = 'refund1',entryId = 'sale1--v1') => run('refund',{VendorId:'v1',EntryId:entryId,Amount:value,RequestId:id,
@@ -395,4 +396,153 @@ test('paid online stock shortage holds claims; completing the original issue rel
   assert.equal(f.list('accountingJournals').length,1);
   assert.equal((await f.run('completeInventoryReview',body,f.actor,{commerce:f.commerce})).replayed,true);
   assert.equal(f.get(f.collection,'stock1').Quantity,3);
+});
+
+const stock = (extra = {}) => ({ BranchId:'main',OrganisationEdition:'school',SchoolSection:'Secondary',ItemCode:'WATER',ItemName:'Water',
+  Quantity:37,Price:100,SalePrice:100,Category:'Drinks',Unit:'bottle',Active:'YES',VendorId:'',Barcode:'keep-barcode',...extra });
+const createRow = (extra = {}) => ({RowNumber:2,ItemCode:'WATER',ItemName:'Water',Owner:'v1',Store:'tuckShop',Quantity:'5',Price:'100',...extra});
+async function importPreview(f, Mode, Rows, actor = user, RequestId = 'import1') {
+  const preview = await f.run('previewProductImport',{Mode,Rows},actor);
+  return {preview,body:{Mode,Rows,RequestId,Confirmed:true,PreviewDigest:preview.PreviewDigest}};
+}
+test('ownership batch previews are read-only and assign existing stock without changing any other fields', async () => {
+  const f = fixture([['tuckShopInventory','stock1',stock()]]);
+  const original = structuredClone(f.get('tuckShopInventory','stock1'));
+  const {preview,body} = await importPreview(f,'assign',[{InventoryId:'stock1',Owner:'Vendor v1',Quantity:'0',Price:'1',Category:'do not use',RowNumber:2}]);
+  assert.equal(preview.valid,true); assert.equal(preview.rows[0].Status,'Assign owner'); assert.equal(preview.rows[0].Quantity,37);
+  assert.equal(f.commits.length,0);
+  const result = await f.run('importProducts',body);
+  assert.equal(result.assigned,1);
+  const saved = f.get('tuckShopInventory','stock1');
+  for (const key of ['ItemName','ItemCode','Quantity','Price','SalePrice','Category','Unit','Active','Barcode','SchoolSection']) assert.equal(saved[key],original[key]);
+  assert.equal(saved.VendorId,'v1');
+  assert.ok(f.commits[0].every(w=>['tuckShopInventory','accountingAudit','vendorSettlementOperations'].includes(w.collectionPath)));
+  assert.equal(f.list('accountingJournals').length,0); assert.equal(f.list('vendorBalances').length,0);
+});
+test('reassigning a product preserves earlier vendor earnings and allows explicit organisation ownership', async () => {
+  const f = fixture([['commerceVendors','v2',vendor('v2')],['tuckShopInventory','stock1',stock({VendorId:'v1'})]]);
+  await f.sale(); const earnings = structuredClone(f.get('vendorEarnings','sale1--v1'));
+  const first = await importPreview(f,'assign',[{InventoryId:'stock1',Owner:'v2'}]);
+  await f.run('importProducts',first.body);
+  assert.equal(f.get('tuckShopInventory','stock1').VendorId,'v2'); assert.deepEqual(f.get('vendorEarnings','sale1--v1'),earnings);
+  const second = await importPreview(f,'assign',[{InventoryId:'stock1',Owner:'ORGANISATION'}],user,'import2');
+  await f.run('importProducts',second.body); assert.equal(f.get('tuckShopInventory','stock1').VendorId,'');
+  assert.deepEqual(f.get('vendorEarnings','sale1--v1'),earnings);
+});
+test('ownership batch retries replay even after stock changes; changed rows cannot reuse the request', async () => {
+  const f = fixture([['tuckShopInventory','stock1',stock()]]);
+  const {body} = await importPreview(f,'assign',[{InventoryId:'stock1',Owner:'v1'}]);
+  await f.run('importProducts',body); f.put('tuckShopInventory','stock1',{...f.get('tuckShopInventory','stock1'),Quantity:36});
+  assert.equal((await f.run('importProducts',body)).replayed,true); assert.equal(f.commits.length,1);
+  assert.equal(f.get('tuckShopInventory','stock1').Quantity,36);
+  await assert.rejects(f.run('importProducts',{...body,Rows:[{InventoryId:'stock1',Owner:'School'}]}),/another operation/);
+});
+test('stale stock or vendor previews stop the entire batch before any write', async () => {
+  for (const change of ['stock','vendor']) {
+    const f = fixture([['tuckShopInventory','stock1',stock()],['tuckShopInventory','stock2',stock({ItemCode:'PEN',ItemName:'Pen'})]]);
+    const {body} = await importPreview(f,'assign',[{InventoryId:'stock1',Owner:'v1'},{InventoryId:'stock2',Owner:'v1'}]);
+    if (change === 'stock') f.put('tuckShopInventory','stock1',{...f.get('tuckShopInventory','stock1'),Quantity:36});
+    else f.put('commerceVendors','v1',vendor('v1',{Name:'Updated owner'}));
+    await assert.rejects(f.run('importProducts',body),/changed/); assert.equal(f.commits.length,0); assert.equal(f.get('tuckShopInventory','stock2').VendorId,'');
+  }
+});
+test('atomic commit conflict leaves every stock record and operation unchanged', async () => {
+  const f = fixture([['tuckShopInventory','stock1',stock()]]);
+  const {body} = await importPreview(f,'assign',[{InventoryId:'stock1',Owner:'v1'}]);
+  f.conflict(); await assert.rejects(f.run('importProducts',body),/nothing was partially/);
+  assert.equal(f.get('tuckShopInventory','stock1').VendorId,''); assert.equal(f.list('vendorSettlementOperations').length,0);
+  assert.equal((await f.run('importProducts',body)).assigned,1);
+});
+test('invalid owner, ambiguous name, inactive vendor, missing stock and duplicate rows block import', async () => {
+  const f = fixture([['commerceVendors','v2',vendor('v2',{Name:'Vendor v1'})],['commerceVendors','inactive',vendor('inactive',{Active:'NO'})],['tuckShopInventory','stock1',stock()]]);
+  for (const Rows of [[{InventoryId:'stock1',Owner:'missing'}],[{InventoryId:'stock1',Owner:'Vendor v1'}],
+    [{InventoryId:'stock1',Owner:'inactive'}],[{InventoryId:'missing',Owner:'v1'}],[{InventoryId:'stock1',Owner:''}],
+    [{InventoryId:'stock1',Owner:'v1'},{InventoryId:'stock1',Owner:'v2'}]]) {
+    const {preview,body} = await importPreview(f,'assign',Rows); assert.equal(preview.valid,false);
+    await assert.rejects(f.run('importProducts',body),/invalid/);
+  }
+  assert.equal(f.commits.length,0);
+  assert.equal((await f.run('previewProductImport',{Mode:'assign',Rows:[{InventoryId:'stock1',Owner:'v1'}]})).valid,true);
+});
+test('CSV cannot move stock across branches, editions or school sections', async () => {
+  const f = fixture([['commerceVendors','primary',vendor('primary',{SchoolSection:'Primary'})],
+    ['commerceVendors','other',vendor('other',{ScopeKey:'school--other',BranchId:'other'})],
+    ['tuckShopInventory','stock1',stock()],['tuckShopInventory','foreign',stock({BranchId:'other'})],
+    ['tuckShopInventory','faith',stock({OrganisationEdition:'faith'})]]);
+  for (const row of [{InventoryId:'stock1',Owner:'primary'},{InventoryId:'stock1',Owner:'other'},
+    {InventoryId:'foreign',Owner:'v1'},{InventoryId:'faith',Owner:'v1'},{InventoryId:'stock1',Owner:'v1',SchoolSection:'Primary'}]) {
+    assert.equal((await f.run('previewProductImport',{Mode:'assign',Rows:[row]})).valid,false);
+  }
+  assert.equal((await f.run('previewProductImport',{Mode:'assign',Rows:[{InventoryId:'stock1',Owner:'v1'}]}, {...user,schoolSectionAccess:'Primary'})).valid,false);
+  assert.equal(f.commits.length,0);
+});
+test('an out-of-scope stock ID does not disclose its product, quantity, price or owner in a preview', async () => {
+  const f = fixture([['tuckShopInventory','foreign',stock({BranchId:'other',ItemName:'Private item',Quantity:1234,Price:9876,VendorId:'private-owner'})]]);
+  const preview = await f.run('previewProductImport',{Mode:'assign',Rows:[{InventoryId:'foreign',Owner:'v1'}]});
+  assert.equal(preview.valid,false);
+  assert.ok(!JSON.stringify(preview).includes('Private item')); assert.ok(!JSON.stringify(preview).includes('private-owner'));
+  assert.notEqual(preview.rows[0].Quantity,1234); assert.notEqual(preview.rows[0].Price,9876);
+});
+test('invalid owners still show permitted existing product details for correction without any writes', async () => {
+  const f = fixture([['tuckShopInventory','stock1',stock()]]);
+  const preview = await f.run('previewProductImport',{Mode:'assign',Rows:[{InventoryId:'stock1',Owner:'Unknown vendor'}]});
+  assert.equal(preview.valid,false); assert.equal(preview.rows[0].ItemName,'Water'); assert.equal(preview.rows[0].Owner,'Unknown vendor');
+  assert.equal(preview.rows[0].Quantity,37); assert.equal(f.commits.length,0);
+});
+test('batch action enforces staff permission, read-only subscription and explicit confirmation', async () => {
+  const f = fixture(); const Rows = [createRow()];
+  for (const actor of [{...user,allowedSections:[]},{...user,role:'Vendor User'},{...user,username:''}]) {
+    await assert.rejects(f.run('previewProductImport',{Mode:'create',Rows},actor));
+  }
+  const readOnly = {...user,subscriptionReadOnly:true};
+  const {preview,body} = await importPreview(f,'create',Rows,readOnly);
+  assert.equal(preview.valid,true);
+  await assert.rejects(f.run('importProducts',body,readOnly),/read-only/);
+  await assert.rejects(f.run('importProducts',{...body,Confirmed:false}),/confirm/);
+  assert.equal(f.commits.length,0);
+});
+test('create-only import skips existing stock; identical product codes for different owners remain separate', async () => {
+  const f = fixture([['commerceVendors','v2',vendor('v2')],['tuckShopInventory','old',stock({VendorId:'v1'})]]);
+  const old = structuredClone(f.get('tuckShopInventory','old'));
+  const {preview,body} = await importPreview(f,'create',[createRow(),createRow({Owner:'v2',RowNumber:3})]);
+  assert.equal(preview.rows[0].Status,'Skip existing'); assert.equal(preview.rows[1].Status,'Create');
+  const result = await f.run('importProducts',body); assert.equal(result.created,1); assert.equal(result.skipped,1);
+  assert.deepEqual(f.get('tuckShopInventory','old'),old); assert.equal(f.list('tuckShopInventory').length,2);
+  const replayPreview = await importPreview(f,'create',[createRow({Owner:'v2'})],user,'new-upload');
+  assert.equal(replayPreview.preview.rows[0].Status,'Skip existing');
+  await f.run('importProducts',replayPreview.body); assert.equal(f.list('tuckShopInventory').length,2);
+});
+test('preview rejects mismatched item identity and ambiguous legacy SKU instead of overwriting stock', async () => {
+  const f = fixture([['tuckShopInventory','stock1',stock({VendorId:'v1'})],['tuckShopInventory','stock2',stock({VendorId:'v1'})]]);
+  for (const [Mode,Rows] of [['create',[createRow()]],['assign',[{InventoryId:'stock1',Owner:'v1',ItemName:'Other'}]],
+    ['assign',[{InventoryId:'stock1',Owner:'v1',ItemCode:'Other'}]]]) {
+    assert.equal((await f.run('previewProductImport',{Mode,Rows})).valid,false);
+  }
+  assert.equal(f.commits.length,0);
+});
+test('batch bounds are enforced and audit / operation fingerprints never capture arbitrary credentials', async () => {
+  const f = fixture();
+  await assert.rejects(f.run('previewProductImport',{Mode:'create',Rows:Array.from({length:21},()=>createRow())}),/20/);
+  await assert.rejects(f.run('previewProductImport',{Mode:'create',Rows:[createRow({ItemName:'a'.repeat(62000)})]}),/60 KB/);
+  const {body} = await importPreview(f,'create',[createRow({approvalPassword:'secret-row-value',Secret:'secret-row-value'})]);
+  await f.run('importProducts',{...body,approvalPassword:'secret-top-level'});
+  assert.ok(!JSON.stringify(f.commits).includes('secret-row-value')); assert.ok(!JSON.stringify(f.commits).includes('secret-top-level'));
+});
+for (const edition of ['school','faith','organization']) test(`${edition} existing-owner assignment and new-product import use the same safe backend`, async () => {
+  const Section = edition === 'school' ? 'tuckShop' : 'organizationStore';
+  const collection = edition === 'school' ? 'tuckShopInventory' : 'storeItems';
+  const f = fixture([['commerceVendors','v1',vendor('v1',{OrganisationEdition:edition,ScopeKey:`${edition}--main`,SchoolSection:edition === 'school' ? 'Secondary' : 'All'})],
+    [collection,'stock1',stock({OrganisationEdition:edition,SchoolSection:edition === 'school' ? 'Secondary' : 'All'})]]);
+  const actor = {...user,edition};
+  const assign = await importPreview(f,'assign',[{InventoryId:'stock1',Owner:'v1',Store:Section}],actor);
+  assert.equal((await f.run('importProducts',assign.body,actor)).assigned,1);
+  const add = await importPreview(f,'create',[createRow({ItemCode:'PEN',ItemName:'Pen',Store:Section})],actor,'add');
+  assert.equal((await f.run('importProducts',add.body,actor)).created,1);
+  assert.equal(f.get(collection,'stock1').Quantity,37); assert.equal(f.list('accountingJournals').length,0);
+});
+test('faith restaurant imports are supported and school users cannot select non-school stores', async () => {
+  const f = fixture([['commerceVendors','v1',vendor('v1',{OrganisationEdition:'faith',ScopeKey:'faith--main',SchoolSection:'All'})]]);
+  const {body} = await importPreview(f,'create',[createRow({Store:'Restaurant'})],{...user,edition:'faith'});
+  await f.run('importProducts',body,{...user,edition:'faith'}); assert.equal(f.list('restaurantInventory').length,1);
+  assert.equal((await f.run('previewProductImport',{Mode:'create',Rows:[createRow({Store:'Restaurant',Owner:'School'})]})).valid,false);
 });

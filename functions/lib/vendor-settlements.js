@@ -4,6 +4,7 @@ import { validateRequisitionPosting } from './requisition-posting.js';
 import { assertRequisitionTransition } from './requisition-workflow.js';
 import { findStaffUserRecord, verifyStaffApprovalPassword } from './staff-auth.js';
 import { accountingChartForEdition } from './accounting-edition-scope.js';
+import { handleProductImport } from './vendor-product-import.js';
 import { amount, allocateClaim, balanceView, cents, chargeFor, clean, dateOnly, effectiveRule, fail, lower,
   normalizeRule, periodKey, plain, ruleDescription, settlementScope, visible } from './vendor-settlement-rules.js';
 
@@ -61,7 +62,7 @@ function requireAccess(user, action) {
   if (!clean(user.username)) fail('Sign in to manage vendor settlements.', 401);
   if (!(user.allowedSections || []).includes('vendorSettlements')) fail('Vendor settlements are not available for this account.', 403);
   if (!operators.has(role(user)) && role(user) !== 'Vendor User') fail('Your role cannot access vendor settlements.', 403);
-  if (!['bootstrap', 'statement', 'previewHistorical', 'previewSale'].includes(action)
+  if (!['bootstrap', 'statement', 'previewHistorical', 'previewSale', 'previewProductImport'].includes(action)
     && (user.subscriptionActive === false || user.subscriptionReadOnly === true)) fail('This workspace is read-only until the subscription is renewed.', 403);
 }
 async function ownVendor(env, user, scope, vendorId) {
@@ -103,7 +104,7 @@ async function operation(env, scope, user, body, action) {
   const requestId = id(body.RequestId, 'request reference');
   const key = `${scope.ScopeKey}--${requestId}`;
   const businessFields = new Set(['VendorId', 'SettlementId', 'EntryId', 'SaleNo', 'Amount', 'From', 'To', 'Status', 'Date', 'Reference', 'EvidenceReference',
-    'Notes', 'PaymentAccount', 'PaymentMethod', 'OpeningReference', 'GrossSales', 'Refunds', 'SchoolDeductions', 'PriorPayments', 'OffsetAccount', 'PreviewDigest', 'Confirmed', 'Kind', 'ReplacesSettlementId']);
+    'Notes', 'PaymentAccount', 'PaymentMethod', 'OpeningReference', 'GrossSales', 'Refunds', 'SchoolDeductions', 'PriorPayments', 'OffsetAccount', 'PreviewDigest', 'Confirmed', 'Kind', 'ReplacesSettlementId', 'ImportFingerprint']);
   const fields = Object.fromEntries(Object.entries(body).filter(([key]) => businessFields.has(key)).sort(([a], [b]) => a.localeCompare(b)));
   const fingerprint = JSON.stringify(fields);
   const previous = await getDocument(env, VENDOR_COLLECTIONS.operations, key);
@@ -326,6 +327,7 @@ async function saveProduct(env, user, scope, body) {
   const section = clean(body.Section || (scope.OrganisationEdition === 'school' ? 'tuckShop' : 'organizationStore'));
   if (!(scope.OrganisationEdition === 'school' ? ['tuckShop'] : ['organizationStore', 'restaurant']).includes(section)) fail('Choose a store available in this edition.');
   const vendor = body.VendorId ? await ownVendor(env, user, scope, body.VendorId) : null;
+  if (vendor?.Active === 'NO') fail('Choose an active vendor.');
   const itemId = body.InventoryId ? clean(body.InventoryId) : `ITEM-${crypto.randomUUID()}`;
   if (!itemId || /[\/\\]/.test(itemId) || itemId.length > 240) fail('The stock record reference is invalid.');
   const previous = await getDocument(env, inventoryCollections[section], itemId);
@@ -333,6 +335,7 @@ async function saveProduct(env, user, scope, body) {
     if (lower(previous.BranchId || 'main') !== scope.BranchId || (previous.OrganisationEdition && previous.OrganisationEdition !== scope.OrganisationEdition)
       || (scope.OrganisationEdition === 'school' && lower(scope.SchoolSection) !== 'all' && lower(previous.SchoolSection || 'Secondary') !== lower(scope.SchoolSection))) fail('The stock record is outside your scope.', 403);
     checkVersion(body, previous);
+    if (vendor && scope.OrganisationEdition === 'school' && lower(vendor.SchoolSection) !== lower(previous.SchoolSection || 'Secondary')) fail('Product and owner must belong to the same school section.');
   }
   const name = clean(body.ItemName || previous?.ItemName), quantity = Number(body.Quantity ?? previous?.Quantity ?? 0), price = Number(body.Price ?? previous?.Price ?? previous?.SalePrice ?? 0);
   if (!name || !Number.isSafeInteger(quantity) || quantity < 0 || cents(price) <= 0) fail('Enter an item name, whole-number stock quantity and positive price.');
@@ -731,6 +734,10 @@ export async function handleVendorSettlementAction(env, user, body = {}, options
     case 'saveSettings': return saveSettings(env, user, scope, body);
     case 'saveVendor': return saveVendor(env, user, scope, body);
     case 'saveProduct': return saveProduct(env, user, scope, body);
+    case 'previewProductImport':
+    case 'importProducts': return handleProductImport(env, user, scope, { ...body, action }, {
+      requireOperator: actor => requireRole(actor, operators), vendors: (env, scope) => rows(env, VENDOR_COLLECTIONS.vendors, scope),
+      get: getDocument, query: queryCollectionPages, write, audit, commit, operation, operationWrite });
     case 'requestSettlement': return requestSettlement(env, user, scope, body);
     case 'decision': return decision(env, user, scope, body, options);
     case 'pay': return pay(env, user, scope, body, options);

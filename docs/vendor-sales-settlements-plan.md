@@ -109,10 +109,23 @@ The available rule choices are agreed, but no actual commission rate or fixed am
 6. Use linked refunds and receipts for corrections. Bank-detail changes require withdrawal and fresh approval of unpaid claims. Paid online orders with an unissued stock movement are held from settlement until Accounts completes the original stock issue. Orders already refunded require a separate physical-quantity review.
 7. Historical opening balances require the preview, evidence, a reviewed accounting offset and authorised confirmation. They do not rewrite earlier journals or post another cash receipt.
 
+### Batch products and owner assignments
+
+Use **Product ownership → Batch products & owners**. The workflow is shared across School, Faith and Organisation editions; desktop source uses the same backend actions.
+
+- For products already registered, choose **Assign owners to existing products**, download the existing-products CSV, and change only `Owner` to a registered vendor ID or unique vendor name. `ORGANISATION` explicitly selects organisation-owned stock. Keep `InventoryId`, `Store`, and the identifying product columns unchanged. Assignment preserves stock, prices, category, unit, active status and school section; it does not recreate the product or rewrite earlier sales / earnings.
+- For new products, choose **Create new products** and download the blank template. Required columns are `ItemCode`, `ItemName`, `Owner`, `Quantity` and `Price`. Optional columns are `Store`, `Category`, `Unit`, `Active` and `SchoolSection`. Stock must be a non-negative integer; price must be positive with at most two decimal places. Item codes are normalised to uppercase. Store choices follow the edition: `tuckShop`, or `organizationStore` / `restaurant`. School vendors and products must have the same Primary / Secondary section.
+- Download the vendor ID reference for registered active owners. Register missing vendors first; the product import does not create vendor accounts, alter commission rules, or enable vendor sales.
+- Maximum 1,000 rows / 512 KB per file. All rows are previewed before saving. Unknown / ambiguous owners, duplicate stock references and identity / scope errors block import. Existing matching new-product records are skipped, never overwritten.
+- Review and confirm the preview, which shows the current owner, new owner, stock and proposed action. Saving uses atomic batches of at most 20 rows with progress. If a later batch fails, earlier completed batches remain saved; retry the interrupted batch with its retained reference. If stock or vendor details changed, close the dialog, download a fresh list if needed, and preview again. Re-uploading completed rows keeps them unchanged.
+- Only authorised stock operators may import. Branch, edition, school section, read-only subscription, fresh-record versions, idempotency and audit controls are enforced by the backend. Stock ownership changes do not post journals, wallet movements or historical vendor earnings. Desktop remains source-tested only until a new installer is authorised.
+
 ## Verification and release controls
 
 The automated acceptance suite covers all three editions, actual checkout paths, partial and full payment, retries and conflicts, fixed-charge redistribution after refunds, direct collection, bank changes, data isolation and historical openings. Desktop tests cover shared request handling, role access, form construction and stale-workspace protection. Responsive web checks use sample records only.
 
 Verification on 8 October 2026: 1,832 top-level web tests, 64 payroll tests and 588 desktop tests passed; the Pages Functions bundle compiled successfully. The vendor acceptance suite contains 41 tests, and the desktop vendor suite contains ten tests, including stale statement protection when filters change.
+
+Batch-upload verification on 9 October 2026: 1,896 top-level web tests, 64 payroll tests and 607 desktop tests passed; the Pages Functions bundle compiled successfully. The focused vendor / CSV suite contains 64 tests, and the desktop vendor / CSV suite contains 19 tests. Local browser checks confirmed invalid-owner blocking, preview-before-save, unchanged stock and prices, and safe replay after a response was lost following a successful second batch. No live inventory or financial records were changed for verification.
 
 Live product ownership, vendor rules, account mappings and opening balances still require Accounts review and a controlled pilot. Leave vendor sales disabled during this review. Existing financial records and student wallets are not migrated or altered by publishing the feature.

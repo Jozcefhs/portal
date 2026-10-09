@@ -43,8 +43,8 @@
       const submit = form?.querySelector('[type=submit]'); if (submit) { submit.disabled = true; submit.textContent = 'Processing…'; }
       const timer = setTimeout(() => controller.abort(), 45000);
       try {
-        if (!['bootstrap','statement','previewHistorical','saveVendor','saveProduct','saveSettings'].includes(action)) {
-          body.RequestId = form ? (form.dataset.requestId ||= crypto.randomUUID()) : crypto.randomUUID();
+        if (!['bootstrap','statement','previewHistorical','previewProductImport','saveVendor','saveProduct','saveSettings'].includes(action)) {
+          body.RequestId ||= form ? (form.dataset.requestId ||= crypto.randomUUID()) : crypto.randomUUID();
         }
         return await request(action, body, controller.signal);
       } catch (error) {
@@ -60,6 +60,115 @@
       draw(); if (tab === 'statement') await loadStatement();
     }
     function vendorOptions(chosen = selected, empty = false) { return `${empty ? option('','Organisation-owned stock',chosen) : ''}${data.vendors.map(v => option(v.VendorId,v.Name,chosen)).join('')}`; }
+    async function productImportDialog() {
+      if (busy || disposed) return;
+      let csv;
+      try { csv = await import('./vendor-product-import.js'); }
+      catch { return status('Could not load the CSV tools. Refresh this page and try again.',true); }
+      if (disposed) return;
+      dialog?.remove();
+      const modal = document.createElement('dialog'); dialog = modal; modal.className = 'vendor-dialog vendor-import-dialog';
+      modal.innerHTML = `<div class="vendor-header"><h3>Batch products & owners</h3><button type="button" data-close aria-label="Close">×</button></div>
+        <form class="vendor-form">
+          ${select('Mode','What would you like to do?',[['assign','Assign owners to existing products'],['create','Create new products']],'assign')}
+          <label>Completed CSV<input name="File" type="file" accept=".csv,text/csv"></label>
+          <p class="vendor-full" data-help></p>
+          <div class="vendor-actions vendor-full"><button type="button" data-template></button><button type="button" data-owners>Download vendor IDs</button><button type="button" data-preview>Preview CSV</button></div>
+          <p class="vendor-full vendor-status" role="status" aria-live="polite"></p>
+          <div class="vendor-table-wrap vendor-full" data-preview-table></div>
+          <label class="vendor-check vendor-full"><input type="checkbox" name="Confirmed" disabled> I have checked the products and owners shown in this preview.</label>
+          <button type="submit" class="vendor-full" data-label="Import confirmed rows" disabled>Import confirmed rows</button>
+        </form>`;
+      document.body.append(modal); modal.showModal();
+      const form = modal.querySelector('form'), progress = form.querySelector('[role=status]'), table = form.querySelector('[data-preview-table]');
+      const submit = form.querySelector('[type=submit]'), previewButton = form.querySelector('[data-preview]');
+      let batches = [], previews = [], requestIds = [], next = 0, running = false, complete = false, changed = false;
+      const totals = { created:0, assigned:0, skipped:0 };
+      const say = message => { progress.textContent = message; };
+      function controls() {
+        for (const name of ['Mode','File']) form.elements[name].disabled = running || next > 0;
+        previewButton.disabled = running || next > 0;
+        form.elements.Confirmed.disabled = running || !previews.length || !previews.every(p => p.valid) || complete;
+        submit.disabled = running || complete || !form.elements.Confirmed.checked || form.elements.Confirmed.disabled;
+        modal.querySelector('[data-close]').disabled = running;
+      }
+      function reset() {
+        batches = []; previews = []; requestIds = []; next = 0; complete = false;
+        Object.keys(totals).forEach(key => { totals[key] = 0; });
+        form.elements.Confirmed.checked = false; table.innerHTML = ''; controls(); say('');
+        const assign = form.elements.Mode.value === 'assign';
+        form.querySelector('[data-template]').textContent = assign ? 'Download existing products' : 'Download new-product template';
+        form.querySelector('[data-help]').textContent = assign
+          ? 'Download existing products, fill in Owner using a registered vendor ID / name (or ORGANISATION), and upload. Keep stock IDs unchanged. Stock, prices, and past sales are not changed.'
+          : 'Enter new products and registered owners. Existing matching stock is skipped, never overwritten. Identical products from different owners receive separate stock records.';
+      }
+      function download(filename, contents) {
+        const url = URL.createObjectURL(new Blob([contents],{type:'text/csv;charset=utf-8'}));
+        const link = document.createElement('a'); link.href = url; link.download = filename; document.body.append(link); link.click(); link.remove();
+        setTimeout(() => URL.revokeObjectURL(url),1000);
+      }
+      form.querySelector('[data-template]').onclick = () => {
+        const assign = form.elements.Mode.value === 'assign';
+        const rows = assign ? data.products.map(p => ({ ...p, Store:p.Section, Owner:p.VendorId || 'ORGANISATION',
+          CurrentOwner:data.vendors.find(v => v.VendorId === p.VendorId)?.Name || p.VendorId || 'Organisation' })) : [];
+        download(assign ? 'existing-product-owners.csv' : 'new-products.csv',csv.productCsv(assign
+          ? ['InventoryId','ItemCode','ItemName','Store','SchoolSection','CurrentOwner','Owner']
+          : ['ItemCode','ItemName','Owner','Store','Quantity','Price','Category','Unit','Active','SchoolSection'],rows));
+      };
+      form.querySelector('[data-owners]').onclick = () => download('registered-vendor-ids.csv',csv.productCsv(['Owner','Name','SchoolSection'],
+        data.vendors.filter(v => v.Active !== 'NO').map(v => ({Owner:v.VendorId,Name:v.Name,SchoolSection:v.SchoolSection}))));
+      form.elements.Mode.onchange = reset; form.elements.File.onchange = reset;
+      form.elements.Confirmed.onchange = controls;
+      previewButton.onclick = async () => {
+        const file = form.elements.File.files[0];
+        if (!file) return say('Choose a completed CSV first. Maximum 1,000 rows / 512 KB.');
+        reset(); running = true; controls();
+        try {
+          if (file.size > csv.PRODUCT_IMPORT_LIMITS.bytes) throw new Error('CSV exceeds 512 KB. Split it into smaller files.');
+          batches = csv.productChunks(csv.parseProductCsv(await file.text(),form.elements.Mode.value));
+          for (let i = 0; i < batches.length; i++) {
+            say(`Checking batch ${i + 1} of ${batches.length}… No products have been saved.`);
+            const result = await call('previewProductImport',{Mode:form.elements.Mode.value,Rows:batches[i]},form);
+            if (!result || disposed || !modal.isConnected) { previews = []; return; }
+            previews.push(result);
+          }
+          const duplicates = csv.duplicatePreviewRows(previews);
+          for (const preview of previews) for (const row of preview.rows) if (duplicates.has(row.RowNumber)) {
+            row.Errors.push('Duplicate stock record in this CSV. Keep only one row per product.'); row.Status = 'Error'; preview.valid = false;
+          }
+          const rows = previews.flatMap(p => p.rows), errors = rows.filter(r => r.Errors.length).length;
+          table.innerHTML = `<table class="vendor-table"><thead><tr><th>CSV row / product</th><th>Owner change</th><th>Stock / price (kept for existing products)</th><th>Action / errors</th></tr></thead><tbody>${rows.map(r =>
+            `<tr class="${r.Errors.length ? 'vendor-import-error' : ''}"><td>${r.RowNumber} · ${esc(r.ItemName)}<small>${esc(r.InventoryId || r.ItemCode)} · ${esc(r.Section)}</small></td>
+            <td>${esc(r.CurrentOwner)} → <strong>${esc(r.Owner)}</strong><small>${esc(r.SchoolSection)}</small></td><td>${esc(r.Quantity)} · ${money(r.Price)}</td><td>${esc(r.Status)}<small>${r.Errors.map(esc).join(' ')}</small></td></tr>`).join('')}</tbody></table>`;
+          requestIds = batches.map(() => crypto.randomUUID());
+          say(errors ? `${errors} row(s) need correction. Nothing has been saved. Correct the CSV and preview again.`
+            : `${rows.length} rows checked: ${rows.filter(r => r.Status === 'Assign owner').length} owner changes, ${rows.filter(r => r.Status === 'Create').length} new products. Other rows will be kept unchanged. Confirm to import in batches of 20.`);
+        } catch (error) { previews = []; say(error.message); }
+        finally { running = false; controls(); }
+      };
+      form.onsubmit = async event => {
+        event.preventDefault(); if (running || submit.disabled) return;
+        running = true; controls();
+        try {
+          while (next < batches.length) {
+            say(`Saving batch ${next + 1} of ${batches.length}… ${next * csv.PRODUCT_IMPORT_LIMITS.batch} earlier rows completed.`);
+            const result = await call('importProducts',{Mode:form.elements.Mode.value,Rows:batches[next],Confirmed:true,
+              PreviewDigest:previews[next].PreviewDigest,RequestId:requestIds[next]},form);
+            if (!result || disposed || !modal.isConnected) {
+              if (!disposed) say(`${progress.textContent} Completed ${next} of ${batches.length} batches. Use Import to safely retry this batch. If stock / owner details changed, close and load a fresh preview; earlier completed batches remain saved.`);
+              return;
+            }
+            for (const key of Object.keys(totals)) totals[key] += Number(result[key] || 0);
+            next++; changed = true;
+          }
+          complete = true; say(`Complete: ${totals.assigned} owners assigned, ${totals.created} products created, ${totals.skipped} unchanged. Stock and past sales were preserved.`);
+        } finally { running = false; controls(); }
+      };
+      modal.querySelector('[data-close]').onclick = () => { if (!running) modal.close(); };
+      modal.addEventListener('cancel',event => { if (running) event.preventDefault(); });
+      modal.addEventListener('close',() => { modal.remove(); if (changed && !disposed) reload(); });
+      reset();
+    }
     function showDialog(title, html, action, transform = b => b) {
       dialog?.remove(); const modal = document.createElement('dialog'); dialog = modal; modal.className = 'vendor-dialog';
       modal.innerHTML = `<div class="vendor-header"><h3>${esc(title)}</h3><button type="button" data-close aria-label="Close">×</button></div><form class="vendor-form">${html}
@@ -156,7 +265,7 @@
       if (tab === 'balances') panel.innerHTML = `${c.manage ? '<div class="vendor-actions"><button data-add-vendor>Register vendor</button></div>' : ''}<div class="vendor-grid">${data.vendors.map(v => { const b = data.balances.find(r => r.VendorId === v.VendorId) || {}; return `<article class="vendor-card"><h3>${esc(v.Name)}</h3><small>${esc(v.SchoolSection)} · ${v.Active === 'NO' ? 'Inactive' : 'Active'} · ${esc(v.BankAccountMasked)}</small><p>Available <strong>${money(b.Available)}</strong><br>Reserved ${money(b.Reserved)} · Paid ${money(b.Paid)}</p>${b.NeedsReview ? '<span class="vendor-badge">Needs reconciliation</span>' : ''}<div class="vendor-actions"><button data-view-vendor="${esc(v.VendorId)}">Open statement</button>${c.manage ? `<button data-edit-vendor="${esc(v.VendorId)}">Edit vendor / rule</button>` : ''}</div></article>`; }).join('') || '<p>No vendor accounts yet. Existing unassigned stock stays organisation-owned until reviewed.</p>'}</div>`;
       if (tab === 'statement') panel.innerHTML = `<form class="vendor-form" data-statement-filter><label class="vendor-full">Vendor<select name="VendorId">${vendorOptions()}</select></label>${input('From','From',today().slice(0,7)+'-01','date','required')}${input('To','To',today(),'date','required')}<button type="submit" data-label="Load statement">Load statement</button></form><div class="vendor-actions"><button data-request-new>Request payment</button><button data-print-statement>Print / Save PDF</button>${c.pay ? '<button data-refund>Record linked refund</button><button data-recovery>Record money received</button><button data-opening>Reviewed historical opening</button>' : ''}</div><div data-statement-result><p>Select a vendor and load a statement.</p></div>`;
       if (tab === 'requests') panel.innerHTML = `<p>Accounts confirmation → Admin review → Director / Super Admin approval → Accounts records payment.</p><div class="vendor-grid">${data.requests.map(requestCard).join('') || '<p>No vendor payment requests yet.</p>'}</div>`;
-      if (tab === 'products') panel.innerHTML = `<div class="vendor-actions"><p>Ownership applies to future sales only.</p><button data-add-product>Add vendor product</button></div><div class="vendor-table-wrap"><table class="vendor-table"><thead><tr><th>Product</th><th>Owner</th><th>Stock / price</th><th>Action</th></tr></thead><tbody>${data.products.map((p,index) => `<tr><td>${esc(p.ItemName)}<small>${esc(p.InventoryId)} · ${esc(p.Section)}</small></td><td>${esc(data.vendors.find(v => v.VendorId === p.VendorId)?.Name || 'Organisation')}</td><td>${esc(p.Quantity)} · ${money(p.Price)}</td><td><button data-edit-product="${index}">Review ownership</button></td></tr>`).join('')}</tbody></table></div>`;
+      if (tab === 'products') panel.innerHTML = `<div class="vendor-actions"><p>Ownership applies to future sales only.</p><button data-import-products>Batch products & owners</button><button data-add-product>Add vendor product</button></div><div class="vendor-table-wrap"><table class="vendor-table"><thead><tr><th>Product</th><th>Owner</th><th>Stock / price</th><th>Action</th></tr></thead><tbody>${data.products.map((p,index) => `<tr><td>${esc(p.ItemName)}<small>${esc(p.InventoryId)} · ${esc(p.Section)}</small></td><td>${esc(data.vendors.find(v => v.VendorId === p.VendorId)?.Name || 'Organisation')}</td><td>${esc(p.Quantity)} · ${money(p.Price)}</td><td><button data-edit-product="${index}">Review ownership</button></td></tr>`).join('')}</tbody></table></div>`;
       if (tab === 'settings') { const s = data.settings; panel.innerHTML = `<h3>Default settlement arrangement</h3><p>Individual vendors may inherit this rule or explicitly receive full payment.</p><form class="vendor-form" data-settings>${ruleFields(s.RuleHistory?.at(-1))}
         ${[['PayableAccount','Vendor payable account','Liability'],['CommissionAccount','Commission / charge income','Revenue'],['VendorReceivableAccount','Direct-collection charge receivable','Asset']].map(([key,label,type]) => select(key,label,data.chart.filter(a => a.Type === type && a.Active !== 'NO').map(a => [a.Code,`${a.Code} · ${a.Name}`]),s[key])).join('')}
         ${input('BusinessTimezone','Business timezone',s.BusinessTimezone)}<label class="vendor-check vendor-full"><input name="AccountingConfirmed" type="checkbox" ${s.AccountingConfirmed ? 'checked' : ''}> Accounts has confirmed the collection arrangement and account mappings.</label>
@@ -177,6 +286,7 @@
       root.querySelectorAll('[data-edit-vendor]').forEach(b => b.onclick = () => vendorForm(data.vendors.find(v => v.VendorId === b.dataset.editVendor)));
       root.querySelectorAll('[data-view-vendor]').forEach(b => b.onclick = () => { selected = b.dataset.viewVendor; tab = 'statement'; draw(); loadStatement(); });
       root.querySelector('[data-add-product]')?.addEventListener('click', () => productForm());
+      root.querySelector('[data-import-products]')?.addEventListener('click', productImportDialog);
       root.querySelectorAll('[data-edit-product]').forEach(b => b.onclick = () => productForm(data.products[Number(b.dataset.editProduct)]));
       root.querySelector('[data-request-new]')?.addEventListener('click', () => requestForm());
       root.querySelector('[data-print-statement]')?.addEventListener('click', () => statement ? print(`Vendor statement — ${statement.vendor.Name}`,statementHTML(statement)) : status('Load a statement first.',true));
