@@ -2,7 +2,7 @@ import { batchCommitDocuments, getDocument, queryCollectionPages, listCollection
 import { getAccountingChartRows } from './accounting-reference-cache.js';
 import { validateRequisitionPosting } from './requisition-posting.js';
 import { assertRequisitionTransition } from './requisition-workflow.js';
-import { findStaffUserRecord, verifyStaffApprovalPassword } from './staff-auth.js';
+import { findStaffLoginRecord, findStaffUserRecord, verifyStaffApprovalPassword } from './staff-auth.js';
 import { accountingChartForEdition } from './accounting-edition-scope.js';
 import { handleProductImport } from './vendor-product-import.js';
 import { amount, allocateClaim, balanceView, cents, chargeFor, clean, dateOnly, effectiveRule, fail, lower,
@@ -291,12 +291,20 @@ async function saveVendor(env, user, scope, body) {
     Active: body.Active === 'NO' ? 'NO' : 'YES', PosEnabled: body.PosEnabled == null ? original?.PosEnabled ?? true : body.PosEnabled === true,
     RuleHistory: history, CreatedAt: original?.CreatedAt || timestamp, UpdatedAt: timestamp, UpdatedBy: actor(user) };
   if (vendor.LoginUsername) {
-    const linked = await findStaffUserRecord(env, vendor.LoginUsername);
-    if (!linked || clean(linked.AssignedRole || linked.Role) !== 'Vendor User'
-      || ['no','false','0','inactive','disabled'].includes(lower(linked.Active ?? true))
-      || (clean(linked.BranchId) && lower(linked.BranchId) !== scope.BranchId)
-      || (scope.OrganisationEdition === 'school' && clean(linked.SchoolSectionAccess) && lower(linked.SchoolSectionAccess) !== 'all'
-        && lower(linked.SchoolSectionAccess) !== lower(section))) fail('Link an active Vendor User login authorised for this branch and section.');
+    // New links may use a changed sign-in name; saved links retain the stable
+    // identity used by sessions and vendor ownership checks.
+    const linked = await findStaffLoginRecord(env, vendor.LoginUsername)
+      || await findStaffUserRecord(env, vendor.LoginUsername);
+    if (!linked) fail('No existing staff login matches the vendor login entered. Create a Vendor User account in Staff & Permissions first, or leave this optional field blank to register without portal access.');
+    if (clean(linked.AssignedRole || linked.Role) !== 'Vendor User')
+      fail('The linked login does not have the Vendor User role. Choose an existing Vendor User account, or leave the optional login blank.');
+    if (['no','false','0','inactive','disabled'].includes(lower(linked.Active ?? true)))
+      fail('The linked Vendor User account is inactive. Choose an active Vendor User login, or leave the optional login blank.');
+    if (clean(linked.BranchId) && lower(linked.BranchId) !== scope.BranchId)
+      fail('The linked Vendor User account belongs to another branch. Choose a Vendor User login authorised for this branch.');
+    if (scope.OrganisationEdition === 'school' && clean(linked.SchoolSectionAccess) && lower(linked.SchoolSectionAccess) !== 'all'
+      && lower(linked.SchoolSectionAccess) !== lower(section))
+      fail('The linked Vendor User account cannot access the selected school section. Choose a login authorised for this section.');
     vendor.LoginUsername = lower(linked.Username || linked.__id);
   }
   if (vendor.SupplierId) {

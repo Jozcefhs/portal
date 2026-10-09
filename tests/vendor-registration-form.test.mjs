@@ -94,5 +94,6 @@ test('generic modal keeps validation, error feedback and save controls visible; 
   assert.match(source,/submitForm\(form, body => call\(action, body, form\), transform\)/);
   assert.match(source,/submitForm\(form, payload => \{ body = \{ \.\.\.payload, VendorId:selected \}/);
   assert.match(css,/\.vendor-dialog-footer \{ position:sticky; bottom:-18px/);
-  assert.match(html,/vendor-settlements\.js\?v=20261009-vendor-form-validation/);
+  assert.match(html,/vendor-settlements\.js\?v=20261009-vendor-login-link/);
+  assert.match(source,/This form does not create a sign-in account\. Leave it blank to register the vendor without portal access/);
 });

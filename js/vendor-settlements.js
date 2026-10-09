@@ -216,6 +216,7 @@
       showDialog(v.VendorId ? 'Save vendor' : 'Register vendor', `${input('Name','Vendor name',v.Name,'text','required maxlength="160"')}${input('ContactPerson','Contact person',v.ContactPerson)}
         ${input('Phone','Phone',v.Phone,'tel')}${input('Email','Email',v.Email,'email')}${input('LoginUsername','Restricted Vendor User login (optional)',v.LoginUsername)}
         ${select('SupplierId','Link existing supplier (optional)',[['','Separate sales vendor'],...(data.suppliers || []).map(s => [s.SupplierId,s.Name])],v.SupplierId)}
+        <small class="vendor-full">The optional login must already exist in Staff & Permissions with the Vendor User role and access to this branch${data.capabilities.edition === 'school' ? ' and school section' : ''}. This form does not create a sign-in account. Leave it blank to register the vendor without portal access; you can link an account later.</small>
         ${data.capabilities.edition === 'school' ? select('SchoolSection','School section',['Primary','Secondary'],v.SchoolSection || (data.capabilities.section === 'Primary' ? 'Primary' : 'Secondary')) : ''}
         ${select('Active','Active',['YES','NO'],v.Active || 'YES')}${input('BankName','Bank name',v.BankName)}${input('BankAccountName','Account name',v.BankAccountName)}
         <label class="vendor-check vendor-full"><input name="PosEnabled" type="checkbox" ${v.PosEnabled !== false ? 'checked' : ''}> Allow this vendor login to sell its assigned products at the counter</label>

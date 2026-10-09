@@ -7,6 +7,7 @@ import * as rules from '../functions/lib/vendor-settlement-rules.js';
 import { buildWalletPurchaseAccountingJournal } from '../functions/api/backend.js';
 
 const withoutImports = source => source.replace(/^import[\s\S]*?from '[^']+';\r?\n/gm,'').replace(/export /g,'');
+const staffLookupSource = withoutImports(await readFile(new URL('../functions/lib/staff-auth.js',import.meta.url),'utf8'));
 const accessSource = withoutImports(await readFile(new URL('../functions/lib/vendor-sales-access.js',import.meta.url),'utf8'));
 const posSource = withoutImports(await readFile(new URL('../functions/lib/vendor-sales.js',import.meta.url),'utf8'))
   .replace(/const \{getWalletCardAccount\} = await import\('[^']+'\);/g,'')
@@ -38,6 +39,15 @@ function fixture(initial = []) {
   for (const [collection,id,row] of initial) put(collection,id,row);
   const get = (collection,id) => store.get(`${collection}/${id}`);
   const list = collection => [...store.entries()].filter(([key]) => key.startsWith(`${collection}/`)).map(([,row]) => structuredClone(row));
+  // Use the real canonical/sign-in lookup contract. A mock that accepts both
+  // identities in findStaffUserRecord hides changed-login registration failures.
+  const staffLookups = vm.runInNewContext(`${staffLookupSource}\n({ findStaffUserRecord, findStaffLoginRecord })`, {
+    TextEncoder,
+    getDocument:async (_env,c,id) => structuredClone(get(c,id) || null),
+    listCollection:async (_env,c) => list(c),
+    findOneByField:async (_env,c,field,value) => list(c).find(row => row[field] === value) || null,
+    patchDocumentFields:async (_env,c,id,fields) => put(c,id,{...get(c,id),...fields})
+  });
   const commit = async (_env,writes) => {
     if (forcedConflict) { forcedConflict = false; throw Object.assign(new Error('Conflict'),{status:409}); }
     assert.equal(new Set(writes.map(w => `${w.collectionPath}/${w.documentId}`)).size,writes.length,'No duplicate document mutations in a commit');
@@ -51,7 +61,7 @@ function fixture(initial = []) {
     ...rules, handleProductImport, crypto:webcrypto, Intl, Date, TextEncoder, console, assertRequisitionTransition, validateRequisitionPosting, accountingChartForEdition,
     getDocument:async (_env,c,id) => structuredClone(get(c,id) || null), listCollection:async (_env,c) => c === 'accountingPeriods' ? list(c) : list(c),
     getAccountingChartRows:async () => chart, verifyStaffApprovalPassword:async (_env,username,password) => password === 'test-confirmation',
-    findStaffUserRecord:async (_env,username) => list('staffUsers').find(r => [r.Username,r.LoginUsername,r.__id].some(v => String(v || '').toLowerCase() === username.toLowerCase())),
+    findStaffUserRecord:staffLookups.findStaffUserRecord, findStaffLoginRecord:staffLookups.findStaffLoginRecord,
     queryCollectionPages:async (_env,c,opts) => list(c).filter(row => opts.filters.every(f => f.op === 'in' ? f.value.includes(row[f.field]) : row[f.field] === f.value)), batchCommitDocuments:commit
   });
   const run = (action,body = {},actor = user,options = {}) => functions.handleVendorSettlementAction({},actor,{action,...body},options);
@@ -306,8 +316,45 @@ test('bank-only vendor updates preserve rule history and canonical vendor email 
   assert.equal(f.get('commerceVendors','v1').RuleHistory.length,0);
   assert.equal((await f.run('bootstrap',{}, {...user,role:'Vendor User',username:'vendor-canonical'})).vendors.length,1);
   f.put('staffUsers','staff-unique-id',{Username:'vendor-canonical',LoginUsername:'owner@example.test',Role:'Vendor User',Active:false});
-  await assert.rejects(f.run('saveVendor',{VendorId:'new-vendor',Name:'New vendor',LoginUsername:'owner@example.test'}),/active Vendor User/);
+  await assert.rejects(f.run('saveVendor',{VendorId:'new-vendor',Name:'New vendor',LoginUsername:'owner@example.test'}),/account is inactive/);
 });
+
+for (const edition of ['school','faith','organization']) {
+  test(`${edition} registration resolves changed sign-in usernames and retains canonical vendor access`, async () => {
+    const login = {Username:'stable-owner',UsernameKey:'stable-owner',LoginUsername:'owner@example.test',LoginUsernameKey:'owner@example.test',
+      Role:'Vendor User',Active:true,BranchId:'main',SchoolSectionAccess:'Secondary'};
+    const f = fixture([['staffUsers','stable-owner',login]]), actor = {...user,edition};
+    const result = await f.run('saveVendor',{Name:'Changed login vendor',LoginUsername:' OWNER@EXAMPLE.TEST ',SchoolSection:'Secondary'},actor);
+    assert.equal(f.get('commerceVendors',result.VendorId).LoginUsername,'stable-owner');
+    const vendorActor = {...actor,role:'Vendor User',username:'stable-owner'};
+    assert.ok((await f.run('bootstrap',{},vendorActor)).vendors.some(v=>v.VendorId === result.VendorId));
+    const saved = f.get('commerceVendors',result.VendorId);
+    await f.run('saveVendor',{VendorId:result.VendorId,RecordVersion:saved.__updateTime,Name:saved.Name,LoginUsername:'stable-owner'},actor);
+    assert.equal(f.get('commerceVendors',result.VendorId).LoginUsername,'stable-owner','Editing a saved canonical link still works after a sign-in rename');
+  });
+  test(`${edition} registration explains invalid optional links without creating accounts or widening access`, async () => {
+    for (const [extra,message] of [
+      [null,/No existing staff login matches/],
+      [{Role:'Tuck Shop User'},/does not have the Vendor User role/],
+      [{AssignedRole:'Accounts Officer'},/does not have the Vendor User role/],
+      [{Active:false},/account is inactive/],
+      [{Active:'disabled'},/account is inactive/],
+      [{BranchId:'another-branch'},/belongs to another branch/],
+      ...(edition === 'school' ? [[{SchoolSectionAccess:'Primary'},/cannot access the selected school section/]] : [])
+    ]) {
+      const login = {Username:'owner',UsernameKey:'owner',LoginUsername:'owner@example.test',LoginUsernameKey:'owner@example.test',Role:'Vendor User',
+        Active:true,BranchId:'main',SchoolSectionAccess:'Secondary',...extra};
+      const f = fixture(extra ? [['staffUsers','owner',login]] : []), actor = {...user,edition};
+      await assert.rejects(f.run('saveVendor',{Name:'Blocked link',LoginUsername:'owner@example.test',SchoolSection:'Secondary'},actor),message);
+      assert.equal(f.commits.length,0); assert.equal(f.list('staffUsers').length,extra ? 1 : 0);
+      if (extra) assert.deepEqual(rules.plain(f.get('staffUsers','owner')),login);
+      // Explicitly leaving the link blank registers only a vendor, not an account.
+      const result = await f.run('saveVendor',{Name:'Unlinked vendor',LoginUsername:'',SchoolSection:'Secondary'},actor);
+      assert.equal(f.get('commerceVendors',result.VendorId).LoginUsername,'');
+      assert.ok(f.commits.flat().every(write => ['commerceVendors','accountingAudit'].includes(write.collectionPath)));
+    }
+  });
+}
 test('statement dates filter earnings and payment history without altering the full balance', async () => {
   const f = fixture(); await f.sale(); await f.request(); await f.approve(); await f.pay(100);
   const statement = await f.run('statement',{VendorId:'v1',From:'2026-09-01',To:'2026-09-30'});
