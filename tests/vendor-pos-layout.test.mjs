@@ -94,6 +94,45 @@ test('vendor counter uses the original shared POS structure, colours and compact
   f.mounted.destroy();
 });
 
+test('vendor counters remove the redundant intro and put Refresh at the right of the POS bar',async () => {
+  for (const section of ['tuckShop','restaurant','organizationStore']) {
+    const f=await fixture(section);
+    assert.doesNotMatch(f.root.innerHTML, /vendor-header workflow-intro|Sell your linked vendors|Linked vendor products only/);
+    assert.match(f.root.innerHTML, /vendor-pos-tabs[^>]*>[\s\S]*?data-pos-tab[\s\S]*?Point of sale[\s\S]*?<button type="button" data-refresh>Refresh<\/button><\/div>/);
+    assert.equal(f.root.querySelector('[data-status]').hidden,true);
+    assert.ok(f.root.innerHTML.indexOf('data-status') > f.root.innerHTML.indexOf('aria-label="Vendor sales cart"'), 'important notices stay beside checkout');
+    f.mounted.destroy();
+  }
+  assert.match(css, /\.vendor-pos \.vendor-pos-tabs\{margin:0 0 12px\}/);
+  assert.match(css, /\.vendor-pos \.vendor-pos-tabs \[data-refresh\]\{margin-left:auto;[^}]*background:#1768e8/);
+  assert.match(css, /@media\(min-width:681px\)\{\s*\.vendor-pos \.commerce-product-list\{min-height:358px;max-height:max\(358px,calc\(100dvh - 300px\)\)\}/);
+  assert.match(css, /@media\(min-width:981px\)\{\s*\.vendor-pos \.commerce-product-list\{min-height:max\(358px,calc\(100dvh - 300px\)\);max-height:none\}/);
+});
+
+test('relocated Refresh reloads stock and keeps the routine bootstrap notice hidden',async () => {
+  const products=[{InventoryId:'stock-1',ItemName:'Water',Quantity:5,Price:100}];
+  const f=await fixture('tuckShop',{products});
+  products[0].Quantity=3;
+  await f.root.querySelector('[data-refresh]').onclick();
+  assert.match(f.root.innerHTML, /3 in stock/);
+  assert.equal(f.calls.filter(row=>row.action==='salesBootstrap').length,2);
+  assert.equal(f.calls.some(row=>row.action.startsWith('record')),false);
+  assert.equal(f.root.querySelector('[data-status]').hidden,true);
+  f.mounted.destroy();
+});
+
+test('compact header preserves visible checkout errors, loading notices and receipt confirmation',async () => {
+  const f=await fixture('restaurant');
+  f.root.querySelector('[data-add]').onclick(); f.setFailure(true);
+  await f.root.querySelector('[data-payment-form]').requestSubmit();
+  assert.equal(f.root.querySelector('[data-status]').hidden,false);
+  assert.match(f.root.querySelector('[data-status]').textContent,/interrupted; retry the same checkout/);
+  f.setFailure(false); await f.root.querySelector('[data-payment-form]').requestSubmit();
+  assert.equal(f.root.querySelector('[data-status]').hidden,false);
+  assert.match(f.root.querySelector('[data-status]').textContent,/Receipt FIXTURE-SALE; total ₦100\.00/);
+  f.mounted.destroy();
+});
+
 test('shared POS gives extra width to the catalogue and bounds card and cart widths', () => {
   assert.match(sharedCss,/@media\(min-width:981px\)\{\s*\.commerce-pos-layout\{grid-template-columns:minmax\(0,1fr\) 380px\}/);
   assert.match(sharedCss,/\.commerce-pos-layout>\.commerce-cart\{[^}]*max-width:380px;justify-self:start/);

@@ -23,7 +23,7 @@
     function status(message,error = false) {
       notice = message; failed = error;
       const el = root.querySelector('[data-status]');
-      if (el) {el.textContent = message; el.classList.toggle('error',error);}
+      if (el) {el.textContent = message; el.hidden = !message; el.classList.toggle('error',error);}
       const lookupStatus = root.querySelector('[data-department-status]');
       if (lookupStatus) {lookupStatus.textContent = message; lookupStatus.classList.toggle('bad',error);}
     }
@@ -78,7 +78,7 @@
       if (!result) return;
       data = result; cart.clear(); addQuantities.clear(); checkoutId = ''; customer = null;
       draft.WalletPin = ''; draft.WalletCardId = ''; draft.AccountRef = ''; customerSearch = '';
-      status(result.message); draw();
+      status(result.sellingEnabled ? '' : result.message); draw();
     }
     function payload() {
       return {...draft, Items:[...cart].map(([Reference,Quantity]) => ({Reference,Quantity})),
@@ -91,10 +91,9 @@
       const products = data.products.filter(p => p.Active !== 'NO');
       const entries = [...cart].map(([ref,qty]) => ({ref,qty,product:data.products.find(p => reference(p) === ref)}));
       const total = entries.reduce((sum,row) => sum + Math.round((Number(row.product.Price || 0) + Number.EPSILON) * 100) * row.qty,0) / 100;
-      root.innerHTML = `<section class="vendor-workspace vendor-pos"><header class="vendor-header workflow-intro"><div><h2>${label}</h2><p>Sell your linked vendors’ products. Stock, payment and earnings are posted together.</p></div><button type="button" data-refresh>Refresh</button></header>
-        <p class="vendor-status${failed ? ' error' : ''}" data-status role="status">${esc(notice)}</p>
+      root.innerHTML = `<section class="vendor-workspace vendor-pos" aria-label="${label} point of sale">
         ${!data.sellingEnabled ? '<p class="vendor-notice">Selling is unavailable until Accounts confirms the setup, links this login and enables counter sales. Statements remain separate.</p>' : ''}
-        <div class="module-workspace-tabs vendor-pos-tabs" aria-label="Sales workspace"><button type="button" class="selected" data-pos-tab aria-current="page"><span aria-hidden="true">&#128722;</span><strong>Point of sale</strong></button></div>
+        <div class="module-workspace-tabs vendor-pos-tabs" aria-label="Sales workspace"><button type="button" class="selected" data-pos-tab aria-current="page"><span aria-hidden="true">&#128722;</span><strong>Point of sale</strong></button><button type="button" data-refresh>Refresh</button></div>
         <section class="config-card department-primary-workflow tuck-shop-pos-workspace vendor-pos-shell">
         <header class="config-card-heading"><div><small>Stock-linked checkout</small><h3>${label} POS</h3><p>Select items, identify the customer, then complete payment. Stock updates automatically.</p></div><span class="workspace-feature-icon" aria-hidden="true">&#128722;</span></header>
         <div class="commerce-pos-layout"><section class="commerce-catalog" aria-label="Vendor product catalogue"><label class="commerce-search-label"><span>Search items · <span data-product-count aria-live="polite">${products.length} products</span></span><input data-search type="search" value="${esc(search)}" placeholder="Name, category or unit"></label><div class="commerce-product-list vendor-pos-products">
@@ -113,7 +112,7 @@
         ${!wallet ? `<label>Payment method<select name="PaymentMethod">${['Cash','Bank Transfer','POS / Card'].map(method => `<option${method === draft.PaymentMethod ? ' selected' : ''}>${method}</option>`).join('')}</select></label>${!school ? `<label>Customer name<input name="CustomerName" value="${esc(draft.CustomerName)}" maxlength="160" placeholder="Walk-in customer"></label>` : ''}<label>Who receives the money?<select name="CollectionMode"><option${draft.CollectionMode === 'School collected' ? ' selected' : ''}>School collected</option><option${draft.CollectionMode === 'Vendor collected' ? ' selected' : ''}>Vendor collected</option></select></label>${draft.PaymentMethod !== 'Cash' ? `<label>Payment reference<input name="PaymentReference" value="${esc(draft.PaymentReference)}" required maxlength="200"></label>` : ''}` : ''}
         ${wallet && customer ? `<label>Wallet PIN <small>(when required)</small><input name="WalletPin" type="password" inputmode="numeric" autocomplete="off" value="${esc(draft.WalletPin)}"></label>` : ''}
         <div class="commerce-checkout-total"><span>Calculated total</span><strong>${money(total)}</strong></div>
-        <div class="config-actionbar"><button type="submit" data-complete ${!data.sellingEnabled || !cart.size || school && !customer ? 'disabled' : ''}>${wallet ? 'Complete wallet sale' : school ? 'Complete staff sale' : 'Complete sale'}</button></div></div></form></section></div></section></section>`;
+        <div class="config-actionbar"><button type="submit" data-complete ${!data.sellingEnabled || !cart.size || school && !customer ? 'disabled' : ''}>${wallet ? 'Complete wallet sale' : school ? 'Complete staff sale' : 'Complete sale'}</button></div></div></form><p class="vendor-status${failed ? ' error' : ''}" data-status role="status"${notice ? '' : ' hidden'}>${esc(notice)}</p></section></div></section></section>`;
       root.querySelector('[data-refresh]').onclick = load;
       root.querySelector('[data-pos-tab]').onclick = () => root.querySelector('[data-search]').focus();
       function filterProducts() {

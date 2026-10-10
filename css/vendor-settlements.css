@@ -65,11 +65,18 @@
 .vendor-form [hidden]{display:none!important}
 /* Reuse the staff POS components so both counters keep the same responsive design. */
 .staff-page:has(.vendor-workspace) .staff-sidebar>.staff-tabs{align-content:start}
-.vendor-pos .vendor-header{padding-bottom:12px;border-bottom:1px solid #dce7ef}
-.vendor-pos .vendor-header>button{flex:0 0 auto;width:fit-content}
-.vendor-pos .vendor-pos-tabs{margin:12px 0}
+.vendor-pos .vendor-pos-tabs{margin:0 0 12px}
+.vendor-pos .vendor-pos-tabs [data-refresh]{margin-left:auto;background:#1768e8;color:#fff;border-color:#1768e8}
+.vendor-pos .vendor-pos-tabs [data-refresh]:hover{background:#135bd0;border-color:#135bd0}
 .vendor-pos .vendor-pos-shell{margin:0;min-width:0}
 .vendor-pos [hidden]{display:none!important}
+/* Spend the recovered intro space on stock, not larger product cards or checkout. */
+@media(min-width:681px){
+  .vendor-pos .commerce-product-list{min-height:358px;max-height:max(358px,calc(100dvh - 300px))}
+}
+@media(min-width:981px){
+  .vendor-pos .commerce-product-list{min-height:max(358px,calc(100dvh - 300px));max-height:none}
+}
 .vendor-pos-form{display:grid;gap:10px;margin:0;min-width:0}
 .vendor-pos .vendor-pos-payment{margin:0}
 .vendor-pos .vendor-pos-payment>button{width:100%;min-height:43px;margin:0;font-size:12px}
@@ -80,15 +87,12 @@
 .vendor-pos .commerce-cart>.tuck-shop-step-heading{margin-bottom:9px}
 .vendor-pos-form>.tuck-shop-step-heading{margin:4px 0 0;padding-top:10px}
 html[data-theme="dark"] .vendor-pos{color:#edf4ff}
-html[data-theme="dark"] .vendor-pos .vendor-header{border-color:#33465c}
+html[data-theme="dark"] .vendor-pos .vendor-pos-tabs [data-refresh]{background:#1768e8;color:#fff;border-color:#1768e8}
 html[data-theme="dark"] .vendor-pos .vendor-pos-guidance{border-color:#405773;color:#bdcce0}
 @media(max-width:680px){
-  .vendor-pos .vendor-header{gap:8px;padding-bottom:7px}
-  .vendor-pos .vendor-header h2{margin:0;font-size:17px}
-  .vendor-pos .vendor-header p{margin-top:3px;font-size:10px;line-height:1.35}
-  .vendor-pos .vendor-header>button{min-height:36px;padding:7px 10px;font-size:11px}
   .vendor-pos .vendor-status{min-height:0;margin:6px 0;font-size:11px}
-  .vendor-pos .vendor-pos-tabs{margin:6px 0}
+  .vendor-pos .vendor-pos-tabs{margin:0 0 6px}
+  .vendor-pos .vendor-pos-tabs [data-refresh]{min-height:36px;padding:7px 10px;font-size:11px}
   .vendor-pos-form{gap:7px}
   .vendor-pos .commerce-cart>.tuck-shop-step-heading{margin-bottom:6px}
   .vendor-pos-form>.tuck-shop-step-heading{padding-top:8px}
