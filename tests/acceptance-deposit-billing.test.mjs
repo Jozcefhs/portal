@@ -9,6 +9,7 @@ import {
   studentBillingReconciliationPlan, sameFinancialPeriod
 } from '../functions/api/backend.js';
 import { accountSummaryForKeys } from '../functions/api/parent-dashboard.js';
+import { assertManualPaymentScope, scopedPaymentWriteCondition } from '../functions/lib/manual-payment-scope.js';
 
 const source = await readFile(new URL('../functions/api/backend.js', import.meta.url), 'utf8');
 const clean = value => String(value ?? '').trim();
@@ -45,6 +46,7 @@ function invoiceGenerator(feeItems) {
   const generatorSource = source.slice(source.indexOf('async function generateSchoolFeeInvoicesForAccount('),
     source.indexOf('function ledgerDocumentId('));
   const generate = vm.runInNewContext(`(${generatorSource})`, {
+    assertManualPaymentScope, scopedPaymentWriteCondition,
     clean, normalizeMatchText: lower,
     yesNo: value => ['yes', 'true', '1'].includes(lower(value)) ? 'YES' : 'NO',
     asMoneyNumber: value => Number(value) || 0, normalizeFeeItem: row => row,

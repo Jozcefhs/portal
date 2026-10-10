@@ -131,7 +131,7 @@ test('branch-bound devices fail closed for unverified global and bare-ID actions
     'updateApplicationStatus', 'deleteApplication', 'importStudents', 'promoteStudents',
     'getClinicRecords', 'getClinicInventory', 'getKitchenInventory',
     'getStoreOverview', 'getFormSales', 'saveFeeItem', 'recordSale',
-    'recordManualPayment', 'generateSchoolFeeInvoices', 'getAccountingOverview',
+    'generateSchoolFeeInvoices', 'getAccountingOverview',
     'saveAccountingPeriod', 'saveAccountingApprovalLimit', 'saveAccountingCloseChecklist',
     'syncAccountingRevenue', 'savePayrollTaxProfile', 'exportBackup',
     'saveOrganisationStructure', 'saveOrganizationModulePreferences'
@@ -166,6 +166,34 @@ test('branch-bound devices fail closed for unverified global and bare-ID actions
   assert.match(backend, /balance: updatedAccount\.WalletBalance/);
   assert.match(backend, /const desktopAuthentication = await requireBackendSecret/);
   assert.match(backend, /applyDesktopDeviceBranchScope\(body, desktopAuthentication\)/);
+});
+
+test('shared fee setup explains its organisation-wide scope without widening branch device access', () => {
+  const actions = ['saveFeeItem', 'saveFeeItems', 'deleteFeeItem', 'seedDefaultFeeItems'];
+  for (const branchId of ['main', 'north']) {
+    for (const action of actions) {
+      assert.throws(
+        () => enforceDesktopDeviceActionScope({ type: 'device', branchId }, action, { Action: action }),
+        (error) => error?.status === 403
+          && error.code === 'DESKTOP_DEVICE_ORGANISATION_WIDE_REQUIRED'
+          && /shared organisation-wide catalogue/.test(error.message)
+          && /organisation-wide approved desktop device/.test(error.message)
+          && /Branch payments do not require organisation-wide device approval/.test(error.message),
+        `${action} must remain protected on branch ${branchId}`
+      );
+    }
+  }
+  for (const action of actions) {
+    const body = { Action: action };
+    assert.equal(enforceDesktopDeviceActionScope({ type: 'device', branchId: '' }, action, body), body);
+    assert.equal(enforceDesktopDeviceActionScope({ type: 'legacy-secret' }, action, body), body);
+  }
+  assert.throws(
+    () => enforceDesktopDeviceActionScope({ type: 'device', branchId: 'main' }, 'exportBackup', {}),
+    (error) => error?.code === 'DESKTOP_DEVICE_ORGANISATION_WIDE_REQUIRED'
+      && !/shared organisation-wide catalogue/.test(error.message),
+    'unrelated blocked actions retain their existing warning'
+  );
 });
 
 test('desktop document bridges accept device credentials instead of requiring the Cloudflare secret', async () => {

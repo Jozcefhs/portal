@@ -36,6 +36,7 @@ import { selectStudentBillingProfile, selectStudentBillingProfiles, studentProfi
 import { effectiveInvoiceAfterReversal } from '../lib/invoice-charge-reversal.js';
 import { financialPreviewFingerprint } from '../lib/financial-preview-fingerprint.js';
 import { studentWalletProfile } from '../lib/student-wallet-profile.js';
+import { assertManualPaymentDestination, assertManualPaymentRetry, assertManualPaymentScope, bindManualPaymentIdentity, manualPaymentRequestScope, scopedPaymentWriteCondition } from '../lib/manual-payment-scope.js';
 import {
   applyPublicPortalContent,
   PUBLIC_PORTAL_CONTENT_DOCUMENT
@@ -401,17 +402,21 @@ function studentIdFrom(data) {
   return clean(data.AdmissionNo || data.AdmissionNumber || data.admissionNo || data.AccountRef);
 }
 
-async function findApplication(env, id) {
+async function findApplication(env, id, financialScope = null) {
   const wanted = clean(id);
   if (!wanted) return null;
-  const direct = await getSchoolDocumentById(env, 'applications', safeDocumentId(wanted));
+  const direct = financialScope
+    ? (await getSchoolDocumentsById(env, 'applications', safeDocumentId(wanted), financialScope, { strictReads: true }))
+      .map((row) => assertManualPaymentScope(row, financialScope, 'Linked application'))[0]
+    : await getSchoolDocumentById(env, 'applications', safeDocumentId(wanted));
   if (direct) return direct;
   for (const field of ['ApplicationReference', 'ApplicationID', 'applicationReference']) {
     const rows = await querySchoolCollection(env, 'applications', {
       filters: [{ field, op: '==', value: wanted }],
+      ...(financialScope ? { scope: financialScope } : {}),
       limit: 1
     });
-    if (rows[0]) return rows[0];
+    if (rows[0]) return assertManualPaymentScope(rows[0], financialScope, 'Linked application');
   }
   return null;
 }
@@ -472,7 +477,8 @@ async function findStudentByAccountRef(env, accountRef, requestedScope = null, r
   if (clean(requestedScopePath) && !scopePath) return null;
   const direct = scopePath
     ? await getDocument(env, scopePath, safeDocumentId(wanted)).catch(() => null)
-    : selectStudentBillingProfile(await getSchoolDocumentsById(env, 'students', safeDocumentId(wanted), requestedScope), requestedScope);
+    : selectStudentBillingProfile(await getSchoolDocumentsById(env, 'students', safeDocumentId(wanted), requestedScope,
+      { strictReads: requestedScope?.strictReads === true }), requestedScope);
   if (direct) return normalizeStudent(scopePath ? { ...direct, __scopePath: scopePath } : direct);
   for (const field of STUDENT_ACCOUNT_REFERENCE_FIELDS) {
     const rows = await querySchoolCollection(env, 'students', {
@@ -494,25 +500,25 @@ function findStudentByAccountRefInRows(rows, accountRef) {
     normalized.find((row) => sameReferenceIdentity(row.ApplicationReference, wanted)) || null;
 }
 
-async function saveApplication(env, application) {
+async function saveApplication(env, application, options = {}) {
   const id = pick(application, ['ApplicationReference', 'ApplicationID', 'applicationReference', '__id']);
   if (!id) {
     const err = new Error('ApplicationReference is required.');
     err.status = 400;
     throw err;
   }
-  const saved = await upsertSchoolDocument(env, 'applications', safeDocumentId(id), application);
+  const saved = await upsertSchoolDocument(env, 'applications', safeDocumentId(id), application, options);
   return normalizeApplication(saved);
 }
 
-async function saveStudent(env, student) {
+async function saveStudent(env, student, options = {}) {
   const id = pick(student, ['AdmissionNo', 'admissionNo', 'AccountRef', '__id']);
   if (!id) {
     const err = new Error('AdmissionNo is required.');
     err.status = 400;
     throw err;
   }
-  const saved = await upsertSchoolDocument(env, 'students', safeDocumentId(id), student);
+  const saved = await upsertSchoolDocument(env, 'students', safeDocumentId(id), student, options);
   return normalizeStudent(saved);
 }
 
@@ -968,7 +974,7 @@ const BRANCH_BOUND_DEVICE_ACTIONS = new Set([
   'updateStudentProfile', 'reissueParentOnboarding',
   'getSchoolClasses', 'saveSchoolClasses', 'resetSchoolClasses',
   'getAdmissionClasses', 'saveAdmissionClasses', 'resetAdmissionClasses',
-  'getAccountsOverview', 'getAccountSnapshot', 'getHistoricalPaymentTemplateAccounts', 'importHistoricalPayments',
+  'getAccountsOverview', 'getAccountSnapshot', 'getHistoricalPaymentTemplateAccounts', 'importHistoricalPayments', 'recordManualPayment',
   'getWalletCardAccount', 'saveWalletCard', 'recordWalletPurchase',
   'getTuckShopCatalog', 'searchTuckShopCustomers', 'recordTuckShopStaffSale',
   'getAccountingRequisitionDocument',
@@ -991,7 +997,10 @@ export function enforceDesktopDeviceActionScope(authentication, action, body) {
   const branchId = clean(authentication?.branchId);
   if (authentication?.type !== 'device' || !branchId) return body;
   if (!BRANCH_BOUND_DEVICE_ACTIONS.has(action)) {
-    const error = new Error('This action has not been approved for branch-scoped desktop access. Use an organisation-wide desktop device.');
+    const sharedFeeSetup = ['saveFeeItem', 'saveFeeItems', 'deleteFeeItem', 'seedDefaultFeeItems'].includes(action);
+    const error = new Error(sharedFeeSetup
+      ? 'Fee components belong to a shared organisation-wide catalogue. Editing this catalogue requires an organisation-wide approved desktop device. Branch payments do not require organisation-wide device approval.'
+      : 'This action has not been approved for branch-scoped desktop access. Use an organisation-wide desktop device.');
     error.status = 403;
     error.code = 'DESKTOP_DEVICE_ORGANISATION_WIDE_REQUIRED';
     throw error;
@@ -4940,12 +4949,12 @@ async function seedDefaultFeeItems(env) {
     feeItems: (await listCollection(env, 'feeItems')).map(normalizeFeeItem) };
 }
 
-async function queryAccountRows(env, collection, accountRef) {
+async function queryAccountRows(env, collection, accountRef, financialScope = null) {
   const wanted = clean(accountRef);
   if (!wanted) return [];
   const normalized = normalizeReferenceText(wanted);
   try {
-    return await queryCollection(env, collection, {
+    const rows = await queryCollection(env, collection, {
       filters: [
         { field: 'AccountRefNormalized', op: '==', value: normalized },
         { field: 'AccountRef', op: '==', value: wanted },
@@ -4954,6 +4963,7 @@ async function queryAccountRows(env, collection, accountRef) {
       ],
       filterJoin: 'OR'
     });
+    return rows.map((row) => assertManualPaymentScope(row, financialScope, collection));
   } catch (error) {
     // Older Firestore projects may not yet have the disjunction index. Keep
     // their legacy three-query fallback while newly deployed indexes settle.
@@ -4962,16 +4972,16 @@ async function queryAccountRows(env, collection, accountRef) {
   const groups = await Promise.all(['AccountRef', 'AdmissionNo', 'ApplicationReference'].map((field) => {
     return queryCollection(env, collection, {
       filters: [{ field, op: '==', value: wanted }]
-    }).catch(() => []);
+    }).catch((error) => { if (financialScope) throw error; return []; });
   }));
   const unique = new Map();
   groups.flat().forEach((row) => unique.set(clean(row.__name || row.__id) || JSON.stringify(row), row));
-  return [...unique.values()];
+  return [...unique.values()].map((row) => assertManualPaymentScope(row, financialScope, collection));
 }
 
-async function queryAccountRowsForReferences(env, collection, references = []) {
+async function queryAccountRowsForReferences(env, collection, references = [], financialScope = null) {
   const wanted = [...new Set((references || []).map(clean).filter(Boolean))];
-  const groups = await Promise.all(wanted.map((reference) => queryAccountRows(env, collection, reference)));
+  const groups = await Promise.all(wanted.map((reference) => queryAccountRows(env, collection, reference, financialScope)));
   const unique = new Map();
   groups.flat().forEach((row) => unique.set(clean(row.__name || row.__id) || JSON.stringify(row), row));
   return [...unique.values()];
@@ -4979,12 +4989,18 @@ async function queryAccountRowsForReferences(env, collection, references = []) {
 
 async function findPaymentByReference(env, reference, options = {}) {
   const documentId = safeDocumentId(reference);
-  const direct = await getDocument(env, 'payments', documentId).catch(() => null);
+  const readFailure = (error) => { if (options.strictReads) throw error; return null; };
+  const direct = await getDocument(env, 'payments', documentId).catch(readFailure);
   if (direct) return direct;
   if (options.canonicalOnly) return null;
-  const byReference = await findOneByField(env, 'payments', 'Reference', reference).catch(() => null);
+  const byReference = await findOneByField(env, 'payments', 'Reference', reference).catch(readFailure);
   if (byReference) return byReference;
-  return findOneByField(env, 'payments', 'GatewayReference', reference).catch(() => null);
+  return findOneByField(env, 'payments', 'GatewayReference', reference).catch(readFailure);
+}
+
+async function readScopedFinancialDocument(env, collection, id, financialScope, label = collection, options = {}) {
+  const row = await getDocument(env, collection, id).catch((error) => { if (financialScope) throw error; return null; });
+  return assertManualPaymentScope(row, financialScope, label, options);
 }
 
 export function buildPaymentAccountingJournal(payment = {}, hasMatchingInvoice = false, edition = 'school') {
@@ -5044,9 +5060,9 @@ export function buildSchoolPaymentReclassificationJournal(payment = {}, postedRe
   });
 }
 
-async function createSchoolPaymentReclassificationIfAbsent(env, journal) {
+async function createSchoolPaymentReclassificationIfAbsent(env, journal, financialScope = null) {
   const documentId = safeDocumentId(journal.JournalNo);
-  const prior = await getDocument(env, 'accountingJournals', documentId).catch(() => null);
+  const prior = await readScopedFinancialDocument(env, 'accountingJournals', documentId, financialScope, 'Payment reclassification', { accountRequired: false });
   if (prior) {
     if (lower(prior.Status) !== 'posted' ||
       journalLineSignature(prior.Lines) !== journalLineSignature(journal.Lines) ||
@@ -5068,6 +5084,7 @@ async function createSchoolPaymentReclassificationIfAbsent(env, journal) {
   const created = await createDocumentIfAbsent(env, 'accountingJournals', documentId, journal);
   if (!created.created) {
     const existing = created.document || await getDocument(env, 'accountingJournals', documentId);
+    assertManualPaymentScope(existing, financialScope, 'Payment reclassification', { accountRequired: false });
     if (lower(existing?.Status) !== 'posted' ||
       journalLineSignature(existing?.Lines) !== journalLineSignature(journal.Lines) ||
       !sameText(existing?.Reference, journal.Reference) ||
@@ -5083,12 +5100,13 @@ async function createSchoolPaymentReclassificationIfAbsent(env, journal) {
   return created.created;
 }
 
-async function writePaymentAccountingJournal(env, payment, hasMatchingInvoice) {
+async function writePaymentAccountingJournal(env, payment, hasMatchingInvoice, financialScope = null) {
   const edition = accountingEditionForRequest(env);
   const journal = buildPaymentAccountingJournal(payment, hasMatchingInvoice, edition);
   if (!journal) return null;
   if (edition === 'school' && isAvailableSchoolCreditReceipt(payment)) await seedAccountingChart(env);
-  const prior = await getDocument(env, 'accountingJournals', safeDocumentId(journal.JournalNo)).catch(() => null);
+  const prior = await readScopedFinancialDocument(env, 'accountingJournals', safeDocumentId(journal.JournalNo), financialScope, 'Payment accounting journal', { accountRequired: false });
+  assertManualPaymentDestination(prior, financialScope, journal.SourceId, 'Payment accounting journal', { accountRequired: false });
   if (prior && edition === 'school' && isAvailableSchoolCreditReceipt(payment)) {
     if (lower(prior.Status) !== 'posted') {
       const err = new Error('The existing payment journal is not posted; finance review is required.');
@@ -5109,7 +5127,7 @@ async function writePaymentAccountingJournal(env, payment, hasMatchingInvoice) {
         err.status = 409;
         throw err;
       }
-      await createSchoolPaymentReclassificationIfAbsent(env, reclassification);
+      await createSchoolPaymentReclassificationIfAbsent(env, reclassification, financialScope);
     }
     return prior;
   }
@@ -5118,7 +5136,7 @@ async function writePaymentAccountingJournal(env, payment, hasMatchingInvoice) {
     err.status = 409;
     throw err;
   }
-  await upsertDocument(env, 'accountingJournals', safeDocumentId(journal.JournalNo), journal);
+  await upsertDocument(env, 'accountingJournals', safeDocumentId(journal.JournalNo), journal, scopedPaymentWriteCondition(prior, financialScope));
   return journal;
 }
 
@@ -5240,10 +5258,10 @@ export function schoolInvoiceCreditJournalGap(row = {}, journals = []) {
     ...(invalidPostedJournalIds.length ? { invalidPostedJournalIds } : {}) };
 }
 
-async function upsertSystemJournalIfChanged(env, journal) {
+async function upsertSystemJournalIfChanged(env, journal, financialScope = null) {
   if (!journal) return false;
   const documentId = safeDocumentId(journal.JournalNo);
-  const prior = await getDocument(env, 'accountingJournals', documentId).catch(() => null);
+  const prior = await readScopedFinancialDocument(env, 'accountingJournals', documentId, financialScope, 'System journal', { accountRequired: false });
   if (prior && lower(prior.Status) !== 'posted') {
     const err = new Error(`System journal ${journal.JournalNo} is not posted; finance review is required.`);
     err.status = 409;
@@ -5265,21 +5283,26 @@ async function upsertSystemJournalIfChanged(env, journal) {
   }
   await upsertDocument(env, 'accountingJournals', documentId, {
     ...journal, CreatedAt: prior?.CreatedAt || journal.CreatedAt, UpdatedAt: nowIso()
-  });
+  }, scopedPaymentWriteCondition(prior, financialScope));
   return true;
 }
 
 // Repair just one parent's School subledger before a credit withdrawal or
 // transfer. This also reconciles receipts/invoice credits posted before these
 // journals existed, without scanning other students' financial records.
-export async function syncSchoolAccountCreditJournals(env, accountRef, linkedReferences = []) {
+export async function syncSchoolAccountCreditJournals(env, accountRef, linkedReferences = [], financialScope = null) {
   const references = [...new Set([accountRef, ...linkedReferences].map(clean).filter(Boolean))];
   if (!references.length || accountingEditionForRequest(env) !== 'school') return { repaired: 0, unreconciledLegacyActions: [], unreconciledAllocation: null };
+  // A posted sibling transfer may originate in another section of this same
+  // branch. These actions/journals are inspected, not changed by reconciliation.
+  const creditActionScope = financialScope ? { ...financialScope, references: null, schoolSectionAccess: '' } : null;
   const [payments, invoices, ledgerRows, sourceActions, targetActionGroups] = await Promise.all([
-    queryAccountRowsForReferences(env, 'payments', references),
-    queryAccountRowsForReferences(env, 'invoices', references),
-    queryAccountRowsForReferences(env, 'ledger', references),
-    queryAccountRowsForReferences(env, 'creditActions', references),
+    queryAccountRowsForReferences(env, 'payments', references, financialScope),
+    queryAccountRowsForReferences(env, 'invoices', references, financialScope),
+    queryAccountRowsForReferences(env, 'ledger', references, financialScope),
+    // Older credit actions have no branch metadata. Defer ownership validation
+    // until their immutable posted journal has been checked, but keep strict I/O.
+    queryAccountRowsForReferences(env, 'creditActions', references, financialScope ? {} : null),
     Promise.all(references.map((reference) => queryCollection(env, 'creditActions', {
       filters: [{ field: 'TargetAccountRef', op: '==', value: reference }]
     })))
@@ -5292,8 +5315,20 @@ export async function syncSchoolAccountCreditJournals(env, accountRef, linkedRef
   const unreconciledLegacyActions = [];
   for (const [actionId, action] of actions) {
     const journalNo = clean(action.JournalNo) || `SYS-CREDIT-${safeDocumentId(actionId)}`;
-    const journal = await getDocument(env, 'accountingJournals', safeDocumentId(journalNo)).catch(() => null);
-    if (!journal || lower(journal.Status) !== 'posted') unreconciledLegacyActions.push(actionId);
+    const journal = await readScopedFinancialDocument(env, 'accountingJournals', safeDocumentId(journalNo),
+      creditActionScope, 'Credit-action journal', { accountRequired: false });
+    if (!journal || lower(journal.Status) !== 'posted') {
+      unreconciledLegacyActions.push(actionId);
+      continue;
+    }
+    assertManualPaymentScope({ ...action, BranchId: action.BranchId || action.branchId || journal.BranchId || journal.branchId || 'main' },
+      creditActionScope, 'Linked credit action', { accountRequired: false });
+    if (financialScope && ![action.AccountRef, action.TargetAccountRef].some((value) =>
+      financialScope.references.some((reference) => sameReferenceIdentity(value, reference)))) {
+      const error = new Error('A linked credit action has ambiguous account ownership. Finance review is required.');
+      error.status = 409;
+      throw error;
+    }
   }
   if (unreconciledLegacyActions.length) return { repaired: 0, unreconciledLegacyActions, unreconciledAllocation: null };
   const normalizedLedger = ledgerRows.map(normalizeLedger);
@@ -5319,6 +5354,7 @@ export async function syncSchoolAccountCreditJournals(env, accountRef, linkedRef
     const creditJournals = await queryCollection(env, 'accountingJournals', {
       filters: [{ field: 'SourceId', op: '==', value: invoice.InvoiceId }]
     });
+    creditJournals.forEach((journal) => assertManualPaymentScope(journal, financialScope, 'Invoice credit journal', { accountRequired: false }));
     const gap = schoolInvoiceCreditJournalGap(invoice, creditJournals);
     if (gap.invalidPostedJournalIds?.length || gap.missing < -0.005 || (gap.missing > 0.005 && gap.baselineExists)) {
       return { repaired: 0, unreconciledLegacyActions: [], unreconciledAllocation: {
@@ -5337,7 +5373,7 @@ export async function syncSchoolAccountCreditJournals(env, accountRef, linkedRef
     if (!isAvailableSchoolCreditReceipt(payment)) continue;
     const journal = buildPaymentAccountingJournal(payment);
     if (!journal) continue;
-    const prior = await getDocument(env, 'accountingJournals', safeDocumentId(journal.JournalNo)).catch(() => null);
+    const prior = await readScopedFinancialDocument(env, 'accountingJournals', safeDocumentId(journal.JournalNo), financialScope, 'Receipt journal', { accountRequired: false });
     if (!prior) {
       receiptPlans.push({ journal });
       continue;
@@ -5373,7 +5409,7 @@ export async function syncSchoolAccountCreditJournals(env, accountRef, linkedRef
     if (!isSchoolFeeInvoice(invoice)) continue;
     const journal = buildSchoolInvoiceChargeAccountingJournal(invoice);
     if (!journal) continue;
-    const prior = await getDocument(env, 'accountingJournals', safeDocumentId(journal.JournalNo)).catch(() => null);
+    const prior = await readScopedFinancialDocument(env, 'accountingJournals', safeDocumentId(journal.JournalNo), financialScope, 'Invoice charge journal', { accountRequired: false });
     if (prior && lower(prior.Status) === 'posted' &&
       (journalLineSignature(prior.Lines) !== journalLineSignature(journal.Lines) ||
         !sameText(prior.Date, journal.Date) || !sameText(prior.BranchId, journal.BranchId) ||
@@ -5391,7 +5427,7 @@ export async function syncSchoolAccountCreditJournals(env, accountRef, linkedRef
     ...invoiceChargePlans,
     ...baselineJournals
   ]) {
-    const prior = await getDocument(env, 'accountingJournals', safeDocumentId(journal.JournalNo)).catch(() => null);
+    const prior = await readScopedFinancialDocument(env, 'accountingJournals', safeDocumentId(journal.JournalNo), financialScope, 'Reconciliation journal', { accountRequired: false });
     if (!prior && await accountingPeriodIsClosed(env, journal.Date)) {
       return { repaired: 0, unreconciledLegacyActions: [], unreconciledAllocation: {
         receivedSchoolCredit, appliedToSchoolInvoices, withdrawnCredit,
@@ -5402,14 +5438,14 @@ export async function syncSchoolAccountCreditJournals(env, accountRef, linkedRef
   await seedAccountingChart(env);
   let repaired = 0;
   for (const plan of receiptPlans) {
-    if (plan.journal && await upsertSystemJournalIfChanged(env, plan.journal)) repaired += 1;
-    if (plan.reclassification && await createSchoolPaymentReclassificationIfAbsent(env, plan.reclassification)) repaired += 1;
+    if (plan.journal && await upsertSystemJournalIfChanged(env, plan.journal, financialScope)) repaired += 1;
+    if (plan.reclassification && await createSchoolPaymentReclassificationIfAbsent(env, plan.reclassification, financialScope)) repaired += 1;
   }
   for (const journal of invoiceChargePlans) {
-    if (await upsertSystemJournalIfChanged(env, journal)) repaired += 1;
+    if (await upsertSystemJournalIfChanged(env, journal, financialScope)) repaired += 1;
   }
   for (const journal of baselineJournals) {
-    if (await upsertSystemJournalIfChanged(env, journal)) repaired += 1;
+    if (await upsertSystemJournalIfChanged(env, journal, financialScope)) repaired += 1;
   }
   return { repaired, unreconciledLegacyActions, unreconciledAllocation: null };
 }
@@ -5481,28 +5517,43 @@ export function calculateDueSchoolFeeCreditAllocations(invoiceRows = [], ledgerR
   return { allocations, remaining };
 }
 
-async function refreshAccountFinancialSummary(env, accountRef, linkedReferences = []) {
+async function assertScopedAccountSummary(env, accountRef, financialScope) {
+  if (!financialScope) return null;
+  const prior = await getDocument(env, 'accountSummaries', safeDocumentId(accountRef));
+  if (!prior) return null;
+  // Legacy summaries have no branch metadata. The scoped payment preflight
+  // verifies the account's identity across school paths before adopting them.
+  assertManualPaymentScope({ ...prior, BranchId: prior.BranchId || financialScope.branchId }, financialScope, 'Account summary');
+  for (const reference of prior.LinkedReferences || []) {
+    assertManualPaymentScope({ AccountRef: reference, BranchId: financialScope.branchId }, financialScope, 'Linked account summary');
+  }
+  return prior;
+}
+
+async function refreshAccountFinancialSummary(env, accountRef, linkedReferences = [], financialScope = null) {
   const references = [accountRef, ...linkedReferences];
+  const priorSummary = await assertScopedAccountSummary(env, accountRef, financialScope);
   const [invoices, ledger] = await Promise.all([
-    queryAccountRowsForReferences(env, 'invoices', references),
-    queryAccountRowsForReferences(env, 'ledger', references)
+    queryAccountRowsForReferences(env, 'invoices', references, financialScope),
+    queryAccountRowsForReferences(env, 'ledger', references, financialScope)
   ]);
   const summary = calculateAccountFinancialSummary(invoices, ledger, accountRef);
   await upsertDocument(env, 'accountSummaries', safeDocumentId(accountRef), {
     ...summary,
+    ...(financialScope ? { BranchId: financialScope.branchId, SchoolSection: financialScope.schoolSectionAccess } : {}),
     LinkedReferences: [...new Set(linkedReferences.map(clean).filter(Boolean))]
-  });
+  }, scopedPaymentWriteCondition(priorSummary, financialScope));
   return summary;
 }
 
-async function applyDueSchoolFeeCreditsForAccount(env, accountRef, linkedReferences = [], settings = null, today = new Date().toISOString().slice(0, 10)) {
+async function applyDueSchoolFeeCreditsForAccount(env, accountRef, linkedReferences = [], settings = null, today = new Date().toISOString().slice(0, 10), financialScope = null) {
   const references = [accountRef, ...linkedReferences];
   const [invoices, ledger, summarySnapshot] = await Promise.all([
-    queryAccountRowsForReferences(env, 'invoices', references),
-    queryAccountRowsForReferences(env, 'ledger', references),
-    getDocument(env, 'accountSummaries', safeDocumentId(accountRef))
+    queryAccountRowsForReferences(env, 'invoices', references, financialScope),
+    queryAccountRowsForReferences(env, 'ledger', references, financialScope),
+    financialScope ? assertScopedAccountSummary(env, accountRef, financialScope) : getDocument(env, 'accountSummaries', safeDocumentId(accountRef))
   ]);
-  const preflight = await syncSchoolAccountCreditJournals(env, accountRef, linkedReferences);
+  const preflight = await syncSchoolAccountCreditJournals(env, accountRef, linkedReferences, financialScope);
   if (preflight.unreconciledLegacyActions?.length || preflight.unreconciledAllocation) {
     const err = new Error('This parent credit needs finance review before it can be applied to another term.');
     err.status = 409;
@@ -5546,11 +5597,12 @@ async function applyDueSchoolFeeCreditsForAccount(env, accountRef, linkedReferen
     writes.push({
       collectionPath: 'accountSummaries', documentId: safeDocumentId(accountRef),
       ...(summarySnapshot?.__updateTime ? { updateTime: summarySnapshot.__updateTime } : { exists: false }),
-      data: { ...summary, LinkedReferences: [...new Set(linkedReferences.map(clean).filter(Boolean))] }
+      data: { ...summary, LinkedReferences: [...new Set(linkedReferences.map(clean).filter(Boolean))],
+        ...(financialScope ? { BranchId: financialScope.branchId, SchoolSection: financialScope.schoolSectionAccess } : {}) }
     });
     await batchUpsertDocuments(env, writes);
   }
-  if (!allocation.allocations.length) await refreshAccountFinancialSummary(env, accountRef, linkedReferences);
+  if (!allocation.allocations.length) await refreshAccountFinancialSummary(env, accountRef, linkedReferences, financialScope);
   return allocation;
 }
 
@@ -5595,20 +5647,86 @@ export function isStandaloneAcceptanceInvoiceForPayment(invoice, payment) {
   ));
 }
 
-async function removeStandaloneAcceptanceInvoices(env, payment) {
+async function removeStandaloneAcceptanceInvoices(env, payment, financialScope = null) {
   if (!isAcceptanceFeeLike(payment)) return 0;
-  const invoices = await queryAccountRows(env, 'invoices', payment.AccountRef);
+  const invoices = await queryAccountRows(env, 'invoices', payment.AccountRef, financialScope);
   const standalone = invoices.filter((invoice) => isStandaloneAcceptanceInvoiceForPayment(
     normalizeInvoice(invoice),
     payment
   ));
   for (const invoice of standalone) {
-    await deleteDocument(env, 'invoices', invoice.__id || safeDocumentId(invoice.InvoiceId));
+    await deleteDocument(env, 'invoices', invoice.__id || safeDocumentId(invoice.InvoiceId), scopedPaymentWriteCondition(invoice, financialScope));
   }
   return standalone.length;
 }
 
+async function prepareScopedManualPayment(env, body) {
+  const requestedScope = manualPaymentRequestScope(body);
+  if (!requestedScope) return { body, financialScope: null, student: null };
+  requestedScope.strictReads = true;
+  // Do not treat an unreadable branch registry as an empty Main-only school.
+  await getDocument(env, 'settings', 'schoolStructure');
+  const accountRef = clean(body.AccountRef || body.accountRef || body.ApplicationReference);
+  const student = await findStudentByAccountRef(env, accountRef, requestedScope);
+  const identity = student || await findApplication(env, accountRef, requestedScope);
+  if (!identity) {
+    const error = new Error('The student or applicant was not found in your approved branch and school section.');
+    error.status = 403;
+    error.code = 'MANUAL_PAYMENT_SCOPE_MISMATCH';
+    throw error;
+  }
+  const bound = bindManualPaymentIdentity(body, identity, requestedScope);
+  const financialScope = bound.scope;
+  // Financial document IDs are organisation-wide. Refuse ambiguous identities
+  // instead of overwriting another branch's summary or linked receipt.
+  await Promise.all(financialScope.references.flatMap((reference) => ['students', 'applications'].map(async (collection) => {
+    const rows = await getSchoolDocumentsById(env, collection, safeDocumentId(reference), null, { strictReads: true });
+    rows.forEach((row) => assertManualPaymentScope(row, financialScope, 'Account identity'));
+  })));
+  // Older imports used arbitrary document IDs. Also inspect identity fields so
+  // a shared account reference in another branch cannot hide behind an old ID.
+  await Promise.all(['students', 'applications'].map(async (collection) => {
+    const fields = [...STUDENT_ACCOUNT_REFERENCE_FIELDS, 'ApplicationID'];
+    const filters = [...new Set(financialScope.references)].flatMap((reference) =>
+      fields.map((field) => ({ field, op: '==', value: reference })));
+    for (let offset = 0; offset < filters.length; offset += 20) {
+      const rows = await querySchoolCollection(env, collection, { filters: filters.slice(offset, offset + 20), filterJoin: 'OR' });
+      rows.forEach((row) => assertManualPaymentScope(row, financialScope, 'Account identity'));
+    }
+  }));
+  if (student?.ApplicationReference) await findApplication(env, student.ApplicationReference, financialScope);
+  await Promise.all([
+    ...['payments', 'invoices', 'ledger'].map((collection) => queryAccountRowsForReferences(env, collection, financialScope.references, financialScope)),
+    assertScopedAccountSummary(env, accountRef, financialScope)
+  ]);
+  return { body: bound.body, financialScope, student };
+}
+
+async function assertManualPaymentDestinations(env, reference, financialScope) {
+  if (!financialScope) return;
+  const ledger = await getDocument(env, 'ledger', safeDocumentId(`LED-${safeDocumentId(reference)}`));
+  assertManualPaymentDestination(ledger, financialScope, reference, 'Payment ledger');
+  const journal = await getDocument(env, 'accountingJournals', safeDocumentId(`SYS-PAY-${safeDocumentId(reference)}`));
+  assertManualPaymentDestination(journal, financialScope, reference, 'Payment accounting journal', { accountRequired: false });
+  const charge = await getDocument(env, 'paymentGatewayCharges', safeDocumentId(`PAYSTACK-FEE-${reference}`));
+  assertManualPaymentDestination(charge, financialScope, reference, 'Payment gateway charge', { accountRequired: false });
+}
+
+async function manualPaymentVersion(env, documentId, body, financialScope, creditedAmount) {
+  const row = await readScopedFinancialDocument(env, 'payments', documentId, financialScope, 'Payment being posted');
+  if (financialScope && !row) {
+    const error = new Error('The payment changed during posting. Refresh and retry its original reference.');
+    error.status = 409;
+    throw error;
+  }
+  if (row) assertManualPaymentRetry(normalizePayment(row), body, financialScope, creditedAmount);
+  return row;
+}
+
 export async function recordManualPayment(env, body) {
+  // Trusted gateway callers use this recorder too; desktop requests carry the
+  // authoritative actor and must retain the normal finance-role restriction.
+  if (body.DeviceBranchId) requireAccountingRole(body, ['Super Admin', 'Accounts Officer']);
   let accountRef = clean(body.AccountRef || body.accountRef || body.ApplicationReference);
   let feeCode = clean(body.FeeCode || body.feeCode);
   let amount = asMoneyNumber(body.Amount || body.amount);
@@ -5628,14 +5746,22 @@ export async function recordManualPayment(env, body) {
     err.status = 400;
     throw err;
   }
-  const paymentScope = {
-    branchId: clean(body.BranchId || body.branchId),
-    schoolSectionAccess: clean(body.SchoolSection || body.schoolSection)
-  };
+  const scoped = await prepareScopedManualPayment(env, body);
+  body = scoped.body;
+  const financialScope = scoped.financialScope;
+  const paymentScope = financialScope || requestedStudentScope(body);
+  const requestedGrossAmount = asMoneyNumber(body.GrossAmount || amount);
+  const requestedGatewayFee = asMoneyNumber(body.GatewayFee);
+  const requestedCredit = requestedGatewayFee > 0
+    ? Math.min(requestedGrossAmount, Math.max(0, asMoneyNumber(body.NetAmount || requestedGrossAmount - requestedGatewayFee)))
+    : amount;
+  await assertManualPaymentDestinations(env, reference, financialScope);
   let existingPayment = await findPaymentByReference(env, reference, {
-    canonicalOnly: body.ReferenceIsDocumentId === true
+    canonicalOnly: body.ReferenceIsDocumentId === true,
+    strictReads: Boolean(financialScope)
   });
   let payment = existingPayment ? normalizePayment(existingPayment) : null;
+  if (payment) assertManualPaymentRetry(payment, body, financialScope, requestedCredit);
   let duplicate = Boolean(payment);
   let paymentDocumentId = safeDocumentId(existingPayment?.__id || reference);
   if (!payment && await accountingPeriodIsClosed(env, clean(body.PaidAt || body.paidAt) || nowIso())) {
@@ -5648,7 +5774,7 @@ export async function recordManualPayment(env, body) {
     feeCode = clean(payment.FeeCode || feeCode);
     amount = paymentCreditedAmount(payment) || amount;
     if (isAvailableSchoolCreditReceipt(payment)) {
-      const preflight = await syncSchoolAccountCreditJournals(env, accountRef, [payment.ApplicationReference]);
+      const preflight = await syncSchoolAccountCreditJournals(env, accountRef, [payment.ApplicationReference], financialScope);
       if (preflight.unreconciledLegacyActions?.length || preflight.unreconciledAllocation) {
         const err = new Error('This parent account needs finance review before its payment can be allocated to school fees.');
         err.status = 409;
@@ -5664,7 +5790,7 @@ export async function recordManualPayment(env, body) {
         ProcessingVersion: 2,
         ProcessingStartedAt: payment.ProcessingStartedAt,
         UpdatedAt: nowIso()
-      });
+      }, scopedPaymentWriteCondition(existingPayment, financialScope));
     }
   }
   const isTotalPayment = isSchoolFeesTotalCode(feeCode);
@@ -5674,7 +5800,7 @@ export async function recordManualPayment(env, body) {
     : (directFee ? [normalizeFeeItem(directFee)] : []);
   const fee = configuredFees.find((item) => sameText(item.FeeCode, feeCode)) || normalizeFeeItem(body);
   const schoolFeeCodes = new Set(configuredFees.filter(isSchoolFeeInvoice).map((item) => normalizeReferenceText(item.FeeCode)));
-  const student = await findStudentByAccountRef(env, accountRef, paymentScope);
+  const student = scoped.student || await findStudentByAccountRef(env, accountRef, paymentScope);
   const paymentId = ledgerDocumentId('PAY');
   const grossAmount = asMoneyNumber(body.GrossAmount || amount);
   const gatewayFee = asMoneyNumber(body.GatewayFee);
@@ -5730,7 +5856,7 @@ export async function recordManualPayment(env, body) {
       ProcessingStartedAt: nowIso()
     };
     if (isAvailableSchoolCreditReceipt(payment)) {
-      const preflight = await syncSchoolAccountCreditJournals(env, accountRef, [payment.ApplicationReference]);
+      const preflight = await syncSchoolAccountCreditJournals(env, accountRef, [payment.ApplicationReference], financialScope);
       if (preflight.unreconciledLegacyActions?.length || preflight.unreconciledAllocation) {
         const err = new Error('This parent account needs finance review before a new payment can be recorded.');
         err.status = 409;
@@ -5740,13 +5866,14 @@ export async function recordManualPayment(env, body) {
     const paymentCreate = await createDocumentIfAbsent(env, 'payments', safeDocumentId(reference), payment);
     if (!paymentCreate.created) {
       payment = normalizePayment(paymentCreate.document || payment);
+      assertManualPaymentRetry(payment, body, financialScope, requestedCredit);
       existingPayment = paymentCreate.document || payment;
       duplicate = true;
       paymentDocumentId = safeDocumentId(paymentCreate.document?.__id || reference);
       accountRef = clean(payment.AccountRef || accountRef);
       feeCode = clean(payment.FeeCode || feeCode);
       if (isAvailableSchoolCreditReceipt(payment)) {
-        const preflight = await syncSchoolAccountCreditJournals(env, accountRef, [payment.ApplicationReference]);
+        const preflight = await syncSchoolAccountCreditJournals(env, accountRef, [payment.ApplicationReference], financialScope);
         if (preflight.unreconciledLegacyActions?.length || preflight.unreconciledAllocation) {
           const err = new Error('The existing parent account needs finance review before its payment can be allocated.');
           err.status = 409;
@@ -5760,7 +5887,8 @@ export async function recordManualPayment(env, body) {
   const paymentTerm = clean(payment.Term || term);
   const ledgerNo = `LED-${safeDocumentId(reference)}`;
   const ledgerDocumentIdValue = safeDocumentId(ledgerNo);
-  const existingLedger = await getDocument(env, 'ledger', ledgerDocumentIdValue).catch(() => null);
+  const existingLedger = await readScopedFinancialDocument(env, 'ledger', ledgerDocumentIdValue, financialScope, 'Payment ledger');
+  assertManualPaymentDestination(existingLedger, financialScope, reference, 'Payment ledger');
   await upsertDocument(env, 'ledger', safeDocumentId(ledgerNo), {
     LedgerNo: ledgerNo,
     Date: payment.PaidAt,
@@ -5787,16 +5915,17 @@ export async function recordManualPayment(env, body) {
     RecordedBy: payment.RecordedBy,
     Source: payment.Gateway || payment.Method,
     Metadata: payment.Metadata
-  });
+  }, scopedPaymentWriteCondition(existingLedger, financialScope));
   payment.LedgerPostingStatus = 'Completed';
   payment.ProcessingVersion = 2;
+  const postingPaymentVersion = financialScope ? await manualPaymentVersion(env, paymentDocumentId, body, financialScope, requestedCredit) : null;
   await patchDocumentFields(env, 'payments', paymentDocumentId, {
     LedgerPostingStatus: 'Completed',
     ProcessingVersion: 2,
     UpdatedAt: nowIso()
-  });
-  await removeStandaloneAcceptanceInvoices(env, payment);
-  const accountInvoices = (await queryAccountRows(env, 'invoices', accountRef)).map(normalizeInvoice);
+  }, scopedPaymentWriteCondition(postingPaymentVersion, financialScope));
+  await removeStandaloneAcceptanceInvoices(env, payment, financialScope);
+  const accountInvoices = (await queryAccountRows(env, 'invoices', accountRef, financialScope)).map(normalizeInvoice);
   const matchingInvoices = accountInvoices.filter((invoice) => {
     return sameText(invoice.AccountRef, accountRef) &&
       (!isSchoolFeeInvoice(invoice) || isAvailableSchoolCreditReceipt(payment)) &&
@@ -5826,7 +5955,7 @@ export async function recordManualPayment(env, body) {
     }
     payment.InvoiceAllocationStatus = 'Completed';
     payment.InvoiceAllocationCompletedAt = nowIso();
-    const currentPaymentVersion = await getDocument(env, 'payments', paymentDocumentId).catch(() => null);
+    const currentPaymentVersion = await manualPaymentVersion(env, paymentDocumentId, body, financialScope, requestedCredit);
     await batchUpsertDocuments(env, [
       ...invoiceAllocation.allocations.map((allocation) => ({
         collectionPath: 'invoices',
@@ -5852,13 +5981,13 @@ export async function recordManualPayment(env, body) {
         collectionPath: 'payments',
         documentId: paymentDocumentId,
         data: { ...payment, UpdatedAt: nowIso() },
-        updateTime: currentPaymentVersion?.__updateTime
+        ...(financialScope ? scopedPaymentWriteCondition(currentPaymentVersion, financialScope) : { updateTime: currentPaymentVersion?.__updateTime })
       }
     ]);
   }
   if (isAcceptanceFeeLike(payment)) {
     const appId = payment.ApplicationReference || payment.AccountRef;
-    const app = await findApplication(env, appId);
+    const app = await findApplication(env, appId, financialScope);
     if (app) {
       await saveApplication(env, {
         ...app,
@@ -5869,21 +5998,24 @@ export async function recordManualPayment(env, body) {
         AcceptanceFeeReceiptNo: payment.ReceiptNo || payment.Reference,
         AcceptanceFeeReceivedBy: payment.RecordedBy,
         UpdatedAt: nowIso()
-      });
+      }, scopedPaymentWriteCondition(app, financialScope));
     }
   }
   if (payment.GatewayFee > 0) {
     const chargeId = safeDocumentId(`PAYSTACK-FEE-${payment.Reference || payment.GatewayReference || payment.PaymentId}`);
+    const priorCharge = await readScopedFinancialDocument(env, 'paymentGatewayCharges', chargeId, financialScope, 'Payment gateway charge', { accountRequired: false });
+    assertManualPaymentDestination(priorCharge, financialScope, payment.Reference, 'Payment gateway charge', { accountRequired: false });
     await upsertDocument(env, 'paymentGatewayCharges', chargeId, {
       ChargeId: chargeId, Date: payment.PaidAt,
       Description: `Paystack transaction charge - ${payment.Reference || payment.PaymentId}`,
       Amount: payment.GatewayFee, GrossCollection: payment.GrossAmount, NetSettlement: paymentCredit,
       Treatment: 'DeductedBeforeStudentCredit', Status: 'Recorded',
       Reference: payment.Reference || payment.PaymentId, Source: payment.Gateway || 'Paystack',
+      ...(financialScope ? { BranchId: financialScope.branchId, SchoolSection: financialScope.schoolSectionAccess, AccountRef: payment.AccountRef } : {}),
       CreatedAt: nowIso(), UpdatedAt: nowIso()
-    });
+    }, scopedPaymentWriteCondition(priorCharge, financialScope));
   }
-  await writePaymentAccountingJournal(env, payment, matchingInvoices.length > 0);
+  await writePaymentAccountingJournal(env, payment, matchingInvoices.length > 0, financialScope);
   let invoicePostingWarning = '';
   const shouldGenerateSchoolInvoices = Boolean(student) && (
     isSchoolFeesTotalPayment(payment) ||
@@ -5899,23 +6031,25 @@ export async function recordManualPayment(env, body) {
         ResolvedStudent: student,
         ExistingInvoices: accountInvoices,
         NotificationSettings: notificationSettings
-      });
+      }, financialScope);
     } catch (error) {
+      if (error?.code === 'MANUAL_PAYMENT_SCOPE_MISMATCH') throw error;
       invoicePostingWarning = error && error.message ? error.message : String(error);
-      await refreshAccountFinancialSummary(env, accountRef, [payment.ApplicationReference]);
+      await refreshAccountFinancialSummary(env, accountRef, [payment.ApplicationReference], financialScope);
     }
   } else {
-    await refreshAccountFinancialSummary(env, accountRef, [payment.ApplicationReference]);
+    await refreshAccountFinancialSummary(env, accountRef, [payment.ApplicationReference], financialScope);
   }
   if (!shouldGenerateSchoolInvoices || invoicePostingWarning) {
-    await syncSchoolAccountCreditJournals(env, accountRef, [payment.ApplicationReference]);
+    await syncSchoolAccountCreditJournals(env, accountRef, [payment.ApplicationReference], financialScope);
   }
   payment.ProcessingStatus = 'Completed';
   payment.ProcessingVersion = 2;
   payment.CompletedAt = nowIso();
   payment.InvoicePostingStatus = invoicePostingWarning ? 'Warning' : (shouldGenerateSchoolInvoices ? 'Completed' : 'Not Required');
   payment.InvoicePostingWarning = invoicePostingWarning;
-  await upsertDocument(env, 'payments', paymentDocumentId, payment);
+  const finalPaymentVersion = financialScope ? await manualPaymentVersion(env, paymentDocumentId, body, financialScope, requestedCredit) : null;
+  await upsertDocument(env, 'payments', paymentDocumentId, payment, scopedPaymentWriteCondition(finalPaymentVersion, financialScope));
   if (body.DeferNotifications !== true) {
     await notifyParentPaymentReceived(env, payment).catch(() => null);
   }
@@ -5950,7 +6084,7 @@ export function resolveSchoolFeeInvoiceAccountRefs(body = {}) {
   return references;
 }
 
-async function generateSchoolFeeInvoices(env, body) {
+async function generateSchoolFeeInvoices(env, body, financialScope = null) {
   const accountRefs = resolveSchoolFeeInvoiceAccountRefs(body);
   if (!accountRefs.length) {
     const err = new Error('AccountRef or AccountRefs is required.');
@@ -5959,7 +6093,7 @@ async function generateSchoolFeeInvoices(env, body) {
   }
   const results = [];
   for (const accountRef of accountRefs) {
-    results.push(await generateSchoolFeeInvoicesForAccount(env, body, accountRef));
+    results.push(await generateSchoolFeeInvoicesForAccount(env, body, accountRef, financialScope));
   }
   if (results.length === 1) return results[0];
   const created = results.reduce((sum, result) => sum + result.created, 0);
@@ -5973,14 +6107,15 @@ async function generateSchoolFeeInvoices(env, body) {
   };
 }
 
-async function generateSchoolFeeInvoicesForAccount(env, body, accountRef) {
+async function generateSchoolFeeInvoicesForAccount(env, body, accountRef, financialScope = null) {
   let student = body.ResolvedStudent || await findStudentByAccountRef(env, accountRef, {
     branchId: clean(body.BranchId || body.branchId),
     schoolSectionAccess: clean(body.SchoolSection || body.schoolSection)
   });
   if (!student) throw applicationNotFound(accountRef);
+  assertManualPaymentScope(student, financialScope, 'Invoice student');
   const linkedApplication = clean(student.ApplicationReference)
-    ? await findApplication(env, student.ApplicationReference).catch(() => null)
+    ? await findApplication(env, student.ApplicationReference, financialScope).catch((error) => { if (financialScope) throw error; return null; })
     : null;
   const resolvedEnrollmentCategory = resolveStudentEnrollmentCategory(student, linkedApplication || {});
   if (resolvedEnrollmentCategory === 'New Intake' && normalizeMatchText(student.EnrollmentCategory) !== 'new intake') {
@@ -5988,7 +6123,7 @@ async function generateSchoolFeeInvoicesForAccount(env, body, accountRef) {
       ...student,
       ...admissionIntakeClassification(student),
       UpdatedAt: nowIso()
-    });
+    }, scopedPaymentWriteCondition(student, financialScope));
   }
   const profileResult = student.AcademicSession && student.Term
     ? { profile: {} }
@@ -6022,7 +6157,7 @@ async function generateSchoolFeeInvoicesForAccount(env, body, accountRef) {
     throw err;
   }
   // Payment posting can update invoices after its caller took a snapshot.
-  const existing = (await queryAccountRows(env, 'invoices', accountRef)).map(normalizeInvoice);
+  const existing = (await queryAccountRows(env, 'invoices', accountRef, financialScope)).map(normalizeInvoice);
   const linkedReferences = [student.ApplicationReference].map(clean).filter(Boolean);
   let created = 0;
   let updated = 0;
@@ -6090,6 +6225,7 @@ async function generateSchoolFeeInvoicesForAccount(env, body, accountRef) {
     invoiceWrites.push({
       collectionPath: 'invoices',
       documentId: safeDocumentId(invoiceId),
+      ...scopedPaymentWriteCondition(duplicate, financialScope),
       data: invoicePayload
     });
     generatedInvoices.push(invoicePayload);
@@ -6097,7 +6233,7 @@ async function generateSchoolFeeInvoicesForAccount(env, body, accountRef) {
     else created += 1;
   }
   if (invoiceWrites.length) await batchUpsertDocuments(env, invoiceWrites);
-  await applyDueSchoolFeeCreditsForAccount(env, accountRef, linkedReferences, notificationSettings);
+  await applyDueSchoolFeeCreditsForAccount(env, accountRef, linkedReferences, notificationSettings, undefined, financialScope);
   return { ok: true, message: `${created} school fee invoice item(s) generated, ${updated} updated.`, created, updated };
 }
 
@@ -10852,6 +10988,7 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     case 'generateSchoolFeeInvoices':
       return generateSchoolFeeInvoices(env, body);
     case 'recordManualPayment':
+      requireAccountingRole(body, ['Super Admin', 'Accounts Officer']);
       return recordManualPayment(env, body);
     case 'importHistoricalPayments':
       return importHistoricalPayments(env, body);

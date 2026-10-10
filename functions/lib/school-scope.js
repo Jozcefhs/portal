@@ -125,11 +125,14 @@ export async function schoolCollectionPaths(env, collection, requestedScope = nu
   return [...new Set(paths)];
 }
 
-export async function getSchoolDocumentsById(env, collection, documentId, requestedScope = null) {
+export async function getSchoolDocumentsById(env, collection, documentId, requestedScope = null, options = {}) {
   const paths = await schoolCollectionPaths(env, collection, requestedScope);
   const [groups, nameProfile] = await Promise.all([
     Promise.all(paths.map(async (path) => {
-      const row = await getDocument(env, path, documentId).catch(() => null);
+      const row = await getDocument(env, path, documentId).catch((error) => {
+        if (options.strictReads) throw error;
+        return null;
+      });
       return row ? { ...row, __scopePath: path } : null;
     })),
     collection === 'students' ? getDocument(env, 'settings', 'schoolProfile').catch(() => null) : null

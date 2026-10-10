@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
+import { assertManualPaymentScope, scopedPaymentWriteCondition } from '../functions/lib/manual-payment-scope.js';
 import {
   applyBillingCategoryOverrides, buildStudentBillingPreview, feeMatchesApplication,
   matchingFullScholarshipFeeItems, resolveStudentEnrollmentCategory, isSchoolFeeInvoice
@@ -218,6 +219,7 @@ test('actual invoice generator treats scholarship-without-assigned-fees as a suc
   let creditApplications = 0;
   const lower = (value) => String(value ?? '').trim().toLowerCase();
   const run = vm.runInNewContext(`(${block})`, {
+    assertManualPaymentScope, scopedPaymentWriteCondition,
     clean: (value) => String(value ?? '').trim(), normalizeMatchText: lower,
     yesNo: (value) => lower(value) === 'yes' ? 'YES' : 'NO', asMoneyNumber: (value) => Number(value) || 0,
     normalizeFeeItem: (row) => row, isFullScholarship, resolveStudentEnrollmentCategory,
