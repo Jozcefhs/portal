@@ -5459,7 +5459,7 @@ function renderTuckShopPOS(data = {}) {
     ${tuckShopLastSale ? commerceReceiptPreview(tuckShopLastSale) : ''}
     <div class="commerce-pos-layout">
       <section class="commerce-catalog" aria-label="Tuck shop catalogue">
-        <label class="commerce-search-label">Search items<input id="tuckShopCatalogSearch" type="search" value="${escapeHtml(tuckShopCatalogSearch)}" placeholder="Name, category or unit"></label>
+        <label class="commerce-search-label"><span>Search items · <span data-tuck-shop-product-count aria-live="polite">${available.length} products</span></span><input id="tuckShopCatalogSearch" type="search" value="${escapeHtml(tuckShopCatalogSearch)}" placeholder="Name, category or unit"></label>
         <div class="commerce-product-list">${available.map((item, index) => {
           const ref = commerceItemReference('tuckShop', item);
           const searchText = [item.ItemName, item.Category, item.Unit, item.Barcode, item.SKU].map(clean).join(' ').toLowerCase();
@@ -5511,9 +5511,12 @@ function bindTuckShopPOS(data) {
   }));
   const refresh = () => renderDepartmentOperations('tuckShop', data);
   const search = workspace.querySelector('#tuckShopCatalogSearch');
-  const filter = () => workspace.querySelectorAll('[data-tuck-shop-search]').forEach((row) => {
-    row.hidden = !row.dataset.tuckShopSearch.includes(clean(search?.value).toLowerCase());
-  });
+  const filter = () => {
+    const cards = workspace.querySelectorAll('[data-tuck-shop-search]'); let matches = 0;
+    cards.forEach(row => { row.hidden = !row.dataset.tuckShopSearch.includes(clean(search?.value).toLowerCase()); if (!row.hidden) matches++; });
+    const count = workspace.querySelector('[data-tuck-shop-product-count]');
+    if (count) count.textContent = clean(search?.value) ? `${matches} of ${cards.length} products` : `${cards.length} ${cards.length === 1 ? 'product' : 'products'}`;
+  };
   search?.addEventListener('input', () => { tuckShopCatalogSearch = search.value; filter(); });
   filter();
   workspace.querySelectorAll('[data-tuck-shop-add]').forEach((button) => button.addEventListener('click', () => {

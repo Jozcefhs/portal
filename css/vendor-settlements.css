@@ -29,6 +29,8 @@
 .vendor-check input { width:20px; min-height:20px; }
 .vendor-rule { border:1px solid #c5e6df; padding:12px; margin:0; border-radius:8px; }
 .vendor-table-wrap { overflow:auto; margin:12px 0; }
+.vendor-product-requests { max-height:38vh; }
+.vendor-product-requests th { position:sticky; top:0; }
 .vendor-table { width:100%; border-collapse:collapse; font-size:13px; }
 .vendor-table th { text-align:left; padding:10px; background:#eaf1f7; white-space:nowrap; }
 .vendor-table td { border-bottom:1px solid #dae5ec; padding:10px; vertical-align:top; }

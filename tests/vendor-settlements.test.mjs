@@ -17,6 +17,7 @@ const backendSource = await readFile(new URL('../functions/api/backend.js',impor
 const walletSource = backendSource.slice(backendSource.indexOf('export async function recordWalletPurchase('),backendSource.indexOf('export function buildCreditActionAccountingJournal('))
   .replace('export ','').replace(/const \{ assertVendorSaleReplay \} = await import\('[^']+'\);/g,'');
 import { handleProductImport } from '../functions/lib/vendor-product-import.js';
+import * as productManagement from '../functions/lib/vendor-product-management.js';
 import { assertRequisitionTransition } from '../functions/lib/requisition-workflow.js';
 import { validateRequisitionPosting } from '../functions/lib/requisition-posting.js';
 import { accountingChartChoicesForEdition } from '../functions/lib/accounting-edition-scope.js';
@@ -63,7 +64,7 @@ function fixture(initial = [], options = {}) {
     commits.push(structuredClone(writes)); for (const w of writes) put(w.collectionPath,w.documentId,w.data);
   };
   const functions = vm.runInNewContext(`${source}\n({ handleVendorSettlementAction, prepareVendorSale, snapshotVendorCart })`, {
-    ...rules, handleProductImport, crypto:webcrypto, Intl, Date, TextEncoder, console, assertRequisitionTransition, validateRequisitionPosting, accountingChartChoicesForEdition,
+    ...rules, ...productManagement, handleProductImport, crypto:webcrypto, Intl, Date, TextEncoder, console, assertRequisitionTransition, validateRequisitionPosting, accountingChartChoicesForEdition,
     getDocument:async (_env,c,id) => structuredClone(get(c,id) || null), listCollection:async (_env,c) => c === 'accountingPeriods' ? list(c) : list(c),
     getAccountingChartRows:async (_env, params) => { chartReads.push(params); return currentChart; }, verifyStaffApprovalPassword:async (_env,username,password) => password === 'test-confirmation',
     findStaffUserRecord:staffLookups.findStaffUserRecord, findStaffLoginRecord:staffLookups.findStaffLoginRecord,
@@ -997,3 +998,158 @@ test('faith restaurant imports are supported and school users cannot select non-
   await f.run('importProducts',body,{...user,edition:'faith'}); assert.equal(f.list('restaurantInventory').length,1);
   assert.equal((await f.run('previewProductImport',{Mode:'create',Rows:[createRow({Store:'Restaurant',Owner:'School'})]})).valid,false);
 });
+
+const vendorActor = { ...user,role:'Vendor User',username:'seller',allowedSections:['vendorSettlements','tuckShop'] };
+const productBody = (extra = {}) => ({RequestId:'new-product',VendorId:'v1',Section:'tuckShop',InventoryId:'new-stock',
+  ItemName:'Sample bread',Price:50,Quantity:10,Category:'Bakery',Unit:'loaf',Active:'YES',...extra});
+function productFixture(immediate = false) {
+  return fixture([['commerceVendors','v1',vendor('v1',{LoginUsername:'seller'})],
+    ['settings','vendor-settlement-school--main',{...settings,ProductPolicy:{RequireNewApproval:!immediate,RequireEditApproval:!immediate,RequireStockApproval:!immediate}}]]);
+}
+async function reviewProduct(f,result,Decision = 'Approved',actor = user) {
+  const row = f.get('vendorProductChanges',result.ChangeId);
+  const body = {ChangeId:row.ChangeId,RecordVersion:row.__updateTime,Decision,Notes:'Checked delivery and ownership',RequestId:`review-${row.ChangeId}`};
+  return {body,result:await f.run('reviewProductChange',body,actor)};
+}
+test('vendor products are enabled without granting ownership transfers and count only linked stock',async () => {
+  const f = productFixture();
+  for (const [id,vendorId] of [['mine','v1'],['school',''],['other','v2']]) f.put('tuckShopInventory',id,stock({VendorId:vendorId}));
+  f.put('commerceVendors','v2',vendor('v2',{LoginUsername:'another'}));
+  const boot = await f.run('bootstrap',{},vendorActor);
+  assert.equal(boot.capabilities.products,true); assert.equal(boot.capabilities.operate,false); assert.equal(boot.capabilities.reviewProducts,false);
+  assert.equal(boot.productCount,1); assert.equal(boot.products[0].InventoryId,'mine');
+  assert.deepEqual(boot.productPolicy,{RequireNewApproval:true,RequireEditApproval:true,RequireStockApproval:true});
+  assert.equal((await f.run('bootstrap')).productCount,3);
+});
+test('new vendor product defaults to pending; staff approval creates stock once without financial entries',async () => {
+  const f = productFixture();
+  const result = await f.run('saveProduct',productBody(),vendorActor);
+  assert.equal(result.pending,true); assert.equal(f.get('tuckShopInventory','new-stock'),undefined);
+  assert.equal((await f.run('bootstrap',{},vendorActor)).productChanges.length,1);
+  assert.equal((await f.run('saveProduct',productBody(),vendorActor)).replayed,true);
+  assert.equal(f.list('vendorProductChanges').length,1);
+  const {body} = await reviewProduct(f,result);
+  assert.equal(f.get('tuckShopInventory','new-stock').Quantity,10); assert.equal(f.list('tuckShopMovements').length,1);
+  assert.equal((await f.run('reviewProductChange',body)).replayed,true); assert.equal(f.list('tuckShopMovements').length,1);
+  for (const c of ['ledger','accountingJournals','vendorEarnings','vendorBalances']) assert.equal(f.list(c).length,0);
+});
+test('vendor approval and other-owner / branch / section / organisation edits fail closed',async () => {
+  const f = productFixture(true);
+  const other = stock({VendorId:'v2'}); f.put('tuckShopInventory','other',other);
+  for (const extra of [{VendorId:'v2'},{VendorId:'ORGANISATION'},{Section:'restaurant'},
+    {InventoryId:'other',RecordVersion:f.get('tuckShopInventory','other').__updateTime}])
+    await assert.rejects(f.run('saveProduct',productBody(extra),vendorActor));
+  for (const change of [{branchId:'another'},{schoolSectionAccess:'Primary'},{username:'another'},{role:'Teacher'},{subscriptionReadOnly:true}])
+    await assert.rejects(f.run('saveProduct',productBody(),{...vendorActor,...change}));
+  assert.equal(f.commits.length,0);
+  const pending = productFixture(), result = await pending.run('saveProduct',productBody(),vendorActor);
+  await assert.rejects(reviewProduct(pending,result,'Approved',vendorActor),/role/);
+  assert.equal(pending.get('tuckShopInventory','new-stock'),undefined);
+});
+test('vendor cannot overwrite stock or transfer ownership on an existing product',async () => {
+  const f = productFixture(true); await f.run('saveProduct',productBody(),vendorActor);
+  const row = f.get('tuckShopInventory','new-stock'), before = f.commits.length;
+  await assert.rejects(f.run('saveProduct',productBody({RequestId:'wrong-stock',RecordVersion:row.__updateTime,Quantity:1000}),vendorActor),/delivery/);
+  await assert.rejects(f.run('saveProduct',productBody({RequestId:'missing-version'}),vendorActor),/current version/);
+  assert.equal(f.commits.length,before); assert.equal(f.get('tuckShopInventory','new-stock').Quantity,10);
+});
+test('pending edit and delivery merge fresh stock after intervening sales; approval cannot apply twice',async () => {
+  const f = productFixture(); f.put('tuckShopInventory','new-stock',stock({VendorId:'v1',Quantity:10}));
+  const base = f.get('tuckShopInventory','new-stock');
+  const edit = await f.run('saveProduct',productBody({RequestId:'edit',RecordVersion:base.__updateTime,Quantity:10,Price:75}),vendorActor);
+  const delivery = await f.run('recordProductDelivery',productBody({RequestId:'delivery',RecordVersion:base.__updateTime,Quantity:6,Reference:'DEL-1',Notes:'New delivery'}),vendorActor);
+  f.put('tuckShopInventory','new-stock',{...base,Quantity:4}); // Six units sold while school reviews requests.
+  await reviewProduct(f,edit); assert.equal(f.get('tuckShopInventory','new-stock').Quantity,4); assert.equal(f.get('tuckShopInventory','new-stock').Price,75);
+  const {body} = await reviewProduct(f,delivery);
+  assert.equal(f.get('tuckShopInventory','new-stock').Quantity,10);
+  assert.equal(f.list('tuckShopMovements')[0].QuantityBefore,4); assert.equal(f.list('tuckShopMovements')[0].Quantity,6);
+  await f.run('reviewProductChange',body); assert.equal(f.get('tuckShopInventory','new-stock').Quantity,10);
+});
+test('conflicting product details and revoked vendor links cannot be approved, but requests can be rejected',async () => {
+  for (const revoke of [false,true]) {
+    const f = productFixture(); f.put('tuckShopInventory','new-stock',stock({VendorId:'v1',Quantity:10}));
+    const original = f.get('tuckShopInventory','new-stock');
+    const result = await f.run('saveProduct',productBody({RecordVersion:original.__updateTime,Price:75}),vendorActor);
+    if (revoke) f.put('commerceVendors','v1',vendor('v1',{LoginUsername:'new-login'}));
+    else f.put('tuckShopInventory','new-stock',{...original,Price:175});
+    await assert.rejects(reviewProduct(f,result),/fresh|linked/);
+    await reviewProduct(f,result,'Rejected'); assert.equal(f.get('vendorProductChanges',result.ChangeId).Status,'Rejected');
+  }
+});
+test('immediate product edit / delivery retries are idempotent and stock changes are atomic',async () => {
+  const f = productFixture(true); await f.run('saveProduct',productBody(),vendorActor);
+  let row = f.get('tuckShopInventory','new-stock');
+  const edit = productBody({RequestId:'edit',RecordVersion:row.__updateTime,Price:80}); delete edit.Quantity;
+  await f.run('saveProduct',edit,vendorActor); await f.run('saveProduct',edit,vendorActor);
+  row = f.get('tuckShopInventory','new-stock');
+  const delivery = productBody({RequestId:'delivery',RecordVersion:row.__updateTime,Quantity:5,Reference:'DEL-1',Notes:'Five delivered'});
+  f.conflict(); await assert.rejects(f.run('recordProductDelivery',delivery,vendorActor),/changed/);
+  assert.equal(f.get('tuckShopInventory','new-stock').Quantity,10);
+  await f.run('recordProductDelivery',delivery,vendorActor);
+  assert.equal((await f.run('recordProductDelivery',delivery,vendorActor)).replayed,true);
+  assert.equal(f.get('tuckShopInventory','new-stock').Quantity,15); assert.equal(f.list('tuckShopMovements').length,2);
+  await assert.rejects(f.run('recordProductDelivery',{...delivery,Quantity:6},vendorActor),/another operation/);
+  for (const Quantity of [-1,0,1.5,NaN,Number.MAX_SAFE_INTEGER]) {
+    row = f.get('tuckShopInventory','new-stock');
+    await assert.rejects(f.run('recordProductDelivery',{...delivery,RequestId:`invalid-${String(Quantity).replace('.','-')}`,RecordVersion:row.__updateTime,Quantity},vendorActor));
+  }
+});
+test('school approval controls are separately authorized and never overwrite settlement settings',async () => {
+  const f = productFixture(); const before = structuredClone(f.get('settings','vendor-settlement-school--main'));
+  const body = {RecordVersion:before.__updateTime,RequireNewApproval:false,RequireEditApproval:true,RequireStockApproval:false};
+  await assert.rejects(f.run('saveProductPolicy',body,vendorActor));
+  await assert.rejects(f.run('saveProductPolicy',body,{...user,schoolSectionAccess:'Secondary'}),/branch-wide/);
+  await assert.rejects(f.run('saveProductPolicy',{...body,RequireNewApproval:'false'}),/approval setting/);
+  await f.run('saveProductPolicy',body);
+  const after = f.get('settings','vendor-settlement-school--main');
+  for (const key of ['Enabled','AccountingConfirmed','PayableAccount','CommissionAccount','VendorReceivableAccount','RuleHistory']) assert.deepEqual(after[key],before[key]);
+  assert.deepEqual(after.ProductPolicy,{RequireNewApproval:false,RequireEditApproval:true,RequireStockApproval:false});
+  await assert.rejects(f.run('saveProductPolicy',body),/changed/);
+});
+test('vendor CSV auto-assigns only own linked owners and submits read-only previews for approval',async () => {
+  const f = productFixture();
+  const {preview,body} = await importPreview(f,'create',[createRow({Owner:''})],vendorActor);
+  assert.equal(preview.valid,true); assert.equal(preview.approvalRequired,true); assert.equal(preview.rows[0].VendorId,'v1'); assert.equal(f.commits.length,0);
+  const saved = await f.run('importProducts',body,vendorActor); assert.equal(saved.pending,1); assert.equal(saved.created,0);
+  assert.equal(f.list('tuckShopInventory').length,0);
+  await f.run('importProducts',body,vendorActor); assert.equal(f.list('vendorProductChanges').length,1);
+  const change = f.list('vendorProductChanges')[0]; await reviewProduct(f,change);
+  assert.equal(f.get('tuckShopInventory',preview.rows[0].InventoryId).Quantity,5);
+});
+test('vendor CSV cannot assign existing owners, import organisation stock or select unrelated vendors',async () => {
+  const f = productFixture();
+  for (const Owner of ['ORGANISATION','v2','Another vendor']) await assert.rejects(importPreview(f,'create',[createRow({Owner})],vendorActor),/linked vendor/);
+  await assert.rejects(importPreview(f,'assign',[{InventoryId:'foreign-secret',Owner:'v1'}],vendorActor),/Ownership transfers/);
+  f.put('commerceVendors','v2',vendor('v2',{LoginUsername:'seller'}));
+  await assert.rejects(importPreview(f,'create',[createRow({Owner:''})],vendorActor),/linked vendor/);
+  assert.equal((await importPreview(f,'create',[createRow({Owner:'v2'})],vendorActor)).preview.valid,true);
+  assert.equal(f.commits.length,0);
+});
+test('vendor CSV rechecks approval policy; immediate imports preserve stock and retry only once',async () => {
+  const f = productFixture(); const initial = await importPreview(f,'create',[createRow()],vendorActor);
+  f.put('settings','vendor-settlement-school--main',{...settings,ProductPolicy:{RequireNewApproval:false}});
+  await assert.rejects(f.run('importProducts',initial.body,vendorActor),/changed/); assert.equal(f.commits.length,0);
+  const {body,preview} = await importPreview(f,'create',[createRow()],vendorActor,'direct-csv');
+  assert.equal((await f.run('importProducts',body,vendorActor)).created,1);
+  await f.run('importProducts',body,vendorActor); assert.equal(f.list('tuckShopInventory').length,1); assert.equal(f.list('tuckShopMovements').length,1);
+  const item = f.get('tuckShopInventory',preview.rows[0].InventoryId); f.put('tuckShopInventory',item.__id,{...item,Quantity:2});
+  const again = await importPreview(f,'create',[createRow({Quantity:999})],vendorActor,'new-file');
+  assert.equal((await f.run('importProducts',again.body,vendorActor)).skipped,1); assert.equal(f.get('tuckShopInventory',item.__id).Quantity,2);
+});
+for (const [edition,section] of [['school','tuckShop'],['faith','restaurant'],['organization','organizationStore']]) {
+  test(`${edition} newly registered vendor product sells with a single stock decrement and balanced earnings`,async () => {
+    const f = commerceFixture(edition,section,{firestoreRoundTrip:true});
+    f.put('commerceVendors','v1',{...f.get('commerceVendors','v1'),LoginUsername:'seller'});
+    const actor = {...f.actor,username:'seller',role:'Vendor User',allowedSections:['vendorSettlements',section]};
+    const created = await f.run('saveProduct',productBody({Section:section}),actor);
+    await reviewProduct(f,created,'Approved',f.actor);
+    const saleBody = {action:'recordVendorSale',Section:section,SaleRequestId:'added-product-sale',Items:[{Reference:'new-stock',Quantity:2}],PaymentMethod:'Cash',CollectionMode:'School collected',ExpectedAmount:100,Confirmed:true};
+    if (edition === 'school') { saleBody.CustomerType='Staff'; saleBody.CustomerRef='staff-1'; f.put('staffUsers','staff-1',{Username:'staff-1',DisplayName:'Sample staff',BranchId:'main',SchoolSectionAccess:'All',Active:'YES'}); }
+    await f.pos({},actor,saleBody); assert.equal(f.get(f.collection,'new-stock').Quantity,8);
+    assert.equal((await f.pos({},actor,saleBody)).replayed,true); assert.equal(f.get(f.collection,'new-stock').Quantity,8);
+    assert.equal(f.list('vendorEarnings').length,1); assert.equal(f.get('vendorBalances','v1').NetCents,10000);
+    for (const journal of f.list('accountingJournals')) assert.equal(journal.TotalDebit,journal.TotalCredit);
+    await assert.rejects(f.pos({},actor,{...saleBody,SaleRequestId:'too-many',Items:[{Reference:'new-stock',Quantity:9}],ExpectedAmount:450}),/stock|available/i);
+    assert.equal(f.get(f.collection,'new-stock').Quantity,8); assert.equal(f.list('vendorEarnings').length,1);
+  });
+}

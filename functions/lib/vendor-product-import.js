@@ -21,8 +21,8 @@ function input(body) {
   });
 }
 
-async function plan(env, scope, body, deps, inputs) {
-  const vendors = await deps.vendors(env, scope);
+async function plan(env, scope, body, deps, inputs, context) {
+  const vendors = context?.vendors || await deps.vendors(env, scope);
   const allowed = scope.OrganisationEdition === 'school' ? ['tuckShop'] : ['organizationStore', 'restaurant'];
   const rows = [], writes = [], seen = new Set();
   // Exact code lookups are bounded; never scan an entire inventory for a CSV.
@@ -95,31 +95,44 @@ async function plan(env, scope, body, deps, inputs) {
       Category: row.Category, Unit: row.Unit, Active: row.Active, VendorId: newOwner, OwnershipType: vendor ? 'Vendor' : 'School',
       StoreType: section === 'organizationStore' ? 'Organisation Store' : '' } });
   }
-  return { rows, writes, PreviewDigest: await productDigest({ scope, Mode: body.Mode, rows }), valid: rows.every(row => !row.Errors.length) };
+  return { rows, writes, PreviewDigest: await productDigest({ scope, Mode: body.Mode, rows, ...(context ? {ProductPolicy:context.policy} : {}) }), valid: rows.every(row => !row.Errors.length) };
 }
 
 export async function handleProductImport(env, user, scope, body, deps) {
   deps.requireOperator(user);
+  const context = deps.productContext ? await deps.productContext(env,user,scope) : null;
+  if (context) {
+    if (body.Mode !== 'create') fail('Vendor users can upload new products only. Ownership transfers require school / organisation staff.',403);
+    if (!Array.isArray(body.Rows)) fail('Choose a completed product CSV.');
+    body = {...body,Rows:body.Rows.map(raw => {
+      const owner = clean(raw?.Owner);
+      const matches = owner ? context.vendors.filter(v => lower(v.VendorId) === lower(owner) || lower(v.Name) === lower(owner)) : context.vendors;
+      if (matches.length !== 1) fail('Each product must belong to one of your linked vendor accounts. Organisation ownership and other owners are not permitted.',403);
+      return {...raw,Owner:matches[0].VendorId};
+    })};
+  }
   const inputs = input(body);
   if (body.action === 'previewProductImport') {
-    const preview = await plan(env, scope, body, deps, inputs);
+    const preview = await plan(env, scope, body, deps, inputs, context);
     return { ok: true, rows: preview.rows, valid: preview.valid, PreviewDigest: preview.PreviewDigest,
-      message: 'Preview only. Assignment preserves stock, price and previous sales. New-product upload never overwrites existing stock.' };
+      approvalRequired:context?.policy.RequireNewApproval === true,
+      message:context?.policy.RequireNewApproval ? 'Preview only. New products require school / organisation approval before appearing in stock.' : 'Preview only. Assignment preserves stock, price and previous sales. New-product upload never overwrites existing stock.' };
   }
   if (body.Confirmed !== true || !clean(body.PreviewDigest)) fail('Preview and confirm the product ownership changes before importing.');
   const op = await deps.operation(env, scope, user, { ...body, ImportFingerprint: await productDigest({ Mode: body.Mode, rows: inputs }) }, 'importProducts');
   if (op.replay) return op.replay;
-  const preview = await plan(env, scope, body, deps, inputs);
+  const preview = await plan(env, scope, body, deps, inputs, context);
   if (!preview.valid) fail('Some product rows are invalid. Load a fresh preview before importing.');
   if (preview.PreviewDigest !== body.PreviewDigest) fail('Stock or owner details changed. Load a fresh preview; this batch has not been saved.', 409);
   const timestamp = new Date().toISOString();
-  const writes = preview.writes.map(item => deps.write(collections[item.section], item.inventoryId,
+  const prepared = context ? await deps.prepareProductWrites(env,user,scope,preview.writes,context) : null;
+  const writes = prepared?.writes || preview.writes.map(item => deps.write(collections[item.section], item.inventoryId,
     { ...item.data, UpdatedAt: timestamp, UpdatedBy: clean(user.displayName || user.username) }, item.previous));
-  const result = { ok: true, created: preview.rows.filter(row => row.Status === 'Create').length,
+  const result = { ok: true, pending:prepared?.pending || 0, created: preview.rows.filter(row => row.Status === 'Create').length - (prepared?.pending || 0),
     assigned: preview.rows.filter(row => row.Status === 'Assign owner').length, skipped: preview.rows.filter(row => ['Unchanged', 'Skip existing'].includes(row.Status)).length,
-    message: 'Batch saved. Stock and previous sale ownership are preserved.' };
+    message: prepared?.pending ? 'Products submitted for school / organisation approval. Live stock and past sales are unchanged.' : 'Batch saved. Stock and previous sale ownership are preserved.' };
   await deps.commit(env, [...writes, deps.audit(scope, user, 'VENDOR PRODUCTS IMPORTED', body.RequestId,
-    JSON.stringify({ Mode: body.Mode, Created: result.created, Assigned: result.assigned, Skipped: result.skipped,
+    JSON.stringify({ Mode: body.Mode, Created: result.created, Pending: result.pending, Assigned: result.assigned, Skipped: result.skipped,
       Products: preview.rows.filter(row => ['Assign owner', 'Create'].includes(row.Status)).map(row => ({ InventoryId: row.InventoryId, Store: row.Section, PreviousOwner: row.CurrentOwner, Owner: row.Owner, VendorId: row.VendorId })) }), `${scope.ScopeKey}--${body.RequestId}`), deps.operationWrite(op, result)]);
   return result;
 }

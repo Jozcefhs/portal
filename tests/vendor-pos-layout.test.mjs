@@ -23,7 +23,7 @@ function rootHarness() {
     get innerHTML() {return html;},
     set innerHTML(value) {
       nodes.forEach(node => {node.isConnected = false;}); html = value; nodes = [];
-      for (const match of html.matchAll(/<(button|input|select|article|p|form|details|div|datalist)\b([^>]*)>/g)) {
+      for (const match of html.matchAll(/<(button|input|select|article|p|form|details|div|datalist|span)\b([^>]*)>/g)) {
         const attrs = {};
         for (const attr of match[2].matchAll(/([\w-]+)(?:="([^"]*)")?/g)) attrs[attr[1]] = decode(attr[2]);
         const node = {attrs,position:match.index,tagName:match[1].toUpperCase(),dataset:{},name:attrs.name,
@@ -106,8 +106,9 @@ test('shared POS gives extra width to the catalogue and bounds card and cart wid
 test('original and vendor tuck shops share the compact inline search row', async () => {
   const original = await readFile(new URL('../js/admin.js',import.meta.url),'utf8');
   const f = await fixture();
-  assert.match(original, /class="commerce-search-label">Search items<input id="tuckShopCatalogSearch" type="search"/);
-  assert.match(f.root.innerHTML, /class="commerce-search-label">Search items<input data-search type="search"/);
+  assert.match(original, /class="commerce-search-label"><span>Search items · <span data-tuck-shop-product-count[^]*?<input id="tuckShopCatalogSearch" type="search"/);
+  assert.match(f.root.innerHTML, /class="commerce-search-label"><span>Search items · <span data-product-count[^]*?<input data-search type="search"/);
+  assert.equal(f.root.querySelector('[data-product-count]').textContent,'1 product');
   assert.match(sharedCss, /\.tuck-shop-pos-workspace \.commerce-search-label\{grid-template-columns:max-content minmax\(0,360px\);align-items:center;gap:10px\}/);
   assert.match(sharedCss, /\.tuck-shop-pos-workspace \.commerce-search-label input\{width:100%;min-width:0\}/);
   f.mounted.destroy();
@@ -153,6 +154,9 @@ test('product search persists after cart redraws and includes units',async () =>
   f.root.querySelector('[data-search]').oninput({target:{value:'nonexistent'}});
   assert.equal(f.root.querySelector('[data-product]').hidden,true);
   assert.equal(f.root.querySelector('[data-search-empty]').hidden,false);
+  assert.equal(f.root.querySelector('[data-product-count]').textContent,'0 of 1 products');
+  f.root.querySelector('[data-search]').oninput({target:{value:''}});
+  assert.equal(f.root.querySelector('[data-product-count]').textContent,'1 product');
   f.mounted.destroy();
 });
 

@@ -5,6 +5,7 @@ import { assertRequisitionTransition } from './requisition-workflow.js';
 import { findStaffLoginRecord, findStaffUserRecord, verifyStaffApprovalPassword } from './staff-auth.js';
 import { accountingChartChoicesForEdition } from './accounting-edition-scope.js';
 import { handleProductImport } from './vendor-product-import.js';
+import { PRODUCT_CHANGES, productPolicy, vendorProductContext, prepareVendorProductWrites, handleVendorProductAction } from './vendor-product-management.js';
 import { amount, allocateClaim, balanceView, cents, chargeFor, clean, dateOnly, effectiveRule, fail, lower,
   normalizeRule, periodKey, plain, ruleDescription, settlementScope, visible } from './vendor-settlement-rules.js';
 
@@ -108,7 +109,7 @@ async function operation(env, scope, user, body, action) {
   const requestId = id(body.RequestId, 'request reference');
   const key = `${scope.ScopeKey}--${requestId}`;
   const businessFields = new Set(['VendorId', 'SettlementId', 'EntryId', 'SaleNo', 'Amount', 'From', 'To', 'Status', 'Date', 'Reference', 'EvidenceReference',
-    'Notes', 'PaymentAccount', 'PaymentMethod', 'OpeningReference', 'GrossSales', 'Refunds', 'SchoolDeductions', 'PriorPayments', 'OffsetAccount', 'PreviewDigest', 'Confirmed', 'Kind', 'ReplacesSettlementId', 'ImportFingerprint']);
+    'Notes', 'PaymentAccount', 'PaymentMethod', 'OpeningReference', 'GrossSales', 'Refunds', 'SchoolDeductions', 'PriorPayments', 'OffsetAccount', 'PreviewDigest', 'Confirmed', 'Kind', 'ReplacesSettlementId', 'ImportFingerprint', 'ProductFingerprint']);
   const fields = Object.fromEntries(Object.entries(body).filter(([key]) => businessFields.has(key)).sort(([a], [b]) => a.localeCompare(b)));
   const fingerprint = JSON.stringify(fields);
   const previous = await getDocument(env, VENDOR_COLLECTIONS.operations, key);
@@ -244,6 +245,7 @@ async function bootstrap(env, user, scope) {
     chart: accountingChartChoicesForEdition(chart, scope.OrganisationEdition).map(row => ({ Code: clean(row.Code || row.__id),
       Name: row.Name, Type: row.Type, Active: activeAccount(row) ? 'YES' : 'NO' })),
     capabilities: { manage: management.has(role(user)), operate: operators.has(role(user)), vendor: role(user) === 'Vendor User',
+      products: operators.has(role(user)) || vendors.some(v => !['no','false','0','inactive','disabled'].includes(lower(v.Active ?? 'YES'))), reviewProducts: management.has(role(user)),
       confirm: role(user) === 'Accounts Officer', review: role(user) === 'Admin', approve: ['Director', 'Super Admin'].includes(role(user)), pay: role(user) === 'Accounts Officer',
       saleSections: (scope.OrganisationEdition === 'school' ? ['tuckShop'] : ['organizationStore','restaurant']).filter(section => (user.allowedSections || []).includes(section)),
       edition: scope.OrganisationEdition, section: scope.SchoolSection, branchId: scope.BranchId } };
@@ -338,6 +340,7 @@ async function products(env, scope) {
   return result;
 }
 async function saveProduct(env, user, scope, body) {
+  if (role(user) === 'Vendor User') return handleVendorProductAction(env,user,scope,{...body,action:'saveProduct'},productDependencies());
   requireRole(user, operators);
   const section = clean(body.Section || (scope.OrganisationEdition === 'school' ? 'tuckShop' : 'organizationStore'));
   if (!(scope.OrganisationEdition === 'school' ? ['tuckShop'] : ['organizationStore', 'restaurant']).includes(section)) fail('Choose a store available in this edition.');
@@ -363,6 +366,10 @@ async function saveProduct(env, user, scope, body) {
   await commit(env, [write(inventoryCollections[section], itemId, item, previous), audit(scope, user, 'VENDOR PRODUCT SAVED', itemId,
     `${name}; owner ${vendor?.Name || 'School'}; quantity ${quantity}; price ${price}`)]);
   return { ok: true, message: 'Product ownership saved. Previous sale ownership is unchanged.' };
+}
+function productDependencies() {
+  return { vendors:(env,scope) => rows(env,VENDOR_COLLECTIONS.vendors,scope), settings:settingsFor, get:getDocument,
+    requireManagement:actor => requireRole(actor,management), write,audit,commit,operation,operationWrite };
 }
 async function statement(env, user, scope, body) {
   const vendor = await ownVendor(env, user, scope, body.VendorId);
@@ -762,15 +769,25 @@ export async function handleVendorSettlementAction(env, user, body = {}, options
     case 'bootstrap': {
       const data = await bootstrap(env, user, scope);
       const allowed = new Set(data.vendors.map(vendor => vendor.VendorId));
-      return { ...data, products: (await products(env, scope)).filter(item => role(user) !== 'Vendor User' || allowed.has(item.VendorId)) };
+      const changes = await rows(env,PRODUCT_CHANGES,scope);
+      const stock = (await products(env,scope)).filter(item => role(user) !== 'Vendor User' || data.vendors.some(v => v.VendorId === item.VendorId
+        && (scope.OrganisationEdition !== 'school' || lower(v.SchoolSection) === lower(item.SchoolSection || 'Secondary'))));
+      return { ...data, productPolicy:productPolicy(data.settings),
+        productChanges:changes.filter(item => role(user) !== 'Vendor User' || allowed.has(item.VendorId)).map(item => ({...plain(item),RecordVersion:item.__updateTime})),
+        products:stock, productCount:stock.length };
     }
     case 'statement': return statement(env, user, scope, body);
     case 'saveSettings': return saveSettings(env, user, scope, body);
     case 'saveVendor': return saveVendor(env, user, scope, body);
     case 'saveProduct': return saveProduct(env, user, scope, body);
+    case 'recordProductDelivery':
+    case 'saveProductPolicy':
+    case 'reviewProductChange': return handleVendorProductAction(env,user,scope,{...body,action},productDependencies());
     case 'previewProductImport':
     case 'importProducts': return handleProductImport(env, user, scope, { ...body, action }, {
-      requireOperator: actor => requireRole(actor, operators), vendors: (env, scope) => rows(env, VENDOR_COLLECTIONS.vendors, scope),
+      requireOperator: actor => requireRole(actor, new Set([...operators,'Vendor User'])), vendors: (env, scope) => rows(env, VENDOR_COLLECTIONS.vendors, scope),
+      productContext: role(user) === 'Vendor User' ? (env,user,scope) => vendorProductContext(env,user,scope,productDependencies()) : null,
+      prepareProductWrites:(env,user,scope,items,context) => prepareVendorProductWrites(env,user,scope,items,context,productDependencies()),
       get: getDocument, query: queryCollectionPages, write, audit, commit, operation, operationWrite });
     case 'requestSettlement': return requestSettlement(env, user, scope, body);
     case 'decision': return decision(env, user, scope, body, options);
