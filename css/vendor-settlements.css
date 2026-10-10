@@ -68,7 +68,18 @@
 .vendor-pos .vendor-pos-tabs{margin:0 0 12px}
 .vendor-pos .vendor-pos-tabs [data-refresh]{margin-left:auto;background:#1768e8;color:#fff;border-color:#1768e8}
 .vendor-pos .vendor-pos-tabs [data-refresh]:hover{background:#135bd0;border-color:#135bd0}
-.vendor-pos .vendor-pos-shell{margin:0;min-width:0}
+.vendor-pos .vendor-pos-shell{margin:0;min-width:0;overflow:clip}
+.vendor-pos .commerce-search-label{position:sticky;top:0;z-index:13;padding:8px 0;margin-top:-8px;background:#fff;box-shadow:0 5px 0 #fff}
+.staff-page .vendor-pos .commerce-search-label{top:68px}
+.vendor-pos [data-cart-lines][hidden]+.tuck-shop-step-heading{margin-top:10px;padding-top:0;border-top:0}
+.vendor-pos .vendor-pos-history>summary{padding:10px 18px}
+.vendor-pos .vendor-history-tools{padding:8px 18px}
+.vendor-pos .vendor-history-tools button{width:auto;min-height:34px;font-size:11px}
+.vendor-pos .vendor-pos-history .vendor-status{padding:0 18px}
+.vendor-pos .vendor-pos-history .vendor-table{min-width:620px}
+.vendor-pos .vendor-pos-history caption{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.vendor-pos .vendor-pos-history .vendor-table th{position:sticky;top:0;z-index:1}
+html[data-theme="dark"] .vendor-pos .commerce-search-label{background:#0d1b2b;box-shadow:0 5px 0 #0d1b2b}
 .vendor-pos [hidden]{display:none!important}
 /* Spend the recovered intro space on stock, not larger product cards or checkout. */
 @media(min-width:681px){
@@ -90,6 +101,7 @@ html[data-theme="dark"] .vendor-pos{color:#edf4ff}
 html[data-theme="dark"] .vendor-pos .vendor-pos-tabs [data-refresh]{background:#1768e8;color:#fff;border-color:#1768e8}
 html[data-theme="dark"] .vendor-pos .vendor-pos-guidance{border-color:#405773;color:#bdcce0}
 @media(max-width:680px){
+  .staff-page .vendor-pos .commerce-search-label{top:76px}
   .vendor-pos .vendor-status{min-height:0;margin:6px 0;font-size:11px}
   .vendor-pos .vendor-pos-tabs{margin:0 0 6px}
   .vendor-pos .vendor-pos-tabs [data-refresh]{min-height:36px;padding:7px 10px;font-size:11px}

@@ -62,6 +62,7 @@ async function fixture(section = 'tuckShop', options = {}) {
   const request = async(action,body) => {
     calls.push({action,body:structuredClone(body)});
     if (action === 'salesBootstrap') return {products,sellingEnabled:options.enabled !== false,message:'Linked vendor products only.'};
+    if (action === 'recentVendorSales') {if(options.historyError) throw new Error(options.historyError); return options.historyRequest ? options.historyRequest(body) : {sales:options.recentSales || []};}
     if (action === 'vendorCustomerSearch') return {customers:options.customers || [{CustomerRef:'FIXTURE/001',CustomerName:'Fixture child',Detail:'Grade 7'}]};
     if (action === 'vendorWalletLookup') {if(options.lookupError) throw new Error(options.lookupError); return {account:{AccountRef:'FIXTURE/001',DisplayName:'Fixture child',WalletBalance:30900,WalletSpentToday:200,...options.walletSummary}};}
     if (action === 'previewVendorSale') return {Amount:333};
@@ -75,6 +76,62 @@ async function fixture(section = 'tuckShop', options = {}) {
   const find = () => root.querySelector('[data-lookup-form]').requestSubmit();
   return {root,calls,input,find,mounted,setFailure:value=>{failSale=value;}};
 }
+
+test('empty checkout has no space-wasting placeholders but still requires products and a customer',async()=>{
+  const f=await fixture();
+  assert.doesNotMatch(f.root.innerHTML,/Select an item to begin|to continue to payment|data-wallet-prompt/);
+  assert.equal(f.root.querySelector('[data-cart-lines]').hidden,true);
+  assert.equal(f.root.querySelector('[data-payment-form]').hidden,true);
+  f.root.querySelector('[data-add]').onclick();assert.equal(f.root.querySelector('[data-cart-lines]').hidden,false);
+  await f.root.querySelector('[data-payment-form]').requestSubmit();
+  assert.equal(f.calls.some(row=>row.action.startsWith('record')),false);f.mounted.destroy();
+});
+
+test('vendor search is sticky under the staff header, without a clipping scroll ancestor',()=>{
+  assert.match(css,/\.vendor-pos \.commerce-search-label\{position:sticky;top:0;z-index:13/);
+  assert.match(css,/\.staff-page \.vendor-pos \.commerce-search-label\{top:68px\}/);
+  assert.match(css,/@media\(max-width:680px\)\{\s*\.staff-page \.vendor-pos \.commerce-search-label\{top:76px\}/);
+  assert.match(css,/\.vendor-pos \.vendor-pos-shell\{[^}]*overflow:clip/);
+});
+
+test('vendor history loads only when expanded and does not alter the current cart or customer',async()=>{
+  const recentSales=[{SaleNo:'RECENT-1',SaleDate:'2026-10-10T12:00:00Z',CustomerName:'<script>private</script>',
+    PaymentMethod:'Student Wallet',CollectionMode:'School collected',Amount:100,Items:[{ItemName:'Water',Quantity:1}]}];
+  const f=await fixture('tuckShop',{recentSales});
+  assert.match(f.root.innerHTML,/Recent Tuck Shop Sales/);assert.equal(f.calls.length,1);
+  f.root.querySelector('[data-add]').onclick();f.input('AccountRef','FIXTURE/001');await f.find();
+  const history=f.root.querySelector('[data-history]');history.open=true;history.ontoggle({target:history});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.match(f.root.querySelector('[data-history-content]').innerHTML,/RECENT-1|Water × 1/);
+  assert.doesNotMatch(f.root.querySelector('[data-history-content]').innerHTML,/<script>/);
+  assert.equal(f.root.querySelector('[data-history-count]').textContent,'1');
+  assert.equal(f.root.querySelector('[data-complete]').disabled,false);
+  assert.match(f.root.innerHTML,/data-customer/);assert.equal(f.calls.filter(row=>row.action.startsWith('record')).length,0);
+  await f.root.querySelector('[data-payment-form]').requestSubmit();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(f.calls.filter(row=>row.action==='recentVendorSales').length,2,'successful sale refreshes open history');
+  assert.equal(f.root.querySelector('[data-history]').open,true);f.mounted.destroy();
+});
+
+test('history failures are visible and retryable without disabling checkout',async()=>{
+  const f=await fixture('restaurant',{historyError:'Recent sales unavailable'});
+  const history=f.root.querySelector('[data-history]');history.open=true;history.ontoggle({target:history});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.match(f.root.querySelector('[data-history-content]').innerHTML,/Recent sales unavailable/);
+  assert.doesNotMatch(f.root.querySelector('[data-history-content]').innerHTML,/No recent sales/);
+  f.root.querySelector('[data-add]').onclick();assert.equal(f.root.querySelector('[data-complete]').disabled,false);
+  assert.equal(f.root.querySelector('[data-history-refresh]').disabled,false);f.mounted.destroy();
+});
+
+test('slow history reads do not disable the cart and results cannot update an unmounted counter',async()=>{
+  let resolveHistory;
+  const f=await fixture('restaurant',{historyRequest:()=>new Promise(resolve=>{resolveHistory=resolve;})});
+  const history=f.root.querySelector('[data-history]');history.open=true;history.ontoggle({target:history});
+  f.root.querySelector('[data-add]').onclick();assert.equal(f.root.querySelector('[data-complete]').disabled,false);
+  assert.equal(f.root.querySelector('[data-refresh]').disabled,false);
+  const before=f.root.innerHTML;f.mounted.destroy();resolveHistory({sales:[]});
+  await new Promise(resolve=>setImmediate(resolve));assert.equal(f.root.innerHTML,before);
+});
 
 test('vendor counter uses the original shared POS structure, colours and compact mobile catalogue',async () => {
   const f = await fixture();
@@ -232,7 +289,7 @@ test('failed checkout keeps the same request ID without another confirmation, su
   assert.equal(sales[0].body.SaleRequestId,sales[1].body.SaleRequestId);
   assert.equal(sales[0].body.ExpectedAmount,100);
   assert.equal(sales[0].body.Confirmed,true);
-  assert.match(f.root.innerHTML,/Select an item to begin/);
+  assert.equal(f.root.querySelector('[data-cart-lines]').hidden,true);
   assert.equal(f.root.querySelector('[data-complete]').disabled,true);
   f.mounted.destroy();
 });
@@ -402,7 +459,7 @@ test('wallet sale completes directly after lookup and PIN retries keep the same 
   assert.equal(sales[1].body.WalletPin,'4321');
   assert.equal(sales[1].body.ExpectedAmount,100);
   assert.equal(f.calls.some(row=>row.action==='previewVendorSale'),false);
-  assert.match(f.root.innerHTML,/Select an item to begin/);
+  assert.equal(f.root.querySelector('[data-cart-lines]').hidden,true);
   f.mounted.destroy();
 });
 

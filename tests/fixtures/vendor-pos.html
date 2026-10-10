@@ -3,6 +3,7 @@
 <main id="root"></main><script src="vendor-pos-shared-helpers.js"></script><script src="../../js/vendor-pos.js"></script><script>
 window.DynamaxStaffFetch=async()=>new Response(JSON.stringify({ok:true,enabled:true,configured:true,canLookup:true,canManage:false,canErase:false}));
 let quantity=5,posted=false;
+const recentSales=[{SaleNo:'FIXTURE-EARLIER',SaleDate:'2026-10-10T09:00:00Z',CustomerName:'Sample staff member',PaymentMethod:'Cash',CollectionMode:'Vendor collected',Amount:200,Items:[{ItemName:'Bread',Quantity:1}]}];
 const options=new URLSearchParams(location.search);
 const section=['tuckShop','restaurant','organizationStore'].includes(options.get('section'))?options.get('section'):'tuckShop';
 const dense=options.get('dense')==='1';
@@ -13,9 +14,10 @@ DynamaxVendorPOS.mount(document.querySelector('#root'),async(action,body)=>{
   {InventoryId:'stock-2',ItemCode:'BREAD',ItemName:'Bread',Category:'Food',Unit:'loaf',Price:200,Quantity:10},
   ...(dense?Array.from({length:24},(_,i)=>({InventoryId:'sample-'+i,ItemCode:'SAMPLE-'+i,ItemName:'Sample product '+(i+1),Category:['Stationeries','Toiletries','Snacks'][i%3],Unit:'pcs',Price:200,Quantity:20+i})):[])]};
  if(action==='vendorCustomerSearch')return {customers:body.Query.toLowerCase().includes('missing')?[]:body.CustomerType==='Staff'?[{CustomerRef:'sample.staff',CustomerName:'Sample staff member',Detail:'Academics'}]:[{CustomerRef:'FIXTURE/001',CustomerName:'Fixture child',Detail:'Grade 7'}]};
+ if(action==='recentVendorSales')return {sales:recentSales};
  if(action==='vendorWalletLookup'){if(String(body.AccountRef).includes('missing'))throw new Error('Fixture account not found.');return {account:{AccountRef:'FIXTURE/001',DisplayName:'Fixture child',ClassName:'Grade 7',WalletBalance:30900,WalletSpentToday:200}};}
  if(action==='previewVendorSale')return {Amount:body.Items.reduce((n,i)=>n+i.Quantity*(i.Reference==='stock-1'?100:200),0)};
- if(action.startsWith('record')){if(!posted){quantity-=body.Items[0].Quantity;posted=true;}return {message:'Fixture sale recorded.',sale:{SaleNo:'FIXTURE-RECEIPT',Amount:body.ExpectedAmount}};}
+ if(action.startsWith('record')){if(!posted){quantity-=body.Items[0].Quantity;posted=true;recentSales.unshift({SaleNo:'FIXTURE-RECEIPT',SaleDate:new Date().toISOString(),CustomerName:'Fixture child',PaymentMethod:body.PaymentMethod,CollectionMode:body.CollectionMode,Amount:body.ExpectedAmount,Items:[{ItemName:'Water',Quantity:body.Items[0].Quantity}]});}return {message:'Fixture sale recorded.',sale:{SaleNo:'FIXTURE-RECEIPT',Amount:body.ExpectedAmount}};}
  throw new Error('Unexpected fixture action');
 },section,window.vendorFixtureTools);
 </script></html>

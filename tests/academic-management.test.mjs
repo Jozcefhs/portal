@@ -1368,20 +1368,20 @@ test('branch-paired class and arm actions never write the organisation legacy cl
   assert.match(deleteSource, /legacyClassWrite\(projected, schoolClass, 'class', scope\)/);
 });
 
-test('Academic Management staff candidates are active Department Users in the exact Academics department', () => {
+test('Academic Management staff candidates include active Teachers and exact Academics Department Users', () => {
   const candidates = academicSubjectTeacherCandidates([
     { Username: 'academics-all', Role: 'Department User', Department: 'Academics', Active: true, SchoolSectionAccess: 'All' },
     { Username: 'academics-primary', Role: 'Department User', Department: 'Academics', Active: 'YES', SchoolSectionAccess: 'Primary' },
-    { Username: 'wrong-role', Role: 'Teacher', Department: 'Academics', Active: true, SchoolSectionAccess: 'All' },
+    { Username: 'teacher', Role: 'Teacher', Department: '', Active: true, SchoolSectionAccess: 'All' },
     { Username: 'wrong-department', Role: 'Department User', Department: 'Academic Department', Active: true, SchoolSectionAccess: 'All' },
     { Username: 'inactive', Role: 'Department User', Department: 'Academics', Active: false, SchoolSectionAccess: 'All' },
     { Username: 'secondary', Role: 'Department User', Department: 'Academics', Active: true, SchoolSectionAccess: 'Secondary' }
   ], 'primary');
-  assert.deepEqual(candidates.map((row) => row.Username), ['academics-all', 'academics-primary']);
+  assert.deepEqual(candidates.map((row) => row.Username), ['academics-all', 'academics-primary', 'teacher']);
   assert.match(librarySource, /ACADEMIC_TEACHER_DEPARTMENT_INVALID/);
   assert.match(librarySource, /staff: displayStaff\(academicSubjectTeacherCandidates\(visibleStaff, scope\.section\)\)/);
   assert.match(adminSource, /function academicManagementStaffCandidates/);
-  assert.match(adminSource, /role === 'department user'[\s\S]{0,120}department === 'academics'/);
+  assert.match(adminSource, /role === 'teacher' \|\| \(role === 'department user' && department === 'academics'\)/);
 });
 
 test('subject-teacher allocations can be corrected atomically or permanently deleted', () => {

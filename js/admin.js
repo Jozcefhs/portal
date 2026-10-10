@@ -12238,8 +12238,7 @@ function academicManagementStaffCandidates(rows = [], schoolSection = academicMa
     const department = clean(row.Department || row.department).toLowerCase();
     const active = row.Active ?? row.active;
     const assigned = clean(row.SchoolSectionAccess || row.schoolSectionAccess || 'all').toLowerCase();
-    return role === 'department user'
-      && department === 'academics'
+    return (role === 'teacher' || (role === 'department user' && department === 'academics'))
       && active !== false
       && active !== 0
       && !/^(no|false|0|inactive)$/.test(clean(active).toLowerCase())
@@ -13255,7 +13254,7 @@ function academicClassStaffWorkspace(data, rows) {
   const classroomLabel = (row) => `${academicLabel(classes, row.ClassId)} / ${row.Name}`;
   const rowHtml = () => `<div class="academic-class-staff-row" data-academic-class-staff-row data-form-allocation-id="" data-form-revision="" data-assistant-allocation-id="" data-assistant-revision="">
     <label>Classroom<select data-academic-classroom-select>${academicSelectOptions(classrooms, '', classroomLabel, 'Choose classroom')}</select></label>
-    <label>Class teacher<select data-academic-class-teacher>${academicSelectOptions(staff, '', staffLabel, staff.length ? 'Choose class teacher' : 'No eligible Academics Department Users')}</select></label>
+    <label>Class teacher<select data-academic-class-teacher>${academicSelectOptions(staff, '', staffLabel, staff.length ? 'Choose class teacher' : 'No eligible teaching staff')}</select></label>
     <label>Assistant <small>Optional</small><select data-academic-assistant-teacher>${academicSelectOptions(staff, '', staffLabel, 'No assistant')}</select></label>
     <button type="button" class="secondary compact-icon-action" data-academic-class-staff-remove aria-label="Remove assignment row" title="Remove row"><span aria-hidden="true">&#128465;</span></button>
   </div>`;
@@ -13274,7 +13273,7 @@ function academicClassStaffWorkspace(data, rows) {
     <input type="hidden" name="TermId" value="${escapeHtml(termId)}">
     <div class="academic-management-editor-heading"><div><small>Classroom leadership</small><h3>Assign class teachers</h3><p class="muted">Add as many rows as needed. Choosing a classroom loads its current class teacher and assistant for direct editing.</p></div><strong>${classrooms.length} classroom${classrooms.length === 1 ? '' : 's'}</strong></div>
     ${classrooms.length ? `<div class="academic-class-staff-list" data-academic-class-staff-rows>${rowHtml()}${rowHtml()}${rowHtml()}</div><template data-academic-class-staff-template>${rowHtml()}</template><button type="button" class="secondary" data-academic-class-staff-add>Add another row</button>` : '<div class="academic-classroom-empty"><strong>No classrooms are available.</strong><span>Create classrooms before assigning class teachers.</span></div>'}
-    <p class="muted">Only active Department Users in the Academics department are listed. Leaving Assistant blank removes the current assistant for a selected classroom.</p>
+    <p class="muted">Active Teacher accounts and Academics Department Users are listed. Leaving Assistant blank removes the current assistant for a selected classroom.</p>
     <button type="submit"${ready ? '' : ' disabled'}>Save class assignments</button>
   </form>`;
   return `${form}${currentRegister}`;
@@ -13660,7 +13659,7 @@ function academicTeacherWorkspace(data, rows) {
     <div class="academic-management-editor-heading"><div><small>Subject teaching</small><h3>Assign a subject teacher</h3><p class="muted">Choose one teacher and one subject, then select the exact classrooms taught for that subject. Repeat the process if the teacher handles another subject.</p></div></div>
     <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
     <div class="academic-management-form-grid academic-management-form-grid-4">
-      <label>Teacher<select name="TeacherUsername" required>${academicSelectOptions(staff, '', (row) => `${row.DisplayName} (${row.Role}${row.Department ? ` · ${row.Department}` : ''})`, staff.length ? 'Choose teacher' : 'No eligible Academics Department Users')}</select><small>Only active Department Users in the Academics department are listed.</small></label>
+      <label>Teacher<select name="TeacherUsername" required>${academicSelectOptions(staff, '', (row) => `${row.DisplayName} (${row.Role}${row.Department ? ` · ${row.Department}` : ''})`, staff.length ? 'Choose teacher' : 'No eligible teaching staff')}</select><small>Active Teacher accounts and Academics Department Users are listed.</small></label>
       <label>Subject<select name="SubjectId" required>${academicSelectOptions(subjects, '', (row) => `${row.Code} - ${row.Name}`, 'Choose subject')}</select><small data-academic-teacher-subject-help>Choose a teacher to see saved subjects and classrooms.</small></label>
       <label>Session<select name="SessionId" required>${academicSelectOptions(sessions, academicManagementFilters.sessionId, (row) => row.Name, 'Choose session')}</select></label>
       <label>Term<select name="TermId" required>${academicSelectOptions(terms, academicManagementFilters.termId, (row) => row.Name, 'Choose term')}</select></label>
@@ -13685,7 +13684,7 @@ function academicTeacherWorkspace(data, rows) {
     <div class="academic-management-editor-heading"><div><small>Correct saved allocation</small><h3>Edit subject-teacher allocation</h3><p class="muted">Change the teacher, subject, classroom or academic period, then update the existing allocation.</p></div><button type="button" class="academic-form-reset" data-academic-reset="teacherAllocation">Cancel edit</button></div>
     <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
     <div class="academic-management-form-grid academic-management-form-grid-3">
-      <label>Teacher<select name="TeacherUsername" required>${academicSelectOptions(staff, '', (row) => `${row.DisplayName} (${row.Role}${row.Department ? ` · ${row.Department}` : ''})`, staff.length ? 'Choose teacher' : 'No eligible Academics Department Users')}</select><small>Only active Department Users in the Academics department are listed.</small></label>
+      <label>Teacher<select name="TeacherUsername" required>${academicSelectOptions(staff, '', (row) => `${row.DisplayName} (${row.Role}${row.Department ? ` · ${row.Department}` : ''})`, staff.length ? 'Choose teacher' : 'No eligible teaching staff')}</select><small>Active Teacher accounts and Academics Department Users are listed.</small></label>
       <label>Subject<select name="SubjectId" required>${academicSelectOptions(subjects, '', (row) => `${row.Code} - ${row.Name}`, 'Choose subject')}</select></label>
       <label>Classroom<select name="ClassroomId" required>${academicSelectOptions(classrooms, '', (row) => `${academicLabel(classes, row.ClassId)} / ${row.Name}`, 'Choose classroom')}</select></label>
       <label>Session<select name="SessionId" required>${academicSelectOptions(sessions, '', (row) => row.Name, 'Choose session')}</select></label>

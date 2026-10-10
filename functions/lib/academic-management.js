@@ -602,7 +602,7 @@ function isAcademicsDepartmentUser(user = {}) {
 }
 
 function isAcademicsDepartmentStaff(row = {}) {
-  return isAcademicsDepartmentUser(row);
+  return lower(row.Role || row.role) === 'teacher' || isAcademicsDepartmentUser(row);
 }
 
 export function academicSubjectTeacherCandidates(rows = [], schoolSection = '') {
@@ -1534,7 +1534,7 @@ function validateAcademicRecord(state, type, record, people = {}) {
     const teacher = people.staff.find((row) => lower(row.Username || row.username || row.__id) === record.TeacherUsername);
     if (!teacher || !activeValue(teacher.Active, true)) throw failure('The selected teacher is not an active staff account in this branch.');
     if (!isAcademicsDepartmentStaff(teacher)) {
-      throw failure('Academic Management staff must have the Department User role and belong to the Academics department.', 409, 'ACADEMIC_TEACHER_DEPARTMENT_INVALID');
+      throw failure('Academic Management staff must have the Teacher role or the Department User role in the Academics department.', 409, 'ACADEMIC_TEACHER_DEPARTMENT_INVALID');
     }
     const teacherSection = lower(teacher.SchoolSectionAccess || teacher.schoolSectionAccess || 'all');
     if (['primary', 'secondary'].includes(teacherSection) && teacherSection !== record.SchoolSection) {

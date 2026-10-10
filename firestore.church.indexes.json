@@ -1,6 +1,16 @@
 {
   "indexes": [
     {
+      "collectionGroup": "vendorEarnings",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "ScopeKey", "order": "ASCENDING" },
+        { "fieldPath": "VendorId", "order": "ASCENDING" },
+        { "fieldPath": "Type", "order": "ASCENDING" },
+        { "fieldPath": "Date", "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "accountingJournals",
       "queryScope": "COLLECTION",
       "fields": [

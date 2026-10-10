@@ -178,9 +178,9 @@ test('school, church, other organisations and the Dynamax control plane use sepa
   assert.equal(churchConfig.firestore.indexes, 'firestore.church.indexes.json');
   assert.equal(organizationConfig.firestore.indexes, 'firestore.organization.indexes.json');
   assert.equal(platformConfig.firestore.indexes, 'firestore.platform.indexes.json');
-  assert.equal(schoolIndexes.indexes.length, 25);
-  assert.equal(churchIndexes.indexes.length, 11);
-  assert.equal(organizationIndexes.indexes.length, 11);
+  assert.equal(schoolIndexes.indexes.length, 26);
+  assert.equal(churchIndexes.indexes.length, 12);
+  assert.equal(organizationIndexes.indexes.length, 12);
   assert.deepEqual(platformIndexes, { indexes: [], fieldOverrides: [] });
   await assert.rejects(access(new URL('../firebase.json', import.meta.url)));
   await assert.rejects(access(new URL('../firestore.indexes.json', import.meta.url)));

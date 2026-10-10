@@ -17,6 +17,7 @@
     let data, disposed = false, busy = false, checkoutId = '', customer = null, notice = '', failed = false;
     let draft = {PaymentMethod:section === 'tuckShop' ? 'Student Wallet' : 'Cash', CollectionMode:'School collected', CustomerName:''};
     const cart = new Map(), addQuantities = new Map(), pending = new Set();
+    let historyOpen = false, history = null, historyError = '', historyController = null;
     let search = '', manualLookupOpen = false, customerType = 'Student', customerSearch = '', searchTimer = 0, searchGeneration = 0, searchController = null, scanController = null, faceController = null;
     const icon = kind => tools.lookupIcon?.(kind) || lookupIcon;
     const label = section === 'tuckShop' ? 'Tuck Shop' : section === 'restaurant' ? 'Restaurant' : 'Organisation Store';
@@ -35,7 +36,6 @@
       root.querySelector('[data-payment-heading]')?.remove();
       const payment = root.querySelector('[data-payment]'); if (payment) payment.hidden = true;
       const paymentForm = root.querySelector('[data-payment-form]'); if (paymentForm) paymentForm.hidden = true;
-      const prompt = root.querySelector('[data-wallet-prompt]'); if (prompt) prompt.hidden = false;
       root.querySelector('[data-complete]')?.remove();
     }
     async function suggestCustomers(query, field) {
@@ -76,9 +76,40 @@
     async function load() {
       const result = await call('salesBootstrap');
       if (!result) return;
+      historyController?.abort(); historyController = null; history = null; historyError = '';
       data = result; cart.clear(); addQuantities.clear(); checkoutId = ''; customer = null;
       draft.WalletPin = ''; draft.WalletCardId = ''; draft.AccountRef = ''; customerSearch = '';
       status(result.sellingEnabled ? '' : result.message); draw();
+      if (historyOpen) void loadHistory();
+    }
+    function historyMarkup() {
+      return `<div class="vendor-history-tools"><button type="button" data-history-refresh${historyController ? ' disabled' : ''}>Refresh recent sales</button></div>
+        ${historyError ? `<p class="vendor-status error" role="status">${esc(historyError)}</p>` : history === null
+          ? '<p class="vendor-status" role="status">Loading recent sales…</p>'
+          : history.length ? `<div class="table-wrap vendor-table-wrap"><table class="vendor-table"><caption class="sr-only">Latest 30 sales for your linked vendors; amounts include only their products</caption><thead><tr><th>Receipt / date</th><th>Customer</th><th>Products</th><th>Payment</th><th>Amount</th></tr></thead><tbody>${history.map(sale => `<tr><td>${esc(sale.SaleNo)}<small>${esc(sale.SaleDate.replace('T',' ').slice(0,19))}</small></td><td>${esc(sale.CustomerName)}</td><td>${sale.Items.map(item => `${esc(item.ItemName)} × ${esc(item.Quantity)}`).join('<br>')}</td><td>${esc(sale.PaymentMethod)}<small>${esc(sale.CollectionMode)}</small></td><td>${money(sale.Amount)}</td></tr>`).join('')}</tbody></table></div>`
+            : '<p class="vendor-status" role="status">No recent sales for your linked vendors in this shop.</p>'}`;
+    }
+    function updateHistory() {
+      const panel = root.querySelector('[data-history-content]');
+      if (!panel) return;
+      panel.innerHTML = historyMarkup();
+      const count = root.querySelector('[data-history-count]'); if (count) count.textContent = history === null ? '' : String(history.length);
+      panel.querySelector('[data-history-refresh]').onclick = loadHistory;
+    }
+    async function loadHistory() {
+      if (disposed || historyController) return;
+      const controller = new AbortController(); historyController = controller; pending.add(controller); historyError = ''; updateHistory();
+      const timer = setTimeout(() => controller.abort(),30000);
+      try {
+        const result = await request('recentVendorSales',{Section:section},controller.signal);
+        if (!disposed && historyController === controller) history = result.sales || [];
+      } catch (error) {
+        if (!disposed && historyController === controller) historyError = error.name === 'AbortError'
+          ? 'Recent sales timed out. Refresh recent sales to retry.' : error.message;
+      } finally {
+        clearTimeout(timer); pending.delete(controller);
+        if (historyController === controller) {historyController = null; if (!disposed) updateHistory();}
+      }
     }
     function payload() {
       return {...draft, Items:[...cart].map(([Reference,Quantity]) => ({Reference,Quantity})),
@@ -100,19 +131,25 @@
         ${products.map((p,index) => {const ref = reference(p), searchText = `${p.ItemName} ${p.Category || ''} ${p.Unit || ''}`.toLowerCase(); return `<article class="commerce-product" data-product data-search-text="${esc(searchText)}"${searchText.includes(search.toLowerCase()) ? '' : ' hidden'}><div><strong>${esc(p.ItemName)}</strong><span>${esc([p.Category,p.Unit].filter(Boolean).join(' · '))}</span><small>${money(p.Price)} · ${esc(p.Quantity)} in stock</small></div><div class="commerce-product-action"><select data-add-quantity="${index}" aria-label="Quantity for ${esc(p.ItemName)}" ${!data.sellingEnabled || Number(p.Quantity) < 1 ? 'disabled' : ''}>${quantityOptions(p.Quantity,addQuantities.get(ref) || 1)}</select><button type="button" class="compact-icon-action commerce-add-button${cart.has(ref) ? ' is-added' : ''}" data-add="${index}" aria-label="Add ${esc(p.ItemName)} to cart" ${!data.sellingEnabled || Number(p.Quantity) < 1 ? 'disabled' : ''}>${cart.has(ref) ? '&#10003;' : '&#128722;'}</button></div></article>`;}).join('') || '<p class="muted commerce-empty">No products are assigned to your linked selling vendors in this store.</p>'}
         </div><p class="vendor-pos-search-empty muted" data-search-empty hidden>No products match this search.</p></section>
         <section class="commerce-cart vendor-pos-checkout" aria-label="Vendor sales cart"><div class="commerce-cart-title"><div><small>Current sale</small><h4>Cart</h4></div><strong>${money(total)}</strong></div>
-        <div class="commerce-cart-lines">${entries.map(({ref,qty,product:p}) => `<article class="commerce-cart-line"><div><strong>${esc(p.ItemName)}</strong><span>${money(p.Price)} each</span></div><select data-quantity="${esc(ref)}" aria-label="Cart quantity for ${esc(p.ItemName)}">${quantityOptions(p.Quantity,qty)}</select><strong>${money(Number(p.Price) * qty)}</strong><button type="button" class="compact-icon-action compact-delete-action" data-remove="${esc(ref)}" aria-label="Remove ${esc(p.ItemName)}">&#128465;</button></article>`).join('') || '<p class="muted commerce-empty">Select an item to begin.</p>'}</div>
+        <div class="commerce-cart-lines" data-cart-lines${entries.length ? '' : ' hidden'}>${entries.map(({ref,qty,product:p}) => `<article class="commerce-cart-line"><div><strong>${esc(p.ItemName)}</strong><span>${money(p.Price)} each</span></div><select data-quantity="${esc(ref)}" aria-label="Cart quantity for ${esc(p.ItemName)}">${quantityOptions(p.Quantity,qty)}</select><strong>${money(Number(p.Price) * qty)}</strong><button type="button" class="compact-icon-action compact-delete-action" data-remove="${esc(ref)}" aria-label="Remove ${esc(p.ItemName)}">&#128465;</button></article>`).join('')}</div>
         <div class="tuck-shop-step-heading"><span>2</span><div><small>Customer</small><h5>Identify the buyer</h5></div></div>
         ${school ? `<label class="tuck-shop-customer-type">Customer type<select data-customer-type><option value="Student"${customerType === 'Student' ? ' selected' : ''}>Student · wallet</option><option value="Staff"${customerType === 'Staff' ? ' selected' : ''}>Staff · cash, transfer or POS</option></select></label>
         <form data-lookup-form class="tuck-shop-lookup-form"><label>${wallet ? 'Find student' : 'Find staff member'}<input name="Query" data-customer-search type="search" list="vendorCustomerMatches" value="${esc(customerSearch)}" placeholder="${wallet ? 'Name, admission no., card, phone or email' : 'Name, username, staff ID, phone or email'}" autocomplete="off"><datalist id="vendorCustomerMatches" data-customer-matches></datalist></label>
         ${wallet ? `<details class="tuck-shop-manual-lookup" data-manual-lookup${manualLookupOpen ? ' open' : ''}><summary>Enter card ID or admission number manually</summary><div><label>Wallet card ID<input name="WalletCardId" value="${esc(draft.WalletCardId)}" autocomplete="off" placeholder="Scan or enter card ID"></label><label>Admission number<input name="AccountRef" value="${esc(draft.AccountRef)}" autocomplete="off" placeholder="Admission number"></label></div></details>` : ''}
         <div class="tuck-shop-lookup-footer"><p class="status" data-department-status role="status"></p>${wallet ? `<div class="tuck-shop-lookup-actions" role="group" aria-label="Student lookup methods"><button type="submit" data-find class="tuck-shop-lookup-action tuck-shop-lookup-primary" aria-label="Find student wallet" title="Find student wallet">${icon('search')}<span>Find wallet</span></button><button type="button" data-scan class="tuck-shop-lookup-action" aria-label="Scan NFC student card" title="Scan NFC student card">${icon('card')}<span>Scan card</span></button><button type="button" data-face class="tuck-shop-lookup-action" aria-label="Find student by face" title="Find student by face">${icon('face')}<span>Use face</span></button></div>` : '<button type="submit" data-find class="tuck-shop-staff-select">Select staff member</button>'}</div></form>
-        ${customer ? `<div class="wallet-account-result vendor-pos-customer" data-customer><div><small>${wallet ? 'Student' : 'Staff customer'}</small><strong>${esc(customer.DisplayName)}</strong><span>${esc([customer.AccountRef,customer.ClassName].filter(Boolean).join(' · '))}</span></div>${wallet ? `<div data-wallet-summary><small>Wallet balance</small><strong>${money(customer.WalletBalance)}</strong><span>Spent today ${money(customer.WalletSpentToday)}</span></div>` : ''}</div>` : ''}<p class="tuck-shop-payment-prompt" data-wallet-prompt${customer ? ' hidden' : ''}>${wallet ? 'Find the student wallet' : 'Select a staff member'} to continue to payment.</p>` : ''}
+        ${customer ? `<div class="wallet-account-result vendor-pos-customer" data-customer><div><small>${wallet ? 'Student' : 'Staff customer'}</small><strong>${esc(customer.DisplayName)}</strong><span>${esc([customer.AccountRef,customer.ClassName].filter(Boolean).join(' · '))}</span></div>${wallet ? `<div data-wallet-summary><small>Wallet balance</small><strong>${money(customer.WalletBalance)}</strong><span>Spent today ${money(customer.WalletSpentToday)}</span></div>` : ''}</div>` : ''}` : ''}
         ${!school || customer ? `<div class="tuck-shop-step-heading" data-payment-heading><span>3</span><div><small>Payment</small><h5>Complete sale</h5></div></div>` : ''}
         <form class="vendor-pos-form" data-payment-form${school && !customer ? ' hidden' : ''}><div class="commerce-checkout-form vendor-pos-payment" data-payment${school && !customer ? ' hidden' : ''}>
         ${!wallet ? `<label>Payment method<select name="PaymentMethod">${['Cash','Bank Transfer','POS / Card'].map(method => `<option${method === draft.PaymentMethod ? ' selected' : ''}>${method}</option>`).join('')}</select></label>${!school ? `<label>Customer name<input name="CustomerName" value="${esc(draft.CustomerName)}" maxlength="160" placeholder="Walk-in customer"></label>` : ''}<label>Who receives the money?<select name="CollectionMode"><option${draft.CollectionMode === 'School collected' ? ' selected' : ''}>School collected</option><option${draft.CollectionMode === 'Vendor collected' ? ' selected' : ''}>Vendor collected</option></select></label>${draft.PaymentMethod !== 'Cash' ? `<label>Payment reference<input name="PaymentReference" value="${esc(draft.PaymentReference)}" required maxlength="200"></label>` : ''}` : ''}
         ${wallet && customer ? `<label>Wallet PIN <small>(when required)</small><input name="WalletPin" type="password" inputmode="numeric" autocomplete="off" value="${esc(draft.WalletPin)}"></label>` : ''}
         <div class="commerce-checkout-total"><span>Calculated total</span><strong>${money(total)}</strong></div>
-        <div class="config-actionbar"><button type="submit" data-complete ${!data.sellingEnabled || !cart.size || school && !customer ? 'disabled' : ''}>${wallet ? 'Complete wallet sale' : school ? 'Complete staff sale' : 'Complete sale'}</button></div></div></form><p class="vendor-status${failed ? ' error' : ''}" data-status role="status"${notice ? '' : ' hidden'}>${esc(notice)}</p></section></div></section></section>`;
+        <div class="config-actionbar"><button type="submit" data-complete ${!data.sellingEnabled || !cart.size || school && !customer ? 'disabled' : ''}>${wallet ? 'Complete wallet sale' : school ? 'Complete staff sale' : 'Complete sale'}</button></div></div></form><p class="vendor-status${failed ? ' error' : ''}" data-status role="status"${notice ? '' : ' hidden'}>${esc(notice)}</p></section></div>
+        <details class="commerce-sales-history vendor-pos-history" data-history${historyOpen ? ' open' : ''}><summary>Recent ${label} Sales <span data-history-count>${history === null ? '' : history.length}</span></summary><div data-history-content>${historyMarkup()}</div></details></section></section>`;
+      root.querySelector('[data-history]').ontoggle = event => {
+        historyOpen = event.target.open;
+        if (historyOpen && history === null && !historyError) void loadHistory();
+      };
+      updateHistory();
       root.querySelector('[data-refresh]').onclick = load;
       root.querySelector('[data-pos-tab]').onclick = () => root.querySelector('[data-search]').focus();
       function filterProducts() {

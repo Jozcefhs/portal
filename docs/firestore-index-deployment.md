@@ -37,6 +37,8 @@ The workflow uses GitHub's short-lived OpenID Connect identity and Google Applic
 
 ## Deployment behavior
 
+Vendor POS Recent sales uses the `vendorEarnings` composite on `ScopeKey`, `VendorId`, `Type`, and descending `Date` in all three edition manifests. Apply it before publishing the vendor history update and wait for it to become ready. History loads only when expanded; an unavailable index reports a retryable history error without blocking checkout.
+
 `.github/workflows/deploy-organisation.yml` validates the organisation environment and runs:
 
 ```text
