@@ -701,6 +701,9 @@ html[data-theme="dark"] .staff-header-icon:hover{background:#1b334c;color:#fff}
 html[data-theme="dark"] .staff-header-icon.staff-tutorial-button{border-color:#e00000;background:#ff0000;color:#fff}
 html[data-theme="dark"] .staff-header-icon.staff-tutorial-button:hover{border-color:#b90000;background:#cc0000;color:#fff}
 .staff-menu-toggle,.staff-sidebar-scrim{display:none}.staff-menu-toggle{align-items:center;gap:6px;margin:0;border:1px solid #cad5e0;background:#fff;color:var(--finance-navy)}.staff-menu-toggle span{font-size:18px;line-height:1}
+.staff-brand-controls{display:flex;align-items:center;gap:12px;min-width:0}.staff-sidebar-toggle[hidden]{display:none}
+@media(min-width:681px){.staff-sidebar-collapsed .staff-app-layout{grid-template-columns:minmax(0,1fr)}.staff-sidebar-collapsed .staff-sidebar{display:none}}
+@media(max-width:680px){.staff-sidebar-toggle{display:none}}
 .staff-page .staff-shell{max-width:none;margin:0;padding:0}
 .staff-page .staff-dashboard{display:block}
 .staff-app-layout{display:grid;grid-template-columns:255px minmax(0,1fr);min-height:calc(100vh - 68px)}

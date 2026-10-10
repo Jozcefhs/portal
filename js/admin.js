@@ -54,6 +54,8 @@ const passwordButton = document.getElementById('staffPasswordButton');
 const passwordStatus = document.getElementById('staffPasswordStatus');
 const sidebarEl = document.getElementById('staffSidebar');
 const sidebarScrim = document.getElementById('staffSidebarScrim');
+const sidebarToggleButton = document.getElementById('staffSidebarToggle');
+let desktopSidebarCollapsed = false;
 const staffAvatar = document.getElementById('staffAvatar');
 const staffAvatarImage = document.getElementById('staffAvatarImage');
 const staffAvatarFallback = document.getElementById('staffAvatarFallback');
@@ -1621,12 +1623,46 @@ async function startSubscriptionUpgrade(plan, button) {
   }
 }
 
+function syncSidebarNavigation() {
+  const mobile = window.matchMedia('(max-width: 680px)').matches;
+  const dashboardVisible = !dashboardEl.hidden;
+  const collapsed = dashboardVisible && !mobile && desktopSidebarCollapsed;
+  const sidebarVisible = dashboardVisible && (mobile ? sidebarEl.classList.contains('is-open') : !collapsed);
+  document.body.classList.toggle('staff-sidebar-collapsed', collapsed);
+  sidebarToggleButton.hidden = !dashboardVisible || mobile;
+  const label = collapsed ? 'Show navigation menu' : 'Hide navigation menu';
+  sidebarToggleButton.setAttribute('aria-expanded', String(sidebarVisible));
+  sidebarToggleButton.setAttribute('aria-label', label);
+  sidebarToggleButton.title = label;
+  sidebarEl.inert = !sidebarVisible;
+  sidebarEl.setAttribute('aria-hidden', String(!sidebarVisible));
+}
+
+function toggleDesktopSidebar() {
+  if (dashboardEl.hidden || window.matchMedia('(max-width: 680px)').matches) return;
+  desktopSidebarCollapsed = !desktopSidebarCollapsed;
+  if (desktopSidebarCollapsed) {
+    if (sidebarEl.contains(document.activeElement)) sidebarToggleButton.focus();
+    if (staffAccountMenu) staffAccountMenu.open = false;
+  }
+  syncSidebarNavigation();
+  // An appearance preference only: never changes the user's modules or permissions.
+  try { localStorage.setItem('dynamax:desktop-sidebar-collapsed', String(desktopSidebarCollapsed)); } catch {}
+}
+
+function installSidebarNavigation() {
+  try { desktopSidebarCollapsed = localStorage.getItem('dynamax:desktop-sidebar-collapsed') === 'true'; } catch {}
+  sidebarToggleButton.addEventListener('click', toggleDesktopSidebar);
+  syncSidebarNavigation();
+}
+
 function setSidebarOpen(open) {
   const shouldOpen = Boolean(open) && window.matchMedia('(max-width: 680px)').matches && !dashboardEl.hidden;
   sidebarEl.classList.toggle('is-open', shouldOpen);
   sidebarScrim.hidden = !shouldOpen;
   document.body.classList.toggle('staff-sidebar-open', shouldOpen);
   if (!shouldOpen && staffAccountMenu) staffAccountMenu.open = false;
+  syncSidebarNavigation();
   if (shouldOpen) sidebarEl.querySelector('[data-tab]')?.focus();
 }
 
@@ -1970,6 +2006,7 @@ function showLogin(message = '', type = '') {
   clearStaffWorkspaceState();
   dashboardEl.hidden = true;
   identityEl.hidden = true;
+  syncSidebarNavigation();
   approvalSettingsButton.hidden = true;
   desktopSetupButton.hidden = true;
   mobileNav.hidden = true;
@@ -2208,6 +2245,7 @@ function showDashboard(user, options = {}) {
   loginCard.hidden = true;
   identityEl.hidden = false;
   dashboardEl.hidden = false;
+  syncSidebarNavigation();
   mobileNav.hidden = false;
   approvalSettingsButton.hidden = !(
     user.role === 'Super Admin' ||
@@ -22216,6 +22254,7 @@ new MutationObserver(updateStaffThemeToggle).observe(document.documentElement, {
   attributeFilter: ['data-theme']
 });
 updateStaffThemeToggle();
+installSidebarNavigation();
 sidebarScrim.addEventListener('click', () => setSidebarOpen(false));
 installSidebarSwipeGestures();
 mobileNav.addEventListener('click', (event) => {
@@ -22248,7 +22287,7 @@ window.addEventListener('resize', () => {
   if (window.innerWidth > 680) {
     setSidebarOpen(false);
     if (moduleDialog.open) moduleDialog.close();
-  }
+  } else syncSidebarNavigation();
 });
 
 passwordForm.addEventListener('submit', async (event) => {

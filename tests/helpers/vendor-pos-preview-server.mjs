@@ -14,6 +14,29 @@ const files = new Map([
 createServer(async(req,res) => {
   try {
     const path = new URL(req.url,'http://localhost').pathname;
+    if (req.method === 'GET' && path === '/tests/fixtures/staff-sidebar.html') {
+      const adminHtml = await readFile(new URL('../../admin.html',import.meta.url),'utf8');
+      const posHtml = await readFile(new URL('../fixtures/vendor-pos.html',import.meta.url),'utf8');
+      // Production shell and POS with sample records only; never load the admin bootstrap or APIs.
+      const header = adminHtml.slice(adminHtml.indexOf('<header class="staff-topbar">'),adminHtml.indexOf('</header>')+9)
+        .replace('class="staff-identity" hidden','class="staff-identity"')
+        .replace('Organisation Management Suite','Example Academy')
+        .replace('id="staffDisplayName"></strong>','id="staffDisplayName">Sample vendor</strong>')
+        .replace('id="staffRole"></small>','id="staffRole">Vendor User</small>');
+      const sidebar = adminHtml.slice(adminHtml.indexOf('<aside class="staff-sidebar"'),adminHtml.indexOf('<div class="staff-main-content">'))
+        .replace('aria-label="Staff dashboard sections"></nav>','aria-label="Staff dashboard sections"><button data-tab="vendorSettlements">Vendor Sales &amp; Settlements</button><button data-tab="tuckShop" class="selected">Tuck Shop</button></nav>');
+      const scripts = posHtml.slice(posHtml.indexOf('<script src='),posHtml.lastIndexOf('</html>'));
+      res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});
+      res.end(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sidebar sample preview</title><link rel="stylesheet" href="/css/style.css"><link rel="stylesheet" href="/css/vendor-settlements.css"><body class="staff-page">${header}<main class="staff-shell"><section id="staffDashboard" class="staff-dashboard"><div class="staff-app-layout">${sidebar}<div class="staff-main-content"><section id="root" class="staff-panel"></section></div></div></section></main><nav id="staffMobileNav" class="staff-mobile-nav" aria-label="Mobile portal navigation"><button id="fixtureShop">Tuck Shop</button><button id="fixtureMore">More</button></nav><script src="staff-sidebar-navigation.js"></script>${scripts}</body></html>`);
+      return;
+    }
+    if (req.method === 'GET' && path === '/tests/fixtures/staff-sidebar-navigation.js') {
+      const admin = await readFile(new URL('../../js/admin.js',import.meta.url),'utf8');
+      const navigation = admin.slice(admin.indexOf('function syncSidebarNavigation()'),admin.indexOf('function clearStaffWorkspaceState()'));
+      res.writeHead(200,{'Content-Type':'text/javascript; charset=utf-8','Cache-Control':'no-store'});
+      res.end(`const dashboardEl=document.getElementById('staffDashboard'),sidebarEl=document.getElementById('staffSidebar'),sidebarScrim=document.getElementById('staffSidebarScrim'),sidebarToggleButton=document.getElementById('staffSidebarToggle'),staffAccountMenu=document.getElementById('staffAccountMenu'),moduleDialog={open:false};let desktopSidebarCollapsed=false;\n${navigation}\ninstallSidebarNavigation();installSidebarSwipeGestures();sidebarScrim.addEventListener('click',()=>setSidebarOpen(false));document.getElementById('fixtureMore').addEventListener('click',()=>setSidebarOpen(true));document.getElementById('fixtureShop').addEventListener('click',()=>setSidebarOpen(false));document.getElementById('adminTabs').addEventListener('click',()=>setSidebarOpen(false));document.addEventListener('keydown',event=>{if(event.key==='Escape')setSidebarOpen(false);});window.addEventListener('resize',()=>{if(window.innerWidth>680)setSidebarOpen(false);else syncSidebarNavigation();});`);
+      return;
+    }
     if (req.method === 'GET' && path === '/tests/fixtures/vendor-pos-shared-helpers.js') {
       const admin = await readFile(new URL('../../js/admin.js',import.meta.url),'utf8');
       const scanner = admin.slice(admin.indexOf('function decodeNfcRecord('),admin.indexOf('function studentExportClass('));

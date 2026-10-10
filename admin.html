@@ -6,17 +6,22 @@
   <title>Organisation Staff Portal</title>
   <meta name="theme-color" content="#071b33">
   <script src="js/preferences.js?v=20260812-audio-face-guidance"></script>
-  <link rel="stylesheet" href="css/style.css?v=20261006-student-actions-mobile-20261007-face-auto-start-compact-pos-v2-timetable-generator-20261009-staff-account-search-20261010-pos-catalogue-width">
+  <link rel="stylesheet" href="css/style.css?v=20261006-student-actions-mobile-20261007-face-auto-start-compact-pos-v2-timetable-generator-20261009-staff-account-search-20261010-pos-catalogue-width-sidebar-collapse">
   <link rel="stylesheet" href="css/notifications.css?v=20260804-read-efficiency">
   <link rel="stylesheet" href="css/teacher-homework.css?v=20261005-homework">
   <link rel="stylesheet" href="css/vendor-settlements.css?v=20261009-vendor-form-validation">
 </head>
 <body class="staff-page">
   <header class="staff-topbar">
-    <a id="staffBrand" class="staff-brand" href="index.html">
-      <img src="images/Logo.png" alt="" class="nav-logo" onerror="this.style.display='none'">
-      <span><strong data-school-name>Organisation Management Suite</strong><small id="staffEditionLabel">Web Companion</small></span>
-    </a>
+    <div class="staff-brand-controls">
+      <button type="button" id="staffSidebarToggle" class="staff-header-icon staff-sidebar-toggle" aria-controls="staffSidebar" aria-expanded="true" aria-label="Hide navigation menu" title="Hide navigation menu" hidden>
+        <span aria-hidden="true">&#9776;</span>
+      </button>
+      <a id="staffBrand" class="staff-brand" href="index.html">
+        <img src="images/Logo.png" alt="" class="nav-logo" onerror="this.style.display='none'">
+        <span><strong data-school-name>Organisation Management Suite</strong><small id="staffEditionLabel">Web Companion</small></span>
+      </a>
+    </div>
     <div id="staffIdentity" class="staff-identity" hidden>
       <div class="staff-desktop-tools" aria-label="Dashboard controls">
         <button type="button" id="staffTutorialButton" class="staff-header-icon staff-tutorial-button" aria-label="Open tutorial for this module" title="Open tutorial for this module">
@@ -443,7 +448,7 @@
   <script src="js/teacher-homework.js?v=20261005-homework"></script>
   <script src="js/vendor-settlements.js?v=20261009-vendor-login-link"></script>
   <script src="js/vendor-pos.js?v=20261009-vendor-wallet-summary"></script>
-  <script src="js/admin.js?v=20261008-wallet-card-setup-billing-review-completion-student-maintenance-library-returns-vendor-sales-settlements-summary-ready-timetable-generator-20261009-original-pos-lookup-staff-account-search-20261010"></script>
+  <script src="js/admin.js?v=20261008-wallet-card-setup-billing-review-completion-student-maintenance-library-returns-vendor-sales-settlements-summary-ready-timetable-generator-20261009-original-pos-lookup-staff-account-search-20261010-sidebar-collapse"></script>
   <script src="js/web-push.js?v=20260927-spoken-alerts"></script>
   <script src="js/spoken-notifications.js?v=20260927-spoken-alerts"></script>
   <script src="js/notifications.js?v=20260927-spoken-alerts"></script>
