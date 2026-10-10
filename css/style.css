@@ -3564,6 +3564,14 @@ html[data-theme="dark"] .commerce-product-action{border-color:#33465c}
 
 /* Tuck Shop checkout: clear steps and compact, touch-friendly lookup choices. */
 .tuck-shop-pos-workspace{border:1px solid #b9dccc;border-top:3px solid #15936f;box-shadow:0 8px 24px rgba(8,70,59,.07)}
+/* Keep search on one row and use the space beside checkout for more stock cards. */
+.tuck-shop-pos-workspace .commerce-search-label{grid-template-columns:max-content minmax(0,360px);align-items:center;gap:10px}
+.tuck-shop-pos-workspace .commerce-search-label input{width:100%;min-width:0}
+@media(min-width:981px){
+  .tuck-shop-pos-workspace .commerce-catalog{display:flex;flex-direction:column;align-self:stretch}
+  .tuck-shop-pos-workspace .commerce-search-label{flex-shrink:0}
+  .tuck-shop-pos-workspace .commerce-product-list{flex:1 1 0;height:0;min-height:358px;max-height:none}
+}
 .tuck-shop-step-heading{display:flex;align-items:center;gap:10px;margin:16px 0 11px;padding-top:14px;border-top:1px solid #e0e8ef}
 .tuck-shop-step-heading>span{display:grid;place-items:center;flex:0 0 26px;width:26px;height:26px;border-radius:8px;background:#e2f5ed;color:#08775f;font-size:12px;font-weight:800}
 .tuck-shop-step-heading small{display:block;color:#648099;font-size:9px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}

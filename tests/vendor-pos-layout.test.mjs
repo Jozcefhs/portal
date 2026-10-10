@@ -103,6 +103,23 @@ test('shared POS gives extra width to the catalogue and bounds card and cart wid
   assert.ok(catalogueRules.every(rule => !/grid-template-columns:[^;]*1fr/.test(rule)), 'No tablet or phone override should stretch cards into fractional columns');
 });
 
+test('original and vendor tuck shops share the compact inline search row', async () => {
+  const original = await readFile(new URL('../js/admin.js',import.meta.url),'utf8');
+  const f = await fixture();
+  assert.match(original, /class="commerce-search-label">Search items<input id="tuckShopCatalogSearch" type="search"/);
+  assert.match(f.root.innerHTML, /class="commerce-search-label">Search items<input data-search type="search"/);
+  assert.match(sharedCss, /\.tuck-shop-pos-workspace \.commerce-search-label\{grid-template-columns:max-content minmax\(0,360px\);align-items:center;gap:10px\}/);
+  assert.match(sharedCss, /\.tuck-shop-pos-workspace \.commerce-search-label input\{width:100%;min-width:0\}/);
+  f.mounted.destroy();
+});
+
+test('wide tuck-shop catalogue stretches to the checkout row without unbounded stock or stretched cards', () => {
+  assert.match(sharedCss, /@media\(min-width:981px\)\{\s*\.tuck-shop-pos-workspace \.commerce-catalog\{display:flex;flex-direction:column;align-self:stretch\}/);
+  assert.match(sharedCss, /\.tuck-shop-pos-workspace \.commerce-product-list\{flex:1 1 0;height:0;min-height:358px;max-height:none\}/);
+  assert.match(sharedCss, /\.commerce-product-list\{[\s\S]*?align-content:start;[\s\S]*?overflow-y:auto;/);
+  assert.match(sharedCss, /@media\(max-width:680px\)\{[\s\S]*?\.tuck-shop-pos-workspace \.commerce-product-list\{max-height:clamp\(286px,36dvh,324px\)\}/);
+});
+
 test('quantity dropdowns respect stock and checkout submits once without preview or extra confirmation',async () => {
   const f = await fixture('restaurant');
   const addQty=f.root.querySelector('[data-add-quantity]'); addQty.value='3'; addQty.onchange();
