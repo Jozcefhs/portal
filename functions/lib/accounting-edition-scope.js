@@ -44,6 +44,25 @@ export function accountingChartForEdition(chart = [], edition = 'school') {
   return (chart || []).filter((row) => !excluded.has(clean(row?.Code || row?.code || row?.__id)));
 }
 
+const CHURCH_ACCOUNT_GROUPS = new Set(['church revenue', 'giving income']);
+
+// Selection-only projection. Do not use this for reports, stored chart names or
+// validation of historical reversals: old postings must retain their accounts.
+export function accountingChartChoicesForEdition(chart = [], edition = 'school') {
+  const rows = accountingChartForEdition(chart, edition);
+  if (normalizeOrganizationEdition(edition) !== 'school') return rows;
+  return rows.filter((row) => clean(row?.Code || row?.code || row?.__id) !== '4140'
+    && !CHURCH_ACCOUNT_GROUPS.has(clean(row?.Group).toLowerCase())).map((row) => {
+    // Other giving codes overlap hotel/refund codes, so use their explicit group
+    // rather than excluding a numeric range. Preserve customised 4040 names.
+    if (clean(row?.Code || row?.code || row?.__id) === '4040'
+      && clean(row?.Name).toLowerCase() === 'books and uniform revenue') {
+      return { ...row, Name: 'Books, Uniforms and Tuck Shop Revenue' };
+    }
+    return row;
+  });
+}
+
 function journalLines(value) {
   if (Array.isArray(value)) return value;
   if (typeof value !== 'string' || !value.trim()) return [];

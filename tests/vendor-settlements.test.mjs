@@ -19,7 +19,7 @@ const walletSource = backendSource.slice(backendSource.indexOf('export async fun
 import { handleProductImport } from '../functions/lib/vendor-product-import.js';
 import { assertRequisitionTransition } from '../functions/lib/requisition-workflow.js';
 import { validateRequisitionPosting } from '../functions/lib/requisition-posting.js';
-import { accountingChartForEdition } from '../functions/lib/accounting-edition-scope.js';
+import { accountingChartChoicesForEdition } from '../functions/lib/accounting-edition-scope.js';
 import { allowedSectionsFor } from '../functions/lib/staff-auth.js';
 import { rolesForEdition } from '../functions/lib/role-module-access.js';
 
@@ -63,7 +63,7 @@ function fixture(initial = [], options = {}) {
     commits.push(structuredClone(writes)); for (const w of writes) put(w.collectionPath,w.documentId,w.data);
   };
   const functions = vm.runInNewContext(`${source}\n({ handleVendorSettlementAction, prepareVendorSale, snapshotVendorCart })`, {
-    ...rules, handleProductImport, crypto:webcrypto, Intl, Date, TextEncoder, console, assertRequisitionTransition, validateRequisitionPosting, accountingChartForEdition,
+    ...rules, handleProductImport, crypto:webcrypto, Intl, Date, TextEncoder, console, assertRequisitionTransition, validateRequisitionPosting, accountingChartChoicesForEdition,
     getDocument:async (_env,c,id) => structuredClone(get(c,id) || null), listCollection:async (_env,c) => c === 'accountingPeriods' ? list(c) : list(c),
     getAccountingChartRows:async (_env, params) => { chartReads.push(params); return currentChart; }, verifyStaffApprovalPassword:async (_env,username,password) => password === 'test-confirmation',
     findStaffUserRecord:staffLookups.findStaffUserRecord, findStaffLoginRecord:staffLookups.findStaffLoginRecord,
@@ -259,6 +259,66 @@ test('historical preview is non-mutating; confirmed opening is idempotent and ne
 
 const reviewedOpening = {VendorId:'v1',OpeningReference:'VINCENT-HIST-20261008',Date:'2026-10-08',GrossSales:170900,
   Refunds:0,SchoolDeductions:0,PriorPayments:0,OffsetAccount:'4090',EvidenceReference:'Reviewed sales report',Notes:'Accounts reviewed earlier vendor sales'};
+const schoolChoicesChart = chart.map(row => row.Code === '4040' ? {...row,Name:'Books and Uniform Revenue'} : row)
+  .concat({Code:'4140',Name:'Offering Income',Type:'Revenue',Group:'Church Revenue',Active:'YES'});
+
+test('vendor account dropdowns use school choices without changing saved accounts, balances or history', async () => {
+  const f = fixture([['accountingJournals','OLD',{Lines:[{AccountCode:'4140',Credit:100}]}]],{chart:schoolChoicesChart});
+  const before = structuredClone([...f.store]), beforeChart = structuredClone(schoolChoicesChart);
+  const result = await f.run('bootstrap');
+  assert.ok(!result.chart.some(row => row.Code === '4140'));
+  assert.equal(result.chart.find(row => row.Code === '4040').Name,'Books, Uniforms and Tuck Shop Revenue');
+  assert.deepEqual([...f.store],before); assert.deepEqual(schoolChoicesChart,beforeChart);
+  assert.equal(f.commits.length,0);
+});
+
+test('school cannot forge a church-only new vendor mapping or historical offset', async () => {
+  const f = fixture([],{chart:schoolChoicesChart});
+  await assert.rejects(f.run('saveSettings',{...settings,CommissionAccount:'4140',
+    RecordVersion:f.get('settings','vendor-settlement-school--main').__updateTime}),/active, distinct revenue/);
+  const opening = {...reviewedOpening,OffsetAccount:'4140'};
+  await assert.rejects(f.run('previewHistorical',opening),/active revenue or equity offset/);
+  await assert.rejects(f.run('recordOpening',{...opening,Confirmed:true,PreviewDigest:'forged',
+    RequestId:'church-offset',approvalPassword:'test-confirmation'}),/active revenue or equity offset/);
+  assert.equal(f.commits.length,0); assert.equal(f.list('accountingJournals').length,0);
+});
+
+test('school Tuck Shop historical adjustment keeps code 4040 and original account names', async () => {
+  const f = fixture([],{chart:schoolChoicesChart}), opening = {...reviewedOpening,OffsetAccount:'4040'};
+  const preview = await f.run('previewHistorical',opening);
+  await f.run('recordOpening',{...opening,Confirmed:true,PreviewDigest:preview.PreviewDigest,
+    RequestId:'shop-opening',approvalPassword:'test-confirmation'});
+  const journal = f.list('accountingJournals')[0];
+  assert.equal(journal.Lines.find(row => row.AccountCode === '4040').Debit,170900);
+  assert.equal(journal.Lines.find(row => row.AccountCode === '2000').Credit,170900);
+  assert.equal(schoolChoicesChart.find(row => row.Code === '4040').Name,'Books and Uniform Revenue');
+  assert.ok(!f.commits.flat().some(write => write.collectionPath === 'chartOfAccounts'));
+});
+
+test('old school commission snapshots remain refundable after church choices are hidden', async () => {
+  const f = fixture([['settings','vendor-settlement-school--main',{...settings,CommissionAccount:'4140',
+    RuleHistory:[rules.normalizeRule({Mode:'Percentage',Rate:10},timestamp)]}]],{chart:schoolChoicesChart});
+  await f.sale();
+  f.put('settings','vendor-settlement-school--main',settings);
+  await f.request(90); await f.approve(); await f.pay(90); await f.refund(20);
+  const refund = f.get('accountingJournals','SYS-VREF-refund1');
+  assert.equal(refund.Lines.find(row => row.AccountCode === '4140').Debit,2);
+  assert.equal(refund.TotalDebit,refund.TotalCredit);
+  assert.equal(f.get('vendorEarnings','sale1--v1').AccountsSnapshot.CommissionAccount,'4140');
+});
+
+test('faith and organisation vendor choices retain their existing church accounts and mappings', async () => {
+  for (const edition of ['faith','organization']) {
+    const editionScope = {...scope,ScopeKey:`${edition}--main`,OrganisationEdition:edition,SchoolSection:'All'};
+    const f = fixture([['settings',`vendor-settlement-${edition}--main`,{...settings,...editionScope}],
+      ['commerceVendors','v1',vendor('v1',editionScope)]],{chart:schoolChoicesChart});
+    const actor = {...user,edition};
+    assert.ok((await f.run('bootstrap',{},actor)).chart.some(row => row.Code === '4140'));
+    await f.run('previewHistorical',{...reviewedOpening,OffsetAccount:'4140'},actor);
+    assert.equal(f.commits.length,0);
+  }
+});
+
 for (const edition of ['school','faith','organization']) {
   const actor = {...user,edition};
   const editionScope = {...scope,ScopeKey:`${edition}--main`,OrganisationEdition:edition,SchoolSection:edition === 'school' ? 'Secondary' : 'All'};

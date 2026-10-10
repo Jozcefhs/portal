@@ -6,7 +6,7 @@ import { actorBranchScope, branchRecordVisible } from '../lib/branch-scope.js';
 import { getSchoolStructure } from '../lib/school-scope.js';
 import { configuredStaffBranches, resolveStaffAssignmentBranch, staffAssignmentActor } from '../lib/staff-branch-context.js';
 import {
-  accountingChartForEdition,
+  accountingChartChoicesForEdition,
   accountingCodeAllowedForEdition
 } from '../lib/accounting-edition-scope.js';
 import {
@@ -696,7 +696,7 @@ export async function onRequestPost(context) {
       const users = listUsers(staffRows, actor, profile || {});
       const visibleActive = activeStaffAccountCount(visibleRows);
       const organisationActive = activeStaffAccountCount(subscriptionRows);
-      const scopedAccounts = accountingChartForEdition(accounts, actor.edition);
+      const scopedAccounts = accountingChartChoicesForEdition(accounts, actor.edition);
       result = {
         ok: true,
         users,

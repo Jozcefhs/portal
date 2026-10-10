@@ -3,7 +3,7 @@ import { getAccountingChartRows } from './accounting-reference-cache.js';
 import { validateRequisitionPosting } from './requisition-posting.js';
 import { assertRequisitionTransition } from './requisition-workflow.js';
 import { findStaffLoginRecord, findStaffUserRecord, verifyStaffApprovalPassword } from './staff-auth.js';
-import { accountingChartForEdition } from './accounting-edition-scope.js';
+import { accountingChartChoicesForEdition } from './accounting-edition-scope.js';
 import { handleProductImport } from './vendor-product-import.js';
 import { amount, allocateClaim, balanceView, cents, chargeFor, clean, dateOnly, effectiveRule, fail, lower,
   normalizeRule, periodKey, plain, ruleDescription, settlementScope, visible } from './vendor-settlement-rules.js';
@@ -241,7 +241,7 @@ async function bootstrap(env, user, scope) {
       ...(role(user) === 'Accounts Officer' ? { BankAccountNumber: row.BankAccountNumber } : {}) })),
     suppliers: suppliers.filter(row => lower(row.BranchId || 'main') === scope.BranchId).map(row => ({ SupplierId: row.__id, Name: row.Name || row.VendorName })),
     settings: { ...plain(settings), RecordVersion: settings.__updateTime || '' },
-    chart: accountingChartForEdition(chart, scope.OrganisationEdition).map(row => ({ Code: clean(row.Code || row.__id),
+    chart: accountingChartChoicesForEdition(chart, scope.OrganisationEdition).map(row => ({ Code: clean(row.Code || row.__id),
       Name: row.Name, Type: row.Type, Active: activeAccount(row) ? 'YES' : 'NO' })),
     capabilities: { manage: management.has(role(user)), operate: operators.has(role(user)), vendor: role(user) === 'Vendor User',
       confirm: role(user) === 'Accounts Officer', review: role(user) === 'Admin', approve: ['Director', 'Super Admin'].includes(role(user)), pay: role(user) === 'Accounts Officer',
@@ -262,7 +262,7 @@ async function saveSettings(env, user, scope, body) {
     VendorReceivableAccount: id(body.VendorReceivableAccount ?? original?.VendorReceivableAccount ?? defaults.VendorReceivableAccount), BusinessTimezone: clean(body.BusinessTimezone || 'Africa/Lagos'),
     RuleHistory: history, UpdatedAt: timestamp, UpdatedBy: actor(user) };
   periodKey({ Cycle: 'Daily' }, timestamp, settings.BusinessTimezone);
-  const chart = accountingChartForEdition(await getAccountingChartRows(env, { fresh: true }), scope.OrganisationEdition);
+  const chart = accountingChartChoicesForEdition(await getAccountingChartRows(env, { fresh: true }), scope.OrganisationEdition);
   for (const [key, expected] of [['PayableAccount', 'Liability'], ['CommissionAccount', 'Revenue'], ['VendorReceivableAccount', 'Asset']]) {
     const account = chart.find(row => clean(row.Code || row.__id) === settings[key] && activeAccount(row));
     if (!account || account.Type !== expected || ['PayableAccount', 'CommissionAccount', 'VendorReceivableAccount'].filter(other => settings[other] === settings[key]).length !== 1)
@@ -618,7 +618,7 @@ async function historicalPreview(env, user, scope, body) {
     EvidenceReference: clean(body.EvidenceReference), Notes: clean(body.Notes), Source: 'Reviewed historical opening' };
   if (!plan.EvidenceReference || !plan.Notes) fail('Give the reviewed statement evidence and an opening-balance explanation.');
   const references = await Promise.all([getAccountingChartRows(env, { fresh: true }), listCollection(env, 'accountingPeriods')]);
-  const chart = accountingChartForEdition(references[0], scope.OrganisationEdition);
+  const chart = accountingChartChoicesForEdition(references[0], scope.OrganisationEdition);
   if (!chart.some(row => clean(row.Code || row.__id) === plan.PayableAccount && row.Type === 'Liability' && activeAccount(row)))
     fail(`Choose an active liability account for vendor payables in Organisation default. Saved account ${plan.PayableAccount || '(blank)'} is missing, inactive, the wrong type or unavailable in this edition. No opening was posted.`, 409);
   if (!chart.some(row => clean(row.Code || row.__id) === plan.OffsetAccount && ['Revenue', 'Equity'].includes(row.Type) && activeAccount(row))) fail('Accounts must select an active revenue or equity offset: already-collected funds must not debit cash again.');

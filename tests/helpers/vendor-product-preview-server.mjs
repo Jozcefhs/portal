@@ -24,7 +24,7 @@ const {handleVendorSettlementAction} = vm.runInNewContext(`${source}\n({handleVe
   crypto:webcrypto,Intl,Date,TextEncoder,console,
   getDocument:async (_env,c,id)=>get(c,id),listCollection:async (_env,c)=>list(c),getAccountingChartRows:async()=>[],
   queryCollectionPages:async (_env,c,o)=>list(c).filter(row=>o.filters.every(f=>f.op==='in' ? f.value.includes(row[f.field]) : row[f.field]===f.value)),
-  accountingChartForEdition:()=>[],batchCommitDocuments:async (_env,writes)=>{
+  accountingChartChoicesForEdition:()=>[],batchCommitDocuments:async (_env,writes)=>{
     for (const w of writes) { const previous=get(w.collectionPath,w.documentId);
       if(w.exists === false && previous || w.updateTime && previous?.__updateTime !== w.updateTime) throw Object.assign(new Error('Conflict'),{status:409}); }
     for(const w of writes) put(w.collectionPath,w.documentId,w.data);

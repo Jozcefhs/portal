@@ -37,7 +37,7 @@ test('church staff editor removes school modules, roles and accounting permissio
   assert.match(adminJs, /function staffRolesForEdition/);
   assert.match(adminJs, /\$\{schoolEdition \? '<label>School section/);
   assert.match(adminJs, /permissionTabs\.map/);
-  assert.match(staffUsersApi, /accountingChartForEdition\(accounts, actor\.edition\)/);
+  assert.match(staffUsersApi, /accountingChartChoicesForEdition\(accounts, actor\.edition\)/);
   assert.match(staffUsersApi, /ensureRoleAvailable\(role, edition\)/);
   assert.match(staffUsersApi, /LoginUsername: clean\(row\.LoginUsername/);
 });
