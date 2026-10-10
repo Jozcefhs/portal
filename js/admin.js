@@ -545,7 +545,7 @@ function normalizeDesktopPairingBranches(branches = []) {
 
 function desktopPairingDate(value, fallback = 'Date unavailable') {
   const date = value ? new Date(value) : null;
-  return date && !Number.isNaN(date.getTime()) ? date.toLocaleString() : fallback;
+  return date && !Number.isNaN(date.getTime()) ? DynamaxTime.formatDateTime(value) : fallback;
 }
 
 function desktopDeviceBranchLabel(device = {}, branches = []) {
@@ -989,7 +989,7 @@ function recoveryCodeDownload(codes = latestRecoveryCodes) {
   const content = [
     'Dynamax two-factor authentication recovery codes',
     `Account: ${account}`,
-    `Generated: ${new Date().toLocaleString()}`,
+    `Generated: ${DynamaxTime.formatDateTime(new Date())}`,
     '',
     ...rows,
     '',
@@ -1143,7 +1143,7 @@ function renderStaffMfaSummary(data = staffMfaData) {
     <article class="${profile.totpActive ? 'protected' : ''}"><small>Authenticator app</small><strong>${profile.totpActive ? 'Active' : 'Not set up'}</strong><span>Time-based six-digit codes</span></article>
     <article class="${profile.passkeyCount > 0 ? 'protected' : ''}"><small>Device passkeys</small><strong>${Number(profile.passkeyCount || 0)}</strong><span>Fingerprint, face, PIN or device password</span></article>
     <article class="${profile.recoveryCodesRemaining > 0 ? 'protected' : ''}"><small>Recovery codes</small><strong>${Number(profile.recoveryCodesRemaining || 0)}</strong><span>Unused single-use codes</span></article>
-    <article class="${requirement.required ? 'protected' : ''}"><small>Organisation policy</small><strong>${escapeHtml(policyLabels[policy.Mode] || 'Optional')}</strong><span>${requirement.dueAt ? `Enforcement begins ${escapeHtml(new Date(requirement.dueAt).toLocaleString())}` : (requirement.required ? 'Protection applies to this account' : 'You may enable protection voluntarily')}</span></article>
+    <article class="${requirement.required ? 'protected' : ''}"><small>Organisation policy</small><strong>${escapeHtml(policyLabels[policy.Mode] || 'Optional')}</strong><span>${requirement.dueAt ? `Enforcement begins ${escapeHtml(DynamaxTime.formatDateTime(requirement.dueAt))}` : (requirement.required ? 'Protection applies to this account' : 'You may enable protection voluntarily')}</span></article>
   `;
   document.getElementById('staffMfaSetupTotp').textContent = profile.totpActive ? 'Replace authenticator app' : 'Set up authenticator app';
   document.getElementById('staffMfaAddPasskey').hidden = !passkeysSupported();
@@ -1508,7 +1508,7 @@ function renderStaffSubscription() {
     <div><small>Current plan</small><strong>${escapeHtml(currentPlan)}</strong></div>
     <div><small>Billing</small><strong>${escapeHtml(currentCycle === 'yearly' ? 'Yearly' : 'Monthly')}</strong></div>
     <div><small>Status</small><strong>${escapeHtml(policy.SubscriptionStatus || policy.PaymentStatus || 'Active')}</strong></div>
-    <div><small>Paid through</small><strong>${policy.PaidThroughAt ? escapeHtml(new Date(policy.PaidThroughAt).toLocaleDateString()) : 'Not recorded'}</strong></div>
+    <div><small>Paid through</small><strong>${policy.PaidThroughAt ? escapeHtml(DynamaxTime.formatDate(policy.PaidThroughAt)) : 'Not recorded'}</strong></div>
     <div><small>Active users allowed</small><strong>${escapeHtml(policy.UserLimit || 0)}</strong></div>`;
   document.querySelectorAll('[data-subscription-cycle]').forEach((button) => {
     button.classList.toggle('active', button.dataset.subscriptionCycle === subscriptionCycle);
@@ -2475,7 +2475,7 @@ function renderDashboardCharts(charts) {
     const message = clean(currentUser?.subscriptionMessage || dashboardData?.subscriptionMessage)
       || 'Your 7-day full-access trial has ended. Choose a paid subscription to continue.';
     const endedAt = clean(currentUser?.trialEndsAt || dashboardData?.trialEndsAt);
-    dashboardChartsEl.innerHTML = `<article class="department-chart-card dashboard-chart-loading subscription-expired-card"><h3>Subscription required</h3><p class="status bad">${escapeHtml(message)}</p>${endedAt ? `<p class="muted">Trial ended: ${escapeHtml(new Date(endedAt).toLocaleString())}</p>` : ''}<p><a class="button-link" href="/register-organization.html#plans">View paid plans</a></p></article>`;
+    dashboardChartsEl.innerHTML = `<article class="department-chart-card dashboard-chart-loading subscription-expired-card"><h3>Subscription required</h3><p class="status bad">${escapeHtml(message)}</p>${endedAt ? `<p class="muted">Trial ended: ${escapeHtml(DynamaxTime.formatDateTime(endedAt))}</p>` : ''}<p><a class="button-link" href="/register-organization.html#plans">View paid plans</a></p></article>`;
     return;
   }
   if (dashboardData?.summaryDeferred) {
@@ -2509,7 +2509,7 @@ function updateDashboardClockFace() {
   const timeElement = document.getElementById('staffDashboardClockTime');
   const dateElement = document.getElementById('staffDashboardClockDate');
   if (!timeElement || !dateElement) return;
-  const options = dashboardClockTimeZone ? { timeZone: dashboardClockTimeZone } : {};
+  const options = { timeZone: dashboardClockTimeZone || DynamaxTime.DEFAULT_TIME_ZONE };
   const now = new Date();
   try {
     timeElement.textContent = new Intl.DateTimeFormat([], {
@@ -2544,8 +2544,8 @@ function updateDashboardClockFace() {
       void loadDashboardPresenceState();
     }
   } catch (_error) {
-    timeElement.textContent = now.toLocaleTimeString();
-    dateElement.textContent = now.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    timeElement.textContent = DynamaxTime.formatTime(now);
+    dateElement.textContent = DynamaxTime.formatDate(now);
   }
 }
 
@@ -2559,15 +2559,7 @@ function dashboardAttendanceSiteStorageKey(branchId) {
 }
 
 function dashboardAttendanceTime(value, timeZone = '') {
-  if (!value) return '';
-  try {
-    return new Intl.DateTimeFormat([], {
-      ...(timeZone ? { timeZone } : {}),
-      hour: '2-digit', minute: '2-digit'
-    }).format(new Date(value));
-  } catch (_error) {
-    return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  }
+  return DynamaxTime.formatTime(value, timeZone);
 }
 
 function renderDashboardTimeAttendance(data = null, message = '', tone = '') {
@@ -2597,7 +2589,7 @@ function renderDashboardTimeAttendance(data = null, message = '', tone = '') {
   const identityControl = `<small>${identityMode === 'PASSKEY' ? 'Device unlock required' : identityMode === 'FACE' ? 'Live face recognition with spoken guidance' : 'Location/network verification'}</small>`;
   dashboardClockEl.innerHTML = `
     <article class="dashboard-digital-clock">
-      <small>${dashboardClockTimeZone ? escapeHtml(dashboardClockTimeZone) : 'Local time'}</small>
+      <small>${escapeHtml(dashboardClockTimeZone || DynamaxTime.DEFAULT_TIME_ZONE)}</small>
       <strong id="staffDashboardClockTime">--:--:--</strong>
       <span id="staffDashboardClockDate">Loading date...</span>
     </article>
@@ -3371,7 +3363,7 @@ function table(title, rows, columns, options = {}) {
         ...(typeof options.searchValue === 'function' ? [options.searchValue(entry.row)] : [])]
           .map(clean).filter(Boolean).join(' ')
         : '';
-      return `<tr data-list-row data-list-index="${entry.index}" data-list-name="${escapeHtml(entry.name)}" data-list-created="${entry.created}" data-list-modified="${entry.modified}"${searchable ? ` data-list-search="${escapeHtml(searchValue)}"` : ''}>${columns.map((column) => `<td>${column.render ? column.render(entry.row) : escapeHtml(column.value(entry.row))}</td>`).join('')}</tr>`;
+      return `<tr data-list-row data-list-index="${entry.index}" data-list-name="${escapeHtml(entry.name)}" data-list-created="${entry.created}" data-list-modified="${entry.modified}"${searchable ? ` data-list-search="${escapeHtml(searchValue)}"` : ''}>${columns.map((column) => `<td>${column.render ? column.render(entry.row) : escapeHtml(DynamaxTime.formatCell(column.value(entry.row)))}</td>`).join('')}</tr>`;
     }).join('')
     : `<tr><td colspan="${columns.length}">${escapeHtml(options.emptyMessage || 'No records found.')}</td></tr>`;
   const storageKey = adminListStorageKey(title);
@@ -4279,9 +4271,9 @@ function syncCommerceCart(section, inventory = []) {
 }
 
 function commerceSalesSummary(sales = []) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = DynamaxTime.formatDate(new Date());
   const paid = sales.filter((sale) => clean(sale.PaymentStatus || sale.Status).toLowerCase() === 'paid');
-  const todayPaid = paid.filter((sale) => clean(sale.PaidAt || sale.SaleDate || sale.CreatedAt).slice(0, 10) === today);
+  const todayPaid = paid.filter((sale) => DynamaxTime.formatDate(sale.PaidAt || sale.SaleDate || sale.CreatedAt) === today);
   return {
     todayTransactions: todayPaid.length,
     todayAmount: todayPaid.reduce((sum, sale) => sum + commerceNumber(sale.Amount || sale.GrossAmount), 0),
@@ -4405,7 +4397,7 @@ async function loadDirectTransferVerification(contexts = [], workspaceId = '') {
           <span>Purpose<strong>${escapeHtml(directTransferContextLabel(row.Context))}</strong></span>
           <span>Amount<strong>${escapeHtml(directTransferAmount(row))}</strong></span>
           <span>Bank reference<strong>${escapeHtml(row.BankReference || 'Not supplied')}</strong></span>
-          <span>Submitted<strong>${escapeHtml(createdAt ? new Date(createdAt).toLocaleString() : '')}</strong></span>
+          <span>Submitted<strong>${escapeHtml(createdAt ? DynamaxTime.formatDateTime(createdAt) : '')}</strong></span>
         </div>
         <small>${escapeHtml([row.PayerEmail, row.PayerPhone].filter(Boolean).join(' | '))}</small>
         <div class="workflow-actions">
@@ -4580,7 +4572,7 @@ function renderOrganizationCommerceWorkspace(section, data = {}) {
       <details class="commerce-sales-history" ${recentSales.length ? '' : 'open'}>
         <summary>Recent sales <span>${recentSales.length}</span></summary>
         <div class="table-wrap"><table><thead><tr><th>Date</th><th>Receipt</th><th>Customer</th><th>Payment</th><th>Amount</th><th>Print</th></tr></thead><tbody>
-          ${recentSales.length ? recentSales.map((row) => `<tr><td>${escapeHtml(clean(row.PaidAt || row.SaleDate || row.CreatedAt).replace('T', ' ').slice(0, 19))}</td><td>${escapeHtml(row.SaleNo)}</td><td>${escapeHtml(row.CustomerName || 'Walk-in customer')}</td><td>${escapeHtml(row.PaymentMethod)}<br>${commerceSaleStatus(row)}</td><td>${money(row.Amount || row.GrossAmount)}</td><td><button type="button" class="compact-icon-action" data-commerce-print="${escapeHtml(row.SaleNo)}" aria-label="Choose receipt format for ${escapeHtml(row.SaleNo)}" title="Choose receipt format" ${clean(row.PaymentStatus || row.Status).toLowerCase() === 'paid' ? '' : 'disabled'}>&#128424;</button></td></tr>`).join('') : '<tr><td colspan="6">No sales recorded yet.</td></tr>'}
+          ${recentSales.length ? recentSales.map((row) => `<tr><td>${escapeHtml(DynamaxTime.formatDateTime(row.PaidAt || row.SaleDate || row.CreatedAt))}</td><td>${escapeHtml(row.SaleNo)}</td><td>${escapeHtml(row.CustomerName || 'Walk-in customer')}</td><td>${escapeHtml(row.PaymentMethod)}<br>${commerceSaleStatus(row)}</td><td>${money(row.Amount || row.GrossAmount)}</td><td><button type="button" class="compact-icon-action" data-commerce-print="${escapeHtml(row.SaleNo)}" aria-label="Choose receipt format for ${escapeHtml(row.SaleNo)}" title="Choose receipt format" ${clean(row.PaymentStatus || row.Status).toLowerCase() === 'paid' ? '' : 'disabled'}>&#128424;</button></td></tr>`).join('') : '<tr><td colspan="6">No sales recorded yet.</td></tr>'}
         </tbody></table></div>
       </details>
     </section>`;
@@ -4633,12 +4625,12 @@ function printOrganizationCommerceReceipt(sale = {}, format = 'standard') {
   const items = Array.isArray(sale.Items) ? sale.Items : [];
   if (posFormat) {
     receiptWindow.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(sale.SaleNo || 'POS receipt')}</title><style>
-      @page{size:80mm auto;margin:3mm}*{box-sizing:border-box}body{width:80mm;margin:0 auto;background:#eee;color:#000;font:11px/1.35 Arial,sans-serif}.receipt{width:74mm;margin:8px auto;padding:4mm 3mm;background:#fff}.brand{text-align:center}.brand img{width:34px;height:34px;object-fit:contain}.brand h1{margin:4px 0 1px;font-size:15px}.brand p{margin:0;font-size:10px}.divider{margin:8px 0;border-top:1px dashed #000}.meta{display:grid;grid-template-columns:30mm 1fr;gap:2px}.meta span{font-weight:700}.meta strong{min-width:0;text-align:right;overflow-wrap:anywhere}table{width:100%;margin:7px 0;border-collapse:collapse;font-size:10px}th,td{padding:3px 1px;border-bottom:1px dotted #777;text-align:left}.number{text-align:right}.total{display:flex;justify-content:space-between;margin-top:7px;padding:7px 0;border-top:2px solid #000;border-bottom:2px solid #000;font-size:14px}.footer{margin-top:9px;text-align:center;font-size:9px}.print{display:block;width:fit-content;margin:10px auto;padding:8px 12px;border:0;border-radius:5px;background:#1769e0;color:#fff;font-weight:700}@media print{body{width:80mm;background:#fff}.receipt{width:74mm;margin:0;padding:0}.print{display:none}}</style></head><body><button class="print" onclick="window.print()">Print POS receipt</button><main class="receipt"><header class="brand">${logo ? `<img src="${escapeHtml(logo)}" alt="">` : ''}<h1>${escapeHtml(organisation)}</h1><p>${escapeHtml(sale.Department || 'Sales')} payment receipt</p></header><div class="divider"></div><section class="meta"><span>Receipt</span><strong>${escapeHtml(sale.SaleNo)}</strong><span>Date</span><strong>${escapeHtml(clean(sale.PaidAt || sale.SaleDate).replace('T', ' ').slice(0, 19))}</strong><span>Customer</span><strong>${escapeHtml(sale.CustomerName || 'Walk-in customer')}</strong><span>Payment</span><strong>${escapeHtml(sale.PaymentMethod || '')}</strong>${sale.PaymentReference ? `<span>Reference</span><strong>${escapeHtml(sale.PaymentReference)}</strong>` : ''}</section><div class="divider"></div><table><thead><tr><th>Item</th><th class="number">Qty</th><th class="number">Amount</th></tr></thead><tbody>${items.map((item) => `<tr><td>${escapeHtml(item.ItemName || item.ItemCode)}</td><td class="number">${escapeHtml(item.Quantity)}</td><td class="number">${money(item.Amount)}</td></tr>`).join('')}</tbody></table><div class="total"><span>TOTAL</span><strong>${money(sale.Amount || sale.GrossAmount)}</strong></div><footer class="footer">Payment received with thanks<br>Generated by Dynamax</footer></main></body></html>`);
+      @page{size:80mm auto;margin:3mm}*{box-sizing:border-box}body{width:80mm;margin:0 auto;background:#eee;color:#000;font:11px/1.35 Arial,sans-serif}.receipt{width:74mm;margin:8px auto;padding:4mm 3mm;background:#fff}.brand{text-align:center}.brand img{width:34px;height:34px;object-fit:contain}.brand h1{margin:4px 0 1px;font-size:15px}.brand p{margin:0;font-size:10px}.divider{margin:8px 0;border-top:1px dashed #000}.meta{display:grid;grid-template-columns:30mm 1fr;gap:2px}.meta span{font-weight:700}.meta strong{min-width:0;text-align:right;overflow-wrap:anywhere}table{width:100%;margin:7px 0;border-collapse:collapse;font-size:10px}th,td{padding:3px 1px;border-bottom:1px dotted #777;text-align:left}.number{text-align:right}.total{display:flex;justify-content:space-between;margin-top:7px;padding:7px 0;border-top:2px solid #000;border-bottom:2px solid #000;font-size:14px}.footer{margin-top:9px;text-align:center;font-size:9px}.print{display:block;width:fit-content;margin:10px auto;padding:8px 12px;border:0;border-radius:5px;background:#1769e0;color:#fff;font-weight:700}@media print{body{width:80mm;background:#fff}.receipt{width:74mm;margin:0;padding:0}.print{display:none}}</style></head><body><button class="print" onclick="window.print()">Print POS receipt</button><main class="receipt"><header class="brand">${logo ? `<img src="${escapeHtml(logo)}" alt="">` : ''}<h1>${escapeHtml(organisation)}</h1><p>${escapeHtml(sale.Department || 'Sales')} payment receipt</p></header><div class="divider"></div><section class="meta"><span>Receipt</span><strong>${escapeHtml(sale.SaleNo)}</strong><span>Date</span><strong>${escapeHtml(DynamaxTime.formatDateTime(sale.PaidAt || sale.SaleDate))}</strong><span>Customer</span><strong>${escapeHtml(sale.CustomerName || 'Walk-in customer')}</strong><span>Payment</span><strong>${escapeHtml(sale.PaymentMethod || '')}</strong>${sale.PaymentReference ? `<span>Reference</span><strong>${escapeHtml(sale.PaymentReference)}</strong>` : ''}</section><div class="divider"></div><table><thead><tr><th>Item</th><th class="number">Qty</th><th class="number">Amount</th></tr></thead><tbody>${items.map((item) => `<tr><td>${escapeHtml(item.ItemName || item.ItemCode)}</td><td class="number">${escapeHtml(item.Quantity)}</td><td class="number">${money(item.Amount)}</td></tr>`).join('')}</tbody></table><div class="total"><span>TOTAL</span><strong>${money(sale.Amount || sale.GrossAmount)}</strong></div><footer class="footer">Payment received with thanks<br>Generated by Dynamax</footer></main></body></html>`);
     receiptWindow.document.close();
     return;
   }
   receiptWindow.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(sale.SaleNo || 'Receipt')}</title><style>
-    @page{size:A5;margin:12mm}*{box-sizing:border-box}body{margin:0;background:#eef4f8;color:#18324d;font:13px/1.45 Arial,sans-serif}.receipt{position:relative;max-width:620px;min-height:760px;margin:18px auto;padding:28px;border-top:7px solid #0c8b78;background:#fff;box-shadow:0 14px 35px #173b5820;overflow:hidden}.watermark{position:absolute;inset:25% 22%;width:56%;height:50%;object-fit:contain;opacity:.045}.brand,.meta,.total,.footer{position:relative}.brand{display:flex;align-items:center;gap:14px;padding-bottom:18px;border-bottom:2px solid #164d7a}.brand img{width:58px;height:58px;object-fit:contain}.brand h1{margin:0;color:#123f6d;font-size:21px}.brand p{margin:3px 0;color:#60758c}.meta{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:18px 0;padding:13px;background:#eaf4ff}.meta strong,.meta span{display:block}.meta span{font-size:11px;color:#60758c}table{position:relative;width:100%;border-collapse:collapse;margin:18px 0}th,td{padding:9px;border-bottom:1px solid #d8e4ee;text-align:left}th{background:#123f6d;color:white;font-size:10px;text-transform:uppercase}.number{text-align:right}.total{display:flex;justify-content:flex-end;gap:20px;padding:13px;background:#e5f7f1;color:#08725c;font-size:18px}.footer{margin-top:28px;padding-top:12px;border-top:1px solid #d8e4ee;color:#60758c;text-align:center}.print{position:fixed;top:10px;right:10px;padding:9px 13px;border:0;border-radius:7px;background:#1769e0;color:#fff;font-weight:bold;cursor:pointer}@media print{body{background:#fff}.receipt{min-height:auto;margin:0;padding:0;box-shadow:none}.print{display:none}}</style></head><body><button class="print" onclick="window.print()">Print / Save as PDF</button><main class="receipt">${logo ? `<img class="watermark" src="${escapeHtml(logo)}" alt="">` : ''}<header class="brand">${logo ? `<img src="${escapeHtml(logo)}" alt="">` : ''}<div><h1>${escapeHtml(organisation)}</h1><p>${escapeHtml(sale.Department || 'Sales')} payment receipt</p></div></header><section class="meta"><div><span>Receipt number</span><strong>${escapeHtml(sale.SaleNo)}</strong></div><div><span>Date</span><strong>${escapeHtml(clean(sale.PaidAt || sale.SaleDate).replace('T', ' ').slice(0, 19))}</strong></div><div><span>Customer</span><strong>${escapeHtml(sale.CustomerName || 'Walk-in customer')}</strong></div><div><span>Payment</span><strong>${escapeHtml(sale.PaymentMethod || '')}</strong></div>${sale.PaymentReference ? `<div><span>Reference</span><strong>${escapeHtml(sale.PaymentReference)}</strong></div>` : ''}</section><table><thead><tr><th>Item</th><th class="number">Qty</th><th class="number">Price</th><th class="number">Total</th></tr></thead><tbody>${items.map((item) => `<tr><td>${escapeHtml(item.ItemName || item.ItemCode)}</td><td class="number">${escapeHtml(item.Quantity)}</td><td class="number">${money(item.UnitPrice)}</td><td class="number">${money(item.Amount)}</td></tr>`).join('')}</tbody></table><div class="total"><span>Grand total</span><strong>${money(sale.Amount || sale.GrossAmount)}</strong></div><footer class="footer">Payment received with thanks &middot; Generated by Dynamax</footer></main></body></html>`);
+    @page{size:A5;margin:12mm}*{box-sizing:border-box}body{margin:0;background:#eef4f8;color:#18324d;font:13px/1.45 Arial,sans-serif}.receipt{position:relative;max-width:620px;min-height:760px;margin:18px auto;padding:28px;border-top:7px solid #0c8b78;background:#fff;box-shadow:0 14px 35px #173b5820;overflow:hidden}.watermark{position:absolute;inset:25% 22%;width:56%;height:50%;object-fit:contain;opacity:.045}.brand,.meta,.total,.footer{position:relative}.brand{display:flex;align-items:center;gap:14px;padding-bottom:18px;border-bottom:2px solid #164d7a}.brand img{width:58px;height:58px;object-fit:contain}.brand h1{margin:0;color:#123f6d;font-size:21px}.brand p{margin:3px 0;color:#60758c}.meta{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:18px 0;padding:13px;background:#eaf4ff}.meta strong,.meta span{display:block}.meta span{font-size:11px;color:#60758c}table{position:relative;width:100%;border-collapse:collapse;margin:18px 0}th,td{padding:9px;border-bottom:1px solid #d8e4ee;text-align:left}th{background:#123f6d;color:white;font-size:10px;text-transform:uppercase}.number{text-align:right}.total{display:flex;justify-content:flex-end;gap:20px;padding:13px;background:#e5f7f1;color:#08725c;font-size:18px}.footer{margin-top:28px;padding-top:12px;border-top:1px solid #d8e4ee;color:#60758c;text-align:center}.print{position:fixed;top:10px;right:10px;padding:9px 13px;border:0;border-radius:7px;background:#1769e0;color:#fff;font-weight:bold;cursor:pointer}@media print{body{background:#fff}.receipt{min-height:auto;margin:0;padding:0;box-shadow:none}.print{display:none}}</style></head><body><button class="print" onclick="window.print()">Print / Save as PDF</button><main class="receipt">${logo ? `<img class="watermark" src="${escapeHtml(logo)}" alt="">` : ''}<header class="brand">${logo ? `<img src="${escapeHtml(logo)}" alt="">` : ''}<div><h1>${escapeHtml(organisation)}</h1><p>${escapeHtml(sale.Department || 'Sales')} payment receipt</p></div></header><section class="meta"><div><span>Receipt number</span><strong>${escapeHtml(sale.SaleNo)}</strong></div><div><span>Date</span><strong>${escapeHtml(DynamaxTime.formatDateTime(sale.PaidAt || sale.SaleDate))}</strong></div><div><span>Customer</span><strong>${escapeHtml(sale.CustomerName || 'Walk-in customer')}</strong></div><div><span>Payment</span><strong>${escapeHtml(sale.PaymentMethod || '')}</strong></div>${sale.PaymentReference ? `<div><span>Reference</span><strong>${escapeHtml(sale.PaymentReference)}</strong></div>` : ''}</section><table><thead><tr><th>Item</th><th class="number">Qty</th><th class="number">Price</th><th class="number">Total</th></tr></thead><tbody>${items.map((item) => `<tr><td>${escapeHtml(item.ItemName || item.ItemCode)}</td><td class="number">${escapeHtml(item.Quantity)}</td><td class="number">${money(item.UnitPrice)}</td><td class="number">${money(item.Amount)}</td></tr>`).join('')}</tbody></table><div class="total"><span>Grand total</span><strong>${money(sale.Amount || sale.GrossAmount)}</strong></div><footer class="footer">Payment received with thanks &middot; Generated by Dynamax</footer></main></body></html>`);
   receiptWindow.document.close();
 }
 
@@ -4818,7 +4810,7 @@ function renderStaffStore(section, store) {
       const statusLabel = collected ? 'Collected' : ready ? 'Ready · Verify Collection' : 'Paid · Mark Ready';
       return `
       <article class="workflow-record store-order-record"><div class="workflow-record-heading"><div><strong>${escapeHtml(order.DisplayName || order.CustomerName || order.AccountRef || 'Customer')}</strong><small>${escapeHtml(order.OrderNo)}</small></div></div>
-      <p>${money(order.Amount)} &middot; ${escapeHtml(order.PaidAt || order.CreatedAt || '')}</p>
+      <p>${money(order.Amount)} &middot; ${escapeHtml(DynamaxTime.formatDateTime(order.PaidAt || order.CreatedAt))}</p>
       <div class="store-order-actions">
         ${!organisationStore && ready ? `
           <span class="store-order-ready-label">Ready for collection:</span>
@@ -5484,7 +5476,7 @@ function renderTuckShopPOS(data = {}) {
       { label: 'Date', value: (row) => row.PaidAt || row.SaleDate },
       { label: 'Print', render: (row) => `<button type="button" class="compact-icon-action" data-commerce-print="${escapeHtml(row.SaleNo)}" aria-label="Print receipt ${escapeHtml(row.SaleNo)}">&#128424;</button>` }
     ])}</div>
-    <details class="tuck-shop-mobile-history"><summary>Recent sales <span>${sales.length}</span></summary><div class="tuck-shop-mobile-sales">${sales.map((sale) => `<article class="tuck-shop-sale-card"><div><strong>${escapeHtml(sale.CustomerName || 'Customer')}</strong><small>${escapeHtml(sale.SaleNo || '')}</small><span>${escapeHtml(sale.PaymentMethod || '')} · ${escapeHtml(sale.PaidAt || sale.SaleDate || '')}</span></div><div><strong>${money(sale.Amount)}</strong><button type="button" class="compact-icon-action" data-commerce-print="${escapeHtml(sale.SaleNo)}" aria-label="Print receipt ${escapeHtml(sale.SaleNo)}" title="Print receipt">&#128424;</button></div></article>`).join('') || '<p class="tuck-shop-no-sales">No sales recorded yet.</p>'}</div></details>
+    <details class="tuck-shop-mobile-history"><summary>Recent sales <span>${sales.length}</span></summary><div class="tuck-shop-mobile-sales">${sales.map((sale) => `<article class="tuck-shop-sale-card"><div><strong>${escapeHtml(sale.CustomerName || 'Customer')}</strong><small>${escapeHtml(sale.SaleNo || '')}</small><span>${escapeHtml(sale.PaymentMethod || '')} · ${escapeHtml(DynamaxTime.formatDateTime(sale.PaidAt || sale.SaleDate))}</span></div><div><strong>${money(sale.Amount)}</strong><button type="button" class="compact-icon-action" data-commerce-print="${escapeHtml(sale.SaleNo)}" aria-label="Print receipt ${escapeHtml(sale.SaleNo)}" title="Print receipt">&#128424;</button></div></article>`).join('') || '<p class="tuck-shop-no-sales">No sales recorded yet.</p>'}</div></details>
   </section>`;
 }
 
@@ -7534,7 +7526,7 @@ function printChurchDonationReceipt(donation = {}, format = 'standard') {
   const receiptNo = clean(donation.ReceiptNo || donation.DonationId || donation.__id);
   const reference = clean(donation.Reference || donation.PaymentReference || donation.DonationId);
   const paidAt = clean(donation.PaidAt || donation.PaymentDate || donation.UpdatedAt || donation.Timestamp || donation.CreatedAt);
-  const receiptDate = paidAt ? paidAt.replace('T', ' ').replace('Z', '').slice(0, 19) : '';
+  const receiptDate = DynamaxTime.formatDateTime(paidAt);
   const donorName = clean(donation.DonorName) || 'Anonymous donor';
   const paymentDescription = [donation.PaymentType || 'Donation', donation.PaymentMethod].filter(Boolean).join(' · ');
   if (posFormat) {
@@ -8268,11 +8260,11 @@ function attendanceMinutesLabel(value) {
   return hours ? `${hours}h${remainder ? ` ${remainder}m` : ''}` : `${remainder}m`;
 }
 
-function attendancePresenceStatusText(presenceCheck = {}) {
+function attendancePresenceStatusText(presenceCheck = {}, timeZone = dashboardClockTimeZone) {
   if (presenceCheck.status === 'OVERDUE') return 'Confirmation overdue - this will be flagged for HR review.';
   if (presenceCheck.status === 'DUE') return 'A random presence confirmation is due now.';
   if (presenceCheck.status === 'UPCOMING' && presenceCheck.dueAt) {
-    return `Next random confirmation: ${new Date(presenceCheck.dueAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    return `Next random confirmation: ${DynamaxTime.formatTime(presenceCheck.dueAt, timeZone)}`;
   }
   return 'No random presence confirmation is currently due.';
 }
@@ -8393,7 +8385,7 @@ function attendanceReportSummary(rows = []) {
   };
 }
 
-function printStaffAttendanceReport(rows = [], filters = {}) {
+function printStaffAttendanceReport(rows = [], filters = {}, timeZone = '') {
   const printable = window.open('', '_blank', 'width=1100,height=760');
   if (!printable) {
     setStatus(dashboardStatus, 'Allow pop-ups to print the attendance report.', 'bad');
@@ -8406,9 +8398,9 @@ function printStaffAttendanceReport(rows = [], filters = {}) {
   const selectedStatus = clean(filters.Status || 'All');
   const statusLabel = selectedStatus.toLowerCase() === 'all' ? 'All attendance records'
     : selectedStatus.toLowerCase() === 'present' ? 'Present records (including late arrivals)' : `${selectedStatus} records`;
-  const body = rows.length ? rows.map((row) => `<tr><td>${escapeHtml(row.Date)}</td><td>${escapeHtml(row.DisplayName || row.Username)}</td><td>${escapeHtml(row.AttendanceStatus)}</td><td>${escapeHtml(row.FirstClockIn ? new Date(row.FirstClockIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '')}</td><td>${escapeHtml(row.LastClockOut ? new Date(row.LastClockOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '')}</td><td>${escapeHtml(attendanceMinutesLabel(row.LateMinutes))}</td><td>${escapeHtml(attendanceMinutesLabel(row.EarlyDepartureMinutes))}</td><td>${escapeHtml(attendanceMinutesLabel(row.OvertimeMinutes))}</td><td>${escapeHtml(attendanceMinutesLabel(row.WorkMinutes))}</td></tr>`).join('') : '<tr><td colspan="9">No attendance records matched the selected filters.</td></tr>';
+  const body = rows.length ? rows.map((row) => `<tr><td>${escapeHtml(row.Date)}</td><td>${escapeHtml(row.DisplayName || row.Username)}</td><td>${escapeHtml(row.AttendanceStatus)}</td><td>${escapeHtml(row.FirstClockIn ? DynamaxTime.formatTime(row.FirstClockIn, timeZone) : '')}</td><td>${escapeHtml(row.LastClockOut ? DynamaxTime.formatTime(row.LastClockOut, timeZone) : '')}</td><td>${escapeHtml(attendanceMinutesLabel(row.LateMinutes))}</td><td>${escapeHtml(attendanceMinutesLabel(row.EarlyDepartureMinutes))}</td><td>${escapeHtml(attendanceMinutesLabel(row.OvertimeMinutes))}</td><td>${escapeHtml(attendanceMinutesLabel(row.WorkMinutes))}</td></tr>`).join('') : '<tr><td colspan="9">No attendance records matched the selected filters.</td></tr>';
   printable.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(organisation)} attendance report</title><style>
-    @page{size:A4 landscape;margin:10mm}*{box-sizing:border-box}body{margin:24px;color:#17314b;font:11px/1.4 Arial,sans-serif}.brand{display:flex;align-items:center;gap:12px;padding-bottom:12px;border-bottom:3px solid #0b8f76}.brand img{width:52px;height:52px;object-fit:contain}.brand h1{margin:0;color:#123f6d;font-size:20px}.brand p,.meta{margin:3px 0;color:#60758c}.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:16px 0}.summary div{padding:10px;border:1px solid #d4e0eb;border-radius:7px}.summary span,.summary strong{display:block}.summary span{color:#60758c;font-size:9px;text-transform:uppercase}.summary strong{margin-top:3px;font-size:18px}table{width:100%;border-collapse:collapse}th,td{padding:7px;border:1px solid #d4e0eb;text-align:left;white-space:nowrap}th{background:#123f6d;color:#fff;font-size:9px;text-transform:uppercase}.footer{display:flex;justify-content:space-between;margin-top:12px;color:#60758c}.print{position:fixed;top:10px;right:10px;width:fit-content;padding:8px 13px;border:0;border-radius:6px;background:#1769e0;color:#fff;font-weight:bold;cursor:pointer}@media print{body{margin:0}.print{display:none}}</style></head><body><button class="print" onclick="window.print()">Print / Save as PDF</button><header class="brand">${logo ? `<img src="${escapeHtml(logo)}" alt="">` : ''}<div><h1>${escapeHtml(organisation)}</h1><p>Staff attendance report · ${escapeHtml(statusLabel)}</p><p class="meta">Period: ${escapeHtml(filters.FromDate)} to ${escapeHtml(filters.ToDate)}</p></div></header><section class="summary"><div><span>Matching records</span><strong>${summary.records}</strong></div><div><span>Late</span><strong>${summary.late}</strong></div><div><span>Absent</span><strong>${summary.absent}</strong></div><div><span>Overtime</span><strong>${summary.overtime}</strong></div></section><table><thead><tr><th>Date</th><th>Staff</th><th>Status</th><th>Clock in</th><th>Clock out</th><th>Late</th><th>Left early</th><th>Overtime</th><th>Worked</th></tr></thead><tbody>${body}</tbody></table><footer class="footer"><span>Prepared by ${escapeHtml(currentUser?.displayName || currentUser?.username || '')}</span><span>Generated ${escapeHtml(new Date().toLocaleString())}</span></footer></body></html>`);
+    @page{size:A4 landscape;margin:10mm}*{box-sizing:border-box}body{margin:24px;color:#17314b;font:11px/1.4 Arial,sans-serif}.brand{display:flex;align-items:center;gap:12px;padding-bottom:12px;border-bottom:3px solid #0b8f76}.brand img{width:52px;height:52px;object-fit:contain}.brand h1{margin:0;color:#123f6d;font-size:20px}.brand p,.meta{margin:3px 0;color:#60758c}.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:16px 0}.summary div{padding:10px;border:1px solid #d4e0eb;border-radius:7px}.summary span,.summary strong{display:block}.summary span{color:#60758c;font-size:9px;text-transform:uppercase}.summary strong{margin-top:3px;font-size:18px}table{width:100%;border-collapse:collapse}th,td{padding:7px;border:1px solid #d4e0eb;text-align:left;white-space:nowrap}th{background:#123f6d;color:#fff;font-size:9px;text-transform:uppercase}.footer{display:flex;justify-content:space-between;margin-top:12px;color:#60758c}.print{position:fixed;top:10px;right:10px;width:fit-content;padding:8px 13px;border:0;border-radius:6px;background:#1769e0;color:#fff;font-weight:bold;cursor:pointer}@media print{body{margin:0}.print{display:none}}</style></head><body><button class="print" onclick="window.print()">Print / Save as PDF</button><header class="brand">${logo ? `<img src="${escapeHtml(logo)}" alt="">` : ''}<div><h1>${escapeHtml(organisation)}</h1><p>Staff attendance report · ${escapeHtml(statusLabel)}</p><p class="meta">Period: ${escapeHtml(filters.FromDate)} to ${escapeHtml(filters.ToDate)}</p></div></header><section class="summary"><div><span>Matching records</span><strong>${summary.records}</strong></div><div><span>Late</span><strong>${summary.late}</strong></div><div><span>Absent</span><strong>${summary.absent}</strong></div><div><span>Overtime</span><strong>${summary.overtime}</strong></div></section><table><thead><tr><th>Date</th><th>Staff</th><th>Status</th><th>Clock in</th><th>Clock out</th><th>Late</th><th>Left early</th><th>Overtime</th><th>Worked</th></tr></thead><tbody>${body}</tbody></table><footer class="footer"><span>Prepared by ${escapeHtml(currentUser?.displayName || currentUser?.username || '')}</span><span>Generated ${escapeHtml(DynamaxTime.formatDateTime(new Date()))}</span></footer></body></html>`);
   printable.document.close();
   printable.focus();
   window.setTimeout(() => printable.print(), 250);
@@ -8509,7 +8501,7 @@ async function loadStaffAttendance() {
     warmAttendanceIdentity(policy);
     const presenceCheck = data.presenceCheck || { enabled: false };
     if (stateIn) announceRandomPresenceConfirmation(presenceCheck);
-    const presenceStatusText = attendancePresenceStatusText(presenceCheck);
+    const presenceStatusText = attendancePresenceStatusText(presenceCheck, policy.TimeZone);
     const identityChoice = identityMode === 'PASSKEY'
       ? '<input id="staffAttendanceIdentityMethod" type="hidden" value="PASSKEY"><small>Unlock this device with its configured PIN, password or secure screen-lock method.</small>'
       : identityMode === 'FACE'
@@ -8528,7 +8520,7 @@ async function loadStaffAttendance() {
       </div>
       ${(data.processingWarnings || []).map((warning) => `<p class="status bad" role="alert">${escapeHtml(warning)}</p>`).join('')}
       <div class="workflow-kpis">
-        <div><small>Current state</small><strong>${stateComplete ? 'Completed' : stateIn ? 'Clocked in' : 'Clocked out'}</strong><span>${data.myEvents?.[0]?.Timestamp ? escapeHtml(new Date(data.myEvents[0].Timestamp).toLocaleString()) : 'No attendance event yet'}</span></div>
+        <div><small>Current state</small><strong>${stateComplete ? 'Completed' : stateIn ? 'Clocked in' : 'Clocked out'}</strong><span>${data.myEvents?.[0]?.Timestamp ? escapeHtml(DynamaxTime.formatDateTime(data.myEvents[0].Timestamp, policy.TimeZone)) : 'No attendance event yet'}</span></div>
         <div><small>Today's status</small><strong>${escapeHtml(latestDaily?.AttendanceStatus || 'No record')}</strong><span>${latestDaily?.Date ? escapeHtml(latestDaily.Date) : scheduleActive ? 'Awaiting today’s clock-in' : 'Work-hours policy not enabled'}</span></div>
         <div><small>Late today</small><strong>${attendanceMinutesLabel(latestDaily?.LateMinutes)}</strong><span>${todaySchedule.ResumptionTime ? `Resumption ${escapeHtml(todaySchedule.ResumptionTime)} · ${Number(policy.GraceMinutes || 0)}m grace` : 'Not a configured work day'}</span></div>
         <div><small>Overtime today</small><strong>${attendanceMinutesLabel(latestDaily?.OvertimeMinutes)}</strong><span>${todaySchedule.ClosingTime ? `Closing ${escapeHtml(todaySchedule.ClosingTime)}` : 'Not a configured work day'}</span></div>
@@ -8548,8 +8540,8 @@ async function loadStaffAttendance() {
       ${table('My daily attendance', myDailyRecords, [
         { label: 'Date', value: (row) => row.Date },
         { label: 'Status', value: (row) => row.AttendanceStatus },
-        { label: 'Clock in', value: (row) => row.FirstClockIn ? new Date(row.FirstClockIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '' },
-        { label: 'Clock out', value: (row) => row.LastClockOut ? new Date(row.LastClockOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '' },
+        { label: 'Clock in', value: (row) => row.FirstClockIn ? DynamaxTime.formatTime(row.FirstClockIn, policy.TimeZone) : '' },
+        { label: 'Clock out', value: (row) => row.LastClockOut ? DynamaxTime.formatTime(row.LastClockOut, policy.TimeZone) : '' },
         { label: 'Late', value: (row) => attendanceMinutesLabel(row.LateMinutes) },
         { label: 'Left early', value: (row) => attendanceMinutesLabel(row.EarlyDepartureMinutes) },
         { label: 'Overtime', value: (row) => attendanceMinutesLabel(row.OvertimeMinutes) },
@@ -8558,7 +8550,7 @@ async function loadStaffAttendance() {
         { label: 'Missed checks', value: (row) => Number(row.MissedPresenceChecks || 0) }
       ])}
       ${table('My attendance history', data.myEvents || [], [
-        { label: 'Time', value: (row) => row.Timestamp },
+        { label: 'Time', value: (row) => DynamaxTime.formatDateTime(row.Timestamp, policy.TimeZone) },
         { label: 'Action', value: (row) => row.Direction === 'CHECK' ? 'Presence check' : row.Direction === 'IN' ? 'Clock in' : 'Clock out' },
         { label: 'Status', value: (row) => row.AttendanceStatus },
         { label: 'Location', value: (row) => row.SiteName },
@@ -8671,8 +8663,8 @@ async function loadStaffAttendance() {
           { label: 'Date', value: (row) => row.Date },
           { label: 'Staff', value: (row) => row.DisplayName || row.Username },
           { label: 'Status', value: (row) => row.AttendanceStatus },
-          { label: 'Clock in', value: (row) => row.FirstClockIn ? new Date(row.FirstClockIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '' },
-          { label: 'Clock out', value: (row) => row.LastClockOut ? new Date(row.LastClockOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '' },
+          { label: 'Clock in', value: (row) => row.FirstClockIn ? DynamaxTime.formatTime(row.FirstClockIn, policy.TimeZone) : '' },
+          { label: 'Clock out', value: (row) => row.LastClockOut ? DynamaxTime.formatTime(row.LastClockOut, policy.TimeZone) : '' },
           { label: 'Late', value: (row) => attendanceMinutesLabel(row.LateMinutes) },
           { label: 'Left early', value: (row) => attendanceMinutesLabel(row.EarlyDepartureMinutes) },
           { label: 'Overtime', value: (row) => attendanceMinutesLabel(row.OvertimeMinutes) },
@@ -8683,7 +8675,7 @@ async function loadStaffAttendance() {
       </section>` : ''}
       ${capabilities.canReport ? table('Recent staff attendance', data.recentEvents || [], [
         { label: 'Staff', value: (row) => row.DisplayName || row.Username },
-        { label: 'Time', value: (row) => row.Timestamp },
+        { label: 'Time', value: (row) => DynamaxTime.formatDateTime(row.Timestamp, policy.TimeZone) },
         { label: 'Action', value: (row) => row.Direction === 'CHECK' ? 'Presence check' : row.Direction === 'IN' ? 'Clock in' : 'Clock out' },
         { label: 'Status', value: (row) => row.AttendanceStatus },
         { label: 'Location', value: (row) => row.SiteName },
@@ -8766,7 +8758,7 @@ async function loadStaffAttendance() {
         if (button.isConnected) setButtonLoading(button, false, 'Applying...', 'Apply filters');
       }
     });
-    document.getElementById('printStaffAttendanceReport')?.addEventListener('click', () => printStaffAttendanceReport(attendanceReportRows, reportFilters));
+    document.getElementById('printStaffAttendanceReport')?.addEventListener('click', () => printStaffAttendanceReport(attendanceReportRows, reportFilters, policy.TimeZone));
     bindHrPersonPickers(panelEl);
     hrFormStaffNameSync(document.getElementById('staffAttendanceManualForm'), data.staffDirectory || []);
     const policyForm = document.getElementById('staffAttendancePolicyForm');
@@ -9357,7 +9349,7 @@ function renderHumanResources(data) {
     ${table('Candidate pipeline', candidates, [
       { label: 'Candidate', value: (row) => row.CandidateName },
       { label: 'Vacancy', value: (row) => vacancies.find((item) => clean(item.VacancyId || item.__id) === clean(row.VacancyId))?.Title || row.VacancyId },
-      { label: 'Applied', value: (row) => row.ApplicationDate }, { label: 'Application ref.', value: (row) => row.ApplicationReference }, { label: 'Interview', value: (row) => clean(row.InterviewDate).replace('T', ' ') },
+      { label: 'Applied', value: (row) => row.ApplicationDate }, { label: 'Application ref.', value: (row) => row.ApplicationReference }, { label: 'Interview', value: (row) => DynamaxTime.formatDateTime(row.InterviewDate) },
       { label: 'Qualification', value: (row) => row.QualificationCheck }, { label: 'References', value: (row) => row.ReferenceCheck },
       { label: 'Status', value: (row) => row.Status },
       ...(capabilities.canManageRecruitment ? [{ label: 'Action', render: (row) => `<button type="button" class="compact-icon-action compact-edit-action" data-edit-hr-candidate data-hr-record-id="${escapeHtml(row.CandidateId || row.__id)}" aria-label="Edit candidate"><span aria-hidden="true">&#9998;</span></button>` }] : [])
@@ -9378,7 +9370,7 @@ function renderHumanResources(data) {
     ${table('Performance history', reviews, [
       { label: 'Staff', value: (row) => row.DisplayName || row.Username }, { label: 'Period', value: (row) => row.ReviewPeriod },
       { label: 'Rating', value: (row) => row.Rating ? `${row.Rating} / 5` : '' }, { label: 'Status', value: (row) => row.Status },
-      { label: 'Reviewed by', value: (row) => row.ReviewedBy }, { label: 'Date', value: (row) => clean(row.ReviewedAt).slice(0, 10) },
+      { label: 'Reviewed by', value: (row) => row.ReviewedBy }, { label: 'Date', value: (row) => DynamaxTime.formatDate(row.ReviewedAt) },
       ...(capabilities.canManagePerformance ? [{ label: 'Action', render: (row) => `<button type="button" class="compact-icon-action compact-edit-action" data-edit-hr-review data-hr-record-id="${escapeHtml(row.ReviewId || row.__id)}" aria-label="Edit performance review"><span aria-hidden="true">&#9998;</span></button>` }] : [])
     ])}`;
 
@@ -10247,7 +10239,7 @@ function externalAuditFindingRows() {
   const findings = externalAuditState.findings || [];
   if (!findings.length) return '<p class="muted">No audit findings are recorded for this access scope.</p>';
   return findings.map((finding) => `<article class="workflow-card external-audit-finding">
-    <header><div><strong>${escapeHtml(finding.Title)}</strong><small>${escapeHtml(finding.FindingId)} · ${escapeHtml(finding.CreatedAt)} · ${escapeHtml(finding.BranchId || 'All branches')}</small></div><span class="workflow-status ${finding.Status === 'Answered' ? 'status-approved' : 'status-pending'}">${escapeHtml(finding.Status || 'Open')}</span></header>
+    <header><div><strong>${escapeHtml(finding.Title)}</strong><small>${escapeHtml(finding.FindingId)} · ${escapeHtml(DynamaxTime.formatDateTime(finding.CreatedAt))} · ${escapeHtml(finding.BranchId || 'All branches')}</small></div><span class="workflow-status ${finding.Status === 'Answered' ? 'status-approved' : 'status-pending'}">${escapeHtml(finding.Status || 'Open')}</span></header>
     <p>${escapeHtml(finding.Description)}</p><small>${escapeHtml(finding.Category || 'Audit finding')} · Journal: ${escapeHtml(finding.JournalNo || 'None provided')} · Record: ${escapeHtml([finding.RecordType, finding.RecordId].filter(Boolean).join(' / ') || 'None provided')} · Raised by ${escapeHtml(finding.AuditorUsername)}</small>
     ${finding.ManagementResponse ? `<p><strong>Management response:</strong> ${escapeHtml(finding.ManagementResponse)}</p><small>${escapeHtml(finding.RespondedBy)} · ${escapeHtml(finding.RespondedAt)}</small>` : admin ? `<form class="workflow-form" data-audit-response="${escapeHtml(finding.FindingId)}"><label>Management response<textarea name="response" rows="3" maxlength="3000" required></textarea></label><button type="submit">Send response</button></form>` : ''}
   </article>`).join('');
@@ -10284,7 +10276,7 @@ function renderExternalAudit() {
     const root = document.getElementById('externalAuditEvidenceWorkspace');
     const initialRecord = state.evidenceRecord;
     state.evidenceRecord = null;
-    import('./external-audit-workspace.js?v=20261003-paged-audit-reports').then((module) => {
+    import('./external-audit-workspace.js?v=20261003-paged-audit-reports-wat-timestamps').then((module) => {
       if (!root?.isConnected || activeSection !== 'externalAudit') return;
       return module.mountAuditEvidenceWorkspace(root, { request: externalAuditRequest, staffFetch, scope, user: currentUser, view: state.tab,
         initialRecord, raiseFinding: (record) => { externalAuditState.pendingFinding = record; externalAuditState.tab = 'findings'; renderExternalAudit(); } });
@@ -10362,7 +10354,7 @@ function bindExternalAuditEvents() {
     if (!preview) { setStatus(document.getElementById('externalAuditStatus'), 'Allow pop-ups for this portal to open the audit preview.', 'bad'); return; }
     preview.opener = null;
     preview.document.write('<p>Preparing the complete audit register…</p>');
-    import('./external-audit-workspace.js?v=20261003-paged-audit-reports').then((module) => module.previewAuditRegister(externalAuditRequest, externalAuditState.scope, 'journals', preview))
+    import('./external-audit-workspace.js?v=20261003-paged-audit-reports-wat-timestamps').then((module) => module.previewAuditRegister(externalAuditRequest, externalAuditState.scope, 'journals', preview))
       .catch((error) => setStatus(document.getElementById('externalAuditStatus'), error.message || String(error), 'bad'));
   });
   document.getElementById('externalAuditFilter')?.addEventListener('submit', (event) => {
@@ -11379,7 +11371,7 @@ function openExecutivePrint(record = {}, printable = {}, targetWindow = null) {
     : '';
   const filename = clean(printable.filename || `${reference}.pdf`);
   printableWindow.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(filename)}</title><style>
-    @page{size:A4;margin:18mm}*{box-sizing:border-box}body{margin:0;color:#18324d;font:15px/1.65 Georgia,serif}.sheet{position:relative;min-height:250mm;padding:10mm;border:1px solid #c9d8e7;background:#fff;overflow:hidden}.watermark{position:absolute;inset:25% 25%;width:50%;height:50%;object-fit:contain;opacity:.045}.letterhead{position:relative;display:flex;align-items:center;gap:16px;padding:0 0 17px;border-bottom:4px solid #0c8b78}.letterhead img{width:68px;height:68px;object-fit:contain}.letterhead h1{margin:0;color:#123f6d;font:700 25px/1.2 Arial,sans-serif}.letterhead p{margin:4px 0 0;color:#61758a;font:12px Arial,sans-serif}.meta{display:flex;justify-content:space-between;gap:20px;margin:22px 0;color:#587087;font:12px Arial,sans-serif}.subject{margin:24px 0 18px;color:#123f6d;font:700 19px Arial,sans-serif}.recipient{margin-bottom:18px}.body{position:relative;min-height:330px;white-space:pre-wrap}.endorsements{display:flex;gap:50px;margin-top:40px}.endorsement{min-width:210px;padding-top:8px;border-top:1px solid #8499ad;font:12px Arial,sans-serif}.endorsement img{display:block;max-width:150px;max-height:70px;object-fit:contain;margin:-65px 0 4px}.footer{position:absolute;right:10mm;bottom:8mm;left:10mm;display:flex;justify-content:space-between;border-top:1px solid #d6e1ec;padding-top:8px;color:#71869a;font:10px Arial,sans-serif}.print{position:fixed;top:12px;right:12px;padding:10px 14px;border:0;border-radius:7px;background:#1769e0;color:white;font:bold 12px Arial;cursor:pointer}@media print{.print{display:none}.sheet{border:0;padding:0;min-height:auto}}</style></head><body><button class="print" onclick="window.print()">Print / Save as PDF</button><main class="sheet">${logo ? `<img class="watermark" src="${escapeHtml(logo)}" alt="">` : ''}<header class="letterhead">${logo ? `<img src="${escapeHtml(logo)}" alt="">` : ''}<div><h1>${escapeHtml(organisation)}</h1><p>${escapeHtml(executiveOfficeTitle())} · Official communication</p></div></header><div class="meta"><span>Reference: <strong>${escapeHtml(reference)}</strong></span><span>Status: <strong>${escapeHtml(status)}</strong></span></div>${recipient ? `<div class="recipient">To:<br><strong>${escapeHtml(recipient)}</strong></div>` : ''}<h2 class="subject">${escapeHtml(subject)}</h2><div class="body">${escapeHtml(body)}</div><div class="endorsements">${signature ? `<div class="endorsement"><img src="${escapeHtml(signature)}" alt=""><strong>${escapeHtml(currentUser?.displayName || currentUser?.username || '')}</strong><br>${escapeHtml(currentUser?.role || '')}</div>` : ''}${stamp ? `<div class="endorsement"><img src="${escapeHtml(stamp)}" alt="Official stamp"><strong>Official stamp</strong></div>` : ''}</div><footer class="footer"><span>Generated by Dynamax</span><span>${escapeHtml(new Date().toLocaleString())}</span></footer></main></body></html>`);
+    @page{size:A4;margin:18mm}*{box-sizing:border-box}body{margin:0;color:#18324d;font:15px/1.65 Georgia,serif}.sheet{position:relative;min-height:250mm;padding:10mm;border:1px solid #c9d8e7;background:#fff;overflow:hidden}.watermark{position:absolute;inset:25% 25%;width:50%;height:50%;object-fit:contain;opacity:.045}.letterhead{position:relative;display:flex;align-items:center;gap:16px;padding:0 0 17px;border-bottom:4px solid #0c8b78}.letterhead img{width:68px;height:68px;object-fit:contain}.letterhead h1{margin:0;color:#123f6d;font:700 25px/1.2 Arial,sans-serif}.letterhead p{margin:4px 0 0;color:#61758a;font:12px Arial,sans-serif}.meta{display:flex;justify-content:space-between;gap:20px;margin:22px 0;color:#587087;font:12px Arial,sans-serif}.subject{margin:24px 0 18px;color:#123f6d;font:700 19px Arial,sans-serif}.recipient{margin-bottom:18px}.body{position:relative;min-height:330px;white-space:pre-wrap}.endorsements{display:flex;gap:50px;margin-top:40px}.endorsement{min-width:210px;padding-top:8px;border-top:1px solid #8499ad;font:12px Arial,sans-serif}.endorsement img{display:block;max-width:150px;max-height:70px;object-fit:contain;margin:-65px 0 4px}.footer{position:absolute;right:10mm;bottom:8mm;left:10mm;display:flex;justify-content:space-between;border-top:1px solid #d6e1ec;padding-top:8px;color:#71869a;font:10px Arial,sans-serif}.print{position:fixed;top:12px;right:12px;padding:10px 14px;border:0;border-radius:7px;background:#1769e0;color:white;font:bold 12px Arial;cursor:pointer}@media print{.print{display:none}.sheet{border:0;padding:0;min-height:auto}}</style></head><body><button class="print" onclick="window.print()">Print / Save as PDF</button><main class="sheet">${logo ? `<img class="watermark" src="${escapeHtml(logo)}" alt="">` : ''}<header class="letterhead">${logo ? `<img src="${escapeHtml(logo)}" alt="">` : ''}<div><h1>${escapeHtml(organisation)}</h1><p>${escapeHtml(executiveOfficeTitle())} · Official communication</p></div></header><div class="meta"><span>Reference: <strong>${escapeHtml(reference)}</strong></span><span>Status: <strong>${escapeHtml(status)}</strong></span></div>${recipient ? `<div class="recipient">To:<br><strong>${escapeHtml(recipient)}</strong></div>` : ''}<h2 class="subject">${escapeHtml(subject)}</h2><div class="body">${escapeHtml(body)}</div><div class="endorsements">${signature ? `<div class="endorsement"><img src="${escapeHtml(signature)}" alt=""><strong>${escapeHtml(currentUser?.displayName || currentUser?.username || '')}</strong><br>${escapeHtml(currentUser?.role || '')}</div>` : ''}${stamp ? `<div class="endorsement"><img src="${escapeHtml(stamp)}" alt="Official stamp"><strong>Official stamp</strong></div>` : ''}</div><footer class="footer"><span>Generated by Dynamax</span><span>${escapeHtml(DynamaxTime.formatDateTime(new Date()))}</span></footer></main></body></html>`);
   printableWindow.document.close();
 }
 
@@ -12058,7 +12050,7 @@ function renderSchoolLibrary() {
         <div class="config-actionbar"><button type="submit">Reserve</button><p class="status" data-library-status></p></div>
       </form>` : ''}
       ${table('Reservation queue', pending, [
-        { label: 'Requested', value: (row) => clean(row.CreatedAt).slice(0, 16).replace('T', ' ') },
+        { label: 'Requested', value: (row) => DynamaxTime.formatDateTime(row.CreatedAt) },
         { label: 'Title', value: (row) => row.Title },
         { label: 'Borrower', value: (row) => `${row.BorrowerName} · ${row.BorrowerRef}` },
         { label: 'Actions', render: (row) => canManage ? `<button type="button" class="secondary" data-library-cancel="${escapeHtml(row.ReservationId)}">Cancel</button>` : '' }
@@ -14322,7 +14314,7 @@ function saveAcademicAttendanceLocalDraft(form) {
   try {
     localStorage.setItem(key, JSON.stringify({ savedAt: new Date().toISOString(), entries }));
     const status = form.querySelector('[data-academic-attendance-draft-status]');
-    if (status) status.textContent = `Offline draft saved on this device at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`;
+    if (status) status.textContent = `Offline draft saved on this device at ${DynamaxTime.formatTime(new Date())}.`;
     return true;
   } catch (_error) {
     const status = form.querySelector('[data-academic-attendance-draft-status]');
@@ -14346,7 +14338,7 @@ function restoreAcademicAttendanceLocalDraft(form) {
       row.querySelector('[data-academic-attendance-note]').value = saved.Note || '';
     });
     const status = form.querySelector('[data-academic-attendance-draft-status]');
-    if (status) status.textContent = `Recovered offline draft saved ${new Date(draft.savedAt).toLocaleString()}.`;
+    if (status) status.textContent = `Recovered offline draft saved ${DynamaxTime.formatDateTime(draft.savedAt)}.`;
     return true;
   } catch (_error) { return false; }
 }
@@ -14760,7 +14752,7 @@ function academicTermResultsWorkspace(data, rows) {
     { label: 'Actions', render: (row) => academicTermResultActions(row, data.permissions || {}) }
   ], { emptyMessage: selectedArm ? 'No term results have been calculated for this classroom.' : 'Choose a classroom.' });
   const events = table('Result Lifecycle History', rows.resultEvents.filter((event) => !selectedArm || (event.ClassId === selectedArm.ClassId && event.ArmId === selectedArm.ArmId)), [
-    { label: 'Date', value: (row) => row.CreatedAt ? new Date(row.CreatedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '—' },
+    { label: 'Date', value: (row) => row.CreatedAt ? DynamaxTime.formatDateTime(row.CreatedAt) : '—' },
     { label: learner.Singular, value: (row) => academicLabel(data.students, row.StudentRef, row.StudentRef) },
     { label: 'Event', value: (row) => row.EventType },
     { label: 'Status', value: (row) => row.Status },
@@ -14908,7 +14900,7 @@ function academicSessionOutcomesWorkspace(data, rows) {
     { label: 'Version', value: (row) => row.Version },
     { label: 'Sessions', value: (row) => (row.Sessions || []).length },
     { label: 'Status', value: (row) => row.Status },
-    { label: 'Issued', value: (row) => row.IssuedAt ? new Date(row.IssuedAt).toLocaleDateString() : '—' },
+    { label: 'Issued', value: (row) => row.IssuedAt ? DynamaxTime.formatDate(row.IssuedAt) : '—' },
     { label: 'Actions', render: (row) => academicTranscriptActions(row, data.permissions || {}) }
   ], { emptyMessage: 'No official transcript has been created.' });
   const allEvents = [
@@ -14917,7 +14909,7 @@ function academicSessionOutcomesWorkspace(data, rows) {
     ...rows.transcriptEvents.map((row) => ({ ...row, RecordType: 'Transcript' }))
   ].sort((left, right) => clean(right.CreatedAt).localeCompare(clean(left.CreatedAt)));
   const history = table('Session Outcome History', allEvents, [
-    { label: 'Date', value: (row) => row.CreatedAt ? new Date(row.CreatedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '—' },
+    { label: 'Date', value: (row) => row.CreatedAt ? DynamaxTime.formatDateTime(row.CreatedAt) : '—' },
     { label: 'Record', value: (row) => row.RecordType },
     { label: 'Student', value: (row) => academicLabel(data.students, row.StudentRef, row.StudentRef) },
     { label: 'Event', value: (row) => row.EventType },
@@ -15182,7 +15174,7 @@ async function printAcademicTranscript(transcript) {
     ? `<img class="passport" src="${escapeHtml(photoDataUrl)}" alt="Student passport photograph">`
     : `<div class="passport empty">${escapeHtml(initials)}</div>`;
   popup.document.open();
-  popup.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(transcript.TranscriptNumber)}</title><style>@page{size:A4 portrait;margin:12mm}*{box-sizing:border-box}body{margin:0;padding:20px;color:#102a43;font:12px/1.45 Arial,sans-serif}.sheet{border:2px solid #42576b;padding:18px}.letterhead{display:grid;grid-template-columns:82px 1fr 92px;align-items:center;gap:15px;border-bottom:3px solid #0b7f69;padding-bottom:13px}.logo{width:76px;height:76px;object-fit:contain}.school{text-align:center}.school h1{margin:0;color:#123f6d;font-size:23px}.school p{margin:3px 0;color:#60758c}.passport{width:82px;height:96px;border:2px solid #cbd7e2;border-radius:12px;object-fit:cover}.passport.empty{display:grid;place-items:center;background:#eef3f7;color:#60758c;font-size:22px;font-weight:800}.document-title{text-align:center;margin:15px 0 10px}.document-title h2{margin:0;color:#123f6d}.identity{display:grid;grid-template-columns:1.5fr 1fr 1fr;gap:8px;padding:10px;background:#eef6fb}.identity span{display:block;color:#60758c;font-size:9px;text-transform:uppercase}.badge{display:inline-block;padding:4px 8px;border-radius:12px;background:#e8f6f2;color:#086f5e;font-weight:700}section>h2{margin:18px 0 7px;color:#164a78;font-size:14px}table{width:100%;border-collapse:collapse}th,td{padding:6px;border:1px solid #d8e2ec;text-align:left}th{white-space:nowrap;background:#edf3f8;font-size:9px;text-transform:uppercase}.criteria{display:grid;grid-template-columns:1fr 1.3fr;gap:16px;margin-top:17px;padding-top:10px;border-top:1px solid #cbd7e2}.criteria h2{margin:0 0 4px}.criteria ul{margin:0;padding-left:17px;font-size:10px}.draft{color:#b42318;font-weight:800;text-align:center}.endorsement{display:flex;justify-content:space-between;align-items:end;margin-top:22px;padding-top:12px;border-top:1px solid #b8c7d6}.stamp{width:110px;height:84px;object-fit:contain}.qr{width:82px;height:82px}.no-print{margin-top:12px;padding:8px 12px;border:0;border-radius:6px;background:#1769e0;color:#fff;font-weight:bold}@media print{body{padding:0}.no-print{display:none}}</style></head><body><main class="sheet"><header class="letterhead"><img class="logo" src="${escapeHtml(profile.DocumentLogoUrl || '/api/document-logo')}" alt="${escapeHtml(schoolName)} logo" onerror="this.style.visibility='hidden'"><div class="school"><h1>${escapeHtml(schoolName)}</h1><p>${escapeHtml(profile.SchoolAddress || '')}</p><p>${escapeHtml([profile.SchoolPhone, profile.SchoolEmail].filter(Boolean).join(' · '))}</p></div>${passport}</header><section class="document-title"><h2>Official Academic Transcript</h2></section><section class="identity"><div><span>Student</span><strong>${escapeHtml(transcript.StudentName)}</strong></div><div><span>Admission number</span><strong>${escapeHtml(transcript.StudentRef)}</strong></div><div><span>Status / version</span><strong><span class="badge">${escapeHtml(transcript.Status)}</span> · ${escapeHtml(transcript.Version)}</strong></div></section>${transcript.Status !== 'Issued' ? '<p class="draft">DRAFT · NOT AN ISSUED OFFICIAL RECORD</p>' : ''}${sessions}<section><h2>Promotion and completion outcomes</h2><ul>${outcomes || '<li>No committed outcome recorded.</li>'}</ul></section>${academicTranscriptCriteria(transcript)}<footer class="endorsement"><div><img class="stamp" src="${escapeHtml(profile.DocumentStampUrl || '/api/document-stamp')}" alt="Official stamp" onerror="this.style.visibility='hidden'"><strong>${escapeHtml(profile.ResultSignatoryName || 'Authorized school officer')}</strong><br><small>${escapeHtml(profile.ResultSignatoryTitle || 'Official result signatory')}</small></div><div><strong>${escapeHtml(transcript.TranscriptNumber)}</strong><p>${transcript.IssuedAt ? `Issued ${escapeHtml(new Date(transcript.IssuedAt).toLocaleDateString())}` : 'Pending issue approval'}</p>${qr}</div></footer><button class="no-print" onclick="window.print()">Print transcript</button></main></body></html>`);
+  popup.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(transcript.TranscriptNumber)}</title><style>@page{size:A4 portrait;margin:12mm}*{box-sizing:border-box}body{margin:0;padding:20px;color:#102a43;font:12px/1.45 Arial,sans-serif}.sheet{border:2px solid #42576b;padding:18px}.letterhead{display:grid;grid-template-columns:82px 1fr 92px;align-items:center;gap:15px;border-bottom:3px solid #0b7f69;padding-bottom:13px}.logo{width:76px;height:76px;object-fit:contain}.school{text-align:center}.school h1{margin:0;color:#123f6d;font-size:23px}.school p{margin:3px 0;color:#60758c}.passport{width:82px;height:96px;border:2px solid #cbd7e2;border-radius:12px;object-fit:cover}.passport.empty{display:grid;place-items:center;background:#eef3f7;color:#60758c;font-size:22px;font-weight:800}.document-title{text-align:center;margin:15px 0 10px}.document-title h2{margin:0;color:#123f6d}.identity{display:grid;grid-template-columns:1.5fr 1fr 1fr;gap:8px;padding:10px;background:#eef6fb}.identity span{display:block;color:#60758c;font-size:9px;text-transform:uppercase}.badge{display:inline-block;padding:4px 8px;border-radius:12px;background:#e8f6f2;color:#086f5e;font-weight:700}section>h2{margin:18px 0 7px;color:#164a78;font-size:14px}table{width:100%;border-collapse:collapse}th,td{padding:6px;border:1px solid #d8e2ec;text-align:left}th{white-space:nowrap;background:#edf3f8;font-size:9px;text-transform:uppercase}.criteria{display:grid;grid-template-columns:1fr 1.3fr;gap:16px;margin-top:17px;padding-top:10px;border-top:1px solid #cbd7e2}.criteria h2{margin:0 0 4px}.criteria ul{margin:0;padding-left:17px;font-size:10px}.draft{color:#b42318;font-weight:800;text-align:center}.endorsement{display:flex;justify-content:space-between;align-items:end;margin-top:22px;padding-top:12px;border-top:1px solid #b8c7d6}.stamp{width:110px;height:84px;object-fit:contain}.qr{width:82px;height:82px}.no-print{margin-top:12px;padding:8px 12px;border:0;border-radius:6px;background:#1769e0;color:#fff;font-weight:bold}@media print{body{padding:0}.no-print{display:none}}</style></head><body><main class="sheet"><header class="letterhead"><img class="logo" src="${escapeHtml(profile.DocumentLogoUrl || '/api/document-logo')}" alt="${escapeHtml(schoolName)} logo" onerror="this.style.visibility='hidden'"><div class="school"><h1>${escapeHtml(schoolName)}</h1><p>${escapeHtml(profile.SchoolAddress || '')}</p><p>${escapeHtml([profile.SchoolPhone, profile.SchoolEmail].filter(Boolean).join(' · '))}</p></div>${passport}</header><section class="document-title"><h2>Official Academic Transcript</h2></section><section class="identity"><div><span>Student</span><strong>${escapeHtml(transcript.StudentName)}</strong></div><div><span>Admission number</span><strong>${escapeHtml(transcript.StudentRef)}</strong></div><div><span>Status / version</span><strong><span class="badge">${escapeHtml(transcript.Status)}</span> · ${escapeHtml(transcript.Version)}</strong></div></section>${transcript.Status !== 'Issued' ? '<p class="draft">DRAFT · NOT AN ISSUED OFFICIAL RECORD</p>' : ''}${sessions}<section><h2>Promotion and completion outcomes</h2><ul>${outcomes || '<li>No committed outcome recorded.</li>'}</ul></section>${academicTranscriptCriteria(transcript)}<footer class="endorsement"><div><img class="stamp" src="${escapeHtml(profile.DocumentStampUrl || '/api/document-stamp')}" alt="Official stamp" onerror="this.style.visibility='hidden'"><strong>${escapeHtml(profile.ResultSignatoryName || 'Authorized school officer')}</strong><br><small>${escapeHtml(profile.ResultSignatoryTitle || 'Official result signatory')}</small></div><div><strong>${escapeHtml(transcript.TranscriptNumber)}</strong><p>${transcript.IssuedAt ? `Issued ${escapeHtml(DynamaxTime.formatDate(transcript.IssuedAt))}` : 'Pending issue approval'}</p>${qr}</div></footer><button class="no-print" onclick="window.print()">Print transcript</button></main></body></html>`);
   popup.document.close();
 }
 
@@ -15432,7 +15424,7 @@ function academicCbtWorkspace(data, rows) {
 
   const editor = `<form class="academic-management-editor academic-management-editor-wide academic-cbt-editor" data-academic-cbt-editor>${stepOne}${stepTwo}</form>`;
   const register = table('Scheduled CBT Tests', rows.cbtTests, [
-    { label: 'Date and time', value: (row) => new Date(row.StartsAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) },
+    { label: 'Date and time', value: (row) => DynamaxTime.formatDateTime(row.StartsAt) },
     { label: 'Test Type', value: (row) => `${row.AssessmentComponentName} / ${row.MaximumScore}${row.PaperMode === 'split' ? ' · A/B' : ''}` },
     { label: 'Class', value: (row) => academicLabel(rows.classes, row.ClassId) },
     { label: 'Subject', value: (row) => academicLabel(rows.subjects, row.SubjectId, row.SubjectName) },
@@ -19281,7 +19273,7 @@ function requisitionEditHistoryBlock(record) {
   return `<h2>Edit and resubmission history</h2><table class="admin-table"><thead><tr><th>Action / revision</th><th>Officer</th><th>Time</th><th>Changed fields</th></tr></thead><tbody>${history.map((entry) => `<tr>
     <td>${escapeHtml(entry.Action || 'Edit requisition')}${entry.RevisionNumber ? ` · Revision ${escapeHtml(entry.RevisionNumber)}` : ''}</td>
     <td>${escapeHtml(entry.Officer || entry.Username || 'Not recorded')}<br>${escapeHtml([entry.Role, entry.Username].filter(Boolean).join(' · '))}</td>
-    <td>${escapeHtml(entry.Timestamp || 'Not recorded')}</td>
+    <td>${escapeHtml(DynamaxTime.formatDateTime(entry.Timestamp) || 'Not recorded')}</td>
     <td>${escapeHtml((entry.ChangedFields || []).join(', ') || (entry.Legacy ? 'Not recorded in this older revision' : 'No business fields changed; resubmitted'))}</td>
   </tr>`).join('')}</tbody></table>`;
 }
@@ -20475,7 +20467,7 @@ function securityAuditRoutineSystemSuccess(row) {
 function securityAuditDateTime(value) {
   if (!clean(value)) return '';
   const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? clean(value) : parsed.toLocaleString();
+  return Number.isNaN(parsed.getTime()) ? clean(value) : DynamaxTime.formatDateTime(value);
 }
 
 function securityAuditDetail(row) {
@@ -20785,7 +20777,7 @@ function updateMfaPolicyEditor() {
   const timing = document.getElementById('staffMfaPolicyTiming');
   if (timing) {
     timing.textContent = policy.EnforceFrom && requiredMode
-      ? `Current enforcement begins ${new Date(policy.EnforceFrom).toLocaleString()}. Saving a changed required policy starts a new grace period.`
+      ? `Current enforcement begins ${DynamaxTime.formatDateTime(policy.EnforceFrom)}. Saving a changed required policy starts a new grace period.`
       : requiredMode
         ? 'Saving this policy starts the selected grace period.'
         : 'Existing enrolled staff remain protected when the policy is optional. Disabled mode bypasses two-factor sign-in.';
@@ -21014,7 +21006,7 @@ function renderStaffUsers() {
     <section class="staff-security-activity">
       <h2>Recent Security Activity</h2>
       <div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>Time</th><th>Action</th><th>Account</th><th>Actor</th><th>Platform</th></tr></thead><tbody>
-        ${staffAuditData.length ? staffAuditData.map((row) => `<tr><td>${escapeHtml(row.Timestamp)}</td><td>${escapeHtml(row.Action)}</td><td>${escapeHtml(row.Username)}</td><td>${escapeHtml(row.Actor)}</td><td>${escapeHtml(row.SourcePlatform)}</td></tr>`).join('') : '<tr><td colspan="5">No security activity recorded yet.</td></tr>'}
+        ${staffAuditData.length ? staffAuditData.map((row) => `<tr><td>${escapeHtml(DynamaxTime.formatDateTime(row.Timestamp))}</td><td>${escapeHtml(row.Action)}</td><td>${escapeHtml(row.Username)}</td><td>${escapeHtml(row.Actor)}</td><td>${escapeHtml(row.SourcePlatform)}</td></tr>`).join('') : '<tr><td colspan="5">No security activity recorded yet.</td></tr>'}
       </tbody></table></div>
     </section>
     <dialog id="staffUserDialog" class="workflow-dialog">
@@ -21652,7 +21644,7 @@ loginForm.addEventListener('submit', async (event) => {
     if (clean(data.mfaEnrollmentDueAt)) {
       setStatus(
         dashboardStatus,
-        `Two-factor authentication will become required on ${new Date(data.mfaEnrollmentDueAt).toLocaleString()}. Open Account & settings, then Two-factor security to enrol now.`
+        `Two-factor authentication will become required on ${DynamaxTime.formatDateTime(data.mfaEnrollmentDueAt)}. Open Account & settings, then Two-factor security to enrol now.`
       );
     }
   } catch (error) {
@@ -21911,7 +21903,7 @@ document.getElementById('staffDesktopPairingGenerate').addEventListener('click',
     const data = await desktopPairingRequest('create');
     document.getElementById('staffDesktopPortalUrl').value = data.portalUrl || window.location.origin;
     document.getElementById('staffDesktopPairingCode').textContent = data.code;
-    document.getElementById('staffDesktopPairingExpiry').textContent = `Expires ${new Date(data.expiresAt).toLocaleString()}. The code becomes invalid immediately after one successful use.`;
+    document.getElementById('staffDesktopPairingExpiry').textContent = `Expires ${DynamaxTime.formatDateTime(data.expiresAt)}. The code becomes invalid immediately after one successful use.`;
     document.getElementById('staffDesktopPairingPanel').hidden = false;
     setStatus(status, data.message, 'ok');
   } catch (error) {

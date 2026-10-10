@@ -598,7 +598,7 @@ test('staff and parent notification interfaces are wired to protected APIs', asy
   assert.doesNotMatch(parentHtml, /Preferences & devices|parentNotificationSettingsForm|disableParentPush/);
   assert.doesNotMatch(parentDashboardJs, /saveNotificationSettings|data-remove-parent-push-device/);
   assert.match(parentApi, /action === 'archiveNotification'/);
-  assert.match(parentDashboardJs, /new Date\(dateValue\)/);
+  assert.match(parentDashboardJs, /DynamaxTime\.formatDateTime\(dateValue\)/);
   assert.match(styleCss, /\.parent-notification-item strong\{font-size:12px/);
   assert.match(styleCss, /\.parent-notification-item>span>span\{[^}]*font-size:10px/);
   assert.match(staffApi, /requireStaffSession/);

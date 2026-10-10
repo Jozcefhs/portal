@@ -10,8 +10,7 @@ function safeText(value) {
 }
 
 function displayDate(value) {
-  const date = new Date(value);
-  return Number.isFinite(date.getTime()) ? date.toLocaleString() : String(value || '—');
+  return DynamaxTime.formatDateTime(value) || '—';
 }
 
 function displayMoney(amount, currency) {

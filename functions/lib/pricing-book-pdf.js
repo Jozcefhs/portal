@@ -99,7 +99,7 @@ function drawPageBackground(page) {
 
 function drawFooter(page, regular, pageNumber, generatedAt) {
   const date = new Date(generatedAt).toLocaleDateString('en-GB', {
-    day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC'
+    day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Africa/Lagos'
   });
   page.drawLine({ start: { x: 32, y: 35 }, end: { x: 810, y: 35 }, thickness: 0.7, color: BORDER });
   page.drawText(`Dynamax Pricing Book | Generated ${clean(date)}`, { x: 32, y: 19, size: 8, font: regular, color: MUTED });

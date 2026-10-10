@@ -715,8 +715,7 @@ function renderParentNotifications() {
     const title = notification.Title || notification.title || notification.Type || notification.type || 'School notification';
     const message = notification.Message || notification.message || notification.Body || notification.body || '';
     const dateValue = notification.DisplayDate || notification.displayDate || notification.CreatedAt || notification.createdAt || notification.Date || notification.date || '';
-    const parsedDate = dateValue ? new Date(dateValue) : null;
-    const date = parsedDate && !Number.isNaN(parsedDate.getTime()) ? parsedDate.toLocaleString() : dateValue;
+    const date = DynamaxTime.formatDateTime(dateValue);
     row.innerHTML = `
       <span>
         <strong>${escapeHtml(title)}</strong>
@@ -835,7 +834,7 @@ async function parentNotificationRequest(action, extra = {}) {
 function parentHistoryMarkup(row) {
   const id = parentNotificationId(row);
   return `<article class="notification-item${parentNotificationIsRead(row) ? ' is-read' : ''}" data-parent-notification-id="${escapeHtml(id)}">
-    <button type="button" class="notification-open"><span class="notification-item-dot"></span><span class="notification-item-copy"><small>${escapeHtml(row.Category || row.Type || 'System')}</small><strong>${escapeHtml(row.Title || 'Notification')}</strong><span>${escapeHtml(row.Message || '')}</span><time>${escapeHtml(row.CreatedAt ? new Date(row.CreatedAt).toLocaleString() : '')}</time></span></button>
+    <button type="button" class="notification-open"><span class="notification-item-dot"></span><span class="notification-item-copy"><small>${escapeHtml(row.Category || row.Type || 'System')}</small><strong>${escapeHtml(row.Title || 'Notification')}</strong><span>${escapeHtml(row.Message || '')}</span><time>${escapeHtml(row.CreatedAt ? DynamaxTime.formatDateTime(row.CreatedAt) : '')}</time></span></button>
     <button type="button" class="notification-archive-action" data-parent-archive>${row.Archived ? 'Restore' : 'Archive'}</button>
   </article>`;
 }
@@ -1907,14 +1906,14 @@ function renderEntranceResults(child) {
     item.className = 'activity-item';
     const percentage = record.ResultPercentage ? `${record.ResultPercentage}%` : '';
     const status = record.ResultStatus || 'Pending';
-    const date = record.ResultUpdatedAt || record.ResultSentAt || '';
+    const date = DynamaxTime.formatDateTime(record.ResultUpdatedAt || record.ResultSentAt);
     const probationResult = record.ProbationResult || '';
     const probationPercentage = record.ProbationResitPercentage ? `${String(record.ProbationResitPercentage).replace(/%$/, '')}%` : '';
     const probationSummary = [
       probationResult ? `Probation re-sit: ${probationResult}` : '',
       probationPercentage,
       record.ProbationResitDate ? `Sat ${record.ProbationResitDate}` : '',
-      record.ProbationResultUpdatedAt ? `Recorded ${record.ProbationResultUpdatedAt}` : ''
+      record.ProbationResultUpdatedAt ? `Recorded ${DynamaxTime.formatDateTime(record.ProbationResultUpdatedAt)}` : ''
     ].filter(Boolean).join(' | ');
     if (resultDisplayMode(child) === 'percentage') {
       item.innerHTML = `
@@ -2474,7 +2473,7 @@ function renderStores(child) {
   storeOrders.innerHTML = orders.length ? '' : '<p class="muted">No store orders recorded for this student.</p>';
   orders.forEach((order) => {
     const row = document.createElement('div'); row.className = 'activity-item';
-    row.innerHTML = `<strong>${escapeHtml(order.StoreType || 'School Store')} - ${escapeHtml(order.OrderNo)}</strong><span>${escapeHtml(order.Status || 'Paid - Awaiting Collection')}</span><small>${money(order.Amount)} | ${escapeHtml(order.PaidAt || order.CreatedAt || '')}</small>`;
+    row.innerHTML = `<strong>${escapeHtml(order.StoreType || 'School Store')} - ${escapeHtml(order.OrderNo)}</strong><span>${escapeHtml(order.Status || 'Paid - Awaiting Collection')}</span><small>${money(order.Amount)} | ${escapeHtml(DynamaxTime.formatDateTime(order.PaidAt || order.CreatedAt))}</small>`;
     storeOrders.appendChild(row);
   });
 }

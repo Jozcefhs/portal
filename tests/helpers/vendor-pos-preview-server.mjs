@@ -3,6 +3,7 @@ import {createServer} from 'node:http';
 import {readFile} from 'node:fs/promises';
 
 const files = new Map([
+  ['/js/display-time.js',new URL('../../js/display-time.js',import.meta.url)],
   ['/tests/fixtures/boarding-offerings.html',new URL('../fixtures/boarding-offerings.html',import.meta.url)],
   ['/css/boarding-offerings.css',new URL('../../css/boarding-offerings.css',import.meta.url)],
   ['/js/boarding-offerings.js',new URL('../../js/boarding-offerings.js',import.meta.url)],

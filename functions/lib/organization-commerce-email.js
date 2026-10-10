@@ -1,4 +1,5 @@
 import { escapeEmailHtml, sendConfiguredEmail } from './email-service.js';
+import { formatDateTime } from './display-time.js';
 
 const clean = (value) => String(value ?? '').trim();
 const validEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean(value));
@@ -76,7 +77,7 @@ export async function sendOrganizationCommerceReceiptEmail(env, sale = {}) {
   const itemHtml = receiptItemsTable(lines);
   const total = amount(sale.Amount || sale.GrossAmount, sale.Currency);
   const customer = clean(sale.CustomerName) || 'Customer';
-  const paidAt = clean(sale.PaidAt || sale.SaleDate).replace('T', ' ').replace('Z', '').slice(0, 19);
+  const paidAt = formatDateTime(sale.PaidAt || sale.SaleDate);
   const reference = clean(sale.PaymentReference);
   const subject = `Organisation store receipt - ${clean(sale.SaleNo)}`;
   const delivery = await sendConfiguredEmail(env, {

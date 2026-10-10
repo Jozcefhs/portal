@@ -2,7 +2,7 @@
 <link rel="stylesheet" href="../../css/style.css"><link rel="stylesheet" href="../../css/vendor-settlements.css">
 <style>body{padding:12px}main{max-width:1100px;margin:auto}#fixture-state{white-space:pre-wrap;overflow-wrap:anywhere}button{cursor:pointer}</style>
 <main><p>LOCAL FIXTURE ONLY — no live accounts, bank records, payments or API calls.</p><div id="root"></div><pre id="fixture-state">No save requests.</pre></main>
-<script src="../../js/vendor-settlements.js"></script><script>
+<script src="../../js/display-time.js"></script><script src="../../js/vendor-settlements.js"></script><script>
 const requestedEdition=new URLSearchParams(location.search).get('edition');
 const edition=['school','faith','organization'].includes(requestedEdition)?requestedEdition:'school';
 const vendors=[]; let saves=0;

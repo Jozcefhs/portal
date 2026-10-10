@@ -1,4 +1,5 @@
 import { paidLifecycleWindow } from './paid-subscription-lifecycle.js';
+import { formatDate } from './display-time.js';
 
 const clean = (value) => String(value ?? '').trim();
 
@@ -343,11 +344,11 @@ export function subscriptionAccessState(value = {}, options = {}) {
         ? `Your full-access trial has ${daysRemaining} day${daysRemaining === 1 ? '' : 's'} remaining.`
         : 'Your 7-day full-access trial has ended. Choose a paid subscription to continue.'
       : readOnly
-        ? `Renewal payment is overdue. Records remain available in read-only mode until ${new Date(paidWindow.graceEndsAt).toLocaleDateString('en-NG')}.`
+        ? `Renewal payment is overdue. Records remain available in read-only mode until ${formatDate(paidWindow.graceEndsAt)}.`
         : active
           ? ''
           : paidWindow.applicable
-            ? `This subscription is suspended. Renew before ${new Date(paidWindow.retentionEndsAt).toLocaleDateString('en-NG')} to preserve the workspace and its records.`
+            ? `This subscription is suspended. Renew before ${formatDate(paidWindow.retentionEndsAt)} to preserve the workspace and its records.`
             : 'This subscription is not active. Choose a paid subscription to continue.'
   };
 }

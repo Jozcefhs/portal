@@ -132,9 +132,10 @@ test('concurrent updates cannot release a hold and unavailable queues cannot cre
   assert.equal(h.created(), 0);
 });
 
-test('administrator rendering shows the hold, escapes diagnostics and clears the alert after resume', () => {
+test('administrator rendering shows the hold, escapes diagnostics and clears the alert after resume', async () => {
+  await import('../js/display-time.js');
   const elements = new Map();
-  const ctx = vm.createContext({ Date,
+  const ctx = vm.createContext({ Date, DynamaxTime: globalThis.DynamaxTime,
     escapeHtml: value => String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;'),
     document: { getElementById: id => {
       if (!elements.has(id)) elements.set(id, { hidden: false, innerHTML: '', value: '' });

@@ -22,6 +22,7 @@ test('school payment receipt resolves imported-student parent identity and finan
   assert.match(details.amount, /125,000\.00/);
   assert.equal(details.receiptNo, 'PAY-001');
   assert.equal(details.reference, 'BANK-4455');
+  assert.equal(details.paidAt, '2026-08-09 13:30:00 WAT');
 });
 
 test('direct-transfer approval records first and delivers the receipt in a separate resumable stage', async () => {

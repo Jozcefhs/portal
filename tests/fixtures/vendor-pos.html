@@ -1,6 +1,6 @@
 <!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Vendor POS fixture</title>
 <link rel="stylesheet" href="../../css/style.css"><link rel="stylesheet" href="../../css/vendor-settlements.css"><style>body{padding:12px}#root{max-width:1540px;margin:auto;padding:16px;background:#fff;border:1px solid #d4e3ed;border-radius:12px}input,select{box-sizing:border-box}button{cursor:pointer}@media(max-width:680px){body{padding:6px}#root{padding:8px}}</style>
-<main id="root"></main><script src="vendor-pos-shared-helpers.js"></script><script src="../../js/vendor-pos.js"></script><script>
+<main id="root"></main><script src="../../js/display-time.js"></script><script src="vendor-pos-shared-helpers.js"></script><script src="../../js/vendor-pos.js"></script><script>
 window.DynamaxStaffFetch=async()=>new Response(JSON.stringify({ok:true,enabled:true,configured:true,canLookup:true,canManage:false,canErase:false}));
 let quantity=5,posted=false;
 const recentSales=[{SaleNo:'FIXTURE-EARLIER',SaleDate:'2026-10-10T09:00:00Z',CustomerName:'Sample staff member',PaymentMethod:'Cash',CollectionMode:'Vendor collected',Amount:200,Items:[{ItemName:'Bread',Quantity:1}]}];

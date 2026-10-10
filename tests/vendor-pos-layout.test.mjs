@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {runInNewContext} from 'node:vm';
 import {webcrypto} from 'node:crypto';
+import '../js/display-time.js';
 
 const source = await readFile(new URL('../js/vendor-pos.js',import.meta.url),'utf8');
 const css = await readFile(new URL('../css/vendor-settlements.css',import.meta.url),'utf8');
@@ -69,7 +70,7 @@ async function fixture(section = 'tuckShop', options = {}) {
     if (failSale) throw new Error('Fixture response interrupted; retry the same checkout.');
     return {message:'Fixture sale recorded.',sale:{SaleNo:'FIXTURE-SALE',Amount:body.ExpectedAmount}};
   };
-  runInNewContext(source,{window,Intl,AbortController,setTimeout,clearTimeout,crypto:webcrypto});
+  runInNewContext(source,{window,Intl,DynamaxTime:globalThis.DynamaxTime,AbortController,setTimeout,clearTimeout,crypto:webcrypto});
   const mounted = window.DynamaxVendorPOS.mount(root,request,section,options.tools);
   await new Promise(resolve=>setImmediate(resolve));
   const input = (name,value) => {const field=root.querySelector(`[name="${name}"]`),form=root.querySelectorAll('form').find(form=>form.elements[name]===field); field.value=value; form.oninput({target:field});};

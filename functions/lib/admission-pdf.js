@@ -278,7 +278,7 @@ function contextFor(profile, application, issuedAt) {
     probationDate: stripMarkup(pick(application, ['ProbationResitDate', 'probationResitDate'])) || '',
     schoolName: stripMarkup(profile.SchoolName || 'School'),
     schoolAddress: stripMarkup(profile.SchoolAddress),
-    date: new Date(issuedAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' }).replace(/ /g, '-')
+    date: new Date(issuedAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Africa/Lagos' }).replace(/ /g, '-')
   };
 }
 

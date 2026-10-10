@@ -152,7 +152,7 @@ function buildPricingBookPrintMarkup() {
   const cycleLabel = cycle === 'yearly' ? 'Yearly' : 'Monthly';
   const selected = selectedPlanName();
   const currentEdition = edition();
-  const generatedAt = new Date().toLocaleString();
+  const generatedAt = DynamaxTime.formatDateTime(new Date());
 
   const themeRows = plans
     .map((plan) => {

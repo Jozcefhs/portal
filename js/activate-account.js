@@ -50,7 +50,7 @@ async function inspectActivation() {
     document.getElementById('activationUsername').value = suggestedUsername(data.email);
     form.hidden = false;
     statusNode.className = 'status good';
-    statusNode.textContent = `Link verified. It expires ${new Date(data.expiresAt).toLocaleString()}.`;
+    statusNode.textContent = `Link verified. It expires ${DynamaxTime.formatDateTime(data.expiresAt)}.`;
     document.getElementById('activationDisplayName').focus();
   } catch (error) {
     setFailure(error.message || String(error));

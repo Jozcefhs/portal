@@ -1,5 +1,6 @@
 import { createDocumentIfAbsent, getDocument, queryCollection, upsertDocument } from '../lib/firestore.js';
 import { normalizeOrganizationEdition } from '../lib/organization-config.js';
+import { formatDateTime } from '../lib/display-time.js';
 import { loadDeploymentIdentity } from '../lib/deployment-identity.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import {
@@ -964,7 +965,7 @@ export async function onRequestPost({ request, env }) {
         portalUrl: clean(boundRegistration.PortalUrl),
         workspacePending: !clean(boundRegistration.WorkspaceId),
         message: checkout?.trialActive
-          ? `Your 7-day full-access trial is active until ${new Date(checkout.trialEndsAt).toLocaleString('en-NG')}.`
+          ? `Your 7-day full-access trial is active until ${formatDateTime(checkout.trialEndsAt)}.`
           : checkout?.cardVerification
           ? `Continue to Paystack to verify a valid bank card. The ${checkout.verificationCurrency} ${Number(checkout.verificationCharge || 0).toFixed(2)} verification charge will be refunded automatically, and no tenant project is assigned until verification succeeds.`
           : checkout?.trialReserved
@@ -1024,7 +1025,7 @@ export async function onRequestPost({ request, env }) {
       workspacePending: !clean(savedRegistration.WorkspaceId),
       message: checkout
         ? checkout.trialActive
-          ? `Your 7-day full-access trial is active until ${new Date(checkout.trialEndsAt).toLocaleString('en-NG')}.`
+          ? `Your 7-day full-access trial is active until ${formatDateTime(checkout.trialEndsAt)}.`
           : checkout.cardVerification
           ? `Continue to Paystack to verify a valid bank card. The ${checkout.verificationCurrency} ${Number(checkout.verificationCharge || 0).toFixed(2)} verification charge will be refunded automatically, and no tenant project is assigned until verification succeeds.`
           : checkout.trialReserved

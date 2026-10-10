@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { runInNewContext } from 'node:vm';
+import '../js/display-time.js';
 
 const adminSource = await readFile(new URL('../js/admin.js', import.meta.url), 'utf8');
 const start = adminSource.indexOf('function filteredAttendanceReportRows(');
@@ -23,6 +24,7 @@ function reportFunctions(organisation = 'Destiny Christian Academy') {
     print() {}
   };
   const functions = runInNewContext(`${reportSource}\n({ filteredAttendanceReportRows, attendanceReportSummary, printStaffAttendanceReport })`, {
+    DynamaxTime: globalThis.DynamaxTime,
     clean,
     lower: (value) => clean(value).toLowerCase(),
     escapeHtml,
@@ -116,8 +118,16 @@ for (const [edition, organisation] of [
   });
 }
 
+test('attendance print respects its configured zone rather than the browser zone', () => {
+  const report = reportFunctions();
+  report.printStaffAttendanceReport([records[0]], filters, 'Africa/Nairobi');
+  assert.match(report.html(), /10:20/);
+  assert.match(report.html(), /18:00/);
+  assert.doesNotMatch(report.html(), /07:20/);
+});
+
 test('Screen and print share the filtered rows and the UI explicitly includes late arrivals', () => {
   assert.match(adminSource, /attendanceReportRows = filteredAttendanceReportRows\(data\.recentDailyRecords \|\| \[\], reportFilters\)/);
-  assert.match(adminSource, /printStaffAttendanceReport\(attendanceReportRows, reportFilters\)/);
+  assert.match(adminSource, /printStaffAttendanceReport\(attendanceReportRows, reportFilters, policy\.TimeZone\)/);
   assert.match(adminSource, /value="Present"[^>]*>Present \(including late\)<\/option>/);
 });

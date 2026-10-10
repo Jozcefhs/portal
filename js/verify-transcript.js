@@ -21,7 +21,7 @@ function showResult(data) {
     ['Status', data.transcript.Status],
     ['Version', data.transcript.Version],
     ['Academic sessions', data.transcript.SessionCount],
-    ['Issued', data.transcript.IssuedAt ? new Date(data.transcript.IssuedAt).toLocaleDateString() : 'Not recorded']
+    ['Issued', data.transcript.IssuedAt ? DynamaxTime.formatDate(data.transcript.IssuedAt) : 'Not recorded']
   ];
   details.innerHTML = rows.map(([label, value]) => `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd>`).join('');
   details.hidden = false;

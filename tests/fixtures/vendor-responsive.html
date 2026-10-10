@@ -4,7 +4,7 @@
 <body class="staff-page">
 <!-- The fixture server inserts the real staff header and mobile navigation here. -->
 <main class="staff-shell"><div class="staff-main-content"><section id="root" class="card staff-panel"></section></div></main>
-<script src="/js/vendor-settlements.js"></script><script src="/js/vendor-pos.js"></script><script>
+<script src="/js/display-time.js"></script><script src="/js/vendor-settlements.js"></script><script src="/js/vendor-pos.js"></script><script>
 const products=Array.from({length:24},(_,i)=>({InventoryId:'main-Secondary-SAMPLE-'+i,VendorId:'sample-vendor',ItemCode:'SAMPLE-'+i,
   ItemName:['40LV','4 Figure Table','Bathing Soap','Big boy'][i%4],Section:'tuckShop',Quantity:30+i,Price:500+i*100,Category:'General item',Unit:'pcs'}));
 const request=async action=>{

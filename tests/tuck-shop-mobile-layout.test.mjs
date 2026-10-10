@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { runInNewContext } from 'node:vm';
+import '../js/display-time.js';
 
 const [admin, css] = await Promise.all([
   readFile(new URL('../js/admin.js', import.meta.url), 'utf8'),
@@ -12,6 +13,7 @@ const end = admin.indexOf('async function searchTuckShopCustomer(', start);
 
 function render(options = {}) {
   const context = {
+    DynamaxTime: globalThis.DynamaxTime,
     tuckShopLastSale: null,
     tuckShopCatalogSearch: '',
     tuckShopCustomerSearch: '',

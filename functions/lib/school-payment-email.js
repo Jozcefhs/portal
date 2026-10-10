@@ -1,4 +1,5 @@
 import { escapeEmailHtml, sendConfiguredEmail } from './email-service.js';
+import { formatDateTime } from './display-time.js';
 
 const clean = (value) => String(value ?? '').trim();
 const validEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean(value));
@@ -34,7 +35,7 @@ export function schoolPaymentReceiptDetails(payment = {}) {
     receiptNo: clean(payment.ReceiptNo || payment.PaymentId || payment.Reference),
     reference: clean(payment.GatewayReference || payment.Reference),
     method: clean(payment.Method || payment.Gateway) || 'Direct Bank Transfer',
-    paidAt: clean(payment.PaidAt || payment.RecordedAt).replace('T', ' ').replace('Z', '').slice(0, 19),
+    paidAt: formatDateTime(payment.PaidAt || payment.RecordedAt),
     branchId: clean(payment.BranchId || 'main') || 'main'
   };
 }

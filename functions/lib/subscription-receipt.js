@@ -1,5 +1,6 @@
 import { getDocument, patchDocumentFields, patchDocumentFieldsIfCurrent } from './firestore.js';
 import { sendConfiguredEmail } from './email-service.js';
+import { formatDateTime } from './display-time.js';
 
 const clean = (value) => String(value ?? '').trim();
 
@@ -114,7 +115,7 @@ export function subscriptionReceiptText(receipt = {}, receiptUrl = '') {
     `Amount paid: ${money(receipt.Amount, receipt.Currency)}`,
     `Payment method: ${clean(receipt.PaymentMethod)}`,
     `Payment reference: ${clean(receipt.PaymentReference)}`,
-    `Paid at: ${clean(receipt.PaidAt)}`,
+    `Paid at: ${formatDateTime(receipt.PaidAt)}`,
     receiptUrl ? `View or print receipt: ${receiptUrl}` : '',
     '',
     'Thank you for subscribing to Dynamax.'
@@ -130,7 +131,7 @@ export function subscriptionReceiptHtml(receipt = {}, receiptUrl = '') {
     ['Amount paid', money(receipt.Amount, receipt.Currency)],
     ['Payment method', receipt.PaymentMethod],
     ['Payment reference', receipt.PaymentReference],
-    ['Paid at', receipt.PaidAt]
+    ['Paid at', formatDateTime(receipt.PaidAt)]
   ];
   return `<div style="font-family:Arial,sans-serif;max-width:680px;margin:auto;color:#10243e"><div style="border-bottom:4px solid #0b7d70;padding:16px 0"><h1 style="margin:0;font-size:24px">Dynamax subscription receipt</h1><p style="margin:6px 0 0;color:#47627e">Official payment confirmation</p></div><p style="margin:22px 0">Hello ${escapeHtml(receipt.ContactName || 'Subscriber')},</p><p>Payment for <strong>${escapeHtml(receipt.OrganisationName)}</strong> was received successfully.</p><table style="width:100%;border-collapse:collapse;margin:20px 0">${rows.map(([label, value]) => `<tr><th style="text-align:left;padding:10px;border:1px solid #d8e2ee;background:#f3f7fb;width:38%">${escapeHtml(label)}</th><td style="padding:10px;border:1px solid #d8e2ee">${escapeHtml(value)}</td></tr>`).join('')}<tr><th style="text-align:left;padding:10px;border:1px solid #d8e2ee;background:#e7f7f1">Status</th><td style="padding:10px;border:1px solid #d8e2ee;color:#08705f;font-weight:700">PAID</td></tr></table>${receiptUrl ? `<p><a href="${escapeHtml(receiptUrl)}" style="display:inline-block;padding:11px 16px;border-radius:7px;background:#126fe8;color:#fff;text-decoration:none;font-weight:700">View or print receipt</a></p>` : ''}<p style="margin-top:28px;color:#5b6f85;font-size:13px">Keep this receipt for your records. Thank you for subscribing to Dynamax.</p></div>`;
 }

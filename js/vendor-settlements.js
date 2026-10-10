@@ -272,7 +272,7 @@
     }
     function print(title, html) {
       const win = window.open('','_blank'); if (!win) return status('Allow pop-ups to print the statement.',true);
-      win.document.write(`<!doctype html><html><head><title>${esc(title)}</title><style>body{font:14px Arial;color:#143652;padding:24px}table{width:100%;border-collapse:collapse}td,th{padding:8px;text-align:left;border-bottom:1px solid #ccd}small{display:block}button{padding:10px}@media print{button{display:none}}</style></head><body><button onclick="window.print()">Print / Save as PDF</button><h1>${esc(title)}</h1><p>Branch: ${esc(data.capabilities.branchId)} · Generated ${esc(new Date().toLocaleString())}</p>${html}</body></html>`);
+      win.document.write(`<!doctype html><html><head><title>${esc(title)}</title><style>body{font:14px Arial;color:#143652;padding:24px}table{width:100%;border-collapse:collapse}td,th{padding:8px;text-align:left;border-bottom:1px solid #ccd}small{display:block}button{padding:10px}@media print{button{display:none}}</style></head><body><button onclick="window.print()">Print / Save as PDF</button><h1>${esc(title)}</h1><p>Branch: ${esc(data.capabilities.branchId)} · Generated ${esc(DynamaxTime.formatDateTime(new Date()))}</p>${html}</body></html>`);
       win.document.close();
     }
     function requestCard(r) {

@@ -176,7 +176,7 @@
       <button type="button" class="notification-open" data-action-url="${html(row.ActionUrl)}">
         <span class="notification-item-dot" aria-hidden="true"></span><span class="notification-item-copy">
           <small>${html(row.Category || row.Type || 'System')}</small><strong>${html(row.Title || 'Notification')}</strong>
-          <span>${html(row.Message || '')}</span><time datetime="${html(row.CreatedAt || '')}">${html(row.CreatedAt ? new Date(row.CreatedAt).toLocaleString() : '')}</time>
+          <span>${html(row.Message || '')}</span><time datetime="${html(row.CreatedAt || '')}">${html(row.CreatedAt ? DynamaxTime.formatDateTime(row.CreatedAt) : '')}</time>
         </span>
       </button>${full
         ? `<button type="button" class="notification-archive-action" data-archive-notification>${row.Archived ? 'Restore' : 'Archive'}</button>`
@@ -200,7 +200,7 @@
     const deliveryTime = row.Status === 'Scheduled' ? row.ScheduledAt : row.SentAt || row.CreatedAt;
     return `<article class="notification-announcement-record">
       <div><small>${html(row.Status || 'Draft')}</small><strong>${html(row.Title || 'Announcement')}</strong><p>${html(row.Message || '')}</p></div>
-      <dl><div><dt>Recipients</dt><dd>${html(groups)}</dd></div><div><dt>Channels</dt><dd>${html(Object.entries(row.Channels || {}).filter(([, enabled]) => enabled).map(([name]) => name === 'InApp' ? 'In-app' : name).join(' + '))}</dd></div><div><dt>${row.Status === 'Scheduled' ? 'Scheduled' : 'Sent'}</dt><dd>${html(deliveryTime ? new Date(deliveryTime).toLocaleString() : '')}</dd></div><div><dt>By</dt><dd>${html(row.CreatedBy || '')}</dd></div>${row.Channels?.Push && row.Status !== 'Scheduled' ? `<div><dt>Push status</dt><dd>${Number(row.PushDelivered || 0)} delivered · ${Number(row.PushQueued || 0)} queued${Number(row.PushFailed || 0) ? ` · ${Number(row.PushFailed)} failed` : ''}</dd></div>` : ''}</dl>
+      <dl><div><dt>Recipients</dt><dd>${html(groups)}</dd></div><div><dt>Channels</dt><dd>${html(Object.entries(row.Channels || {}).filter(([, enabled]) => enabled).map(([name]) => name === 'InApp' ? 'In-app' : name).join(' + '))}</dd></div><div><dt>${row.Status === 'Scheduled' ? 'Scheduled' : 'Sent'}</dt><dd>${html(deliveryTime ? DynamaxTime.formatDateTime(deliveryTime) : '')}</dd></div><div><dt>By</dt><dd>${html(row.CreatedBy || '')}</dd></div>${row.Channels?.Push && row.Status !== 'Scheduled' ? `<div><dt>Push status</dt><dd>${Number(row.PushDelivered || 0)} delivered · ${Number(row.PushQueued || 0)} queued${Number(row.PushFailed || 0) ? ` · ${Number(row.PushFailed)} failed` : ''}</dd></div>` : ''}</dl>
       ${row.Error ? `<p class="notification-announcement-error">${html(row.Error)}</p>` : ''}
     </article>`;
   }
@@ -394,7 +394,7 @@
     form.querySelector('[data-disable-push]').disabled = !thisDevice;
     form.querySelector('[data-test-push]').disabled = !thisDevice;
     form.querySelector('.notification-device-list').innerHTML = (data.subscriptions || []).length
-      ? `<strong>Subscribed devices</strong>${data.subscriptions.map((row) => `<span><span><b>${html(row.DeviceName || 'Browser device')}</b><small>${html(row.LastSeenAt ? new Date(row.LastSeenAt).toLocaleString() : '')}${row.DeviceId === window.DynamaxWebPush?.deviceId?.() ? ' · This device' : ''}</small></span><button type="button" class="notification-device-delete" data-remove-push-device="${html(row.DeviceId)}" aria-label="Delete ${html(row.DeviceName || 'browser device')}" title="Delete device">&#128465;</button></span>`).join('')}`
+      ? `<strong>Subscribed devices</strong>${data.subscriptions.map((row) => `<span><span><b>${html(row.DeviceName || 'Browser device')}</b><small>${html(row.LastSeenAt ? DynamaxTime.formatDateTime(row.LastSeenAt) : '')}${row.DeviceId === window.DynamaxWebPush?.deviceId?.() ? ' · This device' : ''}</small></span><button type="button" class="notification-device-delete" data-remove-push-device="${html(row.DeviceId)}" aria-label="Delete ${html(row.DeviceName || 'browser device')}" title="Delete device">&#128465;</button></span>`).join('')}`
       : '<span>No browser devices are subscribed.</span>';
   }
 
@@ -449,7 +449,7 @@
     const scheduledValue = composeForm.elements.ScheduledAt.value;
     const scheduledAt = scheduledValue ? new Date(scheduledValue) : null;
     if (scheduledAt && Number.isNaN(scheduledAt.getTime())) { status.textContent = 'Choose a valid delivery date and time.'; return; }
-    const action = scheduledAt && scheduledAt.getTime() > Date.now() ? `schedule this message for ${scheduledAt.toLocaleString()}` : 'send this message now';
+    const action = scheduledAt && scheduledAt.getTime() > Date.now() ? `schedule this message for ${DynamaxTime.formatDateTime(scheduledAt)}` : 'send this message now';
     if (!await window.DynamaxDialogs.confirm({
       title: scheduledAt && scheduledAt.getTime() > Date.now() ? 'Schedule notification' : 'Send notification',
       message: `Are you sure you want to ${action} for ${recipientNames.join(', ')}?`,

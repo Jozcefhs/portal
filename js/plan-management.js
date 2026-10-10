@@ -269,7 +269,7 @@ function renderPlatformPaymentState() {
       <td>${escapeHtml(transfer.BankReference)}</td>
       <td>${transfer.HasProof ? `<button type="button" class="compact-action" data-platform-transfer-proof="${escapeHtml(transfer.Reference)}">View proof</button>` : '<span class="muted">Not supplied</span>'}</td>
       <td><span class="tenant-pool-status ${awaiting ? '' : paid ? 'ok' : 'bad'}">${escapeHtml(transfer.Status)}</span>${transfer.ProvisioningStatus ? `<small>${escapeHtml(transfer.ProvisioningStatus)}</small>` : ''}</td>
-      <td>${transfer.CreatedAt ? escapeHtml(new Date(transfer.CreatedAt).toLocaleString()) : '&mdash;'}</td>
+      <td>${transfer.CreatedAt ? escapeHtml(DynamaxTime.formatDateTime(transfer.CreatedAt)) : '&mdash;'}</td>
       <td>${awaiting ? `<span class="compact-row-actions"><button type="button" class="compact-action" data-platform-transfer-decision="approve" data-reference="${escapeHtml(transfer.Reference)}">Approve</button><button type="button" class="compact-action danger" data-platform-transfer-decision="reject" data-reference="${escapeHtml(transfer.Reference)}">Reject</button></span>` : `<span class="compact-row-actions"><span>${escapeHtml(closedCopy || 'Closed')}</span>${onboardingAction}</span>`}</td>
     </tr>`;
   }).join('') : '<tr><td colspan="8">No direct subscription transfers have been submitted.</td></tr>';
@@ -421,14 +421,14 @@ function renderTenantPool() {
       : pending && request.Mode === 'pool' && request.ActionRequired === false ? 'Capacity met'
         : request.Status;
     const retryDetail = retryScheduled
-      ? `Retry after ${new Date(request.NextAttemptAt).toLocaleString()}. ${request.LastError || ''}`
+      ? `Retry after ${DynamaxTime.formatDateTime(request.NextAttemptAt)}. ${request.LastError || ''}`
       : request.HoldReason || request.LastError || '';
     return `
-    <tr><td>${escapeHtml(request.Reference)}</td><td>${escapeHtml(editionLabel(request.Edition))}</td><td>${escapeHtml(request.Mode)}</td><td>${Number(request.ActionRequired ? request.EffectiveCount || request.Count || 1 : request.Count || 1)}</td><td><span class="tenant-pool-status ${poolStatusClass(displayStatus)}">${escapeHtml(displayStatus)}</span>${retryDetail ? `<small>${escapeHtml(retryDetail)}</small>` : ''}</td><td>${request.RequestedAt ? escapeHtml(new Date(request.RequestedAt).toLocaleString()) : '—'}</td><td>${blocked && request.BlockedCode === 'GOOGLE_BILLING_PROJECT_QUOTA' ? `<button type="button" class="compact-action" data-resume-tenant-request="${escapeHtml(request.Reference)}">Resume after approval</button>` : '—'}</td></tr>`;
+    <tr><td>${escapeHtml(request.Reference)}</td><td>${escapeHtml(editionLabel(request.Edition))}</td><td>${escapeHtml(request.Mode)}</td><td>${Number(request.ActionRequired ? request.EffectiveCount || request.Count || 1 : request.Count || 1)}</td><td><span class="tenant-pool-status ${poolStatusClass(displayStatus)}">${escapeHtml(displayStatus)}</span>${retryDetail ? `<small>${escapeHtml(retryDetail)}</small>` : ''}</td><td>${request.RequestedAt ? escapeHtml(DynamaxTime.formatDateTime(request.RequestedAt)) : '—'}</td><td>${blocked && request.BlockedCode === 'GOOGLE_BILLING_PROJECT_QUOTA' ? `<button type="button" class="compact-action" data-resume-tenant-request="${escapeHtml(request.Reference)}">Resume after approval</button>` : '—'}</td></tr>`;
   }).join('') : '<tr><td colspan="7">No provisioning requests are waiting.</td></tr>';
   if (tenantRetirementRows) {
     tenantRetirementRows.innerHTML = (tenantPoolState.retirements || []).length ? tenantPoolState.retirements.map((request) => `
-      <tr><td>${escapeHtml(request.FirebaseProjectId)}</td><td>${escapeHtml(editionLabel(request.Edition))}</td><td><span class="tenant-pool-status ${poolStatusClass(request.Status)}">${escapeHtml(request.Status)}</span></td><td>${Number(request.Attempts || 0)}</td><td>${request.RequestedAt ? escapeHtml(new Date(request.RequestedAt).toLocaleString()) : '—'}</td><td>${escapeHtml(request.LastError || '—')}</td></tr>
+      <tr><td>${escapeHtml(request.FirebaseProjectId)}</td><td>${escapeHtml(editionLabel(request.Edition))}</td><td><span class="tenant-pool-status ${poolStatusClass(request.Status)}">${escapeHtml(request.Status)}</span></td><td>${Number(request.Attempts || 0)}</td><td>${request.RequestedAt ? escapeHtml(DynamaxTime.formatDateTime(request.RequestedAt)) : '—'}</td><td>${escapeHtml(request.LastError || '—')}</td></tr>
     `).join('') : '<tr><td colspan="6">No tenant projects are awaiting secure retirement.</td></tr>';
     if ((tenantPoolState.retirements || []).length) {
       [...tenantRetirementRows.rows].forEach((row, index) => {

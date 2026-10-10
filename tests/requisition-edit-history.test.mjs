@@ -165,9 +165,10 @@ test('desktop refuses stale edits and surfaces atomic commit failures', async ()
 });
 
 test('web print escapes officer and changed-field text and includes edit actions', async () => {
+  await import('../js/display-time.js');
   const source = await readFile(new URL('../js/admin.js', import.meta.url), 'utf8');
   const block = source.slice(source.indexOf('function requisitionEditHistoryBlock('), source.indexOf('\nfunction openFinanceRecordPrint('));
-  const render = vm.runInNewContext(`(${block})`, { escapeHtml: value => String(value ?? '').replaceAll('<', '&lt;').replaceAll('>', '&gt;') });
+  const render = vm.runInNewContext(`(${block})`, { DynamaxTime: globalThis.DynamaxTime, escapeHtml: value => String(value ?? '').replaceAll('<', '&lt;').replaceAll('>', '&gt;') });
   const html = render({ EditHistory: [{ Action: 'EDIT REQUISITION', Officer: '<script>bad</script>',
     Timestamp: timestamp, Role: 'Director', ChangedFields: ['Amount'], RevisionNumber: 2 }] });
   assert.match(html, /EDIT REQUISITION/);

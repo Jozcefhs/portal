@@ -1,5 +1,7 @@
+import './display-time.js';
+
 const clean = (value) => String(value ?? '').trim();
-const esc = (value) => clean(value).replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
+const esc = (value) => clean(DynamaxTime.formatCell(value)).replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
 const money = (value) => Number(value || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const label = (value) => clean(value).replace(/([a-z])([A-Z])/g, '$1 $2');
 const csv = (value) => `"${(/^[=+\-@]/.test(clean(value)) ? "'" : '') + clean(value).replace(/"/g, '""')}"`;

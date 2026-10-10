@@ -217,7 +217,7 @@ function lifecycleEmail(registration, window, notice) {
   const portalUrl = clean(registration.PortalUrl);
   const billingUrl = portalUrl ? `${portalUrl.replace(/\/$/, '')}/admin.html#subscription` : '';
   const formattedDate = (value) => new Date(value).toLocaleDateString('en-NG', {
-    day: 'numeric', month: 'long', year: 'numeric'
+    day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Africa/Lagos'
   });
   const deletionDate = formattedDate(window.retentionEndsAt);
   const renewalDate = window.paidThroughAt ? formattedDate(window.paidThroughAt) : '';
