@@ -44,3 +44,32 @@ export async function recentVendorSales(env, user, section, vendors) {
   return [...sales.values()].sort((a,b) => b.SortDate.localeCompare(a.SortDate) || b.SaleNo.localeCompare(a.SaleNo))
     .slice(0,30).map(({AmountCents,vendors,SortDate,...sale}) => ({...sale,Amount:amount(AmountCents)}));
 }
+
+// Committed opening adjustments are vendor-level summaries, never old receipts
+// inferred from today's stock owner or new sales to be posted again.
+export async function recentVendorHistoricalOpenings(env, user, vendors) {
+  const scope = settlementScope(user), openings = [];
+  if (vendors.length > 20) fail('Recent sales supports up to 20 linked vendors. Ask Accounts for a vendor statement.',413);
+  for (const vendor of vendors) {
+    const entries = await queryCollection(env,'vendorEarnings',{
+      filters:[{field:'ScopeKey',op:'==',value:scope.ScopeKey},{field:'VendorId',op:'==',value:vendor.VendorId},
+        {field:'Type',op:'==',value:'Reviewed historical opening'}],
+      orderBy:[{field:'Date',direction:'DESCENDING'},{field:'__name__',direction:'DESCENDING'}],limit:30
+    });
+    for (const entry of entries) {
+      if (!visible(entry,scope) || lower(entry.BranchId) !== scope.BranchId || entry.OrganisationEdition !== scope.OrganisationEdition
+        || entry.VendorId !== vendor.VendorId || entry.Type !== 'Reviewed historical opening'
+        || scope.OrganisationEdition === 'school' && lower(entry.SchoolSection) !== lower(vendor.SchoolSection)) continue;
+      const values = ['GrossCents','RefundCents','ChargeCents','PaidCents','NetCents','OutstandingCents'].map(key => entry[key]);
+      const [gross,refunds,charge,paid,net,outstanding] = values;
+      if (values.some(value => !Number.isSafeInteger(value) || value < 0) || net !== gross - refunds - charge || outstanding !== net - paid
+        || !clean(entry.OpeningReference) || !/^\d{4}-\d{2}-\d{2}$/.test(clean(entry.Date)))
+        fail('A historical opening needs Accounts review. No incomplete history was shown.',409);
+      openings.push({VendorName:clean(vendor.Name) || 'Vendor',Reference:clean(entry.OpeningReference),Date:clean(entry.Date),
+        HistoricalSales:amount(gross),Refunds:amount(refunds),Deductions:amount(charge),PreviouslyPaid:amount(paid),
+        OpeningAmountOwed:amount(outstanding),SortId:clean(entry.__name || entry.EntryId)});
+    }
+  }
+  return openings.sort((a,b) => b.Date.localeCompare(a.Date) || b.SortId.localeCompare(a.SortId))
+    .slice(0,30).map(({SortId,...opening}) => opening);
+}

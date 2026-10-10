@@ -35,6 +35,10 @@
 .vendor-table th { text-align:left; padding:10px; background:#eaf1f7; white-space:nowrap; }
 .vendor-table td { border-bottom:1px solid #dae5ec; padding:10px; vertical-align:top; }
 .vendor-table td small { display:block; color:#537089; margin-top:4px; }
+.vendor-product-table { table-layout:auto; }
+.vendor-product-table td { overflow-wrap:normal; word-break:normal; }
+.vendor-product-actions { display:flex; flex-wrap:wrap; gap:6px; }
+.vendor-workspace .vendor-product-actions button { flex:0 0 auto; width:auto; min-height:44px; padding:9px 12px; font-size:12px; line-height:1.25; white-space:nowrap; overflow-wrap:normal; word-break:normal; }
 .vendor-badge { display:inline-block; padding:4px 8px; border-radius:12px; font-size:12px; background:#dff3ee; color:#126a67; }
 .vendor-dialog { max-width:760px; width:calc(100% - 24px); max-height:90vh; overflow:auto; padding:18px; border:1px solid #c3d8e7; border-radius:14px; }
 .vendor-dialog::backdrop { background:rgba(10,33,53,.55); }
@@ -61,6 +65,15 @@
   .vendor-metric { padding:9px; }
   .vendor-metric strong { font-size:16px; }
   .vendor-actions button { flex:1 1 120px; }
+  /* Keep every product action visible without squeezing labels into vertical text. */
+  .vendor-product-table, .vendor-product-table tbody { display:block; width:100%; }
+  .vendor-product-table thead { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+  .vendor-product-table tbody { display:grid; gap:10px; }
+  .vendor-product-table tr { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); padding:10px; border:1px solid #d4e3ed; border-radius:9px; }
+  .vendor-product-table td { min-width:0; padding:5px; border:0; overflow-wrap:anywhere; }
+  .vendor-product-table td:first-child, .vendor-product-table td:last-child { grid-column:1/-1; }
+  .vendor-product-table td[data-label]::before { content:attr(data-label); display:block; margin-bottom:3px; color:#537089; font-size:10px; font-weight:700; }
+  .vendor-workspace .vendor-product-actions button { flex:1 0 auto; }
 }
 .vendor-form [hidden]{display:none!important}
 /* Reuse the staff POS components so both counters keep the same responsive design. */
@@ -70,15 +83,25 @@
 .vendor-pos .vendor-pos-tabs [data-refresh]:hover{background:#135bd0;border-color:#135bd0}
 .vendor-pos .vendor-pos-shell{margin:0;min-width:0;overflow:clip}
 .vendor-pos .commerce-search-label{position:sticky;top:0;z-index:13;padding:8px 0;margin-top:-8px;background:#fff;box-shadow:0 5px 0 #fff}
-.staff-page .vendor-pos .commerce-search-label{top:68px}
+.staff-page .vendor-pos .commerce-search-label{top:var(--staff-topbar-height,68px)}
 .vendor-pos [data-cart-lines][hidden]+.tuck-shop-step-heading{margin-top:10px;padding-top:0;border-top:0}
-.vendor-pos .vendor-pos-history>summary{padding:10px 18px}
+.vendor-pos .vendor-pos-history>summary{padding:10px 18px;gap:10px;flex-wrap:wrap}
+.vendor-pos .vendor-pos-history>summary span{height:auto;min-height:25px;padding:4px 8px;border-radius:12px;text-align:center}
 .vendor-pos .vendor-history-tools{padding:8px 18px}
 .vendor-pos .vendor-history-tools button{width:auto;min-height:34px;font-size:11px}
 .vendor-pos .vendor-pos-history .vendor-status{padding:0 18px}
 .vendor-pos .vendor-pos-history .vendor-table{min-width:620px}
 .vendor-pos .vendor-pos-history caption{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 .vendor-pos .vendor-pos-history .vendor-table th{position:sticky;top:0;z-index:1}
+.vendor-pos .vendor-history-openings{padding:0 18px 8px}
+.vendor-history-openings h4{margin:8px 0}
+.vendor-history-openings>p{font-size:12px;line-height:1.5;margin:8px 0;color:#537089}
+.vendor-history-openings .vendor-card{margin:8px 0}
+.vendor-opening-amounts{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,160px),1fr));gap:12px;margin:12px 0 0}
+.vendor-opening-amounts dt{font-size:12px;color:#537089}
+.vendor-opening-amounts dd{margin:4px 0 0;font-weight:700;font-size:16px}
+html[data-theme="dark"] .vendor-history-openings .vendor-card{background:#14263a;border-color:#405773}
+html[data-theme="dark"] .vendor-history-openings>p,html[data-theme="dark"] .vendor-opening-amounts dt{color:#bdcce0}
 html[data-theme="dark"] .vendor-pos .commerce-search-label{background:#0d1b2b;box-shadow:0 5px 0 #0d1b2b}
 .vendor-pos [hidden]{display:none!important}
 /* Spend the recovered intro space on stock, not larger product cards or checkout. */
@@ -101,7 +124,6 @@ html[data-theme="dark"] .vendor-pos{color:#edf4ff}
 html[data-theme="dark"] .vendor-pos .vendor-pos-tabs [data-refresh]{background:#1768e8;color:#fff;border-color:#1768e8}
 html[data-theme="dark"] .vendor-pos .vendor-pos-guidance{border-color:#405773;color:#bdcce0}
 @media(max-width:680px){
-  .staff-page .vendor-pos .commerce-search-label{top:76px}
   .vendor-pos .vendor-status{min-height:0;margin:6px 0;font-size:11px}
   .vendor-pos .vendor-pos-tabs{margin:0 0 6px}
   .vendor-pos .vendor-pos-tabs [data-refresh]{min-height:36px;padding:7px 10px;font-size:11px}

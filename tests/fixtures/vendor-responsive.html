@@ -1,0 +1,19 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Responsive vendor layout · local sample</title>
+<link rel="stylesheet" href="/css/style.css"><link rel="stylesheet" href="/css/vendor-settlements.css">
+<body class="staff-page">
+<!-- The fixture server inserts the real staff header and mobile navigation here. -->
+<main class="staff-shell"><div class="staff-main-content"><section id="root" class="card staff-panel"></section></div></main>
+<script src="/js/vendor-settlements.js"></script><script src="/js/vendor-pos.js"></script><script>
+const products=Array.from({length:24},(_,i)=>({InventoryId:'main-Secondary-SAMPLE-'+i,VendorId:'sample-vendor',ItemCode:'SAMPLE-'+i,
+  ItemName:['40LV','4 Figure Table','Bathing Soap','Big boy'][i%4],Section:'tuckShop',Quantity:30+i,Price:500+i*100,Category:'General item',Unit:'pcs'}));
+const request=async action=>{
+  if(action==='bootstrap')return {vendors:[{VendorId:'sample-vendor',Name:'Sample Vincent Stores',Active:'YES',SchoolSection:'Secondary'}],
+    balances:[],products,requests:[],productChanges:[],settings:{Enabled:true,AccountingConfirmed:true},capabilities:{vendor:true,products:true,edition:'school'}};
+  if(action==='salesBootstrap')return {products,sellingEnabled:true};
+  if(action==='recentVendorSales')return {sales:[]};
+  throw new Error('Local layout preview only. No live data or writes.');
+};
+if(new URLSearchParams(location.search).get('view')==='pos')DynamaxVendorPOS.mount(document.querySelector('#root'),request,'tuckShop');
+else DynamaxVendors.mount(document.querySelector('#root'),request);
+</script></body></html>

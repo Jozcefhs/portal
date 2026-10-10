@@ -62,7 +62,7 @@ async function fixture(section = 'tuckShop', options = {}) {
   const request = async(action,body) => {
     calls.push({action,body:structuredClone(body)});
     if (action === 'salesBootstrap') return {products,sellingEnabled:options.enabled !== false,message:'Linked vendor products only.'};
-    if (action === 'recentVendorSales') {if(options.historyError) throw new Error(options.historyError); return options.historyRequest ? options.historyRequest(body) : {sales:options.recentSales || []};}
+    if (action === 'recentVendorSales') {if(options.historyError) throw new Error(options.historyError); return options.historyRequest ? options.historyRequest(body) : {sales:options.recentSales || [],historicalOpenings:options.historicalOpenings || []};}
     if (action === 'vendorCustomerSearch') return {customers:options.customers || [{CustomerRef:'FIXTURE/001',CustomerName:'Fixture child',Detail:'Grade 7'}]};
     if (action === 'vendorWalletLookup') {if(options.lookupError) throw new Error(options.lookupError); return {account:{AccountRef:'FIXTURE/001',DisplayName:'Fixture child',WalletBalance:30900,WalletSpentToday:200,...options.walletSummary}};}
     if (action === 'previewVendorSale') return {Amount:333};
@@ -89,8 +89,7 @@ test('empty checkout has no space-wasting placeholders but still requires produc
 
 test('vendor search is sticky under the staff header, without a clipping scroll ancestor',()=>{
   assert.match(css,/\.vendor-pos \.commerce-search-label\{position:sticky;top:0;z-index:13/);
-  assert.match(css,/\.staff-page \.vendor-pos \.commerce-search-label\{top:68px\}/);
-  assert.match(css,/@media\(max-width:680px\)\{\s*\.staff-page \.vendor-pos \.commerce-search-label\{top:76px\}/);
+  assert.match(css,/\.staff-page \.vendor-pos \.commerce-search-label\{top:var\(--staff-topbar-height,68px\)\}/);
   assert.match(css,/\.vendor-pos \.vendor-pos-shell\{[^}]*overflow:clip/);
 });
 
@@ -121,6 +120,44 @@ test('history failures are visible and retryable without disabling checkout',asy
   assert.doesNotMatch(f.root.querySelector('[data-history-content]').innerHTML,/No recent sales/);
   f.root.querySelector('[data-add]').onclick();assert.equal(f.root.querySelector('[data-complete]').disabled,false);
   assert.equal(f.root.querySelector('[data-history-refresh]').disabled,false);f.mounted.destroy();
+});
+
+test('earlier organisation-owned sales appear as a labelled historical opening, not fake receipts or current balance',async()=>{
+  assert.match(css,/\.vendor-pos \.vendor-pos-history>summary\{[^}]*flex-wrap:wrap/);
+  assert.match(css,/\.vendor-pos \.vendor-pos-history>summary span\{[^}]*height:auto/);
+  const historicalOpenings=[{VendorName:'Vincent <Stores>',Reference:'HIST-001<script>',Date:'2026-10-08',
+    HistoricalSales:200000,Refunds:10000,Deductions:9100,PreviouslyPaid:10000,OpeningAmountOwed:170900}];
+  for (const section of ['tuckShop','restaurant','organizationStore']) {
+    const f=await fixture(section,{historicalOpenings});
+    const history=f.root.querySelector('[data-history]');history.open=true;history.ontoggle({target:history});
+    await new Promise(resolve=>setImmediate(resolve));
+    const html=f.root.querySelector('[data-history-content]').innerHTML;
+    assert.match(html,/Historical sales opening/);assert.match(html,/Historical sales collected/);
+    assert.match(html,/₦200,000\.00/);assert.match(html,/Amount owed at opening/);assert.match(html,/₦170,900\.00/);
+    assert.match(html,/Refunds|Agreed deductions|Previously paid/);assert.match(html,/not individual receipts or your current balance/);
+    assert.match(html,/Earlier sales are summarised/);assert.doesNotMatch(html,/<table|<script>|Vincent <Stores>/);
+    assert.equal(f.root.querySelector('[data-history-count]').textContent,'0 receipts · 1 historical opening');
+    assert.equal(html.includes('not shop-specific'),section!=='tuckShop');
+    f.root.querySelector('[data-add]').onclick();
+    assert.equal(f.root.querySelector('[data-history-count]').textContent,'0 receipts · 1 historical opening','cart redraw keeps the separate count');
+    assert.equal(f.calls.filter(row=>row.action.startsWith('record')).length,0);
+    f.mounted.destroy();
+  }
+});
+
+test('receipts and multiple historical summaries remain separate and a failed refresh cannot show stale amounts as fresh',async()=>{
+  const opening={VendorName:'Vendor',Reference:'OPEN',Date:'2026-10-08',HistoricalSales:100,Refunds:0,Deductions:0,PreviouslyPaid:100,OpeningAmountOwed:0};
+  const options={historicalOpenings:[opening,{...opening,Reference:'SECOND'}],recentSales:[{SaleNo:'NEW-SALE',SaleDate:'2026-10-10',CustomerName:'Customer',PaymentMethod:'Cash',CollectionMode:'Vendor collected',Amount:500,Items:[]}]};
+  const f=await fixture('restaurant',options),history=f.root.querySelector('[data-history]');history.open=true;history.ontoggle({target:history});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(f.root.querySelector('[data-history-count]').textContent,'1 receipt · 2 historical openings');
+  assert.match(f.root.querySelector('[data-history-content]').innerHTML,/NEW-SALE/);
+  assert.match(f.root.querySelector('[data-history-content]').innerHTML,/₦0\.00/,'fully-paid openings still show their historical sales and zero opening owed');
+  options.historyError='Historical read failed';await f.root.querySelector('[data-history-refresh]').onclick();
+  assert.match(f.root.querySelector('[data-history-content]').innerHTML,/Historical read failed/);
+  assert.doesNotMatch(f.root.querySelector('[data-history-content]').innerHTML,/₦|NEW-SALE/);
+  assert.equal(f.root.querySelector('[data-history-count]').textContent,'');
+  f.mounted.destroy();
 });
 
 test('slow history reads do not disable the cart and results cannot update an unmounted counter',async()=>{

@@ -4,6 +4,7 @@ import {readFile} from 'node:fs/promises';
 
 const files = new Map([
   ['/tests/fixtures/vendor-pos.html',new URL('../fixtures/vendor-pos.html',import.meta.url)],
+  ['/images/Logo.png',new URL('../../images/Logo.png',import.meta.url)],
   ['/tests/fixtures/vendor-registration.html',new URL('../fixtures/vendor-registration.html',import.meta.url)],
   ['/tests/fixtures/staff-account-list.html',new URL('../fixtures/staff-account-list.html',import.meta.url)],
   ['/js/list-sorting.js',new URL('../../js/list-sorting.js',import.meta.url)],
@@ -16,6 +17,23 @@ const files = new Map([
 createServer(async(req,res) => {
   try {
     const path = new URL(req.url,'http://localhost').pathname;
+    if (req.method === 'GET' && path === '/tests/fixtures/vendor-responsive.html') {
+      const adminHtml = await readFile(new URL('../../admin.html',import.meta.url),'utf8');
+      const fixture = await readFile(new URL('../fixtures/vendor-responsive.html',import.meta.url),'utf8');
+      const header = adminHtml.slice(adminHtml.indexOf('<header class="staff-topbar">'),adminHtml.indexOf('</header>')+9)
+        .replace('class="staff-identity" hidden','class="staff-identity"')
+        .replace('Organisation Management Suite','Sample Academy')
+        .replace('images/Logo.png','/images/Logo.png')
+        .replace('id="staffDisplayName"></strong>','id="staffDisplayName">Sample vendor</strong>')
+        .replace('id="staffRole"></small>','id="staffRole">Vendor User</small>')
+        .replace('<button type="button" id="staffProfileTrigger"','<div class="notification-centre"><button class="staff-header-icon notification-trigger" aria-label="Notifications">🔔</button></div><button type="button" id="staffProfileTrigger"');
+      const admin = await readFile(new URL('../../js/admin.js',import.meta.url),'utf8');
+      const navigation = admin.slice(admin.indexOf('function renderMobileNavigation('),admin.indexOf('\nconst {',admin.indexOf('function renderMobileNavigation(')));
+      const nav = `<nav id="staffMobileNav" class="staff-mobile-nav" aria-label="Mobile portal navigation"></nav><script>const mobileNav=document.getElementById('staffMobileNav'),moduleGrid=document.createElement('div'),tabIcons={overview:'⌂',students:'♟',accounts:'₦'},activeSection='overview',escapeHtml=v=>String(v);\n${navigation}\nrenderMobileNavigation([['overview','Home'],['students','Students'],['accounts','Accounts']],[]);</script>`;
+      res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});
+      res.end(fixture.replace('<!-- The fixture server inserts the real staff header and mobile navigation here. -->',header+nav));
+      return;
+    }
     if (req.method === 'GET' && path === '/tests/fixtures/staff-account-list-production.js') {
       const admin = await readFile(new URL('../../js/admin.js',import.meta.url),'utf8');
       const helpers = admin.slice(admin.indexOf('function alphabeticalStaffRoles('),admin.indexOf('function renderStaffUsers('));
@@ -56,7 +74,7 @@ createServer(async(req,res) => {
       return;
     }
     if (req.method !== 'GET' || !files.has(path)) {res.writeHead(404);res.end();return;}
-    const type = path.endsWith('.js') ? 'text/javascript' : path.endsWith('.css') ? 'text/css' : 'text/html';
+    const type = path.endsWith('.png') ? 'image/png' : path.endsWith('.js') ? 'text/javascript' : path.endsWith('.css') ? 'text/css' : 'text/html';
     res.writeHead(200,{'Content-Type':`${type}; charset=utf-8`,'Cache-Control':'no-store'});
     res.end(await readFile(files.get(path)));
   } catch {res.writeHead(500);res.end('Fixture unavailable.');}

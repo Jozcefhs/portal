@@ -17,7 +17,7 @@
     let data, disposed = false, busy = false, checkoutId = '', customer = null, notice = '', failed = false;
     let draft = {PaymentMethod:section === 'tuckShop' ? 'Student Wallet' : 'Cash', CollectionMode:'School collected', CustomerName:''};
     const cart = new Map(), addQuantities = new Map(), pending = new Set();
-    let historyOpen = false, history = null, historyError = '', historyController = null;
+    let historyOpen = false, history = null, historicalOpenings = [], historyError = '', historyController = null;
     let search = '', manualLookupOpen = false, customerType = 'Student', customerSearch = '', searchTimer = 0, searchGeneration = 0, searchController = null, scanController = null, faceController = null;
     const icon = kind => tools.lookupIcon?.(kind) || lookupIcon;
     const label = section === 'tuckShop' ? 'Tuck Shop' : section === 'restaurant' ? 'Restaurant' : 'Organisation Store';
@@ -76,24 +76,36 @@
     async function load() {
       const result = await call('salesBootstrap');
       if (!result) return;
-      historyController?.abort(); historyController = null; history = null; historyError = '';
+      historyController?.abort(); historyController = null; history = null; historicalOpenings = []; historyError = '';
       data = result; cart.clear(); addQuantities.clear(); checkoutId = ''; customer = null;
       draft.WalletPin = ''; draft.WalletCardId = ''; draft.AccountRef = ''; customerSearch = '';
       status(result.sellingEnabled ? '' : result.message); draw();
       if (historyOpen) void loadHistory();
     }
+    function historyCount() {
+      return history === null || historyError ? '' : historicalOpenings.length
+        ? `${history.length} ${history.length === 1 ? 'receipt' : 'receipts'} · ${historicalOpenings.length} historical ${historicalOpenings.length === 1 ? 'opening' : 'openings'}` : String(history.length);
+    }
+    function historicalOpeningMarkup() {
+      if (!historicalOpenings.length) return '';
+      return `<section class="vendor-history-openings" aria-label="Historical sales opening"><h4>Historical sales opening</h4>
+        <p>Latest 30 reviewed opening adjustments for your linked vendors. Summary only, not individual receipts or your current balance.${section !== 'tuckShop' ? ' These vendor-level openings are not shop-specific.' : ''}</p>
+        ${historicalOpenings.map(opening => `<article class="vendor-card"><div class="vendor-header"><strong>${esc(opening.VendorName)}</strong><small>${esc(opening.Date)} · ${esc(opening.Reference)}</small></div>
+          <dl class="vendor-opening-amounts">${[['Historical sales collected',opening.HistoricalSales],['Refunds',opening.Refunds],['Agreed deductions',opening.Deductions],['Previously paid',opening.PreviouslyPaid],['Amount owed at opening',opening.OpeningAmountOwed]].map(([title,value]) => `<div><dt>${title}</dt><dd>${money(value)}</dd></div>`).join('')}</dl>
+        </article>`).join('')}</section>`;
+    }
     function historyMarkup() {
       return `<div class="vendor-history-tools"><button type="button" data-history-refresh${historyController ? ' disabled' : ''}>Refresh recent sales</button></div>
         ${historyError ? `<p class="vendor-status error" role="status">${esc(historyError)}</p>` : history === null
           ? '<p class="vendor-status" role="status">Loading recent sales…</p>'
-          : history.length ? `<div class="table-wrap vendor-table-wrap"><table class="vendor-table"><caption class="sr-only">Latest 30 sales for your linked vendors; amounts include only their products</caption><thead><tr><th>Receipt / date</th><th>Customer</th><th>Products</th><th>Payment</th><th>Amount</th></tr></thead><tbody>${history.map(sale => `<tr><td>${esc(sale.SaleNo)}<small>${esc(sale.SaleDate.replace('T',' ').slice(0,19))}</small></td><td>${esc(sale.CustomerName)}</td><td>${sale.Items.map(item => `${esc(item.ItemName)} × ${esc(item.Quantity)}`).join('<br>')}</td><td>${esc(sale.PaymentMethod)}<small>${esc(sale.CollectionMode)}</small></td><td>${money(sale.Amount)}</td></tr>`).join('')}</tbody></table></div>`
-            : '<p class="vendor-status" role="status">No recent sales for your linked vendors in this shop.</p>'}`;
+          : `${historicalOpeningMarkup()}${history.length ? `<div class="table-wrap vendor-table-wrap"><table class="vendor-table"><caption class="sr-only">Latest 30 sales for your linked vendors; amounts include only their products</caption><thead><tr><th>Receipt / date</th><th>Customer</th><th>Products</th><th>Payment</th><th>Amount</th></tr></thead><tbody>${history.map(sale => `<tr><td>${esc(sale.SaleNo)}<small>${esc(sale.SaleDate.replace('T',' ').slice(0,19))}</small></td><td>${esc(sale.CustomerName)}</td><td>${sale.Items.map(item => `${esc(item.ItemName)} × ${esc(item.Quantity)}`).join('<br>')}</td><td>${esc(sale.PaymentMethod)}<small>${esc(sale.CollectionMode)}</small></td><td>${money(sale.Amount)}</td></tr>`).join('')}</tbody></table></div>`
+            : `<p class="vendor-status" role="status">${historicalOpenings.length ? 'Earlier sales are summarised in the historical opening above. No individual vendor-owned receipts yet in this shop.' : 'No recent sales for your linked vendors in this shop.'}</p>`}`}`;
     }
     function updateHistory() {
       const panel = root.querySelector('[data-history-content]');
       if (!panel) return;
       panel.innerHTML = historyMarkup();
-      const count = root.querySelector('[data-history-count]'); if (count) count.textContent = history === null ? '' : String(history.length);
+      const count = root.querySelector('[data-history-count]'); if (count) count.textContent = historyCount();
       panel.querySelector('[data-history-refresh]').onclick = loadHistory;
     }
     async function loadHistory() {
@@ -102,7 +114,7 @@
       const timer = setTimeout(() => controller.abort(),30000);
       try {
         const result = await request('recentVendorSales',{Section:section},controller.signal);
-        if (!disposed && historyController === controller) history = result.sales || [];
+        if (!disposed && historyController === controller) {history = result.sales || []; historicalOpenings = result.historicalOpenings || [];}
       } catch (error) {
         if (!disposed && historyController === controller) historyError = error.name === 'AbortError'
           ? 'Recent sales timed out. Refresh recent sales to retry.' : error.message;
@@ -144,7 +156,7 @@
         ${wallet && customer ? `<label>Wallet PIN <small>(when required)</small><input name="WalletPin" type="password" inputmode="numeric" autocomplete="off" value="${esc(draft.WalletPin)}"></label>` : ''}
         <div class="commerce-checkout-total"><span>Calculated total</span><strong>${money(total)}</strong></div>
         <div class="config-actionbar"><button type="submit" data-complete ${!data.sellingEnabled || !cart.size || school && !customer ? 'disabled' : ''}>${wallet ? 'Complete wallet sale' : school ? 'Complete staff sale' : 'Complete sale'}</button></div></div></form><p class="vendor-status${failed ? ' error' : ''}" data-status role="status"${notice ? '' : ' hidden'}>${esc(notice)}</p></section></div>
-        <details class="commerce-sales-history vendor-pos-history" data-history${historyOpen ? ' open' : ''}><summary>Recent ${label} Sales <span data-history-count>${history === null ? '' : history.length}</span></summary><div data-history-content>${historyMarkup()}</div></details></section></section>`;
+        <details class="commerce-sales-history vendor-pos-history" data-history${historyOpen ? ' open' : ''}><summary>Recent ${label} Sales <span data-history-count>${historyCount()}</span></summary><div data-history-content>${historyMarkup()}</div></details></section></section>`;
       root.querySelector('[data-history]').ontoggle = event => {
         historyOpen = event.target.open;
         if (historyOpen && history === null && !historyError) void loadHistory();

@@ -44,24 +44,37 @@ function workspaceRoot() {
   return container();
 }
 
-async function fixture() {
+async function fixture(options = {}) {
   const root=workspaceRoot(),window={},reads=[],calls=[];
   class FormDataFixture {constructor(form){this.rows=Object.values(form.elements).map(node=>[node.name,node.value]);}[Symbol.iterator](){return this.rows[Symbol.iterator]();}}
   const request=async(action,body,signal)=>{
     calls.push({action,body});
-    if(action==='bootstrap') return {vendors:[{VendorId:'v1',Name:'First vendor'},{VendorId:'v2',Name:'Second vendor'}],balances:[],products:[],requests:[],settings:{Enabled:true,AccountingConfirmed:true},capabilities:{vendor:true}};
+    if(action==='bootstrap') return {vendors:[{VendorId:'v1',Name:'First vendor'},{VendorId:'v2',Name:'Second vendor'}],balances:[],products:options.products || [],requests:[],settings:{Enabled:true,AccountingConfirmed:true},capabilities:{vendor:true,products:true}};
     if(action==='statement') return new Promise((resolve,reject)=>reads.push({body,signal,resolve,reject}));
     throw new Error(`Unexpected action: ${action}`);
   };
   runInNewContext(source,{window,FormData:FormDataFixture,Intl,AbortController,setTimeout,clearTimeout,crypto:webcrypto});
   const mounted=window.DynamaxVendors.mount(root,request);
   await tick();
-  root.querySelectorAll('[data-tab]').find(node=>node.dataset.tab==='statement').onclick();
+  root.querySelectorAll('[data-tab]').find(node=>node.dataset.tab===(options.products ? 'products' : 'statement')).onclick();
   const filter=()=>root.querySelector('[data-statement-filter]');
   const change=(name,value)=>{filter().elements[name].value=value;filter().onchange({target:filter().elements[name]});};
   return {root,reads,calls,mounted:{destroy(){mounted.destroy();reads.forEach(read=>read.resolve(null));}},change,filter,result:()=>root.querySelector('[data-statement-result]'),
     response(index,amount=0){const read=reads[index];read.resolve({vendor:{VendorId:read.body.VendorId,Name:read.body.VendorId==='v1'?'First vendor':'Second vendor'},balance:{Available:amount},availableInPeriod:amount,entries:[],payments:[]});}};
 }
+
+test('responsive product rows preserve stock, escaping and working edit / delivery handlers',async t=>{
+  const f=await fixture({products:[{InventoryId:'main-Secondary-test',VendorId:'v1',ItemName:'Water <sample>',Section:'tuckShop',Quantity:5,Price:500}]});
+  t.after(()=>f.mounted.destroy());
+  const panel=f.root.querySelector('[data-panel]');
+  assert.match(panel.innerHTML,/vendor-table vendor-product-table/);
+  assert.match(panel.innerHTML,/Water &lt;sample&gt;/);
+  assert.match(panel.innerHTML,/data-label="Owner">First vendor/);
+  assert.match(panel.innerHTML,/data-label="Stock \/ price">5 · ₦500\.00/);
+  assert.equal(typeof panel.querySelector('[data-edit-product]').onclick,'function');
+  assert.equal(typeof panel.querySelector('[data-delivery]').onclick,'function');
+  assert.deepEqual(f.calls.map(call=>call.action),['bootstrap']);
+});
 
 test('switching vendors automatically loads their statement and preserves the date range',async t=>{
   const f=await fixture();t.after(()=>f.mounted.destroy());

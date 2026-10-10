@@ -3,7 +3,7 @@ import { COMMERCE_CONFIG, previewOrganizationCommerceSale, recordManualOrganizat
 import { clean, lower, fail, settlementScope } from './vendor-settlement-rules.js';
 import { linkedSalesVendors, restrictVendorInventory, vendorCustomerScope } from './vendor-sales-access.js';
 import { searchTuckShopCustomers, canonicalTuckShopStudentReference } from './school-tuck-shop.js';
-import { recentVendorSales } from './vendor-sales-history.js';
+import { recentVendorSales, recentVendorHistoricalOpenings } from './vendor-sales-history.js';
 
 // Only the selected, scope-checked customer's checkout summary is exposed.
 // Never return the full wallet payload, ledger, limits, contacts or PIN data.
@@ -40,7 +40,12 @@ function saleBody(body, user, saleId) {
 export async function handleVendorSalesAction(env, user, body) {
   const scope = settlementScope(user), section = clean(body.Section || (scope.OrganisationEdition === 'school' ? 'tuckShop' : 'organizationStore'));
   const vendors = await linkedSalesVendors(env,user,section);
-  if (body.action === 'recentVendorSales') return {ok:true,sales:await recentVendorSales(env,user,section,vendors)};
+  if (body.action === 'recentVendorSales') {
+    const [sales,historicalOpenings] = await Promise.all([
+      recentVendorSales(env,user,section,vendors),recentVendorHistoricalOpenings(env,user,vendors)
+    ]);
+    return {ok:true,sales,historicalOpenings};
+  }
   if (body.action === 'salesBootstrap') {
     const rows = (await listCollection(env,COMMERCE_CONFIG[section].inventory)).filter(row => lower(row.BranchId || 'main') === scope.BranchId
       && (!row.OrganisationEdition || row.OrganisationEdition === scope.OrganisationEdition)

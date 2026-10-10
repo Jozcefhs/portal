@@ -10,6 +10,7 @@ import { objectToFirestoreFields, firestoreDocumentToObject } from '../functions
 const withoutImports = source => source.replace(/^import[\s\S]*?from '[^']+';\r?\n/gm,'').replace(/export /g,'');
 const staffLookupSource = withoutImports(await readFile(new URL('../functions/lib/staff-auth.js',import.meta.url),'utf8'));
 const accessSource = withoutImports(await readFile(new URL('../functions/lib/vendor-sales-access.js',import.meta.url),'utf8'));
+const historySource = withoutImports(await readFile(new URL('../functions/lib/vendor-sales-history.js',import.meta.url),'utf8'));
 const posSource = withoutImports(await readFile(new URL('../functions/lib/vendor-sales.js',import.meta.url),'utf8'))
   .replace(/const \{getWalletCardAccount\} = await import\('[^']+'\);/g,'')
   .replace(/const \{recordWalletPurchase\} = await import\('[^']+'\);/g,'');
@@ -598,11 +599,30 @@ function commerceFixture(edition = 'school', section = 'tuckShop', options = {})
     safeDocumentId:v => String(v).replace(/[^a-zA-Z0-9_-]/g,'_'),schoolSectionFor:r => r.SchoolSection,
     nowIso:() => timestamp,sha256Hex,requireConfiguredDesktopSecret:() => 'fixture-secret',
     buildWalletPurchaseAccountingJournal,batchCommitDocuments:f.commit});
-  const pos = vm.runInNewContext(`${posSource}\nhandleVendorSalesAction`,{...context,...rules,...commerce,TextEncoder,
+  const history = vm.runInNewContext(`${historySource}\n({recentVendorSales,recentVendorHistoricalOpenings})`,{...context,...rules,...commerce,
+    queryCollection:async (_env,c,opts) => f.list(c).filter(row => opts.filters.every(q => q.op === 'in' ? q.value.includes(row[q.field]) : row[q.field] === q.value))
+      .sort((a,b) => String(b.Date).localeCompare(String(a.Date)) || b.__id.localeCompare(a.__id)).slice(0,opts.limit)});
+  const pos = vm.runInNewContext(`${posSource}\nhandleVendorSalesAction`,{...context,...rules,...commerce,...history,TextEncoder,
     recordWalletPurchase:wallet,getWalletCardAccount:async () => ({account:await walletAccountPayload({},await findStudent())})});
   return {...f,commerce,pos,wallet,sha256Hex,section,collection,actor:{...user,edition},body:{SaleRequestId:'sale1',PaymentMethod:'Cash',Items:[{Reference:'stock1',Quantity:2}]}};
 }
 for (const [edition,section] of [['school','tuckShop'],['faith','restaurant'],['organization','organizationStore']]) {
+  test(`${edition} actual confirmed opening round trips into read-only POS history without changing balances or past receipts`,async()=>{
+    const f=commerceFixture(edition,section,{firestoreRoundTrip:true});
+    const owner=f.get('commerceVendors','v1');f.put('commerceVendors','v1',{...owner,LoginUsername:'seller',PosEnabled:true});
+    f.put('organizationCommerceSales','OLD',{SaleNo:'OLD',Amount:170900,PaymentStatus:'Paid',Items:[{ItemName:'Organisation item'}]});
+    const preview=await f.run('previewHistorical',reviewedOpening,f.actor);
+    await f.run('recordOpening',{...reviewedOpening,PreviewDigest:preview.PreviewDigest,Confirmed:true,RequestId:'opening-history',approvalPassword:'test-confirmation'},f.actor);
+    await f.commerce.recordManualOrganizationCommerceSale({},section,f.body,f.actor);
+    const before=JSON.stringify([...f.store]),commits=f.commits.length;
+    const seller={...f.actor,role:'Vendor User',username:'seller',allowedSections:['vendorSettlements',section]};
+    const result=await f.pos({},seller,{action:'recentVendorSales',Section:section});
+    assert.equal(result.sales.length,1);assert.equal(result.sales[0].Amount,100);
+    assert.equal(result.historicalOpenings.length,1);assert.equal(result.historicalOpenings[0].HistoricalSales,170900);
+    assert.equal(result.historicalOpenings[0].OpeningAmountOwed,170900);
+    assert.equal(result.historicalOpenings[0].Reference,reviewedOpening.OpeningReference);
+    assert.equal(JSON.stringify([...f.store]),before);assert.equal(f.commits.length,commits);
+  });
   test(`${edition} real database round trips retain a fixed period charge once across sales and refunds`, async () => {
     const f = commerceFixture(edition,section,{firestoreRoundTrip:true});
     const settingsId = `vendor-settlement-${edition}--main`;
