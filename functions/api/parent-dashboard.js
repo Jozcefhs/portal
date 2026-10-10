@@ -1815,6 +1815,25 @@ export function paymentHistoryForChild(child, payments, ledger) {
   return paymentHistoryFor(child, payments, ledger);
 }
 
+export function transferHistoryForChild(child, transfers, selectedScope) {
+  return (transfers || []).filter(row => {
+    if (row.Context !== 'school-payment') return false;
+    const payload = row.Payload || {};
+    return recordMatchesSelectedChildScope({ ...payload, BranchId: row.BranchId || 'main', __scopePath: '' }, selectedScope) &&
+      financialReferenceMatches(payload.AccountRef || payload.AdmissionNo || payload.ApplicationReference, child);
+  }).map(row => ({
+    Reference: clean(row.Reference),
+    FeeName: clean(row.Payload?.FeeName || 'Payment'),
+    Amount: asMoneyNumber(row.Amount),
+    Currency: clean(row.Currency || 'NGN'),
+    Status: clean(row.Status),
+    RejectionReason: row.Status === 'Rejected' ? clean(row.RejectionReason) : '',
+    SubmittedAt: clean(row.CreatedAt),
+    ReviewedAt: clean(row.ReviewedAt),
+    HasProof: Boolean(clean(row.ProofDataUrl))
+  })).sort((a, b) => b.SubmittedAt.localeCompare(a.SubmittedAt));
+}
+
 function dueStatus(dueDate) {
   const text = clean(dueDate);
   if (!text) return '';
@@ -2037,7 +2056,7 @@ async function getChildActivity(env, body, options = {}) {
   child.BranchId = selectedScope.branchId;
   child.SchoolSection = selectedScope.schoolSection;
   const keys = accountKeys(child);
-  const [ledgerRows, invoiceRows, paymentRows, clinicRows, summaryRows, linkedApplication, storeItems, storeOrderRows, academicResultRows, academicClearanceRows, academicMembershipRows, academicAttendanceRows, timetableVersionRows, timetableEntryRows, academicSubjectRows, schoolCalendarRows, academicTermRows, libraryLoanRows, scholarshipFeeItems] = await Promise.all([
+  const [ledgerRows, invoiceRows, paymentRows, clinicRows, summaryRows, linkedApplication, storeItems, storeOrderRows, academicResultRows, academicClearanceRows, academicMembershipRows, academicAttendanceRows, timetableVersionRows, timetableEntryRows, academicSubjectRows, schoolCalendarRows, academicTermRows, libraryLoanRows, scholarshipFeeItems, transferRows] = await Promise.all([
     queryRowsForReferences(env, 'ledger', ['AccountRef', 'AdmissionNo', 'ApplicationReference'], keys),
     queryRowsForReferences(env, 'invoices', ['AccountRef', 'AdmissionNo', 'ApplicationReference'], keys),
     queryRowsForReferences(env, 'payments', ['AccountRef', 'AdmissionNo', 'ApplicationReference'], keys),
@@ -2064,7 +2083,8 @@ async function getChildActivity(env, body, options = {}) {
     queryCollection(env, 'academicTerms', { filters: [{ field: 'BranchId', op: '==', value: selectedScope.branchId }] }).catch(() => []),
     queryRowsForReferences(env, 'libraryLoans', ['BorrowerRef'], keys),
     // Never swallow a fee read failure: that could grant an unverified exemption.
-    isFullScholarship(child.BillingCategory) ? listCollection(env, 'feeItems') : Promise.resolve(null)
+    isFullScholarship(child.BillingCategory) ? listCollection(env, 'feeItems') : Promise.resolve(null),
+    queryRowsForReferences(env, 'directTransferRequests', ['Payload.AccountRef', 'Payload.AdmissionNo', 'Payload.ApplicationReference'], keys)
   ]);
   if (linkedApplication && !findScopedChildApplication(applications, child)) {
     applications.push(linkedApplication);
@@ -2174,6 +2194,7 @@ async function getChildActivity(env, body, options = {}) {
     walletBalance: walletBalance(walletEntries),
     accountSummary,
     paymentRecords: childPayments,
+    transferRequests: transferHistoryForChild(child, transferRows, selectedScope),
     dueNotifications: childDueNotifications,
     notifications: notificationData.notifications,
     notificationUnreadCount: notificationData.unreadCount,

@@ -310,5 +310,5 @@ test('timetable web assets have new version identifiers for existing browser ins
   ]);
   assert.match(html, /css\/style\.css\?v=[^"]*timetable-generator-20261009/);
   assert.match(html, /js\/admin\.js\?v=[^"]*timetable-generator-20261009/);
-  assert.match(serviceWorker, /const CACHE = 'dynamax-v359-batch-items-vendor-statement-figures'/);
+  assert.match(serviceWorker, /const CACHE = 'dynamax-v360-transfer-rejections-batch-items-vendor-statement-figures'/);
 });

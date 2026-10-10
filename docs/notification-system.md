@@ -44,6 +44,23 @@ Invoice documents now contain `ReminderEligible`, `NextReminderDate`, `NextRemin
 
 Paystack is verified before `recordManualPayment` completes. After ledger/invoice allocation and final `ProcessingStatus: Completed`, one Payment Received event is created. Its recipients are the student account reference and every known parent/guardian email stored on the student/payment. Replaying payment verification uses the same payment reference and notification event key.
 
+### Rejected school bank transfer
+
+Rejecting a school-payment transfer atomically saves the rejected request and a
+parent Payments notification containing the rejection reason. The write checks
+the transfer's database version so it cannot race with approval. Push uses the
+existing device subscriptions, preferences and per-device delivery deduplication;
+in-app notification persistence does not depend on push being enabled or working.
+Retrying the same rejection reuses its event and saved reason, without creating a
+receipt, wallet credit or accounting entry.
+
+Parents can also see bank-transfer submissions and their rejection notes under
+Payments & Fees, separately from completed payments. This read-only history covers
+older rejected submissions too, without retroactively sending notifications or
+rewriting financial records. Results are limited to the authenticated parent's
+selected child, branch and school section; payment proofs and internal payloads
+are not returned. No email delivery is implied by a successful in-app notice.
+
 ### Fee reminders
 
 Invoice generation calculates the next reminder from the configured due-date schedule. Payment allocation immediately recalculates eligibility and the remaining balance. Paid invoices are not queried by the scheduler.

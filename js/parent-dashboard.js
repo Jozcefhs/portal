@@ -10,6 +10,8 @@ const payableItems = document.getElementById('payableItems');
 const optionalPayments = document.getElementById('optionalPayments');
 const accountCreditSummary = document.getElementById('accountCreditSummary');
 const paymentRecords = document.getElementById('paymentRecords');
+const parentTransferHistory = document.getElementById('parentTransferHistory');
+const parentTransferRecords = document.getElementById('parentTransferRecords');
 const entranceResultPanel = document.getElementById('entranceResultPanel');
 const academicTermResults = document.getElementById('academicTermResults');
 const entranceResults = document.getElementById('entranceResults');
@@ -274,6 +276,7 @@ function normalizeChildResultMaps(data) {
   const fields = [
     'walletActivity',
     'paymentRecords',
+    'transferRequests',
     'accountSummaries',
     'payableItems',
     'payableErrors',
@@ -1236,6 +1239,7 @@ async function loadPayablesForSelected(force = false) {
   dashboard.accountSummaries = dashboard.accountSummaries || {};
   dashboard.walletActivity = dashboard.walletActivity || {};
   dashboard.paymentRecords = dashboard.paymentRecords || {};
+  dashboard.transferRequests = dashboard.transferRequests || {};
   dashboard.clinicVisits = dashboard.clinicVisits || {};
   dashboard.libraryLoans = dashboard.libraryLoans || {};
   dashboard.academicResults = dashboard.academicResults || {};
@@ -1318,6 +1322,7 @@ async function loadPayablesForSelected(force = false) {
         Object.assign(child, activityData.accountSummary);
       }
       setChildResult(dashboard.paymentRecords, child, activityData.paymentRecords || []);
+      setChildResult(dashboard.transferRequests, child, activityData.transferRequests || []);
       setChildResult(dashboard.clinicVisits, child, activityData.clinicVisits || []);
       setChildResult(dashboard.libraryLoans, child, activityData.libraryLoans || []);
       setChildResult(dashboard.academicResults, child, activityData.academicResults || []);
@@ -1584,7 +1589,38 @@ function renderClinic(child) {
   });
 }
 
+function renderTransferRequests(child) {
+  if (!parentTransferHistory || !parentTransferRecords) return;
+  const records = childResult(dashboard.transferRequests, child, []);
+  parentTransferHistory.hidden = !records.length;
+  parentTransferRecords.replaceChildren();
+  const target = activityTarget(parentTransferRecords, records, 'bank transfer submissions');
+  records.slice(0, 100).forEach(record => {
+    const item = document.createElement('div');
+    item.className = 'activity-item';
+    const rejected = record.Status === 'Rejected';
+    const title = document.createElement('strong');
+    title.textContent = `${record.FeeName || 'Payment'} · ${money(record.Amount)}`;
+    const status = document.createElement('span');
+    status.className = rejected ? 'status bad' : '';
+    status.textContent = `Status: ${record.Status || 'Awaiting Verification'}`;
+    const detail = document.createElement('small');
+    detail.textContent = `Submitted: ${record.SubmittedAt ? DynamaxTime.formatDateTime(record.SubmittedAt) : '—'} | Ref: ${record.Reference || '—'}`;
+    item.append(title, status, detail);
+    if (rejected) {
+      const reason = document.createElement('p');
+      reason.className = 'status bad';
+      reason.textContent = `Reason: ${record.RejectionReason || 'Please contact the Accounts Office.'}`;
+      const note = document.createElement('small');
+      note.textContent = 'No payment or wallet credit was added for this rejected submission.';
+      item.append(reason, note);
+    }
+    target.appendChild(item);
+  });
+}
+
 function renderPayments(child) {
+  renderTransferRequests(child);
   const records = childResult(dashboard.paymentRecords, child, []);
   if (!records.length) {
     paymentRecords.innerHTML = '<p class="muted">No payment records found.</p>';

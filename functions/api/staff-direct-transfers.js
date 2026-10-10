@@ -15,6 +15,7 @@ import { recordManualOrganizationCommerceSale } from '../lib/organization-commer
 import { saveChurchDonation } from '../lib/church-payments.js';
 import { sendSchoolPaymentReceiptEmail } from '../lib/school-payment-email.js';
 import { notifyParentPaymentReceived } from '../lib/notifications.js';
+import { rejectDirectTransfer } from '../lib/direct-transfer-review.js';
 
 const clean = (value) => String(value ?? '').trim();
 const safeId = (value) => clean(value).replace(/[\/\\?#\[\]]/g, '-').replace(/\s+/g, '_').slice(0, 140);
@@ -301,19 +302,7 @@ export async function onRequestPost(context) {
     processingReference = reference;
     verifyScope(user, transfer);
     if (action === 'reject') {
-      const reason = clean(body.Reason || body.reason).slice(0, 500);
-      if (!reason) throw error('Enter the reason for rejecting this transfer.');
-      if (clean(transfer.Status) !== 'Awaiting Verification') throw error('This transfer has already been processed.', 409);
-      if (clean(transfer.VerificationError)) throw error('This transfer has a previous approval attempt. Retry approval so its dependent records can be completed.', 409);
-      await upsertDocument(context.env, 'directTransferRequests', reference, {
-        ...withoutMetadata(transfer),
-        Status: 'Rejected',
-        RejectionReason: reason,
-        ReviewedAt: new Date().toISOString(),
-        ReviewedBy: clean(user.displayName || user.username),
-        UpdatedAt: new Date().toISOString()
-      });
-      return Response.json({ ok: true, message: 'Transfer rejected. No receipt or accounting entry was created.' }, { headers: { 'Cache-Control': 'no-store' } });
+      return Response.json(await rejectDirectTransfer(context.env, reference, transfer, user, body.Reason || body.reason), { headers: { 'Cache-Control': 'no-store' } });
     }
     if (action !== 'approve') throw error('Choose approve or reject.');
     const status = clean(transfer.Status).toLowerCase();

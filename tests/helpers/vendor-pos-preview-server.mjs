@@ -3,6 +3,7 @@ import {createServer} from 'node:http';
 import {readFile} from 'node:fs/promises';
 
 const files = new Map([
+  ['/tests/fixtures/parent-transfer-history.html',new URL('../fixtures/parent-transfer-history.html',import.meta.url)],
   ['/tests/fixtures/item-import.html',new URL('../fixtures/item-import.html',import.meta.url)],
   ['/css/item-import.css',new URL('../../css/item-import.css',import.meta.url)],
   ['/js/item-import-csv.js',new URL('../../js/item-import-csv.js',import.meta.url)],
@@ -27,6 +28,17 @@ const files = new Map([
 createServer(async(req,res) => {
   try {
     const path = new URL(req.url,'http://localhost').pathname;
+    if (req.method === 'GET' && path === '/tests/fixtures/parent-transfer-renderer.js') {
+      const source = await readFile(new URL('../../js/parent-dashboard.js',import.meta.url),'utf8');
+      const render = source.slice(source.indexOf('function renderTransferRequests(child)'),source.indexOf('function renderPayments(child)'));
+      res.writeHead(200,{'Content-Type':'text/javascript; charset=utf-8','Cache-Control':'no-store'});
+      res.end(`const parentTransferHistory=document.getElementById('parentTransferHistory'),parentTransferRecords=document.getElementById('parentTransferRecords');
+const dashboard={transferRequests:{one:[{Reference:'SAMPLE-DBT-001',FeeName:'Student Wallet Top-up',Amount:5000,Status:'Rejected',RejectionReason:'No proof of payment was attached. Please contact the Accounts Office with your bank-transfer evidence.',SubmittedAt:'2026-10-10T19:00:00Z'}],two:[{Reference:'SAMPLE-DBT-002',FeeName:'Student Wallet Top-up',Amount:2000,Status:'Awaiting Verification',SubmittedAt:'2026-10-10T19:15:00Z'}]}};
+const childResult=(map,child,fallback)=>map?.[child.AccountRef]||fallback,money=n=>new Intl.NumberFormat('en-NG',{style:'currency',currency:'NGN'}).format(n),activityTarget=(el)=>el;
+${render}
+document.getElementById('firstChild').onclick=()=>renderTransferRequests({AccountRef:'one'});document.getElementById('secondChild').onclick=()=>renderTransferRequests({AccountRef:'two'});renderTransferRequests({AccountRef:'one'});`);
+      return;
+    }
     if (req.method === 'GET' && path === '/tests/fixtures/vendor-responsive.html') {
       const adminHtml = await readFile(new URL('../../admin.html',import.meta.url),'utf8');
       const fixture = await readFile(new URL('../fixtures/vendor-responsive.html',import.meta.url),'utf8');

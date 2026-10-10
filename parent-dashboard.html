@@ -306,6 +306,12 @@
 
           <section class="panel full-panel dashboard-view-panel" data-dashboard-view="payments" hidden>
             <h2>Payments & Fees</h2>
+            <div id="parentTransferHistory" hidden>
+              <h3>Bank transfer submissions</h3>
+              <p class="muted">Submission status is shown below. A submission is not a receipt or wallet credit until approved.</p>
+              <div id="parentTransferRecords" class="activity-list"></div>
+              <h3>Completed payments</h3>
+            </div>
             <div id="paymentRecords" class="activity-list"></div>
           </section>
 
@@ -374,6 +380,6 @@
   <script src="js/password-toggle.js?v=20260726-biometric"></script>
   <script src="js/financial-values.js?v=20260803-finance-commas"></script>
   <script src="js/payment-methods.js?v=20260809-direct-transfer-sharp-text"></script>
-  <script src="js/parent-dashboard.js?v=20261008-stock-dropdown-wat-timestamps"></script>
+  <script src="js/parent-dashboard.js?v=20261008-stock-dropdown-wat-timestamps-transfer-rejections"></script>
 </body>
 </html>

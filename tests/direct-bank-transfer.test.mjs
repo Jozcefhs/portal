@@ -64,7 +64,10 @@ test('direct transfer never posts revenue, inventory or receipts before staff ap
   assert.match(verifier, /ApprovalStage:\s*'record'/);
   assert.match(verifier, /ApprovalStage:\s*'deliver-receipt'/);
   assert.match(verifier, /ApprovalStage:\s*'complete'/);
-  assert.match(verifier, /No receipt or accounting entry was created/);
+  assert.match(verifier, /rejectDirectTransfer/);
+  const rejection = await source('functions/lib/direct-transfer-review.js');
+  assert.match(rejection, /No receipt or accounting entry was created/);
+  assert.doesNotMatch(rejection, /recordManualPayment|recordSale|recordManualOrganizationCommerceSale|saveChurchDonation/);
 });
 
 test('school transfer approval stays below the Worker request ceiling by scoping and batching work', async () => {

@@ -10,6 +10,7 @@ import {
   deliverPushNotification,
   publicMessagingConfig
 } from './firebase-messaging.js';
+import { schoolSectionFor } from './school-scope.js';
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -882,6 +883,33 @@ export function parentPaymentNotification(payment = {}) {
 
 export async function notifyParentPaymentReceived(env, payment, options = {}) {
   return createNotification(env, parentPaymentNotification(payment), options);
+}
+
+export function parentTransferRejectionNotification(transfer = {}) {
+  const payload = transfer.Payload || {};
+  const reference = clean(transfer.Reference);
+  const accountRef = clean(payload.AccountRef || payload.AdmissionNo || payload.ApplicationReference);
+  const reason = clean(transfer.RejectionReason).slice(0, 500);
+  const section = schoolSectionFor(payload);
+  return {
+    EventKey: `transfer-rejected:${lower(transfer.BranchId || 'main')}:${section}:${reference}:${accountRef}`,
+    Type: 'Bank Transfer Rejected',
+    Audience: 'Parent',
+    TargetEmails: [...values(payload.ParentEmails), payload.ParentEmail, transfer.PayerEmail].filter(Boolean),
+    TargetAccountRefs: [accountRef].filter(Boolean),
+    Category: 'Payments',
+    Channels: ['InApp', 'Push'],
+    Severity: 'Warning',
+    Title: 'Bank transfer rejected',
+    Message: `The ${money(transfer.Amount, transfer.Currency)} bank-transfer submission for ${clean(payload.DisplayName || 'your child')} (${clean(payload.FeeName || 'payment')}) was rejected. Reason: ${reason}. No payment or wallet credit was added.`,
+    ActionUrl: 'parent-dashboard.html?tab=payments',
+    RecordType: 'Direct Transfer Request',
+    RecordId: reference,
+    BranchId: transfer.BranchId || 'main',
+    SchoolSection: section,
+    CreatedAt: transfer.ReviewedAt,
+    CreatedBy: transfer.ReviewedBy || 'Accounts Office'
+  };
 }
 
 function dueBalance(invoice = {}) {
