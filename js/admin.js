@@ -20743,17 +20743,78 @@ function updateMfaPolicyEditor() {
   }
 }
 
+function alphabeticalStaffRoles(roles) {
+  return [...roles].sort((left, right) => left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' }));
+}
+
+function staffUserListEntry(user, index) {
+  const active = yes(user.Active);
+  return {
+    index,
+    name: clean(user.DisplayName || user.LoginUsername || user.Username),
+    created: adminListTimestamp(user, ADMIN_LIST_CREATED_FIELDS),
+    modified: adminListTimestamp(user, ADMIN_LIST_MODIFIED_FIELDS),
+    role: clean(user.Role),
+    status: active ? 'active' : 'disabled',
+    search: [user.DisplayName, user.FirstName, user.MiddleName, user.Surname, user.Username,
+      user.LoginUsername, user.Role, user.Department, user.BranchId, user.SchoolSectionAccess,
+      active ? 'Active' : 'Disabled'].map(clean).filter(Boolean).join(' ').toLowerCase()
+  };
+}
+
+function filterStaffUserListEntries(entries, filters = {}) {
+  const terms = clean(filters.search).toLowerCase().split(/\s+/).filter(Boolean);
+  return entries.filter((entry) => (!filters.role || entry.role === filters.role)
+    && (!filters.status || entry.status === filters.status)
+    && terms.every((term) => entry.search.includes(term)));
+}
+
+function applyStaffUserListControls(register) {
+  if (!register) return;
+  const list = register.querySelector('.staff-user-list');
+  const entries = [...list.querySelectorAll(':scope > [data-staff-user-row]')].map((row) => ({
+    row, index: Number(row.dataset.listIndex), name: row.dataset.listName,
+    created: Number(row.dataset.listCreated), modified: Number(row.dataset.listModified),
+    search: row.dataset.listSearch, role: row.dataset.listRole, status: row.dataset.listStatus
+  }));
+  const filters = {
+    search: register.querySelector('[data-staff-user-search]').value,
+    role: register.querySelector('[data-staff-user-role]').value,
+    status: register.querySelector('[data-staff-user-status]').value
+  };
+  const sort = register.querySelector('[data-staff-user-sort]');
+  const matches = new Set(filterStaffUserListEntries(entries, filters).map((entry) => entry.row));
+  sortAdminListEntries(entries, sort.value).forEach((entry) => {
+    entry.row.hidden = !matches.has(entry.row);
+    list.append(entry.row);
+  });
+  register.querySelector('[data-staff-user-count]').textContent = `${matches.size} of ${entries.length} accounts shown`;
+  register.querySelector('[data-staff-user-empty]').hidden = matches.size > 0 || !entries.length;
+  try { window.localStorage.setItem(sort.dataset.listStorageKey, sort.value); } catch (_error) { /* optional */ }
+}
+
 function renderStaffUsers() {
   if (activeSection !== 'staffUsers') return;
+  const previousRegister = panelEl.querySelector('[data-staff-account-register]');
+  const staffListFilters = {
+    search: previousRegister?.querySelector('[data-staff-user-search]')?.value || '',
+    role: previousRegister?.querySelector('[data-staff-user-role]')?.value || '',
+    status: previousRegister?.querySelector('[data-staff-user-status]')?.value || ''
+  };
+  const staffListRoles = alphabeticalStaffRoles(new Set(staffUsersData.map((user) => clean(user.Role)).filter(Boolean)));
+  if (!staffListRoles.includes(staffListFilters.role)) staffListFilters.role = '';
+  const staffListSort = savedAdminListSort('Staff accounts');
   const activeUsers = staffUsersData.filter((user) => yes(user.Active)).length;
   const organisationActiveUsers = Number(staffSeatUsage?.active ?? activeUsers);
   const organisationUserLimit = Math.max(1, Number(staffSeatUsage?.limit || 5) || 5);
   const otherBranchActiveUsers = Math.max(0, Number(staffSeatUsage?.otherBranchActive || 0));
   const admins = staffUsersData.filter((user) => user.Role === 'Super Admin' && yes(user.Active)).length;
   const schoolEdition = resolveDashboardEdition(currentUser || {}) === 'school';
-  const availableRoles = Object.keys(staffRoleAccessData?.roles || {}).length
+  const configuredRoles = Object.keys(staffRoleAccessData?.roles || {}).length
     ? Object.keys(staffRoleAccessData.roles)
     : staffRolesForEdition();
+  const defaultStaffRole = configuredRoles[0] || '';
+  const availableRoles = alphabeticalStaffRoles(configuredRoles);
   const permissionTabs = webTabsForEdition();
   const policyRoles = staffRoleAccessData?.roles || {};
   const policyModules = Array.isArray(staffRoleAccessData?.modules) && staffRoleAccessData.modules.length
@@ -20790,16 +20851,30 @@ function renderStaffUsers() {
       <div><small>Disabled</small><strong>${staffUsersData.length - activeUsers}</strong><span>Access blocked</span></div>
     </div>
     <p class="status staff-seat-scope-note">Organisation plan seats: ${organisationActiveUsers} of ${organisationUserLimit} active login${organisationActiveUsers === 1 ? '' : 's'}.${otherBranchActiveUsers ? ` This branch view excludes ${otherBranchActiveUsers} active login${otherBranchActiveUsers === 1 ? '' : 's'} assigned to other branches.` : ''}</p>
-    <div class="staff-user-list">
-      ${staffUsersData.length ? staffUsersData.map((user) => `
-        <article class="staff-user-row">
+    <section class="staff-account-register" data-staff-account-register aria-label="Staff accounts">
+      <div class="admin-list-sort-toolbar admin-list-toolbar-search staff-user-list-toolbar">
+        <label class="admin-list-search">Search staff accounts
+          <input type="search" data-staff-user-search value="${escapeHtml(staffListFilters.search)}" placeholder="Name, username, department or branch" autocomplete="off" aria-label="Search staff accounts">
+          <small data-staff-user-count aria-live="polite">${staffUsersData.length} accounts</small>
+        </label>
+        <label>Role<select data-staff-user-role aria-label="Filter staff accounts by role"><option value="">All roles</option>${staffListRoles.map((role) => `<option value="${escapeHtml(role)}"${staffListFilters.role === role ? ' selected' : ''}>${escapeHtml(role)}</option>`).join('')}</select></label>
+        <label>Status<select data-staff-user-status aria-label="Filter staff accounts by status"><option value="">All statuses</option><option value="active"${staffListFilters.status === 'active' ? ' selected' : ''}>Active</option><option value="disabled"${staffListFilters.status === 'disabled' ? ' selected' : ''}>Disabled</option></select></label>
+        <label>Sort list<select data-staff-user-sort data-list-storage-key="${escapeHtml(adminListStorageKey('Staff accounts'))}" aria-label="Sort staff accounts">${ADMIN_LIST_SORT_MODES.map(([value, label]) => `<option value="${value}"${staffListSort === value ? ' selected' : ''}>${escapeHtml(label)}</option>`).join('')}</select></label>
+      </div>
+      <div class="staff-user-list">
+      ${staffUsersData.length ? staffUsersData.map((user, index) => {
+        const entry = staffUserListEntry(user, index);
+        return `
+        <article class="staff-user-row" data-staff-user-row data-list-index="${entry.index}" data-list-name="${escapeHtml(entry.name)}" data-list-created="${entry.created}" data-list-modified="${entry.modified}" data-list-search="${escapeHtml(entry.search)}" data-list-role="${escapeHtml(entry.role)}" data-list-status="${entry.status}">
           <div class="staff-user-avatar">${escapeHtml((user.DisplayName || user.Username || 'U').split(/\s+/).slice(0,2).map((part) => part[0]).join('').toUpperCase())}</div>
           <div class="staff-user-copy"><strong>${escapeHtml(user.DisplayName || user.LoginUsername || user.Username)}</strong><span>@${escapeHtml(user.LoginUsername || user.Username)} • ${escapeHtml(user.Role)}</span><small>${escapeHtml(user.Department || (user.Role === 'External Auditor' ? 'Financial audit' : 'No department'))} • ${escapeHtml(user.BranchId || 'All branches')}${schoolEdition && user.Role !== 'External Auditor' ? ` / ${escapeHtml(user.SchoolSectionAccess || 'All sections')}` : ''}${user.Role === 'External Auditor' ? ` • Audit ${escapeHtml(user.AuditDateFrom)}–${escapeHtml(user.AuditDateTo)} • Expires ${escapeHtml(user.AuditExpiresAt)}` : ''}${yes(user.PasswordSetupRequired) ? ' • Password setup required' : yes(user.MustChangePassword) ? ' • Password change required' : ''}</small><small class="staff-mfa-account-state">${escapeHtml(staffMfaAccountLabel(user.Username))}</small></div>
           <span class="workflow-status ${yes(user.Active) ? 'status-approved' : 'status-rejected'}">${yes(user.Active) ? 'Active' : 'Disabled'}</span>
           <div class="staff-user-actions"><button type="button" class="compact-icon-action compact-edit-action" data-edit-user="${escapeHtml(user.Username)}" aria-label="Edit ${escapeHtml(user.DisplayName || user.Username)}" title="Edit staff account"><span aria-hidden="true">&#9998;</span></button><button type="button" class="compact-icon-action compact-delete-action" data-delete-user="${escapeHtml(user.Username)}" aria-label="Delete ${escapeHtml(user.DisplayName || user.Username)}" title="Delete staff account"><span aria-hidden="true">&#128465;&#65038;</span></button></div>
         </article>
-      `).join('') : '<p class="muted">No database staff accounts found. Create the first shared staff account.</p>'}
-    </div>
+      `; }).join('') : '<p class="muted">No database staff accounts found. Create the first shared staff account.</p>'}
+      <p class="muted" data-staff-user-empty hidden>No staff accounts match your search and filters.</p>
+      </div>
+    </section>
     <section class="role-access-settings organization-module-settings">
       <div class="role-access-heading"><div><p class="eyebrow">Organisation-wide access</p><h2>Enabled subscription modules</h2><p class="muted">${canManageOrganisationPolicy ? 'Turn off plan modules the organisation does not currently use. This changes access on web and desktop, but it does not change the subscription price or plan entitlement.' : 'These organisation-wide module settings are locked for branch administrators.'}</p></div><span class="role-access-scope">${escapeHtml(staffModulePreferencesData?.plan || 'Current plan')}</span></div>
       <div class="role-access-editor">
@@ -20868,7 +20943,7 @@ function renderStaffUsers() {
           <label>Surname <span class="required">*</span><input name="Surname" autocomplete="family-name" required></label>
           <label>Middle name<input name="MiddleName" autocomplete="additional-name"></label>
           <label>Display name<input name="DisplayName" readonly><small>Generated using ${escapeHtml(staffNameFormat)}.</small></label>
-          <label>Role <select name="Role" required>${availableRoles.map((role) => `<option>${role}</option>`).join('')}</select></label>
+          <label>Role <select name="Role" required>${availableRoles.map((role) => `<option${role === defaultStaffRole ? ' selected' : ''}>${escapeHtml(role)}</option>`).join('')}</select></label>
           <label>Department<input name="Department" placeholder="Required for Department User"></label>
           <label>Assigned branch<select name="BranchId"${canAssignAnyStaffBranch ? '' : ' disabled'}>${staffBranchOptions}</select><small>${canAssignAnyStaffBranch ? 'Choose any configured branch without changing your working branch.' : 'Your account may create staff only in its assigned branch.'}</small></label>
           ${schoolEdition ? '<label>School section<select name="SchoolSectionAccess"><option>All</option><option>Primary</option><option>Secondary</option></select></label>' : ''}
@@ -20895,7 +20970,7 @@ function renderStaffUsers() {
   `;
   mountWorkspaceTabs('staffUsers', [
     { key: 'overview', label: 'Overview', icon: '\u25A6', nodes: [document.getElementById('staffUsersStatus'), panelEl.querySelector(':scope > .workflow-kpis')] },
-    { key: 'accounts', label: 'Staff accounts', icon: '\u{1F465}', count: staffUsersData.length, nodes: panelEl.querySelector(':scope > .staff-user-list') },
+    { key: 'accounts', label: 'Staff accounts', icon: '\u{1F465}', count: staffUsersData.length, nodes: panelEl.querySelector(':scope > .staff-account-register') },
     { key: 'modules', label: 'Enabled modules', icon: '\u25A6', count: organizationModules.filter((module) => module.Enabled).length, nodes: panelEl.querySelector(':scope > .organization-module-settings') },
     { key: 'roleAccess', label: 'Role access', icon: '\u{1F511}', nodes: panelEl.querySelector(':scope > .role-module-settings') },
     { key: 'mfaPolicy', label: 'Two-factor policy', icon: '\u{1F6E1}', nodes: panelEl.querySelector(':scope > .staff-mfa-policy-settings') },
@@ -21058,6 +21133,18 @@ function openStaffUserDialog(username = '') {
 }
 
 function bindStaffUserEvents() {
+  const staffRegister = panelEl.querySelector('[data-staff-account-register]');
+  staffRegister?.querySelector('[data-staff-user-search]').addEventListener('input', () => {
+    applyStaffUserListControls(staffRegister);
+    staffRegister.querySelector('.staff-user-list').scrollTop = 0;
+  });
+  staffRegister?.querySelectorAll('[data-staff-user-role], [data-staff-user-status], [data-staff-user-sort]').forEach((control) => {
+    control.addEventListener('change', () => {
+      applyStaffUserListControls(staffRegister);
+      staffRegister.querySelector('.staff-user-list').scrollTop = 0;
+    });
+  });
+  applyStaffUserListControls(staffRegister);
   ['FirstName', 'MiddleName', 'Surname'].forEach((field) => {
     document.querySelector(`#staffUserForm [name="${field}"]`)?.addEventListener('input', (event) => {
       syncStaffDisplayName(event.currentTarget.form);

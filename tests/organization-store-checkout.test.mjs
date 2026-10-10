@@ -62,9 +62,9 @@ test('public organisation store exposes a compact searchable catalogue and autho
   assert.match(storeJs, /storeCartBadge\.textContent = String\(itemCount\)/);
   assert.match(storeJs, /storeCartShortcut\.disabled = !itemCount/);
   assert.match(storeJs, /storeCheckout\.scrollIntoView\(\{ behavior: 'smooth', block: 'start' \}\)/);
-  assert.match(staffCss, /\.commerce-product-list\{[\s\S]*?grid-template-columns:repeat\(auto-fill,minmax\(128px,1fr\)\);[\s\S]*?max-height:358px;/);
+  assert.match(staffCss, /\.commerce-product-list\{[\s\S]*?grid-template-columns:repeat\(auto-fill,128px\);[\s\S]*?max-height:358px;/);
   assert.match(staffCss, /\.commerce-product\{[\s\S]*?grid-template-rows:minmax\(0,1fr\) auto;[\s\S]*?min-height:110px;/);
-  assert.match(staffCss, /@media\(max-width:680px\)\{[\s\S]*?\.commerce-product-list\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+  assert.match(staffCss, /@media\(max-width:680px\)\{[\s\S]*?\.commerce-product-list\{grid-template-columns:repeat\(auto-fill,112px\)/);
   assert.match(staffCss, /\.commerce-product:has\(\.commerce-add-button\.is-added\)/);
 });
 

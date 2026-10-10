@@ -800,6 +800,9 @@ html[data-theme="dark"] .finance-attachment-field{color:#edf4ff}html[data-theme=
 
 /* Unified staff accounts */
 .staff-user-list{display:grid;gap:9px;margin-top:18px}.staff-user-row{display:grid;grid-template-columns:48px minmax(180px,1fr) auto auto;gap:12px;align-items:center;padding:13px;border:1px solid #dce4ec;border-radius:10px;background:#fff}.staff-user-row:hover{border-color:#afc1d2;background:#fbfdff}.staff-user-avatar{width:44px;height:44px;display:grid;place-items:center;border-radius:12px;background:linear-gradient(135deg,var(--finance-navy-2),var(--finance-cyan));color:#fff;font-weight:700}.staff-user-copy{min-width:0}.staff-user-copy strong,.staff-user-copy span,.staff-user-copy small{display:block;overflow-wrap:anywhere}.staff-user-copy span{margin-top:2px;color:#486581;font-size:13px}.staff-user-copy small{margin-top:3px;color:#829ab1}.staff-user-actions{display:flex;align-items:center;justify-content:flex-end;gap:5px}.staff-password-dialog .workflow-form>button{width:fit-content}.staff-password-dialog .dashboard-signout{margin-top:8px}
+.staff-account-register{min-width:0;margin-top:14px}.staff-account-register .staff-user-list{margin-top:8px}.staff-user-list-toolbar{position:static;display:grid;grid-template-columns:minmax(220px,1fr) minmax(140px,190px) minmax(110px,140px) minmax(180px,220px);gap:10px;min-width:0;border-bottom:1px solid var(--line);border-radius:9px;align-items:start}.staff-user-list-toolbar label{display:grid;gap:5px;min-width:0}.staff-user-list-toolbar .admin-list-search{min-width:0}.staff-user-list-toolbar input,.staff-user-list-toolbar select{width:100%;min-width:0}.staff-user-list-toolbar [data-staff-user-count]{min-height:14px}
+@media (max-width:1000px){.staff-user-list-toolbar{grid-template-columns:repeat(2,minmax(0,1fr))}.staff-user-list-toolbar .admin-list-search{grid-column:1/-1}}
+@media (max-width:520px){.staff-user-list-toolbar label:last-child{grid-column:1/-1}.staff-user-list-toolbar input,.staff-user-list-toolbar select{font-size:16px}}
 .staff-security-activity{margin-top:28px;padding-top:20px;border-top:1px solid #dce4ec}.staff-security-activity h2{margin-bottom:10px}
 .role-access-settings{margin-top:18px;padding:18px;border:1px solid #dce4ec;border-radius:12px;background:#fff}.role-access-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}.role-access-heading h2{margin:2px 0 4px}.role-access-heading p{margin:0}.role-access-scope{flex:0 0 auto;padding:6px 10px;border-radius:999px;background:#e7f7f3;color:#087360;font-size:11px;font-weight:800}.role-access-editor{margin-top:16px}.role-access-role{display:grid;grid-template-columns:minmax(140px,220px);gap:5px;font-weight:700}.role-access-source{min-height:20px;margin:8px 0 0;color:#627d98;font-size:12px}.role-access-modules{grid-template-columns:repeat(3,minmax(0,1fr));margin-top:10px}.role-access-actions{display:flex;align-items:center;justify-content:flex-end;gap:9px;margin-top:13px}.role-access-actions .status{flex:1;margin:0}.role-access-actions button{width:fit-content;margin:0}.role-access-actions button.secondary{border-color:#b8c7d5;background:#fff;color:#244b70}
 .organization-module-option{align-items:flex-start!important;min-width:0;padding:8px;border:1px solid #dce7ef;border-radius:8px;background:#fff}.organization-module-option>input{margin-top:2px!important}.organization-module-option>span,.organization-module-option strong,.organization-module-option small{display:block;min-width:0}.organization-module-option strong{color:#173b58;font-size:11px}.organization-module-option small{margin-top:3px;color:#627d98;font-size:9px;font-weight:400;line-height:1.35}
@@ -3485,10 +3488,19 @@ img.nav-logo,
   border-radius: 0;
 }
 
-/* Dense POS catalogue: show several products at once without sacrificing item details. */
+/* Keep checkout compact; additional screen width belongs to the catalogue. */
+.commerce-pos-layout{grid-template-columns:minmax(0,1fr)}
+.commerce-pos-layout>.commerce-cart{box-sizing:border-box;width:100%;max-width:380px;justify-self:start}
+@media(min-width:981px){
+  .commerce-pos-layout{grid-template-columns:minmax(0,1fr) 380px}
+}
+@media(max-width:680px){
+  .commerce-pos-layout>.commerce-cart{max-width:none}
+}
+/* Dense POS catalogue: add columns instead of stretching product cards. */
 .commerce-product-list{
   display:grid;
-  grid-template-columns:repeat(auto-fill,minmax(128px,1fr));
+  grid-template-columns:repeat(auto-fill,128px);
   grid-auto-rows:minmax(110px,auto);
   align-content:start;
   gap:8px;
@@ -3535,7 +3547,7 @@ html[data-theme="dark"] .commerce-product:nth-child(3n){background:#3b3224}
 html[data-theme="dark"] .commerce-product:has(.commerce-add-button.is-added){border-color:#2d8168;background:#123a34}
 html[data-theme="dark"] .commerce-product-action{border-color:#33465c}
 @media(max-width:680px){
-  .commerce-product-list{grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-rows:auto;max-height:clamp(286px,36dvh,324px);gap:5px}
+  .commerce-product-list{grid-template-columns:repeat(auto-fill,112px);grid-auto-rows:auto;max-height:clamp(286px,36dvh,324px);gap:5px}
   .commerce-product{grid-template-rows:auto auto;gap:3px;min-height:0;padding:6px;border-radius:8px}
   .commerce-product strong{min-height:0;font-size:11px;line-height:1.2}
   .commerce-product span{margin-top:1px;font-size:8.5px;line-height:1.2}
@@ -3757,9 +3769,6 @@ html[data-theme="dark"] .module-workspace-tabs button{color:#b8c8d8}html[data-th
   #adminPanel:has(.commerce-pos-layout) .module-workspace-panel{padding:6px 0 0}
   #adminPanel:has(.commerce-pos-layout) .config-card{margin-bottom:6px}
   #adminPanel:has(.commerce-pos-layout) .config-card .config-form{gap:8px;padding:8px}
-}
-@media(min-width:520px) and (max-width:680px){
-  .commerce-product-list{grid-template-columns:repeat(3,minmax(0,1fr))}
 }
 
 /* Human Resources workspace */

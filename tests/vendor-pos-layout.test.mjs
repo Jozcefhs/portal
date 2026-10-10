@@ -87,11 +87,20 @@ test('vendor counter uses the original shared POS structure, colours and compact
   for(const label of ['Find student','Find wallet','Scan card','Use face','Student · wallet','Staff · cash, transfer or POS']) assert.ok(f.root.innerHTML.includes(label));
   assert.equal(f.root.querySelector('[data-manual-lookup]').open,false);
   assert.match(sharedCss,/\.commerce-product:nth-child\(3n\+2\)\{background:#edf8f3\}/);
-  assert.match(sharedCss,/@media\(max-width:680px\)\{\s*\.commerce-product-list\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+  assert.match(sharedCss,/@media\(max-width:680px\)\{\s*\.commerce-product-list\{grid-template-columns:repeat\(auto-fill,112px\)/);
   assert.doesNotMatch(css,/\.vendor-pos-products\{display:grid|\.vendor-pos-layout\{/);
   assert.doesNotMatch(css,/\.vendor-pos-customer\{grid-template-columns:/);
   assert.match(css,/\.staff-page:has\(\.vendor-workspace\) \.staff-sidebar>\.staff-tabs\{align-content:start\}/);
   f.mounted.destroy();
+});
+
+test('shared POS gives extra width to the catalogue and bounds card and cart widths', () => {
+  assert.match(sharedCss,/@media\(min-width:981px\)\{\s*\.commerce-pos-layout\{grid-template-columns:minmax\(0,1fr\) 380px\}/);
+  assert.match(sharedCss,/\.commerce-pos-layout>\.commerce-cart\{[^}]*max-width:380px;justify-self:start/);
+  assert.match(sharedCss,/@media\(max-width:680px\)\{\s*\.commerce-pos-layout>\.commerce-cart\{max-width:none\}/);
+  const catalogueRules = [...sharedCss.matchAll(/\.commerce-product-list\{([^}]*)\}/g)].map(match => match[1]);
+  assert.ok(catalogueRules.some(rule => rule.includes('grid-template-columns:repeat(auto-fill,128px)')));
+  assert.ok(catalogueRules.every(rule => !/grid-template-columns:[^;]*1fr/.test(rule)), 'No tablet or phone override should stretch cards into fractional columns');
 });
 
 test('quantity dropdowns respect stock and checkout submits once without preview or extra confirmation',async () => {

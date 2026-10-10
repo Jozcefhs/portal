@@ -15,6 +15,15 @@ The selected mode is stored locally for the current workspace and register.
 Missing legacy timestamps always remain after dated records, so an unknown date
 is never presented as the newest or oldest known date.
 
+The Staff & Permissions account cards expose these same sorting modes, alongside
+instant search by name, username, department, branch or school section and
+combined role/status filters. Filtering uses only the already-authorised loaded
+accounts and does not fetch additional records or change account permissions.
+The controls stay above the scrolling cards. Search and filters survive account
+refresh/edit rerenders, and sorting is remembered using the shared register
+preference. Role choices in staff account forms, role access and two-factor
+policy are alphabetical, without changing the original new-account default role.
+
 ## Desktop suite
 
 Every shared `ttk.Treeview` register can be sorted by selecting a column
