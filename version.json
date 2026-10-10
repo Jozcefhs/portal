@@ -1,7 +1,7 @@
 {
-  "version": "3.1.21",
+  "version": "3.1.22",
   "channel": "stable",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.21.exe",
-  "sha256": "c77621823a229b61581f4f4a0ea6ac33c061bc9c51d7f3c167140697becf1732",
-  "notes": "Dynamax Desktop v3.1.21 repairs UI stalls by coalescing window resize events and loading update checks and Accounts caches in the background. Vendor checkout no longer requires a separate preview or authorisation checkbox; the deliberate Complete sale action retains server-verified prices, stock, wallet balance, configured PIN, commission and duplicate-posting safeguards. School vendor checkout now shows the selected student's live wallet balance and spending today, matching the original POS without exposing their ledger or PIN data. Includes the shared Accounts card-search repair. Applies across School, Faith and Organisation editions where the relevant modules are enabled. Existing financial records, ownership rules and timetable drafts are not rewritten by installing this update."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.22.exe",
+  "sha256": "52f8b445cd4911668a83258d010be387a8c96fccf4575fb1b6ba3c4567cd964b",
+  "notes": "Dynamax Desktop v3.1.22 aligns Tuck Shop POS price, stock, quantity and subtotal headers with their values, including after sorting or theme changes. Retains the earlier responsiveness, vendor checkout, wallet lookup and West Africa Time repairs. Installing this update does not rewrite stock, student wallets, ownership or historical financial records. The companion web release adds validated batch item uploads to School Library, Clinic, Kitchen, Books & Supplies and Clothing & Supplies."
 }
