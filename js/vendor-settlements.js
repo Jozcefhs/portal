@@ -3,6 +3,9 @@
   'use strict';
   const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]);
   const money = v => new Intl.NumberFormat('en-NG', { style:'currency', currency:'NGN' }).format(Number(v || 0));
+  const productIcon = kind => `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${kind === 'edit'
+    ? '<path d="m15 5 4 4M4 20l4-1L20 7a2.8 2.8 0 0 0-4-4L4 15l-1 6Z"/>'
+    : '<path d="M3 5h11v12H3zM14 9h4l3 4v4h-7M18 9v5h3"/><circle cx="7" cy="18" r="2"/><circle cx="18" cy="18" r="2"/>'}</svg>`;
   const today = () => new Date().toISOString().slice(0, 10);
   const option = (value, label = value, selected = '') => `<option value="${esc(value)}"${String(value) === String(selected) ? ' selected' : ''}>${esc(label)}</option>`;
   const input = (name, label, value = '', type = 'text', extra = '') => `<label>${esc(label)}<input name="${esc(name)}" type="${type}" value="${esc(value)}" ${extra}></label>`;
@@ -66,6 +69,7 @@
     mounted?.destroy();
     let data, tab = 'balances', statement, selected = '', busy = false, notice = '', disposed = false, dialog, statementGeneration = 0, statementController;
     const pending = new Set();
+    let analysisRange = {From:today().slice(0,7)+'-01',To:today()};
     const status = (message, error = false) => { const el = root.querySelector('.vendor-status'); if (el) { el.textContent = message; el.classList.toggle('error', error); } };
     async function call(action, body = {}, form) {
       if (busy || disposed) {
@@ -92,7 +96,7 @@
     async function reload() {
       const result = await call('bootstrap'); if (!result || disposed || !root.isConnected) return;
       data = result; if (!data.vendors.some(v => v.VendorId === selected)) selected = data.vendors[0]?.VendorId || '';
-      draw(); if (tab === 'statement') await loadStatement();
+      draw(); if (['statement','analysis'].includes(tab)) await loadStatement();
     }
     function vendorOptions(chosen = selected, empty = false) { return `${empty ? option('','Organisation-owned stock',chosen) : ''}${data.vendors.map(v => option(v.VendorId,v.Name,chosen)).join('')}`; }
     const activeVendors = () => data.vendors.filter(v => !['no','false','0','inactive','disabled'].includes(String(v.Active ?? 'YES').trim().toLowerCase()));
@@ -293,15 +297,16 @@
       <h4>Recorded payments / receipts</h4><div class="vendor-table-wrap"><table class="vendor-table"><thead><tr><th>Date</th><th>Reference</th><th>Type / method</th><th>Amount</th></tr></thead><tbody>${s.payments.map(p => `<tr><td>${esc(p.Date)}</td><td>${esc(p.Reference)}<small>${esc(p.EvidenceReference)}</small></td><td>${esc(p.Type || p.PaymentMethod || 'Settlement')}</td><td>${money(p.Amount)}</td></tr>`).join('') || '<tr><td colspan="4">No payments recorded.</td></tr>'}</tbody></table></div><small>The summary is the full vendor balance; rows are filtered by date. Payments are recorded separately, never initiated by this page.</small>`; }
     async function loadStatement() {
       if (!selected || !data || disposed) return;
-      const form = root.querySelector('[data-statement-filter]'), range = form ? formBody(form) : { From:today().slice(0,7) + '-01', To:today() };
+      const analysis = tab === 'analysis', label = analysis ? 'sales analysis' : 'statement', retry = analysis ? 'Load analysis' : 'Load statement';
+      const form = root.querySelector(analysis ? '[data-analysis-filter]' : '[data-statement-filter]'), range = form ? formBody(form) : { From:today().slice(0,7) + '-01', To:today() };
       const generation = ++statementGeneration, vendorId = selected;
       statement = null; statementController?.abort();
-      const target = root.querySelector('[data-statement-result]');
+      const target = root.querySelector(analysis ? '[data-analysis-result]' : '[data-statement-result]');
       if (!target) return;
       if (!range.From || !range.To || range.From > range.To) {
-        target.textContent = 'Choose a valid date range before loading the statement.'; return;
+        target.textContent = `Choose a valid date range before loading the ${label}.`; return;
       }
-      target.textContent = 'Loading statement…'; status(notice);
+      target.textContent = `Loading ${label}…`; target.setAttribute?.('aria-busy','true'); status(notice);
       // Reads have their own cancellation lifecycle; switching vendors must not
       // be dropped by the single-flight guard for financial mutations.
       const controller = new AbortController(); statementController = controller; pending.add(controller);
@@ -309,14 +314,20 @@
       const current = () => !disposed && generation === statementGeneration && vendorId === selected && target.isConnected;
       try {
         const result = await request('statement',{ ...range, VendorId:vendorId },controller.signal);
-        if (result && current()) { statement = result; target.innerHTML = statementHTML(result); }
+        if (result && current()) {
+          if (analysis) {
+            const {renderVendorSalesAnalysis} = await import('./vendor-sales-analysis.js');
+            if (current()) target.innerHTML = renderVendorSalesAnalysis(result);
+          } else { statement = result; target.innerHTML = statementHTML(result); }
+        }
       } catch (error) {
         if (current()) {
-          target.textContent = 'Could not load this vendor’s statement. Use Load statement to retry.';
-          status(error.name === 'AbortError' ? 'Statement request timed out. Please retry.' : error.message,true);
+          target.textContent = `Could not load this vendor’s ${label}. Use ${retry} to retry.`;
+          status(error.name === 'AbortError' ? `${retry} request timed out. Please retry.` : error.message,true);
         }
       } finally {
         clearTimeout(timer); pending.delete(controller);
+        if (current()) target.setAttribute?.('aria-busy','false');
         if (statementController === controller) statementController = null;
       }
     }
@@ -346,12 +357,13 @@
       const c = data.capabilities;
       root.innerHTML = `<section class="vendor-workspace"><header class="vendor-header"><div><h2>Vendor Sales & Settlements</h2><p>Vendor earnings, approved requisitions and recorded payments in one place.</p></div><button data-refresh>Refresh</button></header>
         ${!data.settings.Enabled || !data.settings.AccountingConfirmed ? '<div class="vendor-notice">Setup only — vendor sales are disabled until Accounts confirms the arrangement and account mappings. Existing organisation-owned sales are unchanged.</div>' : ''}
-        <p class="vendor-status" role="status">${esc(notice)}</p><nav class="vendor-tabs" aria-label="Vendor sections">${[['balances','Vendors & balances'],['statement','Statement & request'],['requests','Payment requests'],...(c.products || c.operate ? [['products',`Product ownership (${data.products.length})`]] : []),...(c.manage ? [['settings','Organisation default']] : [])].map(([key,label]) => `<button data-tab="${key}" aria-pressed="${tab === key}">${label}</button>`).join('')}</nav><div class="vendor-panel" data-panel></div></section>`;
+        <p class="vendor-status" role="status">${esc(notice)}</p><nav class="vendor-tabs" aria-label="Vendor sections">${[['balances','Vendors & balances'],['statement','Statement & request'],['analysis','Sales analysis'],['requests','Payment requests'],...(c.products || c.operate ? [['products',`Product ownership (${data.products.length})`]] : []),...(c.manage ? [['settings','Organisation default']] : [])].map(([key,label]) => `<button data-tab="${key}" aria-pressed="${tab === key}">${label}</button>`).join('')}</nav><div class="vendor-panel" data-panel></div></section>`;
       const panel = root.querySelector('[data-panel]');
       if (tab === 'balances') panel.innerHTML = `${c.manage ? '<div class="vendor-actions"><button data-add-vendor>Register vendor</button></div>' : ''}<div class="vendor-grid">${data.vendors.map(v => { const b = data.balances.find(r => r.VendorId === v.VendorId) || {}; return `<article class="vendor-card"><h3>${esc(v.Name)}</h3><small>${esc(v.SchoolSection)} · ${v.Active === 'NO' ? 'Inactive' : 'Active'} · ${esc(v.BankAccountMasked)}</small><p>Available <strong>${money(b.Available)}</strong><br>Reserved ${money(b.Reserved)} · Paid ${money(b.Paid)}</p>${b.NeedsReview ? '<span class="vendor-badge">Needs reconciliation</span>' : ''}<div class="vendor-actions"><button data-view-vendor="${esc(v.VendorId)}">Open statement</button>${c.manage ? `<button data-edit-vendor="${esc(v.VendorId)}">Edit vendor / rule</button>` : ''}</div></article>`; }).join('') || '<p>No vendor accounts yet. Existing unassigned stock stays organisation-owned until reviewed.</p>'}</div>`;
       if (tab === 'statement') panel.innerHTML = `<form class="vendor-form" data-statement-filter><label class="vendor-full">Vendor<select name="VendorId">${vendorOptions()}</select></label>${input('From','From',today().slice(0,7)+'-01','date','required')}${input('To','To',today(),'date','required')}<button type="submit" data-label="Load statement">Load statement</button></form><div class="vendor-actions"><button data-request-new>Request payment</button><button data-print-statement>Print / Save PDF</button>${c.pay ? '<button data-refund>Record linked refund</button><button data-recovery>Record money received</button><button data-opening>Reviewed historical opening</button>' : ''}</div><div data-statement-result><p>Select a vendor and load a statement.</p></div>`;
+      if (tab === 'analysis') panel.innerHTML = `<form class="vendor-form" data-analysis-filter><label class="vendor-full">Vendor<select name="VendorId">${vendorOptions()}</select></label>${input('From','From',analysisRange.From,'date','required')}${input('To','To',analysisRange.To,'date','required')}<button type="submit">Load analysis</button></form><div data-analysis-result role="region" aria-label="Vendor sales analysis" aria-live="polite">${selected ? 'Loading sales analysis…' : 'No vendor accounts available for analysis.'}</div>`;
       if (tab === 'requests') panel.innerHTML = `<p>Accounts confirmation → Admin review → Director / Super Admin approval → Accounts records payment.</p><div class="vendor-grid">${data.requests.map(requestCard).join('') || '<p>No vendor payment requests yet.</p>'}</div>`;
-      if (tab === 'products') panel.innerHTML = `<div class="vendor-actions"><p><strong>Products: ${data.products.length}</strong> · Awaiting approval: ${(data.productChanges || []).filter(r => r.Status === 'Pending').length}<br>${c.vendor ? 'Only products belonging to your linked vendor accounts are shown. Stock reduces automatically on completed sales.' : 'Ownership applies to future sales only.'}</p><button data-import-products>${c.vendor ? 'Batch products' : 'Batch products & owners'}</button><button data-add-product>Add vendor product</button></div>${productPolicyHTML()}${productRequestsHTML()}<h3>Live products</h3><div class="vendor-table-wrap"><table class="vendor-table vendor-product-table" role="table" aria-label="Live products"><thead role="rowgroup"><tr role="row"><th scope="col">Product</th><th scope="col">Owner</th><th scope="col">Stock / price</th><th scope="col">Action</th></tr></thead><tbody role="rowgroup">${data.products.map((p,index) => `<tr role="row"><td role="cell">${esc(p.ItemName)}<small>${esc(p.InventoryId)} · ${esc(p.Section)}</small></td><td role="cell" data-label="Owner">${esc(data.vendors.find(v => v.VendorId === p.VendorId)?.Name || 'Organisation')}</td><td role="cell" data-label="Stock / price">${esc(p.Quantity)} · ${money(p.Price)}</td><td role="cell"><div class="vendor-product-actions"><button data-edit-product="${index}">${c.vendor ? 'Edit product' : 'Review ownership'}</button>${c.vendor ? ` <button data-delivery="${index}">Record delivery</button>` : ''}</div></td></tr>`).join('') || '<tr role="row"><td role="cell" colspan="4">No live products yet. Add a product or upload a CSV; pending products appear above for review.</td></tr>'}</tbody></table></div>`;
+      if (tab === 'products') panel.innerHTML = `<div class="vendor-actions"><p><strong>Products: ${data.products.length}</strong> · Awaiting approval: ${(data.productChanges || []).filter(r => r.Status === 'Pending').length}<br>${c.vendor ? 'Only products belonging to your linked vendor accounts are shown. Stock reduces automatically on completed sales.' : 'Ownership applies to future sales only.'}</p><button data-import-products>${c.vendor ? 'Batch products' : 'Batch products & owners'}</button><button data-add-product>Add vendor product</button></div>${productPolicyHTML()}${productRequestsHTML()}<h3>Live products</h3><div class="vendor-table-wrap"><table class="vendor-table vendor-product-table" role="table" aria-label="Live products"><thead role="rowgroup"><tr role="row"><th scope="col">Product</th><th scope="col">Owner</th><th scope="col">Stock / price</th><th scope="col">Action</th></tr></thead><tbody role="rowgroup">${data.products.map((p,index) => `<tr role="row"><td role="cell">${esc(p.ItemName)}<small>${esc(p.InventoryId)} · ${esc(p.Section)}</small></td><td role="cell" data-label="Owner">${esc(data.vendors.find(v => v.VendorId === p.VendorId)?.Name || 'Organisation')}</td><td role="cell" data-label="Stock / price">${esc(p.Quantity)} · ${money(p.Price)}</td><td role="cell"><div class="vendor-product-actions"><button data-edit-product="${index}" type="button" ${c.vendor ? `class="vendor-icon-action" title="Edit product" aria-label="Edit product: ${esc(p.ItemName)}"` : ''}>${c.vendor ? productIcon('edit') : 'Review ownership'}</button>${c.vendor ? ` <button data-delivery="${index}" type="button" class="vendor-icon-action" title="Record delivery" aria-label="Record delivery: ${esc(p.ItemName)}">${productIcon('delivery')}</button>` : ''}</div></td></tr>`).join('') || '<tr role="row"><td role="cell" colspan="4">No live products yet. Add a product or upload a CSV; pending products appear above for review.</td></tr>'}</tbody></table></div>`;
       if (tab === 'settings') { const s = data.settings; panel.innerHTML = `<h3>Default settlement arrangement</h3><p>Individual vendors may inherit this rule or explicitly receive full payment.</p><form class="vendor-form" data-settings>${ruleFields(s.RuleHistory?.at(-1))}
         ${[['PayableAccount','Vendor payable account','Liability'],['CommissionAccount','Commission / charge income','Revenue'],['VendorReceivableAccount','Direct-collection charge receivable','Asset']].map(([key,label,type]) => accountSelect(key,label,data.chart,[type],s[key])).join('')}
         ${input('BusinessTimezone','Business timezone',s.BusinessTimezone)}<label class="vendor-check vendor-full"><input name="AccountingConfirmed" type="checkbox" ${s.AccountingConfirmed ? 'checked' : ''}> Accounts has confirmed the collection arrangement and account mappings.</label>
@@ -367,7 +379,7 @@
         };
       }
       root.querySelector('[data-refresh]').onclick = reload;
-      root.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { tab = b.dataset.tab; statement = null; statementGeneration++; draw(); if (tab === 'statement') loadStatement(); });
+      root.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { tab = b.dataset.tab; statement = null; statementGeneration++; statementController?.abort(); draw(); if (['statement','analysis'].includes(tab)) loadStatement(); });
       root.querySelector('[data-add-vendor]')?.addEventListener('click', () => vendorForm());
       root.querySelectorAll('[data-edit-vendor]').forEach(b => b.onclick = () => vendorForm(data.vendors.find(v => v.VendorId === b.dataset.editVendor)));
       root.querySelectorAll('[data-view-vendor]').forEach(b => b.onclick = () => { selected = b.dataset.viewVendor; tab = 'statement'; draw(); loadStatement(); });
@@ -396,6 +408,15 @@
           if (event.target.name === 'VendorId') loadStatement();
         };
         filter.onsubmit = e => { e.preventDefault(); selected = filter.elements.VendorId.value; loadStatement(); };
+      }
+      const analysisFilter = root.querySelector('[data-analysis-filter]'); if (analysisFilter) {
+        const update = () => {
+          selected = analysisFilter.elements.VendorId.value;
+          analysisRange = {From:analysisFilter.elements.From.value,To:analysisFilter.elements.To.value};
+          loadStatement();
+        };
+        analysisFilter.onchange = update;
+        analysisFilter.onsubmit = event => { event.preventDefault(); update(); };
       }
       const settings = root.querySelector('[data-settings]'); if (settings) { ruleVisibility(settings); settings.onchange = () => ruleVisibility(settings); settings.onsubmit = async e => { e.preventDefault();
         const result = await call('saveSettings',{ ...formBody(settings), RecordVersion:data.settings.RecordVersion, AccountingConfirmed:settings.elements.AccountingConfirmed.checked, Enabled:settings.elements.Enabled.checked },settings);

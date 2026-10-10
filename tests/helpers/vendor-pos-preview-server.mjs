@@ -16,6 +16,7 @@ const files = new Map([
   ['/css/vendor-settlements.css',new URL('../../css/vendor-settlements.css',import.meta.url)],
   ['/js/vendor-pos.js',new URL('../../js/vendor-pos.js',import.meta.url)],
   ['/js/vendor-settlements.js',new URL('../../js/vendor-settlements.js',import.meta.url)],
+  ['/js/vendor-sales-analysis.js',new URL('../../js/vendor-sales-analysis.js',import.meta.url)],
   ['/js/student-face-lookup.js',new URL('../../js/student-face-lookup.js',import.meta.url)]
 ]);
 createServer(async(req,res) => {

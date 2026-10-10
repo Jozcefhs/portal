@@ -38,6 +38,11 @@
 .vendor-product-table { table-layout:auto; }
 .vendor-product-table td { overflow-wrap:normal; word-break:normal; }
 .vendor-product-actions { display:flex; flex-wrap:wrap; gap:6px; }
+.vendor-workspace .vendor-product-actions .vendor-icon-action {
+  display:inline-grid; place-items:center; flex:0 0 44px; width:44px; height:44px; padding:0;
+}
+.vendor-icon-action svg { display:block; pointer-events:none; }
+.vendor-icon-action:focus-visible { outline:3px solid #126a67; outline-offset:3px; }
 .vendor-workspace .vendor-product-actions button { flex:0 0 auto; width:auto; min-height:44px; padding:9px 12px; font-size:12px; line-height:1.25; white-space:nowrap; overflow-wrap:normal; word-break:normal; }
 .vendor-badge { display:inline-block; padding:4px 8px; border-radius:12px; font-size:12px; background:#dff3ee; color:#126a67; }
 .vendor-dialog { max-width:760px; width:calc(100% - 24px); max-height:90vh; overflow:auto; padding:18px; border:1px solid #c3d8e7; border-radius:14px; }
@@ -73,7 +78,7 @@
   .vendor-product-table td { min-width:0; padding:5px; border:0; overflow-wrap:anywhere; }
   .vendor-product-table td:first-child, .vendor-product-table td:last-child { grid-column:1/-1; }
   .vendor-product-table td[data-label]::before { content:attr(data-label); display:block; margin-bottom:3px; color:#537089; font-size:10px; font-weight:700; }
-  .vendor-workspace .vendor-product-actions button { flex:1 0 auto; }
+  .vendor-workspace .vendor-product-actions button:not(.vendor-icon-action) { flex:1 0 auto; }
 }
 .vendor-form [hidden]{display:none!important}
 /* Reuse the staff POS components so both counters keep the same responsive design. */
@@ -115,6 +120,45 @@ html[data-theme="dark"] .vendor-pos .commerce-search-label{background:#0d1b2b;bo
 .vendor-pos .vendor-pos-payment{margin:0}
 .vendor-pos .vendor-pos-payment>button{width:100%;min-height:43px;margin:0;font-size:12px}
 .vendor-pos .vendor-pos-guidance{margin:0;padding:10px;border:1px dashed #cad8e6;border-radius:9px;font-size:11px}
+.vendor-analysis h3,.vendor-chart-card h4{margin:0 0 10px}
+.vendor-analysis>p,.vendor-chart-card>p{font-size:13px;line-height:1.5;color:#537089}
+.vendor-analysis-charts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:18px 0}
+.vendor-chart-card{min-width:0;padding:16px;border:1px solid #d4e3ed;border-radius:12px;background:#f9fbfd}
+.vendor-chart-wide{grid-column:1/-1}
+.vendor-chart-legend{display:flex;flex-wrap:wrap;gap:18px;font-size:12px}
+.vendor-chart-legend span::before{content:'';display:inline-block;width:10px;height:10px;margin-right:6px;border-radius:2px;background:#126a67}
+.vendor-chart-legend span+span::before{background:#d97727}
+.vendor-trend-scroll{overflow-x:auto;margin:10px 0}
+.vendor-trend-chart{display:block;width:100%;min-width:540px;max-height:320px}
+.vendor-trend-chart text{fill:#537089;font:11px system-ui,sans-serif}
+.vendor-chart-gridline{stroke:#d4e3ed;stroke-width:1}
+.vendor-chart-sales{fill:#126a67}
+.vendor-chart-refunds{fill:#d97727}
+.vendor-chart-card summary{cursor:pointer;font-size:13px;font-weight:600}
+.vendor-chart-card caption{text-align:left;padding:8px 0;color:#537089}
+.vendor-chart-card .vendor-table-wrap{max-height:300px}
+.vendor-bar-chart{display:grid;gap:16px;margin:16px 0}
+.vendor-bar-row>div:first-child{display:flex;justify-content:space-between;align-items:baseline;gap:10px;font-size:13px}
+.vendor-bar-row span{overflow-wrap:anywhere}
+.vendor-bar-row strong{flex-shrink:0;white-space:nowrap;font-size:13px;font-variant-numeric:tabular-nums}
+.vendor-bar-row small{display:block;margin-top:4px;color:#537089}
+.vendor-bar-track{height:10px;margin-top:6px;overflow:hidden;border-radius:6px;background:#e1ecee}
+.vendor-bar-track span{display:block;height:100%;border-radius:6px;background:#126a67}
+.vendor-analysis-footnote{margin-top:16px}
+.vendor-historical-analysis .vendor-table{min-width:720px}
+html[data-theme="dark"] .vendor-chart-card{background:#14283b;border-color:#33465c}
+html[data-theme="dark"] .vendor-analysis>p,html[data-theme="dark"] .vendor-chart-card>p,html[data-theme="dark"] .vendor-bar-row small,html[data-theme="dark"] .vendor-chart-card caption{color:#bdcce0}
+html[data-theme="dark"] .vendor-trend-chart text{fill:#bdcce0}
+html[data-theme="dark"] .vendor-chart-gridline{stroke:#33465c}
+html[data-theme="dark"] .vendor-bar-track{background:#33465c}
+html[data-theme="dark"] .vendor-chart-sales,html[data-theme="dark"] .vendor-chart-legend span::before,html[data-theme="dark"] .vendor-bar-track span{fill:#2aaf9e;background:#2aaf9e}
+html[data-theme="dark"] .vendor-chart-legend span+span::before{background:#d97727}
+html[data-theme="dark"] .vendor-icon-action:focus-visible{outline-color:#68d5c6}
+@media(max-width:680px){
+  .vendor-analysis-charts{grid-template-columns:minmax(0,1fr)}
+  .vendor-chart-card{padding:12px}
+  .vendor-bar-row>div:first-child{flex-wrap:wrap;gap:4px 8px}
+}
 .vendor-pos .vendor-pos-search-empty{margin:8px 0 0;font-size:12px}
 .vendor-pos .vendor-check{display:flex!important;align-items:center;gap:8px;font-size:12px}
 .vendor-pos .vendor-check input{flex:0 0 18px;width:18px;height:18px;min-height:18px;padding:0}

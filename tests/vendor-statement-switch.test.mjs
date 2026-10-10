@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
-import {runInNewContext} from 'node:vm';
+import {runInNewContext,constants} from 'node:vm';
 import {webcrypto} from 'node:crypto';
+import {fileURLToPath} from 'node:url';
 
 const source = await readFile(new URL('../js/vendor-settlements.js',import.meta.url),'utf8');
 const tick = () => new Promise(resolve => setImmediate(resolve));
@@ -53,14 +54,15 @@ async function fixture(options = {}) {
     if(action==='statement') return new Promise((resolve,reject)=>reads.push({body,signal,resolve,reject}));
     throw new Error(`Unexpected action: ${action}`);
   };
-  runInNewContext(source,{window,FormData:FormDataFixture,Intl,AbortController,setTimeout,clearTimeout,crypto:webcrypto});
+  runInNewContext(source,{window,FormData:FormDataFixture,Intl,AbortController,setTimeout,clearTimeout,crypto:webcrypto},
+    {filename:fileURLToPath(new URL('../js/vendor-settlements.js',import.meta.url)),importModuleDynamically:constants.USE_MAIN_CONTEXT_DEFAULT_LOADER});
   const mounted=window.DynamaxVendors.mount(root,request);
   await tick();
-  root.querySelectorAll('[data-tab]').find(node=>node.dataset.tab===(options.products ? 'products' : 'statement')).onclick();
-  const filter=()=>root.querySelector('[data-statement-filter]');
+  root.querySelectorAll('[data-tab]').find(node=>node.dataset.tab===(options.tab || (options.products ? 'products' : 'statement'))).onclick();
+  const filter=()=>root.querySelector(options.tab==='analysis' ? '[data-analysis-filter]' : '[data-statement-filter]');
   const change=(name,value)=>{filter().elements[name].value=value;filter().onchange({target:filter().elements[name]});};
-  return {root,reads,calls,mounted:{destroy(){mounted.destroy();reads.forEach(read=>read.resolve(null));}},change,filter,result:()=>root.querySelector('[data-statement-result]'),
-    response(index,amount=0){const read=reads[index];read.resolve({vendor:{VendorId:read.body.VendorId,Name:read.body.VendorId==='v1'?'First vendor':'Second vendor'},balance:{Available:amount},availableInPeriod:amount,entries:[],payments:[]});}};
+  return {root,reads,calls,mounted:{destroy(){mounted.destroy();reads.forEach(read=>read.resolve(null));}},change,filter,result:()=>root.querySelector(options.tab==='analysis' ? '[data-analysis-result]' : '[data-statement-result]'),
+    response(index,amount=0){const read=reads[index];read.resolve({vendor:{VendorId:read.body.VendorId,Name:read.body.VendorId==='v1'?'First vendor':'Second vendor'},from:read.body.From,to:read.body.To,balance:{Available:amount},availableInPeriod:amount,entries:[],payments:[]});}};
 }
 
 test('responsive product rows preserve stock, escaping and working edit / delivery handlers',async t=>{
@@ -73,6 +75,9 @@ test('responsive product rows preserve stock, escaping and working edit / delive
   assert.match(panel.innerHTML,/data-label="Stock \/ price">5 · ₦500\.00/);
   assert.equal(typeof panel.querySelector('[data-edit-product]').onclick,'function');
   assert.equal(typeof panel.querySelector('[data-delivery]').onclick,'function');
+  assert.match(panel.innerHTML,/class="vendor-icon-action" title="Edit product" aria-label="Edit product: Water &lt;sample&gt;"/);
+  assert.match(panel.innerHTML,/aria-label="Record delivery: Water &lt;sample&gt;"/);
+  assert.equal((panel.innerHTML.match(/aria-hidden="true" focusable="false"/g) || []).length,2);
   assert.deepEqual(f.calls.map(call=>call.action),['bootstrap']);
 });
 
@@ -129,4 +134,33 @@ test('destroying the workspace aborts statement reads and ignores their results'
   assert.equal(f.reads[0].signal.aborted,true);
   f.response(0,999);await tick();
   assert.doesNotMatch(f.result().innerHTML,/999\.00/);
+});
+
+test('sales analysis uses scoped statement reads, auto-loads filters and ignores stale vendors',async t=>{
+  const f=await fixture({tab:'analysis'});t.after(()=>f.mounted.destroy());
+  assert.equal(f.calls[1].action,'statement');
+  f.change('From','2026-10-01');f.change('To','2026-10-10');f.change('VendorId','v2');
+  assert.deepEqual({...f.reads.at(-1).body},{VendorId:'v2',From:'2026-10-01',To:'2026-10-10'});
+  assert.ok(f.reads.slice(0,-1).every(read=>read.signal.aborted));
+  f.response(0);await tick();assert.match(f.result().innerHTML,/Loading sales analysis/);
+  f.response(f.reads.length-1);
+  // Dynamic chart module import may take a few event-loop turns on a cold run.
+  for(let i=0;i<40 && !f.result().innerHTML.includes('vendor-analysis-charts');i++) await new Promise(resolve=>setTimeout(resolve,10));
+  assert.match(f.result().innerHTML,/Second vendor · Sales analysis/);
+  assert.match(f.result().innerHTML,/vendor-trend-chart/);
+  assert.equal(f.root.querySelector('[data-request-new]'),null,'charts cannot initiate payments');
+  assert.ok(f.calls.every(row=>['bootstrap','statement'].includes(row.action)));
+});
+
+test('analysis errors and invalid ranges are visible and retryable, and refresh preserves its range',async t=>{
+  const f=await fixture({tab:'analysis'});t.after(()=>f.mounted.destroy());
+  f.reads[0].reject(new Error('Sample connection failure'));await tick();
+  assert.match(f.result().textContent,/Use Load analysis to retry/);
+  f.change('From','2026-09-01');f.change('To','2026-09-30');
+  f.root.querySelector('[data-refresh]').onclick();await tick();
+  assert.equal(f.filter().elements.From.value,'2026-09-01');
+  assert.equal(f.filter().elements.To.value,'2026-09-30');
+  const count=f.reads.length;f.change('To','2026-08-31');
+  assert.equal(f.reads.length,count);assert.match(f.result().textContent,/valid date range/);
+  f.mounted.destroy();assert.ok(f.reads.slice(1).every(read=>read.signal.aborted));
 });

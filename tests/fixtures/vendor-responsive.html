@@ -6,12 +6,27 @@
 <main class="staff-shell"><div class="staff-main-content"><section id="root" class="card staff-panel"></section></div></main>
 <script src="/js/display-time.js"></script><script src="/js/vendor-settlements.js"></script><script src="/js/vendor-pos.js"></script><script>
 const products=Array.from({length:24},(_,i)=>({InventoryId:'main-Secondary-SAMPLE-'+i,VendorId:'sample-vendor',ItemCode:'SAMPLE-'+i,
-  ItemName:['40LV','4 Figure Table','Bathing Soap','Big boy'][i%4],Section:'tuckShop',Quantity:30+i,Price:500+i*100,Category:'General item',Unit:'pcs'}));
-const request=async action=>{
-  if(action==='bootstrap')return {vendors:[{VendorId:'sample-vendor',Name:'Sample Vincent Stores',Active:'YES',SchoolSection:'Secondary'}],
+  ItemName:i===23?'4k RFID S70 NFC Card':['40LV','4 Figure Table','Bathing Soap','Big boy'][i%4],Section:'tuckShop',Quantity:30+i,Price:500+i*100,Category:'General item',Unit:'pcs'}));
+const request=async (action,body={})=>{
+  if(action==='bootstrap')return {vendors:[{VendorId:'sample-vendor',Name:'Sample Vincent Stores',Active:'YES',SchoolSection:'Secondary'},
+    {VendorId:'second-vendor',Name:'Sample Kitchen',Active:'YES',SchoolSection:'Secondary'}],
     balances:[],products,requests:[],productChanges:[],settings:{Enabled:true,AccountingConfirmed:true},capabilities:{vendor:true,products:true,edition:'school'}};
   if(action==='salesBootstrap')return {products,sellingEnabled:true};
   if(action==='recentVendorSales')return {sales:[]};
+  if(action==='statement') {
+    const second=body.VendorId==='second-vendor',start=new Date(body.From+'T00:00:00Z');
+    const entries=Array.from({length:8},(_,i)=>{
+      const date=new Date(start);date.setUTCDate(date.getUTCDate()+i);
+      const amount=(second?2:1)*(i+1)*150000,quantity=(i+1)*3;
+      return {Type:i%3===0?'Vendor collected sale':'Sale',CollectionMode:i%3===0?'Vendor collected':'School collected',
+        Date:date.toISOString(),SaleNo:'SAMPLE-SALE-'+i,GrossCents:amount,Items:[{ItemName:products[i].ItemName,
+          InventoryDocumentId:products[i].InventoryId,Quantity:quantity,Amount:amount/100}]};
+    }).filter(row=>row.Date.slice(0,10)<=body.To);
+    entries.push({Type:'Reviewed historical opening',Date:body.From,OpeningReference:'SAMPLE-OPENING',GrossCents:20000000,
+      RefundCents:1000000,ChargeCents:910000,PaidCents:1000000,OutstandingCents:17090000});
+    entries.push({Type:'Refund',Date:body.To,RefundCents:50000});
+    return {vendor:{VendorId:body.VendorId,Name:second?'Sample Kitchen':'Sample Vincent Stores'},from:body.From,to:body.To,entries,balance:{},payments:[]};
+  }
   throw new Error('Local layout preview only. No live data or writes.');
 };
 if(new URLSearchParams(location.search).get('view')==='pos')DynamaxVendorPOS.mount(document.querySelector('#root'),request,'tuckShop');

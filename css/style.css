@@ -3501,10 +3501,11 @@ img.nav-logo,
   .commerce-pos-layout>.commerce-cart{max-width:none}
 }
 /* Dense POS catalogue: add columns instead of stretching product cards. */
+/* Content-sized tracks keep prices/controls intact in the zero-height flex viewport. */
 .commerce-product-list{
   display:grid;
   grid-template-columns:repeat(auto-fill,128px);
-  grid-auto-rows:minmax(110px,auto);
+  grid-auto-rows:max-content;
   align-content:start;
   gap:8px;
   max-height:358px;
@@ -3516,10 +3517,10 @@ img.nav-logo,
 .commerce-product{
   display:grid;
   grid-template-columns:minmax(0,1fr);
-  grid-template-rows:minmax(0,1fr) auto;
+  grid-template-rows:auto auto;
   align-items:stretch;
   gap:7px;
-  height:auto;
+  height:max-content;
   min-height:110px;
   box-sizing:border-box;
   padding:9px;
@@ -3530,7 +3531,7 @@ img.nav-logo,
 .commerce-product:nth-child(3n){background:#fff7e8}
 .commerce-product:hover{border-color:#8fb9da;box-shadow:0 5px 13px rgba(28,73,110,.09);transform:translateY(-1px)}
 .commerce-product:has(.commerce-add-button.is-added){border-color:#75c9ad;background:#f1fbf7}
-.commerce-product>div:first-child{min-height:0}
+.commerce-product>div:first-child{min-height:auto}
 .commerce-product strong{
   display:-webkit-box;
   min-height:29px;
@@ -3541,6 +3542,8 @@ img.nav-logo,
   -webkit-line-clamp:2;
 }
 .commerce-product span,.commerce-product small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.commerce-product span{line-height:1.3}
+.commerce-product small{min-height:1.3em;line-height:1.3;font-variant-numeric:tabular-nums}
 .commerce-product-action{justify-content:space-between;margin-top:auto;padding-top:6px;border-top:1px solid #e4ebf1}
 .commerce-product-action select{width:50px}
 .commerce-empty{grid-column:1/-1}

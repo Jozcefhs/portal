@@ -21,9 +21,10 @@ test('phone product rows keep all details and actions visible with full-width wr
   assert.match(mobile,/\.vendor-product-table tr \{ display:grid; grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
   assert.match(mobile,/td:first-child, \.vendor-product-table td:last-child \{ grid-column:1\/-1/);
   assert.match(mobile,/content:attr\(data-label\)/);
-  assert.match(mobile,/\.vendor-product-actions button \{ flex:1 0 auto/);
+  assert.match(mobile,/\.vendor-product-actions button:not\(\.vendor-icon-action\) \{ flex:1 0 auto/);
   assert.match(vendorCss,/\.vendor-product-actions \{ display:flex; flex-wrap:wrap; gap:6px/);
   assert.match(vendorCss,/\.vendor-product-actions button \{[^}]*min-height:44px;[^}]*white-space:nowrap; overflow-wrap:normal; word-break:normal/);
+  assert.match(vendorCss,/\.vendor-product-actions \.vendor-icon-action \{[^}]*flex:0 0 44px; width:44px; height:44px; padding:0/);
 });
 
 test('landscape tablet chrome is compact without reducing touch targets or hiding navigation',()=>{
