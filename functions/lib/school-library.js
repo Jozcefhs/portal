@@ -32,6 +32,10 @@ function requireAccess(user, write = false) {
   }
 }
 
+export function requireSchoolLibraryAccess(user, write = false) {
+  return requireAccess(user, write);
+}
+
 async function branchFor(env, user, body = {}) {
   const structure = await getSchoolStructure(env);
   return safeScopeId(enforceActorBranch(

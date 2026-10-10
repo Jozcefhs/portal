@@ -62,8 +62,20 @@ async function fixture(options = {}) {
   const filter=()=>root.querySelector(options.tab==='analysis' ? '[data-analysis-filter]' : '[data-statement-filter]');
   const change=(name,value)=>{filter().elements[name].value=value;filter().onchange({target:filter().elements[name]});};
   return {root,reads,calls,mounted:{destroy(){mounted.destroy();reads.forEach(read=>read.resolve(null));}},change,filter,result:()=>root.querySelector(options.tab==='analysis' ? '[data-analysis-result]' : '[data-statement-result]'),
-    response(index,amount=0){const read=reads[index];read.resolve({vendor:{VendorId:read.body.VendorId,Name:read.body.VendorId==='v1'?'First vendor':'Second vendor'},from:read.body.From,to:read.body.To,balance:{Available:amount},availableInPeriod:amount,entries:[],payments:[]});}};
+    response(index,amount=0,details={}){const read=reads[index];read.resolve({vendor:{VendorId:read.body.VendorId,Name:read.body.VendorId==='v1'?'First vendor':'Second vendor'},from:read.body.From,to:read.body.To,balance:{Available:amount},availableInPeriod:amount,entries:[],payments:[],...details});}};
 }
+
+test('statement renders every monetary column with a no-wrap class without changing values',async t=>{
+  const f=await fixture();t.after(()=>f.mounted.destroy());
+  f.response(0,341000,{directChargeDue:1500,entries:[{Date:'2026-10-10',SaleNo:'SAMPLE',Type:'Sale',
+    Gross:170900,Refund:0,SchoolCharge:1600,Net:169300,Items:[]}],payments:[{Date:'2026-10-10',Reference:'SAMPLE-PAYMENT',Amount:1234567.89}]});
+  await tick();
+  const html=f.result().innerHTML;
+  assert.deepEqual([...html.matchAll(/<td class="vendor-amount">([^<]*)<\/td>/g)].map(match=>match[1]),
+    ['₦170,900.00','₦0.00','₦1,600.00','₦169,300.00','₦1,234,567.89']);
+  assert.match(html,/<strong class="vendor-amount">₦341,000\.00<\/strong>/);
+  assert.match(html,/<span class="vendor-amount">₦1,500\.00<\/span>/);
+});
 
 test('responsive product rows preserve stock, escaping and working edit / delivery handlers',async t=>{
   const f=await fixture({products:[{InventoryId:'main-Secondary-test',VendorId:'v1',ItemName:'Water <sample>',Section:'tuckShop',Quantity:5,Price:500}]});

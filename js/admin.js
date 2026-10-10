@@ -4767,6 +4767,39 @@ function bindOrganizationCommerceWorkspace(section, data = {}) {
   }));
 }
 
+async function openModuleItemImport(section, trigger) {
+  const user = currentUser, branch = selectedBranchId, workspace = activeSection;
+  const isCurrent = () => currentUser === user && selectedBranchId === branch && activeSection === workspace;
+  setButtonLoading(trigger, true, 'Loading...', 'Batch upload items');
+  try {
+    const { openItemImportDialog } = await import('./item-import-dialog.js?v=20261010-batch-items');
+    if (!isCurrent()) return;
+    openItemImportDialog({ section, isCurrent,
+      defaultSection: ['Primary', 'Secondary'].includes(user?.schoolSectionAccess) ? user.schoolSectionAccess : 'Secondary',
+      request: async payload => {
+        if (!isCurrent()) throw new Error('Your workspace changed. Open a fresh upload.');
+        const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 45000);
+        try {
+          const response = await staffFetch('/api/staff-item-import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: controller.signal,
+            body: JSON.stringify({ ...payload, section, BranchId: clean(branch || user?.branchId) }) });
+          const result = await response.json();
+          if (!response.ok || !result.ok) throw new Error(result.message || 'The item upload failed.');
+          return result;
+        } catch (error) {
+          if (error.name === 'AbortError') throw new Error('Upload timed out. Retrying this batch is safe; it will not duplicate stock.');
+          throw error;
+        } finally { clearTimeout(timer); }
+      },
+      reload: () => section === 'library' ? loadSchoolLibrary() : ['bookstore', 'uniformStore'].includes(section) ? loadStaffStore(section) : loadDepartmentOperations(section)
+    });
+  } catch (error) { setStatus(dashboardStatus, error.message || String(error), 'bad'); }
+  finally { if (trigger?.isConnected) setButtonLoading(trigger, false, '', 'Batch upload items'); }
+}
+
+function bindModuleItemImport(section) {
+  panelEl.querySelectorAll('[data-batch-upload-items]').forEach(button => button.addEventListener('click', () => openModuleItemImport(section, button)));
+}
+
 function renderStaffStore(section, store) {
   const organisationStore = section === 'organizationStore';
   const label = organisationStore ? 'Organisation Store' : (section === 'bookstore' ? 'Bookstore' : 'Uniform Store');
@@ -4778,7 +4811,7 @@ function renderStaffStore(section, store) {
     <div class="workflow-intro"><div><p class="eyebrow">${organisationStore ? 'Retail operations' : 'School store'}</p><h2>${label}</h2><p class="muted">List items and prices, monitor paid orders, and record collection.</p></div></div>
     ${organisationStore ? renderOrganizationCommerceWorkspace(section, store) : ''}
     <section class="config-card" id="staffStoreItemWorkspace">
-      <header class="config-card-heading"><div><small>Inventory setup</small><h3>Add or update an item</h3><p>Define how this product appears to ${storeAudience}.</p></div></header>
+      <header class="config-card-heading"><div><small>Inventory setup</small><h3>Add or update an item</h3><p>Define how this product appears to ${storeAudience}.</p></div>${!organisationStore ? '<button type="button" data-batch-upload-items>Batch upload items</button>' : ''}</header>
     <form id="staffStoreItemForm" class="workflow-form workflow-form-grid config-form"><input type="hidden" name="ItemId">
       <label>Item code<input name="ItemCode" required></label><label>Item name<input name="ItemName" required></label>
       <label>Category<input name="Category" list="storeCategoryOptions" autocomplete="off" required><datalist id="storeCategoryOptions">${activeCategories.map((row) => `<option value="${escapeHtml(row.Name)}"></option>`).join('')}</datalist></label><label>Variant / size<input name="Size"></label>
@@ -4829,6 +4862,7 @@ function renderStaffStore(section, store) {
   ]);
   if (organisationStore) loadDirectTransferVerification(['organization-store'], 'organizationStoreDirectTransferVerification');
   if (organisationStore) bindOrganizationCommerceWorkspace(section, store);
+  if (!organisationStore) bindModuleItemImport(section);
   const itemForm = document.getElementById('staffStoreItemForm');
   const resetStoreItemForm = () => {
     if (!itemForm) return;
@@ -5704,7 +5738,7 @@ function renderDepartmentOperations(section, data) {
         <div class="config-actionbar"><p class="status" data-department-status></p><button type="submit" ${inventory.length ? '' : 'disabled'}>Send market list</button></div>
       </form>
     </section>` : ''}
-    <section class="config-card" id="departmentInventoryWorkspace"><header class="config-card-heading"><div><small>Inventory setup</small><h3>Add or update an item</h3></div></header>
+    <section class="config-card" id="departmentInventoryWorkspace"><header class="config-card-heading"><div><small>Inventory setup</small><h3>Add or update an item</h3></div>${['clinic', 'kitchen'].includes(section) ? '<button type="button" data-batch-upload-items>Batch upload items</button>' : ''}</header>
       <form id="departmentInventoryForm" class="workflow-form workflow-form-grid config-form">
         <input type="hidden" name="OriginalItemName">
         <input type="hidden" name="InventoryId">
@@ -5758,6 +5792,7 @@ function renderDepartmentOperations(section, data) {
   departmentTabs.push({ key: 'stock', label: 'Stock in / out', icon: '\u21C5', count: (data.movements || []).length, nodes: [document.getElementById('departmentStockWorkspace'), workspaceTableNodes('Recent Stock Movements')] });
   if (section === 'tuckShop') departmentTabs.push({ key: 'history', label: 'Purchase history', icon: '\u{1F5C2}', count: purchases.length, nodes: document.getElementById('departmentPurchaseHistory') });
   mountWorkspaceTabs(section, departmentTabs);
+  if (['clinic', 'kitchen'].includes(section)) bindModuleItemImport(section);
   if (section === 'restaurant') bindOrganizationCommerceWorkspace(section, data);
   if (section === 'tuckShop') bindTuckShopPOS(data);
   const recordsHandoff = takeRecordsDeskHandoff(section);
@@ -11968,7 +12003,7 @@ function renderSchoolLibrary() {
       <div><small>Overdue</small><strong>${escapeHtml(summary.Overdue || 0)}</strong></div>
     </div>
     <section class="school-library-panel" id="libraryCatalogPanel">
-      ${canManage ? `<div class="school-library-forms">
+      ${canManage ? `<div class="inline-action-group"><button type="button" data-batch-upload-items>Batch upload items</button></div><div class="school-library-forms">
         <form id="libraryTitleForm" class="config-card workflow-form workflow-form-grid" data-library-action="saveTitle">
           <h3>Book title</h3><input type="hidden" name="TitleId">
           <label>Title *<input name="Title" required maxlength="200"></label>
@@ -12078,6 +12113,7 @@ function renderSchoolLibrary() {
     { key: 'reports', label: 'Overdue', icon: '\u26A0', count: summary.Overdue || 0, nodes: document.getElementById('libraryReportsPanel') },
     { key: 'policy', label: 'Lending rules', icon: '\u2699', nodes: document.getElementById('libraryPolicyPanel') }
   ]);
+  if (canManage) bindModuleItemImport('library');
   document.getElementById('libraryOpenReturns')?.addEventListener('click', () => libraryTabs?.activate('circulation'));
   document.getElementById('refreshSchoolLibrary')?.addEventListener('click', (event) =>
     runButtonAction(event.currentTarget, 'Refreshing...', loadSchoolLibrary));

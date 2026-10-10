@@ -124,6 +124,6 @@ test('every affected page loads the shared helper synchronously before consumers
     const helper = html.indexOf('js/display-time.js?v=20261010-wat-timestamps');
     assert.ok(helper > 0 && helper < html.indexOf(`js/${page}.js`), page);
   }
-  assert.match(read('sw.js'), /dynamax-v357-vendor-nowrap-columns/);
+  assert.match(read('sw.js'), /dynamax-v359-batch-items-vendor-statement-figures/);
   assert.match(read('sw.js'), /\/js\/display-time.js/);
 });

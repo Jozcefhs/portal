@@ -14,7 +14,7 @@
 .vendor-metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:8px; margin:12px 0; }
 .vendor-metric { padding:12px; border-radius:8px; background:var(--vendor-soft); border:1px solid #c5e6df; }
 .vendor-metric span, .vendor-card small { display:block; font-size:12px; color:#537089; margin:4px 0; }
-.vendor-metric strong { font-size:19px; }
+.vendor-metric strong { font-size:19px; white-space:nowrap; overflow-wrap:normal; word-break:normal; }
 .vendor-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr)); gap:12px; }
 .vendor-card { border:1px solid #d4e3ed; border-radius:9px; padding:14px; background:#f8fbfe; min-width:0; overflow-wrap:anywhere; }
 .vendor-card h3 { margin:0 0 6px; }
@@ -36,7 +36,9 @@
 .vendor-table td { border-bottom:1px solid #dae5ec; padding:10px; vertical-align:top; }
 .vendor-table td small { display:block; color:#537089; margin-top:4px; }
 /* Keep financial values and request states intact, even in narrow phone tables. */
-.vendor-table .vendor-amount, .vendor-table .vendor-request-status { white-space:nowrap; overflow-wrap:normal; word-break:normal; }
+.vendor-workspace .vendor-amount, .vendor-table .vendor-request-status { white-space:nowrap; overflow-wrap:normal; word-break:normal; }
+.vendor-statement-table { min-width:720px; table-layout:auto; }
+.vendor-payment-table { min-width:560px; table-layout:auto; }
 .vendor-product-table { table-layout:auto; }
 .vendor-product-table td { overflow-wrap:normal; word-break:normal; }
 .vendor-product-actions { display:flex; flex-wrap:wrap; gap:6px; }

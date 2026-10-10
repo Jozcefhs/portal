@@ -31,6 +31,22 @@ Main public flows
 - register-organization.html: organization registration/subscription.
 - admin.html: secured staff web companion.
 
+Batch item uploads
+------------------
+
+School Library, Clinic, Kitchen, Books & Supplies and Clothing & Supplies
+provide Batch upload items in their inventory / catalogue workspace. Download
+the module's CSV template, fill it, preview every row, then confirm. Each file
+supports up to 1,000 rows / 512 KB, saved in retryable 20-row batches. Completed
+batches stay saved if a later batch fails; retry resumes without duplicating
+items. Existing items are skipped, not updated or restocked.
+
+School Library uses one row per physical copy with a unique barcode. Copies
+of a matching title share a catalogue entry. Existing copy availability and
+loans are preserved. Store and department imports retain the account's normal
+module, branch and school-section boundaries. Importing items does not post
+sales or payments and does not change historical records.
+
 Required Cloudflare variables
 -----------------------------
 

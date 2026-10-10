@@ -32,11 +32,25 @@ test('sales amounts and product request statuses never split across lines on nar
   assert.match(posJs,/<td class="vendor-amount">\$\{money\(sale.Amount\)\}<\/td>/);
   assert.match(vendorJs,/<th class="vendor-request-status">Status<\/th>/);
   assert.match(vendorJs,/<td class="vendor-request-status">\$\{esc\(r.Status\)\}<small>\$\{esc\(r.ReviewNotes\)\}/);
-  assert.match(vendorCss,/\.vendor-table \.vendor-amount, \.vendor-table \.vendor-request-status \{ white-space:nowrap; overflow-wrap:normal; word-break:normal; \}/);
+  assert.match(vendorCss,/\.vendor-workspace \.vendor-amount, \.vendor-table \.vendor-request-status \{ white-space:nowrap; overflow-wrap:normal; word-break:normal; \}/);
   assert.match(vendorCss,/\.vendor-table-wrap \{ overflow:auto;/);
   for (const asset of ['css/vendor-settlements.css','js/vendor-settlements.js','js/vendor-pos.js']) {
     assert.ok(html.includes(asset + '?v=') && html.split(asset + '?v=')[1].split('"')[0].endsWith('-nowrap-columns'));
   }
+});
+
+test('all statement figures stay intact, including balances, period totals and payments',()=>{
+  for (const field of ['Gross','Refund','SchoolCharge','Net']) {
+    assert.ok(vendorJs.includes('<td class="vendor-amount">${money(e.' + field + ')}</td>'));
+  }
+  assert.match(vendorJs,/<td class="vendor-amount">\$\{money\(p.Amount\)\}<\/td>/);
+  assert.match(vendorJs,/<strong class="vendor-amount">\$\{money\(s.availableInPeriod\)\}<\/strong>/);
+  assert.match(vendorJs,/<span class="vendor-amount">\$\{money\(s.directChargeDue\)\}<\/span>/);
+  assert.match(vendorCss,/\.vendor-metric strong \{[^}]*white-space:nowrap; overflow-wrap:normal; word-break:normal/);
+  assert.match(vendorCss,/\.vendor-statement-table \{ min-width:720px; table-layout:auto; \}/);
+  assert.match(vendorCss,/\.vendor-payment-table \{ min-width:560px; table-layout:auto; \}/);
+  assert.match(vendorJs,/class="vendor-table vendor-statement-table"/);
+  assert.match(vendorJs,/class="vendor-table vendor-payment-table"/);
 });
 
 test('landscape tablet chrome is compact without reducing touch targets or hiding navigation',()=>{

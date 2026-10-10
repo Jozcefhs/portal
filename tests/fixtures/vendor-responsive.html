@@ -26,13 +26,15 @@ const request=async (action,body={})=>{
       const date=new Date(start);date.setUTCDate(date.getUTCDate()+i);
       const amount=(second?2:1)*(i+1)*150000,quantity=(i+1)*3;
       return {Type:i%3===0?'Vendor collected sale':'Sale',CollectionMode:i%3===0?'Vendor collected':'School collected',
-        Date:date.toISOString(),SaleNo:'SAMPLE-SALE-'+i,GrossCents:amount,Items:[{ItemName:products[i].ItemName,
+        Date:date.toISOString(),SaleNo:'SAMPLE-SALE-'+i,GrossCents:amount,Gross:amount/100,Refund:0,SchoolCharge:0,Net:amount/100,Items:[{ItemName:products[i].ItemName,
           InventoryDocumentId:products[i].InventoryId,Quantity:quantity,Amount:amount/100}]};
     }).filter(row=>row.Date.slice(0,10)<=body.To);
     entries.push({Type:'Reviewed historical opening',Date:body.From,OpeningReference:'SAMPLE-OPENING',GrossCents:20000000,
-      RefundCents:1000000,ChargeCents:910000,PaidCents:1000000,OutstandingCents:17090000});
-    entries.push({Type:'Refund',Date:body.To,RefundCents:50000});
-    return {vendor:{VendorId:body.VendorId,Name:second?'Sample Kitchen':'Sample Vincent Stores'},from:body.From,to:body.To,entries,balance:{},payments:[]};
+      RefundCents:1000000,ChargeCents:910000,PaidCents:1000000,OutstandingCents:17090000,Gross:200000,Refund:10000,SchoolCharge:9100,Net:180900});
+    entries.push({Type:'Refund',Date:body.To,RefundCents:50000,Gross:0,Refund:500,SchoolCharge:0,Net:-500});
+    return {vendor:{VendorId:body.VendorId,Name:second?'Sample Kitchen':'Sample Vincent Stores'},from:body.From,to:body.To,entries,
+      availableInPeriod:341000,directChargeDue:1500,balance:{GrossSales:351000,Refunds:10000,SchoolDeductions:0,NetEntitlement:341000,Outstanding:341000,Available:341000},
+      payments:[{Date:body.To,Reference:'SAMPLE-PAYMENT',PaymentMethod:'Bank transfer',Amount:1234567.89}]};
   }
   throw new Error('Local layout preview only. No live data or writes.');
 };
