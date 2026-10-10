@@ -10,9 +10,16 @@ const products=Array.from({length:24},(_,i)=>({InventoryId:'main-Secondary-SAMPL
 const request=async (action,body={})=>{
   if(action==='bootstrap')return {vendors:[{VendorId:'sample-vendor',Name:'Sample Vincent Stores',Active:'YES',SchoolSection:'Secondary'},
     {VendorId:'second-vendor',Name:'Sample Kitchen',Active:'YES',SchoolSection:'Secondary'}],
-    balances:[],products,requests:[],productChanges:[],settings:{Enabled:true,AccountingConfirmed:true},capabilities:{vendor:true,products:true,edition:'school'}};
+    balances:[],products,requests:[],productChanges:['Pending','Approved','Rejected'].map((Status,i)=>({
+      ChangeId:'sample-change-'+i,InventoryId:products[i].InventoryId,VendorId:'sample-vendor',Kind:'Create',Status,
+      Data:products[i],RequestedBy:'sample-vendor',RequestedAt:'2026-10-10T12:00:00Z',ReviewNotes:i===1?'already registered':Status.toLowerCase()
+    })),settings:{Enabled:true,AccountingConfirmed:true},capabilities:{vendor:true,products:true,edition:'school'}};
   if(action==='salesBootstrap')return {products,sellingEnabled:true};
-  if(action==='recentVendorSales')return {sales:[]};
+  if(action==='recentVendorSales')return {sales:[1300,1700,1234567.89].map((Amount,i)=>({
+    SaleNo:'SAMPLE-SALE-'+i,SaleDate:'2026-10-10T12:00:00Z',CustomerName:'Sample customer '+(i+1),
+    PaymentMethod:'Student Wallet',CollectionMode:'School collected',Amount,
+    Items:[{ItemName:'Sample chocolate snack',Quantity:2},{ItemName:'Sample drink',Quantity:1}]
+  }))};
   if(action==='statement') {
     const second=body.VendorId==='second-vendor',start=new Date(body.From+'T00:00:00Z');
     const entries=Array.from({length:8},(_,i)=>{

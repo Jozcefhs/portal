@@ -119,6 +119,6 @@ test('cart and page scroll targets clear the sticky bar, while the phone cart st
 
 test('cache-busted layout assets are loaded and included in the new offline shell', () => {
   assert.match(html, /js\/parent-store-layout\.js\?v=20261008-sticky-controls" defer/);
-  assert.match(shell, /dynamax-v356-vendor-sales-analysis/);
+  assert.match(shell, /dynamax-v357-vendor-nowrap-columns/);
   assert.match(shell, /SHELL\.push\('\/js\/parent-store-layout\.js'\)/);
 });

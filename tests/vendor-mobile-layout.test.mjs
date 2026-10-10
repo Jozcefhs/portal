@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 
-const [vendorCss, shellCss, vendorJs, html] = await Promise.all([
-  'css/vendor-settlements.css','css/style.css','js/vendor-settlements.js','admin.html'
+const [vendorCss, shellCss, vendorJs, html, posJs] = await Promise.all([
+  'css/vendor-settlements.css','css/style.css','js/vendor-settlements.js','admin.html','js/vendor-pos.js'
 ].map(file => readFile(new URL(`../${file}`,import.meta.url),'utf8')));
 
 test('live products retain labelled table semantics and separate action controls',()=>{
@@ -25,6 +25,18 @@ test('phone product rows keep all details and actions visible with full-width wr
   assert.match(vendorCss,/\.vendor-product-actions \{ display:flex; flex-wrap:wrap; gap:6px/);
   assert.match(vendorCss,/\.vendor-product-actions button \{[^}]*min-height:44px;[^}]*white-space:nowrap; overflow-wrap:normal; word-break:normal/);
   assert.match(vendorCss,/\.vendor-product-actions \.vendor-icon-action \{[^}]*flex:0 0 44px; width:44px; height:44px; padding:0/);
+});
+
+test('sales amounts and product request statuses never split across lines on narrow screens',()=>{
+  assert.match(posJs,/<th class="vendor-amount">Amount<\/th>/);
+  assert.match(posJs,/<td class="vendor-amount">\$\{money\(sale.Amount\)\}<\/td>/);
+  assert.match(vendorJs,/<th class="vendor-request-status">Status<\/th>/);
+  assert.match(vendorJs,/<td class="vendor-request-status">\$\{esc\(r.Status\)\}<small>\$\{esc\(r.ReviewNotes\)\}/);
+  assert.match(vendorCss,/\.vendor-table \.vendor-amount, \.vendor-table \.vendor-request-status \{ white-space:nowrap; overflow-wrap:normal; word-break:normal; \}/);
+  assert.match(vendorCss,/\.vendor-table-wrap \{ overflow:auto;/);
+  for (const asset of ['css/vendor-settlements.css','js/vendor-settlements.js','js/vendor-pos.js']) {
+    assert.ok(html.includes(asset + '?v=') && html.split(asset + '?v=')[1].split('"')[0].endsWith('-nowrap-columns'));
+  }
 });
 
 test('landscape tablet chrome is compact without reducing touch targets or hiding navigation',()=>{
