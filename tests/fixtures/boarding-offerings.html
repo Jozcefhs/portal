@@ -1,0 +1,28 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Boarding offerings — isolated sample</title><link rel="stylesheet" href="/css/style.css"><link rel="stylesheet" href="/css/boarding-offerings.css"></head>
+<body class="staff-page"><main style="padding:24px"><h1>Boarding offerings sample</h1><p>Isolated test data only. No live API, credentials or student records.</p><button id="open">Open boarding offerings</button><p id="fixtureResult" role="status"></p></main><script src="/js/boarding-offerings.js"></script><script>
+const sampleStudents=Array.from({length:12},(_,i)=>({StudentKey:'secondary|demo-'+(i+1),StudentDocumentId:'DEMO-'+(i+1),AccountRef:'DEMO-'+(i+1),DisplayName:'Sample Boarder '+String(i+1).padStart(2,'0'),ClassName:i%2?'Grade 8':'Grade 7',SchoolSection:'secondary',WalletCardStatus:'Active',PinProtected:false}));
+let sampleService=null;let sampleCalls=[];
+const sampleFetch=async(_url,options)=>{
+ const body=JSON.parse(options.body);sampleCalls.push(body.action);
+ let result={ok:true};
+ if(body.action==='bootstrap')result={ok:true,Students:sampleStudents,PayableAccounts:[{Code:'2000',Name:'Accounts Payable'}],PaymentAccounts:[{Code:'1020',Name:'Bank'}],Services:sampleService?[sampleService]:[]};
+ if(body.action==='preview'){
+  if(!body.Reference||!body.ChurchName||body.Rows.length>5)throw new Error('Fixture detected missing details or an oversized preview');
+  result={ok:true,Ready:true,PreviewToken:'LOCAL-ONLY',Rows:body.Rows.map(row=>({...sampleStudents.find(s=>s.StudentKey===row.StudentKey),Amount:Number(row.Amount),Balance:1000,BalanceAfter:1000-Number(row.Amount),Errors:[]})),Total:body.Rows.reduce((sum,row)=>sum+Number(row.Amount),0)};
+ }
+ if(body.action==='start'){
+  if(body.approvalPassword!=='demo-confirm'||!body.PreviewTokens?.length)throw new Error('Use the sample confirmation password demo-confirm');
+  sampleService={...body,ServiceId:'BO-local-only',Rows:body.Rows.map(row=>({...sampleStudents.find(s=>s.StudentKey===row.StudentKey),Amount:Number(row.Amount),Posted:false})),Count:body.Rows.length,Total:body.Rows.reduce((sum,row)=>sum+Number(row.Amount),0),PostedCount:0,Collected:0,Remitted:0,Outstanding:0,Status:'Pending'};
+  delete sampleService.approvalPassword;delete sampleService.PreviewTokens;result={ok:true,Service:sampleService};
+ }
+ if(body.action==='postNext'){
+  const next=Math.min(sampleService.Count,body.Offset+5);sampleService.PostedCount=next;sampleService.Rows.forEach((row,i)=>row.Posted=i<next);
+  sampleService.Collected=sampleService.Rows.filter(row=>row.Posted).reduce((sum,row)=>sum+row.Amount,0);sampleService.Outstanding=sampleService.Collected-sampleService.Remitted;sampleService.Status=next===sampleService.Count?'Collected':'Partially collected';
+  result={ok:true,Service:sampleService,message:next+' of '+sampleService.Count+' sample deductions recorded'};
+ }
+ if(body.action==='remit'){sampleService.Remitted+=Number(body.Amount);sampleService.Outstanding=sampleService.Collected-sampleService.Remitted;result={ok:true,Service:sampleService,message:'Sample remittance recorded; no actual payment made.'};}
+ document.getElementById('fixtureResult').textContent='Local requests: '+sampleCalls.join(', ');
+ return new Response(JSON.stringify(result),{headers:{'Content-Type':'application/json'}});
+};
+document.getElementById('open').onclick=()=>DynamaxBoardingOfferings.open({fetch:sampleFetch,user:{username:'demo-accountant',role:'Accounts Officer',edition:'school',branchId:'main',allowedSections:['accounts']}});
+</script></body></html>

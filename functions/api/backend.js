@@ -4949,19 +4949,19 @@ async function seedDefaultFeeItems(env) {
     feeItems: (await listCollection(env, 'feeItems')).map(normalizeFeeItem) };
 }
 
-async function queryAccountRows(env, collection, accountRef, financialScope = null) {
+async function queryAccountRows(env, collection, accountRef, financialScope = null, options = {}) {
   const wanted = clean(accountRef);
   if (!wanted) return [];
   const normalized = normalizeReferenceText(wanted);
   try {
-    const rows = await queryCollection(env, collection, {
+    const rows = await (options.strict ? queryCollectionPages : queryCollection)(env, collection, {
       filters: [
         { field: 'AccountRefNormalized', op: '==', value: normalized },
         { field: 'AccountRef', op: '==', value: wanted },
         { field: 'AdmissionNo', op: '==', value: wanted },
         { field: 'ApplicationReference', op: '==', value: wanted }
       ],
-      filterJoin: 'OR'
+      filterJoin: 'OR', ...(options.strict ? { pageSize: 500, maxRows: 20000 } : {})
     });
     return rows.map((row) => assertManualPaymentScope(row, financialScope, collection));
   } catch (error) {
@@ -4970,9 +4970,9 @@ async function queryAccountRows(env, collection, accountRef, financialScope = nu
     if (!/index|failed precondition/i.test(clean(error?.message))) throw error;
   }
   const groups = await Promise.all(['AccountRef', 'AdmissionNo', 'ApplicationReference'].map((field) => {
-    return queryCollection(env, collection, {
-      filters: [{ field, op: '==', value: wanted }]
-    }).catch((error) => { if (financialScope) throw error; return []; });
+    return (options.strict ? queryCollectionPages : queryCollection)(env, collection, {
+      filters: [{ field, op: '==', value: wanted }], ...(options.strict ? { pageSize: 500, maxRows: 20000 } : {})
+    }).catch((error) => { if (financialScope || options.strict) throw error; return []; });
   }));
   const unique = new Map();
   groups.flat().forEach((row) => unique.set(clean(row.__name || row.__id) || JSON.stringify(row), row));
@@ -6255,7 +6255,7 @@ export function summarizeWalletActivity(rows, accountRef, today = new Date()) {
     if (normalizeMatchText(row.FeeCategory) === 'wallet' || normalizeMatchText(row.EntryType).startsWith('wallet')) {
       summary.balance += asMoneyNumber(row.Credit) - asMoneyNumber(row.Debit);
     }
-    if (normalizeMatchText(row.EntryType) === 'wallet purchase' && sameDayIso(row.Date || row.createdAt, today)) {
+    if (['wallet purchase', 'wallet offering'].includes(normalizeMatchText(row.EntryType)) && sameDayIso(row.Date || row.createdAt, today)) {
       summary.spentToday += asMoneyNumber(row.Debit);
     }
     return summary;
@@ -6279,7 +6279,7 @@ export function calculateCarryForwardSchoolCredit({
 }
 
 async function walletActivityForAccount(env, accountRef, studentScope = null) {
-  let rows = await queryAccountRows(env, 'ledger', accountRef);
+  let rows = await queryAccountRows(env, 'ledger', accountRef, null, { strict: true });
   if (studentScope) {
     const branchId = clean(studentScope.BranchId || studentScope.branchId || 'main').toLowerCase() || 'main';
     const schoolSection = clean(studentScope.SchoolSection || schoolSectionFor(studentScope)).toLowerCase();
@@ -6308,7 +6308,7 @@ export function studentsShareParentForCreditTransfer(source = {}, target = {}) {
   return [...emails(target)].some((email) => sourceEmails.has(email));
 }
 
-async function walletAccountPayload(env, student) {
+export async function walletAccountPayload(env, student) {
   const normalized = normalizeStudent(student || {});
   const accountRef = normalized.AdmissionNo || normalized.ApplicationReference || normalized.AccountRef || '';
   const activity = await walletActivityForAccount(env, accountRef, normalized);
@@ -6799,8 +6799,27 @@ export async function recordWalletPurchase(env, body, options = {}) {
     return { ok: true, message: 'Tuck-shop sale paid from the student wallet; stock updated.',
       ledger: entry, sale, balance: updatedAccount.WalletBalance, account: updatedAccount };
   }
-  await upsertDocument(env, 'ledger', safeDocumentId(ledgerNo), entry);
-  await writeWalletPurchaseAccountingJournal(env, entry);
+  // All wallet debits share the student version guard, including boarding
+  // offerings and non-stock clinic/kitchen purchases. Balance checks must not
+  // race another debit; the subledger and journal also succeed together.
+  if (!student.__scopePath || !student.__id || !student.__updateTime) {
+    const err = new Error('Student wallet version is unavailable. Refresh and try again.'); err.status = 409; throw err;
+  }
+  const purchaseJournal = buildWalletPurchaseAccountingJournal(entry);
+  try {
+    await batchCommitDocuments(env, [
+      { collectionPath: student.__scopePath, documentId: student.__id,
+        data: { WalletLastPurchaseAt: entry.Date, WalletLastPurchaseNo: ledgerNo },
+        updateMask: ['WalletLastPurchaseAt', 'WalletLastPurchaseNo'], updateTime: student.__updateTime },
+      { collectionPath: 'ledger', documentId: safeDocumentId(ledgerNo), data: entry, exists: false },
+      { collectionPath: 'accountingJournals', documentId: safeDocumentId(purchaseJournal.JournalNo), data: purchaseJournal, exists: false }
+    ]);
+  } catch (error) {
+    if ([409, 412].includes(Number(error.status))) {
+      const err = new Error('The wallet changed during this purchase. Refresh and try again; nothing was partially posted.'); err.status = 409; throw err;
+    }
+    throw error;
+  }
   const updatedAccount = await walletAccountPayload(env, student);
   return {
     ok: true,

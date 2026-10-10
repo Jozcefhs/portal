@@ -18695,6 +18695,12 @@ function renderSection(active) {
       { key: 'wallet', label: 'Wallet setup', icon: '\u{1F4B3}', nodes: document.getElementById('accountWalletSetupWorkspace') },
       { key: 'transfers', label: 'Transfer verification', icon: '\u{1F50E}', nodes: document.getElementById('schoolDirectTransferVerification') }
     ]);
+    if (window.DynamaxBoardingOfferings?.canAccess(currentUser)) {
+      const button = document.createElement('button');
+      button.type = 'button'; button.className = 'secondary'; button.textContent = 'Boarding service offerings';
+      button.addEventListener('click', () => window.DynamaxBoardingOfferings.open({ fetch: staffFetch, user: currentUser }));
+      panelEl.querySelector('.workflow-intro')?.append(button);
+    }
     bindAccountWalletSetupWorkspace();
     loadDirectTransferVerification(['school-payment'], 'schoolDirectTransferVerification');
   } else if (active === 'clinic' || active === 'kitchen' || active === 'restaurant' || active === 'tuckShop') {

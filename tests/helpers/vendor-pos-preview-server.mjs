@@ -3,6 +3,9 @@ import {createServer} from 'node:http';
 import {readFile} from 'node:fs/promises';
 
 const files = new Map([
+  ['/tests/fixtures/boarding-offerings.html',new URL('../fixtures/boarding-offerings.html',import.meta.url)],
+  ['/css/boarding-offerings.css',new URL('../../css/boarding-offerings.css',import.meta.url)],
+  ['/js/boarding-offerings.js',new URL('../../js/boarding-offerings.js',import.meta.url)],
   ['/tests/fixtures/vendor-pos.html',new URL('../fixtures/vendor-pos.html',import.meta.url)],
   ['/images/Logo.png',new URL('../../images/Logo.png',import.meta.url)],
   ['/tests/fixtures/vendor-registration.html',new URL('../fixtures/vendor-registration.html',import.meta.url)],

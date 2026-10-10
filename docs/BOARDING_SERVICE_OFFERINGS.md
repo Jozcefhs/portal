@@ -1,0 +1,23 @@
+# Boarding service offerings (School edition)
+
+Open **Accounts → Boarding service offerings** as an Accounts Officer, Director or Super Admin with Accounts access and a concrete working branch. The roster includes only active boarding students in that user's branch and permitted school sections. The screen loads on demand; other editions and vendor accounts cannot access it.
+
+1. Enter a unique service reference (for example `CHAPEL-20261011`), service date/name, receiving church, instruction/notes and an active Payables liability account. This account represents money held for the recipient; it is not an Offering Income or other school Revenue account. Accounts must configure an active Student Wallet Liability account (2200) and the chosen payable account first. No chart accounts are created automatically.
+2. Search/filter and select the participating, authorised students. Enter individual amounts or enter one **Flat amount → Apply to selected**. Individual amounts remain editable. Select shown after clearing filters to include all listed boarders. Unselected and zero-amount rows are excluded.
+3. **Preview deductions** checks live balances, active wallet status, transaction and daily limits, and each student's existing PIN rule. Supply the student's PIN only when required. Resolve flagged rows or exclude them and preview again. A PIN cannot be overridden by the accountant's password.
+4. Confirm that the selected students and amounts follow an authorised student/guardian offering instruction, enter the current staff password and confirm deductions. Preview signatures expire after 15 minutes and are bound to the staff username, branch, students, amounts and service details. They authorise no financial write by themselves.
+5. The screen processes five students per atomic batch with progress. Every wallet is re-read and rechecked before deduction. Each batch creates the wallet ledger entries, balanced journals, version guards, service progress and audit together. On a failure, earlier successful batches remain recorded; no student in the failed batch is partially posted. Reload the service and **Resume deductions** to process only the remaining students. Do not create a new service reference for a retry.
+6. After money is actually paid to the church, choose **Record remittance**, enter the cash/bank account, date, amount and unique payment reference, and confirm with the staff password. Partial remittances are supported; the amount cannot exceed collected, unremitted funds. Recording does not initiate a bank transfer.
+
+## Financial records and safeguards
+
+- A deduction creates a `Wallet Offering` debit in the student's existing `ledger`, classified as Wallet, with the service reference and church name. It reduces the same live wallet balance used by POS and counts toward the wallet's daily spending limit. It does not affect stock, fee invoices, vendor earnings or school sales revenue.
+- The accompanying `accountingJournals` record debits Student Wallet Liability (2200) and credits the selected church payable. A remittance journal debits that payable and credits the selected cash/bank account. Closed accounting periods and missing/inactive accounts block posting.
+- `boardingServiceOfferings` stores the immutable selected student/amount manifest, authorisation audit, posted progress, collected amount and remitted amount. `boardingOfferingRemittances` holds payment references. Current passwords and wallet PINs are never stored in these records, journals or accounting audit.
+- The service reference is unique within a branch. Deterministic per-student ledger/journal IDs and optimistic versions prevent repeat submissions, multiple tabs or simultaneous sales from double-debiting the same wallet. Completed rows cannot be altered or recharged through this screen.
+- This is a restricted administrative deduction workflow, not consent collection. Accounts is responsible for obtaining and retaining the appropriate student/guardian instruction before selecting a student.
+- The recent-services screen displays the latest 30 services visible in the current branch/section. Full student entries remain in the wallet and accounting ledgers. School backups discover and retain the new root collections automatically.
+
+## Verification
+
+`node --test tests/boarding-offerings.test.mjs` covers access/scope, boarder status, money validation, signed previews, PINs/limits, atomic posting, conflicts/retries/resumption, journal mappings, periods, remittances and credential minimisation. The isolated `/tests/fixtures/boarding-offerings.html` preview uses sample students and a local in-memory fetch, never a live wallet or API.
