@@ -355,6 +355,32 @@ for (const edition of ['school','faith','organization']) {
     }
   });
 }
+test('a missing vendor balance has the same empty view as a new account', () => {
+  assert.deepEqual(rules.balanceView(null), rules.balanceView());
+  assert.equal(rules.balanceView(null).Available, 0);
+  assert.equal(rules.balanceView(null).NeedsReview, false);
+});
+
+for (const assignedRole of ['Vendor User', 'Accounts Officer', 'Super Admin', 'Director']) {
+  test(`${assignedRole} can load a statement before the vendor has any sales`, async () => {
+    const f = fixture([['commerceVendors', 'v1', vendor('v1', { LoginUsername:'owner' })],
+      ['tuckShopInventory', 'stock1', { BranchId:'main', SchoolSection:'Secondary', VendorId:'v1', ItemName:'Water', Quantity:73, Price:100 }]]);
+    const actor = { ...user, role:assignedRole, username:assignedRole === 'Vendor User' ? 'owner' : user.username };
+    const before = structuredClone([...f.store]);
+    const result = await f.run('statement', { VendorId:'v1', From:'2026-10-01', To:'2026-10-10' }, actor);
+    assert.equal(result.ok, true);
+    assert.equal(result.vendor.VendorId, 'v1');
+    assert.deepEqual(result.balance, rules.balanceView());
+    for (const key of ['entries', 'requests', 'payments']) assert.equal(result[key].length, 0);
+    for (const key of ['availableInPeriod', 'directSales', 'directChargeDue']) assert.equal(result[key], 0);
+    assert.deepEqual([...f.store], before, 'Reading a statement must not create balances or alter stock/financial records');
+    assert.equal(f.commits.length, 0);
+    assert.equal(f.get('vendorBalances', 'v1'), undefined);
+    await assert.rejects(f.request(1), /unavailable/, 'An empty statement must not permit payment requests');
+    assert.equal(f.commits.length, 0);
+  });
+}
+
 test('statement dates filter earnings and payment history without altering the full balance', async () => {
   const f = fixture(); await f.sale(); await f.request(); await f.approve(); await f.pay(100);
   const statement = await f.run('statement',{VendorId:'v1',From:'2026-09-01',To:'2026-09-30'});

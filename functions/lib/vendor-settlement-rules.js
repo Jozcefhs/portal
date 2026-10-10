@@ -89,6 +89,9 @@ export function chargeFor(rule, grossCents) {
   fail('The saved vendor settlement rule is invalid.');
 }
 export function balanceView(balance = {}) {
+  // Firestore returns null until the first vendor sale/opening creates a balance.
+  // An unsold vendor has an empty statement; reading it must not create records.
+  balance ??= {};
   const net = Number(balance.NetCents || 0), paid = Number(balance.PaidCents || 0), reserved = Number(balance.ReservedCents || 0);
   const needsReview = balance.ReviewRequired === true || net < paid + reserved;
   return { GrossSales: amount(balance.GrossCents), Refunds: amount(balance.RefundCents), SchoolDeductions: amount(balance.ChargeCents),
