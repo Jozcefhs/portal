@@ -197,10 +197,17 @@ function looksNumeric(value) {
   return /^-?\d+(\.\d+)?$/.test(text);
 }
 
+// Account mappings are identifiers, while *Cents fields are monetary minor units.
+// Keep these explicit: the legacy substring rule also matches the "id" in PaidCents.
+function isAccountCodeField(key) { return /account$/i.test(String(key || '')); }
+function isMinorUnitsField(key) { return /cents$/i.test(String(key || '')); }
+
 function shouldKeepString(key, value) {
   const name = String(key || '').toLowerCase();
   const text = String(value ?? '').trim();
   if (!text) return true;
+  if (isAccountCodeField(key)) return true;
+  if (isMinorUnitsField(key)) return false;
   if (/^0\d+/.test(text)) return true;
   return [
     'phone',
@@ -584,21 +591,22 @@ export async function deleteDocumentIfCurrent(env, collectionPath, documentId, c
   }
 }
 
-function fromFirestoreValue(value) {
+function fromFirestoreValue(value, key = '') {
   if (!value || typeof value !== 'object') return '';
-  if ('stringValue' in value) return value.stringValue;
-  if ('integerValue' in value) return Number(value.integerValue);
-  if ('doubleValue' in value) return Number(value.doubleValue);
+  if ('stringValue' in value) return isMinorUnitsField(key) && looksNumeric(value.stringValue) ? Number(value.stringValue) : value.stringValue;
+  // Read old numeric mappings compatibly; no migration or historical rewrite is needed.
+  if ('integerValue' in value) return isAccountCodeField(key) ? String(value.integerValue) : Number(value.integerValue);
+  if ('doubleValue' in value) return isAccountCodeField(key) ? String(value.doubleValue) : Number(value.doubleValue);
   if ('booleanValue' in value) return Boolean(value.booleanValue);
   if ('timestampValue' in value) return value.timestampValue;
   if ('nullValue' in value) return '';
   if ('arrayValue' in value) {
-    return (value.arrayValue.values || []).map(fromFirestoreValue);
+    return (value.arrayValue.values || []).map(item => fromFirestoreValue(item));
   }
   if ('mapValue' in value) {
     const out = {};
     Object.entries(value.mapValue.fields || {}).forEach(([key, item]) => {
-      out[key] = fromFirestoreValue(item);
+      out[key] = fromFirestoreValue(item, key);
     });
     return out;
   }
@@ -608,7 +616,7 @@ function fromFirestoreValue(value) {
 export function firestoreDocumentToObject(document) {
   const out = {};
   Object.entries((document && document.fields) || {}).forEach(([key, value]) => {
-    out[key] = fromFirestoreValue(value);
+    out[key] = fromFirestoreValue(value, key);
   });
   if (document && document.name) {
     out.__name = document.name;

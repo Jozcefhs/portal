@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { webcrypto } from 'node:crypto';
 import * as rules from '../functions/lib/vendor-settlement-rules.js';
 import { buildWalletPurchaseAccountingJournal } from '../functions/api/backend.js';
+import { objectToFirestoreFields, firestoreDocumentToObject } from '../functions/lib/firestore.js';
 
 const withoutImports = source => source.replace(/^import[\s\S]*?from '[^']+';\r?\n/gm,'').replace(/export /g,'');
 const staffLookupSource = withoutImports(await readFile(new URL('../functions/lib/staff-auth.js',import.meta.url),'utf8'));
@@ -32,9 +33,13 @@ const vendor = (id = 'v1', extra = {}) => ({ ...scope, VendorId:id, Name:`Vendor
   BankAccountName:'Vendor name', BankAccountNumber:'1234567890', BankDetailsVersion:'bank1', RuleHistory:[], ...extra });
 const settings = { ...scope, Enabled:true, AccountingConfirmed:true, PayableAccount:'2000', CommissionAccount:'4090', VendorReceivableAccount:'1110', BusinessTimezone:'Africa/Lagos', RuleHistory:[] };
 const chart = [['1010','Asset'],['1020','Asset'],['1030','Asset'],['1110','Asset'],['2000','Liability'],['2100','Liability'],['2200','Liability'],['4090','Revenue'],['4040','Revenue'],['4120','Revenue'],['4130','Revenue'],['6060','Expense'],['3000','Equity']].map(([Code,Type]) => ({Code,Name:Code,Type,Active:'YES'}));
-function fixture(initial = []) {
+function fixture(initial = [], options = {}) {
   const store = new Map(), commits = []; let version = 0, forcedConflict = false;
-  const put = (collection,id,row) => store.set(`${collection}/${id}`, { ...structuredClone(row), __id:id, __updateTime:`r${++version}` });
+  let currentChart = options.chart || chart;
+  const chartReads = [];
+  const put = (collection,id,row) => store.set(`${collection}/${id}`, {
+    ...(options.firestoreRoundTrip ? firestoreDocumentToObject({fields:objectToFirestoreFields(row)}) : structuredClone(row)),
+    __id:id, __updateTime:`r${++version}` });
   put('settings','vendor-settlement-school--main',settings); put('commerceVendors','v1',vendor());
   for (const [collection,id,row] of initial) put(collection,id,row);
   const get = (collection,id) => store.get(`${collection}/${id}`);
@@ -60,7 +65,7 @@ function fixture(initial = []) {
   const functions = vm.runInNewContext(`${source}\n({ handleVendorSettlementAction, prepareVendorSale, snapshotVendorCart })`, {
     ...rules, handleProductImport, crypto:webcrypto, Intl, Date, TextEncoder, console, assertRequisitionTransition, validateRequisitionPosting, accountingChartForEdition,
     getDocument:async (_env,c,id) => structuredClone(get(c,id) || null), listCollection:async (_env,c) => c === 'accountingPeriods' ? list(c) : list(c),
-    getAccountingChartRows:async () => chart, verifyStaffApprovalPassword:async (_env,username,password) => password === 'test-confirmation',
+    getAccountingChartRows:async (_env, params) => { chartReads.push(params); return currentChart; }, verifyStaffApprovalPassword:async (_env,username,password) => password === 'test-confirmation',
     findStaffUserRecord:staffLookups.findStaffUserRecord, findStaffLoginRecord:staffLookups.findStaffLoginRecord,
     queryCollectionPages:async (_env,c,opts) => list(c).filter(row => opts.filters.every(f => f.op === 'in' ? f.value.includes(row[f.field]) : row[f.field] === f.value)), batchCommitDocuments:commit
   });
@@ -84,7 +89,8 @@ const pay = async (amount,id = 'pay1') => { const r = get('vendorSettlementReque
     Reference:'BANK-1',EvidenceReference:'Slip-1',approvalPassword:'test-confirmation'}); };
   const refund = async (value,id = 'refund1',entryId = 'sale1--v1') => run('refund',{VendorId:'v1',EntryId:entryId,Amount:value,RequestId:id,
     Date:'2026-10-08',Reference:'REFUND-1',EvidenceReference:'REFUND-SLIP',Notes:'Returned unopened',approvalPassword:'test-confirmation'});
-  return { store,put,get,list,commits,commit,run,sale,request,decision,approve,pay,refund,functions, conflict:() => { forcedConflict = true; } };
+  return { store,put,get,list,commits,commit,run,sale,request,decision,approve,pay,refund,functions, chartReads,
+    setChart: rows => { currentChart = rows; }, conflict:() => { forcedConflict = true; } };
 }
 test('integer money, percent validation, full-payment override and prospective rules', () => {
   assert.equal(rules.cents(12.34),1234); assert.throws(() => rules.cents(Infinity));
@@ -250,6 +256,69 @@ test('historical preview is non-mutating; confirmed opening is idempotent and ne
   assert.equal((await f.run('recordOpening',{...body,Confirmed:true,PreviewDigest:p.PreviewDigest,RequestId:'open1',approvalPassword:'test-confirmation'})).replayed,true);
   assert.equal(rules.balanceView(f.get('vendorBalances','v1')).ReconciliationDifference,0);
 });
+
+const reviewedOpening = {VendorId:'v1',OpeningReference:'VINCENT-HIST-20261008',Date:'2026-10-08',GrossSales:170900,
+  Refunds:0,SchoolDeductions:0,PriorPayments:0,OffsetAccount:'4090',EvidenceReference:'Reviewed sales report',Notes:'Accounts reviewed earlier vendor sales'};
+for (const edition of ['school','faith','organization']) {
+  const actor = {...user,edition};
+  const editionScope = {...scope,ScopeKey:`${edition}--main`,OrganisationEdition:edition,SchoolSection:edition === 'school' ? 'Secondary' : 'All'};
+  const settingsId = `vendor-settlement-${edition}--main`;
+  const initial = [['commerceVendors','v1',vendor('v1',editionScope)],['settings',settingsId,
+    {...settings,...editionScope,PayableAccount:2000,CommissionAccount:4090,VendorReceivableAccount:1110}]];
+  test(`${edition} legacy numeric mappings preview and post the exact opening without rewriting old records`, async () => {
+    const f = fixture([...initial,['accountingJournals','OLD',{Description:'Preserved historical sale'}]]);
+    const before = structuredClone([...f.store]);
+    const bootstrap = await f.run('bootstrap',{},actor);
+    for (const [key,code] of [['PayableAccount','2000'],['CommissionAccount','4090'],['VendorReceivableAccount','1110']]) assert.equal(bootstrap.settings[key],code);
+    const preview = await f.run('previewHistorical',reviewedOpening,actor);
+    assert.equal(preview.Outstanding,170900); assert.equal(preview.preview.PayableAccount,'2000');
+    assert.deepEqual([...f.store],before); assert.equal(f.commits.length,0);
+    const body = {...reviewedOpening,Confirmed:true,PreviewDigest:preview.PreviewDigest,RequestId:'open-numeric'};
+    await assert.rejects(f.run('recordOpening',body,actor),/password|approval proof/);
+    assert.equal(f.commits.length,0);
+    await f.run('recordOpening',{...body,approvalPassword:'test-confirmation'},actor);
+    const journal = f.list('accountingJournals').find(row => row.Source === 'Reviewed historical opening');
+    assert.equal(journal.TotalDebit,170900); assert.equal(journal.TotalCredit,170900);
+    assert.equal(journal.Lines.find(row => row.AccountCode === '2000').Credit,170900);
+    assert.equal(journal.Lines.find(row => row.AccountCode === '4090').Debit,170900);
+    assert.ok(!journal.Lines.some(row => ['1010','1020','1030','2200'].includes(row.AccountCode)));
+    assert.equal(f.list('ledger').length,0); assert.equal(f.list('commerceSales').length,0);
+    assert.deepEqual(f.get('accountingJournals','OLD'),before.find(([key]) => key === 'accountingJournals/OLD')[1]);
+    assert.equal((await f.run('recordOpening',{...body,approvalPassword:'test-confirmation'},actor)).replayed,true);
+    assert.equal(f.commits.length,1); assert.ok(f.chartReads.every(params => params?.fresh || params === undefined));
+  });
+  test(`${edition} historical preview rejects missing, wrong-type or inactive payable before any posting`, async () => {
+    for (const replacement of [null,{Type:'Asset'},...['NO','false',false,0,'inactive','disabled'].map(Active => ({Active}))]) {
+      const f = fixture(initial,{chart:chart.filter(row => row.Code !== '2000').concat(replacement ? [{...chart.find(row => row.Code === '2000'),...replacement}] : [])});
+      await assert.rejects(f.run('previewHistorical',reviewedOpening,actor),/active liability.*Organisation default/i);
+      assert.equal(f.commits.length,0); assert.equal(f.get('vendorBalances','v1'),undefined);
+    }
+  });
+  test(`${edition} preview rejects inactive offset, closed periods and edition-excluded accounts`, async () => {
+    const f = fixture(initial,{chart:chart.map(row => row.Code === '4090' ? {...row,Active:false} : row)});
+    await assert.rejects(f.run('previewHistorical',reviewedOpening,actor),/active revenue or equity/);
+    f.setChart(chart);
+    f.put('accountingPeriods','closed',{StartDate:'2026-10-01',EndDate:'2026-10-31',Status:'Closed'});
+    await assert.rejects(f.run('previewHistorical',reviewedOpening,actor),/period is closed/);
+    assert.equal(f.commits.length,0);
+    if (edition !== 'school') {
+      const excluded = fixture(initial);
+      await assert.rejects(excluded.run('previewHistorical',{...reviewedOpening,OffsetAccount:'3000'},actor),/active revenue or equity/);
+      assert.equal(excluded.commits.length,0);
+    }
+  });
+  test(`${edition} confirmation reloads mappings and chart rather than trusting a stale preview`, async () => {
+    const f = fixture(initial);
+    const p = await f.run('previewHistorical',reviewedOpening,actor);
+    const body = {...reviewedOpening,Confirmed:true,PreviewDigest:p.PreviewDigest,RequestId:'stale-opening',approvalPassword:'test-confirmation'};
+    f.setChart(chart.filter(row => row.Code !== '2000'));
+    await assert.rejects(f.run('recordOpening',body,actor),/active liability/);
+    f.setChart(chart);
+    f.put('settings',settingsId,{...settings,...editionScope,PayableAccount:'2100'});
+    await assert.rejects(f.run('recordOpening',body,actor),/unchanged historical preview/);
+    assert.equal(f.commits.length,0); assert.equal(f.list('accountingJournals').length,0);
+  });
+}
 test('vendor access returns only own data and masks other payment details', async () => {
   const f = fixture([['commerceVendors','v1',vendor('v1',{LoginUsername:'vendor-login'})],['commerceVendors','v2',vendor('v2')]]);
   const owner = {...user,role:'Vendor User',username:'vendor-login'};
@@ -394,6 +463,46 @@ test('claims against different payable mappings clear their original accounts af
   assert.ok(lines.some(l => l.AccountCode === '2000' && l.Debit === 40));
   assert.ok(lines.some(l => l.AccountCode === '2100' && l.Debit === 60));
 });
+
+test('numeric legacy claim/snapshot mappings retain the original payable on payments and refunds', async () => {
+  const f = fixture([['settings','vendor-settlement-school--main',{...settings,PayableAccount:2100,CommissionAccount:4090,
+    RuleHistory:[rules.normalizeRule({Mode:'Percentage',Rate:10},timestamp)]}]]);
+  await f.sale();
+  const lot = f.get('vendorClaimLots','sale1--v1'); lot.PayableAccount = 2100;
+  lot.AccountsSnapshot.PayableAccount = 2100; lot.AccountsSnapshot.CommissionAccount = 4090;
+  const entry = f.get('vendorEarnings','sale1--v1'); entry.AccountsSnapshot.PayableAccount = 2100; entry.AccountsSnapshot.CommissionAccount = 4090;
+  f.put('settings','vendor-settlement-school--main',settings);
+  await f.request(90); await f.approve(); await f.pay(90); await f.refund(20);
+  const payment = f.get('accountingJournals','SYS-VPAY-pay1');
+  assert.equal(payment.Lines.find(line => line.AccountCode === '2100').Debit,90);
+  const refund = f.get('accountingJournals','SYS-VREF-refund1');
+  assert.equal(refund.Lines.find(line => line.AccountCode === '2100').Debit,18);
+  assert.equal(refund.Lines.find(line => line.AccountCode === '4090').Debit,2);
+  for (const journal of [payment,refund]) assert.ok(!journal.Lines.some(line => line.AccountCode === '2000'));
+});
+
+test('mixed numeric/text historical receivable mappings are one account, not a reason to remap old sales', async () => {
+  const f = fixture([['settings','vendor-settlement-school--main',{...settings,RuleHistory:[rules.normalizeRule({Mode:'Percentage',Rate:10},timestamp)]}]]);
+  await f.sale('direct1',100,{CollectionMode:'Vendor collected'}); await f.sale('direct2',100,{CollectionMode:'Vendor collected'});
+  f.get('vendorEarnings','direct1--v1').AccountsSnapshot.VendorReceivableAccount = 1110;
+  f.put('settings','vendor-settlement-school--main',{...settings,VendorReceivableAccount:'1030'});
+  await f.run('recordRecovery',{VendorId:'v1',Kind:'Commission received',Amount:20,Date:'2026-10-08',RequestId:'legacy-receivable',
+    Reference:'RECEIPT',EvidenceReference:'Slip',approvalPassword:'test-confirmation'});
+  const journal = f.get('accountingJournals','SYS-VREC-legacy-receivable');
+  assert.equal(journal.Lines.find(line => line.AccountCode === '1110').Credit,20);
+  assert.ok(!journal.Lines.some(line => line.AccountCode === '1030'));
+});
+
+test('explicit blank or inactive saved account mappings cannot be silently replaced with defaults', async () => {
+  for (const patch of [{PayableAccount:''},{CommissionAccount:''},{VendorReceivableAccount:''}]) {
+    const f = fixture();
+    await assert.rejects(f.run('saveSettings',{...settings,...patch,RecordVersion:f.get('settings','vendor-settlement-school--main').__updateTime}));
+    assert.equal(f.commits.length,0);
+  }
+  const f = fixture([],{chart:chart.map(row => row.Code === '2000' ? {...row,Active:false} : row)});
+  await assert.rejects(f.run('saveSettings',{...settings,RecordVersion:f.get('settings','vendor-settlement-school--main').__updateTime}),/active, distinct liability/);
+  assert.equal(f.commits.length,0);
+});
 test('pending / failed payments cannot earn a vendor balance', async () => {
   for (const PaymentStatus of ['Pending','Failed','Cancelled']) {
     const f = fixture(); await assert.rejects(f.sale('not-paid',100,{PaymentStatus}),/confirmed paid/); assert.equal(f.commits.length,0);
@@ -402,9 +511,9 @@ test('pending / failed payments cannot earn a vendor balance', async () => {
 
 const commerceSource = (await readFile(new URL('../functions/lib/organization-commerce.js',import.meta.url),'utf8'))
   .replace(/^import[\s\S]*?from '[^']+';\r?\n/gm,'').replace(/export /g,'');
-function commerceFixture(edition = 'school', section = 'tuckShop') {
+function commerceFixture(edition = 'school', section = 'tuckShop', options = {}) {
   const scoped = {...scope,ScopeKey:`${edition}--main`,OrganisationEdition:edition,SchoolSection:edition === 'school' ? 'Secondary' : 'All'};
-  const f = fixture([['commerceVendors','v1',vendor('v1',scoped)],['settings',`vendor-settlement-${edition}--main`,{...settings,...scoped}]]);
+  const f = fixture([['commerceVendors','v1',vendor('v1',scoped)],['settings',`vendor-settlement-${edition}--main`,{...settings,...scoped}]],options);
   const collection = ({tuckShop:'tuckShopInventory',organizationStore:'storeItems',restaurant:'restaurantInventory'})[section];
   for (const stockId of ['stock1','stock2']) f.put(collection,stockId,{...scoped,ItemCode:stockId,StoreType:'Organisation Store',ItemName:'Water',VendorId:'v1',Price:50,Quantity:5,Active:'YES'});
   const access = vm.runInNewContext(`${accessSource}\n({linkedSalesVendors,restrictVendorInventory,assertVendorSaleReplay,vendorCustomerScope})`,{
@@ -433,6 +542,67 @@ function commerceFixture(edition = 'school', section = 'tuckShop') {
   return {...f,commerce,pos,wallet,sha256Hex,section,collection,actor:{...user,edition},body:{SaleRequestId:'sale1',PaymentMethod:'Cash',Items:[{Reference:'stock1',Quantity:2}]}};
 }
 for (const [edition,section] of [['school','tuckShop'],['faith','restaurant'],['organization','organizationStore']]) {
+  test(`${edition} real database round trips retain a fixed period charge once across sales and refunds`, async () => {
+    const f = commerceFixture(edition,section,{firestoreRoundTrip:true});
+    const settingsId = `vendor-settlement-${edition}--main`;
+    await f.run('saveSettings',{RecordVersion:f.get('settings',settingsId).__updateTime,Enabled:true,AccountingConfirmed:true,
+      PayableAccount:'2000',CommissionAccount:'4090',VendorReceivableAccount:'1110',
+      Rule:{Mode:'Fixed charge',FixedAmount:30,Basis:'Per period',Cycle:'Monthly'}},f.actor);
+    const first = await f.commerce.recordManualOrganizationCommerceSale({},section,f.body,f.actor);
+    await f.commerce.recordManualOrganizationCommerceSale({},section,{...f.body,SaleRequestId:'second-period-sale'},f.actor);
+    assert.equal(f.get('settings',settingsId).RuleHistory.at(-1).FixedCents,3000);
+    assert.equal(f.list('vendorChargePeriods').length,1);
+    assert.equal(f.get('vendorBalances','v1').ChargeCents,3000);
+    assert.equal(f.get('vendorBalances','v1').NetCents,17000);
+    await f.run('refund',{VendorId:'v1',EntryId:`${first.sale.SaleNo}--v1`,Amount:100,RequestId:'period-roundtrip-refund',Date:'2026-10-10',
+      Reference:'RETURN',EvidenceReference:'Refund slip',Notes:'Returned unopened',approvalPassword:'test-confirmation'},f.actor);
+    const balance = f.get('vendorBalances','v1');
+    assert.equal(balance.ChargeCents,3000); assert.equal(balance.NetCents,7000);
+    assert.equal(f.list('vendorClaimLots').reduce((sum,lot) => sum+lot.NetCents,0),7000);
+    assert.equal(rules.balanceView(balance).ReconciliationDifference,0);
+    for (const journal of f.list('accountingJournals')) assert.equal(journal.TotalDebit,journal.TotalCredit);
+  });
+  test(`${edition} real database round trips preserve mappings and reconcile sale, partial/full payment, refund and recovery`, async () => {
+    const f = commerceFixture(edition,section,{firestoreRoundTrip:true});
+    const settingsId = `vendor-settlement-${edition}--main`;
+    await f.run('saveSettings',{RecordVersion:f.get('settings',settingsId).__updateTime,Enabled:true,AccountingConfirmed:true,
+      PayableAccount:'2000',CommissionAccount:'4090',VendorReceivableAccount:'1110',Rule:{Mode:'Percentage',Rate:10}},f.actor);
+    const saved = f.get('settings',settingsId);
+    assert.equal(saved.PayableAccount,'2000'); assert.equal(saved.CommissionAccount,'4090'); assert.equal(saved.VendorReceivableAccount,'1110');
+    const sale = await f.commerce.recordManualOrganizationCommerceSale({},section,f.body,f.actor);
+    const claim = {VendorId:'v1',RequestId:'roundtrip-claim',From:'1970-01-01',To:'2099-12-31',Amount:90};
+    await f.run('requestSettlement',claim,f.actor);
+    for (const [Status,role] of [['Accounts Confirmed','Accounts Officer'],['Admin Reviewed','Admin'],['Approved','Director']]) {
+      const r = f.get('vendorSettlementRequests','VREQ-roundtrip-claim');
+      await f.run('decision',{VendorId:'v1',SettlementId:r.SettlementId,RequestId:`roundtrip-${Status.replaceAll(' ','')}`,
+        RecordVersion:r.__updateTime,Status,Notes:'Reviewed',approvalPassword:'test-confirmation'},{...f.actor,role,username:role});
+    }
+    for (const [Amount,RequestId] of [[40,'roundtrip-pay1'],[50,'roundtrip-pay2']]) {
+      const r = f.get('vendorSettlementRequests','VREQ-roundtrip-claim');
+      const body = {VendorId:'v1',SettlementId:r.SettlementId,RequestId,RecordVersion:r.__updateTime,Amount,
+        Date:'2026-10-10',Reference:RequestId,EvidenceReference:'Reviewed slip',approvalPassword:'test-confirmation'};
+      await f.run('pay',body,f.actor); assert.equal((await f.run('pay',body,f.actor)).replayed,true);
+    }
+    let balance = f.get('vendorBalances','v1');
+    assert.equal(balance.PaidCents,9000); assert.equal(balance.ReservedCents,0); assert.equal(balance.NetCents,9000);
+    const lot = f.list('vendorClaimLots')[0];
+    assert.equal(lot.PayableAccount,'2000'); assert.equal(lot.PaidCents,9000); assert.equal(lot.ReservedCents,0);
+    await f.run('refund',{VendorId:'v1',EntryId:lot.LotId,Amount:20,RequestId:'roundtrip-refund',Date:'2026-10-10',
+      Reference:'RETURN',EvidenceReference:'Refund slip',Notes:'Returned unopened',approvalPassword:'test-confirmation'},f.actor);
+    await f.run('recordRecovery',{VendorId:'v1',Kind:'Overpayment recovery',Amount:18,RequestId:'roundtrip-recovery',Date:'2026-10-10',
+      Reference:'RECOVERY',EvidenceReference:'Recovery slip',approvalPassword:'test-confirmation'},f.actor);
+    balance = f.get('vendorBalances','v1');
+    assert.equal(balance.NetCents,7200); assert.equal(balance.PaidCents,7200); assert.equal(balance.ChargeCents,800);
+    assert.equal(balance.ReviewRequired,false); assert.equal(rules.balanceView(balance).ReconciliationDifference,0);
+    assert.equal(f.get(f.collection,'stock1').Quantity,3,'Refund does not automatically restock physical goods');
+    assert.equal(f.list('accountingExpenses').length,0); assert.equal(f.list('ledger').length,0);
+    assert.equal(f.list('vendorEarnings').find(e => e.Type === 'Sale').GrossCents,10000);
+    assert.equal(sale.sale.Amount,100);
+    for (const journal of f.list('accountingJournals')) {
+      assert.equal(journal.TotalDebit,journal.TotalCredit);
+      assert.ok(journal.Lines.every(line => typeof line.AccountCode === 'string' && typeof line.Debit === 'number' && typeof line.Credit === 'number'));
+    }
+  });
   test(`${edition} direct vendor checkout needs no preview request but still reprices and prevents double posting`,async () => {
     const f = commerceFixture(edition,section);
     f.put('commerceVendors','v1',{...f.get('commerceVendors','v1'),LoginUsername:'seller'});

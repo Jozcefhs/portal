@@ -78,10 +78,10 @@ export function validateRequisitionPosting(journal, chart, periods, edition) {
     fail('This accounting period is closed. Choose an open posting date.', 409, 'ACCOUNTING_PERIOD_CLOSED');
   }
   const active = new Set(accountingChartForEdition(chart, edition)
-    .filter(row => !['no', 'false', 'inactive', '0'].includes(lower(row.Active ?? 'YES')))
+    .filter(row => !['no', 'false', 'inactive', 'disabled', '0'].includes(lower(row.Active ?? 'YES')))
     .map(row => clean(row.Code || row.__id)));
   for (const line of journal.Lines) {
-    if (!active.has(line.AccountCode)) fail(`Journal account ${line.AccountCode} does not exist, is inactive, or is unavailable in this edition.`);
+    if (!active.has(clean(line.AccountCode))) fail(`Journal account ${line.AccountCode} does not exist, is inactive, or is unavailable in this edition.`);
   }
 }
 

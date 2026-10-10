@@ -102,6 +102,20 @@ test('closed periods, inactive/missing accounts and edition-excluded codes preve
   assert.throws(() => validateRequisitionPosting(schoolAccount, [...chart, { Code: '5000' }], [], 'church'), /unavailable in this edition/);
 });
 
+test('numeric legacy journal codes are compared as identifiers in every edition without weakening account guards', () => {
+  const journal = {...buildRequisitionPosting(approved,accounts,options).journal,
+    Lines:[{AccountCode:6090,Debit:380000,Credit:0},{AccountCode:1020,Debit:0,Credit:380000}]};
+  const before = structuredClone(journal);
+  for (const edition of ['school','faith','organization']) {
+    assert.doesNotThrow(() => validateRequisitionPosting(journal,chart,[],edition));
+    for (const Active of ['NO',false,'false',0,'inactive','disabled']) {
+      assert.throws(() => validateRequisitionPosting(journal,[chart[0],{...chart[1],Active}],[],edition),/inactive/);
+    }
+    assert.throws(() => validateRequisitionPosting(journal,[chart[0]],[],edition),/does not exist/);
+  }
+  assert.deepEqual(journal,before,'Validation must not rewrite historical journal evidence');
+});
+
 test('concurrent web/desktop posting commits exactly one journal, requisition and audit in every edition', async () => {
   for (const edition of ['school', 'church', 'other']) {
     const store = storeHarness();

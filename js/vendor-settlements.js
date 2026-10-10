@@ -4,9 +4,19 @@
   const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]);
   const money = v => new Intl.NumberFormat('en-NG', { style:'currency', currency:'NGN' }).format(Number(v || 0));
   const today = () => new Date().toISOString().slice(0, 10);
-  const option = (value, label = value, selected = '') => `<option value="${esc(value)}"${value === selected ? ' selected' : ''}>${esc(label)}</option>`;
+  const option = (value, label = value, selected = '') => `<option value="${esc(value)}"${String(value) === String(selected) ? ' selected' : ''}>${esc(label)}</option>`;
   const input = (name, label, value = '', type = 'text', extra = '') => `<label>${esc(label)}<input name="${esc(name)}" type="${type}" value="${esc(value)}" ${extra}></label>`;
   const select = (name, label, values, chosen = '') => `<label>${esc(label)}<select name="${esc(name)}">${values.map(v => Array.isArray(v) ? option(v[0], v[1], chosen) : option(v, v, chosen)).join('')}</select></label>`;
+  const accountSelect = (name, label, chart, types, chosen = '') => {
+    const selected = String(chosen ?? '').trim();
+    const accounts = (chart || []).filter(a => types.includes(a.Type)
+      && !['no','false','inactive','disabled','0'].includes(String(a.Active ?? 'YES').trim().toLowerCase()))
+      .map(a => [String(a.Code || a.__id || '').trim(), `${a.Code || a.__id} · ${a.Name}`]).filter(([code]) => code);
+    const values = [['','Choose an account'], ...accounts];
+    // Never silently replace an unavailable saved mapping with the first account.
+    if (selected && !accounts.some(([code]) => code === selected)) values.splice(1,0,[selected,`${selected} · Unavailable — review mapping`]);
+    return `<label>${esc(label)}<select name="${esc(name)}" required>${values.map(([code,title]) => option(code,title,selected)).join('')}</select></label>`;
+  };
   const metrics = balance => `<div class="vendor-metrics">${['GrossSales','Refunds','SchoolDeductions','NetEntitlement','Paid','Reserved','Outstanding','Available'].map(key =>
     `<div class="vendor-metric"><span>${esc(({ GrossSales:'Confirmed sales', SchoolDeductions:'Organisation deductions', NetEntitlement:'Net entitlement', Reserved:'Reserved in requests', Available:'Available to request' })[key] || key)}</span><strong>${money(balance?.[key])}</strong></div>`).join('')}</div>`;
   const ruleFields = (rule = {}, inherited = false) => `<fieldset class="vendor-rule vendor-full"><legend>Agreed settlement rule</legend><div class="vendor-form">
@@ -275,7 +285,7 @@
     function historicalForm() {
       showDialog('Preview reviewed opening', `${input('OpeningReference','Unique historical reference','','text','required pattern="[A-Za-z0-9_-]{1,120}"')}${input('Date','Opening date',today(),'date','required')}
         ${['GrossSales','Refunds','SchoolDeductions','PriorPayments'].map(k => input(k,({GrossSales:'Historical sales collected',SchoolDeductions:'Agreed past deductions',PriorPayments:'Already paid to vendor'})[k] || k,0,'number','min="0" step="0.01" required')).join('')}
-        ${select('OffsetAccount','Reviewed revenue / equity offset',(data.chart || []).filter(a => ['Revenue','Equity'].includes(a.Type)).map(a => [a.Code,`${a.Code} · ${a.Name}`]))}
+        ${accountSelect('OffsetAccount','Reviewed revenue / equity offset',data.chart,['Revenue','Equity'])}
         ${input('EvidenceReference','Reviewed statement / evidence reference','','text','required')}${notes()}`, 'previewHistorical',b => ({ ...b, VendorId:selected }));
       const form = dialog.querySelector('form');
       form.onsubmit = async event => { event.preventDefault(); let body;
@@ -296,7 +306,7 @@
       if (tab === 'requests') panel.innerHTML = `<p>Accounts confirmation → Admin review → Director / Super Admin approval → Accounts records payment.</p><div class="vendor-grid">${data.requests.map(requestCard).join('') || '<p>No vendor payment requests yet.</p>'}</div>`;
       if (tab === 'products') panel.innerHTML = `<div class="vendor-actions"><p>Ownership applies to future sales only.</p><button data-import-products>Batch products & owners</button><button data-add-product>Add vendor product</button></div><div class="vendor-table-wrap"><table class="vendor-table"><thead><tr><th>Product</th><th>Owner</th><th>Stock / price</th><th>Action</th></tr></thead><tbody>${data.products.map((p,index) => `<tr><td>${esc(p.ItemName)}<small>${esc(p.InventoryId)} · ${esc(p.Section)}</small></td><td>${esc(data.vendors.find(v => v.VendorId === p.VendorId)?.Name || 'Organisation')}</td><td>${esc(p.Quantity)} · ${money(p.Price)}</td><td><button data-edit-product="${index}">Review ownership</button></td></tr>`).join('')}</tbody></table></div>`;
       if (tab === 'settings') { const s = data.settings; panel.innerHTML = `<h3>Default settlement arrangement</h3><p>Individual vendors may inherit this rule or explicitly receive full payment.</p><form class="vendor-form" data-settings>${ruleFields(s.RuleHistory?.at(-1))}
-        ${[['PayableAccount','Vendor payable account','Liability'],['CommissionAccount','Commission / charge income','Revenue'],['VendorReceivableAccount','Direct-collection charge receivable','Asset']].map(([key,label,type]) => select(key,label,data.chart.filter(a => a.Type === type && a.Active !== 'NO').map(a => [a.Code,`${a.Code} · ${a.Name}`]),s[key])).join('')}
+        ${[['PayableAccount','Vendor payable account','Liability'],['CommissionAccount','Commission / charge income','Revenue'],['VendorReceivableAccount','Direct-collection charge receivable','Asset']].map(([key,label,type]) => accountSelect(key,label,data.chart,[type],s[key])).join('')}
         ${input('BusinessTimezone','Business timezone',s.BusinessTimezone)}<label class="vendor-check vendor-full"><input name="AccountingConfirmed" type="checkbox" ${s.AccountingConfirmed ? 'checked' : ''}> Accounts has confirmed the collection arrangement and account mappings.</label>
         <label class="vendor-check vendor-full"><input name="Enabled" type="checkbox" ${s.Enabled ? 'checked' : ''}> Enable reviewed vendor sales and settlements in this branch</label><button type="submit" data-label="Save default arrangement">Save default arrangement</button><p class="vendor-full" role="status"></p></form>`; }
       if (tab === 'statement' && c.pay) {

@@ -50,8 +50,11 @@ async function scoped(env, collection, recordId, scope) {
   return row;
 }
 async function settingsFor(env, scope) {
-  return { ...defaults, ...(await getDocument(env, 'settings', `vendor-settlement-${scope.ScopeKey}`) || {}) };
+  const settings = { ...defaults, ...(await getDocument(env, 'settings', `vendor-settlement-${scope.ScopeKey}`) || {}) };
+  for (const key of ['PayableAccount', 'CommissionAccount', 'VendorReceivableAccount']) settings[key] = clean(settings[key]);
+  return settings;
 }
+const activeAccount = row => !['no', 'false', 'inactive', 'disabled', '0'].includes(lower(row.Active ?? 'YES'));
 function assertEnabled(settings) {
   if (settings.Enabled !== true || settings.AccountingConfirmed !== true) fail('Accounts must confirm the vendor arrangement and account mappings before vendor sales or settlements are enabled.', 409);
 }
@@ -84,8 +87,9 @@ function balanceFor(vendor, previous = null) {
     SchoolSection: vendor.SchoolSection, VendorId: vendor.VendorId, GrossCents: 0, RefundCents: 0, ChargeCents: 0, NetCents: 0,
     ReservedCents: 0, PaidCents: 0, DirectSalesCents: 0, DirectChargeCents: 0, DirectChargePaidCents: 0 };
 }
-async function validateJournal(env, journal, edition) {
-  const [chart, periods] = await Promise.all([getAccountingChartRows(env, { fresh: true }), listCollection(env, 'accountingPeriods')]);
+async function validateJournal(env, journal, edition, references = null) {
+  const [chart, periods] = references || await Promise.all([getAccountingChartRows(env, { fresh: true }), listCollection(env, 'accountingPeriods')]);
+  journal.Lines = journal.Lines.map(line => ({ ...line, AccountCode: clean(line.AccountCode) }));
   validateRequisitionPosting(journal, chart, periods, edition);
   const debit = journal.Lines.reduce((sum, line) => sum + cents(line.Debit), 0);
   const credit = journal.Lines.reduce((sum, line) => sum + cents(line.Credit), 0);
@@ -237,7 +241,8 @@ async function bootstrap(env, user, scope) {
       ...(role(user) === 'Accounts Officer' ? { BankAccountNumber: row.BankAccountNumber } : {}) })),
     suppliers: suppliers.filter(row => lower(row.BranchId || 'main') === scope.BranchId).map(row => ({ SupplierId: row.__id, Name: row.Name || row.VendorName })),
     settings: { ...plain(settings), RecordVersion: settings.__updateTime || '' },
-    chart: accountingChartForEdition(chart, scope.OrganisationEdition).map(({ Code, Name, Type, Active }) => ({ Code, Name, Type, Active })),
+    chart: accountingChartForEdition(chart, scope.OrganisationEdition).map(row => ({ Code: clean(row.Code || row.__id),
+      Name: row.Name, Type: row.Type, Active: activeAccount(row) ? 'YES' : 'NO' })),
     capabilities: { manage: management.has(role(user)), operate: operators.has(role(user)), vendor: role(user) === 'Vendor User',
       confirm: role(user) === 'Accounts Officer', review: role(user) === 'Admin', approve: ['Director', 'Super Admin'].includes(role(user)), pay: role(user) === 'Accounts Officer',
       saleSections: (scope.OrganisationEdition === 'school' ? ['tuckShop'] : ['organizationStore','restaurant']).filter(section => (user.allowedSections || []).includes(section)),
@@ -252,13 +257,14 @@ async function saveSettings(env, user, scope, body) {
   const history = [...(original?.RuleHistory || []), rule];
   if (history.length > 120) fail('Archive reviewed rule history before adding more revisions.', 409);
   const settings = { ...defaults, ...plain(original), ...scope, Enabled: body.Enabled === true, AccountingConfirmed: body.AccountingConfirmed === true,
-    PayableAccount: id(body.PayableAccount || '2000'), CommissionAccount: id(body.CommissionAccount || '4090'),
-    VendorReceivableAccount: id(body.VendorReceivableAccount || '1110'), BusinessTimezone: clean(body.BusinessTimezone || 'Africa/Lagos'),
+    PayableAccount: id(body.PayableAccount ?? original?.PayableAccount ?? defaults.PayableAccount),
+    CommissionAccount: id(body.CommissionAccount ?? original?.CommissionAccount ?? defaults.CommissionAccount),
+    VendorReceivableAccount: id(body.VendorReceivableAccount ?? original?.VendorReceivableAccount ?? defaults.VendorReceivableAccount), BusinessTimezone: clean(body.BusinessTimezone || 'Africa/Lagos'),
     RuleHistory: history, UpdatedAt: timestamp, UpdatedBy: actor(user) };
   periodKey({ Cycle: 'Daily' }, timestamp, settings.BusinessTimezone);
   const chart = accountingChartForEdition(await getAccountingChartRows(env, { fresh: true }), scope.OrganisationEdition);
   for (const [key, expected] of [['PayableAccount', 'Liability'], ['CommissionAccount', 'Revenue'], ['VendorReceivableAccount', 'Asset']]) {
-    const account = chart.find(row => clean(row.Code || row.__id) === settings[key] && row.Active !== 'NO');
+    const account = chart.find(row => clean(row.Code || row.__id) === settings[key] && activeAccount(row));
     if (!account || account.Type !== expected || ['PayableAccount', 'CommissionAccount', 'VendorReceivableAccount'].filter(other => settings[other] === settings[key]).length !== 1)
       fail(`Choose an active, distinct ${lower(expected)} account for ${key}.`);
   }
@@ -611,12 +617,23 @@ async function historicalPreview(env, user, scope, body) {
     OffsetAccount: id(body.OffsetAccount), PayableAccount: settings.PayableAccount,
     EvidenceReference: clean(body.EvidenceReference), Notes: clean(body.Notes), Source: 'Reviewed historical opening' };
   if (!plan.EvidenceReference || !plan.Notes) fail('Give the reviewed statement evidence and an opening-balance explanation.');
-  const chart = accountingChartForEdition(await getAccountingChartRows(env, { fresh: true }), scope.OrganisationEdition);
-  if (!chart.some(row => clean(row.Code) === plan.OffsetAccount && ['Revenue', 'Equity'].includes(row.Type) && row.Active !== 'NO')) fail('Accounts must select an active revenue or equity offset: already-collected funds must not debit cash again.');
+  const references = await Promise.all([getAccountingChartRows(env, { fresh: true }), listCollection(env, 'accountingPeriods')]);
+  const chart = accountingChartForEdition(references[0], scope.OrganisationEdition);
+  if (!chart.some(row => clean(row.Code || row.__id) === plan.PayableAccount && row.Type === 'Liability' && activeAccount(row)))
+    fail(`Choose an active liability account for vendor payables in Organisation default. Saved account ${plan.PayableAccount || '(blank)'} is missing, inactive, the wrong type or unavailable in this edition. No opening was posted.`, 409);
+  if (!chart.some(row => clean(row.Code || row.__id) === plan.OffsetAccount && ['Revenue', 'Equity'].includes(row.Type) && activeAccount(row))) fail('Accounts must select an active revenue or equity offset: already-collected funds must not debit cash again.');
+  if (plan.OutstandingCents) await validateJournal(env, historicalOpeningJournal(scope, plan, user), scope.OrganisationEdition, references);
   const bytes = new TextEncoder().encode(JSON.stringify(plan));
   const digest = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(n => n.toString(16).padStart(2, '0')).join('');
   return { ok: true, preview: plan, PreviewDigest: digest, Outstanding: amount(plan.OutstandingCents),
     message: 'Preview only. Original sales, student wallets and historical journals will not be rewritten.' };
+}
+function historicalOpeningJournal(scope, plan, user, timestamp = new Date().toISOString()) {
+  const openingId = `${scope.ScopeKey}--OPEN-${plan.OpeningReference}`;
+  return { ...scope, JournalNo: `SYS-${openingId}`, Date: plan.Date, Status: 'Posted', System: 'YES', Source: plan.Source, SourceId: openingId,
+    Description: plan.Notes, Reference: plan.OpeningReference, CreatedAt: timestamp, RecordedBy: actor(user),
+    Lines: [signedLine(plan.OffsetAccount, plan.OutstandingCents, plan.VendorId, 'Reviewed historical reclassification'),
+      signedLine(plan.PayableAccount, -plan.OutstandingCents, plan.VendorId, 'Outstanding vendor opening')] };
 }
 async function recordOpening(env, user, scope, body, options) {
   requireRole(user, new Set(['Accounts Officer']));
@@ -627,9 +644,8 @@ async function recordOpening(env, user, scope, body, options) {
   const vendor = await ownVendor(env, user, scope, p.VendorId), previous = await getDocument(env, VENDOR_COLLECTIONS.balances, p.VendorId);
   const balance = balanceFor(vendor, previous), openingId = `${scope.ScopeKey}--OPEN-${p.OpeningReference}`;
   const settings = await settingsFor(env, scope); assertEnabled(settings);
-  const journal = { ...scope, JournalNo: `SYS-${openingId}`, Date: p.Date, Status: 'Posted', System: 'YES', Source: p.Source, SourceId: openingId,
-    Description: p.Notes, Reference: p.OpeningReference, CreatedAt: timestamp, RecordedBy: actor(user),
-    Lines: [signedLine(p.OffsetAccount, p.OutstandingCents, p.VendorId, 'Reviewed historical reclassification'), signedLine(p.PayableAccount, -p.OutstandingCents, p.VendorId, 'Outstanding vendor opening')] };
+  if (settings.PayableAccount !== p.PayableAccount) fail('Load and confirm an unchanged historical preview first.', 409);
+  const journal = historicalOpeningJournal(scope, p, user, timestamp);
   const writes = [];
   if (p.OutstandingCents) { await validateJournal(env, journal, scope.OrganisationEdition); writes.push(write('accountingJournals', journal.JournalNo, journal)); }
   await commit(env, [...writes,
@@ -662,7 +678,7 @@ async function recordRecovery(env, user, scope, body, options) {
     const settings = await settingsFor(env, scope);
     // A mapping change must not misdirect settlement of an existing receivable.
     const entries = await rows(env, VENDOR_COLLECTIONS.entries, scope, vendor.VendorId);
-    const codes = new Set(entries.filter(e => e.Type === 'Vendor collected sale' && e.ChargeCents).map(e => e.AccountsSnapshot.VendorReceivableAccount));
+    const codes = new Set(entries.filter(e => e.Type === 'Vendor collected sale' && e.ChargeCents).map(e => clean(e.AccountsSnapshot.VendorReceivableAccount)));
     if (codes.size > 1) fail('Multiple historical receivable mappings require an accountant-reviewed journal instead of automatic receipt.', 409);
     lines.push(signedLine([...codes][0] || settings.VendorReceivableAccount, returned ? value : -value, vendor.VendorId, kind));
     updated.DirectChargePaidCents += returned ? -value : value;

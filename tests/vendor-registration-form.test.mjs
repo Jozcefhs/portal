@@ -9,8 +9,8 @@ class FormDataFixture {
   constructor(form) { this.rows = Object.values(form.elements).filter(field => !field.disabled && (field.type !== 'checkbox' || field.checked)).map(field => [field.name, field.value]); }
   [Symbol.iterator]() { return this.rows[Symbol.iterator](); }
 }
-runInNewContext(source.replace('let mounted;', 'window.formChecks = { ruleVisibility, submitForm }; let mounted;'), { window, FormData: FormDataFixture });
-const { ruleVisibility, submitForm } = window.formChecks;
+runInNewContext(source.replace('let mounted;', 'window.formChecks = { ruleVisibility, submitForm, accountSelect }; let mounted;'), { window, FormData: FormDataFixture });
+const { ruleVisibility, submitForm, accountSelect } = window.formChecks;
 
 function fixture(extra = {}) {
   const progress = { textContent: '' }, calls = [];
@@ -94,6 +94,34 @@ test('generic modal keeps validation, error feedback and save controls visible; 
   assert.match(source,/submitForm\(form, body => call\(action, body, form\), transform\)/);
   assert.match(source,/submitForm\(form, payload => \{ body = \{ \.\.\.payload, VendorId:selected \}/);
   assert.match(css,/\.vendor-dialog-footer \{ position:sticky; bottom:-18px/);
-  assert.match(html,/vendor-settlements\.js\?v=20261009-vendor-login-link/);
+  assert.match(html,/vendor-settlements\.js\?v=20261010-account-mappings/);
   assert.match(source,/This form does not create a sign-in account\. Leave it blank to register the vendor without portal access/);
+});
+
+test('account dropdown matches legacy numeric mappings and never silently selects another account', () => {
+  const chart = [{Code:'4000',Name:'Tuition',Type:'Revenue',Active:'YES'},
+    {Code:'4090',Name:'Commission',Type:'Revenue',Active:'YES'},
+    {Code:1110,Name:'Receivable',Type:'Asset',Active:'YES'}];
+  const selected = accountSelect('CommissionAccount','Income',chart,['Revenue'],4090);
+  assert.match(selected,/<option value="4090" selected>4090 · Commission/);
+  assert.doesNotMatch(selected,/<option value="4000" selected>/);
+  assert.equal((selected.match(/ selected/g) || []).length,1);
+  const unavailable = accountSelect('CommissionAccount','Income',chart,['Revenue'],'9999');
+  assert.match(unavailable,/<option value="9999" selected>9999 · Unavailable — review mapping/);
+  assert.doesNotMatch(unavailable,/<option value="(?:4000|4090)" selected>/);
+  const missing = accountSelect('OffsetAccount','Offset',chart,['Revenue','Equity']);
+  assert.match(missing,/<select name="OffsetAccount" required><option value="" selected>Choose an account/);
+  assert.doesNotMatch(missing,/<option value="(?:4000|4090)" selected>/);
+  assert.match(accountSelect('VendorReceivableAccount','Asset',chart,['Asset'],'1110'),/<option value="1110" selected>/);
+});
+
+test('account dropdown excludes inactive and wrong-type accounts and escapes labels', () => {
+  const chart = ['NO','false',false,0,'inactive','disabled'].map((Active,i) => ({Code:`bad${i}`,Type:'Revenue',Active}));
+  chart.push({Code:'2000',Type:'Liability',Name:'Wrong type',Active:'YES'},
+    {Code:'4090',Type:'Revenue',Name:'Fees <script>',Active:'YES'});
+  const html = accountSelect('OffsetAccount','Offset',chart,['Revenue','Equity']);
+  assert.doesNotMatch(html,/bad\d|value="2000"|<script>/);
+  assert.match(html,/Fees &lt;script&gt;/);
+  assert.match(source,/accountSelect\('OffsetAccount'/);
+  assert.match(source,/accountSelect\(key,label,data\.chart,\[type\],s\[key\]\)/);
 });
