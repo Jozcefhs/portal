@@ -3232,6 +3232,9 @@ function renderWorkspace(active, options = {}) {
 
 function selectSection(key, allowed = activeTabs.map(([tabKey]) => tabKey)) {
   if (!allowed.includes(key)) return;
+  if (key === 'staffUsers' && activeSection !== key) {
+    resetStaffUserListSearch(panelEl.querySelector('[data-staff-account-register]'));
+  }
   activeSection = key;
   const url = new URL(window.location.href);
   url.searchParams.set('section', key);
@@ -20810,6 +20813,40 @@ function filterStaffUserListEntries(entries, filters = {}) {
     && terms.every((term) => entry.search.includes(term)));
 }
 
+function resetStaffUserListSearch(register) {
+  if (!register) return;
+  register.dataset.staffUserQuery = '';
+  register.querySelector('[data-staff-user-search]').value = '';
+}
+
+function bindStaffUserListControls(register) {
+  if (!register) return;
+  const search = register.querySelector('[data-staff-user-search]');
+  // Saved sign-in usernames must not become list filters. Unlock only on focus,
+  // and preserve the intentional query separately from autofill's input value.
+  search.value = register.dataset.staffUserQuery || '';
+  search.addEventListener('focus', () => { search.readOnly = false; });
+  search.addEventListener('blur', () => { search.readOnly = true; });
+  const updateSearch = () => {
+    if (search.readOnly) {
+      search.value = register.dataset.staffUserQuery || '';
+      return;
+    }
+    register.dataset.staffUserQuery = search.value;
+    applyStaffUserListControls(register);
+    register.querySelector('.staff-user-list').scrollTop = 0;
+  };
+  search.addEventListener('input', updateSearch);
+  search.addEventListener('change', updateSearch);
+  register.querySelectorAll('[data-staff-user-role], [data-staff-user-status], [data-staff-user-sort]').forEach((control) => {
+    control.addEventListener('change', () => {
+      applyStaffUserListControls(register);
+      register.querySelector('.staff-user-list').scrollTop = 0;
+    });
+  });
+  applyStaffUserListControls(register);
+}
+
 function applyStaffUserListControls(register) {
   if (!register) return;
   const list = register.querySelector('.staff-user-list');
@@ -20819,7 +20856,7 @@ function applyStaffUserListControls(register) {
     search: row.dataset.listSearch, role: row.dataset.listRole, status: row.dataset.listStatus
   }));
   const filters = {
-    search: register.querySelector('[data-staff-user-search]').value,
+    search: register.dataset.staffUserQuery || '',
     role: register.querySelector('[data-staff-user-role]').value,
     status: register.querySelector('[data-staff-user-status]').value
   };
@@ -20838,7 +20875,7 @@ function renderStaffUsers() {
   if (activeSection !== 'staffUsers') return;
   const previousRegister = panelEl.querySelector('[data-staff-account-register]');
   const staffListFilters = {
-    search: previousRegister?.querySelector('[data-staff-user-search]')?.value || '',
+    search: previousRegister?.dataset.staffUserQuery || '',
     role: previousRegister?.querySelector('[data-staff-user-role]')?.value || '',
     status: previousRegister?.querySelector('[data-staff-user-status]')?.value || ''
   };
@@ -20892,10 +20929,10 @@ function renderStaffUsers() {
       <div><small>Disabled</small><strong>${staffUsersData.length - activeUsers}</strong><span>Access blocked</span></div>
     </div>
     <p class="status staff-seat-scope-note">Organisation plan seats: ${organisationActiveUsers} of ${organisationUserLimit} active login${organisationActiveUsers === 1 ? '' : 's'}.${otherBranchActiveUsers ? ` This branch view excludes ${otherBranchActiveUsers} active login${otherBranchActiveUsers === 1 ? '' : 's'} assigned to other branches.` : ''}</p>
-    <section class="staff-account-register" data-staff-account-register aria-label="Staff accounts">
+    <section class="staff-account-register" data-staff-account-register data-staff-user-query="${escapeHtml(staffListFilters.search)}" aria-label="Staff accounts">
       <div class="admin-list-sort-toolbar admin-list-toolbar-search staff-user-list-toolbar">
         <label class="admin-list-search">Search staff accounts
-          <input type="search" data-staff-user-search value="${escapeHtml(staffListFilters.search)}" placeholder="Name, username, department or branch" autocomplete="off" aria-label="Search staff accounts">
+          <input type="search" name="staff-account-filter" data-staff-user-search value="${escapeHtml(staffListFilters.search)}" placeholder="Name, username, department or branch" autocomplete="off" data-lpignore="true" data-1p-ignore readonly aria-label="Search staff accounts">
           <small data-staff-user-count aria-live="polite">${staffUsersData.length} accounts</small>
         </label>
         <label>Role<select data-staff-user-role aria-label="Filter staff accounts by role"><option value="">All roles</option>${staffListRoles.map((role) => `<option value="${escapeHtml(role)}"${staffListFilters.role === role ? ' selected' : ''}>${escapeHtml(role)}</option>`).join('')}</select></label>
@@ -21175,17 +21212,7 @@ function openStaffUserDialog(username = '') {
 
 function bindStaffUserEvents() {
   const staffRegister = panelEl.querySelector('[data-staff-account-register]');
-  staffRegister?.querySelector('[data-staff-user-search]').addEventListener('input', () => {
-    applyStaffUserListControls(staffRegister);
-    staffRegister.querySelector('.staff-user-list').scrollTop = 0;
-  });
-  staffRegister?.querySelectorAll('[data-staff-user-role], [data-staff-user-status], [data-staff-user-sort]').forEach((control) => {
-    control.addEventListener('change', () => {
-      applyStaffUserListControls(staffRegister);
-      staffRegister.querySelector('.staff-user-list').scrollTop = 0;
-    });
-  });
-  applyStaffUserListControls(staffRegister);
+  bindStaffUserListControls(staffRegister);
   ['FirstName', 'MiddleName', 'Surname'].forEach((field) => {
     document.querySelector(`#staffUserForm [name="${field}"]`)?.addEventListener('input', (event) => {
       syncStaffDisplayName(event.currentTarget.form);

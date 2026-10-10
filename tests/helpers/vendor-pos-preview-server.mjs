@@ -5,6 +5,8 @@ import {readFile} from 'node:fs/promises';
 const files = new Map([
   ['/tests/fixtures/vendor-pos.html',new URL('../fixtures/vendor-pos.html',import.meta.url)],
   ['/tests/fixtures/vendor-registration.html',new URL('../fixtures/vendor-registration.html',import.meta.url)],
+  ['/tests/fixtures/staff-account-list.html',new URL('../fixtures/staff-account-list.html',import.meta.url)],
+  ['/js/list-sorting.js',new URL('../../js/list-sorting.js',import.meta.url)],
   ['/css/style.css',new URL('../../css/style.css',import.meta.url)],
   ['/css/vendor-settlements.css',new URL('../../css/vendor-settlements.css',import.meta.url)],
   ['/js/vendor-pos.js',new URL('../../js/vendor-pos.js',import.meta.url)],
@@ -14,6 +16,14 @@ const files = new Map([
 createServer(async(req,res) => {
   try {
     const path = new URL(req.url,'http://localhost').pathname;
+    if (req.method === 'GET' && path === '/tests/fixtures/staff-account-list-production.js') {
+      const admin = await readFile(new URL('../../js/admin.js',import.meta.url),'utf8');
+      const helpers = admin.slice(admin.indexOf('function alphabeticalStaffRoles('),admin.indexOf('function renderStaffUsers('));
+      const render = admin.slice(admin.indexOf('function renderStaffUsers('),admin.indexOf('function renderRoleAccessEditor('));
+      res.writeHead(200,{'Content-Type':'text/javascript; charset=utf-8','Cache-Control':'no-store'});
+      res.end(`${helpers}\n${render}\nrenderStaffUsers();`);
+      return;
+    }
     if (req.method === 'GET' && path === '/tests/fixtures/staff-sidebar.html') {
       const adminHtml = await readFile(new URL('../../admin.html',import.meta.url),'utf8');
       const posHtml = await readFile(new URL('../fixtures/vendor-pos.html',import.meta.url),'utf8');

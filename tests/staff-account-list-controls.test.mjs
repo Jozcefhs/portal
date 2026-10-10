@@ -68,12 +68,15 @@ function registerFixture({ unavailableStorage = false } = {}) {
     listSearch: entry.search, listRole: entry.role, listStatus: entry.status
   } }));
   const controls = {
-    '[data-staff-user-search]': { value: '' }, '[data-staff-user-role]': { value: '' },
+    '[data-staff-user-search]': { value: '', readOnly: true }, '[data-staff-user-role]': { value: '' },
     '[data-staff-user-status]': { value: '' }, '[data-staff-user-sort]': { value: 'default', dataset: { listStorageKey: 'staff-sort' } },
     '[data-staff-user-count]': { textContent: '' }, '[data-staff-user-empty]': { hidden: true }
   };
+  for (const control of Object.values(controls)) control.addEventListener = (type, listener) => { control[`on${type}`] = listener; };
   const list = { querySelectorAll: () => [...rows], append: (row) => { rows.splice(rows.indexOf(row), 1); rows.push(row); } };
-  const register = { querySelector: (selector) => selector === '.staff-user-list' ? list : controls[selector] };
+  const register = { dataset: { staffUserQuery: '' },
+    querySelector: (selector) => selector === '.staff-user-list' ? list : controls[selector],
+    querySelectorAll: () => ['[data-staff-user-role]', '[data-staff-user-status]', '[data-staff-user-sort]'].map((selector) => controls[selector]) };
   if (unavailableStorage) context.window.localStorage.setItem = () => { throw new Error('Storage unavailable'); };
   return { context, rows, controls, register, stored };
 }
@@ -82,6 +85,7 @@ test('live card filtering updates visible rows, count and empty state and preser
   const { context, rows, controls, register, stored } = registerFixture();
   const originalRows = [...rows];
   controls['[data-staff-user-search]'].value = 'staff';
+  register.dataset.staffUserQuery = 'staff';
   controls['[data-staff-user-sort]'].value = 'name-asc';
   context.applyStaffUserListControls(register);
   assert.deepEqual(rows.filter((row) => !row.hidden).map((row) => row.dataset.listIndex), ['3', '2']);
@@ -94,6 +98,7 @@ test('live card filtering updates visible rows, count and empty state and preser
   assert.equal(controls['[data-staff-user-empty]'].hidden, false);
   assert.equal(controls['[data-staff-user-count]'].textContent, '0 of 4 accounts shown');
   controls['[data-staff-user-search]'].value = '';
+  register.dataset.staffUserQuery = '';
   controls['[data-staff-user-status]'].value = '';
   controls['[data-staff-user-sort]'].value = 'default';
   context.applyStaffUserListControls(register);
@@ -158,19 +163,62 @@ test('the fallback role list and empty register render with the same controls', 
 
 test('search and filters survive a refresh/edit rerender and user-supplied values are escaped', () => {
   const values = { '[data-staff-user-search]': '" <script>Smith</script>', '[data-staff-user-role]': 'Teacher', '[data-staff-user-status]': 'active' };
-  const html = renderedFixture('school', { previous: { querySelector: (selector) => ({ value: values[selector] }) } });
+  const html = renderedFixture('school', { previous: { dataset: { staffUserQuery: values['[data-staff-user-search]'] }, querySelector: (selector) => ({ value: values[selector] }) } });
   assert.match(html, /value="&quot; &lt;script&gt;Smith&lt;\/script&gt;"/);
   assert.match(html, /value="Teacher" selected/);
   assert.match(html, /value="active" selected/);
   assert.doesNotMatch(html, /<script>Smith/);
 });
 
+test('fresh openings and autofilled usernames do not create or retain a default search', () => {
+  const { context, register, controls, rows } = registerFixture();
+  const search = controls['[data-staff-user-search]'];
+  search.value = 'admin'; // A password manager filled the DOM before events were bound.
+  const html = renderedFixture('school', { previous: register });
+  assert.match(html, /data-staff-user-search value=""/);
+  assert.match(html, /name="staff-account-filter"[^>]*autocomplete="off"[^>]*readonly/);
+  context.bindStaffUserListControls(register);
+  assert.equal(search.value, '');
+  assert.ok(rows.every((row) => !row.hidden));
+  // A later unfocused autofill event must not filter accounts either.
+  search.value = 'admin'; search.oninput(); search.onchange();
+  assert.equal(search.value, '');
+  assert.equal(register.dataset.staffUserQuery, '');
+  assert.equal(controls['[data-staff-user-count]'].textContent, '4 of 4 accounts shown');
+});
+
+test('focused manual search works, including admin, and reopening clears only the query', () => {
+  const { context, register, controls, rows } = registerFixture();
+  const search = controls['[data-staff-user-search]'];
+  context.bindStaffUserListControls(register);
+  search.onfocus();
+  assert.equal(search.readOnly, false);
+  search.value = 'admin'; search.oninput();
+  assert.equal(register.dataset.staffUserQuery, 'admin', 'admin remains a valid intentional query');
+  assert.ok(rows.every((row) => row.hidden));
+  search.value = 'zoe'; search.oninput(); search.onblur();
+  assert.equal(search.readOnly, true);
+  assert.equal(register.dataset.staffUserQuery, 'zoe');
+  assert.match(renderedFixture('school', { previous: register }), /data-staff-user-search value="zoe"/);
+  controls['[data-staff-user-role]'].value = 'Teacher';
+  context.resetStaffUserListSearch(register);
+  context.applyStaffUserListControls(register);
+  assert.equal(search.value, '');
+  assert.equal(register.dataset.staffUserQuery, '');
+  assert.equal(controls['[data-staff-user-role]'].value, 'Teacher');
+  assert.equal(controls['[data-staff-user-count]'].textContent, '3 of 4 accounts shown');
+  const navigation = admin.slice(admin.indexOf('function selectSection('), admin.indexOf('function renderMobileNavigation('));
+  assert.match(navigation, /key === 'staffUsers' && activeSection !== key/);
+  assert.ok(navigation.indexOf('resetStaffUserListSearch(') < navigation.indexOf('activeSection = key'));
+});
+
 test('controls stay with the Staff accounts tab and filter locally without fetching or replacing the list', () => {
   assert.match(renderSource, /key: 'accounts'[\s\S]*?nodes: panelEl\.querySelector\(':scope > \.staff-account-register'\)/);
   const bindings = admin.slice(admin.indexOf('function bindStaffUserEvents('), admin.indexOf("  ['FirstName', 'MiddleName', 'Surname'].forEach", admin.indexOf('function bindStaffUserEvents(')));
-  assert.match(bindings, /data-staff-user-search.*addEventListener\('input'/);
-  assert.match(bindings, /data-staff-user-role.*data-staff-user-status.*data-staff-user-sort/);
-  assert.match(bindings, /applyStaffUserListControls\(staffRegister\)/);
+  assert.match(bindings, /bindStaffUserListControls\(staffRegister\)/);
+  assert.match(helperSource, /search\.addEventListener\('input', updateSearch\)/);
+  assert.match(helperSource, /data-staff-user-role.*data-staff-user-status.*data-staff-user-sort/);
+  assert.match(helperSource, /applyStaffUserListControls\(register\)/);
   assert.doesNotMatch(helperSource, /staffFetch|fetch\(|innerHTML\s*=/);
   assert.match(css, /\.staff-user-list-toolbar\{position:static;display:grid/);
   assert.match(css, /@media \(max-width:520px\)\{\.staff-user-list-toolbar/);

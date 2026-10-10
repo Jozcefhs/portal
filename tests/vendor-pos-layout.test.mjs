@@ -304,10 +304,46 @@ test('Staff customer mode uses the same directory selector and cannot debit a st
   assert.equal(f.calls.find(row=>row.action==='vendorCustomerSearch').body.CustomerType,'Staff');
   assert.match(f.root.innerHTML,/Staff One/);
   assert.equal(f.root.querySelector('[data-wallet-summary]'),null);
+  assert.equal(f.root.querySelector('[name="CollectionMode"]').value,'Vendor collected');
   f.root.querySelector('[data-add]').onclick();
   await f.root.querySelector('[data-payment-form]').requestSubmit();
   assert.equal(f.calls.some(row=>row.action==='recordVendorWalletPurchase'),false);
-  assert.equal(f.calls.find(row=>row.action==='recordVendorSale').body.CustomerName,'Staff One'); f.mounted.destroy();
+  const sale=f.calls.find(row=>row.action==='recordVendorSale').body;
+  assert.equal(sale.CustomerName,'Staff One');
+  assert.equal(sale.CollectionMode,'Vendor collected'); f.mounted.destroy();
+});
+
+test('staff collection default preserves explicit school collection through cart and payment redraws',async () => {
+  const f=await fixture('tuckShop',{customers:[{CustomerRef:'staff.one',CustomerName:'Staff One'}]});
+  f.root.querySelector('[data-customer-type]').onchange({target:{value:'Staff'}});
+  f.input('Query','Staff One'); await f.find();
+  f.input('CollectionMode','School collected');
+  f.root.querySelector('[data-add]').onclick();
+  assert.equal(f.root.querySelector('[name="CollectionMode"]').value,'School collected');
+  f.input('PaymentMethod','Bank Transfer'); f.input('PaymentReference','FIXTURE-TRANSFER');
+  assert.equal(f.root.querySelector('[name="CollectionMode"]').value,'School collected');
+  await f.root.querySelector('[data-payment-form]').requestSubmit();
+  const sale=f.calls.find(row=>row.action==='recordVendorSale').body;
+  assert.equal(sale.CollectionMode,'School collected');
+  assert.equal(sale.PaymentMethod,'Bank Transfer');
+  f.mounted.destroy();
+});
+
+test('switching back to staff resets its default but student wallet sales always remain school collected',async () => {
+  const f=await fixture('tuckShop',{customers:[{CustomerRef:'staff.one',CustomerName:'Staff One'}]});
+  f.root.querySelector('[data-customer-type]').onchange({target:{value:'Staff'}});
+  f.input('Query','Staff One'); await f.find();
+  f.input('CollectionMode','School collected');
+  f.root.querySelector('[data-customer-type]').onchange({target:{value:'Student'}});
+  f.input('AccountRef','FIXTURE/001'); await f.find();
+  assert.equal(f.root.querySelector('[name="CollectionMode"]'),null);
+  f.root.querySelector('[data-add]').onclick();
+  await f.root.querySelector('[data-payment-form]').requestSubmit();
+  assert.equal(f.calls.find(row=>row.action==='recordVendorWalletPurchase').body.CollectionMode,'School collected');
+  f.root.querySelector('[data-customer-type]').onchange({target:{value:'Staff'}});
+  f.input('Query','Staff One'); await f.find();
+  assert.equal(f.root.querySelector('[name="CollectionMode"]').value,'Vendor collected');
+  f.mounted.destroy();
 });
 
 test('wallet sale completes directly after lookup and PIN retries keep the same checkout identity',async () => {

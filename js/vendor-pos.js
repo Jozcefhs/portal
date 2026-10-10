@@ -142,7 +142,8 @@
       root.querySelector('[data-customer-type]')?.addEventListener('change',event => {
         customerType = event.target.value; scanController?.abort(); faceController?.abort();
         clearCustomer(); customerSearch = ''; draft.AccountRef = ''; draft.WalletCardId = ''; draft.PaymentReference = '';
-        draft.PaymentMethod = customerType === 'Student' ? 'Student Wallet' : 'Cash'; draw();
+        draft.PaymentMethod = customerType === 'Student' ? 'Student Wallet' : 'Cash';
+        draft.CollectionMode = customerType === 'Staff' ? 'Vendor collected' : 'School collected'; draw();
       });
       root.querySelector('[data-manual-lookup]')?.addEventListener('toggle',event => {manualLookupOpen = event.target.open;});
       if (lookupForm) lookupForm.oninput = event => {
