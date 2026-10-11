@@ -16,18 +16,13 @@ import {
 } from './staff-attendance-storage.js';
 import { staffRecordMatchesEdition } from './records-desk.js';
 import { hrCapabilitiesFor } from './human-resources.js';
+import { addAttendanceDays, attendanceGroupFor, attendanceShiftForDate, resolveAttendanceShift } from './staff-attendance-schedules.js';
+import { assignAttendanceGroups, attendanceHrRecordMatchesScope, canManageAttendanceGroups, deleteAttendanceGroup, loadAttendanceRoster, requireAttendanceStaff, saveAttendanceGroup } from './staff-attendance-groups.js';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
 const nowIso = () => new Date().toISOString();
 const MANAGE_ROLES = new Set(['Super Admin', 'Church Administrator']);
-const ATTENDANCE_ADMIN_ROLES = new Set([
-  ...MANAGE_ROLES,
-  'HR Director',
-  'HR Manager',
-  'HR Business Partner',
-  'HR Officer'
-]);
 const REPORT_ROLES = new Set([...MANAGE_ROLES, 'Pastor', 'Treasurer', 'Auditor']);
 const ATTENDANCE_REPORT_LIMIT = 5000;
 const DAY_KEYS = Object.freeze(['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN']);
@@ -121,11 +116,11 @@ export function normalizeAttendanceReportPeriod(input = {}) {
 
 export function canReportStaffAttendance(user = {}) {
   const role = clean(user.role || user.Role);
-  return REPORT_ROLES.has(role) || hrCapabilitiesFor(user).canManageTime;
+  return canManageStaffAttendance(user) || REPORT_ROLES.has(role) || hrCapabilitiesFor(user).canManageTime;
 }
 
 export function canManageStaffAttendance(user = {}) {
-  return ATTENDANCE_ADMIN_ROLES.has(clean(user.role || user.Role));
+  return canManageAttendanceGroups(user);
 }
 
 function localAttendanceParts(timestamp, timeZone) {
@@ -268,6 +263,18 @@ function clockTimeLabel(minutes) {
 }
 
 export function attendanceClockInWindow(policyInput = {}, timestamp = nowIso()) {
+  const shift = policyInput.ShiftSnapshot;
+  if (shift) {
+    const now = Date.parse(timestamp);
+    const start = Date.parse(shift.StartAt);
+    const opensAt = start - Number(shift.ClockInOpenMinutesBefore || 0) * 60000;
+    const closed = now >= Date.parse(shift.EndAt);
+    return { allowed: now >= opensAt && !closed, closed, enforced: true, date: shift.AttendanceDate, day: shift.Day,
+      opensAt: new Intl.DateTimeFormat('en-GB', { timeZone: shift.TimeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(opensAt),
+      resumptionTime: shift.ResumptionTime, allowanceMinutes: Number(shift.ClockInOpenMinutesBefore || 0),
+      minutesBeforeOpening: Math.max(0, Math.ceil((opensAt - now) / 60000)),
+      minutesBeforeResumption: Math.max(0, Math.ceil((start - now) / 60000)) };
+  }
   const policy = normalizeAttendancePolicy(policyInput);
   const local = localAttendanceParts(timestamp, policy.TimeZone);
   const schedule = policy.DaySchedules?.[local.day] || {};
@@ -294,6 +301,30 @@ export function calculateAttendanceMetrics(policyInput = {}, eventInput = {}) {
   const timestamp = clean(eventInput.Timestamp) || nowIso();
   const direction = clean(eventInput.Direction).toUpperCase();
   if (!['IN', 'OUT'].includes(direction)) fail('Choose Clock in or Clock out.');
+  const shift = eventInput.ShiftSnapshot || policyInput.ShiftSnapshot;
+  if (shift) {
+    const instant = Date.parse(timestamp);
+    const start = Date.parse(shift.StartAt);
+    const end = Date.parse(shift.EndAt);
+    if (![instant, start, end].every(Number.isFinite) || end <= start) fail('The stored attendance shift is invalid. Ask HR to review it.', 409);
+    const minutes = value => Math.max(0, Math.round(value / 60000));
+    const workDay = shift.WorkDay !== false;
+    const late = direction === 'IN' && workDay ? minutes(instant - start) : 0;
+    const lateMinutes = late > Number(shift.GraceMinutes || 0) ? late : 0;
+    const first = Date.parse(eventInput.FirstClockIn);
+    const workMinutes = direction === 'OUT' && Number.isFinite(first) ? minutes(instant - first) : 0;
+    const rawOvertime = direction === 'OUT' ? workDay ? minutes(instant - end) : workMinutes : 0;
+    return {
+      Date: shift.AttendanceDate, Day: shift.Day, WorkDay: workDay,
+      ScheduledResumptionTime: shift.ResumptionTime, ScheduledClosingTime: shift.ClosingTime,
+      AttendanceStatus: direction === 'IN' ? workDay ? lateMinutes ? 'Late' : 'Present' : 'Overtime day'
+        : clean(eventInput.ExistingStatus) || (Number.isFinite(first) ? 'Present' : 'Incomplete'),
+      LateMinutes: lateMinutes,
+      OvertimeMinutes: rawOvertime >= Number(shift.OvertimeMinimumMinutes || 0) ? rawOvertime : 0,
+      EarlyDepartureMinutes: direction === 'OUT' && workDay ? minutes(end - instant) : 0,
+      WorkMinutes: workMinutes
+    };
+  }
   const local = localAttendanceParts(timestamp, policy.TimeZone);
   const schedule = policy.DaySchedules[local.day];
   const workDay = Boolean(schedule?.Enabled);
@@ -487,7 +518,8 @@ function activeStaffValue(value) {
 }
 
 export function staffAttendanceDirectoryFor(staffUsers = [], employees = [], user = {}, branchId = 'main') {
-  const exited = new Set(employees.filter((row) => /exited|terminated/i.test(clean(row.Status))).map((row) => lower(row.Username)));
+  const exited = new Set(employees.filter((row) => attendanceHrRecordMatchesScope(row, staffUsers, user, branchId)
+    && /exited|terminated/i.test(clean(row.Status))).map((row) => lower(row.Username)));
   const identities = new Map();
   for (const row of staffUsers) {
     const username = lower(row.Username || row.__id);
@@ -537,6 +569,14 @@ export function automaticAbsenceCandidates(directory = [], dailyRows = [], date 
 }
 
 function attendancePolicySnapshot(policy = {}, day = '') {
+  if (policy.ShiftSnapshot) {
+    const shift = policy.ShiftSnapshot;
+    return { ShiftSnapshot: { ...shift }, AttendanceGroupId: shift.GroupId, AttendanceGroupName: shift.GroupName,
+      ScheduledStartAt: shift.StartAt, ScheduledEndAt: shift.EndAt,
+      ScheduledResumptionTime: shift.ResumptionTime, ScheduledClosingTime: shift.ClosingTime,
+      GraceMinutes: shift.GraceMinutes, ClockInOpenMinutesBefore: shift.ClockInOpenMinutesBefore,
+      OvertimeMinimumMinutes: shift.OvertimeMinimumMinutes, TimeZone: shift.TimeZone };
+  }
   const schedule = policy.DaySchedules?.[clean(day).slice(0, 3).toUpperCase()] || {};
   return {
     ScheduledResumptionTime: clean(schedule.ResumptionTime || policy.ResumptionTime),
@@ -549,6 +589,8 @@ function attendancePolicySnapshot(policy = {}, day = '') {
 }
 
 function buildDailyAttendanceFromEvent(policy, event, existing = {}) {
+  const shift = existing.ShiftSnapshot || event.ShiftSnapshot || policy.ShiftSnapshot;
+  if (shift) policy = effectiveShiftPolicy(policy, shift);
   const { __id: _documentId, __createTime: _createdAt, __updateTime: _updatedAt, ...storedExisting } = existing;
   const storedFirstClockIn = clean(existing.FirstClockIn);
   const storedLastClockOut = clean(existing.LastClockOut);
@@ -676,6 +718,56 @@ export async function synchronizeAutomaticAbsences(env, branchId, policy, now, d
   return { dailyRows: [...refreshed, ...dailyRows.filter((row) => clean(row.Date) !== local.date)], processingWarnings };
 }
 
+export async function synchronizeRosterAbsences(env, branchId, policy, roster, now, directory, leaveRows, dailyRows, dependencies = {}) {
+  const local = localAttendanceParts(now, policy.TimeZone);
+  const ordinary = directory.filter(row => !attendanceGroupFor(roster, row.Username, local.date));
+  const legacy = await synchronizeAutomaticAbsences(env, branchId, policy, now, ordinary, leaveRows, dailyRows, dependencies);
+  if (lower(policy.AutoRecordAbsence) === 'no') return legacy;
+  const commit = dependencies.batchCommitDocuments || batchCommitDocuments;
+  const query = dependencies.queryStaffAttendanceCollection || queryStaffAttendanceCollection;
+  const instant = new Date(now).getTime();
+  let rows = legacy.dailyRows;
+  const warnings = [...legacy.processingWarnings];
+  // Group duties can last up to 48 hours. Check their start dates, not the
+  // calendar date of clock-out. Rest days never generate absence records.
+  for (let offset = -2; offset <= 0; offset++) {
+    const date = addAttendanceDays(local.date, offset);
+    const candidatesByName = new Map();
+    for (const member of directory) {
+      if (!attendanceGroupFor(roster, member.Username, date)) continue;
+      const shift = attendanceShiftForDate(policy, roster, member.Username, date);
+      if (shift?.GroupId && instant >= Date.parse(shift.EndAt)) candidatesByName.set(member.Username, { member, shift });
+    }
+    const { candidates, processingWarnings } = automaticAbsenceCandidates([...candidatesByName.values()].map(row => row.member), rows, date);
+    warnings.push(...processingWarnings);
+    const timestamp = new Date(now).toISOString();
+    const created = candidates.map(member => {
+      const shift = candidatesByName.get(member.Username).shift;
+      const leave = approvedLeaveForDate(leaveRows, member.Username, date);
+      return { DailyId: dailyAttendanceId(date, member.Username), BranchId: branchId, Date: date, Day: shift.Day,
+        Username: member.Username, DisplayName: member.DisplayName, Role: member.Role,
+        AttendanceStatus: leave ? 'Approved leave' : 'Absent', FirstClockIn: '', LastClockOut: '',
+        LateMinutes: 0, OvertimeMinutes: 0, EarlyDepartureMinutes: 0, WorkMinutes: 0,
+        ...attendancePolicySnapshot(effectiveShiftPolicy(policy, shift), shift.Day), AutoGenerated: true,
+        GeneratedReason: leave ? 'Approved leave covers this shift.' : 'No clock-in was recorded by the assigned shift end.',
+        CreatedAt: timestamp, UpdatedAt: timestamp, UpdatedBy: 'Automatic attendance processing' };
+    });
+    for (let start = 0; start < created.length; start += 400) {
+      const chunk = created.slice(start, start + 400);
+      try {
+        await commit(env, chunk.map(row => ({ collectionPath: dailyAttendancePath(env, branchId), documentId: row.DailyId, data: row, exists: false })));
+        rows = [...chunk, ...rows];
+      } catch (error) {
+        if (![409, 412].includes(Number(error?.status))) throw error;
+        const refreshed = await query(env, 'daily', branchId, { filters: [{ field: 'Date', op: '==', value: date }], limit: ATTENDANCE_REPORT_LIMIT });
+        rows = [...refreshed, ...rows.filter(row => row.Date !== date)];
+        warnings.push('Attendance changed while calculating shift absences. Refresh to complete the remaining checks.');
+      }
+    }
+  }
+  return { dailyRows: rows, processingWarnings: [...new Set(warnings)] };
+}
+
 async function ensurePresenceNotificationSchedule(env, statePath, username, policy = {}, state = {}, presenceCheck = {}) {
   const dueAt = clean(presenceCheck.dueAt || state.NextPresenceCheckDueAt);
   const pushEnabled = clean(policy.PresenceCheckPushEnabled).toUpperCase() !== 'NO';
@@ -693,6 +785,78 @@ async function ensurePresenceNotificationSchedule(env, statePath, username, poli
   });
 }
 
+function effectiveShiftPolicy(base, shift) {
+  if (!shift) return base;
+  return { ...base, Active: shift.Active || 'YES', GraceMinutes: shift.GraceMinutes,
+    ClockInOpenMinutesBefore: shift.ClockInOpenMinutesBefore,
+    OvertimeMinimumMinutes: shift.OvertimeMinimumMinutes, ShiftSnapshot: shift };
+}
+
+function recordedDefaultShift(policy, daily, username, date) {
+  const day = localAttendanceParts(daily.FirstClockIn, daily.TimeZone || policy.TimeZone).day;
+  const savedPolicy = { ...policy, TimeZone: daily.TimeZone || policy.TimeZone,
+    Active: daily.AttendanceStatus === 'Recorded' ? 'NO' : 'YES',
+    GraceMinutes: daily.GraceMinutes ?? policy.GraceMinutes,
+    ClockInOpenMinutesBefore: daily.ClockInOpenMinutesBefore ?? policy.ClockInOpenMinutesBefore,
+    OvertimeMinimumMinutes: daily.OvertimeMinimumMinutes ?? policy.OvertimeMinimumMinutes,
+    DaySchedules: { ...policy.DaySchedules, [day]: { Enabled: true,
+      ResumptionTime: daily.ScheduledResumptionTime || policy.ResumptionTime,
+      ClosingTime: daily.ScheduledClosingTime || policy.ClosingTime, EndDayOffset: 0 } } };
+  return { ...attendanceShiftForDate(savedPolicy, {}, username, date), ScheduleType: 'DEFAULT',
+    WorkDay: daily.AttendanceStatus !== 'Overtime day' };
+}
+
+// An open group shift belongs to its start date, even after midnight or after
+// an administrator reassigns its owner. Only the server-stored snapshot wins.
+async function personalAttendanceContext(env, branchId, username, options = {}) {
+  const timestamp = options.timestamp || nowIso();
+  const [policy, roster, storedState] = await Promise.all([
+    options.policy || getStaffAttendanceDocument(env, 'policy', branchId, 'default')
+      .then(row => normalizeAttendancePolicy(row || { Active: 'NO' })),
+    options.roster || loadAttendanceRoster(env, branchId),
+    options.storedState === undefined
+      ? getStaffAttendanceDocument(env, 'state', branchId, safeStaffAttendanceDocumentId(username)) : options.storedState
+  ]);
+  const local = localAttendanceParts(timestamp, policy.TimeZone);
+  const assignedGroup = attendanceGroupFor(roster, username, local.date);
+  let openShift = clean(storedState?.State) === 'CLOCKED_IN' && storedState?.ShiftSnapshot
+    ? storedState.ShiftSnapshot : null;
+  let openDaily = null;
+  if (!openShift && assignedGroup && clean(storedState?.State) === 'CLOCKED_IN' && storedState.AttendanceDate) {
+    openDaily = await getStaffAttendanceDocument(env, 'daily', branchId, dailyAttendanceId(storedState.AttendanceDate, username));
+    if (openDaily?.FirstClockIn && !openDaily.LastClockOut) {
+      openShift = openDaily.ShiftSnapshot || recordedDefaultShift(policy, openDaily, username, storedState.AttendanceDate);
+    }
+  }
+  // Resolve a new assignment only after checking the saved open duty. A later
+  // schedule edit must never prevent clock-out or recalculate that duty.
+  const scheduled = openShift || resolveAttendanceShift(policy, roster, username, timestamp);
+  let currentShift = openShift || (scheduled?.GroupId ? scheduled : null);
+  const date = currentShift?.AttendanceDate || local.date;
+  const dailyId = dailyAttendanceId(date, username);
+  const existingDaily = openDaily && openDaily.Date === date ? openDaily
+    : await getStaffAttendanceDocument(env, 'daily', branchId, dailyId);
+  if (openShift && (!existingDaily?.FirstClockIn || existingDaily.LastClockOut)) {
+    fail('The open shift and attendance record disagree. Ask HR to review this attendance record.', 409);
+  }
+  if (existingDaily?.ShiftSnapshot) currentShift = existingDaily.ShiftSnapshot;
+  else if (assignedGroup && existingDaily?.FirstClockIn) currentShift = recordedDefaultShift(policy, existingDaily, username, date);
+  const grouped = Boolean(currentShift?.GroupId || assignedGroup);
+  const state = clean(existingDaily?.FirstClockIn)
+    ? clean(existingDaily?.LastClockOut) ? 'COMPLETED' : 'CLOCKED_IN'
+    : grouped && (!currentShift || Date.parse(timestamp) >= Date.parse(currentShift.EndAt)) ? 'OFF_DUTY' : 'CLOCKED_OUT';
+  const today = { ...local, date, day: currentShift?.Day || local.day };
+  const myPolicy = effectiveShiftPolicy(policy, currentShift);
+  const todayState = clean(storedState?.AttendanceDate) === date ? storedState : {};
+  return { policy: myPolicy, basePolicy: policy, roster, today, currentShift, assignedGroup,
+    attendanceDate: date, todayCalendarDate: local.date, existingDaily, storedState, dailyId, grouped, state,
+    nextDirection: state === 'CLOCKED_IN' ? 'OUT' : state === 'CLOCKED_OUT' ? 'IN' : '',
+    todaySchedule: currentShift ? { Enabled: true, ResumptionTime: currentShift.ResumptionTime,
+      ClosingTime: currentShift.ClosingTime, EndDayOffset: currentShift.EndDayOffset }
+      : grouped ? { Enabled: false } : policy.DaySchedules?.[today.day] || null,
+    presenceCheck: presenceCheckView(myPolicy, todayState, state === 'CLOCKED_IN') };
+}
+
 export async function getStaffAttendanceQuickState(env, user, body = {}) {
   const branchId = branchFor(user, body);
   const username = actorId(user);
@@ -701,31 +865,29 @@ export async function getStaffAttendanceQuickState(env, user, body = {}) {
   const sitesPromise = listStaffAttendanceCollection(env, 'sites', branchId);
   const storedPolicy = await policyDocumentPromise;
   const policy = normalizeAttendancePolicy(storedPolicy || { Active: 'NO' });
-  const today = localAttendanceParts(new Date(), policy.TimeZone);
   const statePath = staffAttendanceCollectionPath(env, 'state', branchId);
-  const todayDailyPromise = getStaffAttendanceDocument(env, 'daily', branchId, dailyAttendanceId(today.date, username));
-  const storedStatePromise = getStaffAttendanceDocument(env, 'state', branchId, safeStaffAttendanceDocumentId(username));
-  const [sites, todayDaily, storedState] = await Promise.all([sitesPromise, todayDailyPromise, storedStatePromise]);
-  const state = clean(todayDaily?.FirstClockIn)
-    ? clean(todayDaily?.LastClockOut) ? 'COMPLETED' : 'CLOCKED_IN'
-    : 'CLOCKED_OUT';
-  const todayStoredState = clean(storedState?.AttendanceDate) === today.date ? storedState : {};
-  const presenceCheck = presenceCheckView(policy, todayStoredState, state === 'CLOCKED_IN');
-  await ensurePresenceNotificationSchedule(env, statePath, username, policy, todayStoredState, presenceCheck);
+  const [sites, workspace] = await Promise.all([sitesPromise, personalAttendanceContext(env, branchId, username, { policy })]);
+  const { today, state, presenceCheck, existingDaily: todayDaily, storedState } = workspace;
+  await ensurePresenceNotificationSchedule(env, statePath, username, workspace.policy, storedState || {}, presenceCheck);
   return {
     ok: true,
     branchId,
     sites: sites
       .filter((row) => lower(row.Active || 'YES') !== 'no')
       .sort((a, b) => clean(a.Name).localeCompare(clean(b.Name))),
-    policy,
+    policy: workspace.policy,
+    myPolicy: workspace.policy,
+    currentShift: workspace.currentShift,
+    selfgroup: workspace.assignedGroup ? { GroupId: workspace.assignedGroup.GroupId, Name: workspace.assignedGroup.Name } : null,
+    todayCalendarDate: workspace.todayCalendarDate,
+    attendanceDate: workspace.attendanceDate,
     policyConfigured: Boolean(storedPolicy),
     todayAttendanceDate: today.date,
     todayAttendanceDay: today.day,
-    todaySchedule: policy.DaySchedules?.[today.day] || null,
+    todaySchedule: workspace.todaySchedule,
     todayDaily: todayDaily || null,
     state,
-    nextDirection: state === 'CLOCKED_IN' ? 'OUT' : state === 'CLOCKED_OUT' ? 'IN' : '',
+    nextDirection: workspace.nextDirection,
     presenceCheck
   };
 }
@@ -758,7 +920,9 @@ export async function listStaffAttendance(env, user, body = {}) {
   const canManage = canManageStaffAttendance(user);
   const canReport = canReportStaffAttendance(user);
   const reportPeriod = canReport ? normalizeAttendanceReportPeriod(body) : { FromDate: '', ToDate: '' };
-  const [sites, events, storedState, storedPolicy, dailySource, staffUsers, employees, leaveRows] = await Promise.all([
+  // These reads precede automatic absence writes. A failed HR/leave read must
+  // not turn an exited employee or approved leave into a persisted absence.
+  const [sites, events, storedState, storedPolicy, dailySource, staffUsers, employees, leaveRows, roster] = await Promise.all([
     listStaffAttendanceCollection(env, 'sites', branchId),
     queryStaffAttendanceCollection(env, 'events', branchId, {
       orderBy: [{ field: 'Timestamp', direction: 'DESCENDING' }],
@@ -770,13 +934,15 @@ export async function listStaffAttendance(env, user, body = {}) {
       orderBy: [{ field: 'Date', direction: 'DESCENDING' }],
       limit: 500
     }),
-    listCollection(env, 'staffUsers').catch(() => []),
-    listCollection(env, 'hrEmployees').catch(() => []),
-    listCollection(env, 'hrLeaveRequests').catch(() => [])
+    listCollection(env, 'staffUsers'),
+    listCollection(env, 'hrEmployees'),
+    listCollection(env, 'hrLeaveRequests'),
+    loadAttendanceRoster(env, branchId)
   ]);
   const policy = normalizeAttendancePolicy(storedPolicy || { Active: 'NO' });
   const directory = staffAttendanceDirectoryFor(staffUsers, employees, user, branchId);
-  const { dailyRows, processingWarnings } = await synchronizeAutomaticAbsences(env, branchId, policy, new Date(), directory, leaveRows, dailySource);
+  const scopedLeaveRows = leaveRows.filter((row) => attendanceHrRecordMatchesScope(row, staffUsers, user, branchId));
+  const { dailyRows, processingWarnings } = await synchronizeRosterAbsences(env, branchId, policy, roster, new Date(), directory, scopedLeaveRows, dailySource);
   const sorted = events.sort((a, b) => clean(b.Timestamp).localeCompare(clean(a.Timestamp)));
   const sortedDaily = dailyRows.sort((a, b) => clean(b.Date).localeCompare(clean(a.Date)) || clean(a.DisplayName).localeCompare(clean(b.DisplayName)));
   let reportDailyRows = sortedDaily;
@@ -795,20 +961,18 @@ export async function listStaffAttendance(env, user, body = {}) {
   const own = sorted.filter((row) => actorId(row) === username).slice(0, 100);
   const ownDaily = sortedDaily.filter((row) => actorId(row) === username).slice(0, 100);
   const latest = own[0] || null;
-  const todayLocal = localAttendanceParts(new Date(), policy.TimeZone);
-  const todayAttendanceDate = todayLocal.date;
-  const todayDaily = ownDaily.find((row) => clean(row.Date) === todayAttendanceDate) || null;
-  const todayState = clean(todayDaily?.FirstClockIn)
-    ? clean(todayDaily?.LastClockOut) ? 'COMPLETED' : 'CLOCKED_IN'
-    : 'CLOCKED_OUT';
-  const todayStoredState = clean(storedState?.AttendanceDate) === todayAttendanceDate ? storedState : {};
-  const presenceCheck = presenceCheckView(policy, todayStoredState, todayState === 'CLOCKED_IN');
+  const personal = await personalAttendanceContext(env, branchId, username, { policy, roster, storedState });
+  if (personal.existingDaily && !ownDaily.some(row => row.Date === personal.attendanceDate)) ownDaily.unshift(personal.existingDaily);
+  const todayLocal = personal.today;
+  const todayAttendanceDate = personal.attendanceDate;
+  const todayState = personal.state;
+  const presenceCheck = personal.presenceCheck;
   await ensurePresenceNotificationSchedule(
     env,
     staffAttendanceCollectionPath(env, 'state', branchId),
     username,
-    policy,
-    todayStoredState,
+    personal.policy,
+    storedState || {},
     presenceCheck
   );
   return {
@@ -817,10 +981,16 @@ export async function listStaffAttendance(env, user, body = {}) {
     sites: sortedSites.filter((row) => lower(row.Active || 'YES') !== 'no'),
     configuredSites: canManage ? sortedSites : [],
     policy,
+    myPolicy: personal.policy,
+    currentShift: personal.currentShift,
+    selfgroup: personal.assignedGroup ? { GroupId: personal.assignedGroup.GroupId, Name: personal.assignedGroup.Name } : null,
+    todayCalendarDate: personal.todayCalendarDate,
+    attendanceDate: personal.attendanceDate,
+    roster: canManage ? { Revision: clean(roster.Revision), Groups: roster.Groups || [], Assignments: roster.Assignments || [] } : undefined,
     policyConfigured: Boolean(storedPolicy),
     todayAttendanceDate,
     todayAttendanceDay: todayLocal.day,
-    todaySchedule: policy.DaySchedules?.[todayLocal.day] || null,
+    todaySchedule: personal.todaySchedule,
     staffDirectory: canManage ? directory : [],
     processingWarnings: canReport ? processingWarnings : [],
     myEvents: own,
@@ -830,7 +1000,7 @@ export async function listStaffAttendance(env, user, body = {}) {
     reportPeriod,
     reportTruncated: canReport && reportDailyRows.length >= ATTENDANCE_REPORT_LIMIT,
     state: todayState,
-    nextDirection: todayState === 'CLOCKED_IN' ? 'OUT' : todayState === 'CLOCKED_OUT' ? 'IN' : '',
+    nextDirection: personal.nextDirection,
     stateVersion: clean(storedState?.__updateTime),
     presenceCheck,
     capabilities: {
@@ -894,34 +1064,15 @@ export async function saveAttendancePolicy(env, user, body = {}) {
 }
 
 async function getStaffAttendanceActionState(env, branchId, username, siteId) {
-  const storedPolicy = await getStaffAttendanceDocument(env, 'policy', branchId, 'default');
-  const policy = normalizeAttendancePolicy(storedPolicy || { Active: 'NO' });
-  const today = localAttendanceParts(new Date(), policy.TimeZone);
-  const statePath = staffAttendanceCollectionPath(env, 'state', branchId);
-  const dailyPath = dailyAttendancePath(env, branchId);
-  const dailyId = dailyAttendanceId(today.date, username);
-  const [site, storedState, existingDaily] = await Promise.all([
+  const [site, workspace] = await Promise.all([
     getStaffAttendanceDocument(env, 'sites', branchId, siteId),
-    getStaffAttendanceDocument(env, 'state', branchId, safeStaffAttendanceDocumentId(username)),
-    getStaffAttendanceDocument(env, 'daily', branchId, dailyId)
+    personalAttendanceContext(env, branchId, username)
   ]);
   if (!site || !activeValue(site.Active, true)) fail('The selected attendance location is inactive or unavailable.', 404);
-  const state = clean(existingDaily?.FirstClockIn)
-    ? clean(existingDaily?.LastClockOut) ? 'COMPLETED' : 'CLOCKED_IN'
-    : 'CLOCKED_OUT';
-  const todayState = clean(storedState?.AttendanceDate) === today.date ? storedState : {};
   return {
-    policy,
-    today,
-    statePath,
-    dailyPath,
-    dailyId,
-    site,
-    storedState,
-    existingDaily,
-    state,
-    nextDirection: state === 'CLOCKED_IN' ? 'OUT' : state === 'CLOCKED_OUT' ? 'IN' : '',
-    presenceCheck: presenceCheckView(policy, todayState, state === 'CLOCKED_IN')
+    ...workspace, site,
+    statePath: staffAttendanceCollectionPath(env, 'state', branchId),
+    dailyPath: dailyAttendancePath(env, branchId)
   };
 }
 
@@ -933,6 +1084,7 @@ export async function clockStaffAttendance(env, user, body = {}, requestContext 
   if (!siteId) fail('Choose the attendance location.');
   const workspace = await getStaffAttendanceActionState(env, branchId, username, siteId);
   const expected = workspace.nextDirection;
+  if (workspace.state === 'OFF_DUTY') fail('There is no open shift scheduled for you now. Ask HR to review your attendance group if this is incorrect.', 409);
   if (!expected) fail('Today\'s first clock-in and first clock-out are already recorded. Repeated clocking cannot change them.', 409);
   const direction = clean(body.Direction || expected).toUpperCase();
   if (!['IN', 'OUT'].includes(direction)) fail('Choose Clock in or Clock out.');
@@ -940,6 +1092,7 @@ export async function clockStaffAttendance(env, user, body = {}, requestContext 
   const timestamp = nowIso();
   if (direction === 'IN') {
     const opening = attendanceClockInWindow(workspace.policy, timestamp);
+    if (opening.closed) fail('This shift has ended. Ask HR to record a correction if you missed clocking in.', 409);
     if (!opening.allowed) {
       const attemptKey = clean(body.idempotencyKey) || crypto.randomUUID();
       const auditId = safeStaffAttendanceDocumentId(`EARLY-IN-${opening.date}-${username}-${attemptKey}`);
@@ -1001,6 +1154,7 @@ export async function clockStaffAttendance(env, user, body = {}, requestContext 
     Notes: clean(body.Notes),
     ManualOverride: false
   };
+  if (workspace.currentShift) event.ShiftSnapshot = workspace.currentShift;
   const daily = buildDailyAttendanceFromEvent(workspace.policy, event, existingDaily || {});
   if (direction === 'OUT' && workspace.presenceCheck?.status === 'OVERDUE') {
     daily.MissedPresenceChecks = Number(daily.MissedPresenceChecks || 0) + 1;
@@ -1034,6 +1188,7 @@ export async function clockStaffAttendance(env, user, body = {}, requestContext 
     LastTimestamp: timestamp,
     UpdatedAt: timestamp
   };
+  if (workspace.currentShift) stateDocument.ShiftSnapshot = workspace.currentShift;
   await batchCommitDocuments(env, [
     { collectionPath: eventPath, documentId: eventId, data: event, exists: false },
     {
@@ -1133,6 +1288,10 @@ export async function recordPresenceCheck(env, user, body = {}, requestContext =
     PresenceCheckSequence: Number(currentPresenceCheck.sequence || 0) + 1,
     UpdatedAt: timestamp
   };
+  if (workspace.currentShift) {
+    event.ShiftSnapshot = workspace.currentShift;
+    state.ShiftSnapshot = workspace.currentShift;
+  }
   await batchCommitDocuments(env, [
     {
       collectionPath: staffAttendanceCollectionPath(env, 'events', branchId),
@@ -1173,6 +1332,9 @@ export async function recordManualAttendance(env, user, body = {}) {
   if (!username) fail('Enter the staff username.');
   if (!['IN', 'OUT'].includes(direction)) fail('Choose Clock in or Clock out.');
   if (reason.length < 5) fail('Enter a clear reason for the manual correction.');
+  // HR can correct historical attendance after an employee leaves, but the
+  // target must still be an authoritative account in this branch and edition.
+  const staffMember = await requireAttendanceStaff(env, user, branchId, username, { allowInactive: true });
   const requestedTimestamp = clean(body.Timestamp) || nowIso();
   const parsedTimestamp = new Date(requestedTimestamp);
   if (Number.isNaN(parsedTimestamp.getTime())) fail('Enter a valid correction date and time.');
@@ -1182,7 +1344,8 @@ export async function recordManualAttendance(env, user, body = {}) {
     EventId: eventId,
     BranchId: branchId,
     Username: username,
-    DisplayName: clean(body.DisplayName) || username,
+    DisplayName: staffMember.DisplayName,
+    Role: staffMember.Role,
     Direction: direction,
     Timestamp: timestamp,
     SiteId: clean(body.SiteId),
@@ -1197,13 +1360,41 @@ export async function recordManualAttendance(env, user, body = {}) {
   const auditPath = staffAttendanceCollectionPath(env, 'audit', branchId);
   const statePath = staffAttendanceCollectionPath(env, 'state', branchId);
   const stateId = safeStaffAttendanceDocumentId(username);
-  const policy = normalizeAttendancePolicy(await getStaffAttendanceDocument(env, 'policy', branchId, 'default') || { Active: 'NO' });
-  const attendanceDate = calculateAttendanceMetrics(policy, { Direction: direction, Timestamp: timestamp }).Date;
-  const dailyId = dailyAttendanceId(attendanceDate, username);
-  const [currentState, existingDaily] = await Promise.all([
-    getStaffAttendanceDocument(env, 'state', branchId, stateId),
-    getStaffAttendanceDocument(env, 'daily', branchId, dailyId)
+  const [storedPolicy, roster, currentState] = await Promise.all([
+    getStaffAttendanceDocument(env, 'policy', branchId, 'default'), loadAttendanceRoster(env, branchId),
+    getStaffAttendanceDocument(env, 'state', branchId, stateId)
   ]);
+  let policy = normalizeAttendancePolicy(storedPolicy || { Active: 'NO' });
+  const localDate = localAttendanceParts(timestamp, policy.TimeZone).date;
+  const openShift = direction === 'OUT' && currentState?.State === 'CLOCKED_IN' && currentState.ShiftSnapshot
+    && timestamp >= currentState.ShiftSnapshot.StartAt
+    && Date.parse(timestamp) <= Date.parse(currentState.ShiftSnapshot.EndAt) + 86400000 ? currentState.ShiftSnapshot : null;
+  const requestedDate = clean(body.AttendanceDate) ? attendanceDate(body.AttendanceDate, 'Shift start date') : '';
+  let attendanceDateValue = requestedDate || openShift?.AttendanceDate || localDate;
+  let existingDaily = await getStaffAttendanceDocument(env, 'daily', branchId, dailyAttendanceId(attendanceDateValue, username));
+  let shift = existingDaily?.ShiftSnapshot || (openShift?.AttendanceDate === attendanceDateValue ? openShift : null);
+  if (!shift) {
+    shift = requestedDate ? attendanceShiftForDate(policy, roster, username, requestedDate)
+      : resolveAttendanceShift(policy, roster, username, timestamp);
+    if (!requestedDate && shift?.GroupId && shift.AttendanceDate !== attendanceDateValue && !existingDaily?.FirstClockIn) {
+      attendanceDateValue = shift.AttendanceDate;
+      existingDaily = await getStaffAttendanceDocument(env, 'daily', branchId, dailyAttendanceId(attendanceDateValue, username));
+    }
+    if (existingDaily?.ShiftSnapshot) shift = existingDaily.ShiftSnapshot;
+    else if (existingDaily?.FirstClockIn && attendanceGroupFor(roster, username, attendanceDateValue)) {
+      shift = recordedDefaultShift(policy, existingDaily, username, attendanceDateValue);
+    }
+  }
+  const group = attendanceGroupFor(roster, username, attendanceDateValue);
+  if (group && !shift?.GroupId && shift?.ScheduleType !== 'DEFAULT') fail('This is a rest day for the selected attendance group. Choose the shift start date.');
+  if (shift?.GroupId || shift?.ScheduleType === 'DEFAULT') {
+    const earliest = Date.parse(shift.StartAt) - Number(shift.ClockInOpenMinutesBefore || 0) * 60000;
+    const latest = Date.parse(shift.EndAt) + (direction === 'OUT' ? 86400000 : 0);
+    if (Date.parse(timestamp) < earliest || Date.parse(timestamp) > latest) fail('The correction time is outside the selected shift. Check the shift start date.');
+    policy = effectiveShiftPolicy(policy, shift);
+    event.ShiftSnapshot = shift;
+  } else if (attendanceDateValue !== localDate) fail('The correction date must match the attendance date for branch-default staff.');
+  if (direction === 'OUT' && !existingDaily?.FirstClockIn) fail('Record or correct the shift clock-in before its clock-out.', 409);
   const daily = buildDailyAttendanceFromEvent(policy, event, existingDaily || {});
   Object.assign(event, {
     AttendanceDate: daily.Date,
@@ -1222,16 +1413,17 @@ export async function recordManualAttendance(env, user, body = {}) {
       data: daily,
       ...canonicalWritePrecondition(existingDaily)
     },
-    ...(!currentState?.LastTimestamp || currentState.AttendanceDate === attendanceDate || timestamp >= currentState.LastTimestamp ? [{
+    ...(!currentState?.LastTimestamp || currentState.AttendanceDate === attendanceDateValue || timestamp >= currentState.LastTimestamp ? [{
       collectionPath: statePath,
       documentId: staffAttendanceWriteDocumentId(currentState, stateId),
       data: {
-        ...Object.fromEntries(Object.entries(currentState?.AttendanceDate === attendanceDate ? currentState : {}).filter(([key]) => !key.startsWith('__'))),
+        ...Object.fromEntries(Object.entries(currentState?.AttendanceDate === attendanceDateValue ? currentState : {}).filter(([key]) => !key.startsWith('__'))),
         Username: username,
         BranchId: branchId,
         State: daily.LastClockOut ? 'COMPLETED' : 'CLOCKED_IN',
         NextDirection: daily.LastClockOut ? '' : 'OUT',
-        AttendanceDate: attendanceDate,
+        AttendanceDate: attendanceDateValue,
+        ...(daily.ShiftSnapshot ? { ShiftSnapshot: daily.ShiftSnapshot } : {}),
         LastEventId: eventId,
         LastTimestamp: daily.LastClockOut || daily.FirstClockIn,
         UpdatedAt: nowIso(),
@@ -1290,6 +1482,14 @@ export async function cleanupStaffAttendanceStorage(env, user, body = {}) {
 
 export async function handleStaffAttendanceAction(env, user, body = {}, requestContext = {}) {
   const action = lower(body.action || body.Action || 'list');
+  if (['savegroup', 'assigngroups', 'deletegroup'].includes(action)) {
+    if (user.subscriptionReadOnly) fail('The subscription is read-only. Attendance group changes are disabled.', 403);
+    if (!canManageStaffAttendance(user)) fail('Only attendance administrators can configure attendance groups.', 403);
+    const branchId = branchFor(user, body);
+    const policy = normalizeAttendancePolicy(await getStaffAttendanceDocument(env, 'policy', branchId, 'default') || { Active: 'NO' });
+    const operation = { savegroup: saveAttendanceGroup, assigngroups: assignAttendanceGroups, deletegroup: deleteAttendanceGroup }[action];
+    return operation(env, user, body, branchId, policy);
+  }
   if (action === 'list') return listStaffAttendance(env, user, body);
   if (action === 'quick') return getStaffAttendanceQuickState(env, user, body);
   if (action === 'presencequick') return getStaffAttendancePresenceState(env, user, body);

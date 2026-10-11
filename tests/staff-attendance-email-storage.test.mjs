@@ -5,10 +5,10 @@ import vm from 'node:vm';
 import { webcrypto } from 'node:crypto';
 import { requiredDeploymentIdentity } from '../functions/lib/deployment-identity.js';
 import { safeScopeId } from '../functions/lib/school-scope.js';
-import { staffRecordMatchesEdition } from '../functions/lib/records-desk.js';
+import { canonicalRecordEdition, staffRecordMatchesEdition } from '../functions/lib/records-desk.js';
 import { hrCapabilitiesFor } from '../functions/lib/human-resources.js';
 
-const sources = Object.fromEntries(await Promise.all(['firestore', 'staff-attendance-storage', 'staff-time-attendance', 'attendance-presence-notifications'].map(async name => [
+const sources = Object.fromEntries(await Promise.all(['firestore', 'staff-attendance-storage', 'staff-attendance-schedules', 'staff-attendance-groups', 'staff-time-attendance', 'attendance-presence-notifications'].map(async name => [
   name, await readFile(new URL(`../functions/lib/${name}.js`, import.meta.url), 'utf8')
 ])));
 
@@ -24,6 +24,7 @@ function loadModule(source, imports, globals, setup = '') {
 
 function fixture(edition = 'school', username = 'teacher@example.test') {
   let time = '2026-10-09T09:00:00.000Z';
+  let beforeRequest = null;
   let revision = 0;
   class TestDate extends Date {
     constructor(...args) { super(...(args.length ? args : [time])); }
@@ -56,6 +57,7 @@ function fixture(edition = 'school', username = 'teacher@example.test') {
     assert.equal(parsed.hostname, 'firestore.googleapis.com', 'No real network or OAuth calls');
     const name = decodeURIComponent(parsed.pathname.replace(/^\/v1\//, ''));
     requests.push({ name, method: options.method || 'GET' });
+    if (beforeRequest) beforeRequest({ name, method: options.method || 'GET' });
     if (name.endsWith(':commit')) {
       const { writes } = JSON.parse(options.body);
       // Firestore JSON resource names are literal, unlike REST URL segments.
@@ -103,8 +105,15 @@ function fixture(edition = 'school', username = 'teacher@example.test') {
   const storage = loadModule(sources['staff-attendance-storage'], {
     './firestore.js': firestore, './deployment-identity.js': { requiredDeploymentIdentity }, './school-scope.js': { safeScopeId }
   }, globals);
+  const schedules = loadModule(sources['staff-attendance-schedules'], {}, globals);
+  const groups = loadModule(sources['staff-attendance-groups'], {
+    './firestore.js': firestore, './deployment-identity.js': { requiredDeploymentIdentity },
+    './staff-attendance-storage.js': storage, './staff-attendance-schedules.js': schedules,
+    './records-desk.js': { canonicalRecordEdition, staffRecordMatchesEdition }
+  }, globals);
   const attendance = loadModule(sources['staff-time-attendance'], {
     './firestore.js': firestore, './staff-attendance-storage.js': storage,
+    './staff-attendance-schedules.js': schedules, './staff-attendance-groups.js': groups,
     './records-desk.js': { staffRecordMatchesEdition }, './human-resources.js': { hrCapabilitiesFor }
   }, globals);
   const notifications = loadModule(sources['attendance-presence-notifications'], {
@@ -123,14 +132,233 @@ function fixture(edition = 'school', username = 'teacher@example.test') {
   });
   put(path('staffAttendanceSites'), 'office', { SiteId: 'office', Name: 'Office', Active: 'YES', Policy: 'NETWORK_ONLY', AllowedPublicIps: ['192.0.2.1'] });
   const user = { username, displayName: 'Sample Teacher', branchId: 'main', role: 'Department User', edition };
+  put('staffUsers', username, { Username: username, DisplayName: user.displayName, Role: user.role,
+    Edition: edition, BranchId: 'main', Active: 'YES' });
   const body = { SiteId: 'office', BranchId: 'main' };
   const context = { clientIp: '192.0.2.1' };
   const clock = direction => attendance.clockStaffAttendance(env, user, { ...body, Direction: direction }, context);
   const dailyId = (date = time.slice(0, 10)) => storage.safeStaffAttendanceDocumentId(`DAY-${date}-${username}`);
-  return { env, firestore, storage, attendance, notifications, user, body, context, documents, commits, requests, path, put, get, count, clock, dailyId, setTime: value => { time = value; } };
+  return { env, firestore, storage, schedules, groups, attendance, notifications, user, body, context, documents, commits, requests, path, put, get, count, clock, dailyId,
+    setTime: value => { time = value; }, beforeRequest: callback => { beforeRequest = callback; } };
+}
+
+function configureAttendanceGroup(f, changes = {}, policyChanges = {}) {
+  const policy = { ...f.get(f.path('staffAttendancePolicy'), 'default'), ...policyChanges };
+  f.put(f.path('staffAttendancePolicy'), 'default', policy);
+  const daySchedules = Object.fromEntries(['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'].map(day => [day, {
+    Enabled: day === 'FRI', ResumptionTime: '21:00', ClosingTime: '07:00', EndDayOffset: 1
+  }]));
+  const group = f.schedules.normalizeAttendanceGroup({ GroupId: 'night-duty', Name: 'Night duty', ScheduleType: 'FIXED',
+    EffectiveFrom: '2026-10-09', DaySchedules: daySchedules, ...changes }, {}, policy);
+  const roster = { Revision: 'roster-1', Groups: [group], Assignments: [{ Username: f.user.username, GroupId: group.GroupId, EffectiveFrom: group.EffectiveFrom }] };
+  f.put(f.path('staffAttendancePolicy'), 'roster', roster);
+  f.put('staffUsers', f.user.username, { Username: f.user.username, DisplayName: f.user.displayName, Role: f.user.role,
+    Edition: f.user.edition, BranchId: 'main', Active: 'YES' });
+  return { policy: f.attendance.normalizeAttendancePolicy(policy), group, roster };
 }
 
 for (const edition of ['school', 'faith', 'organization']) {
+  test(`${edition}: fixed overnight group retains its daily identity, metrics and presence after midnight`, async () => {
+    const f = fixture(edition);
+    configureAttendanceGroup(f);
+    f.setTime('2026-10-09T22:00:00.000Z');
+    const first = await f.clock('IN');
+    assert.equal(first.daily.Date, '2026-10-09');
+    assert.equal(first.daily.LateMinutes, 60);
+    assert.equal(first.daily.ShiftSnapshot.EndAt, '2026-10-10T07:00:00.000Z');
+    f.setTime('2026-10-10T02:00:00.000Z');
+    const quick = await f.attendance.getStaffAttendanceQuickState(f.env, f.user);
+    const list = await f.attendance.listStaffAttendance(f.env, f.user);
+    const presence = await f.attendance.getStaffAttendancePresenceState(f.env, f.user);
+    for (const view of [quick, list, presence]) {
+      assert.equal(view.state, 'CLOCKED_IN');
+      assert.equal(view.attendanceDate, '2026-10-09');
+    }
+    assert.equal(quick.todayDaily.DailyId, f.dailyId('2026-10-09'));
+    assert.equal(list.myDailyRecords[0].DailyId, f.dailyId('2026-10-09'));
+    await f.attendance.recordPresenceCheck(f.env, f.user, f.body, f.context);
+    assert.equal(f.get(f.path('staffTimeState'), f.user.username).ShiftSnapshot.AttendanceDate, '2026-10-09');
+    f.setTime('2026-10-10T08:00:00.000Z');
+    const completed = await f.clock('OUT');
+    assert.equal(completed.state, 'COMPLETED');
+    assert.equal(completed.daily.WorkMinutes, 600);
+    assert.equal(completed.daily.OvertimeMinutes, 60);
+    assert.equal(completed.daily.LateMinutes, 60);
+    assert.equal(completed.daily.EarlyDepartureMinutes, 0);
+    assert.equal(completed.daily.PresenceCheckCount, 1);
+    assert.equal(f.count(f.path('staffDailyAttendance')), 1);
+    assert.equal(f.count(f.path('staffTimeEvents')), 3);
+    assert.equal(f.get(f.path('staffDailyAttendance'), f.dailyId('2026-10-10')), null);
+  });
+
+  test(`${edition}: rotating 24-hour duty has two rest days and absence only after the duty ends`, async () => {
+    const f = fixture(edition);
+    const { policy, roster } = configureAttendanceGroup(f, { ScheduleType: 'ROTATING', AnchorDate: '2026-10-09', CycleDays: [
+      { Enabled: true, ResumptionTime: '08:00', ClosingTime: '08:00', EndDayOffset: 1 }, { Enabled: false }, { Enabled: false }
+    ] }, { AutoRecordAbsence: 'YES' });
+    const directory = [{ Username: f.user.username, DisplayName: f.user.displayName }];
+    const synchronize = (date, rows = []) => f.attendance.synchronizeRosterAbsences(f.env, 'main', policy, roster, new Date(date), directory, [], rows);
+    assert.equal((await synchronize('2026-10-09T18:00:00.000Z')).dailyRows.length, 0);
+    assert.equal((await synchronize('2026-10-10T07:59:59.000Z')).dailyRows.length, 0);
+    const end = await synchronize('2026-10-10T08:00:00.000Z');
+    assert.equal(end.dailyRows.length, 1);
+    assert.equal(end.dailyRows[0].Date, '2026-10-09');
+    assert.equal(end.dailyRows[0].AttendanceStatus, 'Absent');
+    assert.equal(end.dailyRows[0].ShiftSnapshot.GroupId, 'night-duty');
+    const rest = await synchronize('2026-10-11T23:00:00.000Z', end.dailyRows);
+    assert.equal(rest.dailyRows.length, 1);
+    f.setTime('2026-10-11T09:00:00.000Z');
+    assert.equal((await f.attendance.getStaffAttendanceQuickState(f.env, f.user)).state, 'OFF_DUTY');
+    await assert.rejects(f.clock('IN'), /no open shift scheduled/i);
+    assert.equal(f.count(f.path('staffTimeEvents')), 0);
+    assert.equal(f.count(f.path('staffDailyAttendance')), 1);
+  });
+
+  test(`${edition}: edited group history retains an unclocked prior-night duty for absence processing`, async () => {
+    const f = fixture(edition);
+    const { policy, roster, group } = configureAttendanceGroup(f, {}, { AutoRecordAbsence: 'YES' });
+    const changed = f.schedules.normalizeAttendanceGroup({ Name: 'New daytime rota', EffectiveFrom: '2026-10-10',
+      DaySchedules: { FRI: { Enabled: false }, SAT: { Enabled: true, ResumptionTime: '08:00', ClosingTime: '17:00', EndDayOffset: 0 } }
+    }, group, policy);
+    const updated = { ...roster, Revision: 'roster-2', Groups: [{ ...changed, History: [group] }] };
+    f.put(f.path('staffAttendancePolicy'), 'roster', updated);
+    const result = await f.attendance.synchronizeRosterAbsences(f.env, 'main', policy, updated, new Date('2026-10-10T07:00:00.000Z'),
+      [{ Username: f.user.username, DisplayName: f.user.displayName }], [], []);
+    assert.equal(result.dailyRows.length, 1);
+    assert.equal(result.dailyRows[0].Date, '2026-10-09');
+    assert.equal(result.dailyRows[0].AttendanceStatus, 'Absent');
+    assert.equal(result.dailyRows[0].ShiftSnapshot.GroupName, 'Night duty');
+    assert.equal(result.dailyRows[0].ShiftSnapshot.EndAt, '2026-10-10T07:00:00.000Z');
+  });
+
+  test(`${edition}: 24-hour clock-out and manual overnight correction use the starting attendance date`, async () => {
+    const f = fixture(edition);
+    configureAttendanceGroup(f, { ScheduleType: 'ROTATING', AnchorDate: '2026-10-09', CycleDays: [
+      { Enabled: true, ResumptionTime: '08:00', ClosingTime: '08:00', EndDayOffset: 1 }, { Enabled: false }, { Enabled: false }
+    ] });
+    f.setTime('2026-10-09T08:00:00.000Z');
+    await f.clock('IN');
+    f.setTime('2026-10-10T08:00:00.000Z');
+    const out = await f.clock('OUT');
+    assert.equal(out.daily.Date, '2026-10-09');
+    assert.equal(out.daily.WorkMinutes, 1440);
+    const corrected = await f.attendance.recordManualAttendance(f.env, { ...f.user, role: 'Super Admin' }, {
+      Username: f.user.username, Direction: 'OUT', AttendanceDate: '2026-10-09',
+      Timestamp: '2026-10-10T09:00:00.000Z', Reason: 'Confirmed actual overnight handover time'
+    });
+    assert.equal(corrected.daily.Date, '2026-10-09');
+    assert.equal(corrected.daily.WorkMinutes, 1500);
+    assert.equal(corrected.daily.OvertimeMinutes, 60);
+    assert.equal(f.count(f.path('staffDailyAttendance')), 1);
+    assert.equal(f.get(f.path('staffTimeState'), f.user.username).AttendanceDate, '2026-10-09');
+  });
+
+  test(`${edition}: edits to schedule, assignment and default timing cannot change a clocked-in snapshot`, async () => {
+    const f = fixture(edition);
+    const { roster } = configureAttendanceGroup(f);
+    f.setTime('2026-10-09T21:00:00.000Z');
+    await f.clock('IN');
+    const original = f.get(f.path('staffTimeState'), f.user.username).ShiftSnapshot;
+    f.put(f.path('staffAttendancePolicy'), 'roster', { ...roster, Revision: 'roster-2',
+      Groups: [{ ...roster.Groups[0], EffectiveFrom: '2026-10-10', GraceMinutes: 100, Name: 'Renamed night duty' }],
+      Assignments: [...roster.Assignments, { Username: f.user.username, GroupId: '', EffectiveFrom: '2026-10-10' }]
+    });
+    f.put(f.path('staffAttendancePolicy'), 'default', {
+      ...f.get(f.path('staffAttendancePolicy'), 'default'), ClosingTime: '18:00', GraceMinutes: 180, OvertimeMinimumMinutes: 240
+    });
+    f.setTime('2026-10-10T06:30:00.000Z');
+    const quick = await f.attendance.getStaffAttendanceQuickState(f.env, f.user);
+    assert.equal(quick.state, 'CLOCKED_IN');
+    assert.deepEqual(quick.currentShift, original);
+    const out = await f.clock('OUT');
+    assert.equal(out.daily.Date, '2026-10-09');
+    assert.equal(out.daily.WorkMinutes, 570);
+    assert.equal(out.daily.EarlyDepartureMinutes, 30);
+    assert.equal(out.daily.ShiftSnapshot.GroupName, 'Night duty');
+  });
+
+  test(`${edition}: simultaneous overnight clock-outs have one winner and cannot duplicate or rewrite history`, async () => {
+    const f = fixture(edition);
+    configureAttendanceGroup(f);
+    f.setTime('2026-10-09T21:00:00.000Z');
+    await f.clock('IN');
+    f.setTime('2026-10-10T07:00:00.000Z');
+    const results = await Promise.allSettled([f.clock('OUT'), f.clock('OUT')]);
+    assert.equal(results.filter(row => row.status === 'fulfilled').length, 1);
+    assert.equal(results.filter(row => row.status === 'rejected').length, 1);
+    assert.equal(f.count(f.path('staffDailyAttendance')), 1);
+    assert.equal(f.count(f.path('staffTimeEvents')), 2);
+    f.setTime('2026-10-10T07:30:00.000Z');
+    await assert.rejects(f.clock('OUT'), error => error.status === 409);
+    assert.equal(f.get(f.path('staffDailyAttendance'), f.dailyId('2026-10-09')).LastClockOut, '2026-10-10T07:00:00.000Z');
+  });
+
+  test(`${edition}: assigning a group after a default-policy clock-in preserves that day's original hours`, async () => {
+    const f = fixture(edition);
+    await f.clock('IN');
+    const original = f.get(f.path('staffDailyAttendance'), f.dailyId('2026-10-09'));
+    configureAttendanceGroup(f);
+    f.setTime('2026-10-09T09:16:00.000Z');
+    await f.attendance.recordPresenceCheck(f.env, f.user, f.body, f.context);
+    const preservedState = f.get(f.path('staffTimeState'), f.user.username);
+    assert.equal(f.notifications.attendancePresenceNotificationCandidate(f.get(f.path('staffAttendancePolicy'), 'default'),
+      preservedState, new Date('2026-10-09T09:31:00.000Z')).eligible, true);
+    f.setTime('2026-10-09T17:00:00.000Z');
+    const out = await f.clock('OUT');
+    assert.equal(out.daily.ScheduledResumptionTime, original.ScheduledResumptionTime);
+    assert.equal(out.daily.ScheduledClosingTime, original.ScheduledClosingTime);
+    assert.equal(out.daily.WorkMinutes, 480);
+    assert.equal(out.daily.EarlyDepartureMinutes, 0);
+    assert.equal(out.daily.OvertimeMinutes, 0);
+    assert.equal(out.daily.LateMinutes, 60);
+    assert.equal(f.count(f.path('staffDailyAttendance')), 1);
+  });
+
+  test(`${edition}: assigning a group during default-policy rest-day work preserves its overtime classification`, async () => {
+    const f = fixture(edition);
+    f.setTime('2026-10-10T09:00:00.000Z');
+    const clockIn = await f.clock('IN');
+    assert.equal(clockIn.daily.AttendanceStatus, 'Overtime day');
+    configureAttendanceGroup(f);
+    f.setTime('2026-10-10T13:00:00.000Z');
+    const out = await f.clock('OUT');
+    assert.equal(out.daily.AttendanceStatus, 'Overtime day');
+    assert.equal(out.daily.WorkMinutes, 240);
+    assert.equal(out.daily.OvertimeMinutes, 240);
+    assert.equal(out.daily.EarlyDepartureMinutes, 0);
+    assert.equal(out.daily.LateMinutes, 0);
+    assert.equal(f.count(f.path('staffDailyAttendance')), 1);
+  });
+
+  test(`${edition}: reaching shift end during attendance reads cannot create a late clock-in`, async () => {
+    const f = fixture(edition);
+    configureAttendanceGroup(f);
+    f.setTime('2026-10-10T06:59:59.999Z');
+    f.beforeRequest(({ name, method }) => {
+      if (method === 'GET' && name.includes('/staffDailyAttendance/')) f.setTime('2026-10-10T07:00:00.000Z');
+    });
+    await assert.rejects(f.clock('IN'), error => [400, 403, 409].includes(error.status) && /shift|scheduled/i.test(error.message));
+    assert.equal(f.count(f.path('staffDailyAttendance')), 0);
+    assert.equal(f.count(f.path('staffTimeEvents')), 0);
+  });
+
+  test(`${edition}: group opening hours and normal premises checks remain enforced with inactive branch hours`, async () => {
+    const f = fixture(edition);
+    configureAttendanceGroup(f, {}, { Active: 'NO' });
+    f.setTime('2026-10-09T19:59:00.000Z');
+    await assert.rejects(f.clock('IN'), /Clock-in opens at/);
+    assert.equal(f.count(f.path('staffDailyAttendance')), 0);
+    f.setTime('2026-10-09T20:00:00.000Z');
+    await assert.rejects(f.attendance.clockStaffAttendance(f.env, f.user, { ...f.body, Direction: 'IN',
+      ShiftSnapshot: { StartAt: '2026-10-09T00:00:00Z', EndAt: '2026-10-10T23:00:00Z' }, GroupId: 'spoofed'
+    }, { clientIp: '198.51.100.1' }), /outside the approved/);
+    assert.equal(f.count(f.path('staffDailyAttendance')), 0);
+    const saved = await f.clock('IN');
+    assert.equal(saved.daily.ShiftSnapshot.GroupId, 'night-duty');
+    assert.equal(saved.daily.ShiftSnapshot.StartAt, '2026-10-09T21:00:00.000Z');
+    assert.equal(saved.daily.LateMinutes, 0);
+  });
+
   test(`${edition}: email username clocks in, reloads, confirms presence and clocks out without duplicate records`, async () => {
     const f = fixture(edition);
     assert.equal((await f.clock('IN')).state, 'CLOCKED_IN');
@@ -307,6 +535,34 @@ for (const edition of ['school', 'faith', 'organization']) {
     assert.deepEqual([...notices[0].TargetUsernames], [f.user.username]);
   });
 }
+
+test('a later DST-gap schedule cannot block checkout or manual correction of an existing overnight snapshot', async () => {
+  const f = fixture();
+  const week = Object.fromEntries(['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'].map(day => [day, { Enabled: false }]));
+  const { policy, roster, group } = configureAttendanceGroup(f, { EffectiveFrom: '2026-03-28',
+    DaySchedules: { ...week, SAT: { Enabled: true, ResumptionTime: '08:00', ClosingTime: '08:00', EndDayOffset: 1 } }
+  }, { TimeZone: 'Europe/London' });
+  f.setTime('2026-03-28T08:00:00.000Z');
+  await f.clock('IN');
+  const changed = f.schedules.normalizeAttendanceGroup({ EffectiveFrom: '2026-03-29', DaySchedules: {
+    ...week, SUN: { Enabled: true, ResumptionTime: '01:30', ClosingTime: '08:00', EndDayOffset: 0 }
+  } }, group, policy);
+  f.put(f.path('staffAttendancePolicy'), 'roster', { ...roster, Groups: [{ ...changed, History: [group] }] });
+  f.setTime('2026-03-29T07:15:00.000Z');
+  assert.equal((await f.attendance.getStaffAttendanceQuickState(f.env, f.user)).state, 'CLOCKED_IN');
+  const out = await f.clock('OUT');
+  assert.equal(out.daily.Date, '2026-03-28');
+  assert.equal(out.daily.WorkMinutes, 1395);
+  assert.equal(out.daily.OvertimeMinutes, 15);
+  const corrected = await f.attendance.recordManualAttendance(f.env, { ...f.user, role: 'Super Admin' }, {
+    Username: f.user.username, Direction: 'OUT', AttendanceDate: '2026-03-28', Timestamp: '2026-03-29T07:30:00.000Z',
+    Reason: 'Verified handover after the clock change'
+  });
+  assert.equal(corrected.daily.Date, '2026-03-28');
+  assert.equal(corrected.daily.WorkMinutes, 1410);
+  assert.equal(corrected.daily.OvertimeMinutes, 30);
+  assert.equal(f.count(f.path('staffDailyAttendance')), 1);
+});
 
 for (const username of ['plain.teacher', 'teacher+primary@example.test', 'teacher%40literal@example.test', 'tęacher@example.test']) {
   test(`literal document IDs round-trip for ${username}`, async () => {

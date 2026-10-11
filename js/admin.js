@@ -2548,7 +2548,7 @@ function updateDashboardClockFace() {
     const attendanceDate = `${dateParts.year}-${dateParts.month}-${dateParts.day}`;
     if (activeSection === 'overview'
         && dashboardAttendanceCache?.data?.todayAttendanceDate
-        && attendanceDate !== clean(dashboardAttendanceCache.data.todayAttendanceDate)
+        && attendanceDate !== clean(dashboardAttendanceCache.data.todayCalendarDate || dashboardAttendanceCache.data.todayAttendanceDate)
         && !dashboardAttendanceCache.loading) {
       void loadDashboardAttendanceCard(true, '', '', { silent: true });
     } else if (activeSection === 'overview'
@@ -2589,23 +2589,24 @@ function renderDashboardTimeAttendance(data = null, message = '', tone = '') {
   const refreshing = Boolean(dashboardAttendanceCache?.loading && !dashboardAttendanceCache?.background);
   const state = clean(data?.state || 'CLOCKED_OUT').toUpperCase();
   const complete = state === 'COMPLETED';
-  const direction = clean(data?.nextDirection || (state === 'CLOCKED_IN' ? 'OUT' : 'IN')).toUpperCase();
+  const offDuty = state === 'OFF_DUTY';
+  const direction = offDuty ? '' : clean(data?.nextDirection || (state === 'CLOCKED_IN' ? 'OUT' : 'IN')).toUpperCase();
   const sites = data?.sites || [];
-  const policy = data?.policy || {};
+  const policy = data?.myPolicy || data?.policy || {};
   const presenceCheck = data?.presenceCheck || {};
   if (state === 'CLOCKED_IN') announceRandomPresenceConfirmation(presenceCheck);
   warmAttendanceIdentity(policy);
   const identityMode = clean(policy.IdentityVerification || 'NONE').toUpperCase();
-  const todaySchedule = data?.todaySchedule || {};
+  const todaySchedule = data?.todaySchedule || (data?.currentShift ? { ...data.currentShift, Enabled: true } : {});
   const daily = data?.todayDaily || {};
   let savedSiteId = '';
   try { savedSiteId = window.localStorage.getItem(dashboardAttendanceSiteStorageKey(data?.branchId)) || ''; } catch (_error) { /* Browser storage is optional. */ }
   const selectedSiteId = sites.some((site) => clean(site.SiteId || site.__id) === savedSiteId)
     ? savedSiteId
     : clean(sites[0]?.SiteId || sites[0]?.__id);
-  const stateLabel = complete ? 'Completed today' : state === 'CLOCKED_IN' ? 'Currently clocked in' : 'Not clocked in';
+  const stateLabel = offDuty ? 'No shift scheduled / shift ended' : complete ? 'Completed this shift' : state === 'CLOCKED_IN' ? 'Currently clocked in' : 'Not clocked in';
   const timeNote = todaySchedule.Enabled
-    ? `${clean(todaySchedule.ResumptionTime)}-${clean(todaySchedule.ClosingTime)}`
+    ? `${clean(todaySchedule.ResumptionTime)}-${clean(todaySchedule.ClosingTime)}${Number(todaySchedule.EndDayOffset) ? ` (+${Number(todaySchedule.EndDayOffset)} day${Number(todaySchedule.EndDayOffset) > 1 ? 's' : ''})` : ''}`
     : 'No work schedule for today';
   const identityControl = `<small>${identityMode === 'PASSKEY' ? 'Device unlock required' : identityMode === 'FACE' ? 'Live face recognition with spoken guidance' : 'Location/network verification'}</small>`;
   dashboardClockEl.innerHTML = `
@@ -2621,11 +2622,11 @@ function renderDashboardTimeAttendance(data = null, message = '', tone = '') {
         : loading
           ? '<p class="muted">Loading today\'s attendance state and approved locations...</p>'
           : data
-            ? `<div class="dashboard-attendance-meta"><span>${escapeHtml(timeNote)}</span>${daily.FirstClockIn ? `<span>In: ${escapeHtml(dashboardAttendanceTime(daily.FirstClockIn, policy.TimeZone))}</span>` : ''}${daily.LastClockOut ? `<span>Out: ${escapeHtml(dashboardAttendanceTime(daily.LastClockOut, policy.TimeZone))}</span>` : ''}</div>
+            ? `<div class="dashboard-attendance-meta"><span>${escapeHtml(data.currentShift?.GroupName || data.selfgroup?.Name || 'Branch default')}</span><span>${escapeHtml(timeNote)}</span>${data.attendanceDate ? `<span>Shift date: ${escapeHtml(data.attendanceDate)}</span>` : ''}${daily.FirstClockIn ? `<span>In: ${escapeHtml(dashboardAttendanceTime(daily.FirstClockIn, policy.TimeZone))}</span>` : ''}${daily.LastClockOut ? `<span>Out: ${escapeHtml(dashboardAttendanceTime(daily.LastClockOut, policy.TimeZone))}</span>` : ''}</div>
               <div class="dashboard-attendance-controls">
                 <label>Location<select id="dashboardAttendanceSite" ${sites.length ? '' : 'disabled'}>${sites.length ? sites.map((site) => { const id = clean(site.SiteId || site.__id); return `<option value="${escapeHtml(id)}"${id === selectedSiteId ? ' selected' : ''}>${escapeHtml(site.Name)}</option>`; }).join('') : '<option value="">No approved location</option>'}</select></label>
                 ${identityControl}
-                <button type="button" id="dashboardAttendanceClockButton" ${sites.length && !complete && !refreshing ? '' : 'disabled'}>${refreshing ? 'Refreshing...' : complete ? 'Completed' : direction === 'OUT' ? 'Clock out' : 'Clock in'}</button>
+                <button type="button" id="dashboardAttendanceClockButton" ${sites.length && !complete && !offDuty && direction && !refreshing ? '' : 'disabled'}>${refreshing ? 'Refreshing...' : offDuty ? 'Off duty' : complete ? 'Completed' : direction === 'OUT' ? 'Clock out' : 'Clock in'}</button>
               </div>
               ${presenceCheck.enabled && state === 'CLOCKED_IN'
                 ? `<div class="attendance-presence-check dashboard-attendance-presence${presenceCheck.status === 'OVERDUE' ? ' is-overdue' : presenceCheck.status === 'DUE' ? ' is-due' : ''}">
@@ -2642,6 +2643,7 @@ function renderDashboardTimeAttendance(data = null, message = '', tone = '') {
     try { window.localStorage.setItem(dashboardAttendanceSiteStorageKey(data?.branchId), clean(siteSelect.value)); } catch (_error) { /* Browser storage is optional. */ }
   });
   document.getElementById('dashboardAttendanceClockButton')?.addEventListener('click', async (event) => {
+    if (offDuty || complete || !direction) return;
     const button = event.currentTarget;
     const status = document.getElementById('dashboardAttendanceStatus');
     const siteId = clean(siteSelect?.value);
@@ -2734,7 +2736,7 @@ async function loadDashboardPresenceState() {
       const state = await staffAttendanceRequest('presencequick');
       const cached = dashboardAttendanceCache?.branchId === branchId ? dashboardAttendanceCache.data : null;
       if (!cached || activeSection !== 'overview') return;
-      const attendanceChanged = clean(state.attendanceDate) !== clean(cached.todayAttendanceDate)
+      const attendanceChanged = clean(state.attendanceDate) !== clean(cached.attendanceDate || cached.todayAttendanceDate)
         || clean(state.state).toUpperCase() !== 'CLOCKED_IN';
       if (attendanceChanged) {
         await loadDashboardAttendanceCard(true, '', '', { silent: true });
@@ -8546,13 +8548,16 @@ async function loadStaffAttendance() {
     const configuredSites = data.configuredSites || sites;
     const stateIn = data.state === 'CLOCKED_IN';
     const stateComplete = data.state === 'COMPLETED';
-    const nextDirection = data.nextDirection || (stateIn ? 'OUT' : 'IN');
+    const stateOffDuty = data.state === 'OFF_DUTY';
+    const nextDirection = stateOffDuty ? '' : data.nextDirection || (stateIn ? 'OUT' : 'IN');
     const capabilities = data.capabilities || {};
     const policy = data.policy || {};
+    const myPolicy = data.myPolicy || policy;
+    const currentShift = data.currentShift || null;
     const workDays = Array.isArray(policy.WorkDays) ? policy.WorkDays : [];
     const attendanceDays = [['MON', 'Monday'], ['TUE', 'Tuesday'], ['WED', 'Wednesday'], ['THU', 'Thursday'], ['FRI', 'Friday'], ['SAT', 'Saturday'], ['SUN', 'Sunday']];
     const daySchedules = policy.DaySchedules || {};
-    const todaySchedule = data.todaySchedule || daySchedules[data.todayAttendanceDay] || {};
+    const todaySchedule = data.todaySchedule || (currentShift ? { ...currentShift, Enabled: true } : myPolicy.DaySchedules?.[data.todayAttendanceDay]) || {};
     const identityMode = clean(policy.IdentityVerification || 'NONE').toUpperCase();
     warmAttendanceIdentity(policy);
     const presenceCheck = data.presenceCheck || { enabled: false };
@@ -8564,8 +8569,8 @@ async function loadStaffAttendance() {
         ? '<input id="staffAttendanceIdentityMethod" type="hidden" value="FACE"><small>Live face recognition is required. Visual and spoken instructions will guide the capture.</small>'
         : '<input id="staffAttendanceIdentityMethod" type="hidden" value="NONE"><small>Location or approved network verification is required.</small>';
     const myDailyRecords = data.myDailyRecords || [];
-    const latestDaily = myDailyRecords.find((row) => clean(row.Date) === clean(data.todayAttendanceDate)) || null;
-    const scheduleActive = clean(policy.Active).toUpperCase() !== 'NO';
+    const latestDaily = myDailyRecords.find((row) => clean(row.Date) === clean(data.attendanceDate || data.todayAttendanceDate)) || null;
+    const scheduleActive = clean(myPolicy.Active).toUpperCase() !== 'NO';
     const selectedOption = (value, expected) => clean(value).toUpperCase() === expected ? ' selected' : '';
     const attendanceReportRows = filteredAttendanceReportRows(data.recentDailyRecords || [], reportFilters);
     const reportSummary = attendanceReportSummary(attendanceReportRows);
@@ -8576,18 +8581,18 @@ async function loadStaffAttendance() {
       </div>
       ${(data.processingWarnings || []).map((warning) => `<p class="status bad" role="alert">${escapeHtml(warning)}</p>`).join('')}
       <div class="workflow-kpis">
-        <div><small>Current state</small><strong>${stateComplete ? 'Completed' : stateIn ? 'Clocked in' : 'Clocked out'}</strong><span>${data.myEvents?.[0]?.Timestamp ? escapeHtml(DynamaxTime.formatDateTime(data.myEvents[0].Timestamp, policy.TimeZone)) : 'No attendance event yet'}</span></div>
+        <div><small>Current state</small><strong>${stateOffDuty ? 'Off duty' : stateComplete ? 'Completed' : stateIn ? 'Clocked in' : 'Clocked out'}</strong><span>${data.myEvents?.[0]?.Timestamp ? escapeHtml(DynamaxTime.formatDateTime(data.myEvents[0].Timestamp, policy.TimeZone)) : 'No attendance event yet'}</span></div>
         <div><small>Today's status</small><strong>${escapeHtml(latestDaily?.AttendanceStatus || 'No record')}</strong><span>${latestDaily?.Date ? escapeHtml(latestDaily.Date) : scheduleActive ? 'Awaiting today’s clock-in' : 'Work-hours policy not enabled'}</span></div>
-        <div><small>Late today</small><strong>${attendanceMinutesLabel(latestDaily?.LateMinutes)}</strong><span>${todaySchedule.ResumptionTime ? `Resumption ${escapeHtml(todaySchedule.ResumptionTime)} · ${Number(policy.GraceMinutes || 0)}m grace` : 'Not a configured work day'}</span></div>
-        <div><small>Overtime today</small><strong>${attendanceMinutesLabel(latestDaily?.OvertimeMinutes)}</strong><span>${todaySchedule.ClosingTime ? `Closing ${escapeHtml(todaySchedule.ClosingTime)}` : 'Not a configured work day'}</span></div>
+        <div><small>Late this shift</small><strong>${attendanceMinutesLabel(latestDaily?.LateMinutes)}</strong><span>${todaySchedule.ResumptionTime ? `Resumption ${escapeHtml(todaySchedule.ResumptionTime)} · ${Number(myPolicy.GraceMinutes || 0)}m grace` : 'Not a configured work day'}</span></div>
+        <div><small>Overtime this shift</small><strong>${attendanceMinutesLabel(latestDaily?.OvertimeMinutes)}</strong><span>${todaySchedule.ClosingTime ? `Closing ${escapeHtml(todaySchedule.ClosingTime)}${Number(todaySchedule.EndDayOffset) ? ` (+${Number(todaySchedule.EndDayOffset)} day${Number(todaySchedule.EndDayOffset) > 1 ? 's' : ''})` : ''}` : 'Not a configured work day'}</span></div>
         <div><small>Approved locations</small><strong>${sites.length}</strong><span>Geofence or organisation network</span></div>
       </div>
       <section class="attendance-clock-card ${stateIn ? 'is-clocked-in' : ''}">
-        <div><p class="eyebrow">My attendance</p><h3>${stateComplete ? 'Attendance completed for today' : stateIn ? 'Ready to clock out?' : 'Ready to clock in?'}</h3><p>${scheduleActive && todaySchedule.Enabled ? `Today: ${escapeHtml(todaySchedule.ResumptionTime)}-${escapeHtml(todaySchedule.ClosingTime)}. ` : ''}Your precise coordinates are used only to validate your distance and are not stored in the attendance record. The first successful clock-in and clock-out cannot be replaced by repeated attempts.</p></div>
+        <div><p class="eyebrow">My attendance</p><h3>${stateOffDuty ? 'No shift scheduled / shift ended' : stateComplete ? 'Attendance completed for this shift' : stateIn ? 'Ready to clock out?' : 'Ready to clock in?'}</h3><p class="attendance-group-my-shift"><strong>${escapeHtml(currentShift?.GroupName || data.selfgroup?.Name || 'Branch default')}</strong>${data.attendanceDate ? ` · Shift date: ${escapeHtml(data.attendanceDate)}` : ''}${currentShift?.StartAt && currentShift?.EndAt ? ` · ${escapeHtml(DynamaxTime.formatDateTime(currentShift.StartAt, policy.TimeZone))} to ${escapeHtml(DynamaxTime.formatDateTime(currentShift.EndAt, policy.TimeZone))}` : ''}</p><p>${scheduleActive && todaySchedule.Enabled ? `Scheduled: ${escapeHtml(todaySchedule.ResumptionTime)}-${escapeHtml(todaySchedule.ClosingTime)}${Number(todaySchedule.EndDayOffset) ? ` (+${Number(todaySchedule.EndDayOffset)} day${Number(todaySchedule.EndDayOffset) > 1 ? 's' : ''})` : ''}. ` : ''}Your precise coordinates are used only to validate your distance and are not stored in the attendance record. The first successful clock-in and clock-out cannot be replaced by repeated attempts.</p></div>
         <div class="attendance-clock-controls">
           <label>Location <select id="staffAttendanceSite"><option value="">Choose location</option>${sites.map((site) => `<option value="${escapeHtml(site.SiteId || site.__id)}">${escapeHtml(site.Name)}</option>`).join('')}</select></label>
           ${identityChoice}
-          <button type="button" id="staffClockButton" ${sites.length && !stateComplete ? '' : 'disabled'}>${stateComplete ? 'Completed' : nextDirection === 'IN' ? 'Clock in' : 'Clock out'}</button>
+          <button type="button" id="staffClockButton" ${sites.length && !stateComplete && !stateOffDuty && nextDirection ? '' : 'disabled'}>${stateOffDuty ? 'Off duty' : stateComplete ? 'Completed' : nextDirection === 'IN' ? 'Clock in' : 'Clock out'}</button>
         </div>
         ${identityMode === 'PASSKEY' ? '<div class="attendance-security-actions"><button type="button" class="secondary" id="setupAttendancePasskey">Set up device unlock</button></div>' : identityMode === 'FACE' ? '<div class="attendance-security-actions"><button type="button" class="secondary" id="setupAttendancePasskey">Set up device unlock</button><button type="button" class="secondary" id="enrollAttendanceFace">Enroll or replace my face</button><button type="button" class="secondary danger" id="removeAttendanceFace">Remove face enrollment</button></div>' : ''}
         ${presenceCheck.enabled && stateIn ? `<div class="attendance-presence-check ${presenceCheck.status === 'OVERDUE' ? 'is-overdue' : presenceCheck.status === 'DUE' ? 'is-due' : ''}"><div><strong>Random presence confirmation</strong><small>${escapeHtml(presenceStatusText)}</small></div><button type="button" id="staffPresenceButton" ${presenceCheck.canConfirm ? '' : 'disabled'}>Confirm presence</button></div>` : ''}
@@ -8613,6 +8618,7 @@ async function loadStaffAttendance() {
         { label: 'Verified by', value: (row) => row.VerificationMethod },
         { label: 'Distance', value: (row) => row.DistanceMetres === null || row.DistanceMetres === undefined ? '' : `${row.DistanceMetres} m` }
       ])}
+      ${window.DynamaxAttendanceGroups?.render(data) || ''}
       ${capabilities.canManage ? `<section class="config-group">
         <header><strong>Daily work hours</strong><small>After the configured closing time, active staff without a clock-in are marked absent automatically. Approved leave is recorded separately.</small></header>
         <form id="staffAttendancePolicyForm" class="workflow-form config-form">
@@ -8687,6 +8693,7 @@ async function loadStaffAttendance() {
           <input name="DisplayName" type="hidden">
           <label>Action <select name="Direction"><option value="IN">Clock in</option><option value="OUT">Clock out</option></select></label>
           <label>Time <input name="Timestamp" type="datetime-local" required></label>
+          <label>Shift start date (optional) <input name="AttendanceDate" type="date"><small>For an overnight clock-out, choose the date that shift started.</small></label>
           <label>Reason <input name="Reason" minlength="5" required></label>
           <button type="submit">Record correction</button>
         </form>
@@ -8744,6 +8751,7 @@ async function loadStaffAttendance() {
       { key: 'clock', label: 'Clock in / out', icon: '\u23F1', nodes: [panelEl.querySelector(':scope > .workflow-kpis'), panelEl.querySelector(':scope > .attendance-clock-card')] },
       { key: 'my-history', label: 'My history', icon: '\u{1F5C2}', count: myDailyRecords.length, nodes: [...workspaceTableNodes('My daily attendance'), ...workspaceTableNodes('My attendance history')] },
       { key: 'policy', label: 'Work hours', icon: '\u23F0', nodes: attendanceGroups.find((node) => /daily work hours/i.test(node.textContent)) },
+      { key: 'groups', label: 'Attendance groups', icon: '\u{1F465}', count: data.roster?.Groups?.length || 0, nodes: panelEl.querySelector('#staffAttendanceGroups') },
       { key: 'locations', label: 'Locations', icon: '\u2316', count: configuredSites.length, nodes: attendanceGroups.find((node) => /attendance locations/i.test(node.textContent)) },
       { key: 'corrections', label: 'Corrections', icon: '\u270E', nodes: attendanceGroups.find((node) => /manual correction/i.test(node.textContent)) },
       { key: 'storage', label: 'Data storage', icon: '\u{1F5C4}', nodes: attendanceGroups.find((node) => /attendance data storage/i.test(node.textContent)) },
@@ -8751,6 +8759,13 @@ async function loadStaffAttendance() {
     ]);
     staffAttendanceLoadedAt = Date.now();
     staffAttendanceFormDirty = false;
+    window.DynamaxAttendanceGroups?.mount(panelEl.querySelector('#staffAttendanceGroups'), {
+      data,
+      request: staffAttendanceRequest,
+      reload: loadStaffAttendance,
+      onDirty: (dirty) => { if (dirty) staffAttendanceFormDirty = true; },
+      confirm: (message) => window.DynamaxDialogs.confirm({ title: 'Attendance groups', message, confirmText: 'Continue' })
+    });
     panelEl.querySelectorAll('#staffAttendancePolicyForm, #staffAttendanceSiteForm, #staffAttendanceManualForm').forEach((form) => {
       form.addEventListener('input', () => { staffAttendanceFormDirty = true; });
       form.addEventListener('change', () => { staffAttendanceFormDirty = true; });

@@ -28,6 +28,11 @@ export async function onRequestPost(context) {
       error.status = 401;
       throw error;
     }
+    if (['savegroup', 'assigngroups', 'deletegroup'].includes(action) && user.subscriptionReadOnly) {
+      return Response.json({ ok: false, message: 'The subscription is read-only. Attendance group changes are disabled.' }, {
+        status: 403, headers: { 'Cache-Control': 'no-store' }
+      });
+    }
     const personalClockingActions = new Set(['quick', 'presencequick', 'clock', 'presence']);
     if (!personalClockingActions.has(action) && !(user.allowedSections || []).includes('staffAttendance')) {
       return Response.json({ ok: false, message: 'Staff attendance administration is not available to this account.' }, { status: 403 });

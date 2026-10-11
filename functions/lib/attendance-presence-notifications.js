@@ -38,11 +38,19 @@ export function attendancePresenceNotificationCandidate(policy = {}, state = {},
   const randomEnabled = clean(policy.PresenceCheckMode).toUpperCase() === 'RANDOM';
   const currentDate = localDate(now, clean(policy.TimeZone) || 'Africa/Lagos');
   const sentForDueAt = clean(state.PresenceNotificationSentForDueAt);
+  const shift = state.ShiftSnapshot;
+  const shiftStart = Date.parse(shift?.StartAt);
+  const shiftEnd = Date.parse(shift?.EndAt);
+  const currentDuty = shift ? Boolean((clean(shift.GroupId) || shift.ScheduleType === 'DEFAULT')
+    && clean(shift.AttendanceDate) === clean(state.AttendanceDate)
+    && Number.isFinite(shiftStart) && Number.isFinite(shiftEnd) && shiftEnd > shiftStart
+    && now.getTime() >= shiftStart && now.getTime() < shiftEnd)
+    : clean(state.AttendanceDate) === currentDate;
   return {
     eligible: Boolean(
       pushEnabled && randomEnabled && dueAt && Number.isFinite(dueTime) && dueTime <= now.getTime()
       && clean(state.State).toUpperCase() === 'CLOCKED_IN'
-      && clean(state.AttendanceDate) === currentDate
+      && currentDuty
       && sentForDueAt !== dueAt
     ),
     dueAt,

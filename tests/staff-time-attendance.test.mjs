@@ -31,6 +31,10 @@ const attendanceActionStateSource = attendanceSource.slice(
   attendanceSource.indexOf('async function getStaffAttendanceActionState'),
   attendanceSource.indexOf('export async function clockStaffAttendance')
 );
+const attendancePersonalContextSource = attendanceSource.slice(
+  attendanceSource.indexOf('async function personalAttendanceContext'),
+  attendanceSource.indexOf('export async function getStaffAttendanceQuickState')
+);
 const clockHandlerSource = attendanceSource.slice(
   attendanceSource.indexOf('export async function clockStaffAttendance'),
   attendanceSource.indexOf('export async function recordPresenceCheck')
@@ -247,9 +251,11 @@ test('HR attendance report supports period filters, sorting and printing', () =>
   assert.match(adminJs, /Print \/ Save as PDF/);
 });
 
-test('attendance state resets by date and preserves the first successful daily times', () => {
-  assert.match(attendanceSource, /clean\(storedState\?\.AttendanceDate\) === todayAttendanceDate/);
-  assert.match(attendanceSource, /todayState = clean\(todayDaily\?\.FirstClockIn\)/);
+test('attendance state follows the shift start date and preserves the first successful daily times', () => {
+  assert.match(attendancePersonalContextSource, /clean\(storedState\?\.AttendanceDate\) === date/);
+  assert.match(attendancePersonalContextSource, /state = clean\(existingDaily\?\.FirstClockIn\)/);
+  assert.match(attendancePersonalContextSource, /scheduled = openShift \|\| resolveAttendanceShift/);
+  assert.match(attendancePersonalContextSource, /currentShift\?\.AttendanceDate \|\| local\.date/);
   assert.match(attendanceSource, /state: direction === 'IN' \? 'CLOCKED_IN' : 'COMPLETED'/);
   assert.match(attendanceSource, /Repeated clocking cannot change them/);
   assert.match(attendanceSource, /first clock-in is already recorded/);
@@ -298,10 +304,14 @@ test('continued-presence confirmation uses focused reads and updates the UI with
   assert.doesNotMatch(presenceHandlerSource, /listStaffAttendance|listCollection|queryCollection/);
   assert.match(presenceHandlerSource, /getStaffAttendanceActionState/);
   assert.doesNotMatch(attendanceActionStateSource, /listStaffAttendance|listCollection|queryCollection/);
-  assert.equal((attendanceActionStateSource.match(/getStaffAttendanceDocument\(/g) || []).length, 4);
-  assert.match(attendanceActionStateSource, /getStaffAttendanceDocument\(env, 'policy', branchId, 'default'\)/);
-  assert.match(attendanceActionStateSource, /const \[site, storedState, existingDaily\] = await Promise\.all/);
-  assert.match(attendanceActionStateSource, /getStaffAttendanceDocument\(env, 'daily', branchId, dailyId\)/);
+  assert.match(attendanceActionStateSource, /getStaffAttendanceDocument\(env, 'sites', branchId, siteId\)/);
+  assert.match(attendanceActionStateSource, /const \[site, workspace\] = await Promise\.all/);
+  assert.match(attendanceActionStateSource, /personalAttendanceContext\(env, branchId, username\)/);
+  assert.doesNotMatch(attendancePersonalContextSource, /listStaffAttendance|listCollection|queryCollection/);
+  assert.match(attendancePersonalContextSource, /getStaffAttendanceDocument\(env, 'policy', branchId, 'default'\)/);
+  assert.match(attendancePersonalContextSource, /loadAttendanceRoster\(env, branchId\)/);
+  assert.match(attendancePersonalContextSource, /getStaffAttendanceDocument\(env, 'state', branchId, safeStaffAttendanceDocumentId\(username\)\)/);
+  assert.match(attendancePersonalContextSource, /getStaffAttendanceDocument\(env, 'daily', branchId, dailyId\)/);
   assert.match(presenceHandlerSource, /batchCommitDocuments/);
   assert.doesNotMatch(presenceButtonSource, /loadStaffAttendance\(/);
   assert.match(presenceButtonSource, /updateAttendancePresenceCard/);
