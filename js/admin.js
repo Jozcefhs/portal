@@ -5911,7 +5911,7 @@ function renderDepartmentOperations(section, data) {
     document.getElementById(button.dataset.departmentJump)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }));
   const clinicRecordForm = document.getElementById('clinicRecordForm');
-  if (clinicRecordForm) import('./clinic-dispensing.js?v=20261011-clinic-stock').then(({ mountClinicDispensing }) => {
+  if (clinicRecordForm) import('./clinic-dispensing.js?v=20261011-clinic-visible-items').then(({ mountClinicDispensing }) => {
     if (!clinicRecordForm.isConnected) return;
     mountClinicDispensing(clinicRecordForm, { inventory, records, setStatus,
       request: payload => requestDepartmentAction('clinic', 'saveClinicRecord', payload, '', { render: false }),

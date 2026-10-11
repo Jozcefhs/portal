@@ -4,7 +4,7 @@ const escape = value => clean(value).replace(/[&<>"']/g, character => ({ '&': '&
 export function clinicDispensingItems(rows) {
   if (!Array.isArray(rows) || rows.length > 30) throw new Error('Choose no more than 30 dispensed items.');
   const selected = new Set();
-  return rows.map(row => {
+  return rows.filter(row => clean(row.InventoryId) || clean(row.Quantity)).map(row => {
     const InventoryId = clean(row.InventoryId), Quantity = Number(row.Quantity);
     if (!InventoryId || selected.has(InventoryId) || !Number.isFinite(Quantity) || Quantity <= 0 || Quantity > 1000000
       || Math.abs(Math.round(Quantity * 1000) / 1000 - Quantity) > 0.0000001) {
@@ -23,19 +23,25 @@ export function mountClinicDispensing(form, { inventory = [], records = [], requ
   let lines = [];
   const supplies = inventory.filter(row => !clean(row.VendorId) && clean(row.OwnershipType || row.OwnerType).toLowerCase() !== 'vendor');
   host.innerHTML = `<label>Visit<select data-clinic-edit><option value="">New clinic visit</option>${records.map((row, index) => `<option value="${index}">${escape(row.Date)} · ${escape(row.StudentName)} · ${escape(row.RecordId || row.__id)}${row.Status === 'Cancelled' ? ' · Cancelled' : ''}</option>`).join('')}</select></label>
-    <fieldset><legend>Items dispensed (optional)</legend><p class="muted">Use the item's stock unit. Saving deducts these quantities from Clinic inventory. Do not record a second Stock out for the same items.</p><div data-clinic-lines></div><button type="button" data-clinic-add>Add dispensed item</button></fieldset>
+    <fieldset><legend>Items dispensed (optional)</legend><p class="muted">Choose the drugs or supplies used and enter the quantity in the displayed stock unit. Save visit deducts the quantities automatically. Leave the row blank if no items were used.</p><div data-clinic-lines></div><button type="button" data-clinic-add>Add another item</button></fieldset>
     <div data-clinic-correction hidden><label>Visit status<select data-clinic-status><option>Active</option><option>Cancelled</option></select></label><label>Reason for correction / cancellation<input data-clinic-reason maxlength="1000"></label>
     <label class="check-row"><input type="checkbox" data-clinic-return> All previously dispensed items were unused and physically returned to Clinic stock.</label><p class="muted">Cancelling the clinical record alone does not return consumed stock. Reducing quantities records a stock correction; only return items actually unused or correct an entry made in error.</p></div>`;
   const draw = () => {
+    if (!lines.length) lines.push({ InventoryId: '', Quantity: '' });
+    const scoped = supplies.filter(item => (!studentSection || clean(item.SchoolSection || 'Secondary').toLowerCase() === studentSection)
+      && (!studentBranch || clean(item.BranchId || 'main').toLowerCase() === studentBranch));
+    const available = scoped.filter(item => clean(item.__id) && Number.isFinite(Number(item.Quantity)) && Number(item.Quantity) > 0
+      && !['no', 'inactive', 'false', '0'].includes(clean(item.Active).toLowerCase()))
+      .sort((left, right) => clean(left.ItemName).localeCompare(clean(right.ItemName), undefined, { sensitivity: 'base', numeric: true }));
     host.querySelector('[data-clinic-lines]').innerHTML = lines.map((line, index) => {
-      const available = supplies.filter(item => (!studentSection || clean(item.SchoolSection || 'Secondary').toLowerCase() === studentSection)
-        && (!studentBranch || clean(item.BranchId || 'main').toLowerCase() === studentBranch));
       const missing = line.InventoryId && !available.some(item => clean(item.__id) === line.InventoryId);
-      return `<div class="config-grid" data-clinic-line><label>Inventory item<select data-clinic-item required><option value="">Choose item</option>${missing ? `<option value="${escape(line.InventoryId)}" selected>${escape(line.ItemName || line.InventoryId)} (unavailable; refresh inventory)</option>` : ''}${available.map(item => `<option value="${escape(item.__id)}" ${clean(item.__id) === line.InventoryId ? 'selected' : ''}>${escape(item.ItemName)} · ${escape(item.Quantity)} ${escape(item.Unit)} · ${escape(item.SchoolSection || 'Secondary')}</option>`).join('')}</select></label><label>Quantity dispensed<input type="number" data-clinic-quantity min="0.001" step="0.001" value="${escape(line.Quantity || '')}" required></label><button type="button" data-clinic-remove="${index}" aria-label="Remove dispensed item ${index + 1}">Remove</button></div>`;
+      const previous = scoped.find(item => clean(item.__id) === line.InventoryId);
+      const retained = editing?.DispensedItems?.some(item => clean(item.InventoryId) === line.InventoryId);
+      return `<div class="config-grid" data-clinic-line><label>Drug / supply<select data-clinic-item><option value="">${available.length ? 'Choose an item in stock' : 'No active items in stock'}</option>${missing ? `<option value="${escape(line.InventoryId)}" selected>${escape(previous?.ItemName || line.ItemName || line.InventoryId)} (${retained ? 'previously dispensed; unavailable for new use' : 'unavailable; refresh inventory'})</option>` : ''}${available.map(item => `<option value="${escape(item.__id)}" ${clean(item.__id) === line.InventoryId ? 'selected' : ''}>${escape(item.ItemName)} · ${escape(item.Quantity)} ${escape(item.Unit)} in stock · ${escape(item.SchoolSection || 'Secondary')}</option>`).join('')}</select></label><label>Quantity used<input type="number" data-clinic-quantity min="0.001" step="0.001" placeholder="Enter quantity" value="${escape(line.Quantity ?? '')}"></label><button type="button" data-clinic-remove="${index}" aria-label="Remove dispensed item ${index + 1}">Remove</button></div>`;
     }).join('');
     host.querySelector('[data-clinic-add]').disabled = lines.length >= 30;
   };
-  const capture = () => { lines = [...host.querySelectorAll('[data-clinic-line]')].map(row => ({
+  const capture = () => { lines = [...host.querySelectorAll('[data-clinic-line]')].map((row, index) => ({ ...lines[index],
     InventoryId: row.querySelector('[data-clinic-item]').value, Quantity: row.querySelector('[data-clinic-quantity]').value
   })); };
   host.querySelector('[data-clinic-add]').addEventListener('click', () => { capture(); if (lines.length < 30) lines.push({ InventoryId: '', Quantity: '' }); requestId = ''; draw(); });
