@@ -11116,12 +11116,62 @@ function executiveRecordName(row = {}) {
   ])) || executiveRecordId(row) || 'Unnamed record';
 }
 
+function executiveValidEmail(value) {
+  const email = clean(value).toLowerCase();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : '';
+}
+
 function executiveRecordEmail(row = {}) {
-  return clean(pick(row, ['email', 'Email', 'ParentEmail', 'WorkEmail', 'OfficialEmail']));
+  const type = clean(pick(row, ['type', 'Type', 'recordType', 'RecordType'])).toLowerCase();
+  // Directory API `email` is already resolved to the selected recipient's contact.
+  // A student's own Email/Username must never replace their parent's address.
+  const fields = type === 'student'
+    ? ['ParentEmail', 'parentEmail', 'VerificationEmail', 'verificationEmail', 'FatherEmail', 'fatherEmail', 'MotherEmail', 'motherEmail', 'GuardianEmail', 'guardianEmail', 'email']
+    : type === 'staff'
+      ? ['Email', 'email', 'StaffEmail', 'staffEmail', 'WorkEmail', 'workEmail', 'OfficialEmail', 'officialEmail', 'Username', 'username']
+      : ['email', 'Email', 'ParentEmail', 'WorkEmail', 'OfficialEmail'];
+  return fields.map(key => executiveValidEmail(row[key])).find(Boolean) || '';
 }
 
 function executiveRecordType(row = {}) {
   return clean(pick(row, ['type', 'Type', 'recordType', 'RecordType'])) || executiveDirectoryType;
+}
+
+function setExecutiveDeliveryEmail(form, fieldName, value) {
+  const field = form.elements[fieldName];
+  form.executiveDeliveryEmails ||= {};
+  form.executiveDeliveryEmails[fieldName] = executiveValidEmail(value);
+  field.value = form.executiveDeliveryEmails[fieldName];
+  field.readOnly = true;
+}
+
+function bindExecutiveDeliveryEmail(form, fieldName) {
+  const field = form?.elements[fieldName];
+  if (!field) return;
+  setExecutiveDeliveryEmail(form, fieldName, field.defaultValue);
+  form.querySelector(`[data-executive-edit-email="${fieldName}"]`)?.addEventListener('click', () => {
+    field.value = form.executiveDeliveryEmails[fieldName];
+    field.readOnly = false;
+    field.focus();
+  });
+  const rememberEmail = () => {
+    // Password managers may insert the operator's username beside approvalPassword.
+    // Only an explicitly unlocked field can change the chosen delivery address.
+    if (field.readOnly) field.value = form.executiveDeliveryEmails[fieldName];
+    else form.executiveDeliveryEmails[fieldName] = field.value;
+  };
+  field.addEventListener('input', rememberEmail);
+  field.addEventListener('change', rememberEmail);
+  field.addEventListener('blur', () => { field.readOnly = true; });
+}
+
+function executiveDeliveryEmail(form, fieldName, fallback = '') {
+  const value = clean(form.executiveDeliveryEmails?.[fieldName] || fallback);
+  const email = executiveValidEmail(value);
+  if (value && !email) throw new Error('Enter a valid delivery email address.');
+  // Never submit an autofilled sign-in username from the raw form value.
+  form.elements[fieldName].value = email;
+  return email;
 }
 
 function executiveRecordMeta(row = {}) {
@@ -11324,7 +11374,7 @@ function renderExecutiveComposer(draft = null) {
   const selectedType = executiveRecordType(executiveSelectedRecipient || {});
   return `
     <div class="department-panel-heading"><div><small>Official correspondence</small><h3>Compose document</h3></div><p>Draft freely; issuing or sending requires your current password and creates an auditable record.</p></div>
-    <form id="executiveComposerForm" class="workflow-form executive-composer">
+    <form id="executiveComposerForm" class="workflow-form executive-composer" autocomplete="off">
       <input type="hidden" name="correspondenceId" value="${escapeHtml(executiveCorrespondenceId(draft || {}))}">
       <input type="hidden" name="recipientId" value="${escapeHtml(selectedId || pick(draft || {}, ['recipientId', 'RecipientId']))}">
       <input type="hidden" name="recipientType" value="${escapeHtml(selectedType || pick(draft || {}, ['recipientType', 'RecipientType']))}">
@@ -11342,11 +11392,11 @@ function renderExecutiveComposer(draft = null) {
           <label class="check-row"><input type="radio" name="recipientMode" value="directory"${selectedId ? ' checked' : ''}> Directory recipient</label>
           <label class="check-row"><input type="radio" name="recipientMode" value="external"${selectedId ? '' : ' checked'}> External / manual recipient</label>
         </div>
-        <div data-executive-directory-recipient>${executiveSelectedRecipientMarkup()}<label class="executive-directory-email">Delivery email <input type="email" name="directoryRecipientEmail" value="${escapeHtml(executiveRecordEmail(executiveSelectedRecipient || {}) || pick(draft || {}, ['recipientEmail', 'RecipientEmail']))}" placeholder="Email used when this document is sent"></label><button type="button" class="secondary compact-action" data-executive-open="directory">Search directory</button></div>
+        <div data-executive-directory-recipient>${executiveSelectedRecipientMarkup()}<label class="executive-directory-email">Delivery email <input type="email" name="directoryRecipientEmail" readonly autocomplete="off" data-lpignore="true" data-1p-ignore value="${escapeHtml(executiveSelectedRecipient ? executiveRecordEmail(executiveSelectedRecipient) : executiveValidEmail(pick(draft || {}, ['recipientEmail', 'RecipientEmail'])))}" placeholder="No email on record — use Change email"></label><div class="compact-row-actions"><button type="button" class="secondary compact-action" data-executive-edit-email="directoryRecipientEmail">Change email</button><button type="button" class="secondary compact-action" data-executive-open="directory">Search directory</button></div></div>
         <div class="executive-compose-grid" data-executive-external-recipient>
           <label>Recipient name <input name="recipientName" value="${escapeHtml(pick(draft || {}, ['recipientName', 'RecipientName']))}"></label>
           <label>Organisation / ministry <input name="recipientOrganisation" value="${escapeHtml(pick(draft || {}, ['recipientOrganisation', 'RecipientOrganisation']))}"></label>
-          <label>Email <input type="email" name="recipientEmail" value="${escapeHtml(pick(draft || {}, ['recipientEmail', 'RecipientEmail']))}"></label>
+          <label>Email <input type="email" name="recipientEmail" autocomplete="off" data-lpignore="true" data-1p-ignore value="${escapeHtml(executiveValidEmail(pick(draft || {}, ['recipientEmail', 'RecipientEmail'])))}"></label>
           <label class="executive-span-two">Postal address<textarea name="recipientAddress" rows="2">${escapeHtml(pick(draft || {}, ['recipientAddress', 'RecipientAddress']))}</textarea></label>
         </div>
       </section>
@@ -11407,9 +11457,10 @@ function executiveRegisterRow(row) {
 function executiveSendDialogMarkup() {
   return `<dialog id="executiveSendDialog" class="workflow-dialog executive-send-dialog">
     <div class="workflow-dialog-header"><div><small>Secure delivery</small><h2>Send issued document</h2></div><button type="button" data-close-executive-send aria-label="Close">&times;</button></div>
-    <form id="executiveSendForm" class="workflow-form">
+    <form id="executiveSendForm" class="workflow-form" autocomplete="off">
       <input type="hidden" name="correspondenceId">
-      <label>Recipient email <input type="email" name="recipientEmail" required></label>
+      <label>Recipient email <input type="email" name="recipientEmail" readonly autocomplete="off" data-lpignore="true" data-1p-ignore required></label>
+      <button type="button" class="secondary compact-action" data-executive-edit-email="recipientEmail">Change email</button>
       <label>Current password <input type="password" name="approvalPassword" autocomplete="current-password" required></label>
       <div class="executive-form-actions"><button type="submit">Send document</button><p id="executiveSendStatus" class="status"></p></div>
     </form>
@@ -11484,7 +11535,7 @@ function executiveComposerPayload(form) {
     payload.recipientId = executiveRecordId(executiveSelectedRecipient);
     payload.recipientType = executiveRecordType(executiveSelectedRecipient);
     payload.recipientName = executiveRecordName(executiveSelectedRecipient);
-    payload.recipientEmail = clean(payload.directoryRecipientEmail) || executiveRecordEmail(executiveSelectedRecipient);
+    payload.recipientEmail = executiveDeliveryEmail(form, 'directoryRecipientEmail', executiveRecordEmail(executiveSelectedRecipient));
     payload.recipientOrganisation = clean(pick(executiveSelectedRecipient, ['Organisation', 'Organization', 'DepartmentName']));
     payload.recipientAddress = clean(pick(executiveSelectedRecipient, ['address', 'Address', 'PostalAddress', 'ResidentialAddress']));
   } else if (payload.recipientMode === 'external') {
@@ -11553,7 +11604,7 @@ function openExecutiveSendDialog(correspondenceId) {
   }
   form.reset();
   form.elements.correspondenceId.value = executiveCorrespondenceId(row);
-  form.elements.recipientEmail.value = clean(pick(row, ['RecipientEmail', 'recipientEmail']));
+  setExecutiveDeliveryEmail(form, 'recipientEmail', pick(row, ['RecipientEmail', 'recipientEmail']));
   setStatus(document.getElementById('executiveSendStatus'), '');
   if (typeof dialog.showModal === 'function') {
     if (!dialog.open) dialog.showModal();
@@ -11670,6 +11721,7 @@ function bindExecutiveOfficeEvents() {
     openExecutiveSendDialog(button.dataset.sendExecutive);
   }));
   document.querySelector('[data-close-executive-send]')?.addEventListener('click', () => document.getElementById('executiveSendDialog')?.close());
+  bindExecutiveDeliveryEmail(document.getElementById('executiveSendForm'), 'recipientEmail');
   document.getElementById('executiveSendForm')?.addEventListener('submit', async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -11677,7 +11729,10 @@ function bindExecutiveOfficeEvents() {
     const status = document.getElementById('executiveSendStatus');
     setButtonLoading(button, true, 'Sending...', 'Send document');
     try {
-      const data = await executiveOfficeRequest('send', Object.fromEntries(new FormData(form).entries()));
+      const payload = Object.fromEntries(new FormData(form).entries());
+      payload.recipientEmail = executiveDeliveryEmail(form, 'recipientEmail');
+      if (!payload.recipientEmail) throw new Error('A valid recipient email address is required.');
+      const data = await executiveOfficeRequest('send', payload);
       const refreshed = await executiveOfficeRequest('bootstrap');
       executiveOfficeData = refreshed;
       renderModuleSummary('executiveOffice', refreshed);
@@ -11689,6 +11744,7 @@ function bindExecutiveOfficeEvents() {
     }
   });
   const composer = document.getElementById('executiveComposerForm');
+  bindExecutiveDeliveryEmail(composer, 'directoryRecipientEmail');
   composer?.querySelectorAll('[name="recipientMode"]').forEach((input) => input.addEventListener('change', updateExecutiveComposerVisibility));
   composer?.elements.kind?.addEventListener('change', updateExecutiveComposerVisibility);
   composer?.elements.templateId?.addEventListener('change', () => {

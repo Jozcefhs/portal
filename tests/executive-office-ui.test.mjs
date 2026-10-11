@@ -42,7 +42,7 @@ test('executive correspondence uses the authenticated server API for every workf
   assert.match(adminJs, /\$\{executiveSendDialogMarkup\(\)\}/);
   assert.match(adminJs, /class="compact-icon-action executive-send-action" data-send-executive=/);
   assert.match(adminJs, /function openExecutiveSendDialog\(correspondenceId\)/);
-  assert.match(adminJs, /form\.elements\.recipientEmail\.value = clean\(pick\(row, \['RecipientEmail', 'recipientEmail'\]\)\)/);
+  assert.match(adminJs, /setExecutiveDeliveryEmail\(form, 'recipientEmail', pick\(row, \['RecipientEmail', 'recipientEmail'\]\)\)/);
   assert.match(adminJs, /typeof dialog\.showModal === 'function'/);
   assert.match(adminJs, /openExecutiveSendDialog\(button\.dataset\.sendExecutive\)/);
 });
@@ -66,7 +66,7 @@ test('executive workspace provides configurable metrics, directories, templates,
   assert.match(adminJs, /body\.replace\(\/\\\{\\\{LETTER_BODY\\\}\\\}\/gi/);
   assert.match(adminJs, /LETTER_BODY: ''/);
   assert.match(adminJs, /name="directoryRecipientEmail"/);
-  assert.match(adminJs, /payload\.directoryRecipientEmail\) \|\| executiveRecordEmail/);
+  assert.match(adminJs, /executiveDeliveryEmail\(form, 'directoryRecipientEmail', executiveRecordEmail/);
   assert.doesNotMatch(adminJs, /\.filter\(\(metric\) => selected\.has\(metric\.id\)\)\s*\.slice\(0, 6\)/);
   assert.match(adminJs, /data-executive-manage-staff>Manage staff accounts/);
   assert.match(adminJs, /data-executive-manage-staff\]'\)\?\.addEventListener\('click', \(\) => selectSection\('staffUsers'\)\)/);

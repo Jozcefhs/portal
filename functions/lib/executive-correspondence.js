@@ -199,7 +199,14 @@ function normalizeEmail(value) {
 
 export function staffDeliveryEmail(row = {}) {
   // Email-style usernames are a fallback, never a replacement for a saved email.
-  return [row.Email, row.email, row.StaffEmail, row.staffEmail, row.Username, row.username]
+  return [row.Email, row.email, row.StaffEmail, row.staffEmail, row.WorkEmail, row.workEmail,
+    row.OfficialEmail, row.officialEmail, row.Username, row.username]
+    .map(normalizeEmail).find(Boolean) || '';
+}
+
+export function studentParentDeliveryEmail(row = {}) {
+  return [row.ParentEmail, row.parentEmail, row.VerificationEmail, row.verificationEmail,
+    row.FatherEmail, row.fatherEmail, row.MotherEmail, row.motherEmail, row.GuardianEmail, row.guardianEmail]
     .map(normalizeEmail).find(Boolean) || '';
 }
 
@@ -718,7 +725,7 @@ async function searchDirectory(env, body, capabilities, scope, user = {}) {
           row.AdmissionNo || row.AccountRef || row.__id,
           row.DisplayName || row.StudentName || row.ApplicantName,
           [row.AdmissionNo || row.AccountRef, row.ClassName, row.ClassArm].map(clean).filter(Boolean).join(' · '),
-          row.ParentEmail || row.VerificationEmail,
+          studentParentDeliveryEmail(row),
           row.ParentAddress || row.Address,
           row,
           {
