@@ -49,7 +49,7 @@ test('accounting writes reject attempts to edit another branch', () => {
 test('desktop overview scopes every financial register before building reports', async () => {
   const source = await readFile(new URL('../functions/api/backend.js', import.meta.url), 'utf8');
   assert.match(source, /const branchId = accountingRequestBranch\(body\)/);
-  assert.match(source, /buildAccountingReport\(scopedChart, scopedJournals, scopedExpenses, scopedBudgets, filter, scopedInvoices\)/);
+  assert.match(source, /buildAccountingReport\(scopedChart, scopedJournals, scopedExpenses, scopedBudgets, filter, scopedInvoices, scopedPayments\)/);
   assert.match(source, /payrollProfiles: scopedPayrollProfiles/);
   assert.match(source, /payrollTaxOverrides: scopedPayrollTaxOverrides/);
   assert.match(source, /donations: scopedDonations/);

@@ -53,6 +53,7 @@ function responseView(view = {}) {
     Scope: view.Scope,
     Period: view.Period,
     AssignmentId: view.AssignmentId,
+    RevisionToken: view.RevisionToken,
     InheritedPolicy: view.InheritedPolicy,
     ActivePolicy: view.ActivePolicy,
     Policy: view.Policy,
@@ -99,16 +100,18 @@ export async function onRequestPost(context) {
         period,
         policy: body.policy || body.Policy,
         inheritanceMode: body.InheritanceMode || body.inheritanceMode,
+        expectedRevision: body.RevisionToken,
         actor
       });
       message = view.CanActivate
         ? 'Academic policy draft saved and ready for activation.'
         : 'Academic policy draft saved. Resolve the listed requirements before activation.';
     } else if (action === 'activate') {
-      view = await activateAcademicPolicyDraft(env, { scope, scopeChain, period, actor });
+      view = await activateAcademicPolicyDraft(env, { scope, scopeChain, period, actor,
+        expectedRevision: body.RevisionToken, expectedDraftRevisionId: body.DraftRevisionId });
       message = 'Academic policy activated for the selected scope, session and term.';
     } else if (action === 'inherit' || action === 'reset') {
-      view = await inheritAcademicPolicyAtScope(env, { scope, scopeChain, period, actor });
+      view = await inheritAcademicPolicyAtScope(env, { scope, scopeChain, period, actor, expectedRevision: body.RevisionToken });
       message = 'This branch now inherits the organisation academic policy for the selected period.';
     } else if (action === 'load') {
       view = await loadAcademicPolicyView(env, { scope, scopeChain, period });

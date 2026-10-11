@@ -1078,7 +1078,7 @@ test('school-fees-total payment is allocated FIFO across component invoices in t
     { InvoiceId: 'INV-1', AccountRef: 'STU-1', FeeCode: 'TUITION', FeeCategory: 'School Fee', AcademicSession: '2026/2027', Term: 'First Term', Amount: 60000, Date: '2026-09-01' },
     { InvoiceId: 'INV-2', AccountRef: 'STU-1', FeeCode: 'DEVELOPMENT', FeeCategory: 'School Fee', AcademicSession: '2026/2027', Term: 'First Term', Amount: 40000, Date: '2026-09-02' }
   ], [{
-    AccountRef: 'STU-1', FeeCode: 'SCHOOL_FEES_TOTAL', FeeCategory: 'School Fee', AcademicSession: '2026/2027', Term: 'First Term', Amount: 70000, Status: 'Paid'
+    AccountRef: 'STU-1', FeeCode: 'SCHOOL_FEES_TOTAL', FeeCategory: 'School Fee', AcademicSession: '2026/2027', Term: 'First Term', Amount: 70000, Status: 'Paid', Date: '2026-09-20'
   }], '2026-09-30');
   assert.equal(ageing.length, 1);
   assert.equal(ageing[0].Reference, 'INV-2');
@@ -1105,6 +1105,7 @@ test('receivables ageing applies acceptance deposits and remaining payments to e
     AcademicSession: '2026/2027',
     Term: 'First Term',
     Amount: 150000,
+    Date: '2026-07-01',
     Status: 'Paid'
   }, {
     AccountRef: 'DCA/26/002',
@@ -1114,6 +1115,7 @@ test('receivables ageing applies acceptance deposits and remaining payments to e
     AcademicSession: '2026/2027',
     Term: 'First Term',
     Amount: 144600,
+    Date: '2026-07-02',
     Status: 'Paid'
   }], '2026-07-23');
   assert.deepEqual(ageing, []);

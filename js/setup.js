@@ -78,6 +78,7 @@ let webLogoDataUrl = '';
 let webLogoChanged = false;
 let activeSettingsEdition = 'school';
 let loadedAcademicPolicyView = null;
+let loadedAcademicPolicyFormSnapshot = '';
 let activeSettingsAccess = { scope: requestedSettingsScope, branchId: requestedSettingsBranch, scopeLocked: false };
 let paystackConnectionMode = 'not-configured';
 let paystackSelfServiceAvailable = false;
@@ -547,8 +548,6 @@ function renderAcademicPolicy(policy = {}) {
   setField('academicMinimumPaidPercentage', clearance.MinimumPaidPercentage ?? 100);
   setField('academicMaximumOutstanding', clearance.MaximumOutstanding ?? 0);
   setField('academicFeeCategoryIds', (clearance.FeeCategoryIds || []).join(', '));
-  policyField('academicRecognizeScholarships').checked = clearance.RecognizeScholarships !== false;
-  policyField('academicRecognizePaymentPlans').checked = clearance.RecognizePaymentPlans !== false;
   policyField('academicAllowManualExemptions').checked = clearance.AllowManualExemptions !== false;
   setField('academicPositionMode', position.Mode || 'unconfigured');
   setField('academicTieMode', position.TieMode || 'competition');
@@ -605,9 +604,10 @@ function academicPolicyFromForm() {
     };
   });
   const midTermComponentIds = [...policyField('academicComponents').children]
-    .filter((row) => row.children[8]?.checked)
-    .map((row, index) => row.dataset.policyId || components[index]?.Id || String(components[index]?.Name || '')
-      .trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80))
+    .map((row, index) => row.children[8]?.checked
+      ? row.dataset.policyId || components[index]?.Id || String(components[index]?.Name || '')
+        .trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80)
+      : '')
     .filter(Boolean);
   const gradeBands = [...policyField('academicGradeBands').children].map((row, index) => {
     const [grade, minimum, maximum, point, classification, remark] = row.children;
@@ -640,8 +640,9 @@ function academicPolicyFromForm() {
         MinimumPaidPercentage: policyNumber('academicMinimumPaidPercentage', 100),
         MaximumOutstanding: policyNumber('academicMaximumOutstanding', 0),
         FeeCategoryIds: policyList('academicFeeCategoryIds'),
-        RecognizeScholarships: policyField('academicRecognizeScholarships').checked,
-        RecognizePaymentPlans: policyField('academicRecognizePaymentPlans').checked,
+        // Preserve legacy fields without presenting unsupported access switches.
+        RecognizeScholarships: loadedAcademicPolicyView?.Policy?.ResultAccess?.FinancialClearance?.RecognizeScholarships !== false,
+        RecognizePaymentPlans: loadedAcademicPolicyView?.Policy?.ResultAccess?.FinancialClearance?.RecognizePaymentPlans !== false,
         AllowManualExemptions: policyField('academicAllowManualExemptions').checked
       }
     },
@@ -748,14 +749,27 @@ function renderAcademicPolicyView(view = {}, message = '') {
   renderAcademicPolicyIssues(view.ActivationIssues || [], hasDraft);
   activateAcademicPolicyButton.disabled = !view.CanActivate;
   inheritAcademicPolicyButton.hidden = !branchMode;
+  loadedAcademicPolicyFormSnapshot = JSON.stringify(academicPolicyFromForm());
 }
 
 function academicPolicyRequestBody(action, extra = {}) {
   const session = policyField('academicPolicySession').value.trim();
   const term = policyField('academicPolicyTerm').value.trim();
   if (!session || !term) throw new Error('Enter the academic session and term before loading or saving a policy.');
+  if (action === 'activate' && (loadedAcademicPolicyFormSnapshot !== JSON.stringify(academicPolicyFromForm())
+      || (settingsScopeField.value === 'branch' && loadedAcademicPolicyView?.InheritanceMode !== academicPolicyInheritanceMode?.value))) {
+    throw new Error('Save the changed academic policy as a draft before activating it.');
+  }
+  if (action !== 'load' && (!loadedAcademicPolicyView?.RevisionToken
+      || loadedAcademicPolicyView.Period?.Session !== session || loadedAcademicPolicyView.Period?.Term !== term
+      || loadedAcademicPolicyView.Scope?.Type !== settingsScopeField.value
+      || (settingsScopeField.value === 'branch' && loadedAcademicPolicyView.Scope?.Id !== settingsBranchField.value))) {
+    throw new Error('Load and review the academic policy for this scope, session and term before changing it.');
+  }
   return {
     action,
+    RevisionToken: loadedAcademicPolicyView?.RevisionToken,
+    DraftRevisionId: loadedAcademicPolicyView?.DraftRevisionId,
     password: unlockedPassword,
     SettingsScope: settingsScopeField.value,
     BranchId: settingsScopeField.value === 'branch' ? settingsBranchField.value : '',

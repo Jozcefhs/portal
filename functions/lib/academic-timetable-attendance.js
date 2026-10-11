@@ -291,7 +291,7 @@ export function normalizeAcademicAttendanceEntries(value, eligibleStudentRefs = 
   return supplied.map((row, index) => {
     const studentRef = clean(row.StudentRef);
     const key = lower(studentRef);
-    if (!studentRef || (eligible.size && !eligible.has(key))) throw failure(`Attendance row ${index + 1} is not in this classroom.`);
+    if (!studentRef || !eligible.has(key)) throw failure(`Attendance row ${index + 1} is not in this classroom.`);
     if (seen.has(key)) throw failure(`Student ${studentRef} is repeated in this attendance register.`);
     seen.add(key);
     const status = oneOf(row.Status, ACADEMIC_ATTENDANCE_STATUSES, '');

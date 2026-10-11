@@ -703,7 +703,9 @@ async function academicScope(env, user = {}, input = {}, { requireSection = fals
   const branchId = enforceActorBranch(user, requestedBranch, '', structure.ActiveBranchId || 'main');
   const branch = structure.Branches.find((row) => lower(row.Id || row.id) === lower(branchId));
   if (!branch) throw failure('The selected branch is not configured for this school.', 403, 'ACADEMIC_BRANCH_FORBIDDEN');
-  const section = scopedSection(input, requireSection);
+  const requestedSection = scopedSection(input, requireSection);
+  const assignedSection = lower(user.schoolSectionAccess || user.SchoolSectionAccess || 'all');
+  const section = requestedSection || (assignedSection !== 'all' ? assignedSection : '');
   assertUserSection(user, section);
   return {
     branchId: safeScopeId(branchId),
@@ -1026,7 +1028,10 @@ async function loadAcademicState(env, branchId, requestedKeys = null) {
   }
   const requested = new Set(requestedKeys);
   const allCollections = Object.entries(ACADEMIC_MANAGEMENT_COLLECTIONS).filter(([key]) => key !== 'audit');
-  const collections = allCollections.filter(([key]) => requested.has(key));
+  // Read the version before lessons. Every lesson mutation also conditionally
+  // advances it, so a later write cannot validate against a stale lesson snapshot.
+  const collections = allCollections.filter(([key]) => requested.has(key))
+    .sort(([left], [right]) => Number(right === 'timetableVersions') - Number(left === 'timetableVersions'));
   const loadCollection = ([, collection]) => queryCollection(env, collection, {
     filters: [{ field: 'BranchId', op: '==', value: branchId }]
   });
@@ -1861,16 +1866,25 @@ export function academicTeacherVisibleMemberships(state = {}, username = '', sub
     && lower(row.TeacherUsername) === teacherUsername);
   const homeroomKeys = new Set(allocations
     .filter((row) => lower(row.AllocationRole) !== 'subject teacher')
-    .map((row) => `${row.ClassId}|${row.ArmId || '*'}`));
-  (substituteClassrooms || []).forEach((row) => homeroomKeys.add(`${row.ClassId}|${row.ArmId}`));
+    .map((row) => `${row.SessionId}|${row.TermId}|${row.ClassId}|${row.ArmId || '*'}`));
+  (substituteClassrooms || []).forEach((row) => homeroomKeys.add(`${row.SessionId}|${row.TermId}|${row.ClassId}|${row.ArmId}`));
   const subjectKeys = new Set(allocations
     .filter((row) => lower(row.AllocationRole) === 'subject teacher' && clean(row.SubjectId))
-    .map((row) => `${row.ClassId}|${row.SubjectId}`));
+    .map((row) => `${row.SessionId}|${row.TermId}|${row.ClassId}|${row.SubjectId}`));
   return (state.studentMemberships || []).filter((row) => (
-    homeroomKeys.has(`${row.ClassId}|${row.ArmId}`)
-    || homeroomKeys.has(`${row.ClassId}|*`)
-    || (row.SubjectIds || []).some((subjectId) => subjectKeys.has(`${row.ClassId}|${subjectId}`))
+    homeroomKeys.has(`${row.SessionId}|${row.TermId}|${row.ClassId}|${row.ArmId}`)
+    || homeroomKeys.has(`${row.SessionId}|${row.TermId}|${row.ClassId}|*`)
+    || (row.SubjectIds || []).some((subjectId) => subjectKeys.has(`${row.SessionId}|${row.TermId}|${row.ClassId}|${subjectId}`))
   ));
+}
+
+export function academicTeacherCanReadScoreSheet(row = {}, allocations = [], substituteClassrooms = []) {
+  const classroomMatches = (allocation) => allocation.SessionId === row.SessionId
+    && allocation.TermId === row.TermId && allocation.ClassId === row.ClassId
+    && (!clean(allocation.ArmId) || allocation.ArmId === row.ArmId);
+  return allocations.some((allocation) => statusActive(allocation) && classroomMatches(allocation)
+    && (lower(allocation.AllocationRole) !== 'subject teacher' || allocation.SubjectId === row.SubjectId))
+    || substituteClassrooms.some((allocation) => classroomMatches(allocation) && allocation.SubjectId === row.SubjectId);
 }
 
 export function academicTeacherVisibleTimetable(state = {}, username = '', focusedView = 'timetable') {
@@ -1927,8 +1941,6 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
       && lower(row.SubstituteTeacherUsername) === username).map((row) => row.TimetableEntryId));
     const substituteClassrooms = state.timetableEntries.filter((row) => substituteEntryIds.has(row.EntryId));
     state.teacherAllocations = state.teacherAllocations.filter((row) => lower(row.TeacherUsername) === username);
-    const visibleKeys = new Set(state.teacherAllocations.map((row) => `${row.ClassId}|${row.ArmId || '*'}`));
-    substituteClassrooms.forEach((row) => visibleKeys.add(`${row.ClassId}|${row.ArmId}`));
     state.studentMemberships = academicTeacherVisibleMemberships(state, username, substituteClassrooms);
     const ownDailyClassrooms = new Set(state.teacherAllocations.filter((row) => statusActive(row)
       && ['form teacher', 'assistant teacher'].includes(lower(row.AllocationRole)))
@@ -1938,7 +1950,12 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
         `${row.SessionId}|${row.TermId}|${row.ClassId}|${row.ArmId}`));
     }
     const visibleStudents = new Set(state.studentMemberships.map((row) => lower(row.StudentRef)));
-    state.studentMovements = state.studentMovements.filter((row) => visibleStudents.has(lower(row.StudentRef)));
+    const membershipKey = (row) => `${row.SessionId}|${row.TermId}|${row.ClassId}|${row.ArmId}|${lower(row.StudentRef)}`;
+    const visibleMemberships = new Set(state.studentMemberships.map(membershipKey));
+    const sessionKey = (row) => `${row.SessionId}|${row.ClassId}|${row.ArmId}|${lower(row.StudentRef)}`;
+    const visibleSessions = new Set(state.studentMemberships.map(sessionKey));
+    state.studentMovements = state.studentMovements.filter((row) => state.studentMemberships.some((membership) =>
+      lower(row.StudentRef) === lower(membership.StudentRef) && row.SessionId === membership.SessionId && row.TermId === membership.TermId));
     const visibleTimetable = academicTeacherVisibleTimetable(state, username, focusedView);
     state.timetableVersions = visibleTimetable.versions;
     state.timetableEntries = visibleTimetable.entries;
@@ -1946,29 +1963,29 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
     state.timetableSubstitutions = state.timetableSubstitutions.filter((row) => visibleEntries.has(row.TimetableEntryId)
       || lower(row.SubstituteTeacherUsername) === username);
     state.timetableConstraints = state.timetableConstraints.filter((row) => lower(row.TeacherUsername) === username);
-    state.studentAttendance = state.studentAttendance.filter((row) => visibleStudents.has(lower(row.StudentRef))
+    state.studentAttendance = state.studentAttendance.filter((row) => visibleMemberships.has(membershipKey(row))
       && (focusedView !== 'presence' || (lower(row.Mode) === 'daily' && ownDailyClassrooms.has(
         `${row.SessionId}|${row.TermId}|${row.ClassId}|${row.ArmId}`))));
     const visibleAttendanceIds = new Set(state.studentAttendance.map((row) => row.AttendanceId));
     state.attendanceCorrections = state.attendanceCorrections.filter((row) => lower(row.RequestedByUsername) === username
       && (focusedView !== 'presence' || visibleAttendanceIds.has(row.AttendanceId)));
-    state.scoreSheets = state.scoreSheets.filter((row) => lower(row.TeacherUsername) === username
-      || visibleKeys.has(`${row.ClassId}|${row.ArmId}`) || visibleKeys.has(`${row.ClassId}|*`));
+    state.scoreSheets = state.scoreSheets.filter((row) => academicTeacherCanReadScoreSheet(row, state.teacherAllocations, substituteClassrooms));
     const visibleScoreSheets = new Set(state.scoreSheets.map((row) => row.SheetId));
     state.studentScores = state.studentScores.filter((row) => visibleScoreSheets.has(row.SheetId) && visibleStudents.has(lower(row.StudentRef)));
     state.scoreImports = state.scoreImports.filter((row) => visibleScoreSheets.has(row.SheetId));
     state.scoreSyncBatches = state.scoreSyncBatches.filter((row) => visibleScoreSheets.has(row.SheetId));
     state.cbtTests = state.cbtTests.filter((row) => lower(row.TeacherUsername) === username);
-    state.termResults = state.termResults.filter((row) => visibleStudents.has(lower(row.StudentRef)));
+    state.termResults = state.termResults.filter((row) => visibleMemberships.has(membershipKey(row)));
     const visibleResults = new Set(state.termResults.map((row) => row.ResultId));
     state.resultEvents = state.resultEvents.filter((row) => visibleResults.has(row.ResultId));
-    state.cumulativeResults = state.cumulativeResults.filter((row) => visibleStudents.has(lower(row.StudentRef)));
+    state.cumulativeResults = state.cumulativeResults.filter((row) => visibleSessions.has(sessionKey(row)));
     const visibleCumulative = new Set(state.cumulativeResults.map((row) => row.CumulativeResultId));
     state.cumulativeEvents = state.cumulativeEvents.filter((row) => visibleCumulative.has(row.CumulativeResultId));
-    state.promotionDecisions = state.promotionDecisions.filter((row) => visibleStudents.has(lower(row.StudentRef)));
+    state.promotionDecisions = state.promotionDecisions.filter((row) => visibleSessions.has(sessionKey(row)));
     const visiblePromotions = new Set(state.promotionDecisions.map((row) => row.PromotionDecisionId));
     state.promotionEvents = state.promotionEvents.filter((row) => visiblePromotions.has(row.PromotionDecisionId));
-    state.transcripts = state.transcripts.filter((row) => visibleStudents.has(lower(row.StudentRef)));
+    // Transcripts span historical periods outside an ordinary teaching allocation.
+    state.transcripts = [];
     const visibleTranscripts = new Set(state.transcripts.map((row) => row.TranscriptId));
     state.transcriptEvents = state.transcriptEvents.filter((row) => visibleTranscripts.has(row.TranscriptId));
     students = students.filter((row) => visibleStudents.has(lower(studentReference(row))));
@@ -4172,14 +4189,15 @@ export async function copyAcademicTimetableSelection(env, user = {}, input = {})
     data: withoutMetadata({ ...Entry, CreatedAt: timestamp, CreatedBy: actorName(user), UpdatedAt: timestamp, UpdatedBy: actorName(user) }),
     exists: false
   }));
-  for (let offset = 0; offset < writes.length; offset += 450) {
-    await commitAcademicBatch(env, writes.slice(offset, offset + 450), 'The target timetable changed while lessons were being copied. Preview the selection again.');
-  }
-  await commitAcademicBatch(env, [auditWrite(user, 'TARGETED_COPY', 'timetableEntry', {
+  if (writes.length > 498) throw failure('Copy at most 498 lessons into a draft at once.');
+  await commitAcademicBatch(env, [...writes,
+    academicTimetableMutationGuard(findById(context.state.timetableVersions, plan.TargetVersionId), user),
+    auditWrite(user, 'TARGETED_COPY', 'timetableEntry', {
     RecordId: plan.TargetVersionId, VersionId: plan.TargetVersionId,
     BranchId: context.scope.branchId, SchoolSection: context.scope.section,
     SessionId: context.session.SessionId, TermId: context.term.TermId
-  }, `${plan.SourceVersionName}: ${plan.SourceClassId}/${plan.SourceArmId} -> ${plan.TargetVersionName}: ${plan.TargetClassId}/${plan.TargetArmId}; ${writes.length} lesson(s)`)]);
+  }, `${plan.SourceVersionName}: ${plan.SourceClassId}/${plan.SourceArmId} -> ${plan.TargetVersionName}: ${plan.TargetClassId}/${plan.TargetArmId}; ${writes.length} lesson(s)`)],
+  'The target timetable changed while lessons were being copied. Preview the selection again.');
   return academicOperationalResponse(env, user, input, context.scope,
     writes.length
       ? `${writes.length} validated lesson${writes.length === 1 ? '' : 's'} copied into ${plan.TargetVersionName}.`
@@ -4193,6 +4211,16 @@ function academicSubjectTeacherAllocation(state, candidate) {
     && lower(row.TeacherUsername) === lower(candidate.TeacherUsername)
     && row.ClassId === candidate.ClassId && (!row.ArmId || row.ArmId === candidate.ArmId)
     && row.SubjectId === candidate.SubjectId);
+}
+
+function academicTimetableMutationGuard(version, user) {
+  if (!version || lower(version.Status) !== 'draft') throw failure('Only a draft timetable can be changed.', 409, 'ACADEMIC_TIMETABLE_LOCKED');
+  return {
+    collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableVersions,
+    documentId: version.VersionId,
+    data: withoutMetadata({ ...version, UpdatedAt: nowIso(), UpdatedBy: actorName(user), LessonMutationId: globalThis.crypto.randomUUID() }),
+    ...writePrecondition(version, version.__updateTime)
+  };
 }
 
 export async function saveAcademicTimetableEntry(env, user = {}, input = {}) {
@@ -4237,6 +4265,7 @@ export async function saveAcademicTimetableEntry(env, user = {}, input = {}) {
   record.UpdatedAt = timestamp;
   record.UpdatedBy = actorName(user);
   await commitAcademicBatch(env, [
+    academicTimetableMutationGuard(version, user),
     { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableEntries, documentId: entryId, data: withoutMetadata(record), ...writePrecondition(existing, input.RevisionToken) },
     auditWrite(user, existing ? 'UPDATE' : 'CREATE', 'timetableEntry', record, `${record.DayCode} ${record.PeriodCodes.join(', ')}`)
   ], 'This timetable lesson changed while it was being saved. Reload and try again.');
@@ -4301,6 +4330,7 @@ export async function bulkSaveAcademicTimetableEntries(env, user = {}, input = {
       auditWrite(user, 'CREATE', 'timetableEntry', saved, `${record.DayCode} ${record.PeriodCodes.join(', ')}; batch of ${records.length}`)
     ];
   });
+  writes.push(academicTimetableMutationGuard(findById(context.state.timetableVersions, input.VersionId), user));
   await commitAcademicBatch(env, writes, 'The timetable changed while this batch was being saved. Reload and review the lessons before trying again.');
   return academicOperationalResponse(env, user, input, context.scope,
     `${records.length} timetable lesson${records.length === 1 ? '' : 's'} saved without conflicts.`);
@@ -4316,6 +4346,7 @@ export async function deleteAcademicTimetableEntry(env, user = {}, input = {}) {
   const revisionToken = clean(input.RevisionToken);
   if (!revisionToken || revisionToken !== clean(existing.__updateTime)) throw failure('This timetable lesson changed after it was loaded. Reload and try again.', 409);
   await commitAcademicBatch(env, [
+    academicTimetableMutationGuard(version, user),
     { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableEntries, documentId: existing.EntryId, operation: 'delete', updateTime: revisionToken },
     auditWrite(user, 'DELETE', 'timetableEntry', existing, `${existing.DayCode} ${existing.PeriodCodes?.join(', ') || ''}`)
   ], 'This timetable lesson changed while it was being deleted. Reload and try again.');
@@ -6797,7 +6828,22 @@ export async function saveAcademicCbtTest(env, user = {}, input = {}, options = 
   });
   writes.push(auditWrite(user, existing ? 'UPDATE' : 'CREATE', 'cbtTests', record,
     `${record.AssessmentComponentName}; ${record.NumberOfQuestions} questions; ${record.RosterCount} students; starts ${record.StartsAt}; replaced papers ${replacementCandidates.length}`));
-  const commit = await commitAcademicBatch(env, writes, 'The CBT test changed while it was being saved. Reload and try again.');
+  let commit;
+  try {
+    commit = await commitAcademicBatch(env, writes, 'The CBT test changed while it was being saved. Reload and try again.');
+  } catch (error) {
+    if (Number(error?.status || 500) < 500 && !error?.outcomeUncertain) throw error;
+    // A lost commit response is not evidence that the transaction rolled back.
+    const persisted = await getDocument(env, ACADEMIC_MANAGEMENT_COLLECTIONS.cbtTests, record.CbtTestId).catch(() => null);
+    if (persisted && persisted.PackageDigest === record.PackageDigest && persisted.UpdatedAt === record.UpdatedAt
+        && persisted.PaperUrl === record.PaperUrl && persisted.TheoryPaperUrl === record.TheoryPaperUrl) {
+      commit = { writeResults: [{ updateTime: persisted.__updateTime }] };
+    } else {
+      throw Object.assign(new Error('The CBT save outcome could not be confirmed. The uploaded papers have been retained. Reload the test list before attempting another upload.'), {
+        status: 503, code: 'ACADEMIC_CBT_SAVE_UNCERTAIN', outcomeUncertain: true
+      });
+    }
+  }
   const savedRecord = publicRecord({ ...record, __updateTime: clean(commit?.writeResults?.[0]?.updateTime) });
   return {
     ok: true,

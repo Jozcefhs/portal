@@ -1,4 +1,4 @@
-import { batchUpsertDocuments, listCollection, upsertDocument } from '../firestore.js';
+import { batchCommitLiteralDocuments, batchUpsertDocuments, listCollection, upsertDocument } from '../firestore.js';
 import { validatePayrollFormula } from './formula-engine.js';
 import { validateTaxBands } from './paye-engine.js';
 
@@ -63,13 +63,16 @@ async function commitChunks(env, writes) {
   return unique.length;
 }
 
-export async function getPayrollTaxConfiguration(env) {
+export async function getPayrollTaxConfiguration(env, options = {}) {
+  const read = collection => (options.listCollection || listCollection)(env, collection).catch(error => {
+    if (options.strictReads) throw error;
+    return [];
+  });
   const [components, profiles, bands, reliefs, mappings, overrides, migrations, runs, items] = await Promise.all([
-    listCollection(env, PAYROLL_TAX_COLLECTIONS.components).catch(() => []), listCollection(env, PAYROLL_TAX_COLLECTIONS.profiles).catch(() => []),
-    listCollection(env, PAYROLL_TAX_COLLECTIONS.bands).catch(() => []), listCollection(env, PAYROLL_TAX_COLLECTIONS.reliefs).catch(() => []),
-    listCollection(env, PAYROLL_TAX_COLLECTIONS.mappings).catch(() => []), listCollection(env, PAYROLL_TAX_COLLECTIONS.overrides).catch(() => []),
-    listCollection(env, PAYROLL_TAX_COLLECTIONS.migrations).catch(() => []), listCollection(env, 'payrollRuns').catch(() => []),
-    listCollection(env, 'payrollItems').catch(() => [])
+    read(PAYROLL_TAX_COLLECTIONS.components), read(PAYROLL_TAX_COLLECTIONS.profiles),
+    read(PAYROLL_TAX_COLLECTIONS.bands), read(PAYROLL_TAX_COLLECTIONS.reliefs),
+    read(PAYROLL_TAX_COLLECTIONS.mappings), read(PAYROLL_TAX_COLLECTIONS.overrides),
+    read(PAYROLL_TAX_COLLECTIONS.migrations), read('payrollRuns'), read('payrollItems')
   ]);
   const finalizedRunIds = new Set(runs.filter((row) => ['approved', 'posted', 'part paid', 'paid', 'finalized'].includes(lower(row.Status))).map((row) => lower(row.RunId)));
   const usage = {};
@@ -247,10 +250,12 @@ export function buildPayrollTaxPhase2MigrationPlan(input = {}, body = {}) {
   const existingTaxProfiles = input.existingTaxProfiles || [];
   const marker = markers.find((row) => clean(row.MigrationId || row.__id) === migrationId);
   const definitions = new Map(existingComponents.map((row) => [clean(row.ComponentId || row.__id), documentData(row)]));
-  const basic = { ...legacyComponentDefinition('Basic Salary', 'earning'), ComponentId: 'COMP-BASIC', Code: 'BASIC', DisplayOrder: 10 }; definitions.set(basic.ComponentId, basic);
+  const existingComponentIds = new Set(definitions.keys());
+  const addDefinition = definition => { if (!definitions.has(definition.ComponentId)) definitions.set(definition.ComponentId, definition); };
+  const basic = { ...legacyComponentDefinition('Basic Salary', 'earning'), ComponentId: 'COMP-BASIC', Code: 'BASIC', DisplayOrder: 10 }; addDefinition(basic);
   profiles.forEach((profile) => {
-    (profile.Allowances || []).forEach((row) => { const def = legacyComponentDefinition(row.Name || row.name, 'earning'); if (def.Name) definitions.set(def.ComponentId, def); });
-    (profile.Deductions || []).forEach((row) => { const def = legacyComponentDefinition(row.Name || row.name, 'deduction'); if (def.Name) definitions.set(def.ComponentId, def); });
+    (profile.Allowances || []).forEach((row) => { const def = legacyComponentDefinition(row.Name || row.name, 'earning'); if (def.Name) addDefinition(def); });
+    (profile.Deductions || []).forEach((row) => { const def = legacyComponentDefinition(row.Name || row.name, 'deduction'); if (def.Name) addDefinition(def); });
   });
   const warnings = [];
   if (profiles.some((row) => !clean(row.Username))) warnings.push('Some payroll profiles have no staff username and require manual review.');
@@ -258,36 +263,54 @@ export function buildPayrollTaxPhase2MigrationPlan(input = {}, body = {}) {
   if (marker) return { report, marker, writes: [], alreadyApplied: true };
   const backupReference = clean(body.BackupReference); if (apply && !backupReference) throw configError('A verified backup reference is required before applying payroll migration.', 409, 'PAYROLL_BACKUP_REQUIRED');
   const writes = [];
-  definitions.forEach((data, id) => writes.push({ collectionPath: PAYROLL_TAX_COLLECTIONS.components, documentId: id, data }));
+  const metadataWrite = (collectionPath, documentId, data, current) => {
+    const updateTime = clean(current.__updateTime);
+    if (apply && !updateTime) throw configError('Refresh payroll records before applying the migration.', 409, 'PAYROLL_MIGRATION_STALE_DATA');
+    return { collectionPath, documentId, data, updateMask: Object.keys(data), ...(updateTime ? { updateTime } : {}) };
+  };
+  definitions.forEach((data, id) => { if (!existingComponentIds.has(id)) writes.push({ collectionPath: PAYROLL_TAX_COLLECTIONS.components, documentId: id, data, exists: false }); });
   profiles.forEach((profile) => {
+    if (profile.MigrationVersion === migrationId) return;
     const assignments = [{ ComponentId: 'COMP-BASIC', Code: 'BASIC', Amount: Math.max(0, number(profile.BasicSalary)), SourceField: 'BasicSalary' }];
     (profile.Allowances || []).forEach((row) => { const def = legacyComponentDefinition(row.Name || row.name, 'earning'); if (def.Name) assignments.push({ ComponentId: def.ComponentId, Code: def.Code, Amount: Math.max(0, number(row.Amount || row.amount)), SourceField: 'Allowances' }); });
     (profile.Deductions || []).forEach((row) => { const def = legacyComponentDefinition(row.Name || row.name, 'deduction'); if (def.Name) assignments.push({ ComponentId: def.ComponentId, Code: def.Code, Amount: Math.max(0, number(row.Amount || row.amount)), SourceField: 'Deductions' }); });
-    const data = { ...documentData(profile), ComponentAssignments: profile.ComponentAssignments || assignments, CalculationMode: profile.CalculationMode || 'LEGACY_FLAT_RATE', LegacyTaxRate: number(profile.LegacyTaxRate ?? profile.TaxRate), TaxStatus: clean(profile.TaxStatus || 'TAXABLE'), TaxJurisdiction: clean(profile.TaxJurisdiction || 'FCT'), PensionParticipating: number(profile.PensionRate) > 0 ? 'YES' : 'NO', MigrationVersion: migrationId, MigratedAt: now() };
-    writes.push({ collectionPath: 'payrollProfiles', documentId: profile.__id || slug(profile.EmployeeId), data });
+    const data = { ComponentAssignments: profile.ComponentAssignments || assignments, CalculationMode: profile.CalculationMode || 'LEGACY_FLAT_RATE', LegacyTaxRate: number(profile.LegacyTaxRate ?? profile.TaxRate), TaxStatus: clean(profile.TaxStatus || 'TAXABLE'), TaxJurisdiction: clean(profile.TaxJurisdiction || 'FCT'), PensionParticipating: profile.PensionParticipating || (number(profile.PensionRate) > 0 ? 'YES' : 'NO'), MigrationVersion: migrationId, MigratedAt: now() };
+    writes.push(metadataWrite('payrollProfiles', profile.__id || slug(profile.EmployeeId), data, profile));
   });
-  runs.forEach((run) => { if (run.CalculationVersion) return; writes.push({ collectionPath: 'payrollRuns', documentId: run.__id || slug(run.RunId), data: { ...documentData(run), CalculationVersion: 'LEGACY_FLAT_RATE', LegacyTaxMode: 'YES', TaxTraceStatus: 'LEGACY_UNAVAILABLE' } }); });
-  items.forEach((item) => { if (item.CalculationVersion) return; writes.push({ collectionPath: 'payrollItems', documentId: item.__id || slug(item.ItemId), data: { ...documentData(item), CalculationVersion: 'LEGACY_FLAT_RATE', LegacyTaxMode: 'YES', TaxTraceStatus: 'LEGACY_UNAVAILABLE', LegacyTaxRate: number(item.TaxRate), LegacyTaxAmount: number(item.TaxAmount) } }); });
+  runs.forEach((run) => { if (run.CalculationVersion) return; writes.push(metadataWrite('payrollRuns', run.__id || slug(run.RunId), { CalculationVersion: 'LEGACY_FLAT_RATE', LegacyTaxMode: 'YES', TaxTraceStatus: 'LEGACY_UNAVAILABLE' }, run)); });
+  items.forEach((item) => { if (item.CalculationVersion) return; writes.push(metadataWrite('payrollItems', item.__id || slug(item.ItemId), { CalculationVersion: 'LEGACY_FLAT_RATE', LegacyTaxMode: 'YES', TaxTraceStatus: 'LEGACY_UNAVAILABLE', LegacyTaxRate: number(item.TaxRate), LegacyTaxAmount: number(item.TaxAmount) }, item)); });
   if (!existingTaxProfiles.length) {
-    const seed = traditionalSeed(body.EffectiveFrom); writes.push({ collectionPath: PAYROLL_TAX_COLLECTIONS.profiles, documentId: seed.profile.ProfileId, data: seed.profile });
-    seed.bands.forEach((row) => writes.push({ collectionPath: PAYROLL_TAX_COLLECTIONS.bands, documentId: row.BandId, data: row })); seed.reliefs.forEach((row) => writes.push({ collectionPath: PAYROLL_TAX_COLLECTIONS.reliefs, documentId: row.RuleId, data: row }));
+    const seed = traditionalSeed(body.EffectiveFrom); writes.push({ collectionPath: PAYROLL_TAX_COLLECTIONS.profiles, documentId: seed.profile.ProfileId, data: seed.profile, exists: false });
+    seed.bands.forEach((row) => writes.push({ collectionPath: PAYROLL_TAX_COLLECTIONS.bands, documentId: row.BandId, data: row, exists: false })); seed.reliefs.forEach((row) => writes.push({ collectionPath: PAYROLL_TAX_COLLECTIONS.reliefs, documentId: row.RuleId, data: row, exists: false }));
   }
   const markerData = { MigrationId: migrationId, Status: 'APPLIED', AppliedAt: now(), AppliedBy: clean(body.RecordedBy), BackupReference: backupReference, Report: report };
-  writes.push({ collectionPath: PAYROLL_TAX_COLLECTIONS.migrations, documentId: migrationId, data: markerData });
+  writes.push({ collectionPath: PAYROLL_TAX_COLLECTIONS.migrations, documentId: migrationId, data: markerData, exists: false });
   report.DocumentsPlanned = writes.length;
   return { report, marker: markerData, writes, alreadyApplied: false };
 }
 
-export async function migratePayrollTaxPhase2(env, body = {}) {
+export async function migratePayrollTaxPhase2(env, body = {}, options = {}) {
+  const db = { listCollection, batchCommitLiteralDocuments, ...options };
   const [markers, profiles, runs, items, existingComponents, existingTaxProfiles] = await Promise.all([
-    listCollection(env, PAYROLL_TAX_COLLECTIONS.migrations).catch(() => []), listCollection(env, 'payrollProfiles').catch(() => []),
-    listCollection(env, 'payrollRuns').catch(() => []), listCollection(env, 'payrollItems').catch(() => []),
-    listCollection(env, PAYROLL_TAX_COLLECTIONS.components).catch(() => []), listCollection(env, PAYROLL_TAX_COLLECTIONS.profiles).catch(() => [])
+    db.listCollection(env, PAYROLL_TAX_COLLECTIONS.migrations), db.listCollection(env, 'payrollProfiles'),
+    db.listCollection(env, 'payrollRuns'), db.listCollection(env, 'payrollItems'),
+    db.listCollection(env, PAYROLL_TAX_COLLECTIONS.components), db.listCollection(env, PAYROLL_TAX_COLLECTIONS.profiles)
   ]);
   const plan = buildPayrollTaxPhase2MigrationPlan({ markers, profiles, runs, items, existingComponents, existingTaxProfiles }, body);
   const apply = yesNo(body.Apply ?? body.apply, 'NO') === 'YES';
   if (plan.alreadyApplied) return { ok: true, message: 'PAYE Phase 2 migration was already applied; no documents were changed.', report: plan.report, marker: plan.marker };
   if (!apply) return { ok: true, message: 'PAYE Phase 2 migration dry run completed; no documents were changed.', report: plan.report, marker: null };
-  plan.report.DocumentsWritten = await commitChunks(env, plan.writes);
+  // Seed a whole tax profile with its bands/reliefs together, so an interrupted
+  // migration cannot leave a partial profile that prevents a complete retry.
+  const seedCollections = new Set([PAYROLL_TAX_COLLECTIONS.profiles, PAYROLL_TAX_COLLECTIONS.bands, PAYROLL_TAX_COLLECTIONS.reliefs]);
+  const seedWrites = plan.writes.filter(write => seedCollections.has(write.collectionPath));
+  if (seedWrites.length) await db.batchCommitLiteralDocuments(env, seedWrites);
+  const additions = plan.writes.filter(write => !seedCollections.has(write.collectionPath) && write.collectionPath !== PAYROLL_TAX_COLLECTIONS.migrations);
+  for (let index = 0; index < additions.length; index += 450) await db.batchCommitLiteralDocuments(env, additions.slice(index, index + 450));
+  // Sources are metadata-only compare-and-set patches. A concurrent payment,
+  // finalization or profile edit fails the current chunk; rerunning safely skips
+  // completed chunks. Never mark the migration applied after a failed read/write.
+  plan.report.DocumentsWritten = plan.writes.length;
+  await db.batchCommitLiteralDocuments(env, plan.writes.filter(write => write.collectionPath === PAYROLL_TAX_COLLECTIONS.migrations));
   return { ok: true, message: 'PAYE Phase 2 additive migration applied. Existing payroll amounts were preserved and marked legacy.', report: plan.report, marker: plan.marker };
 }

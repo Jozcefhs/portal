@@ -19,6 +19,17 @@ export function isOpenImprestStatus(status) {
   return IMPREST_OPEN_STATUSES.some((value) => value.toLowerCase() === clean(status).toLowerCase());
 }
 
+export function imprestClaimReleaseWrites(record, claim, claimId) {
+  if (!claim) return [];
+  if (clean(claim.ImprestNo) !== clean(record.ImprestNo) || !clean(claim.__updateTime)) {
+    throw Object.assign(new Error('The open imprest claim changed. Refresh before closing this request.'), {
+      status: 409, code: 'FINANCE_WRITE_CONFLICT'
+    });
+  }
+  return [{ collectionPath: 'accountingImprestOpenClaims', documentId: claimId,
+    operation: 'delete', updateTime: claim.__updateTime }];
+}
+
 export function normalizeImprestRetirementLines(value) {
   let rows = value;
   if (typeof rows === 'string') {
@@ -157,11 +168,10 @@ export function buildImprestRetirementJournal(imprest = {}, actor = '') {
 export function imprestReportSummary(rows = [], today = new Date().toISOString().slice(0, 10)) {
   return (rows || []).reduce((summary, row) => {
     const amountIssued = money(row.AmountIssued || row.AmountApproved || row.AmountRequested);
-    const expenseTotal = money(row.ExpenseTotal);
-    const returnedAmount = money(row.ReturnedAmount);
-    const outstanding = isOpenImprestStatus(row.Status)
-      ? money(Math.max(0, amountIssued - expenseTotal - returnedAmount))
-      : 0;
+    // A submitted retirement is only a proposal. The advance remains open until
+    // Accounts verifies it and posts the clearing journal, including when the
+    // proposal is returned to the custodian for correction.
+    const outstanding = isOpenImprestStatus(row.Status) ? amountIssued : 0;
     summary.total += 1;
     summary.outstanding += outstanding;
     if (isOpenImprestStatus(row.Status)) summary.open += 1;

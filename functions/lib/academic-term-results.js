@@ -1,4 +1,5 @@
 import { normalizeAcademicPolicy } from './academic-policy.js';
+import { academicAssessmentScheme, calculateAcademicStudentScore } from './academic-scorebook.js';
 import { schoolCalendarDayIsOpen, schoolCalendarSummary } from './academic-school-calendar.js';
 
 const clean = (value) => String(value ?? '').trim();
@@ -147,6 +148,10 @@ function subjectSnapshot(score, sheet, subject) {
       RawScore: component.RawScore ?? null,
       MaximumScore: component.MaximumScore ?? null,
       WeightPercentage: component.WeightPercentage ?? null,
+      ...(Array.isArray(component.Parts) ? { Parts: component.Parts.map((part) => ({
+        PartId: clean(part.PartId), State: clean(part.State), RawScore: part.RawScore ?? null,
+        MaximumScore: part.MaximumScore ?? null, Note: clean(part.Note)
+      })) } : {}),
       Note: clean(component.Note)
     })),
     WeightedTotal: Number(score.WeightedTotal ?? score.Percentage ?? 0),
@@ -308,42 +313,20 @@ export function calculateAcademicMidTermResultDrafts(input = {}) {
   if (!selectedIds.length || selectedIds.length > 2) return { Ready: false, Issues: ['Choose one or two assessment components for the mid-term result.'], Results: [] };
   const selected = policy.Assessment.Components.filter((component) => selectedIds.some((id) => lower(id) === lower(component.Id)));
   if (selected.length !== selectedIds.length) return { Ready: false, Issues: ['One or more configured mid-term components are not in the active assessment scheme.'], Results: [] };
+  const totalWeight = selected.reduce((sum, component) => sum + component.WeightPercentage, 0);
+  const scheme = academicAssessmentScheme({ Assessment: {
+    ...policy.Assessment,
+    Components: selected.map((component) => ({ ...component, Required: true,
+      WeightPercentage: totalWeight > 0 ? component.WeightPercentage * 100 / totalWeight : 0 }))
+  } });
+  if (!scheme.Ready) return { Ready: false, Issues: scheme.Issues, Results: [] };
   const scores = (input.StudentScores || []).map((score) => {
-    const source = new Map((score.ComponentScores || []).map((row) => [lower(row.ComponentId), row]));
-    let includedWeight = 0;
-    let weighted = 0;
-    let complete = true;
-    const ComponentScores = selected.map((component) => {
-      const entry = source.get(lower(component.Id)) || {};
-      const state = lower(entry.State || (entry.RawScore === 0 || entry.RawScore ? 'Numeric' : 'Missing'));
-      if (!['numeric', 'absent', 'exempt'].includes(state)) complete = false;
-      if (state !== 'exempt') {
-        includedWeight += Number(component.WeightPercentage || 0);
-        const raw = state === 'absent' ? 0 : Number(entry.RawScore);
-        if (!Number.isFinite(raw)) complete = false;
-        else weighted += (raw / Number(component.MaximumScore || 1)) * Number(component.WeightPercentage || 0);
-      }
-      return {
-        ComponentId: component.Id,
-        State: clean(entry.State || (state === 'numeric' ? 'Numeric' : entry.State)),
-        RawScore: entry.RawScore ?? null,
-        MaximumScore: component.MaximumScore,
-        WeightPercentage: component.WeightPercentage,
-        Note: clean(entry.Note)
-      };
-    });
-    const percentage = includedWeight ? rounded((weighted / includedWeight) * 100) : 0;
-    const band = gradeForPercentage(policy, percentage);
+    const selectedScores = (score.ComponentScores || []).filter((row) => selectedIds.some((id) => lower(id) === lower(row.ComponentId)));
+    const calculated = calculateAcademicStudentScore(scheme, selectedScores);
     return {
       ...score,
-      ComponentScores,
-      CompletionStatus: complete && includedWeight ? 'Complete' : 'Incomplete',
-      Percentage: percentage,
-      WeightedTotal: percentage,
-      Grade: clean(band?.Grade),
-      GradePoint: band?.GradePoint ?? null,
-      Remark: clean(band?.Remark),
-      Classification: clean(band?.Classification)
+      ...calculated,
+      WeightedTotal: calculated.Percentage
     };
   });
   return calculateAcademicTermResultDrafts({

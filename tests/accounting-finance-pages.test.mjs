@@ -87,12 +87,13 @@ test('paged overview skips entire invoice/payment scans and withholds incomplete
     const calls = [];
     const handler = vm.runInNewContext(`(${handlerSource})`, { clean, lower: v => clean(v).toLowerCase(),
       accountingEditionForRequest: () => edition, accountingRequestBranch: () => 'main', accountingRowsForBranch,
+      requireAccountingRole: () => {}, DEPARTMENT_ACCOUNTING_ROLES: [],
       isDepartmentAccountingUser: () => false, listCollection: async (_env, collection) => { calls.push(collection); return []; },
       listCollectionForReport: async (_env, collection) => { throw new Error(`Unbounded ${collection}`); },
       listChurchDonationsForAccounting: async () => [], accountingFilter: () => ({}),
       accountingChartForEdition: rows => rows, accountingJournalsForEdition: rows => rows,
       PAYROLL_TAX_COLLECTIONS: {}, buildAccountingReport: () => ({ dashboard: {} }),
-      buildReceivablesAgeing: () => [], buildAgeing: () => [], nowIso: () => new Date().toISOString(),
+      buildReceivablesAgeing: () => [], buildPayablesAgeing: () => [], nowIso: () => new Date().toISOString(),
       buildGatewayCollectionsReport: () => ({ summary: {}, onlineTransactions: [] }),
       canEditRequisitions: () => false, accountingRequisitionActor: () => ({}) });
     const result = await handler({}, { FinancePagination: 'paged' });

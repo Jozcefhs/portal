@@ -83,9 +83,11 @@ test('payment reconciliation runs before a new receipt is saved, and global sync
   const paymentPreflight = payment.indexOf('syncSchoolAccountCreditJournals(env, accountRef', payment.indexOf('if (!payment) {'));
   assert.ok(firstPaymentCreate > 0);
   assert.ok(paymentPreflight > 0 && paymentPreflight < firstPaymentCreate);
-  const globalSync = source.split('async function syncRevenueToAccounting(env) {', 2)[1]
+  const globalSync = source.split('async function syncRevenueRows(env, sources, io) {', 2)[1]
     .split('async function ', 1)[0];
   const receiptPass = globalSync.indexOf('for (const row of payments)');
   const creditPass = globalSync.indexOf('const gap = schoolInvoiceCreditJournalGap(row, journals)');
   assert.ok(receiptPass > 0 && creditPass > receiptPass);
+  const stages = source.slice(source.indexOf('async function syncRevenueToAccounting('), source.indexOf('function accountingSyncConflict('));
+  assert.ok(stages.indexOf("stage: 'payments'") < stages.indexOf("stage: 'invoiceCredits'"));
 });

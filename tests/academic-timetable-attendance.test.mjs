@@ -259,7 +259,7 @@ test('timetable publication and attendance corrections use protected audited wor
   assert.match(source, /academic-absence:/);
   assert.match(source, /TargetAccountRefs: contacts\.accountRefs/);
   assert.match(source, /The substitute teacher already has another substitution during this period/);
-  assert.match(source, /substituteClassrooms\.forEach\(\(row\) => visibleKeys\.add/);
+  assert.match(source, /academicTeacherCanReadScoreSheet\(row, state\.teacherAllocations, substituteClassrooms\)/);
   assert.match(source, /Enter the reason for withdrawing this timetable/);
   assert.match(source, /Only a Draft timetable version can be edited/);
   assert.match(source, /Only a Draft timetable version can be deleted/);

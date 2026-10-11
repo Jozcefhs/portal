@@ -110,6 +110,7 @@ export async function loadAcademicPolicyView(env, {
     Scope: scope,
     Period: period,
     AssignmentId: academicPolicyAssignmentId(scope, period),
+    RevisionToken: targetEntry?.assignment ? clean(targetEntry.assignment.__updateTime) : 'absent',
     InheritedPolicy: inheritedPolicy,
     ActivePolicy: activePolicy,
     Policy: draftPolicy,
@@ -135,15 +136,39 @@ function revisionId(assignmentId) {
   return `${assignmentId}__revision__${suffix}`;
 }
 
+function assertPolicyRevision(view, expectedRevision, expectedDraftRevisionId) {
+  if (!clean(expectedRevision) || !view.RevisionToken) {
+    throw Object.assign(new Error('Load the academic policy before saving or changing it.'), { status: 428, code: 'ACADEMIC_POLICY_REVISION_REQUIRED' });
+  }
+  if (expectedRevision !== view.RevisionToken
+      || (expectedDraftRevisionId !== undefined && expectedDraftRevisionId !== view.DraftRevisionId)) {
+    throw Object.assign(new Error('This academic policy changed. Reload and review it before trying again.'), { status: 409, code: 'ACADEMIC_POLICY_CONFLICT' });
+  }
+}
+
+async function writePolicyAssignment(env, view, data) {
+  const condition = view.RevisionToken === 'absent' ? { exists: false } : { updateTime: view.RevisionToken };
+  try {
+    await upsertDocument(env, ACADEMIC_POLICY_ASSIGNMENTS_COLLECTION, view.AssignmentId, data, condition);
+  } catch (error) {
+    if ([409, 412].includes(Number(error?.status))) {
+      throw Object.assign(new Error('This academic policy changed. Reload and review it before trying again.'), { status: 409, code: 'ACADEMIC_POLICY_CONFLICT' });
+    }
+    throw error;
+  }
+}
+
 export async function saveAcademicPolicyDraft(env, {
   scope,
   scopeChain,
   period,
   policy,
   inheritanceMode = '',
+  expectedRevision,
   actor = {}
 } = {}) {
   const view = await loadAcademicPolicyView(env, { scope, scopeChain, period });
+  assertPolicyRevision(view, expectedRevision);
   const submitted = normalizeAcademicPolicy(policy);
   const mode = requestedInheritanceMode(view.Scope, inheritanceMode, view.InheritanceMode);
   const basePolicy = mode === 'independent' ? defaultAcademicPolicy() : view.InheritedPolicy;
@@ -168,7 +193,7 @@ export async function saveAcademicPolicyDraft(env, {
     error.status = 409;
     throw error;
   }
-  await upsertDocument(env, ACADEMIC_POLICY_ASSIGNMENTS_COLLECTION, view.AssignmentId, {
+  await writePolicyAssignment(env, view, {
     AssignmentId: view.AssignmentId,
     Scope: view.Scope,
     Period: view.Period,
@@ -184,9 +209,15 @@ export async function activateAcademicPolicyDraft(env, {
   scope,
   scopeChain,
   period,
+  expectedRevision,
+  expectedDraftRevisionId,
   actor = {}
 } = {}) {
   const view = await loadAcademicPolicyView(env, { scope, scopeChain, period });
+  assertPolicyRevision(view, expectedRevision, expectedDraftRevisionId);
+  if (!clean(expectedDraftRevisionId)) {
+    throw Object.assign(new Error('Reload and review the saved draft before activating it.'), { status: 428, code: 'ACADEMIC_POLICY_REVISION_REQUIRED' });
+  }
   if (!view.DraftRevision) {
     const error = new Error('Save an academic policy draft before activating it.');
     error.status = 409;
@@ -194,7 +225,7 @@ export async function activateAcademicPolicyDraft(env, {
   }
   assertAcademicPolicyActivatable(view.Policy);
   const now = new Date().toISOString();
-  await upsertDocument(env, ACADEMIC_POLICY_ASSIGNMENTS_COLLECTION, view.AssignmentId, {
+  await writePolicyAssignment(env, view, {
     AssignmentId: view.AssignmentId,
     Scope: view.Scope,
     Period: view.Period,
@@ -212,16 +243,18 @@ export async function inheritAcademicPolicyAtScope(env, {
   scope,
   scopeChain,
   period,
+  expectedRevision,
   actor = {}
 } = {}) {
   const view = await loadAcademicPolicyView(env, { scope, scopeChain, period });
+  assertPolicyRevision(view, expectedRevision);
   if (view.Scope.Type === 'organisation') {
     const error = new Error('The organisation academic policy cannot inherit from a higher scope.');
     error.status = 400;
     throw error;
   }
   const now = new Date().toISOString();
-  await upsertDocument(env, ACADEMIC_POLICY_ASSIGNMENTS_COLLECTION, view.AssignmentId, {
+  await writePolicyAssignment(env, view, {
     AssignmentId: view.AssignmentId,
     Scope: view.Scope,
     Period: view.Period,

@@ -58,6 +58,7 @@ async function handleRequest(context) {
   const uploadedUrls = [];
   let storage = null;
   let testSaved = false;
+  let saveAttempted = false;
   try {
     const { request, env } = context;
     const deployment = requiredDeploymentIdentity(env);
@@ -96,7 +97,7 @@ async function handleRequest(context) {
         const stored = await putStoredDocument(env, {
           category: 'academic-cbt',
           branchId: preview.context.scope.branchId,
-          schoolSection: preview.context.scope.schoolSection,
+          schoolSection: preview.context.scope.section,
           ownerId: preview.record.CbtTestId,
           documentType: papersValue.length === 1 ? prefix : `${prefix}-page-${String(index + 1).padStart(3, '0')}`,
           operationId: idempotency.documentId,
@@ -121,6 +122,7 @@ async function handleRequest(context) {
     const theoryPaperFiles = splitPaper ? await uploadPaperSet(theoryInputs, theoryPapers, 'theory') : [];
     const firstPaper = paperFiles[0];
     const firstTheoryPaper = theoryPaperFiles[0] || {};
+    saveAttempted = true;
     const saved = await saveAcademicCbtTest(env, user, {
       ...body,
       Files: undefined,
@@ -165,7 +167,9 @@ async function handleRequest(context) {
     await completeIdempotentRequest(env, idempotency, data, 200);
     return Response.json(data, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
-    if (uploadedUrls.length && storage && !testSaved) {
+    const uncertainSave = saveAttempted && (Boolean(error.outcomeUncertain) || Number(error.status || 500) >= 500);
+    if (uncertainSave) error.outcomeUncertain = true;
+    if (uploadedUrls.length && storage && !testSaved && !uncertainSave) {
       await Promise.all(uploadedUrls.map((url) => deleteStoredDocument(context.env, url).catch(() => null)));
     }
     if (idempotency?.owner) await failIdempotentRequest(context.env, idempotency, error);

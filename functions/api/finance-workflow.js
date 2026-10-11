@@ -1,5 +1,6 @@
-import { batchUpsertDocuments, deleteDocument, findOneByField, getDocument, listCollection, queryCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
+import { batchUpsertDocuments, deleteDocument, findOneByField, getDocument, listCollection, queryCollection, queryCollectionPages, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { getAccountingChartRows } from '../lib/accounting-reference-cache.js';
+import { assertFinanceRoleLimit } from '../lib/accounting-mutation-guards.js';
 import {
   clearStaffApprovalProofCookie,
   readStaffApprovalProof,
@@ -11,7 +12,8 @@ import { notifyStaffRequisitionEvent, notifyStaffRequisitionSubmitted } from '..
 import { recordRequisitionEdit, requisitionEditDetails, resolvedRequisitionEditHistory } from '../lib/requisition-edit-history.js';
 import { explicitAuditAction } from '../lib/security-audit.js';
 import { canEditRequisitions, assertRequisitionEditPermission } from '../lib/requisition-edit-permission.js';
-import { postApprovedRequisition } from '../lib/requisition-posting.js';
+import { postApprovedRequisition, validateRequisitionPosting } from '../lib/requisition-posting.js';
+import { resolveOrganizationConfig } from '../lib/organization-config.js';
 import {
   REQUISITION_STATUS,
   assertRequisitionTransition,
@@ -21,6 +23,7 @@ import {
   IMPREST_ADVANCE_ACCOUNT,
   buildImprestIssueJournal,
   buildImprestRetirementJournal,
+  imprestClaimReleaseWrites,
   imprestReportSummary,
   isOpenImprestStatus,
   validateImprestRetirement
@@ -661,6 +664,7 @@ async function submitBill(env, user, body) {
 }
 
 async function approvalLimitAllows(env, user, transactionType, value) {
+  assertFinanceRoleLimit(await listCollection(env, 'accountingApprovalLimits'), clean(user.role), transactionType, value);
   if (user.role === 'Super Admin') return true;
   if (!user.approvalEnabled) return false;
   const maximum = amount(user.approvalMaxAmount);
@@ -867,7 +871,7 @@ async function reviewRecord(env, user, body, request) {
   const direct = await getDocument(env, collection, safeId(id));
   const existing = direct || (await listCollection(env, collection))
     .find((row) => same(row[idField], id) || same(row.__id, safeId(id)));
-  if (!existing) {
+  if (!existing || !scopedRows([existing], user, access).length) {
     const err = new Error('The selected finance request was not found.');
     err.status = 404;
     throw err;
@@ -972,7 +976,7 @@ async function accountsReview(env, user, body, request) {
   const direct = await getDocument(env, collection, safeId(id));
   const existing = direct || (await listCollection(env, collection))
     .find((row) => same(row[idField], id) || same(row.__id, safeId(id)));
-  if (!existing) {
+  if (!existing || !scopedRows([existing], user, access).length) {
     const err = new Error('The selected finance request was not found.');
     err.status = 404;
     throw err;
@@ -1081,23 +1085,10 @@ function postedJournalPayload(journal, user) {
 }
 
 async function validateImprestPosting(env, journal) {
-  const date = clean(journal.Date).slice(0, 10);
-  const periods = await listCollection(env, 'accountingPeriods').catch(() => []);
-  if (periods.some((row) => lower(row.Status) === 'closed' &&
-    date >= clean(row.StartDate) && date <= clean(row.EndDate))) {
-    const err = new Error('This accounting period is closed. Reopen it or use a valid open posting date.');
-    err.status = 409;
-    throw err;
-  }
-  const chart = await getAccountingChartRows(env);
-  const activeCodes = new Set(chart.filter((row) => !['no', 'false', 'inactive'].includes(lower(row.Active || 'YES')))
-    .map((row) => clean(row.Code || row.__id)));
-  const invalid = journal.Lines.find((line) => !activeCodes.has(clean(line.AccountCode)));
-  if (invalid) {
-    const err = new Error(`Journal account ${invalid.AccountCode} does not exist or is inactive.`);
-    err.status = 400;
-    throw err;
-  }
+  const [periods, chart] = await Promise.all([
+    listCollection(env, 'accountingPeriods'), getAccountingChartRows(env, { fresh: true })
+  ]);
+  validateRequisitionPosting(journal, chart, periods, resolveOrganizationConfig({ env }).Edition);
   const debit = amount(journal.Lines.reduce((sum, line) => sum + amount(line.Debit), 0));
   const credit = amount(journal.Lines.reduce((sum, line) => sum + amount(line.Credit), 0));
   if (Math.abs(debit - credit) > 0.005) {
@@ -1127,10 +1118,10 @@ async function submitImprest(env, user, body) {
   const branchId = clean(user.branchId) || 'main';
   const claimId = imprestOpenClaimId({ BranchId: branchId, CustodianUsername: username });
   const openClaim = await getDocument(env, 'accountingImprestOpenClaims', claimId);
-  const legacyOpenRows = openClaim ? [] : await queryCollection(env, 'accountingImprests', {
+  const legacyOpenRows = openClaim ? [] : await queryCollectionPages(env, 'accountingImprests', {
     filters: [{ field: 'CustodianUsername', op: '==', value: username }],
-    limit: 20
-  }).catch(() => []);
+    pageSize: 100, maxRows: 10000
+  });
   const existingOpen = openClaim || legacyOpenRows.find((row) =>
     same(row.BranchId || 'main', branchId) && isOpenImprestStatus(row.Status));
   if (existingOpen) {
@@ -1250,9 +1241,11 @@ async function reviewImprest(env, user, body, request) {
     },
     auditWrite(user, decision.toUpperCase(), 'Imprest', existing.ImprestNo, clean(body.notes), timestamp, existing)
   ];
-  if (decision === 'Rejected') writes.push({
-    collectionPath: 'accountingImprestOpenClaims', documentId: imprestOpenClaimId(existing), operation: 'delete'
-  });
+  if (decision === 'Rejected') {
+    const claimId = imprestOpenClaimId(existing);
+    writes.push(...imprestClaimReleaseWrites(existing,
+      await getDocument(env, 'accountingImprestOpenClaims', claimId), claimId));
+  }
   await commitFinanceDecision(env, writes);
   return { ok: true, message: `Imprest ${decision.toLowerCase()}.`, imprest: payload };
 }
@@ -1402,6 +1395,9 @@ async function reviewImprestRetirement(env, user, body, request) {
     RetirementDate: validIsoDate(body.retirementDate || body.RetirementDate || dateToday(), 'retirement date')
   }, actor(user)), user);
   await validateImprestPosting(env, journal);
+  const claimId = imprestOpenClaimId(existing);
+  const claimWrites = imprestClaimReleaseWrites(existing,
+    await getDocument(env, 'accountingImprestOpenClaims', claimId), claimId);
   const payload = removeFirestoreMetadata({
     ...existing,
     Status: 'Retired',
@@ -1420,7 +1416,7 @@ async function reviewImprestRetirement(env, user, body, request) {
       collectionPath: 'accountingImprests', documentId: safeId(existing.ImprestNo), data: payload,
       updateTime: documentVersion(existing)
     },
-    { collectionPath: 'accountingImprestOpenClaims', documentId: imprestOpenClaimId(existing), operation: 'delete' },
+    ...claimWrites,
     auditWrite(user, 'VERIFY RETIREMENT', 'Imprest', existing.ImprestNo, clean(body.notes), timestamp, existing)
   ]);
   return { ok: true, message: 'Imprest fully retired and posted to the expense accounts.', imprest: payload };
