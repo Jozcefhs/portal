@@ -219,7 +219,12 @@ async function handleRequest(context, identityLoader) {
   let failure = null;
   let proxied = false;
   try {
-    if (platformPath && hasPlatformBackend) {
+    if (url.pathname.replace(/\/+$/, '') === '/api/help-config') {
+      // Public support must work even before activation or when a subscription
+      // expires. This route resolves central config using a bounded, credential-
+      // free GET and authorizes owner-only writes itself; never proxy its POST.
+      response = await next();
+    } else if (platformPath && hasPlatformBackend) {
       // The central Dynamax deployment serves subscriber and plan data without
       // consulting or exposing any organisation's operational database.
       response = await next();

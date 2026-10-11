@@ -26,7 +26,10 @@ function element() {
 function fixture(overrides = {}, options = {}) {
   const nodes = new Map(['[data-proc-status]', '[data-proc-count]', '[data-proc-body]'].map(selector => [selector, element()]));
   const root = element(); root.querySelector = selector => nodes.get(selector); root.querySelectorAll = () => [];
-  const modalForm = element(); const progress = element(); modalForm.querySelector = () => progress;
+  const modalForm = element(); const progress = element();
+  const importNodes = new Map(['[data-proc-import-csv]', '[data-proc-import-results]', '[data-proc-import-confirm]', 'button[type="submit"]', '[data-proc-import-preview]', '[data-proc-import-file]', '[data-proc-import-template]'].map(selector => [selector, element()]));
+  modalForm.querySelector = selector => importNodes.get(selector) || progress;
+  modalForm.querySelectorAll = selector => selector === '[data-proc-import-source]' ? [importNodes.get('[data-proc-import-csv]'), importNodes.get('[data-proc-import-file]')] : selector === 'button, input, select, textarea' ? [...importNodes.values(), modalForm.elements.Department] : [];
   modalForm.elements = { Department: element(), ItemCode: element(), Discrepancy: { checked: false } };
   const modal = element(); modal.querySelector = () => modalForm;
   const document = { createElement: () => modal, body: { append() {} } };
@@ -40,7 +43,7 @@ function fixture(overrides = {}, options = {}) {
     requests: [{ RequisitionId: 'REQ-1', Department: 'kitchen', Status: 'PENDING', Notes: 'Need rice', Revision: 1, Lines: [{ ItemId: 'rice', ItemName: 'Rice', Quantity: 10, InventoryId: 'rice-dept' }] }],
     purchases: [], transfers: [], settings: { Enabled: false, Revision: 0 }, ...overrides };
   const calls = [];
-  let fail, listFailure, lookupResult, recordsResult, detailResult;
+  let fail, listFailure, lookupResult, recordsResult, detailResult, previewResult;
   const controller = window.DynamaxProcurement.mount(root, { ...options, request: async (action, payload) => {
     calls.push({ action, payload: plain(payload) });
     if (action === 'list') { if (listFailure) throw listFailure; return data; }
@@ -48,11 +51,12 @@ function fixture(overrides = {}, options = {}) {
     if (action === 'lookupinventory') return lookupResult || { ok: true, departmentInventory: [] };
     if (action === 'records') return recordsResult || { ok: true, records: [], paging: { mode: payload.Mode, hasMore: false, nextCursor: null } };
     if (action === 'recorddetail') return { ok: true, record: detailResult };
+    if (action === 'previewitemimport') return previewResult;
     return { ok: true, message: 'Saved.' };
   } });
   const action = (value, id = '') => ({ dataset: { procAction: value, id }, closest() { return this; } });
   const tab = value => ({ dataset: { procTab: value }, closest() { return this; } });
-  return { ui: window.DynamaxProcurement, root, nodes, calls, data, controller, modal, modalForm, progress, action, tab, fail: error => { fail = error; }, failList: error => { listFailure = error; }, lookup: result => { lookupResult = result; }, records: result => { recordsResult = result; }, detail: record => { detailResult = record; } };
+  return { ui: window.DynamaxProcurement, root, nodes, calls, data, controller, modal, modalForm, progress, action, tab, importNodes, preview: result => { previewResult = result; }, fail: error => { fail = error; }, failList: error => { listFailure = error; }, lookup: result => { lookupResult = result; }, records: result => { recordsResult = result; }, detail: record => { detailResult = record; } };
 }
 
 test('request lines require exact target inventory, positive amounts, unique items and a 20-line maximum', async () => {
@@ -417,4 +421,169 @@ test('legacy OwnerType vendor stock remains editable when branch procurement is 
   assert.equal(form.elements.Quantity.readOnly, false);
   assert.equal(form.elements.Unit.readOnly, false);
   assert.match(admin, /row\?\.OwnershipType \|\| row\?\.OwnerType/);
+});
+
+test('stock and reorder figures line up with explicitly numeric headers in both inventories', async () => {
+  const view = fixture({ purchases: [{ PurchaseId: 'p1', SupplierName: 'Supplier', TotalAmount: 1234 }] }); await tick();
+  for (const [tab, labels] of [['stock', ['Central stock', 'Reorder level']], ['departments', ['Available stock', 'Reorder level']], ['purchases', ['Amount']]]) {
+    await view.root.fire('click', view.tab(tab));
+    const html = view.nodes.get('[data-proc-body]').innerHTML;
+    for (const label of labels) assert.match(html, new RegExp(`<th scope="col" class="procurement-number">${label}</th>`));
+    assert.match(html, /<td class="procurement-number">/);
+  }
+  assert.doesNotMatch(source, /quantity\|stock\|units\|cost\|amount/);
+  view.controller.destroy();
+});
+
+const importRow = { RowNumber: 2, ItemName: 'Sugar <test>', Unit: 'kg', ItemCode: 'SUGAR', ReorderLevel: '5', Price: '200' };
+const importModule = {
+  PROCUREMENT_IMPORT_LIMITS: { rows: 50, bytes: 65536 },
+  PROCUREMENT_IMPORT_COLUMNS: { central: ['ItemName', 'Unit', 'ItemCode', 'Category', 'ReorderLevel'], department: ['ItemName', 'Unit', 'ItemCode', 'Category', 'ReorderLevel', 'Price', 'Notes'] },
+  parseProcurementItemCsv: () => [importRow], normalizeProcurementImportRow: row => ({ row, errors: [] })
+};
+const readyPreview = { ok: true, canImport: true, PreviewFingerprint: 'checked-records-v1', summary: { total: 1, ready: 1, skipped: 0, errors: 0, newCentral: 1, newDepartment: 1 }, rows: [{ ...importRow, status: 'ready', errors: [] }] };
+async function importFixture(mode = 'central', module = importModule) {
+  const view = fixture({}, { branchId: 'branch-1', loadItemImport: async () => module }); await tick();
+  await view.root.fire('click', view.tab(mode === 'department' ? 'departments' : 'stock'));
+  await view.root.fire('click', view.action('batchitems'));
+  view.modalForm.elements.Department.value = 'kitchen';
+  view.preview(readyPreview);
+  return view;
+}
+
+test('batch upload is shown only to writable procurement managers in every edition', async () => {
+  for (const edition of ['school', 'faith', 'organization']) {
+    for (const [allowed, extra] of [[true, {}], [false, { readOnly: true }], [false, { capabilities: { canRequest: true } }]]) {
+      const view = fixture({ edition, ...extra }); await tick();
+      for (const tab of ['stock', 'departments']) {
+        await view.root.fire('click', view.tab(tab));
+        assert.equal(view.root.innerHTML.includes('Batch upload items'), allowed);
+      }
+      view.controller.destroy();
+    }
+  }
+});
+
+test('CSV preview is read-only; confirmed department import keeps section, department and fingerprint', async () => {
+  const view = await importFixture('department');
+  assert.match(view.modal.innerHTML, /Branch: branch-1 · School section: Secondary/);
+  assert.match(view.modal.innerHTML, /zero stock/);
+  assert.match(view.modal.innerHTML, /Download CSV template/);
+  assert.equal(view.importNodes.get('button[type="submit"]').disabled, true);
+  await view.importNodes.get('[data-proc-import-preview]').fire('click');
+  const previewCall = view.calls.at(-1);
+  assert.equal(previewCall.action, 'previewitemimport');
+  assert.equal(previewCall.payload.RequestId, undefined);
+  assert.equal(previewCall.payload.SchoolSection, 'Secondary');
+  assert.equal(previewCall.payload.Department, 'kitchen');
+  assert.match(view.importNodes.get('[data-proc-import-results]').innerHTML, /Sugar &lt;test&gt;/);
+  assert.equal(view.importNodes.get('[data-proc-import-confirm]').disabled, false);
+  await view.modalForm.fire('submit');
+  assert.equal(view.calls.at(-1).action, 'previewitemimport');
+  view.importNodes.get('[data-proc-import-confirm]').checked = true;
+  await view.modalForm.fire('submit');
+  const imported = view.calls.find(call => call.action === 'importitems');
+  assert.equal(imported.payload.PreviewFingerprint, readyPreview.PreviewFingerprint);
+  assert.equal(imported.payload.Department, 'kitchen');
+  assert.equal(imported.payload.SchoolSection, 'Secondary');
+  assert.match(imported.payload.RequestId, /^[0-9a-f-]{36}$/);
+  assert.equal(imported.payload.Rows[0].Quantity, undefined);
+  assert.equal(view.calls.at(-1).action, 'list');
+  view.controller.destroy();
+});
+
+test('CSV errors do not call the server, while stale edits invalidate checked previews', async () => {
+  const invalid = await importFixture('central', { ...importModule, normalizeProcurementImportRow: () => ({ errors: ['Unit is required <unsafe>'] }) });
+  await invalid.importNodes.get('[data-proc-import-preview]').fire('click');
+  assert.equal(invalid.calls.length, 1);
+  assert.match(invalid.importNodes.get('[data-proc-import-results]').innerHTML, /Row 2: Unit is required &lt;unsafe&gt;/);
+  assert.equal(invalid.importNodes.get('button[type="submit"]').disabled, true);
+  invalid.controller.destroy();
+  const view = await importFixture('department');
+  await view.importNodes.get('[data-proc-import-preview]').fire('click');
+  await view.modalForm.elements.Department.fire('change');
+  assert.equal(view.importNodes.get('button[type="submit"]').disabled, true);
+  assert.equal(view.importNodes.get('[data-proc-import-confirm]').checked, false);
+  await view.modalForm.fire('submit');
+  assert.equal(view.calls.at(-1).action, 'previewitemimport');
+  view.controller.destroy();
+});
+
+test('all-skipped and conflicting-row previews cannot be imported', async () => {
+  for (const status of ['skip', 'error']) {
+    const view = await importFixture();
+    view.preview({ ...readyPreview, canImport: false, summary: { ready: 0, skipped: status === 'skip' ? 1 : 0, errors: status === 'error' ? 1 : 0 }, rows: [{ ...importRow, status, errors: status === 'error' ? ['Existing vendor-owned record'] : [] }] });
+    await view.importNodes.get('[data-proc-import-preview]').fire('click');
+    assert.equal(view.importNodes.get('button[type="submit"]').disabled, true);
+    assert.equal(view.importNodes.get('[data-proc-import-confirm]').disabled, true);
+    assert.match(view.progress.textContent, status === 'skip' ? /no new items/ : /Correct all errors/);
+    view.controller.destroy();
+  }
+});
+
+test('unknown batch results lock source and retain identical retry payloads; definitive conflict permits re-preview', async () => {
+  const view = await importFixture('department');
+  await view.importNodes.get('[data-proc-import-preview]').fire('click');
+  view.importNodes.get('[data-proc-import-confirm]').checked = true;
+  view.fail(new Error('Connection lost'));
+  await view.modalForm.fire('submit');
+  const first = view.calls.at(-1);
+  assert.equal(view.importNodes.get('[data-proc-import-csv]').disabled, true);
+  assert.equal(view.modalForm.elements.Department.disabled, true);
+  assert.equal(view.importNodes.get('[data-proc-import-preview]').disabled, true);
+  assert.equal(view.importNodes.get('button[type="submit"]').textContent, 'Retry unchanged upload');
+  await view.modalForm.fire('submit');
+  assert.deepEqual(view.calls.at(-1), first);
+  view.fail(Object.assign(new Error('Existing records changed; preview again.'), { responseReceived: true }));
+  await view.modalForm.fire('submit');
+  assert.equal(view.importNodes.get('[data-proc-import-csv]').disabled, false);
+  assert.equal(view.importNodes.get('[data-proc-import-preview]').disabled, false);
+  assert.equal(view.importNodes.get('button[type="submit"]').disabled, true);
+  assert.match(view.progress.textContent, /Existing records changed/);
+  view.controller.destroy();
+});
+
+test('in-flight preview freezes all inputs and refuses duplicate submissions', async () => {
+  const view = await importFixture();
+  let resolve;
+  view.preview(new Promise(done => { resolve = done; }));
+  const pending = view.importNodes.get('[data-proc-import-preview]').fire('click');
+  assert.equal(view.importNodes.get('[data-proc-import-csv]').disabled, true);
+  await view.importNodes.get('[data-proc-import-preview]').fire('click');
+  assert.equal(view.calls.filter(call => call.action === 'previewitemimport').length, 1);
+  resolve(readyPreview); await pending;
+  assert.equal(view.importNodes.get('[data-proc-import-csv]').disabled, false);
+  view.controller.destroy();
+});
+
+test('real shared CSV parser integrates with preview and rejects forbidden quantity columns', async () => {
+  const module = await import('../js/procurement-item-import.js');
+  const view = await importFixture('department', module);
+  const csv = view.importNodes.get('[data-proc-import-csv]');
+  csv.value = 'ItemName,Unit,ItemCode,ReorderLevel,Price\nSugar,kg,SUGAR,5,200\n';
+  await view.importNodes.get('[data-proc-import-preview]').fire('click');
+  assert.deepEqual(view.calls.at(-1).payload.Rows, [{ ItemName: 'Sugar', Unit: 'kg', ItemCode: 'SUGAR', ReorderLevel: '5', Price: '200', RowNumber: 2 }]);
+  const count = view.calls.length;
+  csv.value = 'ItemName,Unit,Quantity\nSugar,kg,200\n'; await csv.fire('input');
+  await view.importNodes.get('[data-proc-import-preview]').fire('click');
+  assert.equal(view.calls.length, count);
+  assert.match(view.progress.textContent, /stock and vendor fields are not allowed/);
+  view.controller.destroy();
+});
+
+test('file-read failures preserve the existing CSV draft and late reads do not replace newer edits', async () => {
+  const view = await importFixture();
+  const file = view.importNodes.get('[data-proc-import-file]'), csv = view.importNodes.get('[data-proc-import-csv]');
+  csv.value = 'Existing draft';
+  file.files = [{ name: 'items.csv', size: 100000 }];
+  await file.fire('change');
+  assert.equal(csv.value, 'Existing draft');
+  assert.match(view.progress.textContent, /Existing draft contents have been kept/);
+  let resolve;
+  file.files = [{ name: 'items.csv', size: 10, text: () => new Promise(done => { resolve = done; }) }];
+  const reading = file.fire('change');
+  csv.value = 'Newer typed draft'; await csv.fire('input');
+  resolve('Late file'); await reading;
+  assert.equal(csv.value, 'Newer typed draft');
+  view.controller.destroy();
 });

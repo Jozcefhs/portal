@@ -25,6 +25,7 @@
 .procurement-table th { background: var(--surface-alt, #edf3f7); font-size: .8rem; }
 .procurement-table td small { display: block; color: var(--muted, #566e84); margin-top: .3rem; }
 .procurement-table .procurement-number { text-align: right; white-space: nowrap; word-break: normal; overflow-wrap: normal; }
+.procurement-table th.procurement-number, .procurement-table td.procurement-number { font-variant-numeric: tabular-nums; }
 .procurement-state { display: inline-block; padding: .25rem .55rem; background: var(--surface-alt, #edf3f7); border-radius: 15px; white-space: nowrap; word-break: normal; }
 .procurement-table .procurement-actions { justify-content: flex-start; min-width: 135px; }
 .procurement-table .procurement-actions button { padding: .45rem .7rem; font-size: .78rem; }
@@ -51,6 +52,12 @@
 .procurement-line button { padding-inline: .7rem; }
 .procurement-history { display: grid; gap: .5rem; padding-left: 1.2rem; }
 .procurement-history li { padding-left: .2rem; }
+.procurement-dialog [data-proc-import-csv] { font-family: ui-monospace, monospace; resize: vertical; }
+.procurement-import-errors, .procurement-table .procurement-import-error { color: #b91c1c; }
+.procurement-import-errors { padding-left: 1.3rem; line-height: 1.5; }
+.procurement-dialog [data-proc-import-results] .procurement-table-wrap { max-height: 330px; }
+.procurement-dialog [data-proc-import-results] .procurement-table th { position: sticky; top: 0; }
+html[data-theme="dark"] .procurement-import-errors, html[data-theme="dark"] .procurement-table .procurement-import-error { color: #fca5a5; }
 html[data-theme="dark"] .procurement-metric { background: #103532; }
 html[data-theme="dark"] .procurement-tabs, html[data-theme="dark"] .procurement-table th, html[data-theme="dark"] .procurement-state { background: #102b40; }
 html[data-theme="dark"] .procurement-dialog { background: #0c2132; color: #e1edf8; }

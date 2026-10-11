@@ -9,12 +9,13 @@
   <link rel="icon" href="images/Logo.png">
   <script src="js/preferences.js?v=20260726-biometric"></script>
   <link rel="stylesheet" href="css/style.css?v=20260830-dual-currency-pricing">
+  <link rel="stylesheet" href="css/help.css?v=20261011-help-devices">
 </head>
 <body class="settings-page">
   <main class="settings-shell plan-management-shell">
     <header class="settings-topbar">
       <div class="settings-brand"><span class="settings-logo-wrap"><img src="images/Logo.png" alt="Dynamax logo" class="settings-logo"></span><div><p class="settings-eyebrow">Dynamax administration</p><h1>Plans and pricing</h1><p>Set prices, payment methods and subscription module access.</p></div></div>
-      <div class="settings-top-actions"><a href="register-organization.html#plans" class="settings-link">View public plans</a><a href="setup.html#licence-settings" class="settings-link">Organisation setup</a></div>
+      <div class="settings-top-actions"><a href="help.html" class="settings-link" target="_blank" rel="noopener">View Help &amp; devices</a><a href="register-organization.html#plans" class="settings-link">View public plans</a><a href="setup.html#licence-settings" class="settings-link">Organisation setup</a></div>
     </header>
 
     <form id="planPricingLoginForm" class="settings-unlock-card">
@@ -137,6 +138,22 @@
       </section>
       <div class="settings-savebar"><div><strong>Publish plans, prices and module access</strong><p id="planPricingStatus" class="status">Review the plans before saving.</p></div><button id="savePlanPricing" type="submit">Save plans &amp; pricing</button></div>
     </form>
+    <section id="ownerHelpSettings" class="settings-section owner-help-section" hidden>
+      <div class="settings-section-heading"><div><span class="settings-section-icon" aria-hidden="true">?</span></div><div><p class="settings-eyebrow">Owner-managed help</p><h2>Support, devices &amp; FAQs</h2><p>Publish one help page for all editions and subscriber workspaces. These settings are independent of plan prices and payment settings.</p></div></div>
+      <form id="ownerHelpForm">
+        <fieldset id="ownerHelpFields" disabled>
+          <div class="settings-fields two-column">
+            <div class="settings-field"><label for="ownerSupportEmail">Platform support email</label><input id="ownerSupportEmail" type="email" maxlength="254" autocomplete="email" placeholder="Enter your support email"><small>Leave blank to hide the email button. No default email address is used.</small></div>
+            <div class="settings-field"><label for="ownerHardwareShopUrl">Hardware shop URL</label><input id="ownerHardwareShopUrl" type="url" maxlength="2048" inputmode="url" required autocomplete="url" spellcheck="false"><small>Secure HTTPS link for cards, readers and compatible accessories.</small></div>
+          </div>
+          <div class="settings-subsection-title"><strong>Frequently asked questions</strong><span>Plain text only. Up to 30 questions, shown in the order below.</span></div>
+          <div id="ownerHelpFaqList"></div>
+          <button id="ownerHelpAddFaq" type="button" class="secondary">Add FAQ</button>
+        </fieldset>
+        <div class="settings-actions"><button id="saveOwnerHelp" type="submit" disabled>Publish help settings</button><button id="reloadOwnerHelp" type="button" class="secondary">Reload published settings</button><a href="help.html" class="settings-link" target="_blank" rel="noopener">Open help page</a></div>
+        <p id="ownerHelpStatus" class="status" aria-live="polite" role="status"></p>
+      </form>
+    </section>
   </main>
   <dialog id="platformTransferDecisionDialog" class="platform-transfer-decision-dialog" aria-labelledby="platformTransferDecisionTitle">
     <form id="platformTransferDecisionForm">
@@ -164,6 +181,7 @@
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
   <script src="js/app-dialogs.js?v=20260809-custom-dialogs"></script>
   <script src="js/tutorial-module-catalogue.js?v=20261011-procurement-tutorials"></script>
-  <script src="js/plan-management.js?v=20261011-module-tutorials"></script>
+  <script src="js/owner-help-settings.js?v=20261011-help-devices"></script>
+  <script src="js/plan-management.js?v=20261011-help-devices"></script>
 </body>
 </html>

@@ -1,5 +1,5 @@
 import { requireFirestoreEnv } from '../lib/firestore.js';
-import { readJsonBody } from '../lib/request-security.js';
+import { readProcurementJsonBody } from '../lib/procurement-item-import.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { handleProcurementAction } from '../lib/procurement.js';
 
@@ -8,7 +8,7 @@ export async function onRequestPost({ request, env }) {
   try {
     requireFirestoreEnv(env);
     const user = await requireStaffSession(env, request);
-    const body = await readJsonBody(request, { maxBytes: 64 * 1024 });
+    const body = await readProcurementJsonBody(request);
     return new Response(JSON.stringify(await handleProcurementAction(env, user, body)), { headers });
   } catch (error) {
     const status = Number(error.status || 500);

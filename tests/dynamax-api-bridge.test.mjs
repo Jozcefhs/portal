@@ -73,6 +73,32 @@ test('a deployment with a local Firebase backend continues to its own Pages Func
   assert.deepEqual(await response.json(), { ok: true, local: true });
 });
 
+test('public help bypasses tenant activation and expired subscription gates without forwarding credentials', async () => {
+  for (const env of [{}, { FIREBASE_PROJECT_ID: 'tenant-project' }, {
+    ALLOW_CANONICAL_API_PROXY: 'true', CANONICAL_PORTAL_URL: 'https://dynamax.cc',
+    CANONICAL_API_PROXY_SCOPE: 'platform-subscriptions'
+  }]) {
+    const response = await onRequestWithIdentityLoader({
+      request: new Request('https://school.example/api/help-config'), env,
+      next: async () => Response.json({ ok: true, helpRoute: true })
+    }, async () => { throw new Error('Help must not depend on the tenant identity.'); });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { ok: true, helpRoute: true });
+    assert.equal(response.headers.get('X-Content-Type-Options'), 'nosniff');
+    assert.ok(response.headers.get('X-Request-Id'));
+  }
+});
+
+test('help writes are handled by the local owner-authorized route, not the generic canonical proxy', async () => {
+  const response = await onRequestWithIdentityLoader({
+    request: new Request('https://school.example/api/help-config', { method: 'POST' }),
+    env: { ALLOW_CANONICAL_API_PROXY: 'true', CANONICAL_PORTAL_URL: 'https://dynamax.cc' },
+    next: async () => Response.json({ ok: false, message: 'Owner portal only.' }, { status: 403 })
+  }, async () => { throw new Error('Owner route has its own authorization.'); });
+  assert.equal(response.status, 403);
+  assert.equal((await response.json()).message, 'Owner portal only.');
+});
+
 test('secure first-account completion bypasses an identity profile that does not exist yet', async () => {
   let identityCalled = false;
   let nextCalled = false;

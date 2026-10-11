@@ -129,15 +129,45 @@ export function securityAuditAction({ pathname = '', method = 'GET', body = {} }
   return `${operation} ${target}`.slice(0, 180);
 }
 
+async function boundedProcurementAuditBody(request) {
+  const reader = request.clone().body?.getReader();
+  if (!reader) return {};
+  const chunks = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > 64 * 1024) {
+        // Cancellation of a cloned stream waits for the route's reader; do
+        // not wait here or the route and audit can deadlock on oversized CSV.
+        void reader.cancel().catch(() => undefined);
+        return {};
+      }
+      chunks.push(value);
+    }
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+    return JSON.parse(new TextDecoder().decode(bytes));
+  } catch { return {}; } finally { reader.releaseLock(); }
+}
+
 async function requestAuditInput(request, pathname) {
   let body = {};
   const method = clean(request.method || 'GET').toUpperCase();
   const contentType = lower(request.headers.get('Content-Type'));
   const declaredSize = Number(request.headers.get('Content-Length') || 0);
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)
+      // Help publishing has no body routing identifiers. Its route owns the
+      // bounded reader; do not create an unbounded audit clone of FAQ content.
+      && clean(pathname).replace(/\/+$/, '') !== '/api/help-config'
       && contentType.includes('application/json')
       && (!declaredSize || declaredSize <= 64 * 1024)) {
-    body = await request.clone().json().catch(() => ({}));
+    body = clean(pathname).replace(/\/+$/, '') === '/api/staff-procurement'
+      ? await boundedProcurementAuditBody(request)
+      : await request.clone().json().catch(() => ({}));
     if (!body || typeof body !== 'object' || Array.isArray(body)) body = {};
   }
   // Read only known routing/record identifiers from the URL; never log its raw query

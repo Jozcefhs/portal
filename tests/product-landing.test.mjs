@@ -46,7 +46,8 @@ test('the compact product landing includes trademark, product menu and contact l
   assert.doesNotMatch(html, /href="images\/dynamax-mark\.svg"/);
   assert.match(html, /<details class="products-menu">[\s\S]*?<summary>Products/);
   assert.match(html, /<script src="js\/products\.js\?v=20261002-menu" defer><\/script>/);
-  assert.match(html, /href="mailto:support@dynamax\.cc"/);
+  assert.match(html, /href="help\.html">Help &amp; support<\/a>/);
+  assert.doesNotMatch(html, /mailto:support@dynamax\.cc/);
   assert.match(html, /href="https:\/\/www\.youtube\.com\/@DynamaxVendmac"/);
   assert.match(html, /class="about-link youtube-link"/);
   assert.match(html, /class="youtube-link footer-youtube"/);

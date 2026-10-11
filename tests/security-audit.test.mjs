@@ -12,6 +12,44 @@ import {
 } from '../functions/lib/security-audit.js';
 import { explicitAuditAction, normalizedLegacyAudit, securityAuditRowVisible, persistRequestSecurityAudit } from '../functions/lib/security-audit.js';
 
+test('Procurement import audit bounds undeclared upload bodies without consuming the route body', async () => {
+  const request = new Request('https://school.example/api/staff-procurement', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'importitems', Rows: [{ Notes: 'x'.repeat(70 * 1024) }] })
+  });
+  const prepared = await prepareSecurityAudit(request, '/api/staff-procurement');
+  assert.equal(prepared.action, 'SUBMIT TO STAFF PROCUREMENT');
+  assert.equal(request.bodyUsed, false);
+  assert.equal((await request.json()).action, 'importitems');
+  assert.doesNotMatch(JSON.stringify(prepared), /Rows|Notes/);
+});
+
+test('bounded Procurement audit still identifies valid item imports', async () => {
+  const request = new Request('https://school.example/api/staff-procurement', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'importitems', Rows: [{ ItemName: 'Sterile dressing' }] })
+  });
+  const prepared = await prepareSecurityAudit(request, '/api/staff-procurement');
+  assert.equal(prepared.action, 'IMPORTITEMS');
+  assert.equal(request.bodyUsed, false);
+  assert.equal((await request.json()).Rows.length, 1);
+});
+
+test('help audit records request metadata without cloning the owner settings payload', async () => {
+  const request = new Request('https://dynamax.cc/api/help-config', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: 'private-password', config: { Faqs: [] } })
+  });
+  request.clone = () => { throw new Error('Only the bounded help route may read this body.'); };
+  const prepared = await prepareSecurityAudit(request, '/api/help-config');
+  assert.equal(prepared.method, 'POST');
+  assert.equal(prepared.pathname, '/api/help-config');
+  assert.equal(prepared.action, 'SUBMIT TO HELP CONFIG');
+  assert.equal(shouldPersistSecurityAudit(prepared, null, 403), true);
+  assert.equal(request.bodyUsed, false);
+  assert.doesNotMatch(JSON.stringify(prepared), /private-password|Faqs/);
+});
+
 test('generic audit verbs identify their exact record type and preserve historical actor/reference fields', () => {
   const row = normalizedLegacyAudit({ Action: 'UPDATE', User: 'Ada Officer', ActorUsername: 'ada',
     UserRole: 'Admin', RecordType: 'Material Requisition', RecordId: 'WEB-MAT-42', Details: 'Changed quantity' },

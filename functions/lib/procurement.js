@@ -1,6 +1,7 @@
 import { getDocument, queryCollectionPages, batchCommitLiteralDocuments } from './firestore.js';
 import { schoolSectionFor } from './school-scope.js';
 import { procurementRecordPage, procurementRecordDetail } from './procurement-history.js';
+import { planProcurementItemImport, procurementImportWrites, procurementItemId, procurementDestinationId, procurementIdentityClaim } from './procurement-item-import.js';
 import { DEPARTMENTS, clean, lower, plain, fail, actor, vendorOwned, scopeFor, capabilitiesFor, schoolSectionsFor, sectionFor,
   sameScope, visibleRecord, inventoryAllowed, id, units, unitCost, quantity, linesFor, version, requireCapability, separatedActor } from './procurement-rules.js';
 
@@ -81,6 +82,9 @@ export async function handleProcurementAction(env, user, body = {}, dependencies
   if (action === 'recorddetail') {
     return { ok: true, record: await procurementRecordDetail(env, user, scope, cap, body, dependencies) };
   }
+  if (action === 'previewitemimport') {
+    return (await planProcurementItemImport(env, user, body, scope, cap, db)).preview;
+  }
   if (action === 'lookupinventory') {
     const Department = clean(body.Department), SchoolSection = sectionFor(user, scope, body.SchoolSection);
     if (!cap.departments.includes(Department)) fail('This department is not assigned or enabled.', 403);
@@ -116,7 +120,7 @@ export async function handleProcurementAction(env, user, body = {}, dependencies
       requests: requests.rows, purchases: purchases.rows, transfers: receiveFlags(transfers.rows),
       paging: { requests: requests.paging, purchases: purchases.paging, transfers: transfers.paging } };
   }
-  const actions = new Set(['settings', 'saveitem', 'savedestination', 'request', 'reviewrequest', 'createpurchase', 'reviewpurchase', 'receivepurchase', 'issue', 'confirmreceipt', 'returntransfer']);
+  const actions = new Set(['settings', 'saveitem', 'savedestination', 'importitems', 'request', 'reviewrequest', 'createpurchase', 'reviewpurchase', 'receivepurchase', 'issue', 'confirmreceipt', 'returntransfer']);
   if (!actions.has(action)) fail('Unknown Procurement action.');
   const requestId = id(body.RequestId, 'operation reference');
   if (requestId.length < 8) fail('The operation reference is too short.');
@@ -133,6 +137,16 @@ export async function handleProcurementAction(env, user, body = {}, dependencies
   const writes = [], movements = [];
   const result = { ok: true, message: 'Procurement records updated.' };
   function stage(collection, documentId, data, previous) { writes.push(write(collection, documentId, data, previous)); }
+  async function claimIdentity(kind, row, Department = '', SchoolSection = '') {
+    const claim = await procurementIdentityClaim(scope, kind, row, Department, SchoolSection);
+    const previous = await db.get(env, C.operations, claim.documentId);
+    if (previous) {
+      if (previous.ItemId !== row.ItemId || clean(previous.InventoryId) !== clean(row.InventoryId))
+        fail('This item identity has already been registered. Find and review the existing item instead.', 409);
+      return;
+    }
+    stage(C.operations, claim.documentId, { ...base, ...claim.data }, null);
+  }
   function stockChange(collection, documentId, row, delta, extra = {}) {
     const before = stockUnits(row), after = before + delta;
     if (after < 0) fail(`Insufficient stock for ${row.ItemName || documentId}. Refresh and reduce the quantity.`, 409);
@@ -150,7 +164,18 @@ export async function handleProcurementAction(env, user, body = {}, dependencies
     });
   }
   try {
-  if (action === 'settings') {
+  if (action === 'importitems') {
+    requireCapability(cap, 'canManage');
+    const plan = await planProcurementItemImport(env, user, body, scope, cap, db);
+    if (!plan.preview.canImport) fail('No items were imported. Preview the CSV and resolve conflicting or invalid rows before importing.', 409, 'PROCUREMENT_IMPORT_REVIEW');
+    if (!clean(body.PreviewFingerprint) || body.PreviewFingerprint !== plan.preview.PreviewFingerprint)
+      fail('The item preview has changed. Nothing was imported; preview the CSV again before continuing.', 409, 'PROCUREMENT_IMPORT_CHANGED');
+    for (const row of procurementImportWrites(plan, base, user, operationId)) stage(row.collectionPath, row.documentId, row.data, row.previous);
+    result.summary = plan.preview.summary;
+    result.importedItems = plan.preview.rows.filter(row => row.status === 'ready').map(row => ({ RowNumber: row.RowNumber,
+      ItemId: row.ItemId, ...(row.InventoryId ? { InventoryId: row.InventoryId, Department: plan.Department, SchoolSection: plan.SchoolSection } : {}) }));
+    result.message = `${result.summary.newCentral} central and ${result.summary.newDepartment} department items created at zero stock; ${result.summary.skipped} duplicate rows skipped. Use purchase receipts and confirmed deliveries to receive stock.`;
+  } else if (action === 'settings') {
     requireCapability(cap, 'canConfigure');
     if (typeof body.Enabled !== 'boolean' || body.ConfirmExistingBalances !== true) fail('Review existing department balances and explicitly confirm the Procurement control change.');
     const existing = await db.get(env, C.settings, scope.ScopeKey);
@@ -163,11 +188,12 @@ export async function handleProcurementAction(env, user, body = {}, dependencies
   } else if (action === 'saveitem') {
     requireCapability(cap, 'canManage');
     const ItemName = text(body.ItemName, 'Item name', true, 160), Unit = text(body.Unit, 'Stock unit', true, 40), ItemCode = text(body.ItemCode, 'Item code', false, 80);
-    const ItemId = clean(body.ItemId) || `ITEM-${(await hash(`${scope.ScopeKey}|${lower(ItemCode || ItemName)}|${lower(Unit)}`)).slice(0, 32)}`;
+    const ItemId = clean(body.ItemId) || await procurementItemId(scope, { ItemCode, ItemName, Unit });
     const existing = clean(body.ItemId) ? await central(ItemId) : await db.get(env, C.items, ItemId);
     if (existing && !body.ItemId) fail('This central catalogue item already exists. Edit it instead of adding a duplicate.', 409);
     if (existing) { version(body, existing); if (lower(existing.Unit) !== lower(Unit)) fail('A central item’s stock unit cannot change. Create a separate item for the new unit.'); }
     if (vendorOwned(body) || (body.Quantity !== undefined && Number(body.Quantity) !== 0)) fail('Central stock starts at zero. Use approved purchase receipts; vendor stock is not supported.');
+    await claimIdentity('central', { ItemId, ItemCode, ItemName, Unit });
     stage(C.items, ItemId, { ...(existing ? next(existing) : base), ItemId, ItemName, ItemCode, Unit,
       Category: text(body.Category, 'Category', false, 100), ReorderLevel: quantity(units(body.ReorderLevel ?? 0, 'Reorder level', true)),
       Quantity: existing?.Quantity || 0, OwnershipType: 'Organisation' }, existing);
@@ -178,14 +204,14 @@ export async function handleProcurementAction(env, user, body = {}, dependencies
     if (!cap.departments.includes(Department)) fail('Choose an enabled receiving department.', 403);
     const item = await central(body.ItemId), config = DEPARTMENTS[Department];
     const ItemCode = text(body.ItemCode || item.ItemCode, 'Department item code', !!config.StoreType, 80);
-    const inventoryId = (config.StoreType ? `${config.StoreType}-${ItemCode}-${scope.BranchId}-${SchoolSection}` : `${scope.BranchId}-${SchoolSection}-${item.ItemName}`)
-      .replace(/[\/\\?#\[\]]/g, '-').replace(/\s+/g, '_').slice(0, 140);
+    const inventoryId = procurementDestinationId(scope, config, SchoolSection, { ItemCode, ItemName: item.ItemName });
     if (await db.get(env, config.Collection, inventoryId)) fail('This department item already exists. Select its existing stock record when requesting supplies.', 409);
     const matching = await db.query(env, config.Collection, { filters: [{ field: config.StoreType ? 'ItemCode' : 'ItemName', op: '==', value: config.StoreType ? ItemCode : item.ItemName }], pageSize: 100, maxRows: 100 });
     if (matching.some(row => inventoryAllowed(row, Department, { ...user, schoolSectionAccess: SchoolSection }, scope))) {
       fail('A matching department item already exists, including legacy inventory. Find and select that existing record; do not duplicate its balance.', 409);
     }
     const Price = unitCost(body.Price ?? 0) / 100;
+    await claimIdentity('department', { ItemId: item.ItemId, InventoryId: inventoryId, ItemName: item.ItemName, ItemCode }, Department, SchoolSection);
     stage(config.Collection, inventoryId, { ...scope, SchoolSection, ItemName: item.ItemName, Unit: item.Unit, ItemCode,
       ...(config.StoreType ? { StoreType: config.StoreType } : {}), Category: item.Category || 'General Item', Quantity: 0, Price,
       ReorderLevel: item.ReorderLevel || 0, Active: 'YES', LastUpdated: now, UpdatedAt: now, UpdatedBy: actor(user),
@@ -328,7 +354,8 @@ export async function handleProcurementAction(env, user, body = {}, dependencies
   // Stock, workflow state, audit and the replay result are committed together.
   // A timeout after commit can be retried with the same RequestId without moving stock twice.
   stage(C.movements, operationId, { ...base, Action: action, RequestId: requestId, Lines: movements, EntityId: result.TransferId || result.PurchaseId || result.RequisitionId || result.InventoryId || result.ItemId || scope.ScopeKey,
-    Notes: clean(body.Notes), OverrideReason: clean(body.OverrideReason) }, null);
+    Notes: clean(body.Notes), OverrideReason: clean(body.OverrideReason),
+    ...(result.importedItems ? { ImportedItems: result.importedItems, ImportSummary: result.summary } : {}) }, null);
   stage(C.operations, operationId, { ...base, Action: action, Fingerprint: fingerprint, Result: result }, null);
   await db.commit(env, writes);
   return result;

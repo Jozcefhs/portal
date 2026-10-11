@@ -601,7 +601,7 @@ loginForm.addEventListener('submit', async (event) => {
     document.getElementById('planPricingCurrency').value = catalog.Currency || 'NGN';
     document.getElementById('planUsdToNgnRate').value = Number(catalog.UsdToNgnRate || 1350);
     renderCatalog();
-    await Promise.all([loadTenantPool(), loadPlatformPayments(), loadOwnerTutorialCatalog()]);
+    await Promise.all([loadTenantPool(), loadPlatformPayments(), loadOwnerTutorialCatalog(), window.DynamaxOwnerHelpSettings?.load(() => unlockedPassword)]);
     loginForm.hidden = true;
     pricingForm.hidden = false;
     setStatus(pricingStatus, 'Pricing loaded. Changes are not published until you save.', 'ok');
