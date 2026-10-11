@@ -109,7 +109,7 @@ test('tenant bridge uses canonical public route without any caller credentials o
   let calls = 0;
   const result = await loadPublishedHelpConfig({ ...bridge, BACKEND_API_KEY: 'secret', ADMIN_WEB_PASSWORD: 'password' }, 'https://tenant.test/api/help-config?password=private', {
     fetch: async (url, options) => { calls += 1; assert.equal(String(url), 'https://dynamax.cc/api/help-config');
-      assert.deepEqual(options.headers, { Accept: 'application/json' }); assert.equal(options.redirect, 'error'); assert.ok(options.signal);
+      assert.deepEqual(options.headers, { Accept: 'application/json' }); assert.equal(options.redirect, 'manual'); assert.ok(options.signal);
       return Response.json({ ok: true, published: true, config: { ...draft(), Revision: 4, PrivateKey: 'do not leak' } }); }
   });
   assert.equal(calls, 1); assert.equal(result.config.Revision, 4); assert.doesNotMatch(JSON.stringify(result), /do not leak/);
@@ -170,6 +170,7 @@ test('canonical timeout also aborts a response body that has not finished stream
 
 test('bridge errors and malformed/oversized responses return safe unavailable defaults', async () => {
   for (const response of [Response.json({ ok: true, published: true, config: draft() }, { status: 503 }),
+    new Response(null, { status: 302, headers: { Location: 'https://untrusted.test/help' } }),
     Response.json({ ok: true, published: true, unavailable: true, config: draft() }), Response.json({ ok: true, published: 'true', config: draft() }),
     new Response('<html>error</html>'), new Response('x'.repeat(HELP_CONFIG_MAX_BYTES + 1), { headers: { 'Content-Type': 'application/json' } })]) {
     const result = await loadPublishedHelpConfig(bridge, 'https://tenant.test/api/help-config', { fetch: async () => response });

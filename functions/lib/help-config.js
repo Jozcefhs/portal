@@ -120,7 +120,9 @@ export async function loadPublishedHelpConfig(env = {}, requestUrl = '', deps = 
   const timer = setTimeout(() => controller.abort(), 5000);
   try {
     // Public configuration never forwards the caller's cookies, password, session or backend tokens.
-    const response = await fetchImpl(target, { headers: { Accept: 'application/json' }, redirect: 'error', signal: controller.signal });
+    // Workerd does not support redirect: 'error' on the deployed runtime.
+    // Return redirects untouched and reject their non-success status below.
+    const response = await fetchImpl(target, { headers: { Accept: 'application/json' }, redirect: 'manual', signal: controller.signal });
     if (!response.ok || !/\bapplication\/json\b/i.test(response.headers.get('Content-Type') || '')) return fallback;
     const data = await readHelpConfigJson(response);
     if (data.ok !== true || data.unavailable || typeof data.published !== 'boolean' || !object(data.config)) return fallback;
