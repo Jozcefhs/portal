@@ -1,11 +1,11 @@
 import { batchCommitLiteralDocuments, getDocument } from './firestore.js';
 import { hasPlatformFirestoreConfiguration, requirePlatformFirestoreEnv } from './platform-firestore.js';
-import { canonicalSubscriptionBridgeConfigured } from './plan-policy-sync.js';
 
 export const HELP_CONFIG_DOCUMENT_ID = 'dynamaxHelpConfig';
 export const HELP_CONFIG_MAX_BYTES = 400 * 1024;
 export const DEFAULT_HARDWARE_SHOP_URL = 'https://vehiclepass.dynamax.cc/shop';
 const OWNER_HOSTS = new Set(['dynamax.cc', 'www.dynamax.cc', 'dynamaxms.pages.dev']);
+const PUBLIC_HELP_ORIGIN = 'https://dynamax.cc';
 const DEFAULT_FAQS = Object.freeze([
   Object.freeze({ Question: 'Where can I buy cards and readers?', Answer: 'Use the Buy compatible devices link. Confirm the card type, reader connection and device compatibility with the seller before buying.' }),
   Object.freeze({ Question: 'Who can help with my account or institution records?', Answer: 'Contact your institution administrator for account access, student or staff records, and permissions. Contact platform support for a problem with the software itself.' }),
@@ -94,10 +94,12 @@ export async function readHelpConfigJson(message, { maxBytes = HELP_CONFIG_MAX_B
 }
 
 function bridgeTarget(env, requestUrl) {
-  if (isHelpOwnerHost(requestUrl) || !canonicalSubscriptionBridgeConfigured(env)) return null;
+  if (isHelpOwnerHost(requestUrl)) return null;
   try {
-    const target = new URL(env.CANONICAL_PORTAL_URL);
-    if (!OWNER_HOSTS.has(target.hostname.toLowerCase()) || target.username || target.password || target.port) return null;
+    // Help is public platform content, independent of tenant subscription-proxy
+    // permissions. New and existing editions can use it without extra setup.
+    const target = new URL(clean(env.CANONICAL_PORTAL_URL) || PUBLIC_HELP_ORIGIN);
+    if (target.protocol !== 'https:' || !OWNER_HOSTS.has(target.hostname.toLowerCase()) || target.username || target.password || target.port) return null;
     if (new URL(requestUrl).origin === target.origin) return null;
     return new URL('/api/help-config', target.origin);
   } catch { return null; }
@@ -109,7 +111,7 @@ export async function loadPublishedHelpConfig(env = {}, requestUrl = '', deps = 
   if (hasPlatformFirestoreConfiguration(env)) {
     try {
       const saved = await get(requirePlatformFirestoreEnv(env), 'settings', HELP_CONFIG_DOCUMENT_ID);
-      return { published: Boolean(saved), config: normalizeHelpConfig(saved) };
+      if (saved || isHelpOwnerHost(requestUrl)) return { published: Boolean(saved), config: normalizeHelpConfig(saved) };
     } catch { /* Tenant deployments may use the canonical bridge if direct access is unavailable. */ }
   }
   const target = bridgeTarget(env, requestUrl);

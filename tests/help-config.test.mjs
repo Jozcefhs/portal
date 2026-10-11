@@ -123,6 +123,35 @@ test('failed direct access can fall back to the public central bridge', async ()
   assert.equal(result.published, true); assert.equal(result.config.SupportEmail, draft().SupportEmail);
 });
 
+test('every tenant edition loads published help without subscription proxy configuration', async () => {
+  for (const edition of ['school', 'faith', 'organization']) {
+    for (const proxySettings of [{}, { ALLOW_CANONICAL_API_PROXY: 'false', CANONICAL_API_PROXY_SCOPE: 'none' }]) {
+      let calls = 0;
+      const result = await loadPublishedHelpConfig({ ORGANISATION_EDITION: edition, ...proxySettings }, 'https://tenant.test/api/help-config', {
+        fetch: async (url, options) => {
+          calls += 1;
+          assert.equal(String(url), 'https://dynamax.cc/api/help-config');
+          assert.deepEqual(options.headers, { Accept: 'application/json' });
+          return Response.json({ ok: true, published: true, config: { ...draft(), Revision: 7 } });
+        }
+      });
+      assert.equal(calls, 1);
+      assert.equal(result.published, true);
+      assert.equal(result.config.SupportEmail, draft().SupportEmail);
+      assert.equal(result.config.Revision, 7);
+    }
+  }
+});
+
+test('missing tenant-side platform record still loads the published central help', async () => {
+  const result = await loadPublishedHelpConfig(env, 'https://tenant.test/api/help-config', {
+    get: async () => null,
+    fetch: async () => Response.json({ ok: true, published: true, config: draft() })
+  });
+  assert.equal(result.published, true);
+  assert.equal(result.config.SupportEmail, draft().SupportEmail);
+});
+
 test('canonical timeout also aborts a response body that has not finished streaming', async () => {
   let signal;
   const result = await loadPublishedHelpConfig(bridge, 'https://tenant.test/api/help-config', {
@@ -157,7 +186,6 @@ test('owner hosts never proxy recursively and invalid canonical destinations nev
   }
   for (const CANONICAL_PORTAL_URL of ['http://dynamax.cc', 'https://other.test', 'https://user:password@dynamax.cc', 'https://dynamax.cc:444', 'not-a-url'])
     assert.equal((await loadPublishedHelpConfig({ ...bridge, CANONICAL_PORTAL_URL }, 'https://tenant.test/api/help-config', { fetch })).unavailable, true);
-  assert.equal((await loadPublishedHelpConfig({}, 'https://tenant.test/api/help-config', { fetch })).unavailable, true);
 });
 
 test('owner publishing creates centrally and updates using version and revision preconditions', async () => {

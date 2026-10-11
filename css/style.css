@@ -670,6 +670,13 @@ html[data-theme="dark"] .preference-switch-row:has(.preference-switch input:chec
 .staff-desktop-tools{display:flex;align-items:center;gap:7px}
 .staff-header-icon{display:grid;place-items:center;flex:0 0 38px;width:38px;height:38px;min-height:38px;margin:0;padding:0;border:1px solid #cad5e0;border-radius:10px;background:#f7fafc;color:var(--finance-navy);box-shadow:none}
 .staff-header-icon:hover{border-color:#8fa8c0;background:#eaf0f6}.staff-header-icon span{font-size:20px;line-height:1}.staff-header-icon.is-loading span{display:none}
+.staff-page .staff-help-button{flex:0 0 44px;min-width:44px;min-height:44px;text-decoration:none;font-weight:800}
+.staff-identity .staff-help-button span{display:block;font-size:22px}
+.staff-help-button:focus-visible,.dashboard-help-button:focus-visible{outline:3px solid #6caceb;outline-offset:2px}
+.parent-dashboard-page .dashboard-actions{flex-wrap:wrap;align-items:center}
+.dashboard-help-button{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:40px;margin:0;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--card,#fff);color:var(--blue2);font-size:13px;font-weight:700;text-decoration:none;white-space:nowrap}
+.dashboard-help-button:hover{background:#eaf0f6}
+@media(max-width:680px){.staff-page .staff-brand-controls{flex:1;min-width:0}.staff-page .staff-brand{min-width:0;overflow:hidden}.staff-page .staff-brand span{min-width:0}.staff-page .staff-help-button{background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.25);color:#fff}.parent-dashboard-page .dashboard-help-button{font-size:12px}}
 .staff-header-icon.staff-tutorial-button{border-color:#e00000;background:#ff0000;color:#fff}
 .staff-header-icon.staff-tutorial-button:hover{border-color:#b90000;background:#cc0000;color:#fff}
 .staff-header-icon.staff-tutorial-button:focus-visible{outline:3px solid #ffb3b3;outline-offset:2px}

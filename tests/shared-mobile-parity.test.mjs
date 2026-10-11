@@ -5,9 +5,9 @@ import { readFile } from 'node:fs/promises';
 const portalRoot = new URL('../', import.meta.url);
 const sharedVersion = '20260903-hotel-tabs';
 const pageStyleVersions = new Map([
-  ['admin.html', '20261006-student-actions-mobile'],
+  ['admin.html', '20261012-help-access'],
   ['setup.html', '20260923-youtube-tutorials'],
-  ['parent-dashboard.html', '20260930-school-library'],
+  ['parent-dashboard.html', '20261012-help-access'],
   ['plan-management.html', '20260830-dual-currency-pricing'],
   ['register-organization.html', '20260918-neutral-plan-cards']
 ]);
@@ -71,8 +71,8 @@ test('action buttons fit their contents instead of stretching across cards and f
   assert.doesNotMatch(portalCss, /\.workflow-form button\{width:100%/);
 });
 
-test('parent mobile dashboard actions keep the bell and compact buttons on one row', () => {
-  assert.match(portalCss, /@media \(max-width:680px\)[\s\S]*?\.dashboard-actions\{display:flex;[^}]*flex-wrap:nowrap/);
+test('parent mobile dashboard actions keep compact controls and wrap when Help needs space', () => {
+  assert.match(portalCss, /\.parent-dashboard-page \.dashboard-actions\{flex-wrap:wrap;align-items:center\}/);
   assert.match(portalCss, /\.dashboard-actions button\{[^}]*font-size:10px[^}]*white-space:nowrap/);
   assert.match(portalCss, /\.dashboard-actions \.parent-notification-button\{[^}]*width:36px/);
 });
@@ -120,7 +120,7 @@ test('all portal pages reference the current shared stylesheet version', () => {
 });
 
 test('service worker refreshes the shared school, church, and parent assets', () => {
-  assert.match(serviceWorker, /dynamax-v367-procurement-batch/);
+  assert.match(serviceWorker, /dynamax-v368-help-access/);
   assert.match(serviceWorker, /'\/verify-result\.html'/);
   assert.match(serviceWorker, /'\/js\/verify-result\.js'/);
   assert.match(serviceWorker, /'\/css\/school-landing\.css'/);
