@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises';
 const portalRoot = new URL('../', import.meta.url);
 const sharedVersion = '20260903-hotel-tabs';
 const pageStyleVersions = new Map([
-  ['admin.html', '20261012-help-access'],
+  ['admin.html', '20261006-student-actions-mobile'],
   ['setup.html', '20260923-youtube-tutorials'],
   ['parent-dashboard.html', '20261012-help-access'],
   ['plan-management.html', '20260830-dual-currency-pricing'],
