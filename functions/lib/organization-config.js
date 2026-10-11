@@ -1,4 +1,6 @@
 import {
+  SUBSCRIPTION_MODULE_CATALOG_VERSION,
+  migrateSubscriptionModuleEntitlements,
   normalizeSubscriptionPlan,
   subscriptionAccessState,
   subscriptionModulesForEdition,
@@ -72,6 +74,8 @@ export const EDITION_FEATURE_DEFAULTS = Object.freeze({
     staffAttendance: true,
     bulkCommunication: true,
     accounting: true,
+    vendorSettlements: true,
+    externalAudit: true,
     payroll: true,
     admissions: true,
     students: true,
@@ -96,6 +100,8 @@ export const EDITION_FEATURE_DEFAULTS = Object.freeze({
     staffAttendance: true,
     bulkCommunication: true,
     accounting: true,
+    vendorSettlements: true,
+    externalAudit: true,
     payroll: true,
     admissions: false,
     students: false,
@@ -126,6 +132,8 @@ export const EDITION_FEATURE_DEFAULTS = Object.freeze({
     staffAttendance: true,
     bulkCommunication: true,
     accounting: true,
+    vendorSettlements: true,
+    externalAudit: true,
     payroll: true,
     admissions: false,
     students: false,
@@ -188,11 +196,11 @@ export function featureFlagsForEdition(edition, overrides = {}) {
   ]));
 }
 
-export function featureFlagsForPlan(edition, plan, overrides = {}, configuredEntitlements = null) {
+export function featureFlagsForPlan(edition, plan, overrides = {}, configuredEntitlements = null, moduleCatalogVersion = 0) {
   const normalizedPlan = normalizeSubscriptionPlan(plan);
   const editionFlags = featureFlagsForEdition(edition, overrides);
   const entitlements = Array.isArray(configuredEntitlements) || configuredEntitlements === '*'
-    ? configuredEntitlements
+    ? migrateSubscriptionModuleEntitlements(edition, configuredEntitlements, moduleCatalogVersion)
     : subscriptionPlanEntitlements(normalizedPlan, normalizeOrganizationEdition(edition));
   if (entitlements === '*') return editionFlags;
   const allowed = new Set(entitlements);
@@ -288,8 +296,13 @@ export function resolveOrganizationConfig({ env = {}, organizationProfile = {}, 
   // locked. Only the explicit override field is authoritative.
   const overrides = profile.FeatureOverrides
     || legacy.FeatureOverrides || {};
-  const planEntitlements = profile.PlanEntitlements ?? profile.FeatureEntitlements
+  const configuredEntitlements = profile.PlanEntitlements ?? profile.FeatureEntitlements
     ?? legacy.PlanEntitlements ?? legacy.FeatureEntitlements ?? null;
+  const sourceModuleCatalogVersion = profile.PlanModuleCatalogVersion ?? legacy.PlanModuleCatalogVersion
+    ?? profile.SubscriptionPriceSnapshot?.ModuleCatalogVersion ?? legacy.SubscriptionPriceSnapshot?.ModuleCatalogVersion ?? 0;
+  const planEntitlements = Array.isArray(configuredEntitlements) || configuredEntitlements === '*'
+    ? migrateSubscriptionModuleEntitlements(edition, configuredEntitlements, sourceModuleCatalogVersion)
+    : null;
   const configuredPlan = clean(
     profile.Plan || profile.SubscriptionPlan
       || legacy.Plan || legacy.SubscriptionPlan
@@ -314,7 +327,7 @@ export function resolveOrganizationConfig({ env = {}, organizationProfile = {}, 
     GracePeriodEndsAt: profile.GracePeriodEndsAt || legacy.GracePeriodEndsAt,
     DataRetentionEndsAt: profile.DataRetentionEndsAt || legacy.DataRetentionEndsAt
   });
-  const planFlags = featureFlagsForPlan(edition, plan, overrides, planEntitlements);
+  const planFlags = featureFlagsForPlan(edition, plan, overrides, planEntitlements, SUBSCRIPTION_MODULE_CATALOG_VERSION);
   const modulePreferences = organizationModulePreferences(
     edition,
     planFlags,
@@ -333,6 +346,7 @@ export function resolveOrganizationConfig({ env = {}, organizationProfile = {}, 
     UserLimit: Math.max(1, Number(profile.UserLimit || legacy.UserLimit || env.USER_LIMIT || defaultLimit) || defaultLimit),
     FeatureOverrides: overrides,
     PlanEntitlements: planEntitlements,
+    PlanModuleCatalogVersion: SUBSCRIPTION_MODULE_CATALOG_VERSION,
     EnabledFeatureEntitlements: modulePreferences.enabledModules,
     DisabledFeatureEntitlements: modulePreferences.disabledModules,
     PlanFeatureFlags: planFlags,
@@ -353,7 +367,9 @@ export function organizationProfileDocument(config, audit = {}) {
     Code: resolved.Code,
     NameFormat: normalizeNameFormat(config.NameFormat || config.nameFormat || resolved.NameFormat),
     FeatureOverrides: config.FeatureOverrides || config.featureOverrides || resolved.FeatureOverrides || {},
-    PlanEntitlements: config.PlanEntitlements ?? config.FeatureEntitlements ?? resolved.PlanEntitlements ?? null,
+    PlanEntitlements: resolved.PlanEntitlements,
+    PlanModuleCatalogVersion: resolved.PlanModuleCatalogVersion,
+    SubscriptionPriceSnapshot: config.SubscriptionPriceSnapshot ?? null,
     DisabledFeatureEntitlements: config.DisabledFeatureEntitlements
       ?? config.DisabledModules ?? resolved.DisabledFeatureEntitlements ?? [],
     PlanCatalogRevision: clean(config.PlanCatalogRevision || config.planCatalogRevision),
@@ -391,9 +407,9 @@ const SECTION_FEATURES = Object.freeze({
   studentConduct: 'studentConduct',
   accounts: Object.freeze(['students', 'accounting']),
   incomeAnalytics: 'accounting',
-  externalAudit: 'accounting',
+  externalAudit: Object.freeze(['accounting', 'externalAudit']),
   financeRequests: 'approvals',
-  vendorSettlements: Object.freeze(['accounting', 'approvals']),
+  vendorSettlements: Object.freeze(['accounting', 'approvals', 'vendorSettlements']),
   payroll: 'payroll',
   clinic: 'clinic',
   kitchen: 'kitchen',

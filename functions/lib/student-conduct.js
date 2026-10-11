@@ -62,10 +62,12 @@ function capabilities(user = {}) {
     'Super Admin', 'Principal', 'Vice Principal Academics', 'Vice Principal Administration',
     'Management', 'Admissions Officer', 'Student Welfare Officer'
   ]);
+  const enabled = edition === 'school' && user.subscriptionActive !== false && allowed.has('studentConduct');
+  const writable = enabled && !user.subscriptionReadOnly;
   return {
-    enabled: edition === 'school' && (allowed.has('studentConduct') || permittedRoles.has(role)),
-    canManage: edition === 'school' && permittedRoles.has(role),
-    canDelete: edition === 'school' && role === 'Super Admin'
+    enabled,
+    canManage: writable && permittedRoles.has(role),
+    canDelete: writable && role === 'Super Admin'
   };
 }
 

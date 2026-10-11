@@ -552,12 +552,16 @@ function buildDailyAttendanceFromEvent(policy, event, existing = {}) {
   const { __id: _documentId, __createTime: _createdAt, __updateTime: _updatedAt, ...storedExisting } = existing;
   const storedFirstClockIn = clean(existing.FirstClockIn);
   const storedLastClockOut = clean(existing.LastClockOut);
+  const correction = event.ManualOverride === true;
   const firstClockIn = event.Direction === 'IN'
-    ? !storedFirstClockIn || event.Timestamp < storedFirstClockIn ? event.Timestamp : storedFirstClockIn
+    ? correction || !storedFirstClockIn || event.Timestamp < storedFirstClockIn ? event.Timestamp : storedFirstClockIn
     : storedFirstClockIn;
   const lastClockOut = event.Direction === 'OUT'
-    ? !storedLastClockOut || event.Timestamp > storedLastClockOut ? event.Timestamp : storedLastClockOut
+    ? correction || !storedLastClockOut || event.Timestamp > storedLastClockOut ? event.Timestamp : storedLastClockOut
     : storedLastClockOut;
+  if (correction && firstClockIn && lastClockOut && firstClockIn > lastClockOut) {
+    fail('Clock-in must not be later than clock-out. Correct the other time first.');
+  }
   const metrics = calculateAttendanceMetrics(policy, {
     Direction: event.Direction,
     Timestamp: event.Direction === 'OUT' ? lastClockOut : firstClockIn,
@@ -565,6 +569,12 @@ function buildDailyAttendanceFromEvent(policy, event, existing = {}) {
     ExistingStatus: event.Direction === 'OUT' ? existing.AttendanceStatus : ''
   });
   const id = dailyAttendanceId(metrics.Date, event.Username);
+  const inMetrics = correction && firstClockIn
+    ? calculateAttendanceMetrics(policy, { Direction: 'IN', Timestamp: firstClockIn }) : null;
+  const outMetrics = correction && lastClockOut
+    ? calculateAttendanceMetrics(policy, { Direction: 'OUT', Timestamp: lastClockOut, FirstClockIn: firstClockIn,
+      ExistingStatus: inMetrics?.AttendanceStatus || '' }) : null;
+  const correctedMetrics = outMetrics || inMetrics;
   const scheduleActive = lower(policy.Active) !== 'no';
   return {
     ...storedExisting,
@@ -575,13 +585,17 @@ function buildDailyAttendanceFromEvent(policy, event, existing = {}) {
     Username: event.Username,
     DisplayName: event.DisplayName,
     Role: event.Role || clean(existing.Role),
-    AttendanceStatus: scheduleActive ? metrics.AttendanceStatus : clean(existing.AttendanceStatus) || 'Recorded',
+    AttendanceStatus: scheduleActive ? (correctedMetrics || metrics).AttendanceStatus : clean(existing.AttendanceStatus) || 'Recorded',
     FirstClockIn: firstClockIn,
     LastClockOut: lastClockOut,
-    LateMinutes: scheduleActive && event.Direction === 'IN' ? metrics.LateMinutes : Number(existing.LateMinutes || 0),
-    OvertimeMinutes: scheduleActive && event.Direction === 'OUT' ? metrics.OvertimeMinutes : Number(existing.OvertimeMinutes || 0),
-    EarlyDepartureMinutes: scheduleActive && event.Direction === 'OUT' ? metrics.EarlyDepartureMinutes : Number(existing.EarlyDepartureMinutes || 0),
-    WorkMinutes: event.Direction === 'OUT' ? metrics.WorkMinutes : Number(existing.WorkMinutes || 0),
+    LateMinutes: correction ? (scheduleActive ? Number(inMetrics?.LateMinutes || 0) : 0)
+      : scheduleActive && event.Direction === 'IN' ? metrics.LateMinutes : Number(existing.LateMinutes || 0),
+    OvertimeMinutes: correction ? (scheduleActive ? Number(outMetrics?.OvertimeMinutes || 0) : 0)
+      : scheduleActive && event.Direction === 'OUT' ? metrics.OvertimeMinutes : Number(existing.OvertimeMinutes || 0),
+    EarlyDepartureMinutes: correction ? (scheduleActive ? Number(outMetrics?.EarlyDepartureMinutes || 0) : 0)
+      : scheduleActive && event.Direction === 'OUT' ? metrics.EarlyDepartureMinutes : Number(existing.EarlyDepartureMinutes || 0),
+    WorkMinutes: correction ? Number(outMetrics?.WorkMinutes || 0)
+      : event.Direction === 'OUT' ? metrics.WorkMinutes : Number(existing.WorkMinutes || 0),
     PresenceCheckCount: Number(existing.PresenceCheckCount || 0),
     MissedPresenceChecks: Number(existing.MissedPresenceChecks || 0),
     PresenceStatus: clean(existing.PresenceStatus) || (clean(policy.PresenceCheckMode).toUpperCase() === 'RANDOM' ? 'Awaiting random check' : 'Not required'),
@@ -1208,17 +1222,18 @@ export async function recordManualAttendance(env, user, body = {}) {
       data: daily,
       ...canonicalWritePrecondition(existingDaily)
     },
-    ...(!currentState?.LastTimestamp || timestamp >= currentState.LastTimestamp ? [{
+    ...(!currentState?.LastTimestamp || currentState.AttendanceDate === attendanceDate || timestamp >= currentState.LastTimestamp ? [{
       collectionPath: statePath,
       documentId: staffAttendanceWriteDocumentId(currentState, stateId),
       data: {
+        ...Object.fromEntries(Object.entries(currentState?.AttendanceDate === attendanceDate ? currentState : {}).filter(([key]) => !key.startsWith('__'))),
         Username: username,
         BranchId: branchId,
-        State: direction === 'IN' ? 'CLOCKED_IN' : 'COMPLETED',
-        NextDirection: direction === 'IN' ? 'OUT' : '',
+        State: daily.LastClockOut ? 'COMPLETED' : 'CLOCKED_IN',
+        NextDirection: daily.LastClockOut ? '' : 'OUT',
         AttendanceDate: attendanceDate,
         LastEventId: eventId,
-        LastTimestamp: timestamp,
+        LastTimestamp: daily.LastClockOut || daily.FirstClockIn,
         UpdatedAt: nowIso(),
         UpdatedBy: actorName(user)
       },

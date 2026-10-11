@@ -8,6 +8,7 @@ import { finalizeHotelOnlinePayment } from '../lib/hotel-services.js';
 import { registerDonorFromPaidDonation } from '../lib/church-donation-management.js';
 import { finalizeOnlineOrganizationCommerceSale } from '../lib/organization-commerce.js';
 import { paymentIntentReference, paymentIntentType } from '../lib/payment-intent.js';
+import { resolveSchoolStoreStock } from '../lib/school-store-stock.js';
 import {
   beginIdempotentRequest,
   completeIdempotentRequest,
@@ -41,10 +42,11 @@ function withoutFirestoreMetadata(document = {}) {
 function storeItemDemand(items, storeType) {
   const demand = new Map();
   for (const item of items) {
-    const documentId = safeId(`${storeType}-${item.ItemCode}`);
+    const documentId = clean(item.InventoryDocumentId) || [storeType, item.ItemCode, item.BranchId || '', item.SchoolSection || ''].join('|');
     const previous = demand.get(documentId);
     demand.set(documentId, {
       documentId,
+      item: { ...item, StoreType: storeType },
       itemCode: clean(item.ItemCode),
       itemName: clean(item.ItemName || item.FeeName || item.ItemCode),
       quantity: Number(previous?.quantity || 0) + Math.max(1, Number(item.Quantity || 1))
@@ -63,9 +65,9 @@ export async function createPaidStoreOrder(env, orderData, items, storeType) {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const stockRows = await Promise.all(demand.map(async (entry) => ({
       ...entry,
-      stock: await getDocument(env, 'storeItems', entry.documentId).catch(() => null)
+      stock: await resolveSchoolStoreStock(env, entry.item, orderData)
     })));
-    const unavailable = stockRows.filter(({ stock, quantity }) => !stock || Number(stock.Quantity || 0) < quantity);
+    const unavailable = stockRows.filter(({ stock, quantity }) => !stock || !clean(stock.__updateTime) || Number(stock.Quantity || 0) < quantity);
     if (unavailable.length) {
       const issue = unavailable
         .map(({ itemName, quantity, stock }) => `${itemName}: requested ${quantity}, available ${Number(stock?.Quantity || 0)}`)

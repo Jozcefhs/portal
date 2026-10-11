@@ -204,6 +204,63 @@ for (const edition of ['school', 'faith', 'organization']) {
     assert.equal(f.count(f.path('staffTimeAudit')), 1);
   });
 
+  test(`${edition}: corrections replace either timestamp and recalculate the completed day's totals`, async () => {
+    const f = fixture(edition);
+    f.put(f.path('staffAttendancePolicy'), 'default', {
+      Active: 'YES', TimeZone: 'UTC', ResumptionTime: '08:00', ClosingTime: '17:00', GraceMinutes: 0, OvertimeMinimumMinutes: 0
+    });
+    f.put(f.path('staffTimeState'), f.user.username, {
+      Username: f.user.username, State: 'COMPLETED', AttendanceDate: '2026-10-09', LastTimestamp: '2026-10-09T17:00:00.000Z', PresenceCheckSequence: 3
+    });
+    f.put(f.path('staffDailyAttendance'), f.dailyId(), {
+      Username: f.user.username, Date: '2026-10-09', DailyId: f.dailyId(), FirstClockIn: '2026-10-09T08:00:00.000Z',
+      LastClockOut: '2026-10-09T17:00:00.000Z', WorkMinutes: 540, AttendanceStatus: 'Present', Notes: 'Preserve evidence', PresenceCheckCount: 3
+    });
+    const correct = (Direction, hour) => f.attendance.recordManualAttendance(f.env, { ...f.user, role: 'Super Admin' }, {
+      Username: f.user.username, Direction, Reason: 'Verified attendance correction', Timestamp: `2026-10-09T${hour}:00:00.000Z`
+    });
+    const later = (await correct('IN', '09')).daily;
+    assert.equal(later.FirstClockIn, '2026-10-09T09:00:00.000Z');
+    assert.equal(later.WorkMinutes, 480);
+    assert.equal(later.LateMinutes, 60);
+    assert.equal(later.AttendanceStatus, 'Late');
+    const earlier = (await correct('IN', '07')).daily;
+    assert.equal(earlier.WorkMinutes, 600);
+    assert.equal(earlier.LateMinutes, 0);
+    assert.equal(earlier.AttendanceStatus, 'Present');
+    const earlyExit = (await correct('OUT', '16')).daily;
+    assert.equal(earlyExit.LastClockOut, '2026-10-09T16:00:00.000Z');
+    assert.equal(earlyExit.WorkMinutes, 540);
+    assert.equal(earlyExit.EarlyDepartureMinutes, 60);
+    assert.equal(earlyExit.Notes, 'Preserve evidence');
+    assert.equal(earlyExit.PresenceCheckCount, 3);
+    const lateExit = (await correct('OUT', '18')).daily;
+    assert.equal(lateExit.OvertimeMinutes, 60);
+    assert.equal(lateExit.EarlyDepartureMinutes, 0);
+    assert.equal(lateExit.WorkMinutes, 660);
+    const state = f.get(f.path('staffTimeState'), f.user.username);
+    assert.equal(state.State, 'COMPLETED');
+    assert.equal(state.NextDirection, '');
+    assert.equal(state.LastTimestamp, lateExit.LastClockOut);
+    assert.equal(state.PresenceCheckSequence, 3);
+    await assert.rejects(correct('IN', '19'), /Clock-in must not be later/);
+    await assert.rejects(correct('OUT', '06'), /Clock-in must not be later/);
+    assert.equal(f.count(f.path('staffTimeAudit')), 4);
+    assert.equal(f.count(f.path('staffTimeEvents')), 4);
+    assert.equal(f.get(f.path('staffDailyAttendance'), f.dailyId()).WorkMinutes, 660);
+  });
+
+  test(`${edition}: correcting an older day does not move the current-day clock state backwards`, async () => {
+    const f = fixture(edition);
+    f.put(f.path('staffTimeState'), f.user.username, { Username: f.user.username, State: 'CLOCKED_IN',
+      AttendanceDate: '2026-10-10', LastTimestamp: '2026-10-10T08:00:00.000Z' });
+    await f.attendance.recordManualAttendance(f.env, { ...f.user, role: 'Super Admin' }, {
+      Username: f.user.username, Direction: 'IN', Reason: 'Verified earlier day', Timestamp: '2026-10-09T08:00:00.000Z'
+    });
+    assert.equal(f.get(f.path('staffTimeState'), f.user.username).AttendanceDate, '2026-10-10');
+    assert.equal(f.get(f.path('staffTimeState'), f.user.username).State, 'CLOCKED_IN');
+  });
+
   test(`${edition}: simultaneous clock-ins create one atomic attendance entry`, async () => {
     const f = fixture(edition);
     const results = await Promise.allSettled([f.clock('IN'), f.clock('IN')]);

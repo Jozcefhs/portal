@@ -125,6 +125,8 @@ async function saveInventory(env, section, body, user) {
   const payload = {
     ...existing,
     ...scopeFields(user),
+    BranchId: clean(existing.BranchId) || scopeFields(user).BranchId,
+    SchoolSection: clean(existing.SchoolSection) || scopeFields(user).SchoolSection,
     ItemName: itemName,
     Category: clean(body.Category) || config.category,
     Unit: clean(body.Unit) || config.unit,
@@ -144,16 +146,12 @@ async function saveInventory(env, section, body, user) {
   delete payload.__name;
   delete payload.__updateTime;
   delete payload.__createTime;
-  if (['restaurant', 'tuckShop'].includes(section)) {
-    if (existing.__id && !existing.__updateTime) {
-      const err = new Error('Stock version is unavailable. Refresh and try again.'); err.status = 409; throw err;
-    }
-    await batchCommitDocuments(env, [{ collectionPath: config.inventory,
-      documentId: existing.__id || safeId(`${scopeFields(user).BranchId}-${scopeFields(user).SchoolSection}-${itemName}`),
-      data: payload, ...(existing.__id ? { updateTime: existing.__updateTime } : { exists: false }) }]);
-  } else {
-    await upsertDocument(env, config.inventory, existing.__id || safeId(`${scopeFields(user).BranchId}-${scopeFields(user).SchoolSection}-${itemName}`), payload);
+  if (existing.__id && !existing.__updateTime) {
+    const err = new Error('Stock version is unavailable. Refresh and try again.'); err.status = 409; throw err;
   }
+  await batchCommitDocuments(env, [{ collectionPath: config.inventory,
+    documentId: existing.__id || safeId(`${scopeFields(user).BranchId}-${scopeFields(user).SchoolSection}-${itemName}`),
+    data: payload, ...(existing.__id ? { updateTime: existing.__updateTime } : { exists: false }) }]);
   return { ok: true, message: `${config.label} inventory item saved.` };
 }
 
@@ -181,6 +179,9 @@ async function recordMovement(env, section, body, user) {
   const movementNo = `${config.prefix}-${Date.now()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
   const movement = {
     ...scopeFields(user),
+    BranchId: clean(item.BranchId) || scopeFields(user).BranchId,
+    SchoolSection: clean(item.SchoolSection) || scopeFields(user).SchoolSection,
+    InventoryId: item.__id,
     MovementNo: movementNo,
     Date: timestamp,
     ItemName: clean(item.ItemName) || itemName,
@@ -189,18 +190,13 @@ async function recordMovement(env, section, body, user) {
     Reason: clean(body.Reason),
     RecordedBy: user.displayName || user.username
   };
-  if (['restaurant', 'tuckShop'].includes(section)) {
-    if (!item.__updateTime) {
-      const err = new Error('Stock version is unavailable. Refresh and try again.'); err.status = 409; throw err;
-    }
-    await batchCommitDocuments(env, [
-      { collectionPath: config.inventory, documentId: item.__id, data: updated, updateTime: item.__updateTime },
-      { collectionPath: config.movements, documentId: movementNo, data: movement, exists: false }
-    ]);
-  } else {
-    await upsertDocument(env, config.inventory, item.__id, updated);
-    await upsertDocument(env, config.movements, movementNo, movement);
+  if (!item.__updateTime) {
+    const err = new Error('Stock version is unavailable. Refresh and try again.'); err.status = 409; throw err;
   }
+  await batchCommitDocuments(env, [
+    { collectionPath: config.inventory, documentId: item.__id, data: updated, updateTime: item.__updateTime },
+    { collectionPath: config.movements, documentId: movementNo, data: movement, exists: false }
+  ]);
   return { ok: true, message: `${config.label} stock ${movementType === 'IN' ? 'receipt' : 'issue'} recorded.` };
 }
 

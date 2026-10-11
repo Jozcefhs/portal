@@ -5,7 +5,7 @@ import {
   safeChurchDocumentId
 } from './church-foundation.js';
 import { resolveOrganizationConfig } from './organization-config.js';
-import { resolveMembershipBranch } from './church-membership.js';
+import { organizationOperationsRole, recordWritePrecondition, resolveMembershipBranch } from './church-membership.js';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
@@ -18,6 +18,7 @@ const inputError = (message) => {
 
 const VIEW_ROLES = new Set(['Super Admin', 'Pastor', 'Church Administrator', 'Membership Officer']);
 const MANAGE_ROLES = new Set(['Super Admin', 'Pastor', 'Church Administrator']);
+const ORGANIZATION_MANAGE_ROLES = new Set(['Executive Director', 'Organisation Administrator', 'Operations Manager']);
 const SERVICE_OCCURRENCE_STATUSES = new Map([
   ['scheduled', 'Scheduled'],
   ['in progress', 'In Progress'],
@@ -27,12 +28,15 @@ const SERVICE_OCCURRENCE_STATUSES = new Map([
 
 export function serviceCapabilities(user = {}) {
   const role = clean(user.role || user.Role);
+  const organizationRole = organizationOperationsRole(user);
+  const canManage = MANAGE_ROLES.has(role) || ORGANIZATION_MANAGE_ROLES.has(organizationRole);
+  const canView = VIEW_ROLES.has(role) || ORGANIZATION_MANAGE_ROLES.has(organizationRole) || organizationRole === 'Records Officer';
   return {
-    canView: VIEW_ROLES.has(role),
-    canManageServices: MANAGE_ROLES.has(role),
-    canManageOccurrences: MANAGE_ROLES.has(role),
-    canRecordAttendance: VIEW_ROLES.has(role),
-    canViewAudit: MANAGE_ROLES.has(role)
+    canView,
+    canManageServices: canManage,
+    canManageOccurrences: canManage,
+    canRecordAttendance: canView,
+    canViewAudit: canManage
   };
 }
 
@@ -105,9 +109,10 @@ export function normalizeAttendance(input = {}, branchId = 'main') {
   const requestedType = lower(input.AttendanceType || input.attendanceType);
   const attendanceType = memberId ? 'Member' : 'Visitor';
   const displayName = clean(input.DisplayName || input.displayName || input.VisitorName || input.visitorName);
+  const visitorReference = clean(input.VisitorReference || input.visitorReference);
   const attendanceId = attendanceDocumentId(input) || (
-    occurrenceId && attendanceType === 'Visitor'
-      ? safeChurchDocumentId(`${occurrenceId}--visitor--${clean(input.VisitorReference || input.visitorReference)}`)
+    occurrenceId && attendanceType === 'Visitor' && visitorReference
+      ? safeChurchDocumentId(`${occurrenceId}--visitor--${visitorReference}`)
       : ''
   );
   if (!occurrenceId) throw inputError('OccurrenceId is required for attendance.');
@@ -447,8 +452,13 @@ export async function recordChurchAttendanceTotal(env, user, body = {}) {
     UpdatedAt: recordedAt,
     UpdatedBy: actorName(user)
   };
+  // This form replaces the breakdown. Blank optional figures must not revive
+  // an older age/gender breakdown that contradicts the newly saved total.
+  for (const field of ['ChildrenCount', 'AdultCount', 'MaleCount', 'FemaleCount', 'FirstTimerCount', 'NewConvertCount']) {
+    if (!Object.hasOwn(attendanceBreakdown, field)) delete payload[field];
+  }
   delete payload.__id; delete payload.__name;
-  await upsertDocument(env, path, id, payload);
+  await upsertDocument(env, path, id, payload, recordWritePrecondition(occurrence));
   const breakdownAudit = [
     attendanceBreakdown.ChildrenCount === undefined ? '' : `${attendanceBreakdown.ChildrenCount} children, ${attendanceBreakdown.AdultCount} adults`,
     attendanceBreakdown.MaleCount === undefined ? '' : `${attendanceBreakdown.MaleCount} male, ${attendanceBreakdown.FemaleCount} female`,

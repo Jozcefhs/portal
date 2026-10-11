@@ -90,6 +90,77 @@ const organisationOnlyControlIds = [
   'organisationEdition', 'nameFormat', 'webLogoFile', 'removeWebLogo',
   'googleDocumentsUrl', 'subscriptionPlan', 'userLimit'
 ];
+let academicPolicyTutorialUrl = '';
+let academicPolicyTutorialLoaded = false;
+
+function academicPolicyTutorialDestination(profile = {}) {
+  let links = profile.TutorialLinks || {};
+  if (typeof links === 'string') {
+    try { links = JSON.parse(links); } catch (_error) { links = {}; }
+  }
+  const candidates = [links?.['Academic Policies'], links?.academicPolicies,
+    links?.['Academic Management'], links?.academics, links?.Settings, profile.TutorialChannelUrl];
+  for (const candidate of candidates) {
+    try {
+      const url = new URL(String(candidate || '').trim());
+      if (url.protocol === 'https:' && [
+        'youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be', 'www.youtu.be',
+        'youtube-nocookie.com', 'www.youtube-nocookie.com'
+      ].includes(url.hostname.toLowerCase()) && url.pathname !== '/') return url.href;
+    } catch (_error) { /* Skip an unconfigured or invalid destination. */ }
+  }
+  return '';
+}
+
+async function preloadAcademicPolicyTutorial() {
+  try {
+    // The public profile overlays the published owner catalogue. Private
+    // settings responses may still contain legacy organisation tutorial links.
+    const response = await fetch('/api/settings');
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.message || 'Tutorial links could not be loaded.');
+    academicPolicyTutorialUrl = academicPolicyTutorialDestination(data.profile);
+    academicPolicyTutorialLoaded = true;
+  } catch (_error) {
+    // Tutorials are optional; their availability must never prevent setup login.
+    academicPolicyTutorialLoaded = false;
+  }
+}
+
+async function openAcademicPolicyTutorial(event) {
+  if (academicPolicyTutorialUrl) {
+    // Keep this before the first await so mobile browsers retain the click's
+    // user activation when opening the YouTube tab.
+    window.open(academicPolicyTutorialUrl, '_blank', 'noopener,noreferrer');
+    return;
+  }
+  const button = event.currentTarget;
+  if (!window.DynamaxActionFeedback.begin(button, 'Loading tutorial...')) return;
+  try {
+    if (!academicPolicyTutorialLoaded) await preloadAcademicPolicyTutorial();
+    if (academicPolicyTutorialUrl) {
+      // A retry required a network round trip. Let the next click perform the
+      // open synchronously instead of creating a popup after the fetch.
+      await window.DynamaxDialogs.alert({ title: 'Tutorial ready',
+        message: 'The tutorial is ready. Select Tutorial again to open the video.', confirmText: 'Close' });
+    } else if (academicPolicyTutorialLoaded) await window.DynamaxDialogs.alert({ title: 'Tutorial not published yet',
+      message: 'The YouTube tutorial for academic policies has not been published yet.', confirmText: 'Close' });
+    else await window.DynamaxDialogs.alert({ title: 'Tutorial unavailable',
+      message: 'Tutorial links could not be loaded. Please try again.', confirmText: 'Close' });
+  } finally {
+    window.DynamaxActionFeedback.end(button);
+  }
+}
+
+function installAcademicPolicyTutorial() {
+  const heading = academicPolicySection?.querySelector('.settings-section-heading > div:last-child');
+  if (!heading) return;
+  const button = document.createElement('button');
+  button.type = 'button'; button.className = 'settings-text-button'; button.textContent = '▶ Tutorial';
+  button.setAttribute('aria-label', 'Open the academic policies tutorial');
+  button.addEventListener('click', openAcademicPolicyTutorial);
+  heading.append(button);
+}
 
 const settingsTerminology = {
   school: {
@@ -1070,7 +1141,10 @@ async function loadProfile(password = '', { scope = settingsScopeField.value, br
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(data.message || 'Could not load setup.');
     applyProfile(data.profile || {}, data.settingsAccess);
-    if (password && activeSettingsEdition === 'school') await loadAcademicPolicy({ silent: true });
+    if (password && activeSettingsEdition === 'school') {
+      void preloadAcademicPolicyTutorial();
+      await loadAcademicPolicy({ silent: true });
+    }
     return data.profile || {};
   } catch (error) {
     setStatus(error.message, 'bad');
@@ -1461,3 +1535,4 @@ if ('IntersectionObserver' in window) {
 }
 
 // Public pages can read the school profile, but setup editing stays locked until password entry.
+installAcademicPolicyTutorial();

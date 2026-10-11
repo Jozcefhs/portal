@@ -165,7 +165,7 @@ test('saved plan-module selections replace defaults and enforce dependencies', (
   });
   assert.deepEqual(
     catalog.Plans.Starter.EntitlementsByEdition.school,
-    ['humanResources', 'staffAttendance', 'accounting', 'payroll']
+    ['humanResources', 'staffAttendance', 'accounting', 'externalAudit', 'payroll']
   );
   assert.deepEqual(catalog.Plans.Starter.EntitlementsByEdition.faith, []);
   assert.deepEqual(
@@ -174,7 +174,7 @@ test('saved plan-module selections replace defaults and enforce dependencies', (
   );
   assert.deepEqual(
     subscriptionPlanEntitlements('Starter', 'school', catalog),
-    ['humanResources', 'staffAttendance', 'accounting', 'payroll']
+    ['humanResources', 'staffAttendance', 'accounting', 'externalAudit', 'payroll']
   );
   assert.ok(subscriptionModulesForEdition('school').every((module) => !/church|offering/i.test(module.Label)));
   assert.deepEqual(
@@ -182,7 +182,7 @@ test('saved plan-module selections replace defaults and enforce dependencies', (
     {
       Key: 'academics',
       Label: 'Academic management, scorebook & CBT',
-      Description: 'Classes, subjects, timetables, attendance, score recording, CBT, results and academic outcomes.',
+      Description: 'Classes, subjects, timetable generation, attendance, homework, academic policies, score recording, student and Android CBT, results and academic outcomes.',
       Requires: ['students'],
       SuggestedMonthlyAmountUSD: SUBSCRIPTION_FLEX_PRICE_ESTIMATES_USD.academics,
       SuggestedYearlyAmountUSD: SUBSCRIPTION_FLEX_PRICE_ESTIMATES_USD.academics * 10
@@ -221,7 +221,7 @@ test('saved plan-module selections replace defaults and enforce dependencies', (
   });
   assert.deepEqual(
     existingStandardCatalog.Plans.Standard.EntitlementsByEdition.school,
-    ['accounting', 'bulkCommunication']
+    ['accounting', 'externalAudit', 'bulkCommunication']
   );
 
   const fullPlanWithoutBulkCommunication = Object.fromEntries(
@@ -247,7 +247,7 @@ test('saved plan-module selections replace defaults and enforce dependencies', (
   }
   assert.deepEqual(
     restoredEnterpriseCatalog.Plans.Standard.EntitlementsByEdition.school,
-    ['accounting']
+    ['accounting', 'externalAudit']
   );
 });
 
@@ -379,7 +379,7 @@ test('registration and pricing interfaces expose feature details and recurring c
   assert.match(pricingHtml, /id="planEntitlementMatrix"/);
   assert.match(pricingHtml, /<select id="planPricingCurrency"><option value="NGN">NGN<\/option><option value="USD">USD<\/option><\/select>/);
   assert.match(pricingHtml, /id="planUsdToNgnRate"/);
-  assert.match(pricingHtml, /plan-management\.js\?v=20261004-provisioning-quota-hold/);
+  assert.match(pricingHtml, /plan-management\.js\?v=20261011-module-tutorials/);
   assert.match(pricingHtml, /id="tenantPoolSummary"/);
   assert.match(pricingHtml, /Other organisation/);
   assert.match(pricingHtml, /Save plans &amp; pricing/);

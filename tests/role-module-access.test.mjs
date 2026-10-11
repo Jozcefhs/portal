@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-import { featureFlagsForEdition } from '../functions/lib/organization-config.js';
+import { featureFlagsForEdition, featureFlagsForPlan } from '../functions/lib/organization-config.js';
 import {
   configuredModulesForUser,
   defaultModulesForRole,
@@ -13,7 +13,7 @@ import {
   withRoleModules,
   withoutRoleModules
 } from '../functions/lib/role-module-access.js';
-import { allowedSectionsFor } from '../functions/lib/staff-auth.js';
+import { allowedSectionsFor, sectionAccessFor } from '../functions/lib/staff-auth.js';
 
 const [staffUsersApi, adminJs] = await Promise.all([
   readFile(new URL('../functions/api/staff-users.js', import.meta.url), 'utf8'),
@@ -113,6 +113,69 @@ test('Director and Admin exist in every edition with distinct permission boundar
       { role: 'Management', assignedRole: 'Admin', tabAccess: ['staffUsers', 'financeRequests'] },
       flags, { edition }
     ).includes('staffUsers'), false);
+  }
+});
+
+test('Vendor User loses every sales module when vendor settlements or a prerequisite is disabled', () => {
+  for (const edition of ['school', 'faith', 'organization']) {
+    const fullFlags = featureFlagsForEdition(edition);
+    const storeSections = edition === 'school' ? ['tuckShop'] : edition === 'faith' ? ['organizationStore', 'restaurant'] : [];
+    const user = { role: 'Vendor User', branchId: 'main', tabAccess: [...storeSections, 'staffUsers'] };
+    const policy = { Scopes: { main: { 'Vendor User': storeSections } } };
+    for (const disabledFeature of ['vendorSettlements', 'accounting', 'approvals']) {
+      const featureFlags = { ...fullFlags, [disabledFeature]: false };
+      assert.deepEqual(defaultModulesForRole('Vendor User', { edition, featureFlags }), [], `${edition}: ${disabledFeature}`);
+      assert.deepEqual(configuredModulesForUser(policy, user, 'Vendor User', edition, featureFlags), []);
+      assert.deepEqual(allowedSectionsFor(user, featureFlags, { edition, roleModules: storeSections }), []);
+      assert.deepEqual(roleAccessView(policy, user, edition, featureFlags).roles['Vendor User'].modules, []);
+      const access = sectionAccessFor(user, {
+        Edition: edition, FeatureFlags: featureFlags, PlanFeatureFlags: fullFlags
+      }, policy);
+      assert.deepEqual(access.allowedSections, []);
+      assert.deepEqual(access.disabledSections, ['vendorSettlements', ...storeSections]);
+      for (const section of storeSections) {
+        assert.ok(allowedSectionsFor({ role: 'Super Admin' }, featureFlags, { edition }).includes(section));
+      }
+    }
+  }
+});
+
+test('Vendor User store access still follows each store entitlement after vendor settlements is enabled', () => {
+  for (const edition of ['school', 'faith', 'organization']) {
+    const flags = featureFlagsForEdition(edition);
+    const stores = edition === 'school' ? [['tuckShop', 'stores']]
+      : edition === 'faith' ? [['organizationStore', 'retail'], ['restaurant', 'restaurant']] : [];
+    for (const [section, feature] of stores) {
+      const featureFlags = { ...flags, [feature]: false };
+      const expected = ['vendorSettlements', ...stores.map(([key]) => key).filter(key => key !== section)];
+      assert.deepEqual(defaultModulesForRole('Vendor User', { edition, featureFlags }), expected);
+      assert.deepEqual(allowedSectionsFor({ role: 'Vendor User' }, featureFlags, { edition }), expected);
+    }
+    const allStoresDisabled = { ...flags, ...Object.fromEntries(stores.map(([, feature]) => [feature, false])) };
+    assert.deepEqual(allowedSectionsFor({ role: 'Vendor User' }, allStoresDisabled, { edition }), ['vendorSettlements']);
+  }
+});
+
+test('section access preserves current catalogue exclusions when recomputing plan restrictions', () => {
+  for (const edition of ['school', 'faith', 'organization']) {
+    for (const version of [10, 11]) {
+      for (const marker of [
+        { PlanModuleCatalogVersion: version },
+        { SubscriptionPriceSnapshot: { ModuleCatalogVersion: version } }
+      ]) {
+        const organization = {
+          Edition: edition, Plan: 'Flex', PlanEntitlements: ['accounting', 'approvals'],
+          FeatureFlags: featureFlagsForPlan(edition, 'Flex', {}, ['accounting', 'approvals'], version),
+          ...marker
+        };
+        const access = sectionAccessFor({ role: 'Super Admin' }, organization);
+        for (const section of ['vendorSettlements', 'externalAudit']) {
+          assert.equal(access.allowedSections.includes(section), version < 11);
+          assert.equal(access.restrictedSections.includes(section), version >= 11);
+          assert.equal(access.disabledSections.includes(section), false);
+        }
+      }
+    }
   }
 });
 

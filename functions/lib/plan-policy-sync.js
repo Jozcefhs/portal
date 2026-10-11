@@ -1,6 +1,8 @@
 import { getDocument, queryCollection, upsertDocument } from './firestore.js';
 import { hasPlatformFirestoreConfiguration, requirePlatformFirestoreEnv } from './platform-firestore.js';
 import {
+  SUBSCRIPTION_MODULE_CATALOG_VERSION,
+  migrateSubscriptionModuleEntitlements,
   normalizeSubscriptionPlanCatalog,
   normalizeSubscriptionPlan,
   subscriptionModulesForEdition,
@@ -168,9 +170,11 @@ export async function refreshOrganizationPlanPolicy(env, organizationProfile = {
     ? subscriptionModulesForEdition(edition).map((module) => module.Key)
     : plan === 'Flex'
     ? Array.isArray(registration.FeatureEntitlements)
-      ? [...registration.FeatureEntitlements]
+      ? migrateSubscriptionModuleEntitlements(edition, registration.FeatureEntitlements,
+        registration.PlanModuleCatalogVersion ?? registration.PriceSnapshot?.ModuleCatalogVersion)
       : Array.isArray(organizationProfile.PlanEntitlements)
-        ? [...organizationProfile.PlanEntitlements]
+        ? migrateSubscriptionModuleEntitlements(edition, organizationProfile.PlanEntitlements,
+          organizationProfile.PlanModuleCatalogVersion ?? organizationProfile.SubscriptionPriceSnapshot?.ModuleCatalogVersion)
         : []
     : subscriptionPlanEntitlements(plan, edition, central.catalog);
   const revision = clean(central.catalog.PolicyRevision || central.catalog.UpdatedAt);
@@ -181,6 +185,7 @@ export async function refreshOrganizationPlanPolicy(env, organizationProfile = {
     NonBillable: ownerDemo || registration.NonBillable === true,
     SyntheticDataOnly: ownerDemo || registration.SyntheticDataOnly === true,
     PlanEntitlements: centrallyRevoked ? [] : entitlements,
+    PlanModuleCatalogVersion: SUBSCRIPTION_MODULE_CATALOG_VERSION,
     PlanCatalogRevision: revision,
     BillingCycle: clean(registration.BillingCycle || organizationProfile.BillingCycle),
     SubscriptionPrice: Number(registration.Price || organizationProfile.SubscriptionPrice || 0),
@@ -213,6 +218,7 @@ export async function refreshOrganizationPlanPolicy(env, organizationProfile = {
     || clean(organizationProfile.SubscriptionCurrency) !== clean(enriched.SubscriptionCurrency)
     || JSON.stringify(organizationProfile.SubscriptionPriceSnapshot || null) !== JSON.stringify(enriched.SubscriptionPriceSnapshot || null)
     || clean(organizationProfile.PlanCatalogRevision) !== revision
+    || Number(organizationProfile.PlanModuleCatalogVersion || 0) !== enriched.PlanModuleCatalogVersion
     || comparableEntitlements(organizationProfile.PlanEntitlements) !== comparableEntitlements(entitlements)
     || Number(organizationProfile.UserLimit || 0) !== Number(enriched.UserLimit || 0)
     || clean(organizationProfile.SubscriptionStatus) !== clean(enriched.SubscriptionStatus)

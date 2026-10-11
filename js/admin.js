@@ -316,6 +316,7 @@ const tutorialStorageKeys = Object.freeze({
   incomeAnalytics: 'Income Analytics',
   externalAudit: 'External Audit',
   financeRequests: 'Finance & Accounting',
+  vendorSettlements: 'Vendor Sales & Settlements',
   payroll: 'Payroll',
   clinic: 'Clinic',
   kitchen: 'Kitchen',
@@ -328,6 +329,14 @@ const tutorialStorageKeys = Object.freeze({
   dataBackup: 'Backup & Restore',
   securityAudit: 'Logs',
   staffUsers: 'Settings'
+});
+
+const tutorialSubfeatureContexts = Object.freeze({
+  teacherHomework: { storageKey: 'Teacher Homework', label: 'Homework and parent messages', parentSection: 'academics' },
+  academicPolicies: { storageKey: 'Academic Policies', label: 'Academic policies', parentSection: 'academics' },
+  timetableGeneration: { storageKey: 'Timetable Generation', label: 'Timetable generation', parentSection: 'academics' },
+  academicCbt: { storageKey: 'Online CBT Authoring', label: 'Create and schedule CBT tests', parentSection: 'academics' },
+  boardingOfferings: { storageKey: 'Boarding Offerings', label: 'Boarding service offerings', parentSection: 'accounts' }
 });
 
 const schoolOnlyWebSections = new Set([
@@ -470,9 +479,17 @@ function safeYouTubeTutorialUrl(value) {
 
 function tutorialDestination(section = activeSection) {
   const links = dashboardData?.tutorials?.links || {};
-  const storageKey = tutorialStorageKeys[section] || '';
-  const displayedLabel = staffTabLabel(section, storageKey || section);
-  const candidates = [storageKey, section, displayedLabel];
+  const contextKey = section === 'academics' && academicManagementView === 'timetable'
+    && academicManagementTaskViews.timetable === 'generator' ? 'timetableGeneration'
+    : section === 'academics' && academicManagementView === 'cbt' ? 'academicCbt' : section;
+  const context = tutorialSubfeatureContexts[contextKey];
+  const parentSection = context?.parentSection || section;
+  const storageKey = tutorialStorageKeys[parentSection] || '';
+  const parentLabel = staffTabLabel(parentSection, storageKey || parentSection);
+  const displayedLabel = context?.label || parentLabel;
+  const candidates = context
+    ? [context.storageKey, contextKey, storageKey, parentSection, parentLabel]
+    : [storageKey, section, parentLabel];
   const moduleUrl = candidates.map((key) => safeYouTubeTutorialUrl(links[key])).find(Boolean) || '';
   return {
     moduleUrl,
@@ -496,7 +513,11 @@ function updateTutorialControls() {
 }
 
 async function openCurrentTutorial() {
-  const destination = tutorialDestination();
+  return openTutorialForSection(activeSection);
+}
+
+async function openTutorialForSection(section) {
+  const destination = tutorialDestination(section);
   const target = destination.moduleUrl || destination.channelUrl;
   if (target) {
     window.open(target, '_blank', 'noopener,noreferrer');
@@ -13093,6 +13114,7 @@ function showAcademicManagementTask(view, taskKey, options = {}) {
     button.tabIndex = active ? 0 : -1;
   });
   panels.forEach((panel) => { panel.hidden = panel.dataset.academicTaskPanel !== selected; });
+  updateTutorialControls();
   if (options.focus) workspace.querySelector(`[data-academic-task-panel="${selected}"] h3`)?.focus();
 }
 
@@ -15616,6 +15638,7 @@ function renderAcademicManagement(data = academicManagementData || {}, message =
   organizeAcademicManagementWorkspace(academicManagementView);
   renderModuleSummary('academics', data);
   bindAcademicManagement();
+  updateTutorialControls();
   if (academicManagementView === 'scorebook') queueMicrotask(() => { void loadAcademicScorebookContext(); });
 }
 
@@ -16307,7 +16330,8 @@ function bindAcademicTimetableGenerator(panel) {
 function bindAcademicManagement() {
   bindAcademicTimetableGenerator(panelEl);
   panelEl.querySelector('[data-teacher-homework]')?.addEventListener('click', () => {
-    window.DynamaxTeacherHomework.open({ staffFetch, branchId: selectedBranchId, schoolSection: academicManagementFilters.section })
+    window.DynamaxTeacherHomework.open({ staffFetch, branchId: selectedBranchId, schoolSection: academicManagementFilters.section,
+      openTutorial: () => openTutorialForSection('teacherHomework') })
       .catch((error) => setStatus(document.getElementById('academicManagementStatus'), error.message, 'bad'));
   });
   const calendarForm = panelEl.querySelector('[data-academic-school-calendar]');
@@ -18726,7 +18750,8 @@ function renderSection(active) {
     if (window.DynamaxBoardingOfferings?.canAccess(currentUser)) {
       const button = document.createElement('button');
       button.type = 'button'; button.className = 'secondary'; button.textContent = 'Boarding service offerings';
-      button.addEventListener('click', () => window.DynamaxBoardingOfferings.open({ fetch: staffFetch, user: currentUser }));
+      button.addEventListener('click', () => window.DynamaxBoardingOfferings.open({ fetch: staffFetch, user: currentUser,
+        openTutorial: () => openTutorialForSection('boardingOfferings') }));
       panelEl.querySelector('.workflow-intro')?.append(button);
     }
     bindAccountWalletSetupWorkspace();
@@ -21197,6 +21222,7 @@ function openStaffUserDialog(username = '') {
   const plansLink = form.querySelector('[data-subscription-plans-link]');
   if (plansLink) plansLink.hidden = true;
   form.elements.Username.readOnly = Boolean(user);
+  form.dataset.originalUsername = user?.Username || '';
   document.getElementById('staffUserDialogTitle').textContent = user ? 'Manage Staff Account' : 'New Staff Account';
   if (user) {
     form.elements.Username.value = user.Username;
@@ -21416,6 +21442,7 @@ function bindStaffUserEvents() {
     const plansLink = form.querySelector('[data-subscription-plans-link]');
     const payload = Object.fromEntries(new FormData(form).entries());
     payload.Active = form.elements.Active.checked;
+    payload.OriginalUsername = form.dataset.originalUsername || '';
     payload.MustChangePassword = form.elements.MustChangePassword.checked;
     payload.ApprovalEnabled = form.elements.ApprovalEnabled.checked;
     payload.RequisitionEditEnabled = form.elements.RequisitionEditEnabled.checked;

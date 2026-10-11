@@ -9,6 +9,12 @@ import { requiredDeploymentIdentity } from './deployment-identity.js';
 import { CHURCH_COLLECTIONS, churchCollectionPath } from './church-foundation.js';
 import { getSchoolStructure, schoolCollectionPaths } from './school-scope.js';
 import {
+  beginStaffAccountChange,
+  commitStaffAccountChanges,
+  staffAccountCondition,
+  staffAccountDocumentId
+} from './staff-account-integrity.js';
+import {
   STAFF_ATTENDANCE_COLLECTIONS,
   canonicalStaffAttendanceCollectionPath,
   legacyStaffAttendanceCollectionPath
@@ -58,10 +64,15 @@ const SENSITIVE_SETTING_FIELDS = Object.freeze([
   'GoogleAppsScriptSecret', 'DocumentStorageSecret'
 ]);
 
+const SUBSCRIPTION_IDENTITY_SETTING_FIELDS = Object.freeze([
+  'Plan', 'PlanEntitlements', 'PlanModuleCatalogVersion', 'SubscriptionPriceSnapshot'
+]);
+
 const IDENTITY_SETTING_FIELDS = Object.freeze([
   'WorkspaceId', 'DeploymentWorkspaceId', 'Edition', 'OrganisationEdition', 'OrganizationEdition',
   'SubscriptionPlan', 'SubscriptionStatus', 'SubscriptionActive', 'SubscriptionExpiresAt',
-  'SubscriptionStartedAt', 'FeatureEntitlements', 'FeatureFlags', 'MaximumActiveUsers', 'MaxUsers'
+  'SubscriptionStartedAt', 'FeatureEntitlements', 'FeatureFlags', 'MaximumActiveUsers', 'MaxUsers',
+  ...SUBSCRIPTION_IDENTITY_SETTING_FIELDS
 ]);
 
 const RESET_PRESERVED_ROOT_COLLECTIONS = new Set([
@@ -272,6 +283,37 @@ function restoreActor(user = {}) {
   };
 }
 
+function protectRestoreStaffActor(env, actor, rows) {
+  // Resolve the destination from live records, never the backup's Username.
+  // Legacy account document IDs may differ from the canonical/login username.
+  const matches = rows.filter((row) => [row.Username, row.username, row.__id]
+    .some((value) => lower(value) === actor.username));
+  if (matches.length > 1) {
+    throw restoreError('The signed-in administrator has conflicting account records. Resolve them before restoring staff.', 409);
+  }
+  const current = matches[0];
+  const environmentAdmin = actor.role === 'Super Admin'
+    && actor.username === lower(env.ADMIN_WEB_USERNAME || 'admin');
+  if (!current && !environmentAdmin) {
+    throw restoreError('The signed-in administrator account could not be verified. Sign in again before restoring staff.', 409);
+  }
+  if (current && !clean(current.__id)) {
+    throw restoreError('The administrator document identity is missing. Reload before restoring staff.', 409);
+  }
+  return {
+    ...actor,
+    protectedStaffIds: new Set([current ? clean(current.__id) : '', staffAccountDocumentId(actor.username)].filter(Boolean)),
+    protectedStaffNames: new Set([actor.username, current?.Username, current?.username,
+      current?.LoginUsername, current?.loginUsername].map(lower).filter(Boolean))
+  };
+}
+
+function isProtectedRestoreStaff(row, actor) {
+  return actor.protectedStaffIds?.has(clean(row.__id))
+    || [row.Username, row.username, row.UsernameKey, row.LoginUsername, row.loginUsername, row.LoginUsernameKey]
+      .some((value) => actor.protectedStaffNames?.has(lower(value)) || lower(value) === actor.username);
+}
+
 function validateManifest(identity, manifest = {}) {
   if (clean(manifest.format) !== ORGANIZATION_BACKUP_FORMAT) throw restoreError('This is not a Dynamax organisation backup.');
   if (Number(manifest.formatVersion || manifest.version) > ORGANIZATION_BACKUP_VERSION) {
@@ -412,7 +454,7 @@ function jobAllowsCollection(job, collectionPath) {
 }
 
 export async function clearOrganizationRestoreCollection(env, user, jobId, collectionPath) {
-  const actor = restoreActor(user);
+  let actor = restoreActor(user);
   const job = await currentRestoreJob(env, jobId, actor);
   const path = jobAllowsCollection(job, collectionPath);
   // Settings contain the live deployment and subscription bridge. Keep the
@@ -427,14 +469,19 @@ export async function clearOrganizationRestoreCollection(env, user, jobId, colle
     });
     return { ok: true, message: 'Settings are ready for protected restore.', removed: 0, more: false };
   }
+  const staffState = path === 'staffUsers' ? await beginStaffAccountChange(env) : null;
+  if (staffState) actor = protectRestoreStaffActor(env, actor, staffState.rows);
   const page = await listCollectionPage(env, path, { pageSize: 400 });
   const rows = path === 'staffUsers'
-    ? page.documents.filter((row) => lower(row.Username || row.__id) !== actor.username)
+    ? page.documents.filter((row) => !isProtectedRestoreStaff(row, actor))
     : page.documents;
   if (rows.length) {
-    await batchCommitDocuments(env, rows.map((row) => ({
-      operation: 'delete', collectionPath: path, documentId: clean(row.__id)
-    })));
+    const writes = rows.map((row) => ({
+      operation: 'delete', collectionPath: path, documentId: clean(row.__id),
+      ...(staffState ? staffAccountCondition(row) : {})
+    }));
+    if (staffState) await commitStaffAccountChanges(env, staffState, writes);
+    else await batchCommitDocuments(env, writes);
   }
   await upsertDocument(env, RESTORE_JOB_COLLECTION, clean(jobId), {
     ...withoutTransportMetadata(job),
@@ -455,20 +502,34 @@ async function protectedRestoreDocument(env, path, row, actor) {
   const id = clean(copy.__id);
   delete copy.__id;
   if (!id) throw restoreError(`A record in "${path}" has no document ID.`);
-  if (path === 'staffUsers' && lower(copy.Username || id) === actor.username) return null;
+  if (path === 'staffUsers' && isProtectedRestoreStaff({ ...copy, __id: id }, actor)) return null;
+  let condition = {};
   if (path === 'settings') {
-    const current = await getDocument(env, path, id).catch(() => null);
+    // An unavailable read is not evidence that protected live values are absent.
+    const current = await getDocument(env, path, id);
     const redacted = Array.isArray(copy.__redactedFields) ? copy.__redactedFields.map(clean).filter(Boolean) : [];
+    if (!current && (id === 'organisationProfile' || redacted.length)) {
+      throw restoreError('Protected live settings are missing. Restore cannot safely preserve organisation identity or credentials.', 409);
+    }
+    if (current && !clean(current.__updateTime)) {
+      throw restoreError('Reload the live settings before restoring this chunk.', 409);
+    }
+    condition = current ? { updateTime: current.__updateTime } : { exists: false };
     delete copy.__redactedFields;
     [...redacted, ...(id === 'organisationProfile' ? IDENTITY_SETTING_FIELDS : [])].forEach((field) => {
       if (current && Object.prototype.hasOwnProperty.call(current, field)) copy[field] = current[field];
+      else if (current) {
+        // Absence is also part of the live identity/credential configuration.
+        // A backup must not inject an old entitlement, identity or secret.
+        delete copy[field];
+      }
     });
   }
-  return { collectionPath: path, documentId: id, data: copy };
+  return { collectionPath: path, documentId: id, data: copy, ...condition };
 }
 
 export async function writeOrganizationRestoreChunk(env, user, jobId, collectionPath, documents = []) {
-  const actor = restoreActor(user);
+  let actor = restoreActor(user);
   const job = await currentRestoreJob(env, jobId, actor);
   if (clean(job.JobType) === 'Reset') throw restoreError('Reset sessions cannot write records.', 409, 'RESET_WRITE_FORBIDDEN');
   const path = jobAllowsCollection(job, collectionPath);
@@ -476,8 +537,17 @@ export async function writeOrganizationRestoreChunk(env, user, jobId, collection
   if (!rows.length || rows.length > MAX_RESTORE_DOCUMENTS) {
     throw restoreError(`Each restore write must contain between 1 and ${MAX_RESTORE_DOCUMENTS} records.`);
   }
+  const staffState = path === 'staffUsers' ? await beginStaffAccountChange(env) : null;
+  if (staffState) actor = protectRestoreStaffActor(env, actor, staffState.rows);
   const prepared = (await Promise.all(rows.map((row) => protectedRestoreDocument(env, path, row, actor)))).filter(Boolean);
-  if (prepared.length) await batchCommitDocuments(env, prepared);
+  if (prepared.length) {
+    if (staffState) {
+      const existingById = new Map(staffState.rows.map((row) => [clean(row.__id), row]));
+      await commitStaffAccountChanges(env, staffState, prepared.map((write) => ({
+        ...write, ...staffAccountCondition(existingById.get(write.documentId))
+      })));
+    } else await batchCommitDocuments(env, prepared);
+  }
   return { ok: true, message: `Restored ${prepared.length} record(s).`, restored: prepared.length };
 }
 

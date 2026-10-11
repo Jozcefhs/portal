@@ -38,6 +38,8 @@ const chart = [['1010','Asset'],['1020','Asset'],['1030','Asset'],['1110','Asset
 function fixture(initial = [], options = {}) {
   const store = new Map(), commits = []; let version = 0, forcedConflict = false;
   let currentChart = options.chart || chart;
+  let featureFlags = { vendorSettlements:true, accounting:true, approvals:true, ...options.featureFlags };
+  const accessReads = [];
   const chartReads = [];
   const put = (collection,id,row) => store.set(`${collection}/${id}`, {
     ...(options.firestoreRoundTrip ? firestoreDocumentToObject({fields:objectToFirestoreFields(row)}) : structuredClone(row)),
@@ -66,6 +68,7 @@ function fixture(initial = [], options = {}) {
   };
   const functions = vm.runInNewContext(`${source}\n({ handleVendorSettlementAction, prepareVendorSale, snapshotVendorCart })`, {
     ...rules, ...productManagement, handleProductImport, crypto:webcrypto, Intl, Date, TextEncoder, console, assertRequisitionTransition, validateRequisitionPosting, accountingChartChoicesForEdition,
+    staffAccessFor:async (_env, actor) => { accessReads.push(actor); return { featureFlags }; },
     getDocument:async (_env,c,id) => structuredClone(get(c,id) || null), listCollection:async (_env,c) => c === 'accountingPeriods' ? list(c) : list(c),
     getAccountingChartRows:async (_env, params) => { chartReads.push(params); return currentChart; }, verifyStaffApprovalPassword:async (_env,username,password) => password === 'test-confirmation',
     findStaffUserRecord:staffLookups.findStaffUserRecord, findStaffLoginRecord:staffLookups.findStaffLoginRecord,
@@ -91,7 +94,8 @@ const pay = async (amount,id = 'pay1') => { const r = get('vendorSettlementReque
     Reference:'BANK-1',EvidenceReference:'Slip-1',approvalPassword:'test-confirmation'}); };
   const refund = async (value,id = 'refund1',entryId = 'sale1--v1') => run('refund',{VendorId:'v1',EntryId:entryId,Amount:value,RequestId:id,
     Date:'2026-10-08',Reference:'REFUND-1',EvidenceReference:'REFUND-SLIP',Notes:'Returned unopened',approvalPassword:'test-confirmation'});
-  return { store,put,get,list,commits,commit,run,sale,request,decision,approve,pay,refund,functions, chartReads,
+  return { store,put,get,list,commits,commit,run,sale,request,decision,approve,pay,refund,functions, chartReads, accessReads,
+    setFeatureFlags: flags => { featureFlags = flags; },
     setChart: rows => { currentChart = rows; }, conflict:() => { forcedConflict = true; } };
 }
 test('integer money, percent validation, full-payment override and prospective rules', () => {
@@ -118,9 +122,51 @@ test('vendor role is available in every edition and custom modules cannot expand
   }
 });
 test('school-owned carts use no vendor reads or extra mutations', async () => {
-  const f = fixture(); assert.deepEqual(await f.functions.snapshotVendorCart({},[{ItemName:'School'}],user,timestamp),[{ItemName:'School'}]);
+  const f = fixture([], {featureFlags:{vendorSettlements:false}});
+  assert.deepEqual(await f.functions.snapshotVendorCart({},[{ItemName:'School'}],user,timestamp),[{ItemName:'School'}]);
+  assert.equal(f.accessReads.length,0);
   const journal = {Lines:[]}; const result = await f.functions.prepareVendorSale({},{Items:[]},journal);
   assert.equal(result.journal,journal); assert.equal(result.writes.length,0);
+});
+
+test('new vendor carts require authoritative vendor entitlement and prerequisites for staff and public checkout', async () => {
+  const items = [{VendorId:'v1',ItemName:'Water',Quantity:1,Amount:100,SchoolSection:'Secondary'}];
+  for (const disabledFeature of ['vendorSettlements','accounting','approvals']) {
+    const f = fixture([], {featureFlags:{[disabledFeature]:false}});
+    for (const actor of [
+      {...user,allowedSections:['tuckShop'],featureFlags:{vendorSettlements:true,accounting:true,approvals:true}},
+      {edition:'school',branchId:'main',username:'public-store'}
+    ]) {
+      await assert.rejects(f.functions.snapshotVendorCart({},items,actor,timestamp), error => error.status === 403);
+    }
+    assert.equal(f.accessReads.length,2);
+    assert.equal(f.commits.length,0);
+  }
+});
+
+test('enabled vendor plans allow authorized store cashiers and public checkout without settlement management access', async () => {
+  const f = fixture();
+  const items = [{VendorId:'v1',ItemName:'Water',Quantity:1,Amount:100,SchoolSection:'Secondary'}];
+  for (const actor of [
+    {...user,allowedSections:['tuckShop']},
+    {edition:'school',branchId:'main',username:'public-store'}
+  ]) {
+    const cart = await f.functions.snapshotVendorCart({},items,actor,timestamp);
+    assert.ok(cart[0].VendorRule);
+    assert.ok(cart[0].VendorSettings);
+  }
+  assert.equal(f.commits.length,0);
+});
+
+test('the new-cart gate does not recheck entitlement when refunding a paid vendor snapshot', async () => {
+  const f = fixture();
+  await f.sale();
+  const reads = f.accessReads.length;
+  f.setFeatureFlags({vendorSettlements:false,accounting:false,approvals:false});
+  await f.refund(20);
+  assert.equal(f.accessReads.length,reads);
+  assert.equal(f.get('vendorBalances','v1').NetCents,8000);
+  assert.equal(f.list('vendorEarnings').filter(row => row.Type === 'Sale').length,1);
 });
 test('confirmed sale creates immutable earnings and the payable, not another expense', async () => {
   const f = fixture(); const result = await f.sale();
@@ -845,11 +891,14 @@ test('online initialization earns nothing; verified payment posts vendor earning
   await assert.rejects(f.commerce.initializeOnlineOrganizationCommerceSale(env,{url:'https://store.example.test'},f.section,{...f.body,CollectionMode:'Vendor collected'},f.actor),/organisation/);
   await f.commerce.initializeOnlineOrganizationCommerceSale(env,{url:'https://store.example.test'},f.section,{...f.body,CustomerEmail:'fixture@example.test'},f.actor);
   assert.equal(f.list('vendorEarnings').length,0); assert.equal(f.get(f.collection,'stock1').Quantity,5);
+  const accessReads = f.accessReads.length;
+  f.setFeatureFlags({vendorSettlements:false,accounting:false,approvals:false});
   const intent = {SaleId:'sale1',SaleType:f.section};
   const posted = await f.commerce.finalizeOnlineOrganizationCommerceSale(env,intent,{GrossAmount:100,GatewayFee:2,NetAmount:98,Reference:'ONLINE-1',PaidAt:timestamp});
   assert.equal(posted.journal.TotalDebit,100); assert.equal(f.get('vendorBalances','v1').NetCents,10000); assert.equal(f.get(f.collection,'stock1').Quantity,3);
   const replay = await f.commerce.finalizeOnlineOrganizationCommerceSale(env,intent,{GrossAmount:100,GatewayFee:2,NetAmount:98,Reference:'ONLINE-1',PaidAt:timestamp});
   assert.equal(replay.replayed,true); assert.equal(f.list('vendorEarnings').length,1);
+  assert.equal(f.accessReads.length,accessReads);
 });
 
 test('paid online stock shortage holds claims; completing the original issue releases the hold without new earnings', async () => {

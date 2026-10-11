@@ -279,7 +279,7 @@ export function allowedSectionsFor(user = {}, featureFlags = null, options = {})
   const role = clean(user.role || user.Role);
   if (role === 'Vendor User') {
     const edition = clean(options.edition || user.edition || user.Edition || 'school');
-    return filterSectionsForFeatures(['vendorSettlements', ...(edition === 'school' ? ['tuckShop'] : ['organizationStore', 'restaurant'])], featureFlags);
+    return withRequiredRoleModules(role, [], edition, featureFlags);
   }
   if (role === EXTERNAL_AUDITOR_ROLE) return filterSectionsForFeatures(['externalAudit'], featureFlags);
   const department = lower(user.department || user.Department);
@@ -331,7 +331,8 @@ export function sectionAccessFor(user = {}, organization = {}, roleAccess = null
     edition,
     subscriptionPlan,
     {},
-    organization.PlanEntitlements || organization.FeatureEntitlements || null
+    organization.PlanEntitlements || organization.FeatureEntitlements || null,
+    organization.PlanModuleCatalogVersion ?? organization.SubscriptionPriceSnapshot?.ModuleCatalogVersion
   );
   const editionFeatureFlags = featureFlagsForEdition(edition);
   const configuredRoleModules = configuredModulesForUser(

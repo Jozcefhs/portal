@@ -19,6 +19,7 @@ import {
   withPaystackBranchRouting
 } from '../lib/direct-bank-transfer.js';
 import { requireGuestFeePaymentToken } from '../lib/guest-fee-payment.js';
+import { resolveSchoolStoreStock } from '../lib/school-store-stock.js';
 
 const PAYSTACK_INIT_URL = 'https://api.paystack.co/transaction/initialize';
 function cleanReference(value) {
@@ -195,13 +196,12 @@ export async function onRequestPost(context) {
       storeCart = await Promise.all(requestedCart.map(async (entry) => {
         const itemCode = String(entry.itemCode || '').trim();
         const storeType = String(entry.storeType || '').trim();
-        const direct = await getDocument(env, 'storeItems', safeDocumentId(`${storeType}-${itemCode}`)).catch(() => null);
-        const fallback = direct || await findOneByField(env, 'storeItems', 'ItemCode', itemCode).catch(() => null);
+        const fallback = await resolveSchoolStoreStock(env, { ItemCode: itemCode, StoreType: storeType }, payableAccount);
         const item = fallback && String(fallback.StoreType || '').trim() === storeType && storeItemIsPurchasable(fallback, payableAccount) ? fallback : null;
         if (!item || !isYes(item.Active === undefined ? 'YES' : item.Active)) throw new Error('A selected store item is no longer available.');
         const quantity = Math.max(1, Math.floor(toAmount(entry.quantity || 1)));
         if (quantity > toAmount(item.Quantity)) throw new Error(`${item.ItemName} does not have enough stock.`);
-        return { ItemCode: item.ItemCode, ItemName: item.ItemName, StoreType: item.StoreType, CategoryId: item.CategoryId || '', Category: item.Category || '', Size: item.Size || '', Gender: item.Gender || 'All', BranchId: item.BranchId || 'main', SchoolSection: item.SchoolSection || '', Quantity: quantity, UnitPrice: toAmount(item.Price), Amount: toAmount(item.Price) * quantity };
+        return { InventoryDocumentId: item.__id, ItemCode: item.ItemCode, ItemName: item.ItemName, StoreType: item.StoreType, CategoryId: item.CategoryId || '', Category: item.Category || '', Size: item.Size || '', Gender: item.Gender || 'All', BranchId: item.BranchId || 'main', SchoolSection: item.SchoolSection || '', Quantity: quantity, UnitPrice: toAmount(item.Price), Amount: toAmount(item.Price) * quantity };
       }));
       if (!storeCart.length) throw new Error('Choose at least one store item.');
       const cartTotal = storeCart.reduce((sum, item) => sum + item.Amount, 0);

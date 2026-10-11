@@ -2,12 +2,19 @@
   'use strict';
   const escape = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
 
-  async function open({ staffFetch, branchId, schoolSection }) {
+  async function open({ staffFetch, branchId, schoolSection, openTutorial }) {
     if (!branchId || branchId === 'all') throw new Error('Choose one working branch first.');
     const dialog = document.createElement('dialog');
     dialog.className = 'teacher-homework-dialog';
     dialog.setAttribute('aria-label', 'Homework / parent message');
     dialog.innerHTML = `<form method="dialog" class="teacher-homework-heading"><div><p class="eyebrow">Teacher → parents</p><h2>Homework / parent message</h2></div><button aria-label="Close homework" class="secondary">Close</button></form><p data-homework-status role="status">Loading your active subject assignments…</p><div data-homework-body></div>`;
+    if (typeof openTutorial === 'function') {
+      const tutorial = document.createElement('button');
+      tutorial.type = 'button'; tutorial.className = 'secondary'; tutorial.textContent = '▶ Tutorial';
+      tutorial.setAttribute('aria-label', 'Open the homework and parent messages tutorial');
+      tutorial.addEventListener('click', openTutorial);
+      dialog.querySelector('.teacher-homework-heading > div').append(tutorial);
+    }
     document.body.append(dialog);
     dialog.addEventListener('close', () => dialog.remove(), { once: true });
     dialog.showModal();

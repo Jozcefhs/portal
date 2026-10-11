@@ -149,6 +149,14 @@ export async function createScheduledPaystackSubscription(env, options = {}, fet
   };
 }
 
+export function subscriptionIntentModuleCatalogVersion(intent = {}, registration = {}) {
+  // The marker must describe the selected entitlements, not the previous plan.
+  // An old payment intent still represents the former bundled module access.
+  const selection = intent.FeatureEntitlements ? intent : registration;
+  return Math.max(0, Number(selection.PlanModuleCatalogVersion
+    ?? selection.PriceSnapshot?.ModuleCatalogVersion) || 0);
+}
+
 export async function activateSavedSubscriptionPayment(env, options = {}) {
   const platformEnv = options.platformEnv || requirePlatformFirestoreEnv(env);
   const reference = safeId(options.reference);
@@ -226,6 +234,7 @@ export async function activateSavedSubscriptionPayment(env, options = {}) {
     BillingCycle: clean(intent.BillingCycle),
     UserLimit: Math.max(1, Number(intent.UserLimit || registration.UserLimit || 5) || 5),
     FeatureEntitlements: intent.FeatureEntitlements || registration.FeatureEntitlements || [],
+    PlanModuleCatalogVersion: subscriptionIntentModuleCatalogVersion(intent, registration),
     PriceSnapshot: intent.PriceSnapshot || registration.PriceSnapshot || null,
     PlanCatalogRevision: clean(intent.PlanCatalogRevision || registration.PlanCatalogRevision),
     Price: Number(intent.FullCycleAmount || intent.Amount || 0),
@@ -401,6 +410,7 @@ export async function recordVerifiedCardVerification(env, transaction, requested
     Currency: clean(intent.Currency || 'NGN'),
     UserLimit: Math.max(1, Number(intent.UserLimit || savedRegistration.UserLimit || 5) || 5),
     FeatureEntitlements: intent.FeatureEntitlements || savedRegistration.FeatureEntitlements || [],
+    PlanModuleCatalogVersion: subscriptionIntentModuleCatalogVersion(intent, savedRegistration),
     PlanCatalogRevision: clean(intent.PlanCatalogRevision || savedRegistration.PlanCatalogRevision),
     ...cardFields,
     CardVerificationReference: reference,

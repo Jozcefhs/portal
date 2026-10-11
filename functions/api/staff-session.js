@@ -12,7 +12,8 @@ import {
   staffUserForAccess,
   verifyStaffApprovalPassword
 } from '../lib/staff-auth.js';
-import { batchUpsertDocuments, listCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
+import { batchCommitLiteralDocuments, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
+import { beginStaffAccountChange, commitStaffAccountChanges, staffAccountCondition, staffAccountWrite } from '../lib/staff-account-integrity.js';
 import { hashStaffPassword } from '../lib/staff-auth.js';
 import {
   checkStaffLoginAllowed,
@@ -202,7 +203,7 @@ export async function onRequestPost(context) {
     if (action === 'updateprofile') {
       const sessionUser = await readStaffSession(env, request);
       if (!sessionUser) return response({ ok: false, message: 'Your staff session has expired.' }, 401);
-      const existing = await findStaffUserRecord(env, sessionUser.username).catch(() => null)
+      const existing = await findStaffUserRecord(env, sessionUser.username)
         || environmentAdminProfile(env, sessionUser);
       if (!existing) return response({ ok: false, message: 'The database staff account was not found.' }, 404);
       if (['no', 'false', '0', 'inactive', 'disabled'].includes(String(existing.Active ?? 'YES').trim().toLowerCase())) {
@@ -239,11 +240,12 @@ export async function onRequestPost(context) {
       };
       delete updated.__id;
       delete updated.__name;
-      await batchUpsertDocuments(env, [
+      await batchCommitLiteralDocuments(env, [
         {
           collectionPath: 'staffUsers',
           documentId: staffDocumentId,
-          data: updated
+          data: updated,
+          ...staffAccountCondition(existing.__updateTime ? existing : null)
         },
         {
           collectionPath: 'staffProfileImages',
@@ -279,7 +281,7 @@ export async function onRequestPost(context) {
       const password = String(body.password || '');
       if (password !== String(body.confirmPassword || '')) return response({ ok: false, message: 'Passwords do not match.' }, 400);
       if (password.length < 6) return response({ ok: false, message: 'Password must contain at least 6 characters.' }, 400);
-      const existing = await findStaffUserRecord(env, sessionUser.username).catch(() => null)
+      const existing = await findStaffUserRecord(env, sessionUser.username)
         || environmentAdminProfile(env, sessionUser);
       if (!existing) return response({ ok: false, message: 'The database staff account was not found.' }, 404);
       if (['no', 'false', '0', 'inactive', 'disabled'].includes(String(existing.Active ?? 'YES').trim().toLowerCase())) {
@@ -304,7 +306,7 @@ export async function onRequestPost(context) {
       };
       delete updated.__id;
       delete updated.__name;
-      await upsertDocument(env, 'staffUsers', existing.__id, updated);
+      await upsertDocument(env, 'staffUsers', existing.__id, updated, staffAccountCondition(existing.__updateTime ? existing : null));
       const refreshedUser = authoritativeSessionUser(
         updated,
         { ...sessionUser, mustChangePassword: false },
@@ -322,7 +324,8 @@ export async function onRequestPost(context) {
     if (action === 'updatelogindetails') {
       const sessionUser = await readStaffSession(env, request);
       if (!sessionUser) return response({ ok: false, message: 'Your staff session has expired.' }, 401);
-      const existing = await findStaffUserRecord(env, sessionUser.username).catch(() => null)
+      const state = await beginStaffAccountChange(env);
+      const existing = await findStaffUserRecord(env, sessionUser.username)
         || environmentAdminProfile(env, sessionUser);
       if (!existing) return response({ ok: false, message: 'The database staff account was not found.' }, 404);
       if (!isActiveStaffRecord(existing)) {
@@ -343,7 +346,7 @@ export async function onRequestPost(context) {
           message: 'Login username must be 3 to 80 characters and use only letters, numbers, dots, underscores, @ or hyphens.'
         }, 400);
       }
-      const users = await listCollection(env, 'staffUsers');
+      const users = state.rows;
       const existingId = lower(existing.__id);
       const conflict = users.find((row) =>
         lower(row.__id) !== existingId &&
@@ -376,12 +379,8 @@ export async function onRequestPost(context) {
       delete updated.__id;
       delete updated.__name;
       const auditId = `STAFF-LOGIN-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
-      await batchUpsertDocuments(env, [
-        {
-          collectionPath: 'staffUsers',
-          documentId: existing.__id,
-          data: updated
-        },
+      await commitStaffAccountChanges(env, state, [
+        staffAccountWrite(existing.__updateTime ? existing : null, canonicalUsername, updated),
         {
           collectionPath: 'staffSecurityAudit',
           documentId: auditId,

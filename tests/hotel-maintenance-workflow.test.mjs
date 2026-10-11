@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
+import { enforceActorBranch } from '../functions/lib/branch-scope.js';
 
 const source = await readFile(new URL('../functions/lib/hotel-services.js', import.meta.url), 'utf8');
 
@@ -13,7 +14,20 @@ function hotelHarness() {
   const key = (collection, id) => `${collection}/${id}`;
   const context = {
     crypto: globalThis.crypto,
-    getDocument: async (_env, collection, id) => clone(documents.get(key(collection, id)) || null),
+    enforceActorBranch,
+    getDocument: async (_env, collection, id) => {
+      const value = documents.get(key(collection, id));
+      return value ? { ...clone(value), __id: id, __updateTime: value.__updateTime || 'initial-version' } : null;
+    },
+    batchCommitDocuments: async (_env, writes) => {
+      for (const write of writes) {
+        const previous = documents.get(key(write.collectionPath, write.documentId));
+        if ((write.exists === false && previous) || (write.updateTime && write.updateTime !== (previous?.__updateTime || 'initial-version'))) {
+          throw Object.assign(new Error('Conflict'), { status: 409 });
+        }
+      }
+      for (const write of writes) documents.set(key(write.collectionPath, write.documentId), { ...clone(write.data), __updateTime: crypto.randomUUID() });
+    },
     upsertDocument: async (_env, collection, id, data) => {
       documents.set(key(collection, id), clone(data));
       return clone(data);

@@ -152,7 +152,15 @@ export async function assertConfiguredProfileBranch(env, branchId) {
 export async function loadBranchProfileOverride(env, branchId) {
   const normalizedBranchId = clean(branchId) ? safeScopeId(branchId) : '';
   if (!normalizedBranchId) return null;
-  return getDocument(env, BRANCH_PROFILE_OVERRIDE_COLLECTION, normalizedBranchId).catch(() => null);
+  // getDocument returns null for a confirmed missing document; outages must
+  // propagate so a partial edit cannot replace an unread existing override.
+  return getDocument(env, BRANCH_PROFILE_OVERRIDE_COLLECTION, normalizedBranchId);
+}
+
+function overrideWriteCondition(existing) {
+  if (!existing) return { exists: false };
+  if (clean(existing.__updateTime)) return { updateTime: existing.__updateTime };
+  throw Object.assign(new Error('Reload branch settings before saving changes.'), { status: 409 });
 }
 
 export async function effectiveBranchProfile(env, defaultProfile = {}, branchId = '') {
@@ -170,15 +178,15 @@ export async function saveBranchProfileOverrides(env, {
   preserveOmitted = true
 } = {}) {
   const branch = await assertConfiguredProfileBranch(env, branchId);
-  const existing = preserveOmitted ? await loadBranchProfileOverride(env, branch.id) : null;
+  const existing = await loadBranchProfileOverride(env, branch.id);
   const mergedSubmission = preserveOmitted
     ? mergeBranchProfileSubmission(existing, submittedProfile)
     : submittedProfile;
   const values = deriveBranchProfileOverrides(defaultProfile, mergedSubmission);
   const fields = Object.keys(values);
   if (!fields.length) {
-    const stored = existing || await loadBranchProfileOverride(env, branch.id);
-    if (stored) await deleteDocument(env, BRANCH_PROFILE_OVERRIDE_COLLECTION, branch.id);
+    const stored = existing;
+    if (stored) await deleteDocument(env, BRANCH_PROFILE_OVERRIDE_COLLECTION, branch.id, overrideWriteCondition(stored));
     return { branch, values: {}, fields: [], deleted: Boolean(stored) };
   }
   await upsertDocument(env, BRANCH_PROFILE_OVERRIDE_COLLECTION, branch.id, {
@@ -188,13 +196,13 @@ export async function saveBranchProfileOverrides(env, {
     Values: values,
     UpdatedAt: new Date().toISOString(),
     UpdatedBy: clean(updatedBy) || 'Administrator'
-  });
+  }, overrideWriteCondition(existing));
   return { branch, values, fields, deleted: false };
 }
 
 export async function resetBranchProfileOverrides(env, branchId) {
   const branch = await assertConfiguredProfileBranch(env, branchId);
   const existing = await loadBranchProfileOverride(env, branch.id);
-  if (existing) await deleteDocument(env, BRANCH_PROFILE_OVERRIDE_COLLECTION, branch.id);
+  if (existing) await deleteDocument(env, BRANCH_PROFILE_OVERRIDE_COLLECTION, branch.id, overrideWriteCondition(existing));
   return { branch, deleted: Boolean(existing) };
 }

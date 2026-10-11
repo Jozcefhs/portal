@@ -76,8 +76,9 @@ async function run(context) {
         now: clean(body.now),
         limit: Number(body.limit || 100)
       });
-    const churchAnnouncements = attendanceOnly || identity.edition !== 'faith' ? { skipped: true } : await processScheduledChurchAnnouncements(context.env, {
+    const churchAnnouncements = attendanceOnly || !['faith', 'organization'].includes(identity.edition) ? { skipped: true } : await processScheduledChurchAnnouncements(context.env, {
         now: clean(body.now),
+        edition: identity.edition,
         limit: Number(body.limit || 100)
       });
     const announcements = {
@@ -90,7 +91,7 @@ async function run(context) {
     const announcementPush = attendanceOnly ? { skipped: true } : await processSchoolAnnouncementPushQueue(context.env, {
       now: clean(body.now),
       limit: Number(body.pushJobLimit || 1),
-      edition: identity.edition
+      edition: ['faith', 'organization'].includes(identity.edition) ? 'church' : identity.edition
     });
     const attendancePresence = announcementsOnly ? { skipped: true } : await processAttendancePresenceNotifications(context.env, {
       now: clean(body.now),

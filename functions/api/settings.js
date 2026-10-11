@@ -260,6 +260,8 @@ async function loadProfile(env, options = {}) {
     profile.OrganisationCode = identity.organisationCode;
     profile.FeatureFlags = organization.FeatureFlags;
     profile.PlanEntitlements = organization.PlanEntitlements;
+    profile.PlanModuleCatalogVersion = organization.PlanModuleCatalogVersion;
+    profile.SubscriptionPriceSnapshot = savedOrganization?.SubscriptionPriceSnapshot ?? null;
     profile.EnabledFeatureEntitlements = organization.EnabledFeatureEntitlements;
     profile.DisabledFeatureEntitlements = organization.DisabledFeatureEntitlements;
     profile.ModulePreferences = organization.ModulePreferences;
@@ -480,6 +482,8 @@ export async function onRequestPost(context) {
         GracePeriodEndsAt: existing.GracePeriodEndsAt,
         DataRetentionEndsAt: existing.DataRetentionEndsAt,
         PlanEntitlements: existing.PlanEntitlements,
+        PlanModuleCatalogVersion: existing.PlanModuleCatalogVersion,
+        SubscriptionPriceSnapshot: existing.SubscriptionPriceSnapshot,
         DisabledFeatureEntitlements: existing.DisabledFeatureEntitlements,
         PlanCatalogRevision: existing.PlanCatalogRevision,
         UserLimit: existing.UserLimit
@@ -586,6 +590,8 @@ export async function onRequestPost(context) {
       WorkspaceId: deployment.workspaceId,
       Plan: profile.SubscriptionPlan,
       PlanEntitlements: existing.PlanEntitlements,
+      PlanModuleCatalogVersion: existing.PlanModuleCatalogVersion,
+      SubscriptionPriceSnapshot: existing.SubscriptionPriceSnapshot,
       DisabledFeatureEntitlements: existing.DisabledFeatureEntitlements,
       PlanCatalogRevision: existing.PlanCatalogRevision,
       UserLimit: profile.UserLimit,

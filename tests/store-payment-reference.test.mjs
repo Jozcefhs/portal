@@ -135,6 +135,7 @@ function checkoutHarness({ paymentMethod = 'paystack', replay = null, documents 
     readParentSession: async () => ({ email: 'parent@example.org' }),
     verifyTurnstile: async () => {}, requireFirestoreEnv: () => {},
     getPayableFees: async () => ({ ok: true, account, fees: [] }),
+    resolveSchoolStoreStock: async () => ({ __id: 'Bookstore-BOOK1', ItemCode: 'BOOK1', ItemName: 'Demo book', StoreType: 'Bookstore', BranchId: branchId, Price: 5500, Quantity: 10, Active: 'YES' }),
     getSchoolCode: async (configuration, requestedBranch) => {
       calls.code.push(requestedBranch);
       return resolver.getSchoolCode(configuration, requestedBranch);

@@ -7,6 +7,7 @@ import { staffRecordMatchesEdition } from './records-desk.js';
 const ANNOUNCEMENT_ROLES = new Set([
   'super admin', 'pastor', 'senior pastor', 'head minister', 'church administrator'
 ]);
+const ORGANIZATION_ANNOUNCEMENT_ROLES = new Set(['super admin', 'executive director', 'organisation administrator']);
 const MAX_TARGETS_PER_NOTIFICATION = 100;
 const MAX_SCHEDULED_DELIVERY_ATTEMPTS = 5;
 const SCHEDULED_RETRY_DELAY_MS = 5 * 60 * 1000;
@@ -42,6 +43,9 @@ function branchFor(row = {}) {
 
 export function canManageChurchAnnouncements(user = {}) {
   const edition = lower(user.edition || user.OrganisationEdition || user.OrganizationEdition);
+  if (['organization', 'organisation'].includes(edition)) {
+    return ORGANIZATION_ANNOUNCEMENT_ROLES.has(lower(user.role || user.Role));
+  }
   const churchEdition = ['church', 'faith', 'organization', 'organisation'].includes(edition) ||
     user.featureFlags?.members === true;
   return churchEdition && ANNOUNCEMENT_ROLES.has(lower(user.role || user.Role));
@@ -79,6 +83,7 @@ export function normalizeChurchAnnouncementInput(input = {}, options = {}) {
     AnnouncementId: clean(input.AnnouncementId || input.announcementId) ||
       `CH-ANN-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
     Edition: 'church',
+    OrganisationEdition: ['organization', 'organisation'].includes(lower(options.edition)) ? 'organization' : 'faith',
     Title: title,
     Message: message,
     Recipients: recipients,
@@ -93,6 +98,7 @@ export function normalizeChurchAnnouncementInput(input = {}, options = {}) {
 
 export function buildChurchAnnouncementAudienceGroups(members = [], staffUsers = [], recipients = {}, options = {}) {
   const selectedBranchId = clean(options.branchId) ? resolveMembershipBranch({}, options.branchId) : '';
+  const edition = ['organization', 'organisation'].includes(lower(options.edition)) ? 'organization' : 'faith';
   const branchAllowed = (row) => !selectedBranchId || branchFor(row) === selectedBranchId;
   const memberBranches = new Map();
   if (recipients.Members) {
@@ -115,7 +121,7 @@ export function buildChurchAnnouncementAudienceGroups(members = [], staffUsers =
   if (recipients.Staff) {
     (staffUsers || []).filter(activeStaff)
       .filter(branchAllowed)
-      .filter((staff) => staffRecordMatchesEdition(staff, { edition: 'church' }))
+      .filter((staff) => staffRecordMatchesEdition(staff, { edition }))
       .forEach((staff) => {
         const username = lower(staff.Username || staff.username || staff.__id);
         if (!username) return;
@@ -172,7 +178,7 @@ export async function sendChurchAnnouncement(env, announcement, options = {}) {
     members,
     staffUsers,
     announcement.Recipients,
-    { branchId }
+    { branchId, edition: announcement.OrganisationEdition || options.edition }
   );
   if (!audience.groups.length) {
     throw Object.assign(new Error('No active church recipients with notification contact details were found.'), { status: 409 });
@@ -214,7 +220,8 @@ export async function createChurchAnnouncement(env, user, input = {}, options = 
     throw Object.assign(new Error('Only authorised church leaders can send church announcements.'), { status: 403 });
   }
   const announcement = normalizeChurchAnnouncementInput(input, {
-    now: options.now, createdBy: user.username, workspaceId: env.DYNAMAX_WORKSPACE_ID
+    now: options.now, createdBy: user.username, workspaceId: env.DYNAMAX_WORKSPACE_ID,
+    edition: user.edition || user.OrganisationEdition || user.OrganizationEdition
   });
   announcement.BranchId = resolveMembershipBranch(user, input.BranchId || input.branchId);
   const settings = await loadNotificationSettings(env).catch(() => null);
@@ -271,7 +278,7 @@ export async function processScheduledChurchAnnouncements(env, options = {}) {
   const results = [];
   for (const announcement of due) {
     try {
-      results.push(await sendChurchAnnouncement(env, { ...announcement, Status: 'Sending' }, { now }));
+      results.push(await sendChurchAnnouncement(env, { ...announcement, Status: 'Sending' }, { now, edition: options.edition }));
     } catch (error) {
       const attemptCount = Number(announcement.AttemptCount || 0) + 1;
       const retryable = attemptCount < MAX_SCHEDULED_DELIVERY_ATTEMPTS;

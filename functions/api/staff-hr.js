@@ -1,5 +1,6 @@
-import { batchCommitDocuments, getDocument, listCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
+import { getDocument, listCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
+import { beginStaffAccountChange, commitStaffAccountChanges, staffAccountCondition } from '../lib/staff-account-integrity.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { branchRecordVisible, enforceActorBranch, recordBranchId } from '../lib/branch-scope.js';
 import { staffRecordMatchesEdition } from '../lib/records-desk.js';
@@ -375,9 +376,12 @@ async function saveVacancy(env, user, body, capabilities) {
 async function saveReview(env, user, body, capabilities) {
   assertCapability(capabilities, 'canManagePerformance', 'Your HR role cannot record performance reviews.');
   if (lower(body.Username) === actorUsername(user)) fail('You cannot record your own performance review.', 409);
-  const staff = await assertLineManagerTarget(env, user, body.Username);
   const id = safeId(clean(body.ReviewId) || `REVIEW-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`);
-  const existing = clean(body.ReviewId) ? await getDocument(env, 'hrPerformanceReviews', id).catch(() => null) : null;
+  const existing = clean(body.ReviewId) ? await getDocument(env, 'hrPerformanceReviews', id) : null;
+  if (clean(body.ReviewId) && !existing) fail('The performance review no longer exists. Reload before editing.', 404);
+  if (existing && lower(existing.Username) !== lower(body.Username)) fail('A performance review cannot be reassigned to another staff member.', 409);
+  const staff = await assertLineManagerTarget(env, user, existing?.Username || body.Username);
+  if (existing && !existing.__updateTime) fail('Reload the performance review before editing.', 409);
   const branchId = enforceActorBranch(user, body.BranchId || body.branchId, clean(existing?.BranchId || staff.BranchId), clean(staff.BranchId) || 'main');
   const record = {
     ...(existing || {}), ReviewId: id, ...normalizeHrReview(body, existing || {}),
@@ -386,7 +390,10 @@ async function saveReview(env, user, body, capabilities) {
   };
   delete record.__id;
   delete record.__name;
-  await upsertDocument(env, 'hrPerformanceReviews', id, record);
+  delete record.__updateTime;
+  delete record.__createTime;
+  await upsertDocument(env, 'hrPerformanceReviews', id, record,
+    existing ? { updateTime: existing.__updateTime } : { exists: false });
   await audit(env, user, existing ? 'UPDATE REVIEW' : 'CREATE REVIEW', id, record.Username, branchId);
   return { ok: true, message: 'Performance review saved.', review: record };
 }
@@ -524,7 +531,8 @@ async function saveExit(env, user, body, capabilities) {
   const targetUsername = lower(existingExit?.Username || body.Username);
   if (!targetUsername) fail('Choose an existing staff account.', 404);
   let targetStaff = null;
-  const staffUsers = await listCollection(env, 'staffUsers');
+  const accountChange = await beginStaffAccountChange(env);
+  const staffUsers = accountChange.rows;
   targetStaff = staffUsers.find((row) => lower(row.Username || row.__id) === targetUsername);
   requireVisibleStaff(targetStaff, user);
   const branchId = enforceActorBranch(
@@ -609,7 +617,7 @@ async function saveExit(env, user, body, capabilities) {
     });
     writes.push({
       collectionPath: 'staffUsers', documentId: targetStaff.__id || employeeId, data: updatedStaff,
-      ...(targetStaff.__updateTime ? { updateTime: targetStaff.__updateTime } : {})
+      ...staffAccountCondition(targetStaff)
     });
     const securityAuditId = safeId(`STAFF-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`);
     writes.push({
@@ -640,7 +648,7 @@ async function saveExit(env, user, body, capabilities) {
       ...(employee.__updateTime ? { updateTime: employee.__updateTime } : {})
     });
   }
-  await batchCommitDocuments(env, writes);
+  await commitStaffAccountChanges(env, accountChange, writes);
   return {
     ok: true,
     message: targetIsActive

@@ -66,11 +66,20 @@ function safeYouTubeHref(value) {
 function saveVisibleTutorialDraft() {
   if (!ownerTutorialCatalogReady || !ownerTutorialCatalog) return;
   ownerTutorialCatalog.ChannelUrl = document.getElementById('ownerTutorialChannelUrl').value.trim();
-  ownerTutorialCatalog.Editions[ownerTutorialEdition.value].Links = Object.fromEntries(
-    [...ownerTutorialLinksList.querySelectorAll('[data-tutorial-storage-key]')]
-      .map((input) => [input.dataset.tutorialStorageKey, input.value.trim()])
-      .filter(([, url]) => url)
-  );
+  // A select change has already updated its value; the inputs still belong to
+  // the last rendered edition. Leave unlisted and future module keys intact.
+  const edition = ownerTutorialLinksList.dataset.edition || ownerTutorialEdition.value;
+  const links = ownerTutorialCatalog.Editions[edition].Links;
+  ownerTutorialLinksList.querySelectorAll('[data-tutorial-storage-key]').forEach((input) => {
+    const key = input.dataset.tutorialStorageKey;
+    const url = input.value.trim();
+    if (url) links[key] = url;
+    else delete links[key];
+    // Render accepts the former module-key alias too. Clear that alias when
+    // editing its visible field so an erased URL cannot reappear on reload.
+    const module = window.DynamaxTutorialModuleCatalogue.find((item) => item.storageKey === key);
+    if (module && module.key !== key) delete links[module.key];
+  });
 }
 
 function renderOwnerTutorialLinks() {
@@ -657,16 +666,9 @@ pricingForm.addEventListener('input', (event) => {
   if (!event.target.closest('.tenant-pool-section, .platform-payment-section, .owner-tutorial-section')) setStatus(pricingStatus, 'You have unsaved pricing changes.');
 });
 
-ownerTutorialEdition?.addEventListener('change', (event) => {
+ownerTutorialEdition?.addEventListener('change', () => {
   if (!ownerTutorialCatalog) return;
-  // The change event fires after the select value changes. Keep the previous
-  // edition's draft using the last rendered edition instead of the new value.
-  const previousEdition = ownerTutorialLinksList.dataset.edition || 'school';
-  ownerTutorialCatalog.Editions[previousEdition].Links = Object.fromEntries(
-    [...ownerTutorialLinksList.querySelectorAll('[data-tutorial-storage-key]')]
-      .map((input) => [input.dataset.tutorialStorageKey, input.value.trim()])
-      .filter(([, url]) => url)
-  );
+  saveVisibleTutorialDraft();
   renderOwnerTutorialLinks();
 });
 

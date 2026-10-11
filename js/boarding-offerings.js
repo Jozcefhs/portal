@@ -8,7 +8,7 @@
   window.DynamaxBoardingOfferings = {
     canAccess: user => user?.edition === 'school' && (user.allowedSections || []).includes('accounts')
       && ['Accounts Officer', 'Super Admin', 'Director'].includes(user.assignedRole || user.role),
-    async open({ fetch: staffFetch, user }) {
+    async open({ fetch: staffFetch, user, openTutorial }) {
       if (!this.canAccess(user)) return;
       document.getElementById('boardingOfferingsDialog')?.remove();
       const dialog = document.createElement('dialog');
@@ -16,6 +16,13 @@
       dialog.setAttribute('aria-labelledby', 'boardingOfferingTitle');
       dialog.innerHTML = `<header class="boarding-offering-heading"><div><p class="eyebrow">Accounts · Student wallets</p><h2 id="boardingOfferingTitle">Boarding service offerings</h2></div><button type="button" data-close aria-label="Close boarding offerings">×</button></header>
         <p class="status" role="status" aria-live="polite" data-status>Loading boarding students…</p><div data-content></div>`;
+      if (typeof openTutorial === 'function') {
+        const tutorial = document.createElement('button');
+        tutorial.type = 'button'; tutorial.className = 'secondary'; tutorial.textContent = '▶ Tutorial';
+        tutorial.setAttribute('aria-label', 'Open the boarding service offerings tutorial');
+        tutorial.addEventListener('click', openTutorial);
+        dialog.querySelector('.boarding-offering-heading > div').append(tutorial);
+      }
       document.body.append(dialog); dialog.showModal();
       let busy = false, preview = null, service = null, data = null, selections = new Map(), credentials = '';
       const status = (message, bad = false) => { const el = dialog.querySelector('[data-status]'); el.textContent = message; el.className = `status ${bad ? 'bad' : 'ok'}`; };

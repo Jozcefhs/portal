@@ -1,6 +1,6 @@
 import { queryCollection } from '../lib/firestore.js';
 import { requirePlatformFirestoreEnv } from '../lib/platform-firestore.js';
-import { subscriptionModulesForEdition } from '../lib/subscription-plans.js';
+import { SUBSCRIPTION_MODULE_CATALOG_VERSION, subscriptionModulesForEdition } from '../lib/subscription-plans.js';
 
 const clean = (value) => String(value ?? '').trim();
 
@@ -18,6 +18,8 @@ export function publicPolicy(row = {}) {
     Price: Number(row.Price || 0),
     Currency: clean(row.Currency || 'NGN'),
     PriceSnapshot: row.PriceSnapshot && typeof row.PriceSnapshot === 'object' ? row.PriceSnapshot : null,
+    PlanModuleCatalogVersion: ownerDemo ? SUBSCRIPTION_MODULE_CATALOG_VERSION
+      : Math.max(0, Number(row.PlanModuleCatalogVersion ?? row.PriceSnapshot?.ModuleCatalogVersion) || 0),
     SubscriptionStatus: clean(row.SubscriptionStatus),
     PaymentStatus: clean(row.PaymentStatus),
     OwnerDemo: ownerDemo,

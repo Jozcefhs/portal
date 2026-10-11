@@ -129,7 +129,6 @@ test('branch-bound devices fail closed for unverified global and bare-ID actions
 
   [
     'updateApplicationStatus', 'deleteApplication', 'importStudents', 'promoteStudents',
-    'getClinicRecords', 'getClinicInventory', 'getKitchenInventory',
     'getStoreOverview', 'getFormSales', 'saveFeeItem', 'recordSale',
     'generateSchoolFeeInvoices', 'getAccountingOverview',
     'saveAccountingPeriod', 'saveAccountingApprovalLimit', 'saveAccountingCloseChecklist',
@@ -145,6 +144,12 @@ test('branch-bound devices fail closed for unverified global and bare-ID actions
       `${action} must fail closed for a branch-bound device`
     );
   });
+
+  for (const action of ['enrollStudent', 'getClinicRecords', 'saveClinicRecord',
+    'getClinicInventory', 'saveClinicInventoryItem', 'deleteClinicInventoryItem', 'recordClinicStockMovement',
+    'getKitchenInventory', 'saveKitchenInventoryItem', 'deleteKitchenInventoryItem', 'recordKitchenStockMovement']) {
+    assert.equal(enforceDesktopDeviceActionScope(branchDevice, action, { Action: action }).Action, action);
+  }
 
   const organisationWideBody = { Action: 'deleteApplication', ApplicationReference: 'ANY/26/000001' };
   assert.equal(

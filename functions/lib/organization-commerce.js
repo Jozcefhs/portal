@@ -231,7 +231,7 @@ function paymentAccount(method) {
 }
 
 function itemReference(entry = {}) {
-  return clean(entry.ItemCode || entry.itemCode || entry.ItemName || entry.itemName || entry.Reference);
+  return clean(entry.InventoryDocumentId || entry.ItemCode || entry.itemCode || entry.ItemName || entry.itemName || entry.Reference);
 }
 
 function requestedQuantity(entry = {}) {
@@ -279,7 +279,11 @@ async function scopedInventory(env, section, user) {
 function findInventoryItem(rows, section, reference) {
   const wanted = lower(reference);
   if (section === 'organizationStore') {
-    return rows.find((row) => lower(row.ItemCode || row.__id) === wanted);
+    const exact = rows.find((row) => lower(row.__id) === wanted);
+    if (exact) return exact;
+    const matches = rows.filter((row) => lower(row.ItemCode) === wanted);
+    if (matches.length > 1) throw error('More than one stock record uses this code. Select the exact inventory item.', 409);
+    return matches[0];
   }
   if (section === 'tuckShop') {
     return rows.find((row) => lower(row.__id) === wanted);
@@ -436,7 +440,7 @@ export function buildOrganizationCommerceJournal(sale = {}, settlement = {}) {
 function inventoryWrites(section, cart, inventoryRows, timestamp) {
   return cart.map((line) => {
     const item = findInventoryItem(inventoryRows, section,
-      section === 'organizationStore' ? (line.ItemCode || line.ItemName) : line.InventoryDocumentId || line.ItemName);
+      line.InventoryDocumentId || line.ItemCode || line.ItemName);
     if (!item) throw error(`${line.ItemName} is no longer in inventory.`, 409);
     if (!clean(item.__updateTime)) {
       throw error(`${line.ItemName} stock version is unavailable. Refresh inventory and try again.`, 409);
@@ -753,7 +757,7 @@ export async function initializeDirectTransferOrganizationCommerceSale(env, sect
       CustomerName: sale.CustomerName,
       CustomerEmail: sale.CustomerEmail,
       CustomerPhone: sale.CustomerPhone,
-      Items: cart.map((item) => ({ Reference: item.InventoryDocumentId || item.ItemCode || item.ItemName, Quantity: item.Quantity })),
+      Items: cart.map((item) => ({ InventoryDocumentId: item.InventoryDocumentId, ItemCode: item.ItemCode, Reference: item.InventoryDocumentId || item.ItemCode || item.ItemName, Quantity: item.Quantity })),
       CheckoutSource: sale.CheckoutSource
     }
   });

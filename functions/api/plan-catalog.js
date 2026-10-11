@@ -5,7 +5,9 @@ import { loadPlatformPaymentSettings } from '../lib/platform-direct-bank-transfe
 import { readJsonBody } from '../lib/request-security.js';
 import { paystackEnvironmentIdentity, paystackSecretMode } from '../lib/paystack-environment.js';
 import {
+  SUBSCRIPTION_MODULE_CATALOG_VERSION,
   SUBSCRIPTION_PLAN_NAMES,
+  migrateSubscriptionModuleEntitlements,
   normalizeSubscriptionPlanCatalog,
   publicSubscriptionPlanCatalog,
   subscriptionPlanEntitlements
@@ -62,8 +64,10 @@ async function updateSubscriberEntitlements(platformEnv, catalog) {
       data: {
         ...withoutFirestoreMetadata(registration),
         FeatureEntitlements: clean(registration.Plan) === 'Flex' && Array.isArray(registration.FeatureEntitlements)
-          ? [...registration.FeatureEntitlements]
+          ? migrateSubscriptionModuleEntitlements(registration.Edition, registration.FeatureEntitlements,
+            registration.PlanModuleCatalogVersion ?? registration.PriceSnapshot?.ModuleCatalogVersion)
           : subscriptionPlanEntitlements(registration.Plan, registration.Edition, catalog),
+        PlanModuleCatalogVersion: SUBSCRIPTION_MODULE_CATALOG_VERSION,
         PlanCatalogRevision: catalog.PolicyRevision,
         EntitlementsUpdatedAt: catalog.UpdatedAt,
         UpdatedAt: new Date().toISOString()

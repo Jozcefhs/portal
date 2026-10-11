@@ -180,7 +180,27 @@ test('large staff imports keep every permission grant and officer update in the 
   const usersSource = await readFile(new URL('../functions/api/staff-users.js', import.meta.url), 'utf8');
   const source = usersSource.slice(usersSource.indexOf('async function importUsers('), usersSource.indexOf('\nasync function deleteUser('));
   const batches = [];
+  const integritySource = (await readFile(new URL('../functions/lib/staff-account-integrity.js', import.meta.url), 'utf8'))
+    .replace(/^import[^\n]+\n/m, '').replace(/^export /gm, '');
+  let guard = null;
+  let revision = 0;
+  const directory = [];
+  const integrityContext = vm.createContext({ crypto, Date,
+    getDocument: async () => guard,
+    listCollection: async () => directory,
+    batchCommitLiteralDocuments: async (_env, batch) => {
+      assert.ok(batch.length <= 500);
+      batches.push(batch);
+      for (const write of batch) {
+        if (write.collectionPath === 'staffUsers') directory.push({ ...write.data, __id: write.documentId, __updateTime: `v${++revision}` });
+        if (write.collectionPath === 'settings') guard = { ...write.data, __updateTime: `v${++revision}` };
+      }
+    }
+  });
+  vm.runInContext(integritySource, integrityContext);
   const importer = vm.runInNewContext(`(${source})`, {
+    ...Object.fromEntries(['assertStaffAccountFinalState', 'beginStaffAccountChange', 'commitStaffAccountChanges',
+      'resolveStaffAccountTarget', 'staffAccountWrite'].map(name => [name, integrityContext[name]])),
     clean, lower, listCollection: async () => [], normalizeOrganizationEdition: value => value,
     loadSubscriptionUserLimit: async () => 1000, staffAccountsForSubscription: rows => rows,
     getSchoolStructure: async () => ({}), loadOrganizationNameProfile: async () => ({}),
@@ -199,10 +219,11 @@ test('large staff imports keep every permission grant and officer update in the 
   });
   assert.equal(result.imported, 500);
   assert.equal(result.failures.length, 0);
-  assert.equal(batches.length, 2);
+  assert.equal(batches.length, 3);
   for (const batch of batches) {
-    assert.equal(batch.length, 500);
-    for (let index = 0; index < batch.length; index += 2) {
+    assert.ok(batch.length <= 500);
+    assert.equal(batch.at(-1).documentId, 'staffAccountIntegrity');
+    for (let index = 0; index < batch.length - 1; index += 2) {
       assert.equal(batch[index].collectionPath, 'staffUsers');
       assert.equal(batch[index].data.RequisitionEditEnabled, true);
       assert.equal(batch[index + 1].data.Username, batch[index].data.Username);

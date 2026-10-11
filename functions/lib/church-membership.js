@@ -61,13 +61,22 @@ export const CHURCH_STAFF_ROLES = Object.freeze([
 
 const MEMBER_ROLES = new Set(['Super Admin', 'Pastor', 'Church Administrator', 'Membership Officer']);
 const PASTORAL_ROLES = new Set(['Super Admin', 'Pastor']);
+const ORGANIZATION_PERSONNEL_ROLES = new Set([
+  'Executive Director', 'Organisation Administrator', 'Operations Manager', 'Records Officer'
+]);
+
+export function organizationOperationsRole(user = {}) {
+  const edition = lower(user.edition || user.OrganisationEdition || user.OrganizationEdition);
+  return ['organization', 'organisation'].includes(edition) ? clean(user.role || user.Role) : '';
+}
 
 export function membershipCapabilities(user = {}) {
   const role = clean(user.role || user.Role);
+  const personnelAccess = ORGANIZATION_PERSONNEL_ROLES.has(organizationOperationsRole(user));
   return {
-    canView: MEMBER_ROLES.has(role),
-    canEditMembers: MEMBER_ROLES.has(role),
-    canManageHouseholds: MEMBER_ROLES.has(role),
+    canView: MEMBER_ROLES.has(role) || personnelAccess,
+    canEditMembers: MEMBER_ROLES.has(role) || personnelAccess,
+    canManageHouseholds: MEMBER_ROLES.has(role) || personnelAccess,
     canViewPastoralNotes: PASTORAL_ROLES.has(role),
     canEditPastoralNotes: PASTORAL_ROLES.has(role),
     canViewAudit: PASTORAL_ROLES.has(role)
@@ -152,8 +161,30 @@ export function normalizeChurchMember(input = {}, branchId = 'main') {
 export function publicChurchMember(row = {}, capabilities = {}) {
   const copy = { ...row };
   delete copy.__name;
-  if (!capabilities.canViewPastoralNotes) delete copy.PastoralNotes;
+  if (!capabilities.canViewPastoralNotes) {
+    delete copy.PastoralNotes;
+    delete copy.pastoralNotes;
+  }
   return copy;
+}
+
+export function normalizeChurchMemberUpdate(input = {}, branchId = 'main', existing = null) {
+  // The compact web editor does not contain the complete desktop profile.
+  // Apply only supplied fields, including intentional blanks, before validation.
+  const merged = { ...(existing || {}) };
+  const fields = Object.keys(normalizeChurchMember({ MemberId: '_', DisplayName: '_' }, branchId));
+  for (const field of fields) {
+    const aliases = [field, field[0].toLowerCase() + field.slice(1)];
+    if (field === 'Surname') aliases.push('LastName', 'lastName');
+    const supplied = aliases.find((name) => Object.hasOwn(input, name) && input[name] !== undefined);
+    if (supplied) {
+      // Remove legacy aliases too, so an explicit blank cannot fall back to an
+      // older lower-case value during normalization.
+      for (const alias of aliases) delete merged[alias];
+      merged[field] = input[supplied];
+    }
+  }
+  return normalizeChurchMember(merged, branchId);
 }
 
 function requireCapability(user, capability) {
@@ -256,10 +287,12 @@ export async function saveChurchMember(env, user, body = {}) {
     error.status = 403;
     throw error;
   }
-  const member = normalizeChurchMember(incoming, branchId);
   const memberPath = churchCollectionPath(CHURCH_COLLECTIONS.members, branchId);
-  const id = safeChurchDocumentId(member.MemberId);
+  const incomingMemberId = clean(incoming.MemberId || incoming.memberId);
+  if (!incomingMemberId) throw inputError('MemberId is required.');
+  const id = safeChurchDocumentId(incomingMemberId);
   const existing = await getDocument(env, memberPath, id);
+  const member = normalizeChurchMemberUpdate(incoming, branchId, existing);
   const originalMemberId = clean(
     body.OriginalMemberId || body.originalMemberId ||
     incoming.OriginalMemberId || incoming.originalMemberId
@@ -280,7 +313,7 @@ export async function saveChurchMember(env, user, body = {}) {
       throw error;
     }
   }
-  if (!capabilities.canEditPastoralNotes) member.PastoralNotes = clean(existing?.PastoralNotes);
+  if (!capabilities.canEditPastoralNotes) member.PastoralNotes = clean(existing?.PastoralNotes || existing?.pastoralNotes);
   const payload = {
     ...(existing || {}),
     ...member,

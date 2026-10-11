@@ -139,6 +139,9 @@ function publicActivationRegistration(registration = {}) {
     billingCycle: clean(registration.BillingCycle),
     userLimit: Math.max(1, Number(registration.UserLimit || 5) || 5),
     planEntitlements: registration.FeatureEntitlements ?? registration.PlanEntitlements ?? null,
+    planModuleCatalogVersion: Math.max(0, Number(registration.PlanModuleCatalogVersion
+      ?? registration.PriceSnapshot?.ModuleCatalogVersion) || 0),
+    subscriptionPriceSnapshot: registration.PriceSnapshot ?? null,
     planCatalogRevision: clean(registration.PlanCatalogRevision),
     subscriptionStatus: clean(registration.SubscriptionStatus),
     ownerDemo: registration.OwnerDemo === true,

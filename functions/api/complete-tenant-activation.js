@@ -106,6 +106,9 @@ function organizationProfile(claim, identity, existing = {}) {
     Plan: clean(claim.plan),
     SubscriptionPlan: clean(claim.plan),
     PlanEntitlements: claim.planEntitlements ?? null,
+    PlanModuleCatalogVersion: Math.max(0, Number(claim.planModuleCatalogVersion
+      ?? claim.subscriptionPriceSnapshot?.ModuleCatalogVersion) || 0),
+    SubscriptionPriceSnapshot: claim.subscriptionPriceSnapshot ?? null,
     PlanCatalogRevision: clean(claim.planCatalogRevision),
     UserLimit: Math.max(1, Number(claim.userLimit || 5) || 5),
     SubscriptionStatus: clean(claim.subscriptionStatus),

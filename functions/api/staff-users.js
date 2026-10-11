@@ -1,4 +1,4 @@
-import { batchUpsertDocuments, deleteDocument, getDocument, listCollection, patchDocumentFields, requireFirestoreEnv, updateDocumentIfCurrent, upsertDocument } from '../lib/firestore.js';
+import { getDocument, listCollection, patchDocumentFields, requireFirestoreEnv, updateDocumentIfCurrent, upsertDocument } from '../lib/firestore.js';
 import { hashStaffPassword, invalidateStaffAccessCache, requireStaffSession } from '../lib/staff-auth.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { staffRecordMatchesEdition } from '../lib/records-desk.js';
@@ -36,6 +36,7 @@ import { loadOrganizationNameProfile } from '../lib/organization-name-format.js'
 import { formatPersonName } from '../lib/person-name-format.js';
 import { canEditRequisitions, requisitionEditGrant, requisitionEditPermissionAuditWrite } from '../lib/requisition-edit-permission.js';
 import { EXTERNAL_AUDITOR_ROLE, normalizeExternalAuditGrant } from '../lib/external-audit.js';
+import { assertStaffAccountFinalState, beginStaffAccountChange, commitStaffAccountChanges, resolveStaffAccountTarget, staffAccountCondition, staffAccountWrite } from '../lib/staff-account-integrity.js';
 
 function clean(value) { return String(value ?? '').trim(); }
 function lower(value) { return clean(value).toLowerCase(); }
@@ -246,10 +247,9 @@ async function listSecurityAudit(env, actor) {
 async function saveUser(env, actor, body) {
   const username = clean(body.Username || body.username);
   if (!username) { const err = new Error('Username is required.'); err.status = 400; throw err; }
-  const id = safeId(username);
-  if (!id) { const err = new Error('Enter a valid username.'); err.status = 400; throw err; }
-  const rows = await listCollection(env, 'staffUsers');
-  const existing = rows.find((row) => lower(row.Username || row.__id) === lower(username));
+  const state = await beginStaffAccountChange(env);
+  const rows = state.rows;
+  const { existing } = resolveStaffAccountTarget(rows, username, body.OriginalUsername);
   if (existing && !staffRecordMatchesEdition(existing, actor)) {
     const err = new Error('This staff account belongs to another organisation workspace.'); err.status = 403; throw err;
   }
@@ -336,8 +336,8 @@ async function saveUser(env, actor, body) {
   delete payload.__id;
   delete payload.__name;
   const permissionAudit = requisitionEditPermissionAuditWrite(existing || {}, payload, actor);
-  await batchUpsertDocuments(env, [
-    { collectionPath: 'staffUsers', documentId: id, data: payload },
+  await commitStaffAccountChanges(env, state, [
+    staffAccountWrite(existing, username, payload),
     ...(permissionAudit ? [permissionAudit] : [])
   ]);
   await audit(env, actor, existing ? 'UPDATE USER' : 'CREATE USER', username, `${role}${department ? ` | ${department}` : ''}`, branchId);
@@ -362,27 +362,26 @@ async function migrateStaffNames(env, actor) {
 async function importUsers(env, actor, body) {
   const users = Array.isArray(body.users) ? body.users.slice(0, 500) : [];
   if (!users.length) { const err = new Error('Choose a CSV containing at least one staff row.'); err.status = 400; throw err; }
-  const existingRows = await listCollection(env, 'staffUsers');
+  let state = await beginStaffAccountChange(env);
+  const existingRows = state.rows;
   const edition = normalizeOrganizationEdition(actor.edition);
   const userLimit = await loadSubscriptionUserLimit(env);
   const subscriptionRows = staffAccountsForSubscription(existingRows, edition, actor.username);
   const plannedRows = subscriptionRows.map((row) => ({ ...row }));
-  const existingByName = new Map(existingRows.map((row) => [lower(row.Username || row.__id), row]));
   const [structure, profile] = await Promise.all([
     getSchoolStructure(env),
     loadOrganizationNameProfile(env)
   ]);
   const writes = []; const writeGroups = []; const failures = []; const seen = new Set();
+  const identityRows = [...existingRows];
   for (let index = 0; index < users.length; index += 1) {
     try {
       const row = users[index] || {};
       const requiredIdentity = requiredStaffImportIdentity(row);
       const username = requiredIdentity.Username;
-      const id = safeId(username);
-      if (!id) throw new Error('Enter a valid Username.');
       if (seen.has(lower(username))) throw new Error('Duplicate username in this CSV.');
       seen.add(lower(username));
-      const existing = existingByName.get(lower(username));
+      const { existing, id } = resolveStaffAccountTarget(identityRows, username, '', { importing: true });
       if (existing && !staffRecordMatchesEdition(existing, actor)) throw new Error('This staff account belongs to another organisation workspace.');
       if (existing && !branchRecordVisible(existing, actor)) throw new Error('This staff account belongs to another branch.');
       const password = String(row.Password || row.password || '');
@@ -390,7 +389,7 @@ async function importUsers(env, actor, body) {
         ...row,
         FirstName: requiredIdentity.FirstName,
         Surname: requiredIdentity.Surname
-      }, existing, profile || {});
+      }, existing || {}, profile || {});
       const role = clean(row.Role || row.role) || clean(existing?.Role || existing?.role) || 'Front Desk';
       ensureRoleAvailable(role, edition);
       if (role === EXTERNAL_AUDITOR_ROLE) throw new Error('Create external auditor accounts individually and set their audit period and expiry.');
@@ -457,25 +456,30 @@ async function importUsers(env, actor, body) {
         UpdatedAt: nowIso(), UpdatedBy: actor.displayName || actor.username
       };
       delete payload.__id; delete payload.__name;
-      const write = { collectionPath: 'staffUsers', documentId: id, data: payload };
+      const write = staffAccountWrite(existing, username, payload);
       const permissionAudit = requisitionEditPermissionAuditWrite(existing || {}, payload, actor);
       writes.push(write);
       writeGroups.push([write, ...(permissionAudit ? [permissionAudit] : [])]);
+      if (!existing) identityRows.push({ ...payload, __id: id });
     } catch (error) {
       failures.push({ row: index + 2, username: clean(users[index]?.Username), message: error.message || String(error) });
     }
   }
-  // Keep each staff permission change and its audit in the same transaction,
-  // without exceeding Firestore's 500-write batch limit on large imports.
+  // Validate the whole import before any write. Promotions go first so a
+  // legitimate administrator handover is also safe across chunk boundaries.
+  assertStaffAccountFinalState(existingRows, writes);
+  writeGroups.sort((a, b) => Number(b[0].data.Role === 'Super Admin' && activeValue(b[0].data.Active))
+    - Number(a[0].data.Role === 'Super Admin' && activeValue(a[0].data.Active)));
   let batch = [];
   for (const group of writeGroups) {
-    if (batch.length + group.length > 500) {
-      await batchUpsertDocuments(env, batch);
+    if (batch.length + group.length > 499) {
+      await commitStaffAccountChanges(env, state, batch);
+      state = await beginStaffAccountChange(env);
       batch = [];
     }
     batch.push(...group);
   }
-  if (batch.length) await batchUpsertDocuments(env, batch);
+  if (batch.length) await commitStaffAccountChanges(env, state, batch);
   const imported = writes.length;
   const passwordSetupRequired = writes.filter((write) => write.data.PasswordSetupRequired === true).length;
   await audit(env, actor, 'BULK IMPORT', `${imported} staff`, `${failures.length} failed`, actorBranchScope(actor) || 'main');
@@ -490,15 +494,18 @@ async function importUsers(env, actor, body) {
 
 async function deleteUser(env, actor, body) {
   const username = clean(body.Username || body.username);
-  const rows = await listCollection(env, 'staffUsers');
+  const state = await beginStaffAccountChange(env);
+  const rows = state.rows;
   const existing = rows.find((row) => lower(row.Username || row.__id) === lower(username));
   if (!existing) { const err = new Error('Staff account was not found.'); err.status = 404; throw err; }
+  if (!staffRecordMatchesEdition(existing, actor)) { const err = new Error('This staff account belongs to another organisation workspace.'); err.status = 403; throw err; }
   if (!branchRecordVisible(existing, actor)) { const err = new Error('This staff account belongs to another branch.'); err.status = 403; throw err; }
   if (lower(username) === lower(actor.username)) { const err = new Error('You cannot delete the account currently signed in.'); err.status = 409; throw err; }
   if (clean(existing.Role) === 'Super Admin' && activeValue(existing.Active === undefined ? true : existing.Active) && activeSuperAdmins(rows, username).length === 0) {
     const err = new Error('At least one active Super Admin must remain.'); err.status = 409; throw err;
   }
-  await deleteDocument(env, 'staffUsers', existing.__id || safeId(username));
+  await commitStaffAccountChanges(env, state, [{ collectionPath: 'staffUsers',
+    documentId: existing.__id || safeId(username), operation: 'delete', ...staffAccountCondition(existing) }]);
   await audit(env, actor, 'DELETE USER', username, clean(existing.Role), clean(existing.BranchId || 'main'));
   return { ok: true, message: 'Staff account deleted.' };
 }

@@ -52,7 +52,8 @@ test('restore is Super-Administrator-only, identity-bound and safety-backed', ()
   assert.match(backupLib, /BACKUP_IDENTITY_MISMATCH/);
   assert.match(backupLib, /Firestore removes a collection from discovery when its final document is/);
   assert.match(backupLib, /schoolBranches\\\/\[a-z0-9\._-\]\+/);
-  assert.match(backupLib, /path === 'staffUsers'[\s\S]*actor\.username/);
+  assert.match(backupLib, /path === 'staffUsers' && isProtectedRestoreStaff/);
+  assert.match(backupLib, /protectedStaffIds: new Set\(\[current \? clean\(current\.__id\)/);
   assert.match(backupLib, /IDENTITY_SETTING_FIELDS/);
   assert.match(backupLib, /Status: 'Completed'/);
   assert.match(middleware, /'\/api\/data-backup'/);
@@ -93,7 +94,8 @@ test('one-click test reset is password-approved, safety-backed and clears R2 thr
   assert.match(backupLib, /RESET \$\{identity\.workspaceId\}/);
   assert.match(backupLib, /bucket\.list\(\{ prefix, limit: 1000 \}\)/);
   assert.match(backupLib, /await bucket\.delete\(keys\)/);
-  assert.match(backupLib, /path === 'staffUsers'[\s\S]*actor\.username/);
+  assert.match(backupLib, /page\.documents\.filter\(\(row\) => !isProtectedRestoreStaff\(row, actor\)\)/);
+  assert.match(backupLib, /commitStaffAccountChanges\(env, staffState, writes\)/);
   assert.match(admin, /Reset test workspace/);
   assert.match(admin, /pre-reset-safety-backup/);
   assert.match(admin, /Preview and reset test data/);

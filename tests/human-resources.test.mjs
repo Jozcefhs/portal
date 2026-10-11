@@ -176,7 +176,7 @@ test('completing an employee exit deactivates access and excludes exited staff f
   assert.match(apiSource, /Automatically deactivated after completed/);
   assert.match(apiSource, /At least one active Super Admin must remain/);
   assert.match(apiSource, /Employee exit completed and staff account deactivated/);
-  assert.match(apiSource, /batchCommitDocuments\(env, writes\)/);
+  assert.match(apiSource, /commitStaffAccountChanges\(env, accountChange, writes\)/);
   assert.match(apiSource, /AccessSyncStatus = 'Completed'/);
   assert.match(apiSource, /REPAIR COMPLETED EMPLOYEE EXIT/);
   assert.match(adminJs, /inactive\|suspended\|terminated\|exited/i);

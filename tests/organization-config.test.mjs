@@ -140,13 +140,14 @@ test('server-issued plan entitlements override bootstrap plan defaults', () => {
     organizationProfile: {
       Edition: 'school',
       Plan: 'Starter',
+      PlanModuleCatalogVersion: 11,
       PlanEntitlements: ['accounting', 'humanResources', 'payroll']
     }
   });
   assert.equal(configured.FeatureFlags.accounting, true);
   assert.equal(configured.FeatureFlags.payroll, true);
   assert.equal(configured.FeatureFlags.students, false);
-  assert.deepEqual(configured.PlanEntitlements, ['accounting', 'humanResources', 'payroll']);
+  assert.deepEqual(configured.PlanEntitlements, ['humanResources', 'accounting', 'payroll']);
 
   const noOperationalModules = featureFlagsForPlan('faith', 'Professional', {}, []);
   assert.equal(Object.values(noOperationalModules).some(Boolean), false);

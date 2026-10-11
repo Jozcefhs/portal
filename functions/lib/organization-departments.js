@@ -3,6 +3,9 @@ import { CHURCH_COLLECTIONS, churchCollectionPath, safeChurchDocumentId } from '
 import {
   assertImmutableRecordIdentity,
   importChurchMembers,
+  membershipCapabilities,
+  organizationOperationsRole,
+  publicChurchMember,
   recordWritePrecondition,
   resolveMembershipBranch,
   saveChurchMember,
@@ -27,17 +30,21 @@ const VIEW_ROLES = new Set(['Super Admin', 'Pastor', 'Church Administrator', 'Me
 const MANAGE_ROLES = new Set(['Super Admin', 'Pastor', 'Church Administrator']);
 const OFFERING_ROLES = new Set(['Super Admin', 'Pastor', 'Church Administrator', 'Treasurer']);
 const REMITTANCE_ROLES = new Set(['Super Admin', 'Treasurer', 'Accountant', 'Finance Officer']);
+const ORGANIZATION_MANAGE_ROLES = new Set(['Executive Director', 'Organisation Administrator', 'Operations Manager']);
 
 export function departmentCapabilities(user = {}) {
+  const organizationRole = organizationOperationsRole(user);
+  const canManage = MANAGE_ROLES.has(role(user)) || ORGANIZATION_MANAGE_ROLES.has(organizationRole);
+  const canRecord = canManage || role(user) === 'Membership Officer' || organizationRole === 'Records Officer';
   return {
-    canView: VIEW_ROLES.has(role(user)) || Boolean((user.allowedSections || []).includes('members')),
-    canManageDepartments: MANAGE_ROLES.has(role(user)),
-    canManageMembers: MANAGE_ROLES.has(role(user)) || role(user) === 'Membership Officer',
-    canRecordMeetings: MANAGE_ROLES.has(role(user)) || role(user) === 'Membership Officer',
-    canSubmitOfferings: OFFERING_ROLES.has(role(user)),
+    canView: VIEW_ROLES.has(role(user)) || canRecord || Boolean((user.allowedSections || []).includes('members')),
+    canManageDepartments: canManage,
+    canManageMembers: canRecord,
+    canRecordMeetings: canRecord,
+    canSubmitOfferings: OFFERING_ROLES.has(role(user)) || ['Executive Director', 'Organisation Administrator'].includes(organizationRole),
     canConfirmRemittance: REMITTANCE_ROLES.has(role(user)),
-    canManagePrograms: MANAGE_ROLES.has(role(user)),
-    canManageForeignVisitors: MANAGE_ROLES.has(role(user)) || role(user) === 'Membership Officer'
+    canManagePrograms: canManage,
+    canManageForeignVisitors: canRecord
   };
 }
 
@@ -499,11 +506,16 @@ async function batchAssignDepartmentPeople(env, user, body, branchId) {
       };
     }
     const existing = existingById.get(membershipId);
-    if (existing) updated += 1;
-    else created += 1;
+    if (existing) {
+      // A stale form or retry must not erase an existing position, date or status.
+      updated += 1;
+      return null;
+    }
+    created += 1;
     return {
       collectionPath: path('departmentMembers', branchId),
       documentId: membershipId,
+      exists: false,
       data: {
         ...stripFirestoreMetadata(existing),
         ...assignment,
@@ -514,20 +526,20 @@ async function batchAssignDepartmentPeople(env, user, body, branchId) {
         UpdatedBy: actor(user)
       }
     };
-  });
+  }).filter(Boolean);
   writes.push(departmentAuditWrite(
     branchId,
     user,
     'BATCH ASSIGN',
     'Department Member',
     authoritativeDepartmentId,
-    `${created} assigned | ${updated} already assigned or updated`
+    `${created} assigned | ${updated} already assigned and preserved`
   ));
   await batchUpsertDocuments(env, writes);
   return {
     assigned: created,
     updated,
-    message: `${created} person(s) assigned to ${departmentName}${updated ? `; ${updated} existing assignment(s) updated.` : '.'}`
+    message: `${created} person(s) assigned to ${departmentName}${updated ? `; ${updated} existing assignment(s) preserved.` : '.'}`
   };
 }
 
@@ -605,20 +617,23 @@ async function saveDepartmentOffering(env, user, body, branchId) {
   const Amount = number(body.Amount);
   if (!OfferingId || !DepartmentId || Amount <= 0) throw inputError('Offering ID, department and an amount greater than zero are required.');
   const method = clean(body.PaymentMethod) || 'Cash';
-  const onlinePaid = ['online', 'card', 'transfer'].includes(lower(method)) && yes(body.PaymentStatus);
-  const existing = await getDocument(env, path('departmentOfferings', branchId), safeChurchDocumentId(OfferingId)).catch(() => null);
+  const existing = await getDocument(env, path('departmentOfferings', branchId), safeChurchDocumentId(OfferingId));
+  if (lower(existing?.RemittanceStatus) === 'paid' || lower(existing?.Status) === 'paid') {
+    throw inputError('A confirmed offering cannot be changed through submission.', 409);
+  }
   await upsertDocument(env, path('departmentOfferings', branchId), safeChurchDocumentId(OfferingId), {
     ...(existing || {}), OfferingId, DepartmentId, MeetingId: clean(body.MeetingId),
     Date: clean(body.Date) || nowIso().slice(0, 10), Amount, Currency: clean(body.Currency) || 'NGN',
     PaymentMethod: method, PaymentReference: clean(body.PaymentReference),
-    Status: onlinePaid ? 'Paid' : 'Awaiting Remittance',
-    RemittanceStatus: onlinePaid ? 'Paid' : 'Unpaid',
+    // Payment method/reference are evidence only, never proof of receipt.
+    Status: 'Awaiting Remittance',
+    RemittanceStatus: 'Unpaid',
     SubmittedAt: existing?.SubmittedAt || nowIso(), SubmittedBy: existing?.SubmittedBy || actor(user),
-    PaidAt: onlinePaid ? nowIso() : clean(existing?.PaidAt), PaidBy: onlinePaid ? 'Online payment confirmation' : clean(existing?.PaidBy),
+    PaidAt: '', PaidBy: '',
     BranchId: branchId, Notes: clean(body.Notes), UpdatedAt: nowIso(), UpdatedBy: actor(user)
-  });
-  await audit(env, branchId, user, onlinePaid ? 'ONLINE PAYMENT CONFIRMED' : 'SUBMIT', 'Department Offering', OfferingId, `${DepartmentId} | ${Amount}`);
-  return { message: onlinePaid ? 'Offering submitted and automatically marked paid.' : 'Offering submitted for remittance.' };
+  }, recordWritePrecondition(existing));
+  await audit(env, branchId, user, 'SUBMIT', 'Department Offering', OfferingId, `${DepartmentId} | ${Amount}`);
+  return { message: 'Offering submitted for remittance.' };
 }
 
 async function markOfferingPaid(env, user, body, branchId) {
@@ -631,7 +646,7 @@ async function markOfferingPaid(env, user, body, branchId) {
     RemittanceReference: clean(body.RemittanceReference || body.PaymentReference), UpdatedAt: nowIso(), UpdatedBy: actor(user)
   };
   delete payload.__id; delete payload.__name;
-  await upsertDocument(env, path('departmentOfferings', branchId), id, payload);
+  await upsertDocument(env, path('departmentOfferings', branchId), id, payload, recordWritePrecondition(existing));
   await audit(env, branchId, user, 'MARK PAID', 'Department Offering', body.OfferingId, payload.RemittanceReference);
   return { message: 'Offering remittance marked paid.' };
 }
@@ -723,6 +738,7 @@ export async function listOrganizationDepartments(env, user, body = {}) {
     listCollection(env, 'staffUsers').catch(() => [])
   ]);
   const data = Object.fromEntries(names.map((name, index) => [name, rows[index]]));
+  data.members = data.members.map((row) => publicChurchMember(row, membershipCapabilities(user)));
   return {
     ok: true, branchId, capabilities, ...data,
     assignablePeople: departmentAssignablePeople(data.members, staffUsers, branchId, user),

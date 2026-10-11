@@ -2,7 +2,7 @@ import { batchCommitDocuments, getDocument, queryCollectionPages, listCollection
 import { getAccountingChartRows } from './accounting-reference-cache.js';
 import { validateRequisitionPosting } from './requisition-posting.js';
 import { assertRequisitionTransition } from './requisition-workflow.js';
-import { findStaffLoginRecord, findStaffUserRecord, verifyStaffApprovalPassword } from './staff-auth.js';
+import { findStaffLoginRecord, findStaffUserRecord, staffAccessFor, verifyStaffApprovalPassword } from './staff-auth.js';
 import { accountingChartChoicesForEdition } from './accounting-edition-scope.js';
 import { handleProductImport } from './vendor-product-import.js';
 import { PRODUCT_CHANGES, productPolicy, vendorProductContext, prepareVendorProductWrites, handleVendorProductAction } from './vendor-product-management.js';
@@ -125,6 +125,10 @@ function operationWrite(op, result) { return write(VENDOR_COLLECTIONS.operations
 
 export async function snapshotVendorCart(env, items, user, timestamp = new Date().toISOString()) {
   if (!(items || []).some(item => clean(item.VendorId))) return items;
+  const { featureFlags } = await staffAccessFor(env, user);
+  if (featureFlags?.vendorSettlements !== true || featureFlags?.accounting !== true || featureFlags?.approvals !== true) {
+    fail('Vendor Sales & Settlements is not enabled for this workspace.', 403);
+  }
   const scope = settlementScope(user), settings = await settingsFor(env, scope);
   assertEnabled(settings);
   const vendorIds = [...new Set(items.map(item => clean(item.VendorId)).filter(Boolean))];

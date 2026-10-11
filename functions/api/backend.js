@@ -35,11 +35,13 @@ import { organizationModulePreferences, organizationProfileDocument, resolveOrga
 import { loadOrganizationNameProfile } from '../lib/organization-name-format.js';
 import { loadFinanceSchoolProfile } from '../lib/finance-school-profile.js';
 import { invalidateStaffAccessCache, staffAccessFor } from '../lib/staff-auth.js';
+import { beginStaffAccountChange, commitStaffAccountChanges, resolveStaffAccountTarget, staffAccountCondition, staffAccountWrite } from '../lib/staff-account-integrity.js';
 import { mergedProfileText } from '../lib/profile-settings-update.js';
 import { selectStudentBillingProfile, selectStudentBillingProfiles, studentProfileValue } from '../lib/student-billing-profile.js';
 import { effectiveInvoiceAfterReversal } from '../lib/invoice-charge-reversal.js';
 import { financialPreviewFingerprint } from '../lib/financial-preview-fingerprint.js';
 import { studentWalletProfile } from '../lib/student-wallet-profile.js';
+import { withStudentProfileDefaults } from '../lib/student-profile-defaults.js';
 import { assertManualPaymentDestination, assertManualPaymentRetry, assertManualPaymentScope, bindManualPaymentIdentity, manualPaymentRequestScope, scopedPaymentWriteCondition } from '../lib/manual-payment-scope.js';
 import {
   applyPublicPortalContent,
@@ -916,6 +918,7 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
   'saveWalletCard', 'recordWalletPurchase', 'recordCreditAction',
   'getTuckShopCatalog', 'searchTuckShopCustomers', 'recordTuckShopStaffSale',
   'saveStoreItem', 'saveStoreCategory', 'deleteStoreCategory', 'updateStoreOrderStatus',
+  'getClinicRecords', 'saveClinicRecord', 'getClinicInventory', 'getKitchenInventory',
   'saveClinicInventoryItem', 'deleteClinicInventoryItem', 'recordClinicStockMovement',
   'saveKitchenInventoryItem', 'deleteKitchenInventoryItem', 'recordKitchenStockMovement',
   'updateApplicationStatus', 'updateApplicantIntelligence', 'updateApplicationDetails',
@@ -934,6 +937,9 @@ const BRANCH_BOUND_DEVICE_ACTIONS = new Set([
   'cancelLibraryReservation', 'saveLibraryPolicy',
   'ping',
   'getApplications', 'getStudents',
+  'enrollStudent', 'getClinicRecords', 'saveClinicRecord',
+  'getClinicInventory', 'saveClinicInventoryItem', 'deleteClinicInventoryItem', 'recordClinicStockMovement',
+  'getKitchenInventory', 'saveKitchenInventoryItem', 'deleteKitchenInventoryItem', 'recordKitchenStockMovement',
   'getStudentConductCases', 'saveStudentConductCase', 'deleteStudentConductCase',
   'getAcademicManagement', 'saveAcademicSession', 'saveAcademicTerm', 'saveAcademicClass',
   'saveAcademicArmTemplate', 'saveAcademicArm', 'saveAcademicSubject', 'saveAcademicDepartment', 'saveAcademicOffering',
@@ -3001,6 +3007,9 @@ async function saveSchoolProfile(env, body, deploymentIdentity) {
   profile.OrganisationCode = organization.Code;
   profile.FeatureOverrides = organization.FeatureOverrides;
   profile.FeatureFlags = organization.FeatureFlags;
+  profile.PlanEntitlements = organization.PlanEntitlements;
+  profile.PlanModuleCatalogVersion = organization.PlanModuleCatalogVersion;
+  profile.SubscriptionPriceSnapshot = existingOrganization?.SubscriptionPriceSnapshot ?? null;
   if (body.WebLogoDataUrl !== undefined || body.webLogoDataUrl !== undefined) {
     const webLogo = clean(body.WebLogoDataUrl ?? body.webLogoDataUrl);
     if (webLogo && (!/^data:image\/(png|jpeg|webp);base64,/i.test(webLogo) || webLogo.length > 750000)) {
@@ -3037,6 +3046,8 @@ async function saveSchoolProfile(env, body, deploymentIdentity) {
     WorkspaceId: deploymentIdentity?.workspaceId,
     Plan: profile.SubscriptionPlan,
     PlanEntitlements: existingOrganization?.PlanEntitlements,
+    PlanModuleCatalogVersion: existingOrganization?.PlanModuleCatalogVersion,
+    SubscriptionPriceSnapshot: existingOrganization?.SubscriptionPriceSnapshot,
     DisabledFeatureEntitlements: existingOrganization?.DisabledFeatureEntitlements,
     PlanCatalogRevision: existingOrganization?.PlanCatalogRevision,
     UserLimit: profile.UserLimit,
@@ -3174,6 +3185,8 @@ async function getSchoolProfile(env, options = {}) {
       GmailConnectedEmail: emailProvider === 'gmail' ? clean(env.GMAIL_CONNECTED_EMAIL) : '',
       FeatureFlags: organization.FeatureFlags,
       PlanEntitlements: organization.PlanEntitlements,
+      PlanModuleCatalogVersion: organization.PlanModuleCatalogVersion,
+      SubscriptionPriceSnapshot: organizationProfile?.SubscriptionPriceSnapshot ?? null,
       EnabledFeatureEntitlements: organization.EnabledFeatureEntitlements,
       DisabledFeatureEntitlements: organization.DisabledFeatureEntitlements,
       ModulePreferences: organization.ModulePreferences,
@@ -4154,10 +4167,72 @@ async function promoteStudents(env, body) {
   return { ok: true, message: 'Student promotion completed.', promoted, skipped, failures, students: (await listSchoolCollection(env, 'students')).map(normalizeStudent) };
 }
 
+async function desktopSchoolOperationsActor(env, body, section, write = false) {
+  const actor = {
+    username: clean(body.UserUsername), displayName: clean(body.RecordedBy || body.UserUsername),
+    role: clean(body.UserRole), assignedRole: clean(body.UserAssignedRole || body.UserRole),
+    branchId: clean(body.UserBranchId), schoolSectionAccess: clean(body.UserSchoolSectionAccess || 'All'),
+    tabAccess: body.UserTabAccess, department: clean(body.UserDepartment)
+  };
+  const access = await staffAccessFor(env, actor);
+  if (!actor.username || access.edition !== 'school' || access.subscriptionActive === false
+    || !access.allowedSections?.includes(section) || (write && access.subscriptionReadOnly)) {
+    throw Object.assign(new Error('This school module is not available to your account or subscription.'), { status: 403 });
+  }
+  return { ...access, ...actor };
+}
+
+function schoolOperationsScope(body = {}) {
+  const branches = [body.DeviceBranchId, body.UserBranchId, body.BranchId || body.branchId]
+    .map(clean).filter(value => value && lower(value) !== 'all').map(value => canonicalSchoolBranchId(value));
+  const assignedSection = lower(body.UserSchoolSectionAccess);
+  const selectedSection = lower(body.SchoolSection || body.SchoolSectionAccess);
+  if (new Set(branches).size > 1 || (['primary', 'secondary'].includes(assignedSection)
+    && selectedSection && selectedSection !== 'all' && selectedSection !== assignedSection)) {
+    throw Object.assign(new Error('Select a record in your authorised branch and school section.'), { status: 403 });
+  }
+  return { branchId: branches[0] || '', schoolSectionAccess: ['primary', 'secondary'].includes(assignedSection)
+    ? assignedSection : ['primary', 'secondary'].includes(selectedSection) ? selectedSection : '', strictReads: true };
+}
+
+function schoolOperationsRowVisible(row, scope) {
+  const path = /^schoolBranches\/([^/]+)\/sections\/(primary|secondary)\//i.exec(clean(row.__scopePath));
+  if (path && ((row.BranchId && canonicalSchoolBranchId(row.BranchId) !== canonicalSchoolBranchId(path[1]))
+    || (row.SchoolSection && schoolSectionFor(row) !== lower(path[2])))) return false;
+  return (!scope.branchId || identityRecordBranch(row) === scope.branchId)
+    && (!scope.schoolSectionAccess || identityRecordSection(row) === scope.schoolSectionAccess);
+}
+
+function schoolOperationsWrite(collectionPath, documentId, data, existing = null) {
+  if (existing && !existing.__updateTime) {
+    throw Object.assign(new Error('The record version could not be verified. Refresh and retry.'), { status: 409 });
+  }
+  return { collectionPath, documentId,
+    data: Object.fromEntries(Object.entries(data).filter(([key]) => !key.startsWith('__'))),
+    ...(existing ? { updateTime: existing.__updateTime } : { exists: false }) };
+}
+
+async function commitStudentEnrollment(env, application, student, priorStudent = null) {
+  const branch = identityRecordBranch(application);
+  const section = identityRecordSection(application);
+  const applicationPath = clean(application.__scopePath) || `schoolBranches/${branch}/sections/${section}/applications`;
+  const studentPath = clean(student.__scopePath) || identityScopePathForCollection(applicationPath, 'students');
+  const studentData = withStudentProfileDefaults({ ...student, BranchId: branch, SchoolSection: section });
+  await batchCommitDocuments(env, [
+    schoolOperationsWrite(studentPath, clean(priorStudent?.__id) || safeDocumentId(student.AdmissionNo), studentData, priorStudent),
+    schoolOperationsWrite(applicationPath, clean(application.__id) || safeDocumentId(application.ApplicationReference),
+      { ...application, BranchId: branch, SchoolSection: section }, application)
+  ]);
+  return { student: normalizeStudent({ ...studentData, __scopePath: studentPath }), application: normalizeApplication(application) };
+}
+
 async function enrollStudent(env, body) {
+  await desktopSchoolOperationsActor(env, body, 'admissions', true);
+  const scope = schoolOperationsScope(body);
   const id = applicationIdFrom(body);
-  const existing = id ? await findApplication(env, id) : null;
+  const existing = id ? await findApplication(env, id, scope) : null;
   if (!existing) throw applicationNotFound(id);
+  if (!schoolOperationsRowVisible(existing, scope)) throw Object.assign(new Error('The applicant is outside your permitted workspace.'), { status: 403 });
   if (yesNo(pick(existing, ['Enrolled'])) === 'YES' || pick(existing, ['Status']) === 'Enrolled') throw new Error('Student is already enrolled.');
   if (pick(existing, ['ResultStatus']) !== 'Admitted') throw new Error('Entrance result is not marked Admitted.');
   if (yesNo(pick(existing, ['OfferSent'])) !== 'YES') throw new Error('Offer of Admission has not been sent.');
@@ -4169,9 +4244,21 @@ async function enrollStudent(env, body) {
   const enrolledBy = clean(body.RecordedBy || body.EnrolledBy || body.enrolledBy) || 'Admissions Office';
   const intakeClassification = admissionIntakeClassification(existing);
   const applicantName = pick(existing, ['ApplicantName', 'Name', 'DisplayName']);
-  const studentScopePath = identityScopePathForCollection(existing, 'students');
-  const assignedStudent = await getSelectedIdentityRow(env, 'students', admissionNo, studentScopePath);
+  const studentScopePath = identityScopePathForCollection(existing, 'students')
+    || `schoolBranches/${identityRecordBranch(existing)}/sections/${identityRecordSection(existing)}/students`;
+  const applicantScope = { branchId: identityRecordBranch(existing), schoolSectionAccess: identityRecordSection(existing) };
+  // A migration may have moved only the application or only the student.
+  // Search both legacy and scoped storage, but never another branch/section.
+  const assignedStudents = (await getSchoolDocumentsById(env, 'students', safeDocumentId(admissionNo), applicantScope, { strictReads: true }))
+    .filter(student => schoolOperationsRowVisible(student, applicantScope));
+  if (assignedStudents.length > 1) {
+    throw enrollmentConflict('More than one student record uses this admission number. Resolve the duplicates before enrolling.', 'ENROLLMENT_DUPLICATE_STUDENT_RECORDS');
+  }
+  const assignedStudent = assignedStudents[0];
   if (assignedStudent) {
+    if (!schoolOperationsRowVisible(assignedStudent, { branchId: identityRecordBranch(existing), schoolSectionAccess: identityRecordSection(existing) })) {
+      throw enrollmentConflict('The existing student belongs to another branch or school section.', 'ENROLLMENT_SCOPE_CONFLICT');
+    }
     if (!studentMatchesEnrollmentApplication(assignedStudent, existing)) {
       const registeredName = pick(assignedStudent, ['DisplayName', 'ApplicantName', 'Name']) || 'another student';
       throw enrollmentConflict(
@@ -4180,13 +4267,13 @@ async function enrollStudent(env, body) {
       );
     }
     const enrolledAt = pick(existing, ['EnrolledAt']) || nowIso();
-    const repairedStudent = await saveStudent(env, {
+    const repairedStudent = {
       ...assignedStudent,
       ApplicationReference: pick(assignedStudent, ['ApplicationReference']) || appRef,
       ...intakeClassification,
       UpdatedAt: nowIso()
-    });
-    const application = await saveApplication(env, {
+    };
+    const applicationData = {
       ...existing,
       ...intakeClassification,
       AdmissionNo: pick(assignedStudent, ['AdmissionNo', 'AdmissionNumber']) || admissionNo,
@@ -4195,32 +4282,34 @@ async function enrollStudent(env, body) {
       EnrolledBy: enrolledBy,
       Status: 'Enrolled',
       UpdatedAt: nowIso()
-    });
+    };
+    const { application, student } = await commitStudentEnrollment(env, applicationData, repairedStudent, assignedStudent);
     return {
       ok: true,
       message: 'The existing student record was linked and the application was marked enrolled.',
       reconciled: true,
       application,
-      student: normalizeStudent(repairedStudent)
+      student
     };
   }
-  const linkedStudents = appRef ? await querySchoolCollection(env, 'students', {
+  const linkedStudents = appRef ? (await querySchoolCollection(env, 'students', {
     filters: [{ field: 'ApplicationReference', op: '==', value: appRef }],
-    ...(studentScopePath ? { scopePath: studentScopePath } : {}),
+    scope: applicantScope,
     limit: 10
-  }) : [];
+  })).filter(student => schoolOperationsRowVisible(student, applicantScope)) : [];
   const matchingLinkedStudents = linkedStudents.filter((student) =>
-    studentMatchesEnrollmentApplication(student, existing));
+    schoolOperationsRowVisible(student, { branchId: identityRecordBranch(existing), schoolSectionAccess: identityRecordSection(existing) })
+    && studentMatchesEnrollmentApplication(student, existing));
   if (matchingLinkedStudents.length === 1) {
     const linkedStudent = matchingLinkedStudents[0];
     const linkedAdmissionNo = pick(linkedStudent, ['AdmissionNo', 'AdmissionNumber']);
-    const repairedStudent = await saveStudent(env, {
+    const repairedStudent = {
       ...linkedStudent,
       ApplicationReference: appRef,
       ...intakeClassification,
       UpdatedAt: nowIso()
-    });
-    const application = await saveApplication(env, {
+    };
+    const applicationData = {
       ...existing,
       ...intakeClassification,
       AdmissionNo: linkedAdmissionNo || admissionNo,
@@ -4229,13 +4318,14 @@ async function enrollStudent(env, body) {
       EnrolledBy: enrolledBy,
       Status: 'Enrolled',
       UpdatedAt: nowIso()
-    });
+    };
+    const { application, student } = await commitStudentEnrollment(env, applicationData, repairedStudent, linkedStudent);
     return {
       ok: true,
       message: 'The existing student record was linked and the application was marked enrolled.',
       reconciled: true,
       application,
-      student: normalizeStudent(repairedStudent)
+      student
     };
   }
   if (matchingLinkedStudents.length > 1) {
@@ -4251,7 +4341,10 @@ async function enrollStudent(env, body) {
     );
   }
   const admittedClass = canonicalConfiguredClass(pick(existing, ['ClassApplyingFor', 'ClassName']), await configuredClassNames(env));
-  const student = await saveStudent(env, {
+  const studentData = {
+    __scopePath: studentScopePath,
+    BranchId: identityRecordBranch(existing),
+    SchoolSection: identityRecordSection(existing),
     EnrolledAt: nowIso(),
     ApplicationReference: appRef,
     AdmissionNo: admissionNo,
@@ -4288,8 +4381,9 @@ async function enrollStudent(env, body) {
     EnrolledBy: enrolledBy,
     Status: 'Active',
     UpdatedAt: nowIso()
-  });
-  const application = await saveApplication(env, { ...existing, ...intakeClassification, Enrolled: 'YES', EnrolledAt: nowIso(), EnrolledBy: enrolledBy, Status: 'Enrolled', UpdatedAt: nowIso() });
+  };
+  const { application, student } = await commitStudentEnrollment(env,
+    { ...existing, ...intakeClassification, Enrolled: 'YES', EnrolledAt: nowIso(), EnrolledBy: enrolledBy, Status: 'Enrolled', UpdatedAt: nowIso() }, studentData);
   return { ok: true, message: 'Student enrolled successfully.', application, student };
 }
 
@@ -7215,7 +7309,13 @@ async function recordCreditAction(env, body) {
 }
 
 async function saveClinicRecord(env, body) {
-  const studentName = clean(body.StudentName || body.studentName);
+  await desktopSchoolOperationsActor(env, body, 'clinic', true);
+  const scope = schoolOperationsScope(body);
+  const student = await findStudentByAccountRef(env, clean(body.AdmissionNo), scope, body.StudentScopePath);
+  if (!student || !schoolOperationsRowVisible(student, scope)) {
+    throw Object.assign(new Error('Choose an enrolled student in your permitted branch and school section.'), { status: 404 });
+  }
+  const studentName = pick(student, ['DisplayName', 'ApplicantName', 'StudentName', 'Name']);
   const complaint = clean(body.Complaint || body.complaint);
   if (!studentName) {
     const err = new Error('Student name is required.');
@@ -7228,13 +7328,23 @@ async function saveClinicRecord(env, body) {
     throw err;
   }
   const recordId = clean(body.RecordId || body.RecordNo) || ledgerDocumentId('CLN');
+  const existing = await getDocument(env, 'clinicRecords', safeDocumentId(recordId));
+  if (existing && (!schoolOperationsRowVisible(existing, scope)
+    || identityRecordBranch(existing) !== identityRecordBranch(student)
+    || identityRecordSection(existing) !== identityRecordSection(student)
+    || !sameReferenceIdentity(existing.AdmissionNo, student.AdmissionNo))) {
+    throw Object.assign(new Error('A clinic record cannot be reassigned to another student or workspace.'), { status: 403 });
+  }
   const payload = {
     RecordId: recordId,
     RecordNo: recordId,
     Date: clean(body.Date) || nowIso(),
     StudentName: studentName,
-    AdmissionNo: clean(body.AdmissionNo),
-    ClassName: clean(body.ClassName),
+    AdmissionNo: clean(student.AdmissionNo),
+    ClassName: clean(student.ClassName || student.ClassAdmitted),
+    BranchId: identityRecordBranch(student),
+    SchoolSection: identityRecordSection(student),
+    OrganisationEdition: 'school',
     Complaint: complaint,
     Treatment: clean(body.Treatment),
     Disposition: clean(body.Disposition),
@@ -7243,8 +7353,51 @@ async function saveClinicRecord(env, body) {
     Notes: clean(body.Notes),
     UpdatedAt: nowIso()
   };
-  await upsertDocument(env, 'clinicRecords', safeDocumentId(recordId), payload);
+  await batchCommitDocuments(env, [schoolOperationsWrite('clinicRecords', safeDocumentId(recordId), payload, existing)]);
   return { ok: true, message: 'Clinic record saved to the database.', record: payload };
+}
+
+async function getClinicRecords(env, body) {
+  await desktopSchoolOperationsActor(env, body, 'clinic');
+  const scope = schoolOperationsScope(body);
+  const rows = await listCollection(env, 'clinicRecords');
+  return { ok: true, message: 'Clinic records loaded from the database.', records: rows
+    .filter(row => (!clean(row.OrganisationEdition) || lower(row.OrganisationEdition) === 'school')
+      && schoolOperationsRowVisible(row, scope)).map(normalizeClinicRecord) };
+}
+
+function desktopInventoryScope(body = {}) {
+  const assigned = clean(body.UserBranchId).toLowerCase();
+  const requested = clean(body.BranchId).toLowerCase();
+  if (assigned && assigned !== 'all' && requested && requested !== assigned) {
+    throw Object.assign(new Error('This inventory belongs to another branch.'), { status: 403 });
+  }
+  return { BranchId: (assigned && assigned !== 'all' ? assigned : requested) || 'main',
+    SchoolSection: clean(body.UserSchoolSectionAccess || 'All') };
+}
+
+async function desktopInventoryRows(env, body, collection, write = false) {
+  await desktopSchoolOperationsActor(env, body, collection === 'clinicInventory' ? 'clinic' : 'kitchen', write);
+  const scope = desktopInventoryScope(body);
+  return (await listCollection(env, collection)).filter(row =>
+    sameText(row.BranchId || 'main', scope.BranchId)
+    && (!clean(row.OrganisationEdition) || sameText(row.OrganisationEdition, 'school'))
+    && (sameText(scope.SchoolSection, 'All') || schoolSectionFor(row) === scope.SchoolSection.toLowerCase()));
+}
+
+function desktopInventoryMatch(rows, body, name) {
+  const id = clean(body.InventoryId || body.ItemId);
+  const matches = rows.filter(row => id ? clean(row.__id) === id : sameText(row.ItemName, name));
+  if (matches.length > 1) throw Object.assign(new Error('Several stock records use this name. Select the exact item.'), { status: 409 });
+  if (id && !matches.length) throw Object.assign(new Error('The stock item is outside your permitted workspace.'), { status: 404 });
+  return matches[0];
+}
+
+function inventoryConditionalWrite(collectionPath, documentId, data, existing) {
+  if (existing && !existing.__updateTime) throw Object.assign(new Error('Stock version is unavailable. Refresh and try again.'), { status: 409 });
+  const payload = { ...data };
+  for (const key of ['__id', '__name', '__updateTime', '__createTime']) delete payload[key];
+  return { collectionPath, documentId, data: payload, ...(existing ? { updateTime: existing.__updateTime } : { exists: false }) };
 }
 
 async function saveInventoryItem(env, body, collection, defaults) {
@@ -7255,24 +7408,29 @@ async function saveInventoryItem(env, body, collection, defaults) {
     err.status = 400;
     throw err;
   }
-  const existingRows = await listCollection(env, collection);
-  const existing = existingRows.find((row) => sameText(row.ItemName, originalItemName) || sameText(row.__id, safeDocumentId(originalItemName)) || sameText(row.ItemName, itemName)) || {};
-  const originalId = safeDocumentId(originalItemName);
-  const nextId = safeDocumentId(itemName);
+  const scope = desktopInventoryScope(body);
+  const existingRows = await desktopInventoryRows(env, body, collection, true);
+  const existing = desktopInventoryMatch(existingRows, body, originalItemName);
+  const section = clean(existing?.SchoolSection) || (sameText(scope.SchoolSection, 'All') ? 'Secondary' : scope.SchoolSection);
+  if (existingRows.some(row => row.__id !== existing?.__id && sameText(row.ItemName, itemName)
+    && schoolSectionFor(row) === section.toLowerCase())) {
+    throw Object.assign(new Error('That item name already exists in this workspace.'), { status: 409 });
+  }
+  const nextId = clean(existing?.__id) || safeDocumentId(`${scope.BranchId}-${section}-${itemName}`);
+  const quantity = asMoneyNumber(body.Quantity ?? body.quantity);
+  if (quantity < 0) throw Object.assign(new Error('Stock quantity cannot be negative.'), { status: 400 });
   const payload = {
-    ...existing,
+    ...(existing || {}),
+    BranchId: scope.BranchId, SchoolSection: section, OrganisationEdition: 'school',
     ItemName: itemName,
     Category: clean(body.Category || body.category) || defaults.category,
     Unit: clean(body.Unit || body.unit) || defaults.unit,
-    Quantity: asMoneyNumber(body.Quantity || body.quantity),
+    Quantity: quantity,
     ReorderLevel: asMoneyNumber(body.ReorderLevel || body.reorderLevel),
     LastUpdated: nowIso(),
     Notes: clean(body.Notes || body.notes)
   };
-  if (originalId && originalId !== nextId) {
-    await deleteDocument(env, collection, originalId);
-  }
-  await upsertDocument(env, collection, nextId, payload);
+  await batchCommitDocuments(env, [inventoryConditionalWrite(collection, nextId, payload, existing)]);
   return { ok: true, message: `${defaults.label} inventory item saved to the database.`, item: normalizeInventory(payload) };
 }
 
@@ -7283,7 +7441,10 @@ async function deleteInventoryItem(env, body, collection, label) {
     err.status = 400;
     throw err;
   }
-  await deleteDocument(env, collection, safeDocumentId(itemName));
+  const existing = desktopInventoryMatch(await desktopInventoryRows(env, body, collection, true), body, itemName);
+  if (!existing) throw Object.assign(new Error('Inventory item not found in this workspace.'), { status: 404 });
+  const write = inventoryConditionalWrite(collection, existing.__id, {}, existing);
+  await batchCommitDocuments(env, [{ ...write, operation: 'delete' }]);
   return { ok: true, message: `${label} inventory item deleted from the database.` };
 }
 
@@ -7306,8 +7467,8 @@ async function recordStockMovement(env, body, collection, movementCollection, de
     err.status = 400;
     throw err;
   }
-  const rows = await listCollection(env, collection);
-  const existing = rows.find((row) => sameText(row.ItemName, itemName) || sameText(row.__id, safeDocumentId(itemName)));
+  const rows = await desktopInventoryRows(env, body, collection, true);
+  const existing = desktopInventoryMatch(rows, body, itemName);
   if (!existing) {
     const err = new Error('Inventory item not found. Create the item first.');
     err.status = 404;
@@ -7315,14 +7476,17 @@ async function recordStockMovement(env, body, collection, movementCollection, de
   }
   const current = asMoneyNumber(existing.Quantity);
   const nextQty = movementType === 'IN' ? current + quantity : current - quantity;
+  if (nextQty < 0) throw Object.assign(new Error(`Only ${current} ${clean(existing.Unit) || 'units'} are currently available.`), { status: 409 });
   const itemPayload = {
     ...existing,
     Quantity: nextQty,
     LastUpdated: nowIso()
   };
-  await upsertDocument(env, collection, safeDocumentId(existing.ItemName || itemName), itemPayload);
   const movementNo = ledgerDocumentId(defaults.prefix);
   const movement = {
+    BranchId: clean(existing.BranchId) || 'main',
+    SchoolSection: clean(existing.SchoolSection) || 'Secondary', OrganisationEdition: 'school',
+    InventoryId: existing.__id,
     MovementNo: movementNo,
     Date: nowIso(),
     ItemName: existing.ItemName || itemName,
@@ -7331,7 +7495,10 @@ async function recordStockMovement(env, body, collection, movementCollection, de
     Reason: clean(body.Reason),
     RecordedBy: clean(body.RecordedBy) || defaults.actor
   };
-  await upsertDocument(env, movementCollection, safeDocumentId(movementNo), movement);
+  await batchCommitDocuments(env, [
+    inventoryConditionalWrite(collection, existing.__id, itemPayload, existing),
+    inventoryConditionalWrite(movementCollection, safeDocumentId(movementNo), movement)
+  ]);
   return { ok: true, message: `${defaults.label} stock movement recorded in the database.`, movement, item: normalizeInventory(itemPayload) };
 }
 
@@ -10846,8 +11013,9 @@ async function saveStaffUserFromDesktop(env, body) {
   const incoming = body.User && typeof body.User === 'object' ? body.User : body;
   const username = clean(incoming.Username || incoming.username);
   if (!username) { const err = new Error('Username is required.'); err.status = 400; throw err; }
-  const users = await listCollection(env, 'staffUsers');
-  const existing = users.find((row) => sameText(row.Username || row.__id, username));
+  const state = await beginStaffAccountChange(env);
+  const users = state.rows;
+  const { existing } = resolveStaffAccountTarget(users, username, body.OriginalUsername || incoming.OriginalUsername);
   const deviceBranchId = clean(body.DeviceBranchId);
   if (deviceBranchId && existing && assignedStaffBranchId(existing) !== canonicalSchoolBranchId(deviceBranchId)) {
     const err = new Error('This computer cannot update a staff account assigned to another branch.');
@@ -10920,8 +11088,8 @@ async function saveStaffUserFromDesktop(env, body) {
   const permissionAudit = requisitionEditPermissionAuditWrite(existing || {}, payload, {
     displayName: body.RecordedBy, username: body.UserUsername, sourcePlatform: 'Desktop'
   });
-  await batchUpsertDocuments(env, [
-    { collectionPath: 'staffUsers', documentId: safeDocumentId(lower(username)), data: payload },
+  await commitStaffAccountChanges(env, state, [
+    staffAccountWrite(existing, username, payload),
     ...(permissionAudit ? [permissionAudit] : [])
   ]);
   await upsertDocument(env, 'staffSecurityAudit', safeDocumentId(`DESKTOP-${Date.now()}-${username}`), {
@@ -10934,7 +11102,8 @@ async function saveStaffUserFromDesktop(env, body) {
 async function deleteStaffUserFromDesktop(env, body) {
   requireStaffUserAdmin(body);
   const username = clean(body.Username || body.username);
-  const users = await listCollection(env, 'staffUsers');
+  const state = await beginStaffAccountChange(env);
+  const users = state.rows;
   const existing = users.find((row) => sameText(row.Username || row.__id, username));
   if (!existing) { const err = new Error('Staff account was not found.'); err.status = 404; throw err; }
   const deviceBranchId = clean(body.DeviceBranchId);
@@ -10944,11 +11113,12 @@ async function deleteStaffUserFromDesktop(env, body) {
     err.code = 'DESKTOP_DEVICE_BRANCH_MISMATCH';
     throw err;
   }
-  if (sameText(username, body.RecordedBy)) { const err = new Error('You cannot delete the account currently signed in.'); err.status = 409; throw err; }
+  if (sameText(username, body.UserUsername || body.RecordedBy)) { const err = new Error('You cannot delete the account currently signed in.'); err.status = 409; throw err; }
   if (clean(existing.Role) === 'Super Admin' && staffUserIsActive(existing) && activeStaffSuperAdmins(users, username).length === 0) {
     const err = new Error('At least one active Super Admin must remain.'); err.status = 409; throw err;
   }
-  await deleteDocument(env, 'staffUsers', existing.__id || safeDocumentId(lower(username)));
+  await commitStaffAccountChanges(env, state, [{ collectionPath: 'staffUsers',
+    documentId: existing.__id || safeDocumentId(lower(username)), operation: 'delete', ...staffAccountCondition(existing) }]);
   await upsertDocument(env, 'staffSecurityAudit', safeDocumentId(`DESKTOP-${Date.now()}-${username}`), {
     Timestamp: nowIso(), Action: 'DELETE USER', Username: username,
     Actor: clean(body.RecordedBy) || 'Desktop Super Admin', SourcePlatform: 'Desktop'
@@ -11184,16 +11354,9 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     }
     case 'getStudentConductCases':
     case 'saveStudentConductCase':
-    case 'deleteStudentConductCase':
-      return handleStudentConductAction(env, {
-        username: clean(body.UserUsername),
-        displayName: clean(body.RecordedBy),
-        role: clean(body.UserRole),
-        branchId: clean(body.UserBranchId),
-        schoolSectionAccess: clean(body.UserSchoolSectionAccess || 'All'),
-        edition: clean(body.OrganisationEdition || body.OrganizationEdition || 'school'),
-        allowedSections: ['studentConduct']
-      }, {
+    case 'deleteStudentConductCase': {
+      const actor = await desktopSchoolOperationsActor(env, body, 'studentConduct', action !== 'getStudentConductCases');
+      return handleStudentConductAction(env, actor, {
         ...body,
         action: ({
           getStudentConductCases: 'list',
@@ -11201,6 +11364,7 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
           deleteStudentConductCase: 'delete'
         })[action]
       });
+    }
     case 'getAcademicManagement':
     case 'saveAcademicSession':
     case 'saveAcademicTerm':
@@ -11346,6 +11510,7 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     case 'saveChurchHousehold':
     case 'importChurchMembers':
       return handleChurchMembershipAction(env, {
+        edition: deploymentIdentity?.edition,
         username: clean(body.UserUsername),
         displayName: clean(body.RecordedBy),
         role: clean(body.UserRole),
@@ -11408,6 +11573,7 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     case 'saveChurchServiceOccurrence':
     case 'recordChurchAttendance':
       return handleChurchServiceAction(env, {
+        edition: deploymentIdentity?.edition,
         username: clean(body.UserUsername),
         displayName: clean(body.RecordedBy),
         role: clean(body.UserRole),
@@ -11435,10 +11601,19 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
         username: clean(body.UserUsername),
         displayName: clean(body.RecordedBy),
         role: clean(body.UserRole),
+        assignedRole: clean(body.UserAssignedRole || body.UserRole),
+        tabAccess: body.UserTabAccess,
         department: clean(body.UserDepartment),
         branchId: clean(body.UserBranchId),
         edition: deploymentIdentity?.edition || clean(body.OrganisationEdition || body.OrganizationEdition)
       };
+      const hotelAccess = await staffAccessFor(env, hotelUser);
+      if (!hotelUser.username || !['faith', 'organization'].includes(hotelAccess.edition)
+        || hotelAccess.subscriptionActive === false || !hotelAccess.allowedSections?.includes('hotel')
+        || (action !== 'getHotelServices' && hotelAccess.subscriptionReadOnly)) {
+        throw Object.assign(new Error('Hotel Services is not available to this account or subscription for this action.'), { status: 403 });
+      }
+      Object.assign(hotelUser, hotelAccess);
       const result = await handleHotelAction(env, hotelUser, body);
       if (action !== 'getHotelServices' || !result?.ok) return result;
       try {
@@ -11724,18 +11899,14 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     case 'getPayableFees':
       return getPayableFees(env, body);
     case 'getClinicRecords':
-      return {
-        ok: true,
-        message: 'Clinic records loaded from the database.',
-        records: (await listCollection(env, 'clinicRecords')).map(normalizeClinicRecord)
-      };
+      return getClinicRecords(env, body);
     case 'saveClinicRecord':
       return saveClinicRecord(env, body);
     case 'getClinicInventory':
       return {
         ok: true,
         message: 'Clinic inventory loaded from the database.',
-        inventory: (await listCollection(env, 'clinicInventory')).map(normalizeInventory)
+        inventory: (await desktopInventoryRows(env, body, 'clinicInventory')).map(normalizeInventory)
       };
     case 'saveClinicInventoryItem':
       return saveInventoryItem(env, body, 'clinicInventory', { label: 'Clinic', category: 'Medical Supply', unit: 'pcs' });
@@ -11747,7 +11918,7 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
       return {
         ok: true,
         message: 'Kitchen inventory loaded from the database.',
-        inventory: (await listCollection(env, 'kitchenInventory')).map(normalizeInventory)
+        inventory: (await desktopInventoryRows(env, body, 'kitchenInventory')).map(normalizeInventory)
       };
     case 'saveKitchenInventoryItem':
       return saveInventoryItem(env, body, 'kitchenInventory', { label: 'Kitchen', category: 'Foodstuff', unit: 'kg' });

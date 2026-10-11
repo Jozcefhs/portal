@@ -27,7 +27,8 @@ test('staff can update only their own display profile through the authenticated 
   assert.match(sessionApi, /action === 'updateprofile'/);
   assert.match(sessionApi, /const sessionUser = await readStaffSession/);
   assert.match(sessionApi, /const photo = profilePhoto\(body\.profilePhotoDataUrl\)/);
-  assert.match(sessionApi, /await batchUpsertDocuments\(env/);
+  assert.match(sessionApi, /await batchCommitLiteralDocuments\(env/);
+  assert.match(sessionApi, /staffAccountCondition\(existing\.__updateTime \? existing : null\)/);
   assert.match(sessionApi, /collectionPath: 'staffProfileImages'/);
   assert.match(sessionApi, /ProfilePhotoDataUrl: photo/);
   assert.match(sessionApi, /FirstName: firstName/);
@@ -86,7 +87,8 @@ test('dashboard hydration does not erase the separately loaded profile picture',
 test('the authenticated environment super admin can bootstrap a missing database profile', () => {
   assert.match(sessionApi, /function environmentAdminProfile\(env, sessionUser\)/);
   assert.match(sessionApi, /sessionUser\.role !== 'Super Admin'/);
-  assert.match(sessionApi, /findStaffUserRecord\(env, sessionUser\.username\)\.catch\(\(\) => null\)\s*\|\| environmentAdminProfile\(env, sessionUser\)/);
+  assert.match(sessionApi, /findStaffUserRecord\(env, sessionUser\.username\)\s*\|\| environmentAdminProfile\(env, sessionUser\)/);
+  assert.doesNotMatch(sessionApi, /findStaffUserRecord\(env, sessionUser\.username\)\.catch/);
 });
 
 test('staff can securely change their own login details from the web profile', () => {
