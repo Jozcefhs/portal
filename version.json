@@ -1,7 +1,7 @@
 {
-  "version": "3.1.22",
+  "version": "3.1.23",
   "channel": "stable",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.22.exe",
-  "sha256": "52f8b445cd4911668a83258d010be387a8c96fccf4575fb1b6ba3c4567cd964b",
-  "notes": "Dynamax Desktop v3.1.22 aligns Tuck Shop POS price, stock, quantity and subtotal headers with their values, including after sorting or theme changes. Retains the earlier responsiveness, vendor checkout, wallet lookup and West Africa Time repairs. Installing this update does not rewrite stock, student wallets, ownership or historical financial records. The companion web release adds validated batch item uploads to School Library, Clinic, Kitchen, Books & Supplies and Clothing & Supplies."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.23.exe",
+  "sha256": "58bef729e03975723bd3ffb6032306ac05135c25a5e3e8c74dd4952f3e02937b",
+  "notes": "Dynamax Desktop v3.1.23 adds Procurement access across editions, Clinic visit stock deductions, Help and devices, configurable support and FAQs, and a verified Student CBT Android download from the local CBT server. Includes the recent finance, inventory, account and CBT reliability repairs. Companion portal updates add Procurement CSV batch uploads and aligned stock headers."
 }
