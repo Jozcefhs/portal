@@ -1,4 +1,4 @@
-import { batchUpsertDocuments, deleteDocument, listCollection, upsertDocument } from './firestore.js';
+import { batchCommitLiteralDocuments as batchUpsertDocuments, deleteDocument, listCollection, upsertDocument } from './firestore.js';
 
 const clean = (value) => String(value ?? '').trim().replace(/\s+/g, ' ');
 const scopeName = (value) => {
@@ -51,9 +51,9 @@ export async function ensureStoreCategories(env) {
       writes.push({ collectionPath: 'storeCategories', documentId: category.CategoryId, data: category });
     }
     if (clean(item.CategoryId) !== category.CategoryId || name !== category.Name) {
-      const payload = { ...item, CategoryId: category.CategoryId, Category: category.Name, UpdatedAt: item.UpdatedAt || new Date().toISOString() };
-      delete payload.__id; delete payload.__name;
-      writes.push({ collectionPath: 'storeItems', documentId: item.__id, data: payload });
+      const payload = { CategoryId: category.CategoryId, Category: category.Name, UpdatedAt: item.UpdatedAt || new Date().toISOString() };
+      writes.push({ collectionPath: 'storeItems', documentId: item.__id, data: payload,
+        updateMask: ['CategoryId', 'Category', 'UpdatedAt'], exists: true });
     }
   }
   if (!categories.length) {
@@ -82,7 +82,10 @@ export async function saveStoreCategory(env, body, updatedBy = '') {
   await upsertDocument(env, 'storeCategories', categoryId, payload);
   if (current && current.Name !== name) {
     const affected = items.filter((item) => clean(item.CategoryId) === categoryId || categoryKey(item.Category) === categoryKey(current.Name));
-    for (let index = 0; index < affected.length; index += 450) await batchUpsertDocuments(env, affected.slice(index, index + 450).map((item) => { const data = { ...item, CategoryId: categoryId, Category: name }; delete data.__id; delete data.__name; return { collectionPath: 'storeItems', documentId: item.__id, data }; }));
+    for (let index = 0; index < affected.length; index += 450) await batchUpsertDocuments(env, affected.slice(index, index + 450).map((item) => ({
+      collectionPath: 'storeItems', documentId: item.__id, data: { CategoryId: categoryId, Category: name },
+      updateMask: ['CategoryId', 'Category'], exists: true
+    })));
   }
   return payload;
 }

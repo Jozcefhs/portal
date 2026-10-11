@@ -10,6 +10,7 @@ import { schoolSectionFor } from '../functions/lib/school-scope.js';
 import { categoryApplies, categoryKey } from '../functions/lib/store-categories.js';
 import { canonicalConfiguredClass } from '../functions/lib/class-names.js';
 import { requireSchoolLibraryAccess } from '../functions/lib/school-library.js';
+import { guardProcurementImportRow, loadProcurementInventoryControl } from '../functions/lib/procurement-inventory-guard.js';
 
 const source = (await readFile(new URL('../functions/lib/item-import.js', import.meta.url), 'utf8')).replace(/^import[\s\S]*?from '[^']+';\r?\n/gm, '').replace(/export /g, '');
 const user = { username: 'officer', displayName: 'Officer', role: 'Librarian', edition: 'school', branchId: 'main', schoolSectionAccess: 'All', allowedSections: Object.keys(ITEM_IMPORT_MODULES) };
@@ -22,6 +23,8 @@ function fixture(initial = []) {
   const commits = []; let reads = 0, conflict = false;
   const list = collection => [...documents.entries()].filter(([key]) => key.startsWith(`${collection}/`)).map(([, row]) => structuredClone(row));
   const context = { crypto: webcrypto, TextEncoder, ITEM_IMPORT_LIMITS, ITEM_IMPORT_MODULES, normalizeItemImportRow, duplicateItemImportRows, itemImportKey, enforceActorBranch, schoolSectionFor, requireSchoolLibraryAccess, categoryApplies, categoryKey, canonicalConfiguredClass,
+    guardProcurementImportRow,
+    loadProcurementInventoryControl: (env, scope) => loadProcurementInventoryControl(env, scope, async (_env, collection, id) => structuredClone(documents.get(`${collection}/${id}`) || null)),
     listCollection: async (_env, collection) => { reads++; return list(collection); },
     queryCollection: async (_env, collection, options) => { reads++; return list(collection).filter(row => options.filters.every(filter => row[filter.field] === filter.value)); },
     getDocument: async (_env, collection, id) => { reads++; return structuredClone(documents.get(`${collection}/${id}`) || null); },
@@ -97,6 +100,20 @@ test('existing stock and on-loan copies are skipped, not overwritten or made ava
   ]);
   for (const section of ['clinic', 'library']) { const Rows = [rowFor(section)], p = await f.preview(section, Rows); assert.equal(p.skipped, 1); const result = await f.save(section, Rows, p.PreviewDigest); assert.equal(result.created, 0); }
   assert.equal(f.list('clinicInventory')[0].Quantity, 3); assert.equal(f.list('libraryCopies')[0].Status, 'On Loan'); assert.equal(f.list('libraryCopies')[0].CurrentLoanId, 'loan');
+});
+
+test('Procurement branch control permits zero-stock catalogues but refuses independent opening balances in all quantity import modules', async () => {
+  for (const section of ['clinic', 'kitchen', 'bookstore', 'uniformStore']) {
+    const f = fixture([['procurementSettings', 'school--main', { Enabled: true }]]);
+    const preview = await f.preview(section);
+    assert.equal(preview.valid, false);
+    assert.match(preview.rows[0].Errors.join(' '), /controlled by Procurement/);
+    assert.equal(f.commits.length, 0);
+    const Rows = [{ ...rowFor(section), Quantity: 0 }], zero = await f.preview(section, Rows);
+    assert.equal(zero.valid, true);
+    await f.save(section, Rows, zero.PreviewDigest);
+    assert.equal(f.commits.length, 1);
+  }
 });
 
 test('library batch shares one title across copies and refuses conflicting ISBN / barcode assignments', async () => {

@@ -16,6 +16,8 @@ import {
   recordManualOrganizationCommerceSale
 } from '../lib/organization-commerce.js';
 import { recordTuckShopStaffSale, searchTuckShopCustomers } from '../lib/school-tuck-shop.js';
+import { assertProcurementInventoryEdit, assertProcurementInventoryMovement, loadProcurementInventoryControl, procurementMovementBalance } from '../lib/procurement-inventory-guard.js';
+import { commitClinicVisit, isActiveClinicVisit } from '../lib/clinic-stock-usage.js';
 
 function clean(value) { return String(value ?? '').trim(); }
 function lower(value) { return clean(value).toLowerCase(); }
@@ -92,17 +94,19 @@ function publicRows(rows) {
 
 async function loadDepartment(env, section, user) {
   const config = CONFIG[section];
-  const [inventory, movements, records, sales] = await Promise.all([
+  const [inventory, movements, records, sales, procurementControlled] = await Promise.all([
     listCollection(env, config.inventory),
     listCollection(env, config.movements),
     section === 'clinic' ? listCollection(env, 'clinicRecords') : Promise.resolve([]),
     ['restaurant', 'tuckShop'].includes(section)
       ? listOrganizationCommerceSales(env, section, user)
-      : Promise.resolve([])
+      : Promise.resolve([]),
+    loadProcurementInventoryControl(env, user)
   ]);
   const scopedInventory = visible(inventory, user);
   return {
     ok: true,
+    procurementControlled,
     inventory: publicRows(scopedInventory),
     movements: publicRows(visible(movements, user).sort((a, b) => clean(b.Date).localeCompare(clean(a.Date))).slice(0, 100)),
     records: publicRows(visible(records, user).sort((a, b) => clean(b.Date).localeCompare(clean(a.Date))).slice(0, 100)),
@@ -122,6 +126,7 @@ async function saveInventory(env, section, body, user) {
   if (!inventoryId && matching.length > 1) { const error = new Error('Several vendors sell this item. Select the exact stock record.'); error.status = 409; throw error; }
   const existing = (inventoryId ? rows.find(row => clean(row.__id) === inventoryId) : matching[0]) || {};
   if (inventoryId && !existing.__id) { const error = new Error('The stock record is outside your workspace.'); error.status = 404; throw error; }
+  const procurementControlled = await loadProcurementInventoryControl(env, user);
   const payload = {
     ...existing,
     ...scopeFields(user),
@@ -129,8 +134,8 @@ async function saveInventory(env, section, body, user) {
     SchoolSection: clean(existing.SchoolSection) || scopeFields(user).SchoolSection,
     ItemName: itemName,
     Category: clean(body.Category) || config.category,
-    Unit: clean(body.Unit) || config.unit,
-    Quantity: Math.max(0, number(body.Quantity)),
+    Unit: clean(body.Unit) || clean(existing.Unit) || config.unit,
+    Quantity: Math.max(0, number(body.Quantity ?? existing.Quantity)),
     ReorderLevel: Math.max(0, number(body.ReorderLevel)),
     Price: ['restaurant', 'tuckShop'].includes(section)
       ? Math.max(0, number(body.Price ?? body.SalePrice ?? existing.Price ?? existing.SalePrice))
@@ -146,12 +151,13 @@ async function saveInventory(env, section, body, user) {
   delete payload.__name;
   delete payload.__updateTime;
   delete payload.__createTime;
+  assertProcurementInventoryEdit(existing, payload, { controlled: procurementControlled });
   if (existing.__id && !existing.__updateTime) {
     const err = new Error('Stock version is unavailable. Refresh and try again.'); err.status = 409; throw err;
   }
   await batchCommitDocuments(env, [{ collectionPath: config.inventory,
-    documentId: existing.__id || safeId(`${scopeFields(user).BranchId}-${scopeFields(user).SchoolSection}-${itemName}`),
-    data: payload, ...(existing.__id ? { updateTime: existing.__updateTime } : { exists: false }) }]);
+    documentId: existing.__id || encodeURIComponent(safeId(`${scopeFields(user).BranchId}-${scopeFields(user).SchoolSection}-${itemName}`)),
+    data: payload, ...(existing.__id ? { updateTime: existing.__updateTime } : { exists: false }) }], { literalDocumentIds: true });
   return { ok: true, message: `${config.label} inventory item saved.` };
 }
 
@@ -168,10 +174,12 @@ async function recordMovement(env, section, body, user) {
   if (matching.length > 1) { const error = new Error('Select the exact vendor stock record.'); error.status = 409; throw error; }
   const item = matching[0];
   if (!item) { const err = new Error('Inventory item not found. Create it first.'); err.status = 404; throw err; }
+  const procurementControl = { controlled: await loadProcurementInventoryControl(env, user) };
+  assertProcurementInventoryMovement(item, movementType, procurementControl);
   const current = number(item.Quantity);
   if (movementType === 'OUT' && quantity > current) { const err = new Error(`Only ${current} ${clean(item.Unit) || 'units'} are currently available.`); err.status = 409; throw err; }
   const timestamp = nowIso();
-  const updated = { ...item, Quantity: movementType === 'IN' ? current + quantity : current - quantity, LastUpdated: timestamp, UpdatedBy: user.displayName || user.username };
+  const updated = { ...item, Quantity: procurementMovementBalance(item, movementType, quantity, procurementControl), LastUpdated: timestamp, UpdatedBy: user.displayName || user.username };
   delete updated.__id;
   delete updated.__name;
   delete updated.__updateTime;
@@ -196,7 +204,7 @@ async function recordMovement(env, section, body, user) {
   await batchCommitDocuments(env, [
     { collectionPath: config.inventory, documentId: item.__id, data: updated, updateTime: item.__updateTime },
     { collectionPath: config.movements, documentId: movementNo, data: movement, exists: false }
-  ]);
+  ], { literalDocumentIds: true });
   return { ok: true, message: `${config.label} stock ${movementType === 'IN' ? 'receipt' : 'issue'} recorded.` };
 }
 
@@ -208,8 +216,10 @@ async function saveClinicRecord(env, body, user) {
   const complaint = clean(body.Complaint);
   if (!complaint) { const err = new Error('Complaint is required.'); err.status = 400; throw err; }
   const recordId = clean(body.RecordId) || `CLN-${Date.now()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
-  await upsertDocument(env, 'clinicRecords', safeId(recordId), {
+  const payload = {
     ...scopeFields(user),
+    BranchId: clean(student.BranchId) || clean(user.branchId) || 'main',
+    SchoolSection: schoolSectionFor(student),
     RecordId: recordId,
     RecordNo: recordId,
     Date: clean(body.Date) || nowIso().slice(0, 10),
@@ -222,8 +232,8 @@ async function saveClinicRecord(env, body, user) {
     Notes: clean(body.Notes),
     RecordedBy: user.displayName || user.username,
     UpdatedAt: nowIso()
-  });
-  return { ok: true, message: 'Clinic visit saved.' };
+  };
+  return commitClinicVisit(env, { documentId: safeId(recordId), payload, body, user });
 }
 
 function studentReference(row) {
@@ -256,7 +266,9 @@ async function lookupClinicStudent(env, body, user) {
     StudentName: clean(student.DisplayName || student.StudentName || student.ApplicantName),
     ClassName: clean(student.ClassName || student.ClassAdmitted),
     StudentType: clean(student.StudentType),
-    ProfileStatus: clean(student.ProfileCompletionStatus || student.Status)
+    ProfileStatus: clean(student.ProfileCompletionStatus || student.Status),
+    BranchId: clean(student.BranchId) || clean(user.branchId) || 'main',
+    SchoolSection: schoolSectionFor(student)
   };
 }
 
@@ -299,7 +311,7 @@ function parentEmailFor(student) {
 
 function clinicHistory(records, student) {
   const ref = studentReference(student);
-  return records.filter((row) => sameRef(row.AdmissionNo || row.AccountRef, ref))
+  return records.filter((row) => isActiveClinicVisit(row) && sameRef(row.AdmissionNo || row.AccountRef, ref))
     .sort((a, b) => clean(b.Date).localeCompare(clean(a.Date)));
 }
 
@@ -383,6 +395,9 @@ export async function onRequestPost(context) {
       const err = new Error('This staff account is not allowed to manage that department.'); err.status = 403; throw err;
     }
     const action = lower(body.action || 'list');
+    if (['saveitem', 'recordmovement'].includes(action) && (user.subscriptionReadOnly === true || user.subscriptionActive === false)) {
+      const err = new Error('Inventory is read-only until the subscription is renewed.'); err.status = 403; throw err;
+    }
     if (action === 'recordsale' && !['restaurant', 'tuckShop'].includes(section)) {
       const err = new Error('Direct commerce payments are not available in this department.');
       err.status = 403;
@@ -403,7 +418,7 @@ export async function onRequestPost(context) {
     let actionResult = null;
     if (action === 'saveitem') await saveInventory(env, section, body, user);
     else if (action === 'recordmovement') await recordMovement(env, section, body, user);
-    else if (action === 'saveclinicrecord' && section === 'clinic') await saveClinicRecord(env, body, user);
+    else if (action === 'saveclinicrecord' && section === 'clinic') actionResult = await saveClinicRecord(env, body, user);
     else if (action === 'lookupclinicstudent' && section === 'clinic') actionResult = { clinicStudent: await lookupClinicStudent(env, body, user) };
     else if (action === 'lookupwallet' && section === 'tuckShop') actionResult = { walletAccount: await lookupWallet(env, body, user) };
     else if (action === 'searchcustomers' && section === 'tuckShop') actionResult = await searchTuckShopCustomers(env, user, body);
@@ -436,7 +451,7 @@ export async function onRequestPost(context) {
     if (action !== 'list') data.message = ({
       saveitem: `${CONFIG[section].label} inventory item saved.`,
       recordmovement: `${CONFIG[section].label} stock movement recorded.`,
-      saveclinicrecord: 'Clinic visit saved.',
+      saveclinicrecord: actionResult?.message || 'Clinic visit saved.',
       lookupclinicstudent: 'Student found. Complete the clinic visit details.',
       lookupwallet: 'Wallet account loaded.',
       searchcustomers: 'Customers found.',

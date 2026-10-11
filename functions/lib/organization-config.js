@@ -31,12 +31,13 @@ export const FAITH_ONLY_STAFF_ROLES = Object.freeze([
 
 export const ORGANIZATION_ONLY_STAFF_ROLES = Object.freeze([
   'Executive Director', 'Organisation Administrator', 'Operations Manager',
-  'Procurement Officer', 'Records Officer'
+  'Records Officer'
 ]);
 
 export const SHARED_STAFF_ROLES = Object.freeze([
   'Vendor User',
   'Super Admin', 'Director', 'Admin', 'Accounts Officer', 'Management', 'Department User',
+  'Procurement Officer',
   'External Auditor',
   'Front Desk', 'HR Director', 'HR Manager', 'HR Business Partner',
   'HR Officer', 'HR Assistant', 'Recruitment Officer',
@@ -69,6 +70,7 @@ export const EDITION_FEATURE_DEFAULTS = Object.freeze({
     branches: true,
     branding: true,
     approvals: true,
+    procurement: true,
     executiveOffice: true,
     humanResources: true,
     staffAttendance: true,
@@ -95,6 +97,7 @@ export const EDITION_FEATURE_DEFAULTS = Object.freeze({
     branches: true,
     branding: true,
     approvals: true,
+    procurement: true,
     executiveOffice: true,
     humanResources: true,
     staffAttendance: true,
@@ -127,6 +130,7 @@ export const EDITION_FEATURE_DEFAULTS = Object.freeze({
     branches: true,
     branding: true,
     approvals: true,
+    procurement: true,
     executiveOffice: true,
     humanResources: true,
     staffAttendance: true,
@@ -151,6 +155,8 @@ export const EDITION_FEATURE_DEFAULTS = Object.freeze({
     donations: true,
     departments: true,
     programs: true,
+    retail: true,
+    restaurant: true,
     hotel: true
   })
 });
@@ -409,6 +415,7 @@ const SECTION_FEATURES = Object.freeze({
   incomeAnalytics: 'accounting',
   externalAudit: Object.freeze(['accounting', 'externalAudit']),
   financeRequests: 'approvals',
+  procurement: 'procurement',
   vendorSettlements: Object.freeze(['accounting', 'approvals', 'vendorSettlements']),
   payroll: 'payroll',
   clinic: 'clinic',

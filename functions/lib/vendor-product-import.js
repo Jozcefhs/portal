@@ -1,5 +1,6 @@
 import { normalizeProductRow, PRODUCT_IMPORT_LIMITS } from '../../js/vendor-product-import.js';
 import { clean, lower, plain, fail, amount, cents } from './vendor-settlement-rules.js';
+import { assertProcurementInventoryEdit, loadProcurementInventoryControl } from './procurement-inventory-guard.js';
 
 const collections = Object.freeze({ tuckShop: 'tuckShopInventory', organizationStore: 'storeItems', restaurant: 'restaurantInventory' });
 const storeNames = new Map([['tuckshop', 'tuckShop'], ['tuck shop', 'tuckShop'], ['organizationstore', 'organizationStore'],
@@ -23,6 +24,7 @@ function input(body) {
 
 async function plan(env, scope, body, deps, inputs, context) {
   const vendors = context?.vendors || await deps.vendors(env, scope);
+  const procurementControlled = await loadProcurementInventoryControl(env, scope, deps.get);
   const allowed = scope.OrganisationEdition === 'school' ? ['tuckShop'] : ['organizationStore', 'restaurant'];
   const rows = [], writes = [], seen = new Set();
   // Exact code lookups are bounded; never scan an entire inventory for a CSV.
@@ -81,6 +83,13 @@ async function plan(env, scope, body, deps, inputs, context) {
       seen.add(key);
     }
     const oldOwner = clean(previous?.VendorId), newOwner = vendor?.VendorId || '';
+    if (!errors.length) {
+      try {
+        assertProcurementInventoryEdit(previous || {}, { ...(previous || {}),
+          Quantity: previous?.Quantity ?? row.Quantity, VendorId: newOwner, OwnershipType: vendor ? 'Vendor' : 'School'
+        }, { controlled: procurementControlled });
+      } catch (error) { errors.push(error.message); }
+    }
     const status = errors.length ? 'Error' : body.Mode === 'assign' ? (oldOwner === newOwner ? 'Unchanged' : 'Assign owner') : previous ? 'Skip existing' : 'Create';
     const output = { RowNumber: row.RowNumber, InventoryId: inventoryId, Section: section || row.Store, ItemCode: previous?.ItemCode || row.ItemCode,
       ItemName: previous?.ItemName || row.ItemName, VendorId: newOwner, Owner: vendor?.Name || (['organisation','organization','school'].includes(lower(row.Owner)) ? 'Organisation' : row.Owner),

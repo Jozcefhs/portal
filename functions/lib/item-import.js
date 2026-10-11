@@ -5,6 +5,7 @@ import { requireSchoolLibraryAccess } from './school-library.js';
 import { categoryApplies, categoryKey } from './store-categories.js';
 import { canonicalConfiguredClass } from './class-names.js';
 import { ITEM_IMPORT_LIMITS, ITEM_IMPORT_MODULES, normalizeItemImportRow, duplicateItemImportRows, itemImportKey } from '../../js/item-import-csv.js';
+import { guardProcurementImportRow, loadProcurementInventoryControl } from './procurement-inventory-guard.js';
 
 const clean = value => String(value ?? '').trim();
 const lower = value => clean(value).toLowerCase();
@@ -29,6 +30,7 @@ export async function handleItemImport(env, user, body) {
   const branchId = enforceActorBranch(user, body.BranchId, '', 'main');
   if (!/^[a-z0-9._-]{1,80}$/.test(branchId)) throw fail('Choose a valid branch.');
   const edition = lower(user.edition || user.OrganisationEdition) || 'school';
+  const procurementControlled = section !== 'library' && await loadProcurementInventoryControl(env, { edition, branchId });
   const defaultSection = ['primary', 'secondary'].includes(lower(user.schoolSectionAccess)) ? clean(user.schoolSectionAccess) : 'Secondary';
   const normalized = body.Rows.map(raw => normalizeItemImportRow(raw, section));
   for (const { row, errors } of normalized) if (section !== 'library') {
@@ -85,6 +87,8 @@ export async function handleItemImport(env, user, body) {
       const store = ['bookstore', 'uniformStore'].includes(section);
       const existing = rows.find(item => schoolSectionFor(item) === lower(row.SchoolSection) && (!store || item.StoreType === storeType) && itemImportKey(store ? item.ItemCode : item.ItemName) === itemImportKey(store ? row.ItemCode : row.ItemName));
       if (existing) { view.Status = 'Skip existing'; continue; }
+      try { guardProcurementImportRow({}, row, { controlled: procurementControlled }); }
+      catch (error) { errors.push(error.message); view.Status = 'Error'; continue; }
       const scope = { BranchId: branchId, SchoolSection: row.SchoolSection, OrganisationEdition: edition };
       let data, documentId;
       if (store) {

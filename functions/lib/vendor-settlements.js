@@ -5,6 +5,7 @@ import { assertRequisitionTransition } from './requisition-workflow.js';
 import { findStaffLoginRecord, findStaffUserRecord, staffAccessFor, verifyStaffApprovalPassword } from './staff-auth.js';
 import { accountingChartChoicesForEdition } from './accounting-edition-scope.js';
 import { handleProductImport } from './vendor-product-import.js';
+import { assertProcurementInventoryEdit, loadProcurementInventoryControl } from './procurement-inventory-guard.js';
 import { PRODUCT_CHANGES, productPolicy, vendorProductContext, prepareVendorProductWrites, handleVendorProductAction } from './vendor-product-management.js';
 import { amount, allocateClaim, balanceView, cents, chargeFor, clean, dateOnly, effectiveRule, fail, lower,
   normalizeRule, periodKey, plain, ruleDescription, settlementScope, visible } from './vendor-settlement-rules.js';
@@ -26,7 +27,8 @@ function id(value, label = 'record') {
 }
 function write(collectionPath, documentId, data, previous = null) {
   if (previous && !clean(previous.__updateTime)) fail('Refresh this record before changing it.', 409);
-  return { collectionPath, documentId, data: plain(data), ...(previous ? { updateTime: previous.__updateTime } : { exists: false }) };
+  return { collectionPath, documentId, data: plain(data), ...(previous ? { updateTime: previous.__updateTime } : { exists: false }),
+    ...(Object.values(inventoryCollections).includes(collectionPath) && previous?.__id === documentId ? { literalDocumentId: true } : {}) };
 }
 function audit(scope, user, action, entityId, details, operationId = crypto.randomUUID()) {
   return write('accountingAudit', `VENDOR-${operationId}`, { ...scope, AuditId: `VENDOR-${operationId}`, Timestamp: new Date().toISOString(),
@@ -367,6 +369,7 @@ async function saveProduct(env, user, scope, body) {
     Category: clean(body.Category || previous?.Category || 'General Item'), Unit: clean(body.Unit || previous?.Unit || 'pcs'),
     Active: body.Active === 'NO' ? 'NO' : 'YES', VendorId: vendor?.VendorId || '', OwnershipType: vendor ? 'Vendor' : 'School',
     StoreType: section === 'organizationStore' ? 'Organisation Store' : clean(previous?.StoreType), UpdatedAt: new Date().toISOString(), UpdatedBy: actor(user) };
+  assertProcurementInventoryEdit(previous || {}, item, { controlled: await loadProcurementInventoryControl(env, scope) });
   await commit(env, [write(inventoryCollections[section], itemId, item, previous), audit(scope, user, 'VENDOR PRODUCT SAVED', itemId,
     `${name}; owner ${vendor?.Name || 'School'}; quantity ${quantity}; price ${price}`)]);
   return { ok: true, message: 'Product ownership saved. Previous sale ownership is unchanged.' };

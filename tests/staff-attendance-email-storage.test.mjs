@@ -598,6 +598,29 @@ test('literal commits reject document path injection while retaining existing de
   assert.equal(f.get('unrelatedCollection', 'legacy%40example.test'), null);
 });
 
+test('mixed legacy and literal inventory writes preserve exact IDs and atomic version conditions', async () => {
+  const f = fixture(), stockId = 'café%20stock', legacyId = 'sale@example.test';
+  f.put('inventory', stockId, { Quantity: 2.125 });
+  const stock = f.get('inventory', stockId);
+  await f.firestore.batchCommitDocuments(f.env, [
+    { collectionPath: 'inventory', documentId: stockId, literalDocumentId: true, updateTime: stock.__updateTime, data: { Quantity: 1.125 } },
+    { collectionPath: 'legacySales', documentId: legacyId, exists: false, data: { Quantity: 1 } }
+  ]);
+  assert.equal(f.get('inventory', stockId).Quantity, 1.125);
+  assert.equal(f.get('inventory', encodeURIComponent(stockId)), null);
+  assert.equal(f.get('legacySales', encodeURIComponent(legacyId)).Quantity, 1);
+  assert.equal(f.get('legacySales', legacyId), null);
+  await assert.rejects(f.firestore.batchCommitDocuments(f.env, [
+    { collectionPath: 'inventory', documentId: stockId, literalDocumentId: true, updateTime: stock.__updateTime, data: { Quantity: 0.125 } },
+    { collectionPath: 'legacySales', documentId: 'never-created', exists: false, data: { Quantity: 1 } }
+  ]));
+  assert.equal(f.get('inventory', stockId).Quantity, 1.125);
+  assert.equal(f.get('legacySales', 'never-created'), null);
+  for (const documentId of ['one/two', '.', '..']) {
+    await assert.rejects(f.firestore.batchCommitDocuments(f.env, [{ collectionPath: 'inventory', documentId, literalDocumentId: true, data: {} }]), /single document path segment/);
+  }
+});
+
 test('a literal-percent login cannot overwrite an email account whose old encoded ID collides with it', async () => {
   const f = fixture('school', 'teacher%40example.test');
   f.put(f.path('staffTimeState'), f.user.username, { Username: 'teacher@example.test', State: 'COMPLETED' });

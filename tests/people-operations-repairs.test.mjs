@@ -55,9 +55,10 @@ async function fixture({ edition = 'school', role = 'Super Admin', branch = 'ann
   const school = await load('functions/lib/school-scope.js', db.io,
     ['listSchoolCollection', 'getSchoolDocumentsById', 'getSchoolDocumentById', 'querySchoolCollection', 'upsertSchoolDocument', 'getSchoolStructure']);
   const conduct = await load('functions/lib/student-conduct.js', school, ['handleStudentConductAction']);
+  const clinic = await load('functions/lib/clinic-stock-usage.js', { ...db.io, batchCommitLiteralDocuments: db.io.batchCommitDocuments }, ['commitClinicVisit']);
   let verified = 0;
   const backend = await load('functions/api/backend.js', {
-    ...db.io, ...school, ...conduct,
+    ...db.io, ...school, ...conduct, ...clinic,
     staffAccessFor: async () => access,
     resolveAuthoritativeDesktopActorForEnv: async () => { verified++; return actor; },
     verifyDesktopSecret: () => ({ type: 'legacy-secret' }),
@@ -169,6 +170,23 @@ test('clinic blocks a student selected by a forged foreign-branch scope path', a
   const response = await f.post('saveClinicRecord', { AdmissionNo: 'STUDENT-1', Complaint: 'Synthetic', StudentScopePath: 'schoolBranches/main/sections/primary/students' });
   assert.equal(response.status, 404);
   assert.equal(f.db.commits.length, 0);
+});
+
+test('desktop clinic dispensing uses exact scoped stock and persists visit plus stock atomically', async () => {
+  const f = await fixture({ role: 'Clinic User' });
+  f.db.put(studentPath, 'STUDENT-1', student);
+  f.db.put('clinicInventory', 'SYNTHETIC-MED', { ItemName: 'Synthetic supply', Quantity: 10, Unit: 'pcs', BranchId: 'annex', SchoolSection: 'primary' });
+  const body = { RecordId: 'CLINIC-STOCK-1', RequestId: 'stock-first', AdmissionNo: 'STUDENT-1', Complaint: 'Synthetic visit', DispensedItems: [{ InventoryId: 'SYNTHETIC-MED', Quantity: 2 }] };
+  const response = await f.post('saveClinicRecord', body, true);
+  assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
+  assert.equal(f.db.rows.get('clinicInventory/SYNTHETIC-MED').Quantity, 8);
+  assert.equal(f.db.commits.length, 1);
+  assert.equal(f.db.commits[0].length, 4);
+  assert.equal((await f.post('saveClinicRecord', body, true)).status, 200);
+  assert.equal(f.db.commits.length, 1);
+  const shortage = await f.post('saveClinicRecord', { ...body, RecordId: 'CLINIC-STOCK-2', RequestId: 'stock-second', DispensedItems: [{ InventoryId: 'SYNTHETIC-MED', Quantity: 12 }] }, true);
+  assert.equal(shortage.status, 409);
+  assert.equal(f.db.rows.has('clinicRecords/CLINIC-STOCK-2'), false);
 });
 
 test('posted administrator roles cannot elevate a verified teacher into clinic or admissions', async () => {

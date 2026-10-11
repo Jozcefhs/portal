@@ -17,6 +17,7 @@ import {
 } from './direct-bank-transfer.js';
 import { prepareVendorSale, snapshotVendorCart } from './vendor-settlements.js';
 import { restrictVendorInventory, assertVendorSaleReplay } from './vendor-sales-access.js';
+import { inventoryQuantityNumber, procurementMovementBalance } from './procurement-inventory-guard.js';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
@@ -304,7 +305,7 @@ async function authoritativeCart(env, section, body, user, inventoryRows = null)
     if (clean(item.Active || 'YES').toUpperCase() === 'NO') {
       throw error(`${clean(item.ItemName) || requested.Reference} is not available for sale.`, 409);
     }
-    const available = Math.floor(money(item.Quantity));
+    const available = inventoryQuantityNumber(item.Quantity);
     if (requested.Quantity > available) {
       throw error(`${clean(item.ItemName) || requested.Reference} has only ${available} available.`, 409);
     }
@@ -445,16 +446,17 @@ function inventoryWrites(section, cart, inventoryRows, timestamp) {
     if (!clean(item.__updateTime)) {
       throw error(`${line.ItemName} stock version is unavailable. Refresh inventory and try again.`, 409);
     }
-    const available = Math.floor(money(item.Quantity));
+    const available = inventoryQuantityNumber(item.Quantity);
     if (line.Quantity > available) {
       throw error(`${line.ItemName} has only ${available} available.`, 409);
     }
     return {
       collectionPath: configFor(section).inventory,
       documentId: clean(item.__id),
+      literalDocumentId: true,
       data: {
         ...withoutMetadata(item),
-        Quantity: available - line.Quantity,
+        Quantity: procurementMovementBalance({ ...item, Quantity: available }, 'OUT', line.Quantity),
         LastUpdated: timestamp,
         UpdatedAt: timestamp
       },

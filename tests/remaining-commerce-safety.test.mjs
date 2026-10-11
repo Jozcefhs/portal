@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
 import { enforceActorBranch } from '../functions/lib/branch-scope.js';
+import * as procurementGuards from '../functions/lib/procurement-inventory-guard.js';
 
 const root = new URL('../', import.meta.url);
 const clone = value => value == null ? value : structuredClone(value);
@@ -42,6 +43,8 @@ function database() {
 }
 async function load(file, db, extra = {}, slice) {
   const context = {
+    ...procurementGuards,
+    loadProcurementInventoryControl: (env, scope) => procurementGuards.loadProcurementInventoryControl(env, scope, db.api.getDocument),
     ...db.api, crypto:globalThis.crypto, Response, URL, URLSearchParams, TextEncoder, console,
     enforceActorBranch, schoolSectionFor: row => clean(row.SchoolSection || 'Secondary').toLowerCase(),
     resolveOrganizationConfig: ({env}) => ({Edition:env.edition || 'faith',FeatureFlags:{hotel:true},Code:'TEST'}),
@@ -80,6 +83,40 @@ test('R11: school stock confirmation resolves scoped and legacy IDs, never anoth
   assert.equal(legacy.__id,'Bookstore-OLD');
   assert.equal(legacy.ItemCode,'OLD');
   assert.equal((await stock.resolveSchoolStoreStock({}, {StoreType:'Bookstore',ItemCode:'OLD',InventoryDocumentId:legacy.__id},{BranchId:'main'})).__id,legacy.__id);
+});
+
+test('school paid store writes preserve actual stock IDs and fractional balances without changing order IDs',async()=>{
+  const db=database(), stock=await load('functions/lib/school-store-stock.js',db), commit=db.api.batchUpsertDocuments;
+  let submitted;
+  db.api.batchUpsertDocuments=async(env,writes)=>{submitted=writes;return commit(env,writes);};
+  const payment=await load('functions/api/verify-payment.js',db,{resolveSchoolStoreStock:stock.resolveSchoolStoreStock});
+  for(const StoreType of ['Bookstore','Uniform Store']) {
+    const id=`${StoreType}-café%20stock`;
+    db.documents.set(`storeItems/${id}`,{StoreType,ItemCode:'BOOK',BranchId:'main',SchoolSection:'Secondary',Quantity:2.125,ProcurementManaged:'YES'});
+    const item={ItemCode:'BOOK',InventoryDocumentId:id,StoreType,BranchId:'main',SchoolSection:'Secondary',Quantity:1};
+    const result=await payment.createPaidStoreOrder({}, {OrderNo:`order-${StoreType}`,BranchId:'main'},[item],StoreType);
+    assert.equal(result.created,true); assert.equal(result.warning,'');
+    assert.equal(db.read('storeItems',id).Quantity,1.125);
+    const stockWrite=submitted.find(write=>write.collectionPath==='storeItems');
+    assert.equal(stockWrite.documentId,id); assert.equal(stockWrite.literalDocumentId,true);
+    assert.equal(submitted.find(write=>write.collectionPath==='storeOrders').literalDocumentId,undefined);
+    await payment.createPaidStoreOrder({}, {OrderNo:`order-${StoreType}`,BranchId:'main'},[item],StoreType);
+    assert.equal(db.read('storeItems',id).Quantity,1.125,'replay does not deduct twice');
+  }
+});
+
+test('vendor inventory edits opt into literal IDs only for resolved existing stock records',async()=>{
+  const db=database(), api=await load('functions/lib/vendor-settlements.js',db,{
+    inventoryCollections:{tuckShop:'tuckShopInventory',organizationStore:'storeItems',restaurant:'restaurantInventory'},
+    clean, plain:row=>({...row}), fail:message=>{throw new Error(message);}
+  },['function write(', 'function audit(']);
+  for(const collection of ['tuckShopInventory','storeItems','restaurantInventory']) {
+    const previous={__id:'café%20stock',__updateTime:'v1'};
+    assert.equal(api.write(collection,previous.__id,{Quantity:3},previous).literalDocumentId,true);
+    assert.equal(api.write(collection,'NEW-ITEM',{Quantity:0}).literalDocumentId,undefined);
+    assert.equal(api.write(collection,'different-id',{Quantity:3},previous).literalDocumentId,undefined);
+  }
+  assert.equal(api.write('vendorBalances','legacy%20id',{}, {__id:'legacy%20id',__updateTime:'v1'}).literalDocumentId,undefined);
 });
 
 test('R12: both organisation editions approve transfer using exact immutable stock ID',async()=>{

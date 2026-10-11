@@ -14,8 +14,11 @@ export const SUBSCRIPTION_PLAN_NAMES = Object.freeze([
 
 const FULL_ACCESS = '*';
 export const FREE_TRIAL_DAYS = 7;
-export const SUBSCRIPTION_MODULE_CATALOG_VERSION = 11;
-const RECENT_FINANCE_MODULES = new Set(['vendorSettlements', 'externalAudit']);
+export const SUBSCRIPTION_MODULE_CATALOG_VERSION = 12;
+const RECENT_MODULE_VERSIONS = Object.freeze({ vendorSettlements: 11, externalAudit: 11, procurement: 12 });
+const moduleIntroductionVersion = (key, edition) => edition === 'organization' && ['retail', 'restaurant'].includes(key)
+  ? 12 : RECENT_MODULE_VERSIONS[key] || 0;
+const moduleExistedAtVersion = (key, version, edition) => Number(version) >= moduleIntroductionVersion(key, edition);
 export const SUBSCRIPTION_CURRENCIES = Object.freeze(['NGN', 'USD']);
 export const DEFAULT_USD_TO_NGN_RATE = 1350;
 
@@ -26,6 +29,7 @@ export const SUBSCRIPTION_FLEX_PRICE_ESTIMATES_USD = Object.freeze({
   branches: 2,
   branding: 2,
   approvals: 3,
+  procurement: 5,
   executiveOffice: 2,
   humanResources: 4,
   staffAttendance: 3,
@@ -59,6 +63,7 @@ export const SUBSCRIPTION_MODULE_CATALOG = Object.freeze([
   Object.freeze({ Key: 'branches', Editions: Object.freeze(['school', 'faith', 'organization']), Labels: Object.freeze({ school: 'Branches & campuses', faith: 'Branches & assemblies', organization: 'Branches & offices' }), Description: 'Branch switching and branch-isolated records.', Requires: Object.freeze([]) }),
   Object.freeze({ Key: 'branding', Editions: Object.freeze(['school', 'faith', 'organization']), Labels: Object.freeze({ school: 'Branding & document identity', faith: 'Branding & document identity', organization: 'Branding & document identity' }), Description: 'Organisation identity, logos and document presentation.', Requires: Object.freeze([]) }),
   Object.freeze({ Key: 'approvals', Editions: Object.freeze(['school', 'faith', 'organization']), Labels: Object.freeze({ school: 'Bills, requisitions & approvals', faith: 'Bills, requisitions & approvals', organization: 'Bills, requisitions & approvals' }), Description: 'Request, review, approval and posting workflows.', Requires: Object.freeze([]) }),
+  Object.freeze({ Key: 'procurement', Editions: Object.freeze(['school', 'faith', 'organization']), Labels: Object.freeze({ school: 'Procurement', faith: 'Procurement', organization: 'Procurement' }), Description: 'Central purchases, purchase approvals, department supply requests, stock issues, receipt confirmation and replenishment. Integrates enabled department inventories while keeping vendor-owned stock separate. Department inventory modules are selected separately.', Requires: Object.freeze([]), Surface: 'Web companion and desktop launcher' }),
   Object.freeze({ Key: 'executiveOffice', Editions: Object.freeze(['school', 'faith', 'organization']), Labels: Object.freeze({ school: 'Executive Office', faith: 'Executive Office', organization: 'Executive Office' }), Description: 'Official correspondence, templates and executive records.', Requires: Object.freeze([]) }),
   Object.freeze({ Key: 'humanResources', Editions: Object.freeze(['school', 'faith', 'organization']), Labels: Object.freeze({ school: 'Human Resources', faith: 'Human Resources', organization: 'Human Resources' }), Description: 'Employee journey, records, leave, welfare and performance.', Requires: Object.freeze([]) }),
   Object.freeze({ Key: 'staffAttendance', Editions: Object.freeze(['school', 'faith', 'organization']), Labels: Object.freeze({ school: 'Staff attendance & clocking', faith: 'Staff attendance & clocking', organization: 'Staff attendance & clocking' }), Description: 'Clock-in/out, schedules, lateness, absence, overtime and presence checks.', Requires: Object.freeze([]) }),
@@ -83,8 +88,8 @@ export const SUBSCRIPTION_MODULE_CATALOG = Object.freeze([
   Object.freeze({ Key: 'funds', Editions: Object.freeze(['faith', 'organization']), Labels: Object.freeze({ faith: 'Funds & mappings', organization: 'Budgets & account mappings' }), Description: 'Fund controls and accounting mappings.', Requires: Object.freeze(['accounting']) }),
   Object.freeze({ Key: 'offerings', Editions: Object.freeze(['faith', 'organization']), Labels: Object.freeze({ faith: 'Offerings', organization: 'Income & receipts' }), Description: 'Batch collection, reconciliation and posting.', Requires: Object.freeze(['accounting']) }),
   Object.freeze({ Key: 'donations', Editions: Object.freeze(['faith', 'organization']), Labels: Object.freeze({ faith: 'Donations & donor management', organization: 'Grants & contributions' }), Description: 'Donor records, currencies, conversion and giving analytics.', Requires: Object.freeze(['accounting']) }),
-  Object.freeze({ Key: 'retail', Editions: Object.freeze(['faith']), Labels: Object.freeze({ faith: 'Organisation store' }), Description: 'Inventory, sales, checkout and receipts.', Requires: Object.freeze(['accounting']) }),
-  Object.freeze({ Key: 'restaurant', Editions: Object.freeze(['faith']), Labels: Object.freeze({ faith: 'Restaurant' }), Description: 'Restaurant stock, ordering and sales operations.', Requires: Object.freeze(['accounting']) }),
+  Object.freeze({ Key: 'retail', Editions: Object.freeze(['faith', 'organization']), Labels: Object.freeze({ faith: 'Organisation store', organization: 'Inventory & Sales' }), Description: 'Inventory, sales, checkout and receipts.', Requires: Object.freeze(['accounting']) }),
+  Object.freeze({ Key: 'restaurant', Editions: Object.freeze(['faith', 'organization']), Labels: Object.freeze({ faith: 'Restaurant', organization: 'Catering Operations' }), Description: 'Restaurant and catering stock, ordering and sales operations.', Requires: Object.freeze(['accounting']) }),
   Object.freeze({ Key: 'hotel', Editions: Object.freeze(['faith', 'organization']), Labels: Object.freeze({ faith: 'Hotel services', organization: 'Hotel services' }), Description: 'Rooms, reservations, guest stays, housekeeping, charges and payments.', Requires: Object.freeze(['accounting']) })
 ]);
 
@@ -140,13 +145,12 @@ export function normalizeSubscriptionEntitlements(edition, value, fallback = [])
   return normalizeConfiguredEntitlements(edition, value, fallback);
 }
 
-// These workspaces previously received the two finance areas through their
-// parent modules. Keep that access without changing their paid price snapshot.
+// These workspaces previously received finance areas through
+// their parent modules. Keep that access without changing their paid price snapshot.
 // New quotations use normalization only, so unselected add-ons are not added.
 export function migrateSubscriptionModuleEntitlements(edition, value, sourceVersion = 0) {
   const entitlements = normalizeConfiguredEntitlements(edition, value, []);
-  if (Number(sourceVersion) >= 11) return entitlements;
-  if (entitlements.includes('accounting')) {
+  if (Number(sourceVersion) < 11 && entitlements.includes('accounting')) {
     entitlements.push('externalAudit');
     if (entitlements.includes('approvals')) entitlements.push('vendorSettlements');
   }
@@ -185,15 +189,15 @@ export const SUBSCRIPTION_PLAN_DEFINITIONS = Object.freeze({
     Entitlements: Object.freeze({
       school: Object.freeze([
         'branches', 'branding', 'admissions', 'students', 'academics', 'parentPortal',
-        'approvals', 'executiveOffice', 'humanResources', 'staffAttendance', 'accounting', 'vendorSettlements', 'externalAudit', 'bulkCommunication'
+        'approvals', 'procurement', 'executiveOffice', 'humanResources', 'staffAttendance', 'accounting', 'vendorSettlements', 'externalAudit', 'bulkCommunication'
       ]),
       faith: Object.freeze([
         'branches', 'branding', 'members', 'services', 'departments', 'programs',
-        'approvals', 'executiveOffice', 'humanResources', 'staffAttendance', 'accounting', 'vendorSettlements', 'externalAudit', 'bulkCommunication', 'funds', 'offerings', 'donations'
+        'approvals', 'procurement', 'executiveOffice', 'humanResources', 'staffAttendance', 'accounting', 'vendorSettlements', 'externalAudit', 'bulkCommunication', 'funds', 'offerings', 'donations'
       ]),
       organization: Object.freeze([
         'branches', 'branding', 'members', 'departments', 'programs',
-        'approvals', 'executiveOffice', 'humanResources', 'staffAttendance', 'accounting', 'vendorSettlements', 'externalAudit', 'bulkCommunication'
+        'approvals', 'procurement', 'executiveOffice', 'humanResources', 'staffAttendance', 'accounting', 'vendorSettlements', 'externalAudit', 'bulkCommunication'
       ])
     }),
     Features: Object.freeze({
@@ -424,9 +428,9 @@ export function defaultSubscriptionPlanCatalog() {
           edition,
           Object.fromEntries(subscriptionModulesForEdition(edition).map((module) => [
             module.Key,
-            { MonthlyAmount: name === 'Flex' && (module.Key === 'library' || RECENT_FINANCE_MODULES.has(module.Key))
+            { MonthlyAmount: name === 'Flex' && (module.Key === 'library' || moduleIntroductionVersion(module.Key, edition))
               ? suggestedFlexModuleAmount(module.Key, 'monthly', 'NGN', DEFAULT_USD_TO_NGN_RATE) : 0,
-              YearlyAmount: name === 'Flex' && (module.Key === 'library' || RECENT_FINANCE_MODULES.has(module.Key))
+              YearlyAmount: name === 'Flex' && (module.Key === 'library' || moduleIntroductionVersion(module.Key, edition))
                 ? suggestedFlexModuleAmount(module.Key, 'yearly', 'NGN', DEFAULT_USD_TO_NGN_RATE) : 0 }
           ]))
         ]))
@@ -492,10 +496,10 @@ export function normalizeSubscriptionPlanCatalog(value = {}) {
             ? normalizeConfiguredEntitlements(edition, [...migratedEntitlements, 'bulkCommunication'], [])
             : migratedEntitlements;
           const expectedEntitlements = defaults.Plans[name].EntitlementsByEdition[edition]
-            .filter((key) => sourceModuleCatalogVersion >= 11 || !RECENT_FINANCE_MODULES.has(key));
+            .filter((key) => moduleExistedAtVersion(key, sourceModuleCatalogVersion, edition));
           const expectedWithoutCommunication = expectedEntitlements.filter((key) => key !== 'bulkCommunication');
           const previousCommunicationEntitlements = communicationMigratedEntitlements
-            .filter((key) => sourceModuleCatalogVersion >= 11 || !RECENT_FINANCE_MODULES.has(key));
+            .filter((key) => moduleExistedAtVersion(key, sourceModuleCatalogVersion, edition));
           const omittedOnlyBulkCommunication = sourceModuleCatalogVersion < 9
             && expectedEntitlements.includes('bulkCommunication')
             && !communicationMigratedEntitlements.includes('bulkCommunication')
@@ -511,7 +515,7 @@ export function normalizeSubscriptionPlanCatalog(value = {}) {
             : restoredCommunicationEntitlements;
           const previousFullSchoolModules = expectedEntitlements.filter((key) => key !== 'library');
           const previousHotelEntitlements = hotelMigratedEntitlements
-            .filter((key) => sourceModuleCatalogVersion >= 11 || !RECENT_FINANCE_MODULES.has(key));
+            .filter((key) => moduleExistedAtVersion(key, sourceModuleCatalogVersion, edition));
           const libraryMigratedEntitlements = sourceModuleCatalogVersion < 10
             && edition === 'school'
             && ['Free', 'Professional', 'Enterprise'].includes(name)
@@ -519,7 +523,23 @@ export function normalizeSubscriptionPlanCatalog(value = {}) {
             && previousFullSchoolModules.every((key) => previousHotelEntitlements.includes(key))
             ? normalizeConfiguredEntitlements(edition, [...hotelMigratedEntitlements, 'library'], [])
             : hotelMigratedEntitlements;
-          return [edition, migrateSubscriptionModuleEntitlements(edition, libraryMigratedEntitlements, sourceModuleCatalogVersion)];
+          const previousCatalogueEntitlements = libraryMigratedEntitlements
+            .filter((key) => moduleExistedAtVersion(key, sourceModuleCatalogVersion, edition));
+          const unchangedFixedSelection = name !== 'Flex'
+            && previousCatalogueEntitlements.length === expectedEntitlements.length
+            && expectedEntitlements.every((key) => previousCatalogueEntitlements.includes(key));
+          // New fixed-plan defaults can include Procurement, but an existing
+          // custom or Flex selection must never gain this new paid module.
+          const procurementDefaultEntitlements = sourceModuleCatalogVersion < 12 && unchangedFixedSelection
+            && defaults.Plans[name].EntitlementsByEdition[edition].includes('procurement')
+            ? [...libraryMigratedEntitlements, 'procurement'] : libraryMigratedEntitlements;
+          // Restore the existing inventory modules only for unchanged full-access
+          // Organization plans. Custom selections and Flex remain opt-in.
+          const organizationInventoryEntitlements = sourceModuleCatalogVersion < 12
+            && edition === 'organization' && ['Free', 'Professional', 'Enterprise'].includes(name)
+            && unchangedFixedSelection
+            ? [...procurementDefaultEntitlements, 'retail', 'restaurant'] : procurementDefaultEntitlements;
+          return [edition, migrateSubscriptionModuleEntitlements(edition, organizationInventoryEntitlements, sourceModuleCatalogVersion)];
         })),
         PaystackMonthlyPlanCode: name === 'Free' ? '' : clean(incoming.PaystackMonthlyPlanCode),
         PaystackYearlyPlanCode: name === 'Free' ? '' : clean(incoming.PaystackYearlyPlanCode),
@@ -532,7 +552,8 @@ export function normalizeSubscriptionPlanCatalog(value = {}) {
           edition,
           Object.fromEntries(subscriptionModulesForEdition(edition).map((module) => {
             const price = configuredModulePrices?.[edition]?.[module.Key] || {};
-            const recentModule = RECENT_FINANCE_MODULES.has(module.Key);
+            const recentModuleVersion = moduleIntroductionVersion(module.Key, edition);
+            const recentModule = Boolean(recentModuleVersion);
             const migrateUnpricedFlexModule = name === 'Flex' && !recentModule && (
               sourceModuleCatalogVersion < 6
               || (sourceModuleCatalogVersion < 8 && module.Key === 'hotel')
@@ -540,14 +561,14 @@ export function normalizeSubscriptionPlanCatalog(value = {}) {
             );
             return [module.Key, {
               MonthlyAmount: name === 'Flex'
-                ? recentModule && sourceModuleCatalogVersion < 11 && !Object.prototype.hasOwnProperty.call(price, 'MonthlyAmount')
+                ? recentModule && sourceModuleCatalogVersion < recentModuleVersion && !Object.prototype.hasOwnProperty.call(price, 'MonthlyAmount')
                   ? suggestedFlexModuleAmount(module.Key, 'monthly', normalizedCurrency, normalizedUsdToNgnRate)
                   : money(price.MonthlyAmount) || (migrateUnpricedFlexModule
                   ? suggestedFlexModuleAmount(module.Key, 'monthly', normalizedCurrency, normalizedUsdToNgnRate)
                   : 0)
                 : 0,
               YearlyAmount: name === 'Flex'
-                ? recentModule && sourceModuleCatalogVersion < 11 && !Object.prototype.hasOwnProperty.call(price, 'YearlyAmount')
+                ? recentModule && sourceModuleCatalogVersion < recentModuleVersion && !Object.prototype.hasOwnProperty.call(price, 'YearlyAmount')
                   ? suggestedFlexModuleAmount(module.Key, 'yearly', normalizedCurrency, normalizedUsdToNgnRate)
                   : money(price.YearlyAmount) || (migrateUnpricedFlexModule
                   ? suggestedFlexModuleAmount(module.Key, 'yearly', normalizedCurrency, normalizedUsdToNgnRate)

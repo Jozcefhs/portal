@@ -8,6 +8,7 @@ import { webcrypto } from 'node:crypto';
 import * as rules from '../../functions/lib/vendor-settlement-rules.js';
 import { handleProductImport } from '../../functions/lib/vendor-product-import.js';
 import * as productManagement from '../../functions/lib/vendor-product-management.js';
+import * as procurementGuards from '../../functions/lib/procurement-inventory-guard.js';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const scope = {ScopeKey:'school--main',BranchId:'main',OrganisationEdition:'school',SchoolSection:'Secondary'};
@@ -24,6 +25,8 @@ for (let i=1;i<=21;i++) put('tuckShopInventory',`fixture-stock-${i}`,{...scope,I
 const source = (await readFile(new URL('../../functions/lib/vendor-settlements.js',import.meta.url),'utf8'))
   .replace(/^import[\s\S]*?from '[^']+';\r?\n/gm,'').replace(/export /g,'');
 const {handleVendorSettlementAction} = vm.runInNewContext(`${source}\n({handleVendorSettlementAction})`,{...rules,...productManagement,handleProductImport,
+  ...procurementGuards,
+  loadProcurementInventoryControl: (env, scope) => procurementGuards.loadProcurementInventoryControl(env, scope, async (_env,c,id)=>get(c,id)),
   crypto:webcrypto,Intl,Date,TextEncoder,console,
   getDocument:async (_env,c,id)=>get(c,id),listCollection:async (_env,c)=>list(c),getAccountingChartRows:async()=>[],
   queryCollectionPages:async (_env,c,o)=>list(c).filter(row=>o.filters.every(f=>f.op==='in' ? f.value.includes(row[f.field]) : row[f.field]===f.value)),

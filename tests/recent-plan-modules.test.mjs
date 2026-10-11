@@ -16,7 +16,7 @@ const editions = ['school', 'faith', 'organization'];
 const recentKeys = ['vendorSettlements', 'externalAudit'];
 
 test('recent finance modules have approved editable prices and dependencies across editions', () => {
-  assert.equal(SUBSCRIPTION_MODULE_CATALOG_VERSION, 11);
+  assert.equal(SUBSCRIPTION_MODULE_CATALOG_VERSION, 12);
   for (const edition of editions) {
     const modules = subscriptionModulesForEdition(edition);
     const vendor = modules.find((row) => row.Key === 'vendorSettlements');
@@ -81,9 +81,9 @@ test('legacy finance access migrates, but v11 explicit exclusions and empty plan
       assert.equal(organization.FeatureFlags.vendorSettlements, version < 11);
       assert.equal(organization.FeatureFlags.externalAudit, version < 11);
       assert.deepEqual(filterSectionsForFeatures(recentKeys, organization.FeatureFlags), version < 11 ? recentKeys : []);
-      assert.equal(organization.PlanModuleCatalogVersion, 11);
+      assert.equal(organization.PlanModuleCatalogVersion, SUBSCRIPTION_MODULE_CATALOG_VERSION);
       const saved = organizationProfileDocument(organization);
-      assert.equal(saved.PlanModuleCatalogVersion, 11);
+      assert.equal(saved.PlanModuleCatalogVersion, SUBSCRIPTION_MODULE_CATALOG_VERSION);
       assert.deepEqual(resolveOrganizationConfig({ organizationProfile: saved }).PlanEntitlements, organization.PlanEntitlements);
     }
     const disabled = resolveOrganizationConfig({ organizationProfile: {
@@ -116,7 +116,7 @@ test('new Flex quotations charge common dependencies once and do not add unselec
   const quote = subscriptionFlexQuote(catalog, 'school', recentKeys, 1);
   assert.deepEqual(quote.FeatureEntitlements, ['approvals', 'accounting', 'vendorSettlements', 'externalAudit']);
   assert.equal(quote.Amount, 15);
-  assert.equal(quote.PriceSnapshot.ModuleCatalogVersion, 11);
+  assert.equal(quote.PriceSnapshot.ModuleCatalogVersion, SUBSCRIPTION_MODULE_CATALOG_VERSION);
   assert.equal(subscriptionFlexQuote(catalog, 'school', recentKeys, 1, 'yearly').Amount, 150);
   const accountingOnly = subscriptionFlexQuote(catalog, 'school', ['accounting'], 1);
   assert.deepEqual(accountingOnly.FeatureEntitlements, ['accounting']);
@@ -137,7 +137,7 @@ test('policy refresh grandfathers legacy Flex access without repricing its paid 
       const refreshed = await refreshOrganizationPlanPolicy({ ALLOW_CANONICAL_API_PROXY: 'true',
         CANONICAL_PORTAL_URL: 'https://recent-module-test.example', CANONICAL_API_PROXY_SCOPE: 'platform-subscriptions' },
       { WorkspaceId: 'recent-module-test', Edition: 'school' });
-      assert.equal(refreshed.PlanModuleCatalogVersion, 11);
+      assert.equal(refreshed.PlanModuleCatalogVersion, SUBSCRIPTION_MODULE_CATALOG_VERSION);
       assert.equal(refreshed.PlanEntitlements.includes('vendorSettlements'), version < 11);
       assert.equal(refreshed.PlanEntitlements.includes('externalAudit'), version < 11);
       assert.equal(refreshed.SubscriptionPrice, 1234);

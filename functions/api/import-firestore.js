@@ -1,7 +1,9 @@
-import { batchUpsertDocuments, requireFirestoreEnv } from '../lib/firestore.js';
+import { batchUpsertDocuments, getDocument, queryCollection, requireFirestoreEnv } from '../lib/firestore.js';
 import { requireConfiguredDesktopSecret, verifyDesktopCredential } from '../lib/backend-security.js';
 import { finishRequestMetric, startRequestMetric } from '../lib/request-metrics.js';
 import { readJsonBody } from '../lib/request-security.js';
+import { guardProcurementImportRow, loadProcurementInventoryControl, procurementManagedItem } from '../lib/procurement-inventory-guard.js';
+import { requiredDeploymentIdentity } from '../lib/deployment-identity.js';
 
 const MAX_IMPORT_ROWS = 250;
 const IMPORT_BATCH_SIZE = 100;
@@ -237,8 +239,39 @@ export async function onRequestPost({ request, env }) {
           ...row,
           UpdatedAt: row.UpdatedAt || new Date().toISOString()
         };
+        let inventoryCondition = {};
+        if (collection === 'clinicRecords') {
+          const protectedFields = ['DispensedItems', 'Revision', 'StockReturnedOnCancellation'];
+          const existing = await getDocument(env, collection, documentId);
+          if (protectedFields.some(field => Object.hasOwn(payload, field) || (existing && Object.hasOwn(existing, field)))) {
+            throw new Error('Clinic dispensing and reviewed visit history cannot be created or replaced through a generic import. Use the Clinic visit workflow; historical text-only visits remain importable.');
+          }
+          if (existing && !clean(existing.__updateTime)) throw new Error('Clinic record version is unavailable. Refresh before importing.');
+          inventoryCondition = existing ? { updateTime: existing.__updateTime } : { exists: false };
+        }
+        if (['clinicInventory', 'kitchenInventory', 'restaurantInventory'].includes(collection)) {
+          const { edition } = requiredDeploymentIdentity(env);
+          const branchId = clean(row.BranchId || 'main').toLowerCase();
+          const existing = await getDocument(env, collection, documentId);
+          const controlled = await loadProcurementInventoryControl(env, { edition, branchId })
+            || Boolean(existing && await loadProcurementInventoryControl(env, { edition, BranchId: existing.BranchId || 'main' }));
+          guardProcurementImportRow(existing || {}, payload, { controlled });
+          if (existing && !clean(existing.__updateTime)) throw new Error('Stock version is unavailable. Refresh and use Procurement for stock adjustments.');
+          inventoryCondition = existing ? { updateTime: existing.__updateTime } : { exists: false };
+          // Legacy imports use a name-only ID; do not create a second stock row
+          // beside the managed branch/section identity of the same item.
+          if (!existing && clean(row.ItemName)) {
+            const matching = await queryCollection(env, collection, { filters: [{ field: 'ItemName', op: '==', value: clean(row.ItemName) }], limit: 101 });
+            if (matching.length > 100) throw new Error('Too many matching stock records. Review inventory in Procurement.');
+            if (matching.some(item => procurementManagedItem(item) && clean(item.BranchId || 'main').toLowerCase() === branchId
+              && (!clean(item.OrganisationEdition) || clean(item.OrganisationEdition).toLowerCase() === edition)
+              && clean(item.SchoolSection || 'Secondary').toLowerCase() === clean(row.SchoolSection || 'Secondary').toLowerCase())) {
+              throw new Error('This item is already controlled by Procurement. Import must not create duplicate opening stock.');
+            }
+          }
+        }
         if (dryRun) imported.push({ index, documentId });
-        else writes.push({ index, documentId, collectionPath: collection, data: payload });
+        else writes.push({ index, documentId, collectionPath: collection, data: payload, ...inventoryCondition });
       } catch (error) {
         failures.push({ index, documentId: '', message: error.message || 'The row is invalid.' });
       }

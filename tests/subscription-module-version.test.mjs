@@ -43,7 +43,7 @@ test('fixed and Flex selections identify the catalogue that produced their expli
   } });
   for (const plan of ['Standard', 'Flex']) {
     const selection = select(catalog, plan, 'school', 'monthly', ['accounting', 'approvals'], 5);
-    assert.equal(selection.PriceSnapshot.ModuleCatalogVersion, 11);
+    assert.equal(selection.PriceSnapshot.ModuleCatalogVersion, SUBSCRIPTION_MODULE_CATALOG_VERSION);
     assert.ok(!selection.FeatureEntitlements.includes('vendorSettlements'));
     assert.ok(!selection.FeatureEntitlements.includes('externalAudit'));
   }
@@ -66,7 +66,7 @@ test('catalogue save migrates legacy Flex access once without touching paid pric
       batchUpsertDocuments: async (_env, batch) => writes.push(...structuredClone(batch)) });
   assert.equal(await update({}, normalizeSubscriptionPlanCatalog()), registrations.length);
   for (const write of writes) {
-    assert.equal(write.data.PlanModuleCatalogVersion, 11);
+    assert.equal(write.data.PlanModuleCatalogVersion, SUBSCRIPTION_MODULE_CATALOG_VERSION);
     assert.deepEqual(write.data.PriceSnapshot, registrations.find(row => row.Reference === write.documentId).PriceSnapshot);
     const shouldInclude = ['legacy', 'standard'].includes(write.documentId);
     assert.equal(write.data.FeatureEntitlements.includes('vendorSettlements'), shouldInclude);

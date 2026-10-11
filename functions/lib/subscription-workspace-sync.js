@@ -28,7 +28,7 @@ export async function syncRegistrationSubscriptionToWorkspace(env, registration 
     ...withoutFirestoreMetadata(organizationProfile),
     Plan: clean(registration.Plan || organizationProfile.Plan),
     BillingCycle: clean(registration.BillingCycle || organizationProfile.BillingCycle),
-    SubscriptionPrice: Number(registration.Price || organizationProfile.SubscriptionPrice || 0),
+    SubscriptionPrice: Number(registration.Price ?? organizationProfile.SubscriptionPrice ?? 0),
     SubscriptionCurrency: clean(registration.Currency || organizationProfile.SubscriptionCurrency || 'NGN'),
     SubscriptionPriceSnapshot: registration.PriceSnapshot ?? organizationProfile.SubscriptionPriceSnapshot ?? null,
     PlanEntitlements: entitlements == null ? null : migrateSubscriptionModuleEntitlements(

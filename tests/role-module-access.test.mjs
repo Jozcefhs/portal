@@ -119,7 +119,7 @@ test('Director and Admin exist in every edition with distinct permission boundar
 test('Vendor User loses every sales module when vendor settlements or a prerequisite is disabled', () => {
   for (const edition of ['school', 'faith', 'organization']) {
     const fullFlags = featureFlagsForEdition(edition);
-    const storeSections = edition === 'school' ? ['tuckShop'] : edition === 'faith' ? ['organizationStore', 'restaurant'] : [];
+    const storeSections = edition === 'school' ? ['tuckShop'] : ['organizationStore', 'restaurant'];
     const user = { role: 'Vendor User', branchId: 'main', tabAccess: [...storeSections, 'staffUsers'] };
     const policy = { Scopes: { main: { 'Vendor User': storeSections } } };
     for (const disabledFeature of ['vendorSettlements', 'accounting', 'approvals']) {
@@ -144,7 +144,7 @@ test('Vendor User store access still follows each store entitlement after vendor
   for (const edition of ['school', 'faith', 'organization']) {
     const flags = featureFlagsForEdition(edition);
     const stores = edition === 'school' ? [['tuckShop', 'stores']]
-      : edition === 'faith' ? [['organizationStore', 'retail'], ['restaurant', 'restaurant']] : [];
+      : [['organizationStore', 'retail'], ['restaurant', 'restaurant']];
     for (const [section, feature] of stores) {
       const featureFlags = { ...flags, [feature]: false };
       const expected = ['vendorSettlements', ...stores.map(([key]) => key).filter(key => key !== section)];

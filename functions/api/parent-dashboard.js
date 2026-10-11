@@ -6,6 +6,7 @@ import { isFullScholarship } from '../lib/full-scholarship.js';
 import { withStudentProfileDefaults } from '../lib/student-profile-defaults.js';
 import { studentWalletProfile } from '../lib/student-wallet-profile.js';
 import { effectiveInvoiceAfterReversal } from '../lib/invoice-charge-reversal.js';
+import { isActiveClinicVisit } from '../lib/clinic-stock-usage.js';
 import { createDocumentIfAbsent, getDocument, listCollection, queryCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import {
   querySchoolCollection,
@@ -1918,7 +1919,7 @@ async function getDashboard(env, body, options = {}) {
   const ledger = (sources.ledger || []).map(normalizeLedger);
   const invoices = (sources.invoices || []).map(normalizeInvoice);
   const payments = (sources.payments || []).map(normalizePayment);
-  const clinic = (sources.clinic || []).map(normalizeClinicRecord);
+  const clinic = (sources.clinic || []).filter(isActiveClinicVisit).map(normalizeClinicRecord);
   const walletActivity = {};
   const paymentRecords = {};
   const payableItems = {};
@@ -2100,7 +2101,7 @@ async function getChildActivity(env, body, options = {}) {
   const ledger = scopedLedgerRows.map(normalizeLedger);
   const invoices = scopedInvoiceRows.map(normalizeInvoice);
   const payments = scopedPaymentRows.map(normalizePayment);
-  const clinic = scopedClinicRows.map(normalizeClinicRecord);
+  const clinic = scopedClinicRows.filter(isActiveClinicVisit).map(normalizeClinicRecord);
   const walletEntries = ledger.filter((entry) => financialReferenceMatches(entry.AccountRef, child) && lower(entry.FeeCategory) === 'wallet')
     .sort((a, b) => clean(b.Date).localeCompare(clean(a.Date)));
   const childLedger = ledger.filter((entry) => financialReferenceMatches(entry.AccountRef, child));

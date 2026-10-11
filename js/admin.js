@@ -96,6 +96,7 @@ let staffNameMigration = { migratable: 0, requiresReview: 0 };
 let canAssignStaffBranches = false;
 let humanResourcesData = null;
 let staffAttendanceReportFilters = null;
+let procurementDepartmentHandoff = '';
 let activeTabs = [];
 let approvalProfile = null;
 let approvalAssetState = { signature: '', stamp: '' };
@@ -279,6 +280,7 @@ const tabConfig = [
   ['incomeAnalytics', 'Income Analytics'],
   ['externalAudit', 'External Audit'],
   ['financeRequests', 'Finance Requests & Imprest'],
+  ['procurement', 'Procurement'],
   ['vendorSettlements', 'Vendor Sales & Settlements'],
   ['payroll', 'My Payroll'],
   ['clinic', 'Clinic'],
@@ -316,6 +318,7 @@ const tutorialStorageKeys = Object.freeze({
   incomeAnalytics: 'Income Analytics',
   externalAudit: 'External Audit',
   financeRequests: 'Finance & Accounting',
+  procurement: 'Procurement',
   vendorSettlements: 'Vendor Sales & Settlements',
   payroll: 'Payroll',
   clinic: 'Clinic',
@@ -374,7 +377,7 @@ const faithOnlyStaffRoles = new Set([
 
 const organizationOnlyStaffRoles = new Set([
   'Executive Director', 'Organisation Administrator', 'Operations Manager',
-  'Procurement Officer', 'Records Officer'
+  'Records Officer'
 ]);
 
 const nonSchoolOnlyStaffRoles = new Set([
@@ -436,6 +439,7 @@ const tabIcons = {
   incomeAnalytics: '\u{1F4CA}',
   externalAudit: '\u{1F50E}',
   financeRequests: '\u{1F4CB}',
+  procurement: '\u{1F4E6}',
   vendorSettlements: '\u{1F91D}',
   payroll: '\u{1F4B3}',
   clinic: '\u2695',
@@ -4823,6 +4827,64 @@ function bindModuleItemImport(section) {
   panelEl.querySelectorAll('[data-batch-upload-items]').forEach(button => button.addEventListener('click', () => openModuleItemImport(section, button)));
 }
 
+function procurementManagedItem(row) {
+  return /^(yes|true|1)$/i.test(clean(row?.ProcurementManaged)) || !!clean(row?.ProcurementItemId);
+}
+
+async function procurementResponseResult(response) {
+  let result;
+  try { result = await response.json(); } catch (_error) { /* An unreadable response cannot prove whether a stock write committed. */ }
+  if (!result || typeof result !== 'object' || Array.isArray(result) || typeof result.ok !== 'boolean') {
+    throw Object.assign(new Error('Procurement did not return a valid response.'), { responseReceived: false });
+  }
+  if (!response.ok || !result.ok) {
+    const error = receivedResponseError(result.message || 'Procurement request failed.');
+    // A transient upstream failure can happen after the atomic commit. Keep the
+    // original operation ID until a definitive response or unchanged retry.
+    error.responseReceived = response.status !== 408 && response.status < 500;
+    throw error;
+  }
+  return result;
+}
+
+function procurementInventoryFields(form, row = {}, controlled = false) {
+  if (!form) return;
+  const managed = procurementManagedItem(row);
+  const vendorOwned = !!clean(row.VendorId) || /^vendor$/i.test(clean(row.OwnershipType || row.OwnerType));
+  const quantityControlled = managed || (controlled && !vendorOwned);
+  ['Quantity', 'Unit', 'ItemCode'].forEach((name) => {
+    const control = form.elements[name];
+    const readOnly = name === 'Quantity' ? quantityControlled : managed;
+    if (control) { control.readOnly = readOnly; control.setAttribute('aria-readonly', String(readOnly)); }
+  });
+  if (quantityControlled && !clean(row.__id || row.ItemId || row.InventoryId) && form.elements.Quantity) form.elements.Quantity.value = '0';
+  let note = form.querySelector('[data-procurement-stock-note]');
+  if (!note) {
+    note = document.createElement('p');
+    note.dataset.procurementStockNote = 'yes';
+    note.className = 'muted workflow-wide-field';
+    form.append(note);
+  }
+  note.hidden = !quantityControlled;
+  note.textContent = `Stock supplied through Procurement. Confirm new deliveries in Procurement; record usage through stock out or the existing sales workflow. ${managed ? 'The stock quantity, unit and item code cannot be changed here.' : 'The stock quantity cannot be changed here.'}`;
+}
+
+function bindProcurementDepartmentShortcut(section) {
+  if (!(currentUser?.allowedSections || []).includes('procurement') || currentUser?.role === 'Vendor User') return;
+  const heading = panelEl.querySelector('.workflow-intro');
+  if (!heading || heading.querySelector('[data-open-procurement]')) return;
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'secondary compact-action';
+  button.dataset.openProcurement = section;
+  button.textContent = 'Request supplies / confirm delivery';
+  button.addEventListener('click', () => {
+    procurementDepartmentHandoff = section;
+    selectSection('procurement');
+  });
+  heading.append(button);
+}
+
 function renderStaffStore(section, store) {
   const organisationStore = section === 'organizationStore';
   const label = organisationStore ? 'Organisation Store' : (section === 'bookstore' ? 'Bookstore' : 'Uniform Store');
@@ -4886,12 +4948,15 @@ function renderStaffStore(section, store) {
   if (organisationStore) loadDirectTransferVerification(['organization-store'], 'organizationStoreDirectTransferVerification');
   if (organisationStore) bindOrganizationCommerceWorkspace(section, store);
   if (!organisationStore) bindModuleItemImport(section);
+  bindProcurementDepartmentShortcut(section);
   const itemForm = document.getElementById('staffStoreItemForm');
+  procurementInventoryFields(itemForm, {}, store.procurementControlled === true);
   const resetStoreItemForm = () => {
     if (!itemForm) return;
     itemForm.reset();
     itemForm.elements.ItemId.value = '';
     itemForm.elements.Active.checked = true;
+    procurementInventoryFields(itemForm, {}, store.procurementControlled === true);
     itemForm.querySelector('button[type="submit"]').textContent = 'Save item';
     itemForm.querySelector('[data-cancel-store-edit]').hidden = true;
     setStatus(itemForm.querySelector('[data-store-status]'), '');
@@ -4928,6 +4993,7 @@ function renderStaffStore(section, store) {
     setFinancialInputValue(itemForm.elements.Price, commerceNumber(row.Price));
     itemForm.elements.Quantity.value = commerceItemStock(row);
     itemForm.elements.Active.checked = clean(row.Active || 'YES').toUpperCase() !== 'NO';
+    procurementInventoryFields(itemForm, row, store.procurementControlled === true);
     if (itemForm.elements.Gender) itemForm.elements.Gender.value = clean(row.Gender || 'All');
     if (itemForm.elements.ClassName) itemForm.elements.ClassName.value = clean(row.ClassName || 'All');
     itemForm.querySelector('button[type="submit"]').textContent = 'Update item';
@@ -5731,7 +5797,8 @@ function renderDepartmentOperations(section, data) {
         <label>Complaint<textarea name="Complaint" required></textarea></label><label>Treatment<textarea name="Treatment"></textarea></label>
         <label>Disposition<select name="Disposition"><option>Treated and returned</option><option>Resting in clinic</option><option>Sent home</option><option>Referred to hospital</option></select></label>
         <label>Notes<input name="Notes"></label>
-        <div class="config-actionbar"><p class="status" data-department-status></p><div class="inline-action-group"><button type="button" id="clinicStudentSearch">&#128269; Search student</button><button type="button" id="clinicFaceLookup" class="student-face-workflow-action">&#128247; Verify by face</button><button type="submit" data-normal-text="Save visit">Save visit</button></div></div>
+        <div class="workflow-wide-field" data-clinic-dispensing></div>
+        <div class="config-actionbar"><p class="status" data-department-status></p><div class="inline-action-group"><button type="button" id="clinicStudentSearch">&#128269; Search student</button><button type="button" id="clinicFaceLookup" class="student-face-workflow-action">&#128247; Verify by face</button><button type="submit" data-normal-text="Save visit" disabled>Save visit</button></div></div>
       </form>
     </section>` : ''}
     ${section === 'clinic' ? `
@@ -5788,7 +5855,9 @@ function renderDepartmentOperations(section, data) {
     ${section === 'clinic' ? table('Clinic Records', records, [
       { label: 'Date', value: (row) => pick(row, ['Date']) }, { label: 'Student', value: (row) => pick(row, ['StudentName']) },
       { label: 'Class', value: (row) => pick(row, ['ClassName']) }, { label: 'Complaint', value: (row) => pick(row, ['Complaint']) },
-      { label: 'Treatment', value: (row) => pick(row, ['Treatment']) }, { label: 'Disposition', value: (row) => pick(row, ['Disposition']) }
+      { label: 'Treatment', value: (row) => pick(row, ['Treatment']) }, { label: 'Disposition', value: (row) => pick(row, ['Disposition']) },
+      { label: 'Dispensed', value: (row) => (row.DispensedItems || []).map(item => `${item.ItemName || item.InventoryId} × ${item.Quantity} ${item.Unit || ''}`).join('; ') },
+      { label: 'Status', value: (row) => row.Status || 'Active' }
     ]) : ''}
     ${section === 'tuckShop' ? `<div id="departmentPurchaseHistory">${table('Wallet Purchases', purchases, [
       { label: 'Date', value: (row) => pick(row, ['Date']) }, { label: 'Student', value: (row) => pick(row, ['DisplayName']) },
@@ -5815,6 +5884,7 @@ function renderDepartmentOperations(section, data) {
   departmentTabs.push({ key: 'stock', label: 'Stock in / out', icon: '\u21C5', count: (data.movements || []).length, nodes: [document.getElementById('departmentStockWorkspace'), workspaceTableNodes('Recent Stock Movements')] });
   if (section === 'tuckShop') departmentTabs.push({ key: 'history', label: 'Purchase history', icon: '\u{1F5C2}', count: purchases.length, nodes: document.getElementById('departmentPurchaseHistory') });
   mountWorkspaceTabs(section, departmentTabs);
+  bindProcurementDepartmentShortcut(section);
   if (['clinic', 'kitchen'].includes(section)) bindModuleItemImport(section);
   if (section === 'restaurant') bindOrganizationCommerceWorkspace(section, data);
   if (section === 'tuckShop') bindTuckShopPOS(data);
@@ -5840,8 +5910,13 @@ function renderDepartmentOperations(section, data) {
     panelEl.querySelectorAll('[data-department-jump]').forEach((item) => item.classList.toggle('active', item === button));
     document.getElementById(button.dataset.departmentJump)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }));
-  document.getElementById('clinicRecordForm')?.addEventListener('submit', (event) => { event.preventDefault(); submitDepartmentAction(section, 'saveClinicRecord', event.currentTarget); });
   const clinicRecordForm = document.getElementById('clinicRecordForm');
+  if (clinicRecordForm) import('./clinic-dispensing.js?v=20261011-clinic-stock').then(({ mountClinicDispensing }) => {
+    if (!clinicRecordForm.isConnected) return;
+    mountClinicDispensing(clinicRecordForm, { inventory, records, setStatus,
+      request: payload => requestDepartmentAction('clinic', 'saveClinicRecord', payload, '', { render: false }),
+      onSaved: result => { renderDepartmentOperations('clinic', result); setStatus(dashboardStatus, result.message, 'ok'); } });
+  }).catch(error => setStatus(clinicRecordForm.querySelector('[data-department-status]'), error.message || 'Clinic dispensing controls could not load. Refresh the page.', 'bad'));
   const clinicStudentInput = clinicRecordForm?.elements?.AdmissionNo;
   const clinicStudentSearch = document.getElementById('clinicStudentSearch');
   let clinicLookupTimer = 0;
@@ -5860,6 +5935,7 @@ function renderDepartmentOperations(section, data) {
       const student = data.clinicStudent;
       clinicStudentInput.value = student.AccountRef || value;
       clinicRecordForm.dataset.clinicStudentReference = student.AccountRef || value;
+      clinicRecordForm.dispatchEvent(new CustomEvent('clinic-student-selected', { detail: student }));
       let result = clinicRecordForm.querySelector('[data-clinic-student-result]');
       if (!result) {
         result = document.createElement('div');
@@ -6047,6 +6123,16 @@ function renderDepartmentOperations(section, data) {
   });
   document.getElementById('departmentInventoryForm')?.addEventListener('submit', (event) => { event.preventDefault(); submitDepartmentAction(section, 'saveItem', event.currentTarget); });
   document.getElementById('departmentMovementForm')?.addEventListener('submit', (event) => { event.preventDefault(); submitDepartmentAction(section, 'recordMovement', event.currentTarget); });
+  const procurementMovementForm = document.getElementById('departmentMovementForm');
+  procurementInventoryFields(document.getElementById('departmentInventoryForm'), {}, data.procurementControlled === true);
+  procurementMovementForm?.elements.InventoryId.addEventListener('change', () => {
+    const row = inventory.find((item) => clean(item.__id) === procurementMovementForm.elements.InventoryId.value);
+    const managed = procurementManagedItem(row) || (data.procurementControlled === true && !clean(row?.VendorId) && !/^vendor$/i.test(clean(row?.OwnershipType || row?.OwnerType)));
+    const option = procurementMovementForm.elements.MovementType.querySelector('option[value="IN"]');
+    if (option) option.disabled = managed;
+    if (managed) procurementMovementForm.elements.MovementType.value = 'OUT';
+    setStatus(procurementMovementForm.querySelector('[data-department-status]'), managed ? 'Centrally supplied stock: record usage here. Confirm deliveries through Procurement to add stock.' : '');
+  });
   panelEl.querySelectorAll('[data-edit-inventory]').forEach((button) => button.addEventListener('click', () => {
     const row = inventory.find((item) => clean(item.__id || item.ItemName) === button.dataset.editInventory);
     const form = document.getElementById('departmentInventoryForm');
@@ -6060,6 +6146,7 @@ function renderDepartmentOperations(section, data) {
     if (form.elements.Active) form.elements.Active.checked = clean(row.Active || 'YES').toUpperCase() !== 'NO';
     form.elements.OriginalItemName.value = row.ItemName;
     form.elements.InventoryId.value = row.__id || '';
+    procurementInventoryFields(form, row, data.procurementControlled === true);
     form.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }));
 }
@@ -18561,6 +18648,7 @@ function renderSection(active) {
   if (!dashboardData) return;
   window.DynamaxVendors?.unmount();
   window.DynamaxVendorPOS?.unmount();
+  window.DynamaxProcurement?.unmount();
   if (currentUser?.role === 'Vendor User' && ['tuckShop','organizationStore','restaurant'].includes(active)) {
     summaryEl.replaceChildren();
     window.DynamaxVendorPOS?.mount(panelEl,async (action,payload,signal) => {
@@ -18610,6 +18698,29 @@ function renderSection(active) {
   } else if (active === 'library') {
     panelEl.innerHTML = '<p class="muted">Loading School Library...</p>';
     loadSchoolLibrary();
+  } else if (active === 'procurement') {
+    summaryEl.replaceChildren();
+    if (!window.DynamaxProcurement) {
+      panelEl.innerHTML = '<p class="status bad">Procurement could not be loaded. Refresh the page to load the updated workspace.</p>';
+      return;
+    }
+    const procurementBranchId = clean(selectedBranchId) || clean(currentUser?.activeBranchId || currentUser?.branchId);
+    if (!procurementBranchId || ['all', 'global'].includes(procurementBranchId.toLowerCase())) {
+      panelEl.innerHTML = '<p class="status">Choose one working branch from the branch selector to open Procurement. Stock cannot be moved across an all-branches view.</p>';
+      return;
+    }
+    window.DynamaxProcurement.mount(panelEl, {
+      branchId: procurementBranchId,
+      department: procurementDepartmentHandoff,
+      readOnly: currentUser?.subscriptionReadOnly === true,
+      request: async (action, payload = {}, signal) => {
+        const response = await staffFetch('/api/staff-procurement', { method: 'POST', signal,
+          credentials: 'same-origin', cache: 'no-store',
+          headers: { 'Content-Type': 'application/json', ...(payload.RequestId ? { 'Idempotency-Key': payload.RequestId } : {}) },
+          body: JSON.stringify({ ...payload, action, BranchId: procurementBranchId }) });
+        return procurementResponseResult(response);
+      }
+    });
   } else if (active === 'vendorSettlements') {
     // This workspace owns its summaries; do not leave the generic Loading card above it.
     summaryEl.replaceChildren();

@@ -28,6 +28,7 @@ export const WEB_SECTION_CATALOG = Object.freeze([
   Object.freeze({ key: 'externalAudit', label: 'External Audit' }),
   Object.freeze({ key: 'financeRequests', label: 'Finance Requests & Imprest' }),
   Object.freeze({ key: 'vendorSettlements', label: 'Vendor Sales & Settlements' }),
+  Object.freeze({ key: 'procurement', label: 'Procurement' }),
   Object.freeze({ key: 'payroll', label: 'My Payroll' }),
   Object.freeze({ key: 'clinic', label: 'Clinic' }),
   Object.freeze({ key: 'kitchen', label: 'Kitchen' }),
@@ -126,7 +127,7 @@ const LEGACY_ROLE_DEFAULTS = Object.freeze({
   'Executive Director': ['recordsDesk', 'executiveOffice', 'humanResources', 'members', 'services', 'funds', 'offerings', 'donations', 'incomeAnalytics', 'financeRequests', 'payroll'],
   'Organisation Administrator': ['recordsDesk', 'executiveOffice', 'humanResources', 'members', 'services', 'funds', 'offerings', 'donations', 'incomeAnalytics', 'financeRequests', 'payroll', 'organizationStore', 'restaurant', 'hotel'],
   'Operations Manager': ['recordsDesk', 'humanResources', 'members', 'services', 'financeRequests', 'organizationStore', 'restaurant', 'hotel', 'payroll'],
-  'Procurement Officer': ['recordsDesk', 'financeRequests', 'organizationStore', 'payroll'],
+  'Procurement Officer': ['recordsDesk', 'financeRequests', 'procurement', 'payroll'],
   'Records Officer': ['recordsDesk', 'members', 'services', 'payroll']
 });
 
@@ -182,6 +183,10 @@ export function defaultModulesForRole(role, { edition = 'school', featureFlags =
     : [...(LEGACY_ROLE_DEFAULTS[name] || []), ...(name ? ['humanResources'] : [])];
   if (name) base.push('staffAttendance');
   if (['Super Admin', 'Director', 'Admin', 'Management', 'Accounts Officer', 'Tuck Shop User', 'Store User', 'Restaurant User', 'Operations Manager'].includes(name)) base.push('vendorSettlements');
+  if (['Super Admin', 'Director', 'Admin', 'Management', 'Accounts Officer', 'Procurement Officer',
+    'Church Administrator', 'Executive Director', 'Organisation Administrator', 'Operations Manager',
+    'Department User', 'Clinic User', 'Kitchen User', 'Librarian', 'Tuck Shop User', 'Store User',
+    'Restaurant User', 'Hotel User'].includes(name)) base.push('procurement');
   return withRequiredRoleModules(name, base, edition, featureFlags);
 }
 

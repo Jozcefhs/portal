@@ -16,6 +16,7 @@ import {
   recordManualOrganizationCommerceSale
 } from '../lib/organization-commerce.js';
 import QRCode from 'qrcode';
+import { assertProcurementInventoryEdit, loadProcurementInventoryControl } from '../lib/procurement-inventory-guard.js';
 
 function clean(value) { return String(value ?? '').trim(); }
 function lower(value) { return clean(value).toLowerCase(); }
@@ -45,7 +46,9 @@ function storeForSection(section) {
 function visible(rows, user) {
   const section = lower(user.schoolSectionAccess || 'All');
   const branch = lower(user.branchId || '');
-  return rows.filter((row) => (section === 'all' || schoolSectionFor(row) === section) && (!branch || lower(row.BranchId || 'main') === branch));
+  const edition = lower(user.edition || user.OrganisationEdition || 'school');
+  return rows.filter((row) => (section === 'all' || schoolSectionFor(row) === section) && (!branch || lower(row.BranchId || 'main') === branch)
+    && (!clean(row.OrganisationEdition) || lower(row.OrganisationEdition) === edition));
 }
 
 export async function onRequestPost(context) {
@@ -61,6 +64,9 @@ export async function onRequestPost(context) {
     }
     const storeType = storeForSection(section);
     const action = lower(body.action || 'list');
+    if (action === 'saveitem' && (user.subscriptionReadOnly === true || user.subscriptionActive === false)) {
+      const err = new Error('Inventory is read-only until the subscription is renewed.'); err.status = 403; throw err;
+    }
     if (action === 'genericqr') {
       if (section !== 'organizationStore') {
         const err = new Error('The public store QR code is available only in the Organisation Store workspace.');
@@ -98,6 +104,7 @@ export async function onRequestPost(context) {
       const itemCode = clean(body.ItemCode);
       const itemName = clean(body.ItemName);
       if (!itemCode || !itemName) { const err = new Error('Item code and item name are required.'); err.status = 400; throw err; }
+      const category = await resolveStoreCategory(env, body, storeType);
       const scopedItems = visible(await listCollection(env, 'storeItems'), user)
         .filter((row) => clean(row.StoreType) === storeType);
       const existing = itemId ? scopedItems.find((row) => clean(row.__id) === itemId) : null;
@@ -105,13 +112,13 @@ export async function onRequestPost(context) {
       const duplicate = scopedItems.find((row) => lower(row.ItemCode) === lower(itemCode) && clean(row.__id) !== clean(existing?.__id));
       if (duplicate) { const err = new Error(`Item code ${itemCode} is already in use. Edit that item instead.`); err.status = 409; throw err; }
       const configuredClasses = await listCollection(env, 'settings/academics/classes').catch(() => []);
-      const category = await resolveStoreCategory(env, body, storeType);
+      const procurementControlled = await loadProcurementInventoryControl(env, user);
       const payload = {
         ...(existing || {}),
         StoreType: storeType, ItemCode: itemCode, ItemName: itemName,
         CategoryId: category.CategoryId, Category: category.Name, Size: clean(body.Size), Gender: section === 'organizationStore' ? 'All' : (clean(body.Gender) || 'All'),
         ClassName: section === 'organizationStore' ? 'All' : canonicalConfiguredClass(clean(body.ClassName) || 'All', configuredClasses), Price: Math.max(0, Number(body.Price || 0) || 0),
-        Quantity: Math.max(0, Math.floor(Number(body.Quantity || 0) || 0)), Active: yes(body.Active ?? true) ? 'YES' : 'NO',
+        Quantity: Math.max(0, Number(body.Quantity ?? existing?.Quantity ?? 0) || 0), Active: yes(body.Active ?? true) ? 'YES' : 'NO',
         BranchId: clean(existing?.BranchId || user.branchId) || 'main',
         OrganisationEdition: clean(existing?.OrganisationEdition || user.edition || user.OrganisationEdition) || 'school',
         SchoolSection: clean(existing?.SchoolSection) || (clean(user.schoolSectionAccess) === 'All' ? 'Secondary' : clean(user.schoolSectionAccess || 'Secondary')),
@@ -119,18 +126,23 @@ export async function onRequestPost(context) {
       };
       delete payload.__id;
       delete payload.__name;
-      const desiredDocumentId = safeId(`${storeType}-${itemCode}-${payload.BranchId}-${payload.SchoolSection}`);
+      delete payload.__updateTime;
+      delete payload.__createTime;
+      assertProcurementInventoryEdit(existing || {}, payload, { controlled: procurementControlled });
+      if (existing && !existing.__updateTime) { const err = new Error('Stock version is unavailable. Refresh and try again.'); err.status = 409; throw err; }
+      const desiredDocumentId = encodeURIComponent(safeId(`${storeType}-${itemCode}-${payload.BranchId}-${payload.SchoolSection}`));
       const codeChanged = Boolean(existing) && lower(existing.ItemCode) !== lower(itemCode);
       const targetConflict = codeChanged && scopedItems.find((row) => clean(row.__id) === desiredDocumentId && clean(row.__id) !== clean(existing.__id));
       if (targetConflict) { const err = new Error('The updated item code conflicts with another stored item identity. Choose a different code.'); err.status = 409; throw err; }
       const documentId = codeChanged ? desiredDocumentId : (clean(existing?.__id) || desiredDocumentId);
       if (codeChanged) {
         await batchCommitDocuments(env, [
-          { collectionPath: 'storeItems', documentId, data: payload },
-          { collectionPath: 'storeItems', documentId: existing.__id, operation: 'delete' }
-        ]);
+          { collectionPath: 'storeItems', documentId, data: payload, exists: false },
+          { collectionPath: 'storeItems', documentId: existing.__id, operation: 'delete', updateTime: existing.__updateTime }
+        ], { literalDocumentIds: true });
       } else {
-        await upsertDocument(env, 'storeItems', documentId, payload);
+        await batchCommitDocuments(env, [{ collectionPath: 'storeItems', documentId, data: payload,
+          ...(existing ? { updateTime: existing.__updateTime } : { exists: false }) }], { literalDocumentIds: true });
       }
       return Response.json({ ok: true, message: existing ? 'Store item updated.' : 'Store item saved.', item: { ...payload, __id: documentId } });
     }
@@ -190,15 +202,17 @@ export async function onRequestPost(context) {
       await upsertDocument(env, 'storeOrders', order.__id || safeId(orderNo), payload);
       return Response.json({ ok: true, message: 'Order collection status updated.', order: payload });
     }
-    const [{ categories, items }, orders, sales] = await Promise.all([
+    const [{ categories, items }, orders, sales, procurementControlled] = await Promise.all([
       ensureStoreCategories(env),
       listCollection(env, 'storeOrders'),
       section === 'organizationStore'
         ? listOrganizationCommerceSales(env, section, user)
-        : Promise.resolve([])
+        : Promise.resolve([]),
+      loadProcurementInventoryControl(env, user)
     ]);
     return Response.json({
       ok: true,
+      procurementControlled,
       categories: categories.filter((row) => categoryApplies(row, storeType)),
       items: visible(items, user).filter((row) => clean(row.StoreType) === storeType),
       orders: visible(orders, user).filter((row) => clean(row.StoreType) === storeType),

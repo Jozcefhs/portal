@@ -94,6 +94,7 @@ export async function createPaidStoreOrder(env, orderData, items, storeType) {
       ...stockRows.map(({ documentId: stockId, stock, quantity }) => ({
         collectionPath: 'storeItems',
         documentId: stock.__id || stockId,
+        literalDocumentId: Boolean(stock.__id),
         data: {
           ...withoutFirestoreMetadata(stock),
           Quantity: Number(stock.Quantity || 0) - quantity,

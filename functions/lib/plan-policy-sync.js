@@ -188,7 +188,7 @@ export async function refreshOrganizationPlanPolicy(env, organizationProfile = {
     PlanModuleCatalogVersion: SUBSCRIPTION_MODULE_CATALOG_VERSION,
     PlanCatalogRevision: revision,
     BillingCycle: clean(registration.BillingCycle || organizationProfile.BillingCycle),
-    SubscriptionPrice: Number(registration.Price || organizationProfile.SubscriptionPrice || 0),
+    SubscriptionPrice: Number(registration.Price ?? organizationProfile.SubscriptionPrice ?? 0),
     SubscriptionCurrency: clean(registration.Currency || organizationProfile.SubscriptionCurrency || 'NGN'),
     SubscriptionPriceSnapshot: registration.PriceSnapshot ?? organizationProfile.SubscriptionPriceSnapshot ?? null,
     UserLimit: Math.max(1, Number(registration.UserLimit || organizationProfile.UserLimit || (ownerDemo ? 250 : central.catalog.Plans[plan]?.UserLimit) || 5) || 5),

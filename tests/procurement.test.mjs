@@ -1,0 +1,448 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { handleProcurementAction, PROCUREMENT_COLLECTIONS as C } from '../functions/lib/procurement.js';
+import { units, linesFor, scopeFor, inventoryAllowed } from '../functions/lib/procurement-rules.js';
+import { featureFlagsForPlan } from '../functions/lib/organization-config.js';
+
+const copy = value => value === undefined ? undefined : structuredClone(value);
+function fixture(edition = 'school') {
+  const store = new Map(), commits = []; let serial = 0, conflict = false, loseResponse = false;
+  const department = edition === 'school' ? 'clinic' : 'organizationStore';
+  const collection = edition === 'school' ? 'clinicInventory' : 'storeItems';
+  const section = edition === 'school' ? 'Secondary' : 'All';
+  const scope = { ScopeKey: `${edition}--main`, BranchId: 'main', OrganisationEdition: edition };
+  const common = { edition, branchId: 'main', schoolSectionAccess: 'All', subscriptionActive: true, featureFlags: featureFlagsForPlan(edition, 'Professional') };
+  const manager = { ...common, username: 'buyer', displayName: 'Procurement Officer', role: 'Procurement Officer', allowedSections: ['procurement'] };
+  const approver = { ...common, username: 'accounts', role: 'Accounts Officer', approvalEnabled: true, approvalMaxAmount: 1000000, allowedSections: ['procurement', department] };
+  const receiver = { ...common, username: 'department', role: 'Department User', allowedSections: ['procurement', department] };
+  const admin = { ...common, username: 'owner', role: 'Super Admin', allowedSections: ['procurement', department] };
+  function put(collection, documentId, data) {
+    const row = { ...copy(data), __id: documentId, __updateTime: `version-${++serial}`, __name: `${collection}/${documentId}` };
+    store.set(`${collection}/${documentId}`, row); return copy(row);
+  }
+  const get = (collection, id) => copy(store.get(`${collection}/${id}`)) || null;
+  const list = collection => [...store.entries()].filter(([key]) => key.startsWith(`${collection}/`)).map(([, value]) => copy(value));
+  const deps = {
+    get: async (_env, collection, id) => get(collection, id),
+    query: async (_env, collection, options) => {
+      let rows = list(collection).filter(row => (options.filters || []).every(filter => filter.op === 'in' ? filter.value.includes(row[filter.field]) : row[filter.field] === filter.value));
+      if (options.orderBy) rows.sort((a, b) => {
+        for (const order of options.orderBy) {
+          const field = order.field === '__name__' ? '__name' : order.field;
+          const comparison = String(a[field] || '').localeCompare(String(b[field] || '')) * (order.direction === 'DESCENDING' ? -1 : 1);
+          if (comparison) return comparison;
+        }
+        return 0;
+      });
+      if (options.startAfterName) rows = rows.slice(rows.findIndex(row => row.__name === options.startAfterName) + 1);
+      return options.limit ? rows.slice(0, options.limit) : rows;
+    },
+    commit: async (_env, writes) => {
+      if (conflict) throw Object.assign(new Error('Concurrent stock write'), { status: 409 });
+      const keys = new Set();
+      for (const write of writes) {
+        const key = `${write.collectionPath}/${write.documentId}`, current = store.get(key);
+        assert.ok(!keys.has(key), `One atomic write per document: ${key}`); keys.add(key);
+        if ((write.exists === false && current) || (write.updateTime && current?.__updateTime !== write.updateTime)) throw Object.assign(new Error('Precondition failed'), { status: 409 });
+      }
+      commits.push(copy(writes));
+      writes.forEach(write => put(write.collectionPath, write.documentId, write.updateMask ? { ...get(write.collectionPath, write.documentId), ...write.data } : write.data));
+      if (loseResponse) { loseResponse = false; throw new Error('Upstream response lost after commit'); }
+    }
+  };
+  const run = (body, user = manager) => handleProcurementAction({}, user, { RequestId: crypto.randomUUID(), ...body }, deps);
+  const command = (action, body = {}, user) => run({ action, ...body }, user);
+  const target = (InventoryId = 'department-item', changes = {}) => put(collection, InventoryId, { ...scope, SchoolSection: section,
+    ItemName: 'Medical supply', Unit: 'pcs', StoreType: edition === 'school' ? undefined : 'Organisation Store', ItemCode: InventoryId,
+    Quantity: 7, WalletPinHash: 'never-return-this', ...changes });
+  target();
+  async function item(name = 'Medical supply', extra = {}) {
+    const result = await command('saveitem', { ItemName: name, ItemCode: name, Unit: 'pcs', ReorderLevel: 5, ...extra }); return result.ItemId;
+  }
+  async function purchase(ItemId, amount = 100, extra = {}) {
+    const result = await command('createpurchase', { SupplierName: 'Supplier', Reference: crypto.randomUUID(), Notes: 'Restocking authorised stock', Lines: [{ ItemId, Quantity: amount, UnitCost: 2.25 }], ...extra });
+    await command('reviewpurchase', { PurchaseId: result.PurchaseId, ExpectedRevision: 1, Decision: 'APPROVED', Notes: 'Budget and supplier checked' }, approver);
+    return result.PurchaseId;
+  }
+  async function receivePurchase(PurchaseId, ItemId, amount, extra = {}) {
+    return command('receivepurchase', { PurchaseId, ExpectedRevision: get(C.purchases, PurchaseId).Revision, DeliveryReference: crypto.randomUUID(),
+      Notes: 'Counted physically received stock', Lines: [{ ItemId, Quantity: amount }], ...extra });
+  }
+  async function stocked(amount = 100) { const ItemId = await item(), PurchaseId = await purchase(ItemId, amount); await receivePurchase(PurchaseId, ItemId, amount); return ItemId; }
+  async function requisition(ItemId, amount = 20, extra = {}) {
+    const result = await command('request', { Department: department, SchoolSection: section, Notes: 'Replenish department', Lines: [{ ItemId, InventoryId: 'department-item', Quantity: amount }], ...extra }, receiver);
+    await command('reviewrequest', { RequisitionId: result.RequisitionId, ExpectedRevision: 1, Decision: 'APPROVED', Notes: 'Checked department need' });
+    return result.RequisitionId;
+  }
+  async function issue(RequisitionId, ItemId, amount, extra = {}) {
+    return command('issue', { RequisitionId, ExpectedRevision: get(C.requests, RequisitionId).Revision, Notes: 'Dispatched to department', Lines: [{ ItemId, Quantity: amount }], ...extra });
+  }
+  async function receive(TransferId, ItemId, amount, extra = {}, user = receiver) {
+    return command('confirmreceipt', { TransferId, ExpectedRevision: get(C.transfers, TransferId).Revision, Notes: 'Department physically counted delivery', Lines: amount ? [{ ItemId, Quantity: amount }] : [], ...extra }, user);
+  }
+  return { store, commits, deps, run, command, get, put, list, target, manager, approver, receiver, admin, department, collection, section, scope,
+    item, purchase, receivePurchase, stocked, requisition, issue, receive, setConflict: value => conflict = value, loseResponse: () => loseResponse = true };
+}
+
+test('quantities validate positive integer thousandths without coercing unsafe inputs', () => {
+  assert.equal(units('1.125'), 1125); assert.equal(units(0, 'Qty', true), 0);
+  for (const value of [-1, '1e3', '1,000', '', '  ', false, null, Infinity, NaN, '0.0001', '1000000001', 0]) assert.throws(() => units(value), undefined, String(value));
+  assert.throws(() => linesFor([{ ItemId: 'one', Quantity: 1 }, { ItemId: 'one', Quantity: 2 }]), /once/);
+  assert.throws(() => linesFor(Array.from({ length: 21 }, (_, i) => ({ ItemId: `id${i}`, Quantity: 1 }))), /20/);
+  assert.throws(() => linesFor([{ ItemId: '../invalid', Quantity: 1 }]), /valid/);
+});
+
+for (const edition of ['school', 'faith', 'organization']) {
+  test(`${edition}: purchase -> central -> transit -> confirmed existing department stock is conserved`, async () => {
+    const f = fixture(edition), ItemId = await f.stocked(), RequisitionId = await f.requisition(ItemId);
+    assert.equal(f.get(f.collection, 'department-item').Quantity, 7);
+    const { TransferId } = await f.issue(RequisitionId, ItemId, 20);
+    assert.equal(f.get(C.items, ItemId).Quantity, 80); assert.equal(f.get(f.collection, 'department-item').Quantity, 7);
+    assert.equal(f.get(C.transfers, TransferId).Status, 'IN_TRANSIT');
+    await f.receive(TransferId, ItemId, 12);
+    assert.equal(f.get(f.collection, 'department-item').Quantity, 19); assert.equal(f.get(C.items, ItemId).Quantity, 80);
+    assert.equal(f.get(C.transfers, TransferId).Status, 'PARTIALLY_RECEIVED');
+    await f.receive(TransferId, ItemId, 8);
+    assert.equal(f.get(f.collection, 'department-item').Quantity, 27); assert.equal(f.get(C.transfers, TransferId).Status, 'RECEIVED');
+    assert.equal(f.get(f.collection, 'department-item').ProcurementItemId, ItemId);
+    const result = await f.command('list', {}, f.receiver);
+    assert.equal(result.purchases.length, 0); assert.equal(result.departmentInventory.length, 1);
+    assert.doesNotMatch(JSON.stringify(result), /never-return-this/);
+    assert.ok(f.commits.every(writes => writes.some(write => write.collectionPath === C.operations) && writes.some(write => write.collectionPath === C.movements)));
+    await assert.rejects(f.receive(TransferId, ItemId, 1), /outstanding stock/);
+  });
+}
+
+test('role, module, read-only, branch, edition and explicit assignment boundaries fail closed', async () => {
+  const f = fixture();
+  for (const change of [{ role: 'Vendor User' }, { role: 'External Auditor' }, { allowedSections: [] }, { branchId: 'all' }, { branchId: '' }, { username: '' }, { branchId: '../other' }])
+    await assert.rejects(f.command('list', {}, { ...f.manager, ...change }), error => error.status === 403);
+  await assert.rejects(f.command('saveitem', { ItemName: 'Item', Unit: 'pcs' }, f.receiver), /role/);
+  await assert.rejects(f.command('saveitem', { ItemName: 'Item', Unit: 'pcs' }, { ...f.manager, subscriptionReadOnly: true }), /read-only/);
+  assert.equal((await f.command('list', {}, { ...f.manager, subscriptionReadOnly: true })).readOnly, true);
+  assert.equal(f.commits.length, 0);
+});
+
+test('central catalogue starts at zero, duplicate name/code rejected and unit is immutable', async () => {
+  const f = fixture(), ItemId = await f.item();
+  assert.equal(f.get(C.items, ItemId).Quantity, 0);
+  await assert.rejects(f.item(), /already exists/);
+  await assert.rejects(f.item('Vendor item', { VendorId: 'vendor' }), /Vendor stock|vendor stock/);
+  await assert.rejects(f.item('Opening stock', { Quantity: 10 }), /starts at zero/);
+  await assert.rejects(f.command('saveitem', { ItemId, ItemName: 'Changed', Unit: 'kg', ExpectedRevision: 1 }), /unit cannot change/);
+  await f.command('saveitem', { ItemId, ItemName: 'Renamed', Unit: 'pcs', ExpectedRevision: 1 });
+  assert.equal(f.get(C.items, ItemId).ItemName, 'Renamed');
+});
+
+test('vendor ownership cannot enter through list, request destination, or central tampering', async () => {
+  const f = fixture(), ItemId = await f.item();
+  for (const change of [{ VendorId: 'vendor1' }, { OwnershipType: 'Vendor' }, { OwnerType: 'Vendor' }]) {
+    f.target('vendor-stock', change);
+    const result = await f.command('list'); assert.equal(result.departmentInventory.length, 1);
+    await assert.rejects(f.command('request', { Department: f.department, SchoolSection: f.section, Notes: 'Test', Lines: [{ ItemId, InventoryId: 'vendor-stock', Quantity: 2 }] }, f.receiver), /vendor stock/);
+  }
+  f.put(C.items, ItemId, { ...f.get(C.items, ItemId), VendorId: 'tampered' });
+  await assert.rejects(f.purchase(ItemId), /Vendor-owned/);
+});
+
+test('department destination must match exact branch, edition, section, store type, unit and central link', async () => {
+  const f = fixture(), ItemId = await f.item();
+  for (const changes of [{ BranchId: 'another' }, { OrganisationEdition: 'faith' }, { SchoolSection: 'Primary' }, { Unit: 'kg' }, { ProcurementItemId: 'another-central' }]) {
+    f.target('wrong', changes);
+    await assert.rejects(f.command('request', { Department: f.department, SchoolSection: f.section, Notes: 'Test', Lines: [{ ItemId, InventoryId: 'wrong', Quantity: 2 }] }, f.receiver));
+  }
+  const nonSchool = fixture('organization'), central = await nonSchool.item(); nonSchool.target('wrong', { StoreType: 'Bookstore' });
+  await assert.rejects(nonSchool.command('request', { Department: nonSchool.department, SchoolSection: 'All', Notes: 'Test', Lines: [{ ItemId: central, InventoryId: 'wrong', Quantity: 2 }] }, nonSchool.receiver));
+  assert.equal(inventoryAllowed({ BranchId: 'main', Quantity: 1 }, 'organizationStore', nonSchool.receiver, nonSchool.scope), false);
+});
+
+test('section selector filters department balances and restricted section cannot request outside it', async () => {
+  const f = fixture(), ItemId = await f.item(); f.target('primary-item', { SchoolSection: 'Primary' });
+  const primary = await f.command('list', { SchoolSection: 'Primary' }); assert.equal(primary.schoolSection, 'Primary'); assert.deepEqual(primary.departmentInventory.map(row => row.InventoryId), ['primary-item']);
+  const secondaryOnly = { ...f.receiver, schoolSectionAccess: 'Secondary' };
+  await assert.rejects(f.command('list', { SchoolSection: 'Primary' }, secondaryOnly), /assigned/);
+  await assert.rejects(f.command('request', { Department: f.department, SchoolSection: 'Primary', Lines: [{ ItemId, InventoryId: 'primary-item', Quantity: 2 }], Notes: 'Need stock' }, secondaryOnly), /assigned/);
+});
+
+test('purchase approvals are separate, limits enforced and explicit owner override audited', async () => {
+  const f = fixture(), ItemId = await f.item();
+  const { PurchaseId } = await f.command('createpurchase', { SupplierName: 'S', Reference: 'REF1', Notes: 'Request', Lines: [{ ItemId, Quantity: 10, UnitCost: 2 }] }, f.admin);
+  const review = { PurchaseId, ExpectedRevision: 1, Decision: 'APPROVED', Notes: 'Checked' };
+  await assert.rejects(f.command('reviewpurchase', review, f.manager), /role/);
+  await assert.rejects(f.command('reviewpurchase', review, f.admin), /own purchase/);
+  await assert.rejects(f.command('reviewpurchase', review, { ...f.approver, approvalMaxAmount: 10 }), /approval limit/);
+  await f.command('reviewpurchase', { ...review, OverrideReason: 'Sole authorised owner; supplier invoice checked.' }, f.admin);
+  assert.match(f.get(C.purchases, PurchaseId).OverrideReason, /Sole authorised/);
+  await assert.rejects(f.command('reviewpurchase', { ...review, ExpectedRevision: 2 }, f.approver), /pending/);
+});
+
+test('purchase supplier/reference duplicate blocked; pending or rejected purchases cannot receive stock', async () => {
+  const f = fixture(), ItemId = await f.item(), fields = { SupplierName: 'Supplier', Reference: 'REF', Notes: 'Request', Lines: [{ ItemId, Quantity: 10, UnitCost: 1 }] };
+  const { PurchaseId } = await f.command('createpurchase', fields);
+  await assert.rejects(f.command('createpurchase', { ...fields, SupplierName: 'supplier', Reference: 'ref' }), /already exists/);
+  await assert.rejects(f.receivePurchase(PurchaseId, ItemId, 1), /Approve/);
+  await f.command('reviewpurchase', { PurchaseId, ExpectedRevision: 1, Decision: 'REJECTED', Notes: 'Not required' }, f.approver);
+  await assert.rejects(f.receivePurchase(PurchaseId, ItemId, 1), /Approve/);
+  assert.equal(f.get(C.items, ItemId).Quantity, 0);
+});
+
+test('partial purchase receipts prevent excess, duplicate delivery references and unknown items', async () => {
+  const f = fixture(), ItemId = await f.item(), PurchaseId = await f.purchase(ItemId, 10);
+  await f.receivePurchase(PurchaseId, ItemId, 4, { DeliveryReference: 'DELIVERY1' });
+  assert.equal(f.get(C.items, ItemId).Quantity, 4); assert.equal(f.get(C.purchases, PurchaseId).Status, 'PARTIALLY_RECEIVED');
+  await assert.rejects(f.receivePurchase(PurchaseId, ItemId, 1, { DeliveryReference: 'delivery1' }), /already been received/);
+  await assert.rejects(f.receivePurchase(PurchaseId, ItemId, 7), /outstanding/);
+  await assert.rejects(f.receivePurchase(PurchaseId, 'unknown-item', 1), /not part/);
+  await f.receivePurchase(PurchaseId, ItemId, 6); assert.equal(f.get(C.items, ItemId).Quantity, 10);
+});
+
+test('issue rejects stock shortage and unapproved/excess request; no partial writes on multi-line failure', async () => {
+  const f = fixture(), ItemId = await f.stocked(5), RequisitionId = await f.requisition(ItemId, 10);
+  const baseline = f.commits.length;
+  await assert.rejects(f.issue(RequisitionId, ItemId, 6), /Insufficient/); assert.equal(f.commits.length, baseline);
+  await assert.rejects(f.issue(RequisitionId, ItemId, 11), /exceeds/);
+  assert.equal(f.get(C.items, ItemId).Quantity, 5);
+  const { RequisitionId: pending } = await f.command('request', { Department: f.department, SchoolSection: f.section, Notes: 'Need stock', Lines: [{ ItemId, InventoryId: 'department-item', Quantity: 2 }] }, f.receiver);
+  await assert.rejects(f.issue(pending, ItemId, 1), /Approve/);
+});
+
+test('receipt must be by assigned department, not dispatching officer, except audited superadmin override', async () => {
+  const f = fixture(), ItemId = await f.stocked(), RequisitionId = await f.requisition(ItemId), { TransferId } = await f.issue(RequisitionId, ItemId, 20);
+  await assert.rejects(f.receive(TransferId, ItemId, 1, {}, f.manager), /receiving department/);
+  await assert.rejects(f.receive(TransferId, ItemId, 1, {}, { ...f.receiver, username: f.manager.username }), /issuing officer/);
+  await assert.rejects(f.receive(TransferId, ItemId, 1, {}, { ...f.receiver, allowedSections: ['procurement', 'kitchen'] }), /not available/);
+  await f.receive(TransferId, ItemId, 1, { OverrideReason: 'Owner independently counted the returned delivery.' }, { ...f.admin, username: f.manager.username });
+  assert.ok(f.get(C.transfers, TransferId).Receipts[0].OverrideReason);
+});
+
+test('partial receipts/discrepancy/physical transit returns conserve stock and reopen unfulfilled request', async () => {
+  const f = fixture(), ItemId = await f.stocked(100), RequisitionId = await f.requisition(ItemId, 20), { TransferId } = await f.issue(RequisitionId, ItemId, 20);
+  await f.receive(TransferId, ItemId, 12);
+  await f.receive(TransferId, ItemId, 0, { ReportDiscrepancy: true, Notes: 'Eight units not delivered yet.' });
+  assert.equal(f.get(C.transfers, TransferId).Status, 'DISCREPANCY'); assert.equal(f.get(C.items, ItemId).Quantity, 80);
+  await f.command('returntransfer', { TransferId, ExpectedRevision: f.get(C.transfers, TransferId).Revision, Notes: 'Eight sealed units physically returned to central stores.', Lines: [{ ItemId, Quantity: 8 }] });
+  assert.equal(f.get(C.items, ItemId).Quantity, 88); assert.equal(f.get(f.collection, 'department-item').Quantity, 19);
+  assert.equal(f.get(C.transfers, TransferId).Status, 'COMPLETED_WITH_RETURNS'); assert.equal(f.get(C.requests, RequisitionId).Status, 'PARTIALLY_ISSUED');
+  const replacement = await f.issue(RequisitionId, ItemId, 8); await f.receive(replacement.TransferId, ItemId, 8);
+  assert.equal(f.get(C.items, ItemId).Quantity, 80); assert.equal(f.get(f.collection, 'department-item').Quantity, 27);
+});
+
+test('fractional repeated receipts stay exact; department sales changes are preserved', async () => {
+  const f = fixture(), ItemId = await f.stocked(1), RequisitionId = await f.requisition(ItemId, 0.3), { TransferId } = await f.issue(RequisitionId, ItemId, 0.3);
+  await f.receive(TransferId, ItemId, 0.1);
+  f.put(f.collection, 'department-item', { ...f.get(f.collection, 'department-item'), Quantity: 6.1 });
+  await f.receive(TransferId, ItemId, 0.1); await f.receive(TransferId, ItemId, 0.1);
+  assert.equal(f.get(f.collection, 'department-item').Quantity, 6.3); assert.equal(f.get(C.items, ItemId).Quantity, 0.7);
+  assert.equal(f.get(C.transfers, TransferId).Status, 'RECEIVED');
+});
+
+test('same operation retries replay saved result even after revision changes or lost response', async () => {
+  const f = fixture(), ItemId = await f.item(), PurchaseId = await f.purchase(ItemId, 10), body = { action: 'receivepurchase', RequestId: 'durable-request-1',
+    PurchaseId, ExpectedRevision: 2, DeliveryReference: 'same-delivery', Notes: 'Counted', Lines: [{ ItemId, Quantity: 5 }] };
+  f.loseResponse(); const first = await f.run(body); assert.equal(first.replayed, true);
+  const after = f.commits.length; const second = await f.run(body); assert.equal(second.replayed, true);
+  assert.equal(f.commits.length, after); assert.equal(f.get(C.items, ItemId).Quantity, 5);
+  await assert.rejects(f.run({ ...body, Lines: [{ ItemId, Quantity: 6 }] }), /different entries/);
+});
+
+test('concurrent requests for one operation are idempotent and different competing stock operations conflict safely', async () => {
+  const f = fixture(), ItemId = await f.item(), PurchaseId = await f.purchase(ItemId, 10), body = { action: 'receivepurchase', RequestId: 'concurrent-key-1',
+    PurchaseId, ExpectedRevision: 2, DeliveryReference: 'delivery-1', Notes: 'Counted', Lines: [{ ItemId, Quantity: 5 }] };
+  const results = await Promise.all([f.run(body), f.run(body)]); assert.ok(results.some(result => result.replayed));
+  assert.equal(f.get(C.items, ItemId).Quantity, 5);
+  const RequisitionId = await f.requisition(ItemId, 5); f.setConflict(true); const before = f.commits.length;
+  await assert.rejects(f.issue(RequisitionId, ItemId, 5), /Nothing was partially/);
+  assert.equal(f.commits.length, before); assert.equal(f.get(C.items, ItemId).Quantity, 5); assert.equal(f.list(C.transfers).length, 0);
+});
+
+test('configuration is reviewed, versioned, restricted and never migrates or rewrites existing stock', async () => {
+  const f = fixture(), before = f.get(f.collection, 'department-item');
+  const fields = { Enabled: true, ConfirmExistingBalances: true, ExpectedRevision: 0, Notes: 'Reviewed starting balances and configured receiving departments.' };
+  await assert.rejects(f.command('settings', fields), /role/);
+  await assert.rejects(f.command('settings', { ...fields, ConfirmExistingBalances: false }, f.approver), /explicitly confirm/);
+  await f.command('settings', fields, f.approver);
+  assert.equal(f.get(C.settings, f.scope.ScopeKey).Enabled, true); assert.deepEqual(f.get(f.collection, 'department-item'), before);
+  await assert.rejects(f.command('settings', { ...fields, Enabled: false }, f.approver), /changed/);
+  await f.command('settings', { ...fields, Enabled: false, ExpectedRevision: 1 }, f.approver);
+  assert.equal(f.get(C.settings, f.scope.ScopeKey).Enabled, false); assert.deepEqual(f.get(f.collection, 'department-item'), before);
+});
+
+function competeAtCommit(f) {
+  const original = f.deps.commit;
+  let count = 0, release;
+  const barrier = new Promise(resolve => { release = resolve; });
+  f.deps.commit = async (...args) => {
+    count += 1;
+    if (count <= 2) { if (count === 2) release(); await barrier; }
+    return original(...args);
+  };
+}
+
+test('two distinct approved requests competing for central stock cannot oversell or create a losing transfer', async () => {
+  const f = fixture(), ItemId = await f.stocked(10);
+  f.target('second-destination');
+  const first = await f.requisition(ItemId, 7);
+  const second = await f.requisition(ItemId, 7, { Lines: [{ ItemId, InventoryId: 'second-destination', Quantity: 7 }] });
+  competeAtCommit(f);
+  const outcomes = await Promise.allSettled([f.issue(first, ItemId, 7), f.issue(second, ItemId, 7)]);
+  assert.equal(outcomes.filter(row => row.status === 'fulfilled').length, 1);
+  assert.equal(outcomes.filter(row => row.status === 'rejected' && row.reason.code === 'PROCUREMENT_WRITE_CONFLICT').length, 1);
+  assert.equal(f.get(C.items, ItemId).Quantity, 3);
+  assert.equal(f.list(C.transfers).length, 1);
+  assert.equal(f.get(f.collection, 'department-item').Quantity, 7);
+  assert.equal(f.get(f.collection, 'second-destination').Quantity, 7);
+  const requests = [f.get(C.requests, first), f.get(C.requests, second)];
+  assert.deepEqual(requests.map(row => row.Lines[0].IssuedQuantity).sort(), [0, 7]);
+  const losing = requests.find(row => row.Lines[0].IssuedQuantity === 0);
+  await assert.rejects(f.issue(losing.RequisitionId, ItemId, 7), /Insufficient stock/);
+});
+
+test('different department receipts compete safely on one balance and a reviewed retry credits only the remaining delivery', async () => {
+  const f = fixture(), ItemId = await f.stocked(10);
+  const first = await f.requisition(ItemId, 3), second = await f.requisition(ItemId, 3);
+  const a = await f.issue(first, ItemId, 3), b = await f.issue(second, ItemId, 3);
+  competeAtCommit(f);
+  const outcomes = await Promise.allSettled([f.receive(a.TransferId, ItemId, 3), f.receive(b.TransferId, ItemId, 3)]);
+  assert.equal(outcomes.filter(row => row.status === 'fulfilled').length, 1);
+  assert.equal(f.get(f.collection, 'department-item').Quantity, 10);
+  const loser = [a, b][outcomes.findIndex(row => row.status === 'rejected')];
+  assert.equal(f.get(C.transfers, loser.TransferId).Receipts.length, 0);
+  await f.receive(loser.TransferId, ItemId, 3);
+  assert.equal(f.get(f.collection, 'department-item').Quantity, 13);
+  assert.equal(f.get(C.items, ItemId).Quantity, 4);
+  assert.equal(f.list(C.transfers).filter(row => row.Status === 'RECEIVED').length, 2);
+});
+
+test('different supplier deliveries cannot overwrite each other on one central item', async () => {
+  const f = fixture(), ItemId = await f.item(), first = await f.purchase(ItemId, 4), second = await f.purchase(ItemId, 6);
+  competeAtCommit(f);
+  const outcomes = await Promise.allSettled([f.receivePurchase(first, ItemId, 4), f.receivePurchase(second, ItemId, 6)]);
+  assert.equal(outcomes.filter(row => row.status === 'fulfilled').length, 1);
+  const losingIndex = outcomes.findIndex(row => row.status === 'rejected');
+  assert.equal(f.get(C.items, ItemId).Quantity, losingIndex === 0 ? 6 : 4);
+  const loser = [first, second][losingIndex];
+  assert.equal(f.get(C.purchases, loser).Receipts, undefined);
+  await f.receivePurchase(loser, ItemId, losingIndex === 0 ? 4 : 6);
+  assert.equal(f.get(C.items, ItemId).Quantity, 10);
+  assert.equal(f.list(C.purchases).filter(row => row.Status === 'RECEIVED').length, 2);
+});
+
+test('central and workflow record lookups reject forged cross-branch and cross-edition IDs', async () => {
+  const f = fixture(), ItemId = await f.item();
+  for (const changes of [{ BranchId: 'foreign' }, { OrganisationEdition: 'organization' }, { ScopeKey: 'faith--main' }]) {
+    const original = f.get(C.items, ItemId); f.put(C.items, ItemId, { ...original, ...changes });
+    await assert.rejects(f.purchase(ItemId), /not available/); f.put(C.items, ItemId, original);
+  }
+});
+
+for (const edition of ['school', 'faith', 'organization']) test(`${edition}: procurement officer can register zero-stock department destination without changing existing stock`, async () => {
+  const f = fixture(edition), ItemId = await f.item('New supply');
+  const fields = { Department: f.department, SchoolSection: f.section, ItemId, ItemCode: 'NEW', Price: 12.5 };
+  await assert.rejects(f.command('savedestination', fields, f.receiver), /role/);
+  const { InventoryId } = await f.command('savedestination', fields);
+  assert.equal(f.get(f.collection, InventoryId).Quantity, 0); assert.equal(f.get(f.collection, InventoryId).ProcurementItemId, ItemId);
+  assert.equal(f.get(f.collection, InventoryId).Price, 12.5); assert.equal(f.get(f.collection, 'department-item').Quantity, 7);
+  await assert.rejects(f.command('savedestination', fields), /already exists/);
+  const request = await f.command('request', { Department: f.department, SchoolSection: f.section, Notes: 'Need new supplies', Lines: [{ ItemId, InventoryId, Quantity: 1 }] }, f.receiver);
+  assert.ok(request.RequisitionId);
+});
+
+test('multi-line issue never deducts an available first item when another item has insufficient stock', async () => {
+  const f = fixture(), first = await f.stocked(10), second = await f.item('Second supply'); f.target('second-destination', { ItemName: 'Second supply' });
+  const { RequisitionId } = await f.command('request', { Department: f.department, SchoolSection: f.section, Notes: 'Need both supplies', Lines: [
+    { ItemId: first, InventoryId: 'department-item', Quantity: 3 }, { ItemId: second, InventoryId: 'second-destination', Quantity: 3 }
+  ] }, f.receiver);
+  await f.command('reviewrequest', { RequisitionId, ExpectedRevision: 1, Decision: 'APPROVED', Notes: 'Approved need' });
+  const before = f.commits.length;
+  await assert.rejects(f.command('issue', { RequisitionId, ExpectedRevision: 2, Notes: 'Deliver both', Lines: [{ ItemId: first, Quantity: 3 }, { ItemId: second, Quantity: 3 }] }), /Insufficient/);
+  assert.equal(f.commits.length, before); assert.equal(f.get(C.items, first).Quantity, 10); assert.equal(f.get(C.items, second).Quantity, 0);
+  assert.equal(f.get(C.requests, RequisitionId).Status, 'APPROVED'); assert.equal(f.list(C.transfers).length, 0);
+});
+
+test('legacy binary floating stock residue does not block a valid receipt; finer stock precision does', async () => {
+  const f = fixture(), ItemId = await f.stocked(), RequisitionId = await f.requisition(ItemId, 1), { TransferId } = await f.issue(RequisitionId, ItemId, 1);
+  f.put(f.collection, 'department-item', { ...f.get(f.collection, 'department-item'), Quantity: 0.3 - 0.1 });
+  await f.receive(TransferId, ItemId, 0.1); assert.equal(f.get(f.collection, 'department-item').Quantity, 0.3);
+  f.put(f.collection, 'department-item', { ...f.get(f.collection, 'department-item'), Quantity: 0.0001 });
+  await assert.rejects(f.receive(TransferId, ItemId, 0.1), /precision/);
+});
+
+test('school-section restricted approver cannot enable branch-wide procurement controls', async () => {
+  const f = fixture();
+  await assert.rejects(f.command('settings', { Enabled: true, ConfirmExistingBalances: true, ExpectedRevision: 0, Notes: 'Enable controls' },
+    { ...f.approver, schoolSectionAccess: 'Primary' }), /role/);
+  assert.equal(f.commits.length, 0);
+});
+
+test('a rejected request never permanently links department stock to a mistaken central item', async () => {
+  const f = fixture(), wrong = await f.item('Wrong supply'), correct = await f.item('Correct supply');
+  const { RequisitionId } = await f.command('request', { Department: f.department, SchoolSection: f.section, Notes: 'Mistaken selection',
+    Lines: [{ ItemId: wrong, InventoryId: 'department-item', Quantity: 2 }] }, f.receiver);
+  assert.equal(f.get(f.collection, 'department-item').ProcurementItemId, undefined);
+  assert.equal(f.get(C.requests, RequisitionId).Lines[0].DepartmentItemName, 'Medical supply');
+  await f.command('reviewrequest', { RequisitionId, ExpectedRevision: 1, Decision: 'REJECTED', Notes: 'Selected the wrong central item' });
+  const valid = await f.requisition(correct, 2), PurchaseId = await f.purchase(correct, 2); await f.receivePurchase(PurchaseId, correct, 2);
+  await f.issue(valid, correct, 2); assert.equal(f.get(f.collection, 'department-item').ProcurementItemId, correct);
+});
+
+test('ownership changed after requesting supplies prevents dispatch without moving any central stock', async () => {
+  const f = fixture(), ItemId = await f.stocked(), RequisitionId = await f.requisition(ItemId);
+  f.target('department-item', { VendorId: 'new-vendor' }); const before = f.commits.length;
+  await assert.rejects(f.issue(RequisitionId, ItemId, 20), /vendor stock/);
+  assert.equal(f.commits.length, before); assert.equal(f.get(C.items, ItemId).Quantity, 100);
+});
+
+test('normal inventory reads are branch-indexed; older unscoped stock is explicitly found without rewriting its balance', async () => {
+  const f = fixture(), queries = [], originalQuery = f.deps.query;
+  f.deps.query = async (env, collection, options) => { queries.push({ collection, options }); return originalQuery(env, collection, options); };
+  f.target('unscoped-old', { BranchId: undefined, OrganisationEdition: undefined, ItemName: 'Legacy supply', Quantity: 32 });
+  f.target('other-branch', { BranchId: 'other', ItemName: 'Legacy supply' });
+  f.target('other-section', { SchoolSection: 'Primary', ItemName: 'Legacy supply' });
+  const listed = await f.command('list'); assert.ok(!listed.departmentInventory.some(row => row.InventoryId === 'unscoped-old'));
+  assert.ok(queries.filter(query => query.collection === f.collection).every(query => query.options.filters.some(filter => filter.field === 'BranchId' && filter.value === 'main')));
+  const result = await f.command('lookupinventory', { Department: f.department, SchoolSection: 'Secondary', ItemName: 'Legacy supply' }, f.receiver);
+  assert.deepEqual(result.departmentInventory.map(row => row.InventoryId), ['unscoped-old']); assert.equal(f.commits.length, 0);
+  const ItemId = await f.item('Legacy supply');
+  await assert.rejects(f.command('savedestination', { ItemId, Department: f.department, SchoolSection: 'Secondary' }), /legacy inventory/);
+  const PurchaseId = await f.purchase(ItemId, 2); await f.receivePurchase(PurchaseId, ItemId, 2);
+  const RequisitionId = await f.requisition(ItemId, 2, { Lines: [{ ItemId, Quantity: 2, InventoryId: 'unscoped-old' }] });
+  await f.issue(RequisitionId, ItemId, 2);
+  assert.equal(f.get(f.collection, 'unscoped-old').Quantity, 32); assert.equal(f.get(f.collection, 'unscoped-old').BranchId, 'main');
+  assert.ok((await f.command('list')).departmentInventory.some(row => row.InventoryId === 'unscoped-old'));
+});
+
+test('legacy stock lookup is read-only, sanitised and never bypasses vendor, branch or department permissions', async () => {
+  const f = fixture();
+  const result = await f.command('lookupinventory', { Department: f.department, SchoolSection: f.section, InventoryId: 'department-item' }, { ...f.receiver, subscriptionReadOnly: true });
+  assert.equal(result.departmentInventory.length, 1); assert.doesNotMatch(JSON.stringify(result), /never-return-this/); assert.equal(f.commits.length, 0);
+  await assert.rejects(f.command('lookupinventory', { Department: 'kitchen', SchoolSection: f.section, InventoryId: 'department-item' }, f.receiver), /not assigned/);
+  for (const change of [{ VendorId: 'vendor' }, { BranchId: 'another' }]) {
+    f.target('unavailable', change);
+    await assert.rejects(f.command('lookupinventory', { Department: f.department, SchoolSection: f.section, InventoryId: 'unavailable' }, f.receiver), /No organisation-owned/);
+  }
+});
+
+test('explicitly disabled approval grants cannot approve purchases or change branch control', async () => {
+  const f = fixture(), ItemId = await f.item();
+  const { PurchaseId } = await f.command('createpurchase', { SupplierName: 'S', Reference: 'GRANT', Notes: 'Need stock', Lines: [{ ItemId, Quantity: 1, UnitCost: 1 }] });
+  for (const flags of [{ approvalEnabled: false }, { ApprovalEnabled: 'NO' }, { approvalEnabled: undefined }, { approvalEnabled: 'false' }]) {
+    const disabled = { ...f.approver, ...flags };
+    assert.equal((await f.command('list', {}, disabled)).capabilities.canApprove, false);
+    await assert.rejects(f.command('reviewpurchase', { PurchaseId, ExpectedRevision: 1, Decision: 'APPROVED', Notes: 'Approve' }, disabled), /role/);
+    await assert.rejects(f.command('settings', { Enabled: true, ExpectedRevision: 0, ConfirmExistingBalances: true, Notes: 'Enable' }, disabled), /role/);
+  }
+  await f.command('reviewpurchase', { PurchaseId, ExpectedRevision: 1, Decision: 'APPROVED', Notes: 'Owner approval' }, { ...f.admin, approvalEnabled: false });
+  assert.equal(f.get(C.purchases, PurchaseId).Status, 'APPROVED');
+});
+
+test('purchase approval fails closed for missing, zero, negative or invalid account limits', async () => {
+  const f = fixture(), ItemId = await f.item();
+  const { PurchaseId } = await f.command('createpurchase', { SupplierName: 'S', Reference: 'LIMITS', Notes: 'Need stock', Lines: [{ ItemId, Quantity: 10, UnitCost: 2 }] });
+  const review = { PurchaseId, ExpectedRevision: 1, Decision: 'APPROVED', Notes: 'Checked purchase' };
+  for (const approvalMaxAmount of [undefined, null, '', 0, -1, NaN, Infinity, 'invalid', 19.99]) {
+    await assert.rejects(f.command('reviewpurchase', review, { ...f.approver, approvalMaxAmount }), /approval limit/);
+    assert.equal(f.get(C.purchases, PurchaseId).Status, 'PENDING');
+  }
+  await f.command('reviewpurchase', review, { ...f.approver, approvalMaxAmount: 20 });
+  assert.equal(f.get(C.purchases, PurchaseId).Status, 'APPROVED');
+});

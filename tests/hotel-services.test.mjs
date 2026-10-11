@@ -73,7 +73,7 @@ test('existing plan-management catalogues are migrated to include Hotel Services
 test('Hotel User and organisation administrators receive the hotel workspace by default', () => {
   assert.deepEqual(
     defaultModulesForRole('Hotel User', { edition: 'faith' }),
-    ['hotel', 'financeRequests', 'payroll', 'humanResources', 'staffAttendance']
+    ['hotel', 'financeRequests', 'payroll', 'humanResources', 'staffAttendance', 'procurement']
   );
   assert.equal(defaultModulesForRole('Church Administrator', { edition: 'faith' }).includes('hotel'), true);
   assert.equal(defaultModulesForRole('Organisation Administrator', { edition: 'organization' }).includes('hotel'), true);

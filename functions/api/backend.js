@@ -7,6 +7,7 @@ import { canonicalSchoolBranchId, deleteSchoolDocument, getSchoolDocumentById, g
 import { canonicalConfiguredClass, classNamesMatch } from '../lib/class-names.js';
 import { explicitlyIncludesFullScholarship, isFullScholarship } from '../lib/full-scholarship.js';
 import { categoryApplies, deleteStoreCategory, ensureStoreCategories, resolveStoreCategory, saveStoreCategory } from '../lib/store-categories.js';
+import { assertProcurementInventoryEdit, assertProcurementInventoryMovement, assertProcurementInventoryDeletion, loadProcurementInventoryControl, procurementMovementBalance, inventoryQuantityNumber } from '../lib/procurement-inventory-guard.js';
 import {
   clonePayrollTaxProfile, getPayrollTaxConfiguration, migratePayrollTaxPhase2,
   PAYROLL_TAX_COLLECTIONS, savePayrollSalaryComponent, savePayrollTaxBands,
@@ -89,6 +90,7 @@ import { getWebBranding, saveWebBranding } from '../lib/web-branding.js';
 import { saveDocumentBranding } from '../lib/document-branding.js';
 import { finishRequestMetric, startRequestMetric } from '../lib/request-metrics.js';
 import { readJsonBody } from '../lib/request-security.js';
+import { commitClinicVisit } from '../lib/clinic-stock-usage.js';
 import { recordRequisitionEdit, requisitionEditDetails, resolvedRequisitionEditHistory, requisitionChangedFields } from '../lib/requisition-edit-history.js';
 import { canEditRequisitions, assertRequisitionEditPermission, requisitionEditGrant, requisitionEditPermissionAuditWrite } from '../lib/requisition-edit-permission.js';
 import { resubmitRequisition } from './finance-workflow.js';
@@ -837,8 +839,8 @@ function normalizeInventory(row) {
     ItemName: pick(row, ['itemName', 'ItemName', '__id']),
     Category: pick(row, ['category', 'Category']),
     Unit: pick(row, ['unit', 'Unit']),
-    Quantity: asMoneyNumber(pick(row, ['quantity', 'Quantity'])),
-    ReorderLevel: asMoneyNumber(pick(row, ['reorderLevel', 'ReorderLevel'])),
+    Quantity: inventoryQuantityNumber(pick(row, ['quantity', 'Quantity'])),
+    ReorderLevel: inventoryQuantityNumber(pick(row, ['reorderLevel', 'ReorderLevel'])),
     LastUpdated: toDisplayDate(pick(row, ['lastUpdated', 'LastUpdated'])),
     Notes: pick(row, ['notes', 'Notes'])
   };
@@ -2646,10 +2648,16 @@ async function deleteBillingCategory(env, body) {
 
 async function getStoreOverview(env, body) {
   const storeType = clean(body.StoreType || body.storeType);
+  if (!['Bookstore', 'Uniform Store'].includes(storeType)) throw Object.assign(new Error('Choose a valid store.'), { status: 400 });
+  await desktopSchoolOperationsActor(env, body, storeType === 'Bookstore' ? 'bookstore' : 'uniformStore');
+  const scope = desktopInventoryScope(body);
   const [{ categories, items }, orders] = await Promise.all([ensureStoreCategories(env), listCollection(env, 'storeOrders')]);
-  const matches = (row) => !storeType || sameText(row.StoreType, storeType);
+  const matches = (row) => sameText(row.StoreType, storeType) && sameText(row.BranchId || 'main', scope.BranchId)
+    && (!clean(row.OrganisationEdition) || sameText(row.OrganisationEdition, 'school'))
+    && (sameText(scope.SchoolSection, 'All') || schoolSectionFor(row) === scope.SchoolSection.toLowerCase());
   return {
     ok: true, message: 'Store catalog and orders loaded.',
+    procurementControlled: await loadProcurementInventoryControl(env, { ...scope, edition: 'school' }),
     categories: categories.filter((row) => !storeType || categoryApplies(row, storeType)).sort((a, b) => clean(a.Name).localeCompare(clean(b.Name))),
     items: items.filter(matches).sort((a, b) => clean(a.ItemName).localeCompare(clean(b.ItemName))),
     orders: orders.filter(matches).sort((a, b) => clean(b.PaidAt || b.CreatedAt).localeCompare(clean(a.PaidAt || a.CreatedAt)))
@@ -2663,24 +2671,34 @@ async function saveStoreItem(env, body) {
   if (!['Bookstore', 'Uniform Store'].includes(storeType) || !itemCode || !itemName) {
     const err = new Error('Store type, item code and item name are required.'); err.status = 400; throw err;
   }
-  const directStoreItem = await getDocument(env, 'storeItems', safeDocumentId(`${storeType}-${itemCode}`));
-  const legacyStoreItems = directStoreItem ? [] : await queryCollection(env, 'storeItems', {
-    filters: [{ field: 'ItemCode', op: '==', value: itemCode }],
-    limit: 20
-  }).catch(() => []);
-  const existing = directStoreItem
-    || legacyStoreItems.find((row) => sameText(row.StoreType, storeType))
-    || {};
+  await desktopSchoolOperationsActor(env, body, storeType === 'Bookstore' ? 'bookstore' : 'uniformStore', true);
+  const scope = desktopInventoryScope(body);
   const category = await resolveStoreCategory(env, body, storeType);
+  const items = (await listCollection(env, 'storeItems')).filter(row => sameText(row.StoreType, storeType)
+    && sameText(row.BranchId || 'main', scope.BranchId)
+    && (!clean(row.OrganisationEdition) || sameText(row.OrganisationEdition, 'school'))
+    && (sameText(scope.SchoolSection, 'All') || schoolSectionFor(row) === scope.SchoolSection.toLowerCase()));
+  const itemId = clean(body.ItemId || body.InventoryId);
+  const matching = items.filter(row => itemId ? clean(row.__id) === itemId : sameText(row.ItemCode, itemCode));
+  if (matching.length > 1) throw Object.assign(new Error('Several stock records have this code. Select the exact item.'), { status: 409 });
+  if (itemId && !matching.length) throw Object.assign(new Error('The store item is outside your permitted workspace.'), { status: 404 });
+  const existing = matching[0] || {};
+  const schoolSection = clean(existing.SchoolSection) || (sameText(scope.SchoolSection, 'All') ? 'Secondary' : scope.SchoolSection);
+  if (items.some(row => row.__id !== existing.__id && sameText(row.ItemCode, itemCode) && schoolSectionFor(row) === schoolSection.toLowerCase())) {
+    throw Object.assign(new Error('That item code already exists in this branch and section.'), { status: 409 });
+  }
   const className = canonicalConfiguredClass(clean(body.ClassName) || 'All', await configuredClassNames(env));
   const payload = {
     ...existing, StoreType: storeType, ItemCode: itemCode, ItemName: itemName,
+    BranchId: scope.BranchId, SchoolSection: schoolSection, OrganisationEdition: 'school',
     CategoryId: category.CategoryId, Category: category.Name, Gender: clean(body.Gender) || 'All', ClassName: className,
-    Size: clean(body.Size), Price: asMoneyNumber(body.Price), Quantity: Math.max(0, asMoneyNumber(body.Quantity)),
+    Size: clean(body.Size), Price: asMoneyNumber(body.Price), Quantity: Math.max(0, inventoryQuantityNumber(body.Quantity ?? existing.Quantity)),
     Active: yesNo(body.Active ?? 'YES') || 'YES', UpdatedAt: nowIso(), CreatedAt: existing.CreatedAt || nowIso()
   };
   delete payload.__id; delete payload.__name;
-  await upsertDocument(env, 'storeItems', safeDocumentId(`${storeType}-${itemCode}`), payload);
+  assertProcurementInventoryEdit(existing, payload, { controlled: await loadProcurementInventoryControl(env, { ...scope, edition: 'school' }) });
+  const documentId = clean(existing.__id) || safeDocumentId(`${storeType}-${itemCode}-${scope.BranchId}-${schoolSection}`);
+  await batchCommitDocuments(env, [inventoryConditionalWrite('storeItems', documentId, payload, existing.__id ? existing : null)], { literalDocumentIds: true });
   return { ok: true, message: `${storeType} item saved.`, item: payload };
 }
 
@@ -7309,7 +7327,7 @@ async function recordCreditAction(env, body) {
 }
 
 async function saveClinicRecord(env, body) {
-  await desktopSchoolOperationsActor(env, body, 'clinic', true);
+  const actor = await desktopSchoolOperationsActor(env, body, 'clinic', true);
   const scope = schoolOperationsScope(body);
   const student = await findStudentByAccountRef(env, clean(body.AdmissionNo), scope, body.StudentScopePath);
   if (!student || !schoolOperationsRowVisible(student, scope)) {
@@ -7353,8 +7371,7 @@ async function saveClinicRecord(env, body) {
     Notes: clean(body.Notes),
     UpdatedAt: nowIso()
   };
-  await batchCommitDocuments(env, [schoolOperationsWrite('clinicRecords', safeDocumentId(recordId), payload, existing)]);
-  return { ok: true, message: 'Clinic record saved to the database.', record: payload };
+  return commitClinicVisit(env, { documentId: safeDocumentId(recordId), payload, body, user: actor });
 }
 
 async function getClinicRecords(env, body) {
@@ -7397,7 +7414,7 @@ function inventoryConditionalWrite(collectionPath, documentId, data, existing) {
   if (existing && !existing.__updateTime) throw Object.assign(new Error('Stock version is unavailable. Refresh and try again.'), { status: 409 });
   const payload = { ...data };
   for (const key of ['__id', '__name', '__updateTime', '__createTime']) delete payload[key];
-  return { collectionPath, documentId, data: payload, ...(existing ? { updateTime: existing.__updateTime } : { exists: false }) };
+  return { collectionPath, documentId: existing ? documentId : encodeURIComponent(documentId), data: payload, ...(existing ? { updateTime: existing.__updateTime } : { exists: false }) };
 }
 
 async function saveInventoryItem(env, body, collection, defaults) {
@@ -7417,20 +7434,21 @@ async function saveInventoryItem(env, body, collection, defaults) {
     throw Object.assign(new Error('That item name already exists in this workspace.'), { status: 409 });
   }
   const nextId = clean(existing?.__id) || safeDocumentId(`${scope.BranchId}-${section}-${itemName}`);
-  const quantity = asMoneyNumber(body.Quantity ?? body.quantity);
+  const quantity = inventoryQuantityNumber(body.Quantity ?? body.quantity ?? existing?.Quantity);
   if (quantity < 0) throw Object.assign(new Error('Stock quantity cannot be negative.'), { status: 400 });
   const payload = {
     ...(existing || {}),
     BranchId: scope.BranchId, SchoolSection: section, OrganisationEdition: 'school',
     ItemName: itemName,
     Category: clean(body.Category || body.category) || defaults.category,
-    Unit: clean(body.Unit || body.unit) || defaults.unit,
+    Unit: clean(body.Unit || body.unit) || clean(existing?.Unit) || defaults.unit,
     Quantity: quantity,
-    ReorderLevel: asMoneyNumber(body.ReorderLevel || body.reorderLevel),
+    ReorderLevel: inventoryQuantityNumber(body.ReorderLevel || body.reorderLevel),
     LastUpdated: nowIso(),
     Notes: clean(body.Notes || body.notes)
   };
-  await batchCommitDocuments(env, [inventoryConditionalWrite(collection, nextId, payload, existing)]);
+  assertProcurementInventoryEdit(existing || {}, payload, { controlled: await loadProcurementInventoryControl(env, { ...scope, edition: 'school' }) });
+  await batchCommitDocuments(env, [inventoryConditionalWrite(collection, nextId, payload, existing)], { literalDocumentIds: true });
   return { ok: true, message: `${defaults.label} inventory item saved to the database.`, item: normalizeInventory(payload) };
 }
 
@@ -7443,15 +7461,16 @@ async function deleteInventoryItem(env, body, collection, label) {
   }
   const existing = desktopInventoryMatch(await desktopInventoryRows(env, body, collection, true), body, itemName);
   if (!existing) throw Object.assign(new Error('Inventory item not found in this workspace.'), { status: 404 });
+  assertProcurementInventoryDeletion(existing, { controlled: await loadProcurementInventoryControl(env, { ...desktopInventoryScope(body), edition: 'school' }) });
   const write = inventoryConditionalWrite(collection, existing.__id, {}, existing);
-  await batchCommitDocuments(env, [{ ...write, operation: 'delete' }]);
+  await batchCommitDocuments(env, [{ ...write, operation: 'delete' }], { literalDocumentIds: true });
   return { ok: true, message: `${label} inventory item deleted from the database.` };
 }
 
 async function recordStockMovement(env, body, collection, movementCollection, defaults) {
   const itemName = clean(body.ItemName || body.itemName);
   const movementType = clean(body.MovementType || body.movementType).toUpperCase();
-  const quantity = asMoneyNumber(body.Quantity || body.quantity);
+  const quantity = inventoryQuantityNumber(body.Quantity || body.quantity);
   if (!itemName) {
     const err = new Error('Item name is required.');
     err.status = 400;
@@ -7474,8 +7493,10 @@ async function recordStockMovement(env, body, collection, movementCollection, de
     err.status = 404;
     throw err;
   }
-  const current = asMoneyNumber(existing.Quantity);
-  const nextQty = movementType === 'IN' ? current + quantity : current - quantity;
+  const procurementControl = { controlled: await loadProcurementInventoryControl(env, { ...desktopInventoryScope(body), edition: 'school' }) };
+  assertProcurementInventoryMovement(existing, movementType, procurementControl);
+  const current = inventoryQuantityNumber(existing.Quantity);
+  const nextQty = procurementMovementBalance(existing, movementType, quantity, procurementControl);
   if (nextQty < 0) throw Object.assign(new Error(`Only ${current} ${clean(existing.Unit) || 'units'} are currently available.`), { status: 409 });
   const itemPayload = {
     ...existing,
@@ -7498,7 +7519,7 @@ async function recordStockMovement(env, body, collection, movementCollection, de
   await batchCommitDocuments(env, [
     inventoryConditionalWrite(collection, existing.__id, itemPayload, existing),
     inventoryConditionalWrite(movementCollection, safeDocumentId(movementNo), movement)
-  ]);
+  ], { literalDocumentIds: true });
   return { ok: true, message: `${defaults.label} stock movement recorded in the database.`, movement, item: normalizeInventory(itemPayload) };
 }
 

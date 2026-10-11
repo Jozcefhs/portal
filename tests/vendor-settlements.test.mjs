@@ -6,6 +6,7 @@ import { webcrypto } from 'node:crypto';
 import * as rules from '../functions/lib/vendor-settlement-rules.js';
 import { buildWalletPurchaseAccountingJournal } from '../functions/api/backend.js';
 import { objectToFirestoreFields, firestoreDocumentToObject } from '../functions/lib/firestore.js';
+import { inventoryQuantityNumber, procurementMovementBalance } from '../functions/lib/procurement-inventory-guard.js';
 
 const withoutImports = source => source.replace(/^import[\s\S]*?from '[^']+';\r?\n/gm,'').replace(/export /g,'');
 const staffLookupSource = withoutImports(await readFile(new URL('../functions/lib/staff-auth.js',import.meta.url),'utf8'));
@@ -626,7 +627,7 @@ function commerceFixture(edition = 'school', section = 'tuckShop', options = {})
   for (const stockId of ['stock1','stock2']) f.put(collection,stockId,{...scoped,ItemCode:stockId,StoreType:'Organisation Store',ItemName:'Water',VendorId:'v1',Price:50,Quantity:5,Active:'YES'});
   const access = vm.runInNewContext(`${accessSource}\n({linkedSalesVendors,restrictVendorInventory,assertVendorSaleReplay,vendorCustomerScope})`,{
     ...rules,queryCollectionPages:async (_env,c,opts) => f.list(c).filter(row => opts.filters.every(q => row[q.field] === q.value))});
-  const context = {...f.functions,...access,crypto:webcrypto,Date,console,URL,URLSearchParams,
+  const context = {...f.functions,...access,inventoryQuantityNumber,procurementMovementBalance,crypto:webcrypto,Date,console,URL,URLSearchParams,
     batchUpsertDocuments:f.commit,getDocument:async (_env,c,id) => structuredClone(f.get(c,id) || null),listCollection:async (_env,c) => f.list(c),
     upsertDocument:async (_env,c,id,row) => f.put(c,id,row),patchDocumentFields:async (_env,c,id,row) => f.put(c,id,{...f.get(c,id),...row}),
     createDocumentIfAbsent:async (_env,c,id,row) => { const previous = f.get(c,id); if (!previous) f.put(c,id,row); return {created:!previous,document:previous || f.get(c,id)}; },

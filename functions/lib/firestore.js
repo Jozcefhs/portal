@@ -479,9 +479,10 @@ export async function batchCommitDocuments(env, writes, options = {}) {
       const documentId = String(item.documentId || '').trim();
       // Keep legacy callers' persisted IDs stable. New/compatible storage uses
       // literal resource IDs: URL encoding belongs only in the HTTP URL.
-      const id = options.literalDocumentIds === true ? documentId : encodeURIComponent(documentId);
+      const literalDocumentId = options.literalDocumentIds === true || item.literalDocumentId === true;
+      const id = literalDocumentId ? documentId : encodeURIComponent(documentId);
       if (!collection || !id) throw new Error('Every batch write requires a collection path and document ID.');
-      if (options.literalDocumentIds === true && (id.includes('/') || id === '.' || id === '..')) {
+      if (literalDocumentId && (id.includes('/') || id === '.' || id === '..')) {
         throw new Error('A literal batch document ID must be a single document path segment.');
       }
       const resourceName = `${resourceBase}/${collection}/${id}`;
