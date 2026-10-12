@@ -299,11 +299,11 @@ test('role defaults expose Records Desk without weakening member privacy', () =>
   assert.match(roleAccessSource, /Treasurer: \['recordsDesk', 'funds'/);
 });
 
-test('existing custom access derives Records Desk without widening its source permissions', () => {
+test('additional access derives Records Desk without widening a restricted role policy', () => {
   const accounts = allowedSectionsFor({
     Role: 'Accounts Officer',
     TabAccess: ['accounts', 'financeRequests']
-  });
+  }, null, { roleModules: ['accounts', 'financeRequests'] });
   const unrelated = allowedSectionsFor({
     Role: 'Department User',
     TabAccess: ['payroll', 'financeRequests']

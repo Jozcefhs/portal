@@ -276,46 +276,36 @@ function publicUser(user) {
 }
 
 export function allowedSectionsFor(user = {}, featureFlags = null, options = {}) {
-  const role = clean(user.role || user.Role);
-  if (role === 'Vendor User') {
-    const edition = clean(options.edition || user.edition || user.Edition || 'school');
+  const role = clean(user.assignedRole || user.AssignedRole || user.role || user.Role);
+  const edition = clean(options.edition || user.edition || user.Edition || 'school');
+  if (role === 'Vendor User' || role === EXTERNAL_AUDITOR_ROLE) {
     return withRequiredRoleModules(role, [], edition, featureFlags);
   }
-  if (role === EXTERNAL_AUDITOR_ROLE) return filterSectionsForFeatures(['externalAudit'], featureFlags);
   const department = lower(user.department || user.Department);
   const departmentEntitlements = role === 'Department User'
     && (department === 'academic' || department === 'academics' || department.startsWith('academic ') || department.startsWith('academics '))
     ? ['academics']
     : [];
-  const withDepartmentEntitlements = (modules) => filterSectionsForFeatures(
-    [...new Set([...modules, ...departmentEntitlements])].filter((key) =>
-      clean(user.assignedRole || user.AssignedRole) !== 'Admin' || !['staffUsers', 'dataBackup', 'securityAudit'].includes(key)),
-    featureFlags
+  const customValue = user.tabAccess ?? user.TabAccess;
+  const custom = (Array.isArray(customValue) ? customValue : clean(customValue).split(/[;,]/))
+    .map(clean).filter(Boolean);
+  // Account selections are additional grants, never a replacement for the
+  // branch/global role policy. An explicitly empty policy still takes precedence
+  // over system defaults, and inherited modules are not copied into TabAccess.
+  const inherited = Array.isArray(options.roleModules)
+    ? options.roleModules
+    : defaultModulesForRole(role, { edition, featureFlags, department });
+  const modules = withRequiredRoleModules(
+    role, [...inherited, ...custom, ...departmentEntitlements], edition, featureFlags
   );
-  const custom = Array.isArray(user.tabAccess || user.TabAccess) ? (user.tabAccess || user.TabAccess).map(clean).filter(Boolean) : [];
   if (custom.length) {
-    const inherited = role === 'Super Admin'
-      ? [...custom, 'humanResources', 'dataBackup', 'securityAudit', 'staffUsers']
-      : [...custom, 'humanResources'];
-    const required = withRequiredRoleModules(role, inherited, options.edition || 'school', featureFlags);
     const recordsDeskSources = new Set([
       'admissions', 'students', 'accounts', 'clinic', 'tuckShop',
       'staffUsers', 'members', 'funds', 'offerings', 'executiveOffice'
     ]);
-    if (required.some((section) => recordsDeskSources.has(section))) required.push('recordsDesk');
-    return withDepartmentEntitlements(required);
+    if (modules.some((section) => custom.includes(section) && recordsDeskSources.has(section))) modules.push('recordsDesk');
   }
-  if (Array.isArray(options.roleModules)) {
-    const configured = withRequiredRoleModules(
-      role, options.roleModules, options.edition || 'school', featureFlags
-    );
-    return withDepartmentEntitlements(configured);
-  }
-  return withDepartmentEntitlements(defaultModulesForRole(role, {
-    edition: options.edition || 'school',
-    featureFlags,
-    department
-  }));
+  return withRequiredRoleModules(role, modules, edition, featureFlags);
 }
 
 export function invalidateStaffAccessCache() {

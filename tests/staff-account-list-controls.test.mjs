@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
+import { featureFlagsForEdition } from '../functions/lib/organization-config.js';
+import { modulesForEdition } from '../functions/lib/role-module-access.js';
 
 const admin = await readFile(new URL('../js/admin.js', import.meta.url), 'utf8');
 const css = await readFile(new URL('../css/style.css', import.meta.url), 'utf8');
@@ -122,12 +124,12 @@ test('roles sort alphabetically without mutating the original list or Set', () =
   assert.deepEqual(roles, before);
 });
 
-function renderedFixture(edition, { previous = null, rolePolicy = true, rows = users } = {}) {
+function renderedFixture(edition, { previous = null, rolePolicy = true, rows = users, modules } = {}) {
   const roles = ['Vendor User', 'Super Admin', 'Director', 'Admin', 'Accounts Officer', 'Teacher'];
   const panel = { querySelector: (selector) => selector === '[data-staff-account-register]' ? previous : null, innerHTML: '' };
   const { context } = fixture({
     panelEl: panel, activeSection: 'staffUsers', staffUsersData: rows, staffSeatUsage: null,
-    staffRoleAccessData: rolePolicy ? { roles: Object.fromEntries(roles.map((role) => [role, {}])) } : null,
+    staffRoleAccessData: rolePolicy ? { roles: Object.fromEntries(roles.map((role) => [role, {}])), modules } : null,
     currentUser: { username: 'signed-in-admin' }, resolveDashboardEdition: () => edition,
     staffRolesForEdition: () => roles, webTabsForEdition: () => [], staffModulePreferencesData: null,
     staffRoleAccessSelectedRole: '', staffMfaAdminData: null, staffNameMigration: null, staffNameFormat: 'First name, surname',
@@ -142,6 +144,17 @@ function renderedFixture(edition, { previous = null, rolePolicy = true, rows = u
 }
 
 for (const edition of ['school', 'faith', 'organization']) {
+  test(`${edition} staff extras use the same enabled catalogue as role access`, () => {
+    const modules = modulesForEdition(edition, featureFlagsForEdition(edition));
+    const html = renderedFixture(edition, { modules });
+    const roleOptions = [...html.matchAll(/name="RoleModuleOption" value="([^"]+)"/g)].map(match => match[1]);
+    const extraOptions = [...html.matchAll(/name="TabAccessOption" value="([^"]+)"/g)].map(match => match[1]);
+    assert.deepEqual(extraOptions, modules.map(module => module.key));
+    assert.deepEqual(extraOptions, roleOptions);
+    assert.ok(!extraOptions.includes(edition === 'school' ? 'offerings' : 'students'));
+    assert.match(html, /Additional module access/);
+  });
+
   test(`${edition} staff screen renders scoped controls and alphabetic role options without changing the default role`, () => {
     const html = renderedFixture(edition);
     for (const selector of ['data-staff-account-register', 'data-staff-user-search', 'data-staff-user-role', 'data-staff-user-status', 'data-staff-user-sort']) assert.ok(html.includes(selector));

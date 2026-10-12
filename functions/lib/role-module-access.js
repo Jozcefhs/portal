@@ -201,6 +201,9 @@ export function withRequiredRoleModules(role, modules = [], edition = 'school', 
   }
   if (role === 'External Auditor') return normalizeModuleList(['externalAudit'], edition, featureFlags);
   const normalized = [...modules, ...STAFF_SELF_SERVICE_MODULES];
+  // Older saved policies may predate Procurement. Its named officer must retain
+  // the workspace, subject to the same edition/subscription gates as any module.
+  if (role === 'Procurement Officer' && !normalized.includes('procurement')) normalized.push('procurement');
   if (role === 'Super Admin' || role === 'Director') {
     if (!normalized.includes('externalAudit')) normalized.push('externalAudit');
     if (!normalized.includes('dataBackup')) normalized.push('dataBackup');

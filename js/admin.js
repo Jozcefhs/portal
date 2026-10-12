@@ -21133,11 +21133,11 @@ function renderStaffUsers() {
     : staffRolesForEdition();
   const defaultStaffRole = configuredRoles[0] || '';
   const availableRoles = alphabeticalStaffRoles(configuredRoles);
-  const permissionTabs = webTabsForEdition();
   const policyRoles = staffRoleAccessData?.roles || {};
-  const policyModules = Array.isArray(staffRoleAccessData?.modules) && staffRoleAccessData.modules.length
+  const policyModules = Array.isArray(staffRoleAccessData?.modules)
     ? staffRoleAccessData.modules
-    : permissionTabs.map(([key, label]) => ({ key, label }));
+    : webTabsForEdition().map(([key, label]) => ({ key, label }));
+  const permissionTabs = policyModules.map(({ key, label }) => [key, label]);
   const organizationModules = Array.isArray(staffModulePreferencesData?.modules)
     ? staffModulePreferencesData.modules
     : [];
@@ -21206,7 +21206,7 @@ function renderStaffUsers() {
       </div>
     </section>
     <section class="role-access-settings role-module-settings">
-      <div class="role-access-heading"><div><p class="eyebrow">Role access</p><h2>Role module access</h2><p class="muted">Choose the tabs each role receives by default. Individual staff overrides remain available in each staff account.</p></div><span class="role-access-scope">${policyScope === 'global' ? 'All branches' : `Branch: ${escapeHtml(policyScope)}`}</span></div>
+      <div class="role-access-heading"><div><p class="eyebrow">Role access</p><h2>Role module access</h2><p class="muted">Choose the modules each role receives by default. Extra modules selected on a staff account are added to these defaults, not substituted for them.</p></div><span class="role-access-scope">${policyScope === 'global' ? 'All branches' : `Branch: ${escapeHtml(policyScope)}`}</span></div>
       <div class="role-access-editor">
         <label class="role-access-role">Staff role<select id="roleAccessRole">${availableRoles.map((role) => `<option value="${escapeHtml(role)}"${role === staffRoleAccessSelectedRole ? ' selected' : ''}>${escapeHtml(role)}</option>`).join('')}</select></label>
         <p class="role-access-source" id="roleAccessSource"></p>
@@ -21277,7 +21277,7 @@ function renderStaffUsers() {
           <small data-requisition-edit-help>Separate from approval authority. Edits restart Accounts review and record the officer's name. Final-approved, paid and posted documents remain locked.</small>
           <label>Maximum approval amount<input name="ApprovalMaxAmount" type="number" min="0" step="0.01" value="0" data-finance-input><small>Zero blocks approval. Super Admin is unrestricted.</small></label>
         </div><div class="approval-account-list config-option-list"><strong>Accounts this user may approve directly from</strong>${staffApprovalAccounts.length ? staffApprovalAccounts.map((account) => `<label class="check-row"><input type="checkbox" name="ApprovalAccountOption" value="${escapeHtml(account.Code)}"> ${escapeHtml(account.Code)} - ${escapeHtml(account.Name || '')}</label>`).join('') : '<small>Create active Chart of Accounts entries in the desktop Finance tab first.</small>'}</div></section>
-        <section class="config-group" data-staff-tabs-group><header><strong>Web companion access</strong><small>Optional user-specific override. Leave all clear to inherit the module access saved for the selected role. My Payroll and Finance Requests &amp; Imprest remain available to ordinary staff accounts.</small></header><div class="approval-account-list config-option-list config-option-grid">${permissionTabs.map(([key, label]) => `<label class="check-row"><input type="checkbox" name="TabAccessOption" value="${escapeHtml(key)}"> ${escapeHtml(label)}</label>`).join('')}</div></section>
+        <section class="config-group" data-staff-tabs-group><header><strong>Additional module access</strong><small>Select extra modules for this staff member. Their role's default modules remain available automatically, including future role changes. Unchecked boxes do not remove role access. Leave all clear to use only the role defaults. My Payroll and Finance Requests &amp; Imprest remain available to ordinary staff accounts.</small></header><div class="approval-account-list config-option-list config-option-grid">${permissionTabs.map(([key, label]) => `<label class="check-row"><input type="checkbox" name="TabAccessOption" value="${escapeHtml(key)}"> ${escapeHtml(label)}</label>`).join('')}</div></section>
         <section class="config-group"><header><strong>Security</strong><small>Password and account-state controls.</small></header><div class="config-grid">
           <label>New or reset password<input name="Password" type="password" minlength="6" autocomplete="new-password"><small>Required for a new account. Leave blank when editing unless resetting it.</small></label>
           <div class="config-toggle-stack"><label class="check-row"><input name="Active" type="checkbox" checked> Account active</label><label class="check-row"><input name="MustChangePassword" type="checkbox" checked> Require password change at next sign-in</label>${schoolEdition ? '<label class="check-row sensitive-access-toggle"><input name="BiometricLookupEnabled" type="checkbox"> Allow student face-enrollment management</label>' : ''}</div>
@@ -21308,23 +21308,29 @@ function renderRoleAccessEditor(role = staffRoleAccessSelectedRole, roles = staf
   const allowed = new Set(policy.modules || []);
   const universalStaffModules = new Set(['financeRequests', 'payroll']);
   document.querySelectorAll('[name="RoleModuleOption"]').forEach((input) => {
-    const external = staffRoleAccessSelectedRole === 'External Auditor';
-    input.checked = external ? input.value === 'externalAudit' : allowed.has(input.value) || universalStaffModules.has(input.value);
-    input.disabled = external || universalStaffModules.has(input.value);
-    if (input.disabled) input.closest('label')?.setAttribute('title', external
-      ? 'External Auditor access is fixed to this workspace.'
-      : 'Available to ordinary staff accounts for personal self-service.');
+    const fixed = ['External Auditor', 'Vendor User'].includes(staffRoleAccessSelectedRole);
+    const procurement = staffRoleAccessSelectedRole === 'Procurement Officer' && input.value === 'procurement';
+    input.checked = allowed.has(input.value) || (!fixed && (universalStaffModules.has(input.value) || procurement));
+    input.disabled = fixed || universalStaffModules.has(input.value) || procurement;
+    if (input.disabled) input.closest('label')?.setAttribute('title', fixed
+      ? 'This role has a fixed, restricted workspace.'
+      : procurement ? 'Procurement is included for every Procurement Officer.'
+        : 'Available to ordinary staff accounts for personal self-service.');
     else input.closest('label')?.removeAttribute('title');
   });
   const source = document.getElementById('roleAccessSource');
   if (source) {
     source.textContent = staffRoleAccessSelectedRole === 'External Auditor'
       ? 'This role is fixed to the read-only External Audit workspace. Other modules cannot be granted.'
+      : staffRoleAccessSelectedRole === 'Vendor User'
+      ? 'This role is limited to linked vendor products and settlements. Other modules cannot be granted.'
       : policy.source === 'default'
       ? 'Using the safe system starting policy until you save this role.'
       : policy.locallyConfigured
         ? `Saved specifically for ${policy.source === 'global' ? 'all branches' : `branch ${policy.source}`}.`
         : 'Inheriting the organisation-wide role policy.';
+    if (staffRoleAccessSelectedRole === 'Procurement Officer') source.textContent += ' Procurement is always included when enabled in the organisation plan.';
+    if (staffRoleAccessSelectedRole === 'Recruitment Officer') source.textContent += ' Recruitment Officer is an HR role. For purchasing and supplies, choose Procurement Officer.';
   }
   const reset = document.getElementById('resetRoleAccess');
   if (reset) reset.disabled = !policy.locallyConfigured;
@@ -21363,7 +21369,7 @@ function syncExternalAuditUserForm(form) {
   const finance = form.querySelector('[data-staff-finance-group]');
   if (finance) finance.hidden = external;
   const tabs = form.querySelector('[data-staff-tabs-group]');
-  if (tabs) tabs.hidden = external;
+  if (tabs) tabs.hidden = external || form.elements.Role?.value === 'Vendor User';
   ['AuditDateFrom', 'AuditDateTo', 'AuditExpiresAt'].forEach((name) => {
     if (form.elements[name]) form.elements[name].required = external;
   });
