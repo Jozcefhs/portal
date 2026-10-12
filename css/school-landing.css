@@ -56,6 +56,8 @@
 .landing-nav .nav-actions .nav-action-primary { color: #fff; background: var(--landing-navy); }
 .landing-nav .nav-actions .nav-action-primary:hover { color: #fff; background: #082d53; transform: translateY(-1px); }
 .landing-mobile-menu { display: none; }
+/* Keep the closed panel hidden even when a mobile browser overrides details styling. */
+.landing-mobile-menu:not([open]) .landing-mobile-menu-panel { display: none; }
 
 .landing-announcement {
   display: flex;

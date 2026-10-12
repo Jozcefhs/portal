@@ -13,6 +13,7 @@ SHELL.push('/css/procurement.css', '/js/procurement.js', '/js/procurement-item-i
 SHELL.push('/js/clinic-dispensing.js');
 SHELL.push('/help.html', '/css/help.css', '/js/help.js', '/js/owner-help-settings.js');
 SHELL.push('/css/launcher-layout.css');
+SHELL.push('/js/school-menu.js');
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
