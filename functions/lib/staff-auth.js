@@ -406,16 +406,15 @@ export function sectionAccessFor(user = {}, organization = {}, roleAccess = null
 export async function staffAccessFor(env, user = {}) {
   const environmentKey = `${clean(env.FIREBASE_PROJECT_ID)}|${clean(env.ORGANISATION_EDITION || env.ORGANIZATION_EDITION)}`;
   const now = Date.now();
+  // Role policies are authorization state. A save may run in a different Worker
+  // isolate, so invalidating this isolate's cache cannot refresh other sessions.
+  // Only a genuine missing document falls back to defaults; read errors propagate.
+  const roleAccess = await getDocument(env, 'settings', 'roleModuleAccess');
   let organization;
-  let roleAccess;
   if (accessConfigCache && accessConfigCache.environmentKey === environmentKey && accessConfigCache.expiresAt > now) {
     organization = accessConfigCache.organization;
-    roleAccess = accessConfigCache.roleAccess;
   } else {
-    let [organizationProfile, storedRoleAccess] = await Promise.all([
-      getDocument(env, 'settings', 'organisationProfile').catch(() => null),
-      getDocument(env, 'settings', 'roleModuleAccess').catch(() => null)
-    ]);
+    let organizationProfile = await getDocument(env, 'settings', 'organisationProfile').catch(() => null);
     const legacyProfile = organizationProfile
       ? null
       : await getDocument(env, 'settings', 'schoolProfile').catch(() => null);
@@ -428,11 +427,9 @@ export async function staffAccessFor(env, user = {}) {
       organizationProfile = await refreshOrganizationPlanPolicy(env, organizationProfile);
     }
     organization = resolveOrganizationConfig({ env, organizationProfile, legacyProfile });
-    roleAccess = storedRoleAccess;
     accessConfigCache = {
       environmentKey,
       organization,
-      roleAccess,
       expiresAt: Date.now() + ACCESS_CONFIG_CACHE_MS
     };
   }
@@ -466,6 +463,18 @@ export function staffUserForAccess(user = {}, access = {}) {
     biometricLookupEnabled,
     tabAccess: externalAuditor ? [] : filterSectionsForFeatures(list(user.tabAccess), access.featureFlags)
   };
+}
+
+export async function staffUserForRequest(env, user, request) {
+  const requestedBranch = request.headers.get('X-Dynamax-Branch') || '';
+  const needsConfiguredBranchValidation = !clean(user.branchId)
+    && clean(requestedBranch) && lower(requestedBranch) !== 'all';
+  const structure = needsConfiguredBranchValidation ? await getSchoolStructure(env) : {};
+  // Resolve and validate branch scope before looking up its role policy. Do not
+  // combine branch grants into organisation-wide access or trust a raw header.
+  const scopedUser = applyStaffBranchContext(user, requestedBranch, structure);
+  const access = await staffAccessFor(env, scopedUser);
+  return staffUserForAccess(scopedUser, access);
 }
 
 export async function authenticateStaff(env, username, password, options = {}) {
@@ -706,19 +715,13 @@ export async function requireStaffSession(env, request) {
     err.status = 428;
     throw err;
   }
-  const access = await staffAccessFor(env, user);
-  const requestedBranch = request.headers.get('X-Dynamax-Branch') || '';
   // Face endpoint independently checks purchase-only purpose and active vendor
   // linkage. No Records Desk, enrollment or general student access is granted.
   if (user.role === 'Vendor User' && !['/api/staff-vendor-settlements', '/api/staff-face-lookup', '/api/admin', '/api/staff-session',
     '/api/staff-passkey', '/api/staff-mfa', '/api/staff-approval-profile'].includes(new URL(request.url).pathname)) {
     const error = new Error('Vendor accounts may access only their own sales, settlements and sign-in settings.'); error.status = 403; throw error;
   }
-  const needsConfiguredBranchValidation = !clean(user.branchId)
-    && clean(requestedBranch)
-    && lower(requestedBranch) !== 'all';
-  const structure = needsConfiguredBranchValidation ? await getSchoolStructure(env) : {};
-  return applyStaffBranchContext(staffUserForAccess(user, access), requestedBranch, structure);
+  return staffUserForRequest(env, user, request);
 }
 
 export async function createStaffAttendanceProof(env, user, scope = {}) {

@@ -10,6 +10,7 @@ import {
   staffSessionCookie,
   staffAccessFor,
   staffUserForAccess,
+  staffUserForRequest,
   verifyStaffApprovalPassword
 } from '../lib/staff-auth.js';
 import { batchCommitLiteralDocuments, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
@@ -126,7 +127,7 @@ function authoritativeSessionUser(record, sessionUser, profilePhotoUrl = '', sch
     profilePhotoUrl: clean(profilePhotoUrl || record.ProfilePhotoDataUrl || sessionUser.profilePhotoUrl),
     role,
     department: clean(record.Department || sessionUser.department || inferredDepartment),
-    branchId: clean(record.BranchId || sessionUser.branchId),
+    branchId: clean(record.BranchId ?? sessionUser.branchId),
     auditDateFrom: clean(record.AuditDateFrom),
     auditDateTo: clean(record.AuditDateTo),
     auditExpiresAt: clean(record.AuditExpiresAt),
@@ -172,11 +173,11 @@ export async function onRequestGet(context) {
       profileImage?.ProfilePhotoDataUrl,
       schoolProfile || {}
     );
-    const access = user ? await staffAccessFor(context.env, user) : null;
+    const scopedUser = user ? await staffUserForRequest(context.env, user, context.request) : null;
     return response({
       ok: true,
       authenticated: Boolean(user),
-      user: user ? staffUserForAccess(user, access) : null
+      user: scopedUser
     });
   } catch (err) {
     const status = err.status || 500;

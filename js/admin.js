@@ -2388,11 +2388,9 @@ async function loadDashboard(options = {}) {
       const storedBranchId = readStoredStaffBranch(data.user);
       const storedBranch = availableBranches.find((branch) => branch.id.toLowerCase() === storedBranchId.toLowerCase());
       selectedBranchId = storedBranch?.id || clean(data.defaultBranchId || availableBranches[0]?.id || 'all');
-      data.user = {
-        ...data.user,
-        branchId: selectedBranchId === 'all' ? '' : selectedBranchId,
-        activeBranchId: selectedBranchId
-      };
+      // Branch-specific role grants must come from the server. Do not relabel
+      // an all-branch response as the selected branch while keeping its modules.
+      if (selectedBranchId !== 'all') return await loadDashboard(options);
     }
     dashboardData = merge ? mergeDashboardResponse(dashboardData, data) : data;
     const dashboardUser = data.user || {};

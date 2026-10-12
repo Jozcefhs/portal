@@ -108,7 +108,8 @@ test('the web companion sends and renders the server-enforced session branch', (
   assert.match(adminJs, /branchControlLabel = canSwitch && options\.length > 1 \? 'Working branch' : 'Current branch'/);
   assert.match(adminJs, /welcomeEl\.classList\.toggle\('branch-context-only', !overview\)/);
   assert.match(portalCss, /\.staff-page \.staff-welcome\.branch-context-only/);
-  assert.match(staffAuth, /applyStaffBranchContext\(staffUserForAccess\(user, access\), requestedBranch, structure\)/);
+  assert.match(staffAuth, /const scopedUser = applyStaffBranchContext\(user, requestedBranch, structure\)/);
+  assert.match(staffAuth, /const access = await staffAccessFor\(env, scopedUser\)/);
   assert.match(adminApi, /branches,/);
   assert.match(staffUsersApi, /branches: configuredStaffBranches\(structure\)/);
   assert.match(adminJs, /availableBranches = data\.branches\.map\(\(branch\) => \(\{/);

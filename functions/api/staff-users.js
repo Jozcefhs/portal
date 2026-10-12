@@ -511,7 +511,7 @@ async function deleteUser(env, actor, body) {
 }
 
 async function roleAccessSettings(env, actor) {
-  const document = await getDocument(env, 'settings', 'roleModuleAccess').catch(() => null);
+  const document = await getDocument(env, 'settings', 'roleModuleAccess');
   return roleAccessView(document, actor, actor.edition, actor.featureFlags);
 }
 
@@ -615,7 +615,7 @@ async function saveRoleAccess(env, actor, body) {
     err.status = 400;
     throw err;
   }
-  const existing = await getDocument(env, 'settings', 'roleModuleAccess').catch(() => null);
+  const existing = await getDocument(env, 'settings', 'roleModuleAccess');
   const scope = roleAccessScope(actor);
   const scopes = withRoleModules(
     existing,
@@ -637,12 +637,12 @@ async function saveRoleAccess(env, actor, body) {
   delete saved.__createTime;
   delete saved.__updateTime;
   if (existing?.__updateTime) await updateDocumentIfCurrent(env, 'settings', 'roleModuleAccess', saved, existing);
-  else await upsertDocument(env, 'settings', 'roleModuleAccess', saved);
+  else await upsertDocument(env, 'settings', 'roleModuleAccess', saved, { exists: false });
   invalidateStaffAccessCache();
   await audit(env, actor, 'UPDATE ROLE ACCESS', role, `${scope} | ${(scopes[scope]?.[role] || []).join(', ')}`, actorBranchScope(actor) || 'main');
   return {
     ok: true,
-    message: `${role} module access saved for ${scope === 'global' ? 'all branches' : `branch ${scope}`}.`,
+    message: `${role} module access saved for ${scope === 'global' ? 'all branches' : `branch ${scope}`}. Refresh the affected staff workspace to load the new access.`,
     roleAccess: roleAccessView(saved, actor, actor.edition, actor.featureFlags)
   };
 }
@@ -654,7 +654,7 @@ async function resetRoleAccess(env, actor, body) {
     err.status = 400;
     throw err;
   }
-  const existing = await getDocument(env, 'settings', 'roleModuleAccess').catch(() => null);
+  const existing = await getDocument(env, 'settings', 'roleModuleAccess');
   const scope = roleAccessScope(actor);
   const saved = {
     ...(existing || {}),
@@ -668,7 +668,7 @@ async function resetRoleAccess(env, actor, body) {
   delete saved.__createTime;
   delete saved.__updateTime;
   if (existing?.__updateTime) await updateDocumentIfCurrent(env, 'settings', 'roleModuleAccess', saved, existing);
-  else await upsertDocument(env, 'settings', 'roleModuleAccess', saved);
+  else await upsertDocument(env, 'settings', 'roleModuleAccess', saved, { exists: false });
   invalidateStaffAccessCache();
   await audit(env, actor, 'RESET ROLE ACCESS', role, scope, actorBranchScope(actor) || 'main');
   return {

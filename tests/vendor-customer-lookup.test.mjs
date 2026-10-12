@@ -115,8 +115,7 @@ test('session gateway permits the assisted face endpoint but still blocks all ge
   const begin=auth.indexOf('export async function requireStaffSession('),end=auth.indexOf('export async function createStaffAttendanceProof(',begin);
   const requireSession=runInNewContext(`${auth.slice(begin,end).replace('export ','')}\nrequireStaffSession`,{
     clean:rules.clean,lower:rules.lower,URL,readStaffSession:async()=>actor,findStaffUserRecord:async()=>({...actor,Active:'YES'}),
-    publicUser:row=>row,externalAuditAccessExpired:()=>false,staffAccessFor:async()=>({}),
-    staffUserForAccess:user=>user,applyStaffBranchContext:user=>user
+    publicUser:row=>row,externalAuditAccessExpired:()=>false,staffUserForRequest:async(_env,user)=>user
   });
   const request=path=>new Request(`https://fixture.test${path}`);
   assert.equal((await requireSession({},request('/api/staff-face-lookup'))).username,'seller');
