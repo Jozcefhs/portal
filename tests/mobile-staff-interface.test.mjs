@@ -160,8 +160,8 @@ test('staff and parent sign-out actions return to the suite landing page', () =>
   assert.match(parentDashboardJs, /signOutDashboardBtn[\s\S]*?window\.location\.replace\('index\.html'\)/);
 });
 
-test('mobile launcher uses a compact first-screen layout', () => {
-  assert.match(portalCss, /\.suite-launcher-page\{height:100vh;height:100dvh;[^}]*overflow:hidden/);
+test('mobile launcher stays compact while allowing the onboarding card to scroll', () => {
+  assert.match(portalCss, /\.suite-launcher-page\{height:auto;min-height:100vh;min-height:100dvh;[^}]*overflow-y:auto/);
   assert.match(portalCss, /@media \(max-width:560px\)\{[\s\S]*?\.suite-launcher-page\{height:auto;[^}]*overflow-y:auto/);
   assert.match(portalCss, /@media \(max-width:560px\)\{[\s\S]*?\.suite-launcher\{height:auto;[^}]*overflow:visible/);
   assert.match(portalCss, /\.launcher-showcase\{height:auto;min-height:clamp\(190px,28dvh,220px\)/);

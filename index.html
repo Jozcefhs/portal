@@ -10,7 +10,7 @@
   <link rel="icon" type="image/png" href="images/Logo.png?v=20260801-transparent-app-logo">
   <link rel="apple-touch-icon" href="images/Logo.png?v=20260801-transparent-app-logo">
   <script src="js/preferences.js?v=20260726-biometric"></script>
-  <link rel="stylesheet" href="css/style.css?v=20260903-hotel-tabs">
+  <link rel="stylesheet" href="css/style.css?v=20260903-hotel-tabs-20261012-registration-card">
 </head>
 <body class="suite-launcher-page">
   <main class="suite-launcher">
@@ -33,9 +33,23 @@
       <header class="launcher-heading">
         <p class="launcher-kicker">Welcome to Dynamax</p>
         <h2 id="workspaceTitle">Where would you like to go?</h2>
-        <p>Select a workspace to continue.</p>
+        <p>Set up your organisation or select a workspace to continue.</p>
       </header>
 
+      <section class="launcher-registration" aria-labelledby="registrationTitle">
+        <span class="launcher-registration-icon" aria-hidden="true">
+          <svg viewBox="0 0 32 32" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" focusable="false">
+            <path d="M5 27V6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10M3 27h17M11 27v-7h6v7M10 9h2m5 0h1m-8 5h2m5 0h1M25 20v10m-5-5h10"/>
+          </svg>
+        </span>
+        <div class="launcher-registration-copy">
+          <h3 id="registrationTitle">New to Dynamax?</h3>
+          <p>Set up your organisation, explore available modules and choose your plan.</p>
+        </div>
+        <a class="launcher-registration-button" href="register-organization.html">Register &amp; choose a plan <span aria-hidden="true">→</span></a>
+      </section>
+
+      <p class="launcher-workspace-label">Already registered? Choose your workspace</p>
       <div class="launcher-channels">
         <a class="launcher-channel" href="school.html">
           <span class="channel-mark" aria-hidden="true">SC</span>
@@ -74,7 +88,6 @@
       <p class="launcher-help">Need staff access? <a href="admin.html">Sign in to the staff portal</a></p>
       <div class="launcher-public-actions">
         <a href="help.html">Help &amp; devices</a>
-        <a href="register-organization.html">Register & choose a plan</a>
         <a
           id="downloadDesktopInstaller"
           class="launcher-desktop-download"
