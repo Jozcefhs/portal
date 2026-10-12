@@ -12,6 +12,7 @@ SHELL.push('/css/staff-attendance-groups.css', '/js/staff-attendance-groups.js')
 SHELL.push('/css/procurement.css', '/js/procurement.js', '/js/procurement-item-import.js');
 SHELL.push('/js/clinic-dispensing.js');
 SHELL.push('/help.html', '/css/help.css', '/js/help.js', '/js/owner-help-settings.js');
+SHELL.push('/css/launcher-layout.css');
 
 self.addEventListener('install', (event) => {
   event.waitUntil(

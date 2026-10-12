@@ -11,6 +11,7 @@
   <link rel="apple-touch-icon" href="images/Logo.png?v=20260801-transparent-app-logo">
   <script src="js/preferences.js?v=20260726-biometric"></script>
   <link rel="stylesheet" href="css/style.css?v=20260903-hotel-tabs-20261012-registration-card">
+  <link rel="stylesheet" href="css/launcher-layout.css?v=20261012-fit-window">
 </head>
 <body class="suite-launcher-page">
   <main class="suite-launcher">
@@ -18,6 +19,7 @@
       <div class="launcher-showcase-top">
         <span class="launcher-logo"><img src="images/Logo.png" alt=""></span>
         <span class="launcher-product">Dynamax</span>
+        <button class="launcher-settings-button" type="button" id="openSettings" aria-label="Open general settings" aria-haspopup="dialog" aria-controls="settingsPanel"><span aria-hidden="true">⚙</span></button>
       </div>
       <div class="launcher-art" aria-hidden="true">
         <span></span><span></span><span></span>
@@ -55,7 +57,7 @@
           <span class="channel-mark" aria-hidden="true">SC</span>
           <span class="channel-copy">
             <strong>School</strong>
-            <small>Admissions, parents, students and payments</small>
+            <small>Admissions, students &amp; payments</small>
           </span>
           <span class="channel-arrow" aria-hidden="true">→</span>
         </a>
@@ -63,7 +65,7 @@
           <span class="channel-mark" aria-hidden="true">FA</span>
           <span class="channel-copy">
             <strong>Religious organisation</strong>
-            <small>Departments, meetings, offerings, programs and visitors</small>
+            <small>Departments, services &amp; offerings</small>
           </span>
           <span class="channel-arrow" aria-hidden="true">→</span>
         </a>
@@ -71,7 +73,7 @@
           <span class="channel-mark" aria-hidden="true">OR</span>
           <span class="channel-copy">
             <strong>Other organisation</strong>
-            <small>Businesses, government offices, NGOs and secular organisations</small>
+            <small>Business, government &amp; NGOs</small>
           </span>
           <span class="channel-arrow" aria-hidden="true">→</span>
         </a>
@@ -79,7 +81,7 @@
           <span class="channel-mark" aria-hidden="true">+</span>
           <span class="channel-copy">
             <strong>Other services</strong>
-            <small>Parents, staff, payments, setup and more</small>
+            <small>Parents, staff, setup &amp; more</small>
           </span>
           <span class="channel-arrow" aria-hidden="true">→</span>
         </button>
@@ -96,10 +98,6 @@
       </div>
     </section>
   </main>
-
-  <button class="launcher-settings-button" type="button" id="openSettings" aria-label="Open general settings" aria-haspopup="dialog" aria-controls="settingsPanel">
-    <span aria-hidden="true">⚙</span>
-  </button>
 
   <div class="launcher-overlay" id="servicesSheet" role="dialog" aria-modal="true" aria-labelledby="servicesTitle" hidden>
     <div class="launcher-sheet services-sheet">
