@@ -5,6 +5,7 @@ import { runInNewContext } from 'node:vm';
 import { withStudentDisplayName } from '../functions/lib/student-display-name.js';
 import { displayNameForProfile } from '../functions/api/admin.js';
 import { studentSearchCard, studentDetailProjection, recordMatches } from '../functions/lib/records-desk.js';
+import { studentParentDeliveryEmail } from '../functions/lib/executive-correspondence.js';
 
 const scopeSource = await readFile(new URL('../functions/lib/school-scope.js', import.meta.url), 'utf8');
 const recordsSource = await readFile(new URL('../functions/api/staff-records.js', import.meta.url), 'utf8');
@@ -132,7 +133,7 @@ test('Records Desk search cards and detail headers use the corrected name withou
 test('Principal Office directory results and new-document recipient tokens use corrected names', async () => {
   const readers = scopedReads({}, { students: [corrected] });
   const search = runInNewContext(`${functionSource(executiveSource, 'searchDirectory', 'async function authoritativeRecipientTokens(')}\nsearchDirectory`, {
-    clean, lower: (value) => clean(value).toLowerCase(),
+    clean, studentParentDeliveryEmail, lower: (value) => clean(value).toLowerCase(),
     listSchoolCollection: readers.listSchoolCollection,
     visibleSchoolRow: (row, scope) => row.BranchId === scope.branchId && row.SchoolSection === scope.schoolSection,
     requestedSearchTypes: () => ({ available: ['student'], selected: ['student'] }),

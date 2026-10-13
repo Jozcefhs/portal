@@ -124,3 +124,53 @@ test('web and desktop register authenticated, shared reporting for all editions'
   const endpoint = readFileSync(new URL('../functions/api/fee-collection-summary.js', import.meta.url), 'utf8');
   assert.match(endpoint, /requireStaffSession/); assert.match(endpoint, /no-store/);
 });
+
+test('matching components combine day/boarding codes across pages and editions without changing overall totals', async () => {
+  for (const edition of ['school', 'faith', 'organization']) {
+    const day = { ...payment, FeeCode: 'ACC', FeeName: 'Acceptance fee', FeeCategory: 'Admission', Amount: 10000, GrossAmount: 10000, GatewayFee: 100 };
+    const boarding = { ...day, FeeCode: 'ACC_BOA', FeeName: '  Acceptance   FEE  ', Amount: 20000, GrossAmount: 20000, GatewayFee: 200 };
+    const io = {
+      list: async (_env, collection, options) => {
+        if (collection === 'feeItems') return { documents: options.pageToken ? [boarding] : [day], nextPageToken: options.pageToken ? '' : 'catalogue-2' };
+        if (collection === 'payments') return { documents: options.pageToken ? [boarding, { ...boarding, Currency: 'USD', Amount: 50, GrossAmount: 50, GatewayFee: 0 }]
+          : [day, { ...boarding, BranchId: 'other' }, { ...day, Status: 'Pending' }], nextPageToken: options.pageToken ? '' : 'receipts-2' };
+        return { documents: [{ Reference: 'P1', Amount: 1000, RecordedAt: '2026-10-13', BranchId: 'main', SchoolSection: 'secondary' }], nextPageToken: '' };
+      }, query: async () => [boarding]
+    };
+    const report = await ui.loadReport(body => getFeeCollectionSummaryPage({}, { ...user, edition }, body, io), period);
+    const ngn = report.rows.filter(row => row.currency === 'NGN');
+    assert.equal(ngn.length, 1);
+    assert.equal(ngn[0].name, 'Acceptance fee');
+    assert.equal(ngn[0].code, 'ACC, ACC_BOA');
+    assert.equal(ngn[0].receipts, 2);
+    assert.equal(ngn[0].grossCents, 3000000);
+    assert.equal(ngn[0].gatewayCents, 30000);
+    assert.equal(ngn[0].correctionCents, 100000);
+    assert.equal(report.rows.find(row => row.currency === 'USD').grossCents, 5000);
+    assert.match(ui.csv(report), /"ACC, ACC_BOA"/);
+    assert.match(ui.csv(report), /28,700.00/);
+    assert.match(ui.printHtml(report), /28,700.00/);
+  }
+});
+
+test('consolidation uses catalogue names, preserves distinct components and does not mix bundled receipts', async () => {
+  const definitions = [{ FeeCode: 'T_DAY', FeeName: 'Tuition' }, { FeeCode: 'T_BOA', FeeName: 'Tuition' },
+    { FeeCode: 'EXAM', FeeName: 'Examination fee' }, { FeeCode: 'ZERO', FeeName: 'Unused' },
+    { FeeCode: 'ZERO2', FeeName: 'Unused' }];
+  const io = { list: async (_env, collection) => ({ nextPageToken: '', documents: collection === 'feeItems' ? definitions
+    : collection === 'payments' ? [ { ...payment, FeeCode: 'T_DAY', FeeName: 'Old tuition title' }, { ...payment, FeeCode: 'T_BOA' },
+      { ...payment, FeeCode: 'EXAM', FeeName: 'Examination fee' }, { ...payment, FeeCode: 'SCHOOL_FEES_TOTAL' } ] : [] }), query: async () => [] };
+  const report = await ui.loadReport(body => getFeeCollectionSummaryPage({}, user, body, io), period);
+  assert.equal(report.rows.length, 4);
+  assert.equal(report.rows.find(row => row.code === 'T_BOA, T_DAY').receipts, 2);
+  assert.equal(report.rows.find(row => row.code === 'ZERO, ZERO2').receipts, 0);
+  assert.equal(report.rows.find(row => row.code === 'SCHOOL_FEES_TOTAL').grossCents, 1400000);
+  assert.equal(report.totals[0].grossCents, 5600000);
+});
+
+test('the summary scrolls intrinsically wide columns without wrapping any heading or cell', () => {
+  const css = readFileSync(new URL('../css/fee-collection-summary.css', import.meta.url), 'utf8');
+  assert.match(css, /\.fee-summary-scroll\s*\{[^}]*overflow-x:\s*auto/);
+  assert.match(css, /\.fee-summary \.fee-summary-scroll table\s*\{[^}]*width:\s*max-content/);
+  assert.match(css, /\.fee-summary \.fee-summary-scroll th, \.fee-summary \.fee-summary-scroll td\s*\{[^}]*white-space:\s*nowrap;[^}]*overflow-wrap:\s*normal;[^}]*word-break:\s*normal/);
+});

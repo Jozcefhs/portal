@@ -5,9 +5,10 @@
 .fee-summary-controls [hidden] { display: none; }
 .fee-summary-period { font-weight: 600; }
 .fee-summary-warning { color: #875400; }
-.fee-summary-scroll { max-width: 100%; overflow-x: auto; border: 1px solid #cedee9; border-radius: 10px; }
-.fee-summary-scroll table { width: 100%; min-width: 960px; border-collapse: collapse; table-layout: auto; }
-.fee-summary-scroll th, .fee-summary-scroll td { padding: 12px; text-align: left; vertical-align: top; }
+.fee-summary-scroll { max-width: 100%; min-width: 0; overflow-x: auto; overscroll-behavior-inline: contain; border: 1px solid #cedee9; border-radius: 10px; }
+.fee-summary .fee-summary-scroll table { width: max-content; min-width: 100%; max-width: none; border-collapse: collapse; table-layout: auto; }
+.fee-summary .fee-summary-scroll th, .fee-summary .fee-summary-scroll td { padding: 12px; text-align: left; vertical-align: top; white-space: nowrap; overflow-wrap: normal; word-break: normal; }
+.fee-summary .fee-summary-scroll .fee-summary-number { text-align: right; }
 .fee-summary-scroll .fee-summary-number { text-align: right; white-space: nowrap; overflow-wrap: normal; word-break: normal; }
 .fee-summary-total { font-weight: 700; background: #e9f6f3; }
 .fee-summary-preview { width: min(1200px, 96vw); max-width: 96vw; height: 90vh; padding: 14px; border: 1px solid #cedee9; border-radius: 12px; }

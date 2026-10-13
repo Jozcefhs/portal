@@ -1,8 +1,8 @@
 (function (root) {
   'use strict';
   const fields = ['receipts', 'grossCents', 'gatewayCents', 'correctionCents'];
-  const headers = ['Fee component', 'Code', 'Category', 'Currency', 'Receipts', 'Gross received', 'Gateway charges', 'Corrections', 'Net collected'];
-  const note = 'Payments collected only; wallet deposits and unpaid invoices are excluded. Combined school-fee receipts remain under their recorded component; bill snapshots are not treated as payment splits. Corrections use their recording date. Net = gross received − gateway charges − corrections. Dates use Africa/Lagos.';
+  const headers = ['Fee component', 'Code(s)', 'Category', 'Currency', 'Receipts', 'Gross received', 'Gateway charges', 'Corrections', 'Net collected'];
+  const note = 'Payments collected only; wallet deposits and unpaid invoices are excluded. Matching component names are combined across fee codes (including day and boarding variants), separately for each currency. Combined school-fee receipts remain under their recorded component; bill snapshots are not treated as payment splits. Corrections use their recording date. Net = gross received − gateway charges − corrections. Dates use Africa/Lagos.';
   const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
   const net = row => row.grossCents - row.gatewayCents - row.correctionCents;
   const money = cents => (cents / 100).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -10,6 +10,27 @@
   const values = row => [row.name, row.code, row.category, row.currency, row.receipts,
     money(row.grossCents), money(row.gatewayCents), money(row.correctionCents), money(net(row))];
   const caption = report => `${report.scope.dateFrom} to ${report.scope.dateTo} · Branch: ${report.scope.branchId} · Section: ${report.scope.schoolSection} · Edition: ${report.scope.edition}`;
+
+  function combineComponents(rows) {
+    const groups = new Map();
+    // First collect every page by immutable code. Only then group the complete
+    // report by its catalogue-backed name; never change receipt/fee identities.
+    for (const row of rows) {
+      const name = String(row.name || row.code || 'Unspecified fee').normalize('NFKC').trim().replace(/\s+/g, ' ');
+      const kind = String(row.code).toUpperCase() === 'SCHOOL_FEES_TOTAL' ? 'combined-receipt' : 'component';
+      const key = JSON.stringify([row.currency, kind, name.toLowerCase()]);
+      const group = groups.get(key) || { ...row, key, name, codes: new Set(), categories: new Set(), ...Object.fromEntries(fields.map(field => [field, 0])) };
+      if (row.code) group.codes.add(row.code);
+      if (row.category) group.categories.add(row.category);
+      for (const field of fields) {
+        group[field] += row[field];
+        if (!Number.isSafeInteger(group[field])) throw new Error('Report total exceeds the supported range.');
+      }
+      groups.set(key, group);
+    }
+    return [...groups.values()].map(group => ({ ...group, codes: [...group.codes].sort(), categories: [...group.categories].sort(),
+      code: [...group.codes].sort().join(', '), category: [...group.categories].sort().join(', ') }));
+  }
 
   async function loadReport(request, period, progress = () => {}) {
     const rows = new Map(), warnings = { undated: 0, unfinished: 0, walletsExcluded: 0 }, visited = new Set();
@@ -35,8 +56,9 @@
       scanned += page.scanned || 0; progress(scanned);
       next = page.next;
     }
+    const combined = combineComponents(rows.values());
     const totals = new Map();
-    for (const row of rows.values()) {
+    for (const row of combined) {
       const total = totals.get(row.currency) || { name: 'TOTAL', code: '', category: '', currency: row.currency, ...Object.fromEntries(fields.map(key => [key, 0])) };
       for (const key of fields) {
         total[key] += row[key];
@@ -44,7 +66,7 @@
       }
       totals.set(row.currency, total);
     }
-    return { rows: [...rows.values()].sort((a, b) => a.currency.localeCompare(b.currency) || a.name.localeCompare(b.name)),
+    return { rows: combined.sort((a, b) => a.currency.localeCompare(b.currency) || a.name.localeCompare(b.name)),
       totals: [...totals.values()].sort((a, b) => a.currency.localeCompare(b.currency)), warnings, scope, readTime };
   }
   function warningText(report) {
@@ -95,7 +117,7 @@
         if (!active()) return;
         report = loaded; report.context = scope;
         result.innerHTML = `<p class="fee-summary-period">${esc(caption(report))}</p><p class="fee-summary-warning">${esc(warningText(report))}</p><div class="fee-summary-scroll" tabindex="0" role="region" aria-label="Fee totals">${table(report)}</div>`;
-        status.textContent = 'Summary complete. Totals are separated by currency.'; print.disabled = download.disabled = false;
+        status.textContent = 'Summary complete. Matching components combined; totals separated by currency. Scroll the table horizontally to see every column.'; print.disabled = download.disabled = false;
       } catch (error) {
         if (active()) { result.innerHTML = ''; status.textContent = `${error.message} No partial totals displayed.`; }
       } finally { if (generation === id) cancel.hidden = true; }

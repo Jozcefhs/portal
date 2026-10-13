@@ -54,7 +54,8 @@ test('all statement figures stay intact, including balances, period totals and p
 });
 
 test('landscape tablet chrome is compact without reducing touch targets or hiding navigation',()=>{
-  const landscape = shellCss.slice(shellCss.indexOf('/* Short landscape screens'));
+  const landscapeStart = shellCss.indexOf('/* Short landscape screens');
+  const landscape = shellCss.slice(landscapeStart, shellCss.indexOf('.paystack-connection-heading', landscapeStart));
   assert.match(landscape,/@media \(orientation:landscape\) and \(max-height:820px\) and \(max-width:1280px\)/);
   assert.match(landscape,/\.staff-page\{--staff-topbar-height:52px\}/);
   assert.match(landscape,/\.staff-topbar\{height:52px/);

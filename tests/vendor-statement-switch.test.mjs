@@ -46,27 +46,44 @@ function workspaceRoot() {
 }
 
 async function fixture(options = {}) {
-  const root=workspaceRoot(),window={},reads=[],calls=[];
+  const root=workspaceRoot(),previews=[],window={open(){return {document:{write(html){previews.push(html);},close(){}}};}},reads=[],calls=[];
   let policy = options.policy || {RequireNewApproval:true,RequireEditApproval:true,RequireStockApproval:true};
   class FormDataFixture {constructor(form){this.rows=Object.values(form.elements).map(node=>[node.name,node.value]);}[Symbol.iterator](){return this.rows[Symbol.iterator]();}}
   const request=async(action,body,signal)=>{
     calls.push({action,body});
-    if(action==='bootstrap') return {vendors:[{VendorId:'v1',Name:'First vendor'},{VendorId:'v2',Name:'Second vendor'}],balances:[],products:options.products || [],requests:[],productPolicy:policy,
+    if(action==='bootstrap') return {vendors:[{VendorId:'v1',Name:'First vendor'},{VendorId:'v2',Name:'Second vendor'}],balances:[],products:options.products || [],requests:options.requests || [],productPolicy:policy,
       settings:{Enabled:true,AccountingConfirmed:true,RecordVersion:'settings-1'},capabilities:options.capabilities || {vendor:true,products:true}};
     if(action==='saveProductPolicy') { policy=body; return {ok:true,message:'Approval controls saved.'}; }
     if(action==='statement') return new Promise((resolve,reject)=>reads.push({body,signal,resolve,reject}));
     throw new Error(`Unexpected action: ${action}`);
   };
-  runInNewContext(source,{window,FormData:FormDataFixture,Intl,AbortController,setTimeout,clearTimeout,crypto:webcrypto},
+  runInNewContext(source,{window,FormData:FormDataFixture,Intl,AbortController,setTimeout,clearTimeout,crypto:webcrypto,DynamaxTime:{formatDateTime:()=> '13/10/2026 15:00'}},
     {filename:fileURLToPath(new URL('../js/vendor-settlements.js',import.meta.url)),importModuleDynamically:constants.USE_MAIN_CONTEXT_DEFAULT_LOADER});
   const mounted=window.DynamaxVendors.mount(root,request);
   await tick();
   root.querySelectorAll('[data-tab]').find(node=>node.dataset.tab===(options.tab || (options.products ? 'products' : 'statement'))).onclick();
   const filter=()=>root.querySelector(options.tab==='analysis' ? '[data-analysis-filter]' : '[data-statement-filter]');
   const change=(name,value)=>{filter().elements[name].value=value;filter().onchange({target:filter().elements[name]});};
-  return {root,reads,calls,mounted:{destroy(){mounted.destroy();reads.forEach(read=>read.resolve(null));}},change,filter,result:()=>root.querySelector(options.tab==='analysis' ? '[data-analysis-result]' : '[data-statement-result]'),
+  return {root,reads,calls,previews,mounted:{destroy(){mounted.destroy();reads.forEach(read=>read.resolve(null));}},change,filter,result:()=>root.querySelector(options.tab==='analysis' ? '[data-analysis-result]' : '[data-statement-result]'),
     response(index,amount=0,details={}){const read=reads[index];read.resolve({vendor:{VendorId:read.body.VendorId,Name:read.body.VendorId==='v1'?'First vendor':'Second vendor'},from:read.body.From,to:read.body.To,balance:{Available:amount},availableInPeriod:amount,entries:[],payments:[],...details});}};
 }
+
+test('vendor requisition has an explicit printable preview with its saved snapshot and approval trail', async t => {
+  const f = await fixture({tab:'requests',requests:[{SettlementId:'REQ-1',VendorName:'Vendor <sample>',Status:'Submitted',PaymentStatus:'Unpaid',Revision:1,
+    Amount:5000,Paid:0,Unpaid:5000,From:'2026-10-01',To:'2026-10-13',BankAccountMasked:'****1234',
+    Snapshot:[{SaleNo:'SALE-1',Items:[{Quantity:2,ItemName:'Bread'}],Gross:5500,Refund:0,Charge:500,Net:5000,RuleLabel:'Agreed fee'}],
+    History:[{Action:'Submitted',By:'vendor',At:'2026-10-13',Notes:'Example <note>'}]}]});
+  t.after(()=>f.mounted.destroy());
+  assert.match(f.root.querySelector('[data-panel]').innerHTML, /Preview \/ print requisition/);
+  f.root.querySelectorAll('[data-request]').find(node=>node.dataset.action==='print').onclick();
+  assert.equal(f.previews.length,1);
+  assert.match(f.previews[0],/Print \/ Save as PDF/);
+  assert.match(f.previews[0],/Vendor &lt;sample&gt;/);
+  assert.match(f.previews[0],/2 × Bread/);
+  assert.match(f.previews[0],/Approval \/ payment trail/);
+  assert.match(f.previews[0],/Example &lt;note&gt;/);
+  assert.deepEqual(f.calls.map(call=>call.action),['bootstrap']);
+});
 
 test('statement renders every monetary column with a no-wrap class without changing values',async t=>{
   const f=await fixture();t.after(()=>f.mounted.destroy());
