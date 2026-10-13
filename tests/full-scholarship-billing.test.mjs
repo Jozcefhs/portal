@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { feeBranchId } from '../functions/lib/fee-branch-scope.js';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { assertManualPaymentScope, scopedPaymentWriteCondition } from '../functions/lib/manual-payment-scope.js';
@@ -225,7 +226,7 @@ test('actual invoice generator treats scholarship-without-assigned-fees as a suc
     normalizeFeeItem: (row) => row, isFullScholarship, resolveStudentEnrollmentCategory,
     applyBillingCategoryOverrides, feeMatchesApplication, isSchoolFeeInvoice,
     isWalletFee: (row) => lower(row.FeeCategory) === 'wallet',
-    listCollection: async () => items, queryAccountRows: async () => [], normalizeInvoice: (row) => row,
+    loadBranchFinanceRows: async () => items, feeBranchId, queryAccountRows: async () => [], normalizeInvoice: (row) => row,
     loadNotificationSettings: async () => ({}), resolvedPeriodValue: (value, fallback) => lower(value) === 'all' ? fallback : value,
     normalizeReferenceText: lower, ledgerDocumentId: () => 'test-invoice', schoolSectionFor: (row) => row.SchoolSection,
     invoiceReminderFields: () => ({}), nowIso: () => '2026-10-08T00:00:00.000Z',

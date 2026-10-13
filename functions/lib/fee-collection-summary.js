@@ -1,5 +1,7 @@
 import { listCollectionPage, queryCollection } from './firestore.js';
 import { recordBranchId, resolveRequestedBranch } from './branch-scope.js';
+import { feeBranchId } from './fee-branch-scope.js';
+import { loadBranchFinancePage } from './finance-branch-reads.js';
 
 const clean = value => String(value ?? '').trim();
 const lower = value => clean(value).toLowerCase();
@@ -37,8 +39,8 @@ export function feeCollectionScope(user, body) {
 }
 
 function visible(row, scope, catalogue = false) {
-  const branch = lower(row.BranchId || row.branchId);
-  if (!(catalogue && (!branch || branch === 'all')) && scope.branchId !== 'all' && recordBranchId(row) !== scope.branchId) return false;
+  const branch = catalogue ? feeBranchId(row) : recordBranchId(row);
+  if (scope.branchId !== 'all' && branch !== scope.branchId) return false;
   const section = lower(row.SchoolSection || row.schoolSection);
   return scope.schoolSection === 'all' || section === scope.schoolSection || (catalogue && (!section || section === 'all'));
 }
@@ -116,8 +118,9 @@ export async function getFeeCollectionSummaryPage(env, user, body = {}, io = { l
   const age = Date.now() - Date.parse(readTime);
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(readTime) || !Number.isFinite(age) || age < -5000 || age > 50 * 60 * 1000
     || (!body.readTime && (pageToken || collection !== collections[0]))) fail('The report snapshot expired or is missing. Generate it again.');
-  const page = await io.list(env, collection, { pageSize: collection === 'manualPaymentCorrections' ? 20 : 500,
-    pageToken, query: `readTime=${encodeURIComponent(readTime)}` });
+  const page = await loadBranchFinancePage(env, collection, scope.branchId, {
+    pageSize: collection === 'manualPaymentCorrections' ? 20 : 500, pageToken, readTime
+  }, { listCollectionPage: io.list, queryCollection: io.query });
   let documents = page.documents;
   let undatedCorrections = 0;
   if (collection === 'manualPaymentCorrections') {

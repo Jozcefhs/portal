@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
+import { feeBranchId } from '../functions/lib/fee-branch-scope.js';
 import {
   applyBillingCategoryOverrides, buildStudentBillingPreview,
   calculateAccountFinancialSummary, feeMatchesApplication,
@@ -52,7 +53,7 @@ function invoiceGenerator(feeItems) {
     asMoneyNumber: value => Number(value) || 0, normalizeFeeItem: row => row,
     isSchoolFeeInvoice, isAcceptanceFeeLike, resolveStudentEnrollmentCategory,
     applyBillingCategoryOverrides, feeMatchesApplication, isWalletFee: () => false,
-    listCollection: async () => feeItems, queryAccountRows: async () => [...stored.values()],
+    loadBranchFinanceRows: async () => feeItems, feeBranchId, queryAccountRows: async () => [...stored.values()],
     normalizeInvoice: row => row, loadNotificationSettings: async () => ({}),
     resolvedPeriodValue: (value, fallback) => lower(value) === 'all' ? fallback : value || fallback,
     normalizeReferenceText: lower, sameText: (a, b) => lower(a) === lower(b),

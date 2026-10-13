@@ -1,4 +1,6 @@
 import { batchCommitDocuments, batchCommitLiteralDocuments, batchUpsertDocuments, createDocumentIfAbsent, deleteDocument, findOneByField, getDocument, listCollection, listCollectionForReport, listCollectionPage, patchDocumentFields, queryCollection, queryCollectionPages, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
+import { feeBranchId, feeRowsForBranch, feeMatchesBranch, feeSetupBranch, resolveFeeDocument, feeDocumentWrite } from '../lib/fee-branch-scope.js';
+import { loadBranchFinanceRows, loadBranchFinancePage } from '../lib/finance-branch-reads.js';
 import { financeMoney, financeDate, financeData, financeWrite, financeFailure, financeOperationId, journalFinancialSignature, assertFinanceRoleLimit } from '../lib/accounting-mutation-guards.js';
 import { getAccountingChartRows, invalidateAccountingChartRows, primeAccountingChartRows } from '../lib/accounting-reference-cache.js';
 import { continueRevenueSync, revenueSyncWrite } from '../lib/accounting-revenue-sync.js';
@@ -713,6 +715,7 @@ function normalizeFeeItem(row) {
   const billingCategories = feeBillingCategories(row);
   return {
     ...row,
+    BranchId: feeBranchId(row),
     FeeCode: pick(row, ['feeCode', 'FeeCode', '__id']),
     FeeName: pick(row, ['feeName', 'FeeName']),
     FeeCategory: pick(row, ['feeCategory', 'FeeCategory'], 'School Fee'),
@@ -916,7 +919,7 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
   'updateStudentProfile', 'reissueParentOnboarding',
   'saveSchoolClasses', 'resetSchoolClasses',
   'saveAdmissionClasses', 'resetAdmissionClasses',
-  'saveFeeItem', 'deleteFeeItem', 'seedDefaultFeeItems',
+  'saveFeeItem', 'saveFeeItems', 'deleteFeeItem', 'seedDefaultFeeItems',
   'saveBillingCategory', 'deleteBillingCategory', 'updateStudentBillingCategory',
   'generateSchoolFeeInvoices', 'recordManualPayment', 'importHistoricalPayments',
   'saveWalletCard', 'recordWalletPurchase', 'recordCreditAction',
@@ -936,6 +939,7 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
 // retain the existing action surface for backwards compatibility.
 const BRANCH_BOUND_DEVICE_ACTIONS = new Set([
   'manualPaymentCorrection',
+  'saveFeeItem', 'saveFeeItems', 'deleteFeeItem', 'seedDefaultFeeItems',
   'getFeeCollectionSummary',
   'vendorSettlements',
   'getSchoolLibrary', 'searchLibraryBorrowers', 'saveLibraryTitle', 'addLibraryCopy', 'restoreLibraryCopy', 'repairLibraryCopyStatus', 'checkoutLibraryCopy',
@@ -1014,10 +1018,7 @@ export function enforceDesktopDeviceActionScope(authentication, action, body) {
   const branchId = clean(authentication?.branchId);
   if (authentication?.type !== 'device' || !branchId) return body;
   if (!BRANCH_BOUND_DEVICE_ACTIONS.has(action)) {
-    const sharedFeeSetup = ['saveFeeItem', 'saveFeeItems', 'deleteFeeItem', 'seedDefaultFeeItems'].includes(action);
-    const error = new Error(sharedFeeSetup
-      ? 'Fee components belong to a shared organisation-wide catalogue. Editing this catalogue requires an organisation-wide approved desktop device. Branch payments do not require organisation-wide device approval.'
-      : 'This action has not been approved for branch-scoped desktop access. Use an organisation-wide desktop device.');
+    const error = new Error('This action has not been approved for branch-scoped desktop access. Use an organisation-wide desktop device.');
     error.status = 403;
     error.code = 'DESKTOP_DEVICE_ORGANISATION_WIDE_REQUIRED';
     throw error;
@@ -1235,6 +1236,7 @@ function feeClassRuleMatches(ruleValue, actualValue) {
 }
 
 export function feeMatchesApplication(fee, app) {
+  if (!feeMatchesBranch(fee, app)) return false;
   const appClass = app.ClassApplyingFor || app.ClassAdmitted || app.ClassName || '';
   const appType = app.StudentType || '';
   const appSession = app.AcademicSession || '';
@@ -1304,6 +1306,7 @@ function termRank(value) {
 }
 
 function feeMatchesAccountPeriod(fee, app) {
+  if (!feeMatchesBranch(fee, app)) return false;
   const appClass = app.ClassApplyingFor || app.ClassAdmitted || app.ClassName || '';
   const appType = app.StudentType || '';
   const appSession = app.AcademicSession || '';
@@ -1475,6 +1478,7 @@ function periodMatchesFee(row, fee) {
 }
 
 function feeMatchesAccountBase(fee, app) {
+  if (!feeMatchesBranch(fee, app)) return false;
   const appClass = app.ClassApplyingFor || app.ClassAdmitted || app.ClassName || '';
   const appType = app.StudentType || '';
   const appSession = app.AcademicSession || '';
@@ -2010,14 +2014,14 @@ export async function getPayableFees(env, body = {}) {
   };
 
   let [feeRows, paymentRows, invoiceRows, ledgerRows] = await Promise.all([
-    listCollection(env, 'feeItems'),
+    loadBranchFinanceRows(env, 'feeItems', feeBranchId(billingApp)),
     queryAccountRows(env, 'payments', accountRef),
     queryAccountRows(env, 'invoices', accountRef),
     queryAccountRows(env, 'ledger', accountRef)
   ]);
   const correctedInvoices = correctedPayableInvoices(invoiceRows, ledgerRows);
   ledgerRows = payableLedgerAfterPaymentCorrections(ledgerRows);
-  const allFees = feeRows.map(normalizeFeeItem)
+  const allFees = feeRowsForBranch(feeRows, feeBranchId(billingApp)).map(normalizeFeeItem)
     .filter((row) => yesNo(row.Active) === 'YES')
     .sort((a, b) => asMoneyNumber(a.SortOrder) - asMoneyNumber(b.SortOrder));
   const enrolledForBilling = Boolean(student) || yesNo(app.Enrolled) === 'YES' || normalizeMatchText(app.Status) === 'enrolled';
@@ -2305,26 +2309,27 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
       error.status = 409;
       throw error;
     }
-    return queryCollectionPages(env, collection, {
+    return loadBranchFinanceRows(env, collection, branchId, {
       filters: [{ field: 'AcademicSession', op: 'in', value: [financeSession, '', 'All'] }],
       pageSize: 500,
       maxRows: 15000
     });
   };
-  const [loadedAccounts, loadedPayments, loadedInvoices, feeItems, loadedLedger, loadedApplications, loadedStudents, billingCategories, loadedAccountSummaries] = await Promise.all([
-    provided('accounts') ? Promise.resolve(preloaded.accounts) : listCollection(env, 'accounts'),
+  const [loadedAccounts, loadedPayments, loadedInvoices, loadedFeeItems, loadedLedger, loadedApplications, loadedStudents, billingCategories, loadedAccountSummaries] = await Promise.all([
+    provided('accounts') ? Promise.resolve(preloaded.accounts) : loadBranchFinanceRows(env, 'accounts', branchId),
     provided('payments') ? Promise.resolve(preloaded.payments) : financeRows('payments'),
     provided('invoices') ? Promise.resolve(preloaded.invoices) : financeRows('invoices'),
-    provided('feeItems') ? Promise.resolve(preloaded.feeItems) : listCollection(env, 'feeItems'),
+    provided('feeItems') ? Promise.resolve(preloaded.feeItems) : loadBranchFinanceRows(env, 'feeItems', branchId),
     provided('ledger') ? Promise.resolve(preloaded.ledger) : financeRows('ledger'),
     provided('applications') ? Promise.resolve(preloaded.applications) : listSchoolCollection(env, 'applications', schoolScope),
     provided('students') ? Promise.resolve(preloaded.students) : listSchoolCollection(env, 'students', schoolScope),
     provided('billingCategories') ? Promise.resolve(preloaded.billingCategories) : listCollection(env, 'billingCategories'),
     provided('accountSummaries') ? Promise.resolve(preloaded.accountSummaries)
       : provided('payments') && provided('invoices') && provided('ledger') ? Promise.resolve([])
-      : listCollection(env, 'accountSummaries')
+      : loadBranchFinanceRows(env, 'accountSummaries', branchId)
   ]);
   const accounts = branchRows(loadedAccounts);
+  const feeItems = feeRowsForBranch(loadedFeeItems, branchId);
   const payments = branchRows(loadedPayments);
   const invoices = branchRows(loadedInvoices);
   const storedLedger = branchRows(loadedLedger);
@@ -3330,12 +3335,12 @@ export async function getStudentBillingData(env, student, options = {}) {
         sameText(row.SchoolSection || row.schoolSection, options.section));
   };
   const [schoolProfile, feeItems, invoices, payments, ledger, accountSummaries] = await Promise.all([
-    getDocument(env, 'settings', 'schoolProfile'), listCollection(env, 'feeItems'),
+    getDocument(env, 'settings', 'schoolProfile'), loadBranchFinanceRows(env, 'feeItems', feeBranchId(student)),
     load('invoices'), load('payments'), load('ledger'), load('accountSummaries')
   ]);
   return {
     schoolProfile, invoices, payments, ledger, accountSummaries,
-    feeItems: feeItems.filter((row) => !clean(row.BranchId) || canonicalSchoolBranchId(row.BranchId) === canonicalSchoolBranchId(student.BranchId || 'main'))
+    feeItems: feeRowsForBranch(feeItems, feeBranchId(student))
   };
 }
 
@@ -4900,6 +4905,8 @@ export function feeCodeRenameAllowed(originalFeeCode, feeCode) {
 }
 
 async function saveFeeItem(env, body) {
+  requireAccountingRole(body, ['Super Admin', 'Accounts Officer']);
+  const branchId = feeSetupBranch(body);
   const feeCode = clean(body.FeeCode || body.feeCode);
   if (!feeCode) {
     const err = new Error('FeeCode is required.');
@@ -4912,17 +4919,18 @@ async function saveFeeItem(env, body) {
     err.status = 409;
     throw err;
   }
-  const [existingRecord, classNames] = await Promise.all([
-    getDocumentByIdOrField(env, 'feeItems', feeCode, 'FeeCode'),
-    configuredClassNames(env)
+  const [target, classNames] = await Promise.all([
+    resolveFeeDocument(env, branchId, feeCode),
+    configuredClassNames(env, { BranchId: branchId })
   ]);
-  const existing = existingRecord || {};
+  const existing = target.existing || {};
   const className = canonicalConfiguredClass(clean(body.ClassName || body.className) || 'All', classNames);
   const billingCategories = normalizeFeeBillingCategories(
     body.BillingCategories ?? body.billingCategories ?? body.BillingCategory ?? body.billingCategory
   );
   const payload = {
     ...existing,
+    BranchId: branchId,
     FeeCode: feeCode,
     FeeName: clean(body.FeeName || body.feeName),
     FeeCategory: clean(body.FeeCategory || body.feeCategory) || 'School Fee',
@@ -4950,11 +4958,13 @@ async function saveFeeItem(env, body) {
     CreatedAt: existing.CreatedAt || nowIso(),
     UpdatedAt: nowIso()
   };
-  await upsertDocument(env, 'feeItems', safeDocumentId(feeCode), payload);
+  await batchCommitDocuments(env, [feeDocumentWrite(target, payload)]);
   return { ok: true, message: 'Fee item saved to the database.', fee: normalizeFeeItem(payload) };
 }
 
 async function saveFeeItems(env, body) {
+  requireAccountingRole(body, ['Super Admin', 'Accounts Officer']);
+  const branchId = feeSetupBranch(body);
   const items = Array.isArray(body.Items || body.items) ? (body.Items || body.items) : [];
   if (!items.length) {
     const err = new Error('At least one fee item is required.');
@@ -4966,9 +4976,12 @@ async function saveFeeItems(env, body) {
     err.status = 413;
     throw err;
   }
-  const classNames = await configuredClassNames(env);
+  const classNames = await configuredClassNames(env, { BranchId: branchId });
   const seenFeeCodes = new Set();
   const prepared = items.map((item) => {
+    if (clean(item.BranchId || item.branchId) && feeBranchId(item) !== branchId) {
+      const error = new Error('Every fee item must belong to the selected branch.'); error.status = 403; throw error;
+    }
     const feeCode = clean(item.FeeCode || item.feeCode);
     if (!feeCode) {
       const err = new Error('Every fee item requires a FeeCode.');
@@ -4991,11 +5004,14 @@ async function saveFeeItems(env, body) {
     return { item, feeCode };
   });
   const updatedAt = nowIso();
-  const fees = prepared.map(({ item, feeCode }) => {
+  const targets = await Promise.all(prepared.map(({ feeCode }) => resolveFeeDocument(env, branchId, feeCode)));
+  const fees = prepared.map(({ item, feeCode }, index) => {
     const billingCategories = normalizeFeeBillingCategories(
       item.BillingCategories ?? item.billingCategories ?? item.BillingCategory ?? item.billingCategory
     );
     return normalizeFeeItem({
+      ...(targets[index].existing || {}),
+      BranchId: branchId,
       FeeCode: feeCode,
       FeeName: clean(item.FeeName || item.feeName),
       FeeCategory: clean(item.FeeCategory || item.feeCategory) || 'School Fee',
@@ -5020,15 +5036,11 @@ async function saveFeeItems(env, body) {
       Active: yesNo(item.Active ?? item.active ?? 'YES') || 'YES',
       SortOrder: asMoneyNumber(item.SortOrder || item.sortOrder || 100),
       Notes: clean(item.Notes || item.notes),
-      CreatedAt: clean(item.CreatedAt || item.createdAt) || updatedAt,
+      CreatedAt: targets[index].existing?.CreatedAt || updatedAt,
       UpdatedAt: updatedAt
     });
   });
-  await batchUpsertDocuments(env, fees.map((fee) => ({
-    collectionPath: 'feeItems',
-    documentId: safeDocumentId(fee.FeeCode),
-    data: fee
-  })));
+  await batchCommitDocuments(env, fees.map((fee, index) => feeDocumentWrite(targets[index], fee)));
   return {
     ok: true,
     message: `${fees.length} fee item(s) saved to the database.`,
@@ -5038,13 +5050,17 @@ async function saveFeeItems(env, body) {
 }
 
 async function deleteFeeItem(env, body) {
+  requireAccountingRole(body, ['Super Admin', 'Accounts Officer']);
+  const branchId = feeSetupBranch(body);
   const feeCode = clean(body.FeeCode || body.feeCode);
   if (!feeCode) {
     const err = new Error('FeeCode is required.');
     err.status = 400;
     throw err;
   }
-  await deleteDocument(env, 'feeItems', safeDocumentId(feeCode));
+  const target = await resolveFeeDocument(env, branchId, feeCode);
+  if (!target.existing) { const error = new Error('This fee does not exist in the selected branch.'); error.status = 404; throw error; }
+  await batchCommitDocuments(env, [feeDocumentWrite(target, null, 'delete')]);
   return { ok: true, message: 'Fee item deleted from the database.' };
 }
 
@@ -5060,21 +5076,26 @@ const DEFAULT_FEE_ITEMS = [
   { FeeCode: 'WALLET_TOPUP', FeeName: 'Student Wallet Top-up', FeeCategory: 'Wallet', ClassName: 'All', StudentType: 'All', AcademicSession: 'All', Term: 'All', Amount: 0, Currency: 'NGN', PayableOnline: 'YES', AllowInstallment: 'YES', MinAmount: 500, RequiredForEnrollment: 'NO', Active: 'YES', SortOrder: 900 }
 ];
 
-async function seedDefaultFeeItems(env) {
-  const existing = (await listCollection(env, 'feeItems')).map(normalizeFeeItem);
+async function seedDefaultFeeItems(env, body) {
+  requireAccountingRole(body, ['Super Admin', 'Accounts Officer']);
+  const branchId = feeSetupBranch(body);
+  const existing = feeRowsForBranch(await loadBranchFinanceRows(env, 'feeItems', branchId), branchId).map(normalizeFeeItem);
   const existingCodes = new Set(existing.map((item) => clean(item.FeeCode).toUpperCase()));
   let added = 0;
   for (const item of DEFAULT_FEE_ITEMS) {
     if (existingCodes.has(clean(item.FeeCode).toUpperCase())) continue;
-    await upsertDocument(env, 'feeItems', safeDocumentId(item.FeeCode), {
+    const target = await resolveFeeDocument(env, branchId, item.FeeCode);
+    if (target.existing) continue;
+    await batchCommitDocuments(env, [feeDocumentWrite(target, {
       ...item,
+      BranchId: branchId,
       CreatedAt: nowIso(),
       UpdatedAt: nowIso()
-    });
+    })]);
     added += 1;
   }
   return { ok: true, message: added ? 'Default fee items created in the database.' : 'Default fee items already exist in the database.', added,
-    feeItems: (await listCollection(env, 'feeItems')).map(normalizeFeeItem) };
+    feeItems: feeRowsForBranch(await loadBranchFinanceRows(env, 'feeItems', branchId), branchId).map(normalizeFeeItem) };
 }
 
 export async function queryAccountRows(env, collection, accountRef, financialScope = null, options = {}) {
@@ -5967,13 +5988,14 @@ export async function recordManualPayment(env, body) {
     }
   }
   const isTotalPayment = isSchoolFeesTotalCode(feeCode);
-  const directFee = await getDocument(env, 'feeItems', safeDocumentId(feeCode)).catch(() => null);
+  const student = scoped.student || await findStudentByAccountRef(env, accountRef, paymentScope);
+  const feeBranch = feeBranchId(student || { BranchId: paymentScope?.branchId || body.BranchId });
+  const directFee = isTotalPayment ? null : (await resolveFeeDocument(env, feeBranch, feeCode)).existing;
   const configuredFees = isTotalPayment
-    ? (await listCollection(env, 'feeItems')).map(normalizeFeeItem)
+    ? feeRowsForBranch(await loadBranchFinanceRows(env, 'feeItems', feeBranch), feeBranch).map(normalizeFeeItem)
     : (directFee ? [normalizeFeeItem(directFee)] : []);
   const fee = configuredFees.find((item) => sameText(item.FeeCode, feeCode)) || normalizeFeeItem(body);
   const schoolFeeCodes = new Set(configuredFees.filter(isSchoolFeeInvoice).map((item) => normalizeReferenceText(item.FeeCode)));
-  const student = scoped.student || await findStudentByAccountRef(env, accountRef, paymentScope);
   const paymentId = ledgerDocumentId('PAY');
   const grossAmount = asMoneyNumber(body.GrossAmount || amount);
   const gatewayFee = asMoneyNumber(body.GatewayFee);
@@ -6314,7 +6336,7 @@ async function generateSchoolFeeInvoicesForAccount(env, body, accountRef, financ
   };
   const billingSession = clean(billingApp.AcademicSession);
   const billingTerm = clean(billingApp.Term);
-  const fees = applyBillingCategoryOverrides((await listCollection(env, 'feeItems')).map(normalizeFeeItem).filter((fee) => {
+  const fees = applyBillingCategoryOverrides((await loadBranchFinanceRows(env, 'feeItems', feeBranchId(billingApp))).map(normalizeFeeItem).filter((fee) => {
     return yesNo(fee.Active) === 'YES' &&
       isSchoolFeeInvoice(fee) &&
       !isWalletFee(fee) &&
@@ -10275,8 +10297,8 @@ async function getAccountingOverview(env, body = {}) {
     if (!department) { const err = new Error('A department must be assigned to this user.'); err.status = 403; throw err; }
     await seedAccountingChart(env);
     const [chart, expenses, budgets, vendors, supplierBills, imprests] = await Promise.all([
-      listCollection(env, 'chartOfAccounts'), listCollection(env, 'accountingExpenses'), listCollection(env, 'accountingBudgets'),
-      listCollection(env, 'accountingVendors'), listCollection(env, 'accountingSupplierBills'), listCollection(env, 'accountingImprests').catch(() => [])
+      listCollection(env, 'chartOfAccounts'), loadBranchFinanceRows(env, 'accountingExpenses', branchId), loadBranchFinanceRows(env, 'accountingBudgets', branchId),
+      loadBranchFinanceRows(env, 'accountingVendors', branchId), loadBranchFinanceRows(env, 'accountingSupplierBills', branchId), loadBranchFinanceRows(env, 'accountingImprests', branchId)
     ]);
     return {
       ok: true, message: `${department} requisitions and bills loaded.`, synchronized: 0,
@@ -10299,24 +10321,31 @@ async function getAccountingOverview(env, body = {}) {
   // Leave a small clock-skew margin so Firestore never sees a future readTime.
   const reportReadTime = pagedJournals ? new Date(Date.now() - 2000).toISOString() : '';
   const snapshotQuery = reportReadTime ? { query: `readTime=${encodeURIComponent(reportReadTime)}` } : undefined;
-  const listSnapshot = (collection) => listCollection(env, collection, snapshotQuery);
+  // Reference settings remain organisation-wide; operational records do not.
+  const sharedCollections = new Set(['chartOfAccounts', 'accountingPeriods', 'accountingApprovalLimits',
+    PAYROLL_TAX_COLLECTIONS.profiles, PAYROLL_TAX_COLLECTIONS.components, PAYROLL_TAX_COLLECTIONS.bands,
+    PAYROLL_TAX_COLLECTIONS.reliefs, PAYROLL_TAX_COLLECTIONS.mappings]);
+  const listSnapshot = (collection) => sharedCollections.has(collection)
+    ? listCollection(env, collection, snapshotQuery)
+    : loadBranchFinanceRows(env, collection, branchId, { readTime: reportReadTime });
+  const reportSnapshot = collection => loadBranchFinanceRows(env, collection, branchId, { report: true, readTime: reportReadTime });
   const optionalSnapshot = (collection) => listSnapshot(collection).catch((error) => {
     if (pagedFinance) throw error; // Never silently omit a financial source in a complete snapshot.
     return [];
   });
   const [chart, journals, expenses, budgets, banks, reconciliations, periods, audit, vendors, supplierBills, supplierPayments, imprests, assets, adjustments, approvalLimits, closeChecklist, bankStatementItems, invoices, payments, formSales, gatewayCharges, payrollProfiles, payrollRuns, payrollItems, payrollPayments, payrollAudit, payrollTaxProfiles, payrollTaxOverrides, payrollSalaryComponents, payrollTaxBands, payrollTaxReliefs, payrollLedgerMappings, donations] = await Promise.all([
-    listSnapshot('chartOfAccounts'), pagedJournals ? [] : listCollectionForReport(env, 'accountingJournals'), listSnapshot('accountingExpenses'),
+    listSnapshot('chartOfAccounts'), pagedJournals ? [] : reportSnapshot('accountingJournals'), listSnapshot('accountingExpenses'),
     listSnapshot('accountingBudgets'), listSnapshot('accountingBanks'), listSnapshot('accountingReconciliations'),
     listSnapshot('accountingPeriods'), listSnapshot('accountingAudit'), listSnapshot('accountingVendors'),
     listSnapshot('accountingSupplierBills'), listSnapshot('accountingSupplierPayments'), optionalSnapshot('accountingImprests'), listSnapshot('accountingAssets'),
     listSnapshot('accountingAdjustments'), listSnapshot('accountingApprovalLimits'), listSnapshot('accountingCloseChecklist'),
-    listSnapshot('accountingBankStatementItems'), pagedFinance ? [] : listCollectionForReport(env, 'invoices', { readTime: reportReadTime }), pagedFinance ? [] : listCollectionForReport(env, 'payments', { readTime: reportReadTime }),
+    listSnapshot('accountingBankStatementItems'), pagedFinance ? [] : reportSnapshot('invoices'), pagedFinance ? [] : reportSnapshot('payments'),
     optionalSnapshot('formSales'), optionalSnapshot('paymentGatewayCharges'),
     listSnapshot('payrollProfiles'), listSnapshot('payrollRuns'), listSnapshot('payrollItems'),
     listSnapshot('payrollPayments'), listSnapshot('payrollAudit'), optionalSnapshot(PAYROLL_TAX_COLLECTIONS.profiles), optionalSnapshot(PAYROLL_TAX_COLLECTIONS.overrides),
     optionalSnapshot(PAYROLL_TAX_COLLECTIONS.components), optionalSnapshot(PAYROLL_TAX_COLLECTIONS.bands),
     optionalSnapshot(PAYROLL_TAX_COLLECTIONS.reliefs), optionalSnapshot(PAYROLL_TAX_COLLECTIONS.mappings),
-    listChurchDonationsForAccounting(env, pagedFinance ? { readTime: reportReadTime, branchId } : {})
+    listChurchDonationsForAccounting(env, { readTime: reportReadTime, branchId })
   ]);
   const scopedJournalsByBranch = branchRows(journals);
   const scopedExpenses = branchRows(expenses);
@@ -11000,12 +11029,8 @@ function validateAccountingReportPage(body = {}) {
 
 async function getAccountingJournalPage(env, body = {}) {
   const { readTime, pageToken } = validateAccountingReportPage(body);
-  const page = await listCollectionPage(env, 'accountingJournals', {
-    pageSize: 500,
-    pageToken,
-    query: `readTime=${encodeURIComponent(readTime)}`
-  });
   const branchId = accountingRequestBranch(body);
+  const page = await loadBranchFinancePage(env, 'accountingJournals', branchId, { pageSize: 500, pageToken, readTime });
   const edition = accountingEditionForRequest(env, body);
   const rows = accountingJournalsForEdition(accountingRowsForBranch(page.documents, branchId), edition);
   return { ok: true, journals: rows, nextPageToken: page.nextPageToken, readTime };
@@ -11038,9 +11063,7 @@ export async function getAccountingFinancePage(env, body = {}) {
     const error = new Error('The finance report collection is invalid.'); error.status = 400; throw error;
   }
   const branchId = accountingRequestBranch(body);
-  const page = await listCollectionPage(env, collection, {
-    pageSize: 500, pageToken, query: `readTime=${encodeURIComponent(readTime)}`
-  });
+  const page = await loadBranchFinancePage(env, collection, branchId, { pageSize: 500, pageToken, readTime });
   const rows = accountingFinanceReportRows(collection,
     accountingRowsForBranch(page.documents, branchId), accountingFilter(body));
   return { ok: true, collection, rows, nextPageToken: page.nextPageToken, readTime,
@@ -11786,7 +11809,7 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     case 'deleteFeeItem':
       return deleteFeeItem(env, body);
     case 'seedDefaultFeeItems':
-      return seedDefaultFeeItems(env);
+      return seedDefaultFeeItems(env, body);
     case 'generateSchoolFeeInvoices':
       return generateSchoolFeeInvoices(env, body);
     case 'recordManualPayment':

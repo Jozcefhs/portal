@@ -2,6 +2,7 @@ import { getDocument, listCollectionForReport, queryCollectionPages } from './fi
 import { schoolCollectionPaths, querySchoolCollection } from './school-scope.js';
 import { selectStudentBillingProfiles, studentBillingIdentity, studentProfileValue } from './student-billing-profile.js';
 import { withStudentDisplayName } from './student-display-name.js';
+import { feeRowsForBranch } from './fee-branch-scope.js';
 import { financialRowMatchesAccount, studentBillingReconciliationPlan } from '../api/backend.js';
 
 const clean = (value) => String(value ?? '').trim();
@@ -26,7 +27,7 @@ async function configuration(env, user, deps) {
   const [schoolProfile, allFees] = await Promise.all([
     deps.getDocument(env, 'settings', 'schoolProfile'), deps.listCollectionForReport(env, 'feeItems')
   ]);
-  const feeItems = allFees.filter((row) => !clean(row.BranchId) || clean(row.BranchId).toLowerCase() === clean(user.branchId).toLowerCase());
+  const feeItems = feeRowsForBranch(allFees, user.branchId);
   const signature = JSON.stringify(stable([scopeFor(user), schoolProfile,
     [...feeItems].sort((a, b) => clean(a.__name || a.__id).localeCompare(clean(b.__name || b.__id)))]));
   const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(signature));

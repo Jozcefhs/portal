@@ -173,8 +173,8 @@ function fixture(t, branch = 'main', section = 'secondary') {
   });
   put('settings', 'schoolStructure', { Branches: [{ Id: 'main' }, { Id: 'north' }], Sections: ['primary', 'secondary'], ActiveBranchId: 'main' });
   put('settings', 'schoolProfile', { CurrentAcademicSession: '2026/2027', CurrentTerm: 'First Term' });
-  put('feeItems', 'WALLET_TOPUP', { FeeCode: 'WALLET_TOPUP', FeeName: 'Student Wallet Top-up', FeeCategory: 'Wallet', Amount: 0, Active: 'YES' });
-  put('feeItems', 'ACC', { FeeCode: 'ACC', FeeName: 'Admission acceptance fee', FeeCategory: 'Acceptance Fee', Amount: 1250, Active: 'YES' });
+  put('feeItems', 'WALLET_TOPUP', { BranchId: branch, FeeCode: 'WALLET_TOPUP', FeeName: 'Student Wallet Top-up', FeeCategory: 'Wallet', Amount: 0, Active: 'YES' });
+  put('feeItems', 'ACC', { BranchId: branch, FeeCode: 'ACC', FeeName: 'Admission acceptance fee', FeeCategory: 'Acceptance Fee', Amount: 1250, Active: 'YES' });
   const payment = overrides => ({
     PaymentId: 'PAY-001', Reference: 'MANUAL-001', AccountRef: 'STU-001', AdmissionNo: 'STU-001',
     BranchId: branch, SchoolSection: section, FeeCode: 'WALLET_TOPUP', FeeName: 'Student Wallet Top-up', FeeCategory: 'Wallet',
@@ -397,6 +397,7 @@ test('an existing summary owned by another branch cannot be overwritten by a mat
 
 function schoolFee(f, amount = 2500) {
   f.put('feeItems', 'TUI', {
+    BranchId: f.body().BranchId,
     FeeCode: 'TUI', FeeName: 'Tuition', FeeCategory: 'School Fee', Amount: amount,
     ClassName: 'All', StudentType: 'All', Gender: 'All', BillingCategory: 'All', EnrollmentCategory: 'All',
     AcademicProgress: 'All', AcademicSession: '2026/2027', Term: 'First Term',

@@ -5,6 +5,7 @@ import { selectStudentBillingProfiles, studentBillingIdentity } from '../lib/stu
 import { readJsonBody } from '../lib/request-security.js';
 import { studentBillingReviewRoster, studentBillingReviewBatch } from '../lib/student-billing-review.js';
 import { billingPreviewStudent } from './student-billing-preview.js';
+import { feeRowsForBranch } from '../lib/fee-branch-scope.js';
 import { financialRowMatchesAccount, studentBillingReconciliationPlan, getStudentBillingData, reconcileStudentBilling,
   boardingWearReversalPlan, getBoardingWearReversalData, reverseBoardingWearCharge } from './backend.js';
 
@@ -60,7 +61,7 @@ export async function onRequestPost({ request, env }) {
           AdmissionNo: row.AdmissionNo || row.admissionNo, ApplicationReference: row.ApplicationReference || row.applicationReference }, account) &&
           clean(row.BranchId || 'main').toLowerCase() === identity.branch;
         const inputs = {
-          schoolProfile, feeItems: feeItems.filter((row) => !clean(row.BranchId) || clean(row.BranchId).toLowerCase() === identity.branch),
+          schoolProfile, feeItems: feeRowsForBranch(feeItems, identity.branch),
           invoices: invoices.filter(matches), accountSummaries: [], payments: [], ledger: []
         };
         const plan = await boardingWearReversalPlan({ ...student, BranchId: identity.branch, SchoolSection: identity.section }, inputs, { candidateOnly: true });

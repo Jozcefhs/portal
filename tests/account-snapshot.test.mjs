@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { feeBranchId, feeRowsForBranch } from '../functions/lib/fee-branch-scope.js';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { getAccountSnapshot, getAccountsOverview, financialRowMatchesAccount, enforceDesktopDeviceActionScope } from '../functions/api/backend.js';
@@ -132,14 +133,16 @@ function billingLoader(failCollection = '') {
     normalizeStudent: row => row,
     accountRefsFrom: row => [row.AccountRef, row.AdmissionNo, row.ApplicationReference],
     canonicalSchoolBranchId: value => lower(value || 'main'), financialRowMatchesAccount,
+    feeBranchId, feeRowsForBranch,
     queryCollectionPages: async (_env, collection, options) => {
       calls.push({ collection, options });
       if (collection === failCollection) throw new Error('Read failed; no partial result');
       return rows;
     },
     getDocument: async () => data.schoolProfile,
-    listCollection: async (_env, collection) => {
+    loadBranchFinanceRows: async (_env, collection, branch) => {
       assert.equal(collection, 'feeItems', 'no full-school financial collection scans');
+      assert.equal(branch, 'main');
       return [];
     }
   }) };

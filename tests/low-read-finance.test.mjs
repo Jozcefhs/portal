@@ -22,10 +22,11 @@ test('fee mutations use direct reads and one batch write instead of collection s
   const singleSave = section(backend, 'async function saveFeeItem(', 'async function saveFeeItems(');
   const batchSave = section(backend, 'async function saveFeeItems(', 'async function deleteFeeItem(');
 
-  assert.match(singleSave, /getDocumentByIdOrField\(env, 'feeItems'/);
+  assert.match(singleSave, /resolveFeeDocument\(env, branchId, feeCode\)/);
   assert.match(singleSave, /BillingCategories: billingCategories/);
   assert.doesNotMatch(singleSave, /listCollection\(env, 'feeItems'/);
-  assert.match(batchSave, /batchUpsertDocuments/);
+  assert.match(batchSave, /batchCommitDocuments/);
+  assert.match(batchSave, /feeDocumentWrite/);
   assert.match(batchSave, /BillingCategories: billingCategories/);
   assert.doesNotMatch(batchSave, /listCollection\(env, 'feeItems'/);
   assert.doesNotMatch(batchSave, /getDocumentByIdOrField\(env, 'feeItems'/);

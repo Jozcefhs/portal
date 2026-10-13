@@ -129,7 +129,7 @@ test('branch-bound devices fail closed for unverified global and bare-ID actions
 
   [
     'updateApplicationStatus', 'deleteApplication', 'importStudents', 'promoteStudents',
-    'getStoreOverview', 'getFormSales', 'saveFeeItem', 'recordSale',
+    'getStoreOverview', 'getFormSales', 'recordSale',
     'generateSchoolFeeInvoices', 'getAccountingOverview',
     'saveAccountingPeriod', 'saveAccountingApprovalLimit', 'saveAccountingCloseChecklist',
     'syncAccountingRevenue', 'savePayrollTaxProfile', 'exportBackup',
@@ -173,19 +173,12 @@ test('branch-bound devices fail closed for unverified global and bare-ID actions
   assert.match(backend, /applyDesktopDeviceBranchScope\(body, desktopAuthentication\)/);
 });
 
-test('shared fee setup explains its organisation-wide scope without widening branch device access', () => {
+test('branch-scoped fee setup is available on branch devices without widening unrelated access', () => {
   const actions = ['saveFeeItem', 'saveFeeItems', 'deleteFeeItem', 'seedDefaultFeeItems'];
   for (const branchId of ['main', 'north']) {
     for (const action of actions) {
-      assert.throws(
-        () => enforceDesktopDeviceActionScope({ type: 'device', branchId }, action, { Action: action }),
-        (error) => error?.status === 403
-          && error.code === 'DESKTOP_DEVICE_ORGANISATION_WIDE_REQUIRED'
-          && /shared organisation-wide catalogue/.test(error.message)
-          && /organisation-wide approved desktop device/.test(error.message)
-          && /Branch payments do not require organisation-wide device approval/.test(error.message),
-        `${action} must remain protected on branch ${branchId}`
-      );
+      const body = { Action: action, BranchId: branchId };
+      assert.equal(enforceDesktopDeviceActionScope({ type: 'device', branchId }, action, body), body);
     }
   }
   for (const action of actions) {

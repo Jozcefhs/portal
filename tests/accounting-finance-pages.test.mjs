@@ -17,8 +17,8 @@ function pageHandler(overrides = {}) {
     requireAccountingRole: body => { if (!['Super Admin', 'Accounts Officer', 'Management'].includes(body.UserRole)) {
       const error = new Error('Not authorized'); error.status = 403; throw error;
     } }, accountingRequestBranch, accountingRowsForBranch, accountingFinanceReportRows,
-    accountingFilter: () => ({}), listCollectionPage: async (_env, collection, options) => {
-      calls.push({ collection, options });
+    accountingFilter: () => ({}), loadBranchFinancePage: async (_env, collection, branchId, options) => {
+      calls.push({ collection, branchId, options });
       return { documents: [{ __id: 'west', BranchId: 'west', Amount: 50 },
         { __id: 'main', BranchId: 'main', Amount: 70 }], nextPageToken: 'next' };
     }, ...overrides });
@@ -39,7 +39,8 @@ for (const edition of ['school', 'church', 'organization', 'hotel']) {
     assert.equal(result.scanned, 2);
     assert.equal(calls.length, 1);
     assert.equal(calls[0].options.pageSize, 500);
-    assert.equal(calls[0].options.query, `readTime=${encodeURIComponent(body.ReadTime)}`);
+    assert.equal(calls[0].options.readTime, body.ReadTime);
+    assert.equal(calls[0].branchId, body.BranchId);
   });
 }
 
@@ -53,7 +54,7 @@ test('wrong collection, expired snapshot, role and branch escalation fail before
 });
 
 test('empty authorized branch page retains cursor so later authorized records are still read', async () => {
-  const { handler } = pageHandler({ listCollectionPage: async () => ({
+  const { handler } = pageHandler({ loadBranchFinancePage: async () => ({
     documents: [{ BranchId: 'west', Amount: 1 }], nextPageToken: 'still-more' }) });
   const result = await handler({}, request());
   assert.equal(result.rows.length, 0);
@@ -89,6 +90,7 @@ test('paged overview skips entire invoice/payment scans and withholds incomplete
       accountingEditionForRequest: () => edition, accountingRequestBranch: () => 'main', accountingRowsForBranch,
       requireAccountingRole: () => {}, DEPARTMENT_ACCOUNTING_ROLES: [],
       isDepartmentAccountingUser: () => false, listCollection: async (_env, collection) => { calls.push(collection); return []; },
+      loadBranchFinanceRows: async (_env, collection, branchId) => { assert.equal(branchId, 'main'); calls.push(collection); return []; },
       listCollectionForReport: async (_env, collection) => { throw new Error(`Unbounded ${collection}`); },
       listChurchDonationsForAccounting: async () => [], accountingFilter: () => ({}),
       accountingChartForEdition: rows => rows, accountingJournalsForEdition: rows => rows,

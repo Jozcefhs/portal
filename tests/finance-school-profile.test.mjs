@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
+import { feeRowsForBranch } from '../functions/lib/fee-branch-scope.js';
 import { loadFinanceSchoolProfile } from '../functions/lib/finance-school-profile.js';
 import { getAccountsOverview } from '../functions/api/backend.js';
 import { accountingRequestBranch, accountingRowsForBranch } from '../functions/lib/accounting-branch-scope.js';
@@ -39,6 +40,11 @@ function financeHarness(options = {}) {
   const financeQueries = [], overviewCalls = [];
   const common = {
     clean,
+    feeRowsForBranch,
+    loadBranchFinanceRows: async (_env, collection, branchId, query = {}) => {
+      if (query.filters) financeQueries.push({ collection, query, branchId });
+      return [];
+    },
     loadFinanceSchoolProfile: (env, branch) => loadFinanceSchoolProfile(env, branch, reader.readDocument),
     getDocument: reader.readDocument,
     listCollection: async () => [],

@@ -1,5 +1,6 @@
 import { getAccountsOverview } from './backend.js';
-import { getDocument, listCollection, listCollectionForReport, queryCollectionPages, requireFirestoreEnv } from '../lib/firestore.js';
+import { getDocument, listCollection, listCollectionForReport, requireFirestoreEnv } from '../lib/firestore.js';
+import { loadBranchFinanceRows } from '../lib/finance-branch-reads.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { getSchoolStructure, listSchoolCollection, schoolSectionFor } from '../lib/school-scope.js';
 import { configuredStaffBranches } from '../lib/staff-branch-context.js';
@@ -111,13 +112,13 @@ function reconcileInvoiceDisplay(invoices, accounts) {
   });
 }
 
-async function currentSessionFinanceRows(env, collection, academicSession) {
+async function currentSessionFinanceRows(env, collection, academicSession, branchId) {
   if (!academicSession) {
     const error = new Error('Set the current academic session in School Profile before opening finance summaries.');
     error.status = 409;
     throw error;
   }
-  return queryCollectionPages(env, collection, {
+  return loadBranchFinanceRows(env, collection, branchId, {
     filters: [{ field: 'AcademicSession', op: 'in', value: [academicSession, '', 'All'] }],
     pageSize: 500,
     maxRows: 15000
@@ -243,11 +244,11 @@ export async function onRequestPost(context) {
         branchId: user.branchId,
         schoolSectionAccess: user.schoolSectionAccess
       }) : Promise.resolve([]),
-      shouldLoad('formPurchases') ? listCollection(env, 'formSales') : Promise.resolve([]),
-      shouldLoad('accounts') ? listCollection(env, 'accountSummaries') : Promise.resolve([]),
-      shouldLoad('accounts') ? currentSessionFinanceRows(env, 'payments', financeSession) : Promise.resolve([]),
-      shouldLoad('accounts') ? currentSessionFinanceRows(env, 'invoices', financeSession) : Promise.resolve([]),
-      shouldLoad('accounts') ? currentSessionFinanceRows(env, 'ledger', financeSession)
+      shouldLoad('formPurchases') ? loadBranchFinanceRows(env, 'formSales', user.branchId) : Promise.resolve([]),
+      shouldLoad('accounts') ? loadBranchFinanceRows(env, 'accountSummaries', user.branchId) : Promise.resolve([]),
+      shouldLoad('accounts') ? currentSessionFinanceRows(env, 'payments', financeSession, user.branchId) : Promise.resolve([]),
+      shouldLoad('accounts') ? currentSessionFinanceRows(env, 'invoices', financeSession, user.branchId) : Promise.resolve([]),
+      shouldLoad('accounts') ? currentSessionFinanceRows(env, 'ledger', financeSession, user.branchId)
         : shouldLoad('tuckShop') ? listCollectionForReport(env, 'ledger') : Promise.resolve([]),
       shouldLoad('clinic') ? listCollection(env, 'clinicRecords') : Promise.resolve([]),
       shouldLoad('clinic') ? listCollection(env, 'clinicInventory') : Promise.resolve([]),
