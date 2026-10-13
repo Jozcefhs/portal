@@ -1176,6 +1176,108 @@ test('school approval controls are separately authorized and never overwrite set
   assert.deepEqual(after.ProductPolicy,{RequireNewApproval:false,RequireEditApproval:true,RequireStockApproval:false});
   await assert.rejects(f.run('saveProductPolicy',body),/changed/);
 });
+
+for (const [edition,section] of [['school','tuckShop'],['faith','organizationStore'],['faith','restaurant'],['organization','organizationStore'],['organization','restaurant']]) {
+  test(`${edition} ${section}: Accounts independently controls new-item and restock approval`,async () => {
+    for (const RequireNewApproval of [true,false]) for (const RequireStockApproval of [true,false]) {
+      const f = commerceFixture(edition,section,{firestoreRoundTrip:true});
+      f.put('commerceVendors','v1',{...f.get('commerceVendors','v1'),LoginUsername:'seller'});
+      const actor = {...f.actor,role:'Vendor User',username:'seller',allowedSections:['vendorSettlements',section]};
+      const settingsId = `vendor-settlement-${edition}--main`;
+      await f.run('saveProductPolicy',{RecordVersion:f.get('settings',settingsId).__updateTime,
+        RequireNewApproval,RequireStockApproval,RequireEditApproval:true},f.actor);
+      const saved = f.get('settings',settingsId);
+      assert.equal(saved.ProductPolicyUpdatedBy,f.actor.username);
+      assert.equal(saved.Enabled,true); assert.equal(saved.PayableAccount,'2000');
+      const created = await f.run('saveProduct',productBody({Section:section}),actor);
+      assert.equal(created.pending,RequireNewApproval);
+      assert.equal(!!f.get(f.collection,'new-stock'),!RequireNewApproval);
+      const deliveryBody = {RequestId:'restock-policy',Section:section,InventoryId:'stock1',VendorId:'v1',
+        RecordVersion:f.get(f.collection,'stock1').__updateTime,Quantity:6,Reference:'DELIVERY',Notes:'Checked delivery'};
+      const delivery = await f.run('recordProductDelivery',deliveryBody,actor);
+      assert.equal(delivery.pending,RequireStockApproval);
+      assert.equal(f.get(f.collection,'stock1').Quantity,RequireStockApproval ? 5 : 11);
+      await f.run('recordProductDelivery',deliveryBody,actor);
+      assert.equal(f.get(f.collection,'stock1').Quantity,RequireStockApproval ? 5 : 11);
+      // Toggling the policy never auto-applies previously pending requests.
+      await f.run('saveProductPolicy',{RecordVersion:saved.__updateTime,
+        RequireNewApproval:false,RequireStockApproval:false,RequireEditApproval:true},f.actor);
+      if (created.pending) assert.equal(f.get('vendorProductChanges',created.ChangeId).Status,'Pending');
+      if (delivery.pending) assert.equal(f.get(f.collection,'stock1').Quantity,5);
+      for (const c of ['ledger','accountingJournals','vendorEarnings','vendorBalances']) assert.equal(f.list(c).length,0);
+    }
+  });
+
+  test(`${edition} ${section}: revoke blocks stale carts, preserves records, and Accounts can restore`,async () => {
+    const f = commerceFixture(edition,section,{firestoreRoundTrip:true});
+    f.put('commerceVendors','v1',{...f.get('commerceVendors','v1'),LoginUsername:'seller'});
+    const actor = {...f.actor,role:'Vendor User',username:'seller',allowedSections:['vendorSettlements',section]};
+    const before = structuredClone(f.get(f.collection,'stock1'));
+    await f.commerce.previewOrganizationCommerceSale({},section,f.body,f.actor);
+    const body = {RequestId:'revoke-stock',Section:section,InventoryId:'stock1',RecordVersion:before.__updateTime,
+      Revoked:true,Notes:'Not approved for sale'};
+    await f.run('setProductAvailability',body,f.actor);
+    assert.equal((await f.run('setProductAvailability',body,f.actor)).replayed,true);
+    const revoked = f.get(f.collection,'stock1');
+    assert.equal(revoked.Active,'NO'); assert.equal(revoked.VendorSaleRevoked,true);
+    for (const key of ['Quantity','Price','VendorId','ItemCode','SchoolSection']) assert.equal(revoked[key],before[key]);
+    const boot = await f.run('bootstrap',{},actor);
+    assert.equal(boot.products.find(p=>p.InventoryId==='stock1').VendorSaleRevoked,true);
+    assert.equal((await f.pos({},actor,{action:'salesBootstrap',Section:section})).products.find(p=>p.InventoryId==='stock1').Active,'NO');
+    await assert.rejects(f.commerce.recordManualOrganizationCommerceSale({},section,f.body,f.actor),/not available for sale/);
+    await assert.rejects(f.run('saveProduct',productBody({Section:section,InventoryId:'stock1',RequestId:'vendor-restore',
+      RecordVersion:revoked.__updateTime,Quantity:5}),actor),/revoked/);
+    await assert.rejects(f.run('setProductAvailability',{...body,Revoked:false,RequestId:'vendor-restore'},actor),/role/);
+    // Even a stale client that resets Active must not bypass the revocation marker at checkout.
+    f.put(f.collection,'stock1',{...revoked,Active:'YES'});
+    await assert.rejects(f.commerce.recordManualOrganizationCommerceSale({},section,f.body,f.actor),/not available for sale/);
+    await f.run('setProductAvailability',{...body,RequestId:'restore-stock',Revoked:false,Notes:'Approved after review',
+      RecordVersion:f.get(f.collection,'stock1').__updateTime},f.actor);
+    assert.equal(f.get(f.collection,'stock1').Active,'YES'); assert.equal(f.get(f.collection,'stock1').VendorSaleRevoked,false);
+    assert.equal(f.get(f.collection,'stock1').Quantity,5);
+    assert.deepEqual(f.list('accountingAudit').map(r=>r.Action),['VENDOR PRODUCT REVOKED','VENDOR PRODUCT RESTORED']);
+    for (const c of ['ledger','accountingJournals','vendorEarnings','vendorBalances','commerceSales']) assert.equal(f.list(c).length,0);
+    await f.commerce.recordManualOrganizationCommerceSale({},section,f.body,f.actor);
+    assert.equal(f.get(f.collection,'stock1').Quantity,3);
+  });
+}
+
+test('revoke validates permission, scope, reasons, versions and atomic conflicts before changing stock',async () => {
+  const f = productFixture(true); await f.run('saveProduct',productBody(),vendorActor);
+  const row = f.get('tuckShopInventory','new-stock');
+  const body = {RequestId:'revoke',InventoryId:'new-stock',Section:'tuckShop',RecordVersion:row.__updateTime,Revoked:true,Notes:'Accounts review'};
+  const before = f.commits.length;
+  for (const patch of [{Notes:''},{Notes:'x'.repeat(2001)},{Revoked:'true'},{RecordVersion:'stale'},{Section:'restaurant'}])
+    await assert.rejects(f.run('setProductAvailability',{...body,...patch}));
+  for (const patch of [{role:'Vendor User'},{role:'Tuck Shop User'},{role:'Admin'},{subscriptionReadOnly:true},
+    {branchId:'other'},{schoolSectionAccess:'Primary'}]) await assert.rejects(f.run('setProductAvailability',body,{...user,...patch}));
+  f.put('tuckShopInventory','school-stock',stock({VendorId:''}));
+  await assert.rejects(f.run('setProductAvailability',{...body,InventoryId:'school-stock'}),/vendor-owned/);
+  f.conflict(); await assert.rejects(f.run('setProductAvailability',body),/changed/);
+  assert.equal(f.commits.length,before); assert.equal(f.get('tuckShopInventory','new-stock').Active,'YES');
+  await f.run('setProductAvailability',body);
+  await assert.rejects(f.run('setProductAvailability',{...body,Notes:'Different reason'}),/another operation/);
+  const revoked = f.get('tuckShopInventory','new-stock');
+  await f.run('recordProductDelivery',productBody({RequestId:'revoked-restock',RecordVersion:revoked.__updateTime,
+    Quantity:4,Reference:'DELIVERY',Notes:'Four received'}),vendorActor);
+  assert.equal(f.get('tuckShopInventory','new-stock').Quantity,14);
+  assert.equal(f.get('tuckShopInventory','new-stock').Active,'NO');
+  assert.equal(f.get('tuckShopInventory','new-stock').VendorSaleRevoked,true);
+});
+
+test('revoking a product blocks earlier pending edits from reactivating it and prevents wallet deductions',async () => {
+  const f = commerceFixture();
+  f.put('commerceVendors','v1',{...f.get('commerceVendors','v1'),LoginUsername:'seller'});
+  const actor = {...vendorActor};
+  const row = f.get(f.collection,'stock1');
+  const edit = await f.run('saveProduct',productBody({InventoryId:'stock1',RecordVersion:row.__updateTime,Quantity:5}),actor);
+  await f.run('setProductAvailability',{RequestId:'revoke',InventoryId:'stock1',Section:'tuckShop',RecordVersion:row.__updateTime,Revoked:true,Notes:'Review'},f.actor);
+  await assert.rejects(reviewProduct(f,edit),/revoked/);
+  f.put('students','child',{AccountRef:'child',BranchId:'main',SchoolSection:'Secondary',OpeningWallet:500});
+  await assert.rejects(f.commerce.prepareTuckShopWalletCart({}, {Items:[{Reference:'stock1',Quantity:1}]},f.actor),/not available for sale/);
+  assert.equal(f.list('ledger').length,0);
+  assert.equal(f.get(f.collection,'stock1').Quantity,5);
+});
 test('vendor CSV auto-assigns only own linked owners and submits read-only previews for approval',async () => {
   const f = productFixture();
   const {preview,body} = await importPreview(f,'create',[createRow({Owner:''})],vendorActor);

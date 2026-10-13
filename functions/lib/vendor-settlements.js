@@ -341,7 +341,8 @@ async function products(env, scope) {
       .map(row => ({ Section: section, InventoryId: row.__id, ItemCode: row.ItemCode, ItemName: row.ItemName, VendorId: row.VendorId || '',
         Quantity: row.Quantity, Price: row.Price ?? row.SalePrice, SchoolSection: row.SchoolSection, RecordVersion: row.__updateTime })));
     result.filter(row => row.Section === section).forEach(row => { const original = inventory.find(r => r.__id === row.InventoryId);
-      Object.assign(row, { Category:original.Category, Unit:original.Unit, Active:original.Active || 'YES' }); });
+      Object.assign(row, { Category:original.Category, Unit:original.Unit, Active:original.Active || 'YES',
+        VendorSaleRevoked:original.VendorSaleRevoked === true, VendorSaleStatusReason:clean(original.VendorSaleStatusReason) }); });
   }
   return result;
 }
@@ -359,6 +360,7 @@ async function saveProduct(env, user, scope, body) {
     if (lower(previous.BranchId || 'main') !== scope.BranchId || (previous.OrganisationEdition && previous.OrganisationEdition !== scope.OrganisationEdition)
       || (scope.OrganisationEdition === 'school' && lower(scope.SchoolSection) !== 'all' && lower(previous.SchoolSection || 'Secondary') !== lower(scope.SchoolSection))) fail('The stock record is outside your scope.', 403);
     checkVersion(body, previous);
+    if (previous.VendorSaleRevoked === true && body.Active !== 'NO') fail('Use Restore for sale to lift the Accounts revocation first.',409);
     if (vendor && scope.OrganisationEdition === 'school' && lower(vendor.SchoolSection) !== lower(previous.SchoolSection || 'Secondary')) fail('Product and owner must belong to the same school section.');
   }
   const name = clean(body.ItemName || previous?.ItemName), quantity = Number(body.Quantity ?? previous?.Quantity ?? 0), price = Number(body.Price ?? previous?.Price ?? previous?.SalePrice ?? 0);
@@ -789,6 +791,7 @@ export async function handleVendorSettlementAction(env, user, body = {}, options
     case 'saveVendor': return saveVendor(env, user, scope, body);
     case 'saveProduct': return saveProduct(env, user, scope, body);
     case 'recordProductDelivery':
+    case 'setProductAvailability':
     case 'saveProductPolicy':
     case 'reviewProductChange': return handleVendorProductAction(env,user,scope,{...body,action},productDependencies());
     case 'previewProductImport':

@@ -12,9 +12,17 @@ Vendor Users reuse **Vendor Sales & Settlements → Product ownership** to add p
 
 ## School / organisation controls
 
-Approval is required by default for new products, product details / selling prices, and deliveries. A branch-wide authorised manager can separately enable immediate updates under **Product ownership → Product approval controls**. This setting does not change financial settlement rules; existing pending requests still require review.
+Approval is required by default for new products, product details / selling prices, and deliveries. Go to **Vendor Sales & Settlements → Approval settings** (also linked from Product ownership). Accounts Officers, Directors and Super Admins can independently choose **Approval required** or **No approval — apply immediately** for adding new items (including batch uploads), restocking, and editing details / prices. Save the choices with **Save approval settings**. The desktop edition has the same tab with **Change approval settings**.
+
+Settings apply to every vendor in the current branch. For schools, the editor needs **All school sections** access; section-limited reviewers can see the current choices and an explanation. Defaults remain approval-required. Saving records the actor and time without changing financial settlement rules or approving existing pending requests.
 
 Authorised school / organisation reviewers approve or reject requests in **Product change requests**. Vendor Users cannot approve their own requests or transfer another owner's stock. Conflicting detail changes or a removed vendor-login link require rejection and a fresh submission.
+
+## Revoking a live item
+
+In **Product ownership**, Accounts Officers, Directors and Super Admins can choose **Revoke item**, enter a reason and confirm. Desktop users first select one product. This withdraws a vendor-owned product from new sales without deleting it or changing its stock quantity, past receipts, earnings or payment claims. The product remains listed as **Revoked by Accounts**, with the reason visible on the web.
+
+Revocation is server-enforced at checkout, including stale carts and student-wallet purchases. Vendors cannot reactivate the item through edits, imports or restocking, even with approval disabled. Existing pending product edits cannot clear the revocation. Accounts can explicitly **Restore for sale**, with a reason, after review. Both actions are version-checked, atomic, audited and safe to retry; they do not post money or stock movements. Organisation-owned items are not changed by these actions.
 
 ## Release status
 

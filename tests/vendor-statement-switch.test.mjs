@@ -47,10 +47,13 @@ function workspaceRoot() {
 
 async function fixture(options = {}) {
   const root=workspaceRoot(),window={},reads=[],calls=[];
+  let policy = options.policy || {RequireNewApproval:true,RequireEditApproval:true,RequireStockApproval:true};
   class FormDataFixture {constructor(form){this.rows=Object.values(form.elements).map(node=>[node.name,node.value]);}[Symbol.iterator](){return this.rows[Symbol.iterator]();}}
   const request=async(action,body,signal)=>{
     calls.push({action,body});
-    if(action==='bootstrap') return {vendors:[{VendorId:'v1',Name:'First vendor'},{VendorId:'v2',Name:'Second vendor'}],balances:[],products:options.products || [],requests:[],settings:{Enabled:true,AccountingConfirmed:true},capabilities:{vendor:true,products:true}};
+    if(action==='bootstrap') return {vendors:[{VendorId:'v1',Name:'First vendor'},{VendorId:'v2',Name:'Second vendor'}],balances:[],products:options.products || [],requests:[],productPolicy:policy,
+      settings:{Enabled:true,AccountingConfirmed:true,RecordVersion:'settings-1'},capabilities:options.capabilities || {vendor:true,products:true}};
+    if(action==='saveProductPolicy') { policy=body; return {ok:true,message:'Approval controls saved.'}; }
     if(action==='statement') return new Promise((resolve,reject)=>reads.push({body,signal,resolve,reject}));
     throw new Error(`Unexpected action: ${action}`);
   };
@@ -91,6 +94,48 @@ test('responsive product rows preserve stock, escaping and working edit / delive
   assert.match(panel.innerHTML,/aria-label="Record delivery: Water &lt;sample&gt;"/);
   assert.equal((panel.innerHTML.match(/aria-hidden="true" focusable="false"/g) || []).length,2);
   assert.deepEqual(f.calls.map(call=>call.action),['bootstrap']);
+});
+
+test('Accounts sees an explicit approval tab, saves independent booleans, and refresh retains choices',async t=>{
+  const f=await fixture({tab:'approvals',capabilities:{manage:true,reviewProducts:true,edition:'school',section:'All',branchId:'main'}});
+  t.after(()=>f.mounted.destroy());
+  const panel=()=>f.root.querySelector('[data-panel]');
+  assert.match(panel().innerHTML,/Adding new items/); assert.match(panel().innerHTML,/Restocking items/);
+  assert.doesNotMatch(panel().innerHTML,/<details/);
+  const form=panel().querySelector('[data-product-policy]');
+  form.elements.RequireNewApproval.value='false';
+  form.elements.RequireStockApproval.value='true';
+  await form.onsubmit({preventDefault(){}});
+  const saved=f.calls.find(c=>c.action==='saveProductPolicy').body;
+  assert.equal(saved.RecordVersion,'settings-1'); assert.equal(saved.RequireNewApproval,false);
+  assert.equal(saved.RequireStockApproval,true); assert.equal(saved.RequireEditApproval,true);
+  assert.equal(panel().querySelector('[data-product-policy]').elements.RequireNewApproval.value,'false');
+});
+
+test('section-limited Accounts sees current approval policy with an explanation, not hidden controls',async t=>{
+  const f=await fixture({tab:'approvals',capabilities:{reviewProducts:true,edition:'school',section:'Secondary',branchId:'main'}});
+  t.after(()=>f.mounted.destroy());
+  const panel=f.root.querySelector('[data-panel]');
+  assert.match(panel.innerHTML,/All school sections access/);
+  assert.equal(panel.querySelectorAll('select').filter(n=>Object.hasOwn(n.attrs,'disabled')).length,3);
+  assert.doesNotMatch(panel.innerHTML,/type="submit"/);
+});
+
+test('only Accounts reviewers see revoke/restore; vendor sees the reason without management actions',async t=>{
+  const products=[{InventoryId:'one',ItemName:'Bread',VendorId:'v1',Section:'tuckShop',Quantity:5,Price:50},
+    {InventoryId:'two',ItemName:'Water',VendorId:'v1',Section:'tuckShop',Quantity:8,Price:100,VendorSaleRevoked:true,VendorSaleStatusReason:'Review <sample>'}];
+  const accounts=await fixture({products,capabilities:{reviewProducts:true,products:true}});
+  let panel=accounts.root.querySelector('[data-panel]');
+  assert.match(panel.innerHTML,/Revoke item/); assert.match(panel.innerHTML,/Restore for sale/);
+  assert.equal(panel.querySelectorAll('[data-product-availability]').length,2);
+  assert.equal(typeof panel.querySelector('[data-product-availability]').onclick,'function');
+  assert.match(panel.innerHTML,/data-approval-settings/);
+  accounts.mounted.destroy();
+  const vendor=await fixture({products}); t.after(()=>vendor.mounted.destroy());
+  panel=vendor.root.querySelector('[data-panel]');
+  assert.match(panel.innerHTML,/Revoked by Accounts · Review &lt;sample&gt;/);
+  assert.equal(panel.querySelectorAll('[data-product-availability]').length,0);
+  assert.ok(!vendor.root.querySelectorAll('[data-tab]').some(n=>n.dataset.tab==='approvals'));
 });
 
 test('switching vendors automatically loads their statement and preserves the date range',async t=>{

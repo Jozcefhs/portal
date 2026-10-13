@@ -42,6 +42,8 @@
 .vendor-product-table { table-layout:auto; }
 .vendor-product-table td { overflow-wrap:normal; word-break:normal; }
 .vendor-product-actions { display:flex; flex-wrap:wrap; gap:6px; }
+.vendor-product-actions .vendor-revoke-action { background:#a32020; color:white; }
+.vendor-table td small.vendor-revoked { color:#a32020; font-weight:700; }
 .vendor-workspace .vendor-product-actions .vendor-icon-action {
   display:inline-grid; place-items:center; flex:0 0 44px; width:44px; height:44px; padding:0;
 }

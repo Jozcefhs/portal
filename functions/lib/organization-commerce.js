@@ -302,7 +302,7 @@ async function authoritativeCart(env, section, body, user, inventoryRows = null)
   const cart = demand.map((requested) => {
     const item = findInventoryItem(inventory, section, requested.Reference);
     if (!item) throw error(`${requested.Reference} was not found in this branch.`, 404);
-    if (clean(item.Active || 'YES').toUpperCase() === 'NO') {
+    if (item.VendorSaleRevoked === true || clean(item.Active || 'YES').toUpperCase() === 'NO') {
       throw error(`${clean(item.ItemName) || requested.Reference} is not available for sale.`, 409);
     }
     const available = inventoryQuantityNumber(item.Quantity);
@@ -520,7 +520,7 @@ export async function listOrganizationCommerceSales(env, section, user) {
 export async function listPublicOrganizationStoreItems(env, branchId = 'main', edition = 'faith') {
   const rows = await scopedInventory(env, 'organizationStore', { branchId, edition });
   return rows
-    .filter((row) => clean(row.Active || 'YES').toUpperCase() !== 'NO')
+    .filter((row) => row.VendorSaleRevoked !== true && clean(row.Active || 'YES').toUpperCase() !== 'NO')
     .map((row) => ({
       ItemCode: clean(row.ItemCode || row.__id),
       ItemName: clean(row.ItemName || row.__id),

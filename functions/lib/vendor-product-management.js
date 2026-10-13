@@ -60,6 +60,8 @@ async function applyChange(env, user, scope, change, vendor, deps) {
     item = { ...change.Data };
   } else {
     previous = await ownStock(env, scope, section, inventoryId, vendor, deps);
+    if (previous.VendorSaleRevoked === true && change.Kind === 'Edit' && change.Data.Active !== 'NO')
+      fail('Accounts has revoked this item. Only Accounts can restore it for sale.',409);
     if (change.Kind === 'Edit' && JSON.stringify(details(previous)) !== JSON.stringify(change.BaseDetails))
       fail('Product details changed since submission. Reject this request and ask for a fresh change.',409);
     // Merge fresh stock, never a quantity captured before intervening sales.
@@ -90,6 +92,32 @@ export async function prepareVendorProductWrites(env, user, scope, items, contex
 
 export async function handleVendorProductAction(env, user, scope, body, deps) {
   const action = body.action;
+  if (action === 'setProductAvailability') {
+    deps.requireManagement(user);
+    const section = clean(body.Section), inventoryId = stockId(body.InventoryId), notes = clean(body.Notes);
+    if (!sectionAllowed(scope,section)) fail('Choose a store available in this edition.');
+    if (typeof body.Revoked !== 'boolean' || !notes || notes.length > 2000)
+      fail('Choose revoke or restore and enter a reason (up to 2,000 characters).');
+    const op = await deps.operation(env,scope,user,{RequestId:body.RequestId,
+      ProductFingerprint:await productDigest({section,inventoryId,revoked:body.Revoked,notes})},action);
+    if (op.replay) return op.replay;
+    const previous = await deps.get(env,inventories[section],inventoryId);
+    if (!stockInScope(previous,scope) || !clean(previous.VendorId)) fail('Choose a vendor-owned item in your branch / section.',403);
+    version(body,previous);
+    if (body.Revoked === (previous.VendorSaleRevoked === true)) fail('This item already has that sale status. Refresh the product list.',409);
+    const timestamp = new Date().toISOString();
+    const item = {...plain(previous),Active:body.Revoked ? 'NO' : 'YES',VendorSaleRevoked:body.Revoked,
+      VendorSaleStatusReason:notes,VendorSaleStatusBy:clean(user.username),VendorSaleStatusAt:timestamp,
+      UpdatedBy:clean(user.displayName || user.username),UpdatedAt:timestamp};
+    const result = {ok:true,message:body.Revoked
+      ? 'Item revoked from sale. Stock and past sales are unchanged. Only Accounts can restore it.'
+      : 'Item restored for sale. Stock and past sales are unchanged.'};
+    await deps.commit(env,[deps.write(inventories[section],inventoryId,item,previous),
+      deps.audit(scope,user,body.Revoked ? 'VENDOR PRODUCT REVOKED' : 'VENDOR PRODUCT RESTORED',inventoryId,
+        JSON.stringify({Section:section,VendorId:previous.VendorId,PreviousActive:previous.Active || 'YES',Reason:notes})),
+      deps.operationWrite(op,result)]);
+    return result;
+  }
   if (action === 'saveProductPolicy') {
     deps.requireManagement(user);
     if (scope.OrganisationEdition === 'school' && lower(scope.SchoolSection) !== 'all') fail('Only a branch-wide manager can change product approval controls.',403);
@@ -100,7 +128,8 @@ export async function handleVendorProductAction(env, user, scope, body, deps) {
       if (typeof body[key] !== 'boolean') fail('Choose an approval setting for each type of product change.');
       policy[key] = body[key];
     }
-    await deps.commit(env,[deps.write('settings',`vendor-settlement-${scope.ScopeKey}`,{...plain(original),...scope,ProductPolicy:policy},original),
+    await deps.commit(env,[deps.write('settings',`vendor-settlement-${scope.ScopeKey}`,{...plain(original),...scope,ProductPolicy:policy,
+      ProductPolicyUpdatedAt:new Date().toISOString(),ProductPolicyUpdatedBy:clean(user.username)},original),
       deps.audit(scope,user,'VENDOR PRODUCT APPROVAL POLICY CHANGED',scope.ScopeKey,JSON.stringify(policy))]);
     return {ok:true,message:'Product approval controls saved. Settlement rules and existing requests are unchanged.'};
   }
@@ -151,6 +180,8 @@ export async function handleVendorProductAction(env, user, scope, body, deps) {
     data = {ItemName:name,Price:price,SalePrice:price,Category:category,Unit:unit,Active:body.Active || 'YES'};
     if (previous) {
       kind = 'Edit';
+      if (previous.VendorSaleRevoked === true && data.Active !== 'NO')
+        fail('Accounts has revoked this item. Only Accounts can restore it for sale.',403);
       if (body.Quantity !== undefined && Number(body.Quantity) !== Number(previous.Quantity)) fail('Record a stock delivery instead of overwriting remaining stock.');
     } else data = {...data,BranchId:scope.BranchId,OrganisationEdition:scope.OrganisationEdition,
       SchoolSection:scope.OrganisationEdition === 'school' ? vendor.SchoolSection : 'All',VendorId:vendor.VendorId,OwnershipType:'Vendor',

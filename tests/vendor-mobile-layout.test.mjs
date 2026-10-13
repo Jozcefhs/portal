@@ -8,11 +8,11 @@ const [vendorCss, shellCss, vendorJs, html, posJs] = await Promise.all([
 
 test('live products retain labelled table semantics and separate action controls',()=>{
   const products = vendorJs.slice(vendorJs.indexOf("if (tab === 'products')"),vendorJs.indexOf("if (tab === 'settings')"));
-  assert.match(products,/class="vendor-table vendor-product-table" role="table" aria-label="Live products"/);
+  assert.match(products,/class="vendor-table vendor-product-table" role="table" aria-label="Products and sale status"/);
   assert.match(products,/<thead role="rowgroup"><tr role="row"><th scope="col">Product/);
   assert.match(products,/role="cell" data-label="Owner"/);
   assert.match(products,/role="cell" data-label="Stock \/ price"/);
-  assert.match(products,/<div class="vendor-product-actions"><button data-edit-product=/);
+  assert.match(products,/<div class="vendor-product-actions">\s*<button data-edit-product=/);
   assert.match(products,/data-delivery="\$\{index\}"/);
 });
 
@@ -71,6 +71,6 @@ test('sticky vendor search follows portrait, desktop and landscape header height
   assert.match(shellCss,/@media \(max-width:680px\)\{\s*\.staff-page\{--staff-topbar-height:76px/);
   assert.match(vendorCss,/\.staff-page \.vendor-pos \.commerce-search-label\{top:var\(--staff-topbar-height,68px\)\}/);
   assert.match(html,/css\/style\.css\?v=[^"]*responsive-vendor-navigation/);
-  assert.match(html,/css\/vendor-settlements\.css\?v=20261010-responsive-vendor-navigation/);
-  assert.match(html,/js\/vendor-settlements\.js\?v=20261010-responsive-vendor-navigation/);
+  assert.match(html,/css\/vendor-settlements\.css\?v=20261013-vendor-approval-revocation/);
+  assert.match(html,/js\/vendor-settlements\.js\?v=20261013-vendor-approval-revocation/);
 });
