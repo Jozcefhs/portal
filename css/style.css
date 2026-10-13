@@ -228,7 +228,11 @@ img{max-width:100%}
 }
 
 .academic-attendance-register{gap:14px}
-.academic-attendance-register>.academic-management-editor-heading>strong{border-radius:999px;background:#e5f6f1;color:#087865;padding:7px 11px;font-size:12px}
+/* Keep roster totals readable without squeezing the heading on narrow screens. */
+:is(.academic-attendance-register,.academic-attendance-report,.academic-scorebook)>.academic-management-editor-heading{flex-wrap:wrap}
+:is(.academic-attendance-register,.academic-attendance-report,.academic-scorebook)>.academic-management-editor-heading>div{flex:1 1 260px;min-width:0}
+:is(.academic-attendance-register,.academic-attendance-report,.academic-scorebook)>.academic-management-editor-heading>strong{flex:0 0 auto;white-space:nowrap;overflow-wrap:normal;word-break:normal;border-radius:999px;background:#e5f6f1;color:#087865;padding:7px 11px;font-size:12px}
+html[data-theme="dark"] :is(.academic-attendance-register,.academic-attendance-report,.academic-scorebook)>.academic-management-editor-heading>strong{background:#143a34;color:#9ce4d4}
 .academic-attendance-bulk-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px 11px;border:1px solid #cbdbe7;border-radius:10px;background:#f6f9fc}
 .academic-attendance-bulk-actions>span{margin-left:auto;color:#365168;font-size:12px;font-weight:700}
 .academic-attendance-draft-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:9px 11px;border-left:4px solid #087865;border-radius:8px;background:#eaf7f3;color:#365168;font-size:11px;font-weight:650}.academic-attendance-draft-bar>div{display:flex;gap:7px;flex-wrap:wrap}.academic-attendance-draft-bar button{width:max-content;min-height:32px;margin:0;padding:6px 9px;font-size:10px}

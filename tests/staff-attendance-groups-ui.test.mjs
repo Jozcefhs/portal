@@ -245,6 +245,6 @@ test('attendance group assets are versioned, cached and loaded before the admin 
   const controller = html.indexOf('src="js/admin.js?v=');
   assert.ok(helper > 0 && controller > helper);
   assert.match(html, /js\/admin\.js\?v=[^"\n]*attendance-groups/);
-  assert.match(serviceWorker, /const CACHE = 'dynamax-v372-fee-collection-summary'/);
+  assert.match(serviceWorker, /const CACHE = 'dynamax-v373-academic-register'/);
   assert.match(serviceWorker, /SHELL\.push\('\/css\/staff-attendance-groups\.css', '\/js\/staff-attendance-groups\.js'\)/);
 });

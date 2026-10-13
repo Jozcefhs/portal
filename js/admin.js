@@ -14677,7 +14677,10 @@ function academicAttendanceWorkspace(data, rows, presenceOnly = false) {
     ?.Exceptions?.find((row) => row.Date === academicAttendanceDraft.date && row.Status === 'Closed');
   const roster = rows.studentMemberships.filter((row) => academicIsActive(row)
     && row.SessionId === sessionId && row.TermId === termId
-    && row.ClassId === selectedArm?.ClassId && row.ArmId === selectedArm?.ArmId);
+    && row.ClassId === selectedArm?.ClassId && row.ArmId === selectedArm?.ArmId)
+    .sort((a, b) => academicLabel(data.students, a.StudentRef, a.StudentRef)
+      .localeCompare(academicLabel(data.students, b.StudentRef, b.StudentRef), undefined, { sensitivity: 'base' })
+      || clean(a.StudentRef).localeCompare(clean(b.StudentRef), undefined, { numeric: true }));
   const publishedVersions = new Set(rows.timetableVersions.filter((row) => row.Status === 'Published').map((row) => row.VersionId));
   const lessons = rows.timetableEntries.filter((row) => publishedVersions.has(row.VersionId) && row.ClassId === selectedArm?.ClassId && row.ArmId === selectedArm?.ArmId);
   const subjectIds = [...new Set(rows.teacherAllocations.filter((row) => academicIsActive(row) && row.ClassId === selectedArm?.ClassId && (!row.ArmId || row.ArmId === selectedArm?.ArmId)).map((row) => row.SubjectId).filter(Boolean))];
