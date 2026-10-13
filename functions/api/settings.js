@@ -23,7 +23,7 @@ import { refreshOrganizationPlanPolicy } from '../lib/plan-policy-sync.js';
 import { readStaffSession } from '../lib/staff-auth.js';
 import { requireSetupAdministrator, resolveSetupSettingsAccess } from '../lib/setup-auth.js';
 import { mergedProfileText } from '../lib/profile-settings-update.js';
-import { paystackSecretMode } from '../lib/paystack-environment.js';
+import { paystackCredentialFingerprint, paystackSecretMode } from '../lib/paystack-environment.js';
 import {
   applyPublicPortalContent,
   PUBLIC_PORTAL_CONTENT_DOCUMENT,
@@ -302,6 +302,7 @@ async function loadProfile(env, options = {}) {
   if (!profile.SettingsScope) profile = await effectiveBranchProfile(env, profile);
   profile.TurnstileSiteKey = clean(env.TURNSTILE_SITE_KEY);
   profile.PaystackConnectionMode = paystackSecretMode(env.PAYSTACK_SECRET_KEY);
+  profile.PaystackCredentialFingerprint = await paystackCredentialFingerprint(env.PAYSTACK_SECRET_KEY);
   profile.PaystackSelfServiceAvailable = Boolean(clean(env.TENANT_CONTROL_PLANE_PRIVATE_KEY));
   Object.assign(profile, emailProviderProfile(env, { legacyBrevoApiKeyConfigured }));
   delete profile.GoogleDocumentsUrl;
@@ -580,6 +581,7 @@ export async function onRequestPost(context) {
     delete profile.WebLogoConfigured;
     delete profile.TurnstileSiteKey;
     delete profile.PaystackConnectionMode;
+    delete profile.PaystackCredentialFingerprint;
     delete profile.PaystackSelfServiceAvailable;
     delete profile.EmailProvider;
     delete profile.GmailConnectedEmail;

@@ -13,6 +13,7 @@ const paystackSecretKeyField = document.getElementById('paystackSecretKey');
 const confirmPaystackReplacement = document.getElementById('confirmPaystackReplacement');
 const connectPaystackButton = document.getElementById('connectPaystackButton');
 const paystackConnectionStatus = document.getElementById('paystackConnectionStatus');
+const checkPaystackActivationButton = document.getElementById('checkPaystackActivation');
 const emailProviderPanel = document.getElementById('emailProviderPanel');
 const connectGoogleEmailButton = document.getElementById('connectGoogleEmail');
 const useBrevoEmailButton = document.getElementById('useBrevoEmail');
@@ -82,6 +83,8 @@ let loadedAcademicPolicyFormSnapshot = '';
 let activeSettingsAccess = { scope: requestedSettingsScope, branchId: requestedSettingsBranch, scopeLocked: false };
 let paystackConnectionMode = 'not-configured';
 let paystackSelfServiceAvailable = false;
+let paystackWorkspaceId = '';
+let paystackActivationTracker = null;
 let activeEmailProvider = 'brevo';
 let emailProviderConnectionReady = false;
 let emailProviderSelfServiceAvailable = false;
@@ -271,7 +274,7 @@ function setLoginStatus(message, type) {
 }
 
 function paystackConfigured() {
-  return paystackConnectionMode !== 'not-configured';
+  return paystackConnectionMode !== 'not-configured' || Boolean(paystackActivationTracker?.pending());
 }
 
 function setPaystackConnectionStatus(message, type = '') {
@@ -281,34 +284,37 @@ function setPaystackConnectionStatus(message, type = '') {
 }
 
 function updatePaystackConnectionUI(profile = {}) {
+  const workspaceId = String(profile.WorkspaceId || paystackWorkspaceId || window.location.host);
+  if (!paystackActivationTracker || workspaceId !== paystackWorkspaceId) {
+    paystackWorkspaceId = workspaceId;
+    let storage;
+    try { storage = window.sessionStorage; } catch (_error) { /* Private browsing may block storage. */ }
+    paystackActivationTracker = window.DynamaxPaystackConnectionStatus.createTracker(storage, workspaceId);
+  }
+  const pending = paystackActivationTracker.reconcile(profile);
   paystackConnectionMode = String(profile.PaystackConnectionMode || paystackConnectionMode || 'not-configured').trim().toLowerCase();
   paystackSelfServiceAvailable = profile.PaystackSelfServiceAvailable === true;
   const configured = paystackConfigured();
-  const modeLabel = paystackConnectionMode === 'live'
-    ? 'Live payments connected'
-    : paystackConnectionMode === 'test'
-      ? 'Test payments connected'
-      : configured ? 'Payment credential connected' : 'No Paystack account connected';
+  const display = window.DynamaxPaystackConnectionStatus.presentation(paystackConnectionMode, pending);
   const state = document.getElementById('paystackConnectionState');
   const badge = document.getElementById('paystackConnectionBadge');
   const confirmation = document.getElementById('paystackReplaceConfirmation');
   const webhook = document.getElementById('paystackWebhookUrl');
-  if (state) state.textContent = modeLabel;
+  if (state) state.textContent = display.title;
   if (badge) {
-    badge.textContent = configured ? `${paystackConnectionMode} mode` : 'Not connected';
+    badge.textContent = display.badge;
     badge.classList.toggle('is-connected', configured);
-    badge.classList.toggle('is-live', paystackConnectionMode === 'live');
+    badge.classList.toggle('is-live', display.live);
   }
+  if (checkPaystackActivationButton) checkPaystackActivationButton.hidden = !configured;
   if (confirmation) confirmation.hidden = !configured;
   if (confirmPaystackReplacement && !configured) confirmPaystackReplacement.checked = false;
   if (connectPaystackButton) connectPaystackButton.textContent = configured ? 'Replace Paystack account' : 'Connect Paystack';
   if (webhook) webhook.textContent = `${window.location.origin}/api/paystack-webhook`;
   if (!paystackSelfServiceAvailable) {
     setPaystackConnectionStatus('This tenant still needs the one-time secure onboarding upgrade before it can connect Paystack.', 'bad');
-  } else if (!configured) {
-    setPaystackConnectionStatus('Paste a Paystack secret key to validate and connect this organisation.');
   } else {
-    setPaystackConnectionStatus('The secret remains encrypted in Cloudflare and is never displayed here.', 'ok');
+    setPaystackConnectionStatus(display.message, pending || !configured ? '' : 'ok');
   }
 }
 
@@ -1279,16 +1285,39 @@ connectPaystackButton?.addEventListener('click', async () => {
     });
     const data = await response.json().catch(() => null);
     if (!response.ok || !data?.ok) throw new Error(data?.message || 'Paystack could not be connected.');
-    paystackConnectionMode = String(data.mode || 'configured').trim().toLowerCase();
+    paystackActivationTracker.remember({ mode: data.mode, fingerprint: data.credentialFingerprint });
     if (confirmPaystackReplacement) confirmPaystackReplacement.checked = false;
-    updatePaystackConnectionUI({ PaystackConnectionMode: paystackConnectionMode, PaystackSelfServiceAvailable: true });
-    setPaystackConnectionStatus(`${data.message} Add the webhook URL shown above in Paystack API Keys & Webhooks.`, 'ok');
-    setStatus('Paystack connection saved securely. The payment deployment is updating.', 'ok');
+    updatePaystackConnectionUI({ PaystackConnectionMode: data.activeMode || paystackConnectionMode, PaystackSelfServiceAvailable: true });
+    setStatus('Paystack key saved securely. Activation is pending deployment. Add the webhook URL shown above in Paystack API Keys & Webhooks.', 'ok');
   } catch (error) {
     setPaystackConnectionStatus(error.message, 'bad');
   } finally {
     if (paystackSecretKeyField) paystackSecretKeyField.value = '';
     window.DynamaxActionFeedback.end(connectPaystackButton);
+    connectPaystackButton.textContent = paystackConfigured() ? 'Replace Paystack account' : 'Connect Paystack';
+  }
+});
+
+checkPaystackActivationButton?.addEventListener('click', async () => {
+  if (!window.DynamaxActionFeedback.begin(checkPaystackActivationButton, 'Checking…')) return;
+  try {
+    const response = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'load', password: unlockedPassword,
+        SettingsScope: settingsScopeField.value,
+        BranchId: settingsScopeField.value === 'branch' ? settingsBranchField.value : ''
+      })
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok || !data?.ok) throw new Error(data?.message || 'Could not check payment activation. Try again.');
+    // Do not reload the form: unrelated, unsaved settings must remain intact.
+    updatePaystackConnectionUI(data.profile || {});
+  } catch (error) {
+    setPaystackConnectionStatus(error.message, 'bad');
+  } finally {
+    window.DynamaxActionFeedback.end(checkPaystackActivationButton);
   }
 });
 

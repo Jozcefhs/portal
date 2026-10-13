@@ -128,7 +128,7 @@ export async function onRequestPost({ request, env }) {
     const webhookUrl = new URL('/api/paystack-webhook', clean(registration.PortalUrl)).href;
     return Response.json({
       ok: true,
-      message: `Paystack ${validation.mode} mode was connected securely. The tenant deployment is queued and normally finishes within five minutes.`,
+      message: `The Paystack ${validation.mode} key was saved securely. Activation is pending a deployment; scheduled deployments can be delayed.`,
       mode: validation.mode,
       connectedAt,
       deploymentQueued: true,

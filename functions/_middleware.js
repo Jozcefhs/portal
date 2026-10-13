@@ -7,7 +7,8 @@ const LOW_READ_IDENTITY_PATHS = new Set([
   '/api/staff-passkey',
   '/api/staff-mfa',
   '/api/admin',
-  '/api/email-provider-readiness'
+  '/api/email-provider-readiness',
+  '/api/paystack-readiness'
 ]);
 
 const PLATFORM_SUBSCRIPTION_PROXY_PATHS = new Set([

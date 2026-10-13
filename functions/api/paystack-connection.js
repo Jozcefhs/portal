@@ -1,5 +1,5 @@
 import { requiredDeploymentIdentity } from '../lib/deployment-identity.js';
-import { paystackSecretMode } from '../lib/paystack-environment.js';
+import { paystackCredentialFingerprint, paystackSecretMode } from '../lib/paystack-environment.js';
 import { normalizePaystackSecretKey } from '../lib/paystack-connection.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { requireSetupAdministrator, resolveSetupSettingsAccess } from '../lib/setup-auth.js';
@@ -87,6 +87,8 @@ export async function onRequestPost({ request, env }) {
       ok: true,
       message: clean(data.message) || 'Paystack connected securely.',
       mode: clean(data.mode),
+      activeMode: currentMode,
+      credentialFingerprint: await paystackCredentialFingerprint(paystackSecretKey),
       connectedAt: clean(data.connectedAt),
       deploymentQueued: data.deploymentQueued === true,
       webhookUrl: clean(data.webhookUrl)
