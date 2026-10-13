@@ -11,6 +11,7 @@ import {
 import { processScheduledChurchAnnouncements } from '../lib/church-announcements.js';
 import { processAttendancePresenceNotifications } from '../lib/attendance-presence-notifications.js';
 import { processLibraryDueReminders } from '../lib/school-library.js';
+import { notificationSchedulerDiagnostic } from '../lib/notification-scheduler-diagnostics.js';
 
 const clean = (value) => String(value ?? '').trim();
 
@@ -30,8 +31,12 @@ function requireSchedulerAuthorization(env, request) {
 }
 
 async function run(context) {
+  let authorized = false;
+  let stage = 'authorization';
   try {
     requireSchedulerAuthorization(context.env, context.request);
+    authorized = true;
+    stage = 'request-validation';
     // Assign a trusted service identity only after verifying the scheduler secret.
     context.data ||= {};
     context.data.securityAuditActor = {
@@ -57,25 +62,30 @@ async function run(context) {
     }
     const announcementsOnly = body.announcementsOnly === true;
     const attendanceOnly = body.attendanceOnly === true;
+    stage = 'school-fee-credits';
     const schoolFeeCredits = announcementsOnly || attendanceOnly || identity.edition !== 'school'
       ? { skipped: true }
       : await processDueSchoolFeeCredits(context.env, {
           today: clean(body.today),
           limit: Number(body.creditLimit || 1000)
         });
+    stage = 'fee-reminders';
     const reminders = announcementsOnly || attendanceOnly ? { skipped: true } : await processFeeReminderSchedule(context.env, {
       today: clean(body.today),
       limit: Number(body.limit || 250)
     });
+    stage = 'library-reminders';
     const libraryReminders = announcementsOnly || attendanceOnly || identity.edition !== 'school'
       ? { skipped: true }
       : await processLibraryDueReminders(context.env, {
           today: clean(body.today), limit: Number(body.libraryLimit || 250)
         });
+    stage = 'school-announcements';
     const schoolAnnouncements = attendanceOnly || identity.edition !== 'school' ? { skipped: true } : await processScheduledSchoolAnnouncements(context.env, {
         now: clean(body.now),
         limit: Number(body.limit || 100)
       });
+    stage = 'organisation-announcements';
     const churchAnnouncements = attendanceOnly || !['faith', 'organization'].includes(identity.edition) ? { skipped: true } : await processScheduledChurchAnnouncements(context.env, {
         now: clean(body.now),
         edition: identity.edition,
@@ -88,16 +98,20 @@ async function run(context) {
       school: schoolAnnouncements,
       church: churchAnnouncements
     };
+    stage = 'announcement-push-queue';
     const announcementPush = attendanceOnly ? { skipped: true } : await processSchoolAnnouncementPushQueue(context.env, {
       now: clean(body.now),
       limit: Number(body.pushJobLimit || 1),
       edition: ['faith', 'organization'].includes(identity.edition) ? 'church' : identity.edition
     });
+    stage = 'attendance-presence';
     const attendancePresence = announcementsOnly ? { skipped: true } : await processAttendancePresenceNotifications(context.env, {
       now: clean(body.now),
       limit: Number(body.attendanceLimit || 2)
     });
+    stage = 'push-delivery-retries';
     const pushRetries = announcementsOnly ? { skipped: true } : await retryFailedPushDeliveries(context.env, { limit: 50 });
+    stage = 'result-summary';
     const creditRunFailed = schoolFeeCredits.ok === false;
     const deliveryFailed = [reminders, libraryReminders, announcements, announcementPush, attendancePresence]
       .some((result) => result.ok === false || Number(result.failed || 0) > 0)
@@ -123,7 +137,12 @@ async function run(context) {
       pushRetries
     }, { status: creditRunFailed ? 500 : 200, headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
-    return Response.json({ ok: false, message: error?.message || String(error) }, {
+    const diagnostic = authorized ? notificationSchedulerDiagnostic(stage, error) : null;
+    if (diagnostic) console.error(JSON.stringify({ event: 'notification-scheduler.failed', ...diagnostic }));
+    return Response.json({ ok: false,
+      message: diagnostic ? `Notification scheduler failed at ${stage}: ${diagnostic.reason}` : error?.message || String(error),
+      ...(diagnostic ? { diagnostic } : {})
+    }, {
       status: error?.status || 500,
       headers: { 'Cache-Control': 'no-store' }
     });

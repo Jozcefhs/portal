@@ -351,6 +351,7 @@ test('scheduler invokes the correct announcement family and queue in all three e
   const url = new URL('../functions/api/notification-scheduler.js', import.meta.url);
   const calls = [];
   globalThis.__faithOrganizationSchedulerMocks = {
+    notificationSchedulerDiagnostic: () => ({ stage: 'unexpected-test-failure' }),
     secureTextEqual: (a, b) => a === b,
     requiredDeploymentIdentity: (env) => ({ edition: env.DYNAMAX_EDITION, workspaceId: 'synthetic' }),
     readJsonBody: async () => ({ announcementsOnly: true })
