@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Payment correction isolated UI fixture</title>
+<link rel="stylesheet" href="../../css/style.css"><link rel="stylesheet" href="../../css/payment-corrections.css">
+<body><main style="padding:24px"><h1>Payment correction UI fixture</h1><p>Simulated data only. No database connection.</p>
+<button id="open">Open correction</button><p id="saved"></p></main><script src="../../js/payment-corrections.js"></script>
+<script>
+const Source = { AccountRef:'TEST/001', DisplayName:'Test Student', ClassName:'Grade 8' };
+const Target = { AccountRef:'TEST/002', DisplayName:'Correct Student', ClassName:'Grade 9' };
+document.getElementById('open').onclick = () => DynamaxPaymentCorrections.open({
+  user:{edition:'school',role:'Accounts Officer',allowedSections:['accounts']},
+  payments:[{Reference:'MANUAL-WALLET',Gateway:'Manual',AccountRef:'TEST/001',Amount:14000},
+    {Reference:'MANUAL-FEES',Gateway:'Manual',AccountRef:'TEST/001',Amount:14000}], accounts:[Source,Target],
+  onSaved:()=>{document.getElementById('saved').textContent='Simulated correction saved.'},
+  fetch:async (url, options)=>{
+    if(url!=='/api/staff-payment-corrections') throw Error('Unexpected fixture request');
+    const input=JSON.parse(options.body), wallet=input.Reference==='MANUAL-WALLET';
+    const Receipt={Reference:input.Reference,Type:wallet?'Wallet':'School fees',Student:Source,OriginalAmount:14000,RemainingAmount:14000};
+    if(input.action==='lookup') return Response.json({ok:true,Receipt});
+    if(!input.Reference || !input.Reason) return Response.json({ok:false,message:'Missing reference or reason'},{status:400});
+    const amount=input.Kind==='reduce'?14000-Number(input.CorrectAmount):14000;
+    return Response.json({ok:true,Receipt,Source,Kind:input.Kind,Amount:amount,RemainingAmount:14000-amount,
+      ...(wallet?{BalanceBefore:14000,BalanceAfter:14000-amount}:{SchoolFees:{Before:{OutstandingBalance:0},After:{OutstandingBalance:amount},Invoices:[{InvoiceId:'INV-TEST',ReleasedCredit:amount,BalanceAfter:amount}]}}),
+      ...(input.Kind==='move'?{Target,TargetBalanceBefore:0,TargetBalanceAfter:amount}:{}),PreviewDigest:'fixture-only',
+      message:input.action==='post'?'Simulated correction posted. No real balances changed.':'Review this simulated correction.'});
+  }
+});
+</script></body></html>

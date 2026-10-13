@@ -10139,6 +10139,16 @@ function renderIncomeDistribution(title, rows = []) {
   </article>`;
 }
 
+function mountFeeCollectionSummary(host) {
+  const node = document.createElement('section');
+  host.append(node);
+  window.DynamaxFeeCollectionSummary?.mount(node, { fetch: staffFetch,
+    getContext: () => ({ username: currentUser?.username, role: currentUser?.assignedRole || currentUser?.role,
+      branch: currentUser?.activeBranchId || currentUser?.branchId, section: currentUser?.schoolSectionAccess,
+      edition: currentUser?.edition, access: currentUser?.allowedSections }) });
+  return node;
+}
+
 function renderIncomeAnalytics(data) {
   if (activeSection !== 'incomeAnalytics') return;
   incomeAnalyticsData = data;
@@ -10211,10 +10221,12 @@ function renderIncomeAnalytics(data) {
       </section>
     </div>`;
   const incomeReport = document.getElementById('incomeAnalyticsReport');
+  const feeSummary = mountFeeCollectionSummary(incomeReport);
   mountWorkspaceTabs('incomeAnalytics', [
     { key: 'overview', label: 'Overview & filters', icon: '\u25A6', nodes: [incomeReport?.querySelector(':scope > .income-filter-card'), incomeReport?.querySelector(':scope > .income-report-period'), [...(incomeReport?.querySelectorAll(':scope > p.status') || [])]] },
     { key: 'trends', label: 'Trends & sources', icon: '\u{1F4CA}', nodes: [incomeReport?.querySelector(':scope > .income-chart-card'), incomeReport?.querySelector(':scope > .income-distribution-grid')] },
-    { key: 'transactions', label: 'Transactions', icon: '\u{1F5C2}', count: (data.transactions || []).length, nodes: incomeReport?.querySelector(':scope > .income-transactions') }
+    { key: 'transactions', label: 'Transactions', icon: '\u{1F5C2}', count: (data.transactions || []).length, nodes: incomeReport?.querySelector(':scope > .income-transactions') },
+    { key: 'feeSummary', label: 'Fee summary', icon: '\u{1F9FE}', nodes: feeSummary }
   ], { host: incomeReport, after: incomeReport?.querySelector(':scope > .workflow-intro') });
   bindIncomeAnalyticsEvents();
 }
@@ -10384,9 +10396,18 @@ async function externalAuditRequest(action, payload = {}) {
 function externalAuditJournalRows() {
   const rows = externalAuditState.journals || [];
   if (!rows.length) return '<tr><td colspan="7">No journals in this branch on this page. Continue to the next page if available.</td></tr>';
-  return rows.map((row) => {
-    const lines = (row.Lines || []).map((line) => `<tr><td>${escapeHtml(line.AccountCode)}</td><td>${escapeHtml(line.Description)}</td><td>${escapeHtml(line.Department)}</td><td>${escapeHtml(Number(line.Debit || 0).toLocaleString('en-NG', { minimumFractionDigits: 2 }))}</td><td>${escapeHtml(Number(line.Credit || 0).toLocaleString('en-NG', { minimumFractionDigits: 2 }))}</td></tr>`).join('');
-    return `<tr><td>${escapeHtml(row.Date)}</td><td><strong>${escapeHtml(row.JournalNo)}</strong><small>${escapeHtml(row.Status)}</small></td><td>${escapeHtml(row.Description || row.SourceType || '—')}</td><td>${escapeHtml(row.BranchId)}</td><td>${escapeHtml(Number(row.TotalDebit || 0).toLocaleString('en-NG', { minimumFractionDigits: 2 }))}</td><td>${escapeHtml(Number(row.TotalCredit || 0).toLocaleString('en-NG', { minimumFractionDigits: 2 }))}</td><td><details><summary>View lines</summary><div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>Account</th><th>Description</th><th>Department</th><th>Debit</th><th>Credit</th></tr></thead><tbody>${lines || '<tr><td colspan="5">No lines recorded.</td></tr>'}</tbody></table></div><small>Source: ${escapeHtml(row.SourceType || '—')} ${escapeHtml(row.SourceId || '')}</small></details><button type="button" class="secondary" data-audit-journal-evidence="${escapeHtml(row.RecordId || row.JournalNo)}">Inspect source evidence</button>${currentUser?.role === 'External Auditor' ? `<button type="button" class="secondary" data-audit-query-journal="${escapeHtml(row.JournalNo)}">Raise finding</button>` : ''}</td></tr>`;
+  return rows.map((row, index) => {
+    const detailId = `external-audit-journal-lines-${index}`;
+    const lines = (row.Lines || []).map((line) => `<tr><td data-label="Account">${escapeHtml(line.AccountCode)}</td><td data-label="Description">${escapeHtml(line.Description)}</td><td data-label="Department">${escapeHtml(line.Department || '—')}</td><td data-label="Debit" class="audit-amount">${escapeHtml(Number(line.Debit || 0).toLocaleString('en-NG', { minimumFractionDigits: 2 }))}</td><td data-label="Credit" class="audit-amount">${escapeHtml(Number(line.Credit || 0).toLocaleString('en-NG', { minimumFractionDigits: 2 }))}</td></tr>`).join('');
+    return `<tr class="audit-journal-summary">
+      <td data-label="Date">${escapeHtml(row.Date)}</td><td data-label="Journal"><strong>${escapeHtml(row.JournalNo)}</strong><small>${escapeHtml(row.Status)}</small></td><td data-label="Description">${escapeHtml(row.Description || row.SourceType || '—')}</td><td data-label="Branch">${escapeHtml(row.BranchId)}</td>
+      <td data-label="Debit" class="audit-amount">${escapeHtml(Number(row.TotalDebit || 0).toLocaleString('en-NG', { minimumFractionDigits: 2 }))}</td><td data-label="Credit" class="audit-amount">${escapeHtml(Number(row.TotalCredit || 0).toLocaleString('en-NG', { minimumFractionDigits: 2 }))}</td>
+      <td data-label="Detail" class="audit-journal-actions"><button type="button" class="secondary" data-audit-toggle-lines aria-expanded="false" aria-controls="${detailId}">View lines</button><button type="button" class="secondary" data-audit-journal-evidence="${escapeHtml(row.RecordId || row.JournalNo)}">Inspect source evidence</button>${currentUser?.role === 'External Auditor' ? `<button type="button" class="secondary" data-audit-query-journal="${escapeHtml(row.JournalNo)}">Raise finding</button>` : ''}</td>
+    </tr><tr class="audit-journal-detail" id="${detailId}" hidden><td colspan="7">
+      <div class="audit-journal-detail-content"><p><strong>Journal lines</strong> · ${escapeHtml(row.JournalNo)}</p>
+      <table class="admin-table audit-journal-lines"><caption class="sr-only">Lines for journal ${escapeHtml(row.JournalNo)}</caption><colgroup><col class="audit-account-col"><col><col class="audit-department-col"><col class="audit-amount-col"><col class="audit-amount-col"></colgroup><thead><tr><th scope="col">Account</th><th scope="col">Description</th><th scope="col">Department</th><th scope="col" class="audit-amount">Debit</th><th scope="col" class="audit-amount">Credit</th></tr></thead><tbody>${lines || '<tr><td colspan="5">No lines recorded.</td></tr>'}</tbody></table>
+      <p class="muted audit-journal-source">Source: ${escapeHtml(row.SourceType || '—')} ${escapeHtml(row.SourceId || '')}</p></div>
+    </td></tr>`;
   }).join('');
 }
 
@@ -10417,7 +10438,7 @@ function renderExternalAudit() {
       <p class="status">Journal entries include fee allocations, parent-credit applications and adjustments. Use Payments &amp; receipts for the amount received in each payment.</p>
       <div class="workflow-primary-actions"><button type="button" id="externalAuditPreview">Preview / print complete journal register</button><button type="button" class="secondary" id="externalAuditExport" ${state.journals.length ? '' : 'disabled'}>Download this page CSV</button></div>
       <p class="muted">Page ${state.page}: ${state.journals.length} visible journal${state.journals.length === 1 ? '' : 's'} from ${state.pageSize || 0} scanned. These are not period totals; continue through all pages for a complete register.</p>
-      <div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>Date</th><th>Journal</th><th>Description</th><th>Branch</th><th>Debit</th><th>Credit</th><th>Detail</th></tr></thead><tbody>${externalAuditJournalRows()}</tbody></table></div>
+      <div class="admin-table-wrap external-audit-journal-register"><table class="admin-table audit-journal-table"><caption class="sr-only">Journal register</caption><colgroup><col class="audit-date-col"><col class="audit-journal-col"><col><col class="audit-branch-col"><col class="audit-amount-col"><col class="audit-amount-col"><col class="audit-actions-col"></colgroup><thead><tr><th scope="col">Date</th><th scope="col">Journal</th><th scope="col">Description</th><th scope="col">Branch</th><th scope="col" class="audit-amount">Debit</th><th scope="col" class="audit-amount">Credit</th><th scope="col">Detail</th></tr></thead><tbody>${externalAuditJournalRows()}</tbody></table></div>
       <div class="workflow-primary-actions"><button type="button" class="secondary" id="externalAuditPrevious" ${state.history.length ? '' : 'disabled'}>Previous page</button><button type="button" id="externalAuditNext" ${state.nextCursor ? '' : 'disabled'}>Next page</button></div>
     </section>
     <section id="externalAuditEvidenceWorkspace" class="external-audit-section" ${['payments', 'records', 'reports'].includes(state.tab) ? '' : 'hidden'}></section>
@@ -10489,6 +10510,13 @@ async function loadExternalAudit() {
 }
 
 function bindExternalAuditEvents() {
+  panelEl.querySelectorAll('[data-audit-toggle-lines]').forEach((button) => button.addEventListener('click', () => {
+    const detail = document.getElementById(button.getAttribute('aria-controls'));
+    if (!detail) return;
+    detail.hidden = !detail.hidden;
+    button.setAttribute('aria-expanded', String(!detail.hidden));
+    button.textContent = detail.hidden ? 'View lines' : 'Hide lines';
+  }));
   panelEl.querySelectorAll('[data-audit-tab]').forEach((button) => button.addEventListener('click', () => {
     externalAuditState.tab = button.dataset.auditTab;
     renderExternalAudit();
@@ -18913,7 +18941,8 @@ function renderSection(active) {
       { label: 'Account', value: (row) => pick(row, ['AccountRef', 'AdmissionNo']) },
       { label: 'Fee', value: (row) => pick(row, ['FeeName', 'FeeCode']) },
       { label: 'Amount', value: (row) => money(pick(row, ['Amount'])) },
-      { label: 'Reference', value: (row) => pick(row, ['Reference']) }
+      { label: 'Reference', value: (row) => pick(row, ['Reference']) },
+      { label: 'Correction', value: row => Number(row.CorrectionTotal) > 0 ? `${row.CorrectionStatus || 'Corrected'} · ${money(row.CorrectionTotal)} adjusted · ${money(Math.max(0, Number(row.Amount) - Number(row.CorrectionTotal)))} remaining` : '—' }
     ]) + table('Invoices', invoices, [
       { label: 'Date', value: (row) => pick(row, ['Date', 'CreatedAt']) },
       { label: 'Account', value: (row) => pick(row, ['AccountRef']) },
@@ -18921,17 +18950,26 @@ function renderSection(active) {
       { label: 'Debit', value: (row) => money(pick(row, ['Debit', 'Amount'])) },
       { label: 'Status', value: (row) => pick(row, ['Status']) }
     ]) + directTransferVerificationWorkspace('schoolDirectTransferVerification', 'School-payment transfers awaiting verification');
+    const feeSummary = mountFeeCollectionSummary(panelEl);
     mountWorkspaceTabs('accounts', [
       { key: 'payments', label: 'Payments', icon: '\u2713', count: payments.length, nodes: [panelEl.querySelector(':scope > .records-desk-handoff'), workspaceTableNodes('Payments')] },
       { key: 'invoices', label: 'Invoices', icon: '\u{1F9FE}', count: invoices.length, nodes: workspaceTableNodes('Invoices') },
       { key: 'wallet', label: 'Wallet setup', icon: '\u{1F4B3}', nodes: document.getElementById('accountWalletSetupWorkspace') },
-      { key: 'transfers', label: 'Transfer verification', icon: '\u{1F50E}', nodes: document.getElementById('schoolDirectTransferVerification') }
+      { key: 'transfers', label: 'Transfer verification', icon: '\u{1F50E}', nodes: document.getElementById('schoolDirectTransferVerification') },
+      { key: 'feeSummary', label: 'Fee summary', icon: '\u{1F9FE}', nodes: feeSummary }
     ]);
     if (window.DynamaxBoardingOfferings?.canAccess(currentUser)) {
       const button = document.createElement('button');
       button.type = 'button'; button.className = 'secondary'; button.textContent = 'Boarding service offerings';
       button.addEventListener('click', () => window.DynamaxBoardingOfferings.open({ fetch: staffFetch, user: currentUser,
         openTutorial: () => openTutorialForSection('boardingOfferings') }));
+      panelEl.querySelector('.workflow-intro')?.append(button);
+    }
+    if (window.DynamaxPaymentCorrections?.canAccess(currentUser)) {
+      const button = document.createElement('button');
+      button.type = 'button'; button.className = 'secondary'; button.textContent = 'Correct manual payment';
+      button.addEventListener('click', () => window.DynamaxPaymentCorrections.open({ fetch: staffFetch, user: currentUser,
+        payments: accounts.payments || [], accounts: accounts.accounts || [], onSaved: () => refreshDashboard() }));
       panelEl.querySelector('.workflow-intro')?.append(button);
     }
     bindAccountWalletSetupWorkspace();

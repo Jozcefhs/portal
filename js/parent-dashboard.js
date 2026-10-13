@@ -1635,10 +1635,15 @@ function renderPayments(child) {
     const item = document.createElement('div');
     item.className = 'activity-item';
     item.innerHTML = `
-      <strong>${title}</strong>
-      <span>${record.Date || ''}${period ? ' | ' + period : ''} | ${isCredit ? '+' : ''}${money(amount)}</span>
-      <small>${record.RecordType || ''}${record.Status ? ' | Status: ' + record.Status : ''}${record.Reference ? ' | Ref: ' + record.Reference : ''}</small>
+      <strong>${escapeHtml(title)}</strong>
+      <span>${escapeHtml(record.Date || '')}${period ? ' | ' + escapeHtml(period) : ''} | ${isCredit ? '+' : '−'}${money(amount)}</span>
+      <small>${escapeHtml(record.RecordType || '')}${record.Status ? ' | Status: ' + escapeHtml(record.Status) : ''}${record.Reference ? ' | Ref: ' + escapeHtml(record.Reference) : ''}</small>
     `;
+    if (Number(record.CorrectionTotal) > 0) {
+      const correction = document.createElement('small');
+      correction.textContent = `Original receipt retained. Corrected by ${money(record.CorrectionTotal)}; remaining credited amount ${money(Math.max(0, Number(amount) - Number(record.CorrectionTotal)))}.`;
+      item.appendChild(correction);
+    }
     target.appendChild(item);
   });
 }

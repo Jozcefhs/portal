@@ -988,6 +988,8 @@ function normalizeApplicationChild(row, profile = {}) {
 
 function normalizeLedger(row) {
   return {
+    CorrectionId: clean(row.CorrectionId), CorrectionTotal: asMoneyNumber(row.CorrectionTotal),
+    OriginalPaymentReference: clean(row.OriginalPaymentReference),
     Date: toDisplayDate(pick(row, ['Date', 'date', 'CreatedAt', 'createdAt'])),
     RawDate: pick(row, ['Date', 'date', 'CreatedAt', 'createdAt', 'PaidAt', 'paidAt']),
     AccountRef: pick(row, ['AccountRef', 'accountRef', 'AdmissionNo', 'admissionNo']),
@@ -1038,6 +1040,7 @@ function normalizeInvoice(row) {
 
 function normalizePayment(row) {
   return {
+    CorrectionTotal: asMoneyNumber(row.CorrectionTotal), CorrectionStatus: clean(row.CorrectionStatus),
     Date: toDisplayDate(pick(row, ['Date', 'date', 'PaidAt', 'paidAt', 'CreatedAt', 'createdAt'])),
     AccountRef: pick(row, ['AccountRef', 'accountRef', 'AdmissionNo', 'admissionNo']),
     ApplicationReference: pick(row, ['ApplicationReference', 'applicationReference']),
@@ -1774,14 +1777,22 @@ function paymentHistoryRows(paymentEntries = [], ledgerEntries = []) {
     const key = paymentGroupKey(record);
     if (!records.has(key)) records.set(key, record);
   });
+  ledgerEntries.filter(isManualPaymentCorrectionDebit).forEach(entry => {
+    records.set(`correction:${entry.CorrectionId}`, { ...entry, RecordType: 'Payment correction',
+      Amount: asMoneyNumber(entry.Debit), Credit: 0, Status: 'Posted' });
+  });
   return [...records.values()].sort((a, b) => clean(b.Date).localeCompare(clean(a.Date)));
+}
+
+function isManualPaymentCorrectionDebit(entry) {
+  return entry.Source === 'Manual Payment Correction' && Boolean(entry.CorrectionId) && asMoneyNumber(entry.Debit) > 0;
 }
 
 function paymentHistoryFor(child, payments, ledger) {
   const paymentEntries = (payments || []).filter((entry) =>
     financialReferenceMatches(entry.AccountRef || entry.AdmissionNo || entry.ApplicationReference, child));
   const ledgerEntries = (ledger || []).filter((entry) => financialReferenceMatches(entry.AccountRef, child) && lower(entry.FeeCategory) !== 'wallet');
-  const paidLedgerEntries = ledgerEntries.filter(isPaidRecord);
+  const paidLedgerEntries = ledgerEntries.filter(row => isPaidRecord(row) || isManualPaymentCorrectionDebit(row));
   return paymentHistoryRows(paymentEntries, paidLedgerEntries);
 }
 
@@ -1806,7 +1817,7 @@ export function paymentHistoryForChild(child, payments, ledger) {
       return !entryMs || entryMs >= childCreatedMs;
     });
     const appLedger = (ledger || []).filter((entry) => {
-      if (lower(entry.FeeCategory) === 'wallet' || !isPaidRecord(entry) || !recordMatchesApplication(entry, appRef)) return false;
+      if (lower(entry.FeeCategory) === 'wallet' || (!isPaidRecord(entry) && !isManualPaymentCorrectionDebit(entry)) || !recordMatchesApplication(entry, appRef)) return false;
       if (!childCreatedMs) return false;
       const entryMs = timestampMs(entry.RawDate || entry.Date);
       return entryMs >= childCreatedMs;

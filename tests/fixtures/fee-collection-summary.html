@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Fee summary test fixture</title>
+<link rel="stylesheet" href="../../css/style.css"><link rel="stylesheet" href="../../css/fee-collection-summary.css">
+<style>body{display:block;padding:20px;background:#f1f6fa}main{max-width:1280px;padding:24px;margin:auto;background:white;border-radius:16px}h1{font-size:24px}@media(max-width:540px){body{padding:8px}main{padding:12px}}</style></head>
+<body><main><h1>Accounts · Fee summary</h1><p>Test fixture — synthetic records only.</p><section id="report"></section></main>
+<script src="../../js/fee-collection-summary.js"></script><script>
+const readTime = new Date().toISOString();
+const definitions = [['TUITION','Tuition fees',125,18500000,42000,4000],['BOARDING','Boarding fees',48,4800000,12000,0],['TRANSPORT','School transport',32,1120000,0,10000],['LAB','Laboratory fees',60,600000,2000,0],['EXAM','Examination fees',0,0,0,0],['SCHOOL_FEES_TOTAL','School fees total',12,910000,0,0]];
+DynamaxFeeCollectionSummary.mount(document.getElementById('report'), {getContext:()=>({edition:'school',branch:'main'}), fetch:async(url,options)=>{
+ const body=JSON.parse(options.body), first=body.collection==='feeItems';
+ const rows=first?definitions.map(([code,name,receipts,gross,gateway,corrections])=>({key:code,code,name,category:'School Fee',currency:'NGN',receipts,grossCents:gross*100,gatewayCents:gateway*100,correctionCents:corrections*100})):[];
+ return {ok:true,json:async()=>({ok:true,rows,warnings:{undated:0,unfinished:0,walletsExcluded:5},scope:{dateFrom:body.dateFrom,dateTo:body.dateTo,branchId:'main',schoolSection:'all',edition:'school'},readTime,scanned:first?277:0,next:first?{collection:'payments',pageToken:''}:null,complete:!first})};
+}});
+</script></body></html>

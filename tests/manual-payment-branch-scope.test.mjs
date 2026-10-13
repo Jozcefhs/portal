@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, webcrypto } from 'node:crypto';
-import { recordManualPayment, enforceDesktopDeviceActionScope } from '../functions/api/backend.js';
+import { recordManualPayment, enforceDesktopDeviceActionScope, syncSchoolAccountCreditJournals } from '../functions/api/backend.js';
+import { handleManualPaymentCorrection } from '../functions/lib/manual-payment-corrections.js';
 import { objectToFirestoreFields, firestoreDocumentToObject } from '../functions/lib/firestore.js';
 
 // Exercise the real backend and Firestore REST serialization. Every request is
@@ -188,6 +189,46 @@ function fixture(t, branch = 'main', section = 'secondary') {
 }
 
 const denied = error => [403, 404, 409].includes(error.status);
+
+test('real Firestore serialization corrects a settled manual school receipt and reconciliation preserves the reopened balance', async t => {
+  const f = fixture(t); f.student();
+  f.put('feeItems', 'TUITION', { FeeCode: 'TUITION', FeeName: 'Tuition', FeeCategory: 'School Fee',
+    ClassName: 'Grade 8', AcademicSession: '2026/2027', Term: 'First Term', Amount: 14000, Active: 'YES', PayableOnline: 'YES' });
+  await f.record({ FeeCode: 'SCHOOL_FEES_TOTAL', Amount: 14000 });
+  const user = { username: 'accountant', assignedRole: 'Accounts Officer', edition: 'school', branchId: 'main',
+    schoolSectionAccess: 'secondary', allowedSections: ['accounts'] };
+  const body = { Reference: 'MANUAL-001', Kind: 'reduce', CorrectAmount: 10000, Reason: 'Proof confirms 10000', OperationId: 'integration-test-0001' };
+  const deps = { authorize: async () => true, now: () => new Date('2026-10-13T10:00:00Z') };
+  const preview = await handleManualPaymentCorrection(f.env, user, { ...body, action: 'preview' }, deps);
+  assert.equal(preview.SchoolFees.After.OutstandingBalance, 4000);
+  await handleManualPaymentCorrection(f.env, user, { ...body, action: 'post', PreviewDigest: preview.PreviewDigest }, deps);
+  assert.equal(f.rows('payments')[0].Amount, 14000);
+  assert.equal(f.rows('payments')[0].CorrectionTotal, 4000);
+  assert.equal(f.rows('invoices')[0].Credit, 10000);
+  assert.equal(f.rows('invoices')[0].Balance, 4000);
+  assert.equal(f.rows('accountSummaries')[0].OutstandingBalance, 4000);
+  const synced = await syncSchoolAccountCreditJournals(f.env, 'STU-001', [], {
+    branchId: 'main', schoolSectionAccess: 'secondary', references: ['STU-001'] });
+  assert.equal(synced.unreconciledAllocation, null);
+  assert.equal(synced.repaired, 0);
+});
+
+test('replaying an original manual receipt cannot overwrite its correction or re-credit the wallet', async t => {
+  const f = fixture(t); f.student(); await f.record();
+  const payment = f.rows('payments')[0], deposit = f.rows('ledger')[0], journal = f.rows('accountingJournals')[0];
+  f.put('payments', payment.__id, { ...payment, LastCorrectionId: 'PC-test', CorrectionTotal: 250 });
+  f.put('ledger', deposit.__id, { ...deposit, CorrectionTotal: 250 });
+  f.put('accountingJournals', journal.__id, { ...journal, PaymentCorrectionTotal: 250 });
+  f.put('ledger', 'PC-test-OUT', { AccountRef: 'STU-001', BranchId: 'main', SchoolSection: 'secondary',
+    FeeCategory: 'Wallet', Debit: 250, Credit: 0, CorrectionId: 'PC-test' });
+  const before = f.mutations.length;
+  const result = await f.record();
+  assert.equal(result.duplicate, true);
+  assert.equal(f.mutations.length, before);
+  assert.equal(f.get('payments', payment.__id).CorrectionTotal, 250);
+  assert.equal(f.get('accountingJournals', journal.__id).PaymentCorrectionTotal, 250);
+  assert.equal(f.rows('ledger').reduce((sum, row) => sum + Number(row.Credit || 0) - Number(row.Debit || 0), 0), 1000);
+});
 
 for (const branch of ['main', 'north']) {
   test(`${branch}: branch-approved laptop may post a wallet top-up only to its authorised account`, async t => {

@@ -4069,6 +4069,55 @@ html[data-theme="dark"] .academic-cbt-paper-preview-page figcaption{color:#dceaf
 .external-audit-section .admin-table td details{min-width:150px}
 .external-audit-section .admin-table td details .admin-table-wrap{max-height:210px;margin:8px 0}
 .external-audit-section .admin-table td button{width:auto;margin:8px 0 0;padding:6px 9px;font-size:11px}
+/* Journal lines belong to the whole entry, not the narrow action column. */
+.external-audit-journal-register{container-type:inline-size;container-name:audit-register;min-width:0;max-width:100%;padding:0}
+.external-audit-journal-register .admin-table{width:100%;min-width:0;table-layout:fixed}
+.external-audit-journal-register .admin-table th,
+.external-audit-journal-register .admin-table td{width:auto;white-space:normal;overflow-wrap:anywhere}
+.external-audit-journal-register .admin-table .audit-amount{text-align:right;white-space:nowrap;overflow-wrap:normal;font-variant-numeric:tabular-nums}
+.external-audit-journal-register .audit-date-col{width:6.75rem}
+.external-audit-journal-register .audit-journal-col{width:23%}
+.external-audit-journal-register .audit-branch-col{width:5rem}
+.external-audit-journal-register .audit-amount-col{width:8rem}
+.external-audit-journal-register .audit-actions-col{width:11rem}
+.external-audit-journal-register .audit-account-col{width:6rem}
+.external-audit-journal-register .audit-department-col{width:16%}
+.external-audit-journal-register .audit-journal-actions button{display:block;max-width:100%;margin:0 0 7px;white-space:normal;text-align:left}
+.external-audit-journal-register .audit-journal-actions button:last-child{margin-bottom:0}
+.external-audit-journal-register .audit-journal-detail[hidden]{display:none!important}
+.external-audit-journal-register .audit-journal-detail>td{padding:0 11px 14px;background:#f3f8fc}
+.audit-journal-detail-content{padding:12px;border:1px solid var(--line);border-radius:8px;min-width:0}
+.audit-journal-detail-content>p{margin:0 0 10px;overflow-wrap:anywhere;white-space:normal}
+.audit-journal-detail-content>.audit-journal-source{margin:10px 0 0;font-size:12px}
+.external-audit-journal-register .audit-journal-lines thead{position:static}
+.external-audit-journal-register .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
+html[data-theme="dark"] .external-audit-journal-register .audit-journal-detail>td{background:#102032;color:#d8e7f6}
+/* Use the available panel width, including when the desktop sidebar is open. */
+@container audit-register (max-width:900px){
+  .external-audit-journal-register .admin-table,
+  .external-audit-journal-register .admin-table>tbody{display:block;width:100%}
+  .external-audit-journal-register .admin-table>colgroup{display:none}
+  .external-audit-journal-register .admin-table>thead{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+  .external-audit-journal-register .audit-journal-summary,
+  .external-audit-journal-register .audit-journal-lines>tbody>tr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));border-bottom:2px solid var(--line)}
+  .external-audit-journal-register .admin-table td{display:block;min-width:0;padding:9px;line-height:1.45}
+  .external-audit-journal-register td[data-label]::before{content:attr(data-label);display:block;margin-bottom:3px;color:var(--muted);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+  .external-audit-journal-register .audit-journal-summary>td:nth-child(4){order:1;text-align:right}
+  .external-audit-journal-register .audit-journal-summary>td:nth-child(2){order:2;grid-column:1/-1}
+  .external-audit-journal-register .audit-journal-summary>td:nth-child(3){order:3;grid-column:1/-1}
+  .external-audit-journal-register .audit-journal-summary>td:nth-child(5){order:4}
+  .external-audit-journal-register .audit-journal-summary>td:nth-child(6){order:5}
+  .external-audit-journal-register .audit-journal-summary>.audit-journal-actions{order:6;grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px}
+  .external-audit-journal-register td.audit-journal-actions[data-label]::before{display:none}
+  .external-audit-journal-register .audit-journal-actions button{margin:0;min-height:36px}
+  .external-audit-journal-register .audit-journal-detail{display:block}
+  .external-audit-journal-register .audit-journal-detail>td{padding:9px}
+  .external-audit-journal-register .audit-journal-lines td:nth-child(2){grid-column:1/-1;order:2}
+  .external-audit-journal-register .audit-journal-lines td:nth-child(4),
+  .external-audit-journal-register .audit-journal-lines td:nth-child(5){order:3}
+  .external-audit-journal-register .admin-table td[colspan]:not([data-label]){grid-column:1/-1}
+  .audit-journal-detail-content{padding:8px}
+}
 .external-audit-findings{display:grid;gap:12px}
 .external-audit-finding{padding:16px;border:1px solid var(--line);border-left:4px solid #087f6d;border-radius:11px;background:#fff;box-shadow:0 4px 14px rgba(16,42,67,.05)}
 .external-audit-finding header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}

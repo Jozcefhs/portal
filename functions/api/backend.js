@@ -479,7 +479,7 @@ export const STUDENT_ACCOUNT_REFERENCE_FIELDS = Object.freeze([
   'AccountRef', 'accountRef', 'ApplicationReference', 'applicationReference'
 ]);
 
-async function findStudentByAccountRef(env, accountRef, requestedScope = null, requestedScopePath = '') {
+export async function findStudentByAccountRef(env, accountRef, requestedScope = null, requestedScopePath = '') {
   const wanted = clean(accountRef);
   if (!wanted) return null;
   const scopePath = validatedIdentityScopePath(requestedScopePath, 'students');
@@ -739,7 +739,7 @@ function normalizeFeeItem(row) {
   };
 }
 
-function normalizeInvoice(row) {
+export function normalizeInvoice(row) {
   row = effectiveInvoiceAfterReversal(row);
   return {
     ...row,
@@ -790,7 +790,7 @@ function normalizePayment(row) {
   };
 }
 
-function normalizeLedger(row) {
+export function normalizeLedger(row) {
   return {
     ...row,
     LedgerNo: pick(row, ['ledgerNo', 'LedgerNo', 'LedgerId', 'LedgerID', '__id']),
@@ -853,6 +853,8 @@ export function requireBackendSecret(env, body) {
 }
 
 const VERIFIED_ACTOR_ACTIONS = new Set([
+  'manualPaymentCorrection',
+  'getFeeCollectionSummary',
   'vendorSettlements',
   'getAccountSnapshot',
   'getSchoolLibrary', 'searchLibraryBorrowers', 'saveLibraryTitle', 'addLibraryCopy', 'restoreLibraryCopy', 'repairLibraryCopyStatus', 'checkoutLibraryCopy',
@@ -933,6 +935,8 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
 // applyDesktopDeviceBranchScope.  Organisation-wide and legacy credentials
 // retain the existing action surface for backwards compatibility.
 const BRANCH_BOUND_DEVICE_ACTIONS = new Set([
+  'manualPaymentCorrection',
+  'getFeeCollectionSummary',
   'vendorSettlements',
   'getSchoolLibrary', 'searchLibraryBorrowers', 'saveLibraryTitle', 'addLibraryCopy', 'restoreLibraryCopy', 'repairLibraryCopyStatus', 'checkoutLibraryCopy',
   'returnLibraryCopy', 'renewLibraryLoan', 'reserveLibraryTitle',
@@ -2011,6 +2015,8 @@ export async function getPayableFees(env, body = {}) {
     queryAccountRows(env, 'invoices', accountRef),
     queryAccountRows(env, 'ledger', accountRef)
   ]);
+  const correctedInvoices = correctedPayableInvoices(invoiceRows, ledgerRows);
+  ledgerRows = payableLedgerAfterPaymentCorrections(ledgerRows);
   const allFees = feeRows.map(normalizeFeeItem)
     .filter((row) => yesNo(row.Active) === 'YES')
     .sort((a, b) => asMoneyNumber(a.SortOrder) - asMoneyNumber(b.SortOrder));
@@ -2196,6 +2202,11 @@ export async function getPayableFees(env, body = {}) {
       paid += generalFeeCreditApplied;
       generalFeeCreditRemaining -= generalFeeCreditApplied;
     }
+    // A corrected receipt can span several invoices. Their net allocations are
+    // authoritative; counting both a settled invoice and the receipt again
+    // would hide the balance reopened on the other invoice.
+    const correctedPaid = correctedInvoicePaidAmount(correctedInvoices, copy);
+    if (correctedPaid !== null && !optionalSubscription && !isWalletFee(fee)) paid = correctedPaid;
     const walletLimit = isWalletFee(fee) ? asMoneyNumber(copy.MaxAmount) : 0;
     const walletTopupRemaining = walletLimit > 0 ? Math.max(0, walletLimit - currentWalletBalance) : originalAmount;
     const balance = optionalSubscription ? originalAmount : (isWalletFee(fee) ? walletTopupRemaining : Math.max(0, originalAmount - paid));
@@ -5066,7 +5077,7 @@ async function seedDefaultFeeItems(env) {
     feeItems: (await listCollection(env, 'feeItems')).map(normalizeFeeItem) };
 }
 
-async function queryAccountRows(env, collection, accountRef, financialScope = null, options = {}) {
+export async function queryAccountRows(env, collection, accountRef, financialScope = null, options = {}) {
   const wanted = clean(accountRef);
   if (!wanted) return [];
   const normalized = normalizeReferenceText(wanted);
@@ -5228,6 +5239,7 @@ async function writePaymentAccountingJournal(env, payment, hasMatchingInvoice, f
   if (edition === 'school' && isAvailableSchoolCreditReceipt(payment)) await seedAccountingChart(env);
   const prior = await readScopedFinancialDocument(env, 'accountingJournals', safeDocumentId(journal.JournalNo), financialScope, 'Payment accounting journal', { accountRequired: false });
   assertManualPaymentDestination(prior, financialScope, journal.SourceId, 'Payment accounting journal', { accountRequired: false });
+  if (prior?.PaymentCorrectionTotal) return prior;
   if (prior && edition === 'school' && isAvailableSchoolCreditReceipt(payment)) {
     if (lower(prior.Status) !== 'posted') {
       const err = new Error('The existing payment journal is not posted; finance review is required.');
@@ -5332,7 +5344,7 @@ export function buildSchoolInvoiceCreditAutomaticJournal(invoice, priorCredit, n
   const priorCents = Math.round(asMoneyNumber(priorCredit) * 100);
   const newCents = Math.round(asMoneyNumber(newCredit) * 100);
   return buildSchoolInvoiceCreditAccountingJournal(invoice, {
-    amount, journalNo: `SYS-INVCREDIT-AUTO-${safeDocumentId(invoiceId)}-${priorCents}-${newCents}`,
+    amount, journalNo: `SYS-INVCREDIT-AUTO-${safeDocumentId(invoiceId)}-${priorCents}-${newCents}${invoice.PaymentCorrectionReleasedCredit ? `-PC${Math.round(asMoneyNumber(invoice.PaymentCorrectionReleasedCredit) * 100)}` : ''}`,
     date: date || nowIso()
   });
 }
@@ -5373,6 +5385,17 @@ export function schoolInvoiceCreditJournalGap(row = {}, journals = []) {
     } else released += asMoneyNumber(debit.Debit);
   }
   if (asMoneyNumber(released) !== asMoneyNumber(invoice.FeeChargeReleasedCredit || 0)) invalidPostedJournalIds.push('Credit release does not match the approved reversal.');
+  let paymentReleased = 0;
+  for (const journal of journals.filter(row => sameText(row.Source, 'Student Payment Correction Credit Release') && sameText(row.SourceId, invoiceId))) {
+    const lines = accountingLines(journal.Lines);
+    const debit = lines.find(line => line.AccountCode === '1100' && asMoneyNumber(line.Debit) > 0);
+    const credit = lines.find(line => line.AccountCode === '2310' && asMoneyNumber(line.Credit) > 0);
+    if (lower(journal.Status) !== 'posted' || !journal.CorrectionId || lines.length !== 2 || !debit || !credit
+      || asMoneyNumber(debit.Debit) !== asMoneyNumber(credit.Credit)) invalidPostedJournalIds.push(clean(journal.JournalNo || journal.__id));
+    else paymentReleased += asMoneyNumber(debit.Debit);
+  }
+  if (asMoneyNumber(paymentReleased) !== asMoneyNumber(invoice.PaymentCorrectionReleasedCredit || 0)) invalidPostedJournalIds.push('Payment correction releases do not match the invoice.');
+  released += paymentReleased;
   const netPosted = asMoneyNumber(posted - released);
   return { invoiceId, expected, posted: netPosted, ...(released > 0 ? { released } : {}), missing: asMoneyNumber(expected - netPosted),
     baselineExists: related.some((journal) => lower(journal.Status) === 'posted' && sameText(journal.JournalNo || journal.__id, baselineJournalNo)),
@@ -5569,6 +5592,31 @@ export async function syncSchoolAccountCreditJournals(env, accountRef, linkedRef
     if (await upsertSystemJournalIfChanged(env, journal, financialScope)) repaired += 1;
   }
   return { repaired, unreconciledLegacyActions, unreconciledAllocation: null };
+}
+
+// Pay-now matches receipts by fee code. Reduce the matching receipt credit for
+// that view only; the persisted ledger keeps both original and compensating rows.
+export function payableLedgerAfterPaymentCorrections(rows = []) {
+  const corrected = new Set(rows.filter(row => !isWalletLedger(row) && asMoneyNumber(row.CorrectionTotal) > 0)
+    .map(row => clean(row.Reference)));
+  return rows.filter(row => !(row.Source === 'Manual Payment Correction' && !isWalletLedger(row)
+    && asMoneyNumber(row.Debit) > 0 && corrected.has(clean(row.OriginalPaymentReference))))
+    .map(row => !isWalletLedger(row) && asMoneyNumber(row.CorrectionTotal) > 0
+      ? { ...row, Credit: Math.max(0, asMoneyNumber(row.Credit) - asMoneyNumber(row.CorrectionTotal)) } : row);
+}
+
+export function correctedPayableInvoices(invoices = [], ledger = []) {
+  if (!ledger.some(row => !isWalletLedger(row) && Number(row.CorrectionTotal) > 0)) return null;
+  const allocated = new Map(calculateDueSchoolFeeCreditAllocations(invoices, ledger).allocations
+    .map(row => [row.invoice.InvoiceId, row.Credit]));
+  return invoices.map(normalizeInvoice).filter(isSchoolFeeInvoice)
+    .map(row => ({ ...row, Credit: allocated.get(row.InvoiceId) ?? row.Credit }));
+}
+
+export function correctedInvoicePaidAmount(invoices, fee) {
+  if (!invoices || !isSchoolFeeInvoice(fee)) return null;
+  const matching = invoices.filter(row => sameText(row.FeeCode, fee.FeeCode) && periodMatchesFee(row, fee));
+  return matching.length ? asMoneyNumber(matching.reduce((sum, row) => sum + asMoneyNumber(row.Credit), 0)) : null;
 }
 
 export function calculateAccountFinancialSummary(invoiceRows = [], ledgerRows = [], accountRef = '', today = new Date().toISOString().slice(0, 10)) {
@@ -5835,6 +5883,7 @@ async function assertManualPaymentDestinations(env, reference, financialScope) {
 
 async function manualPaymentVersion(env, documentId, body, financialScope, creditedAmount) {
   const row = await readScopedFinancialDocument(env, 'payments', documentId, financialScope, 'Payment being posted');
+  if (row?.LastCorrectionId) throw financeFailure('This receipt was corrected during posting. Reload it; the correction must remain intact.', 409);
   if (financialScope && !row) {
     const error = new Error('The payment changed during posting. Refresh and retry its original reference.');
     error.status = 409;
@@ -5883,6 +5932,9 @@ export async function recordManualPayment(env, body) {
   });
   let payment = existingPayment ? normalizePayment(existingPayment) : null;
   if (payment) assertManualPaymentRetry(payment, body, financialScope, requestedCredit);
+  // Never replay the original deposit/allocation over an audited correction.
+  if (payment?.LastCorrectionId) return { ok: true, duplicate: true, payment,
+    message: 'This payment already has an audited correction. Its original receipt and correction remain unchanged.' };
   let duplicate = Boolean(payment);
   let paymentDocumentId = safeDocumentId(existingPayment?.__id || reference);
   if (!payment && await accountingPeriodIsClosed(env, clean(body.PaidAt || body.paidAt) || nowIso())) {
@@ -6009,6 +6061,7 @@ export async function recordManualPayment(env, body) {
   const ledgerNo = `LED-${safeDocumentId(reference)}`;
   const ledgerDocumentIdValue = safeDocumentId(ledgerNo);
   const existingLedger = await readScopedFinancialDocument(env, 'ledger', ledgerDocumentIdValue, financialScope, 'Payment ledger');
+  if (existingLedger?.CorrectionTotal) throw financeFailure('This receipt has an audited correction. Reload its history instead of reposting it.', 409);
   assertManualPaymentDestination(existingLedger, financialScope, reference, 'Payment ledger');
   await upsertDocument(env, 'ledger', safeDocumentId(ledgerNo), {
     LedgerNo: ledgerNo,
@@ -8077,6 +8130,10 @@ export async function saveAccountingJournal(env, body, system = false, options =
     if (!reversalOf) throw financeFailure('Select the original posted journal before reversing it.');
     const original = await getDocumentByIdOrField(env, 'accountingJournals', reversalOf, 'JournalNo');
     if (!original || lower(original.Status) !== 'posted') throw financeFailure('Only a posted journal can be reversed.', 409);
+    if (original.PaymentCorrectionTotal || ['Manual Payment Correction', 'Student Payment Correction Credit Release'].includes(original.Source)
+      || (original.Source === 'Fee Payment' && accountingLines(original.Lines).some(line => ['2200', '2310'].includes(line.AccountCode)))) {
+      throw financeFailure('Use Accounts → Correct manual payment so the receipt, wallet and invoice balances stay in sync. Do not reverse this journal on its own.', 409);
+    }
     const branch = accountingWriteBranch(body, original);
     const canonicalId = await financeOperationId('REV', branch, original.JournalNo);
     // Older clients created a random journal ID with only Reference=REV-<original>.
@@ -11245,6 +11302,36 @@ async function getSystemHealth(env, body) {
 
 async function routeAction(env, action, body = {}, deploymentIdentity = null, publicOrigin = '') {
   switch (action) {
+    case 'getFeeCollectionSummary': {
+      const branchId = accountingRequestBranch(body);
+      const access = await staffAccessFor(env, {
+        username: clean(body.UserUsername), role: clean(body.UserRole),
+        assignedRole: clean(body.UserAssignedRole || body.UserRole), branchId,
+        schoolSectionAccess: clean(body.UserSchoolSectionAccess), tabAccess: body.UserTabAccess,
+        department: clean(body.UserDepartment)
+      });
+      const { getFeeCollectionSummaryPage } = await import('../lib/fee-collection-summary.js');
+      return getFeeCollectionSummaryPage(env, { ...access, username: clean(body.UserUsername),
+        assignedRole: clean(body.UserAssignedRole || body.UserRole), branchId,
+        schoolSectionAccess: clean(body.UserSchoolSectionAccess || 'All'),
+        edition: deploymentIdentity?.edition || access.edition
+      }, { ...body, branchId });
+    }
+    case 'manualPaymentCorrection': {
+      const branchId = accountingRequestBranch(body);
+      const access = await staffAccessFor(env, {
+        username: clean(body.UserUsername), role: clean(body.UserRole),
+        assignedRole: clean(body.UserAssignedRole || body.UserRole), branchId,
+        schoolSectionAccess: clean(body.UserSchoolSectionAccess), tabAccess: body.UserTabAccess,
+        department: clean(body.UserDepartment)
+      });
+      const { handleManualPaymentCorrection } = await import('../lib/manual-payment-corrections.js');
+      return handleManualPaymentCorrection(env, { ...access, username: clean(body.UserUsername),
+        displayName: clean(body.RecordedBy), assignedRole: clean(body.UserAssignedRole || body.UserRole),
+        branchId, schoolSectionAccess: clean(body.UserSchoolSectionAccess || 'All'),
+        edition: deploymentIdentity?.edition || access.edition, sourcePlatform: 'Desktop'
+      }, { ...body, action: body.Command });
+    }
     case 'vendorSettlements': {
       const access = await staffAccessFor(env, {
         username: clean(body.UserUsername), role: clean(body.UserRole),
