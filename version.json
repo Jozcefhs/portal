@@ -1,7 +1,7 @@
 {
-  "version": "3.1.23",
+  "version": "3.1.24",
   "channel": "stable",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.23.exe",
-  "sha256": "58bef729e03975723bd3ffb6032306ac05135c25a5e3e8c74dd4952f3e02937b",
-  "notes": "Dynamax Desktop v3.1.23 adds Procurement access across editions, Clinic visit stock deductions, Help and devices, configurable support and FAQs, and a verified Student CBT Android download from the local CBT server. Includes the recent finance, inventory, account and CBT reliability repairs. Companion portal updates add Procurement CSV batch uploads and aligned stock headers."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.24.exe",
+  "sha256": "50abb1c5a77c2c889365e118fcfb2a79e3de31badb37dc1dd4c7b02fa0f38d44",
+  "notes": "Dynamax Desktop v3.1.24 adds date-filtered fee collection summaries with print preview and CSV export across editions, and audited corrections for manual wallet and school-fee payments. Includes vendor approval and product revocation controls and the latest account and correspondence repairs. Requires the updated companion backend."
 }
