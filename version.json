@@ -1,7 +1,7 @@
 {
-  "version": "3.1.24",
+  "version": "3.1.25",
   "channel": "stable",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.24.exe",
-  "sha256": "50abb1c5a77c2c889365e118fcfb2a79e3de31badb37dc1dd4c7b02fa0f38d44",
-  "notes": "Dynamax Desktop v3.1.24 adds date-filtered fee collection summaries with print preview and CSV export across editions, and audited corrections for manual wallet and school-fee payments. Includes vendor approval and product revocation controls and the latest account and correspondence repairs. Requires the updated companion backend."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.25.exe",
+  "sha256": "581e177efdbbe8f49de72138134ba97d30e92c21ce0482b7f201e0e1e42d9a71",
+  "notes": "Dynamax Desktop v3.1.25 combines matching fee components across day and boarding variants while keeping currencies separate, preserves horizontal scrolling, and clarifies vendor requisition print previews. Includes branch-scoped fee setup and hotel room previews with secure physical-key dispenser management. Requires the updated companion backend; dispenser hardware must be configured and physically tested."
 }
