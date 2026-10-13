@@ -20,6 +20,7 @@ const departureInput = document.getElementById('hotelDepartureDate');
 const organisationNode = document.getElementById('hotelBookingOrganisation');
 const logoNode = document.getElementById('hotelBookingLogo');
 let availableRooms = [];
+let roomTypeMedia = [];
 let roomPage = 0;
 let availabilityRequest = 0;
 const ROOMS_PER_PAGE = 12;
@@ -89,6 +90,7 @@ function filteredRooms() {
 }
 
 function renderRoomPage() {
+  renderRoomShowcase();
   if (!availableRooms.length) {
     roomCount.textContent = '';
     roomPager.hidden = true;
@@ -96,6 +98,11 @@ function renderRoomPage() {
     return;
   }
   const rooms = filteredRooms();
+  if (!rooms.some(room => clean(room.RoomId) === selectedRoomId.value)) {
+    selectedRoomId.value = rooms[0]?.RoomId || '';
+    delete bookingForm.dataset.idempotencyKey;
+    updateTotal();
+  }
   const pageCount = Math.max(1, Math.ceil(rooms.length / ROOMS_PER_PAGE));
   roomPage = Math.min(roomPage, pageCount - 1);
   roomCount.textContent = rooms.length === availableRooms.length
@@ -113,6 +120,20 @@ function renderRoomPage() {
   roomPageLabel.textContent = `Page ${roomPage + 1} of ${pageCount}`;
   roomPrevious.disabled = roomPage === 0;
   roomNext.disabled = roomPage >= pageCount - 1;
+}
+
+function renderRoomShowcase() {
+  const container = document.getElementById('hotelRoomShowcase');
+  if (!container) return;
+  const types = roomType.value ? [roomType.value] : [...new Set(availableRooms.map(room => room.RoomType))];
+  container.innerHTML = roomTypeMedia.filter(row => types.includes(row.RoomType)).map(row => {
+    const url = clean(row.MediaUrl);
+    if (!/^\/api\/hotel-room-media\?id=[a-f0-9]{64}$/.test(url)) return '';
+    return `<article class="hotel-type-preview">${row.MediaType === 'video'
+      ? `<video controls playsinline preload="metadata" src="${escapeHtml(url)}" aria-label="${escapeHtml(row.RoomType)} room preview"></video>`
+      : `<img src="${escapeHtml(url)}" loading="lazy" alt="${escapeHtml(row.RoomType)} room preview">`}<div><h3>${escapeHtml(row.RoomType)}</h3><p>${escapeHtml(row.Description || 'Explore this room type, then choose an available room below.')}</p></div></article>`;
+  }).join('');
+  container.hidden = !container.innerHTML;
 }
 
 function renderRooms(rooms = [], preferredRoomId = '') {
@@ -172,6 +193,7 @@ async function loadAvailability() {
     if (request !== availabilityRequest) return;
     if (!response.ok || !data?.ok) throw new Error(data?.message || 'Room availability could not be loaded.');
     if (clean(data.organisationName)) organisationNode.textContent = clean(data.organisationName);
+    roomTypeMedia = data.roomTypes || [];
     renderRooms(data.rooms || [], preferredRoomId);
   } catch (error) {
     if (request !== availabilityRequest) return;
@@ -222,12 +244,22 @@ bookingForm.addEventListener('submit', async (event) => {
   bookingButton.textContent = 'Preparing secure payment…';
   setStatus('Confirming availability and creating your reservation…');
   try {
+    // Persist access before payment. Never use the public payment reference as
+    // authority to reveal a room key code.
+    let guestAccessToken = bookingForm.dataset.guestAccessToken;
+    if (!guestAccessToken) {
+      guestAccessToken = [...crypto.getRandomValues(new Uint8Array(32))].map(n => n.toString(16).padStart(2, '0')).join('');
+      bookingForm.dataset.guestAccessToken = guestAccessToken;
+    }
+    localStorage.setItem('hotelBookingStorageCheck', '1');
+    localStorage.removeItem('hotelBookingStorageCheck');
     const turnstile = window.DynamaxPublicApi?.getTurnstileToken
       ? await window.DynamaxPublicApi.getTurnstileToken('hotel_booking')
       : {};
     const payload = {
       ...Object.fromEntries(new FormData(bookingForm).entries()),
       ...turnstile,
+      GuestAccessToken: guestAccessToken,
       idempotencyKey
     };
     const response = await fetch('/api/public-hotel', {
@@ -245,6 +277,7 @@ bookingForm.addEventListener('submit', async (event) => {
     }
     const paymentUrl = clean(data.authorizationUrl);
     if (!/^https:\/\/[A-Za-z0-9.-]+(?:\/|$)/.test(paymentUrl)) throw new Error('The secure payment address was not returned.');
+    localStorage.setItem(`hotelGuest:${data.reference}`, JSON.stringify({ ReservationId: data.reservationId, GuestAccessToken: guestAccessToken }));
     setStatus('Reservation saved. Opening secure Paystack checkout…', 'ok');
     window.location.assign(paymentUrl);
   } catch (error) {

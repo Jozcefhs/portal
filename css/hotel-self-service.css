@@ -1,0 +1,14 @@
+.hotel-setup-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin-top:20px}
+.hotel-setup-grid>.panel{min-width:0;margin:0;display:flex;flex-direction:column;align-items:stretch;gap:12px}
+.hotel-setup-grid h3,.hotel-setup-grid p{margin:0}.hotel-setup-grid label{display:grid;gap:6px;min-width:0;width:100%}
+.hotel-setup-grid input,.hotel-setup-grid select,.hotel-setup-grid textarea{width:100%;min-width:0;box-sizing:border-box}
+.hotel-setup-grid .hotel-check{display:flex;align-items:flex-start;gap:9px}.hotel-setup-grid .hotel-check input{width:18px;flex:0 0 18px;margin-top:3px}
+.hotel-media-previews{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.hotel-media-previews figure{margin:0}.hotel-media-previews img,.hotel-media-previews video{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:8px}.hotel-media-previews figcaption{padding:5px 0}
+#hotelDeviceToken{padding:14px;background:#e5f8f1;border:1px solid #098477;border-radius:10px}#hotelDeviceToken[hidden]{display:none}
+.hotel-collection-pass{max-width:680px;margin:40px auto;padding:28px;border:1px solid #ccddeb;border-radius:18px;background:white;color:#17314b;font:16px/1.6 system-ui,sans-serif}
+.hotel-collection-pass .collection-code{display:block;font-size:clamp(36px,9vw,64px);letter-spacing:.16em;font-weight:800;color:#087d70;margin:18px 0;white-space:nowrap}
+.hotel-collection-pass button,.hotel-collection-pass .button{display:inline-block;padding:12px 16px;border:0;border-radius:9px;background:#1466dc;color:#fff;font-weight:700;cursor:pointer;text-decoration:none}.hotel-collection-pass a{overflow-wrap:anywhere}
+.hotel-collection-pass [hidden]{display:none!important}.hotel-collection-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:20px}
+@media(max-width:800px){.hotel-setup-grid{grid-template-columns:1fr}.hotel-collection-pass{margin:16px;padding:20px}}
+@media print{.hotel-collection-actions{display:none}.hotel-collection-pass{border:0;margin:0}}
+.hotel-collection-pass pre{overflow:auto;padding:14px;border-radius:9px;background:#edf4f8;font-size:13px}

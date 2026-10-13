@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer"><meta name="robots" content="noindex,nofollow">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'">
+<title>Your hotel key collection</title><link rel="stylesheet" href="css/hotel-self-service.css?v=20261013">
+<script src="js/hotel-key-collection.js?v=20261013" defer></script></head>
+<body><main class="hotel-collection-pass"><p>HOTEL SELF-SERVICE</p><h1>Your room key</h1>
+<p id="collectionStatus" role="status">Checking your private booking link…</p>
+<section id="collectionDetails" hidden><h2 id="collectionRoom"></h2><p id="collectionStay"></p>
+<output id="collectionCode" class="collection-code" aria-label="Six-digit key collection code"></output>
+<p id="collectionWindow"></p><p id="collectionMessage"></p></section>
+<div class="hotel-collection-actions"><button id="refreshCollection" type="button">Refresh status</button>
+<button id="copyCollectionLink" type="button">Copy private booking link</button><button id="printCollection" type="button">Print / save pass</button></div>
+<p>Keep your code and private link secure. The code releases one ordinary physical key for your booked room. Do not retry the machine after a jam or uncertain release—contact reception.</p>
+<p>Your code is shown here, not sent by email or SMS. Save the private link before closing this page.</p>
+</main></body></html>

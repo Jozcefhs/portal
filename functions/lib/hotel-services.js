@@ -8,6 +8,7 @@ import { normalizeOrganizationEdition, resolveOrganizationConfig } from './organ
 import { branchPaymentConfiguration, withPaystackBranchRouting } from './direct-bank-transfer.js';
 import QRCode from 'qrcode';
 import { enforceActorBranch } from './branch-scope.js';
+import { guestAccessWrite, hotelSelfServiceAction, hotelSelfServiceData, publicRoomMedia, assertNoKeyHandoff } from './hotel-self-service.js';
 
 const PAYSTACK_INIT_URL = 'https://api.paystack.co/transaction/initialize';
 
@@ -74,11 +75,11 @@ function actorName(user = {}) {
   return clean(user.displayName || user.RecordedBy || user.username || user.UserUsername) || 'Staff user';
 }
 
-function branchIdFor(user = {}, body = {}) {
+export function branchIdFor(user = {}, body = {}) {
   return enforceActorBranch({ ...user, branchId: user.branchId || user.BranchId || user.UserBranchId }, body.BranchId || body.branchId, '', 'main');
 }
 
-function hotelWrite(collectionPath, documentId, data, existing = null) {
+export function hotelWrite(collectionPath, documentId, data, existing = null) {
   if (existing && !clean(existing.__updateTime)) throw inputError('The hotel record version is unavailable. Refresh and try again.', 409);
   const payload = { ...data };
   for (const key of ['__id', '__name', '__createTime', '__updateTime']) delete payload[key];
@@ -93,7 +94,7 @@ function bookingRoomGuard(room, timestamp) {
     { ...room, BookingRevisionAt: timestamp }, room);
 }
 
-async function commitHotelChange(env, writes) {
+export async function commitHotelChange(env, writes) {
   try { return await batchCommitDocuments(env, writes); }
   catch (error) {
     if ([409, 412].includes(Number(error.status))) throw inputError('Hotel records changed during this action. Refresh and try again; nothing was partially saved.', 409);
@@ -116,7 +117,7 @@ export function hotelCapabilities(user = {}) {
   };
 }
 
-function requireCapability(user, capability) {
+export function requireCapability(user, capability) {
   const capabilities = hotelCapabilities(user);
   if (!capabilities[capability]) throw inputError('This staff account is not allowed to perform that hotel action.', 403);
   return capabilities;
@@ -130,7 +131,7 @@ async function hotelOrganization(env) {
   return resolveOrganizationConfig({ env, organizationProfile, legacyProfile });
 }
 
-async function requireHotelOrganization(env) {
+export async function requireHotelOrganization(env) {
   const organization = await hotelOrganization(env);
   const edition = normalizeOrganizationEdition(organization.Edition);
   if (!['faith', 'organization'].includes(edition)) {
@@ -167,7 +168,7 @@ function nightsBetween(arrivalDate, departureDate) {
   return Math.round((end - start) / 86400000);
 }
 
-async function branchRows(env, collection, branchId) {
+export async function branchRows(env, collection, branchId) {
   const rows = await queryCollection(env, collection, {
     filters: [{ field: 'BranchId', op: '==', value: branchId }],
     limit: 1001
@@ -294,6 +295,7 @@ export async function listHotelServices(env, user, body = {}) {
     edition,
     branchId,
     capabilities,
+    ...await hotelSelfServiceData(env, branchId, capabilities),
     rooms: operationalRooms.sort((a, b) => clean(a.RoomNumber).localeCompare(clean(b.RoomNumber), undefined, { numeric: true })),
     reservations: decoratedReservations.sort((a, b) => `${clean(b.ArrivalDate)}|${clean(b.CreatedAt)}`.localeCompare(`${clean(a.ArrivalDate)}|${clean(a.CreatedAt)}`)),
     charges: charges.sort((a, b) => clean(b.ChargeDate || b.CreatedAt).localeCompare(clean(a.ChargeDate || a.CreatedAt))),
@@ -310,6 +312,7 @@ export async function saveHotelRoom(env, user, body = {}) {
   const room = normalizeHotelRoom(body.room || body.Room || body, branchId);
   const existing = await getDocument(env, HOTEL_COLLECTIONS.rooms, safeId(room.RoomId)).catch(() => null);
   if (existing && clean(existing.BranchId) !== branchId) throw inputError('That room belongs to another branch.', 403);
+  assertNoKeyHandoff(existing);
   // The full room editor must also support completing housekeeping maintenance.
   // An explicit room-status restriction with unchanged housekeeping is retained.
   if (existing && lower(existing.HousekeepingStatus) === 'maintenance'
@@ -344,6 +347,8 @@ export async function saveHotelReservation(env, user, body = {}) {
   if (reservation.Adults + reservation.Children > Math.max(1, number(room.Capacity))) throw inputError('The guest count exceeds the selected room capacity.');
   const existing = await getDocument(env, HOTEL_COLLECTIONS.reservations, safeId(reservation.ReservationId)).catch(() => null);
   if (existing && clean(existing.BranchId) !== branchId) throw inputError('That reservation belongs to another branch.', 403);
+  assertNoKeyHandoff(existing);
+  assertNoKeyHandoff(room);
   if (existing && !clean(reservationInput.Status || reservationInput.status)) reservation.Status = existing.Status;
   if (existing && ['checked out', 'cancelled', 'no show'].includes(lower(existing.Status))) throw inputError('A completed or cancelled reservation is locked.');
   if ((!existing && reservation.Status !== 'Reserved') || (existing && reservation.Status !== existing.Status)) {
@@ -388,6 +393,7 @@ export async function changeHotelReservationStatus(env, user, body = {}) {
   const status = normalizedStatus(body.Status || body.status, RESERVATION_STATUSES, 'reservation status');
   const reservation = await getDocument(env, HOTEL_COLLECTIONS.reservations, safeId(reservationId)).catch(() => null);
   if (!reservation || clean(reservation.BranchId) !== branchId) throw inputError('Reservation not found in this branch.', 404);
+  assertNoKeyHandoff(reservation);
   const current = clean(reservation.Status);
   const allowed = {
     Reserved: new Set(['Checked In', 'Cancelled', 'No Show']),
@@ -399,6 +405,7 @@ export async function changeHotelReservationStatus(env, user, body = {}) {
     throw inputError('The room is unavailable. Complete maintenance or choose another room before check-in.', 409);
   }
   if (!room || clean(room.BranchId) !== branchId) throw inputError('The reservation room could not be verified.', 409);
+  assertNoKeyHandoff(room);
   if (status === 'Checked In') {
     const stays = await branchRows(env, HOTEL_COLLECTIONS.reservations, branchId);
     if (stays.some(row => clean(row.ReservationId) !== reservationId && clean(row.RoomId) === clean(reservation.RoomId) && row.Status === 'Checked In')) {
@@ -438,7 +445,8 @@ export async function changeHotelReservationStatus(env, user, body = {}) {
         : lower(room.Status) === 'occupied' ? clean(room.Status) : 'Available';
     const housekeepingStatus = status === 'Checked Out' && lower(room.HousekeepingStatus) !== 'maintenance'
       ? 'Dirty' : clean(room.HousekeepingStatus || 'Clean');
-    const updatedRoom = { ...room, Status: roomStatus, HousekeepingStatus: housekeepingStatus, UpdatedAt: timestamp, UpdatedBy: actorName(user) };
+    const updatedRoom = { ...room, Status: roomStatus, HousekeepingStatus: housekeepingStatus, UpdatedAt: timestamp, UpdatedBy: actorName(user),
+      ...(['Checked In', 'Checked Out'].includes(status) ? { KeyStocked: false } : {}) };
     delete updatedRoom.__id; delete updatedRoom.__name; delete updatedRoom.__updateTime;
     writes.push(hotelWrite(HOTEL_COLLECTIONS.rooms, reservation.RoomId, updatedRoom, room));
   }
@@ -458,6 +466,7 @@ export async function recordHotelCharge(env, user, body = {}) {
   const reservation = await getDocument(env, HOTEL_COLLECTIONS.reservations, safeId(reservationId)).catch(() => null);
   if (!reservation || clean(reservation.BranchId) !== branchId) throw inputError('Reservation not found in this branch.', 404);
   if (['checked out', 'cancelled', 'no show'].includes(lower(reservation.Status))) throw inputError('Charges cannot be added to a finalized reservation.', 409);
+  assertNoKeyHandoff(reservation);
   const chargeId = safeId(body.ChargeId || body.chargeId || `CHG-${crypto.randomUUID()}`);
   const payload = {
     ChargeId: chargeId, ReservationId: reservationId, BranchId: branchId,
@@ -576,6 +585,7 @@ export async function setHotelHousekeepingStatus(env, user, body = {}) {
   const housekeepingStatus = normalizedStatus(body.HousekeepingStatus || body.housekeepingStatus, HOUSEKEEPING_STATUSES, 'housekeeping status');
   const room = await getDocument(env, HOTEL_COLLECTIONS.rooms, safeId(roomId)).catch(() => null);
   if (!room || clean(room.BranchId) !== branchId) throw inputError('Room not found in this branch.', 404);
+  assertNoKeyHandoff(room);
   const timestamp = nowIso();
   const updatedRoom = {
     ...await resolveHotelHousekeepingRoom(env, { ...room, RoomId: roomId }, housekeepingStatus, branchId),
@@ -656,9 +666,10 @@ export async function getPublicHotelAvailability(env, body = {}) {
   if (arrivalDate && nightsBetween(arrivalDate, departureDate) < 1) {
     throw inputError('Departure date must be after the arrival date.');
   }
-  const [rooms, reservations] = await Promise.all([
+  const [rooms, reservations, media] = await Promise.all([
     branchRows(env, HOTEL_COLLECTIONS.rooms, branchId),
-    arrivalDate ? branchRows(env, HOTEL_COLLECTIONS.reservations, branchId) : Promise.resolve([])
+    arrivalDate ? branchRows(env, HOTEL_COLLECTIONS.reservations, branchId) : Promise.resolve([]),
+    publicRoomMedia(env, branchId)
   ]);
   const conflictingRoomIds = new Set(reservations.filter((row) => (
     !['cancelled', 'no show', 'checked out'].includes(lower(row.Status)) &&
@@ -678,6 +689,7 @@ export async function getPublicHotelAvailability(env, body = {}) {
     paymentRequiredBeforeCheckIn: true,
     arrivalDate,
     departureDate,
+    roomTypes: media,
     rooms: availableRooms
   };
 }
@@ -695,6 +707,7 @@ export async function initPublicHotelReservationPayment(env, body = {}, requestO
   if (!paymentConfiguration.online.enabled) throw inputError('Automated online payment is disabled for this branch.', 503);
 
   const reservationId = safeId(`RSV-WEB-${crypto.randomUUID()}`);
+  const accessWrite = await guestAccessWrite(reservationId, branchId, body.GuestAccessToken);
   const reservation = normalizeHotelReservation({
     ReservationId: reservationId,
     GuestName: clean(body.GuestName || body.guestName).slice(0, 160),
@@ -804,7 +817,8 @@ export async function initPublicHotelReservationPayment(env, body = {}, requestO
     await batchCommitDocuments(env, [
       bookingRoomGuard(room, timestamp),
       { collectionPath: HOTEL_COLLECTIONS.reservations, documentId: reservationId, data: storedReservation, exists: false },
-      { collectionPath: 'paymentIntents', documentId: safeId(reference), data: intent, exists: false }
+      { collectionPath: 'paymentIntents', documentId: safeId(reference), data: intent, exists: false },
+      ...(accessWrite ? [accessWrite] : [])
     ]);
   } catch (error) {
     error.status = 502;
@@ -937,7 +951,10 @@ export async function handleHotelAction(env, user, body = {}) {
   else if (['recordcharge', 'recordhotelcharge'].includes(action)) await recordHotelCharge(env, user, body);
   else if (['recordpayment', 'recordhotelpayment'].includes(action)) await recordHotelPayment(env, user, body);
   else if (['sethousekeepingstatus', 'sethotelhousekeepingstatus'].includes(action)) await setHotelHousekeepingStatus(env, user, body);
-  else throw inputError('Choose a valid Hotel Services action.');
+  else {
+    const extra = await hotelSelfServiceAction(env, user, body);
+    return { ...await listHotelServices(env, user, body), ...extra };
+  }
   const result = await listHotelServices(env, user, body);
   result.message = ({
     saveroom: 'Room saved.', savehotelroom: 'Room saved.',

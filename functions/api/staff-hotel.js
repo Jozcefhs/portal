@@ -59,7 +59,7 @@ export async function onRequestPost(context) {
       error.status = 403;
       throw error;
     }
-    const body = await readJsonBody(request, { maxBytes: 256 * 1024 });
+    const body = await readJsonBody(request, { maxBytes: 12 * 1024 * 1024 });
     const result = await handleHotelAction(env, user, body);
     return response(await withSelfServiceQr(env, user, result, request));
   } catch (error) {

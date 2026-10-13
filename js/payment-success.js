@@ -205,6 +205,20 @@ async function verifyPayment() {
               ? 'Your gift has been recorded. An official receipt will be sent to your email.'
               : 'Your payment has been recorded with the Accounts Office.')));
     details.appendChild(note);
+    if (isHotel) {
+      let access = null;
+      try { access = JSON.parse(localStorage.getItem(`hotelGuest:${reference}`) || 'null'); } catch {}
+      if (/^RSV-WEB-[a-f0-9-]{36}$/.test(access?.ReservationId || '') && /^[a-f0-9]{64}$/.test(access?.GuestAccessToken || '')) {
+        const link = document.createElement('a');
+        link.className = 'btn';
+        link.href = `hotel-key-collection.html#${new URLSearchParams({ reservation: access.ReservationId, token: access.GuestAccessToken })}`;
+        link.textContent = 'View six-digit key collection code';
+        details.appendChild(link);
+        note.textContent = 'Payment confirmed. Open your private key collection pass below. If a dispenser is not configured, reception will provide your key.';
+      } else {
+        note.textContent = 'Payment confirmed. To retrieve your collection pass, return to the browser used to book, or contact reception. A payment reference alone cannot unlock a room key.';
+      }
+    }
     if (isFormPurchase) {
       const link = document.createElement('p');
       const anchor = document.createElement('a');

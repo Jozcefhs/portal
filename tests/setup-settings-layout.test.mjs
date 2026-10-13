@@ -23,5 +23,5 @@ test('terminology remains organisation-scoped and hidden from branch-locked and 
 
 test('settings stylesheet and offline shell refresh for the heading repair', () => {
   assert.match(html, /css\/style\.css\?v=[^"]*20261013-settings-heading/);
-  assert.match(worker, /dynamax-v375-paystack-activation/);
+  assert.match(worker, /dynamax-v376-hotel-self-service/);
 });

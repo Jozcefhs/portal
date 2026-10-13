@@ -179,7 +179,7 @@ test('web and desktop backend routes expose the full hotel workflow behind staff
 
 test('Hotel Services uses task tabs and blocks unpaid check-in in both UI and backend', () => {
   for (const label of [
-    'Reservations & check-in', 'Rooms & housekeeping', 'Charges', 'Payments', 'Self-service QR'
+    'Reservations & check-in', 'Rooms & housekeeping', 'Charges', 'Payments', 'QR, room previews & keys'
   ]) assert.match(adminJs, new RegExp(label.replace(/[&]/g, '\\&')));
   assert.match(adminJs, /Payment required/);
   assert.match(hotelService, /Full payment is required before \$\{action\}/);

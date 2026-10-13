@@ -9,7 +9,7 @@
   <link rel="icon" href="images/Logo.png">
   <script src="js/preferences.js?v=20260726-biometric"></script>
   <link rel="stylesheet" href="css/style.css?v=20260903-hotel-tabs">
-  <link rel="stylesheet" href="css/hotel-booking.css?v=20260927-compact-room-picker">
+  <link rel="stylesheet" href="css/hotel-booking.css?v=20261013-room-previews">
 </head>
 <body class="hotel-booking-page">
   <main class="hotel-booking-shell">
@@ -54,6 +54,7 @@
             <label>Sort rooms<select id="hotelRoomSort"><option value="number">Room number</option><option value="price-asc">Lowest price</option><option value="price-desc">Highest price</option></select></label>
           </div>
           <p id="hotelRoomCount" class="hotel-room-count" role="status" aria-live="polite"></p>
+          <div id="hotelRoomShowcase" class="hotel-room-showcase" aria-label="Room-type photos and videos" hidden></div>
           <div id="hotelRoomChoices" class="hotel-room-choices" role="group" aria-label="Choose an available room">
             <p class="muted">Checking room availability…</p>
           </div>
@@ -82,6 +83,6 @@
     </section>
   </main>
   <script src="js/site-config.js?v=20260809-branded-app-icon"></script>
-  <script src="js/hotel-booking.js?v=20260930-identifier-search"></script>
+  <script src="js/hotel-booking.js?v=20261013-room-previews-keys"></script>
 </body>
 </html>

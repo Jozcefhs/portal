@@ -4,6 +4,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 import { enforceActorBranch } from '../functions/lib/branch-scope.js';
 import * as procurementGuards from '../functions/lib/procurement-inventory-guard.js';
+import { assertNoKeyHandoff, guestAccessWrite } from '../functions/lib/hotel-self-service.js';
 
 const root = new URL('../', import.meta.url);
 const clone = value => value == null ? value : structuredClone(value);
@@ -43,6 +44,9 @@ function database() {
 }
 async function load(file, db, extra = {}, slice) {
   const context = {
+    assertNoKeyHandoff, guestAccessWrite,
+    hotelSelfServiceData: async () => ({ roomTypes: [], keyDispenser: null }),
+    publicRoomMedia: async () => [],
     ...procurementGuards,
     loadProcurementInventoryControl: (env, scope) => procurementGuards.loadProcurementInventoryControl(env, scope, db.api.getDocument),
     ...db.api, crypto:globalThis.crypto, Response, URL, URLSearchParams, TextEncoder, console,

@@ -875,6 +875,7 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
   'getChurchMembership', 'saveChurchMember', 'saveChurchHousehold', 'importChurchMembers',
   'getChurchServices', 'saveChurchService', 'saveChurchServiceOccurrence', 'recordChurchAttendance',
   'getHotelServices', 'saveHotelRoom', 'saveHotelReservation', 'changeHotelReservationStatus',
+  'saveHotelRoomMedia', 'saveHotelKeyDevice', 'saveHotelKeySlot', 'resolveHotelKeyCommand',
   'recordHotelCharge', 'recordHotelPayment', 'setHotelHousekeepingStatus',
   'getChurchFunds', 'saveChurchFund', 'saveChurchFundMapping',
   'getChurchOfferings', 'saveChurchOffering', 'reconcileChurchOffering',
@@ -991,6 +992,7 @@ const BRANCH_BOUND_DEVICE_ACTIONS = new Set([
   'saveDepartmentMeeting', 'recordDepartmentAttendance', 'saveDepartmentOffering',
   'markDepartmentOfferingPaid', 'saveSpecialProgram', 'registerProgramParticipant', 'saveForeignVisitor',
   'getHotelServices', 'saveHotelRoom', 'saveHotelReservation', 'changeHotelReservationStatus',
+  'saveHotelRoomMedia', 'saveHotelKeyDevice', 'saveHotelKeySlot', 'resolveHotelKeyCommand',
   'recordHotelCharge', 'recordHotelPayment', 'setHotelHousekeepingStatus',
   'updateStudentProfile', 'reissueParentOnboarding',
   'getSchoolClasses', 'saveSchoolClasses', 'resetSchoolClasses',
@@ -11722,6 +11724,10 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
         branchId: clean(body.UserBranchId)
       }, body);
     case 'getHotelServices':
+    case 'saveHotelRoomMedia':
+    case 'saveHotelKeyDevice':
+    case 'saveHotelKeySlot':
+    case 'resolveHotelKeyCommand':
     case 'saveHotelRoom':
     case 'saveHotelReservation':
     case 'changeHotelReservationStatus':

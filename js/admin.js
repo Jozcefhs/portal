@@ -18586,7 +18586,7 @@ function renderHotelServices(data = {}) {
       <div><strong>${escapeHtml(money(outstanding))}</strong><span>Outstanding guest balance</span></div>
     </div>
     <div class="hotel-task-tabs" role="tablist" aria-label="Hotel Services tasks">
-      ${[['reservations', 'Reservations & check-in'], ['rooms', 'Rooms & housekeeping'], ['charges', 'Charges'], ['payments', 'Payments'], ['self-service', 'Self-service QR']].map(([key, label]) => `<button type="button" role="tab" data-hotel-task="${key}" aria-selected="${hotelServicesView === key ? 'true' : 'false'}">${label}</button>`).join('')}
+      ${[['reservations', 'Reservations & check-in'], ['rooms', 'Rooms & housekeeping'], ['charges', 'Charges'], ['payments', 'Payments'], ['self-service', 'QR, room previews & keys']].map(([key, label]) => `<button type="button" role="tab" data-hotel-task="${key}" aria-selected="${hotelServicesView === key ? 'true' : 'false'}">${label}</button>`).join('')}
     </div>
     <p id="hotelWorkspaceStatus" class="status" role="status"></p>
     <section class="hotel-task-panel" role="tabpanel" data-hotel-task-panel="reservations" ${hotelServicesView === 'reservations' ? '' : 'hidden'}>
@@ -18627,9 +18627,13 @@ function renderHotelServices(data = {}) {
     </section>
     <section class="hotel-task-panel" role="tabpanel" data-hotel-task-panel="self-service" ${hotelServicesView === 'self-service' ? '' : 'hidden'}>
       <div class="hotel-self-service-card"><div><p class="eyebrow">One reusable code</p><h3>Customer self-service booking</h3><p class="muted">Customers scan this same QR code to choose available dates and rooms, create their reservation, and pay online. The code does not change between customers.</p>${data.selfServiceError ? `<p class="status bad">${escapeHtml(data.selfServiceError)}</p>` : ''}</div>${selfService.qrSvg ? `<div class="hotel-self-service-qr">${selfService.qrSvg}</div>` : ''}<p class="hotel-self-service-address">${escapeHtml(bookingUrl || 'The booking link is unavailable.')}</p><div class="compact-row-actions"><button type="button" id="printHotelSelfServiceQr" ${bookingUrl ? '' : 'disabled'}>Print QR</button><button type="button" class="secondary" id="copyHotelSelfServiceLink" ${bookingUrl ? '' : 'disabled'}>Copy link</button>${bookingUrl ? `<a class="button secondary" href="${escapeHtml(bookingUrl)}" target="_blank" rel="noopener">Open booking page</a>` : ''}</div></div>
+      <div id="hotelSelfServiceSetup"></div>
     </section>`;
 
   const statusEl = document.getElementById('hotelWorkspaceStatus');
+  window.DynamaxHotelSelfService?.mount(document.getElementById('hotelSelfServiceSetup'), data,
+    requestHotelServices, renderHotelServices,
+    (message, tone) => setStatus(document.getElementById('hotelWorkspaceStatus'), message, tone));
   const selectHotelTask = (view) => {
     const availableViews = new Set(['reservations', 'rooms', 'charges', 'payments', 'self-service']);
     hotelServicesView = availableViews.has(view) ? view : 'reservations';

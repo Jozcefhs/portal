@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
 import { enforceActorBranch } from '../functions/lib/branch-scope.js';
+import { assertNoKeyHandoff } from '../functions/lib/hotel-self-service.js';
 
 const source = await readFile(new URL('../functions/lib/hotel-services.js', import.meta.url), 'utf8');
 
@@ -14,6 +15,9 @@ function hotelHarness() {
   const key = (collection, id) => `${collection}/${id}`;
   const context = {
     crypto: globalThis.crypto,
+    assertNoKeyHandoff,
+    hotelSelfServiceData: async () => ({ roomTypes: [], keyDispenser: null }),
+    publicRoomMedia: async () => [],
     enforceActorBranch,
     getDocument: async (_env, collection, id) => {
       const value = documents.get(key(collection, id));
