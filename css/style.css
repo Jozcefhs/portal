@@ -565,6 +565,8 @@ html[data-theme="dark"] .preference-switch-row:has(.preference-switch input:chec
 .settings-content{display:grid;gap:18px;min-width:0}
 .settings-section{scroll-margin-top:20px;padding:25px 28px 29px;border:1px solid #dbe3ef;border-radius:14px;background:#fff;box-shadow:0 5px 18px rgba(15,52,89,.04)}
 .settings-section-heading{display:grid;grid-template-columns:42px minmax(0,1fr);gap:13px;align-items:start;margin-bottom:24px;padding-bottom:18px;border-bottom:1px solid #e6ebf2}
+/* Headings without an icon must not be confined to the icon column. */
+.settings-section-heading>div:only-child{grid-column:1/-1;min-width:0}
 .settings-section-icon{display:grid;place-items:center;width:40px;height:40px;border-radius:11px;background:#eaf2ff;color:#174a7c;font-size:14px;font-weight:800}
 .settings-section-heading h2{margin:1px 0 4px;color:#163a5e;font-size:20px;letter-spacing:-.01em}
 .settings-section-heading p:last-child{margin:0;color:#718096;font-size:13px}

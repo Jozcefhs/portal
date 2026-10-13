@@ -84,5 +84,5 @@ test('staff shell and offline cache are versioned for the journal layout repair'
   const html = await read('admin.html');
   assert.match(html, /css\/style\.css\?v=[^"]*audit-journal-layout/);
   assert.match(html, /js\/admin\.js\?v=[^"]*audit-journal-layout/);
-  assert.match(await read('sw.js'), /dynamax-v373-academic-register/);
+  assert.match(await read('sw.js'), /dynamax-v374-settings-heading/);
 });
