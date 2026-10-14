@@ -898,7 +898,7 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
   'bulkCreateAcademicSubjects', 'configureAcademicSeniorChoiceSubjects', 'bulkApplyAcademicSubjects', 'bulkAssignAcademicClassTeachers', 'bulkAssignAcademicSubjectTeacher', 'updateAcademicSubjectTeacherAllocation',
   'saveAcademicTeacherAllocation', 'saveAcademicStudentMembership', 'bulkAllocateAcademicStudents',
   'bulkImportAcademicStudentMemberships',
-  'bulkAssignAcademicArmStudentSubjects',
+  'bulkAssignAcademicArmStudentSubjects', 'reviewAcademicSubjectChange',
   'moveAcademicStudentMembership', 'withdrawAcademicStudentMembership', 'reinstateAcademicStudentMembership',
   'archiveAcademicRecord', 'deleteAcademicRecord',
   'syncAcademicCbtScores', 'syncLocalCbtStudentPasswords',
@@ -959,7 +959,7 @@ const BRANCH_BOUND_DEVICE_ACTIONS = new Set([
   'bulkCreateAcademicSubjects', 'configureAcademicSeniorChoiceSubjects', 'bulkApplyAcademicSubjects',
   'bulkAssignAcademicClassTeachers', 'bulkAssignAcademicSubjectTeacher', 'updateAcademicSubjectTeacherAllocation',
   'saveAcademicTeacherAllocation', 'saveAcademicStudentMembership', 'bulkAllocateAcademicStudents',
-  'bulkImportAcademicStudentMemberships', 'bulkAssignAcademicArmStudentSubjects',
+  'bulkImportAcademicStudentMemberships', 'bulkAssignAcademicArmStudentSubjects', 'reviewAcademicSubjectChange',
   'saveAcademicTimetableSettings', 'saveAcademicTimetableConstraint', 'deleteAcademicTimetableConstraint',
   'createAcademicTimetableVersion', 'updateAcademicTimetableVersion', 'deleteAcademicTimetableVersion',
   'copyAcademicTimetableVersion', 'previewAcademicTimetableCopy',
@@ -11523,6 +11523,7 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     case 'bulkAllocateAcademicStudents':
     case 'bulkImportAcademicStudentMemberships':
     case 'bulkAssignAcademicArmStudentSubjects':
+    case 'reviewAcademicSubjectChange':
     case 'saveAcademicTimetableSettings':
     case 'saveAcademicTimetableGenerationRules':
     case 'previewAcademicTimetableGeneration':

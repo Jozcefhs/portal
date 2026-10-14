@@ -72,5 +72,5 @@ test('both workspace headers retain roster totals and use wrapping headers with 
   const shell = await read('admin.html');
   assert.match(shell, /css\/style\.css\?v=[^"]*20261013-academic-register/);
   assert.match(shell, /js\/admin\.js\?v=[^"]*20261013-academic-register/);
-  assert.match(await read('sw.js'), /dynamax-v377-fee-component-summary/);
+  assert.match(await read('sw.js'), /dynamax-v378-controlled-subject-changes/);
 });

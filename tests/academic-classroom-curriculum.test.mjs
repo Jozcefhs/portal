@@ -119,9 +119,9 @@ test('web subject register renders mixed Core checkboxes as editable and single-
     academicArmSubjectDraft: { classId: 'grade-10', armId: 'brilliance' },
     academicStudentAllocationDraft: {},
     academicLabel: (_rows, id, fallback) => id || fallback || '',
-    academicSelectOptions: () => '', escapeHtml: value => String(value ?? '')
+    academicSelectOptions: () => '', escapeHtml: value => String(value ?? ''), currentUser: { username: 'admin' }
   });
-  const start = admin.indexOf('function academicArmSubjectRegister(');
+  const start = admin.indexOf('function academicSubjectChangeRequests(');
   const end = admin.indexOf('function bindAcademicMembershipSearch(', start);
   const render = vm.runInNewContext(`${admin.slice(start, end)}\nacademicArmSubjectRegister`, context);
   const data = { ...fixture(), permissions: { canManageAllocations: true }, students: [] };
@@ -162,7 +162,8 @@ function batchHarness(state = fixture()) {
   const writes = [];
   const context = vm.createContext({
     ...management, ...timetable, ...scorebook, crypto: webcrypto, safeScopeId: String, TextEncoder, TextDecoder,
-    batchCommitDocuments: async (_env, changes) => { writes.push(...clone(changes)); }
+    batchCommitDocuments: async (_env, changes) => { writes.push(...clone(changes)); },
+    queryCollection: async () => []
   });
   vm.runInContext(source.replace(/^import[\s\S]*?;\r?\n/gm, '').replace(/^export /gm, ''), context);
   context.loadScopedAcademicState = async () => clone(state);

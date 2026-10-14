@@ -409,8 +409,8 @@ test('score-entry student names use the compact register type size', () => {
 
 test('focused Academic Management reads establish one Firestore token before parallel collection loading', () => {
   const loader = academicManagementSource.match(/async function loadAcademicState[\s\S]*?\n}/)?.[0] || '';
-  assert.match(loader, /groups\.push\(await loadCollection\(collections\[0\]\)\)/);
-  assert.match(loader, /collections\.slice\(1\)\.map\(loadCollection\)/);
+  assert.match(loader, /for \(const collection of collections\.slice\(0, sequentialCount\)\) groups\.push\(await loadCollection\(collection\)\)/);
+  assert.match(loader, /collections\.slice\(sequentialCount\)\.map\(loadCollection\)/);
   assert.doesNotMatch(loader, /catch\(\(\) => \[\]\)/);
 });
 
@@ -447,6 +447,7 @@ test('CBT score commits use a short-lived signed preparation bound to the worksp
   const digest = 'a'.repeat(64);
   const syncId = 'score-sync-test';
   const writes = [
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships, documentId: 'membership-1', updateTime: 'rev-1', updateMask: ['ScoreHistoryRevision'], data: { ScoreHistoryRevision: 'revision' } },
     { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentScores, documentId: 'score-1', data: {} },
     { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSheets, documentId: 'sheet-1', data: {} },
     { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSyncBatches, documentId: syncId, data: {} },
@@ -462,7 +463,7 @@ test('CBT score commits use a short-lived signed preparation bound to the worksp
     ScoreSyncPreparation: token
   });
   assert.equal(prepared.SyncId, syncId);
-  assert.equal(prepared.Writes.length, 4);
+  assert.equal(prepared.Writes.length, 5);
   await assert.rejects(
     verifyAcademicCbtSyncPreparation(env, user, {
       BranchId: 'main', SchoolSection: 'secondary', BatchDigest: 'b'.repeat(64),

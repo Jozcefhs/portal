@@ -1121,12 +1121,13 @@ test('class-teacher student-subject form follows the selected period and remains
   const academicIsSeniorClass = runInNewContext(`${adminSource.slice(helperStart, helperEnd)}\nacademicIsSeniorClass`, { clean });
   assert.equal(academicIsSeniorClass({ Name: 'Grade 10', SchoolStage: '' }), true);
   assert.equal(academicIsSeniorClass({ Name: 'Grade 8', SchoolStage: '' }), false);
-  const start = adminSource.indexOf('function academicArmSubjectRegister(');
+  const start = adminSource.indexOf('function academicSubjectChangeRequests(');
   const end = adminSource.indexOf('function academicStudentWorkspace(', start);
   assert.ok(start >= 0 && end > start);
   const context = {
     academicManagementFilters: { section: 'secondary', sessionId: 'current-session', termId: 'current-term' },
     academicArmSubjectDraft: { sessionId: 'old-session', termId: 'old-term', classId: '', armId: '' },
+    currentUser: { username: 'teacher-a' },
     academicStudentAllocationDraft: { classId: '', armId: '' },
     clean,
     academicIsSeniorClass,

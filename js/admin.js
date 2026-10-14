@@ -13250,7 +13250,7 @@ function academicTaskDefinitions(view, root) {
       { key: 'allocate', label: `Allocate ${learner.plural}`, title: `Assign ${learner.plural} to a classroom`, description: `Select the target classroom and check one or up to 100 unassigned ${learner.plural}.`, nodes: nodes(form('[data-academic-student-placement="bulk"]')) },
       { key: 'transfer', label: 'Transfer or reassign', title: `Move a ${learner.singular} safely`, description: `Transfer an active membership or reassign a withdrawn ${learner.singular} with an audit reason.`, nodes: nodes(form('[data-academic-workflow="moveAcademicStudentMembership"]')) },
       { key: 'import', label: `Import ${learner.plural}`, title: `Import existing ${learner.singular} memberships`, description: 'Download the CSV template, complete it, then import the finished file.', nodes: nodes(form('[data-academic-student-membership-import]')) },
-      { key: 'subjects', label: 'Student subjects', title: 'Trade and Optional subjects', description: `Open your Senior classroom and complete subject choices for its ${learner.plural}.`, nodes: nodes(form('[data-academic-arm-subject-register]'), form('[data-academic-arm-subject-info]')) },
+      { key: 'subjects', label: 'Student subjects', title: 'Trade and Optional subjects', description: `Open your Senior classroom and complete subject choices for its ${learner.plural}.`, nodes: nodes(form('[data-academic-arm-subject-register]'), form('[data-academic-arm-subject-info]'), form('[data-academic-subject-change-requests]')) },
       { key: 'register', label: `${learner.Singular} register`, title: 'Class and subject memberships', description: `Review current allocations, curriculum status, and ${learner.singular} actions.`, nodes: nodes(register(membershipRegister)) },
       { key: 'history', label: 'Movement history', title: `${learner.Singular} movement history`, description: 'Review the permanent audit trail for allocations, transfers and withdrawals.', nodes: nodes(register(movementRegister)) }
     ],
@@ -14065,6 +14065,29 @@ function updateAcademicArmStudentSubjectCounts(card) {
   if (totalCount) totalCount.textContent = `${total} subject${total === 1 ? '' : 's'} total`;
 }
 
+function academicSubjectChangeRequests(data) {
+  const username = clean(currentUser?.username || currentUser?.Username).toLowerCase();
+  const requests = (data.studentMemberships || []).filter((row) => row.PendingSubjectChange
+    && row.SessionId === academicManagementFilters.sessionId && row.TermId === academicManagementFilters.termId);
+  if (!requests.length) return '';
+  const names = (ids) => (ids || []).map((id) => academicLabel(data.subjects || [], id, id)).join(', ') || 'None';
+  return `<section class="academic-management-editor academic-management-editor-wide" data-academic-subject-change-requests><h3>Subject changes awaiting approval (${requests.length})</h3><p>Current subjects stay in place until approval. Scores are retained under their original subjects and are never copied to another subject. Another authorised academic administrator must review the request.</p>${requests.map((membership) => {
+    const request = membership.PendingSubjectChange;
+    const own = username && username === clean(request.RequestedByUsername).toLowerCase();
+    const canReview = data.permissions?.canApproveSubjectChanges === true && !own;
+    const form = canReview || own ? `<form class="academic-management-editor" data-academic-workflow="reviewAcademicSubjectChange">
+      <input type="hidden" name="SchoolSection" value="${escapeHtml(membership.SchoolSection)}"><input type="hidden" name="MembershipId" value="${escapeHtml(academicRecordId(membership))}"><input type="hidden" name="RequestId" value="${escapeHtml(request.RequestId)}"><input type="hidden" name="RevisionToken" value="${escapeHtml(membership.RevisionToken || '')}">
+      <label>Decision<select name="Decision" required><option value="">Choose a decision</option>${canReview ? '<option value="Approve">Approve subject change</option><option value="Reject">Reject request</option>' : '<option value="Cancel">Cancel my request</option>'}</select></label>
+      <label>Review reason<textarea name="Reason" minlength="5" maxlength="1000" required placeholder="Explain the approval, rejection or cancellation"></textarea></label><button type="submit">Record decision</button>
+    </form>` : '<p class="muted">Awaiting an authorised academic administrator’s review.</p>';
+    return `<article class="academic-arm-student-subject-card"><header><strong>${escapeHtml(academicLabel(data.students || [], membership.StudentRef, membership.StudentRef))}</strong><small>${escapeHtml(membership.StudentRef)}</small></header>
+      <p><strong>Current subjects:</strong> ${escapeHtml(names(request.Before?.SubjectIds))}</p><p><strong>Requested subjects:</strong> ${escapeHtml(names(request.After?.SubjectIds))}</p>
+      <p><strong>Recorded scores affected:</strong> ${escapeHtml(names(request.Impact?.RecordedSubjectIds))} (${Number(request.Impact?.ScoreRecordCount || 0)} score records; preserved).</p>
+      <p><strong>Requested by:</strong> ${escapeHtml(request.RequestedBy)} · ${escapeHtml(request.RequestedAt)}</p><p><strong>Reason:</strong> ${escapeHtml(request.Reason)}</p>
+      ${(request.Impact?.Results || []).length ? '<p class="academic-arm-subject-warning">Existing results are not changed automatically. Reviewed, approved, published or locked results must be reopened/withdrawn and returned to Calculated Draft before approval. Recalculate drafts after the new assessments.</p>' : ''}${form}</article>`;
+  }).join('')}</section>`;
+}
+
 function academicArmSubjectRegister(data, rows, canManage) {
   if (academicManagementFilters.section !== 'secondary') {
     return data.permissions?.teacherView
@@ -14109,7 +14132,7 @@ function academicArmSubjectRegister(data, rows, canManage) {
     const subjectChecks = (role, subjectIds, selectedIds = [], locked = false) => subjectIds.length
       ? subjectIds.map((subjectId) => {
         const id = `arm-subject-${index}-${role.toLowerCase()}-${clean(subjectId).replace(/[^a-z0-9_-]+/gi, '-')}`;
-        return `<label class="academic-checkbox-option${locked ? ' academic-subject-locked' : ''}" for="${escapeHtml(id)}"><input id="${escapeHtml(id)}" type="checkbox" value="${escapeHtml(subjectId)}" data-academic-student-subject-role="${escapeHtml(role)}"${locked || selectedIds.includes(subjectId) ? ' checked' : ''}${locked ? ' disabled aria-readonly="true"' : ''}><span>${escapeHtml(academicLabel(rows.subjects, subjectId, subjectId))}</span></label>`;
+        return `<label class="academic-checkbox-option${locked ? ' academic-subject-locked' : ''}" for="${escapeHtml(id)}"><input id="${escapeHtml(id)}" type="checkbox" value="${escapeHtml(subjectId)}" data-academic-student-subject-role="${escapeHtml(role)}"${locked || selectedIds.includes(subjectId) ? ' checked' : ''}${locked || membership.PendingSubjectChange ? ' disabled aria-readonly="true"' : ''}><span>${escapeHtml(academicLabel(rows.subjects, subjectId, subjectId))}</span></label>`;
       }).join('')
       : `<span class="academic-checkbox-empty">No ${escapeHtml(role.toLowerCase())} subjects are configured for this arm.</span>`;
     return `<article class="academic-arm-student-subject-card" data-academic-arm-subject-student data-membership-id="${escapeHtml(academicRecordId(membership))}" data-revision-token="${escapeHtml(membership.RevisionToken || '')}" data-student-name="${escapeHtml(studentName)}">
@@ -14119,6 +14142,7 @@ function academicArmSubjectRegister(data, rows, canManage) {
         <fieldset><legend>Trade · choose at least one ${countBadge('Trade')}</legend><div class="academic-checkbox-options">${subjectChecks('Trade', profile.tradeSubjectIds, profile.selectedTradeSubjectIds)}</div></fieldset>
         <fieldset><legend>Optional ${countBadge('Optional')}</legend><div class="academic-checkbox-options">${subjectChecks('Optional', profile.optionalSubjectIds, profile.selectedOptionalSubjectIds)}</div></fieldset>
       </div>
+      ${membership.PendingSubjectChange ? '<p class="academic-arm-subject-warning">A subject change is awaiting approval. Current subjects remain active; review or cancel the request below.</p>' : ''}
       ${profile.unavailableSubjectIds.length ? `<p class="academic-arm-subject-warning">Previously selected subjects need curriculum review before saving: ${escapeHtml(profile.unavailableSubjectIds.map((id) => academicLabel(rows.subjects, id, id)).join(', '))}. Existing selections have not been removed.</p>` : ''}
     </article>`;
   }).join('');
@@ -14140,14 +14164,15 @@ function academicArmSubjectRegister(data, rows, canManage) {
     </div>
     <p class="academic-arm-subject-summary${memberships.length && tradeConfigured ? '' : ' academic-arm-subject-warning'}">${escapeHtml(help)}</p>
     <div class="academic-arm-student-subject-list">${studentCards || '<div class="academic-checkbox-empty">Select a class and arm to open its student subject register.</div>'}</div>
-    <label>Curriculum note<input name="Reason" placeholder="Senior subject selections confirmed"></label>
+    <p>Changes affecting recorded scores or existing results require a reason and another authorised academic administrator’s approval. Until then, current subjects and scores stay unchanged.</p>
+    <label>Reason for changing subjects<input name="Reason" maxlength="1000" placeholder="Required when changing assessed subjects; explain why the change is needed"></label>
     <button type="submit"${memberships.length && tradeConfigured ? '' : ' disabled'}>Save subject selections for this arm</button>
   </form>` : `<div class="academic-view-only-note" data-academic-arm-subject-info><strong>Student subject choices</strong><span>${data.permissions?.teacherView
     ? !ownClassroomIds.size
       ? 'No active Form Teacher assignment is linked to your account for the selected session and term. Ask Academic Management to assign you under Assign class teachers.'
       : 'Your assigned classrooms are not classified as Senior Secondary in this section. Junior Secondary students inherit their saved class subjects automatically.'
     : 'No Senior classroom is available for the selected period. Core, Trade and Optional selections require an active Senior class and arm.'}</span></div>`;
-  return body;
+  return body + academicSubjectChangeRequests(data);
 }
 
 function bindAcademicMembershipSearch(form) {
@@ -14264,10 +14289,11 @@ function academicStudentWorkspace(data, rows) {
   ], { numbered: true, searchable: true, searchValue: (row) => row.StudentRef })}${table(movementRegister, rows.studentMovements, [
     { label: 'Date', value: (row) => row.EffectiveDate },
     { label: learner.Singular, value: (row) => academicLabel(data.students, row.StudentRef, row.StudentRef) },
-    { label: 'Movement', value: (row) => row.MovementType },
+    { label: 'Movement', value: (row) => row.SubjectChangeRequest ? `Subject change — ${row.Status}` : row.MovementType },
     { label: 'From', value: (row) => row.FromClassId ? `${academicLabel(rows.classes, row.FromClassId)} / ${academicLabel(rows.arms, row.FromArmId)}` : '-' },
     { label: 'To', value: (row) => row.ToClassId ? `${academicLabel(rows.classes, row.ToClassId)} / ${academicLabel(rows.arms, row.ToArmId)}` : '-' },
-    { label: 'Reason', value: (row) => row.Reason || '-' },
+    { label: 'Reason', value: (row) => row.SubjectChangeRequest
+      ? `${row.Reason} | From: ${(row.FromSubjectIds || []).map((id) => academicLabel(rows.subjects, id, id)).join(', ')} | To: ${(row.ToSubjectIds || []).map((id) => academicLabel(rows.subjects, id, id)).join(', ')} | Review: ${row.SubjectChangeRequest.ReviewReason || 'Pending'}. Existing scores preserved.` : row.Reason || '-' },
     { label: 'Recorded by', value: (row) => row.RecordedBy || '-' }
   ], { numbered: true, searchable: true, searchValue: (row) => row.StudentRef })}`;
 }
@@ -15995,6 +16021,34 @@ function academicFormPayload(form) {
   return { ...payload, RecordType: form.dataset.academicForm };
 }
 
+async function showAcademicSubjectWorkflowFeedback(form, { error, data } = {}) {
+  const action = form.dataset.academicWorkflow;
+  if (!['bulkAssignAcademicArmStudentSubjects', 'reviewAcademicSubjectChange'].includes(action)) return;
+  if (error) {
+    const focusTarget = document.activeElement;
+    await window.DynamaxDialogs.alert({
+      title: action === 'bulkAssignAcademicArmStudentSubjects' ? 'Check student subject selections' : 'Subject-change review not completed',
+      eyebrow: 'Action required',
+      message: error.message || String(error),
+      tone: 'danger',
+      confirmText: 'Return to form'
+    });
+    if (focusTarget?.isConnected && form.contains(focusTarget)) {
+      focusTarget.focus();
+      focusTarget.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+    }
+  } else if (Number(data?.bulkResult?.PendingApproval) > 0) {
+    await window.DynamaxDialogs.alert({
+      title: 'Subject changes awaiting approval',
+      eyebrow: 'Request submitted',
+      message: data.message,
+      items: ['For students awaiting approval, the current subject selections remain active.', 'An authorised academic administrator must review these requests under Student subjects. Existing scores have not been deleted or copied.'],
+      detailsLabel: 'What happens next',
+      confirmText: 'Understood'
+    });
+  }
+}
+
 function academicWorkflowPayload(form) {
   if (form.dataset.academicWorkflow === 'saveAcademicTimetableGenerationRules') {
     const payload = Object.fromEntries(new FormData(form).entries());
@@ -16093,12 +16147,16 @@ function academicWorkflowPayload(form) {
     };
   }
   if (form.dataset.academicWorkflow === 'bulkAssignAcademicArmStudentSubjects') {
-    const assignments = [...form.querySelectorAll('[data-academic-arm-subject-student]')].map((row) => {
+    const assignments = [...form.querySelectorAll('[data-academic-arm-subject-student]')].filter((row) =>
+      !academicFind(academicManagementData?.studentMemberships || [], row.dataset.membershipId)?.PendingSubjectChange).map((row) => {
       const membership = academicFind(academicManagementData?.studentMemberships || [], row.dataset.membershipId);
       const profile = academicStudentSubjectProfile(academicManagementData || {}, membership || {});
       if (profile.unavailableSubjectIds.length) throw new Error(`${row.dataset.studentName || 'This student'} has existing subjects outside the classroom curriculum. Review the classroom configuration before saving; no selections have been removed.`);
       const coreSubjectIds = [...row.querySelectorAll('[data-academic-student-subject-role="Core"]:checked')].map((input) => input.value);
-      if (!coreSubjectIds.length) throw new Error(`${row.dataset.studentName || 'Each student'} must have at least one Core subject.`);
+      if (!coreSubjectIds.length) {
+        row.querySelector('[data-academic-student-subject-role="Core"]')?.focus();
+        throw new Error(`${row.dataset.studentName || 'Each student'} must have at least one Core subject.`);
+      }
       const tradeSubjectIds = [...row.querySelectorAll('[data-academic-student-subject-role="Trade"]:checked')].map((input) => input.value);
       if (!tradeSubjectIds.length) {
         row.querySelector('[data-academic-student-subject-role="Trade"]')?.focus();
@@ -16112,7 +16170,7 @@ function academicWorkflowPayload(form) {
         OptionalSubjectIds: [...row.querySelectorAll('[data-academic-student-subject-role="Optional"]:checked')].map((input) => input.value)
       };
     });
-    if (!assignments.length) throw new Error('Choose an arm with assigned students first.');
+    if (!assignments.length) throw new Error('No editable student selections. Choose an arm or resolve its pending subject-change requests first.');
     return {
       SchoolSection: 'secondary', SessionId: form.elements.SessionId.value, TermId: form.elements.TermId.value,
       ClassId: form.elements.ClassId.value, ArmId: form.elements.ArmId.value, Reason: form.elements.Reason.value,
@@ -18352,8 +18410,10 @@ function bindAcademicManagement() {
         if (form.dataset.academicWorkflow === 'saveAcademicTimetableEntry') academicTimetableDraft.entryId = '';
         if (form.dataset.academicWorkflow === 'saveAcademicStudentAttendance') clearAcademicAttendanceLocalDraft(form);
         renderAcademicManagement(data, data.message || 'Academic workflow completed online.');
+        await showAcademicSubjectWorkflowFeedback(form, { data });
       } catch (error) {
         setStatus(status, error.message || String(error), 'bad');
+        await showAcademicSubjectWorkflowFeedback(form, { error });
       }
     });
   }));

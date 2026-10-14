@@ -194,6 +194,7 @@ export async function verifyAcademicCbtSyncPreparation(env, user, input = {}) {
     throw failure('The CBT score synchronization preparation does not match this workspace or approved batch.', 409, 'ACADEMIC_CBT_SYNC_PREPARATION_MISMATCH');
   }
   const allowedCollections = new Set([
+    ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships,
     ACADEMIC_MANAGEMENT_COLLECTIONS.studentScores,
     ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSheets,
     ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSyncBatches,
@@ -207,6 +208,10 @@ export async function verifyAcademicCbtSyncPreparation(env, user, input = {}) {
   if (!writes.some((write) => clean(write.collectionPath) === ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSyncBatches
       && clean(write.documentId) === clean(prepared.SyncId))) {
     throw failure('The CBT score synchronization preparation is incomplete.', 409, 'ACADEMIC_CBT_SYNC_PREPARATION_INVALID');
+  }
+  if (!writes.some((write) => write.collectionPath === ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships
+    && write.updateMask?.includes('ScoreHistoryRevision') && clean(write.updateTime))) {
+    throw failure('Prepare the CBT batch again so its student memberships can be checked safely.', 409, 'ACADEMIC_CBT_SYNC_PREPARATION_EXPIRED');
   }
   return prepared;
 }
@@ -627,6 +632,7 @@ export function academicManagementCapabilities(user = {}) {
     canManageStructure: enabled && STRUCTURE_MANAGERS.has(role),
     canManageAllocations: enabled && ALLOCATION_MANAGERS.has(role),
     canConfigureClassStudentSubjects: enabled && (ALLOCATION_MANAGERS.has(role) || role === 'Teacher' || academicsDepartmentUser),
+    canApproveSubjectChanges: enabled && STRUCTURE_MANAGERS.has(role),
     canManageTimetables: enabled && TIMETABLE_MANAGERS.has(role),
     canPublishTimetables: enabled && TIMETABLE_PUBLISHERS.has(role),
     canMarkAttendance: enabled && (TIMETABLE_MANAGERS.has(role) || role === 'Teacher' || academicsDepartmentUser),
@@ -1033,7 +1039,8 @@ async function loadAcademicState(env, branchId, requestedKeys = null) {
   // Read the version before lessons. Every lesson mutation also conditionally
   // advances it, so a later write cannot validate against a stale lesson snapshot.
   const collections = allCollections.filter(([key]) => requested.has(key))
-    .sort(([left], [right]) => Number(right === 'timetableVersions') - Number(left === 'timetableVersions'));
+    .sort(([left], [right]) => Number(right === 'timetableVersions') * 2 + Number(right === 'studentMemberships')
+      - Number(left === 'timetableVersions') * 2 - Number(left === 'studentMemberships'));
   const loadCollection = ([, collection]) => queryCollection(env, collection, {
     filters: [{ field: 'BranchId', op: '==', value: branchId }]
   });
@@ -1042,8 +1049,12 @@ async function loadAcademicState(env, branchId, requestedKeys = null) {
   // request per collection and can exceed the invocation subrequest allowance.
   const groups = [];
   if (collections.length) {
-    groups.push(await loadCollection(collections[0]));
-    groups.push(...await Promise.all(collections.slice(1).map(loadCollection)));
+    // Membership revisions also serialize score writes against subject changes.
+    // Read memberships before scores, never concurrently with their evidence.
+    const membershipIndex = collections.findIndex(([key]) => key === 'studentMemberships');
+    const sequentialCount = membershipIndex < 0 ? 1 : membershipIndex + 1;
+    for (const collection of collections.slice(0, sequentialCount)) groups.push(await loadCollection(collection));
+    groups.push(...await Promise.all(collections.slice(sequentialCount).map(loadCollection)));
   }
   const loaded = new Map(collections.map(([key], index) => [
     key, groups[index].filter((row) => lower(row.BranchId || 'main') === lower(branchId))
@@ -1367,6 +1378,77 @@ function membershipMateriallyChanged(before = {}, after = {}) {
     || clean(before.CurriculumStatus) !== clean(after.CurriculumStatus);
 }
 
+const SUBJECT_SELECTION_FIELDS = ['SubjectIds', 'CoreSubjectIds', 'TradeSubjectIds', 'OptionalSubjectIds'];
+
+function subjectSelection(record = {}) {
+  return Object.fromEntries(SUBJECT_SELECTION_FIELDS.map((key) => [key, uniqueIds(record[key])]));
+}
+
+export function academicSubjectSelectionChanged(before = {}, after = {}) {
+  return SUBJECT_SELECTION_FIELDS.some((key) => JSON.stringify(sortedIds(before[key])) !== JSON.stringify(sortedIds(after[key])));
+}
+
+export function academicSubjectChangeImpact(before, after, evidence = {}, scope = {}) {
+  const changed = new Set(SUBJECT_SELECTION_FIELDS.flatMap((key) => {
+    const from = uniqueIds(before[key]);
+    const to = uniqueIds(after[key]);
+    return [...from.filter((id) => !to.includes(id)), ...to.filter((id) => !from.includes(id))];
+  }));
+  const matchesStudent = (row) => lower(row.StudentRef) === lower(before.StudentRef)
+    && row.SessionId === before.SessionId && row.TermId === before.TermId
+    && lower(row.BranchId) === lower(before.BranchId)
+    && effectiveAcademicSection(row, scope) === effectiveAcademicSection(before, scope);
+  // Even an incomplete/zero/absent score record is assessment history. Do not
+  // infer that a falsey total means there is nothing to protect.
+  const scores = (evidence.studentScores || []).filter((row) => matchesStudent(row) && changed.has(row.SubjectId));
+  const results = (evidence.termResults || []).filter(matchesStudent);
+  return {
+    RequiresApproval: changed.size > 0 && (scores.length > 0 || results.length > 0),
+    ChangedSubjectIds: [...changed],
+    RecordedSubjectIds: uniqueIds(scores.map((row) => row.SubjectId)),
+    ScoreRecordCount: scores.length,
+    Results: results.map((row) => ({ ResultId: row.ResultId, ResultType: row.ResultType || 'End of Term', Status: row.Status }))
+  };
+}
+
+async function loadAcademicSubjectChangeEvidence(env, scope, membership) {
+  // Include history from earlier classrooms in the same term. Bound each query
+  // to the actual students, never scan every branch/term's scores.
+  const refs = uniqueIds(membership.StudentRefs || [membership.StudentRef]);
+  const evidence = { studentScores: [], termResults: [] };
+  // Four predicates per disjunct: 20 references keep the expanded query bounded.
+  for (let offset = 0; offset < refs.length; offset += 20) {
+    const filters = ['SessionId', 'TermId'].map((field) => ({ field, op: '==', value: membership[field] }));
+    filters.push({ field: 'BranchId', op: '==', value: scope.branchId },
+      { field: 'StudentRef', op: 'in', value: refs.slice(offset, offset + 20) });
+    await Promise.all(Object.keys(evidence).map(async (key) => {
+      const rows = await queryCollection(env, ACADEMIC_MANAGEMENT_COLLECTIONS[key], { filters, limit: 10001 });
+      if (rows.length > 10000) throw failure('Too much assessment history to check safely. No subject changes were saved.', 413, 'ACADEMIC_SUBJECT_HISTORY_LIMIT');
+      evidence[key].push(...scopedAcademicRows(rows, scope));
+    }));
+  }
+  return evidence;
+}
+
+function assertNoPendingSubjectChange(membership) {
+  if (membership?.PendingSubjectChange) throw failure(`${membership.StudentRef} has a subject change awaiting approval. Resolve or cancel it before changing this membership.`, 409, 'ACADEMIC_SUBJECT_CHANGE_PENDING');
+}
+
+export function academicScoreMembershipGuards(state, scores) {
+  const memberships = new Map();
+  for (const score of scores) {
+    const membership = (state.studentMemberships || []).find((row) => lower(row.StudentRef) === lower(score.StudentRef)
+      && row.SessionId === score.SessionId && row.TermId === score.TermId);
+    if (!membership || !clean(membership.__updateTime)) throw failure('Reload the classroom before saving scores; its membership revision is missing.', 409, 'ACADEMIC_WRITE_CONFLICT');
+    memberships.set(recordId(membership), membership);
+  }
+  return [...memberships.values()].map((membership) => ({
+    collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships,
+    documentId: recordId(membership), updateTime: membership.__updateTime,
+    data: { ScoreHistoryRevision: crypto.randomUUID() }, updateMask: ['ScoreHistoryRevision']
+  }));
+}
+
 function membershipSnapshot(record = {}, prefix = '') {
   return {
     [`${prefix}ClassId`]: clean(record.ClassId),
@@ -1608,7 +1690,7 @@ function writePrecondition(existing, revisionToken) {
   return { updateTime: expected };
 }
 
-function auditWrite(user, action, type, record, details = '') {
+function auditWrite(user, action, type, record, details = '', summary = '') {
   const id = `ACADEMIC-${Date.now()}-${globalThis.crypto.randomUUID().slice(0, 8).toUpperCase()}`;
   return {
     collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.audit,
@@ -1619,7 +1701,8 @@ function auditWrite(user, action, type, record, details = '') {
       RecordId: recordId(record), BranchId: record.BranchId, SchoolSection: record.SchoolSection,
       SessionId: clean(record.SessionId), TermId: clean(record.TermId),
       Actor: actorName(user), ActorUsername: actorUsername(user), ActorRole: clean(user.role || user.Role),
-      Details: clean(details).slice(0, 1000)
+      Details: clean(details).slice(0, 1000),
+      ...(summary ? { Summary: clean(summary).slice(0, 700) } : {})
     }
   };
 }
@@ -3047,6 +3130,11 @@ export async function bulkAllocateAcademicStudents(env, user = {}, input = {}) {
       })) {
         throw failure(`${studentRef} already has a different membership in this term. Use the transfer workflow instead.`, 409, 'ACADEMIC_BULK_MEMBERSHIP_CONFLICT');
       }
+      assertNoPendingSubjectChange(existing);
+      if (academicSubjectSelectionChanged(existing, record)) {
+        const evidence = await loadAcademicSubjectChangeEvidence(env, scope, existing);
+        if (academicSubjectChangeImpact(existing, record, evidence, scope).RequiresApproval) throw failure('Use Student subjects to request approval before changing assessed subjects.', 409, 'ACADEMIC_SUBJECT_CHANGE_APPROVAL_REQUIRED');
+      }
       stampAcademicRecord(record, user, existing);
       projected.studentMemberships = projected.studentMemberships.map((row) => recordId(row) === existingId ? record : row);
       writes.push({
@@ -3299,6 +3387,8 @@ export async function bulkAssignAcademicArmStudentSubjects(env, user = {}, input
   const skipped = [];
   const seen = new Set();
   const reason = clean(input.Reason) || 'Classroom student subject selections updated.';
+  let evidence;
+  let pendingCount = 0;
   for (const assignment of assignments) {
     const membershipId = clean(assignment?.MembershipId || assignment?.RecordId);
     if (!membershipId || seen.has(lower(membershipId))) throw failure('Every student subject selection must identify one unique membership.');
@@ -3333,6 +3423,32 @@ export async function bulkAssignAcademicArmStudentSubjects(env, user = {}, input
       skipped.push(existing.StudentRef);
       continue;
     }
+    assertNoPendingSubjectChange(existing);
+    evidence ||= await loadAcademicSubjectChangeEvidence(env, scope, {
+      SessionId: sessionId, TermId: termId,
+      StudentRefs: assignments.map((item) => findById(state.studentMemberships, item.MembershipId || item.RecordId)?.StudentRef).filter(Boolean)
+    });
+    const impact = academicSubjectChangeImpact(existing, record, evidence, scope);
+    if (impact.RequiresApproval) {
+      const requestedReason = clean(assignment.Reason || input.Reason);
+      if (requestedReason.length < 5 || requestedReason.length > 1000) throw failure(`Enter a specific reason (5–1000 characters) for ${existing.StudentRef}'s assessed subject change. No selections were changed.`, 400, 'ACADEMIC_SUBJECT_CHANGE_REASON_REQUIRED');
+      const request = {
+        RequestId: crypto.randomUUID(), Status: 'Pending',
+        Before: subjectSelection(existing), After: subjectSelection(record),
+        Reason: requestedReason, Impact: impact,
+        RequestedAt: nowIso(), RequestedBy: actorName(user), RequestedByUsername: actorUsername(user),
+        ClassId: existing.ClassId, ArmId: existing.ArmId
+      };
+      const pending = { ...withoutMetadata(existing), PendingSubjectChange: request };
+      stampAcademicRecord(pending, user, existing);
+      writes.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships,
+        documentId: membershipId, data: pending, updateTime: revisionToken });
+      const movement = academicMovementForState(projected, { ...input, StudentRef: existing.StudentRef,
+        Reason: requestedReason, MovementType: 'Subject Change' }, scope, existing, record);
+      writes.push(movementWrite(user, { ...movement, Status: 'Pending approval', SubjectChangeRequest: request }));
+      pendingCount += 1;
+      continue;
+    }
     stampAcademicRecord(record, user, existing);
     projected.studentMemberships = projected.studentMemberships.map((row) => recordId(row) === membershipId ? record : row);
     writes.push({
@@ -3348,7 +3464,8 @@ export async function bulkAssignAcademicArmStudentSubjects(env, user = {}, input
     writes.push(auditWrite(user, 'BULK SUBJECT ASSIGNMENT', 'studentmembership', {
       BranchId: scope.branchId, SchoolSection: scope.section, SessionId: sessionId, TermId: termId,
       MembershipId: `arm-subjects-${Date.now()}`
-    }, `${updated} student subject selection(s) updated in ${schoolClass.Name} / ${arm.Name}; ${skipped.length} unchanged.`));
+    }, `${updated - pendingCount} subject selection(s) applied; ${pendingCount} assessed subject change(s) requested, awaiting authorised approval; ${skipped.length} unchanged. Existing scores and results were preserved.`,
+    `${actorName(user)} saved subject choices for ${schoolClass.Name} / ${arm.Name}: ${updated - pendingCount} applied immediately and ${pendingCount} sent for approval. Pending students keep their current subjects until another authorised academic administrator approves. No scores were deleted or copied.`));
     try {
       await batchCommitDocuments(env, writes);
     } catch (error) {
@@ -3362,9 +3479,72 @@ export async function bulkAssignAcademicArmStudentSubjects(env, user = {}, input
     ...input, BranchId: scope.branchId, SchoolSection: scope.section, View: 'students'
   });
   response.message = updated
-    ? `${updated} student subject selection${updated === 1 ? '' : 's'} saved online${skipped.length ? `; ${skipped.length} unchanged` : ''}.`
+    ? `${updated - pendingCount} student subject selection(s) applied; ${pendingCount} awaiting authorised approval${skipped.length ? `; ${skipped.length} unchanged` : ''}. Existing scores are preserved.`
     : 'Every student already has the selected subjects.';
-  response.bulkResult = { Requested: assignments.length, Updated: updated, Skipped: skipped.length };
+  response.bulkResult = { Requested: assignments.length, Updated: updated - pendingCount, PendingApproval: pendingCount, Skipped: skipped.length };
+  return response;
+}
+
+export async function reviewAcademicSubjectChange(env, user = {}, input = {}) {
+  requireWritableSubscription(user);
+  const decision = oneOf(input.Decision, ['Approve', 'Reject', 'Cancel'], '');
+  if (!decision) throw failure('Choose Approve, Reject or Cancel.');
+  const permissions = requireCapability(user, decision === 'Cancel' ? 'canConfigureClassStudentSubjects' : 'canApproveSubjectChanges');
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  const state = await loadScopedAcademicState(env, scope, ACADEMIC_STUDENT_STATE_KEYS);
+  const existing = findById(state.studentMemberships, input.MembershipId);
+  const request = existing?.PendingSubjectChange;
+  if (!existing || !request || request.RequestId !== clean(input.RequestId)) throw failure('This subject-change request is no longer pending. Reload the register.', 409, 'ACADEMIC_SUBJECT_CHANGE_NOT_PENDING');
+  if (!clean(input.RevisionToken) || input.RevisionToken !== existing.__updateTime) throw failure('The student or their scores changed. Reload and review the latest request.', 409, 'ACADEMIC_WRITE_CONFLICT');
+  if (decision === 'Cancel') {
+    if (actorUsername(user) !== request.RequestedByUsername || !academicCanConfigureClassStudentSubjects(user, state.teacherAllocations, existing, permissions)) {
+      throw failure('Only the requester with current classroom access may cancel this request.', 403);
+    }
+  } else if (actorUsername(user) === request.RequestedByUsername) {
+    throw failure('Another authorised academic administrator must review this request; you cannot approve or reject your own request.', 403, 'ACADEMIC_SUBJECT_CHANGE_SELF_APPROVAL');
+  }
+  const note = clean(input.Reason);
+  if (note.length < 5 || note.length > 1000) throw failure('Enter a review reason of 5–1000 characters.');
+  let record = { ...withoutMetadata(existing) };
+  let impact = request.Impact;
+  const resultGuards = [];
+  if (decision === 'Approve') {
+    assertReference(findById(state.sessions, existing.SessionId), 'The academic session is closed or inactive.');
+    assertReference(findById(state.terms, existing.TermId), 'The academic term is closed or inactive.');
+    if (!statusActive(existing) || existing.ClassId !== request.ClassId || existing.ArmId !== request.ArmId
+      || academicSubjectSelectionChanged(existing, request.Before)) throw failure('This membership has changed since the request. Reject it and submit a new request.', 409);
+    record = normalizeAcademicStudentMembership({ ...existing, ...request.After }, scope, existing);
+    applyAcademicStudentCurriculum(state, record, { requireTradeSelection: true });
+    if (academicSubjectSelectionChanged(record, request.After)) throw failure('The classroom curriculum has changed. Reject this request and submit the revised choices.', 409);
+    const evidence = await loadAcademicSubjectChangeEvidence(env, scope, existing);
+    impact = academicSubjectChangeImpact(existing, record, evidence, scope);
+    if (impact.Results.some((result) => lower(result.Status) !== 'calculated draft')) throw failure('Reopen or withdraw the existing result through the controlled result workflow and return it to Calculated Draft before approving this subject change.', 409, 'ACADEMIC_RESULT_IMMUTABLE');
+    for (const result of evidence.termResults.filter((row) => impact.Results.some((item) => item.ResultId === row.ResultId))) {
+      if (!result.__updateTime) throw failure('Reload the existing results before approving this change.', 409, 'ACADEMIC_WRITE_CONFLICT');
+      resultGuards.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.termResults, documentId: result.ResultId,
+        updateTime: result.__updateTime, updateMask: ['SubjectChangeRecalculationRequired'], data: { SubjectChangeRecalculationRequired: true } });
+    }
+  }
+  delete record.PendingSubjectChange;
+  const resolved = { ...request, Status: decision === 'Approve' ? 'Approved' : decision === 'Reject' ? 'Rejected' : 'Cancelled',
+    ReviewReason: note, ReviewedAt: nowIso(), ReviewedBy: actorName(user), ReviewedByUsername: actorUsername(user), Impact: impact };
+  record.LastSubjectChange = resolved;
+  stampAcademicRecord(record, user, existing);
+  const movementInput = { ...input, Reason: request.Reason, MovementType: 'Subject Change', StudentRef: existing.StudentRef };
+  const movement = decision === 'Approve'
+    ? academicMovementForState(state, movementInput, scope, existing, record)
+    : normalizeAcademicStudentMovement(movementInput, scope, existing, { ...existing, ...request.After });
+  await commitAcademicBatch(env, [
+    ...resultGuards,
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships, documentId: recordId(existing),
+      data: withoutMetadata(record), updateTime: existing.__updateTime },
+    movementWrite(user, { ...movement, Status: resolved.Status, SubjectChangeRequest: resolved }),
+    auditWrite(user, `SUBJECT CHANGE ${resolved.Status.toUpperCase()}`, 'studentmembership', record,
+      `${existing.StudentRef}: ${resolved.Status.toLowerCase()} subject change requested by ${request.RequestedBy}. Request: ${request.Reason}. Review: ${note}. Old scores preserved; no marks transferred. Recalculate draft results separately.`,
+      `${actorName(user)} ${resolved.Status.toLowerCase()} ${request.RequestedBy}'s subject-change request for ${existing.StudentRef}. ${decision === 'Approve' ? 'The new subject choices are now active; existing drafts require recalculation.' : 'The current subject choices were not changed.'} Existing scores remain under their original subjects; no marks were copied or deleted.`)
+  ], 'The student or request changed during review. Reload before trying again.');
+  const response = await bootstrapAcademicManagement(env, user, { ...input, BranchId: scope.branchId, SchoolSection: scope.section, View: 'students' });
+  response.message = `${existing.StudentRef}: subject change ${resolved.Status.toLowerCase()}. ${decision === 'Approve' ? 'Old scores remain under their original subjects. Assess the new subjects and recalculate draft results separately.' : 'Current subjects and scores are unchanged.'}`;
   return response;
 }
 
@@ -3378,6 +3558,7 @@ export async function manageAcademicStudentMembership(env, user = {}, input = {}
   ]);
   const existing = findById(state.studentMemberships, input.RecordId || input.MembershipId);
   if (!existing) throw failure('The selected student membership was not found.', 404);
+  assertNoPendingSubjectChange(existing);
   if (lower(existing.SchoolSection) !== scope.section) throw failure('This membership belongs to another school section.', 403);
   const expected = clean(input.RevisionToken);
   if (!expected || expected !== clean(existing.__updateTime)) {
@@ -3417,6 +3598,10 @@ export async function manageAcademicStudentMembership(env, user = {}, input = {}
       delete record.WithdrawalDate;
       delete record.WithdrawalReason;
     }
+  }
+  if (academicSubjectSelectionChanged(existing, record)) {
+    const evidence = await loadAcademicSubjectChangeEvidence(env, scope, existing);
+    if (academicSubjectChangeImpact(existing, record, evidence, scope).RequiresApproval) throw failure('This movement changes assessed subjects. Request approval under Student subjects before transferring the student; no subjects or scores were changed.', 409, 'ACADEMIC_SUBJECT_CHANGE_APPROVAL_REQUIRED');
   }
   stampAcademicRecord(record, user, existing);
   const movement = academicMovementForState(state, {
@@ -5042,6 +5227,7 @@ export async function saveAcademicScoreDraft(env, user = {}, input = {}) {
     collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentScores,
     documentId: record.ScoreId, data: withoutMetadata(record), ...writePrecondition(previous, revisionToken)
   }));
+  writes.push(...academicScoreMembershipGuards(state, updatedScores.map((item) => item.record)));
   writes.push({
     collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSheets,
     documentId: SheetId, data: withoutMetadata(sheet), ...writePrecondition(existing, input.SheetRevisionToken)
@@ -5235,6 +5421,7 @@ export async function applyActiveAcademicScoreLayout(env, user = {}, input = {})
     data: withoutMetadata(record),
     ...writePrecondition(previous, previous.__updateTime)
   }));
+  writes.push(...academicScoreMembershipGuards(state, migratedScores.map((item) => item.record)));
   writes.push({
     collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSheets,
     documentId: sheet.SheetId,
@@ -5364,6 +5551,8 @@ async function calculateAcademicResultsForType(env, user = {}, input = {}, resul
     const existing = findById(existingResults, draft.ResultId);
     const result = {
       ...(existing || {}), ...draft,
+      SubjectSelectionSnapshot: subjectSelection(memberships.find((row) => lower(row.StudentRef) === lower(draft.StudentRef))),
+      SubjectChangeRecalculationRequired: false,
       RecordId: draft.ResultId,
       BranchId: scope.branchId, SchoolSection: scope.section,
       CalculationRevision: Number(existing?.CalculationRevision || 0) + 1,
@@ -5438,6 +5627,16 @@ export async function changeAcademicTermResultStatus(env, user = {}, input = {})
   if (!ids.length || ids.length > 200) throw failure('Choose between 1 and 200 term results.');
   const results = ids.map((id) => findById(state.termResults, id));
   if (results.some((row) => !row)) throw failure('One or more selected term results were not found.', 404);
+  if (['Reviewed', 'Approved', 'Published', 'Locked'].includes(target)) {
+    const stale = results.find((result) => {
+      const membership = state.studentMemberships.find((row) => row.SessionId === result.SessionId && row.TermId === result.TermId
+        && lower(row.StudentRef) === lower(result.StudentRef));
+      return result.SubjectChangeRecalculationRequired || (membership && result.SubjectSelectionSnapshot
+        && (academicSubjectSelectionChanged(membership, result.SubjectSelectionSnapshot)
+          || membership.ClassId !== result.ClassId || membership.ArmId !== result.ArmId));
+    });
+    if (stale) throw failure(`${stale.StudentRef}'s subjects changed after this result was calculated. Recalculate the draft before reviewing or publishing it.`, 409, 'ACADEMIC_SUBJECT_RESULT_STALE');
+  }
   if (target === 'Published') {
     const invalid = results.find((result) => academicPolicyIssues(result.PolicySnapshot || {}, { forActivation: true }).length);
     if (invalid) throw failure(`${invalid.StudentRef} has an incomplete policy snapshot and cannot be published. Recalculate it after activating the complete policy.`, 409, 'ACADEMIC_RESULT_POLICY_SNAPSHOT_INVALID');
@@ -6146,6 +6345,7 @@ export async function importAcademicScores(env, user = {}, input = {}) {
     collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentScores,
     documentId: record.ScoreId, data: withoutMetadata(record), ...(previous ? { updateTime: previous.__updateTime } : { exists: false })
   }));
+  writes.push(...academicScoreMembershipGuards(state, importedScores.map((item) => item.record)));
   writes.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSheets, documentId: SheetId,
     data: withoutMetadata(sheet), ...(existing ? { updateTime: existing.__updateTime } : { exists: false }) });
   writes.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.scoreImports, documentId: ImportId,
@@ -6186,6 +6386,7 @@ export async function rollbackAcademicScoreImport(env, user = {}, input = {}) {
       : { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentScores, documentId: current.ScoreId,
           operation: 'delete', updateTime: current.__updateTime };
   });
+  writes.push(...academicScoreMembershipGuards(state, currentScores));
   const restoredScores = state.studentScores.filter((row) => row.SheetId === sheet.SheetId
     && !(importRecord.AffectedScoreIds || []).includes(row.ScoreId));
   (importRecord.PreviousScores || []).filter((row) => row.Existed).forEach((row) => restoredScores.push(row.Data));
@@ -6466,6 +6667,7 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
     documentId: record.ScoreId, data: withoutMetadata(record),
     ...(previous ? { updateTime: previous.__updateTime } : { exists: false })
   }));
+  writes.push(...academicScoreMembershipGuards(state, updatedScores.map((item) => item.record)));
   writes.push({
     collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSheets,
     documentId: SheetId, data: withoutMetadata(sheet),
@@ -7503,6 +7705,7 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
   if (['bulkallocateacademicstudents', 'bulkallocatestudents'].includes(action)) return bulkAllocateAcademicStudents(env, user, input);
   if (['bulkimportacademicstudentmemberships', 'importacademicstudentmemberships'].includes(action)) return bulkImportAcademicStudentMemberships(env, user, input);
   if (['bulkassignacademicarmstudentsubjects', 'bulkassignarmstudentsubjects'].includes(action)) return bulkAssignAcademicArmStudentSubjects(env, user, input);
+  if (action === 'reviewacademicsubjectchange') return reviewAcademicSubjectChange(env, user, input);
   if (['saveacademictimetablesettings', 'savetimetablesettings'].includes(action)) return saveAcademicTimetableSettings(env, user, input);
   if (['saveacademicschoolcalendar', 'saveschoolcalendar'].includes(action)) return saveAcademicSchoolCalendar(env, user, input);
   if (['saveacademictimetableconstraint', 'savetimetableconstraint'].includes(action)) return saveAcademicTimetableConstraint(env, user, input);
