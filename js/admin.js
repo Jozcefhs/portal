@@ -20732,7 +20732,7 @@ function securityAuditFilteredRows() {
     const userMatch = !user || [row.ActorUsername, row.Actor, row.Subject].some((value) => lower(value) === user);
     const searchMatch = !search || [
       row.Action, row.Module, row.Actor, row.ActorUsername, row.Subject, row.ActorRole,
-      row.EntityType, row.EntityId, row.BranchId, row.SourcePlatform, row.Details, row.Route
+      row.EntityType, row.EntityId, row.BranchId, row.SourcePlatform, row.Summary, row.Details, row.Route
     ].some((value) => lower(value).includes(search));
     return (!filters.action || clean(row.Action) === clean(filters.action))
       && userMatch
@@ -20766,7 +20766,7 @@ function securityAuditRowsHtml(rows) {
   return rows.length ? rows.map((row) => `
     <tr>
       <td>${escapeHtml(securityAuditDateTime(row.Timestamp))}</td>
-      <td><strong>${escapeHtml(row.Action || 'Platform action')}</strong></td>
+      <td class="security-audit-description"><strong>${escapeHtml(row.Action || 'Action not recorded')}</strong>${row.Summary ? `<p>${escapeHtml(row.Summary)}</p>` : ''}</td>
       <td>${escapeHtml(row.Module || 'Platform operations')}</td>
       <td><strong>${escapeHtml(row.Actor || row.ActorUsername || 'System')}</strong>${row.ActorUsername && row.ActorUsername !== row.Actor ? `<small>${escapeHtml(row.ActorUsername)}</small>` : ''}${row.ActorRole ? `<small>${escapeHtml(row.ActorRole)}</small>` : ''}</td>
       <td>${escapeHtml(row.Subject || '—')}</td>

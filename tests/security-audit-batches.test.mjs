@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { loadCompleteSecurityAudit } from '../js/security-audit-workspace.js';
 import { normalizedLegacyAudit } from '../functions/lib/security-audit.js';
+import { auditWords, auditSentence, auditNarrative, auditActionContext } from '../functions/lib/audit-language.js';
 import { branchRecordVisible } from '../functions/lib/branch-scope.js';
 import { secureTextEqual } from '../functions/lib/backend-security.js';
 
@@ -22,7 +23,7 @@ const isolated = (source, exports, mocks) => vm.runInNewContext(
   { Response, Request, crypto, console: { warn() {} }, ...mocks });
 const auditModule = (queryCollection = async () => [], mocks = {}) => isolated(auditSource,
   ['loadAggregatedSecurityAudit', 'persistRequestSecurityAudit', 'writeSecurityAudit'],
-  { queryCollection, readStaffSession: async () => null, upsertDocument: async () => {}, ...mocks });
+  { queryCollection, readStaffSession: async () => null, upsertDocument: async () => {}, auditWords, auditSentence, auditNarrative, auditActionContext, ...mocks });
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
 test('all sources page beyond the old limit, including an entirely hidden first batch and equal timestamps', async () => {

@@ -16,6 +16,7 @@ import { saveChurchDonation } from '../lib/church-payments.js';
 import { sendSchoolPaymentReceiptEmail } from '../lib/school-payment-email.js';
 import { notifyParentPaymentReceived } from '../lib/notifications.js';
 import { rejectDirectTransfer } from '../lib/direct-transfer-review.js';
+import { setDirectTransferAudit } from '../lib/direct-transfer-audit.js';
 
 const clean = (value) => String(value ?? '').trim();
 const safeId = (value) => clean(value).replace(/[\/\\?#\[\]]/g, '-').replace(/\s+/g, '_').slice(0, 140);
@@ -301,12 +302,17 @@ export async function onRequestPost(context) {
     processingTransfer = transfer;
     processingReference = reference;
     verifyScope(user, transfer);
+    setDirectTransferAudit(context, user, transfer, 'review');
     if (action === 'reject') {
-      return Response.json(await rejectDirectTransfer(context.env, reference, transfer, user, body.Reason || body.reason), { headers: { 'Cache-Control': 'no-store' } });
+      setDirectTransferAudit(context, user, transfer, 'reject');
+      const result = await rejectDirectTransfer(context.env, reference, transfer, user, body.Reason || body.reason);
+      setDirectTransferAudit(context, user, transfer, 'reject', result);
+      return Response.json(result, { headers: { 'Cache-Control': 'no-store' } });
     }
     if (action !== 'approve') throw error('Choose approve or reject.');
     const status = clean(transfer.Status).toLowerCase();
     if (status === 'awaiting verification') {
+      setDirectTransferAudit(context, user, transfer, 'reserve');
       const bankReferenceMatches = await queryCollection(context.env, 'directTransferRequests', {
         filters: [{ field: 'BankReference', op: '==', value: transfer.BankReference }],
         limit: 20
@@ -340,12 +346,15 @@ export async function onRequestPost(context) {
         UpdatedAt: new Date().toISOString()
       };
       await updateDocumentIfCurrent(context.env, 'directTransferRequests', reference, claimed, transfer);
+      setDirectTransferAudit(context, user, transfer, 'reserve', { completed: true });
       return continuationResponse('Bank reference secured. Recording the payment now...', 'record');
     }
     if (status !== 'verification in progress') throw error('This transfer has already been processed.', 409);
     const stage = clean(transfer.ApprovalStage || 'record').toLowerCase();
     if (stage === 'record') {
+      setDirectTransferAudit(context, user, transfer, 'record');
       const result = await finalizeTransfer(context, transfer, user);
+      setDirectTransferAudit(context, user, transfer, 'record', result);
       if (transfer.Context !== 'school-payment') {
         await markTransferVerified(context.env, reference, transfer, user, result);
         return Response.json({ ok: true, message: 'Transfer verified and recorded.', result }, { headers: { 'Cache-Control': 'no-store' } });
@@ -366,7 +375,9 @@ export async function onRequestPost(context) {
       throw error('This transfer has an invalid approval stage. Contact the administrator.', 409);
     }
     if (stage === 'deliver-receipt') {
+      setDirectTransferAudit(context, user, transfer, 'delivery');
       const deliveryResult = await deliverSchoolPaymentReceipt(context.env, transfer);
+      setDirectTransferAudit(context, user, transfer, 'delivery', deliveryResult);
       await upsertDocument(context.env, 'directTransferRequests', reference, {
         ...withoutMetadata(transfer),
         Status: 'Verification in progress',
@@ -379,7 +390,9 @@ export async function onRequestPost(context) {
       return continuationResponse('Receipt delivery completed. Finalizing the verified transfer...', 'complete');
     }
     const result = transfer.Result || {};
+    setDirectTransferAudit(context, user, transfer, 'complete');
     await markTransferVerified(context.env, reference, transfer, user, result);
+    setDirectTransferAudit(context, user, transfer, 'complete', result);
     const receiptDelivery = result.email;
     const receiptNote = transfer.Context !== 'school-payment'
       ? ''

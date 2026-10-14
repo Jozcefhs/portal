@@ -18,7 +18,7 @@ test('Procurement import audit bounds undeclared upload bodies without consuming
     body: JSON.stringify({ action: 'importitems', Rows: [{ Notes: 'x'.repeat(70 * 1024) }] })
   });
   const prepared = await prepareSecurityAudit(request, '/api/staff-procurement');
-  assert.equal(prepared.action, 'SUBMIT TO STAFF PROCUREMENT');
+  assert.equal(prepared.action, 'Submit to procurement');
   assert.equal(request.bodyUsed, false);
   assert.equal((await request.json()).action, 'importitems');
   assert.doesNotMatch(JSON.stringify(prepared), /Rows|Notes/);
@@ -30,7 +30,7 @@ test('bounded Procurement audit still identifies valid item imports', async () =
     body: JSON.stringify({ action: 'importitems', Rows: [{ ItemName: 'Sterile dressing' }] })
   });
   const prepared = await prepareSecurityAudit(request, '/api/staff-procurement');
-  assert.equal(prepared.action, 'IMPORTITEMS');
+  assert.equal(prepared.action, 'Import inventory items');
   assert.equal(request.bodyUsed, false);
   assert.equal((await request.json()).Rows.length, 1);
 });
@@ -44,7 +44,7 @@ test('help audit records request metadata without cloning the owner settings pay
   const prepared = await prepareSecurityAudit(request, '/api/help-config');
   assert.equal(prepared.method, 'POST');
   assert.equal(prepared.pathname, '/api/help-config');
-  assert.equal(prepared.action, 'SUBMIT TO HELP CONFIG');
+  assert.equal(prepared.action, 'Submit to help settings');
   assert.equal(shouldPersistSecurityAudit(prepared, null, 403), true);
   assert.equal(request.bodyUsed, false);
   assert.doesNotMatch(JSON.stringify(prepared), /private-password|Faqs/);
@@ -54,27 +54,27 @@ test('generic audit verbs identify their exact record type and preserve historic
   const row = normalizedLegacyAudit({ Action: 'UPDATE', User: 'Ada Officer', ActorUsername: 'ada',
     UserRole: 'Admin', RecordType: 'Material Requisition', RecordId: 'WEB-MAT-42', Details: 'Changed quantity' },
   { collection: 'accountingAudit', module: 'Finance & accounting' });
-  assert.equal(row.Action, 'UPDATE MATERIAL REQUISITION');
+  assert.equal(row.Action, 'Update material requisition');
   assert.equal(row.OriginalAction, 'UPDATE');
   assert.equal(row.Actor, 'Ada Officer');
   assert.equal(row.ActorUsername, 'ada');
   assert.equal(row.EntityId, 'WEB-MAT-42');
   assert.equal(row.ActorRole, 'Admin');
-  assert.equal(explicitAuditAction('', 'Requisition'), 'ACTION NOT RECORDED — REQUISITION');
+  assert.equal(explicitAuditAction('', 'Requisition'), 'Action not recorded — requisition');
 });
 
 test('routing metadata distinguishes list, decisions, document reads and desktop saves', async () => {
-  assert.equal(securityAuditAction({ pathname: '/api/finance-workflow', method: 'POST', body: { action: 'list' } }), 'LIST FINANCE WORKFLOW');
-  assert.equal(securityAuditAction({ pathname: '/api/finance-workflow', method: 'POST', body: { action: 'review', recordType: 'bill', decision: 'Rejected' } }), 'REVIEW BILL — REQUESTED REJECTED');
+  assert.equal(securityAuditAction({ pathname: '/api/finance-workflow', method: 'POST', body: { action: 'list' } }), 'List finance request');
+  assert.equal(securityAuditAction({ pathname: '/api/finance-workflow', method: 'POST', body: { action: 'review', recordType: 'bill', decision: 'Rejected' } }), 'Review bill — requested rejected');
   const prepared = await prepareSecurityAudit(new Request('https://example.test/api/staff-records?action=export&recordType=student&recordId=S1&token=secret&password=hidden'), '/api/staff-records');
-  assert.equal(prepared.action, 'EXPORT STUDENT');
+  assert.equal(prepared.action, 'Export student');
   assert.equal(prepared.entityId, 'S1');
   assert.doesNotMatch(JSON.stringify(prepared), /secret|hidden/);
   const desktop = await prepareSecurityAudit(new Request('https://example.test/api/backend', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ Action: 'saveAccountingExpense', ExpenseNo: 'REQ-42', Status: 'Submitted', ApprovalPassword: 'secret' })
   }), '/api/backend');
   assert.equal(desktop.entityId, 'REQ-42');
-  assert.equal(desktop.action, 'SAVE ACCOUNTING EXPENSE — REQUESTED SUBMITTED');
+  assert.equal(desktop.action, 'Save accounting expense — requested submitted');
   assert.doesNotMatch(JSON.stringify(desktop), /secret/);
 });
 import { defaultModulesForRole, modulesForEdition } from '../functions/lib/role-module-access.js';
@@ -82,8 +82,8 @@ import { defaultModulesForRole, modulesForEdition } from '../functions/lib/role-
 test('security audit classifies modules, declared actions and outcomes consistently', () => {
   assert.equal(securityAuditModuleForRoute('/api/staff-hr'), 'Human Resources');
   assert.equal(securityAuditModuleForRoute('/api/backend'), 'Desktop operations');
-  assert.equal(securityAuditAction({ pathname: '/api/staff-users', method: 'POST', body: { action: 'save-role-access' } }), 'SAVE ROLE ACCESS');
-  assert.equal(securityAuditAction({ pathname: '/api/staff-session', method: 'POST', body: { password: 'not-recorded' } }), 'SIGN IN');
+  assert.equal(securityAuditAction({ pathname: '/api/staff-users', method: 'POST', body: { action: 'save-role-access' } }), 'Save role access');
+  assert.equal(securityAuditAction({ pathname: '/api/staff-session', method: 'POST', body: { password: 'not-recorded' } }), 'Sign in');
   assert.equal(securityAuditOutcome(200), 'Success');
   assert.equal(securityAuditOutcome(403), 'Denied');
   assert.equal(securityAuditOutcome(500), 'Failed');
@@ -96,7 +96,7 @@ test('audit preparation retains metadata but never copies request payloads or cr
     body: JSON.stringify({ Action: 'postJournal', RecordedBy: 'accountant', Password: 'secret-value', EntityId: 'JRN-10' })
   });
   const prepared = await prepareSecurityAudit(request, '/api/accounting');
-  assert.equal(prepared.action, 'POST JOURNAL');
+  assert.equal(prepared.action, 'Post journal');
   assert.equal(prepared.actorHint, 'accountant');
   assert.equal(prepared.entityId, 'JRN-10');
   assert.equal(prepared.requestedBranchId, 'west');

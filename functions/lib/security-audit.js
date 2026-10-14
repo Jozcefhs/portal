@@ -1,5 +1,6 @@
 import { queryCollection, upsertDocument } from './firestore.js';
 import { readStaffSession } from './staff-auth.js';
+import { auditWords, auditSentence, auditNarrative, auditActionContext } from './audit-language.js';
 
 export const SECURITY_AUDIT_COLLECTION = 'platformSecurityAudit';
 
@@ -30,6 +31,34 @@ const ROUTE_MODULES = Object.freeze([
   ['/api/finance-workflow', 'Bills & requisitions'],
   ['/api/income-analytics', 'Income analytics'],
   ['/api/accounting', 'Finance & accounting'],
+  ['/api/staff-direct-transfers', 'Finance & accounting'],
+  ['/api/staff-payment-corrections', 'Finance & accounting'],
+  ['/api/staff-wallet', 'Student wallets'],
+  ['/api/staff-procurement', 'Procurement'],
+  ['/api/staff-vendor', 'Vendor sales & settlements'],
+  ['/api/staff-academics', 'Academic management'],
+  ['/api/academic-policy', 'Academic policies'],
+  ['/api/staff-homework', 'Homework'],
+  ['/api/staff-cbt', 'CBT'],
+  ['/api/staff-student', 'Students'],
+  ['/api/staff-admission', 'Admissions'],
+  ['/api/staff-conduct', 'Student conduct'],
+  ['/api/staff-departments', 'Department inventories'],
+  ['/api/staff-stores', 'School stores'],
+  ['/api/staff-item-import', 'Inventory imports'],
+  ['/api/staff-hotel', 'Hotel'],
+  ['/api/staff-members', 'Members'],
+  ['/api/staff-services', 'Services & attendance'],
+  ['/api/staff-funds', 'Funds'],
+  ['/api/staff-offerings', 'Offerings'],
+  ['/api/staff-church-payments', 'Donations'],
+  ['/api/staff-organization-departments', 'Departments'],
+  ['/api/staff-payroll', 'Payroll'],
+  ['/api/data-backup', 'Backup & restore'],
+  ['/api/desktop-pairing', 'Device access'],
+  ['/api/help-config', 'Help settings'],
+  ['/api/plan-catalog', 'Plan management'],
+  ['/api/tutorial-catalog', 'Tutorial links'],
   ['/api/parent-dashboard', 'Parent portal'],
   ['/api/staff-notifications', 'Notifications'],
   ['/api/notification-scheduler', 'Notifications'],
@@ -44,13 +73,55 @@ const SENSITIVE_ACTION_KEYS = new Set([
 ]);
 
 function titleWords(value) {
-  return clean(value)
-    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-    .replace(/[_./:-]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toUpperCase();
+  return auditWords(value).toUpperCase();
 }
+
+// Keep canonical comparison keys separate from human-readable action descriptions.
+// This also formats historical rows at read time without rewriting their evidence.
+function sentenceAction(value) {
+  return auditSentence(value);
+}
+
+const ROUTE_TARGETS = Object.freeze({
+  'staff-direct-transfers': 'bank transfer', 'staff-payment-corrections': 'manual payment correction',
+  'staff-procurement': 'procurement', 'staff-wallet': 'student wallet',
+  'staff-users': 'staff account', 'staff-records': 'directory record',
+  'finance-workflow': 'finance request', 'security-audit': 'security audit log',
+  'help-config': 'help settings', 'academic-policy': 'academic policy',
+  'staff-academics': 'academic record', 'staff-students': 'student record',
+  'staff-library': 'library record', 'staff-hr': 'staff HR record',
+  'staff-attendance': 'staff attendance', 'staff-attendance-face': 'staff attendance face enrolment',
+  'staff-homework': 'homework', 'staff-conduct': 'student conduct record',
+  'staff-departments': 'department inventory', 'staff-stores': 'store inventory',
+  'staff-hotel': 'hotel record', 'staff-services': 'service attendance',
+  'staff-members': 'member record', 'staff-offerings': 'offering',
+  'staff-church-payments': 'donation', 'staff-funds': 'fund', 'staff-payroll': 'payroll',
+  'data-backup': 'backup and restore', 'desktop-pairing': 'desktop access request',
+  'plan-catalog': 'subscription plan', 'tutorial-catalog': 'tutorial link'
+});
+
+const COMPACT_ACTIONS = Object.freeze({
+  importitems: 'Import inventory items', saveitem: 'Save inventory item',
+  savepurchase: 'Save purchase', savedelivery: 'Save delivery',
+  saverequest: 'Save request', confirmreceipt: 'Confirm stock received',
+  login: 'Sign in', logout: 'Sign out'
+});
+
+const MODULE_ACTIONS = Object.freeze({
+  'staff-library': {
+    savetitle: 'Save library book title', addcopy: 'Add library book copy', restorecopy: 'Restore library book copy',
+    repaircopystatus: 'Repair library book copy status', checkout: 'Issue library book to borrower',
+    return: 'Record library book return', renew: 'Renew library loan', reserve: 'Reserve library book',
+    cancelreservation: 'Cancel library reservation', savepolicy: 'Save library borrowing policy'
+  },
+  'staff-departments': {
+    saveclinicrecord: 'Save clinic visit and items dispensed', recordmovement: 'Record department stock movement',
+    prepareclinicreport: 'Prepare clinic report for review', sendclinicreport: 'Send clinic report to parent',
+    sendmarketlist: 'Send supply order to supplier'
+  },
+  'staff-users': { save: 'Save staff account', delete: 'Delete staff account', import: 'Import staff accounts' },
+  'staff-hotel': { checkin: 'Check guest into hotel room', checkout: 'Check guest out of hotel room' }
+});
 
 const GENERIC_ACTION = /^(?:CREATE|UPDATE|EDIT|SAVE|DELETE|REMOVE|LIST|VIEW|GET|READ|PRINT|EXPORT|IMPORT|SEARCH|REVIEW|APPROVE|APPROVED|REJECT|REJECTED|POST|POSTED|SUBMIT|STATUS|USE|VERIFY|ENABLE|DISABLE|EDIT AND RESUBMIT|ACCOUNTS REVIEW|PLATFORM ACTION)$/;
 
@@ -58,9 +129,9 @@ export function explicitAuditAction(action, entityType = '', module = '', route 
   const label = titleWords(action);
   const target = titleWords(entityType || module || route.replace(/^\/api\//, ''));
   if (!label || label === 'PLATFORM ACTION') {
-    return target ? `ACTION NOT RECORDED — ${target}` : 'ACTION NOT RECORDED IN SOURCE AUDIT';
+    return sentenceAction(target ? `ACTION NOT RECORDED — ${target}` : 'ACTION NOT RECORDED IN SOURCE AUDIT');
   }
-  return (GENERIC_ACTION.test(label) && target ? `${label} ${target}` : label).slice(0, 180);
+  return sentenceAction(GENERIC_ACTION.test(label) && target ? `${label} ${target}` : label).slice(0, 180);
 }
 
 function safeField(body, names) {
@@ -108,25 +179,35 @@ export function securityAuditAction({ pathname = '', method = 'GET', body = {} }
   const path = lower(pathname);
   const verb = clean(method || 'GET').toUpperCase();
   if (path === '/api/admin' && safeField(body, ['section'])) {
-    return `VIEW ${titleWords(safeField(body, ['section']))}`.slice(0, 120);
+    return sentenceAction(`VIEW ${titleWords(safeField(body, ['section']))}`).slice(0, 120);
   }
   const declared = safeField(body, ['action', 'Action', 'mode', 'Mode', 'operation', 'Operation']);
   if (declared) {
+    const key = lower(declared);
+    if (path === '/api/staff-payment-corrections' || path === '/api/backend' && key === 'manualpaymentcorrection') {
+      const command = path === '/api/backend' ? lower(body.Command) : key;
+      const correction = { reduce: 'reduce receipt amount', reverse: 'reverse receipt credit', move: 'move credit to another student wallet' }[lower(body.Kind)];
+      return command === 'lookup' ? 'Load manual payment receipt and current wallet balance'
+        : command === 'preview' ? `Preview manual payment correction${correction ? ` — ${correction}` : ''}`
+          : `Post manual payment correction${correction ? ` — ${correction}` : ''}`;
+    }
     const target = safeField(body, ['EntityType', 'entityType', 'RecordType', 'recordType', 'section', 'Section']);
-    const routeTarget = titleWords(path.replace(/^\/api\//, ''));
-    const named = explicitAuditAction(declared, target || routeTarget);
+    const routeName = path.replace(/^\/api\//, '');
+    const routeTarget = ROUTE_TARGETS[routeName] || routeName;
+    const named = explicitAuditAction(MODULE_ACTIONS[routeName]?.[key] || COMPACT_ACTIONS[key] || declared, target || routeTarget);
     const decision = safeField(body, ['decision', 'Decision', 'Status', 'status']);
-    const qualifier = decision ? ` — REQUESTED ${titleWords(decision)}` : '';
+    const qualifier = decision ? ` — requested ${sentenceAction(titleWords(decision)).toLowerCase()}` : '';
     return `${named}${qualifier}`.slice(0, 180);
   }
   if (path === '/api/staff-session') {
-    if (verb === 'DELETE') return 'SIGN OUT';
-    if (verb === 'POST') return 'SIGN IN';
-    return 'CHECK SESSION';
+    if (verb === 'DELETE') return 'Sign out';
+    if (verb === 'POST') return 'Sign in';
+    return 'Check session';
   }
-  const target = titleWords(path.replace(/^\/api\//, '') || 'API');
+  const routeName = path.replace(/^\/api\//, '');
+  const target = titleWords(ROUTE_TARGETS[routeName] || routeName || 'API');
   const operation = verb === 'GET' || verb === 'HEAD' ? 'VIEW' : verb === 'POST' ? 'SUBMIT TO' : verb === 'PATCH' || verb === 'PUT' ? 'UPDATE' : verb;
-  return `${operation} ${target}`.slice(0, 180);
+  return sentenceAction(`${operation} ${target}`).slice(0, 180);
 }
 
 async function boundedProcurementAuditBody(request) {
@@ -182,8 +263,9 @@ async function requestAuditInput(request, pathname) {
     actorHint: safeField(body, ['ActorUsername', 'actorUsername', 'RecordedBy', 'recordedBy', 'UpdatedBy', 'updatedBy', 'Username', 'username', 'Email', 'email']),
     subject: safeField(body, ['TargetUsername', 'targetUsername', 'Username', 'username', 'AdmissionNo', 'admissionNo', 'Reference', 'reference', 'NotificationId', 'notificationId']),
     entityType: safeField(body, ['EntityType', 'entityType', 'RecordType', 'recordType', 'section', 'Section']),
-    entityId: safeField(body, ['EntityId', 'entityId', 'RecordId', 'recordId', 'ExpenseNo', 'expenseNo', 'BillNo', 'billNo', 'JournalNo', 'ImprestNo', 'AccountRef', 'AdmissionNo', 'StaffId', 'Reference', 'reference', 'NotificationId', 'notificationId', 'id', 'Id']),
+    entityId: safeField(body, ['EntityId', 'entityId', 'RecordId', 'recordId', 'ExpenseNo', 'expenseNo', 'BillNo', 'billNo', 'JournalNo', 'ImprestNo', 'AccountRef', 'AdmissionNo', 'StaffId', 'EmployeeId', 'LeaveId', 'ItemId', 'LoanId', 'BookId', 'VisitId', 'RequestId', 'PurchaseId', 'TransferId', 'BookingId', 'RoomId', 'MemberId', 'DepartmentId', 'ClassId', 'SubjectId', 'HomeworkId', 'Reference', 'reference', 'NotificationId', 'notificationId', 'id', 'Id']),
     requestedStatus: safeField(body, ['decision', 'Decision', 'Status', 'status']),
+    actionContext: auditActionContext(body),
     branchId: safeField(body, ['BranchId', 'branchId'])
   };
 }
@@ -256,11 +338,13 @@ export async function writeSecurityAudit(env, event = {}) {
     DurationMs: Math.max(0, Number(event.durationMs || 0) || 0),
     Details: clean(event.details).slice(0, 500)
   };
+  payload.ActionContext = clean(event.actionContext).slice(0, 500);
+  payload.Summary = auditNarrative({ ...payload, Summary: event.summary, SourceCollection: SECURITY_AUDIT_COLLECTION });
   await upsertDocument(env, SECURITY_AUDIT_COLLECTION, id, payload);
   return payload;
 }
 
-export async function persistRequestSecurityAudit({ env, request, prepared, response, failure, requestId, durationMs, authoritativeActor, authoritativeAction, authoritativeActivityClass, authoritativeOutcome, authoritativeDetails, auditHandled, auditNoChange } = {}) {
+export async function persistRequestSecurityAudit({ env, request, prepared, response, failure, requestId, durationMs, authoritativeActor, authoritativeAction, authoritativeActivityClass, authoritativeOutcome, authoritativeDetails, authoritativeSummary, auditHandled, auditNoChange } = {}) {
   const status = Number(response?.status || failure?.status || 500);
   if (auditHandled && status < 400) return null;
   const effectivePrepared = { ...prepared, action: authoritativeAction || prepared.action };
@@ -281,6 +365,7 @@ export async function persistRequestSecurityAudit({ env, request, prepared, resp
     module: securityAuditModuleForRoute(prepared.pathname),
     outcome,
     activityClass: authoritativeActivityClass,
+    summary: status < 400 ? authoritativeSummary : '',
     status,
     method: prepared.method,
     route: prepared.pathname,
@@ -290,6 +375,7 @@ export async function persistRequestSecurityAudit({ env, request, prepared, resp
     subject: prepared.subject,
     entityType: prepared.entityType,
     entityId: prepared.entityId,
+    actionContext: prepared.actionContext,
     branchId,
     sourcePlatform: actor?.sourcePlatform || prepared.sourcePlatform,
     clientAddress: prepared.clientAddress,
@@ -342,8 +428,18 @@ export function normalizedLegacyAudit(row, source) {
     Country: clean(row.Country),
     DurationMs: Math.max(0, Number(row.DurationMs || 0) || 0),
     Details: clean(row.Details || row.Query || row.DeliveryStatus),
+    ActionContext: clean(row.ActionContext),
     SourceCollection: source.collection
   };
+  normalized.Summary = clean(row.Summary);
+  if (lower(normalized.Route) === '/api/staff-direct-transfers') {
+    normalized.Module = 'Finance & accounting';
+    if (titleWords(row.Action) === 'APPROVE STAFF DIRECT TRANSFERS') {
+      normalized.Action = 'Process bank-transfer approval — stage not recorded';
+      normalized.Details = [normalized.Details,
+        'Historical approval step; this entry alone does not establish that money was credited.'].filter(Boolean).join('; ');
+    }
+  }
   // Display-only interpretation: do not rewrite immutable historical records or
   // claim an old request was secret-verified when that evidence was not recorded.
   if (source.collection === SECURITY_AUDIT_COLLECTION
@@ -357,6 +453,7 @@ export function normalizedLegacyAudit(row, source) {
       normalized.Details = [normalized.Details, 'Historical scheduler request; service identity was not recorded.'].filter(Boolean).join('; ');
     }
   }
+  normalized.Summary = auditNarrative(normalized);
   return normalized;
 }
 

@@ -15,7 +15,8 @@
         <p>Correct a wallet top-up or school-fee receipt. The original receipt stays in the audit trail. This does not send money or refund a bank transfer.</p>
         <form autocomplete="off">
           <label>Original payment reference<input name="Reference" list="correctionReceipts" required autocomplete="off" placeholder="Select a receipt or enter its reference"></label>
-          <datalist id="correctionReceipts">${payments.filter(row => String(row.Gateway).toLowerCase() === 'manual').map(row => `<option value="${esc(row.Reference)}">${esc(row.AccountRef)} · ${esc(row.FeeName || row.FeeCode)} · ${esc(money(row.Amount))}</option>`).join('')}</datalist>
+          <datalist id="correctionReceipts">${payments.filter(row => String(row.Gateway).toLowerCase() === 'manual').map(row => `<option value="${esc(row.Reference)}">${esc(row.AccountRef)} · ${esc(row.FeeName || row.FeeCode)} · Receipt amount: ${esc(money(row.Amount))}</option>`).join('')}</datalist>
+          <small>Search results show individual receipt amounts, not wallet balances. Load a receipt to check the current balance.</small>
           <button type="button" data-lookup>Load receipt</button><div data-receipt role="status"></div>
           <label>Correction<select name="Kind"><option value="reduce">Reduce an overstated amount</option><option value="reverse">Reverse the remaining payment</option><option value="move">Move the remaining credit to the correct wallet</option></select></label>
           <label data-reduce>Correct amount to retain<input name="CorrectAmount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="e.g. 10000 when 14000 was recorded"></label>
@@ -73,12 +74,20 @@
       dialog.addEventListener('cancel', event => { if (busy) event.preventDefault(); });
       dialog.addEventListener('close', () => { dialog.remove(); });
       const showReceipt = row => {
-        dialog.querySelector('[data-receipt]').textContent = `${student(row.Student)} — ${row.Type}. Original: ${money(row.OriginalAmount)}. Remaining after earlier corrections: ${money(row.RemainingAmount)}.`;
+        const balance = Number.isFinite(row.CurrentWalletBalance) ? money(row.CurrentWalletBalance) : 'Not loaded — load receipt again';
+        dialog.querySelector('[data-receipt]').innerHTML = `<p>${esc(student(row.Student))} — ${esc(row.Type)}</p>
+          <dl class="payment-correction-amounts">
+            <div><dt>Receipt amount</dt><dd>${esc(money(row.OriginalAmount))}</dd></div>
+            ${row.Type === 'Wallet' ? `<div><dt>Current wallet balance</dt><dd>${esc(balance)}</dd></div>` : ''}
+            <div><dt>Receipt remaining after corrections</dt><dd>${esc(money(row.RemainingAmount))}</dd></div>
+          </dl>
+          ${row.Type === 'Wallet' ? '<small>The wallet balance includes all credits and spending, not just this receipt. Checked when loaded; checked again before confirmation.</small>' : ''}`;
         form.elements.Kind.querySelector('[value="move"]').disabled = row.Type !== 'Wallet';
         if (row.Type !== 'Wallet' && form.elements.Kind.value === 'move') form.elements.Kind.value = 'reduce';
         updateMode();
       };
       dialog.querySelector('[data-lookup]').addEventListener('click', () => run(async () => {
+        dialog.querySelector('[data-receipt]').textContent = '';
         invalidate(); const data = await api({ action: 'lookup', Reference: form.elements.Reference.value });
         showReceipt(data.Receipt); status.textContent = 'Choose the correction and enter a reason.';
       }));
@@ -87,7 +96,7 @@
         event.preventDefault(); const input = values();
         run(async () => {
           const data = await api({ ...input, action: 'preview' });
-          preview = { input, data }; showReceipt(data.Receipt);
+          preview = { input, data }; showReceipt(data.replayed ? { ...data.Receipt, CurrentWalletBalance: undefined } : data.Receipt);
           const parts = [`Correction amount: ${money(data.Amount)}`, `Receipt amount remaining: ${money(data.RemainingAmount)}`];
           if (data.BalanceBefore !== undefined) parts.push(`Source wallet: ${money(data.BalanceBefore)} → ${money(data.BalanceAfter)}`);
           if (data.Target) parts.push(`Correct student: ${student(data.Target)}`, `Target wallet: ${money(data.TargetBalanceBefore)} → ${money(data.TargetBalanceAfter)}`);
@@ -107,6 +116,9 @@
         run(async () => {
           const data = await api({ ...preview.input, action: 'post', PreviewDigest: preview.data.PreviewDigest, approvalPassword });
           posted = true; status.className = 'ok'; status.textContent = data.message;
+          // A successful correction changes the balance. Do not leave the pre-correction value labelled current.
+          if (data.Receipt) showReceipt({ ...data.Receipt, RemainingAmount: data.RemainingAmount,
+            CurrentWalletBalance: data.replayed ? undefined : data.BalanceAfter });
           dialog.querySelector('[data-confirm]').hidden = true;
           if (onSaved) await onSaved(data);
         });

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Security audit language fixture</title><link rel="stylesheet" href="../../css/style.css">
+<body class="staff-page"><main style="padding:24px;max-width:100%;box-sizing:border-box">
+<h1>Security audit — plain-language preview</h1><p>Simulated records only. No database connection.</p>
+<div class="security-audit-workspace"><div class="admin-table-wrap security-audit-table-wrap">
+<table class="admin-table security-audit-table"><thead><tr><th>Date &amp; time</th><th>Action and explanation</th><th>Module</th><th>User</th><th>Subject</th><th>Outcome</th><th>Branch</th><th>Source</th><th>Details</th></tr></thead><tbody id="rows"></tbody></table>
+</div></div></main>
+<script type="module">
+import { auditNarrative } from '../../functions/lib/audit-language.js';
+const rows = [
+  { Action: 'Create employee', Module: 'Human Resources', EntityId: 'STAFF-42', SourceCollection: 'hrAudit', Details: 'Procurement Officer' },
+  { Action: 'Save class attendance', Module: 'Academic management', EntityId: 'REGISTER-1', SourceCollection: 'platformSecurityAudit', ActionContext: 'Class: Grade 8; Term: First Term; Date: 2026-10-14' },
+  { Action: 'Record wallet top-up from bank transfer', Module: 'Finance & accounting', EntityId: 'PAYMENT-TEST', Summary: '₦20,000.00 credited to student TEST/001’s wallet through bank-transfer approval.' },
+  { Action: 'Delete staff account', Module: 'Staff & permissions', EntityId: 'STAFF-42', Outcome: 'Denied' }
+].map(row => ({ Timestamp: '14 Oct 2026, 10:40 WAT', Actor: 'Test Officer', Outcome: 'Success', BranchId: 'main', SourcePlatform: 'Web', ...row }))
+ .map(row => ({ ...row, Subject: row.EntityId, Summary: auditNarrative(row) }));
+// Use the actual production renderer in this isolated fixture, without starting
+// the staff application, authenticating or connecting to its database.
+const source = await (await fetch('../../js/admin.js')).text();
+const renderer = source.slice(source.indexOf('function securityAuditRowsHtml('), source.indexOf('function updateSecurityAuditTable('));
+const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+const render = new Function('escapeHtml', 'lower', 'securityAuditDateTime', 'securityAuditDetail', renderer + ';return securityAuditRowsHtml;')(
+  escapeHtml, value => String(value).toLowerCase(), String, row => row.Details || row.EntityId || '');
+document.getElementById('rows').innerHTML = render(rows);
+</script></body></html>

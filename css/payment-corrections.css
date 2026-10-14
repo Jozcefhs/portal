@@ -5,6 +5,12 @@
 .payment-correction-dialog input, .payment-correction-dialog select, .payment-correction-dialog textarea { width: 100%; box-sizing: border-box; min-width: 0; }
 .payment-correction-dialog [data-receipt], .payment-correction-dialog [data-summary]:not(:empty) { background: #edf7fa; padding: 12px; border-radius: 8px; margin-top: 12px; overflow-wrap: anywhere; }
 .payment-correction-dialog [data-receipt]:empty { display: none; }
+.payment-correction-dialog [data-receipt] p { margin: 0 0 10px; }
+.payment-correction-amounts { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; margin: 0 0 10px; }
+.payment-correction-amounts > div { min-width: 0; padding: 10px; background: #fff; border: 1px solid #c8d9e9; border-radius: 8px; }
+.payment-correction-amounts dt { font-size: 12px; color: #486581; }
+.payment-correction-amounts dd { margin: 4px 0 0; font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: normal; }
+.payment-correction-dialog small { display: block; color: #486581; }
 .payment-correction-dialog [data-summary] p { margin: 8px 0; }
 .payment-correction-dialog [hidden] { display: none !important; }
 @media (max-width: 480px) { .payment-correction-dialog { padding: 14px; } .payment-correction-dialog button:not([data-close]) { width: 100%; } }

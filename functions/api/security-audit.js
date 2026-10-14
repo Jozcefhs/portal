@@ -48,7 +48,7 @@ function filterRows(rows, body) {
     && includesValue(row.BranchId, body.branchId)
     && (!search || [
       row.Action, row.Module, row.Actor, row.ActorUsername, row.Subject,
-      row.EntityType, row.EntityId, row.BranchId, row.Details, row.Route,
+      row.EntityType, row.EntityId, row.BranchId, row.Summary, row.Details, row.Route,
       row.RequestId
     ].some((value) => lower(value).includes(search))));
 }

@@ -174,7 +174,7 @@ test('parent rejection rendering uses text nodes, local display time, and child-
 
 test('authenticated endpoint checks scope before rejecting and queries only linked child references', async () => {
   const staff = await readFile(new URL('../functions/api/staff-direct-transfers.js', import.meta.url), 'utf8');
-  assert.match(staff, /verifyScope\(user, transfer\);\s*if \(action === 'reject'\)/);
+  assert.match(staff, /verifyScope\(user, transfer\);\s*setDirectTransferAudit\(context, user, transfer, 'review'\);\s*if \(action === 'reject'\)/);
   assert.match(staff, /requireStaffSession\(context.env, context.request\)/);
   const api = await readFile(new URL('../functions/api/parent-dashboard.js', import.meta.url), 'utf8');
   assert.match(api, /queryRowsForReferences\(env, 'directTransferRequests', \['Payload.AccountRef', 'Payload.AdmissionNo', 'Payload.ApplicationReference'\], keys\)/);

@@ -62,6 +62,39 @@ function fixture(wallet = true) {
   return { db, rows, io, call, post, add, commits: () => commits };
 }
 
+test('receipt lookup distinguishes original amount from the live wallet balance without writes', async () => {
+  const f = fixture();
+  f.add('ledger', 'OTHER', { AccountRef: 'S1', FeeCategory: 'Wallet', Credit: 31000, Debit: 750 });
+  f.add('accountSummaries', 'S1', { AccountRef: 'S1', BranchId: 'main', SchoolSection: 'secondary', WalletBalance: 999999 });
+  const result = await f.call('lookup');
+  assert.equal(result.Receipt.OriginalAmount, 14000);
+  assert.equal(result.Receipt.CurrentWalletBalance, 44250);
+  assert.equal(result.Receipt.RemainingAmount, 14000);
+  assert.equal(f.commits(), 0);
+  const preview = await f.call('preview');
+  assert.equal(preview.Receipt.CurrentWalletBalance, preview.BalanceBefore);
+  assert.equal(preview.BalanceBefore, 44250);
+});
+
+test('lookup represents a zero balance explicitly and does not substitute a value on read failure', async () => {
+  const f = fixture(); f.add('ledger', 'SPENT', { AccountRef: 'S1', FeeCategory: 'Wallet', Debit: 14000 });
+  assert.equal((await f.call('lookup')).Receipt.CurrentWalletBalance, 0);
+  f.io.wallet = async () => { throw new Error('Wallet unavailable'); };
+  await assert.rejects(f.call('lookup'), /Wallet unavailable/);
+  assert.equal(f.commits(), 0);
+  const school = fixture(false);
+  school.io.wallet = async () => { throw new Error('Must not read a wallet for school fees'); };
+  assert.equal(Object.hasOwn((await school.call('lookup')).Receipt, 'CurrentWalletBalance'), false);
+});
+
+test('lookup rejects an out-of-scope receipt before reading any wallet balance', async () => {
+  const f = fixture(); let reads = 0;
+  f.db.get('payments/MANUAL-1').BranchId = 'other';
+  f.io.wallet = async () => { reads++; return { WalletBalance: 999 }; };
+  await assert.rejects(f.call('lookup'), /branch/);
+  assert.equal(reads, 0);
+});
+
 test('14000 wallet receipt reduced to 10000 leaves original and a linked 4000 reversal', async () => {
   const f = fixture(); const before = await f.call('preview');
   assert.equal(f.commits(), 0); assert.equal(before.Amount, 4000); assert.equal(before.BalanceAfter, 10000);
@@ -73,6 +106,8 @@ test('14000 wallet receipt reduced to 10000 leaves original and a linked 4000 re
   const j = f.rows('accountingJournals').find(row => row.Source === 'Manual Payment Correction');
   assert.deepEqual(j.Lines.map(l => [l.AccountCode, l.Debit, l.Credit]), [['2200', 4000, 0], ['1020', 0, 4000]]);
   assert.equal(f.rows('accountingAudit')[0].ActorUsername, 'accountant');
+  assert.equal(f.rows('accountingAudit')[0].Action, 'Reduce manual wallet top-up receipt');
+  assert.match(f.rows('accountingAudit')[0].Summary, /4,000.00 removed from student S1's wallet/);
 });
 test('move corrects both wallets atomically without changing cash or creating another receipt', async () => {
   const f = fixture(); const result = await f.post({ Kind: 'move', TargetAccountRef: 'S2' });

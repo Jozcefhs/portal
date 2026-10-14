@@ -56,11 +56,12 @@ function identity(student, account = {}) {
     BranchId: clean(student.BranchId || 'main'), SchoolSection: clean(student.SchoolSection),
     AcademicSession: clean(student.AcademicSession), Term: clean(student.Term) };
 }
-function publicReceipt(record) {
+function publicReceipt(record, account = null) {
   return { Reference: record.payment.Reference, ReceiptNo: record.payment.ReceiptNo,
     Type: record.wallet ? 'Wallet' : 'School fees', OriginalAmount: record.original / 100,
     RemainingAmount: record.remaining / 100, CorrectedAmount: (record.original - record.remaining) / 100,
-    Student: identity(record.student), PaidAt: record.payment.PaidAt };
+    Student: identity(record.student), PaidAt: record.payment.PaidAt,
+    ...(record.wallet && account ? { CurrentWalletBalance: Number(account.WalletBalance) } : {}) };
 }
 function instruction(body) {
   const value = { Reference: clean(body.Reference), Kind: clean(body.Kind), Reason: clean(body.Reason),
@@ -155,7 +156,11 @@ export async function handleManualPaymentCorrection(env, user, body, dependencie
   if (!['lookup', 'preview', 'post'].includes(action)) fail('Choose a valid payment correction action.', 400);
   if (action === 'post' && (user.subscriptionReadOnly || user.subscriptionActive === false || !await io.authorize())) fail('Enter your current staff password and use a writable account to confirm this correction.', 403);
   const record = await receipt(env, body, scope, io);
-  if (action === 'lookup') return { ok: true, Receipt: publicReceipt(record) };
+  if (action === 'lookup') {
+    // Read the live, scoped ledger, not the receipt amount or a cached account summary.
+    const account = record.wallet ? await io.wallet(env, record.student) : null;
+    return { ok: true, Receipt: publicReceipt(record, account) };
+  }
   const input = instruction(body);
   if (!/^[a-zA-Z0-9_-]{16,100}$/.test(clean(body.OperationId))) fail('Start a new correction from the Accounts screen.', 400);
   const id = await financeOperationId('PC', scope.branchId, body.OperationId);
@@ -241,7 +246,7 @@ export async function handleManualPaymentCorrection(env, user, body, dependencie
     writes.push(patch(target.__scopePath, target, { WalletLastPurchaseAt: timestamp, WalletLastPurchaseNo: id }), financeWrite('ledger', incoming.LedgerNo, incoming));
   }
   for (const write of writes.filter(row => row.collectionPath === 'accountingJournals' && row.exists === false)) validateRequisitionPosting(write.data, chart, periods, 'school');
-  const result = { Receipt: publicReceipt(record), CorrectionId: id, Kind: input.Kind, Amount: value,
+  const result = { Receipt: publicReceipt(record, account), CorrectionId: id, Kind: input.Kind, Amount: value,
     RemainingAmount: (record.remaining - amount) / 100, Source: source,
     ...(wallet ? { BalanceBefore: Number(account.WalletBalance), BalanceAfter: (cents(account.WalletBalance) - amount) / 100 } : { SchoolFees: school }),
     ...(target ? { Target: identity(target, targetAccount), TargetBalanceBefore: Number(targetAccount.WalletBalance), TargetBalanceAfter: (cents(targetAccount.WalletBalance) + amount) / 100 } : {}) };
@@ -252,7 +257,13 @@ export async function handleManualPaymentCorrection(env, user, body, dependencie
   if (body.PreviewDigest !== digest) fail('The payment, wallet or invoice balances changed after preview. Preview again before confirming.');
   writes.push(financeWrite('manualPaymentCorrections', id, { ...source, ...input, CorrectionId: id, Amount: value,
     OriginalPaymentId: payment.__id, Fingerprint: fingerprint, RecordedAt: timestamp, RecordedBy: user.username, Result: result }),
-  financeWrite('accountingAudit', id, { AuditId: id, Timestamp: timestamp, Action: 'CORRECT MANUAL PAYMENT',
+  financeWrite('accountingAudit', id, { AuditId: id, Timestamp: timestamp,
+    Action: input.Kind === 'move' ? 'Move manual credit to the correct student wallet'
+      : `${input.Kind === 'reduce' ? 'Reduce' : 'Reverse'} manual ${wallet ? 'wallet top-up' : 'school-fee'} receipt`,
+    Summary: `${new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN' }).format(value)} ${target
+      ? `moved from student ${source.AccountRef}'s wallet to student ${targetAccount.AccountRef}'s wallet`
+      : `removed from student ${source.AccountRef}'s ${wallet ? 'wallet' : 'school-fee credit'} to correct receipt ${payment.Reference}`}.
+      ${wallet ? `Source wallet balance: ${Number(account.WalletBalance).toFixed(2)} to ${result.BalanceAfter.toFixed(2)} NGN.` : 'Invoice and account balances were recalculated.'} No bank transfer or cash refund was made.`,
     EntityType: 'Payment', EntityId: payment.Reference, BranchId: scope.branchId, SchoolSection: source.SchoolSection,
     User: clean(user.displayName || user.username), ActorUsername: user.username, UserRole: user.assignedRole || user.role,
     SourcePlatform: user.sourcePlatform || 'Web', Details: `${input.Kind}; amount ${value}; source ${source.AccountRef}; target ${targetAccount?.AccountRef || 'none'}; ${input.Reason}` }));

@@ -98,6 +98,7 @@ import { canEditRequisitions, assertRequisitionEditPermission, requisitionEditGr
 import { resubmitRequisition } from './finance-workflow.js';
 import { postApprovedRequisition } from '../lib/requisition-posting.js';
 import { explicitAuditAction, securityAuditAction } from '../lib/security-audit.js';
+import { paymentAuditSummary } from '../lib/audit-language.js';
 import {
   clearOrganizationRestoreCollection,
   completeOrganizationRestore,
@@ -12139,6 +12140,18 @@ export async function onRequestPost(context) {
     // approved computer branch for downstream reads and writes.
     body = applyDesktopDeviceBranchScope(body, desktopAuthentication);
     const data = await routeAction(env, action, body, deploymentIdentity, new URL(request.url).origin);
+    if (context.data && action === 'recordManualPayment' && data.ok && data.payment) {
+      context.data.securityAuditAction = data.duplicate ? 'Check previously recorded manual payment' : 'Record manual payment';
+      context.data.securityAuditSummary = paymentAuditSummary(data.payment, { duplicate: data.duplicate });
+    }
+    if (context.data && action === 'manualPaymentCorrection' && body.Command === 'post' && data.ok) {
+      // The atomic correction already writes a detailed accounting audit event.
+      context.data.securityAuditHandled = !data.replayed;
+      if (data.replayed) {
+        context.data.securityAuditAction = 'Check previously posted manual payment correction';
+        context.data.securityAuditSummary = 'The earlier correction was found. This retry did not change any balance again.';
+      }
+    }
     finishRequestMetric(metric, { status: 200, action });
     return Response.json(data, { headers: { 'Cache-Control': 'no-store' } });
   } catch (err) {

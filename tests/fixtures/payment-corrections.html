@@ -15,12 +15,12 @@ document.getElementById('open').onclick = () => DynamaxPaymentCorrections.open({
   fetch:async (url, options)=>{
     if(url!=='/api/staff-payment-corrections') throw Error('Unexpected fixture request');
     const input=JSON.parse(options.body), wallet=input.Reference==='MANUAL-WALLET';
-    const Receipt={Reference:input.Reference,Type:wallet?'Wallet':'School fees',Student:Source,OriginalAmount:14000,RemainingAmount:14000};
+    const Receipt={Reference:input.Reference,Type:wallet?'Wallet':'School fees',Student:Source,OriginalAmount:14000,RemainingAmount:14000,...(wallet?{CurrentWalletBalance:44250}:{})};
     if(input.action==='lookup') return Response.json({ok:true,Receipt});
     if(!input.Reference || !input.Reason) return Response.json({ok:false,message:'Missing reference or reason'},{status:400});
     const amount=input.Kind==='reduce'?14000-Number(input.CorrectAmount):14000;
     return Response.json({ok:true,Receipt,Source,Kind:input.Kind,Amount:amount,RemainingAmount:14000-amount,
-      ...(wallet?{BalanceBefore:14000,BalanceAfter:14000-amount}:{SchoolFees:{Before:{OutstandingBalance:0},After:{OutstandingBalance:amount},Invoices:[{InvoiceId:'INV-TEST',ReleasedCredit:amount,BalanceAfter:amount}]}}),
+      ...(wallet?{BalanceBefore:44250,BalanceAfter:44250-amount}:{SchoolFees:{Before:{OutstandingBalance:0},After:{OutstandingBalance:amount},Invoices:[{InvoiceId:'INV-TEST',ReleasedCredit:amount,BalanceAfter:amount}]}}),
       ...(input.Kind==='move'?{Target,TargetBalanceBefore:0,TargetBalanceAfter:amount}:{}),PreviewDigest:'fixture-only',
       message:input.action==='post'?'Simulated correction posted. No real balances changed.':'Review this simulated correction.'});
   }
