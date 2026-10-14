@@ -578,7 +578,7 @@ test('AM-002 active Senior departments reserve their Core subjects from school-w
   ]), ['physics', 'chemistry', 'literature']);
 });
 
-test('Senior Core subjects can span departments while each student keeps an individual department', () => {
+test('Senior classrooms determine departments and mixed classrooms preserve individual Core selections', () => {
   const departments = [
     { DepartmentId: 'science', Name: 'Science', SchoolStage: 'senior-secondary', CoreSubjectIds: ['english', 'math', 'physics'], Status: 'Active' },
     { DepartmentId: 'arts', Name: 'Arts', SchoolStage: 'senior-secondary', CoreSubjectIds: ['english', 'literature'], Status: 'Active' },
@@ -587,28 +587,30 @@ test('Senior Core subjects can span departments while each student keeps an indi
   ];
   assert.deepEqual(academicSeniorCoreSubjectIds(departments), ['english', 'math', 'physics', 'literature']);
   const classroom = { DepartmentId: 'science' };
-  assert.equal(academicStudentDepartmentForClassroom({ DepartmentId: 'arts' }, classroom), 'arts');
-  assert.equal(academicStudentDepartmentForClassroom({ DepartmentId: 'business' }, classroom), 'business');
+  assert.equal(academicStudentDepartmentForClassroom({ DepartmentId: 'arts' }, classroom), 'science');
+  assert.equal(academicStudentDepartmentForClassroom({ DepartmentId: 'business' }, classroom), 'science');
   assert.equal(academicStudentDepartmentForClassroom({}, classroom), 'science');
   assert.equal(academicStudentDepartmentForClassroom({}, {}), '');
   const sameClassroom = {
     SessionId: 'session-1', TermId: 'term-1', ClassId: 'ss1', ArmId: 'brilliance',
     SchoolStage: 'senior-secondary', SubjectIds: []
   };
-  const state = { offerings: [], subjects: [], departments };
+  const state = { offerings: [], subjects: [], departments, arms: [{ ArmId: 'brilliance', ClassId: 'ss1', DepartmentId: '' }] };
   const scienceStudent = applyAcademicStudentCurriculum(state, {
-    ...sameClassroom, DepartmentId: academicStudentDepartmentForClassroom({ DepartmentId: 'science' }, classroom)
+    ...sameClassroom, DepartmentId: 'science', SubjectIds: ['english', 'math', 'physics']
   }, { allowIncompleteCurriculum: true });
   const artsStudent = applyAcademicStudentCurriculum(state, {
-    ...sameClassroom, DepartmentId: academicStudentDepartmentForClassroom({ DepartmentId: 'arts' }, classroom)
+    ...sameClassroom, DepartmentId: 'arts', SubjectIds: ['english', 'literature']
   }, { allowIncompleteCurriculum: true });
   assert.deepEqual(scienceStudent.CoreSubjectIds, ['english', 'math', 'physics']);
   assert.deepEqual(artsStudent.CoreSubjectIds, ['english', 'literature']);
+  assert.equal(scienceStudent.DepartmentId, '');
+  assert.equal(artsStudent.DepartmentId, '');
   assert.match(librarySource, /academicSeniorCoreSubjectIds\(state\.departments\)\.includes\(record\.SubjectId\)/);
   assert.doesNotMatch(librarySource, /ACADEMIC_CLASSROOM_DEPARTMENT_MISMATCH/);
 });
 
-test('optional Senior classroom defaults can be changed without rewriting student departments', () => {
+test('Senior classroom departments can be changed without rewriting existing student selections or scores', () => {
   const batchSource = librarySource.slice(
     librarySource.indexOf('export async function bulkAssignAcademicClassroomDepartments'),
     librarySource.indexOf('export function academicMembershipCanReceiveInitialArm')
@@ -622,13 +624,14 @@ test('optional Senior classroom defaults can be changed without rewriting studen
   assert.match(backendSource, /case 'bulkAssignAcademicClassroomDepartments':/);
   assert.match(adminSource, /data-academic-classroom-departments/);
   assert.match(adminSource, /data-original-department-id/);
-  assert.match(adminSource, /No default \/ mixed departments/);
-  assert.match(adminSource, /Choose or clear a Senior classroom default before saving/);
-  assert.match(adminSource, /Department for selected students/);
-  assert.match(adminSource, /departmentControl\.required = seniorClass && Boolean\(selectedArmId\)/);
+  assert.match(adminSource, /Mixed departments/);
+  assert.match(adminSource, /Change a classroom department or choose Mixed departments before saving/);
+  assert.doesNotMatch(adminSource, /Department for selected students/);
+  assert.match(adminSource, /departmentControl\.required = false/);
   assert.match(adminSource, /departmentControl\.value = seniorClass \? clean\(classroom\?\.DepartmentId\) : ''/);
   assert.doesNotMatch(librarySource, /ACADEMIC_CLASSROOM_DEPARTMENT_CONFLICT/);
-  assert.match(librarySource, /DepartmentId: clean\(existing\.DepartmentId \|\| destinationArm\.DepartmentId\)/);
+  assert.match(librarySource, /DepartmentId: clean\(destinationArm\.DepartmentId\)/);
+  assert.doesNotMatch(batchSource, /collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS\.(studentMemberships|studentScores)/);
 });
 
 test('AM-003 permanent deletion detects current and historical academic references', () => {
@@ -750,7 +753,7 @@ test('class-teacher batches require one unique classroom, one class teacher and 
 
 test('AM-002 existing-student import rows use reusable codes and semicolon subject lists', () => {
   assert.deepEqual(ACADEMIC_STUDENT_IMPORT_COLUMNS, [
-    'StudentRef', 'FirstName', 'Surname', 'MiddleName', 'ClassCode', 'ArmCode', 'DepartmentCode',
+    'StudentRef', 'FirstName', 'Surname', 'MiddleName', 'ClassCode', 'ArmCode', 'CoreSubjectCodes',
     'TradeSubjectCodes', 'OptionalSubjectCodes', 'Reason'
   ]);
   assert.deepEqual(ACADEMIC_STUDENT_IMPORT_REQUIRED_COLUMNS, ['StudentRef', 'FirstName', 'Surname', 'ClassCode']);
@@ -759,14 +762,14 @@ test('AM-002 existing-student import rows use reusable codes and semicolon subje
     DepartmentCode: 'SCI', TradeSubjectCodes: 'CATER; AGR | CATER', OptionalSubjectCodes: 'BIO;MUSIC'
   }]), [{
     StudentRef: 'DCA/2026/001', FirstName: 'Ada', Surname: 'Okafor', MiddleName: 'Grace', ClassCode: 'SS1', ArmCode: 'EXC',
-    DepartmentCode: 'SCI', TradeSubjectCodes: ['CATER', 'AGR'], OptionalSubjectCodes: ['BIO', 'MUSIC'], Reason: ''
+    DepartmentCode: 'SCI', CoreSubjectCodes: [], TradeSubjectCodes: ['CATER', 'AGR'], OptionalSubjectCodes: ['BIO', 'MUSIC'], Reason: ''
   }]);
   assert.deepEqual(normalizeAcademicStudentImportRows('not-json'), []);
   assert.deepEqual(normalizeAcademicStudentImportRows([{
     StudentRef: 'DCA/2026/002', FirstName: 'No Arm', Surname: 'Student', ClassCode: 'JSS1'
   }]), [{
     StudentRef: 'DCA/2026/002', FirstName: 'No Arm', Surname: 'Student', MiddleName: '', ClassCode: 'JSS1', ArmCode: '',
-    DepartmentCode: '', TradeSubjectCodes: [], OptionalSubjectCodes: [], Reason: ''
+    DepartmentCode: '', CoreSubjectCodes: [], TradeSubjectCodes: [], OptionalSubjectCodes: [], Reason: ''
   }]);
 });
 
@@ -813,11 +816,12 @@ test('AM-002 Junior takes all offerings while Senior inherits department core su
     { SubjectId: 'music', SchoolSection: 'secondary', SeniorChoiceRole: 'Optional', Status: 'Active' }
   ];
   const departments = [{ DepartmentId: 'science', SchoolStage: 'senior-secondary', CoreSubjectIds: ['physics'], Status: 'Active' }];
+  const arms = [{ ArmId: 'arm-a', ClassId: 'class-1', DepartmentId: 'science' }];
   const base = { SessionId: 'session-1', TermId: 'term-1', ClassId: 'class-1', ArmId: 'arm-a' };
   const junior = applyAcademicStudentCurriculum({ offerings, subjects, departments }, {
     ...base, SchoolStage: 'junior-secondary', DepartmentId: 'science', SubjectIds: []
   });
-  const senior = applyAcademicStudentCurriculum({ offerings, subjects, departments }, {
+  const senior = applyAcademicStudentCurriculum({ offerings, subjects, departments, arms }, {
     ...base, SchoolStage: 'senior-secondary', DepartmentId: 'science', SubjectIds: ['music']
   });
 
@@ -828,7 +832,7 @@ test('AM-002 Junior takes all offerings while Senior inherits department core su
   assert.deepEqual(senior.SubjectIds, ['music', 'physics']);
   assert.equal(senior.SubjectIds.includes('english'), false);
   assert.equal(senior.SubjectIds.includes('french'), false);
-  const incompleteSenior = applyAcademicStudentCurriculum({ offerings: [], subjects: [], departments }, {
+  const incompleteSenior = applyAcademicStudentCurriculum({ offerings: [], subjects: [], departments, arms }, {
     ...base, SchoolStage: 'senior-secondary', DepartmentId: 'science', SubjectIds: []
   }, { allowIncompleteCurriculum: true });
   assert.deepEqual(incompleteSenior.SubjectIds, ['physics']);
@@ -837,6 +841,7 @@ test('AM-002 Junior takes all offerings while Senior inherits department core su
 
 test('AM-002 Senior arm subjects lock core, require Trade and retain optional selections', () => {
   const state = {
+    arms: [{ ArmId: 'excellence', ClassId: 'sss-1', DepartmentId: 'science' }],
     offerings: [
       { SessionId: 'session-1', TermId: 'term-1', ClassId: 'sss-1', ArmId: '', SubjectId: 'english', SubjectRole: 'Core', Status: 'Active' },
       { SessionId: 'session-1', TermId: 'term-1', ClassId: 'sss-1', ArmId: '', SubjectId: 'french', SubjectRole: 'Trade', Status: 'Active' }
@@ -870,14 +875,14 @@ test('AM-002 Senior arm subjects lock core, require Trade and retain optional se
   assert.throws(() => applyAcademicStudentCurriculum(state, {
     ...base, TradeSubjectIds: ['french'], SubjectIds: ['french']
   }, { requireTradeSelection: true }), /not available/);
-  const pendingDepartment = applyAcademicStudentCurriculum(state, {
+  const pendingDepartment = applyAcademicStudentCurriculum({ ...state, arms: [] }, {
     ...base, DepartmentId: '', TradeSubjectIds: [], OptionalSubjectIds: [], SubjectIds: []
   }, { allowIncompleteCurriculum: true });
   assert.deepEqual(pendingDepartment.CoreSubjectIds, []);
-  assert.equal(pendingDepartment.CurriculumStatus, 'Pending Department Selection');
-  assert.throws(() => applyAcademicStudentCurriculum(state, {
+  assert.equal(pendingDepartment.CurriculumStatus, 'Pending Classroom Assignment');
+  assert.throws(() => applyAcademicStudentCurriculum({ ...state, arms: [] }, {
     ...base, DepartmentId: '', TradeSubjectIds: [], OptionalSubjectIds: [], SubjectIds: []
-  }), /Choose an active senior secondary department/);
+  }), /Assign this student to a classroom/);
 });
 
 test('AM-003 movements preserve before and after membership snapshots', () => {
@@ -972,7 +977,7 @@ test('Academic writes are audited, optimistic and preserve legacy class/student 
   assert.match(librarySource, /ClassName: clean\(schoolClass\?\.Name\)/);
   assert.match(librarySource, /SubjectIds: uniqueIds/);
   assert.match(librarySource, /record\.CoreSubjectIds = coreSubjectIds/);
-  assert.match(librarySource, /record\.CurriculumStatus = !record\.DepartmentId/);
+  assert.match(librarySource, /record\.CurriculumStatus = !classroom/);
   assert.match(librarySource, /department\.CoreSubjectIds/);
   assert.match(librarySource, /AcademicDepartment: clean\(department\?\.Name\)/);
   assert.match(librarySource, /ACADEMIC_MOVEMENT_REQUIRED/);
@@ -983,7 +988,7 @@ test('Academic writes are audited, optimistic and preserve legacy class/student 
   assert.match(librarySource, /scopedCollectionPath\('students', scope\.branchId, scope\.section\)/);
   assert.match(librarySource, /ACADEMIC_IMPORT_STUDENT_SCOPE_CONFLICT/);
   assert.match(librarySource, /allowIncompleteCurriculum: true/);
-  assert.match(adminSource, /Senior department, Trade and Optional subject codes may also be left blank and completed in the app/);
+  assert.match(adminSource, /Core subject codes for mixed classrooms, Trade and Optional subject codes may be left blank and completed in the app/);
   assert.match(adminSource, /ProfileCompletionStatus/);
   assert.match(backendSource, /ProfileCompletionStatus/);
   assert.match(staffStudentsSource, /ProfileCompletionStatus/);
@@ -1499,7 +1504,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /Arm codes are optional/);
   assert.match(adminSource, /data-academic-workflow="bulkAssignAcademicArmStudentSubjects"/);
   assert.match(adminSource, /function academicArmSubjectRegister/);
-  assert.match(adminSource, /Core · locked/);
+  assert.match(adminSource, /profile\.mixedClassroom \? 'choose for this student' : 'locked'/);
   assert.match(adminSource, /Trade · choose at least one/);
   assert.match(adminSource, /must have at least one Trade subject/);
   assert.match(adminSource, /Assignments: assignments/);

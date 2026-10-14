@@ -119,10 +119,11 @@ test('one search match selects current membership and loads the correct student 
   input.value = 'dca/26/002'; input.filter();
   assert.deepEqual(select.options.map(option => option.value), ['', 'm2']);
   assert.equal(select.value, 'm2');
-  for (const [key, value] of Object.entries({ RevisionToken: 'revision-2', ClassId: 'grade-8', ArmId: 'merit', DepartmentId: 'science', SessionId: 'session-1', TermId: 'term-1' })) {
+  for (const [key, value] of Object.entries({ RevisionToken: 'revision-2', ClassId: 'grade-8', ArmId: 'merit', SessionId: 'session-1', TermId: 'term-1' })) {
     assert.equal(form.elements[key].value, value);
   }
   assert.equal(select.changes, 2, 'each new match triggers one normal selection event without recursion');
+  assert.equal(form.elements.DepartmentId.value, '', 'a legacy student department must not populate a transfer override');
   assert.equal(form.elements.Reason.value, 'Approved move');
   assert.equal(form.elements.EffectiveDate.value, '2026-10-14');
 });

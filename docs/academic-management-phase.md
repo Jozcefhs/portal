@@ -23,10 +23,12 @@ and promotion. The first AM-002/AM-003 vertical slice is also operational on
 web and desktop: branch-isolated sessions, terms, Primary classes, distinct
 Junior/Senior Secondary classes, arms, subjects, Senior departments and their
 core subjects, subject offerings, teacher allocations and term-specific
-student class/arm/department/subject memberships share one protected online
-model. Junior students automatically receive every subject offered to their
-class or arm; Senior students receive common compulsory offerings, their
-department core subjects and any selected additional subjects. It
+student class/arm/subject memberships share one protected online model.
+Junior students automatically receive every subject offered to their class or
+arm. Senior departments are classroom-based: single-department classrooms
+require that department's Core subjects; Mixed departments classrooms offer
+the unique Core subjects from all active Senior departments for individual
+student selection, alongside school-wide Trade and Optional choices. It
 includes stable identifiers, effective-period scope, server-side role and
 section enforcement, optimistic concurrency, audit history, archive guards,
 Teacher read-only registers, and compatibility updates for existing class and
@@ -359,9 +361,9 @@ The foundation module manages:
 - student enrollment in a session, class and arm;
 - automatic assignment of every offered subject to Junior Secondary students,
   who do not select electives;
-- assignment of Senior Secondary students to a department, automatically
-  adding that department's core subjects and common compulsory offerings while
-  permitting additional subject selection;
+- classroom-based Senior departments: compulsory department Core subjects in
+  single-department classrooms, or individually selected Core subjects from
+  all active departments in mixed classrooms, plus Trade and Optional choices;
 - bulk allocation, promotion intake, transfer and withdrawal;
 - movement between arms without destroying earlier membership; and
 - class, subject, teacher and student allocation history.
@@ -926,7 +928,7 @@ new audited decision, not silent mutation of the original decision.
 
 When the separate Secondary-division policy is selected, Junior Secondary uses
 configurable promoted and probation average thresholds. Senior Secondary counts
-credits only from the student's department Core subjects, validates the expected
+credits only from the student's assigned Core subjects, validates the expected
 Core-subject count, and applies configurable credit thresholds, credit counts and
 named-subject requirements independently for Promoted and Probation outcomes.
 Repeated is the stored workflow outcome for a student who is Not promoted.

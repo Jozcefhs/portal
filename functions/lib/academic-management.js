@@ -443,7 +443,7 @@ export const ACADEMIC_MEMBERSHIP_STATUSES = Object.freeze(['Active', 'Inactive',
 export const ACADEMIC_SUBJECT_ROLES = Object.freeze(['Core', 'Trade', 'Optional']);
 export const ACADEMIC_SENIOR_CHOICE_ROLES = Object.freeze(['Trade', 'Optional']);
 export const ACADEMIC_STUDENT_IMPORT_COLUMNS = Object.freeze([
-  'StudentRef', 'FirstName', 'Surname', 'MiddleName', 'ClassCode', 'ArmCode', 'DepartmentCode',
+  'StudentRef', 'FirstName', 'Surname', 'MiddleName', 'ClassCode', 'ArmCode', 'CoreSubjectCodes',
   'TradeSubjectCodes', 'OptionalSubjectCodes', 'Reason'
 ]);
 export const ACADEMIC_STUDENT_IMPORT_REQUIRED_COLUMNS = Object.freeze([
@@ -577,7 +577,9 @@ export function academicSeniorCoreSubjectIds(departments = []) {
 }
 
 export function academicStudentDepartmentForClassroom(membership = {}, classroom = {}) {
-  return clean(membership.DepartmentId) || clean(classroom?.DepartmentId);
+  // Department is a classroom property. Blank means mixed, not a fallback to
+  // the student's legacy department (which may describe an old placement).
+  return clean(classroom?.DepartmentId);
 }
 
 function publicRecord(row = {}) {
@@ -1127,8 +1129,8 @@ export function academicMigrationReadiness(state = {}, students = []) {
       add('Error', 'MISSING_STUDENT_PROFILE', 'This academic membership has no matching branch and section student profile.', 'student membership', id, membershipLabel(row));
     }
     const stage = schoolStageValue(row.SchoolStage || schoolClass?.SchoolStage, row.SchoolSection, schoolClass?.Name);
-    if (stage === 'senior-secondary' && !departments.has(row.DepartmentId)) {
-      add('Warning', 'PENDING_SENIOR_DEPARTMENT', 'Choose a valid Senior department before this curriculum is considered ready.', 'student membership', id, membershipLabel(row));
+    if (stage === 'senior-secondary' && arm?.DepartmentId && !departments.has(arm.DepartmentId)) {
+      add('Warning', 'PENDING_SENIOR_DEPARTMENT', 'Choose a valid department for this classroom, or set it to Mixed departments.', 'student membership', id, membershipLabel(row));
     }
     if (stage === 'senior-secondary' && !(row.TradeSubjectIds || []).length) {
       add('Warning', 'PENDING_TRADE_SUBJECT', 'This Senior student must choose at least one Trade subject.', 'student membership', id, membershipLabel(row));
@@ -1243,10 +1245,11 @@ export function applyAcademicStudentCurriculum(state = {}, record = {}, options 
   const offerings = (state.offerings || []).filter((row) => statusActive(row)
     && row.SessionId === record.SessionId && row.TermId === record.TermId && row.ClassId === record.ClassId
     && (!row.ArmId || row.ArmId === record.ArmId));
-  // Senior curriculum is intentionally independent of class offerings. Its Core subjects come
-  // only from the assigned department, while Trade and Optional subjects come from the shared
-  // Senior-choice configuration. Ignoring legacy Senior offerings prevents old bulk assignments
-  // from leaking into the simplified curriculum model.
+  // Senior curriculum belongs to the classroom. Mixed classrooms offer the
+  // union of department Core subjects, but only explicitly selected subjects
+  // are assigned to a student. Legacy student departments cannot narrow it.
+  const classroom = (state.arms || []).find((row) => clean(row.ArmId) === clean(record.ArmId) && row.ClassId === record.ClassId && statusActive(row));
+  const mixedClassroom = record.SchoolStage === 'senior-secondary' && Boolean(classroom) && !clean(classroom.DepartmentId);
   const curriculumOfferings = record.SchoolStage === 'senior-secondary' ? [] : offerings;
   const roleBySubject = new Map();
   const rolePriority = { Optional: 1, Trade: 2, Core: 3 };
@@ -1272,18 +1275,31 @@ export function applyAcademicStudentCurriculum(state = {}, record = {}, options 
     record.DepartmentId = '';
     coreSubjectIds = uniqueIds(curriculumOfferings.map((row) => row.SubjectId));
   } else if (record.SchoolStage === 'senior-secondary') {
+    record.DepartmentId = academicStudentDepartmentForClassroom(record, classroom);
     const department = findById(state.departments || [], record.DepartmentId);
-    if (!department && options.allowIncompleteCurriculum !== true) {
-      throw failure('Choose an active senior secondary department for this student.');
+    if (!classroom && options.allowIncompleteCurriculum !== true) {
+      throw failure('Assign this student to a classroom before choosing Senior subjects.');
+    }
+    if (record.DepartmentId && !department) {
+      throw failure('Choose an active Senior department for this classroom, or set it to Mixed departments.');
     }
     if (department) {
-      assertReference(department, 'Choose an active senior secondary department for this student.');
+      assertReference(department, 'Choose an active Senior department for this classroom.');
       if (department.SchoolStage !== 'senior-secondary') throw failure('The selected department is not a Senior Secondary department.');
       coreSubjectIds = uniqueIds([...coreSubjectIds, ...(department.CoreSubjectIds || [])]);
       coreSubjectIds.forEach((subjectId) => {
         available.add(subjectId);
         roleBySubject.set(subjectId, 'Core');
       });
+    }
+    if (mixedClassroom) {
+      const offered = academicSeniorCoreSubjectIds(state.departments);
+      offered.forEach((subjectId) => { available.add(subjectId); roleBySubject.set(subjectId, 'Core'); });
+      const selected = new Set(uniqueIds(record.SubjectIds));
+      coreSubjectIds = offered.filter((subjectId) => selected.has(subjectId));
+      if (options.requireTradeSelection === true && !coreSubjectIds.length) {
+        throw failure('Choose at least one Core subject for each student in this mixed classroom.');
+      }
     }
   } else {
     record.DepartmentId = '';
@@ -1323,8 +1339,10 @@ export function applyAcademicStudentCurriculum(state = {}, record = {}, options 
     ? coreSubjectIds
     : uniqueIds([...requestedSubjects, ...coreSubjectIds, ...record.TradeSubjectIds, ...record.OptionalSubjectIds]);
   if (record.SchoolStage === 'senior-secondary') {
-    record.CurriculumStatus = !record.DepartmentId
-      ? 'Pending Department Selection'
+    record.CurriculumStatus = !classroom
+      ? 'Pending Classroom Assignment'
+      : !coreSubjectIds.length
+        ? 'Pending Core Selection'
       : !tradeAvailable.length
         ? 'Trade Subjects Not Configured'
         : record.TradeSubjectIds.length ? 'Complete' : 'Pending Trade Selection';
@@ -2134,6 +2152,7 @@ export function normalizeAcademicStudentImportRows(value) {
     ClassCode: clean(row.ClassCode || row.ClassId || row.ClassName),
     ArmCode: clean(row.ArmCode || row.ArmId || row.ArmName),
     DepartmentCode: clean(row.DepartmentCode || row.DepartmentId || row.DepartmentName),
+    CoreSubjectCodes: importCodeList(row.CoreSubjectCodes || row.CoreSubjects),
     TradeSubjectCodes: importCodeList(row.TradeSubjectCodes || row.TradeSubjects),
     OptionalSubjectCodes: importCodeList(row.OptionalSubjectCodes || row.OptionalSubjects),
     Reason: clean(row.Reason)
@@ -2577,14 +2596,14 @@ export async function bulkAssignAcademicClassroomDepartments(env, user = {}, inp
   const scope = await academicScope(env, user, input, { requireSection: true });
   if (scope.section !== 'secondary') throw failure('Senior classroom departments are available only in Secondary school.');
   const assignments = Array.isArray(input.Assignments) ? input.Assignments : [];
-  if (!assignments.length || assignments.length > 100) throw failure('Choose between 1 and 100 Senior classroom defaults to update.');
+  if (!assignments.length || assignments.length > 100) throw failure('Choose between 1 and 100 Senior classroom departments to update.');
   const state = await loadScopedAcademicState(env, scope, ACADEMIC_RECORD_STATE_KEYS.arm);
   const seen = new Set();
   const writes = [];
   for (const assignment of assignments) {
     const armId = clean(assignment?.ClassroomId);
     const departmentId = clean(assignment?.DepartmentId);
-    if (!armId) throw failure('Choose a Senior classroom for every changed default.');
+    if (!armId) throw failure('Choose a Senior classroom for every changed department.');
     if (seen.has(armId)) throw failure('Each classroom may appear only once in this batch.');
     seen.add(armId);
     const existing = assertReference(findById(state.arms, armId), 'One selected classroom is not active.');
@@ -2602,7 +2621,7 @@ export async function bulkAssignAcademicClassroomDepartments(env, user = {}, inp
       data: withoutMetadata(record),
       ...writePrecondition(existing, assignment.RevisionToken)
     });
-    writes.push(auditWrite(user, 'UPDATE', 'arm', record, `Default Senior department: ${schoolClass.Name} / ${record.Name} -> ${findById(state.departments, departmentId)?.Name || 'None (mixed)'}`));
+    writes.push(auditWrite(user, 'UPDATE', 'arm', record, `Classroom department: ${schoolClass.Name} / ${record.Name} -> ${findById(state.departments, departmentId)?.Name || 'Mixed departments'}. Existing student subject selections and scores were not changed.`));
   }
   await commitAcademicBatch(env, writes, 'A classroom changed while its department was being saved. Reload and try again.');
   const response = await bootstrapAcademicManagement(env, user, {
@@ -2610,8 +2629,8 @@ export async function bulkAssignAcademicClassroomDepartments(env, user = {}, inp
   });
   const changed = writes.length / 2;
   response.message = changed
-    ? `${changed} Senior classroom default department${changed === 1 ? '' : 's'} saved. Existing students retain their individual departments.`
-    : 'The selected classroom defaults already match the saved settings.';
+    ? `${changed} Senior classroom department${changed === 1 ? '' : 's'} saved. Existing subject selections and scores are unchanged; review student subjects before saving new selections.`
+    : 'The selected classroom departments already match the saved settings.';
   response.bulkResult = { Requested: assignments.length, Updated: changed };
   return response;
 }
@@ -3157,16 +3176,8 @@ export async function bulkImportAcademicStudentMemberships(env, user = {}, input
         allStudents.push(student);
       }
       const schoolStage = schoolStageValue(schoolClass.SchoolStage, schoolClass.SchoolSection, schoolClass.Name);
-      let departmentId = '';
-      if (schoolStage === 'senior-secondary' && row.DepartmentCode) {
-        departmentId = academicImportReference(
-          state.departments.filter((candidate) => candidate.SchoolStage === 'senior-secondary'),
-          row.DepartmentCode,
-          ['DepartmentId', 'RecordId', 'Code', 'Name'],
-          'Senior department code',
-          rowNumber
-        ).DepartmentId;
-      }
+      // Legacy DepartmentCode columns are accepted but cannot override the classroom.
+      const departmentId = schoolStage === 'senior-secondary' ? clean(arm?.DepartmentId) : '';
       const resolveSubjectIds = (codes, label) => codes.map((code) => academicImportReference(
         state.subjects.filter((candidate) => lower(candidate.SchoolSection) === scope.section),
         code,
@@ -3174,6 +3185,7 @@ export async function bulkImportAcademicStudentMemberships(env, user = {}, input
         label,
         rowNumber
       ).SubjectId);
+      const coreSubjectIds = resolveSubjectIds(row.CoreSubjectCodes, 'Core subject code');
       const tradeSubjectIds = resolveSubjectIds(row.TradeSubjectCodes, 'Trade subject code');
       const optionalSubjectIds = resolveSubjectIds(row.OptionalSubjectCodes, 'optional subject code');
       const existingId = academicId('student', scope.branchId, scope.section, sessionId, termId, row.StudentRef);
@@ -3181,7 +3193,7 @@ export async function bulkImportAcademicStudentMemberships(env, user = {}, input
       const record = normalizeAcademicStudentMembership({
         SessionId: sessionId, TermId: termId, StudentRef: row.StudentRef,
         ClassId: schoolClass.ClassId, ArmId: arm?.ArmId || '', DepartmentId: departmentId,
-        SubjectIds: [...tradeSubjectIds, ...optionalSubjectIds], CoreSubjectIds: [],
+        SubjectIds: [...coreSubjectIds, ...tradeSubjectIds, ...optionalSubjectIds], CoreSubjectIds: [],
         TradeSubjectIds: tradeSubjectIds, OptionalSubjectIds: optionalSubjectIds, CurriculumStatus: '', Status: 'Active'
       }, { ...scope, allowMissingArm: true }, existing);
       validateAcademicRecord(projected, 'studentmembership', record, {
@@ -3286,7 +3298,7 @@ export async function bulkAssignAcademicArmStudentSubjects(env, user = {}, input
   const writes = [];
   const skipped = [];
   const seen = new Set();
-  const reason = clean(input.Reason) || 'Arm-level Trade and optional subject selection updated.';
+  const reason = clean(input.Reason) || 'Classroom student subject selections updated.';
   for (const assignment of assignments) {
     const membershipId = clean(assignment?.MembershipId || assignment?.RecordId);
     if (!membershipId || seen.has(lower(membershipId))) throw failure('Every student subject selection must identify one unique membership.');
@@ -3302,8 +3314,16 @@ export async function bulkAssignAcademicArmStudentSubjects(env, user = {}, input
     }
     const tradeSubjectIds = uniqueIds(assignment.TradeSubjectIds);
     const optionalSubjectIds = uniqueIds(assignment.OptionalSubjectIds);
+    // Do not silently drop existing selections that became unavailable after
+    // a classroom configuration change (including requests from older clients).
+    applyAcademicStudentCurriculum(projected, { ...existing, SchoolStage: schoolStage }, { allowIncompleteCurriculum: true });
+    // Older desktop clients omit CoreSubjectIds. Retain their existing Core
+    // choices instead of clearing them when they save Trade/Optional choices.
+    const coreSubjectIds = assignment.CoreSubjectIds === undefined
+      ? uniqueIds(existing.SubjectIds).filter((id) => academicSeniorCoreSubjectIds(state.departments).includes(id))
+      : uniqueIds(assignment.CoreSubjectIds);
     const record = normalizeAcademicStudentMembership({
-      ...withoutMetadata(existing), SubjectIds: [...tradeSubjectIds, ...optionalSubjectIds],
+      ...withoutMetadata(existing), SubjectIds: [...coreSubjectIds, ...tradeSubjectIds, ...optionalSubjectIds],
       CoreSubjectIds: [], TradeSubjectIds: tradeSubjectIds, OptionalSubjectIds: optionalSubjectIds,
       CurriculumStatus: '', Status: existing.Status
     }, scope, existing);
@@ -3343,7 +3363,7 @@ export async function bulkAssignAcademicArmStudentSubjects(env, user = {}, input
   });
   response.message = updated
     ? `${updated} student subject selection${updated === 1 ? '' : 's'} saved online${skipped.length ? `; ${skipped.length} unchanged` : ''}.`
-    : 'Every student already has the selected Trade and optional subjects.';
+    : 'Every student already has the selected subjects.';
   response.bulkResult = { Requested: assignments.length, Updated: updated, Skipped: skipped.length };
   return response;
 }
@@ -3391,7 +3411,7 @@ export async function manageAcademicStudentMembership(env, user = {}, input = {}
       throw failure('Choose a different classroom, or use Reinstate to restore the student to the original classroom.');
     }
     if (!reinstating && !membershipMateriallyChanged(existing, record)) {
-      throw failure('Choose a different class, arm, department or subject allocation before recording a movement.');
+      throw failure('Choose a different class, arm or subject allocation before recording a movement.');
     }
     if (reinstating || reassigningWithdrawn) {
       delete record.WithdrawalDate;
@@ -5859,7 +5879,7 @@ export async function changeAcademicPromotionStatus(env, user = {}, input = {}) 
       StudentRef: existing.StudentRef,
       ClassId: destinationClass.ClassId,
       ArmId: destinationArm.ArmId,
-      DepartmentId: clean(existing.DepartmentId || destinationArm.DepartmentId),
+      DepartmentId: clean(destinationArm.DepartmentId),
       SubjectIds: [], CoreSubjectIds: [], TradeSubjectIds: [], OptionalSubjectIds: [],
       CurriculumStatus: 'Pending subject allocation', Status: 'Active'
     }, context.scope);
