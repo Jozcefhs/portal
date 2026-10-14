@@ -26,6 +26,22 @@ const auditModule = (queryCollection = async () => [], mocks = {}) => isolated(a
   { queryCollection, readStaffSession: async () => null, upsertDocument: async () => {}, auditWords, auditSentence, auditNarrative, auditActionContext, ...mocks });
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
+test('new academic workspace load records store clear descriptions and keep failures', async () => {
+  const written = [];
+  const module = auditModule(undefined, { upsertDocument: async (_env, _collection, _id, value) => { written.push(value); } });
+  for (const status of [200, 403, 500]) {
+    await module.persistRequestSecurityAudit({ env, request: new Request('https://example.test/api/staff-academics'),
+      prepared: { pathname: '/api/staff-academics', method: 'POST', action: 'Load Academic Management workspace', actionContext: 'School section: secondary' },
+      response: { status }, authoritativeActor: { username: 'test', displayName: 'Test Officer', role: 'Teacher', branchId: 'main' } });
+  }
+  assert.equal(written.length, 3);
+  assert.equal(written[0].Action, 'Loaded Academic Management workspace — Secondary section');
+  assert.equal(written[0].ActivityClass, 'Routine workspace load');
+  assert.match(written[0].Summary, /does not save attendance/);
+  assert.match(written[1].Action, /^Access denied:/);
+  assert.match(written[2].Action, /^Failed to load/);
+});
+
 test('all sources page beyond the old limit, including an entirely hidden first batch and equal timestamps', async () => {
   const platform = Array.from({ length: 360 }, (_, i) => row('platformSecurityAudit', `p-${String(i).padStart(4, '0')}`,
     i < 300 ? { Action: 'LIST DESKTOP PAIRING', Route: '/api/desktop-pairing' } : {}));

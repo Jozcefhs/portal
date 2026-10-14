@@ -404,7 +404,7 @@ test('Milestone 8 server contract exposes idempotent approved CBT score synchron
 });
 
 test('score-entry student names use the compact register type size', () => {
-  assert.match(styleSource, /\.academic-scorebook-table td:first-child strong\{display:block;font-size:12px;line-height:1\.25\}/);
+  assert.match(styleSource, /\.academic-scorebook-table td\.academic-student-cell strong\{display:block;font-size:12px;line-height:1\.25\}/);
 });
 
 test('focused Academic Management reads establish one Firestore token before parallel collection loading', () => {

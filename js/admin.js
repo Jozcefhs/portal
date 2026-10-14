@@ -3336,6 +3336,7 @@ function applyAdminListSort(select) {
     modified: Number(row.dataset.listModified || 0)
   }));
   sortAdminListEntries(entries, select.value).forEach((entry) => body.append(entry.row));
+  renumberAdminListRows(body.querySelectorAll(':scope > tr[data-list-row]'));
   try { window.localStorage.setItem(select.dataset.listStorageKey, select.value); } catch (_error) { /* optional */ }
 }
 
@@ -3350,6 +3351,7 @@ function applyAdminListSearch(input) {
     row.hidden = !matches;
     if (matches) visible += 1;
   });
+  renumberAdminListRows(rows);
   const empty = wrap?.querySelector('[data-list-search-empty]');
   if (empty) empty.hidden = !terms.length || visible > 0;
   const count = wrap?.querySelector('[data-admin-list-search-count]');
@@ -3368,8 +3370,18 @@ document.addEventListener('input', (event) => {
   if (input) applyAdminListSearch(input);
 });
 
+function renumberAdminListRows(rows) {
+  let serial = 0;
+  for (const row of rows) {
+    const cell = row.querySelector('[data-list-serial]');
+    if (cell) cell.textContent = row.hidden ? '' : String(++serial);
+  }
+}
+
 function table(title, rows, columns, options = {}) {
   const sourceRows = Array.isArray(rows) ? rows : [];
+  const numbered = options.numbered === true;
+  const columnCount = columns.length + Number(numbered);
   const mode = savedAdminListSort(title);
   const entries = sourceRows.map((row, index) => ({
     row,
@@ -3381,16 +3393,16 @@ function table(title, rows, columns, options = {}) {
   const sortedEntries = sortAdminListEntries(entries, mode);
   const searchable = options.searchable === true;
   const body = sortedEntries.length
-    ? sortedEntries.map((entry) => {
+    ? sortedEntries.map((entry, index) => {
       const searchValue = searchable
         ? [entry.name, ...columns.filter((column) => typeof column.value === 'function')
           .map((column) => column.value(entry.row)),
         ...(typeof options.searchValue === 'function' ? [options.searchValue(entry.row)] : [])]
           .map(clean).filter(Boolean).join(' ')
         : '';
-      return `<tr data-list-row data-list-index="${entry.index}" data-list-name="${escapeHtml(entry.name)}" data-list-created="${entry.created}" data-list-modified="${entry.modified}"${searchable ? ` data-list-search="${escapeHtml(searchValue)}"` : ''}>${columns.map((column) => `<td>${column.render ? column.render(entry.row) : escapeHtml(DynamaxTime.formatCell(column.value(entry.row)))}</td>`).join('')}</tr>`;
+      return `<tr data-list-row data-list-index="${entry.index}" data-list-name="${escapeHtml(entry.name)}" data-list-created="${entry.created}" data-list-modified="${entry.modified}"${searchable ? ` data-list-search="${escapeHtml(searchValue)}"` : ''}>${numbered ? `<td class="academic-serial" data-list-serial>${index + 1}</td>` : ''}${columns.map((column) => `<td>${column.render ? column.render(entry.row) : escapeHtml(DynamaxTime.formatCell(column.value(entry.row)))}</td>`).join('')}</tr>`;
     }).join('')
-    : `<tr><td colspan="${columns.length}">${escapeHtml(options.emptyMessage || 'No records found.')}</td></tr>`;
+    : `<tr><td colspan="${columnCount}">${escapeHtml(options.emptyMessage || 'No records found.')}</td></tr>`;
   const storageKey = adminListStorageKey(title);
   const wrapClass = ['admin-table-wrap', clean(options.className)].filter(Boolean).join(' ');
   const searchLabel = clean(options.searchLabel || title.toLowerCase());
@@ -3409,8 +3421,8 @@ function table(title, rows, columns, options = {}) {
         </label>
       </div>
       <table class="admin-table">
-        <thead><tr>${columns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join('')}</tr></thead>
-        <tbody>${body}${searchable && sortedEntries.length ? `<tr data-list-search-empty hidden><td colspan="${columns.length}">${escapeHtml(options.searchEmptyMessage || `No ${searchLabel} match your search.`)}</td></tr>` : ''}</tbody>
+        <thead><tr>${numbered ? '<th scope="col" class="academic-serial">S/N</th>' : ''}${columns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join('')}</tr></thead>
+        <tbody>${body}${searchable && sortedEntries.length ? `<tr data-list-search-empty hidden><td colspan="${columnCount}">${escapeHtml(options.searchEmptyMessage || `No ${searchLabel} match your search.`)}</td></tr>` : ''}</tbody>
       </table>
     </div>
   `;
@@ -14090,7 +14102,7 @@ function academicArmSubjectRegister(data, rows, canManage) {
       }).join('')
       : `<span class="academic-checkbox-empty">No ${escapeHtml(role.toLowerCase())} subjects are configured for this arm.</span>`;
     return `<article class="academic-arm-student-subject-card" data-academic-arm-subject-student data-membership-id="${escapeHtml(academicRecordId(membership))}" data-revision-token="${escapeHtml(membership.RevisionToken || '')}" data-student-name="${escapeHtml(studentName)}">
-      <header><div><strong>${escapeHtml(studentName)}</strong><small>${escapeHtml(membership.StudentRef)} · ${escapeHtml(department)}</small></div><div class="academic-arm-student-subject-status"><span>${escapeHtml(curriculumStatus)}</span><strong data-academic-student-subject-total>${selectedTotal} subject${selectedTotal === 1 ? '' : 's'} total</strong></div></header>
+      <header><div><strong><span class="academic-serial">${index + 1}.</span> ${escapeHtml(studentName)}</strong><small>${escapeHtml(membership.StudentRef)} · ${escapeHtml(department)}</small></div><div class="academic-arm-student-subject-status"><span>${escapeHtml(curriculumStatus)}</span><strong data-academic-student-subject-total>${selectedTotal} subject${selectedTotal === 1 ? '' : 's'} total</strong></div></header>
       <div class="academic-arm-student-subject-groups">
         <fieldset><legend>Core · locked ${countBadge('Core')}</legend><div class="academic-checkbox-options">${subjectChecks('Core', profile.coreSubjectIds, profile.coreSubjectIds, true)}</div></fieldset>
         <fieldset><legend>Trade · choose at least one ${countBadge('Trade')}</legend><div class="academic-checkbox-options">${subjectChecks('Trade', profile.tradeSubjectIds, profile.selectedTradeSubjectIds)}</div></fieldset>
@@ -14124,6 +14136,28 @@ function academicArmSubjectRegister(data, rows, canManage) {
       : 'Your assigned classrooms are not classified as Senior Secondary in this section. Junior Secondary students inherit their saved class subjects automatically.'
     : 'No Senior classroom is available for the selected period. Core, Trade and Optional selections require an active Senior class and arm.'}</span></div>`;
   return body;
+}
+
+function bindAcademicMembershipSearch(form) {
+  const input = form?.querySelector('[data-academic-membership-search]');
+  const select = form?.elements.RecordId;
+  const status = form?.querySelector('[data-academic-membership-search-status]');
+  if (!input || !select) return;
+  const options = [...select.options];
+  const normalize = (value) => clean(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const filter = () => {
+    const selected = select.value;
+    const terms = normalize(input.value).split(/\s+/).filter(Boolean);
+    const matches = options.filter((option) => option.value && terms.every((term) => normalize(option.textContent).includes(term)));
+    const retained = selected && !matches.some((option) => option.value === selected);
+    select.replaceChildren(...options.filter((option) => !option.value || option.value === selected || matches.includes(option)));
+    select.value = selected;
+    if (status) status.textContent = `${matches.length} matching membership${matches.length === 1 ? '' : 's'}${retained ? '; current selection kept' : ''}.`;
+  };
+  input.addEventListener('input', filter);
+  select.addEventListener('change', filter);
+  form.resetMembershipSearch = () => { input.value = ''; filter(); };
+  filter();
 }
 
 function academicStudentWorkspace(data, rows) {
@@ -14179,7 +14213,8 @@ function academicStudentWorkspace(data, rows) {
     <form class="academic-management-editor" data-academic-workflow="moveAcademicStudentMembership">
       <div class="academic-management-editor-heading"><div><small>Audited history</small><h3>Transfer or reassign</h3><p class="muted">Move an active ${learner.singular} directly, or reassign a withdrawn ${learner.singular} to a different classroom.</p></div></div>
       <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}"><input type="hidden" name="RevisionToken">
-      <label>Current membership<select name="RecordId" required>${academicSelectOptions(movableMemberships, '', (row) => `${academicLabel(data.students, row.StudentRef, row.StudentRef)} — ${academicLabel(rows.classes, row.ClassId)} / ${academicLabel(rows.arms, row.ArmId)}${clean(row.Status).toLowerCase() === 'withdrawn' ? ' — Withdrawn' : ''}`, `Choose ${learner.singular} membership`)}</select></label>
+      <label>Find ${learner.singular}<input type="search" data-academic-membership-search placeholder="Search by name, admission number or classroom" autocomplete="off"><small data-academic-membership-search-status aria-live="polite"></small></label>
+      <label>Current membership<select name="RecordId" required>${academicSelectOptions(movableMemberships, '', (row) => `${academicLabel(data.students, row.StudentRef, row.StudentRef)} · ${row.StudentRef} — ${academicLabel(rows.classes, row.ClassId)} / ${academicLabel(rows.arms, row.ArmId)}${clean(row.Status).toLowerCase() === 'withdrawn' ? ' — Withdrawn' : ''}`, `Choose ${learner.singular} membership`)}</select></label>
       ${periodFields}${targetFields}
       <label>Effective date<input type="date" name="EffectiveDate" value="${new Date().toISOString().slice(0, 10)}" required></label>
       <label>Reason<textarea name="Reason" rows="3" required placeholder="Explain the approved class, arm or department change"></textarea></label>
@@ -14205,7 +14240,7 @@ function academicStudentWorkspace(data, rows) {
     { label: 'Curriculum', value: (row) => row.CurriculumStatus || '-' },
     { label: 'Status', value: (row) => row.Status },
     { label: 'Actions', render: (row) => academicStudentMembershipActions(row, canManage) }
-  ])}${table(movementRegister, rows.studentMovements, [
+  ], { numbered: true, searchable: true, searchValue: (row) => row.StudentRef })}${table(movementRegister, rows.studentMovements, [
     { label: 'Date', value: (row) => row.EffectiveDate },
     { label: learner.Singular, value: (row) => academicLabel(data.students, row.StudentRef, row.StudentRef) },
     { label: 'Movement', value: (row) => row.MovementType },
@@ -14213,7 +14248,7 @@ function academicStudentWorkspace(data, rows) {
     { label: 'To', value: (row) => row.ToClassId ? `${academicLabel(rows.classes, row.ToClassId)} / ${academicLabel(rows.arms, row.ToArmId)}` : '-' },
     { label: 'Reason', value: (row) => row.Reason || '-' },
     { label: 'Recorded by', value: (row) => row.RecordedBy || '-' }
-  ])}`;
+  ], { numbered: true, searchable: true, searchValue: (row) => row.StudentRef })}`;
 }
 
 function academicPeriodsForDay(schedule = {}, dayCode = '') {
@@ -14649,7 +14684,7 @@ function printAcademicAttendanceReport(data, rows, arm, mode, reportRows) {
   if (!printable) return;
   printable.opener = null;
   const classroom = `${academicLabel(rows.classes, arm.ClassId)} / ${academicLabel(rows.arms, arm.ArmId)}`;
-  printable.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(classroom)} attendance</title><style>@page{size:A4 landscape;margin:10mm}body{margin:28px;color:#102a43;font:12px Arial,sans-serif}h1{margin:0 0 5px}p{color:#526d82}table{width:100%;border-collapse:collapse}th,td{padding:7px;border:1px solid #cbd7e5;text-align:left}th{background:#edf3f8;font-size:10px;text-transform:uppercase}button{margin-bottom:15px;padding:8px 14px;border:0;background:#1769e0;color:#fff}@media print{button{display:none}}</style></head><body><button onclick="window.print()">Print attendance summary</button><h1>${escapeHtml(classroom)}</h1><p>${escapeHtml(academicLabel(data.sessions, academicManagementFilters.sessionId))} · ${escapeHtml(academicLabel(data.terms, academicManagementFilters.termId))} · ${escapeHtml(mode)} registers</p><table><thead><tr><th>Student</th><th>Present</th><th>Absent</th><th>Late</th><th>Excused</th><th>Left early</th><th>Registers</th><th>School open days</th><th>Attendance</th></tr></thead><tbody>${reportRows.map((row) => `<tr><td>${escapeHtml(academicLabel(data.students, row.StudentRef, row.StudentRef))}</td><td>${row.Present}</td><td>${row.Absent}</td><td>${row.Late}</td><td>${row.Excused}</td><td>${row.LeftEarly}</td><td>${row.Total}</td><td>${row.SchoolDaysOpen ?? '—'}</td><td>${row.AttendancePercentage}%</td></tr>`).join('')}</tbody></table></body></html>`);
+  printable.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(classroom)} attendance</title><style>@page{size:A4 landscape;margin:10mm}body{margin:28px;color:#102a43;font:12px Arial,sans-serif}h1{margin:0 0 5px}p{color:#526d82}table{width:100%;border-collapse:collapse}th,td{padding:7px;border:1px solid #cbd7e5;text-align:left}th{background:#edf3f8;font-size:10px;text-transform:uppercase}button{margin-bottom:15px;padding:8px 14px;border:0;background:#1769e0;color:#fff}@media print{button{display:none}}</style></head><body><button onclick="window.print()">Print attendance summary</button><h1>${escapeHtml(classroom)}</h1><p>${escapeHtml(academicLabel(data.sessions, academicManagementFilters.sessionId))} · ${escapeHtml(academicLabel(data.terms, academicManagementFilters.termId))} · ${escapeHtml(mode)} registers</p><table><thead><tr><th scope="col" class="academic-serial">S/N</th><th class="academic-student-cell">Student</th><th>Present</th><th>Absent</th><th>Late</th><th>Excused</th><th>Left early</th><th>Registers</th><th>School open days</th><th>Attendance</th></tr></thead><tbody>${reportRows.map((row, index) => `<tr><td class="academic-serial">${index + 1}</td><td class="academic-student-cell">${escapeHtml(academicLabel(data.students, row.StudentRef, row.StudentRef))}</td><td>${row.Present}</td><td>${row.Absent}</td><td>${row.Late}</td><td>${row.Excused}</td><td>${row.LeftEarly}</td><td>${row.Total}</td><td>${row.SchoolDaysOpen ?? '—'}</td><td>${row.AttendancePercentage}%</td></tr>`).join('')}</tbody></table></body></html>`);
   printable.document.close();
   printable.focus();
 }
@@ -14693,10 +14728,10 @@ function academicAttendanceWorkspace(data, rows, presenceOnly = false) {
   const existingByStudent = new Map(existingRows.map((row) => [clean(row.StudentRef).toLowerCase(), row]));
   const classroomLabel = (arm) => `${academicLabel(rows.classes, arm.ClassId)} / ${arm.Name}`;
   const lessonLabel = (row) => `${row.DayCode} ${row.PeriodCodes?.join('+')} · ${academicLabel(rows.subjects, row.SubjectId)}`;
-  const rosterRows = roster.map((membership) => {
+  const rosterRows = roster.map((membership, index) => {
     const existing = existingByStudent.get(clean(membership.StudentRef).toLowerCase());
     const status = existing?.Status || 'Present';
-    return `<tr data-academic-attendance-student data-student-ref="${escapeHtml(membership.StudentRef)}"><td>${escapeHtml(academicLabel(data.students, membership.StudentRef, membership.StudentRef))}<small>${escapeHtml(membership.StudentRef)}</small></td><td><select data-academic-attendance-status><option${status === 'Present' ? ' selected' : ''}>Present</option><option${status === 'Absent' ? ' selected' : ''}>Absent</option><option${status === 'Late' ? ' selected' : ''}>Late</option><option${status === 'Excused' ? ' selected' : ''}>Excused</option><option${status === 'Left Early' ? ' selected' : ''}>Left Early</option></select></td><td><input type="number" min="0" max="600" data-academic-attendance-minutes value="${escapeHtml(existing?.MinutesLate || '')}" aria-label="Minutes late for ${escapeHtml(membership.StudentRef)}"></td><td><input data-academic-attendance-note value="${escapeHtml(existing?.Note || '')}" placeholder="Optional note" aria-label="Attendance note for ${escapeHtml(membership.StudentRef)}"></td></tr>`;
+    return `<tr data-academic-attendance-student data-student-ref="${escapeHtml(membership.StudentRef)}"><td class="academic-serial">${index + 1}</td><td class="academic-student-cell">${escapeHtml(academicLabel(data.students, membership.StudentRef, membership.StudentRef))}<small>${escapeHtml(membership.StudentRef)}</small></td><td><select data-academic-attendance-status><option${status === 'Present' ? ' selected' : ''}>Present</option><option${status === 'Absent' ? ' selected' : ''}>Absent</option><option${status === 'Late' ? ' selected' : ''}>Late</option><option${status === 'Excused' ? ' selected' : ''}>Excused</option><option${status === 'Left Early' ? ' selected' : ''}>Left Early</option></select></td><td><input type="number" min="0" max="600" data-academic-attendance-minutes value="${escapeHtml(existing?.MinutesLate || '')}" aria-label="Minutes late for ${escapeHtml(membership.StudentRef)}"></td><td><input data-academic-attendance-note value="${escapeHtml(existing?.Note || '')}" placeholder="Optional note" aria-label="Attendance note for ${escapeHtml(membership.StudentRef)}"></td></tr>`;
   }).join('');
   const sourceControl = mode === 'Subject'
     ? `<label>Subject<select data-academic-attendance-source name="SubjectId" required>${academicSelectOptions(subjectIds.map((id) => ({ RecordId: id, Name: academicLabel(rows.subjects, id) })), academicAttendanceDraft.subjectId, (row) => row.Name, 'Choose subject')}</select></label>`
@@ -14713,7 +14748,7 @@ function academicAttendanceWorkspace(data, rows, presenceOnly = false) {
     ${attendanceDayOpen ? '' : `<p class="status bad">${escapeHtml(academicAttendanceDraft.date)} is a closed school day${attendanceClosure?.Reason ? `: ${escapeHtml(attendanceClosure.Reason)}` : '.'} Attendance cannot be marked until the school calendar is changed.</p>`}
     <div class="academic-attendance-bulk-actions"><button type="button" class="secondary" data-academic-attendance-all="Present">Mark all Present</button><button type="button" class="secondary" data-academic-attendance-all="Absent">Mark all Absent</button><span data-academic-attendance-summary></span></div>
     <div class="academic-attendance-draft-bar"><span data-academic-attendance-draft-status>Changes are automatically saved on this device.</span><div><button type="button" class="secondary" data-academic-attendance-save-draft>Save offline draft</button><button type="button" class="secondary" data-academic-attendance-discard-draft>Discard draft</button></div></div>
-    <div class="academic-attendance-table"><table><thead><tr><th>Student</th><th>Status</th><th>Minutes late</th><th>Note</th></tr></thead><tbody>${rosterRows || '<tr><td colspan="4">No active students are assigned to this classroom.</td></tr>'}</tbody></table></div>
+    <div class="academic-attendance-table"><table><thead><tr><th scope="col" class="academic-serial">S/N</th><th class="academic-student-cell">Student</th><th>Status</th><th>Minutes late</th><th>Note</th></tr></thead><tbody>${rosterRows || '<tr><td colspan="5">No active students are assigned to this classroom.</td></tr>'}</tbody></table></div>
     <label>Correction reason <input name="CorrectionReason" placeholder="Required only when changing attendance already saved"></label>
     <button type="submit" ${attendanceDayOpen && roster.length && (mode === 'Daily' || sourceId) ? '' : 'disabled'}>Synchronize attendance online</button>
   </form>` : '';
@@ -14724,7 +14759,7 @@ function academicAttendanceWorkspace(data, rows, presenceOnly = false) {
     { label: 'Classroom', value: (row) => `${academicLabel(rows.classes, row.ClassId)} / ${academicLabel(rows.arms, row.ArmId)}` },
     { label: 'Register', value: (row) => row.Mode }, { label: 'Status', value: (row) => row.Status },
     { label: 'Marked by', value: (row) => row.MarkedBy || '-' }
-  ]);
+  ], { numbered: true });
   const correctionActions = (row) => canDecide && row.Status === 'Pending' ? `<div class="academic-management-row-actions"><button type="button" class="compact-icon-action compact-edit-action" data-academic-attendance-decision="Approved" data-academic-id="${escapeHtml(row.CorrectionId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="Approve correction">&#10003;</button><button type="button" class="compact-icon-action academic-archive-action" data-academic-attendance-decision="Rejected" data-academic-id="${escapeHtml(row.CorrectionId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="Reject correction">&#10005;</button></div>` : '<span class="muted">View only</span>';
   const visibleAttendanceIds = new Set(historyRows.map((row) => row.AttendanceId));
   const corrections = table('Attendance Correction Requests', rows.attendanceCorrections.filter((row) => visibleAttendanceIds.has(row.AttendanceId)), [
@@ -14732,19 +14767,19 @@ function academicAttendanceWorkspace(data, rows, presenceOnly = false) {
     { label: 'Change', value: (row) => `${row.PreviousStatus} → ${row.ProposedStatus}` }, { label: 'Reason', value: (row) => row.Reason },
     { label: 'Requested by', value: (row) => row.RequestedBy }, { label: 'Status', value: (row) => row.Status },
     { label: 'Action', render: correctionActions }
-  ]);
+  ], { numbered: true });
   const reportArm = academicFind(classrooms, academicAttendanceDraft.reportArmId) || selectedArm || classrooms[0];
   academicAttendanceDraft.reportArmId = clean(reportArm?.ArmId);
   const reportMode = presenceOnly ? 'Daily' : ['Period', 'Subject'].includes(academicAttendanceDraft.reportMode) ? academicAttendanceDraft.reportMode : 'Period';
   const reportRows = reportArm ? academicTermAttendanceRows(rows, reportArm.ArmId, reportMode) : [];
-  const reportTableRows = reportRows.map((row) => `<tr><td>${escapeHtml(academicLabel(data.students, row.StudentRef, row.StudentRef))}<small>${escapeHtml(row.StudentRef)}</small></td><td>${row.Present}</td><td>${row.Absent}</td><td>${row.Late}</td><td>${row.Excused}</td><td>${row.LeftEarly}</td><td>${row.Total}</td><td>${row.SchoolDaysOpen ?? '—'}</td><td><strong>${row.AttendancePercentage}%</strong></td></tr>`).join('');
+  const reportTableRows = reportRows.map((row, index) => `<tr><td class="academic-serial">${index + 1}</td><td class="academic-student-cell">${escapeHtml(academicLabel(data.students, row.StudentRef, row.StudentRef))}<small>${escapeHtml(row.StudentRef)}</small></td><td>${row.Present}</td><td>${row.Absent}</td><td>${row.Late}</td><td>${row.Excused}</td><td>${row.LeftEarly}</td><td>${row.Total}</td><td>${row.SchoolDaysOpen ?? '—'}</td><td><strong>${row.AttendancePercentage}%</strong></td></tr>`).join('');
   const reportForm = `<form class="academic-management-editor academic-management-editor-wide academic-attendance-report" data-academic-attendance-report>
     <div class="academic-management-editor-heading"><div><small>Term reporting</small><h3>${presenceOnly ? 'School presence summary' : 'Lesson attendance summary'}</h3><p class="muted">${presenceOnly ? 'Daily school presence uses declared open days and feeds term results. Lesson attendance is counted separately.' : 'Period and subject registers are shown separately and do not alter school-presence totals on results.'}</p></div><strong>${reportRows.length} students</strong></div>
     <div class="academic-management-form-grid academic-management-form-grid-2">
       <label>Classroom<select name="ReportArmId" data-academic-attendance-report-filter>${academicSelectOptions(classrooms, reportArm?.ArmId, classroomLabel, 'Choose classroom')}</select></label>
       ${presenceOnly ? '<input type="hidden" name="ReportMode" value="Daily">' : `<label>Lesson register<select name="ReportMode" data-academic-attendance-report-filter><option${reportMode === 'Period' ? ' selected' : ''}>Period</option><option${reportMode === 'Subject' ? ' selected' : ''}>Subject</option></select></label>`}
     </div>
-    <div class="academic-attendance-table"><table><thead><tr><th>Student</th><th>Present</th><th>Absent</th><th>Late</th><th>Excused</th><th>Left early</th><th>Registers</th><th>School open days</th><th>Attendance</th></tr></thead><tbody>${reportTableRows || '<tr><td colspan="9">No active students are assigned to this classroom.</td></tr>'}</tbody></table></div>
+    <div class="academic-attendance-table"><table><thead><tr><th scope="col" class="academic-serial">S/N</th><th class="academic-student-cell">Student</th><th>Present</th><th>Absent</th><th>Late</th><th>Excused</th><th>Left early</th><th>Registers</th><th>School open days</th><th>Attendance</th></tr></thead><tbody>${reportTableRows || '<tr><td colspan="10">No active students are assigned to this classroom.</td></tr>'}</tbody></table></div>
     <button type="button" data-academic-attendance-report-print ${reportArm && reportRows.length ? '' : 'disabled'}>Print term attendance report</button>
   </form>`;
   return `${markForm}${history}${reportForm}${corrections}`;
@@ -14832,7 +14867,7 @@ function academicScorebookWorkspace(data, rows) {
       : [{ component, part: null, cellId: component.Id, name: component.Name, maximum: Number(component.MaximumScore || 0), weight: Number(component.WeightPercentage || 0), sourceMode: component.SourceMode || 'any' }]
   ));
   const componentHeaders = scoreFields.map((field) => `<th>${escapeHtml(field.name)}<small>${field.maximum} marks · ${Math.round((field.weight + Number.EPSILON) * 100) / 100}% · ${escapeHtml(field.sourceMode)}</small></th>`).join('');
-  const scoreRows = roster.map((membership) => {
+  const scoreRows = roster.map((membership, index) => {
     const score = scoreByStudent.get(clean(membership.StudentRef).toLowerCase()) || {};
     const byComponent = new Map((score.ComponentScores || []).map((entry) => [entry.ComponentId, entry]));
     const lockedScoreCellIds = new Set(Array.isArray(score.LockedScoreCellIds)
@@ -14856,7 +14891,7 @@ function academicScorebookWorkspace(data, rows) {
       if (cellEditable) editableCellCount += 1;
       return `<td><div class="academic-score-component${manualAllowed ? '' : ' is-source-locked'}${cellLocked ? ' is-saved-locked' : ''}" data-academic-score-component="${escapeHtml(component.Id)}" data-academic-score-part="${escapeHtml(field.part?.Id || '')}" data-maximum="${field.maximum}" data-weight="${field.weight}" data-required="${component.Required === false ? 'false' : 'true'}" data-manual-allowed="${manualAllowed ? 'true' : 'false'}" data-cell-locked="${cellLocked ? 'true' : 'false'}" data-state-explicit="${entry.StateExplicit === true ? 'true' : 'false'}"${cellLocked ? ' title="Saved score locked. Admin or Management must reactivate this subject and arm before correction."' : ''}><input type="number" min="0" max="${field.maximum}" step="0.01" value="${numeric ? escapeHtml(entry.RawScore) : ''}" data-academic-score-value ${numeric && cellEditable ? '' : 'disabled'} aria-label="${escapeHtml(field.name)} score for ${escapeHtml(academicLabel(data.students, membership.StudentRef, membership.StudentRef))}"><select data-academic-score-state ${cellEditable ? '' : 'disabled'} aria-label="${escapeHtml(field.name)} status">${academicScoreStateOptions(entry.State || 'Numeric')}</select>${cellLocked ? '<small class="academic-score-cell-lock">&#128274; Saved</small>' : (!manualAllowed ? '<small class="academic-score-cell-lock">CBT only</small>' : '')}</div></td>`;
     }).join('');
-    return `<tr data-academic-score-student="${escapeHtml(membership.StudentRef)}" data-score-id="${escapeHtml(score.ScoreId || '')}" data-revision-token="${escapeHtml(score.RevisionToken || '')}"><td><strong>${escapeHtml(academicLabel(data.students, membership.StudentRef, membership.StudentRef))}</strong><small>${escapeHtml(membership.StudentRef)}</small></td>${componentCells}<td data-academic-score-total>${score.Percentage === null || score.Percentage === undefined ? '—' : `${score.Percentage}%`}</td><td data-academic-score-grade>${escapeHtml(score.Grade || '—')}</td><td data-academic-score-completion>${escapeHtml(score.CompletionStatus || 'Incomplete')}</td></tr>`;
+    return `<tr data-academic-score-student="${escapeHtml(membership.StudentRef)}" data-score-id="${escapeHtml(score.ScoreId || '')}" data-revision-token="${escapeHtml(score.RevisionToken || '')}"><td class="academic-serial">${index + 1}</td><td class="academic-student-cell"><strong>${escapeHtml(academicLabel(data.students, membership.StudentRef, membership.StudentRef))}</strong><small>${escapeHtml(membership.StudentRef)}</small></td>${componentCells}<td data-academic-score-total>${score.Percentage === null || score.Percentage === undefined ? '—' : `${score.Percentage}%`}</td><td data-academic-score-grade>${escapeHtml(score.Grade || '—')}</td><td data-academic-score-completion>${escapeHtml(score.CompletionStatus || 'Incomplete')}</td></tr>`;
   }).join('');
   const blocking = scheme.Ready
     ? `<div class="academic-score-scheme-banner is-ready"><strong>${layoutUpdateAvailable ? 'Score sheet scheme' : 'Active scheme'}</strong><span>${scheme.Components.length} components · ${scheme.GradeBands.length} grade bands · revision ${escapeHtml(scheme.RevisionId)}</span></div>`
@@ -14885,7 +14920,7 @@ function academicScorebookWorkspace(data, rows) {
       <label>Subject and teacher<select name="AllocationId" data-academic-scorebook-allocation required><option value="">Choose allocated subject</option>${selectedAllocations.map((allocation) => `<option value="${escapeHtml(allocationValue(allocation))}"${allocationValue(allocation) === selectedAllocationValue ? ' selected' : ''}>${escapeHtml(`${academicLabel(rows.subjects, allocation.SubjectId)} · ${academicLabel(data.staff, allocation.TeacherUsername, allocation.TeacherUsername)}`)}</option>`).join('')}</select></label>
       <label>Workflow status<input value="${escapeHtml(sheet?.Status || 'New Draft')}" readonly></label>
     </div>
-    <div class="academic-attendance-table academic-scorebook-table"><table><thead><tr><th>Student</th>${componentHeaders}<th>Total</th><th>Grade</th><th>Completion</th></tr></thead><tbody>${scoreRows || `<tr><td colspan="${scoreFields.length + 4}">Choose an allocated classroom and subject with active students.</td></tr>`}</tbody></table></div>
+    <div class="academic-attendance-table academic-scorebook-table"><table><thead><tr><th scope="col" class="academic-serial">S/N</th><th class="academic-student-cell">Student</th>${componentHeaders}<th>Total</th><th>Grade</th><th>Completion</th></tr></thead><tbody>${scoreRows || `<tr><td colspan="${scoreFields.length + 5}">Choose an allocated classroom and subject with active students.</td></tr>`}</tbody></table></div>
     <div class="academic-scorebook-actions"><button type="submit" ${canEdit && roster.length && editableCellCount ? '' : 'disabled'}>Save and lock recorded scores</button>${sheet?.Status === 'Draft' && data.permissions?.canEnterScores ? `<button type="button" class="secondary" data-academic-score-status="Submitted" data-academic-id="${escapeHtml(sheet.SheetId)}" data-academic-revision="${escapeHtml(sheet.RevisionToken)}">Submit complete sheet</button>` : ''}${reactivateButton}</div>
   </form>`;
   const workflow = table('Score Sheet Workflow', rows.scoreSheets, [
@@ -16210,12 +16245,13 @@ function academicScoreTemplateCsv(data = academicManagementData || {}) {
   const scheme = data.assessmentScheme || { Components: [] };
   const roster = currentRows.studentMemberships.filter((row) => academicIsActive(row)
     && row.ClassId === academicScorebookDraft.classId && row.ArmId === academicScorebookDraft.armId
-    && (row.SubjectIds || []).includes(academicScorebookDraft.subjectId));
+    && (row.SubjectIds || []).includes(academicScorebookDraft.subjectId))
+    .sort((a, b) => academicLabel(data.students, a.StudentRef, a.StudentRef).localeCompare(academicLabel(data.students, b.StudentRef, b.StudentRef), undefined, { sensitivity: 'base' }));
   const quote = (value) => `"${String(value ?? '').replace(/"/g, '""')}"`;
   const components = (scheme.Components || []).filter((component) => ['any', 'spreadsheet'].includes(clean(component.SourceMode || 'any').toLowerCase()));
-  const headers = ['StudentRef', 'StudentName', ...components.map((component) => component.Id)];
-  return [headers.map(quote).join(','), ...roster.map((membership) => [
-    membership.StudentRef, academicLabel(data.students || [], membership.StudentRef, membership.StudentRef),
+  const headers = ['S/N', 'StudentRef', 'StudentName', ...components.map((component) => component.Id)];
+  return [headers.map(quote).join(','), ...roster.map((membership, index) => [
+    index + 1, membership.StudentRef, academicLabel(data.students || [], membership.StudentRef, membership.StudentRef),
     ...components.map(() => '')
   ].map(quote).join(','))].join('\r\n');
 }
@@ -18295,6 +18331,7 @@ function bindAcademicManagement() {
     });
   }));
   const movementForm = panelEl.querySelector('[data-academic-workflow="moveAcademicStudentMembership"]');
+  bindAcademicMembershipSearch(movementForm);
   movementForm?.elements.RecordId?.addEventListener('change', (event) => {
     populateAcademicMovementForm(movementForm, academicFind(academicManagementData?.studentMemberships || [], event.target.value));
   });
@@ -18329,6 +18366,7 @@ function bindAcademicManagement() {
   panelEl.querySelectorAll('[data-academic-move]').forEach((button) => button.addEventListener('click', () => {
     const record = academicFind(academicManagementData?.studentMemberships || [], button.dataset.academicMove);
     showAcademicManagementTask('students', 'transfer');
+    movementForm?.resetMembershipSearch?.();
     populateAcademicMovementForm(movementForm, record);
     movementForm?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }));
@@ -20745,9 +20783,13 @@ function securityAuditFilteredRows() {
 }
 
 function securityAuditRoutineSystemSuccess(row) {
+  const succeeded = lower(row.Outcome) === 'success' && Number(row.HttpStatus) >= 200 && Number(row.HttpStatus) < 300;
+  if (!succeeded) return false;
+  if (row.ActivityClass === 'Routine workspace load' && lower(row.Route).replace(/\/+$/, '') === '/api/staff-academics'
+    && /^Loaded Academic Management workspace(?: — (?:Primary section|Secondary section|All school sections))?$/.test(row.Action || '')
+    && ![202, 206].includes(Number(row.HttpStatus))) return true;
   return row.ActivityClass === 'Routine system' && row.ActorRole === 'System'
-    && row.ActorUsername === 'system:notification-scheduler' && row.Route === '/api/notification-scheduler'
-    && lower(row.Outcome) === 'success' && Number(row.HttpStatus) >= 200 && Number(row.HttpStatus) < 300;
+    && row.ActorUsername === 'system:notification-scheduler' && row.Route === '/api/notification-scheduler';
 }
 
 function securityAuditDateTime(value) {
@@ -20794,7 +20836,7 @@ function updateSecurityAuditTable() {
   const hidden = panelEl.querySelector('[data-security-audit-hidden-system]');
   if (hidden) {
     const hiddenCount = securityAuditData.filters?.includeRoutineSystem ? 0 : (securityAuditData.rows || []).filter(securityAuditRoutineSystemSuccess).length;
-    hidden.textContent = hiddenCount ? `${hiddenCount.toLocaleString()} successful routine system runs hidden; their records are retained.` : '';
+    hidden.textContent = hiddenCount ? `${hiddenCount.toLocaleString()} successful routine activities hidden; their records are retained.` : '';
   }
   if (pageLabel) pageLabel.textContent = `Page ${page + 1} of ${pages} · Print includes all matching actions`;
   const previous = document.getElementById('securityAuditPrevious');
@@ -20831,7 +20873,7 @@ function renderSecurityAudit() {
         <label class="security-audit-search">Search<input type="search" name="search" value="${escapeHtml(filters.search)}" placeholder="Action, person, reference or details"></label>
         <div class="security-audit-filter-actions"><button type="submit">Apply dates</button><button type="button" id="resetSecurityAuditFilters" class="secondary">Clear filters</button></div>
       </form>
-      <label class="security-audit-system-toggle"><input type="checkbox" id="includeRoutineSystemAudit"${filters.includeRoutineSystem ? ' checked' : ''}> Show routine system activity</label>
+      <label class="security-audit-system-toggle"><input type="checkbox" id="includeRoutineSystemAudit"${filters.includeRoutineSystem ? ' checked' : ''}> Show routine loading and system activity</label>
       <p class="muted" data-security-audit-hidden-system></p>
       ${securityAuditData.loadedAt ? `<p class="muted security-audit-snapshot">Snapshot loaded ${escapeHtml(securityAuditDateTime(securityAuditData.loadedAt))}. Use Refresh to check for newer actions.</p>` : ''}
       ${(securityAuditData.warnings || []).length ? `<p class="status bad security-audit-warning"><strong>Incomplete audit result:</strong> ${escapeHtml(securityAuditData.warnings.join(' '))}</p>` : ''}

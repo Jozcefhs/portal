@@ -82,6 +82,36 @@ function sentenceAction(value) {
   return auditSentence(value);
 }
 
+function isAcademicWorkspaceLoad(action, route) {
+  // Only this verified read-only command is routine. Do not guess that an
+  // unrelated module's "bootstrap" performs no writes.
+  if (lower(route).replace(/\/+$/, '') !== '/api/staff-academics') return false;
+  const key = lower(action).split('—')[0].replace(/[^a-z]/g, '');
+  return ['bootstrap', 'loadacademicmanagementworkspace', 'loadedacademicmanagementworkspace',
+    'failedtoloadacademicmanagementworkspace', 'accessdeniedacademicmanagementworkspace'].includes(key);
+}
+
+function academicWorkspaceLoadPresentation(row) {
+  if (!isAcademicWorkspaceLoad(row.Action, row.Route)) return null;
+  const status = Number(row.HttpStatus);
+  const outcome = lower(row.Outcome);
+  const denied = outcome === 'denied' || [401, 403].includes(status);
+  const failed = outcome === 'failed' || status >= 400;
+  const succeeded = outcome === 'success' && status >= 200 && status < 300 && ![202, 206].includes(status);
+  const section = /(?:^|;)\s*School section:\s*(primary|secondary|all)\s*(?:;|$)/i.exec(clean(row.ActionContext))?.[1]?.toLowerCase();
+  const suffix = section ? ` — ${section === 'all' ? 'All school sections' : `${sentenceAction(section)} section`}` : '';
+  const workspace = `Academic Management workspace${suffix}`;
+  const actor = clean(row.Actor || row.ActorUsername) || 'An unidentified user';
+  const action = denied ? `Access denied: ${workspace}` : failed ? `Failed to load ${workspace}`
+    : succeeded ? `Loaded ${workspace}` : `Load ${workspace}`;
+  const summary = denied ? `${actor} was denied access to the ${workspace}.`
+    : failed ? `${actor} attempted to load the ${workspace}, but the load request failed.`
+      : succeeded ? `${actor} loaded the ${workspace}.`
+        : `${actor} requested to load the ${workspace}. Completion was not confirmed.`;
+  return { Action: action, Module: 'Academic management', ActivityClass: 'Routine workspace load',
+    Summary: `${summary} This action reads existing information; it does not save attendance, scores or other academic records.` };
+}
+
 const ROUTE_TARGETS = Object.freeze({
   'staff-direct-transfers': 'bank transfer', 'staff-payment-corrections': 'manual payment correction',
   'staff-procurement': 'procurement', 'staff-wallet': 'student wallet',
@@ -184,6 +214,7 @@ export function securityAuditAction({ pathname = '', method = 'GET', body = {} }
   const declared = safeField(body, ['action', 'Action', 'mode', 'Mode', 'operation', 'Operation']);
   if (declared) {
     const key = lower(declared);
+    if (isAcademicWorkspaceLoad(declared, path)) return 'Load Academic Management workspace';
     if (path === '/api/staff-payment-corrections' || path === '/api/backend' && key === 'manualpaymentcorrection') {
       const command = path === '/api/backend' ? lower(body.Command) : key;
       const correction = { reduce: 'reduce receipt amount', reverse: 'reverse receipt credit', move: 'move credit to another student wallet' }[lower(body.Kind)];
@@ -289,6 +320,9 @@ export function shouldPersistSecurityAudit(prepared = {}, actor = null, status =
   const action = titleWords(prepared.action);
   const path = lower(prepared.pathname);
   if (method === 'OPTIONS' || method === 'HEAD') return false;
+  // Retain workspace-load records and their failures. The routine-activity
+  // checkbox controls their visibility; changing the wording must not lose them.
+  if (isAcademicWorkspaceLoad(prepared.action, path)) return true;
   // Scheduler GETs perform work, unlike ordinary page reads. Preserve both
   // service runs and authorization failures; visibility is a separate concern.
   if (path === '/api/notification-scheduler') return true;
@@ -340,6 +374,7 @@ export async function writeSecurityAudit(env, event = {}) {
   };
   payload.ActionContext = clean(event.actionContext).slice(0, 500);
   payload.Summary = auditNarrative({ ...payload, Summary: event.summary, SourceCollection: SECURITY_AUDIT_COLLECTION });
+  Object.assign(payload, academicWorkspaceLoadPresentation(payload));
   await upsertDocument(env, SECURITY_AUDIT_COLLECTION, id, payload);
   return payload;
 }
@@ -454,6 +489,9 @@ export function normalizedLegacyAudit(row, source) {
     }
   }
   normalized.Summary = auditNarrative(normalized);
+  // Interpret old "Bootstrap" rows at read time, including the generic Summary
+  // saved by earlier versions. The original database evidence is never rewritten.
+  Object.assign(normalized, academicWorkspaceLoadPresentation(normalized));
   return normalized;
 }
 
