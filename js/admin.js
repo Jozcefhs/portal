@@ -14145,17 +14145,23 @@ function bindAcademicMembershipSearch(form) {
   if (!input || !select) return;
   const options = [...select.options];
   const normalize = (value) => clean(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-  const filter = () => {
-    const selected = select.value;
+  const filter = (autoSelect = false) => {
+    const previous = select.value;
     const terms = normalize(input.value).split(/\s+/).filter(Boolean);
     const matches = options.filter((option) => option.value && terms.every((term) => normalize(option.textContent).includes(term)));
+    const selected = autoSelect && terms.length && matches.length === 1 ? matches[0].value : previous;
     const retained = selected && !matches.some((option) => option.value === selected);
     select.replaceChildren(...options.filter((option) => !option.value || option.value === selected || matches.includes(option)));
     select.value = selected;
-    if (status) status.textContent = `${matches.length} matching membership${matches.length === 1 ? '' : 's'}${retained ? '; current selection kept' : ''}.`;
+    if (status) status.textContent = matches.length === 1 && selected === matches[0].value
+      ? '1 matching membership selected.'
+      : `${matches.length} matching membership${matches.length === 1 ? '' : 's'}${retained ? '; current selection kept' : ''}.`;
+    // Use the normal selection handler to load the matching record and revision.
+    // Repeated searches for that same student must not reset edited target fields.
+    if (selected !== previous) select.dispatchEvent(new Event('change', { bubbles: true }));
   };
-  input.addEventListener('input', filter);
-  select.addEventListener('change', filter);
+  input.addEventListener('input', () => filter(true));
+  select.addEventListener('change', () => filter());
   form.resetMembershipSearch = () => { input.value = ''; filter(); };
   filter();
 }

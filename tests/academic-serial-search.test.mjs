@@ -78,7 +78,10 @@ test('numbered shared registers follow selected sort and update after filtering'
   assert.match(source, /renumberAdminListRows\(rows\)/);
 });
 
-test('membership search matches names, references and classrooms without replacing the selected student or draft', () => {
+function membershipSearchFixture(memberships = [
+  { RecordId: 'm1', StudentRef: 'DCA/26/001', RevisionToken: 'revision-1', SessionId: 'session-1', TermId: 'term-1', ClassId: 'grade-7', ArmId: 'brilliance', DepartmentId: '' },
+  { RecordId: 'm2', StudentRef: 'DCA/26/002', RevisionToken: 'revision-2', SessionId: 'session-1', TermId: 'term-1', ClassId: 'grade-8', ArmId: 'merit', DepartmentId: 'science' }
+]) {
   const input = { value: '', addEventListener(_event, callback) { this.filter = callback; } };
   const status = { textContent: '' };
   const options = [
@@ -86,29 +89,92 @@ test('membership search matches names, references and classrooms without replaci
     { value: 'm1', textContent: 'Émile Ade · DCA/26/001 — Grade 7 / Brilliance' },
     { value: 'm2', textContent: 'Ada James · DCA/26/002 — Grade 8 / Merit — Withdrawn' }
   ];
-  const select = { options, value: '', addEventListener(_event, callback) { this.change = callback; }, replaceChildren(...nodes) { this.options = nodes; } };
-  const form = { elements: { RecordId: select, Reason: { value: 'Approved move' }, ClassId: { value: 'target-class' }, RevisionToken: { value: 'r1' } }, querySelector: selector => selector.endsWith('-status]') ? status : input };
-  runInNewContext(`(${extractFunction('bindAcademicMembershipSearch')})(form)`, { form, clean });
+  const select = {
+    options: options.filter(option => !option.value || memberships.some(row => row.RecordId === option.value)), value: '', listeners: [], changes: 0,
+    addEventListener(_event, callback) { this.listeners.push(callback); },
+    dispatchEvent(event) { this.changes++; event.target = this; this.listeners.forEach(callback => callback(event)); },
+    replaceChildren(...nodes) { this.options = nodes; }
+  };
+  const elements = { RecordId: select, Reason: { value: 'Approved move' }, EffectiveDate: { value: '2026-10-14' } };
+  for (const key of ['ClassId', 'ArmId', 'DepartmentId', 'SessionId', 'TermId', 'RevisionToken']) elements[key] = { value: '' };
+  elements.namedItem = key => elements[key];
+  const form = { elements, querySelector: selector => selector.endsWith('-status]') ? status : input };
+  runInNewContext(`${helpers}\n${extractFunction('populateAcademicMovementForm')}\n(${extractFunction('bindAcademicMembershipSearch')})(form);
+    form.elements.RecordId.addEventListener('change', event => populateAcademicMovementForm(form, academicFind(memberships, event.target.value)));`, {
+    form, memberships, clean, Event: class { constructor(type, options) { this.type = type; Object.assign(this, options); } }
+  });
+  return { input, status, select, form };
+}
+
+test('one search match selects current membership and loads the correct student context and revision', () => {
+  const { input, status, select, form } = membershipSearchFixture();
+  assert.equal(select.value, '', 'initial load must leave the placeholder selected');
   input.value = 'emile brilliance'; input.filter();
   assert.deepEqual(select.options.map(option => option.value), ['', 'm1']);
-  assert.equal(select.value, '', 'a search must never select another student automatically');
+  assert.equal(select.value, 'm1');
+  assert.equal(form.elements.RevisionToken.value, 'revision-1');
+  assert.equal(form.elements.ClassId.value, 'grade-7');
+  assert.equal(form.elements.ArmId.value, 'brilliance');
+  assert.match(status.textContent, /1 matching membership selected/);
   input.value = 'dca/26/002'; input.filter();
   assert.deepEqual(select.options.map(option => option.value), ['', 'm2']);
-  select.value = 'm2'; select.change();
+  assert.equal(select.value, 'm2');
+  for (const [key, value] of Object.entries({ RevisionToken: 'revision-2', ClassId: 'grade-8', ArmId: 'merit', DepartmentId: 'science', SessionId: 'session-1', TermId: 'term-1' })) {
+    assert.equal(form.elements[key].value, value);
+  }
+  assert.equal(select.changes, 2, 'each new match triggers one normal selection event without recursion');
+  assert.equal(form.elements.Reason.value, 'Approved move');
+  assert.equal(form.elements.EffectiveDate.value, '2026-10-14');
+});
+
+test('searching the same student again preserves the entered transfer destination', () => {
+  const { input, select, form } = membershipSearchFixture();
+  input.value = 'DCA/26/002'; input.filter();
+  form.elements.ClassId.value = 'target-class';
+  form.elements.ArmId.value = 'target-arm';
+  input.value = '  ada  merit  '; input.filter();
+  assert.equal(select.value, 'm2');
+  assert.equal(select.changes, 1);
+  assert.equal(form.elements.ClassId.value, 'target-class');
+  assert.equal(form.elements.ArmId.value, 'target-arm');
+  assert.equal(form.elements.RevisionToken.value, 'revision-2');
+});
+
+test('multiple matches require selection; empty and unmatched searches preserve the current membership and draft', () => {
+  const { input, status, select, form } = membershipSearchFixture();
+  input.value = 'grade'; input.filter();
+  assert.deepEqual(select.options.map(option => option.value), ['', 'm1', 'm2']);
+  assert.equal(select.value, '');
+  assert.equal(select.changes, 0);
+  select.value = 'm2'; select.dispatchEvent({ type: 'change' });
+  form.elements.ClassId.value = 'target-class';
   input.value = 'no match'; input.filter();
   assert.deepEqual(select.options.map(option => option.value), ['', 'm2']);
   assert.equal(select.value, 'm2');
   assert.match(status.textContent, /0 matching memberships; current selection kept/);
   assert.equal(form.elements.Reason.value, 'Approved move');
   assert.equal(form.elements.ClassId.value, 'target-class');
-  assert.equal(form.elements.RevisionToken.value, 'r1');
+  assert.equal(form.elements.RevisionToken.value, 'revision-2');
   form.resetMembershipSearch();
   assert.equal(select.options.length, 3);
   assert.equal(select.value, 'm2');
+  assert.equal(form.elements.ClassId.value, 'target-class');
   select.value = ''; input.value = 'no match'; input.filter();
   assert.deepEqual(select.options.map(option => option.value), ['']);
   assert.match(source, /bindAcademicMembershipSearch\(movementForm\)/);
   assert.match(source, /data-academic-membership-search placeholder="Search by name, admission number or classroom"/);
+});
+
+test('an empty search does not auto-select even when only one membership exists', () => {
+  const { input, select, form } = membershipSearchFixture([{ RecordId: 'm1', RevisionToken: 'revision-1' }]);
+  assert.equal(select.value, '');
+  input.value = ' '; input.filter();
+  assert.equal(select.value, '');
+  form.resetMembershipSearch();
+  assert.equal(select.value, '');
+  input.value = 'DCA/26/001'; input.filter();
+  assert.equal(select.value, 'm1');
+  assert.equal(form.elements.RevisionToken.value, 'revision-1');
 });
 
 test('serial column stays compact and scorebook student names remain sticky beside it', async () => {
