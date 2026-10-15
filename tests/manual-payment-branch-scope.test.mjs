@@ -185,10 +185,72 @@ function fixture(t, branch = 'main', section = 'secondary') {
   return { env, documents, mutations, put, get, rows, student, body, payment, schoolPath, injectedRaces,
     race: row => { createRace = row; }, failRead: predicate => { readFailure = predicate; },
     raceWrite: (collection, id, row, method = '') => { writeRace = { collection, id, row, method }; },
-    record: overrides => recordManualPayment(env, body(overrides)) };
+    record: overrides => recordManualPayment(env, body(overrides)),
+    interactive: overrides => recordManualPayment(env, body(overrides), { reviewWalletDuplicates: true }) };
 }
 
 const denied = error => [403, 404, 409].includes(error.status);
+
+test('interactive wallet top-up stops before any writes for a prior batch credit, and explicit review preserves the original', async t => {
+  const f=fixture(t);f.student();await f.record({Reference:'BATCH-1',Channel:'Historical Payment Import',Amount:22400});
+  const original=f.get('payments','BATCH-1'),before=f.mutations.length;
+  const warning=await f.interactive({Reference:'NEW-1',Amount:22400});
+  assert.equal(warning.code,'WALLET_DUPLICATE_REVIEW_REQUIRED');assert.equal(warning.duplicateReview.MatchCount,1);
+  assert.equal(warning.duplicateReview.Matches[0].Source,'Batch upload');assert.equal(f.mutations.length,before);
+  assert.equal(f.rows('ledger').reduce((sum,row)=>sum+Number(row.Credit||0)-Number(row.Debit||0),0),22400);
+  const posted=await f.interactive({Reference:'NEW-1',Amount:22400,DuplicateWalletReviewDigest:warning.duplicateReview.ReviewDigest});
+  assert.equal(posted.ok,true);assert.equal(posted.payment.DuplicateWalletReview.MatchCount,1);
+  assert.deepEqual(f.get('payments','BATCH-1'),original);assert.equal(f.rows('payments').length,2);
+  assert.equal(f.rows('ledger').reduce((sum,row)=>sum+Number(row.Credit||0)-Number(row.Debit||0),0),44800);
+  const retried=await f.interactive({Reference:'NEW-1',Amount:22400});assert.equal(retried.ok,true);assert.equal(retried.duplicate,true);
+  assert.equal(f.rows('payments').length,2);assert.equal(f.rows('accountSummaries')[0].WalletBalance,44800);
+});
+
+test('a new matching credit after the warning requires another review without creating the proposed receipt',async t=>{
+  const f=fixture(t);f.student();await f.record({Reference:'BATCH-1'});
+  const first=await f.interactive({Reference:'NEW'});await f.record({Reference:'OTHER',Gateway:'Paystack'});
+  const before=f.mutations.length;
+  const stale=await f.interactive({Reference:'NEW',DuplicateWalletReviewDigest:first.duplicateReview.ReviewDigest});
+  assert.equal(stale.code,'WALLET_DUPLICATE_REVIEW_REQUIRED');assert.equal(stale.duplicateReview.MatchCount,2);
+  assert.equal(f.mutations.length,before);assert.equal(f.get('payments','NEW'),null);
+});
+
+test('a legacy wallet ledger credit without a receipt still warns, while unavailable history prevents posting',async t=>{
+  const f=fixture(t);f.student();
+  f.put('ledger','LEGACY',{AccountRef:'STU-001',BranchId:'main',SchoolSection:'secondary',EntryType:'Wallet Deposit',Credit:1250,
+    Date:'2020-01-01',Reference:'IMPORTED-OLD',Metadata:'Historical payment import'});
+  const warning=await f.interactive();assert.equal(warning.duplicateReview.MatchCount,1);assert.equal(warning.duplicateReview.Matches[0].Source,'Batch upload');
+  assert.equal(f.mutations.length,0);
+  f.failRead(({name,options})=>name.endsWith('runQuery') && JSON.parse(options.body).structuredQuery.from[0].collectionId==='payments');
+  await assert.rejects(f.interactive());assert.equal(f.mutations.length,0);
+});
+
+test('no same-amount credit permits normal manual entry; trusted gateway and import recorders do not require interactive confirmation',async t=>{
+  const f=fixture(t);f.student();assert.equal((await f.interactive()).ok,true);
+  assert.equal((await f.interactive({Reference:'DIFFERENT',Amount:1500})).ok,true);
+  assert.equal((await f.record({Reference:'GATEWAY',Gateway:'Paystack'})).ok,true);
+  assert.equal((await f.record({Reference:'IMPORT',Channel:'Historical Payment Import'})).ok,true);
+  assert.equal(f.rows('payments').length,4);
+});
+
+test('interactive review reads beyond the first history page and includes lowercase legacy account aliases', async t => {
+  const f = fixture(t); f.student();
+  const history = { AccountRef: 'STU-001', BranchId: 'main', SchoolSection: 'secondary', FeeCode: 'WALLET_TOPUP',
+    FeeCategory: 'Wallet', Status: 'Paid', Currency: 'NGN', Gateway: 'Manual' };
+  for (let index = 0; index < 505; index++) {
+    const reference = `EARLIER-${String(index).padStart(4, '0')}`;
+    f.put('payments', reference, { ...history, Reference: reference, Amount: 100, PaidAt: '2026-10-10' });
+  }
+  f.put('payments', 'Z-OLD-BATCH', { ...history, Reference: 'Z-OLD-BATCH', Amount: 22400,
+    Channel: 'Historical Payment Import', PaidAt: '2018-01-01' });
+  f.put('payments', 'Z-LOWERCASE', { ...history, AccountRef: 'stu-001', Reference: 'Z-LOWERCASE', Amount: 22400,
+    PaidAt: '2019-01-01' });
+  const result = await f.interactive({ Amount: 22400 });
+  assert.equal(result.code, 'WALLET_DUPLICATE_REVIEW_REQUIRED');
+  assert.equal(result.duplicateReview.MatchCount, 2);
+  assert.deepEqual(result.duplicateReview.Matches.map(row => row.Reference), ['Z-LOWERCASE', 'Z-OLD-BATCH']);
+  assert.equal(f.mutations.length, 0);
+});
 
 test('real Firestore serialization corrects a settled manual school receipt and reconciliation preserves the reopened balance', async t => {
   const f = fixture(t); f.student();

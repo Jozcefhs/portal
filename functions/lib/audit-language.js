@@ -111,6 +111,9 @@ export function paymentAuditSummary(payment = {}, { duplicate = false, channel =
   const target = student ? `student ${student}` : 'the selected student';
   if (duplicate) return `${money} receipt for ${target} was already recorded. The existing payment was reused; this was not a second receipt.`;
   const wallet = clean(payment.FeeCode).toUpperCase() === 'WALLET_TOPUP' || clean(payment.FeeCategory).toLowerCase() === 'wallet';
-  return wallet ? `${money} credited to ${target}'s wallet through ${channel}.`
+  const reviewed = payment.DuplicateWalletReview;
+  const reviewNote = wallet && reviewed?.MatchCount > 0
+    ? ` ${clean(reviewed.ReviewedBy) || 'The accountant'} confirmed this was a separate payment after reviewing ${Number(reviewed.MatchCount)} existing same-amount wallet credit(s).` : '';
+  return wallet ? `${money} credited to ${target}'s wallet through ${channel}.${reviewNote}`
     : `${money} recorded for ${target} through ${channel}${payment.FeeName ? ` (${clean(payment.FeeName)})` : ''}. This was not a wallet top-up.`;
 }

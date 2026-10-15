@@ -46,6 +46,7 @@ import { financialPreviewFingerprint } from '../lib/financial-preview-fingerprin
 import { studentWalletProfile } from '../lib/student-wallet-profile.js';
 import { withStudentProfileDefaults } from '../lib/student-profile-defaults.js';
 import { assertManualPaymentDestination, assertManualPaymentRetry, assertManualPaymentScope, bindManualPaymentIdentity, manualPaymentRequestScope, scopedPaymentWriteCondition } from '../lib/manual-payment-scope.js';
+import { reviewManualWalletTopup } from '../lib/manual-wallet-duplicate-review.js';
 import {
   applyPublicPortalContent,
   PUBLIC_PORTAL_CONTENT_DOCUMENT
@@ -5134,9 +5135,9 @@ export async function queryAccountRows(env, collection, accountRef, financialSco
   return [...unique.values()].map((row) => assertManualPaymentScope(row, financialScope, collection));
 }
 
-async function queryAccountRowsForReferences(env, collection, references = [], financialScope = null) {
+async function queryAccountRowsForReferences(env, collection, references = [], financialScope = null, options = {}) {
   const wanted = [...new Set((references || []).map(clean).filter(Boolean))];
-  const groups = await Promise.all(wanted.map((reference) => queryAccountRows(env, collection, reference, financialScope)));
+  const groups = await Promise.all(wanted.map((reference) => queryAccountRows(env, collection, reference, financialScope, options)));
   const unique = new Map();
   groups.flat().forEach((row) => unique.set(clean(row.__name || row.__id) || JSON.stringify(row), row));
   return [...unique.values()];
@@ -5856,7 +5857,7 @@ async function removeStandaloneAcceptanceInvoices(env, payment, financialScope =
   return standalone.length;
 }
 
-async function prepareScopedManualPayment(env, body) {
+async function prepareScopedManualPayment(env, body, reviewWalletDuplicates = false) {
   const requestedScope = manualPaymentRequestScope(body);
   if (!requestedScope) return { body, financialScope: null, student: null };
   requestedScope.strictReads = true;
@@ -5891,11 +5892,13 @@ async function prepareScopedManualPayment(env, body) {
     }
   }));
   if (student?.ApplicationReference) await findApplication(env, student.ApplicationReference, financialScope);
-  await Promise.all([
-    ...['payments', 'invoices', 'ledger'].map((collection) => queryAccountRowsForReferences(env, collection, financialScope.references, financialScope)),
+  const historyReferences = reviewWalletDuplicates
+    ? [...new Set(financialScope.references.flatMap(value => [value, value.toUpperCase(), value.toLowerCase()]))] : financialScope.references;
+  const [payments, , ledger] = await Promise.all([
+    ...['payments', 'invoices', 'ledger'].map((collection) => queryAccountRowsForReferences(env, collection, historyReferences, financialScope, { strict: reviewWalletDuplicates })),
     assertScopedAccountSummary(env, accountRef, financialScope)
   ]);
-  return { body: bound.body, financialScope, student };
+  return { body: bound.body, financialScope, student, payments, ledger };
 }
 
 async function assertManualPaymentDestinations(env, reference, financialScope) {
@@ -5920,7 +5923,7 @@ async function manualPaymentVersion(env, documentId, body, financialScope, credi
   return row;
 }
 
-export async function recordManualPayment(env, body) {
+export async function recordManualPayment(env, body, { reviewWalletDuplicates = false } = {}) {
   // Trusted gateway callers use this recorder too; desktop requests carry the
   // authoritative actor and must retain the normal finance-role restriction.
   if (body.DeviceBranchId) requireAccountingRole(body, ['Super Admin', 'Accounts Officer']);
@@ -5943,7 +5946,7 @@ export async function recordManualPayment(env, body) {
     err.status = 400;
     throw err;
   }
-  const scoped = await prepareScopedManualPayment(env, body);
+  const scoped = await prepareScopedManualPayment(env, body, reviewWalletDuplicates);
   body = scoped.body;
   const financialScope = scoped.financialScope;
   const paymentScope = financialScope || requestedStudentScope(body);
@@ -6011,6 +6014,16 @@ export async function recordManualPayment(env, body) {
   const creditedAmount = gatewayFee > 0 ? Math.min(grossAmount, netAmount) : amount;
   const academicSession = clean(body.AcademicSession || (student && student.AcademicSession) || resolvedPeriodValue(fee.AcademicSession, ''));
   const term = clean(body.Term || (student && student.Term) || resolvedPeriodValue(fee.Term, ''));
+  let duplicateWalletReview = null;
+  if (!payment && reviewWalletDuplicates) {
+    const review = await reviewManualWalletTopup({
+      body: { ...body, Reference: reference, FeeCode: feeCode, FeeCategory: clean(body.FeeCategory || fee.FeeCategory),
+        Amount: creditedAmount, Currency: clean(body.Currency || fee.Currency) || 'NGN' },
+      student, scope: financialScope, payments: (scoped.payments || []).map(normalizePayment), ledger: (scoped.ledger || []).map(normalizeLedger)
+    });
+    if (review?.required) return review.response;
+    duplicateWalletReview = review?.acknowledgement || null;
+  }
   if (!payment) {
     payment = {
       PaymentId: paymentId,
@@ -6056,6 +6069,7 @@ export async function recordManualPayment(env, body) {
       ProcessingVersion: 2,
       ProcessingStartedAt: nowIso()
     };
+    if (duplicateWalletReview) payment.DuplicateWalletReview = duplicateWalletReview;
     if (isAvailableSchoolCreditReceipt(payment)) {
       const preflight = await syncSchoolAccountCreditJournals(env, accountRef, [payment.ApplicationReference], financialScope);
       if (preflight.unreconciledLegacyActions?.length || preflight.unreconciledAllocation) {
@@ -11839,7 +11853,7 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
       return generateSchoolFeeInvoices(env, body);
     case 'recordManualPayment':
       requireAccountingRole(body, ['Super Admin', 'Accounts Officer']);
-      return recordManualPayment(env, body);
+      return recordManualPayment(env, body, { reviewWalletDuplicates: true });
     case 'importHistoricalPayments':
       return importHistoricalPayments(env, body);
     case 'getHistoricalPaymentTemplateAccounts':
@@ -12158,6 +12172,10 @@ export async function onRequestPost(context) {
     // approved computer branch for downstream reads and writes.
     body = applyDesktopDeviceBranchScope(body, desktopAuthentication);
     const data = await routeAction(env, action, body, deploymentIdentity, new URL(request.url).origin);
+    if (context.data && action === 'recordManualPayment' && data.code === 'WALLET_DUPLICATE_REVIEW_REQUIRED') {
+      context.data.securityAuditAction = 'Review possible duplicate manual wallet top-up';
+      context.data.securityAuditSummary = `Manual wallet top-up for student ${data.duplicateReview.Student.AccountRef} was stopped for review because ${data.duplicateReview.MatchCount} same-amount credit(s) were found. No new payment or wallet credit was recorded.`;
+    }
     if (context.data && action === 'recordManualPayment' && data.ok && data.payment) {
       context.data.securityAuditAction = data.duplicate ? 'Check previously recorded manual payment' : 'Record manual payment';
       context.data.securityAuditSummary = paymentAuditSummary(data.payment, { duplicate: data.duplicate });
