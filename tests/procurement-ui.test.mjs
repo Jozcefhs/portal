@@ -58,7 +58,7 @@ function fixture(overrides = {}, options = {}) {
   };
   modalForm.querySelector = selector => importNodes.get(selector) || pickerNodes.get(selector) || bulkNodes.get(selector) || progress;
   let departmentChoices = [];
-  modalForm.querySelectorAll = selector => selector === '[data-proc-assign-department]:checked' ? departmentChoices.filter(input => input.checked) : selector === '[data-proc-import-source]' ? [importNodes.get('[data-proc-import-csv]'), importNodes.get('[data-proc-import-file]')] : selector === 'button, input, select, textarea' ? [...importNodes.values(), ...pickerNodes.values(), ...bulkNodes.values(), ...bulkChoices.children, ...choices.children, ...departmentChoices, ...holder.children.flatMap(line => line.querySelectorAll()), modalForm.elements.Department].filter(Boolean) : [];
+  modalForm.querySelectorAll = selector => selector === '[data-proc-assign-department]' ? departmentChoices : selector === '[data-proc-assign-department]:checked' ? departmentChoices.filter(input => input.checked) : selector === '[data-proc-import-source]' ? [importNodes.get('[data-proc-import-csv]'), importNodes.get('[data-proc-import-file]')] : selector === 'button, input, select, textarea' ? [...importNodes.values(), ...pickerNodes.values(), ...bulkNodes.values(), ...bulkChoices.children, ...choices.children, ...departmentChoices, ...holder.children.flatMap(line => line.querySelectorAll()), modalForm.elements.Department].filter(Boolean) : [];
   modalForm.elements = { Department: element(), ItemCode: element(), Discrepancy: { checked: false } };
   const modal = element(); modal.querySelector = () => modalForm;
   let modalMarkup = '';
@@ -86,6 +86,7 @@ function fixture(overrides = {}, options = {}) {
     calls.push({ action, payload: plain(payload) });
     if (action === 'list') { if (listFailure) throw listFailure; return data; }
     if (fail) throw fail;
+    if (options.handleRequest) return options.handleRequest(action, payload);
     if (action === 'lookupinventory') return lookupResult || { ok: true, departmentInventory: [] };
     if (action === 'records') return recordsResult || { ok: true, records: [], paging: { mode: payload.Mode, hasMore: false, nextCursor: null } };
     if (action === 'recorddetail') return { ok: true, record: detailResult };
@@ -119,7 +120,7 @@ test('central stock selections survive searching and submit all selected revisio
   assert.doesNotMatch(view.nodes.get('[data-proc-body]').innerHTML, /data-proc-stock-item="vendor"/);
   assert.equal(view.nodes.get('[data-proc-action="assignitems"]').disabled, true);
   await view.selectStock('soap'); await view.searchStock('RICE'); await view.root.fire('click', view.action('selectstockmatches'));
-  assert.match(view.nodes.get('[data-proc-stock-selection-count]').textContent, /2 of 20/);
+  assert.match(view.nodes.get('[data-proc-stock-selection-count]').textContent, /2 items selected/);
   await view.root.fire('click', view.action('assignitems'));
   assert.deepEqual(view.choices.children.map(input => [input.dataset.procBulkChoice, input.checked]), [['rice', true], ['soap', true]]);
   assert.match(view.bulk('[data-proc-bulk-preview]').innerHTML, /Soap &lt;sample&gt;/);
@@ -128,7 +129,7 @@ test('central stock selections survive searching and submit all selected revisio
   assert.deepEqual(sent.Items, [{ ItemId: 'rice', ExpectedRevision: 7 }, { ItemId: 'soap', ExpectedRevision: 3 }]);
   assert.deepEqual(sent.AssignedDepartments, ['clinic', 'kitchen']); assert.equal(sent.SchoolSection, 'Secondary');
   assert.equal(sent.Quantity, undefined); assert.equal(sent.ItemName, undefined);
-  assert.match(view.nodes.get('[data-proc-stock-selection-count]').textContent, /0 of 20/);
+  assert.match(view.nodes.get('[data-proc-stock-selection-count]').textContent, /0 items selected/);
 });
 
 test('Edit central item opens a searchable checkbox dropdown preselected with that item, without applying item edits', async t => {
@@ -162,35 +163,44 @@ test('bulk assignment requires items and departments, and clearing includes hidd
   await view.searchItems('rice'); assert.equal(view.choices.children[0].checked, false);
   await view.modalForm.fire('submit'); assert.deepEqual(view.calls.find(call => call.action === 'assignitems').payload.Items, [{ ItemId: 'soap', ExpectedRevision: 3 }]);
   await view.selectStock('soap'); await view.searchStock('rice'); await view.root.fire('click', view.action('clearstockselection'));
-  assert.match(view.nodes.get('[data-proc-stock-selection-count]').textContent, /0 of 20/);
+  assert.match(view.nodes.get('[data-proc-stock-selection-count]').textContent, /0 items selected/);
 });
 
-test('both bulk item selectors enforce the 20-item limit without partial selections', async t => {
-  const items = Array.from({ length: 21 }, (_, i) => ({ ItemId: `item${i}`, ItemName: `Item ${i}`, Unit: 'pcs', Revision: 1 }));
+test('both bulk selectors select all matches beyond 20 and save every unique item in bounded batches', async t => {
+  const items = Array.from({ length: 55 }, (_, i) => ({ ItemId: `item${i}`, ItemName: `Item ${i}`, Unit: 'pcs', Revision: 1 }));
   const view = await bulkFixture({ items }); t.after(() => view.controller.destroy());
   await view.root.fire('click', view.action('selectstockmatches'));
-  assert.match(view.nodes.get('[data-proc-stock-selection-count]').textContent, /0 of 20/);
-  await view.selectStock('item0'); await view.root.fire('click', view.action('assignitems'));
+  assert.match(view.nodes.get('[data-proc-stock-selection-count]').textContent, /55 items selected/);
+  await view.root.fire('click', view.action('selectstockmatches'));
+  await view.selectStock('item54', false); await view.selectStock('item54');
+  await view.root.fire('click', view.action('assignitems'));
+  assert.ok(view.choices.children.every(row => row.checked && !row.disabled));
+  await view.bulk('[data-proc-bulk-clear]').fire('click');
+  await view.searchItems('Item');
   await view.bulk('[data-proc-bulk-all]').fire('click');
-  assert.match(view.bulk('[data-proc-bulk-status]').textContent, /nothing was partially selected/);
-  assert.match(view.bulk('[data-proc-bulk-summary]').textContent, /1 item selected/);
-  for (let i = 1; i < 20; i++) await view.choose(`item${i}`);
-  assert.equal(view.choices.children.find(row => row.dataset.procBulkChoice === 'item20').disabled, true);
-  await view.choose('item20'); assert.match(view.bulk('[data-proc-bulk-summary]').textContent, /20 items selected/);
-  await view.choose('item0', false); await view.choose('item20');
+  assert.match(view.bulk('[data-proc-bulk-summary]').textContent, /55 items selected/);
+  await view.bulk('[data-proc-bulk-all]').fire('click');
   view.departmentChoices()[0].checked = true; await view.modalForm.fire('submit');
-  const selected = view.calls.find(call => call.action === 'assignitems').payload.Items;
-  assert.equal(selected.length, 20); assert.ok(!selected.some(row => row.ItemId === 'item0')); assert.ok(selected.some(row => row.ItemId === 'item20'));
+  const saved = view.calls.filter(call => call.action === 'assignitems').map(call => call.payload);
+  assert.deepEqual(saved.map(batch => batch.Items.length), [20, 20, 15]);
+  assert.equal(new Set(saved.map(batch => batch.RequestId)).size, 3);
+  assert.deepEqual(saved.flatMap(batch => batch.Items.map(row => row.ItemId)), items.map(row => row.ItemId));
+  assert.ok(saved.every(batch => batch.AssignedDepartments.join(',') === 'clinic' && batch.SchoolSection === 'Secondary'));
+  assert.match(view.root.innerHTML, /55 central items assigned/);
 });
 
-test('bulk assignment retry uses the original request and rejects a changed selection after a lost response', async t => {
+test('bulk assignment retry freezes the selection and uses the original request after a lost response', async t => {
   const view = await bulkFixture(); t.after(() => view.controller.destroy());
   await view.selectStock('rice'); await view.root.fire('click', view.action('assignitems')); view.departmentChoices()[0].checked = true;
   view.fail(new Error('Connection lost')); await view.modalForm.fire('submit'); const original = view.calls.at(-1);
   await view.modalForm.fire('submit'); assert.deepEqual(view.calls.at(-1), original);
   await view.choose('soap'); await view.modalForm.fire('submit'); assert.deepEqual(view.calls.at(-1), original);
-  assert.match(view.progress.textContent, /before changing or resubmitting/);
-  await view.choose('soap', false); view.fail(null); await view.modalForm.fire('submit');
+  assert.match(view.progress.textContent, /0 of 1 items confirmed/);
+  assert.match(view.progress.textContent, /Retry remaining items/);
+  assert.equal(view.departmentChoices()[0].disabled, true);
+  assert.equal(view.bulk('[data-proc-bulk-all]').disabled, true);
+  assert.equal(view.bulk('[data-proc-bulk-clear]').disabled, true);
+  view.fail(null); await view.modalForm.fire('submit');
   assert.deepEqual(view.calls.filter(call => call.action === 'assignitems').at(-1), original);
 });
 
@@ -198,9 +208,77 @@ test('bulk table selection clears only after successful scope reload', async t =
   const view = await bulkFixture(); t.after(() => view.controller.destroy()); await view.selectStock('rice');
   const scopeInput = { value: 'Primary', matches: selector => selector === '[data-proc-school-section]' };
   view.failList(new Error('Offline')); await view.root.fire('change', scopeInput);
-  assert.equal(scopeInput.value, 'Secondary'); assert.match(view.nodes.get('[data-proc-stock-selection-count]').textContent, /1 of 20/);
+  assert.equal(scopeInput.value, 'Secondary'); assert.match(view.nodes.get('[data-proc-stock-selection-count]').textContent, /1 items selected/);
   view.failList(null); scopeInput.value = 'Primary'; await view.root.fire('change', scopeInput);
-  assert.match(view.nodes.get('[data-proc-stock-selection-count]').textContent, /0 of 20/);
+  assert.match(view.nodes.get('[data-proc-stock-selection-count]').textContent, /0 items selected/);
+});
+
+test('large selection resumes only the unconfirmed batch with its original request ID and reports aggregate totals', async t => {
+  const items = Array.from({ length: 47 }, (_, i) => ({ ItemId: `item${i}`, ItemName: `Item ${i}`, Unit: 'pcs', Revision: 1 }));
+  const results = new Map(); let failSecond = true, saves = 0;
+  const view = await bulkFixture({ items }, { handleRequest: async (action, payload) => {
+    assert.equal(action, 'assignitems');
+    if (!results.has(payload.RequestId)) { saves++; results.set(payload.RequestId, { ok: true, summary: { Created: payload.Items.length, Reused: payload.Items.length } }); }
+    if (saves === 2 && failSecond) { failSecond = false; throw new Error('Response lost'); }
+    return results.get(payload.RequestId);
+  } });
+  t.after(() => view.controller.destroy());
+  await view.root.fire('click', view.action('selectstockmatches')); await view.root.fire('click', view.action('assignitems'));
+  view.departmentChoices().forEach(input => { input.checked = true; });
+  await view.modalForm.fire('submit');
+  assert.match(view.progress.textContent, /20 of 47 items confirmed/);
+  assert.match(view.nodes.get('[data-proc-stock-selection-count]').textContent, /27 items selected/);
+  assert.equal(view.importNodes.get('button[type="submit"]').textContent, 'Retry remaining items');
+  const pending = view.calls.at(-1); await view.bulk('[data-proc-bulk-clear]').fire('click');
+  await view.modalForm.fire('submit');
+  const requests = view.calls.filter(call => call.action === 'assignitems');
+  assert.equal(requests.length, 4); assert.deepEqual(requests[2], pending);
+  assert.equal(saves, 3); assert.deepEqual(requests.map(call => call.payload.Items.length), [20, 20, 20, 7]);
+  assert.match(view.root.innerHTML, /47 central items assigned\. 47 department items created at zero stock; 47 existing items reused/);
+});
+
+test('a definitive later batch conflict stops further saves and reports partial completion without claiming all succeeded', async t => {
+  let saves = 0;
+  const view = await bulkFixture({ items: Array.from({ length: 65 }, (_, i) => ({ ItemId: `item${i}`, ItemName: `Item ${i}`, Unit: 'pcs', Revision: 1 })) },
+    { handleRequest: async () => { if (++saves === 2) throw Object.assign(new Error('Item 21: conflicting stock unit'), { responseReceived: true }); return { ok: true, summary: { Created: 20, Reused: 0 } }; } });
+  t.after(() => view.controller.destroy());
+  await view.root.fire('click', view.action('selectstockmatches')); await view.root.fire('click', view.action('assignitems'));
+  view.departmentChoices()[0].checked = true; await view.modalForm.fire('submit');
+  assert.equal(saves, 2); assert.equal(view.modal.isConnected, true);
+  assert.match(view.progress.textContent, /20 of 65 items confirmed/); assert.match(view.progress.textContent, /conflicting stock unit/);
+  assert.match(view.progress.textContent, /close and refresh/);
+  assert.doesNotMatch(view.root.innerHTML, /65 central items assigned/);
+  assert.equal(view.modalForm.dataset.uncertain, undefined);
+});
+
+test('large selection is locked while saving, blocks double submission, and unmount prevents later batches', async t => {
+  let finish; const waiting = new Promise(resolve => { finish = resolve; });
+  const view = await bulkFixture({ items: Array.from({ length: 45 }, (_, i) => ({ ItemId: `item${i}`, ItemName: `Item ${i}`, Unit: 'pcs', Revision: 1 })) }, { handleRequest: () => waiting });
+  t.after(() => view.controller.destroy());
+  await view.root.fire('click', view.action('selectstockmatches')); await view.root.fire('click', view.action('assignitems'));
+  view.departmentChoices()[0].checked = true; const pending = view.modalForm.fire('submit'); await tick();
+  assert.equal(view.importNodes.get('button[type="submit"]').disabled, true);
+  assert.equal(view.departmentChoices()[0].disabled, true);
+  assert.match(view.progress.textContent, /Assigning items 1–20 of 45/);
+  await view.modalForm.fire('submit'); await view.choose('item0', false);
+  assert.equal(view.calls.filter(call => call.action === 'assignitems').length, 1);
+  view.controller.destroy(); finish({ ok: true, summary: { Created: 20, Reused: 0 } }); await pending;
+  assert.equal(view.calls.filter(call => call.action === 'assignitems').length, 1);
+});
+
+test('select all matches respects filters, keeps hidden selections, and deduplicates repeated catalogue rows', async t => {
+  const items = Array.from({ length: 33 }, (_, i) => ({ ItemId: `item${i}`, ItemName: `${i < 30 ? 'Clinic' : 'Kitchen'} item ${i}`, Unit: 'pcs', Revision: 1 }));
+  const view = await bulkFixture({ items: [...items, items[0], { ItemId: 'vendor', ItemName: 'Clinic vendor', VendorId: 'vendor' }] }); t.after(() => view.controller.destroy());
+  await view.searchStock('Clinic'); await view.root.fire('click', view.action('selectstockmatches'));
+  assert.match(view.nodes.get('[data-proc-stock-selection-count]').textContent, /30 items selected/);
+  await view.root.fire('click', view.action('assignitems'));
+  await view.searchItems('Kitchen'); await view.bulk('[data-proc-bulk-all]').fire('click');
+  await view.bulk('[data-proc-bulk-all]').fire('click');
+  assert.match(view.bulk('[data-proc-bulk-summary]').textContent, /33 items selected/);
+  view.departmentChoices()[0].checked = true; await view.modalForm.fire('submit');
+  const sent = view.calls.filter(call => call.action === 'assignitems').flatMap(call => call.payload.Items);
+  assert.equal(sent.length, 33); assert.equal(new Set(sent.map(row => row.ItemId)).size, 33);
+  assert.ok(!sent.some(row => row.ItemId === 'vendor'));
 });
 
 test('bulk assignment controls and forged events cannot bypass read-only or manage permission', async t => {

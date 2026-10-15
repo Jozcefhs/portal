@@ -335,6 +335,43 @@ test('a 20-item assignment shares branch inventory reads and commits once', asyn
   assert.ok(f.commits.at(-1).length < 450);
 });
 
+for (const edition of ['school', 'faith', 'organization']) {
+  test(`${edition}: assigning 47 items in resumable batches preserves stock and prices across retries and repeated selection`, async () => {
+    const f = fixture(edition), ids = [], departments = edition === 'school' ? ['clinic', 'kitchen'] : ['organizationStore', 'restaurant'];
+    for (let i = 0; i < 47; i++) {
+      const ItemId = await f.item(`Bulk ${i}`, { ItemCode: `B${i}` }); ids.push(ItemId);
+      f.put(C.items, ItemId, { ...f.get(C.items, ItemId), Quantity: i + 1 });
+      if (i % 2 === 0) f.target(`existing-${i}`, { ItemName: `Bulk ${i}`, ItemCode: `B${i}`, Quantity: i + 2.5, Price: i + 100, Notes: 'Preserve original' });
+    }
+    const batches = [0, 20, 40].map(offset => ({ action: 'assignitems', RequestId: `large-selection-${offset}`, SchoolSection: f.section,
+      AssignedDepartments: departments, Items: ids.slice(offset, offset + 20).map(ItemId => ({ ItemId, ExpectedRevision: 1 })) }));
+    await f.run(batches[0]); f.loseResponse(); await f.run(batches[1]);
+    const commits = f.commits.length;
+    assert.equal((await f.run(batches[1])).replayed, true); assert.equal(f.commits.length, commits);
+    await f.run(batches[2]);
+    const assigned = () => [...f.list(f.collection), ...f.list(edition === 'school' ? 'kitchenInventory' : 'restaurantInventory')]
+      .filter(row => ids.includes(row.ProcurementItemId));
+    const before = assigned().map(row => [row.__name, row.Quantity, row.Price]);
+    assert.equal(before.length, 94); assert.equal(new Set(before.map(row => row[0])).size, 94);
+    for (let i = 0; i < ids.length; i++) {
+      assert.equal(f.get(C.items, ids[i]).Quantity, i + 1);
+      const targets = assigned().filter(row => row.ProcurementItemId === ids[i]);
+      assert.equal(targets.length, 2);
+      if (i % 2 === 0) {
+        const existing = f.get(f.collection, `existing-${i}`);
+        assert.equal(existing.Quantity, i + 2.5); assert.equal(existing.Price, i + 100); assert.equal(existing.Notes, 'Preserve original');
+      }
+      assert.ok(targets.filter(row => !row.__id.startsWith('existing-')).every(row => row.Quantity === 0 && row.Price === 0));
+    }
+    for (const batch of batches) {
+      const again = await f.command('assignitems', { ...batch, RequestId: crypto.randomUUID(), Items: batch.Items.map(row => ({ ...row, ExpectedRevision: 2 })) });
+      assert.equal(again.summary.Created, 0); assert.equal(again.summary.Reused, batch.Items.length * 2);
+    }
+    assert.deepEqual(assigned().map(row => [row.__name, row.Quantity, row.Price]), before);
+    assert.ok(f.list(C.movements).filter(row => row.Action === 'assignitems').every(row => row.Lines.length === 0));
+  });
+}
+
 test('vendor ownership cannot enter through list, request destination, or central tampering', async () => {
   const f = fixture(), ItemId = await f.item();
   for (const change of [{ VendorId: 'vendor1' }, { OwnershipType: 'Vendor' }, { OwnerType: 'Vendor' }]) {
