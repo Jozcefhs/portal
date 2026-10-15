@@ -507,16 +507,26 @@ test('Procurement can create a zero-stock department target without opening the 
   view.controller.destroy();
 });
 
-test('central-stock rows remove excess padding, detail gaps and inherited button margins', async t => {
-  const view = fixture(); t.after(() => view.controller.destroy()); await tick();
-  await view.root.fire('click', view.tab('stock'));
-  assert.match(view.nodes.get('[data-proc-body]').innerHTML, /class="procurement-table procurement-stock-table"/);
-  assert.match(styles, /\.procurement-stock-table td \{ padding: 4px 10px; vertical-align: middle; line-height: 1.2;/);
-  assert.match(styles, /\.procurement-stock-table td small \{ margin: 0;/);
-  assert.match(styles, /\.procurement-stock-table button \{ margin: 0; min-height: 32px;/);
-  assert.match(styles, /@media \(max-width: 600px\) \{\s*\.procurement-stock-table button \{ min-height: 40px;/);
-  await view.root.fire('click', view.tab('requests'));
-  assert.doesNotMatch(view.nodes.get('[data-proc-body]').innerHTML, /procurement-stock-table/);
+test('stock, department balances and supply requests share compact spacing without changing other tables', async t => {
+  const view = fixture({ purchases: [{ PurchaseId: 'P-1', SupplierName: 'Supplier', Status: 'PENDING' }],
+    transfers: [{ TransferId: 'T-1', Department: 'kitchen', Status: 'IN_TRANSIT' }] });
+  t.after(() => view.controller.destroy()); await tick();
+  for (const tab of ['stock', 'departments', 'requests']) {
+    await view.root.fire('click', view.tab(tab));
+    assert.match(view.nodes.get('[data-proc-body]').innerHTML, /class="procurement-table procurement-table-compact"/, tab);
+  }
+  assert.match(view.nodes.get('[data-proc-body]').innerHTML, /data-proc-action="viewrequest"/);
+  assert.match(view.nodes.get('[data-proc-body]').innerHTML, /data-proc-action="reviewrequest"/);
+  assert.match(styles, /\.procurement-table-compact td \{ padding: 4px 10px; vertical-align: middle; line-height: 1.2;/);
+  assert.match(styles, /\.procurement-table-compact td small \{ margin: 0;/);
+  assert.match(styles, /\.procurement-table\.procurement-table-compact button \{ margin: 0; min-height: 32px; padding: 4px 10px;/);
+  assert.match(styles, /\.procurement-table-compact \.procurement-actions \{ gap: \.35rem;/);
+  assert.match(styles, /@media \(max-width: 600px\) \{\s*\.procurement-table\.procurement-table-compact button \{ min-height: 40px;/);
+  for (const tab of ['purchases', 'transfers']) {
+    await view.root.fire('click', view.tab(tab));
+    assert.match(view.nodes.get('[data-proc-body]').innerHTML, /class="procurement-table"/, tab);
+    assert.doesNotMatch(view.nodes.get('[data-proc-body]').innerHTML, /procurement-table-compact/, tab);
+  }
 });
 
 test('supply request spacing is compact without shrinking checkbox or input touch targets', () => {

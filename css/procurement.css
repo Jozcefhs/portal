@@ -29,10 +29,11 @@
 .procurement-state { display: inline-block; padding: .25rem .55rem; background: var(--surface-alt, #edf3f7); border-radius: 15px; white-space: nowrap; word-break: normal; }
 .procurement-table .procurement-actions { justify-content: flex-start; min-width: 135px; }
 .procurement-table .procurement-actions button { padding: .45rem .7rem; font-size: .78rem; }
-.procurement-stock-table th { padding: 6px 10px; }
-.procurement-stock-table td { padding: 4px 10px; vertical-align: middle; line-height: 1.2; }
-.procurement-stock-table td small { margin: 0; line-height: 1.2; }
-.procurement-stock-table button { margin: 0; min-height: 32px; padding: 4px 10px; }
+.procurement-table-compact th { padding: 6px 10px; }
+.procurement-table-compact td { padding: 4px 10px; vertical-align: middle; line-height: 1.2; }
+.procurement-table-compact td small { margin: 0; line-height: 1.2; }
+.procurement-table.procurement-table-compact button { margin: 0; min-height: 32px; padding: 4px 10px; }
+.procurement-table-compact .procurement-actions { gap: .35rem; }
 .procurement-empty { padding: 1.5rem; color: var(--muted, #566e84); }
 .procurement-section-note { color: var(--muted, #566e84); font-size: .85rem; line-height: 1.5; }
 .procurement-dialog { width: min(850px, calc(100vw - 24px)); max-width: calc(100vw - 24px); max-height: calc(100dvh - 32px); padding: 1.2rem; color: var(--text, #173753); background: var(--surface, #fff); border: 1px solid var(--line, #ccdcea); border-radius: 14px; overflow: auto; }
@@ -100,7 +101,7 @@ html[data-theme="dark"] .procurement-metric { background: #103532; }
 html[data-theme="dark"] .procurement-tabs, html[data-theme="dark"] .procurement-table th, html[data-theme="dark"] .procurement-state { background: #102b40; }
 html[data-theme="dark"] .procurement-dialog { background: #0c2132; color: #e1edf8; }
 @media (max-width: 600px) {
-  .procurement-stock-table button { min-height: 40px; }
+  .procurement-table.procurement-table-compact button { min-height: 40px; }
   .procurement-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .procurement-metric { padding: .65rem; }
   .procurement-form { grid-template-columns: minmax(0, 1fr); }
