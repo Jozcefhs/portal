@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { buildRequisitionResubmission } from '../functions/api/finance-workflow.js';
 import { buildRequisitionPosting } from '../functions/lib/requisition-posting.js';
-import { assertRequisitionTransition, requisitionCapabilities, REQUISITION_STATUS } from '../functions/lib/requisition-workflow.js';
+import { assertRequisitionTransition, requisitionCapabilities, REQUISITION_STATUS, requisitionPendingTransition, approvalFlowLabel } from '../functions/lib/requisition-workflow.js';
 
 const [adminSource, workflowSource] = await Promise.all([
   readFile(new URL('../js/admin.js', import.meta.url), 'utf8'),
@@ -27,7 +27,7 @@ function approvalHarness(initial) {
   const journals = [];
   const source = workflowSource.slice(workflowSource.indexOf('function requestedRequisitionStatus('), workflowSource.indexOf('\nasync function reviewRecord('));
   const advance = vm.runInNewContext(`(() => { ${source}; return advanceRequisition; })()`, {
-    clean, lower, REQUISITION_STATUS, assertRequisitionTransition,
+    clean, lower, REQUISITION_STATUS, assertRequisitionTransition, requisitionPendingTransition, approvalFlowLabel,
     getDocument: async () => record, findOneByField: async () => null, safeId: value => value,
     scopedRows: rows => rows, capabilities: requisitionCapabilities, nowIso: () => timestamp,
     requireDecisionAuthorization: async () => 'Password', buildEndorsement: async () => ({}),
@@ -125,4 +125,23 @@ test('pending-stage guidance does not add approval controls to bills or complete
   }
   assert.doesNotMatch(render({ BillNo: 'BILL-1', Status: 'Submitted' }, 'bill', {}), /finance-next-step/);
   assert.match(render({ ExpenseNo: 'REQ-1', Status: 'Management Authorized' }, 'requisition', access('Director')), /data-decision="Approved"/);
+});
+
+test('actual web decisions retain stage evidence when Accounts or Admin is the final approver', async () => {
+  for (const stages of [['accounts'], ['admin-review'], ['director'], ['accounts','admin-review'], ['accounts','director'], ['admin-review','director']]) {
+    const flow = approvalHarness({ ExpenseNo: 'CONFIG-REQ', Description: 'Supplies', Amount: 200, Date: '2026-09-27',
+      Status: 'Submitted', ApprovalFlow: { Version: 1, Stages: stages } });
+    for (const stage of stages) {
+      const next = requisitionPendingTransition(flow.record()), role = (next.roles || [next.role])[0];
+      const record = { ...flow.record(), PendingApproval: next };
+      assert.match(render(record, 'requisition', access(role)), new RegExp(`data-decision="${next.nextStatus}"`));
+      await flow.advance({ role, username: 'officer', displayName: role }, next.nextStatus);
+      if (stage === 'accounts') assert.equal(flow.record().AccountsConfirmedBy, role);
+      if (stage === 'admin-review') assert.equal(flow.record().AdminStageReviewedBy, role);
+    }
+    assert.equal(flow.record().FinalApprovedStage, stages.at(-1));
+    assert.equal(flow.record().Status, 'Approved');
+    await flow.advance({ role: 'Accounts Officer', username: 'accounts', displayName: 'Accounts' }, 'Posted');
+    assert.equal(flow.journals.length, 1);
+  }
 });

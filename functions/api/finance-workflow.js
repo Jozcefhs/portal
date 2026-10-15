@@ -14,10 +14,11 @@ import { explicitAuditAction } from '../lib/security-audit.js';
 import { canEditRequisitions, assertRequisitionEditPermission } from '../lib/requisition-edit-permission.js';
 import { postApprovedRequisition, validateRequisitionPosting } from '../lib/requisition-posting.js';
 import { resolveOrganizationConfig } from '../lib/organization-config.js';
+import { approvalSnapshot, canManageApprovalSettings } from '../lib/approval-settings.js';
 import {
   REQUISITION_STATUS,
   assertRequisitionTransition,
-  requisitionCapabilities
+  requisitionCapabilities, withApprovalRoute, approvalFlowLabel, requisitionPendingTransition
 } from '../lib/requisition-workflow.js';
 import {
   IMPREST_ADVANCE_ACCOUNT,
@@ -237,6 +238,7 @@ export function buildRequisitionResubmission(existing = {}, body = {}, user = {}
     AdminStageReviewNotes: '',
     AdminStageReviewMethod: '',
     FinalApprovedRole: '',
+    FinalApprovedStage: '',
     RejectedByUsername: '',
     RejectedByRole: '',
     RejectedStage: '',
@@ -309,11 +311,12 @@ function userDepartment(user) {
 function capabilities(user) {
   return {
     canSubmit: Boolean(userDepartment(user)),
+    canConfigureApprovals: canManageApprovalSettings(user),
     canApprove: clean(user.role) === 'Super Admin' || Boolean(user.approvalEnabled),
     canAdminOverride: clean(user.role) === 'Super Admin',
     canEditRequisitions: canEditRequisitions(user),
     canAccountsReview: ['Super Admin', 'Accounts Officer'].includes(clean(user.role)),
-    canViewAll: ['Super Admin', 'Management', 'Accounts Officer'].includes(clean(user.role)),
+    canViewAll: ['Super Admin', 'Director', 'Admin', 'Management', 'Accounts Officer'].includes(clean(user.assignedRole || user.role)),
     ...requisitionCapabilities(user)
   };
 }
@@ -411,7 +414,7 @@ async function listWorkflow(env, user) {
     department: userDepartment(user),
     capabilities: access,
     approvalProfile: approvalProfileSummary,
-    requisitions: publicRows(sortRecent(scopedRows(requests, user, access))).slice(0, 150),
+    requisitions: publicRows(sortRecent(scopedRows(requests, user, access))).slice(0, 150).map(withApprovalRoute),
     bills: publicRows(sortRecent(scopedRows(bills, user, access))).slice(0, 150),
     imprests: scopedImprests,
     imprestSummary: imprestReportSummary(scopedImprests)
@@ -442,6 +445,7 @@ async function submitRequisition(env, user, body) {
   const payload = {
     ExpenseNo: expenseNo,
     Date: requiredDate,
+    ApprovalFlow: await approvalSnapshot(env, 'staff'),
     Vendor: clean(body.vendor || body.Vendor),
     Description: description,
     Amount: value,
@@ -496,6 +500,7 @@ async function submitMaterialRequisition(env, user, body) {
   const payload = {
     ExpenseNo: expenseNo,
     RequisitionType: 'Material',
+    ApprovalFlow: await approvalSnapshot(env, 'staff'),
     Date: requiredDate,
     Vendor: clean(body.vendor || body.Vendor),
     Description: description,
@@ -609,7 +614,7 @@ export async function resubmitRequisition(env, user, body) {
   await notifyStaffRequisitionSubmitted(env, payload, actor(user)).catch(() => null);
   return {
     ok: true,
-    message: `Requisition edited and resubmitted as revision ${nextRevision}. Awaiting Accounts confirmation, then Admin review and Director / Super Admin approval.`,
+    message: `Requisition edited and resubmitted as revision ${nextRevision}. Approval path: ${approvalFlowLabel(payload)}.`,
     requisition: payload,
     revision: {
       RevisionId: revisionId,
@@ -746,7 +751,7 @@ async function advanceRequisition(env, user, body, request) {
     UpdatedBy: actor(user)
   };
   let stageFields = {};
-  if (transition.event === 'Confirmed') {
+  if (transition.stage === 'accounts' && transition.event !== 'Rejected') {
     stageFields = {
       AccountsReviewStatus: 'Confirmed',
       AccountsConfirmedBy: actor(user),
@@ -766,7 +771,7 @@ async function advanceRequisition(env, user, body, request) {
       RejectedByUsername: '',
       RejectedStage: ''
     };
-  } else if (transition.event === 'Reviewed') {
+  } else if (transition.stage === 'admin-review' && transition.event !== 'Rejected') {
     stageFields = {
       AdminStageReviewedBy: actor(user),
       AdminStageReviewedByUsername: clean(user.username),
@@ -790,7 +795,15 @@ async function advanceRequisition(env, user, body, request) {
       RejectedStage: ''
     };
   } else if (transition.event === 'Approved') {
+    stageFields = {};
+  } else {
     stageFields = {
+      RejectedAt: timestamp, RejectedBy: actor(user), RejectedByUsername: clean(user.username),
+      RejectedByRole: clean(user.assignedRole || user.role), RejectedStage: transition.currentStatus, RejectionNotes: notes
+    };
+  }
+  if (transition.event === 'Approved') {
+    Object.assign(stageFields, {
       ApprovedAt: timestamp,
       ApprovedBy: actor(user),
       ApprovedByUsername: clean(user.username),
@@ -802,20 +815,12 @@ async function advanceRequisition(env, user, body, request) {
       AdminStampApplied: Boolean(endorsement?.StampDataUrl),
       AdminAuthenticationMethod: authorizationMethod,
       FinalApprovedRole: clean(user.assignedRole || user.role),
+      FinalApprovedStage: transition.stage,
       RejectedAt: '',
       RejectedBy: '',
       RejectedByUsername: '',
       RejectedStage: ''
-    };
-  } else {
-    stageFields = {
-      RejectedAt: timestamp,
-      RejectedBy: actor(user),
-      RejectedByUsername: clean(user.username),
-      RejectedByRole: clean(user.assignedRole || user.role),
-      RejectedStage: transition.currentStatus,
-      RejectionNotes: notes
-    };
+    });
   }
   const payload = removeFirestoreMetadata({ ...common, ...stageFields });
   const writes = [{
@@ -834,7 +839,7 @@ async function advanceRequisition(env, user, body, request) {
     transition.event.toUpperCase(),
     'Expense Requisition',
     id,
-    notes,
+    `${transition.currentStatus} → ${transition.nextStatus}; acted at ${transition.stage}; ${approvalFlowLabel(existing)}${notes ? `; ${notes}` : ''}`,
     timestamp,
     existing
   ));
@@ -844,7 +849,7 @@ async function advanceRequisition(env, user, body, request) {
     ok: true,
     message: transition.event === 'Rejected'
       ? 'Requisition rejected and returned to the requester.'
-      : `Requisition ${lower(transition.event)} and passed to the next office.`,
+      : `Requisition ${lower(transition.event)}. Next: ${requisitionPendingTransition(payload)?.role || 'Complete'}.`,
     record: payload
   };
 }
@@ -1476,7 +1481,7 @@ async function documentRecord(env, user, body) {
   ]);
   return {
     ok: true,
-    record: publicRows([{ ...existing, ...(!isBill ? { EditHistory: await resolvedRequisitionEditHistory(existing,
+    record: publicRows([{ ...(isBill ? existing : withApprovalRoute(existing)), ...(!isBill ? { EditHistory: await resolvedRequisitionEditHistory(existing,
       revision => getDocument(env, 'accountingExpenseRevisions', safeId(`${existing.ExpenseNo}-REV-${String(revision).padStart(3, '0')}`))) } : {}) }])[0],
     endorsements: {
       approval: approvalEndorsement || null,

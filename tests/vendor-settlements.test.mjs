@@ -20,7 +20,8 @@ const walletSource = backendSource.slice(backendSource.indexOf('export async fun
   .replace('export ','').replace(/const \{ assertVendorSaleReplay \} = await import\('[^']+'\);/g,'');
 import { handleProductImport } from '../functions/lib/vendor-product-import.js';
 import * as productManagement from '../functions/lib/vendor-product-management.js';
-import { assertRequisitionTransition } from '../functions/lib/requisition-workflow.js';
+import { assertRequisitionTransition, withApprovalRoute, requisitionPendingTransition, approvalFlowLabel } from '../functions/lib/requisition-workflow.js';
+import { vendorRequestPrintReport } from '../functions/lib/vendor-request-print.js';
 import { validateRequisitionPosting } from '../functions/lib/requisition-posting.js';
 import { accountingChartChoicesForEdition } from '../functions/lib/accounting-edition-scope.js';
 import { allowedSectionsFor } from '../functions/lib/staff-auth.js';
@@ -69,6 +70,8 @@ function fixture(initial = [], options = {}) {
   };
   const functions = vm.runInNewContext(`${source}\n({ handleVendorSettlementAction, prepareVendorSale, snapshotVendorCart })`, {
     ...rules, ...productManagement, handleProductImport, crypto:webcrypto, Intl, Date, TextEncoder, console, assertRequisitionTransition, validateRequisitionPosting, accountingChartChoicesForEdition,
+    withApprovalRoute, requisitionPendingTransition, approvalFlowLabel, vendorRequestPrintReport,
+    approvalSnapshot: async () => ({ Version: 1, Kind: 'vendor', Stages: [...(options.approvalStages || ['accounts', 'admin-review', 'director'])] }),
     staffAccessFor:async (_env, actor) => { accessReads.push(actor); return { featureFlags }; },
     getDocument:async (_env,c,id) => structuredClone(get(c,id) || null), listCollection:async (_env,c) => c === 'accountingPeriods' ? list(c) : list(c),
     getAccountingChartRows:async (_env, params) => { chartReads.push(params); return currentChart; }, verifyStaffApprovalPassword:async (_env,username,password) => password === 'test-confirmation',
@@ -99,6 +102,26 @@ const pay = async (amount,id = 'pay1') => { const r = get('vendorSettlementReque
     setFeatureFlags: flags => { featureFlags = flags; },
     setChart: rows => { currentChart = rows; }, conflict:() => { forcedConflict = true; } };
 }
+test('all configured vendor paths reach final approval without granting skipped offices authority', async () => {
+  for (let mask = 1; mask < 8; mask++) {
+    const stages = ['accounts','admin-review','director'].filter((_, i) => mask & (1 << i));
+    const f = fixture([], { approvalStages: stages });
+    await f.sale(); await f.request();
+    for (const stage of stages) {
+      const row = f.get('vendorSettlementRequests', 'VREQ-claim1');
+      const next = requisitionPendingTransition(row);
+      assert.equal(next.stage, stage);
+      await assert.rejects(f.decision(next.nextStatus, 'Vendor User'), error => error.status === 403);
+      await f.decision(next.nextStatus, (next.roles || [next.role])[0]);
+    }
+    assert.equal(f.get('vendorSettlementRequests','VREQ-claim1').FinalApprovedStage, stages.at(-1));
+    await f.pay(50);
+    assert.equal(f.get('vendorSettlementRequests','VREQ-claim1').PaidCents, 5000);
+    const bootstrap = await f.run('bootstrap');
+    assert.equal(bootstrap.requests[0].PrintReport.total.Claimed, 100);
+  }
+});
+
 test('integer money, percent validation, full-payment override and prospective rules', () => {
   assert.equal(rules.cents(12.34),1234); assert.throws(() => rules.cents(Infinity));
   for (const value of [-1,101,10.111,NaN]) assert.throws(() => rules.normalizeRule({Mode:'Percentage',Rate:value},timestamp));

@@ -1,7 +1,9 @@
 import { batchCommitDocuments, getDocument, queryCollectionPages, listCollection } from './firestore.js';
 import { getAccountingChartRows } from './accounting-reference-cache.js';
 import { validateRequisitionPosting } from './requisition-posting.js';
-import { assertRequisitionTransition } from './requisition-workflow.js';
+import { assertRequisitionTransition, withApprovalRoute, requisitionPendingTransition, approvalFlowLabel } from './requisition-workflow.js';
+import { approvalSnapshot } from './approval-settings.js';
+import { vendorRequestPrintReport } from './vendor-request-print.js';
 import { findStaffLoginRecord, findStaffUserRecord, staffAccessFor, verifyStaffApprovalPassword } from './staff-auth.js';
 import { accountingChartChoicesForEdition } from './accounting-edition-scope.js';
 import { handleProductImport } from './vendor-product-import.js';
@@ -82,7 +84,8 @@ function publicVendor(vendor) {
 }
 function publicRequest(request) {
   const { BankAccountNumber, ...rest } = plain(request);
-  return { ...rest, BankAccountMasked: BankAccountNumber ? `••••${clean(BankAccountNumber).slice(-4)}` : '', RecordVersion: request.__updateTime,
+  return { ...withApprovalRoute(rest), BankAccountMasked: BankAccountNumber ? `••••${clean(BankAccountNumber).slice(-4)}` : '', RecordVersion: request.__updateTime,
+    PrintReport: vendorRequestPrintReport(request),
     Amount: amount(request.AmountCents), Paid: amount(request.PaidCents), Unpaid: amount(request.AmountCents - (request.PaidCents || 0)) };
 }
 function balanceFor(vendor, previous = null) {
@@ -252,6 +255,7 @@ async function bootstrap(env, user, scope) {
       Name: row.Name, Type: row.Type, Active: activeAccount(row) ? 'YES' : 'NO' })),
     capabilities: { manage: management.has(role(user)), operate: operators.has(role(user)), vendor: role(user) === 'Vendor User',
       products: operators.has(role(user)) || vendors.some(v => !['no','false','0','inactive','disabled'].includes(lower(v.Active ?? 'YES'))), reviewProducts: management.has(role(user)),
+      configureApprovals: role(user) === 'Super Admin',
       confirm: role(user) === 'Accounts Officer', review: role(user) === 'Admin', approve: ['Director', 'Super Admin'].includes(role(user)), pay: role(user) === 'Accounts Officer',
       saleSections: (scope.OrganisationEdition === 'school' ? ['tuckShop'] : ['organizationStore','restaurant']).filter(section => (user.allowedSections || []).includes(section)),
       edition: scope.OrganisationEdition, section: scope.SchoolSection, branchId: scope.BranchId } };
@@ -421,6 +425,7 @@ async function requestSettlement(env, user, scope, body) {
   }
   const request = { ...scope, SchoolSection: vendor.SchoolSection, SettlementId: settlementId, VendorId: vendor.VendorId, VendorName: vendor.Name,
     From: from, To: to, AmountCents: wanted, PaidCents: 0, Status: 'Submitted', PaymentStatus: 'Awaiting approval',
+    ...(replaced ? (replaced.ApprovalFlow ? { ApprovalFlow: replaced.ApprovalFlow } : {}) : { ApprovalFlow: await approvalSnapshot(env, 'vendor') }),
     Allocations: allocations.map(allocation => ({ ...allocation, PayableAccount: lots.find(row => row.LotId === allocation.LotId).PayableAccount })),
     Snapshot: lots.filter(row => allocations.some(allocation => allocation.LotId === row.LotId)).map(row => ({ LotId: row.LotId, SaleNo: row.SaleNo, Date: row.Date,
       Gross: amount(row.GrossCents), Refund: amount(row.RefundedCents), Charge: amount(row.ChargeCents), Net: amount(row.NetCents), RuleSnapshot: row.RuleSnapshot,
@@ -435,7 +440,7 @@ async function requestSettlement(env, user, scope, body) {
     write(VENDOR_COLLECTIONS.balances, vendor.VendorId, { ...balance, ReservedCents: balance.ReservedCents + wanted }, previous),
     write(VENDOR_COLLECTIONS.requests, settlementId, request), operationWrite(op, { SettlementId: settlementId }),
     audit(scope, user, 'VENDOR PAYMENT REQUESTED', settlementId, `${vendor.Name}; ${amount(wanted)}; period ${from} to ${to}`)]);
-  return { ok: true, message: 'Request submitted to Accounts. The claimed earnings are reserved.', SettlementId: settlementId };
+  return { ok: true, message: `Request submitted. Next: ${requisitionPendingTransition(request).role}. The claimed earnings are reserved.`, SettlementId: settlementId };
 }
 async function decision(env, user, scope, body, options) {
   const request = await scoped(env, VENDOR_COLLECTIONS.requests, body.SettlementId, scope);
@@ -443,7 +448,7 @@ async function decision(env, user, scope, body, options) {
   const op = await operation(env, scope, user, { ...body, VendorId: request.VendorId }, 'decision'); if (op.replay) return op.replay;
   checkVersion(body, request);
   const next = clean(body.Status), timestamp = new Date().toISOString();
-  let method = 'Authenticated session';
+  let method = 'Authenticated session', transition = null;
   if (next === 'Cancelled') {
     if (request.RequestedByUsername !== user.username && !management.has(role(user))) fail('Only the requester or Accounts can cancel this request.', 403);
     if (['Cancelled'].includes(request.Status) || request.PaymentStatus === 'Paid') fail('This request cannot be cancelled. Review it with Accounts.', 409);
@@ -454,7 +459,7 @@ async function decision(env, user, scope, body, options) {
     }
   } else if (next === 'Posted') {
     fail('Use Record payment; approval alone cannot mark a vendor paid.', 409);
-  } else { assertRequisitionTransition(request, role(user), next); method = await authorize(env, user, body, options); }
+  } else { transition = assertRequisitionTransition(request, role(user), next); method = await authorize(env, user, body, options); }
   if (next === 'Rejected' && !clean(body.Notes)) fail('Give a reason for rejecting the request.');
   const previous = await scoped(env, VENDOR_COLLECTIONS.balances, request.VendorId, scope), writes = [];
   if (['Rejected', 'Cancelled'].includes(next) && request.Status !== 'Rejected') {
@@ -477,10 +482,11 @@ async function decision(env, user, scope, body, options) {
   const updated = { ...request, Status: next, PaymentStatus: next === 'Approved' ? 'Awaiting payment' : ['Rejected', 'Cancelled'].includes(next) ? next : 'Awaiting approval',
     ...(next === 'Admin Reviewed' ? { AdminReviewedAt: timestamp } : {}),
     ...(next === 'Approved' ? { ApprovedAt: timestamp, ApprovedBy: actor(user), BankDetailsVersion: vendor.BankDetailsVersion,
+      FinalApprovedRole: role(user), FinalApprovedStage: transition.stage,
       BankName: vendor.BankName, BankAccountName: vendor.BankAccountName, BankAccountNumber: vendor.BankAccountNumber } : {}),
-    History: [...request.History, { Action: next, By: actor(user), Username: user.username, At: timestamp, Notes: clean(body.Notes).slice(0, 2000), AuthorizationMethod: method }], UpdatedAt: timestamp };
+    History: [...request.History, { Action: next, Stage: transition?.stage || '', Role: role(user), By: actor(user), Username: user.username, At: timestamp, Notes: clean(body.Notes).slice(0, 2000), AuthorizationMethod: method }], UpdatedAt: timestamp };
   await commit(env, [...writes, write(VENDOR_COLLECTIONS.requests, request.SettlementId, updated, request), operationWrite(op, { SettlementId: request.SettlementId }),
-    audit(scope, user, `VENDOR REQUEST ${next.toUpperCase()}`, request.SettlementId, `${request.VendorName}; ${amount(request.AmountCents)}`)]);
+    audit(scope, user, `Vendor payment request ${next.toLowerCase()}`, request.SettlementId, `${request.VendorName}; ${amount(request.AmountCents)}; ${request.Status} → ${next}; ${approvalFlowLabel(request)}`)]);
   return { ok: true, message: `Vendor request ${next.toLowerCase()}. No bank transfer was initiated.` };
 }
 async function pay(env, user, scope, body, options) {

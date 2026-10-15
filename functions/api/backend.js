@@ -82,6 +82,7 @@ import { assertOrganizationDepartmentWorkspaceAccess } from '../lib/organization
 import { handleExecutiveOfficeAction } from '../lib/executive-correspondence.js';
 import { prepareTuckShopWalletCart } from '../lib/organization-commerce.js';
 import { handleVendorSettlementAction, prepareVendorSale } from '../lib/vendor-settlements.js';
+import { approvalSnapshot, handleApprovalSettings } from '../lib/approval-settings.js';
 import { getTuckShopCatalog, recordTuckShopStaffSale, searchTuckShopCustomers } from '../lib/school-tuck-shop.js';
 import { handleStudentConductAction } from '../lib/student-conduct.js';
 import { handleSchoolLibraryAction } from '../lib/school-library.js';
@@ -857,8 +858,9 @@ export function requireBackendSecret(env, body) {
 }
 
 const VERIFIED_ACTOR_ACTIONS = new Set([
+  'requisitionApprovalSettings',
   'manualPaymentCorrection',
-  'getFeeCollectionSummary',
+  'getFeeCollectionSummary', 'getClubMembers',
   'vendorSettlements',
   'getAccountSnapshot',
   'getSchoolLibrary', 'searchLibraryBorrowers', 'saveLibraryTitle', 'addLibraryCopy', 'restoreLibraryCopy', 'repairLibraryCopyStatus', 'checkoutLibraryCopy',
@@ -940,9 +942,10 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
 // applyDesktopDeviceBranchScope.  Organisation-wide and legacy credentials
 // retain the existing action surface for backwards compatibility.
 const BRANCH_BOUND_DEVICE_ACTIONS = new Set([
+  'requisitionApprovalSettings',
   'manualPaymentCorrection',
   'saveFeeItem', 'saveFeeItems', 'deleteFeeItem', 'seedDefaultFeeItems',
-  'getFeeCollectionSummary',
+  'getFeeCollectionSummary', 'getClubMembers',
   'vendorSettlements',
   'getSchoolLibrary', 'searchLibraryBorrowers', 'saveLibraryTitle', 'addLibraryCopy', 'restoreLibraryCopy', 'repairLibraryCopyStatus', 'checkoutLibraryCopy',
   'returnLibraryCopy', 'renewLibraryLoan', 'reserveLibraryTitle',
@@ -8805,6 +8808,8 @@ async function saveAccountingExpense(env, body) {
   const timestamp = nowIso();
   const payload = {
     ...existing, ExpenseNo: expenseNo, BranchId: branchId, Date: expenseDate,
+    ...((!existing.ExpenseNo || currentWorkflowStatus === 'Draft') && requestedStatus === 'Submitted'
+      ? { ApprovalFlow: await approvalSnapshot(env, 'staff') } : {}),
     Vendor: clean(body.Vendor || body.vendor), Description: clean(body.Description || body.description), Amount: amount,
     ExpenseAccount: clean(body.ExpenseAccount || body.expenseAccount) || '6090',
     PaymentAccount: clean(body.PaymentAccount || body.paymentAccount) || '1020',
@@ -8834,7 +8839,7 @@ async function saveAccountingExpense(env, body) {
     // Review notes belong to the decision; they are not an edit to the requester's notes.
     payload.Notes = clean(existing.Notes);
   }
-  if (transition?.event === 'Confirmed') {
+  if (transition?.stage === 'accounts' && transition.event !== 'Rejected') {
     Object.assign(payload, {
       AccountsReviewStatus: 'Confirmed',
       AccountsConfirmedBy: actorName,
@@ -8847,7 +8852,7 @@ async function saveAccountingExpense(env, body) {
       AccountsReviewNotes: clean(body.Notes || body.notes),
       RejectedAt: '', RejectedBy: '', RejectedByUsername: '', RejectedStage: ''
     });
-  } else if (transition?.event === 'Reviewed') {
+  } else if (transition?.stage === 'admin-review' && transition.event !== 'Rejected') {
     Object.assign(payload, {
       AdminStageReviewedBy: actorName,
       AdminStageReviewedByUsername: actorUsername,
@@ -8863,7 +8868,8 @@ async function saveAccountingExpense(env, body) {
       ManagementAuthorizationNotes: clean(body.Notes || body.notes),
       RejectedAt: '', RejectedBy: '', RejectedByUsername: '', RejectedStage: ''
     });
-  } else if (transition?.event === 'Approved') {
+  }
+  if (transition?.event === 'Approved') {
     Object.assign(payload, {
       ApprovedBy: actorName,
       ApprovedByUsername: actorUsername,
@@ -8872,6 +8878,7 @@ async function saveAccountingExpense(env, body) {
       AdminReviewedByUsername: actorUsername,
       AdminReviewedAt: timestamp,
       FinalApprovedRole: actorRole,
+      FinalApprovedStage: transition.stage,
       RejectedAt: '', RejectedBy: '', RejectedByUsername: '', RejectedStage: ''
     });
   } else if (transition?.event === 'Rejected') {
@@ -8891,7 +8898,7 @@ async function saveAccountingExpense(env, body) {
       ManagementAuthorizedBy: '', ManagementAuthorizedByUsername: '', ManagementAuthorizedAt: '',
       AdminStageReviewedBy: '', AdminStageReviewedByUsername: '', AdminStageReviewedAt: '', AdminStageReviewNotes: '',
       ApprovedBy: '', ApprovedByUsername: '', ApprovedAt: '',
-      FinalApprovedRole: '',
+      FinalApprovedRole: '', FinalApprovedStage: '',
       AdminReviewedBy: '', AdminReviewedByUsername: '', AdminReviewedAt: '',
       RejectedAt: '', RejectedBy: '', RejectedByUsername: '', RejectedByRole: '', RejectedStage: '',
       RejectionNotes: '',
@@ -11328,6 +11335,7 @@ async function getSystemHealth(env, body) {
 
 async function routeAction(env, action, body = {}, deploymentIdentity = null, publicOrigin = '') {
   switch (action) {
+    case 'getClubMembers':
     case 'getFeeCollectionSummary': {
       const branchId = accountingRequestBranch(body);
       const access = await staffAccessFor(env, {
@@ -11336,8 +11344,10 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
         schoolSectionAccess: clean(body.UserSchoolSectionAccess), tabAccess: body.UserTabAccess,
         department: clean(body.UserDepartment)
       });
-      const { getFeeCollectionSummaryPage } = await import('../lib/fee-collection-summary.js');
-      return getFeeCollectionSummaryPage(env, { ...access, username: clean(body.UserUsername),
+      const report = action === 'getClubMembers'
+        ? (await import('../lib/club-members.js')).getClubMembersPage
+        : (await import('../lib/fee-collection-summary.js')).getFeeCollectionSummaryPage;
+      return report(env, { ...access, username: clean(body.UserUsername),
         assignedRole: clean(body.UserAssignedRole || body.UserRole), branchId,
         schoolSectionAccess: clean(body.UserSchoolSectionAccess || 'All'),
         edition: deploymentIdentity?.edition || access.edition
@@ -11357,6 +11367,13 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
         branchId, schoolSectionAccess: clean(body.UserSchoolSectionAccess || 'All'),
         edition: deploymentIdentity?.edition || access.edition, sourcePlatform: 'Desktop'
       }, { ...body, action: body.Command });
+    }
+    case 'requisitionApprovalSettings': {
+      const access = await staffAccessFor(env, {
+        username: clean(body.UserUsername), role: clean(body.UserRole), assignedRole: clean(body.UserAssignedRole || body.UserRole),
+        branchId: clean(body.UserBranchId), schoolSectionAccess: clean(body.UserSchoolSectionAccess), tabAccess: body.UserTabAccess
+      });
+      return handleApprovalSettings(env, { ...access, ...accountingRequisitionActor(body) }, body);
     }
     case 'vendorSettlements': {
       const access = await staffAccessFor(env, {

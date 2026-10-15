@@ -59,7 +59,7 @@ const TRANSITIONS = Object.freeze({
 
 export function requisitionWorkflowStatus(record = {}) {
   const status = lower(record.Status);
-  if (status === 'approved' && !clean(record.AdminReviewedAt)) {
+  if (status === 'approved' && !record.ApprovalFlow && !clean(record.AdminReviewedAt)) {
     // Records approved under the previous workflow still require the new
     // administrative approval before Accounts may post or pay them.
     return REQUISITION_STATUS.MANAGEMENT_AUTHORIZED;
@@ -93,12 +93,46 @@ export function requisitionCapabilities(user = {}) {
 }
 
 export function requisitionPendingTransition(record = {}) {
-  return TRANSITIONS[requisitionWorkflowStatus(record)] || null;
+  const status = requisitionWorkflowStatus(record);
+  if (!record.ApprovalFlow || !['Submitted', 'Accounts Confirmed', 'Admin Reviewed', 'Management Authorized'].includes(status)) {
+    return TRANSITIONS[status] || null;
+  }
+  const stages = validateApprovalStages(record.ApprovalFlow.Stages);
+  const completed = { Submitted: -1, 'Accounts Confirmed': 0, 'Admin Reviewed': 1, 'Management Authorized': 1 }[status];
+  const stage = APPROVAL_STAGES.find((s, index) => index > completed && stages.includes(s.id));
+  if (!stage) throw Object.assign(new Error('The saved approval path does not match this request. Contact an administrator.'), { status: 409 });
+  const original = Object.values(TRANSITIONS).find(t => t.stage === stage.id);
+  const final = stages.at(-1) === stage.id;
+  return { ...original, nextStatus: final ? 'Approved' : original.nextStatus,
+    event: final ? 'Approved' : original.event };
+}
+
+export const APPROVAL_STAGES = Object.freeze([
+  { id: 'accounts', label: 'Accounts confirmation' },
+  { id: 'admin-review', label: 'Admin review' },
+  { id: 'director', label: 'Director / Super Admin approval' }
+]);
+
+export function validateApprovalStages(stages) {
+  const ordered = APPROVAL_STAGES.map(s => s.id);
+  if (!Array.isArray(stages) || !stages.length || stages.some(s => !ordered.includes(s)) || new Set(stages).size !== stages.length) {
+    throw Object.assign(new Error('Select at least one valid approval stage for each request type.'), { status: 400 });
+  }
+  return ordered.filter(s => stages.includes(s));
+}
+
+export function approvalFlowLabel(record = {}) {
+  const stages = record.ApprovalFlow ? validateApprovalStages(record.ApprovalFlow.Stages) : APPROVAL_STAGES.map(s => s.id);
+  return [...APPROVAL_STAGES.filter(s => stages.includes(s.id)).map(s => s.label), 'Accounts records payment'].join(' → ');
+}
+
+export function withApprovalRoute(record) {
+  return { ...record, PendingApproval: requisitionPendingTransition(record), ApprovalFlowLabel: approvalFlowLabel(record) };
 }
 
 export function assertRequisitionTransition(record = {}, userRole = '', requestedStatus = '') {
   const currentStatus = requisitionWorkflowStatus(record);
-  const transition = TRANSITIONS[currentStatus];
+  const transition = requisitionPendingTransition(record);
   const role = clean(userRole);
   const nextStatus = requisitionWorkflowStatus({
     Status: requestedStatus,

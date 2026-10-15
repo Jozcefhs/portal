@@ -65,7 +65,7 @@
     catch (error) { if (progress) progress.textContent = error.message || 'Could not prepare this form. Your entries have been kept; please try again.'; return null; }
   }
   let mounted;
-  function mount(root, request) {
+  function mount(root, request, options = {}) {
     mounted?.destroy();
     let data, tab = 'balances', statement, selected = '', busy = false, notice = '', disposed = false, dialog, statementGeneration = 0, statementController;
     const pending = new Set();
@@ -307,14 +307,33 @@
       win.document.close();
     }
     function requestCard(r) {
-      const c = data.capabilities, next = ({ Submitted:c.confirm && 'Accounts Confirmed', 'Accounts Confirmed':c.review && 'Admin Reviewed', 'Admin Reviewed':c.approve && 'Approved' })[r.Status];
+      const c = data.capabilities, stage = r.PendingApproval;
+      const next = stage && ({ accounts: c.confirm, 'admin-review': c.review, director: c.approve })[stage.stage] && stage.nextStatus;
       return `<article class="vendor-card"><h3>${esc(r.VendorName)}</h3><span class="vendor-badge">${esc(r.Status)} · ${esc(r.PaymentStatus)}</span><small>${esc(r.SettlementId)} · revision ${r.Revision}</small>
         <p>${money(r.Amount)} requested · ${money(r.Paid)} paid<br>${esc(r.From)} — ${esc(r.To)}</p><div class="vendor-actions">
-        <button data-request="${esc(r.SettlementId)}" data-action="print">Preview / print requisition</button>
+        <button data-request="${esc(r.SettlementId)}" data-action="print">Full list preview / print</button>
+        <button data-request="${esc(r.SettlementId)}" data-action="print-summary">Summary preview / print</button>
+        ${stage ? `<small>Next: ${esc(stage.role)} — ${esc(stage.verb)}</small>` : ''}
         ${next ? `<button data-request="${esc(r.SettlementId)}" data-action="${next}">${esc(next)}</button><button data-request="${esc(r.SettlementId)}" data-action="Rejected">Reject</button>` : ''}
         ${c.pay && r.Status === 'Approved' && r.Unpaid > 0 ? `<button data-request="${esc(r.SettlementId)}" data-action="pay">Record payment</button>` : ''}
         ${r.PaymentStatus !== 'Paid' && !['Cancelled','Rejected'].includes(r.Status) && (c.manage || c.vendor || r.Status === 'Submitted') ? `<button data-request="${esc(r.SettlementId)}" data-action="Cancelled">Withdraw unpaid claim</button>` : ''}
         ${['Cancelled','Rejected'].includes(r.Status) && !r.ReplacedBy ? `<button data-request="${esc(r.SettlementId)}" data-action="revise">Revise & resubmit</button>` : ''}</div></article>`;
+    }
+    function printRequest(r, summary) {
+      const report = r.PrintReport;
+      if (!report) return status('Refresh requests to load the complete print report.', true);
+      const columns = ['Gross','Refund','Charge','Net','Claimed'];
+      const cells = row => columns.map(k => `<td class="vendor-amount">${money(row[k])}</td>`).join('');
+      const heading = `${summary ? 'Summary' : 'Full sales list'} — Vendor requisition ${r.SettlementId}`;
+      const rows = summary ? '' : report.rows.map(s => `<tr><td>${s.Serial}</td><td>${esc(s.Date?.slice(0,10))}<small>${esc(s.SaleNo)}</small></td><td>${esc((s.Items || []).map(i => `${i.Quantity} × ${i.ItemName}`).join(', '))}<small>${esc(s.RuleLabel || JSON.stringify(s.RuleSnapshot || {}))}</small></td>${cells(s)}</tr>`).join('');
+      print(heading, `<h3>${esc(r.VendorName)}</h3><p>Period: ${esc(r.From)} — ${esc(r.To)} · Revision ${esc(r.Revision)}</p>
+        <p>${esc(r.Status)} · ${esc(r.PaymentStatus)}<br>${esc(r.ApprovalFlowLabel)}</p>
+        <p><strong>Requested ${money(r.Amount)} · Paid ${money(r.Paid)} · Unpaid ${money(r.Unpaid)}</strong></p>
+        <p>${esc(r.BankName)} · ${esc(r.BankAccountName)} · ${esc(r.BankAccountNumber || r.BankAccountMasked)}</p>
+        <table><thead><tr>${summary ? '<th>Included sales</th>' : '<th>S/N</th><th>Date / sale</th><th>Products / agreed rule</th>'}<th>Gross</th><th>Refunds</th><th>Deductions</th><th>Net entitlement</th><th>Claimed in this request</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><th colspan="${summary ? 1 : 3}">Total: ${report.total.Count} sales</th>${cells(report.total)}</tr></tfoot></table>
+        <p>Saved submission snapshot. Sales may be partly claimed; net entitlement is not the requested payment. Later refunds and payments do not rewrite this snapshot.</p>
+        <p>Requested by ${esc(r.RequestedBy)} · ${esc(r.RequestedAt)}<br>${esc(r.Notes)}</p>
+        <h4>Approval / payment trail</h4><table><thead><tr><th>Action</th><th>Officer</th><th>Date / time</th><th>Notes / reference</th></tr></thead><tbody>${(r.History || []).map(h => `<tr><td>${esc(h.Action)}</td><td>${esc(h.By)}</td><td>${esc(h.At)}</td><td>${esc(h.Notes)} ${esc(h.PaymentId)}</td></tr>`).join('')}</tbody></table>`);
     }
     function statementHTML(s) { return `<h3>${esc(s.vendor.Name)}</h3><p>${esc(s.from)} — ${esc(s.to)} · ${esc(s.vendor.BankName)} ${esc(s.vendor.BankAccountMasked)}</p>${metrics(s.balance)}
       ${s.balance.NeedsReview ? '<p class="vendor-notice">Refunds, overpayments or an unissued paid-sale stock movement require review. Accounts must reconcile the affected records before further requests or payments.</p>' : ''}
@@ -389,7 +408,7 @@
       if (tab === 'balances') panel.innerHTML = `${c.manage ? '<div class="vendor-actions"><button data-add-vendor>Register vendor</button></div>' : ''}<div class="vendor-grid">${data.vendors.map(v => { const b = data.balances.find(r => r.VendorId === v.VendorId) || {}; return `<article class="vendor-card"><h3>${esc(v.Name)}</h3><small>${esc(v.SchoolSection)} · ${v.Active === 'NO' ? 'Inactive' : 'Active'} · ${esc(v.BankAccountMasked)}</small><p>Available <strong>${money(b.Available)}</strong><br>Reserved ${money(b.Reserved)} · Paid ${money(b.Paid)}</p>${b.NeedsReview ? '<span class="vendor-badge">Needs reconciliation</span>' : ''}<div class="vendor-actions"><button data-view-vendor="${esc(v.VendorId)}">Open statement</button>${c.manage ? `<button data-edit-vendor="${esc(v.VendorId)}">Edit vendor / rule</button>` : ''}</div></article>`; }).join('') || '<p>No vendor accounts yet. Existing unassigned stock stays organisation-owned until reviewed.</p>'}</div>`;
       if (tab === 'statement') panel.innerHTML = `<form class="vendor-form" data-statement-filter><label class="vendor-full">Vendor<select name="VendorId">${vendorOptions()}</select></label>${input('From','From',today().slice(0,7)+'-01','date','required')}${input('To','To',today(),'date','required')}<button type="submit" data-label="Load statement">Load statement</button></form><div class="vendor-actions"><button data-request-new>Request payment</button><button data-print-statement>Print / Save PDF</button>${c.pay ? '<button data-refund>Record linked refund</button><button data-recovery>Record money received</button><button data-opening>Reviewed historical opening</button>' : ''}</div><div data-statement-result><p>Select a vendor and load a statement.</p></div>`;
       if (tab === 'analysis') panel.innerHTML = `<form class="vendor-form" data-analysis-filter><label class="vendor-full">Vendor<select name="VendorId">${vendorOptions()}</select></label>${input('From','From',analysisRange.From,'date','required')}${input('To','To',analysisRange.To,'date','required')}<button type="submit">Load analysis</button></form><div data-analysis-result role="region" aria-label="Vendor sales analysis" aria-live="polite">${selected ? 'Loading sales analysis…' : 'No vendor accounts available for analysis.'}</div>`;
-      if (tab === 'requests') panel.innerHTML = `<p>Accounts confirmation → Admin review → Director / Super Admin approval → Accounts records payment.</p><div class="vendor-grid">${data.requests.map(requestCard).join('') || '<p>No vendor payment requests yet.</p>'}</div>`;
+      if (tab === 'requests') panel.innerHTML = `<p>Each request follows its saved approval path. Payment recording is separate.</p>${options.configureApprovals ? '<button type="button" data-payment-approvals>Requisition approval settings</button>' : ''}<div class="vendor-grid">${data.requests.map(requestCard).join('') || '<p>No vendor payment requests yet.</p>'}</div>`;
       if (tab === 'products') panel.innerHTML = `<div class="vendor-actions"><p><strong>Products: ${data.products.length}</strong> · Awaiting approval: ${(data.productChanges || []).filter(r => r.Status === 'Pending').length}<br>${c.vendor ? 'Only products belonging to your linked vendor accounts are shown. Stock reduces automatically on completed sales.' : 'Ownership applies to future sales only.'}</p><button data-import-products>${c.vendor ? 'Batch products' : 'Batch products & owners'}</button><button data-add-product>Add vendor product</button></div>${productPolicyHTML()}${productRequestsHTML()}<h3>Products & sale status</h3><div class="vendor-table-wrap"><table class="vendor-table vendor-product-table" role="table" aria-label="Products and sale status"><thead role="rowgroup"><tr role="row"><th scope="col">Product</th><th scope="col">Owner</th><th scope="col">Stock / price</th><th scope="col">Action</th></tr></thead><tbody role="rowgroup">${productRowsHTML()}</tbody></table></div>`;
       if (tab === 'approvals') panel.innerHTML = productPolicyHTML();
       if (tab === 'settings') { const s = data.settings; panel.innerHTML = `<h3>Default settlement arrangement</h3><p>Individual vendors may inherit this rule or explicitly receive full payment.</p><form class="vendor-form" data-settings>${ruleFields(s.RuleHistory?.at(-1))}
@@ -429,6 +448,7 @@
         if (result) { notice = result.message; await reload(); }
       };
       root.querySelector('[data-request-new]')?.addEventListener('click', () => requestForm());
+      root.querySelector('[data-payment-approvals]')?.addEventListener('click', options.configureApprovals);
       root.querySelector('[data-print-statement]')?.addEventListener('click', () => statement ? print(`Vendor statement — ${statement.vendor.Name}`,statementHTML(statement)) : status('Load a statement first.',true));
       const filter = root.querySelector('[data-statement-filter]'); if (filter) {
         filter.onchange = event => {
@@ -453,7 +473,7 @@
         if (result) { notice = result.message; await reload(); } }; }
       root.querySelectorAll('[data-request]').forEach(b => b.onclick = () => {
         const r = data.requests.find(r => r.SettlementId === b.dataset.request), action = b.dataset.action;
-        if (action === 'print') return print(`Vendor requisition — ${r.SettlementId}`,`<h3>${esc(r.VendorName)}</h3><p>Period: ${esc(r.From)} — ${esc(r.To)}</p><p>${esc(r.Status)} · ${esc(r.PaymentStatus)} · revision ${r.Revision}</p><p>Requested ${money(r.Amount)} · Paid ${money(r.Paid)} · Unpaid ${money(r.Unpaid)}</p><p>${esc(r.BankName)} · ${esc(r.BankAccountName)} · ${esc(r.BankAccountNumber || r.BankAccountMasked)}</p><table><tr><th>Sale</th><th>Products / agreed rule</th><th class="vendor-amount">Gross</th><th class="vendor-amount">Refund</th><th class="vendor-amount">Charge</th><th class="vendor-amount">Net</th></tr>${(r.Snapshot || []).map(s => `<tr><td>${esc(s.SaleNo)}</td><td>${esc((s.Items || []).map(i => `${i.Quantity} × ${i.ItemName}`).join(', '))}<small>${esc(s.RuleLabel || JSON.stringify(s.RuleSnapshot || {}))}</small></td><td class="vendor-amount">${money(s.Gross)}</td><td class="vendor-amount">${money(s.Refund)}</td><td class="vendor-amount">${money(s.Charge)}</td><td class="vendor-amount">${money(s.Net)}</td></tr>`).join('')}</table><h4>Approval / payment trail</h4>${(r.History || []).map(h => `<p>${esc(h.Action)} · ${esc(h.By)} · ${esc(h.At)} · ${esc(h.Notes)}</p>`).join('')}`);
+        if (action === 'print' || action === 'print-summary') return printRequest(r, action === 'print-summary');
         if (action === 'revise') { selected = r.VendorId; return requestForm(r); }
         const payment = action === 'pay';
         showDialog(payment ? 'Record vendor payment' : action, payment ? `<p class="vendor-full">${esc(r.BankName)} · ${esc(r.BankAccountName)} · ${esc(r.BankAccountNumber || r.BankAccountMasked)}. Maximum unpaid ${money(r.Unpaid)}. Record an already-made payment; this does not send money.</p>${paymentFields(r.Unpaid)}${auth()}` : `${notes()}${action === 'Cancelled' && ['Submitted','Rejected'].includes(r.Status) ? '' : auth()}`,

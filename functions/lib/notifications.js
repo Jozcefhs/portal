@@ -1,3 +1,4 @@
+import { requisitionPendingTransition } from './requisition-workflow.js';
 import {
   createDocumentIfAbsent,
   getDocument,
@@ -791,6 +792,10 @@ function requisitionEventRecipients(requisition, event, settings) {
     if (event === 'Rejected') return { roles: [], usernames: [requester].filter(Boolean) };
     return { roles: managementRoles, usernames: [requester].filter(Boolean) };
   }
+  if (requisition.ApprovalFlow && ['Submitted', 'Confirmed', 'Reviewed', 'Authorized', 'Approved'].includes(event)) {
+    const next = requisitionPendingTransition(requisition);
+    return { roles: next ? next.roles || [next.role] : [], usernames: [] };
+  }
   if (event === 'Submitted') return { roles: ['Accounts Officer'], usernames: [] };
   if (event === 'Confirmed') return { roles: ['Admin'], usernames: [] };
   if (event === 'Reviewed' || event === 'Authorized') return { roles: ['Director', 'Super Admin'], usernames: [] };
@@ -837,7 +842,9 @@ export function staffRequisitionEventNotification(requisition = {}, event = 'Upd
       status: normalizedEvent,
       notes: clean(requisition.ReviewNotes || requisition.AccountsReviewNotes)
     },
-    Message: requisitionEventText(requisition, normalizedEvent),
+    Message: requisition.ApprovalFlow && ['Submitted', 'Confirmed', 'Reviewed', 'Approved'].includes(normalizedEvent)
+      ? `${recordId} (${money(requisition.Amount)}) was ${lower(normalizedEvent)} by ${actorName || 'the authorised officer'}. Next: ${requisitionPendingTransition(requisition)?.role || 'Complete'}.`
+      : requisitionEventText(requisition, normalizedEvent),
     ActionUrl: 'admin.html?section=financeRequests',
     RecordType: clean(requisition.BillNo) ? 'Supplier Bill' : 'Requisition',
     RecordId: recordId,

@@ -1,0 +1,29 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Approval settings — local sample</title>
+<link rel="stylesheet" href="/css/style.css"><link rel="stylesheet" href="/css/vendor-settlements.css">
+<style>body{padding:24px;background:#f5f8fb}main{max-width:1200px;margin:auto}</style></head><body><main><p>LOCAL SAMPLE DATA ONLY — no live API calls</p><div id="workspace"></div><output id="saved"></output></main>
+<script src="/js/display-time.js"></script><script src="/js/vendor-settlements.js"></script>
+<script type="module">
+import { openRequisitionApprovalSettings } from '/js/requisition-approval-settings.js';
+import { vendorRequestPrintReport } from '/functions/lib/vendor-request-print.js';
+// Render the real print HTML inside this fixture; no new windows or printers are used.
+window.open = () => {
+  const preview=document.createElement('dialog'); preview.style.cssText='width:95vw;height:90vh;padding:12px';
+  preview.innerHTML='<button type="button">Close print preview</button><iframe title="Vendor request print preview" style="width:100%;height:90%;border:0"></iframe>';
+  document.body.append(preview); preview.querySelector('button').onclick=()=>preview.remove(); preview.showModal();
+  let contents='';
+  return {document:{write:html=>{contents+=html;},close:()=>{preview.querySelector('iframe').srcdoc=contents;}}};
+};
+const stages = [{id:'accounts',label:'Accounts confirmation'},{id:'admin-review',label:'Admin review'},{id:'director',label:'Director / Super Admin approval'}];
+let settings = {ok:true,edition:'school',recordVersion:'v1',stages,policies:{staff:stages.map(s=>s.id),vendor:stages.map(s=>s.id)}};
+const request = {SettlementId:'SAMPLE-REQ-001',VendorName:'Sample Supplies',VendorId:'SAMPLE',Status:'Submitted',PaymentStatus:'Awaiting approval',Revision:1,From:'2026-10-01',To:'2026-10-15',Amount:50000,Paid:0,Unpaid:50000,RequestedBy:'Sample Vendor',RequestedAt:'2026-10-15 10:00 WAT',Notes:'Sample monthly settlement',BankName:'Sample bank',BankAccountName:'Sample Supplies',BankAccountMasked:'••••0000',ApprovalFlowLabel:'Accounts confirmation → Director / Super Admin approval → Accounts records payment',PendingApproval:{stage:'accounts',role:'Accounts Officer',verb:'confirm',nextStatus:'Accounts Confirmed'},History:[{Action:'Submitted',By:'Sample Vendor',At:'2026-10-15 10:00 WAT',Notes:'Monthly settlement'}],
+Snapshot:Array.from({length:100},(_,i)=>({LotId:`LOT-${i}`,SaleNo:`SALE-${i+1}`,Date:'2026-10-14',Items:[{Quantity:2,ItemName:'Sample product'}],Gross:1000,Refund:0,Charge:100,Net:900,RuleLabel:'10% commission'})),Allocations:Array.from({length:100},(_,i)=>({LotId:`LOT-${i}`,AmountCents:50000}))};
+request.PrintReport = vendorRequestPrintReport(request);
+const configureApprovals = () => openRequisitionApprovalSettings(async body => {
+  if(body.action==='save') { settings={...settings,policies:body.policies,recordVersion:'v2'}; document.querySelector('#saved').textContent=JSON.stringify(body.policies); return {ok:true,message:'Sample settings saved. No live settings were changed.'}; }
+  return structuredClone(settings);
+});
+DynamaxVendors.mount(document.querySelector('#workspace'),async action => {
+  if(action!=='bootstrap') throw new Error('This fixture supports read-only requests only.');
+  return {settings:{Enabled:true,AccountingConfirmed:true},capabilities:{branchId:'main',edition:'school'},vendors:[{VendorId:'SAMPLE',Name:'Sample Supplies'}],balances:[],requests:[request],products:[],chart:[]};
+},{configureApprovals});
+</script></body></html>

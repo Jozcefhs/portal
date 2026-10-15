@@ -273,8 +273,8 @@ test('missing invoice allocation journal blocks school correction instead of sil
 test('UI and desktop API use protected correction paths and source retries preserve corrections', () => {
   const backend = readFileSync(new URL('../functions/api/backend.js', import.meta.url), 'utf8');
   const frontend = readFileSync(new URL('../js/payment-corrections.js', import.meta.url), 'utf8');
-  assert.match(backend, /VERIFIED_ACTOR_ACTIONS = new Set\(\[\s*'manualPaymentCorrection'/);
-  assert.match(backend, /BRANCH_BOUND_DEVICE_ACTIONS = new Set\(\[\s*'manualPaymentCorrection'/);
+  assert.match(backend, /VERIFIED_ACTOR_ACTIONS = new Set\(\[[^\]]*'manualPaymentCorrection'/);
+  assert.match(backend, /BRANCH_BOUND_DEVICE_ACTIONS = new Set\(\[[^\]]*'manualPaymentCorrection'/);
   assert.match(backend, /if \(payment\?\.LastCorrectionId\) return/);
   assert.match(frontend, /const input = values\(\);/);
   assert.match(frontend, /PreviewDigest: preview.data.PreviewDigest/);
