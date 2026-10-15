@@ -37,10 +37,10 @@
     const text = clean(query).toLowerCase();
     return !text ? rows : rows.filter(row => JSON.stringify(row).toLowerCase().includes(text));
   }
-  function table(headers, rows, renderRow, empty, className = '') {
+  function table(headers, rows, renderRow, empty) {
     if (!rows.length) return `<p class="procurement-empty">${esc(empty)}</p>`;
     const columns = headers.map(header => typeof header === 'string' ? { label: header } : header);
-    return `<div class="procurement-table-wrap" tabindex="0" role="region" aria-label="${esc(columns.map(column => column.label).join(', '))}"><table class="procurement-table${className ? ` ${esc(className)}` : ''}"><thead><tr>${columns.map(column => `<th scope="col"${column.numeric ? ' class="procurement-number"' : ''}>${esc(column.label)}</th>`).join('')}</tr></thead><tbody>${rows.map(renderRow).join('')}</tbody></table></div>`;
+    return `<div class="procurement-table-wrap" tabindex="0" role="region" aria-label="${esc(columns.map(column => column.label).join(', '))}"><table class="procurement-table procurement-table-compact"><thead><tr>${columns.map(column => `<th scope="col"${column.numeric ? ' class="procurement-number"' : ''}>${esc(column.label)}</th>`).join('')}</tr></thead><tbody>${rows.map(renderRow).join('')}</tbody></table></div>`;
   }
   let mounted;
   function mount(root, options) {
@@ -134,7 +134,7 @@
       } else if (tab === 'stock') {
         rows = filterRows(items(), query);
         headers = ['Item', 'Unit', { label: 'Central stock', numeric: true }, { label: 'Reorder level', numeric: true }, 'Action'];
-        html = table(headers, rows, row => `<tr><td><strong>${esc(itemName(row))}</strong><small>${esc(row.ItemCode || key(row))}${row.Category ? ` · ${esc(row.Category)}` : ''}</small></td><td>${esc(row.Unit)}</td><td class="procurement-number">${number(row.Quantity)}</td><td class="procurement-number">${number(row.ReorderLevel)}</td><td>${can('canManage') ? button('edititem', key(row), 'Edit item') : ''}</td></tr>`, 'No central items match. Procurement can add an organisation-owned item to begin.', 'procurement-table-compact');
+        html = table(headers, rows, row => `<tr><td><strong>${esc(itemName(row))}</strong><small>${esc(row.ItemCode || key(row))}${row.Category ? ` · ${esc(row.Category)}` : ''}</small></td><td>${esc(row.Unit)}</td><td class="procurement-number">${number(row.Quantity)}</td><td class="procurement-number">${number(row.ReorderLevel)}</td><td>${can('canManage') ? button('edititem', key(row), 'Edit item') : ''}</td></tr>`, 'No central items match. Procurement can add an organisation-owned item to begin.');
       } else if (tab === 'purchases') {
         rows = filterRows(data.purchases || [], query);
         headers = ['Purchase / supplier', 'Items', { label: 'Amount', numeric: true }, 'Status', 'Action'];
@@ -146,11 +146,11 @@
       } else if (tab === 'departments') {
         rows = filterRows((data.departmentInventory || []).filter(row => !isVendorItem(row)), query);
         headers = ['Department / item', 'Unit', { label: 'Available stock', numeric: true }, { label: 'Reorder level', numeric: true }];
-        html = table(headers, rows, row => `<tr><td><strong>${esc(itemName(row))}</strong><small>${esc(departmentName(row.Department || row.Section))} · ${esc(row.InventoryId || row.__id)}</small></td><td>${esc(row.Unit)}</td><td class="procurement-number">${number(row.Quantity)}</td><td class="procurement-number">${number(row.ReorderLevel)}</td></tr>`, 'No organisation-owned department stock is listed. Existing vendor-owned products remain in their separate inventory.', 'procurement-table-compact');
+        html = table(headers, rows, row => `<tr><td><strong>${esc(itemName(row))}</strong><small>${esc(departmentName(row.Department || row.Section))} · ${esc(row.InventoryId || row.__id)}</small></td><td>${esc(row.Unit)}</td><td class="procurement-number">${number(row.Quantity)}</td><td class="procurement-number">${number(row.ReorderLevel)}</td></tr>`, 'No organisation-owned department stock is listed. Existing vendor-owned products remain in their separate inventory.');
       } else {
         rows = filterRows(data.requests || [], query);
         headers = ['Request / department', 'Items', 'Status', 'Action'];
-        html = table(headers, rows, row => `<tr><td><strong>${esc(departmentName(row.Department))}</strong><small>${esc(requestKey(row))} · ${esc(row.RequestedBy || row.CreatedBy)}</small><small>${esc(date(row.CreatedAt))}</small></td><td>${lineSummary(row)}</td><td>${state(row.Status)}</td><td>${actions([button('viewrequest', requestKey(row), 'Details'), ...(can('canReviewRequests') && statusKey(row) === 'PENDING' ? [button('reviewrequest', requestKey(row), 'Review')] : []), ...(can('canManage') && ['APPROVED', 'PARTIALLY_ISSUED'].includes(statusKey(row)) ? [button('issue', requestKey(row), 'Issue stock')] : [])])}</td></tr>`, 'No supply requests match. Departments can request replenishment from the central stock catalogue.', 'procurement-table-compact');
+        html = table(headers, rows, row => `<tr><td><strong>${esc(departmentName(row.Department))}</strong><small>${esc(requestKey(row))} · ${esc(row.RequestedBy || row.CreatedBy)}</small><small>${esc(date(row.CreatedAt))}</small></td><td>${lineSummary(row)}</td><td>${state(row.Status)}</td><td>${actions([button('viewrequest', requestKey(row), 'Details'), ...(can('canReviewRequests') && statusKey(row) === 'PENDING' ? [button('reviewrequest', requestKey(row), 'Review')] : []), ...(can('canManage') && ['APPROVED', 'PARTIALLY_ISSUED'].includes(statusKey(row)) ? [button('issue', requestKey(row), 'Issue stock')] : [])])}</td></tr>`, 'No supply requests match. Departments can request replenishment from the central stock catalogue.');
       }
       const total = tab === 'stock' ? items().length : tab === 'purchases' ? (data.purchases || []).length : tab === 'transfers' ? (data.transfers || []).length : tab === 'departments' ? (data.departmentInventory || []).filter(row => !isVendorItem(row)).length : (data.requests || []).length;
       const paging = data.paging?.[tab];

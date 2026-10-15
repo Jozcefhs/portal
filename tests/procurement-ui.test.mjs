@@ -507,9 +507,11 @@ test('Procurement can create a zero-stock department target without opening the 
   view.controller.destroy();
 });
 
-test('stock, department balances and supply requests share compact spacing without changing other tables', async t => {
-  const view = fixture({ purchases: [{ PurchaseId: 'P-1', SupplierName: 'Supplier', Status: 'PENDING' }],
-    transfers: [{ TransferId: 'T-1', Department: 'kitchen', Status: 'IN_TRANSIT' }] });
+test('every Procurement workspace table uses compact spacing and keeps available actions', async t => {
+  const view = fixture({ purchases: [{ PurchaseId: 'P-1', SupplierName: 'Supplier', Status: 'PENDING' },
+    { PurchaseId: 'P-2', SupplierName: 'Supplier', Status: 'APPROVED' }],
+    transfers: [{ TransferId: 'T-1', Department: 'kitchen', Status: 'IN_TRANSIT', CanReceive: true,
+      Lines: [{ ItemId: 'rice', Quantity: 10, ReceivedQuantity: 0 }] }] });
   t.after(() => view.controller.destroy()); await tick();
   for (const tab of ['stock', 'departments', 'requests']) {
     await view.root.fire('click', view.tab(tab));
@@ -522,10 +524,12 @@ test('stock, department balances and supply requests share compact spacing witho
   assert.match(styles, /\.procurement-table\.procurement-table-compact button \{ margin: 0; min-height: 32px; padding: 4px 10px;/);
   assert.match(styles, /\.procurement-table-compact \.procurement-actions \{ gap: \.35rem;/);
   assert.match(styles, /@media \(max-width: 600px\) \{\s*\.procurement-table\.procurement-table-compact button \{ min-height: 40px;/);
-  for (const tab of ['purchases', 'transfers']) {
+  for (const [tab, actions] of [['purchases', ['viewpurchase', 'reviewpurchase', 'receivepurchase']],
+    ['transfers', ['viewtransfer', 'confirmreceipt', 'returntransfer']]]) {
     await view.root.fire('click', view.tab(tab));
-    assert.match(view.nodes.get('[data-proc-body]').innerHTML, /class="procurement-table"/, tab);
-    assert.doesNotMatch(view.nodes.get('[data-proc-body]').innerHTML, /procurement-table-compact/, tab);
+    const html = view.nodes.get('[data-proc-body]').innerHTML;
+    assert.match(html, /class="procurement-table procurement-table-compact"/, tab);
+    for (const action of actions) assert.ok(html.includes(`data-proc-action="${action}"`), action);
   }
 });
 
@@ -639,6 +643,7 @@ test('CSV preview is read-only; confirmed department import keeps section, depar
   assert.equal(previewCall.payload.SchoolSection, 'Secondary');
   assert.equal(previewCall.payload.Department, 'kitchen');
   assert.match(view.importNodes.get('[data-proc-import-results]').innerHTML, /Sugar &lt;test&gt;/);
+  assert.match(view.importNodes.get('[data-proc-import-results]').innerHTML, /class="procurement-table procurement-table-compact"/);
   assert.match(view.importNodes.get('[data-proc-import-results]').innerHTML, /Available quantity/);
   assert.match(view.importNodes.get('[data-proc-import-results]').innerHTML, /20\.125/);
   assert.doesNotMatch(view.importNodes.get('[data-proc-import-results]').innerHTML, /Price \(optional\)/);
