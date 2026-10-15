@@ -56,6 +56,8 @@
 .procurement-line button { padding-inline: .7rem; }
 .procurement-item-picker { min-width: 0; margin: 0; padding: .8rem; border: 1px solid var(--line, #ccdcea); border-radius: 9px; }
 .procurement-item-picker legend { font-weight: 700; padding-inline: .35rem; }
+.procurement-department-choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: .35rem; margin: .4rem 0; }
+.procurement-department-choices .procurement-pick-choice { border: 1px solid var(--line, #ccdcea); border-radius: 7px; }
 .procurement-picker-tools { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .5rem; margin: .65rem 0; }
 .procurement-picker-tools > span { font-size: .8rem; color: var(--muted, #566e84); }
 .procurement-picker-tools button { font-size: .8rem; padding: .4rem .65rem; }

@@ -134,6 +134,133 @@ test('central catalogue starts at zero, duplicate name/code rejected and unit is
   assert.equal(f.get(C.items, ItemId).ItemName, 'Renamed');
 });
 
+for (const edition of ['school', 'faith', 'organization']) {
+  test(`${edition}: central item assigns multiple departments atomically at zero stock and retries never duplicate them`, async () => {
+    const f = fixture(edition), departments = edition === 'school' ? ['clinic', 'tuckShop', 'bookstore', 'uniformStore'] : ['organizationStore', 'restaurant'];
+    const fields = { ItemName: 'Shared supply', ItemCode: 'SHARED', Unit: 'pcs', ReorderLevel: 4, SchoolSection: f.section, AssignedDepartments: departments };
+    const body = { action: 'saveitem', RequestId: 'assignment-create-1', ...fields };
+    const result = await f.run(body), ItemId = result.ItemId;
+    assert.equal(result.DepartmentAssignments.Created, departments.length);
+    assert.equal(f.get(C.items, ItemId).Quantity, 0);
+    assert.deepEqual(f.get(C.items, ItemId).AssignedDepartmentsBySection[f.section], [...departments].sort());
+    assert.equal(f.commits.length, 1);
+    const assigned = f.commits[0].filter(write => write.data.ProcurementItemId === ItemId);
+    assert.equal(assigned.length, departments.length);
+    for (const write of assigned) { assert.equal(write.data.Quantity, 0); assert.equal(write.data.Price, 0); assert.equal(write.exists, false); }
+    assert.equal((await f.run(body)).replayed, true); assert.equal(f.commits.length, 1);
+    const again = await f.command('saveitem', { ...fields, ItemId, ExpectedRevision: 1 });
+    assert.equal(again.DepartmentAssignments.Created, 0); assert.equal(again.DepartmentAssignments.Reused, departments.length);
+    assert.ok(f.list(C.movements).every(row => row.Lines.length === 0), 'assignment never moves stock');
+    assert.deepEqual(f.list(C.movements).at(-1).DepartmentAssignments, again.DepartmentAssignments);
+  });
+}
+
+test('assignments reuse legacy items without resetting quantities, prices or other details', async () => {
+  const f = fixture(), ItemId = await f.stocked(30);
+  f.target('department-item', { Price: 175.50, Notes: 'Keep notes', Active: 'NO', BranchId: undefined, OrganisationEdition: undefined });
+  const before = f.get(f.collection, 'department-item');
+  const result = await f.command('saveitem', { ItemId, ExpectedRevision: f.get(C.items, ItemId).Revision, ItemName: 'Medical supply', ItemCode: 'Medical supply', Unit: 'pcs',
+    SchoolSection: 'Secondary', AssignedDepartments: ['clinic', 'kitchen'] });
+  assert.equal(result.DepartmentAssignments.Created, 1); assert.equal(result.DepartmentAssignments.Reused, 1);
+  const after = f.get(f.collection, 'department-item');
+  for (const field of ['Quantity', 'Price', 'Notes', 'Active', 'ItemName', 'ItemCode', 'WalletPinHash']) assert.equal(after[field], before[field], field);
+  assert.equal(after.ProcurementItemId, ItemId); assert.equal(after.BranchId, 'main');
+  assert.equal(f.get(C.items, ItemId).Quantity, 30);
+  assert.equal(f.list(f.collection).length, 1);
+  assert.ok((await f.command('list')).departmentInventory.some(row => row.InventoryId === 'department-item'));
+});
+
+test('assignment recognizes case and whitespace variants of existing branch inventory', async () => {
+  const f = fixture(), ItemId = await f.item(); f.target('department-item', { ItemName: '  MEDICAL   supply ' });
+  const result = await f.command('saveitem', { ItemId, ExpectedRevision: 1, ItemName: 'Medical supply', Unit: 'pcs', SchoolSection: 'Secondary', AssignedDepartments: ['clinic'] });
+  assert.equal(result.DepartmentAssignments.Created, 0); assert.equal(result.DepartmentAssignments.Reused, 1);
+  assert.equal(f.list(f.collection).length, 1);
+});
+
+test('editing selections preserves other school sections and unticked department stock and history', async () => {
+  const f = fixture(), ItemId = await f.item('New item', { SchoolSection: 'Primary', AssignedDepartments: ['clinic'] });
+  await f.command('saveitem', { ItemId, ExpectedRevision: 1, ItemName: 'New item', ItemCode: 'New item', Unit: 'pcs', SchoolSection: 'Secondary', AssignedDepartments: ['kitchen'] });
+  const targets = new Map([...f.list('clinicInventory'), ...f.list('kitchenInventory')].map(row => [row.__name, row]));
+  await f.command('saveitem', { ItemId, ExpectedRevision: 2, ItemName: 'New item', ItemCode: 'New item', Unit: 'pcs', SchoolSection: 'Secondary', AssignedDepartments: [] });
+  assert.deepEqual(f.get(C.items, ItemId).AssignedDepartmentsBySection, { Primary: ['clinic'], Secondary: [] });
+  for (const row of [...f.list('clinicInventory'), ...f.list('kitchenInventory')]) assert.deepEqual(row, targets.get(row.__name));
+  await f.command('saveitem', { ItemId, ExpectedRevision: 3, ItemName: 'Renamed item', ItemCode: 'New item', Unit: 'pcs' });
+  assert.deepEqual(f.get(C.items, ItemId).AssignedDepartmentsBySection, { Primary: ['clinic'], Secondary: [] }, 'old clients preserve assignments');
+});
+
+test('reassigning after a central rename reuses its linked department record', async () => {
+  const f = fixture(), ItemId = await f.item('Original', { SchoolSection: 'Secondary', AssignedDepartments: ['clinic'] });
+  const result = await f.command('saveitem', { ItemId, ExpectedRevision: 1, ItemName: 'Renamed', ItemCode: 'NEW', Unit: 'pcs', SchoolSection: 'Secondary', AssignedDepartments: ['clinic'] });
+  assert.equal(result.DepartmentAssignments.Created, 0); assert.equal(result.DepartmentAssignments.Reused, 1);
+  assert.equal(f.list(f.collection).filter(row => row.ProcurementItemId === ItemId).length, 1);
+});
+
+test('ambiguous, vendor-owned, incompatible or differently linked department items fail atomically', async () => {
+  for (const changes of [{ Unit: 'kg' }, { VendorId: 'vendor' }, { OwnerType: 'Vendor' }, { ProcurementItemId: 'another' }]) {
+    const f = fixture(), ItemId = await f.item(); f.target('department-item', changes);
+    const before = copy([...f.store]), commits = f.commits.length;
+    await assert.rejects(f.command('saveitem', { ItemId, ExpectedRevision: 1, ItemName: 'Medical supply', Unit: 'pcs', SchoolSection: 'Secondary', AssignedDepartments: ['kitchen', 'clinic'] }), /conflicts|different/);
+    assert.deepEqual([...f.store], before); assert.equal(f.commits.length, commits);
+  }
+  const f = fixture(), ItemId = await f.item(); f.target('another-existing-item');
+  await assert.rejects(f.command('saveitem', { ItemId, ExpectedRevision: 1, ItemName: 'Medical supply', Unit: 'pcs', SchoolSection: 'Secondary', AssignedDepartments: ['clinic'] }), /more than one/);
+  assert.equal(f.get(C.items, ItemId).Revision, 1);
+});
+
+test('department assignment enforces role, feature, edition, branch, section and store-code boundaries', async () => {
+  const f = fixture(), fields = { ItemName: 'Shared', ItemCode: 'SH', Unit: 'pcs', SchoolSection: 'Secondary', AssignedDepartments: ['clinic'] };
+  await assert.rejects(f.command('saveitem', fields, f.receiver), /role/);
+  await assert.rejects(f.command('saveitem', fields, { ...f.manager, subscriptionReadOnly: true }), /read-only/);
+  for (const AssignedDepartments of [null, 'clinic', ['unknown'], ['organizationStore'], [{}], Array(8).fill('clinic')])
+    await assert.rejects(f.command('saveitem', { ...fields, AssignedDepartments }), /enabled departments/);
+  await assert.rejects(f.command('saveitem', fields, { ...f.manager, schoolSectionAccess: 'Primary' }), /school section/);
+  await assert.rejects(f.command('saveitem', { ...fields, AssignedDepartments: ['bookstore'], ItemCode: '' }), /item code/);
+  await assert.rejects(f.command('saveitem', fields, { ...f.manager, featureFlags: featureFlagsForPlan('school', 'Standard') }), /enabled departments/);
+  f.target('other-branch', { ItemName: 'Shared', BranchId: 'other' }); f.target('other-section', { ItemName: 'Shared', SchoolSection: 'Primary' });
+  f.target('other-edition', { ItemName: 'Shared', OrganisationEdition: 'faith' });
+  const result = await f.command('saveitem', fields);
+  assert.equal(result.DepartmentAssignments.Created, 1);
+  assert.equal(f.get(f.collection, 'other-branch').Quantity, 7); assert.equal(f.get(f.collection, 'other-section').Quantity, 7);
+});
+
+test('assignment conflicts roll back all writes and a lost response safely replays', async () => {
+  const f = fixture(), fields = { ItemName: 'Atomic item', ItemCode: 'ATM', Unit: 'pcs', SchoolSection: 'Secondary', AssignedDepartments: ['clinic', 'kitchen'] };
+  f.setConflict(true); const before = copy([...f.store]);
+  await assert.rejects(f.command('saveitem', fields), /Nothing was partially posted/); assert.deepEqual([...f.store], before);
+  f.setConflict(false); f.loseResponse(); const body = { action: 'saveitem', RequestId: 'assignment-lost-reply', ...fields };
+  const result = await f.run(body); assert.equal(result.replayed, true); assert.equal(f.commits.length, 1);
+  assert.equal((await f.run(body)).replayed, true); assert.equal(f.commits.length, 1);
+  await assert.rejects(f.command('saveitem', { ...fields, ItemId: result.ItemId, ExpectedRevision: 0 }), /has changed/);
+});
+
+test('concurrent department stock changes cannot be overwritten by assignment', async () => {
+  const f = fixture(), ItemId = await f.item(), commit = f.deps.commit;
+  f.deps.commit = async (...args) => {
+    f.target('department-item', { Quantity: 19 });
+    return commit(...args);
+  };
+  await assert.rejects(f.command('saveitem', { ItemId, ExpectedRevision: 1, ItemName: 'Medical supply', Unit: 'pcs', SchoolSection: 'Secondary', AssignedDepartments: ['clinic', 'kitchen'] }), /Nothing was partially posted/);
+  assert.equal(f.get(f.collection, 'department-item').Quantity, 19);
+  assert.equal(f.get(C.items, ItemId).Revision, 1); assert.equal(f.list('kitchenInventory').length, 0);
+});
+
+test('competing central items cannot create duplicate department identities', async () => {
+  const f = fixture(), first = await f.item('Shared new', { ItemCode: 'A' }), second = await f.item('Shared new', { ItemCode: 'B' });
+  const results = await Promise.allSettled([first, second].map((ItemId, i) => f.command('saveitem', { ItemId, ExpectedRevision: 1,
+    ItemName: 'Shared new', ItemCode: i ? 'B' : 'A', Unit: 'pcs', SchoolSection: 'Secondary', AssignedDepartments: ['clinic'] })));
+  assert.equal(results.filter(row => row.status === 'fulfilled').length, 1);
+  assert.equal(f.list(f.collection).filter(row => row.ItemName === 'Shared new').length, 1);
+  assert.deepEqual([first, second].map(ItemId => f.get(C.items, ItemId).Revision).sort(), [1, 2]);
+});
+
+test('saving visible departments does not remove assignments for disabled modules', async () => {
+  const f = fixture(), ItemId = await f.item();
+  f.put(C.items, ItemId, { ...f.get(C.items, ItemId), AssignedDepartmentsBySection: { Secondary: ['kitchen'] } });
+  await f.command('saveitem', { ItemId, ExpectedRevision: 1, ItemName: 'Medical supply', Unit: 'pcs', SchoolSection: 'Secondary', AssignedDepartments: [] },
+    { ...f.manager, featureFlags: featureFlagsForPlan('school', 'Standard') });
+  assert.deepEqual(f.get(C.items, ItemId).AssignedDepartmentsBySection.Secondary, ['kitchen']);
+});
+
 test('vendor ownership cannot enter through list, request destination, or central tampering', async () => {
   const f = fixture(), ItemId = await f.item();
   for (const change of [{ VendorId: 'vendor1' }, { OwnershipType: 'Vendor' }, { OwnerType: 'Vendor' }]) {

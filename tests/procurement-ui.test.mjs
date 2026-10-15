@@ -49,9 +49,16 @@ function fixture(overrides = {}, options = {}) {
     return line;
   };
   modalForm.querySelector = selector => importNodes.get(selector) || pickerNodes.get(selector) || progress;
-  modalForm.querySelectorAll = selector => selector === '[data-proc-import-source]' ? [importNodes.get('[data-proc-import-csv]'), importNodes.get('[data-proc-import-file]')] : selector === 'button, input, select, textarea' ? [...importNodes.values(), ...pickerNodes.values(), ...choices.children, ...holder.children.flatMap(line => line.querySelectorAll()), modalForm.elements.Department].filter(Boolean) : [];
+  let departmentChoices = [];
+  modalForm.querySelectorAll = selector => selector === '[data-proc-assign-department]:checked' ? departmentChoices.filter(input => input.checked) : selector === '[data-proc-import-source]' ? [importNodes.get('[data-proc-import-csv]'), importNodes.get('[data-proc-import-file]')] : selector === 'button, input, select, textarea' ? [...importNodes.values(), ...pickerNodes.values(), ...choices.children, ...departmentChoices, ...holder.children.flatMap(line => line.querySelectorAll()), modalForm.elements.Department].filter(Boolean) : [];
   modalForm.elements = { Department: element(), ItemCode: element(), Discrepancy: { checked: false } };
   const modal = element(); modal.querySelector = () => modalForm;
+  let modalMarkup = '';
+  Object.defineProperty(modal, 'innerHTML', { get: () => modalMarkup, set(value) {
+    modalMarkup = value;
+    departmentChoices = [...value.matchAll(/data-proc-assign-department value="([^"]*)"( checked)?/g)]
+      .map(match => ({ ...element(), value: decode(match[1]), checked: !!match[2] }));
+  } });
   const downloads = [], blobs = new Map();
   const document = { createElement: tag => tag === 'a'
     ? { ...element(), click() { downloads.push({ name: this.download, blob: blobs.get(this.href) }); } } : tag === 'div' ? makeLine() : modal, body: { append() {} } };
@@ -79,8 +86,38 @@ function fixture(overrides = {}, options = {}) {
   } });
   const action = (value, id = '') => ({ dataset: { procAction: value, id }, closest() { return this; } });
   const tab = value => ({ dataset: { procTab: value }, closest() { return this; } });
-  return { ui: window.DynamaxProcurement, root, nodes, calls, data, controller, modal, modalForm, progress, action, tab, importNodes, downloads, pickerNodes, preview: result => { previewResult = result; }, fail: error => { fail = error; }, failList: error => { listFailure = error; }, lookup: result => { lookupResult = result; }, records: result => { recordsResult = result; }, detail: record => { detailResult = record; } };
+  return { ui: window.DynamaxProcurement, root, nodes, calls, data, controller, modal, modalForm, progress, action, tab, importNodes, downloads, pickerNodes, departmentChoices: () => departmentChoices, preview: result => { previewResult = result; }, fail: error => { fail = error; }, failList: error => { listFailure = error; }, lookup: result => { lookupResult = result; }, records: result => { recordsResult = result; }, detail: record => { detailResult = record; } };
 }
+
+test('central item edit preselects saved departments and submits all checked departments in the current section', async t => {
+  const view = fixture({ departments: [{ Key: 'clinic', Name: 'Clinic' }, { Key: 'kitchen', Name: 'Kitchen <sample>' }],
+    items: [{ ItemId: 'shared', ItemName: 'Shared', Unit: 'pcs', Revision: 4, AssignedDepartmentsBySection: { Secondary: ['clinic'], Primary: ['kitchen'] } }] });
+  t.after(() => view.controller.destroy()); await tick(); await view.root.fire('click', view.action('edititem', 'shared'));
+  assert.match(view.modal.innerHTML, /multiple selection/); assert.match(view.modal.innerHTML, /zero-stock item/);
+  assert.match(view.modal.innerHTML, /Kitchen &lt;sample&gt;/); assert.match(view.modal.innerHTML, /stock and history are kept/);
+  assert.deepEqual(view.departmentChoices().map(input => [input.value, input.checked]), [['clinic', true], ['kitchen', false]]);
+  view.departmentChoices()[1].checked = true;
+  view.modalForm.values = { ItemName: 'Shared', ItemCode: 'SH', Unit: 'pcs', ReorderLevel: '3' };
+  await view.modalForm.fire('submit'); const sent = view.calls.find(call => call.action === 'saveitem').payload;
+  assert.deepEqual(sent.AssignedDepartments, ['clinic', 'kitchen']); assert.equal(sent.ExpectedRevision, 4); assert.equal(sent.SchoolSection, 'Secondary');
+});
+
+test('central item department checkboxes infer existing links only until an explicit selection is saved', async t => {
+  const view = fixture({ items: [{ ItemId: 'rice', ItemName: 'Rice', Unit: 'kg', Revision: 1 }],
+    departmentInventory: [{ Department: 'kitchen', SchoolSection: 'Secondary', ProcurementItemId: 'rice' }] });
+  t.after(() => view.controller.destroy()); await tick(); await view.root.fire('click', view.action('edititem', 'rice'));
+  assert.equal(view.departmentChoices()[0].checked, true);
+  view.data.items[0].AssignedDepartmentsBySection = { Secondary: [] };
+  await view.root.fire('click', view.action('edititem', 'rice')); assert.equal(view.departmentChoices()[0].checked, false);
+  view.modalForm.values = { ItemName: 'Rice', Unit: 'kg', ReorderLevel: '0' }; await view.modalForm.fire('submit');
+  assert.deepEqual(view.calls.find(call => call.action === 'saveitem').payload.AssignedDepartments, []);
+});
+
+test('new central items offer enabled department checkboxes without preselecting unrelated inventory', async t => {
+  const view = fixture(); t.after(() => view.controller.destroy()); await tick(); await view.root.fire('click', view.action('newitem'));
+  assert.equal(view.departmentChoices().length, 1); assert.equal(view.departmentChoices()[0].checked, false);
+  assert.equal(view.modalForm.className, 'procurement-form procurement-request-form');
+});
 
 async function pickerFixture(overrides = {}, purchase = false) {
   const view = fixture({ items: [

@@ -354,7 +354,19 @@
       };
     }
     function itemDialog(row = {}) {
-      openDialog(row.ItemId ? 'Edit central item' : 'Add central item', `${input('ItemName', 'Item name', row.ItemName, 'text', 'required maxlength="160"')}${input('ItemCode', 'Item code', row.ItemCode, 'text', 'maxlength="80"')}${input('Unit', 'Stock unit', row.Unit || 'pcs', 'text', 'required maxlength="40"')}${input('Category', 'Category', row.Category, 'text', 'maxlength="100"')}${input('ReorderLevel', 'Reorder level', row.ReorderLevel || 0, 'number', 'min="0" step="0.001" required')}<p class="procurement-section-note procurement-full">Central stock starts at zero. Record actual purchases received to add stock. Existing department quantities are not moved or overwritten.</p>`, (fields, form) => save('saveitem', { ...fields, ItemId: key(row), ReorderLevel: numeric(fields.ReorderLevel, 'Reorder level', true), ExpectedRevision: row.Revision || '' }, form), 'Save item');
+      const section = schoolSection || 'All';
+      const assigned = new Set(row.AssignedDepartmentsBySection?.[section] || (data.departmentInventory || [])
+        .filter(target => !isVendorItem(target) && key(row) && target.ProcurementItemId === key(row)
+          && clean(target.SchoolSection || 'All') === section).map(target => clean(target.Department)));
+      const choices = departments().map(department => {
+        const value = departmentId(department);
+        return `<label class="procurement-pick-choice"><input type="checkbox" data-proc-assign-department value="${esc(value)}"${assigned.has(value) ? ' checked' : ''}><span>${esc(departmentName(value))}</span></label>`;
+      }).join('');
+      const form = openDialog(row.ItemId ? 'Edit central item' : 'Add central item', `${input('ItemName', 'Item name', row.ItemName, 'text', 'required maxlength="160"')}${input('ItemCode', 'Item code', row.ItemCode, 'text', 'maxlength="80"')}${input('Unit', 'Stock unit', row.Unit || 'pcs', 'text', 'required maxlength="40"')}${input('Category', 'Category', row.Category, 'text', 'maxlength="100"')}${input('ReorderLevel', 'Reorder level', row.ReorderLevel || 0, 'number', 'min="0" step="0.001" required')}
+        <fieldset class="procurement-item-picker procurement-full"><legend>Assign to departments — multiple selection</legend><p class="procurement-section-note">Current branch · School section: ${esc(section)}. Selected departments receive a zero-stock item only when no matching item exists. Existing items are reused without changing their stock or price. An item code is required for stores.</p><div class="procurement-department-choices">${choices || '<p>No receiving departments are enabled for this account.</p>'}</div><p class="procurement-section-note">Unticking a department removes this selection only; its existing item, stock and history are kept. This does not transfer stock or change staff permissions.</p></fieldset>
+        <p class="procurement-section-note procurement-full">Central stock starts at zero. Record actual purchases received to add stock. Existing department quantities are not moved or overwritten.</p>`, (fields, form) => save('saveitem', { ...fields, ItemId: key(row), ReorderLevel: numeric(fields.ReorderLevel, 'Reorder level', true), ExpectedRevision: row.Revision || '',
+          SchoolSection: section, AssignedDepartments: [...form.querySelectorAll('[data-proc-assign-department]:checked')].map(input => input.value) }, form), 'Save item');
+      if (form) { form.className = 'procurement-form procurement-request-form'; dialog.className = 'procurement-dialog procurement-request-dialog'; }
     }
     function requestDialog() {
       let read;

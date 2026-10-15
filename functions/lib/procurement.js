@@ -1,6 +1,7 @@
 import { getDocument, queryCollectionPages, batchCommitLiteralDocuments } from './firestore.js';
 import { schoolSectionFor } from './school-scope.js';
 import { procurementRecordPage, procurementRecordDetail } from './procurement-history.js';
+import { planDepartmentAssignments } from './procurement-department-assignments.js';
 import { planProcurementItemImport, procurementImportWrites, procurementItemId, procurementDestinationId, procurementIdentityClaim } from './procurement-item-import.js';
 import { DEPARTMENTS, clean, lower, plain, fail, actor, vendorOwned, scopeFor, capabilitiesFor, schoolSectionsFor, sectionFor,
   sameScope, visibleRecord, inventoryAllowed, id, units, unitCost, quantity, linesFor, version, requireCapability, separatedActor } from './procurement-rules.js';
@@ -211,9 +212,17 @@ export async function handleProcurementAction(env, user, body = {}, dependencies
     if (existing) { version(body, existing); if (lower(existing.Unit) !== lower(Unit)) fail('A central item’s stock unit cannot change. Create a separate item for the new unit.'); }
     if (vendorOwned(body) || (body.Quantity !== undefined && Number(body.Quantity) !== 0)) fail('Central stock starts at zero. Use approved purchase receipts; vendor stock is not supported.');
     await claimIdentity('central', { ItemId, ItemCode, ItemName, Unit });
-    stage(C.items, ItemId, { ...(existing ? next(existing) : base), ItemId, ItemName, ItemCode, Unit,
+    const item = { ...(existing ? next(existing) : base), ItemId, ItemName, ItemCode, Unit,
       Category: text(body.Category, 'Category', false, 100), ReorderLevel: quantity(units(body.ReorderLevel ?? 0, 'Reorder level', true)),
-      Quantity: existing?.Quantity || 0, OwnershipType: 'Organisation' }, existing);
+      Quantity: existing?.Quantity || 0, OwnershipType: 'Organisation' };
+    if (body.AssignedDepartments !== undefined) {
+      const plan = await planDepartmentAssignments(env, user, scope, cap, body, item, existing, db, now);
+      item.AssignedDepartmentsBySection = plan.assignments;
+      for (const entry of plan.writes) stage(entry.collectionPath, entry.documentId, entry.data, entry.previous);
+      result.DepartmentAssignments = plan.summary;
+      result.message = `Item saved. ${plan.summary.Created} department items created at zero stock; ${plan.summary.Reused} existing items reused. Existing stock and prices are unchanged. Unticked departments retain their existing records and stock.`;
+    }
+    stage(C.items, ItemId, item, existing);
     result.ItemId = ItemId;
   } else if (action === 'savedestination') {
     requireCapability(cap, 'canManage');
@@ -372,6 +381,7 @@ export async function handleProcurementAction(env, user, body = {}, dependencies
   // A timeout after commit can be retried with the same RequestId without moving stock twice.
   stage(C.movements, operationId, { ...base, Action: action, RequestId: requestId, Lines: movements, EntityId: result.TransferId || result.PurchaseId || result.RequisitionId || result.InventoryId || result.ItemId || scope.ScopeKey,
     Notes: clean(body.Notes), OverrideReason: clean(body.OverrideReason),
+    ...(result.DepartmentAssignments ? { DepartmentAssignments: result.DepartmentAssignments } : {}),
     ...(result.importedItems ? { ImportedItems: result.importedItems, ImportSummary: result.summary,
       ...(result.Department ? { Department: result.Department, SchoolSection: result.SchoolSection } : {}) } : {}) }, null);
   stage(C.operations, operationId, { ...base, Action: action, Fingerprint: fingerprint, Result: result }, null);
