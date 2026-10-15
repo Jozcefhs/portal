@@ -435,10 +435,10 @@ test('stock and reorder figures line up with explicitly numeric headers in both 
   view.controller.destroy();
 });
 
-const importRow = { RowNumber: 2, ItemName: 'Sugar <test>', Unit: 'kg', ItemCode: 'SUGAR', ReorderLevel: '5', Price: '200' };
+const importRow = { RowNumber: 2, ItemName: 'Sugar <test>', Unit: 'kg', ItemCode: 'SUGAR', ReorderLevel: '5', QuantityAvailable: '20.125' };
 const importModule = {
   PROCUREMENT_IMPORT_LIMITS: { rows: 50, bytes: 65536 },
-  PROCUREMENT_IMPORT_COLUMNS: { central: ['ItemName', 'Unit', 'ItemCode', 'Category', 'ReorderLevel'], department: ['ItemName', 'Unit', 'ItemCode', 'Category', 'ReorderLevel', 'Price', 'Notes'] },
+  PROCUREMENT_IMPORT_COLUMNS: { central: ['ItemName', 'Unit', 'ItemCode', 'Category', 'ReorderLevel'], department: ['ItemName', 'Unit', 'ItemCode', 'Category', 'ReorderLevel', 'QuantityAvailable', 'Notes'] },
   parseProcurementItemCsv: () => [importRow], normalizeProcurementImportRow: row => ({ row, errors: [] })
 };
 const readyPreview = { ok: true, canImport: true, PreviewFingerprint: 'checked-records-v1', summary: { total: 1, ready: 1, skipped: 0, errors: 0, newCentral: 1, newDepartment: 1 }, rows: [{ ...importRow, status: 'ready', errors: [] }] };
@@ -467,7 +467,9 @@ test('batch upload is shown only to writable procurement managers in every editi
 test('CSV preview is read-only; confirmed department import keeps section, department and fingerprint', async () => {
   const view = await importFixture('department');
   assert.match(view.modal.innerHTML, /Branch: branch-1 · School section: Secondary/);
-  assert.match(view.modal.innerHTML, /zero stock/);
+  assert.match(view.modal.innerHTML, /opening available quantity/);
+  assert.match(view.modal.innerHTML, /Price is not required/);
+  assert.match(view.modal.innerHTML, /Existing items and vendor-owned stock are never overwritten/);
   assert.match(view.modal.innerHTML, /Download CSV template/);
   assert.equal(view.importNodes.get('button[type="submit"]').disabled, true);
   await view.importNodes.get('[data-proc-import-preview]').fire('click');
@@ -477,6 +479,9 @@ test('CSV preview is read-only; confirmed department import keeps section, depar
   assert.equal(previewCall.payload.SchoolSection, 'Secondary');
   assert.equal(previewCall.payload.Department, 'kitchen');
   assert.match(view.importNodes.get('[data-proc-import-results]').innerHTML, /Sugar &lt;test&gt;/);
+  assert.match(view.importNodes.get('[data-proc-import-results]').innerHTML, /Available quantity/);
+  assert.match(view.importNodes.get('[data-proc-import-results]').innerHTML, /20\.125/);
+  assert.doesNotMatch(view.importNodes.get('[data-proc-import-results]').innerHTML, /Price \(optional\)/);
   assert.equal(view.importNodes.get('[data-proc-import-confirm]').disabled, false);
   await view.modalForm.fire('submit');
   assert.equal(view.calls.at(-1).action, 'previewitemimport');
@@ -488,6 +493,7 @@ test('CSV preview is read-only; confirmed department import keeps section, depar
   assert.equal(imported.payload.SchoolSection, 'Secondary');
   assert.match(imported.payload.RequestId, /^[0-9a-f-]{36}$/);
   assert.equal(imported.payload.Rows[0].Quantity, undefined);
+  assert.equal(imported.payload.Rows[0].QuantityAvailable, '20.125');
   assert.equal(view.calls.at(-1).action, 'list');
   view.controller.destroy();
 });
@@ -556,18 +562,23 @@ test('in-flight preview freezes all inputs and refuses duplicate submissions', a
   view.controller.destroy();
 });
 
-test('real shared CSV parser integrates with preview and rejects forbidden quantity columns', async () => {
+test('real shared CSV parser previews opening quantities and legacy optional prices but rejects direct stock writes', async () => {
   const module = await import('../js/procurement-item-import.js');
   const view = await importFixture('department', module);
   const csv = view.importNodes.get('[data-proc-import-csv]');
   csv.value = 'ItemName,Unit,ItemCode,ReorderLevel,Price\nSugar,kg,SUGAR,5,200\n';
   await view.importNodes.get('[data-proc-import-preview]').fire('click');
   assert.deepEqual(view.calls.at(-1).payload.Rows, [{ ItemName: 'Sugar', Unit: 'kg', ItemCode: 'SUGAR', ReorderLevel: '5', Price: '200', RowNumber: 2 }]);
+  assert.match(view.importNodes.get('[data-proc-import-results]').innerHTML, /Price \(optional\)/);
+  csv.value = 'ItemName,Unit,ItemCode,ReorderLevel,QuantityAvailable\nSugar,kg,SUGAR,5,20.125\n'; await csv.fire('input');
+  await view.importNodes.get('[data-proc-import-preview]').fire('click');
+  assert.deepEqual(view.calls.at(-1).payload.Rows, [{ ItemName: 'Sugar', Unit: 'kg', ItemCode: 'SUGAR', ReorderLevel: '5', QuantityAvailable: '20.125', RowNumber: 2 }]);
+  assert.doesNotMatch(view.importNodes.get('[data-proc-import-results]').innerHTML, /Price \(optional\)/);
   const count = view.calls.length;
   csv.value = 'ItemName,Unit,Quantity\nSugar,kg,200\n'; await csv.fire('input');
   await view.importNodes.get('[data-proc-import-preview]').fire('click');
   assert.equal(view.calls.length, count);
-  assert.match(view.progress.textContent, /stock and vendor fields are not allowed/);
+  assert.match(view.progress.textContent, /direct Quantity and vendor fields are not allowed/);
   view.controller.destroy();
 });
 

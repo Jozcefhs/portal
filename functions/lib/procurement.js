@@ -171,10 +171,26 @@ export async function handleProcurementAction(env, user, body = {}, dependencies
     if (!clean(body.PreviewFingerprint) || body.PreviewFingerprint !== plan.preview.PreviewFingerprint)
       fail('The item preview has changed. Nothing was imported; preview the CSV again before continuing.', 409, 'PROCUREMENT_IMPORT_CHANGED');
     for (const row of procurementImportWrites(plan, base, user, operationId)) stage(row.collectionPath, row.documentId, row.data, row.previous);
+    movements.push(...plan.openingMovements);
+    const departmentMovements = DEPARTMENTS[plan.Department]?.Movements;
+    for (const [index, movement] of plan.openingMovements.entries()) {
+      if (!departmentMovements) continue;
+      const MovementNo = `PROC-OPEN-${operationId}-${index + 1}`;
+      const reason = `Opening stock from Procurement item import, CSV row ${movement.RowNumber}. Existing stock was not changed.`;
+      stage(departmentMovements, MovementNo, { ...scope, SchoolSection: plan.SchoolSection, Date: now, Timestamp: now,
+        ItemName: movement.ItemName, InventoryId: movement.InventoryId, ItemId: movement.ItemId,
+        Type: 'IN', MovementType: 'IN', MovementNo, Quantity: movement.Quantity, Unit: movement.Unit,
+        Before: 0, After: movement.Quantity, Reason: reason, Notes: reason, RecordedBy: base.CreatedBy,
+        Source: 'Procurement', PostingKind: 'OpeningBalance', ImportOperationId: operationId }, null);
+    }
     result.summary = plan.preview.summary;
     result.importedItems = plan.preview.rows.filter(row => row.status === 'ready').map(row => ({ RowNumber: row.RowNumber,
-      ItemId: row.ItemId, ...(row.InventoryId ? { InventoryId: row.InventoryId, Department: plan.Department, SchoolSection: plan.SchoolSection } : {}) }));
-    result.message = `${result.summary.newCentral} central and ${result.summary.newDepartment} department items created at zero stock; ${result.summary.skipped} duplicate rows skipped. Use purchase receipts and confirmed deliveries to receive stock.`;
+      ItemId: row.ItemId, ...(row.InventoryId ? { InventoryId: row.InventoryId, Department: plan.Department, SchoolSection: plan.SchoolSection,
+        OpeningQuantity: row.OpeningQuantity } : {}) }));
+    if (plan.mode === 'department') { result.Department = plan.Department; result.SchoolSection = plan.SchoolSection; }
+    result.message = `${result.summary.newCentral} central catalogue and ${result.summary.newDepartment} department items created; ${result.summary.skipped} duplicate rows skipped. `
+      + (plan.mode === 'department' ? `${plan.openingMovements.length} new department items received the opening quantities shown in the preview. Existing balances were unchanged. ` : '')
+      + 'Central stock remains unchanged. Use purchase receipts and confirmed deliveries for subsequent restocking.';
   } else if (action === 'settings') {
     requireCapability(cap, 'canConfigure');
     if (typeof body.Enabled !== 'boolean' || body.ConfirmExistingBalances !== true) fail('Review existing department balances and explicitly confirm the Procurement control change.');
@@ -355,7 +371,8 @@ export async function handleProcurementAction(env, user, body = {}, dependencies
   // A timeout after commit can be retried with the same RequestId without moving stock twice.
   stage(C.movements, operationId, { ...base, Action: action, RequestId: requestId, Lines: movements, EntityId: result.TransferId || result.PurchaseId || result.RequisitionId || result.InventoryId || result.ItemId || scope.ScopeKey,
     Notes: clean(body.Notes), OverrideReason: clean(body.OverrideReason),
-    ...(result.importedItems ? { ImportedItems: result.importedItems, ImportSummary: result.summary } : {}) }, null);
+    ...(result.importedItems ? { ImportedItems: result.importedItems, ImportSummary: result.summary,
+      ...(result.Department ? { Department: result.Department, SchoolSection: result.SchoolSection } : {}) } : {}) }, null);
   stage(C.operations, operationId, { ...base, Action: action, Fingerprint: fingerprint, Result: result }, null);
   await db.commit(env, writes);
   return result;

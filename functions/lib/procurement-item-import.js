@@ -102,7 +102,7 @@ export async function planProcurementItemImport(env, user, body, scope, cap, db)
     }
   };
   await Promise.all(Array.from({ length: Math.min(4, normalizedRows.length) }, prefetch));
-  const rows = [], planned = new Map(), seen = new Map(), targets = new Map(), snapshots = [], centralStaged = new Set();
+  const rows = [], planned = new Map(), seen = new Map(), targets = new Map(), snapshots = [], centralStaged = new Set(), openingMovements = [];
   const add = (collectionPath, documentId, data, previous = null) => {
     const path = `${collectionPath}/${documentId}`;
     if (planned.has(path)) return;
@@ -113,7 +113,8 @@ export async function planProcurementItemImport(env, user, body, scope, cap, db)
     const normalized = normalizedRows[index], row = normalized.row;
     row.RowNumber ||= index + 2;
     const report = { RowNumber: row.RowNumber, ItemName: row.ItemName, ItemCode: row.ItemCode, Unit: row.Unit,
-      status: 'ready', errors: [...normalized.errors], centralAction: 'none' };
+      status: 'ready', errors: [...normalized.errors], centralAction: 'none',
+      ...(mode === 'department' ? { QuantityAvailable: row.QuantityAvailable, OpeningQuantity: 0 } : {}) };
     rows.push(report);
     if (report.errors.length) { report.status = 'error'; continue; }
     try {
@@ -160,10 +161,11 @@ export async function planProcurementItemImport(env, user, body, scope, cap, db)
         const target = [...matches.values()][0];
         if (target) {
           if (!inInventoryScope(target, Department, viewUser, scope) || vendorOwned(target)) fail('This item conflicts with another scope or vendor-owned stock. No ownership is changed.');
-          const details = item => ({ ...centralValues({ ...item, Unit: item.Unit || config.Unit }), Price: Number(item.Price || 0), Notes: clean(item.Notes) });
+          const details = item => ({ ...centralValues({ ...item, Unit: item.Unit || config.Unit }),
+            ...(row.Price !== null ? { Price: Number(item.Price || 0) } : {}), Notes: clean(item.Notes) });
           if (!equal(details(target), details(row)) || (clean(target.ProcurementItemId) && target.ProcurementItemId !== ItemId))
             fail('An existing department item has different details. Find or review that record; imports never overwrite or relink it.');
-          report.status = 'skip'; report.InventoryId = target.__id; report.message = 'Matching department item already exists; its stock and ownership are unchanged.';
+          report.status = 'skip'; report.InventoryId = target.__id; report.message = 'Matching department item already exists; its stock, price and ownership are unchanged. QuantityAvailable is not added or applied again.';
           snapshots.push({ InventoryId: target.__id, version: target.__updateTime }); continue;
         }
       }
@@ -186,9 +188,16 @@ export async function planProcurementItemImport(env, user, body, scope, cap, db)
       }
       if (mode === 'department') add(config.Collection, InventoryId, { ...scope, SchoolSection, ItemName: existing?.ItemName || row.ItemName,
         Unit: existing?.Unit || row.Unit, ItemCode: row.ItemCode, ...(config.StoreType ? { StoreType: config.StoreType } : {}),
-        Category: row.Category || 'General Item', ReorderLevel: row.ReorderLevel, Quantity: 0, Price: row.Price, Notes: row.Notes,
+        Category: row.Category || 'General Item', ReorderLevel: row.ReorderLevel, Quantity: row.QuantityAvailable, Price: row.Price ?? 0, Notes: row.Notes,
         Active: 'YES', ProcurementManaged: 'YES', ProcurementItemId: ItemId, OwnershipType: 'Organisation' });
       for (const claim of claims) add('procurementOperations', claim.documentId, claim.data);
+      if (mode === 'department') {
+        report.OpeningQuantity = row.QuantityAvailable;
+        if (row.QuantityAvailable > 0) openingMovements.push({ Collection: config.Collection, InventoryId, ItemId,
+          ItemName: existing?.ItemName || row.ItemName, Unit: existing?.Unit || row.Unit, Department, SchoolSection,
+          Quantity: row.QuantityAvailable, Direction: 'IN', Before: 0, After: row.QuantityAvailable,
+          Source: 'OpeningBalance', RowNumber: row.RowNumber });
+      }
     } catch (error) {
       if (Number(error.status || 500) >= 500) throw error;
       report.status = 'error'; report.errors.push(error.message);
@@ -201,7 +210,7 @@ export async function planProcurementItemImport(env, user, body, scope, cap, db)
   const writes = [...planned.values()];
   const PreviewFingerprint = await digest(JSON.stringify({ scope, mode, Department, SchoolSection, rows, snapshots,
     writes: writes.map(({ collectionPath, documentId, data, previous }) => ({ collectionPath, documentId, data, updateTime: previous?.__updateTime || '' })) }));
-  return { preview: { ok: true, canImport: summary.ready > 0 && summary.errors === 0, rows, summary, PreviewFingerprint }, writes, mode, Department, SchoolSection };
+  return { preview: { ok: true, canImport: summary.ready > 0 && summary.errors === 0, rows, summary, PreviewFingerprint }, writes, openingMovements, mode, Department, SchoolSection };
 }
 
 export function procurementImportWrites(plan, base, user, operationId) {

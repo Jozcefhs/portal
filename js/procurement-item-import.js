@@ -1,23 +1,28 @@
-// Shared by the browser preview and the server. Imports create catalogue records,
-// never stock balances, ownership changes or financial postings.
+// Shared by the browser and server. Department imports may record opening stock
+// for new items only; existing balances, ownership and financial records stay intact.
 export const PROCUREMENT_IMPORT_LIMITS = Object.freeze({ rows: 50, bytes: 64 * 1024, requestBytes: 256 * 1024 });
 export const PROCUREMENT_IMPORT_COLUMNS = Object.freeze({
   central: Object.freeze(['ItemName', 'Unit', 'ItemCode', 'Category', 'ReorderLevel']),
-  department: Object.freeze(['ItemName', 'Unit', 'ItemCode', 'Category', 'ReorderLevel', 'Price', 'Notes'])
+  department: Object.freeze(['ItemName', 'Unit', 'ItemCode', 'Category', 'ReorderLevel', 'QuantityAvailable', 'Notes'])
 });
+// Price is optional and remains accepted in older files, but is not needed in
+// the standard opening-stock template. Central stock still requires receipts.
+const supportedColumns = mode => PROCUREMENT_IMPORT_COLUMNS[mode]
+  ? [...PROCUREMENT_IMPORT_COLUMNS[mode], ...(mode === 'department' ? ['Price'] : [])] : null;
 const clean = value => String(value ?? '').trim();
 export const procurementImportKey = value => clean(value).normalize('NFKC').replace(/\s+/g, ' ').toLowerCase();
 
 export function normalizeProcurementImportRow(raw, mode) {
-  const columns = PROCUREMENT_IMPORT_COLUMNS[mode];
+  const columns = supportedColumns(mode);
   if (!columns) throw new Error('Choose Central stock or Department balances.');
   const errors = [], source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
   if (source !== raw) errors.push('Each row must be an item record.');
   const unknown = Object.keys(source).filter(key => !columns.includes(key) && key !== 'RowNumber');
-  if (unknown.length) errors.push(`Unsupported columns: ${unknown.join(', ')}. Stock, ownership and branch fields cannot be imported.`);
+  if (unknown.length) errors.push(`Unsupported columns: ${unknown.join(', ')}. Use QuantityAvailable for new department opening stock; direct Quantity, ownership and branch fields cannot be imported.`);
   const row = Object.fromEntries(columns.map(key => [key, clean(source[key])]));
-  for (const name of columns) if (source[name] != null && typeof source[name] !== 'string' && !(typeof source[name] === 'number' && ['ReorderLevel', 'Price'].includes(name)))
-    errors.push(`${name} must be ${['ReorderLevel', 'Price'].includes(name) ? 'a number' : 'text'}.`);
+  const numericColumns = ['ReorderLevel', 'QuantityAvailable', 'Price'];
+  for (const name of columns) if (source[name] != null && typeof source[name] !== 'string' && !(typeof source[name] === 'number' && numericColumns.includes(name)))
+    errors.push(`${name} must be ${numericColumns.includes(name) ? 'a number' : 'text'}.`);
   row.RowNumber = Number.isSafeInteger(source.RowNumber) && source.RowNumber > 0 ? source.RowNumber : 0;
   for (const key of ['ItemName', 'Unit']) if (!row[key]) errors.push(`${key} is required.`);
   const lengths = { ItemName: 160, Unit: 40, ItemCode: 80, Category: 100, Notes: 2000 };
@@ -33,12 +38,16 @@ export function normalizeProcurementImportRow(raw, mode) {
     row[key] = Number(input);
   };
   decimal('ReorderLevel', 3);
-  if (mode === 'department') decimal('Price', 2);
+  if (mode === 'department') {
+    decimal('QuantityAvailable', 3);
+    if (row.Price) decimal('Price', 2);
+    else row.Price = null;
+  }
   return { row, errors };
 }
 
 export function parseProcurementItemCsv(value, mode) {
-  const columns = PROCUREMENT_IMPORT_COLUMNS[mode];
+  const columns = supportedColumns(mode);
   if (!columns) throw new Error('Choose Central stock or Department balances.');
   if (typeof value !== 'string') throw new Error('Choose a CSV text file.');
   if (new TextEncoder().encode(value).length > PROCUREMENT_IMPORT_LIMITS.bytes) throw new Error('Maximum CSV size is 64 KB.');
@@ -64,7 +73,7 @@ export function parseProcurementItemCsv(value, mode) {
   if (records.length < 2) throw new Error('Choose a CSV with at least one item row.');
   const aliases = new Map(columns.map(key => [key.toLowerCase(), key]));
   const headers = records.shift().fields.map(key => aliases.get(key.toLowerCase()));
-  if (headers.some(key => !key) || new Set(headers).size !== headers.length) throw new Error('Unknown or duplicate columns. Use the Procurement template; stock and vendor fields are not allowed.');
+  if (headers.some(key => !key) || new Set(headers).size !== headers.length) throw new Error('Unknown or duplicate columns. Use the Procurement template; direct Quantity and vendor fields are not allowed.');
   if (!['ItemName', 'Unit'].every(key => headers.includes(key))) throw new Error('Required columns: ItemName, Unit.');
   if (records.length > PROCUREMENT_IMPORT_LIMITS.rows) throw new Error('Maximum 50 item rows per CSV.');
   return records.map(record => {

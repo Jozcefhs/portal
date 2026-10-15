@@ -338,18 +338,19 @@
       catch { feedback('The CSV uploader could not be loaded. Refresh and try again.', true); return; }
       if (disposed || busy || tab !== requestedTab || !can('canManage') || scope !== (schoolSection || 'All')) return;
       const { PROCUREMENT_IMPORT_COLUMNS: columns, PROCUREMENT_IMPORT_LIMITS: limits, parseProcurementItemCsv, normalizeProcurementImportRow } = importer;
+      const createLabel = mode === 'department' ? 'Create items with opening stock' : 'Create zero-stock items';
       let prepared = null, reading = 0;
       const form = openDialog(`Batch upload ${mode === 'department' ? 'department' : 'central'} items`, `
-        <p class="procurement-section-note procurement-full">Branch: ${esc(options.branchId || 'current working branch')}${mode === 'department' ? ` · School section: ${esc(scope)}` : ' · Central catalogue shared within this branch'}. Creates organisation-owned item records at <strong>zero stock</strong>. Add quantities through approved purchases and confirmed deliveries. Existing items and vendor-owned stock are never overwritten.</p>
+        <p class="procurement-section-note procurement-full">Branch: ${esc(options.branchId || 'current working branch')}${mode === 'department' ? ` · School section: ${esc(scope)}` : ' · Central catalogue shared within this branch'}. ${mode === 'department' ? 'Creates new organisation-owned department items with the <strong>opening available quantity</strong> entered in the CSV. Use this for stock already held by the department, not a new delivery. Central stock is not increased or deducted.' : 'Creates organisation-owned central catalogue records at <strong>zero stock</strong>.'} Use approved purchases and confirmed deliveries for subsequent restocking. Existing items and vendor-owned stock are never overwritten.</p>
         ${mode === 'department' ? departmentSelect(options.department) : ''}
         <div class="procurement-actions procurement-full"><button type="button" class="secondary" data-proc-import-template>Download CSV template</button></div>
         <label class="procurement-full">Choose CSV file<input type="file" accept=".csv,text/csv" data-proc-import-file data-proc-import-source></label>
         <label class="procurement-full">CSV contents (paste or edit)<textarea rows="7" spellcheck="false" data-proc-import-csv data-proc-import-source aria-describedby="procurement-import-help"></textarea></label>
-        <p class="procurement-section-note procurement-full" id="procurement-import-help">Up to ${limits.rows} items, ${Math.round(limits.bytes / 1024)} KB. Columns: ${esc(columns[mode].join(', '))}. ItemName and Unit are required. Do not include stock quantities or vendor ownership. ${mode === 'department' ? 'Matching central items are reused; missing central catalogue entries are created. Store departments require an ItemCode.' : 'Use a unique item name and, when supplied, a unique item code.'}</p>
+        <p class="procurement-section-note procurement-full" id="procurement-import-help">Up to ${limits.rows} items, ${Math.round(limits.bytes / 1024)} KB. Columns: ${esc(columns[mode].join(', '))}. ItemName and Unit are required. ${mode === 'department' ? 'QuantityAvailable is the opening balance in the item’s stock unit; blank means 0. Use non-negative numbers with up to 3 decimal places. Price is not required; an optional Price column from older files is still accepted (blank creates a new item with price 0). Matching central items are reused; missing central catalogue entries are created at zero stock. Store departments require an ItemCode.' : 'Use a unique item name and, when supplied, a unique item code. Do not include stock quantities.'} Vendor ownership and branch fields cannot be imported.</p>
         <div class="procurement-actions procurement-full"><button type="button" data-proc-import-preview>Preview and validate</button></div>
         <div class="procurement-full" data-proc-import-results aria-live="polite"></div>
-        <label class="procurement-check procurement-full"><input type="checkbox" data-proc-import-confirm required disabled>I have reviewed the preview and want to create the new zero-stock items shown. Exact duplicates will be skipped.</label>`, async (_fields, currentForm) => {
-        if (!prepared || !currentForm.querySelector('[data-proc-import-confirm]').checked) throw new Error('Preview the CSV and confirm the new zero-stock records before importing.');
+        <label class="procurement-check procurement-full"><input type="checkbox" data-proc-import-confirm required disabled>I have reviewed the preview and want to create ${mode === 'department' ? 'the new items with the opening quantities shown' : 'the new zero-stock items shown'}. Existing items and duplicate rows will be skipped; their stock will not change.</label>`, async (_fields, currentForm) => {
+        if (!prepared || !currentForm.querySelector('[data-proc-import-confirm]').checked) throw new Error('Preview the CSV and confirm the new items and opening quantities before importing.');
         currentForm.dataset.savingMessage = `Creating ${prepared.count} validated item${prepared.count === 1 ? '' : 's'}…`;
         const result = await call('importitems', prepared.payload, currentForm);
         if (disposed || !currentForm.isConnected) return;
@@ -363,9 +364,9 @@
           return;
         }
         dialog?.close(); dialog?.remove(); dialog = null;
-        notice = result.message || 'Batch upload completed. New items start at zero stock; existing balances were preserved.';
+        notice = result.message || 'Batch upload completed as previewed. Existing balances were preserved.';
         await reload();
-      }, 'Create zero-stock items');
+      }, createLabel);
       if (!form) return;
       const csv = form.querySelector('[data-proc-import-csv]');
       const results = form.querySelector('[data-proc-import-results]');
@@ -378,7 +379,7 @@
         prepared = null; confirm.checked = false; confirm.disabled = true; submit.disabled = true;
         form.querySelectorAll('[data-proc-import-source]').forEach(control => { control.disabled = false; });
         if (form.elements.Department) form.elements.Department.disabled = false;
-        preview.disabled = false; submit.textContent = 'Create zero-stock items';
+        preview.disabled = false; submit.textContent = createLabel;
         if (clear) { results.innerHTML = ''; progress.textContent = 'Preview again after changing the CSV or department.'; }
       }
       invalidate(false);
@@ -424,15 +425,16 @@
           if (!result) { if (!progress.textContent) progress.textContent = 'The preview could not be checked. Nothing was uploaded; try Preview and validate again.'; return; }
           const summary = result.summary || {};
           const byRow = new Map(rows.map(row => [Number(row.RowNumber), row]));
-          const headers = [{ label: 'CSV row', numeric: true }, 'Item / unit', { label: 'Reorder level', numeric: true }, ...(mode === 'department' ? [{ label: 'Price', numeric: true }] : []), 'Result'];
-          results.innerHTML = `<p class="procurement-section-note">${number(summary.ready)} ready · ${number(summary.skipped)} skipped · ${number(summary.errors)} with errors. New central items: ${number(summary.newCentral)}${mode === 'department' ? ` · New department items: ${number(summary.newDepartment)}` : ''}. All new stock balances: 0.</p>` + table(headers, result.rows || [], row => {
+          const showPrice = mode === 'department' && rows.some(row => clean(row.Price));
+          const headers = [{ label: 'CSV row', numeric: true }, 'Item / unit', { label: 'Reorder level', numeric: true }, ...(mode === 'department' ? [{ label: 'Available quantity', numeric: true }] : []), ...(showPrice ? [{ label: 'Price (optional)', numeric: true }] : []), 'Result'];
+          results.innerHTML = `<p class="procurement-section-note">${number(summary.ready)} ready · ${number(summary.skipped)} skipped · ${number(summary.errors)} with errors. New central items: ${number(summary.newCentral)}${mode === 'department' ? ` · New department items: ${number(summary.newDepartment)}. Opening quantities below apply only to new department items; skipped balances remain unchanged` : ''}. New central stock balances: 0.</p>` + table(headers, result.rows || [], row => {
             const raw = byRow.get(Number(row.RowNumber)) || {};
-            return `<tr><td class="procurement-number">${esc(row.RowNumber)}</td><td><strong>${esc(row.ItemName)}</strong><small>${esc(row.ItemCode || 'No code')} · ${esc(row.Unit)}</small></td><td class="procurement-number">${number(raw.ReorderLevel)}</td>${mode === 'department' ? `<td class="procurement-number">${money(raw.Price)}</td>` : ''}<td><span class="procurement-state">${esc(row.status)}</span>${row.message ? `<small>${esc(row.message)}</small>` : ''}${(row.errors || []).map(error => `<small class="procurement-import-error">${esc(error)}</small>`).join('')}</td></tr>`;
+            return `<tr><td class="procurement-number">${esc(row.RowNumber)}</td><td><strong>${esc(row.ItemName)}</strong><small>${esc(row.ItemCode || 'No code')} · ${esc(row.Unit)}</small></td><td class="procurement-number">${number(raw.ReorderLevel)}</td>${mode === 'department' ? `<td class="procurement-number">${number(row.QuantityAvailable ?? raw.QuantityAvailable)}</td>` : ''}${showPrice ? `<td class="procurement-number">${money(raw.Price)}</td>` : ''}<td><span class="procurement-state">${esc(row.status)}</span>${row.message ? `<small>${esc(row.message)}</small>` : ''}${(row.errors || []).map(error => `<small class="procurement-import-error">${esc(error)}</small>`).join('')}</td></tr>`;
           }, 'No item rows to import.');
           if (result.canImport && Number(summary.ready) > 0 && !Number(summary.errors) && clean(result.PreviewFingerprint)) {
             prepared = { count: summary.ready, payload: { ...payload, PreviewFingerprint: result.PreviewFingerprint } };
             confirm.disabled = false; submit.disabled = false;
-            progress.textContent = 'Review the preview, then tick the confirmation to create the new items. No stock quantities will change.';
+            progress.textContent = `Review the preview, then tick the confirmation to create the new items${mode === 'department' ? ' with their opening quantities' : ' at zero stock'}. Existing stock quantities will not change.`;
           } else progress.textContent = Number(summary.errors) ? 'Correct all errors and preview again. Nothing has been saved.' : 'All rows already exist or were skipped. There are no new items to upload.';
         } catch (error) { progress.textContent = error.message || 'The CSV could not be read. Check the template and preview again.'; }
       });

@@ -3,7 +3,7 @@ import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { handleProcurementAction, PROCUREMENT_COLLECTIONS as C } from '../functions/lib/procurement.js';
 import { featureFlagsForPlan } from '../functions/lib/organization-config.js';
-import { parseProcurementItemCsv, normalizeProcurementImportRow, PROCUREMENT_IMPORT_LIMITS } from '../js/procurement-item-import.js';
+import { parseProcurementItemCsv, normalizeProcurementImportRow, PROCUREMENT_IMPORT_LIMITS, PROCUREMENT_IMPORT_COLUMNS } from '../js/procurement-item-import.js';
 import { readProcurementJsonBody, procurementItemId } from '../functions/lib/procurement-item-import.js';
 
 const copy = value => value === undefined ? undefined : structuredClone(value);
@@ -54,6 +54,32 @@ test('CSV parser supports BOM, CRLF, quoted commas and escaped quotes with accur
   assert.deepEqual(normalized.errors, []); assert.equal(normalized.row.Price, 12.5); assert.equal(normalized.row.ReorderLevel, 3.125);
 });
 
+test('department template includes opening quantity instead of price; older optional prices still work', () => {
+  assert.deepEqual(PROCUREMENT_IMPORT_COLUMNS.department, ['ItemName', 'Unit', 'ItemCode', 'Category', 'ReorderLevel', 'QuantityAvailable', 'Notes']);
+  const [row] = parseProcurementItemCsv(`${PROCUREMENT_IMPORT_COLUMNS.department.join(',')}\nSoap,pcs,SOAP,General Item,5,20,Opening stock`, 'department');
+  const normalized = normalizeProcurementImportRow(row, 'department');
+  assert.deepEqual(normalized.errors, []); assert.equal(normalized.row.QuantityAvailable, 20); assert.equal(normalized.row.Price, null);
+  for (const QuantityAvailable of [undefined, '', 0, '0', 20, '2.125', 1000000000]) {
+    const result = normalizeProcurementImportRow({ ItemName: 'Soap', Unit: 'pcs', QuantityAvailable }, 'department');
+    assert.deepEqual(result.errors, []); assert.equal(result.row.QuantityAvailable, Number(QuantityAvailable || 0));
+  }
+  for (const Price of ['', undefined, '0', '12.50']) {
+    const result = normalizeProcurementImportRow({ ItemName: 'Soap', Unit: 'pcs', Price }, 'department');
+    assert.deepEqual(result.errors, []); assert.equal(result.row.Price, Price ? Number(Price) : null);
+  }
+  assert.throws(() => parseProcurementItemCsv('ItemName,Unit,QuantityAvailable\nSoap,pcs,20', 'central'), /Unknown/);
+  assert.throws(() => parseProcurementItemCsv('ItemName,Unit,Price\nSoap,pcs,20', 'central'), /Unknown/);
+});
+
+test('invalid opening quantities are rejected without partial inventory writes', async () => {
+  for (const QuantityAvailable of [-1, '1e3', '1,000', '.1', '0.0001', 1000000001, Infinity, NaN, false, [], {}]) {
+    const f = fixture(), body = f.fields([{ ItemName: 'Soap', Unit: 'pcs', QuantityAvailable }]);
+    const p = await f.preview(body);
+    assert.equal(p.canImport, false, String(QuantityAvailable)); assert.match(p.rows[0].errors.join(' '), /QuantityAvailable/);
+    await assert.rejects(f.run(f.importBody(body, p))); assert.equal(f.store.size, 0);
+  }
+});
+
 test('CSV parser and shared row validation fail closed on forged stock/ownership, bad shapes and oversize input', () => {
   for (const csv of ['ItemName,Unit,Quantity\nX,pcs,50', 'ItemName,Unit,VendorId\nX,pcs,vendor', 'ItemName,Unit,unit\nX,pcs,pcs',
     'ItemName\nX', 'ItemName,Unit\n"X,pcs', 'ItemName,Unit\n"X"junk,pcs', 'ItemName,Unit\nX,pcs,extra'])
@@ -81,11 +107,104 @@ for (const edition of ['school', 'faith', 'organization']) {
     assert.equal(destination.OrganisationEdition, edition); assert.equal(destination.BranchId, 'main');
     assert.deepEqual(f.list(C.movements)[0].Lines, []);
     const audit = f.list(C.movements)[0];
-    assert.deepEqual(audit.ImportedItems, [{ RowNumber: 2, ItemId: central.ItemId, InventoryId: destination.__id, Department: f.department, SchoolSection: f.section }]);
+    assert.deepEqual(audit.ImportedItems, [{ RowNumber: 2, ItemId: central.ItemId, InventoryId: destination.__id, Department: f.department, SchoolSection: f.section, OpeningQuantity: 0 }]);
     assert.equal(central.ImportOperationId, audit.__id); assert.equal(destination.ImportOperationId, audit.__id);
     assert.equal(f.list(C.purchases).length, 0); assert.equal(f.list(C.transfers).length, 0);
   });
+
+  test(`${edition}: new department opening stock is audited without central stock, purchases or prices`, async () => {
+    const f = fixture(edition), body = f.fields([{ ItemName: 'Soap', Unit: 'pcs', ItemCode: 'SOAP', QuantityAvailable: 25.125 }]);
+    const p = await f.preview(body);
+    assert.equal(p.canImport, true); assert.equal(p.rows[0].QuantityAvailable, 25.125); assert.equal(p.rows[0].OpeningQuantity, 25.125);
+    assert.equal(f.store.size, 0);
+    const result = await f.run(f.importBody(body, p));
+    const central = f.list(C.items)[0], destination = f.list(f.collection)[0], audit = f.list(C.movements)[0];
+    assert.equal(central.Quantity, 0); assert.equal(destination.Quantity, 25.125); assert.equal(destination.Price, 0);
+    assert.equal(destination.ImportOperationId, audit.__id); assert.equal(audit.Department, f.department); assert.equal(audit.SchoolSection, f.section);
+    assert.deepEqual(audit.Lines, [{ Collection: f.collection, InventoryId: destination.__id, ItemId: central.ItemId,
+      ItemName: 'Soap', Unit: 'pcs', Department: f.department, SchoolSection: f.section,
+      Quantity: 25.125, Direction: 'IN', Before: 0, After: 25.125, Source: 'OpeningBalance', RowNumber: 2 }]);
+    assert.equal(result.importedItems[0].OpeningQuantity, 25.125); assert.match(result.message, /opening quantities/);
+    assert.equal(f.list(C.purchases).length, 0); assert.equal(f.list(C.transfers).length, 0);
+    if (edition === 'school') {
+      const stockIn = f.list('clinicMovements'); assert.equal(stockIn.length, 1);
+      assert.equal(stockIn[0].Quantity, 25.125); assert.equal(stockIn[0].Type, 'IN'); assert.equal(stockIn[0].MovementType, 'IN');
+      assert.equal(stockIn[0].PostingKind, 'OpeningBalance'); assert.equal(stockIn[0].ImportOperationId, audit.__id);
+      assert.equal(stockIn[0].Before, 0); assert.equal(stockIn[0].After, 25.125);
+    }
+    const snapshot = copy([...f.store]);
+    const duplicate = await f.preview(body);
+    assert.equal(duplicate.summary.skipped, 1); assert.equal(duplicate.rows[0].OpeningQuantity, 0);
+    await assert.rejects(f.run(f.importBody(body, duplicate)));
+    assert.deepEqual([...f.store], snapshot);
+  });
 }
+
+test('opening quantities use the correct department inventory and movement collections', async () => {
+  for (const [Department, collection, movements] of [
+    ['kitchen', 'kitchenInventory', 'kitchenMovements'], ['tuckShop', 'tuckShopInventory', 'tuckShopMovements'],
+    ['bookstore', 'storeItems'], ['uniformStore', 'storeItems'], ['organizationStore', 'storeItems'],
+    ['restaurant', 'restaurantInventory', 'restaurantMovements']
+  ]) {
+    const f = fixture(['restaurant', 'organizationStore'].includes(Department) ? 'organization' : 'school');
+    await f.save({ ...f.fields([{ ItemName: 'Item', ItemCode: 'ITEM', Unit: 'pcs', QuantityAvailable: 12 }]), Department });
+    const item = f.list(collection)[0]; assert.equal(item.Quantity, 12); assert.equal(item.Price, 0);
+    assert.equal(f.list(C.movements)[0].Lines[0].InventoryId, item.__id);
+    if (movements) {
+      const stockIn = f.list(movements); assert.equal(stockIn.length, 1);
+      assert.equal(stockIn[0].InventoryId, item.__id); assert.equal(stockIn[0].Quantity, 12);
+    }
+    assert.equal(f.commits.length, 1);
+  }
+});
+
+test('omitted price and opening quantity never overwrite existing prices or balances', async () => {
+  const f = fixture();
+  const original = f.put(f.collection, 'legacy', { ...f.scope, SchoolSection: f.section, ItemName: 'Soap', Unit: 'pcs',
+    ItemCode: 'SOAP', Category: 'General Item', ReorderLevel: 0, Price: 125, Quantity: 77, Notes: '' });
+  const body = f.fields([
+    { ItemName: 'Soap', ItemCode: 'SOAP', Unit: 'pcs', QuantityAvailable: 100 },
+    { ItemName: 'Pads', ItemCode: 'PADS', Unit: 'pcs', QuantityAvailable: 10 }
+  ]);
+  const p = await f.preview(body);
+  assert.equal(p.canImport, true); assert.equal(p.summary.skipped, 1); assert.equal(p.rows[0].OpeningQuantity, 0);
+  assert.match(p.rows[0].message, /not added or applied again/);
+  await f.run(f.importBody(body, p)); assert.deepEqual(f.get(f.collection, 'legacy'), original);
+  const audit = f.list(C.movements)[0]; assert.equal(audit.Lines.length, 1); assert.equal(audit.Lines[0].ItemName, 'Pads');
+});
+
+test('opening stock remains idempotent through lost responses and simultaneous retries', async () => {
+  const f = fixture(), body = f.fields([{ ItemName: 'Soap', Unit: 'pcs', QuantityAvailable: 100 }]);
+  const p = await f.preview(body), command = f.importBody(body, p);
+  f.loseResponse(); assert.equal((await f.run(command)).replayed, true);
+  await Promise.all([f.run(command), f.run(command)]);
+  assert.equal(f.commits.length, 1); assert.equal(f.list(f.collection)[0].Quantity, 100); assert.equal(f.list('clinicMovements').length, 1);
+  await assert.rejects(f.run({ ...command, Rows: [{ ...body.Rows[0], QuantityAvailable: 200 }] }), /different entries/);
+  const fresh = fixture(), review = await fresh.preview(body), same = fresh.importBody(body, review);
+  const racing = await Promise.all([fresh.run(same), fresh.run(same)]);
+  assert.equal(fresh.commits.length, 1); assert.equal(racing.filter(row => row.replayed).length, 1);
+  assert.equal(fresh.list(fresh.collection)[0].Quantity, 100); assert.equal(fresh.list('clinicMovements').length, 1);
+});
+
+test('changed or conflicting duplicate opening quantities require a new valid preview', async () => {
+  const f = fixture(), row = { ItemName: 'Soap', Unit: 'pcs', QuantityAvailable: 10 }, body = f.fields([row]);
+  const p = await f.preview(body);
+  await assert.rejects(f.run(f.importBody(f.fields([{ ...row, QuantityAvailable: 20 }]), p)), /preview/);
+  const conflicting = f.fields([row, { ...row, QuantityAvailable: 20 }]), invalid = await f.preview(conflicting);
+  assert.equal(invalid.canImport, false); await assert.rejects(f.run(f.importBody(conflicting, invalid))); assert.equal(f.store.size, 0);
+  const identical = f.fields([row, { ...row }]), reviewed = await f.preview(identical);
+  assert.equal(reviewed.summary.skipped, 1); await f.run(f.importBody(identical, reviewed));
+  assert.equal(f.list(f.collection)[0].Quantity, 10); assert.equal(f.list('clinicMovements').length, 1);
+});
+
+test('maximum opening-stock import and all its movement records commit atomically', async () => {
+  const f = fixture(), body = f.fields(Array.from({ length: 50 }, (_, i) => ({ ItemName: `Item ${i}`, Unit: 'pcs', QuantityAvailable: i + 1 })));
+  await f.save(body); assert.equal(f.commits.length, 1); assert.equal(f.commits[0].length, 252);
+  assert.equal(f.list('clinicMovements').length, 50); assert.equal(f.list(C.movements)[0].Lines.length, 50);
+  const fresh = fixture(), invalid = fresh.fields([...body.Rows.slice(0, 49), { ItemName: 'Invalid', Unit: 'pcs', QuantityAvailable: -1 }]);
+  const p = await fresh.preview(invalid); assert.equal(p.canImport, false);
+  await assert.rejects(fresh.run(fresh.importBody(invalid, p))); assert.equal(fresh.store.size, 0);
+});
 
 test('central-only upload retains existing single-item IDs and never creates department or financial records', async () => {
   const f = fixture(), body = { ImportMode: 'central', Rows: [{ ItemName: 'Soap', Unit: 'pcs', ItemCode: 'SOAP' }] };
@@ -148,7 +267,8 @@ test('department matching catches case-only names, vendor duplicates and conflic
 });
 
 test('matching existing central item is reused with a CAS guard, not changed by the import', async () => {
-  const f = fixture(), body = f.fields(); const central = { ...body.Rows[0] }; delete central.Price; delete central.Notes;
+  const f = fixture(), body = f.fields(); body.Rows[0].QuantityAvailable = 12;
+  const central = { ...body.Rows[0] }; delete central.Price; delete central.Notes; delete central.QuantityAvailable;
   await f.save({ ImportMode: 'central', Rows: [central] });
   const item = f.list(C.items)[0]; f.put(C.items, item.ItemId, { ...item, Quantity: 77 });
   const before = f.get(C.items, item.ItemId), p = await f.preview(body);
@@ -156,6 +276,7 @@ test('matching existing central item is reused with a CAS guard, not changed by 
   await f.run(f.importBody(body, p));
   const after = f.get(C.items, item.ItemId); delete before.__updateTime; delete after.__updateTime;
   assert.deepEqual(after, before);
+  assert.equal(f.list(f.collection)[0].Quantity, 12);
   assert.ok(f.commits.at(-1).find(row => row.collectionPath === C.items).updateTime);
 });
 
