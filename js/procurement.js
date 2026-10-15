@@ -37,10 +37,10 @@
     const text = clean(query).toLowerCase();
     return !text ? rows : rows.filter(row => JSON.stringify(row).toLowerCase().includes(text));
   }
-  function table(headers, rows, renderRow, empty) {
+  function table(headers, rows, renderRow, empty, className = '') {
     if (!rows.length) return `<p class="procurement-empty">${esc(empty)}</p>`;
     const columns = headers.map(header => typeof header === 'string' ? { label: header } : header);
-    return `<div class="procurement-table-wrap" tabindex="0" role="region" aria-label="${esc(columns.map(column => column.label).join(', '))}"><table class="procurement-table"><thead><tr>${columns.map(column => `<th scope="col"${column.numeric ? ' class="procurement-number"' : ''}>${esc(column.label)}</th>`).join('')}</tr></thead><tbody>${rows.map(renderRow).join('')}</tbody></table></div>`;
+    return `<div class="procurement-table-wrap" tabindex="0" role="region" aria-label="${esc(columns.map(column => column.label).join(', '))}"><table class="procurement-table${className ? ` ${esc(className)}` : ''}"><thead><tr>${columns.map(column => `<th scope="col"${column.numeric ? ' class="procurement-number"' : ''}>${esc(column.label)}</th>`).join('')}</tr></thead><tbody>${rows.map(renderRow).join('')}</tbody></table></div>`;
   }
   let mounted;
   function mount(root, options) {
@@ -134,7 +134,7 @@
       } else if (tab === 'stock') {
         rows = filterRows(items(), query);
         headers = ['Item', 'Unit', { label: 'Central stock', numeric: true }, { label: 'Reorder level', numeric: true }, 'Action'];
-        html = table(headers, rows, row => `<tr><td><strong>${esc(itemName(row))}</strong><small>${esc(row.ItemCode || key(row))}${row.Category ? ` · ${esc(row.Category)}` : ''}</small></td><td>${esc(row.Unit)}</td><td class="procurement-number">${number(row.Quantity)}</td><td class="procurement-number">${number(row.ReorderLevel)}</td><td>${can('canManage') ? button('edititem', key(row), 'Edit item') : ''}</td></tr>`, 'No central items match. Procurement can add an organisation-owned item to begin.');
+        html = table(headers, rows, row => `<tr><td><strong>${esc(itemName(row))}</strong><small>${esc(row.ItemCode || key(row))}${row.Category ? ` · ${esc(row.Category)}` : ''}</small></td><td>${esc(row.Unit)}</td><td class="procurement-number">${number(row.Quantity)}</td><td class="procurement-number">${number(row.ReorderLevel)}</td><td>${can('canManage') ? button('edititem', key(row), 'Edit item') : ''}</td></tr>`, 'No central items match. Procurement can add an organisation-owned item to begin.', 'procurement-stock-table');
       } else if (tab === 'purchases') {
         rows = filterRows(data.purchases || [], query);
         headers = ['Purchase / supplier', 'Items', { label: 'Amount', numeric: true }, 'Status', 'Action'];

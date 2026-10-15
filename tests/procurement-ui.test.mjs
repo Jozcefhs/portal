@@ -507,6 +507,18 @@ test('Procurement can create a zero-stock department target without opening the 
   view.controller.destroy();
 });
 
+test('central-stock rows remove excess padding, detail gaps and inherited button margins', async t => {
+  const view = fixture(); t.after(() => view.controller.destroy()); await tick();
+  await view.root.fire('click', view.tab('stock'));
+  assert.match(view.nodes.get('[data-proc-body]').innerHTML, /class="procurement-table procurement-stock-table"/);
+  assert.match(styles, /\.procurement-stock-table td \{ padding: 4px 10px; vertical-align: middle; line-height: 1.2;/);
+  assert.match(styles, /\.procurement-stock-table td small \{ margin: 0;/);
+  assert.match(styles, /\.procurement-stock-table button \{ margin: 0; min-height: 32px;/);
+  assert.match(styles, /@media \(max-width: 600px\) \{\s*\.procurement-stock-table button \{ min-height: 40px;/);
+  await view.root.fire('click', view.tab('requests'));
+  assert.doesNotMatch(view.nodes.get('[data-proc-body]').innerHTML, /procurement-stock-table/);
+});
+
 test('supply request spacing is compact without shrinking checkbox or input touch targets', () => {
   assert.match(styles, /\.procurement-request-form label \{ margin: 0; gap: \.2rem;/);
   assert.match(styles, /\.procurement-request-dialog button \{ margin: 0;/);
