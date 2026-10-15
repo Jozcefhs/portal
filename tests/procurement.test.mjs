@@ -261,6 +261,80 @@ test('saving visible departments does not remove assignments for disabled module
   assert.deepEqual(f.get(C.items, ItemId).AssignedDepartmentsBySection.Secondary, ['kitchen']);
 });
 
+for (const edition of ['school', 'faith', 'organization']) {
+  test(`${edition}: bulk assignments add multiple items to multiple departments without altering stock or existing assignments`, async () => {
+    const f = fixture(edition), first = await f.item('First', { ItemCode: 'FIRST' }), second = await f.item('Second', { ItemCode: 'SECOND' });
+    f.target('department-item', { ItemName: 'First', ItemCode: 'FIRST', Quantity: 37, Price: 800, Notes: 'Keep' });
+    f.put(C.items, first, { ...f.get(C.items, first), Quantity: 24, AssignedDepartmentsBySection: { [f.section]: ['unavailable-legacy-department'], Primary: ['clinic'] } });
+    const departments = edition === 'school' ? ['clinic', 'kitchen'] : ['organizationStore', 'restaurant'];
+    const payload = { Items: [first, second].map(ItemId => ({ ItemId, ExpectedRevision: 1 })), AssignedDepartments: departments, SchoolSection: f.section };
+    const beforeCommits = f.commits.length, result = await f.command('assignitems', payload);
+    assert.equal(f.commits.length, beforeCommits + 1); assert.deepEqual(result.summary, { Items: 2, Created: 3, Reused: 1 });
+    assert.equal(f.get(C.items, first).Quantity, 24); assert.equal(f.get(C.items, second).Quantity, 0);
+    assert.equal(f.get(f.collection, 'department-item').Quantity, 37); assert.equal(f.get(f.collection, 'department-item').Price, 800);
+    assert.ok(f.get(C.items, first).AssignedDepartmentsBySection[f.section].includes('unavailable-legacy-department'));
+    for (const write of f.commits.at(-1).filter(row => row.data.ProcurementItemId && row.exists === false)) assert.equal(write.data.Quantity, 0);
+    assert.deepEqual(f.list(C.movements).at(-1).ItemAssignments, result.ItemAssignments);
+    assert.deepEqual(f.list(C.movements).at(-1).Lines, []);
+    const again = await f.command('assignitems', { ...payload, Items: [first, second].map(ItemId => ({ ItemId, ExpectedRevision: 2 })) });
+    assert.deepEqual(again.summary, { Items: 2, Created: 0, Reused: 4 });
+    assert.equal(f.get(f.collection, 'department-item').Quantity, 37);
+  });
+}
+
+test('bulk assignment validates item limits, duplicates, revisions, departments and role before any commit', async () => {
+  const f = fixture(), ItemId = await f.item(), fields = { Items: [{ ItemId, ExpectedRevision: 1 }], AssignedDepartments: ['clinic'], SchoolSection: 'Secondary' };
+  const cases = [{ Items: [] }, { Items: null }, { Items: [null] }, { Items: Array(21).fill(fields.Items[0]) },
+    { Items: [fields.Items[0], fields.Items[0]] }, { Items: [{ ItemId, ExpectedRevision: 0 }] },
+    { AssignedDepartments: [] }, { AssignedDepartments: ['organizationStore'] }, { AssignedDepartments: 'clinic' }];
+  const before = copy([...f.store]);
+  for (const change of cases) await assert.rejects(f.command('assignitems', { ...fields, ...change }));
+  await assert.rejects(f.command('assignitems', fields, f.receiver), /role/);
+  await assert.rejects(f.command('assignitems', fields, { ...f.manager, subscriptionReadOnly: true }), /read-only/);
+  await assert.rejects(f.command('assignitems', fields, { ...f.manager, schoolSectionAccess: 'Primary' }), /school section/);
+  await assert.rejects(f.command('assignitems', fields, { ...f.manager, branchId: 'other' }), /branch/);
+  assert.deepEqual([...f.store], before);
+});
+
+test('a bad item stops the whole bulk assignment and concurrent stock edits cannot be overwritten', async () => {
+  const f = fixture(), first = await f.item('Clean'), second = await f.item();
+  f.target('department-item', { VendorId: 'vendor' }); const before = copy([...f.store]);
+  const payload = { Items: [first, second].map(ItemId => ({ ItemId, ExpectedRevision: 1 })), AssignedDepartments: ['clinic', 'kitchen'], SchoolSection: 'Secondary' };
+  await assert.rejects(f.command('assignitems', payload), /Medical supply:.*vendor/); assert.deepEqual([...f.store], before);
+  f.target('department-item'); const commit = f.deps.commit;
+  f.deps.commit = async (...args) => { f.target('department-item', { Quantity: 19 }); return commit(...args); };
+  await assert.rejects(f.command('assignitems', payload), /Nothing was partially posted/);
+  assert.equal(f.get(f.collection, 'department-item').Quantity, 19); assert.equal(f.list('kitchenInventory').length, 0);
+  assert.equal(f.get(C.items, first).Revision, 1); assert.equal(f.get(C.items, second).Revision, 1);
+});
+
+test('two selected central items cannot claim one department record even inside the same bulk save', async () => {
+  const f = fixture(), first = await f.item('Same name', { ItemCode: 'A' }), second = await f.item('Same name', { ItemCode: 'B' });
+  const before = copy([...f.store]);
+  await assert.rejects(f.command('assignitems', { Items: [first, second].map(ItemId => ({ ItemId, ExpectedRevision: 1 })),
+    AssignedDepartments: ['clinic'], SchoolSection: 'Secondary' }), /same department record or identity/);
+  assert.deepEqual([...f.store], before);
+});
+
+test('bulk assignment retries and simultaneous repeats share one atomic result', async () => {
+  const f = fixture(), ItemId = await f.item('Bulk retry'), body = { action: 'assignitems', RequestId: 'bulk-assignment-retry',
+    Items: [{ ItemId, ExpectedRevision: 1 }], AssignedDepartments: ['clinic', 'kitchen'], SchoolSection: 'Secondary' };
+  const commits = f.commits.length; f.loseResponse(); const result = await f.run(body);
+  assert.equal(result.replayed, true); assert.equal(f.commits.length, commits + 1);
+  const [a, b] = await Promise.all([f.run(body), f.run(body)]); assert.equal(a.replayed, true); assert.equal(b.replayed, true);
+  assert.equal(f.commits.length, commits + 1);
+  await assert.rejects(f.run({ ...body, AssignedDepartments: ['kitchen'] }), /different entries/);
+});
+
+test('a 20-item assignment shares branch inventory reads and commits once', async () => {
+  const f = fixture(), ids = []; for (let i = 0; i < 20; i++) ids.push(await f.item(`Bulk ${i}`));
+  let branchReads = 0; const query = f.deps.query;
+  f.deps.query = async (...args) => { if (args[2].filters.some(filter => filter.field === 'BranchId')) branchReads++; return query(...args); };
+  const result = await f.command('assignitems', { Items: ids.map(ItemId => ({ ItemId, ExpectedRevision: 1 })), AssignedDepartments: ['clinic', 'kitchen'], SchoolSection: 'Secondary' });
+  assert.deepEqual(result.summary, { Items: 20, Created: 40, Reused: 0 }); assert.equal(branchReads, 2);
+  assert.ok(f.commits.at(-1).length < 450);
+});
+
 test('vendor ownership cannot enter through list, request destination, or central tampering', async () => {
   const f = fixture(), ItemId = await f.item();
   for (const change of [{ VendorId: 'vendor1' }, { OwnershipType: 'Vendor' }, { OwnerType: 'Vendor' }]) {

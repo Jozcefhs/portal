@@ -4,14 +4,19 @@ import { DEPARTMENTS, clean, plain, fail, inventoryAllowed, vendorOwned, section
 
 // Plan only: the caller commits these records with the central item's revision,
 // audit entry and replay result. Nothing here moves or resets existing stock.
-export async function planDepartmentAssignments(env, user, scope, cap, body, item, previous, db, now) {
+export async function planDepartmentAssignments(env, user, scope, cap, body, item, previous, db, now, cache = {}) {
   if (!Array.isArray(body.AssignedDepartments) || body.AssignedDepartments.length > Object.keys(DEPARTMENTS).length
     || body.AssignedDepartments.some(value => typeof value !== 'string' || !cap.departments.includes(value)))
     fail('Choose only enabled departments available to your account.', 403);
   const Departments = [...new Set(body.AssignedDepartments)].sort();
   const SchoolSection = sectionFor(user, scope, body.SchoolSection);
   const viewUser = { ...user, schoolSectionAccess: SchoolSection }, writes = new Map(), records = [];
-  const queries = new Map();
+  const queries = cache.queries ||= new Map(), gets = cache.gets ||= new Map();
+  const get = (collection, recordId) => {
+    const cacheKey = `${collection}/${recordId}`;
+    if (!gets.has(cacheKey)) gets.set(cacheKey, db.get(env, collection, recordId));
+    return gets.get(cacheKey);
+  };
   const query = (collection, field, value) => {
     const cacheKey = JSON.stringify([collection, field, value]);
     if (!queries.has(cacheKey)) queries.set(cacheKey, db.query(env, collection, {
@@ -31,7 +36,7 @@ export async function planDepartmentAssignments(env, user, scope, cap, body, ite
     // Exact legacy lookups include older main-branch records with no BranchId.
     for (const value of new Set([item.ItemName, previous?.ItemName].filter(Boolean))) lookups.push(query(config.Collection, 'ItemName', value));
     for (const value of new Set([item.ItemCode, previous?.ItemCode].filter(Boolean))) lookups.push(query(config.Collection, 'ItemCode', value));
-    const [direct, groups] = await Promise.all([db.get(env, config.Collection, proposedId), Promise.all(lookups)]);
+    const [direct, groups] = await Promise.all([get(config.Collection, proposedId), Promise.all(lookups)]);
     const matches = new Map(groups.flat().filter(row => inScope(row, Department)
       && (row.ProcurementItemId === item.ItemId || names.has(key(row.ItemName)) || (key(row.ItemCode) && codes.has(key(row.ItemCode)))))
       .map(row => [row.__id, row]));
@@ -49,7 +54,7 @@ export async function planDepartmentAssignments(env, user, scope, cap, body, ite
     for (const identity of [item, ...(target && key(config.StoreType ? target.ItemCode : target.ItemName) ? [target] : [])]) {
       const claim = await procurementIdentityClaim(scope, 'department', { ...identity, ItemId: item.ItemId, InventoryId }, Department, SchoolSection);
       if (writes.has(`procurementOperations/${claim.documentId}`)) continue;
-      const existingClaim = await db.get(env, 'procurementOperations', claim.documentId);
+      const existingClaim = await get('procurementOperations', claim.documentId);
       if (existingClaim) {
         if (existingClaim.ItemId !== item.ItemId || existingClaim.InventoryId !== InventoryId)
           fail(`${label}: this item identity is already registered to another record. Refresh and review it first.`, 409);

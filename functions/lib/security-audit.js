@@ -138,6 +138,7 @@ const COMPACT_ACTIONS = Object.freeze({
 });
 
 const MODULE_ACTIONS = Object.freeze({
+  'staff-procurement': { assignitems: 'Assign central stock items to departments' },
   'staff-library': {
     savetitle: 'Save library book title', addcopy: 'Add library book copy', restorecopy: 'Restore library book copy',
     repaircopystatus: 'Repair library book copy status', checkout: 'Issue library book to borrower',

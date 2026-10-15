@@ -34,6 +34,19 @@
 .procurement-table-compact td small { margin: 0; line-height: 1.2; }
 .procurement-table.procurement-table-compact button { margin: 0; min-height: 32px; padding: 4px 10px; }
 .procurement-table-compact .procurement-actions { gap: .35rem; }
+.procurement-bulk-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .5rem; margin-bottom: .5rem; }
+.procurement-bulk-toolbar > span { font-size: .8rem; color: var(--muted, #566e84); }
+.procurement-bulk-toolbar button { margin: 0; }
+.procurement-table .procurement-select-cell { width: 44px; padding: 0 4px; }
+.procurement-select-cell label { display: flex; align-items: center; justify-content: center; min-height: 40px; margin: 0; cursor: pointer; }
+.procurement-select-cell input { width: 18px; height: 18px; min-height: 18px; margin: 0; }
+.procurement-bulk-items { max-height: 180px; overflow: auto; margin: 0; padding: .5rem .5rem .5rem 1.6rem; border: 1px solid var(--line, #ccdcea); border-radius: 7px; font-size: .86rem; }
+.procurement-bulk-items li { padding: .15rem 0; }
+.procurement-bulk-dropdown { min-width: 0; border: 1px solid var(--line, #ccdcea); border-radius: 7px; }
+.procurement-bulk-dropdown summary { box-sizing: border-box; min-height: 44px; padding: .65rem; font-size: .9rem; font-weight: 700; cursor: pointer; }
+.procurement-bulk-dropdown summary:focus-visible { outline: 2px solid #17a99b; outline-offset: -2px; border-radius: 7px; }
+.procurement-bulk-dropdown > .procurement-item-picker { border: 0; border-top: 1px solid var(--line, #ccdcea); border-radius: 0; }
+.procurement-bulk-dropdown [data-proc-bulk-status]:not(:empty) { margin-top: .4rem; }
 .procurement-empty { padding: 1.5rem; color: var(--muted, #566e84); }
 .procurement-section-note { color: var(--muted, #566e84); font-size: .85rem; line-height: 1.5; }
 .procurement-dialog { width: min(850px, calc(100vw - 24px)); max-width: calc(100vw - 24px); max-height: calc(100dvh - 32px); padding: 1.2rem; color: var(--text, #173753); background: var(--surface, #fff); border: 1px solid var(--line, #ccdcea); border-radius: 14px; overflow: auto; }

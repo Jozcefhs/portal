@@ -121,7 +121,7 @@ export async function handleProcurementAction(env, user, body = {}, dependencies
       requests: requests.rows, purchases: purchases.rows, transfers: receiveFlags(transfers.rows),
       paging: { requests: requests.paging, purchases: purchases.paging, transfers: transfers.paging } };
   }
-  const actions = new Set(['settings', 'saveitem', 'savedestination', 'importitems', 'request', 'reviewrequest', 'createpurchase', 'reviewpurchase', 'receivepurchase', 'issue', 'confirmreceipt', 'returntransfer']);
+  const actions = new Set(['settings', 'saveitem', 'assignitems', 'savedestination', 'importitems', 'request', 'reviewrequest', 'createpurchase', 'reviewpurchase', 'receivepurchase', 'issue', 'confirmreceipt', 'returntransfer']);
   if (!actions.has(action)) fail('Unknown Procurement action.');
   const requestId = id(body.RequestId, 'operation reference');
   if (requestId.length < 8) fail('The operation reference is too short.');
@@ -224,6 +224,49 @@ export async function handleProcurementAction(env, user, body = {}, dependencies
     }
     stage(C.items, ItemId, item, existing);
     result.ItemId = ItemId;
+  } else if (action === 'assignitems') {
+    requireCapability(cap, 'canManage');
+    if (!Array.isArray(body.Items) || !body.Items.length || body.Items.length > 20) fail('Select between 1 and 20 central items.');
+    if (!Array.isArray(body.AssignedDepartments) || !body.AssignedDepartments.length) fail('Select at least one department.');
+    const SchoolSection = sectionFor(user, scope, body.SchoolSection), seen = new Set();
+    const selected = body.Items.map(row => {
+      const ItemId = id(row?.ItemId, 'central item');
+      if (seen.has(ItemId)) fail('Select each central item only once.');
+      seen.add(ItemId); return { ItemId, ExpectedRevision: row.ExpectedRevision };
+    });
+    const plans = new Array(selected.length), cache = {}; let cursor = 0;
+    // Share request-local reads and bound concurrency. Every plan is checked
+    // before a single atomic commit; no per-item saves or partial success.
+    const prepare = async () => {
+      while (cursor < selected.length) {
+        const index = cursor++, row = selected[index], existing = await central(row.ItemId);
+        try {
+          version(row, existing);
+          const plan = await planDepartmentAssignments(env, user, scope, cap, body, existing, existing, db, now, cache);
+          const configured = [...new Set([...(existing.AssignedDepartmentsBySection?.[SchoolSection] || []), ...plan.assignments[SchoolSection]])].sort();
+          plan.assignments[SchoolSection] = configured;
+          plan.summary.Departments = configured;
+          plans[index] = { existing, plan };
+        } catch (error) { error.message = `${existing.ItemName}: ${error.message}`; throw error; }
+      }
+    };
+    // allSettled also drains in-flight reads if another item is invalid.
+    const outcomes = await Promise.allSettled(Array.from({ length: Math.min(4, selected.length) }, prepare));
+    const failure = outcomes.find(row => row.status === 'rejected');
+    if (failure) throw failure.reason;
+    const paths = new Set();
+    for (const { existing, plan } of plans) {
+      for (const entry of plan.writes) {
+        const path = `${entry.collectionPath}/${entry.documentId}`;
+        if (paths.has(path)) fail('Two selected items match the same department record or identity. Review them separately; nothing was saved.', 409);
+        paths.add(path); stage(entry.collectionPath, entry.documentId, entry.data, entry.previous);
+      }
+      stage(C.items, existing.ItemId, { ...next(existing), AssignedDepartmentsBySection: plan.assignments }, existing);
+    }
+    if (writes.length > 450) fail('This selection needs too many updates. Assign fewer items at once; nothing was saved.');
+    result.ItemAssignments = plans.map(({ existing, plan }) => ({ ItemId: existing.ItemId, ItemName: existing.ItemName, ...plan.summary }));
+    result.summary = { Items: plans.length, Created: plans.reduce((sum, row) => sum + row.plan.summary.Created, 0), Reused: plans.reduce((sum, row) => sum + row.plan.summary.Reused, 0) };
+    result.message = `${result.summary.Items} central items assigned. ${result.summary.Created} department items created at zero stock; ${result.summary.Reused} existing items reused. Existing assignments, stock and prices are unchanged.`;
   } else if (action === 'savedestination') {
     requireCapability(cap, 'canManage');
     const Department = clean(body.Department), SchoolSection = sectionFor(user, scope, body.SchoolSection);
@@ -382,6 +425,7 @@ export async function handleProcurementAction(env, user, body = {}, dependencies
   stage(C.movements, operationId, { ...base, Action: action, RequestId: requestId, Lines: movements, EntityId: result.TransferId || result.PurchaseId || result.RequisitionId || result.InventoryId || result.ItemId || scope.ScopeKey,
     Notes: clean(body.Notes), OverrideReason: clean(body.OverrideReason),
     ...(result.DepartmentAssignments ? { DepartmentAssignments: result.DepartmentAssignments } : {}),
+    ...(result.ItemAssignments ? { ItemAssignments: result.ItemAssignments, AssignmentSummary: result.summary } : {}),
     ...(result.importedItems ? { ImportedItems: result.importedItems, ImportSummary: result.summary,
       ...(result.Department ? { Department: result.Department, SchoolSection: result.SchoolSection } : {}) } : {}) }, null);
   stage(C.operations, operationId, { ...base, Action: action, Fingerprint: fingerprint, Result: result }, null);

@@ -35,6 +35,11 @@ test('bounded Procurement audit still identifies valid item imports', async () =
   assert.equal((await request.json()).Rows.length, 1);
 });
 
+test('bulk department assignment audit uses an explicit action label', () => {
+  assert.equal(securityAuditAction({ pathname: '/api/staff-procurement', method: 'POST', body: { action: 'assignitems' } }),
+    'Assign central stock items to departments');
+});
+
 test('help audit records request metadata without cloning the owner settings payload', async () => {
   const request = new Request('https://dynamax.cc/api/help-config', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },

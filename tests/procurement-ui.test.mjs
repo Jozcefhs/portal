@@ -24,11 +24,12 @@ function element() {
   };
 }
 function fixture(overrides = {}, options = {}) {
-  const nodes = new Map(['[data-proc-status]', '[data-proc-count]', '[data-proc-body]'].map(selector => [selector, element()]));
+  const nodes = new Map(['[data-proc-status]', '[data-proc-count]', '[data-proc-body]', '[data-proc-stock-selection-count]', '[data-proc-action="assignitems"]', '[data-proc-action="clearstockselection"]'].map(selector => [selector, element()]));
   const root = element(); root.querySelector = selector => nodes.get(selector); root.querySelectorAll = () => [];
   const modalForm = element(); const progress = element();
   const importNodes = new Map(['[data-proc-import-csv]', '[data-proc-import-results]', '[data-proc-import-confirm]', 'button[type="submit"]', '[data-proc-import-preview]', '[data-proc-import-file]', '[data-proc-import-template]'].map(selector => [selector, element()]));
   const pickerNodes = new Map(['[data-proc-pick-search]', '[data-proc-choices]', '[data-proc-pick-count]', '[data-proc-pick-status]', '[data-proc-pick-all]', '[data-proc-pick-clear]', '[data-proc-pick-empty]', '[data-proc-lines]'].map(selector => [selector, element()]));
+  const bulkNodes = new Map(['[data-proc-bulk-from-item]', '[data-proc-bulk-summary]', '[data-proc-bulk-count]', '[data-proc-bulk-status]', '[data-proc-bulk-search]', '[data-proc-bulk-choices]', '[data-proc-bulk-preview]', '[data-proc-bulk-all]', '[data-proc-bulk-clear]'].map(selector => [selector, element()]));
   const choices = pickerNodes.get('[data-proc-choices]'), holder = pickerNodes.get('[data-proc-lines]');
   const decode = text => text.replaceAll('&quot;', '"').replaceAll('&#39;', "'").replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&amp;', '&');
   let choiceMarkup = '';
@@ -38,6 +39,13 @@ function fixture(overrides = {}, options = {}) {
       dataset: { procPickItem: decode(match[1]) }, matches: selector => selector === '[data-proc-pick-item]' }));
   } });
   choices.querySelectorAll = () => choices.children;
+  const bulkChoices = bulkNodes.get('[data-proc-bulk-choices]'); let bulkMarkup = '';
+  Object.defineProperty(bulkChoices, 'innerHTML', { get: () => bulkMarkup, set(value) {
+    bulkMarkup = value;
+    bulkChoices.children = [...value.matchAll(/data-proc-bulk-choice="([^"]*)"/g)].map(match => ({ ...element(), checked: false,
+      dataset: { procBulkChoice: decode(match[1]) }, matches: selector => selector === '[data-proc-bulk-choice]' }));
+  } });
+  bulkChoices.querySelectorAll = () => bulkChoices.children;
   const makeLine = () => {
     const line = element(), controls = new Map(['[data-line-quantity]', '[data-line-cost]', '[data-line-inventory]', '[data-remove-line]'].map(selector => [selector, element()]));
     let markup = '';
@@ -48,9 +56,9 @@ function fixture(overrides = {}, options = {}) {
     line.querySelector = selector => controls.get(selector); line.querySelectorAll = () => [...controls.values()];
     return line;
   };
-  modalForm.querySelector = selector => importNodes.get(selector) || pickerNodes.get(selector) || progress;
+  modalForm.querySelector = selector => importNodes.get(selector) || pickerNodes.get(selector) || bulkNodes.get(selector) || progress;
   let departmentChoices = [];
-  modalForm.querySelectorAll = selector => selector === '[data-proc-assign-department]:checked' ? departmentChoices.filter(input => input.checked) : selector === '[data-proc-import-source]' ? [importNodes.get('[data-proc-import-csv]'), importNodes.get('[data-proc-import-file]')] : selector === 'button, input, select, textarea' ? [...importNodes.values(), ...pickerNodes.values(), ...choices.children, ...departmentChoices, ...holder.children.flatMap(line => line.querySelectorAll()), modalForm.elements.Department].filter(Boolean) : [];
+  modalForm.querySelectorAll = selector => selector === '[data-proc-assign-department]:checked' ? departmentChoices.filter(input => input.checked) : selector === '[data-proc-import-source]' ? [importNodes.get('[data-proc-import-csv]'), importNodes.get('[data-proc-import-file]')] : selector === 'button, input, select, textarea' ? [...importNodes.values(), ...pickerNodes.values(), ...bulkNodes.values(), ...bulkChoices.children, ...choices.children, ...departmentChoices, ...holder.children.flatMap(line => line.querySelectorAll()), modalForm.elements.Department].filter(Boolean) : [];
   modalForm.elements = { Department: element(), ItemCode: element(), Discrepancy: { checked: false } };
   const modal = element(); modal.querySelector = () => modalForm;
   let modalMarkup = '';
@@ -86,8 +94,123 @@ function fixture(overrides = {}, options = {}) {
   } });
   const action = (value, id = '') => ({ dataset: { procAction: value, id }, closest() { return this; } });
   const tab = value => ({ dataset: { procTab: value }, closest() { return this; } });
-  return { ui: window.DynamaxProcurement, root, nodes, calls, data, controller, modal, modalForm, progress, action, tab, importNodes, downloads, pickerNodes, departmentChoices: () => departmentChoices, preview: result => { previewResult = result; }, fail: error => { fail = error; }, failList: error => { listFailure = error; }, lookup: result => { lookupResult = result; }, records: result => { recordsResult = result; }, detail: record => { detailResult = record; } };
+  return { ui: window.DynamaxProcurement, root, nodes, calls, data, controller, modal, modalForm, progress, action, tab, importNodes, downloads, pickerNodes, bulkNodes, departmentChoices: () => departmentChoices, preview: result => { previewResult = result; }, fail: error => { fail = error; }, failList: error => { listFailure = error; }, lookup: result => { lookupResult = result; }, records: result => { recordsResult = result; }, detail: record => { detailResult = record; } };
 }
+
+async function bulkFixture(overrides = {}, options = {}) {
+  const view = fixture({ items: [
+    { ItemId: 'soap', ItemName: 'Soap <sample>', ItemCode: 'SOAP', Unit: 'bottles', Quantity: 12, Revision: 3 },
+    { ItemId: 'rice', ItemName: 'Rice', ItemCode: 'RICE', Unit: 'kg', Quantity: 90, Revision: 7 },
+    { ItemId: 'vendor', ItemName: 'Vendor item', Unit: 'kg', Quantity: 10, VendorId: 'vendor' }
+  ], departments: [{ Key: 'clinic', Name: 'Clinic' }, { Key: 'kitchen', Name: 'Kitchen' }], ...overrides }, options);
+  await tick(); await view.root.fire('click', view.tab('stock'));
+  const bulk = selector => view.bulkNodes.get(selector), choices = bulk('[data-proc-bulk-choices]');
+  return { ...view, bulk, choices,
+    selectStock: (itemId, checked = true) => view.root.fire('change', { checked, dataset: { procStockItem: itemId }, matches: selector => selector === '[data-proc-stock-item]' }),
+    searchStock: value => view.root.fire('input', { value, matches: selector => selector === '[data-proc-search]' }),
+    async choose(itemId, checked = true) { const input = choices.children.find(row => row.dataset.procBulkChoice === itemId); assert.ok(input); input.checked = checked; await choices.fire('change', input); },
+    async searchItems(value) { bulk('[data-proc-bulk-search]').value = value; await bulk('[data-proc-bulk-search]').fire('input'); }
+  };
+}
+
+test('central stock selections survive searching and submit all selected revisions and departments together', async t => {
+  const view = await bulkFixture(); t.after(() => view.controller.destroy());
+  assert.match(view.nodes.get('[data-proc-body]').innerHTML, /data-proc-stock-item="rice"/);
+  assert.doesNotMatch(view.nodes.get('[data-proc-body]').innerHTML, /data-proc-stock-item="vendor"/);
+  assert.equal(view.nodes.get('[data-proc-action="assignitems"]').disabled, true);
+  await view.selectStock('soap'); await view.searchStock('RICE'); await view.root.fire('click', view.action('selectstockmatches'));
+  assert.match(view.nodes.get('[data-proc-stock-selection-count]').textContent, /2 of 20/);
+  await view.root.fire('click', view.action('assignitems'));
+  assert.deepEqual(view.choices.children.map(input => [input.dataset.procBulkChoice, input.checked]), [['rice', true], ['soap', true]]);
+  assert.match(view.bulk('[data-proc-bulk-preview]').innerHTML, /Soap &lt;sample&gt;/);
+  view.departmentChoices().forEach(input => { input.checked = true; }); await view.modalForm.fire('submit');
+  const sent = view.calls.find(call => call.action === 'assignitems').payload;
+  assert.deepEqual(sent.Items, [{ ItemId: 'rice', ExpectedRevision: 7 }, { ItemId: 'soap', ExpectedRevision: 3 }]);
+  assert.deepEqual(sent.AssignedDepartments, ['clinic', 'kitchen']); assert.equal(sent.SchoolSection, 'Secondary');
+  assert.equal(sent.Quantity, undefined); assert.equal(sent.ItemName, undefined);
+  assert.match(view.nodes.get('[data-proc-stock-selection-count]').textContent, /0 of 20/);
+});
+
+test('Edit central item opens a searchable checkbox dropdown preselected with that item, without applying item edits', async t => {
+  const view = await bulkFixture(); t.after(() => view.controller.destroy());
+  await view.root.fire('click', view.action('edititem', 'soap'));
+  assert.match(view.modal.innerHTML, /Assign multiple items/);
+  view.modalForm.values = { ItemName: 'Unsaved name', Unit: 'wrong unit', Quantity: 1000 };
+  await view.bulk('[data-proc-bulk-from-item]').fire('click');
+  assert.match(view.modal.innerHTML, /<details class="procurement-bulk-dropdown/);
+  assert.doesNotMatch(view.modal.innerHTML, /name="ItemName"|name="Unit"/);
+  assert.match(view.bulk('[data-proc-bulk-summary]').textContent, /1 item selected/);
+  assert.deepEqual(view.choices.children.map(input => [input.dataset.procBulkChoice, input.checked]), [['rice', false], ['soap', true]]);
+  await view.searchItems('kg'); await view.choose('rice');
+  await view.searchItems('sOAp'); assert.equal(view.choices.children[0].checked, true);
+  await view.choose('soap', false); await view.choose('soap');
+  view.departmentChoices()[0].checked = true; await view.modalForm.fire('submit');
+  const sent = view.calls.find(call => call.action === 'assignitems').payload;
+  assert.equal(sent.Items.length, 2); assert.equal(sent.ItemName, undefined); assert.equal(sent.Unit, undefined); assert.equal(sent.Quantity, undefined);
+  assert.ok(!view.calls.some(call => call.action === 'saveitem'));
+});
+
+test('bulk assignment requires items and departments, and clearing includes hidden selections', async t => {
+  const view = await bulkFixture(); t.after(() => view.controller.destroy());
+  await view.selectStock('rice'); await view.root.fire('click', view.action('assignitems'));
+  await view.modalForm.fire('submit'); assert.match(view.progress.textContent, /at least one department/);
+  view.departmentChoices()[0].checked = true;
+  await view.searchItems('soap'); await view.bulk('[data-proc-bulk-clear]').fire('click');
+  await view.modalForm.fire('submit'); assert.match(view.progress.textContent, /at least one central item/);
+  assert.ok(!view.calls.some(call => call.action === 'assignitems'));
+  await view.bulk('[data-proc-bulk-all]').fire('click'); assert.match(view.bulk('[data-proc-bulk-summary]').textContent, /1 item selected/);
+  await view.searchItems('rice'); assert.equal(view.choices.children[0].checked, false);
+  await view.modalForm.fire('submit'); assert.deepEqual(view.calls.find(call => call.action === 'assignitems').payload.Items, [{ ItemId: 'soap', ExpectedRevision: 3 }]);
+  await view.selectStock('soap'); await view.searchStock('rice'); await view.root.fire('click', view.action('clearstockselection'));
+  assert.match(view.nodes.get('[data-proc-stock-selection-count]').textContent, /0 of 20/);
+});
+
+test('both bulk item selectors enforce the 20-item limit without partial selections', async t => {
+  const items = Array.from({ length: 21 }, (_, i) => ({ ItemId: `item${i}`, ItemName: `Item ${i}`, Unit: 'pcs', Revision: 1 }));
+  const view = await bulkFixture({ items }); t.after(() => view.controller.destroy());
+  await view.root.fire('click', view.action('selectstockmatches'));
+  assert.match(view.nodes.get('[data-proc-stock-selection-count]').textContent, /0 of 20/);
+  await view.selectStock('item0'); await view.root.fire('click', view.action('assignitems'));
+  await view.bulk('[data-proc-bulk-all]').fire('click');
+  assert.match(view.bulk('[data-proc-bulk-status]').textContent, /nothing was partially selected/);
+  assert.match(view.bulk('[data-proc-bulk-summary]').textContent, /1 item selected/);
+  for (let i = 1; i < 20; i++) await view.choose(`item${i}`);
+  assert.equal(view.choices.children.find(row => row.dataset.procBulkChoice === 'item20').disabled, true);
+  await view.choose('item20'); assert.match(view.bulk('[data-proc-bulk-summary]').textContent, /20 items selected/);
+  await view.choose('item0', false); await view.choose('item20');
+  view.departmentChoices()[0].checked = true; await view.modalForm.fire('submit');
+  const selected = view.calls.find(call => call.action === 'assignitems').payload.Items;
+  assert.equal(selected.length, 20); assert.ok(!selected.some(row => row.ItemId === 'item0')); assert.ok(selected.some(row => row.ItemId === 'item20'));
+});
+
+test('bulk assignment retry uses the original request and rejects a changed selection after a lost response', async t => {
+  const view = await bulkFixture(); t.after(() => view.controller.destroy());
+  await view.selectStock('rice'); await view.root.fire('click', view.action('assignitems')); view.departmentChoices()[0].checked = true;
+  view.fail(new Error('Connection lost')); await view.modalForm.fire('submit'); const original = view.calls.at(-1);
+  await view.modalForm.fire('submit'); assert.deepEqual(view.calls.at(-1), original);
+  await view.choose('soap'); await view.modalForm.fire('submit'); assert.deepEqual(view.calls.at(-1), original);
+  assert.match(view.progress.textContent, /before changing or resubmitting/);
+  await view.choose('soap', false); view.fail(null); await view.modalForm.fire('submit');
+  assert.deepEqual(view.calls.filter(call => call.action === 'assignitems').at(-1), original);
+});
+
+test('bulk table selection clears only after successful scope reload', async t => {
+  const view = await bulkFixture(); t.after(() => view.controller.destroy()); await view.selectStock('rice');
+  const scopeInput = { value: 'Primary', matches: selector => selector === '[data-proc-school-section]' };
+  view.failList(new Error('Offline')); await view.root.fire('change', scopeInput);
+  assert.equal(scopeInput.value, 'Secondary'); assert.match(view.nodes.get('[data-proc-stock-selection-count]').textContent, /1 of 20/);
+  view.failList(null); scopeInput.value = 'Primary'; await view.root.fire('change', scopeInput);
+  assert.match(view.nodes.get('[data-proc-stock-selection-count]').textContent, /0 of 20/);
+});
+
+test('bulk assignment controls and forged events cannot bypass read-only or manage permission', async t => {
+  for (const [overrides, options] of [[{}, { readOnly: true }], [{ capabilities: { canRequest: true } }, {}]]) {
+    const view = await bulkFixture(overrides, options); t.after(() => view.controller.destroy());
+    assert.doesNotMatch(view.nodes.get('[data-proc-body]').innerHTML, /data-proc-stock-item|data-proc-action="assignitems"/);
+    await view.selectStock('rice'); await view.root.fire('click', view.action('assignitems')); await view.root.fire('click', view.action('edititem', 'rice'));
+    assert.equal(view.modal.innerHTML, ''); assert.ok(!view.calls.some(call => call.action === 'assignitems'));
+  }
+});
 
 test('central item edit preselects saved departments and submits all checked departments in the current section', async t => {
   const view = fixture({ departments: [{ Key: 'clinic', Name: 'Clinic' }, { Key: 'kitchen', Name: 'Kitchen <sample>' }],

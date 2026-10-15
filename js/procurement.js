@@ -46,6 +46,7 @@
   function mount(root, options) {
     mounted?.destroy();
     let data = {}, tab = 'requests', query = '', schoolSection = '', disposed = false, busy = false, dialog = null, notice = '';
+    const stockSelection = new Set(), stockSelectionLimit = 20;
     const controllers = new Set();
     const cap = () => data.capabilities || {};
     const writable = () => !options.readOnly && data.readOnly !== true;
@@ -116,6 +117,7 @@
       if (!result || disposed) return false;
       data = result;
       schoolSection = clean(data.schoolSection || requestedSchoolSection || (data.schoolSections || [])[0]);
+      stockSelection.clear();
       draw();
       return true;
     }
@@ -125,6 +127,17 @@
     const lineSummary = row => (row.Lines || []).map(line => `${esc(line.ItemName || items().find(item => key(item) === line.ItemId)?.ItemName || line.ItemId)} × <span class="procurement-number">${number(line.Quantity)}</span>${line.DepartmentItemName ? `<small>Department item: ${esc(line.DepartmentItemName)}</small>` : ''}`).join('<br>');
     function actions(buttons) { return `<div class="procurement-actions">${buttons.join('')}</div>`; }
     const button = (action, id, label) => `<button type="button" data-proc-action="${esc(action)}" data-id="${esc(id)}">${esc(label)}</button>`;
+    function syncStockSelection() {
+      const count = root.querySelector('[data-proc-stock-selection-count]');
+      if (count) count.textContent = `${stockSelection.size} of ${stockSelectionLimit} items selected. Selections are kept while searching.`;
+      root.querySelectorAll('[data-proc-stock-item]').forEach(input => {
+        input.checked = stockSelection.has(input.dataset.procStockItem);
+        input.disabled = busy || !can('canManage') || (!input.checked && stockSelection.size >= stockSelectionLimit);
+      });
+      const assign = root.querySelector('[data-proc-action="assignitems"]'), clear = root.querySelector('[data-proc-action="clearstockselection"]');
+      if (assign) assign.disabled = busy || !stockSelection.size || !departments().length;
+      if (clear) clear.disabled = busy || !stockSelection.size;
+    }
     function drawBody() {
       let rows, html, headers;
       if (tab === 'settings') {
@@ -133,8 +146,9 @@
         return;
       } else if (tab === 'stock') {
         rows = filterRows(items(), query);
-        headers = ['Item', 'Unit', { label: 'Central stock', numeric: true }, { label: 'Reorder level', numeric: true }, 'Action'];
-        html = table(headers, rows, row => `<tr><td><strong>${esc(itemName(row))}</strong><small>${esc(row.ItemCode || key(row))}${row.Category ? ` · ${esc(row.Category)}` : ''}</small></td><td>${esc(row.Unit)}</td><td class="procurement-number">${number(row.Quantity)}</td><td class="procurement-number">${number(row.ReorderLevel)}</td><td>${can('canManage') ? button('edititem', key(row), 'Edit item') : ''}</td></tr>`, 'No central items match. Procurement can add an organisation-owned item to begin.');
+        headers = [...(can('canManage') ? ['Select'] : []), 'Item', 'Unit', { label: 'Central stock', numeric: true }, { label: 'Reorder level', numeric: true }, 'Action'];
+        html = (can('canManage') ? `<div class="procurement-bulk-toolbar"><span data-proc-stock-selection-count aria-live="polite">${stockSelection.size} of ${stockSelectionLimit} items selected. Selections are kept while searching.</span><div class="procurement-actions">${button('selectstockmatches', '', 'Select matches')}${button('clearstockselection', '', 'Clear selection')}${button('assignitems', '', 'Assign departments')}</div></div>` : '')
+          + table(headers, rows, row => `<tr>${can('canManage') ? `<td class="procurement-select-cell"><label><input type="checkbox" data-proc-stock-item="${esc(key(row))}" aria-label="Select ${esc(itemName(row))}"${stockSelection.has(key(row)) ? ' checked' : ''}></label></td>` : ''}<td><strong>${esc(itemName(row))}</strong><small>${esc(row.ItemCode || key(row))}${row.Category ? ` · ${esc(row.Category)}` : ''}</small></td><td>${esc(row.Unit)}</td><td class="procurement-number">${number(row.Quantity)}</td><td class="procurement-number">${number(row.ReorderLevel)}</td><td>${can('canManage') ? button('edititem', key(row), 'Edit item') : ''}</td></tr>`, 'No central items match. Procurement can add an organisation-owned item to begin.');
       } else if (tab === 'purchases') {
         rows = filterRows(data.purchases || [], query);
         headers = ['Purchase / supplier', 'Items', { label: 'Amount', numeric: true }, 'Status', 'Action'];
@@ -158,6 +172,7 @@
         ? `${rows.length} of ${total} loaded ${paging.mode === 'history' ? 'history' : 'active'} records shown. ${paging.hasMore ? 'More records are available.' : 'End of this record list.'} Search covers loaded records only.`
         : `${rows.length} of ${total} records shown`;
       root.querySelector('[data-proc-body]').innerHTML = `${html}${paging?.hasMore ? `<div class="procurement-pagination">${button('more', '', 'Load more records')}</div>` : ''}`;
+      if (tab === 'stock') syncStockSelection();
     }
     function draw() {
       if (disposed) return;
@@ -184,6 +199,14 @@
       drawBody();
     }
     async function changeScope(event) {
+      if (event.target.matches('[data-proc-stock-item]')) {
+        const itemId = event.target.dataset.procStockItem;
+        if (busy || !can('canManage') || !items().some(row => key(row) === itemId)) { syncStockSelection(); return; }
+        if (!event.target.checked) stockSelection.delete(itemId);
+        else if (stockSelection.size < stockSelectionLimit) stockSelection.add(itemId);
+        else feedback(`Select up to ${stockSelectionLimit} items per assignment. Clear an item or save this batch first.`, true);
+        syncStockSelection(); return;
+      }
       if (event.target.matches('[data-proc-record-mode]')) {
         if (busy) return;
         const previous = data.paging?.[tab]?.mode || 'active';
@@ -353,20 +376,85 @@
           ...(withCost ? { UnitCost: node.querySelector('[data-line-cost]').value } : { InventoryId: node.querySelector('[data-line-inventory]').value }) })), withCost, !withCost);
       };
     }
+    function assignmentDepartmentChoices(assigned = new Set()) {
+      return departments().map(department => {
+        const value = departmentId(department);
+        return `<label class="procurement-pick-choice"><input type="checkbox" data-proc-assign-department value="${esc(value)}"${assigned.has(value) ? ' checked' : ''}><span>${esc(departmentName(value))}</span></label>`;
+      }).join('');
+    }
+    function bulkAssignmentDialog(initialItem = null) {
+      const catalog = items().slice().sort((a, b) => itemName(a).localeCompare(itemName(b), undefined, { sensitivity: 'base', numeric: true }));
+      const selected = new Set(initialItem ? [key(initialItem)] : stockSelection);
+      if (selected.size > stockSelectionLimit) { feedback('Select between 1 and 20 central items first.', true); return; }
+      const section = schoolSection || 'All';
+      const form = openDialog('Assign selected items to departments', `<p class="procurement-section-note procurement-full">School section: ${esc(section)}. Choose up to ${stockSelectionLimit} items, then add the checked departments to each. Existing saved assignments are kept. Item names, codes and stock are not edited here.</p>
+        <details class="procurement-bulk-dropdown procurement-full"><summary data-proc-bulk-summary>Choose items</summary><div class="procurement-item-picker"><label>Find central items<input type="search" data-proc-bulk-search placeholder="Search by item name, code or unit" autocomplete="off"></label><div class="procurement-picker-tools"><span data-proc-bulk-count aria-live="polite"></span><div class="procurement-actions"><button type="button" class="secondary" data-proc-bulk-all>Select matches</button><button type="button" class="secondary" data-proc-bulk-clear>Clear items</button></div></div><div class="procurement-item-choices" data-proc-bulk-choices></div><p class="procurement-section-note" data-proc-bulk-status aria-live="polite"></p></div></details>
+        <ul class="procurement-bulk-items procurement-full" data-proc-bulk-preview></ul>
+        <fieldset class="procurement-item-picker procurement-full"><legend>Choose departments — multiple selection</legend><div class="procurement-department-choices">${assignmentDepartmentChoices()}</div></fieldset>
+        <p class="procurement-section-note procurement-full">Missing department items are created at zero stock. Existing items are reused without changing stock or prices. Items assigned to stores need an item code. The entire selection is checked before saving; a conflict stops the whole batch. No stock is transferred.</p>`, (_fields, form) => {
+        if (!selected.size) throw new Error('Select at least one central item.');
+        const AssignedDepartments = [...form.querySelectorAll('[data-proc-assign-department]:checked')].map(input => input.value);
+        if (!AssignedDepartments.length) throw new Error('Select at least one department.');
+        return save('assignitems', { Items: catalog.filter(row => selected.has(key(row))).map(row => ({ ItemId: key(row), ExpectedRevision: row.Revision })), SchoolSection: section, AssignedDepartments }, form);
+      }, 'Assign selected items');
+      if (!form) return;
+      form.className = 'procurement-form procurement-request-form'; dialog.className = 'procurement-dialog procurement-request-dialog';
+      const search = form.querySelector('[data-proc-bulk-search]'), choices = form.querySelector('[data-proc-bulk-choices]');
+      const status = form.querySelector('[data-proc-bulk-status]');
+      const matches = () => catalog.filter(row => [itemName(row), row.ItemCode, row.Unit].some(value => clean(value).toLowerCase().includes(clean(search.value).toLowerCase())));
+      const sync = () => {
+        form.querySelector('[data-proc-bulk-summary]').textContent = `${selected.size} item${selected.size === 1 ? '' : 's'} selected — choose items`;
+        form.querySelector('[data-proc-bulk-count]').textContent = `${selected.size} of ${stockSelectionLimit} selected · ${matches().length} matching items`;
+        choices.querySelectorAll('[data-proc-bulk-choice]').forEach(input => {
+          input.checked = selected.has(input.dataset.procBulkChoice);
+          input.disabled = !input.checked && selected.size >= stockSelectionLimit;
+        });
+        form.querySelector('[data-proc-bulk-preview]').innerHTML = catalog.filter(row => selected.has(key(row)))
+          .map(row => `<li><strong>${esc(itemName(row))}</strong> · ${esc(row.ItemCode || key(row))} · ${esc(row.Unit)}</li>`).join('') || '<li>No items selected yet.</li>';
+        form.querySelector('[data-proc-bulk-clear]').disabled = !selected.size;
+      };
+      const drawChoices = () => {
+        choices.innerHTML = matches().map(row => `<label class="procurement-pick-choice"><input type="checkbox" data-proc-bulk-choice="${esc(key(row))}" aria-label="Select ${esc(itemName(row))}"><span><strong>${esc(itemName(row))}</strong><small>${esc(row.ItemCode)} · ${esc(row.Unit)} · ${number(row.Quantity)} centrally</small></span></label>`).join('') || '<p>No matching central items.</p>';
+        sync();
+      };
+      choices.addEventListener('change', event => {
+        if (busy || disposed || !event.target.matches('[data-proc-bulk-choice]')) return;
+        const itemId = event.target.dataset.procBulkChoice;
+        if (!catalog.some(row => key(row) === itemId)) return;
+        if (!event.target.checked) selected.delete(itemId);
+        else if (selected.size < stockSelectionLimit) selected.add(itemId);
+        else status.textContent = `Select no more than ${stockSelectionLimit} items per batch.`;
+        sync();
+      });
+      search.addEventListener('input', () => { if (!busy && !disposed) drawChoices(); });
+      form.querySelector('[data-proc-bulk-all]').addEventListener('click', () => {
+        if (busy || disposed) return;
+        const found = matches(), combined = new Set([...selected, ...found.map(key)]);
+        if (combined.size > stockSelectionLimit) { status.textContent = `These matches exceed the ${stockSelectionLimit}-item limit. Narrow your search; nothing was partially selected.`; return; }
+        found.forEach(row => selected.add(key(row))); status.textContent = ''; sync();
+      });
+      form.querySelector('[data-proc-bulk-clear]').addEventListener('click', () => {
+        if (busy || disposed) return;
+        selected.clear(); status.textContent = ''; sync();
+      });
+      drawChoices();
+    }
     function itemDialog(row = {}) {
       const section = schoolSection || 'All';
       const assigned = new Set(row.AssignedDepartmentsBySection?.[section] || (data.departmentInventory || [])
         .filter(target => !isVendorItem(target) && key(row) && target.ProcurementItemId === key(row)
           && clean(target.SchoolSection || 'All') === section).map(target => clean(target.Department)));
-      const choices = departments().map(department => {
-        const value = departmentId(department);
-        return `<label class="procurement-pick-choice"><input type="checkbox" data-proc-assign-department value="${esc(value)}"${assigned.has(value) ? ' checked' : ''}><span>${esc(departmentName(value))}</span></label>`;
-      }).join('');
-      const form = openDialog(row.ItemId ? 'Edit central item' : 'Add central item', `${input('ItemName', 'Item name', row.ItemName, 'text', 'required maxlength="160"')}${input('ItemCode', 'Item code', row.ItemCode, 'text', 'maxlength="80"')}${input('Unit', 'Stock unit', row.Unit || 'pcs', 'text', 'required maxlength="40"')}${input('Category', 'Category', row.Category, 'text', 'maxlength="100"')}${input('ReorderLevel', 'Reorder level', row.ReorderLevel || 0, 'number', 'min="0" step="0.001" required')}
+      const choices = assignmentDepartmentChoices(assigned);
+      const form = openDialog(row.ItemId ? 'Edit central item' : 'Add central item', `${row.ItemId ? '<div class="procurement-bulk-toolbar procurement-full"><span>Assign several existing items together. Unsaved edits in this form will not be applied.</span><button type="button" class="secondary" data-proc-bulk-from-item>Assign multiple items</button></div>' : ''}${input('ItemName', 'Item name', row.ItemName, 'text', 'required maxlength="160"')}${input('ItemCode', 'Item code', row.ItemCode, 'text', 'maxlength="80"')}${input('Unit', 'Stock unit', row.Unit || 'pcs', 'text', 'required maxlength="40"')}${input('Category', 'Category', row.Category, 'text', 'maxlength="100"')}${input('ReorderLevel', 'Reorder level', row.ReorderLevel || 0, 'number', 'min="0" step="0.001" required')}
         <fieldset class="procurement-item-picker procurement-full"><legend>Assign to departments — multiple selection</legend><p class="procurement-section-note">Current branch · School section: ${esc(section)}. Selected departments receive a zero-stock item only when no matching item exists. Existing items are reused without changing their stock or price. An item code is required for stores.</p><div class="procurement-department-choices">${choices || '<p>No receiving departments are enabled for this account.</p>'}</div><p class="procurement-section-note">Unticking a department removes this selection only; its existing item, stock and history are kept. This does not transfer stock or change staff permissions.</p></fieldset>
         <p class="procurement-section-note procurement-full">Central stock starts at zero. Record actual purchases received to add stock. Existing department quantities are not moved or overwritten.</p>`, (fields, form) => save('saveitem', { ...fields, ItemId: key(row), ReorderLevel: numeric(fields.ReorderLevel, 'Reorder level', true), ExpectedRevision: row.Revision || '',
           SchoolSection: section, AssignedDepartments: [...form.querySelectorAll('[data-proc-assign-department]:checked')].map(input => input.value) }, form), 'Save item');
-      if (form) { form.className = 'procurement-form procurement-request-form'; dialog.className = 'procurement-dialog procurement-request-dialog'; }
+      if (form) {
+        form.className = 'procurement-form procurement-request-form'; dialog.className = 'procurement-dialog procurement-request-dialog';
+        if (row.ItemId) form.querySelector('[data-proc-bulk-from-item]').addEventListener('click', () => {
+          if (!busy && !disposed && can('canManage')) bulkAssignmentDialog(row);
+        });
+      }
     }
     function requestDialog() {
       let read;
@@ -547,6 +635,16 @@
       const id = target.dataset.id, action = target.dataset.procAction;
       if (action === 'refresh') { notice = ''; await reload(); return; }
       if (action === 'more' && data.paging?.[tab]?.hasMore) return loadRecords(tab, data.paging[tab].mode, true);
+      if (tab === 'stock' && can('canManage')) {
+        if (action === 'selectstockmatches') {
+          const matches = filterRows(items(), query).map(key), combined = new Set([...stockSelection, ...matches]);
+          if (combined.size > stockSelectionLimit) feedback(`These matches exceed the ${stockSelectionLimit}-item limit. Narrow the search or tick individual items; nothing was partially selected.`, true);
+          else { matches.forEach(itemId => stockSelection.add(itemId)); feedback(''); }
+          syncStockSelection(); return;
+        }
+        if (action === 'clearstockselection') { stockSelection.clear(); feedback(''); syncStockSelection(); return; }
+        if (action === 'assignitems' && departments().length) return bulkAssignmentDialog();
+      }
       if (action === 'newitem' && can('canManage')) return itemDialog();
       if (action === 'batchitems' && ['stock', 'departments'].includes(tab) && can('canManage')) return batchItemsDialog();
       if (action === 'edititem' && can('canManage')) return itemDialog(items().find(row => key(row) === id));
