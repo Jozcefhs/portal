@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertServiceWorkerCacheVersion } from './helpers/service-worker-cache-version.mjs';
 import { readFile } from 'node:fs/promises';
 import {
   normalizeAcademicGenerationRules, buildAcademicGenerationProblem,
@@ -310,5 +311,5 @@ test('timetable web assets have new version identifiers for existing browser ins
   ]);
   assert.match(html, /css\/style\.css\?v=[^"]*timetable-generator-20261009/);
   assert.match(html, /js\/admin\.js\?v=[^"]*timetable-generator-20261009/);
-  assert.match(serviceWorker, /const CACHE = 'dynamax-v378-controlled-subject-changes'/);
+  assertServiceWorkerCacheVersion(serviceWorker, 378);
 });

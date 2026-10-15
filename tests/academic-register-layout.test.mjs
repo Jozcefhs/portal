@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { assertServiceWorkerCacheVersion } from './helpers/service-worker-cache-version.mjs';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
@@ -72,5 +73,5 @@ test('both workspace headers retain roster totals and use wrapping headers with 
   const shell = await read('admin.html');
   assert.match(shell, /css\/style\.css\?v=[^"]*20261013-academic-register/);
   assert.match(shell, /js\/admin\.js\?v=[^"]*20261013-academic-register/);
-  assert.match(await read('sw.js'), /dynamax-v378-controlled-subject-changes/);
+  assertServiceWorkerCacheVersion(await read('sw.js'), 378);
 });

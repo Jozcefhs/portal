@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertServiceWorkerCacheVersion } from './helpers/service-worker-cache-version.mjs';
 import { readFile } from 'node:fs/promises';
 import { runInNewContext } from 'node:vm';
 
@@ -245,6 +246,6 @@ test('attendance group assets are versioned, cached and loaded before the admin 
   const controller = html.indexOf('src="js/admin.js?v=');
   assert.ok(helper > 0 && controller > helper);
   assert.match(html, /js\/admin\.js\?v=[^"\n]*attendance-groups/);
-  assert.match(serviceWorker, /const CACHE = 'dynamax-v378-controlled-subject-changes'/);
+  assertServiceWorkerCacheVersion(serviceWorker, 378);
   assert.match(serviceWorker, /SHELL\.push\('\/css\/staff-attendance-groups\.css', '\/js\/staff-attendance-groups\.js'\)/);
 });

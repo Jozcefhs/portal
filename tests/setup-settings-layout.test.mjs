@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { assertServiceWorkerCacheVersion } from './helpers/service-worker-cache-version.mjs';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
@@ -23,5 +24,5 @@ test('terminology remains organisation-scoped and hidden from branch-locked and 
 
 test('settings stylesheet and offline shell refresh for the heading repair', () => {
   assert.match(html, /css\/style\.css\?v=[^"]*20261013-settings-heading/);
-  assert.match(worker, /dynamax-v378-controlled-subject-changes/);
+  assertServiceWorkerCacheVersion(worker, 378);
 });

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { assertServiceWorkerCacheVersion } from './helpers/service-worker-cache-version.mjs';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
@@ -119,6 +120,6 @@ test('cart and page scroll targets clear the sticky bar, while the phone cart st
 
 test('cache-busted layout assets are loaded and included in the new offline shell', () => {
   assert.match(html, /js\/parent-store-layout\.js\?v=20261008-sticky-controls" defer/);
-  assert.match(shell, /dynamax-v378-controlled-subject-changes/);
+  assertServiceWorkerCacheVersion(shell, 378);
   assert.match(shell, /SHELL\.push\('\/js\/parent-store-layout\.js'\)/);
 });

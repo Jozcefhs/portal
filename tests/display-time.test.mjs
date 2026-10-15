@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { assertServiceWorkerCacheVersion } from './helpers/service-worker-cache-version.mjs';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { spawnSync } from 'node:child_process';
@@ -124,6 +125,6 @@ test('every affected page loads the shared helper synchronously before consumers
     const helper = html.indexOf('js/display-time.js?v=20261010-wat-timestamps');
     assert.ok(helper > 0 && helper < html.indexOf(`js/${page}.js`), page);
   }
-  assert.match(read('sw.js'), /dynamax-v378-controlled-subject-changes/);
+  assertServiceWorkerCacheVersion(read('sw.js'), 378);
   assert.match(read('sw.js'), /\/js\/display-time.js/);
 });

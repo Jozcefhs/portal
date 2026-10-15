@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { assertServiceWorkerCacheVersion } from './helpers/service-worker-cache-version.mjs';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
@@ -84,5 +85,5 @@ test('staff shell and offline cache are versioned for the journal layout repair'
   const html = await read('admin.html');
   assert.match(html, /css\/style\.css\?v=[^"]*audit-journal-layout/);
   assert.match(html, /js\/admin\.js\?v=[^"]*audit-journal-layout/);
-  assert.match(await read('sw.js'), /dynamax-v378-controlled-subject-changes/);
+  assertServiceWorkerCacheVersion(await read('sw.js'), 378);
 });
