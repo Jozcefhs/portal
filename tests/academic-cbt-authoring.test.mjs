@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import vm from 'node:vm';
 
 import {
   academicCbtPaperDigest,
@@ -10,6 +11,77 @@ import { ACADEMIC_CBT_OPTION_STYLES } from '../functions/lib/academic-management
 
 const portalRoot = new URL('../', import.meta.url);
 const onePixelPng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+
+test('CBT lists every assigned subject, deduplicates arms and retains subjects with an empty roster', async () => {
+  const source = await readFile(new URL('js/admin.js', portalRoot), 'utf8');
+  const context = vm.createContext({ clean: value => String(value || '').trim(),
+    academicIsActive: row => row.Status === 'Active', academicFind: (rows, id) => rows.find(row => row.SubjectId === id),
+    academicLabel: (_rows, id) => id });
+  vm.runInContext(source.slice(source.indexOf('function academicCbtContexts('), source.indexOf('function academicCbtStatus(')), context);
+  const allocation = { Status: 'Active', AllocationRole: 'Subject Teacher', TeacherUsername: 'teacher', ClassId: 'grade10' };
+  const rows = { teacherAllocations: [
+    { ...allocation, SubjectId: 'english', ArmId: 'a' }, { ...allocation, SubjectId: 'english', ArmId: 'b' },
+    { ...allocation, SubjectId: 'history' }, { ...allocation, SubjectId: 'printing' },
+    { ...allocation, SubjectId: 'assembly' }, { ...allocation, SubjectId: 'old', Status: 'Inactive' },
+    { ...allocation, SubjectId: 'music', ClassId: 'grade11' }
+  ], subjects: [{ SubjectId: 'assembly', AssessmentCategory: 'TimetableOnly' }],
+  studentMemberships: [{ Status: 'Active', ClassId: 'grade10', SubjectIds: ['english', 'history'] }], classes: [] };
+  const contexts = context.academicCbtContexts({ staff: [] }, rows);
+  assert.deepEqual(Array.from(contexts, row => row.subjectId), ['english', 'history', 'printing', 'music']);
+  assert.equal(contexts.find(row => row.subjectId === 'printing').rosterCount, 0);
+  assert.match(source, /resetAcademicCbtDraft\(\);\s*academicCbtDraft.classroomId = context.classId;\s*academicManagementTaskViews.cbt = 'create'/);
+  assert.match(source, /if \(!context.rosterCount\) return setStatus/);
+});
+
+test('server accepts each of a teacher’s subjects independently and rejects other teachers and empty rosters', async () => {
+  const source = await readFile(new URL('functions/lib/academic-management.js', portalRoot), 'utf8');
+  const active = { Status: 'Active', SchoolSection: 'secondary' };
+  const period = { SessionId: 'session', TermId: 'term', ClassId: 'class' };
+  const state = { classes: [{ ...active, ClassId: 'class' }],
+    subjects: ['english', 'history', 'printing'].map(SubjectId => ({ ...active, SubjectId })),
+    teacherAllocations: ['english', 'history', 'printing'].map(SubjectId => ({ ...active, ...period, SubjectId, TeacherUsername: 'teacher', AllocationRole: 'Subject Teacher' })),
+    studentMemberships: [{ ...active, ...period, SubjectIds: ['english', 'history'] }] };
+  const context = vm.createContext({
+    ACADEMIC_CBT_STATE_KEYS: [],
+    academicOperationalContext: async () => ({ state, scope: { section: 'secondary' }, permissions: { teacherView: true }, session: { SessionId: 'session' }, term: { TermId: 'term' } }),
+    findById: (rows, id) => rows.find(row => row.ClassId === id || row.SubjectId === id),
+    assertReference: row => { assert.ok(row); return row; }, statusActive: row => row.Status === 'Active',
+    lower: value => String(value || '').toLowerCase(), actorUsername: user => user.username,
+    failure: (message, status, code) => Object.assign(new Error(message), { status, code }),
+    academicAssessmentForPeriod: async () => ({ Ready: true })
+  });
+  vm.runInContext(source.slice(source.indexOf('async function academicCbtClassContext('), source.indexOf('async function academicCbtPackageDigest(')), context);
+  for (const SubjectId of ['english', 'history']) {
+    const result = await context.academicCbtClassContext({}, { username: 'teacher' }, { ClassId: 'class', SubjectId });
+    assert.equal(result.subject.SubjectId, SubjectId);
+    assert.equal(result.roster.length, 1);
+  }
+  await assert.rejects(context.academicCbtClassContext({}, { username: 'other' }, { ClassId: 'class', SubjectId: 'history', TeacherUsername: 'teacher' }), { code: 'ACADEMIC_CBT_ALLOCATION_FORBIDDEN' });
+  await assert.rejects(context.academicCbtClassContext({}, { username: 'teacher' }, { ClassId: 'class', SubjectId: 'printing' }), { code: 'ACADEMIC_CBT_ROSTER_EMPTY' });
+});
+
+test('teacher subject menu spans assigned classes and selecting a different class keeps the correct subject', async () => {
+  const source = await readFile(new URL('js/admin.js', portalRoot), 'utf8');
+  const base = { Status: 'Active', AllocationRole: 'Subject Teacher', TeacherUsername: 'teacher' };
+  const rows = { teacherAllocations: [{ ...base, ClassId: 'grade10', SubjectId: 'english' }, { ...base, ClassId: 'grade11', SubjectId: 'history' }],
+    studentMemberships: [{ Status: 'Active', ClassId: 'grade10', SubjectIds: ['english'] }, { Status: 'Active', ClassId: 'grade11', SubjectIds: ['history'] }],
+    subjects: [], classes: [], cbtTests: [] };
+  const context = vm.createContext({ clean: value => String(value || '').trim(), escapeHtml: value => String(value ?? ''),
+    academicIsActive: row => row.Status === 'Active', academicFind: () => null, academicLabel: (_rows, id) => id,
+    academicSelectOptions: (rows, selected) => rows.map(row => `<option value="${row.RecordId}"${row.RecordId === selected ? ' selected' : ''}>${row.Name}</option>`).join(''),
+    ACADEMIC_CBT_OPTION_STYLES, ACADEMIC_CBT_MAX_PAPER_FILES: 12, table: () => '', academicCbtPaperPreviewMarkup: () => '',
+    academicCbtDraft: { clientRequestId: 'new', classroomId: 'grade10', contextKey: '', answerKey: [], files: [], theoryFiles: [], step: 1, questionCount: 1 }
+  });
+  vm.runInContext(source.slice(source.indexOf('function academicCbtContexts('), source.indexOf('function academicFinanceClearanceWorkspace(')), context);
+  const data = { permissions: { teacherView: true }, assessmentScheme: { Ready: true, Components: [{ Id: 'test', Name: 'Test', MaximumScore: 20 }] }, staff: [] };
+  const menu = html => html.match(/<select name="ContextKey"[^>]*>([\s\S]*?)<\/select>/)[1];
+  assert.match(menu(context.academicCbtWorkspace(data, rows)), /history · grade11/);
+  context.academicCbtDraft.classroomId = 'grade11';
+  context.academicCbtDraft.contextKey = 'grade11|history|teacher';
+  assert.match(menu(context.academicCbtWorkspace(data, rows)), /value="grade11\|history\|teacher" selected/);
+  assert.doesNotMatch(menu(context.academicCbtWorkspace({ ...data, permissions: {} }, rows)), /english/);
+  assert.match(source, /if \(selected\) cbtForm.elements.ClassroomId.value = selected.classId;/);
+});
 
 test('CBT papers accept only safe PDF/JPEG/PNG content and retain an upload digest', async () => {
   const paper = validateAcademicCbtPaper({ FileName: 'first-test.png', FileBase64: onePixelPng });

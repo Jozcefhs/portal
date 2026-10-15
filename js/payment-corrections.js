@@ -84,7 +84,7 @@
         if (busy || posted) return;
         lock(true); status.className = ''; status.textContent = 'Checking…';
         try { await task(); }
-        catch (error) { status.textContent = error.message; status.className = 'bad'; }
+        catch (error) { status.textContent = error.message; status.className = 'bad'; void window.DynamaxStaffActionFeedback?.report(error.message, 'bad'); }
         finally { lock(false); dialog.querySelector('[name="approvalPassword"]').value = ''; }
       };
       dialog.querySelector('[data-close]').addEventListener('click', () => { if (!busy) dialog.close(); });

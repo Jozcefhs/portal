@@ -760,8 +760,11 @@ function setFinancialInputValue(input, value) {
 }
 
 function setStatus(element, message, type = '') {
-  element.textContent = message || '';
-  element.className = type ? `status ${type}` : 'status';
+  if (element) {
+    element.textContent = message || '';
+    element.className = type ? `status ${type}` : 'status';
+  }
+  window.DynamaxStaffActionFeedback?.inline(message, type);
 }
 
 function setButtonLoading(button, loading, loadingText, normalText) {
@@ -776,9 +779,11 @@ async function runButtonAction(button, loadingText, action, normalText = '') {
   if (!button || button.disabled || button.getAttribute('aria-busy') === 'true') return undefined;
   const restingText = normalText || clean(button.textContent) || 'Continue';
   setButtonLoading(button, true, loadingText || 'Working...', restingText);
+  window.DynamaxStaffActionFeedback?.begin();
   try {
     return await action();
   } finally {
+    window.DynamaxStaffActionFeedback?.end();
     if (button.isConnected) setButtonLoading(button, false, loadingText || 'Working...', restingText);
   }
 }
@@ -871,7 +876,16 @@ async function staffFetch(input, init = {}) {
     throw lastError || new Error('The online service could not complete this request.');
   };
   if (requestUrl.origin === window.location.origin && requestUrl.pathname.startsWith('/api/')) {
-    return staffWorkspaceReads.fetch(requestUrl, options, network);
+    const feedback = window.DynamaxStaffActionFeedback;
+    const notify = feedback?.isMutation(requestUrl, options);
+    try {
+      const response = await staffWorkspaceReads.fetch(requestUrl, options, network);
+      if (notify) await feedback.response(response).catch(() => {});
+      return response;
+    } catch (error) {
+      if (notify && !staffSessionAbortController.signal.aborted) feedback.uncertain();
+      throw error;
+    }
   }
   return network();
 }
@@ -2028,6 +2042,7 @@ async function switchStaffBranch(nextBranchId) {
 }
 
 function showLogin(message = '', type = '') {
+  window.DynamaxDialogs?.clear?.();
   clearStaffWorkspaceState();
   dashboardEl.hidden = true;
   identityEl.hidden = true;
@@ -14084,15 +14099,17 @@ function academicSubjectChangeRequests(data) {
   const names = (ids) => (ids || []).map((id) => academicLabel(data.subjects || [], id, id)).join(', ') || 'None';
   return `<section class="academic-management-editor academic-management-editor-wide" data-academic-subject-change-requests><h3>Subject changes awaiting approval (${requests.length})</h3><p>Current subjects stay in place until approval. Scores are retained under their original subjects and are never copied to another subject. Another authorised academic administrator must review the request.</p>${requests.map((membership) => {
     const request = membership.PendingSubjectChange;
+    const destination = request.Kind === 'Classroom transfer'
+      ? `<p><strong>Classroom transfer:</strong> ${escapeHtml(academicLabel(data.classes || [], membership.ClassId))} / ${escapeHtml(academicLabel(data.arms || [], membership.ArmId))} → ${escapeHtml(academicLabel(data.classes || [], request.After?.ClassId))} / ${escapeHtml(academicLabel(data.arms || [], request.After?.ArmId))}. Current placement stays unchanged until approval. Complete destination subject choices afterwards.</p>` : '';
     const own = username && username === clean(request.RequestedByUsername).toLowerCase();
     const canReview = data.permissions?.canApproveSubjectChanges === true && !own;
     const form = canReview || own ? `<form class="academic-management-editor" data-academic-workflow="reviewAcademicSubjectChange">
       <input type="hidden" name="SchoolSection" value="${escapeHtml(membership.SchoolSection)}"><input type="hidden" name="MembershipId" value="${escapeHtml(academicRecordId(membership))}"><input type="hidden" name="RequestId" value="${escapeHtml(request.RequestId)}"><input type="hidden" name="RevisionToken" value="${escapeHtml(membership.RevisionToken || '')}">
-      <label>Decision<select name="Decision" required><option value="">Choose a decision</option>${canReview ? '<option value="Approve">Approve subject change</option><option value="Reject">Reject request</option>' : '<option value="Cancel">Cancel my request</option>'}</select></label>
+      <label>Decision<select name="Decision" required><option value="">Choose a decision</option>${canReview ? '<option value="Approve">Approve request</option><option value="Reject">Reject request</option>' : '<option value="Cancel">Cancel my request</option>'}</select></label>
       <label>Review reason<textarea name="Reason" minlength="5" maxlength="1000" required placeholder="Explain the approval, rejection or cancellation"></textarea></label><button type="submit">Record decision</button>
     </form>` : '<p class="muted">Awaiting an authorised academic administrator’s review.</p>';
     return `<article class="academic-arm-student-subject-card"><header><strong>${escapeHtml(academicLabel(data.students || [], membership.StudentRef, membership.StudentRef))}</strong><small>${escapeHtml(membership.StudentRef)}</small></header>
-      <p><strong>Current subjects:</strong> ${escapeHtml(names(request.Before?.SubjectIds))}</p><p><strong>Requested subjects:</strong> ${escapeHtml(names(request.After?.SubjectIds))}</p>
+      ${destination}<p><strong>Current subjects:</strong> ${escapeHtml(names(request.Before?.SubjectIds))}</p><p><strong>Requested subjects:</strong> ${escapeHtml(names(request.After?.SubjectIds))}</p>
       <p><strong>Recorded scores affected:</strong> ${escapeHtml(names(request.Impact?.RecordedSubjectIds))} (${Number(request.Impact?.ScoreRecordCount || 0)} score records; preserved).</p>
       <p><strong>Requested by:</strong> ${escapeHtml(request.RequestedBy)} · ${escapeHtml(request.RequestedAt)}</p><p><strong>Reason:</strong> ${escapeHtml(request.Reason)}</p>
       ${(request.Impact?.Results || []).length ? '<p class="academic-arm-subject-warning">Existing results are not changed automatically. Reviewed, approved, published or locked results must be reopened/withdrawn and returned to Calculated Draft before approval. Recalculate drafts after the new assessments.</p>' : ''}${form}</article>`;
@@ -14101,9 +14118,10 @@ function academicSubjectChangeRequests(data) {
 
 function academicArmSubjectRegister(data, rows, canManage) {
   if (academicManagementFilters.section !== 'secondary') {
-    return data.permissions?.teacherView
+    const info = data.permissions?.teacherView
       ? '<div class="academic-view-only-note" data-academic-arm-subject-info><strong>Student subject choices</strong><span>Individual Trade and Optional choices apply to Senior Secondary. Primary pupils inherit their saved class subjects automatically.</span></div>'
       : '';
+    return `${info}${academicSubjectChangeRequests(data)}`;
   }
   const sessionId = clean(academicManagementFilters.sessionId);
   const termId = clean(academicManagementFilters.termId);
@@ -14270,6 +14288,8 @@ function academicStudentWorkspace(data, rows) {
       <label>Find ${learner.singular}<input type="search" data-academic-membership-search placeholder="Search by name, admission number or classroom" autocomplete="off"><small data-academic-membership-search-status aria-live="polite"></small></label>
       <label>Current membership<select name="RecordId" required>${academicSelectOptions(movableMemberships, '', (row) => `${academicLabel(data.students, row.StudentRef, row.StudentRef)} · ${row.StudentRef} — ${academicLabel(rows.classes, row.ClassId)} / ${academicLabel(rows.arms, row.ArmId)}${clean(row.Status).toLowerCase() === 'withdrawn' ? ' — Withdrawn' : ''}`, `Choose ${learner.singular} membership`)}</select></label>
       ${periodFields}${targetFields}
+      <label class="academic-checkbox-option"><input type="checkbox" name="ResetSubjectSelections" value="true">Reset subject selections for the destination classroom</label>
+      <small class="muted">Use this when the destination has different Core subjects. Old scores and movement history are kept, never deleted or copied. Compulsory destination Core subjects are applied; choose mixed-class Core, Trade and Optional subjects after the transfer. Existing assessment history requires another authorised administrator's approval under Student subjects before the student moves.</small>
       <label>Effective date<input type="date" name="EffectiveDate" value="${new Date().toISOString().slice(0, 10)}" required></label>
       <label>Reason<textarea name="Reason" rows="3" required placeholder="Explain the approved class, arm or department change"></textarea></label>
       <button type="submit">Transfer or reassign ${learner.singular}</button>
@@ -15632,7 +15652,7 @@ function academicCbtContexts(data, rows) {
     const roster = rows.studentMemberships.filter((membership) => academicIsActive(membership)
       && membership.ClassId === allocation.ClassId
       && (membership.SubjectIds || []).includes(allocation.SubjectId));
-    if (!roster.length) return;
+    // An empty roster is a setup issue, not a reason to hide an assigned subject.
     const teacherUsername = clean(allocation.TeacherUsername).toLowerCase();
     const key = `${allocation.ClassId}|${allocation.SubjectId}|${teacherUsername}`;
     if (seen.has(key)) return;
@@ -15690,9 +15710,11 @@ function academicCbtWorkspace(data, rows) {
     academicCbtDraft.classroomId = clean(classroomContexts[0]?.classId);
     academicCbtDraft.contextKey = '';
   }
-  const subjectContexts = contexts.filter((context) => context.classId === academicCbtDraft.classroomId);
-  if (!subjectContexts.some((context) => context.key === academicCbtDraft.contextKey)) {
-    academicCbtDraft.contextKey = clean(subjectContexts[0]?.key);
+  const classSubjectContexts = contexts.filter((context) => context.classId === academicCbtDraft.classroomId);
+  // Teachers can choose every allocated class/subject here, not just the first class.
+  const subjectContexts = data.permissions?.teacherView ? contexts : classSubjectContexts;
+  if (!classSubjectContexts.some((context) => context.key === academicCbtDraft.contextKey)) {
+    academicCbtDraft.contextKey = clean(classSubjectContexts[0]?.key);
   }
   const selectedContext = subjectContexts.find((context) => context.key === academicCbtDraft.contextKey) || null;
   const assessmentComponents = data.assessmentScheme?.Ready ? data.assessmentScheme.Components : [];
@@ -15713,14 +15735,14 @@ function academicCbtWorkspace(data, rows) {
 
   const stepOne = `<div class="academic-cbt-details" data-academic-cbt-step="1"${academicCbtDraft.step === 1 ? '' : ' hidden'}>
     <div class="academic-management-editor-heading"><div><small>Step 1 of 2</small><h3>${editing ? 'Correct scheduled test' : 'Test details and schedule'}</h3><p class="muted">Choose the class and subject. Every student in that class who offers the subject is included across all arms.</p></div>${editing ? '<button type="button" data-academic-cbt-new>Clear</button>' : ''}</div>
-    ${!contexts.length ? '<p class="status bad">No eligible subject-teacher class allocation with students was found for this period.</p>' : ''}
+    ${!contexts.length ? '<p class="status bad">No active subject-teacher allocation was found for this period. Check the selected session, term and school section.</p>' : ''}
     ${!components.length ? '<p class="status bad">No Test Type currently accepts Built-in CBT scores. Configure an assessment component in Account &amp; settings first.</p>' : ''}
     ${splitPaper ? '<div class="academic-cbt-split-note"><strong>Split A/B assessment</strong><span>Paper 1 Objective is marked automatically and locked in the scorebook. Paper 2 Theory is timed separately and marked manually by the teacher.</span></div>' : ''}
     <div class="academic-cbt-detail-grid">
       <label>Test Type<small>Created from the active assessment components.</small><select name="AssessmentComponentId" data-academic-cbt-component required>${academicSelectOptions(components.map((row) => ({ ...row, RecordId: row.Id })), component?.Id || '', (row) => row.Name, 'Choose Test Type')}</select></label>
       <label>Overall mark<small>${splitPaper ? 'Combined Objective A and Theory B maximum.' : 'The maximum score configured for this Test Type.'}</small><input data-academic-cbt-maximum value="${escapeHtml(component?.MaximumScore ?? '')}" readonly></label>
       <label>Class<small>The test applies to eligible students in every arm of this class.</small><select name="ClassroomId" data-academic-cbt-classroom required>${academicSelectOptions(classroomContexts.map((row) => ({ RecordId: row.classId, Name: row.classroomLabel })), academicCbtDraft.classroomId, (row) => row.Name, 'Choose class')}</select></label>
-      <label>Subject<small>The teacher is taken from the saved allocation.</small><select name="ContextKey" data-academic-cbt-context required>${academicSelectOptions(subjectContexts.map((row) => ({ RecordId: row.key, Name: `${row.subjectLabel}${subjectContexts.filter((item) => item.subjectId === row.subjectId).length > 1 ? ` · ${row.teacherLabel}` : ''}` })), academicCbtDraft.contextKey, (row) => row.Name, 'Choose subject')}</select></label>
+      <label>Subject<small>${data.permissions?.teacherView ? 'All your assigned subjects are listed. Selecting one also selects its class.' : 'The teacher is taken from the saved allocation.'}</small><select name="ContextKey" data-academic-cbt-context required>${academicSelectOptions(subjectContexts.map((row) => ({ RecordId: row.key, Name: `${row.subjectLabel}${data.permissions?.teacherView ? ` · ${row.classroomLabel}` : subjectContexts.filter((item) => item.subjectId === row.subjectId).length > 1 ? ` · ${row.teacherLabel}` : ''}` })), academicCbtDraft.contextKey, (row) => row.Name, 'Choose subject')}</select></label>
       <label>Subject teacher<small>The account responsible for this test.</small><input value="${escapeHtml(selectedContext?.teacherLabel || '')}" readonly></label>
       <label>Scheduled date<small>Students cannot open the test before this date.</small><input type="date" name="StartDate" value="${escapeHtml(academicCbtDraft.startDate)}" required></label>
       <label>Start time<small>The test becomes active at this local school time.</small><input type="time" name="StartTime" value="${escapeHtml(academicCbtDraft.startTime)}" required></label>
@@ -15730,8 +15752,8 @@ function academicCbtWorkspace(data, rows) {
       <label>Number of questions<small>Choose between 1 and 200 questions.</small><input type="number" name="NumberOfQuestions" min="1" max="200" value="${escapeHtml(academicCbtDraft.questionCount)}" required></label>
       <label>Multiple-choice style<small>Controls the answer choices shown to students.</small><select name="OptionStyle" data-academic-cbt-option-style>${Object.keys(ACADEMIC_CBT_OPTION_STYLES).map((key) => `<option value="${key}"${key === academicCbtDraft.optionStyle ? ' selected' : ''}>${key === 'TRUE_FALSE' ? 'True / False' : key}</option>`).join('')}</select></label>
     </div>
-    <div class="academic-cbt-roster-note"><strong>${selectedContext?.rosterCount || 0} students</strong><span>The online server validates and snapshots this subject roster when the test is saved.</span></div>
-    <div class="academic-cbt-form-actions"><button type="submit"${scheduleReady && selectedContext ? '' : ' disabled'}>Next: upload paper and answers</button></div>
+    <div class="academic-cbt-roster-note"><strong>${selectedContext?.rosterCount || 0} students</strong><span>${selectedContext && !selectedContext.rosterCount ? 'This subject is assigned to you, but no active students currently offer it in this class. Complete the student subject selections before scheduling a test.' : 'The online server validates and snapshots this subject roster when the test is saved.'}</span></div>
+    <div class="academic-cbt-form-actions"><button type="submit"${scheduleReady && selectedContext?.rosterCount ? '' : ' disabled'}>Next: upload paper and answers</button></div>
   </div>`;
 
   const answerRows = Array.from({ length: questionCount }, (_unused, index) => `<div class="academic-cbt-answer-row"><strong>${index + 1}</strong><div>${options.map((answer) => `<label><input type="radio" name="AcademicCbtAnswer-${index}" value="${escapeHtml(answer)}" data-academic-cbt-answer="${index}"${academicCbtDraft.answerKey[index] === answer ? ' checked' : ''}><span>${escapeHtml(answer)}</span></label>`).join('')}</div></div>`).join('');
@@ -16795,7 +16817,11 @@ function bindAcademicManagement() {
       academicCbtDraft.contextKey = '';
       renderAcademicManagement(academicManagementData || {});
     });
-    cbtForm.querySelector('[data-academic-cbt-context]')?.addEventListener('change', refreshCbtEditor);
+    cbtForm.querySelector('[data-academic-cbt-context]')?.addEventListener('change', (event) => {
+      const selected = academicCbtContexts(academicManagementData || {}, academicCurrentRows()).find(row => row.key === event.target.value);
+      if (selected) cbtForm.elements.ClassroomId.value = selected.classId;
+      refreshCbtEditor();
+    });
     cbtForm.querySelector('[data-academic-cbt-paper]')?.addEventListener('change', (event) => {
       try {
         const files = validateAcademicCbtPaperFiles(event.target.files);
@@ -16867,6 +16893,7 @@ function bindAcademicManagement() {
         const duration = Number(academicCbtDraft.durationMinutes);
         const theoryDuration = Number(academicCbtDraft.theoryDurationMinutes);
         if (!context) return setStatus(status, 'Choose an allocated classroom and subject.', 'bad');
+        if (!context.rosterCount) return setStatus(status, 'No active students offer this subject in the selected class. Complete their subject selections before scheduling a test.', 'bad');
         if (!academicCbtDraft.componentId) return setStatus(status, 'Choose a Test Type.', 'bad');
         if (!Number.isInteger(questionCount) || questionCount < 1 || questionCount > 200) return setStatus(status, 'Number of questions must be between 1 and 200.', 'bad');
         if (!Number.isInteger(duration) || duration < 1 || duration > 480) return setStatus(status, `${splitPaper ? 'Paper 1 duration' : 'Duration'} must be between 1 and 480 minutes.`, 'bad');
@@ -16933,7 +16960,8 @@ function bindAcademicManagement() {
           }, academicCbtDraft.clientRequestId);
           mergeAcademicCbtTest(result);
           resetAcademicCbtDraft();
-          academicManagementTaskViews.cbt = 'register';
+          academicCbtDraft.classroomId = context.classId;
+          academicManagementTaskViews.cbt = 'create';
           renderAcademicManagement(academicManagementData || {}, result.message || 'CBT test scheduled online.');
         });
       } catch (error) {
@@ -19580,7 +19608,7 @@ async function configureRequisitionApprovals() {
       if (!response.ok || !data.ok) throw new Error(data.message || 'Approval settings failed.');
       return data;
     });
-  } catch (error) { window.alert(error.message); }
+  } catch (error) { void window.DynamaxDialogs.alert({ title: 'Approval settings not completed', message: error.message, tone: 'danger' }); }
 }
 
 function financeWorkflowStatus(record = {}, type = '') {
@@ -20451,6 +20479,7 @@ function setDataBackupStatus(message = '', tone = '') {
   if (!status) return;
   status.textContent = message;
   status.className = `status${tone ? ` ${tone}` : ''}`;
+  if (tone === 'good' || tone === 'bad') void window.DynamaxStaffActionFeedback?.report(message, tone === 'good' ? 'ok' : 'bad');
 }
 
 function dataBackupProgress(label, current, total) {

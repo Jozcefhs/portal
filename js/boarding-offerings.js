@@ -25,7 +25,7 @@
       }
       document.body.append(dialog); dialog.showModal();
       let busy = false, preview = null, service = null, data = null, selections = new Map(), credentials = '';
-      const status = (message, bad = false) => { const el = dialog.querySelector('[data-status]'); el.textContent = message; el.className = `status ${bad ? 'bad' : 'ok'}`; };
+      const status = (message, bad = false) => { const el = dialog.querySelector('[data-status]'); el.textContent = message; el.className = `status ${bad ? 'bad' : 'ok'}`; if (bad) void window.DynamaxStaffActionFeedback?.report(message, 'bad'); };
       const close = () => { if (!busy) dialog.close(); };
       dialog.querySelector('[data-close]').addEventListener('click', close);
       dialog.addEventListener('cancel', event => { if (busy) event.preventDefault(); });

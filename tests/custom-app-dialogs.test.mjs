@@ -1,9 +1,42 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import vm from 'node:vm';
 
 const source = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 const nativeDialogPattern = /window\.(?:prompt|confirm|alert)\s*\(/;
+
+test('action result dialogs queue without cancelling a confirmation and coalesce duplicate messages', async () => {
+  class Element {
+    nodes = new Map(); listeners = {}; open = false; classList = { toggle() {} };
+    setAttribute() {} focus() {} replaceChildren(...nodes) { this.children = nodes; }
+    querySelector(selector) { if (!this.nodes.has(selector)) this.nodes.set(selector, new Element()); return this.nodes.get(selector); }
+    querySelectorAll() { return []; }
+    addEventListener(event, handler) { this.listeners[event] = handler; }
+    showModal() { this.open = true; } close() { this.open = false; }
+  }
+  let dialog;
+  const document = { body: { appendChild(node) { dialog = node; } }, createElement: () => new Element() };
+  const window = { requestAnimationFrame: callback => callback() };
+  vm.runInNewContext(await source('js/app-dialogs.js'), { window, document });
+  const confirmation = window.DynamaxDialogs.confirm({ message: 'Approve?' });
+  const result = window.DynamaxDialogs.alert({ message: 'Saved successfully' });
+  const duplicate = window.DynamaxDialogs.alert({ message: 'Saved successfully' });
+  assert.equal(duplicate, result);
+  assert.equal(dialog.querySelector('.app-decision-message').textContent, 'Approve?');
+  dialog.querySelector('form').listeners.submit({ preventDefault() {} });
+  assert.equal(await confirmation, true);
+  assert.equal(dialog.querySelector('.app-decision-message').textContent, 'Saved successfully');
+  dialog.querySelector('form').listeners.submit({ preventDefault() {} });
+  assert.equal(await result, true);
+  assert.equal(dialog.open, false);
+  const privateResult = window.DynamaxDialogs.alert({ message: 'Previous user’s result' });
+  const pendingPrompt = window.DynamaxDialogs.prompt({ message: 'Pending confirmation' });
+  window.DynamaxDialogs.clear();
+  assert.equal(await privateResult, false);
+  assert.equal(await pendingPrompt, null);
+  assert.equal(dialog.open, false);
+});
 
 test('shared Dynamax dialogs replace native JavaScript prompts and confirmations', async () => {
   const [dialogs, admin, notifications, setup, faceLookup, pwa, plan] = await Promise.all([

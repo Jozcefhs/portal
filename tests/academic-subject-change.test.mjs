@@ -92,6 +92,92 @@ test('recorded zero, incomplete, absent and optional scores require approval; un
   assert.equal(management.academicSubjectChangeImpact(membership, after, { studentScores: [{ ...score, SubjectId: 'english' }, { ...score, BranchId: 'other' }, { ...score, TermId: 'previous' }] }).RequiresApproval, false);
 });
 
+function transferHarness(options) {
+  const h = harness(options);
+  h.state.arms.push({ ...scope, RecordId: 'destination', ArmId: 'destination', ClassId: 'class', Name: 'Genius', DepartmentId: 'arts' });
+  h.state.departments.push({ ...scope, DepartmentId: 'arts', SchoolStage: 'senior-secondary', CoreSubjectIds: ['history'] });
+  h.state.subjects.push({ ...scope, SubjectId: 'history', Name: 'History' });
+  h.transfer = (input = {}) => h.context.manageAcademicStudentMembership({}, admin, {
+    ...scope, RecordId: 'member', RevisionToken: h.member().__updateTime,
+    ClassId: 'class', ArmId: 'destination', ResetSubjectSelections: true, Reason: 'Move to the Arts classroom', ...input
+  });
+  h.approver = { ...admin, username: 'other-principal' };
+  return h;
+}
+
+test('destination reset disconnects old selections, applies compulsory cores and preserves history', async () => {
+  const h = transferHarness({ scores: [] });
+  const result = await h.transfer();
+  assert.equal(h.member().ArmId, 'destination');
+  assert.deepEqual(h.member().SubjectIds, ['history']);
+  assert.deepEqual(h.member().TradeSubjectIds, []);
+  assert.equal(h.member().CurriculumStatus, 'Pending Trade Selection');
+  assert.deepEqual(h.state.studentMovements[0].FromSubjectIds, membership.SubjectIds);
+  assert.match(result.message, /preserved/);
+});
+
+test('assessed transfer waits for independent approval then moves without rewriting any scores', async () => {
+  const h = transferHarness();
+  const result = await h.transfer();
+  assert.equal(result.bulkResult.PendingApproval, 1);
+  assert.equal(h.member().ArmId, 'arm');
+  assert.deepEqual(h.member().SubjectIds, membership.SubjectIds);
+  assert.equal(h.member().PendingSubjectChange.Kind, 'Classroom transfer');
+  await assert.rejects(h.review('Approve'), { code: 'ACADEMIC_SUBJECT_CHANGE_SELF_APPROVAL' });
+  await h.review('Approve', h.approver);
+  assert.equal(h.member().ArmId, 'destination');
+  assert.deepEqual(h.member().SubjectIds, ['history']);
+  assert.deepEqual(h.state.studentScores, [score]);
+  assert.ok(h.writes.every(row => row.collectionPath !== 'academicStudentScores'));
+});
+
+test('mixed destination can await subject choices; reset in the current classroom is refused', async () => {
+  const h = transferHarness({ scores: [] });
+  await assert.rejects(h.transfer({ ArmId: 'arm' }), /different classroom/);
+  h.state.arms[1].DepartmentId = '';
+  await h.transfer();
+  assert.deepEqual(h.member().SubjectIds, []);
+  assert.equal(h.member().CurriculumStatus, 'Pending Core Selection');
+});
+
+test('pending transfers recheck capacity, curriculum, scores and published results on approval', async () => {
+  const h = transferHarness({ termResults: [{ ...period, ...scope, ResultId: 'result', StudentRef: 'S1', Status: 'Published', __updateTime: 'result-rev' }] });
+  await h.transfer();
+  await assert.rejects(h.review('Approve', h.approver), { code: 'ACADEMIC_RESULT_IMMUTABLE' });
+  h.state.termResults[0].Status = 'Calculated Draft';
+  h.state.arms[1].Capacity = 1;
+  h.state.studentMemberships.push({ ...membership, MembershipId: 'second', RecordId: 'second', StudentRef: 'S2', ArmId: 'destination' });
+  await assert.rejects(h.review('Approve', h.approver), { code: 'ACADEMIC_ARM_CAPACITY_REACHED' });
+  h.state.studentMemberships.pop();
+  await h.review('Approve', h.approver);
+  assert.equal(h.state.termResults[0].SubjectChangeRecalculationRequired, true);
+});
+
+test('rejecting or cancelling a transfer preserves the original classroom and selections', async () => {
+  for (const decision of ['Reject', 'Cancel']) {
+    const h = transferHarness();
+    await h.transfer();
+    await h.review(decision, decision === 'Cancel' ? admin : h.approver);
+    assert.equal(h.member().ArmId, 'arm');
+    assert.deepEqual(h.member().SubjectIds, membership.SubjectIds);
+    assert.deepEqual(h.state.studentScores, [score]);
+  }
+});
+
+test('classroom changes with unchanged subject IDs still protect existing assessment history', () => {
+  assert.equal(management.academicSubjectChangeImpact(membership, { ...membership, ArmId: 'destination' }, { studentScores: [score] }).RequiresApproval, true);
+});
+
+test('transfer approval revalidates destination curriculum and rejects stale source revisions', async () => {
+  const h = transferHarness();
+  await assert.rejects(h.transfer({ RevisionToken: 'old' }), { code: 'ACADEMIC_WRITE_CONFLICT' });
+  await h.transfer();
+  h.state.departments.find(row => row.DepartmentId === 'arts').CoreSubjectIds = ['english'];
+  await assert.rejects(h.review('Approve', h.approver));
+  assert.equal(h.member().ArmId, 'arm');
+  assert.deepEqual(h.state.studentScores, [score]);
+});
+
 test('scored subject changes require a meaningful reason, including older client requests', async () => {
   const h = harness();
   await assert.rejects(h.request({ Reason: '' }), { code: 'ACADEMIC_SUBJECT_CHANGE_REASON_REQUIRED' });

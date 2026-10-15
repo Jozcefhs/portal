@@ -27,16 +27,39 @@
   const footerCancel = dialog.querySelector('footer [data-app-dialog-cancel]');
   let resolver = null;
   let mode = 'confirm';
+  const queue = [];
+  let active = null;
+  let previousAlert = null;
 
   function finish(value) {
     const resolve = resolver;
     resolver = null;
     if (dialog.open) dialog.close();
+    if (active?.mode === 'alert') previousAlert = { message: active.options.message, time: Date.now() };
+    active = null;
     if (resolve) resolve(value);
+    showNext();
   }
 
   function open(options = {}, nextMode = 'confirm') {
-    if (resolver) finish(nextMode === 'prompt' ? null : false);
+    // Results must never dismiss an approval/password/reason confirmation.
+    if (nextMode === 'alert' && options.message) {
+      const duplicate = [active, ...queue].find(entry => entry?.mode === 'alert' && entry.options.message === options.message);
+      if (duplicate) return duplicate.promise;
+      if (previousAlert?.message === options.message && Date.now() - previousAlert.time < 750) return Promise.resolve(true);
+    }
+    let resolve;
+    const promise = new Promise(done => { resolve = done; });
+    queue.push({ options, mode: nextMode, resolve, promise });
+    showNext();
+    return promise;
+  }
+
+  function showNext() {
+    if (active || !queue.length) return;
+    active = queue.shift();
+    const { options, mode: nextMode } = active;
+    resolver = active.resolve;
     mode = nextMode;
     const dangerous = options.tone === 'danger';
     const items = Array.isArray(options.items)
@@ -67,11 +90,8 @@
     footerCancel.hidden = nextMode === 'alert';
     status.textContent = '';
     status.className = 'app-decision-status status';
-    return new Promise((resolve) => {
-      resolver = resolve;
-      dialog.showModal();
-      window.requestAnimationFrame(() => (nextMode === 'prompt' ? input : confirmButton).focus());
-    });
+    dialog.showModal();
+    window.requestAnimationFrame(() => (nextMode === 'prompt' ? input : confirmButton).focus());
   }
 
   form.addEventListener('submit', (event) => {
@@ -99,6 +119,11 @@
   });
 
   window.DynamaxDialogs = {
+    clear: () => {
+      for (const entry of queue.splice(0)) entry.resolve(entry.mode === 'prompt' ? null : false);
+      finish(mode === 'prompt' ? null : false);
+      previousAlert = null;
+    },
     confirm: (options) => open(options, 'confirm'),
     prompt: (options) => open(options, 'prompt'),
     alert: (options) => open(options, 'alert')

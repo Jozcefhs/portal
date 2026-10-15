@@ -106,7 +106,7 @@
     let fixedDraft = [];
     let cycleDraft = [];
     const dirty = () => options.onDirty?.(editDirty || pending.size > 0);
-    const notice = (message, bad = false) => { status.textContent = message; status.className = `status ${bad ? 'bad' : 'ok'}`; };
+    const notice = (message, bad = false) => { status.textContent = message; status.className = `status ${bad ? 'bad' : 'ok'}`; if (bad) void global.DynamaxStaffActionFeedback?.report(message, 'bad'); };
     const fields = () => Object.fromEntries(new FormData(editor));
     const readSlots = () => [...editor.querySelectorAll('[data-schedule-row]')].map((row) => ({
       Enabled: row.querySelector('[data-slot-enabled]').checked,

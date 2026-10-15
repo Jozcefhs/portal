@@ -258,7 +258,7 @@
         const form = event.currentTarget;
         if (!save || busy || !form.reportValidity()) return;
         try { await save(Object.fromEntries(new FormData(form)), form); }
-        catch (error) { form.querySelector('[role="status"]').textContent = error.message; }
+        catch (error) { form.querySelector('[role="status"]').textContent = error.message; void global.DynamaxStaffActionFeedback?.report(error.message, 'bad'); }
       });
       modal.showModal();
       return modal.querySelector('form');
@@ -635,7 +635,7 @@
             confirm.disabled = false; submit.disabled = false;
             progress.textContent = 'Review the preview, then tick the confirmation to create the new items with their opening quantities. Existing stock quantities will not change.';
           } else progress.textContent = Number(summary.errors) ? 'Correct all errors and preview again. Nothing has been saved.' : 'All rows already exist or were skipped. There are no new items to upload.';
-        } catch (error) { progress.textContent = error.message || 'The CSV could not be read. Check the template and preview again.'; }
+        } catch (error) { progress.textContent = error.message || 'The CSV could not be read. Check the template and preview again.'; void global.DynamaxStaffActionFeedback?.report(progress.textContent, 'bad'); }
       });
     }
     function lookupInventoryDialog() {
