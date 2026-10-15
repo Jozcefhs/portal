@@ -26,6 +26,7 @@
 .procurement-table td small { display: block; color: var(--muted, #566e84); margin-top: .3rem; }
 .procurement-table .procurement-number { text-align: right; white-space: nowrap; word-break: normal; overflow-wrap: normal; }
 .procurement-table th.procurement-number, .procurement-table td.procurement-number { font-variant-numeric: tabular-nums; }
+.procurement-table th.procurement-quantity, .procurement-table td.procurement-quantity { text-align: center; }
 .procurement-state { display: inline-block; padding: .25rem .55rem; background: var(--surface-alt, #edf3f7); border-radius: 15px; white-space: nowrap; word-break: normal; }
 .procurement-table .procurement-actions { justify-content: flex-start; min-width: 135px; }
 .procurement-table .procurement-actions button { padding: .45rem .7rem; font-size: .78rem; }

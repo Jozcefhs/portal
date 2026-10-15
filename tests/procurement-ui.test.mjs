@@ -928,14 +928,19 @@ test('legacy OwnerType vendor stock remains editable when branch procurement is 
   assert.match(admin, /row\?\.OwnershipType \|\| row\?\.OwnerType/);
 });
 
-test('stock and reorder figures line up with explicitly numeric headers in both inventories', async () => {
+test('stock and reorder figures are centred under their headers while purchase amounts stay right-aligned', async () => {
   const view = fixture({ purchases: [{ PurchaseId: 'p1', SupplierName: 'Supplier', TotalAmount: 1234 }] }); await tick();
   for (const [tab, labels] of [['stock', ['Central stock', 'Reorder level']], ['departments', ['Available stock', 'Reorder level']], ['purchases', ['Amount']]]) {
     await view.root.fire('click', view.tab(tab));
     const html = view.nodes.get('[data-proc-body]').innerHTML;
-    for (const label of labels) assert.match(html, new RegExp(`<th scope="col" class="procurement-number">${label}</th>`));
-    assert.match(html, /<td class="procurement-number">/);
+    const classes = tab === 'purchases' ? 'procurement-number' : 'procurement-number procurement-quantity';
+    for (const label of labels) assert.match(html, new RegExp(`<th scope="col" class="${classes}">${label}</th>`));
+    assert.match(html, new RegExp(`<td class="${classes}">`));
+    if (tab === 'purchases') assert.doesNotMatch(html, /procurement-quantity/);
   }
+  const styles = await readFile(new URL('../css/procurement.css', import.meta.url), 'utf8');
+  assert.match(styles, /\.procurement-table th\.procurement-quantity, \.procurement-table td\.procurement-quantity \{ text-align: center; \}/);
+  assert.match(styles, /\.procurement-table \.procurement-number \{ text-align: right;/);
   assert.doesNotMatch(source, /quantity\|stock\|units\|cost\|amount/);
   view.controller.destroy();
 });
