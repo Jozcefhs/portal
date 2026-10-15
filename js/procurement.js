@@ -23,7 +23,7 @@
     return result;
   }
   function lineValues(rows, withCost = false, departmentTargets = false) {
-    if (!rows.length || rows.length > 20) throw new Error('Add between 1 and 20 items.');
+    if (!rows.length) throw new Error('Add at least one item.');
     const seen = new Set();
     return rows.map(row => {
       const ItemId = clean(row.ItemId);
@@ -275,7 +275,7 @@
       && (!schoolSection || clean(row.SchoolSection || 'All') === schoolSection)
       && central && clean(row.Unit || 'pcs').toLowerCase() === clean(central.Unit || 'pcs').toLowerCase()
       && (!clean(row.ProcurementItemId) || clean(row.ProcurementItemId) === key(central)));
-    const itemPickerFields = (withCost = false) => `<fieldset class="procurement-item-picker procurement-full"><legend>Choose items</legend><label>Find items<input type="search" data-proc-pick-search placeholder="Search by item name, code or unit" autocomplete="off"></label><div class="procurement-picker-tools"><span data-proc-pick-count aria-live="polite"></span><div class="procurement-actions"><button type="button" class="secondary" data-proc-pick-all>Select matches</button><button type="button" class="secondary" data-proc-pick-clear>Clear selection</button></div></div><div class="procurement-item-choices" data-proc-choices></div><p class="procurement-section-note" data-proc-pick-status aria-live="polite"></p></fieldset>
+    const itemPickerFields = (withCost = false) => `<fieldset class="procurement-item-picker procurement-full"><legend>Choose items</legend><label>Find items<input type="search" data-proc-pick-search placeholder="Search by item name, code or unit" autocomplete="off"></label><div class="procurement-picker-tools"><span data-proc-pick-count aria-live="polite"></span><div class="procurement-actions"><button type="button" class="secondary" data-proc-pick-all>Select all matches</button><button type="button" class="secondary" data-proc-pick-clear>Clear selection</button></div></div><div class="procurement-item-choices" data-proc-choices></div><p class="procurement-section-note" data-proc-pick-status aria-live="polite"></p></fieldset>
       <h4 class="procurement-picked-heading procurement-full">Selected items — quantities and ${withCost ? 'unit costs' : 'destinations'}</h4><p class="procurement-section-note procurement-full" data-proc-pick-empty>Tick items above to add them to this ${withCost ? 'purchase' : 'request'}.</p><div class="procurement-lines procurement-full" data-proc-lines></div>`;
     function itemPicker(form, withCost = false) {
       const kind = withCost ? 'purchase' : 'request';
@@ -283,7 +283,7 @@
       dialog.className = 'procurement-dialog procurement-request-dialog';
       const catalog = [...new Map(items().filter(row => key(row)).map(row => [key(row), row])).values()]
         .sort((a, b) => itemName(a).localeCompare(itemName(b), undefined, { sensitivity: 'base', numeric: true }));
-      const selected = new Map(), drafts = new Map(), maximum = 20;
+      const selected = new Map(), drafts = new Map();
       const searchInput = form.querySelector('[data-proc-pick-search]'), choices = form.querySelector('[data-proc-choices]');
       const count = form.querySelector('[data-proc-pick-count]'), status = form.querySelector('[data-proc-pick-status]');
       const selectMatches = form.querySelector('[data-proc-pick-all]'), clearSelection = form.querySelector('[data-proc-pick-clear]');
@@ -294,10 +294,10 @@
       };
       function sync() {
         const shown = matches();
-        count.textContent = `${selected.size} of ${maximum} items selected · ${shown.length} matching items`;
+        count.textContent = `${selected.size} items selected · ${shown.length} matching items`;
         choices.querySelectorAll('[data-proc-pick-item]').forEach(input => {
           input.checked = selected.has(input.dataset.procPickItem);
-          input.disabled = !input.checked && selected.size >= maximum;
+          input.disabled = false;
         });
         selectMatches.disabled = !shown.length || shown.every(row => selected.has(key(row)));
         clearSelection.disabled = !selected.size;
@@ -326,7 +326,7 @@
       }
       function add(item) {
         const itemId = key(item);
-        if (selected.has(itemId) || selected.size >= maximum) return;
+        if (selected.has(itemId)) return;
         const draft = drafts.get(itemId) || {}, node = document.createElement('div');
         node.className = `procurement-line procurement-picked-line${withCost ? ' procurement-picked-purchase' : ''}`; node.dataset.procLine = 'yes';
         node.innerHTML = `<div class="procurement-line-info"><strong>${esc(itemName(item))}</strong><small>${esc(item.Unit || 'units')} · ${number(item.Quantity)} available centrally</small></div><label>Quantity<input type="number" data-line-quantity min="0.001" step="0.001" max="1000000000" value="${esc(draft.Quantity || '')}" aria-label="Quantity for ${esc(itemName(item))}" required></label>${withCost
@@ -349,16 +349,12 @@
         if (!item) return;
         status.textContent = '';
         if (!input.checked) remove(itemId);
-        else if (selected.size >= maximum) status.textContent = `A ${kind} can contain up to ${maximum} items. Remove an item or submit a separate ${kind}.`;
         else add(item);
         sync();
       });
       selectMatches.addEventListener('click', () => {
         if (busy || disposed) return;
         const additions = matches().filter(row => !selected.has(key(row)));
-        if (selected.size + additions.length > maximum) {
-          status.textContent = `These matches exceed the ${maximum}-item limit. Narrow your search or select individual items. No selection was changed.`; return;
-        }
         additions.forEach(add); status.textContent = ''; sync();
       });
       clearSelection.addEventListener('click', () => {
@@ -487,12 +483,12 @@
     }
     function requestDialog() {
       let read;
-      const form = openDialog('Request supplies', `${departmentSelect(options.department)}${input('NeededBy', 'Needed by (optional)', '', 'date')}${notes()}<p class="procurement-section-note procurement-full">School section: ${esc(schoolSection || 'All')}. Select up to 20 items together, then enter each quantity and match its existing organisation-owned department stock record with the same unit. If absent, create the department item at zero stock first.</p>${itemPickerFields()}`, (fields, form) => save('request', { ...fields, SchoolSection: schoolSection || 'All', Lines: read() }, form), 'Submit supply request');
+      const form = openDialog('Request supplies', `${departmentSelect(options.department)}${input('NeededBy', 'Needed by (optional)', '', 'date')}${notes()}<p class="procurement-section-note procurement-full">School section: ${esc(schoolSection || 'All')}. Select any matching items, or use Select all matches, then enter each quantity and match its existing organisation-owned department stock record with the same unit. If absent, create the department item at zero stock first.</p>${itemPickerFields()}`, (fields, form) => save('request', { ...fields, SchoolSection: schoolSection || 'All', Lines: read() }, form), 'Submit supply request');
       if (form) read = itemPicker(form);
     }
     function purchaseDialog() {
       let read;
-      const form = openDialog('New purchase', `${input('SupplierName', 'Supplier name', '', 'text', 'required maxlength="160"')}${input('Reference', 'Supplier / approval reference', '', 'text', 'required maxlength="160"')}${input('FinanceReference', 'Finance / Accounts reference (optional)', '', 'text', 'maxlength="160"')}${notes('Purchase reason / supporting document reference')}<p class="procurement-section-note procurement-full">Select up to 20 items, then enter the quantity and unit cost for each. Submit for approval before recording stock received. This does not record a supplier payment or duplicate an accounting journal. Process payment separately through Finance / Accounts and enter its reference above.</p>${itemPickerFields(true)}`, (fields, form) => save('createpurchase', { ...fields, Lines: read() }, form), 'Submit purchase for approval');
+      const form = openDialog('New purchase', `${input('SupplierName', 'Supplier name', '', 'text', 'required maxlength="160"')}${input('Reference', 'Supplier / approval reference', '', 'text', 'required maxlength="160"')}${input('FinanceReference', 'Finance / Accounts reference (optional)', '', 'text', 'maxlength="160"')}${notes('Purchase reason / supporting document reference')}<p class="procurement-section-note procurement-full">Select any matching items, or use Select all matches, then enter the quantity and unit cost for each. All selected items form one purchase with one approval total. Submit for approval before recording stock received. This does not record a supplier payment or duplicate an accounting journal. Process payment separately through Finance / Accounts and enter its reference above.</p>${itemPickerFields(true)}`, (fields, form) => save('createpurchase', { ...fields, Lines: read() }, form), 'Submit purchase for approval');
       if (form) read = itemPicker(form, true);
     }
     function reviewDialog(row, purchase = false) {

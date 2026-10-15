@@ -366,7 +366,7 @@ test('supply request checklist is searchable, alphabetical and excludes vendor s
 test('selecting matches adds independent quantity and destination lines and submits all selected items', async t => {
   const view = await pickerFixture(); t.after(() => view.controller.destroy());
   await view.picker('[data-proc-pick-all]').fire('click'); assert.equal(view.holder.children.length, 2);
-  assert.match(view.picker('[data-proc-pick-count]').textContent, /2 of 20 items selected/);
+  assert.match(view.picker('[data-proc-pick-count]').textContent, /2 items selected/);
   for (const [i, target] of ['rice-kitchen', 'soap-kitchen'].entries()) {
     view.holder.children[i].querySelector('[data-line-quantity]').value = String(i + 2);
     view.holder.children[i].querySelector('[data-line-inventory]').value = target;
@@ -395,17 +395,36 @@ test('searching and reselecting preserve entered quantities without duplicate li
   assert.match(view.picker('[data-proc-pick-status]').textContent, /Select at least one/);
 });
 
-test('checklist enforces 20-item limit without partially selecting oversized matches', async t => {
-  const items = Array.from({ length: 21 }, (_, i) => ({ ItemId: `item${i}`, ItemName: `Item ${i}`, Unit: 'pcs', Quantity: 1 }));
-  const view = await pickerFixture({ items }); t.after(() => view.controller.destroy());
-  await view.picker('[data-proc-pick-all]').fire('click'); assert.equal(view.holder.children.length, 0);
-  assert.match(view.picker('[data-proc-pick-status]').textContent, /No selection was changed/);
-  for (let i = 0; i < 20; i++) await view.choose(`item${i}`);
-  assert.equal(view.holder.children.length, 20); assert.equal(view.choices.children.find(row => row.dataset.procPickItem === 'item20').disabled, true);
-  await view.choose('item20'); assert.equal(view.holder.children.length, 20);
-  await view.choose('item0', false); assert.equal(view.choices.children.find(row => row.dataset.procPickItem === 'item20').disabled, false);
-  await view.choose('item20'); assert.equal(view.holder.children.length, 20);
-});
+for (const edition of ['school', 'faith', 'organization']) for (const purchase of [false, true]) {
+  test(`${edition}: ${purchase ? 'purchase' : 'request'} selects all 110 matches once with independent item values`, async t => {
+    const items = Array.from({ length: 110 }, (_, i) => ({ ItemId: `item${i}`, ItemName: `Item ${i}`, ItemCode: i < 30 ? 'FIRST' : 'REST', Unit: 'pcs', Quantity: 0 }));
+    const departmentInventory = items.map(row => ({ ...row, InventoryId: `dept-${row.ItemId}`, ProcurementItemId: row.ItemId, Department: 'kitchen', SchoolSection: edition === 'school' ? 'Secondary' : 'All' }));
+    const view = await pickerFixture({ edition, items: [...items, items[0]], departmentInventory }, purchase); t.after(() => view.controller.destroy());
+    assert.match(view.modal.innerHTML, /Select all matches/); assert.doesNotMatch(view.modal.innerHTML, /up to 20/);
+    await view.searchItems('FIRST'); await view.picker('[data-proc-pick-all]').fire('click');
+    assert.equal(view.holder.children.length, 30);
+    const first = view.holder.children[0]; first.querySelector('[data-line-quantity]').value = '3.125';
+    if (purchase) first.querySelector('[data-line-cost]').value = '0';
+    await view.searchItems('REST'); await view.picker('[data-proc-pick-all]').fire('click');
+    assert.equal(view.holder.children.length, 110); assert.equal(view.holder.children[0], first);
+    assert.equal(first.querySelector('[data-line-quantity]').value, '3.125');
+    if (purchase) assert.equal(first.querySelector('[data-line-cost]').value, '0');
+    await view.searchItems(''); await view.picker('[data-proc-pick-all]').fire('click');
+    assert.equal(view.holder.children.length, 110); assert.match(view.picker('[data-proc-pick-count]').textContent, /110 items selected/);
+    assert.ok(view.choices.children.every(input => input.checked && !input.disabled));
+    for (const [i, node] of view.holder.children.entries()) {
+      node.querySelector('[data-line-quantity]').value = String(i + 1.125);
+      node.querySelector(purchase ? '[data-line-cost]' : '[data-line-inventory]').value = purchase ? String(i ? i + 0.25 : 0) : `dept-item${i}`;
+    }
+    await view.modalForm.fire('submit');
+    const submissions = view.calls.filter(call => call.action === (purchase ? 'createpurchase' : 'request'));
+    assert.equal(submissions.length, 1, 'one approval document, not separate purchases or requests');
+    const lines = submissions[0].payload.Lines;
+    assert.equal(lines.length, 110); assert.equal(new Set(lines.map(line => line.ItemId)).size, 110);
+    lines.forEach((line, i) => assert.deepEqual(line, { ItemId: `item${i}`, Quantity: i + 1.125,
+      ...(purchase ? { UnitCost: i ? i + 0.25 : 0 } : { InventoryId: `dept-item${i}` }) }));
+  });
+}
 
 test('changing receiving department clears destinations, including deselected drafts, without losing quantities', async t => {
   const view = await pickerFixture(); t.after(() => view.controller.destroy());
@@ -486,16 +505,14 @@ test('purchase checklist rejects missing, negative and invalid quantities or cos
   assert.ok(!view.calls.some(call => call.action === 'createpurchase'));
 });
 
-test('purchase checklist keeps the 20-item cap and can select out-of-stock items for restocking', async t => {
+test('purchase checklist allows selecting individual out-of-stock items beyond twenty', async t => {
   const items = Array.from({ length: 21 }, (_, i) => ({ ItemId: `item${i}`, ItemName: `Item ${i}`, Unit: 'pcs', Quantity: 0 }));
   const view = await pickerFixture({ items }, true); t.after(() => view.controller.destroy());
-  await view.picker('[data-proc-pick-all]').fire('click'); assert.equal(view.holder.children.length, 0);
-  assert.match(view.picker('[data-proc-pick-status]').textContent, /20-item limit/);
   for (let i = 0; i < 20; i++) await view.choose(`item${i}`);
-  assert.equal(view.holder.children.length, 20); assert.equal(view.choices.children[20].disabled, true);
-  await view.choose('item20'); assert.equal(view.holder.children.length, 20);
-  assert.match(view.picker('[data-proc-pick-status]').textContent, /A purchase can contain up to 20/);
-  await view.choose('item0', false); await view.choose('item20'); assert.equal(view.holder.children.length, 20);
+  assert.equal(view.choices.children[20].disabled, false);
+  await view.choose('item20'); assert.equal(view.holder.children.length, 21);
+  await view.choose('item0', false); await view.choose('item0'); assert.equal(view.holder.children.length, 21);
+  assert.equal(view.picker('[data-proc-pick-status]').textContent, '');
 });
 
 test('purchase retries retain their idempotency key and block changed costs after a lost response', async t => {
@@ -507,14 +524,15 @@ test('purchase retries retain their idempotency key and block changed costs afte
   assert.match(view.progress.textContent, /before changing or resubmitting/);
 });
 
-test('request lines require exact target inventory, positive amounts, unique items and a 20-line maximum', async () => {
+test('request lines require exact target inventory, positive amounts and unique items without a twenty-line limit', async () => {
   const view = fixture(); await tick();
   const lines = view.ui.lineValues([{ ItemId: 'rice', Quantity: '2.5', InventoryId: 'department-row' }], false, true);
   assert.deepEqual(plain(lines), [{ ItemId: 'rice', Quantity: 2.5, InventoryId: 'department-row' }]);
   for (const value of ['', '-1', '0', 'Infinity', 'NaN', '1000000001']) assert.throws(() => view.ui.lineValues([{ ItemId: 'rice', Quantity: value }]));
   assert.throws(() => view.ui.lineValues([{ ItemId: 'rice', Quantity: 1 }], false, true), /matching department/);
   assert.throws(() => view.ui.lineValues([{ ItemId: 'rice', Quantity: 1 }, { ItemId: 'rice', Quantity: 2 }]), /once/);
-  assert.throws(() => view.ui.lineValues(Array.from({ length: 21 }, (_, n) => ({ ItemId: String(n), Quantity: 1 }))), /1 and 20/);
+  assert.equal(view.ui.lineValues(Array.from({ length: 110 }, (_, n) => ({ ItemId: String(n), Quantity: 1 }))).length, 110);
+  assert.throws(() => view.ui.lineValues([]), /at least one/);
   view.controller.destroy();
 });
 

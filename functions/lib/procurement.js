@@ -1,4 +1,4 @@
-import { getDocument, queryCollectionPages, batchCommitLiteralDocuments } from './firestore.js';
+import { getDocument, getDocuments, queryCollectionPages, batchCommitLiteralDocuments, objectToFirestoreFields } from './firestore.js';
 import { schoolSectionFor } from './school-scope.js';
 import { procurementRecordPage, procurementRecordDetail } from './procurement-history.js';
 import { planDepartmentAssignments } from './procurement-department-assignments.js';
@@ -51,8 +51,23 @@ export async function handleProcurementAction(env, user, body = {}, dependencies
   const now = new Date().toISOString();
   const base = { ...scope, CreatedAt: now, CreatedBy: clean(user.displayName || user.username), CreatedByUsername: actor(user), Revision: 1 };
   const next = row => ({ ...plain(row), Revision: Number(row.Revision || 0) + 1, UpdatedAt: now, UpdatedBy: actor(user) });
+  // Request-local snapshots avoid one network round trip per selected item.
+  // Stock updates still use each document's updateTime in the atomic commit.
+  const snapshots = new Map(), getMany = dependencies.getMany || (!dependencies.get ? getDocuments : null);
+  const read = (collection, recordId) => snapshots.has(`${collection}/${recordId}`)
+    ? snapshots.get(`${collection}/${recordId}`) : db.get(env, collection, recordId);
+  async function preload(lines, Department = '', savedTargets = false) {
+    if (!getMany || !lines.length) return;
+    const groups = [[C.items, lines.map(line => id(line.ItemId))]];
+    if (Department) groups.push([DEPARTMENTS[Department].Collection, lines.map(line => id(savedTargets ? line.saved.InventoryId : line.InventoryId, 'department stock record'))]);
+    for (const [collection, ids] of groups) {
+      const unique = [...new Set(ids)], records = await getMany(env, collection, unique);
+      if (!Array.isArray(records) || records.length !== unique.length) fail('Could not load every selected item. Nothing was saved; please retry.', 503);
+      unique.forEach((recordId, index) => snapshots.set(`${collection}/${recordId}`, records[index]));
+    }
+  }
   async function scoped(collection, recordId, departmental = false) {
-    const row = await db.get(env, collection, id(recordId));
+    const row = await read(collection, id(recordId));
     if (!(departmental ? visibleRecord(row, user, scope, cap) : sameScope(row, scope))) fail('This record is not available in your branch, edition or department.', 404);
     return row;
   }
@@ -63,7 +78,7 @@ export async function handleProcurementAction(env, user, body = {}, dependencies
   }
   async function inventory(department, inventoryId, schoolSection, centralItem = null) {
     if (!cap.departments.includes(department)) fail('This department is not assigned or enabled.', 403);
-    const config = DEPARTMENTS[department], row = await db.get(env, config.Collection, id(inventoryId, 'department stock record'));
+    const config = DEPARTMENTS[department], row = await read(config.Collection, id(inventoryId, 'department stock record'));
     if (!inventoryAllowed(row, department, user, scope)) fail('Choose organisation-owned stock in this branch and department; vendor stock is kept separate.', 403);
     if (scope.OrganisationEdition === 'school' && schoolSectionFor(row) !== lower(schoolSection)) fail('The department stock belongs to another school section.', 403);
     if (centralItem && lower(row.Unit || config.Unit) !== lower(centralItem.Unit)) fail('Central and department stock units must match. Use separate catalogue items for different units.');
@@ -158,8 +173,9 @@ export async function handleProcurementAction(env, user, body = {}, dependencies
       Quantity: quantity(Math.abs(delta)), Direction: delta < 0 ? 'OUT' : 'IN', Before: quantity(before), After: quantity(after) });
   }
   function checkLines(record, submitted) {
+    const savedLines = new Map(record.Lines.map(line => [line.ItemId, line]));
     return submitted.map(line => {
-      const saved = record.Lines.find(item => item.ItemId === line.ItemId);
+      const saved = savedLines.get(line.ItemId);
       if (!saved) fail('The selected item is not part of this document.');
       return { ...line, saved };
     });
@@ -292,14 +308,15 @@ export async function handleProcurementAction(env, user, body = {}, dependencies
     const Department = clean(body.Department), SchoolSection = sectionFor(user, scope, body.SchoolSection);
     if (!cap.departments.includes(Department) || (!cap.canManage && !cap.receiveDepartments.includes(Department))) fail('You cannot request supplies for this department.', 403);
     const submitted = linesFor(body.Lines), Lines = [], targets = new Set();
+    await preload(submitted, Department);
     for (const line of submitted) {
       const item = await central(line.ItemId), target = await inventory(Department, line.InventoryId, SchoolSection, item);
       if (targets.has(target.__id)) fail('Choose each department inventory record only once.');
       targets.add(target.__id);
       Lines.push({ ...line, InventoryId: target.__id, DepartmentItemName: target.ItemName, ItemName: item.ItemName, Unit: item.Unit, IssuedQuantity: 0, ReceivedQuantity: 0 });
       // A pending/rejected request must not permanently adopt a mistaken mapping.
-      // Check its snapshot now; revalidate and lock the approved link at dispatch.
-      stage(DEPARTMENTS[Department].Collection, target.__id, plain(target), target);
+      // Validate now; revalidate and lock the approved link at dispatch. Do not
+      // rewrite inventory just to submit a request, regardless of selection size.
     }
     const RequisitionId = `REQ-${crypto.randomUUID()}`;
     const NeededBy = text(body.NeededBy, 'Needed-by date', false, 10);
@@ -310,6 +327,7 @@ export async function handleProcurementAction(env, user, body = {}, dependencies
   } else if (action === 'createpurchase') {
     requireCapability(cap, 'canManage');
     const submitted = linesFor(body.Lines, { costs: true }), Lines = [];
+    await preload(submitted);
     for (const line of submitted) { const item = await central(line.ItemId); Lines.push({ ItemId: line.ItemId, Quantity: line.Quantity, UnitCost: line.UnitCost, ItemName: item.ItemName, Unit: item.Unit, ReceivedQuantity: 0 }); }
     const SupplierName = text(body.SupplierName, 'Supplier name', true, 160), Reference = text(body.Reference, 'Supplier / purchase reference', true, 160);
     const PurchaseId = `PUR-${(await hash(`${scope.ScopeKey}|${lower(SupplierName)}|${lower(Reference)}`)).slice(0, 40)}`;
@@ -339,8 +357,9 @@ export async function handleProcurementAction(env, user, body = {}, dependencies
     const DeliveryReference = text(body.DeliveryReference, 'Supplier delivery reference', true, 160);
     const deliveryId = `DEL-${await hash(`${scope.ScopeKey}|${row.PurchaseId}|${lower(DeliveryReference)}`)}`;
     if (await db.get(env, C.operations, deliveryId)) fail('This supplier delivery reference has already been received for this purchase.', 409);
-    const Lines = row.Lines.map(line => ({ ...line }));
-    for (const line of checkLines(row, linesFor(body.Lines))) {
+    const Lines = row.Lines.map(line => ({ ...line })), submitted = checkLines(row, linesFor(body.Lines));
+    await preload(submitted);
+    for (const line of submitted) {
       const incoming = units(line.Quantity), outstanding = units(line.saved.Quantity) - tally(line.saved, 'ReceivedQuantity');
       if (incoming > outstanding) fail('Received quantity exceeds the outstanding approved purchase.', 409);
       const item = await central(line.ItemId);
@@ -357,7 +376,9 @@ export async function handleProcurementAction(env, user, body = {}, dependencies
     const row = await scoped(C.requests, body.RequisitionId, true); version(body, row);
     if (!['APPROVED', 'PARTIALLY_ISSUED'].includes(row.Status)) fail('Approve this supply request before issuing stock.', 409);
     const Lines = row.Lines.map(line => ({ ...line })), transferLines = [];
-    for (const line of checkLines(row, linesFor(body.Lines))) {
+    const submitted = checkLines(row, linesFor(body.Lines));
+    await preload(submitted, row.Department, true);
+    for (const line of submitted) {
       const outgoing = units(line.Quantity), outstanding = units(line.saved.Quantity) - tally(line.saved, 'IssuedQuantity');
       if (outgoing > outstanding) fail('Issued quantity exceeds the unissued approved request.', 409);
       const item = await central(line.ItemId);
@@ -387,7 +408,9 @@ export async function handleProcurementAction(env, user, body = {}, dependencies
     const submitted = linesFor(body.Lines, { empty: discrepancy });
     const Lines = row.Lines.map(line => ({ ...line }));
     const requisition = await scoped(C.requests, row.RequisitionId, true), requestLines = requisition.Lines.map(line => ({ ...line }));
-    for (const line of checkLines(row, submitted)) {
+    const checked = checkLines(row, submitted);
+    await preload(checked, returning ? '' : row.Department, true);
+    for (const line of checked) {
       const amount = units(line.Quantity), outstanding = units(line.saved.Quantity) - tally(line.saved, 'ReceivedQuantity') - tally(line.saved, 'ReturnedQuantity');
       if (amount > outstanding) fail('The quantity exceeds the outstanding delivery. Already received stock cannot be received or returned again.', 409);
       const item = await central(line.ItemId), dest = Lines.find(saved => saved.ItemId === line.ItemId), reqLine = requestLines.find(saved => saved.ItemId === line.ItemId);
@@ -429,6 +452,14 @@ export async function handleProcurementAction(env, user, body = {}, dependencies
     ...(result.importedItems ? { ImportedItems: result.importedItems, ImportSummary: result.summary,
       ...(result.Department ? { Department: result.Department, SchoolSection: result.SchoolSection } : {}) } : {}) }, null);
   stage(C.operations, operationId, { ...base, Action: action, Fingerprint: fingerprint, Result: result }, null);
+  // Never split an approval document or partially commit stock movements. Very
+  // large physical deliveries can use the existing partial-receipt workflow.
+  if (writes.length > 500) fail('Nothing was posted. This stock operation is too large for one atomic save. Enter quantities for fewer items (leave the rest at zero), then process the remaining items separately.', 413, 'PROCUREMENT_POSTING_TOO_LARGE');
+  for (const entry of writes) {
+    if ([C.requests, C.purchases, C.transfers, C.movements, C.operations].includes(entry.collectionPath)
+      && new TextEncoder().encode(JSON.stringify(objectToFirestoreFields(entry.data))).byteLength > 900 * 1024)
+      fail('Nothing was posted. This document exceeds the safe storage size. Reduce its item count or contact support if it already has receipts.', 413, 'PROCUREMENT_DOCUMENT_TOO_LARGE');
+  }
   await db.commit(env, writes);
   return result;
   }

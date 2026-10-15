@@ -24,6 +24,7 @@ function fixture(edition = 'school') {
   const list = collection => [...store.entries()].filter(([key]) => key.startsWith(`${collection}/`)).map(([, value]) => copy(value));
   const deps = {
     get: async (_env, collection, id) => get(collection, id),
+    getMany: async (_env, collection, ids) => ids.map(id => get(collection, id)),
     query: async (_env, collection, options) => {
       let rows = list(collection).filter(row => (options.filters || []).every(filter => filter.op === 'in' ? filter.value.includes(row[filter.field]) : row[filter.field] === filter.value));
       if (options.orderBy) rows.sort((a, b) => {
@@ -84,11 +85,128 @@ function fixture(edition = 'school') {
     item, purchase, receivePurchase, stocked, requisition, issue, receive, setConflict: value => conflict = value, loseResponse: () => loseResponse = true };
 }
 
+function largeSelection(f, count = 110) {
+  return Array.from({ length: count }, (_, i) => {
+    const ItemId = `bulk-${i}`, InventoryId = `target-${i}`, ItemName = `Supply ${i}`;
+    f.put(C.items, ItemId, { ...f.scope, ItemId, ItemName, Unit: 'pcs', Quantity: 10, Revision: 1, OwnershipType: 'Organisation' });
+    f.target(InventoryId, { ItemName, ProcurementItemId: ItemId, Price: i + 20 });
+    return { ItemId, InventoryId, Quantity: i % 3 + 1.125, UnitCost: i + 0.25 };
+  });
+}
+function largeRequest(f, Lines) {
+  return { action: 'request', RequestId: crypto.randomUUID(), Department: f.department, SchoolSection: f.section, Notes: 'All selected supplies',
+    Lines: Lines.map(({ ItemId, InventoryId, Quantity }) => ({ ItemId, InventoryId, Quantity })) };
+}
+
+for (const edition of ['school', 'faith', 'organization']) {
+  test(`${edition}: 110-item purchases and requests keep one approval total, preserve stock and safely retry every posting`, async () => {
+    const f = fixture(edition), selection = largeSelection(f), reads = [], baseRead = f.deps.getMany;
+    f.deps.getMany = async (...args) => { reads.push([args[1], args[2].length]); return baseRead(...args); };
+    const initialTargets = f.list(f.collection), originalCentral = f.list(C.items);
+    const purchaseBody = { action: 'createpurchase', RequestId: 'bulk-purchase-key', SupplierName: 'Bulk supplier', Reference: 'BULK-1', Notes: 'One approval',
+      Lines: selection.map(({ ItemId, Quantity, UnitCost }) => ({ ItemId, Quantity, UnitCost })) };
+    f.loseResponse(); const { PurchaseId } = await f.run(purchaseBody);
+    assert.equal((await f.run(purchaseBody)).replayed, true);
+    assert.equal(f.list(C.purchases).length, 1); assert.equal(f.get(C.purchases, PurchaseId).Lines.length, 110);
+    const total = selection.reduce((sum, line) => sum + Math.round(line.Quantity * line.UnitCost * 100), 0) / 100;
+    assert.equal(f.get(C.purchases, PurchaseId).TotalAmount, total);
+    assert.deepEqual(f.list(C.items), originalCentral); assert.deepEqual(f.list(f.collection), initialTargets);
+    const review = { PurchaseId, ExpectedRevision: 1, Decision: 'APPROVED', Notes: 'Review whole purchase' };
+    await assert.rejects(f.command('reviewpurchase', review, { ...f.approver, approvalMaxAmount: total - 0.01 }), /approval limit/);
+    await f.command('reviewpurchase', review, f.approver);
+    const receipt = { action: 'receivepurchase', RequestId: 'bulk-receipt-key', PurchaseId, ExpectedRevision: 2, DeliveryReference: 'BULK-DELIVERY-1', Notes: 'Counted all items',
+      Lines: selection.map(({ ItemId, Quantity }) => ({ ItemId, Quantity })) };
+    f.loseResponse(); await f.run(receipt); assert.equal((await f.run(receipt)).replayed, true);
+    assert.equal(f.get(C.purchases, PurchaseId).Status, 'RECEIVED');
+    selection.forEach(line => assert.equal(f.get(C.items, line.ItemId).Quantity, 10 + line.Quantity));
+    const requestBody = largeRequest(f, selection);
+    f.loseResponse(); const { RequisitionId } = await f.run(requestBody, f.receiver);
+    assert.equal((await f.run(requestBody, f.receiver)).replayed, true);
+    assert.equal(f.list(C.requests).length, 1); assert.equal(f.get(C.requests, RequisitionId).Lines.length, 110);
+    assert.deepEqual(f.list(f.collection), initialTargets, 'submitting a request never rewrites inventory or prices');
+    await f.command('reviewrequest', { RequisitionId, ExpectedRevision: 1, Decision: 'APPROVED', Notes: 'Approved all supplies' });
+    const dispatch = { action: 'issue', RequestId: 'bulk-dispatch-key', RequisitionId, ExpectedRevision: 2, Notes: 'Dispatch selected supplies', Lines: receipt.Lines };
+    f.loseResponse(); const { TransferId } = await f.run(dispatch); assert.equal((await f.run(dispatch)).replayed, true);
+    assert.equal(f.list(C.transfers).length, 1);
+    selection.forEach(line => { assert.equal(f.get(C.items, line.ItemId).Quantity, 10); assert.equal(f.get(f.collection, line.InventoryId).Quantity, 7); });
+    const delivery = { action: 'confirmreceipt', RequestId: 'bulk-confirm-key', TransferId, ExpectedRevision: 1, Notes: 'Physically counted', Lines: receipt.Lines };
+    f.loseResponse(); await f.run(delivery, f.receiver); assert.equal((await f.run(delivery, f.receiver)).replayed, true);
+    assert.equal(f.get(C.transfers, TransferId).Status, 'RECEIVED');
+    selection.forEach((line, i) => {
+      assert.equal(f.get(C.items, line.ItemId).Quantity, 10);
+      assert.equal(f.get(f.collection, line.InventoryId).Quantity, 7 + line.Quantity);
+      assert.equal(f.get(f.collection, line.InventoryId).Price, i + 20);
+    });
+    assert.ok(reads.length >= 8); assert.ok(reads.every(([, count]) => count === 110));
+    assert.ok(f.commits.every(writes => writes.length <= 500));
+  });
+}
+
+test('large selections fail atomically for duplicate, missing, wrong-scope, vendor or mismatched destination items', async () => {
+  const f = fixture(), selection = largeSelection(f), body = largeRequest(f, selection), original = copy([...f.store.entries()]);
+  await assert.rejects(f.run({ ...body, Lines: [...body.Lines, body.Lines[0]] }, f.receiver), /once/);
+  for (const change of [{ ItemId: 'missing' }, { InventoryId: 'missing' }, { InventoryId: selection[0].InventoryId }])
+    await assert.rejects(f.run({ ...body, Lines: body.Lines.map((line, i) => i === 109 ? { ...line, ...change } : line) }, f.receiver));
+  assert.deepEqual([...f.store.entries()], original);
+  for (const changes of [{ BranchId: 'other' }, { OrganisationEdition: 'faith' }, { VendorId: 'vendor' }]) {
+    const row = f.get(C.items, selection[109].ItemId);
+    f.put(C.items, row.ItemId, { ...row, ...changes });
+    await assert.rejects(f.run(body, f.receiver));
+    f.put(C.items, row.ItemId, row);
+  }
+  assert.equal(f.commits.length, 0);
+});
+
+test('a concurrent change on the last item cannot partially post a large receipt', async () => {
+  const f = fixture(), selection = largeSelection(f);
+  const PurchaseId = await f.purchase(selection[0].ItemId, 1, { Lines: selection });
+  const baseRead = f.deps.getMany;
+  f.deps.getMany = async (...args) => {
+    const records = await baseRead(...args), row = records.at(-1);
+    f.put(C.items, row.ItemId, { ...row, Quantity: 99 }); return records;
+  };
+  const before = f.commits.length;
+  await assert.rejects(f.receivePurchase(PurchaseId, selection[0].ItemId, 1, { Lines: selection }), /Nothing was partially posted/);
+  assert.equal(f.commits.length, before); assert.equal(f.get(C.purchases, PurchaseId).Status, 'APPROVED');
+  selection.slice(0, -1).forEach(line => assert.equal(f.get(C.items, line.ItemId).Quantity, 10));
+  assert.equal(f.get(C.items, selection.at(-1).ItemId).Quantity, 99);
+});
+
+test('600-item requests save as one document without inventory writes; oversized dispatch is atomic and can be fulfilled in parts', async () => {
+  const f = fixture(), selection = largeSelection(f, 600), original = f.list(f.collection);
+  const { RequisitionId } = await f.run(largeRequest(f, selection), f.receiver);
+  assert.equal(f.commits.length, 1); assert.equal(f.commits[0].length, 3);
+  assert.equal(f.get(C.requests, RequisitionId).Lines.length, 600); assert.deepEqual(f.list(f.collection), original);
+  await f.command('reviewrequest', { RequisitionId, ExpectedRevision: 1, Decision: 'APPROVED', Notes: 'Approved' });
+  const before = f.commits.length;
+  await assert.rejects(f.issue(RequisitionId, selection[0].ItemId, 1, { Lines: selection }), error => error.code === 'PROCUREMENT_POSTING_TOO_LARGE');
+  assert.equal(f.commits.length, before); assert.equal(f.list(C.transfers).length, 0);
+  selection.forEach(line => assert.equal(f.get(C.items, line.ItemId).Quantity, 10));
+  for (let offset = 0; offset < selection.length; offset += 200) {
+    const Lines = selection.slice(offset, offset + 200);
+    const { TransferId } = await f.issue(RequisitionId, Lines[0].ItemId, 1, { Lines });
+    await f.receive(TransferId, Lines[0].ItemId, 1, { Lines });
+  }
+  assert.equal(f.get(C.requests, RequisitionId).Status, 'ISSUED');
+  selection.forEach(line => { assert.equal(f.get(C.items, line.ItemId).Quantity, 10 - line.Quantity); assert.equal(f.get(f.collection, line.InventoryId).Quantity, 7 + line.Quantity); });
+});
+
+test('an oversized document fails clearly before any request or stock writes', async () => {
+  const f = fixture(), selection = largeSelection(f, 1100);
+  for (const line of selection) {
+    for (const [collection, id] of [[C.items, line.ItemId], [f.collection, line.InventoryId]])
+      f.put(collection, id, { ...f.get(collection, id), ItemName: '界'.repeat(160) });
+  }
+  await assert.rejects(f.run(largeRequest(f, selection), f.receiver), error => error.code === 'PROCUREMENT_DOCUMENT_TOO_LARGE');
+  assert.equal(f.commits.length, 0); assert.equal(f.list(C.requests).length, 0);
+});
+
 test('quantities validate positive integer thousandths without coercing unsafe inputs', () => {
   assert.equal(units('1.125'), 1125); assert.equal(units(0, 'Qty', true), 0);
   for (const value of [-1, '1e3', '1,000', '', '  ', false, null, Infinity, NaN, '0.0001', '1000000001', 0]) assert.throws(() => units(value), undefined, String(value));
   assert.throws(() => linesFor([{ ItemId: 'one', Quantity: 1 }, { ItemId: 'one', Quantity: 2 }]), /once/);
-  assert.throws(() => linesFor(Array.from({ length: 21 }, (_, i) => ({ ItemId: `id${i}`, Quantity: 1 }))), /20/);
+  assert.equal(linesFor(Array.from({ length: 110 }, (_, i) => ({ ItemId: `id${i}`, Quantity: 1 }))).length, 110);
+  for (const rows of [[], null, [null], [false], [[]]]) assert.throws(() => linesFor(rows));
   assert.throws(() => linesFor([{ ItemId: '../invalid', Quantity: 1 }]), /valid/);
 });
 

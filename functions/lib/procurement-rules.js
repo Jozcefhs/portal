@@ -83,9 +83,10 @@ export function unitCost(value) {
   return result;
 }
 export function linesFor(value, { costs = false, empty = false } = {}) {
-  if (!Array.isArray(value) || value.length > 20 || (!empty && !value.length)) fail('Choose between 1 and 20 distinct items.');
+  if (!Array.isArray(value) || (!empty && !value.length)) fail('Choose at least one distinct item.');
   const seen = new Set();
   return value.map(line => {
+    if (!line || typeof line !== 'object' || Array.isArray(line)) fail('Choose a valid item.');
     const ItemId = id(line.ItemId, 'central item');
     if (seen.has(ItemId)) fail('Choose each central item only once.');
     seen.add(ItemId);

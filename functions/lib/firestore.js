@@ -715,6 +715,42 @@ export async function listCollectionForReport(env, collectionPath, options = {})
   );
 }
 
+// Fetch only the requested documents, in bounded network batches. REST batchGet
+// does not preserve order; explicitly distinguish missing documents from a
+// truncated response so callers never validate a partial selection.
+export async function getDocuments(env, collectionPath, documentIds) {
+  const collection = String(collectionPath || '').replace(/^\/+|\/+$/g, '');
+  if (!collection || collection.split('/').length % 2 !== 1 || collection.split('/').some(part => !part || part === '.' || part === '..'))
+    throw new Error('A valid collection path is required.');
+  if (!Array.isArray(documentIds)) throw new Error('Document IDs must be an array.');
+  const ids = documentIds.map(value => String(value ?? '').trim());
+  if (ids.some(id => !id || id.includes('/') || id === '.' || id === '..')) throw new Error('Every document ID must be a single path segment.');
+  if (!ids.length) return [];
+  const token = await getFirestoreAccessToken(env), base = firestoreBaseUrl(env);
+  const resourceBase = base.replace(/^https:\/\/firestore\.googleapis\.com\/v1\//, '');
+  const names = ids.map(id => `${resourceBase}/${collection}/${id}`), distinct = [...new Set(names)], found = new Map();
+  for (let offset = 0; offset < distinct.length; offset += 25) {
+    const documents = distinct.slice(offset, offset + 25);
+    const response = await fetch(`${base}:batchGet`, { method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ documents }) });
+    const data = await response.json();
+    if (!response.ok) {
+      const error = new Error(data?.error?.message || `Database batch read failed (${response.status})`);
+      Object.assign(error, firestoreErrorStatus(data, response.status));
+      throw error;
+    }
+    if (!Array.isArray(data)) throw new Error('The database batch read was incomplete.');
+    const expected = new Set(documents);
+    for (const entry of data) {
+      const name = entry.found?.name || entry.missing;
+      if (!expected.has(name) || found.has(name)) throw new Error('The database batch read returned an unexpected document.');
+      found.set(name, entry.found ? firestoreDocumentToObject(entry.found) : null);
+    }
+    if (documents.some(name => !found.has(name))) throw new Error('The database batch read was incomplete.');
+  }
+  return names.map(name => found.get(name));
+}
+
 export async function getDocument(env, collectionPath, documentId) {
   const cleanCollection = String(collectionPath || '').replace(/^\/+|\/+$/g, '');
   const encodedId = encodeURIComponent(String(documentId || '').trim());
