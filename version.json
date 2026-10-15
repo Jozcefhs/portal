@@ -1,7 +1,7 @@
 {
-  "version": "3.1.25",
+  "version": "3.1.26",
   "channel": "stable",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.25.exe",
-  "sha256": "581e177efdbbe8f49de72138134ba97d30e92c21ce0482b7f201e0e1e42d9a71",
-  "notes": "Dynamax Desktop v3.1.25 combines matching fee components across day and boarding variants while keeping currencies separate, preserves horizontal scrolling, and clarifies vendor requisition print previews. Includes branch-scoped fee setup and hotel room previews with secure physical-key dispenser management. Requires the updated companion backend; dispenser hardware must be configured and physically tested."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.26.exe",
+  "sha256": "24a9f15de91c74dc767b2cb966e7e9ffa3c49e7c7b38620afd5d9006d3d6e139",
+  "notes": "Dynamax Desktop v3.1.26 adds separate configurable staff and vendor approval paths across editions, full and summary vendor requisition previews, confirmed-payment club registers, and improved optional-fee setup. Includes compact fee reports, clearer receipt amounts and wallet balances, numbered academic registers, mixed-classroom subject selection and controlled subject changes that preserve existing scores. Requires the current companion backend. Installing this update does not change existing balances or approval paths."
 }
