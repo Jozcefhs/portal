@@ -1,7 +1,7 @@
 {
-  "version": "3.1.26",
+  "version": "3.1.27",
   "channel": "stable",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.26.exe",
-  "sha256": "24a9f15de91c74dc767b2cb966e7e9ffa3c49e7c7b38620afd5d9006d3d6e139",
-  "notes": "Dynamax Desktop v3.1.26 adds separate configurable staff and vendor approval paths across editions, full and summary vendor requisition previews, confirmed-payment club registers, and improved optional-fee setup. Includes compact fee reports, clearer receipt amounts and wallet balances, numbered academic registers, mixed-classroom subject selection and controlled subject changes that preserve existing scores. Requires the current companion backend. Installing this update does not change existing balances or approval paths."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.27.exe",
+  "sha256": "1e9d9564636f5ac34c1b879988ecf84e2569e5a180e4c5caf500815a104f9198",
+  "notes": "Dynamax Desktop v3.1.27 packages the latest desktop source for all editions. Its shared online procurement workspace now includes quantity-available imports with repeat-upload protection, bulk department assignment, select-all purchase and supply requests with individual quantities and purchase unit costs, and compact tables with aligned stock values. Includes the existing finance, academic, approval and reporting improvements. Procurement changes require the current companion backend and an internet connection. Installing this update does not change existing stock, balances, approval paths or student scores."
 }
