@@ -1,12 +1,12 @@
-// Shared by the browser and server. Department imports may record opening stock
+// Shared by the browser and server. Central and department imports may record opening stock
 // for new items only; existing balances, ownership and financial records stay intact.
 export const PROCUREMENT_IMPORT_LIMITS = Object.freeze({ rows: 50, bytes: 64 * 1024, requestBytes: 256 * 1024 });
 export const PROCUREMENT_IMPORT_COLUMNS = Object.freeze({
-  central: Object.freeze(['ItemName', 'Unit', 'ItemCode', 'Category', 'ReorderLevel']),
+  central: Object.freeze(['ItemName', 'Unit', 'ItemCode', 'Category', 'ReorderLevel', 'QuantityAvailable']),
   department: Object.freeze(['ItemName', 'Unit', 'ItemCode', 'Category', 'ReorderLevel', 'QuantityAvailable', 'Notes'])
 });
 // Price is optional and remains accepted in older files, but is not needed in
-// the standard opening-stock template. Central stock still requires receipts.
+// the standard department opening-stock template. Subsequent stock uses receipts.
 const supportedColumns = mode => PROCUREMENT_IMPORT_COLUMNS[mode]
   ? [...PROCUREMENT_IMPORT_COLUMNS[mode], ...(mode === 'department' ? ['Price'] : [])] : null;
 const clean = value => String(value ?? '').trim();
@@ -18,7 +18,7 @@ export function normalizeProcurementImportRow(raw, mode) {
   const errors = [], source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
   if (source !== raw) errors.push('Each row must be an item record.');
   const unknown = Object.keys(source).filter(key => !columns.includes(key) && key !== 'RowNumber');
-  if (unknown.length) errors.push(`Unsupported columns: ${unknown.join(', ')}. Use QuantityAvailable for new department opening stock; direct Quantity, ownership and branch fields cannot be imported.`);
+  if (unknown.length) errors.push(`Unsupported columns: ${unknown.join(', ')}. Use QuantityAvailable for new item opening stock; direct Quantity, ownership and branch fields cannot be imported.`);
   const row = Object.fromEntries(columns.map(key => [key, clean(source[key])]));
   const numericColumns = ['ReorderLevel', 'QuantityAvailable', 'Price'];
   for (const name of columns) if (source[name] != null && typeof source[name] !== 'string' && !(typeof source[name] === 'number' && numericColumns.includes(name)))
@@ -38,8 +38,8 @@ export function normalizeProcurementImportRow(raw, mode) {
     row[key] = Number(input);
   };
   decimal('ReorderLevel', 3);
+  decimal('QuantityAvailable', 3);
   if (mode === 'department') {
-    decimal('QuantityAvailable', 3);
     if (row.Price) decimal('Price', 2);
     else row.Price = null;
   }

@@ -67,13 +67,14 @@ test('department template includes opening quantity instead of price; older opti
     const result = normalizeProcurementImportRow({ ItemName: 'Soap', Unit: 'pcs', Price }, 'department');
     assert.deepEqual(result.errors, []); assert.equal(result.row.Price, Price ? Number(Price) : null);
   }
-  assert.throws(() => parseProcurementItemCsv('ItemName,Unit,QuantityAvailable\nSoap,pcs,20', 'central'), /Unknown/);
+  const central = parseProcurementItemCsv('ItemName,Unit,QuantityAvailable\nSoap,pcs,20', 'central');
+  assert.equal(normalizeProcurementImportRow(central[0], 'central').row.QuantityAvailable, 20);
   assert.throws(() => parseProcurementItemCsv('ItemName,Unit,Price\nSoap,pcs,20', 'central'), /Unknown/);
 });
 
-test('invalid opening quantities are rejected without partial inventory writes', async () => {
+for (const ImportMode of ['central', 'department']) test(`${ImportMode}: invalid opening quantities are rejected without partial inventory writes`, async () => {
   for (const QuantityAvailable of [-1, '1e3', '1,000', '.1', '0.0001', 1000000001, Infinity, NaN, false, [], {}]) {
-    const f = fixture(), body = f.fields([{ ItemName: 'Soap', Unit: 'pcs', QuantityAvailable }]);
+    const f = fixture(), body = { ...f.fields([{ ItemName: 'Soap', Unit: 'pcs', QuantityAvailable }]), ImportMode };
     const p = await f.preview(body);
     assert.equal(p.canImport, false, String(QuantityAvailable)); assert.match(p.rows[0].errors.join(' '), /QuantityAvailable/);
     await assert.rejects(f.run(f.importBody(body, p))); assert.equal(f.store.size, 0);
@@ -213,6 +214,92 @@ test('central-only upload retains existing single-item IDs and never creates dep
   const duplicate = await f.preview(body);
   assert.equal(duplicate.canImport, false); assert.equal(duplicate.summary.skipped, 1);
   assert.equal(duplicate.summary.newCentral, 0);
+});
+
+test('central template includes QuantityAvailable and older files default to zero', () => {
+  assert.deepEqual(PROCUREMENT_IMPORT_COLUMNS.central, ['ItemName', 'Unit', 'ItemCode', 'Category', 'ReorderLevel', 'QuantityAvailable']);
+  for (const csv of ['ItemName,Unit\nSoap,pcs', 'ItemName,Unit,QuantityAvailable\nSoap,pcs,']) {
+    const normalized = normalizeProcurementImportRow(parseProcurementItemCsv(csv, 'central')[0], 'central');
+    assert.deepEqual(normalized.errors, []); assert.equal(normalized.row.QuantityAvailable, 0);
+  }
+});
+
+for (const edition of ['school', 'faith', 'organization']) test(`${edition}: central opening stock is created once with an atomic audit and no department changes`, async () => {
+  const f = fixture(edition), body = { ImportMode: 'central', Rows: [{ ItemName: 'Soap', Unit: 'pcs', ItemCode: 'SOAP', QuantityAvailable: 25.125 }] };
+  const department = f.put(f.collection, 'existing-department', { ...f.scope, SchoolSection: f.section, ItemName: 'Soap', Quantity: 10 });
+  const p = await f.preview(body);
+  assert.equal(f.commits.length, 0); assert.equal(p.canImport, true); assert.equal(p.rows[0].OpeningQuantity, 25.125);
+  const result = await f.run(f.importBody(body, p)), item = f.list(C.items)[0], audit = f.list(C.movements)[0];
+  assert.equal(f.commits.length, 1); assert.equal(f.commits[0].length, 4); assert.equal(item.Quantity, 25.125);
+  assert.equal(item.BranchId, 'main'); assert.equal(item.OrganisationEdition, edition); assert.equal(item.ImportOperationId, audit.__id);
+  assert.deepEqual(audit.Lines, [{ Collection: C.items, InventoryId: item.ItemId, ItemId: item.ItemId, ItemName: 'Soap', Unit: 'pcs',
+    Quantity: 25.125, Direction: 'IN', Before: 0, After: 25.125, Source: 'OpeningBalance', RowNumber: 2 }]);
+  assert.deepEqual(audit.ImportedItems, [{ RowNumber: 2, ItemId: item.ItemId, OpeningQuantity: 25.125 }]);
+  assert.match(result.message, /new central items received the opening quantities/); assert.match(result.message, /Department stock remains unchanged/);
+  assert.deepEqual(f.get(f.collection, 'existing-department'), department);
+  assert.equal(f.list(C.purchases).length, 0); assert.equal(f.list(C.transfers).length, 0); assert.equal(f.list('clinicMovements').length, 0);
+  // Even after stock has been consumed, neither the original file nor a changed
+  // opening quantity can reset/top up an existing central item on a fresh upload.
+  f.put(C.items, item.ItemId, { ...item, Quantity: 7 });
+  for (const QuantityAvailable of [25.125, 50, 0]) {
+    const repeated = { ...body, Rows: [{ ...body.Rows[0], QuantityAvailable }] }, preview = await f.preview(repeated);
+    assert.equal(preview.canImport, false); assert.equal(preview.rows[0].status, 'skip'); assert.equal(preview.rows[0].OpeningQuantity, 0);
+    assert.match(preview.rows[0].message, /not added or applied again/);
+    await assert.rejects(f.run(f.importBody(repeated, preview))); assert.equal(f.get(C.items, item.ItemId).Quantity, 7);
+  }
+  assert.equal(f.commits.length, 1); assert.equal(f.list(C.movements).length, 1);
+});
+
+test('mixed central re-upload skips existing stock and creates only genuinely new items', async () => {
+  const f = fixture(), row = { ItemName: 'Soap', Unit: 'pcs', QuantityAvailable: 20 };
+  await f.save({ ImportMode: 'central', Rows: [row] }); const existing = f.list(C.items)[0];
+  const body = { ImportMode: 'central', Rows: [{ ...row, QuantityAvailable: 99 }, { ItemName: 'Pads', Unit: 'pcs', QuantityAvailable: 12 }] };
+  const p = await f.preview(body); assert.equal(p.canImport, true); assert.equal(p.summary.skipped, 1); assert.equal(p.summary.newCentral, 1);
+  await f.run(f.importBody(body, p)); assert.deepEqual(f.get(C.items, existing.ItemId), existing);
+  assert.equal(f.list(C.items).find(item => item.ItemName === 'Pads').Quantity, 12);
+  assert.equal(f.list(C.movements).at(-1).Lines.length, 1); assert.equal(f.list(C.movements).at(-1).Lines[0].ItemName, 'Pads');
+});
+
+test('central opening quantities are protected against drift, duplicate rows, lost responses and racing uploads', async () => {
+  const f = fixture(), row = { ItemName: 'Soap', Unit: 'pcs', QuantityAvailable: 20 }, body = { ImportMode: 'central', Rows: [row] };
+  const p = await f.preview(body);
+  await assert.rejects(f.run(f.importBody({ ...body, Rows: [{ ...row, QuantityAvailable: 40 }] }, p)), /preview/);
+  const conflict = { ...body, Rows: [row, { ...row, QuantityAvailable: 40 }] }, invalid = await f.preview(conflict);
+  assert.equal(invalid.canImport, false); await assert.rejects(f.run(f.importBody(conflict, invalid))); assert.equal(f.store.size, 0);
+  const duplicate = { ...body, Rows: [row, { ...row }] }, reviewed = await f.preview(duplicate), command = f.importBody(duplicate, reviewed);
+  assert.equal(reviewed.summary.skipped, 1);
+  f.loseResponse(); assert.equal((await f.run(command)).replayed, true);
+  await Promise.all([f.run(command), f.run(command)]);
+  assert.equal(f.commits.length, 1); assert.equal(f.list(C.items)[0].Quantity, 20); assert.equal(f.list(C.movements)[0].Lines.length, 1);
+  // Distinct request IDs from the same initial preview still compete on the
+  // same exists:false item and identity claim, not just a replay key.
+  const race = fixture(), preview = await race.preview(body); race.raceCommits();
+  const results = await Promise.allSettled([race.run(race.importBody(body, preview)), race.run(race.importBody(body, preview))]);
+  assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
+  assert.equal(race.commits.length, 1); assert.equal(race.list(C.items)[0].Quantity, 20); assert.equal(race.list(C.movements).length, 1);
+});
+
+test('central opening-stock imports retain vendor, scope and permission restrictions', async () => {
+  const row = { ItemName: 'Soap', Unit: 'pcs', QuantityAvailable: 20 }, body = { ImportMode: 'central', Rows: [row] };
+  for (const changes of [{ VendorId: 'vendor' }, { OwnershipType: 'Vendor' }, { OwnerType: 'Vendor' }, { BranchId: 'other' }, { OrganisationEdition: 'faith' }]) {
+    const f = fixture(), id = await procurementItemId(f.scope, row);
+    f.put(C.items, id, { ...f.scope, ...row, ItemId: id, Quantity: 33, ...changes });
+    const snapshot = copy([...f.store]), p = await f.preview(body);
+    assert.equal(p.canImport, false); await assert.rejects(f.run(f.importBody(body, p))); assert.deepEqual([...f.store], snapshot);
+  }
+  const f = fixture();
+  for (const changes of [{ role: 'Vendor User' }, { role: 'Accounts Officer' }, { allowedSections: [] }, { branchId: 'all' }, { subscriptionReadOnly: true }])
+    await assert.rejects(f.preview(body, { ...f.user, ...changes }), error => error.status === 403);
+  assert.equal(f.store.size, 0);
+});
+
+test('maximum central opening-stock batch commits quantities and audit together; invalid rows save nothing', async () => {
+  const f = fixture(), body = { ImportMode: 'central', Rows: Array.from({ length: 50 }, (_, i) => ({ ItemName: `Item ${i}`, Unit: 'pcs', QuantityAvailable: i + 1 })) };
+  await f.save(body); assert.equal(f.commits.length, 1); assert.equal(f.commits[0].length, 102);
+  assert.equal(f.list(C.items).length, 50); assert.equal(f.list(C.movements)[0].Lines.length, 50);
+  const fresh = fixture(), invalid = { ...body, Rows: [...body.Rows.slice(0, 49), { ItemName: 'Invalid', Unit: 'pcs', QuantityAvailable: -1 }] };
+  const p = await fresh.preview(invalid); assert.equal(p.canImport, false);
+  await assert.rejects(fresh.run(fresh.importBody(invalid, p))); assert.equal(fresh.store.size, 0);
 });
 
 test('matching existing catalogues and legacy department items skip without changing any balance or adoption', async () => {

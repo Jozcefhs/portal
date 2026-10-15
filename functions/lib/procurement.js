@@ -185,12 +185,13 @@ export async function handleProcurementAction(env, user, body = {}, dependencies
     }
     result.summary = plan.preview.summary;
     result.importedItems = plan.preview.rows.filter(row => row.status === 'ready').map(row => ({ RowNumber: row.RowNumber,
-      ItemId: row.ItemId, ...(row.InventoryId ? { InventoryId: row.InventoryId, Department: plan.Department, SchoolSection: plan.SchoolSection,
-        OpeningQuantity: row.OpeningQuantity } : {}) }));
+      ItemId: row.ItemId, OpeningQuantity: row.OpeningQuantity,
+      ...(row.InventoryId ? { InventoryId: row.InventoryId, Department: plan.Department, SchoolSection: plan.SchoolSection } : {}) }));
     if (plan.mode === 'department') { result.Department = plan.Department; result.SchoolSection = plan.SchoolSection; }
     result.message = `${result.summary.newCentral} central catalogue and ${result.summary.newDepartment} department items created; ${result.summary.skipped} duplicate rows skipped. `
-      + (plan.mode === 'department' ? `${plan.openingMovements.length} new department items received the opening quantities shown in the preview. Existing balances were unchanged. ` : '')
-      + 'Central stock remains unchanged. Use purchase receipts and confirmed deliveries for subsequent restocking.';
+      + `${plan.openingMovements.length} new ${plan.mode === 'department' ? 'department' : 'central'} items received the opening quantities shown in the preview. Existing balances were unchanged. `
+      + (plan.mode === 'department' ? 'Central stock remains unchanged. ' : 'Department stock remains unchanged. ')
+      + 'Use purchase receipts and confirmed deliveries for subsequent restocking.';
   } else if (action === 'settings') {
     requireCapability(cap, 'canConfigure');
     if (typeof body.Enabled !== 'boolean' || body.ConfirmExistingBalances !== true) fail('Review existing department balances and explicitly confirm the Procurement control change.');

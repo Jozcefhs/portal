@@ -114,7 +114,7 @@ export async function planProcurementItemImport(env, user, body, scope, cap, db)
     row.RowNumber ||= index + 2;
     const report = { RowNumber: row.RowNumber, ItemName: row.ItemName, ItemCode: row.ItemCode, Unit: row.Unit,
       status: 'ready', errors: [...normalized.errors], centralAction: 'none',
-      ...(mode === 'department' ? { QuantityAvailable: row.QuantityAvailable, OpeningQuantity: 0 } : {}) };
+      QuantityAvailable: row.QuantityAvailable, OpeningQuantity: 0 };
     rows.push(report);
     if (report.errors.length) { report.status = 'error'; continue; }
     try {
@@ -139,7 +139,7 @@ export async function planProcurementItemImport(env, user, body, scope, cap, db)
       const pendingCentral = planned.get(`procurementItems/${ItemId}`);
       if (pendingCentral && !equal(centralValues(pendingCentral.data), centralValues(row))) fail('Two uploaded rows use the same central item code and unit with conflicting details.');
       if (mode === 'central' && existing) {
-        report.status = 'skip'; report.message = 'Matching central item already exists; its stock and details are unchanged.';
+        report.status = 'skip'; report.message = 'Matching central item already exists; its stock and details are unchanged. QuantityAvailable is not added or applied again.';
         snapshots.push({ ItemId, version: existing.__updateTime }); continue;
       }
       let InventoryId = '';
@@ -183,7 +183,7 @@ export async function planProcurementItemImport(env, user, body, scope, cap, db)
         snapshots.push({ ItemId, version: existing.__updateTime });
       } else if (!centralStaged.has(ItemId)) {
         add('procurementItems', ItemId, { ItemId, ItemName: row.ItemName, ItemCode: row.ItemCode, Unit: row.Unit,
-          Category: row.Category, ReorderLevel: row.ReorderLevel, Quantity: 0, OwnershipType: 'Organisation' });
+          Category: row.Category, ReorderLevel: row.ReorderLevel, Quantity: mode === 'central' ? row.QuantityAvailable : 0, OwnershipType: 'Organisation' });
         centralStaged.add(ItemId);
       }
       if (mode === 'department') add(config.Collection, InventoryId, { ...scope, SchoolSection, ItemName: existing?.ItemName || row.ItemName,
@@ -191,13 +191,14 @@ export async function planProcurementItemImport(env, user, body, scope, cap, db)
         Category: row.Category || 'General Item', ReorderLevel: row.ReorderLevel, Quantity: row.QuantityAvailable, Price: row.Price ?? 0, Notes: row.Notes,
         Active: 'YES', ProcurementManaged: 'YES', ProcurementItemId: ItemId, OwnershipType: 'Organisation' });
       for (const claim of claims) add('procurementOperations', claim.documentId, claim.data);
-      if (mode === 'department') {
-        report.OpeningQuantity = row.QuantityAvailable;
-        if (row.QuantityAvailable > 0) openingMovements.push({ Collection: config.Collection, InventoryId, ItemId,
-          ItemName: existing?.ItemName || row.ItemName, Unit: existing?.Unit || row.Unit, Department, SchoolSection,
-          Quantity: row.QuantityAvailable, Direction: 'IN', Before: 0, After: row.QuantityAvailable,
-          Source: 'OpeningBalance', RowNumber: row.RowNumber });
-      }
+      report.OpeningQuantity = row.QuantityAvailable;
+      if (row.QuantityAvailable > 0) openingMovements.push({
+        Collection: mode === 'central' ? 'procurementItems' : config.Collection,
+        InventoryId: mode === 'central' ? ItemId : InventoryId, ItemId,
+        ItemName: existing?.ItemName || row.ItemName, Unit: existing?.Unit || row.Unit,
+        ...(mode === 'department' ? { Department, SchoolSection } : {}),
+        Quantity: row.QuantityAvailable, Direction: 'IN', Before: 0, After: row.QuantityAvailable,
+        Source: 'OpeningBalance', RowNumber: row.RowNumber });
     } catch (error) {
       if (Number(error.status || 500) >= 500) throw error;
       report.status = 'error'; report.errors.push(error.message);

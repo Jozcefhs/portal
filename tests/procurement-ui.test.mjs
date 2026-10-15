@@ -32,9 +32,12 @@ function fixture(overrides = {}, options = {}) {
   modalForm.querySelectorAll = selector => selector === '[data-proc-import-source]' ? [importNodes.get('[data-proc-import-csv]'), importNodes.get('[data-proc-import-file]')] : selector === 'button, input, select, textarea' ? [...importNodes.values(), modalForm.elements.Department] : [];
   modalForm.elements = { Department: element(), ItemCode: element(), Discrepancy: { checked: false } };
   const modal = element(); modal.querySelector = () => modalForm;
-  const document = { createElement: () => modal, body: { append() {} } };
+  const downloads = [], blobs = new Map();
+  const document = { createElement: tag => tag === 'a'
+    ? { ...element(), click() { downloads.push({ name: this.download, blob: blobs.get(this.href) }); } } : modal, body: { append() {} } };
   const window = { crypto: webcrypto };
-  runInNewContext(source, { window, document, AbortController, Intl, Date, setTimeout, clearTimeout,
+  runInNewContext(source, { window, document, AbortController, Intl, Date, setTimeout, clearTimeout, Blob,
+    URL: { createObjectURL(blob) { const url = `blob:fixture-${blobs.size}`; blobs.set(url, blob); return url; }, revokeObjectURL(url) { blobs.delete(url); } },
     FormData: class { constructor(form) { this.values = Object.entries(form.values || {}); } [Symbol.iterator]() { return this.values[Symbol.iterator](); } } });
   const data = { ok: true, capabilities: { canManage: true, canApprove: true, canReviewRequests: true, canRequest: true, canReceive: true, canConfigure: true, canOverride: true }, schoolSection: 'Secondary', schoolSections: ['Primary', 'Secondary'],
     items: [{ ItemId: 'rice', ItemName: 'Rice <script>', Unit: 'kg', Quantity: 90, ReorderLevel: 100 }],
@@ -56,7 +59,7 @@ function fixture(overrides = {}, options = {}) {
   } });
   const action = (value, id = '') => ({ dataset: { procAction: value, id }, closest() { return this; } });
   const tab = value => ({ dataset: { procTab: value }, closest() { return this; } });
-  return { ui: window.DynamaxProcurement, root, nodes, calls, data, controller, modal, modalForm, progress, action, tab, importNodes, preview: result => { previewResult = result; }, fail: error => { fail = error; }, failList: error => { listFailure = error; }, lookup: result => { lookupResult = result; }, records: result => { recordsResult = result; }, detail: record => { detailResult = record; } };
+  return { ui: window.DynamaxProcurement, root, nodes, calls, data, controller, modal, modalForm, progress, action, tab, importNodes, downloads, preview: result => { previewResult = result; }, fail: error => { fail = error; }, failList: error => { listFailure = error; }, lookup: result => { lookupResult = result; }, records: result => { recordsResult = result; }, detail: record => { detailResult = record; } };
 }
 
 test('request lines require exact target inventory, positive amounts, unique items and a 20-line maximum', async () => {
@@ -438,7 +441,7 @@ test('stock and reorder figures line up with explicitly numeric headers in both 
 const importRow = { RowNumber: 2, ItemName: 'Sugar <test>', Unit: 'kg', ItemCode: 'SUGAR', ReorderLevel: '5', QuantityAvailable: '20.125' };
 const importModule = {
   PROCUREMENT_IMPORT_LIMITS: { rows: 50, bytes: 65536 },
-  PROCUREMENT_IMPORT_COLUMNS: { central: ['ItemName', 'Unit', 'ItemCode', 'Category', 'ReorderLevel'], department: ['ItemName', 'Unit', 'ItemCode', 'Category', 'ReorderLevel', 'QuantityAvailable', 'Notes'] },
+  PROCUREMENT_IMPORT_COLUMNS: { central: ['ItemName', 'Unit', 'ItemCode', 'Category', 'ReorderLevel', 'QuantityAvailable'], department: ['ItemName', 'Unit', 'ItemCode', 'Category', 'ReorderLevel', 'QuantityAvailable', 'Notes'] },
   parseProcurementItemCsv: () => [importRow], normalizeProcurementImportRow: row => ({ row, errors: [] })
 };
 const readyPreview = { ok: true, canImport: true, PreviewFingerprint: 'checked-records-v1', summary: { total: 1, ready: 1, skipped: 0, errors: 0, newCentral: 1, newDepartment: 1 }, rows: [{ ...importRow, status: 'ready', errors: [] }] };
@@ -495,6 +498,38 @@ test('CSV preview is read-only; confirmed department import keeps section, depar
   assert.equal(imported.payload.Rows[0].Quantity, undefined);
   assert.equal(imported.payload.Rows[0].QuantityAvailable, '20.125');
   assert.equal(view.calls.at(-1).action, 'list');
+  view.controller.destroy();
+});
+
+for (const mode of ['central', 'department']) test(`${mode}: downloaded CSV template contains QuantityAvailable and no required price`, async () => {
+  const importer = await import('../js/procurement-item-import.js'), view = await importFixture(mode, importer);
+  await view.importNodes.get('[data-proc-import-template]').fire('click');
+  assert.equal(view.downloads.length, 1); assert.equal(view.downloads[0].name, `procurement-${mode}-items.csv`);
+  const csv = await view.downloads[0].blob.text(), columns = csv.trim().replace(/^\uFEFF/, '').split(',');
+  assert.deepEqual(columns, importer.PROCUREMENT_IMPORT_COLUMNS[mode]);
+  assert.ok(columns.includes('QuantityAvailable')); assert.ok(!columns.includes('Price'));
+  view.controller.destroy();
+});
+
+test('central CSV previews available quantities and confirms opening stock without department fields', async () => {
+  const importer = await import('../js/procurement-item-import.js'), view = await importFixture('central', importer);
+  assert.match(view.modal.innerHTML, /opening available quantity/);
+  assert.match(view.modal.innerHTML, /not stock held by departments/);
+  assert.match(view.modal.innerHTML, /blank means 0/);
+  assert.doesNotMatch(view.modal.innerHTML, /Create zero-stock items|Do not include stock quantities/);
+  view.importNodes.get('[data-proc-import-csv]').value = 'ItemName,Unit,ItemCode,Category,ReorderLevel,QuantityAvailable\nSugar,kg,SUGAR,Food,5,20.125\n';
+  await view.importNodes.get('[data-proc-import-preview]').fire('click');
+  const html = view.importNodes.get('[data-proc-import-results]').innerHTML;
+  assert.match(html, /Available quantity/); assert.match(html, /20\.125/); assert.match(html, /new central items; skipped balances remain unchanged/);
+  assert.doesNotMatch(html, /New central stock balances: 0|Price \(optional\)/);
+  assert.equal(view.importNodes.get('button[type="submit"]').textContent, 'Create items with opening stock');
+  assert.match(view.progress.textContent, /with their opening quantities/);
+  await view.modalForm.fire('submit'); assert.equal(view.calls.at(-1).action, 'previewitemimport');
+  view.importNodes.get('[data-proc-import-confirm]').checked = true;
+  await view.modalForm.fire('submit');
+  const payload = view.calls.find(call => call.action === 'importitems').payload;
+  assert.equal(payload.ImportMode, 'central'); assert.equal(payload.Rows[0].QuantityAvailable, '20.125');
+  assert.equal(payload.Department, undefined); assert.equal(payload.SchoolSection, undefined); assert.equal(payload.Rows[0].Quantity, undefined);
   view.controller.destroy();
 });
 
