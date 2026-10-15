@@ -39,16 +39,17 @@ function fixture(overrides = {}, options = {}) {
   } });
   choices.querySelectorAll = () => choices.children;
   const makeLine = () => {
-    const line = element(), controls = new Map(['[data-line-quantity]', '[data-line-inventory]', '[data-remove-line]'].map(selector => [selector, element()]));
+    const line = element(), controls = new Map(['[data-line-quantity]', '[data-line-cost]', '[data-line-inventory]', '[data-remove-line]'].map(selector => [selector, element()]));
     let markup = '';
     Object.defineProperty(line, 'innerHTML', { get: () => markup, set(value) {
       markup = value; controls.get('[data-line-quantity]').value = decode(value.match(/data-line-quantity[^>]*value="([^"]*)"/)?.[1] || '');
+      controls.get('[data-line-cost]').value = decode(value.match(/data-line-cost[^>]*value="([^"]*)"/)?.[1] || '');
     } });
     line.querySelector = selector => controls.get(selector); line.querySelectorAll = () => [...controls.values()];
     return line;
   };
   modalForm.querySelector = selector => importNodes.get(selector) || pickerNodes.get(selector) || progress;
-  modalForm.querySelectorAll = selector => selector === '[data-proc-import-source]' ? [importNodes.get('[data-proc-import-csv]'), importNodes.get('[data-proc-import-file]')] : selector === 'button, input, select, textarea' ? [...importNodes.values(), ...pickerNodes.values(), ...choices.children, ...holder.children.flatMap(line => line.querySelectorAll()), modalForm.elements.Department] : [];
+  modalForm.querySelectorAll = selector => selector === '[data-proc-import-source]' ? [importNodes.get('[data-proc-import-csv]'), importNodes.get('[data-proc-import-file]')] : selector === 'button, input, select, textarea' ? [...importNodes.values(), ...pickerNodes.values(), ...choices.children, ...holder.children.flatMap(line => line.querySelectorAll()), modalForm.elements.Department].filter(Boolean) : [];
   modalForm.elements = { Department: element(), ItemCode: element(), Discrepancy: { checked: false } };
   const modal = element(); modal.querySelector = () => modalForm;
   const downloads = [], blobs = new Map();
@@ -81,7 +82,7 @@ function fixture(overrides = {}, options = {}) {
   return { ui: window.DynamaxProcurement, root, nodes, calls, data, controller, modal, modalForm, progress, action, tab, importNodes, downloads, pickerNodes, preview: result => { previewResult = result; }, fail: error => { fail = error; }, failList: error => { listFailure = error; }, lookup: result => { lookupResult = result; }, records: result => { recordsResult = result; }, detail: record => { detailResult = record; } };
 }
 
-async function pickerFixture(overrides = {}) {
+async function pickerFixture(overrides = {}, purchase = false) {
   const view = fixture({ items: [
     { ItemId: 'soap', ItemName: 'Soap <sample>', ItemCode: 'SOAP', Unit: 'bottles', Quantity: 12 },
     { ItemId: 'rice', ItemName: 'Rice', ItemCode: 'RICE', Unit: 'kg', Quantity: 90 },
@@ -95,9 +96,15 @@ async function pickerFixture(overrides = {}) {
     { InventoryId: 'soap-wrong-link', Department: 'kitchen', SchoolSection: 'Secondary', ItemName: 'Soap', Unit: 'bottles', ProcurementItemId: 'other', Quantity: 6 },
     { InventoryId: 'soap-vendor', Department: 'kitchen', SchoolSection: 'Secondary', ItemName: 'Soap', Unit: 'bottles', VendorId: 'vendor', Quantity: 7 }
   ], ...overrides }, { branchId: 'main', department: 'kitchen' });
-  await tick(); view.modalForm.elements.Department.value = 'kitchen';
-  view.modalForm.values = { Department: 'kitchen', NeededBy: '', Notes: 'Resupply request' };
-  await view.root.fire('click', view.action('newrequest'));
+  await tick();
+  if (purchase) {
+    delete view.modalForm.elements.Department;
+    view.modalForm.values = { SupplierName: 'Test supplier', Reference: 'SUP-1', FinanceReference: 'FIN-1', Notes: 'Stock purchase' };
+  } else {
+    view.modalForm.elements.Department.value = 'kitchen';
+    view.modalForm.values = { Department: 'kitchen', NeededBy: '', Notes: 'Resupply request' };
+  }
+  await view.root.fire('click', view.action(purchase ? 'newpurchase' : 'newrequest'));
   const picker = selector => view.pickerNodes.get(selector), choices = picker('[data-proc-choices]'), holder = picker('[data-proc-lines]');
   return { ...view, picker, choices, holder,
     async choose(itemId, checked = true) { const input = choices.children.find(row => row.dataset.procPickItem === itemId); assert.ok(input); input.checked = checked; await choices.fire('change', input); },
@@ -183,6 +190,82 @@ test('multi-item requests retain the original idempotency key after a lost respo
   view.fail(new Error('Connection lost')); await view.modalForm.fire('submit'); const original = view.calls.at(-1);
   await view.modalForm.fire('submit'); assert.deepEqual(view.calls.at(-1), original);
   line.querySelector('[data-line-quantity]').value = '3'; await view.modalForm.fire('submit'); assert.deepEqual(view.calls.at(-1), original);
+  assert.match(view.progress.textContent, /before changing or resubmitting/);
+});
+
+for (const edition of ['school', 'faith', 'organization']) {
+  test(`${edition}: purchase checklist submits separate quantities and costs without department destinations`, async t => {
+    const view = await pickerFixture({ edition }, true); t.after(() => view.controller.destroy());
+    assert.match(view.modal.innerHTML, /quantities and unit costs/);
+    assert.match(view.modal.innerHTML, /Submit purchase for approval/);
+    assert.doesNotMatch(view.modal.innerHTML, /Add another item|Destination stock record/);
+    assert.equal(view.modalForm.className, 'procurement-form procurement-request-form');
+    assert.deepEqual(view.choices.children.map(row => row.dataset.procPickItem), ['rice', 'soap']);
+    await view.picker('[data-proc-pick-all]').fire('click');
+    const lines = view.holder.children;
+    assert.equal(lines.length, 2);
+    for (const line of lines) {
+      assert.match(line.innerHTML, /data-line-cost min="0" step="0.01"/);
+      assert.doesNotMatch(line.innerHTML, /data-line-inventory/);
+      assert.equal(line.querySelector('[data-line-cost]').value, '');
+    }
+    lines[0].querySelector('[data-line-quantity]').value = '2.5'; lines[0].querySelector('[data-line-cost]').value = '150.75';
+    lines[1].querySelector('[data-line-quantity]').value = '3'; lines[1].querySelector('[data-line-cost]').value = '0';
+    await view.modalForm.fire('submit');
+    const sent = view.calls.find(call => call.action === 'createpurchase');
+    assert.deepEqual(sent.payload.Lines, [{ ItemId: 'rice', Quantity: 2.5, UnitCost: 150.75 }, { ItemId: 'soap', Quantity: 3, UnitCost: 0 }]);
+    for (const [field, value] of Object.entries(view.modalForm.values)) assert.equal(sent.payload[field], value);
+    assert.equal(sent.payload.Department, undefined); assert.equal(sent.payload.SchoolSection, undefined);
+    assert.deepEqual(view.calls.map(call => call.action), ['list', 'createpurchase', 'list']);
+  });
+}
+
+test('purchase checklist preserves quantity and zero unit cost through filtering, removal and re-selection', async t => {
+  const view = await pickerFixture({}, true); t.after(() => view.controller.destroy());
+  await view.searchItems('SOAP'); await view.choose('soap'); const line = view.holder.children[0];
+  line.querySelector('[data-line-quantity]').value = '4'; line.querySelector('[data-line-cost]').value = '0';
+  await view.searchItems('kg'); await view.picker('[data-proc-pick-all]').fire('click'); await view.searchItems('bottles');
+  assert.equal(view.holder.children[0], line); assert.equal(view.choices.children[0].checked, true);
+  await view.choose('soap', false); await view.choose('soap');
+  const restored = view.holder.children[1];
+  assert.equal(restored.querySelector('[data-line-quantity]').value, '4'); assert.equal(restored.querySelector('[data-line-cost]').value, '0');
+  await view.picker('[data-proc-pick-all]').fire('click'); assert.equal(view.holder.children.length, 2);
+  await restored.querySelector('[data-remove-line]').fire('click'); assert.equal(view.choices.children[0].checked, false);
+  await view.picker('[data-proc-pick-clear]').fire('click'); assert.equal(view.holder.children.length, 0);
+  await view.modalForm.fire('submit'); assert.ok(!view.calls.some(call => call.action === 'createpurchase'));
+  assert.match(view.progress.textContent, /Select at least one item for this purchase/);
+});
+
+test('purchase checklist rejects missing, negative and invalid quantities or costs before submission', async t => {
+  const view = await pickerFixture({}, true); t.after(() => view.controller.destroy()); await view.choose('rice');
+  const line = view.holder.children[0], qty = line.querySelector('[data-line-quantity]'), cost = line.querySelector('[data-line-cost]');
+  for (const value of ['', '-1', 'NaN', 'Infinity', '1000000001']) {
+    qty.value = '2'; cost.value = value; await view.modalForm.fire('submit'); assert.match(view.progress.textContent, /Unit cost must/);
+  }
+  for (const value of ['', '0', '-1', 'NaN', 'Infinity', '1000000001']) {
+    qty.value = value; cost.value = '20'; await view.modalForm.fire('submit'); assert.match(view.progress.textContent, /Quantity must/);
+  }
+  assert.ok(!view.calls.some(call => call.action === 'createpurchase'));
+});
+
+test('purchase checklist keeps the 20-item cap and can select out-of-stock items for restocking', async t => {
+  const items = Array.from({ length: 21 }, (_, i) => ({ ItemId: `item${i}`, ItemName: `Item ${i}`, Unit: 'pcs', Quantity: 0 }));
+  const view = await pickerFixture({ items }, true); t.after(() => view.controller.destroy());
+  await view.picker('[data-proc-pick-all]').fire('click'); assert.equal(view.holder.children.length, 0);
+  assert.match(view.picker('[data-proc-pick-status]').textContent, /20-item limit/);
+  for (let i = 0; i < 20; i++) await view.choose(`item${i}`);
+  assert.equal(view.holder.children.length, 20); assert.equal(view.choices.children[20].disabled, true);
+  await view.choose('item20'); assert.equal(view.holder.children.length, 20);
+  assert.match(view.picker('[data-proc-pick-status]').textContent, /A purchase can contain up to 20/);
+  await view.choose('item0', false); await view.choose('item20'); assert.equal(view.holder.children.length, 20);
+});
+
+test('purchase retries retain their idempotency key and block changed costs after a lost response', async t => {
+  const view = await pickerFixture({}, true); t.after(() => view.controller.destroy()); await view.choose('rice');
+  const line = view.holder.children[0]; line.querySelector('[data-line-quantity]').value = '2'; line.querySelector('[data-line-cost]').value = '40';
+  view.fail(new Error('Connection lost')); await view.modalForm.fire('submit'); const original = view.calls.at(-1);
+  await view.modalForm.fire('submit'); assert.deepEqual(view.calls.at(-1), original);
+  line.querySelector('[data-line-cost]').value = '50'; await view.modalForm.fire('submit'); assert.deepEqual(view.calls.at(-1), original);
   assert.match(view.progress.textContent, /before changing or resubmitting/);
 });
 
@@ -542,6 +625,8 @@ test('supply request spacing is compact without shrinking checkbox or input touc
   assert.match(styles, /\.procurement-request-form \.procurement-lines:empty \{ display: none;/);
   assert.match(styles, /\.procurement-picked-line \{ grid-template-columns: minmax\(0, 1.1fr\) minmax\(80px, .4fr\) minmax\(0, 1.5fr\) auto;/);
   assert.match(styles, /\.procurement-picked-line > \.procurement-picked-destination \{ grid-column: 2 \/ -1;/);
+  assert.match(styles, /\.procurement-picked-line > \.procurement-picked-cost \{ grid-column: 2 \/ -1;/);
+  assert.match(styles, /\.procurement-picked-purchase \{ grid-template-columns: minmax\(0, 1fr\) minmax\(0, 1fr\) auto;/);
 });
 
 test('mobile layouts keep amounts and statuses unbroken and scroll wide records horizontally', () => {

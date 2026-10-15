@@ -251,36 +251,12 @@
       && (!schoolSection || clean(row.SchoolSection || 'All') === schoolSection)
       && central && clean(row.Unit || 'pcs').toLowerCase() === clean(central.Unit || 'pcs').toLowerCase()
       && (!clean(row.ProcurementItemId) || clean(row.ProcurementItemId) === key(central)));
-    function lineEditor(form, withCost, initial = [], departmentTargets = false) {
-      const holder = form.querySelector('[data-proc-lines]');
-      const targetOptions = (node, selected = '') => {
-        if (!departmentTargets) return;
-        const central = items().find(item => key(item) === node.querySelector('[data-line-item]').value);
-        const target = node.querySelector('[data-line-inventory]');
-        const department = form.elements.Department.value;
-        const rows = matchingTargets(central, department);
-        target.innerHTML = option('', 'Choose matching department item') + rows.map(row => option(row.InventoryId || row.__id, `${itemName(row)} · ${number(row.Quantity)} ${row.Unit || 'pcs'} available`, selected)).join('');
-      };
-      const add = row => {
-        if (holder.children.length >= 20) return;
-        const node = document.createElement('div');
-        node.className = `procurement-line${withCost ? ' procurement-line-cost' : ''}`;
-        node.dataset.procLine = 'yes';
-        node.innerHTML = `<label>Central item<select data-line-item required>${itemOptions(row?.ItemId)}</select></label><label>Quantity<input type="number" data-line-quantity min="0.001" step="0.001" max="1000000000" value="${esc(row?.Quantity || '')}" required></label>${withCost ? `<label>Unit cost<input type="number" data-line-cost min="0" step="0.01" max="1000000000" value="${esc(row?.UnitCost ?? '')}" required></label>` : ''}<button type="button" class="secondary" data-remove-line aria-label="Remove item line">×</button>${departmentTargets ? '<label class="procurement-full">Destination stock record<select data-line-inventory required><option value="">Choose the central item first</option></select></label>' : ''}`;
-        node.querySelector('[data-remove-line]').addEventListener('click', () => node.remove());
-        if (departmentTargets) {
-          node.querySelector('[data-line-item]').addEventListener('change', () => targetOptions(node));
-          targetOptions(node, row?.InventoryId);
-        }
-        holder.append(node);
-      };
-      form.querySelector('[data-add-line]').addEventListener('click', () => add());
-      if (departmentTargets) form.elements.Department.addEventListener('change', () => holder.querySelectorAll('[data-proc-line]').forEach(node => targetOptions(node)));
-      (initial.length ? initial : [{}]).forEach(add);
-      return () => lineValues([...holder.querySelectorAll('[data-proc-line]')].map(row => ({ ItemId: row.querySelector('[data-line-item]').value, Quantity: row.querySelector('[data-line-quantity]').value, ...(departmentTargets ? { InventoryId: row.querySelector('[data-line-inventory]').value } : {}), ...(withCost ? { UnitCost: row.querySelector('[data-line-cost]').value } : {}) })), withCost, departmentTargets);
-    }
-    const linesBox = '<div class="procurement-lines procurement-full" data-proc-lines></div><div class="procurement-full"><button type="button" class="secondary" data-add-line>Add another item</button></div>';
-    function requestItemPicker(form) {
+    const itemPickerFields = (withCost = false) => `<fieldset class="procurement-item-picker procurement-full"><legend>Choose items</legend><label>Find items<input type="search" data-proc-pick-search placeholder="Search by item name, code or unit" autocomplete="off"></label><div class="procurement-picker-tools"><span data-proc-pick-count aria-live="polite"></span><div class="procurement-actions"><button type="button" class="secondary" data-proc-pick-all>Select matches</button><button type="button" class="secondary" data-proc-pick-clear>Clear selection</button></div></div><div class="procurement-item-choices" data-proc-choices></div><p class="procurement-section-note" data-proc-pick-status aria-live="polite"></p></fieldset>
+      <h4 class="procurement-picked-heading procurement-full">Selected items — quantities and ${withCost ? 'unit costs' : 'destinations'}</h4><p class="procurement-section-note procurement-full" data-proc-pick-empty>Tick items above to add them to this ${withCost ? 'purchase' : 'request'}.</p><div class="procurement-lines procurement-full" data-proc-lines></div>`;
+    function itemPicker(form, withCost = false) {
+      const kind = withCost ? 'purchase' : 'request';
+      form.className = 'procurement-form procurement-request-form';
+      dialog.className = 'procurement-dialog procurement-request-dialog';
       const catalog = [...new Map(items().filter(row => key(row)).map(row => [key(row), row])).values()]
         .sort((a, b) => itemName(a).localeCompare(itemName(b), undefined, { sensitivity: 'base', numeric: true }));
       const selected = new Map(), drafts = new Map(), maximum = 20;
@@ -320,16 +296,19 @@
       function remove(itemId) {
         const node = selected.get(itemId);
         if (!node) return;
-        drafts.set(itemId, { Quantity: node.querySelector('[data-line-quantity]').value, InventoryId: node.querySelector('[data-line-inventory]').value });
+        drafts.set(itemId, { Quantity: node.querySelector('[data-line-quantity]').value,
+          ...(withCost ? { UnitCost: node.querySelector('[data-line-cost]').value } : { InventoryId: node.querySelector('[data-line-inventory]').value }) });
         node.remove(); selected.delete(itemId);
       }
       function add(item) {
         const itemId = key(item);
         if (selected.has(itemId) || selected.size >= maximum) return;
         const draft = drafts.get(itemId) || {}, node = document.createElement('div');
-        node.className = 'procurement-line procurement-picked-line'; node.dataset.procLine = 'yes';
-        node.innerHTML = `<div class="procurement-line-info"><strong>${esc(itemName(item))}</strong><small>${esc(item.Unit || 'units')} · ${number(item.Quantity)} available centrally</small></div><label>Quantity<input type="number" data-line-quantity min="0.001" step="0.001" max="1000000000" value="${esc(draft.Quantity || '')}" aria-label="Quantity for ${esc(itemName(item))}" required></label><label class="procurement-picked-destination">Destination stock record<select data-line-inventory aria-label="Destination stock record for ${esc(itemName(item))}" required></select></label><button type="button" class="secondary" data-remove-line aria-label="Remove ${esc(itemName(item))} from request">×</button>`;
-        targets(node, item, draft.InventoryId);
+        node.className = `procurement-line procurement-picked-line${withCost ? ' procurement-picked-purchase' : ''}`; node.dataset.procLine = 'yes';
+        node.innerHTML = `<div class="procurement-line-info"><strong>${esc(itemName(item))}</strong><small>${esc(item.Unit || 'units')} · ${number(item.Quantity)} available centrally</small></div><label>Quantity<input type="number" data-line-quantity min="0.001" step="0.001" max="1000000000" value="${esc(draft.Quantity || '')}" aria-label="Quantity for ${esc(itemName(item))}" required></label>${withCost
+          ? `<label class="procurement-picked-cost">Unit cost<input type="number" data-line-cost min="0" step="0.01" max="1000000000" value="${esc(draft.UnitCost ?? '')}" aria-label="Unit cost for ${esc(itemName(item))}" required></label>`
+          : `<label class="procurement-picked-destination">Destination stock record<select data-line-inventory aria-label="Destination stock record for ${esc(itemName(item))}" required></select></label>`}<button type="button" class="secondary" data-remove-line aria-label="Remove ${esc(itemName(item))} from ${kind}">×</button>`;
+        if (!withCost) targets(node, item, draft.InventoryId);
         node.querySelector('[data-remove-line]').addEventListener('click', () => {
           if (busy || disposed) return;
           remove(itemId); status.textContent = ''; sync(); searchInput.focus();
@@ -346,7 +325,7 @@
         if (!item) return;
         status.textContent = '';
         if (!input.checked) remove(itemId);
-        else if (selected.size >= maximum) status.textContent = `A request can contain up to ${maximum} items. Remove an item or submit a separate request.`;
+        else if (selected.size >= maximum) status.textContent = `A ${kind} can contain up to ${maximum} items. Remove an item or submit a separate ${kind}.`;
         else add(item);
         sync();
       });
@@ -362,16 +341,16 @@
         if (busy || disposed) return;
         [...selected.keys()].forEach(remove); status.textContent = ''; sync();
       });
-      form.elements.Department.addEventListener('change', () => {
+      if (!withCost) form.elements.Department.addEventListener('change', () => {
         drafts.forEach(draft => { draft.InventoryId = ''; });
         selected.forEach((node, itemId) => targets(node, catalog.find(item => key(item) === itemId)));
         status.textContent = selected.size ? 'Receiving department changed. Choose the destination stock record for each selected item again.' : '';
       });
       showChoices();
       return () => {
-        if (!selected.size) { status.textContent = 'Select at least one item for this request.'; searchInput.focus(); throw new Error(status.textContent); }
+        if (!selected.size) { status.textContent = `Select at least one item for this ${kind}.`; searchInput.focus(); throw new Error(status.textContent); }
         return lineValues([...selected].map(([ItemId, node]) => ({ ItemId, Quantity: node.querySelector('[data-line-quantity]').value,
-          InventoryId: node.querySelector('[data-line-inventory]').value })), false, true);
+          ...(withCost ? { UnitCost: node.querySelector('[data-line-cost]').value } : { InventoryId: node.querySelector('[data-line-inventory]').value }) })), withCost, !withCost);
       };
     }
     function itemDialog(row = {}) {
@@ -379,19 +358,13 @@
     }
     function requestDialog() {
       let read;
-      const form = openDialog('Request supplies', `${departmentSelect(options.department)}${input('NeededBy', 'Needed by (optional)', '', 'date')}${notes()}<p class="procurement-section-note procurement-full">School section: ${esc(schoolSection || 'All')}. Select up to 20 items together, then enter each quantity and match its existing organisation-owned department stock record with the same unit. If absent, create the department item at zero stock first.</p>
-        <fieldset class="procurement-item-picker procurement-full"><legend>Choose items</legend><label>Find items<input type="search" data-proc-pick-search placeholder="Search by item name, code or unit" autocomplete="off"></label><div class="procurement-picker-tools"><span data-proc-pick-count aria-live="polite"></span><div class="procurement-actions"><button type="button" class="secondary" data-proc-pick-all>Select matches</button><button type="button" class="secondary" data-proc-pick-clear>Clear selection</button></div></div><div class="procurement-item-choices" data-proc-choices></div><p class="procurement-section-note" data-proc-pick-status aria-live="polite"></p></fieldset>
-        <h4 class="procurement-picked-heading procurement-full">Selected items — quantities and destinations</h4><p class="procurement-section-note procurement-full" data-proc-pick-empty>Tick items above to add them to this request.</p><div class="procurement-lines procurement-full" data-proc-lines></div>`, (fields, form) => save('request', { ...fields, SchoolSection: schoolSection || 'All', Lines: read() }, form), 'Submit supply request');
-      if (form) {
-        form.className = 'procurement-form procurement-request-form';
-        dialog.className = 'procurement-dialog procurement-request-dialog';
-        read = requestItemPicker(form);
-      }
+      const form = openDialog('Request supplies', `${departmentSelect(options.department)}${input('NeededBy', 'Needed by (optional)', '', 'date')}${notes()}<p class="procurement-section-note procurement-full">School section: ${esc(schoolSection || 'All')}. Select up to 20 items together, then enter each quantity and match its existing organisation-owned department stock record with the same unit. If absent, create the department item at zero stock first.</p>${itemPickerFields()}`, (fields, form) => save('request', { ...fields, SchoolSection: schoolSection || 'All', Lines: read() }, form), 'Submit supply request');
+      if (form) read = itemPicker(form);
     }
     function purchaseDialog() {
       let read;
-      const form = openDialog('New purchase', `${input('SupplierName', 'Supplier name', '', 'text', 'required maxlength="160"')}${input('Reference', 'Supplier / approval reference', '', 'text', 'required maxlength="160"')}${input('FinanceReference', 'Finance / Accounts reference (optional)', '', 'text', 'maxlength="160"')}${notes('Purchase reason / supporting document reference')}${linesBox}<p class="procurement-section-note procurement-full">Submit for approval before recording stock received. This does not record a supplier payment or duplicate an accounting journal. Process payment separately through Finance / Accounts and enter its reference above.</p>`, (fields, form) => save('createpurchase', { ...fields, Lines: read() }, form), 'Submit purchase for approval');
-      if (form) read = lineEditor(form, true);
+      const form = openDialog('New purchase', `${input('SupplierName', 'Supplier name', '', 'text', 'required maxlength="160"')}${input('Reference', 'Supplier / approval reference', '', 'text', 'required maxlength="160"')}${input('FinanceReference', 'Finance / Accounts reference (optional)', '', 'text', 'maxlength="160"')}${notes('Purchase reason / supporting document reference')}<p class="procurement-section-note procurement-full">Select up to 20 items, then enter the quantity and unit cost for each. Submit for approval before recording stock received. This does not record a supplier payment or duplicate an accounting journal. Process payment separately through Finance / Accounts and enter its reference above.</p>${itemPickerFields(true)}`, (fields, form) => save('createpurchase', { ...fields, Lines: read() }, form), 'Submit purchase for approval');
+      if (form) read = itemPicker(form, true);
     }
     function reviewDialog(row, purchase = false) {
       const title = purchase ? 'Review purchase' : 'Review supply request';

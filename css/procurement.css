@@ -50,7 +50,6 @@
 .procurement-check input { width: 18px; height: 18px; flex: 0 0 18px; margin-top: 2px; }
 .procurement-lines { display: grid; gap: .65rem; }
 .procurement-line { display: grid; grid-template-columns: minmax(0, 2fr) minmax(95px, .8fr) auto; gap: .55rem; padding: .75rem; border: 1px solid var(--line, #ccdcea); border-radius: 8px; align-items: end; }
-.procurement-line-cost { grid-template-columns: minmax(0, 2fr) minmax(80px, .7fr) minmax(95px, 1fr) auto; }
 .procurement-line-receipt { grid-template-columns: minmax(0, 2fr) minmax(100px, 1fr); }
 .procurement-line-info strong, .procurement-line-info small { display: block; }
 .procurement-line-info small { margin-top: .3rem; color: var(--muted, #566e84); }
@@ -86,6 +85,7 @@
 .procurement-request-form .procurement-lines { gap: .4rem; }
 .procurement-request-form .procurement-lines:empty { display: none; }
 .procurement-picked-line { grid-template-columns: minmax(0, 1.1fr) minmax(80px, .4fr) minmax(0, 1.5fr) auto; padding: .5rem .6rem; gap: .5rem; }
+.procurement-picked-purchase { grid-template-columns: minmax(0, 2fr) minmax(80px, .7fr) minmax(95px, 1fr) auto; }
 .procurement-picked-line .procurement-line-info { align-self: center; font-size: .86rem; }
 .procurement-picked-line .procurement-line-info small { margin-top: .1rem; }
 .procurement-picked-line [data-remove-line] { min-width: 40px; }
@@ -107,12 +107,14 @@ html[data-theme="dark"] .procurement-dialog { background: #0c2132; color: #e1edf
   .procurement-form { grid-template-columns: minmax(0, 1fr); }
   .procurement-dialog { padding: .8rem; }
   .procurement-heading { align-items: flex-start; }
-  .procurement-line, .procurement-line-cost { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .procurement-line { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .procurement-line > label:first-child { grid-column: 1 / -1; }
   .procurement-picked-line { grid-template-columns: minmax(80px, .4fr) minmax(0, 1fr) auto; }
+  .procurement-picked-purchase { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
   .procurement-picked-line > .procurement-line-info { grid-column: 1 / 3; }
   .procurement-picked-line > label { grid-row: 2; }
   .procurement-picked-line > .procurement-picked-destination { grid-column: 2 / -1; }
+  .procurement-picked-line > .procurement-picked-cost { grid-column: 2 / -1; }
   .procurement-picked-line > [data-remove-line] { grid-column: 3; grid-row: 1; }
   .procurement-line button { justify-self: end; }
   .procurement-line-receipt { grid-template-columns: minmax(0, 1fr); }
