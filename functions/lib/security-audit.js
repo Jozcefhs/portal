@@ -219,7 +219,8 @@ export function securityAuditAction({ pathname = '', method = 'GET', body = {} }
     if (path === '/api/staff-payment-corrections' || path === '/api/backend' && key === 'manualpaymentcorrection') {
       const command = path === '/api/backend' ? lower(body.Command) : key;
       const correction = { reduce: 'reduce receipt amount', reverse: 'reverse receipt credit', move: 'move credit to another student wallet' }[lower(body.Kind)];
-      return command === 'lookup' ? 'Load manual payment receipt and current wallet balance'
+      return command === 'search' ? 'Search a student’s payment history for receipt correction'
+        : command === 'lookup' ? 'Load manual payment receipt and current wallet balance'
         : command === 'preview' ? `Preview manual payment correction${correction ? ` — ${correction}` : ''}`
           : `Post manual payment correction${correction ? ` — ${correction}` : ''}`;
     }

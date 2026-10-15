@@ -33,6 +33,7 @@ test('receipt lookup and preview cannot masquerade as completed financial correc
     const label = command => securityAuditAction({ pathname: desktop ? '/api/backend' : '/api/staff-payment-corrections', method: 'POST',
       body: desktop ? { Action: 'manualPaymentCorrection', Command: command, Kind: 'move' } : { action: command, Kind: 'move' } });
     assert.match(label('lookup'), /^Load manual payment receipt and current wallet balance$/);
+    assert.equal(label('search'), 'Search a student’s payment history for receipt correction');
     assert.match(label('preview'), /^Preview.*move credit to another student wallet/);
     assert.match(auditNarrative({ Action: label('preview'), Actor: 'Ada', Outcome: 'Success' }), /preview, not confirmation/);
   }

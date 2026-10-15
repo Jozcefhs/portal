@@ -1,4 +1,5 @@
-import { batchCommitDocuments, getDocument, queryCollectionPages, listCollectionForReport } from './firestore.js';
+import { batchCommitDocuments, getDocument, queryCollection, queryCollectionPages, listCollectionForReport } from './firestore.js';
+import { searchStudentPaymentHistory } from './manual-payment-search.js';
 import { getAccountingChartRows } from './accounting-reference-cache.js';
 import { financeFailure, financeMoney, financeOperationId, financeWrite } from './accounting-mutation-guards.js';
 import { validateRequisitionPosting } from './requisition-posting.js';
@@ -149,11 +150,12 @@ async function schoolPlan(env, record, amount, entry, id, user, date, timestamp,
 // Injected storage permits atomicity/concurrency testing without live financial records.
 export async function handleManualPaymentCorrection(env, user, body, dependencies = {}) {
   const scope = correctionScope(user), action = clean(body.action);
-  const io = { get: getDocument, query: queryCollectionPages, list: listCollectionForReport, student: findStudentByAccountRef,
+  const io = { get: getDocument, query: queryCollectionPages, page: queryCollection, list: listCollectionForReport, student: findStudentByAccountRef,
     wallet: walletAccountPayload, rows: queryAccountRows, chart: getAccountingChartRows, commit: batchCommitDocuments,
     authorize: () => verifyStaffApprovalPassword(env, user.username, body.approvalPassword),
     now: () => new Date(), ...dependencies };
-  if (!['lookup', 'preview', 'post'].includes(action)) fail('Choose a valid payment correction action.', 400);
+  if (!['search', 'lookup', 'preview', 'post'].includes(action)) fail('Choose a valid payment correction action.', 400);
+  if (action === 'search') return searchStudentPaymentHistory(env, body, scope, io);
   if (action === 'post' && (user.subscriptionReadOnly || user.subscriptionActive === false || !await io.authorize())) fail('Enter your current staff password and use a writable account to confirm this correction.', 403);
   const record = await receipt(env, body, scope, io);
   if (action === 'lookup') {

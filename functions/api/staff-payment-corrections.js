@@ -24,6 +24,6 @@ export async function onRequestPost(context) {
   } catch (error) {
     const status = Number(error.status || 500);
     return Response.json({ ok: false, message: status >= 500
-      ? 'The correction could not be confirmed. Retry the same correction to check its status before starting another.' : error.message }, { status, headers });
+      ? 'The request could not be completed. For a search or receipt lookup, try again. If you were confirming a correction, retry the same instruction to check its status before starting another.' : error.message }, { status, headers });
   }
 }

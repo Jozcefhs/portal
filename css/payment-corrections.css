@@ -11,6 +11,16 @@
 .payment-correction-amounts dt { font-size: 12px; color: #486581; }
 .payment-correction-amounts dd { margin: 4px 0 0; font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: normal; }
 .payment-correction-dialog small { display: block; color: #486581; }
+.payment-history-search { padding: 0 12px 12px; border: 1px solid #c8d9e9; border-radius: 8px; }
+.payment-history-search > small { margin-top: 8px; }
+.payment-history-search [data-history-status]:empty { display: none; }
+.payment-history-results { list-style: none; margin: 8px 0; padding: 0; max-height: 320px; overflow-y: auto; }
+.payment-history-results li { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid #c8d9e9; }
+.payment-history-results li > div { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.payment-history-results strong, .payment-history-results span { display: block; }
+.payment-history-results button { flex: 0 0 auto; }
+.payment-history-results span { font-variant-numeric: tabular-nums; }
+.payment-history-results small { margin-top: 3px; }
 .payment-correction-dialog [data-summary] p { margin: 8px 0; }
 .payment-correction-dialog [hidden] { display: none !important; }
-@media (max-width: 480px) { .payment-correction-dialog { padding: 14px; } .payment-correction-dialog button:not([data-close]) { width: 100%; } }
+@media (max-width: 480px) { .payment-correction-dialog { padding: 14px; } .payment-correction-dialog button:not([data-close]) { width: 100%; } .payment-history-results li { flex-direction: column; align-items: stretch; } }

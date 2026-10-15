@@ -15,12 +15,17 @@ document.getElementById('open').onclick = () => DynamaxPaymentCorrections.open({
   fetch:async (url, options)=>{
     if(url!=='/api/staff-payment-corrections') throw Error('Unexpected fixture request');
     const input=JSON.parse(options.body), wallet=input.Reference==='MANUAL-WALLET';
-    const Receipt={Reference:input.Reference,Type:wallet?'Wallet':'School fees',Student:Source,OriginalAmount:14000,RemainingAmount:14000,...(wallet?{CurrentWalletBalance:44250}:{})};
+    if(input.action==='search') return Response.json({ok:true,Student:Source,NextCursor:input.Cursor?'':'second-page',Complete:!!input.Cursor,
+      Rows:input.Cursor?[{Id:'older',Reference:'MANUAL-WALLET',ReceiptNo:'WAL-2025-100',AccountRef:'TEST/001',FeeName:'Student Wallet Top-up',Amount:22400,Currency:'NGN',Source:'Batch import',RecordedBy:'Test Admin',PaidAt:'2025-10-10T09:00:00Z',AcademicSession:'2025/2026',Term:'First Term',CanSelect:true}]:[
+        {Id:'manual',Reference:'MANUAL-FEES',ReceiptNo:'PAY-2026-42',AccountRef:'TEST/001',FeeName:'School fees',Amount:14000,Currency:'NGN',Source:'Manual payment',RecordedBy:'Test Accountant',PaidAt:'2026-10-12T09:42:42Z',AcademicSession:'2026/2027',Term:'First Term',CanSelect:true},
+        {Id:'online',Reference:'ONLINE-1',AccountRef:'TEST/001',FeeName:'Student Wallet Top-up',Amount:10000,Currency:'NGN',Source:'Paystack',PaidAt:'2026-10-11T09:00:00Z',CanSelect:false,UnavailableReason:'Online payment — not a manual-payment correction'}]});
+    const originalAmount=wallet?22400:14000;
+    const Receipt={Reference:input.Reference,Type:wallet?'Wallet':'School fees',Student:Source,OriginalAmount:originalAmount,RemainingAmount:originalAmount,...(wallet?{CurrentWalletBalance:44800}:{})};
     if(input.action==='lookup') return Response.json({ok:true,Receipt});
     if(!input.Reference || !input.Reason) return Response.json({ok:false,message:'Missing reference or reason'},{status:400});
-    const amount=input.Kind==='reduce'?14000-Number(input.CorrectAmount):14000;
-    return Response.json({ok:true,Receipt,Source,Kind:input.Kind,Amount:amount,RemainingAmount:14000-amount,
-      ...(wallet?{BalanceBefore:44250,BalanceAfter:44250-amount}:{SchoolFees:{Before:{OutstandingBalance:0},After:{OutstandingBalance:amount},Invoices:[{InvoiceId:'INV-TEST',ReleasedCredit:amount,BalanceAfter:amount}]}}),
+    const amount=input.Kind==='reduce'?originalAmount-Number(input.CorrectAmount):originalAmount;
+    return Response.json({ok:true,Receipt,Source,Kind:input.Kind,Amount:amount,RemainingAmount:originalAmount-amount,
+      ...(wallet?{BalanceBefore:44800,BalanceAfter:44800-amount}:{SchoolFees:{Before:{OutstandingBalance:0},After:{OutstandingBalance:amount},Invoices:[{InvoiceId:'INV-TEST',ReleasedCredit:amount,BalanceAfter:amount}]}}),
       ...(input.Kind==='move'?{Target,TargetBalanceBefore:0,TargetBalanceAfter:amount}:{}),PreviewDigest:'fixture-only',
       message:input.action==='post'?'Simulated correction posted. No real balances changed.':'Review this simulated correction.'});
   }
