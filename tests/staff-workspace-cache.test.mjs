@@ -63,6 +63,22 @@ test('filters, cursors and module request payloads are independently keyed', asy
   assert.equal(reads, 3);
 });
 
+test('staff security paging stays live without invalidating unrelated workspace snapshots', async () => {
+  const { cache } = fixture();
+  const policy = requestPolicy(url('/api/staff-users'), post('list-security-audit'));
+  assert.equal(policy.cacheable, false);
+  assert.equal(policy.mutation, false);
+  let libraryReads = 0, auditReads = 0;
+  const library = () => cache.fetch(url('/api/staff-library'), post('list'), async () => { libraryReads++; return json(); });
+  await library();
+  for (let i = 0; i < 2; i++) {
+    await cache.fetch(url('/api/staff-users'), post('list-security-audit'), async () => { auditReads++; return json(); });
+  }
+  await library();
+  assert.equal(auditReads, 2);
+  assert.equal(libraryReads, 1);
+});
+
 test('refresh and mutation invalidate previous snapshots; unknown POSTs are not assumed to be reads', async () => {
   const { cache } = fixture(); let reads = 0;
   const load = () => cache.fetch(url('/api/staff-library'), post('list'), async () => { reads++; return json(); });

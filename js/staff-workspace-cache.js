@@ -25,7 +25,7 @@
   };
   // These reads deliberately remain live: identity/permissions, approvals,
   // device status, money-moving checks, attendance and protected files.
-  const liveReads = new Set(['list', 'status', 'admin-status', 'quick', 'presencequick', 'search',
+  const liveReads = new Set(['list', 'list-security-audit', 'status', 'admin-status', 'quick', 'presencequick', 'search',
     'detail', 'document', 'catalog', 'findings', 'reports', 'exportregister', 'recordexport',
     'searchcustomers', 'getbalance', 'tax-breakdown', 'previewhomework',
     'salesbootstrap', 'recentvendorsales', 'vendorcustomersearch', 'vendorwalletlookup', 'previewvendorsale']);

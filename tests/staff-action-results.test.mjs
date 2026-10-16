@@ -23,6 +23,7 @@ test('staff mutations across modules get results; reads, previews and authentica
     assert.equal(check('/api/staff-academics', action), false, action);
   }
   assert.equal(check('/api/staff-mfa', 'enroll'), false);
+  assert.equal(check('/api/staff-users', 'list-security-audit'), false, 'audit paging never opens mutation-result popups');
   assert.equal(check('/api/staff-academics', 'list', 'GET'), false);
 });
 

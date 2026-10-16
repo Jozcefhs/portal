@@ -37,6 +37,7 @@ import { formatPersonName } from '../lib/person-name-format.js';
 import { canEditRequisitions, requisitionEditGrant, requisitionEditPermissionAuditWrite } from '../lib/requisition-edit-permission.js';
 import { EXTERNAL_AUDITOR_ROLE, normalizeExternalAuditGrant } from '../lib/external-audit.js';
 import { assertStaffAccountFinalState, beginStaffAccountChange, commitStaffAccountChanges, resolveStaffAccountTarget, staffAccountCondition, staffAccountWrite } from '../lib/staff-account-integrity.js';
+import { loadStaffSecurityHistory } from '../lib/staff-security-history.js';
 
 function clean(value) { return String(value ?? '').trim(); }
 function lower(value) { return clean(value).toLowerCase(); }
@@ -235,13 +236,13 @@ function listUsers(rows, actor, profile = {}) {
 }
 
 async function listSecurityAudit(env, actor) {
-  const rows = await listCollection(env, 'staffSecurityAudit');
-  return rows.filter((row) => branchRecordVisible(row, actor))
-    .sort((a, b) => clean(b.Timestamp).localeCompare(clean(a.Timestamp))).slice(0, 80).map((row) => ({
-    Timestamp: clean(row.Timestamp), Action: clean(row.Action), Username: clean(row.Username),
-    Actor: clean(row.Actor || row.ActorUsername), BranchId: clean(row.BranchId || 'main'),
-    SourcePlatform: clean(row.SourcePlatform), Details: clean(row.Details)
-  }));
+  try { return { ...(await loadStaffSecurityHistory(env, actor)), warning: '' }; }
+  catch (_error) {
+    // Compatibility for older clients. Optional history must not block the
+    // directory, and an unavailable history is not an empty history.
+    return { rows: [], nextCursor: null,
+      warning: 'Security activity could not be loaded. Staff management is available. Refresh security activity to retry.' };
+  }
 }
 
 async function saveUser(env, actor, body) {
@@ -690,7 +691,7 @@ export async function onRequestPost(context) {
     if (action === 'list') {
       const [staffRows, audit, accounts, roleAccess, userLimit, moduleSettings, structure, profile] = await Promise.all([
         listCollection(env, 'staffUsers'),
-        listSecurityAudit(env, actor),
+        body.includeAudit === false ? Promise.resolve(null) : listSecurityAudit(env, actor),
         listCollection(env, 'chartOfAccounts'),
         roleAccessSettings(env, actor),
         loadSubscriptionUserLimit(env),
@@ -707,7 +708,9 @@ export async function onRequestPost(context) {
       result = {
         ok: true,
         users,
-        audit,
+        audit: audit?.rows || [],
+        auditWarning: audit?.warning || '',
+        auditNextCursor: audit?.nextCursor || null,
         roleAccess,
         nameFormat: clean(profile?.NameFormat || profile?.nameFormat) || 'Surname, first name, middle name',
         nameMigration: staffNameMigrationSummary(visibleRows),
@@ -723,6 +726,7 @@ export async function onRequestPost(context) {
         approvalAccounts: scopedAccounts.filter((row) => activeValue(row.Active === undefined ? true : row.Active)).map((row) => ({ Code: clean(row.Code || row.__id), Name: clean(row.Name) })).filter((row) => row.Code).sort((a, b) => a.Code.localeCompare(b.Code))
       };
     }
+    else if (action === 'list-security-audit') result = { ok: true, ...(await loadStaffSecurityHistory(env, actor, body.cursor ?? null)) };
     else if (action === 'save') result = await saveUser(env, actor, body);
     else if (action === 'delete') result = await deleteUser(env, actor, body);
     else if (action === 'import') result = await importUsers(env, actor, body);

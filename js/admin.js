@@ -82,6 +82,8 @@ let financeData = null;
 let staffUsersData = [];
 let staffSeatUsage = null;
 let staffAuditData = [];
+let staffAuditState = null;
+let staffUsersLoadVersion = 0;
 let securityAuditData = {
   rows: [], facets: {}, warnings: [], fromDate: '', toDate: '', totalMatches: 0, truncated: false,
   filters: { action: '', user: '', module: '', outcome: '', source: '', branchId: '', search: '' }
@@ -1785,6 +1787,7 @@ function clearStaffWorkspaceState() {
   staffUsersData = [];
   staffSeatUsage = null;
   staffAuditData = [];
+  staffAuditState = null;
   securityAuditData = {
     rows: [], facets: {}, warnings: [], fromDate: '', toDate: '', totalMatches: 0, truncated: false,
     filters: { action: '', user: '', module: '', outcome: '', source: '', branchId: '', search: '' }
@@ -1961,6 +1964,7 @@ function clearBranchScopedWorkspaceData() {
   staffUsersData = [];
   staffSeatUsage = null;
   staffAuditData = [];
+  staffAuditState = null;
   securityAuditData = {
     rows: [], facets: {}, warnings: [], fromDate: '', toDate: '', totalMatches: 0, truncated: false,
     filters: { action: '', user: '', module: '', outcome: '', source: '', branchId: '', search: '' }
@@ -21341,13 +21345,14 @@ async function loadSecurityAudit(forceReload = false) {
   return state.loadPromise;
 }
 
-async function staffUserRequest(action, payload = {}) {
+async function staffUserRequest(action, payload = {}, { signal } = {}) {
   const response = await staffFetch('/api/staff-users', {
-    method: 'POST', credentials: 'same-origin', cache: 'no-store',
+    method: 'POST', credentials: 'same-origin', cache: 'no-store', signal,
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action, ...payload })
   });
   const data = await response.json().catch(() => ({ ok: false, message: 'Staff-user management did not return JSON.' }));
+  if (signal?.aborted) throw Object.assign(new Error('Staff-user request cancelled.'), { name: 'AbortError' });
   if (response.status === 401) showLogin(data.message || 'Your staff session has expired.', 'bad');
   if (!response.ok || !data.ok) throw new Error(data.message || 'Staff-user action failed.');
   return data;
@@ -21646,9 +21651,7 @@ function renderStaffUsers() {
     </section>
     <section class="staff-security-activity">
       <h2>Recent Security Activity</h2>
-      <div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>Time</th><th>Action</th><th>Account</th><th>Actor</th><th>Platform</th></tr></thead><tbody>
-        ${staffAuditData.length ? staffAuditData.map((row) => `<tr><td>${escapeHtml(DynamaxTime.formatDateTime(row.Timestamp))}</td><td>${escapeHtml(row.Action)}</td><td>${escapeHtml(row.Username)}</td><td>${escapeHtml(row.Actor)}</td><td>${escapeHtml(row.SourcePlatform)}</td></tr>`).join('') : '<tr><td colspan="5">No security activity recorded yet.</td></tr>'}
-      </tbody></table></div>
+      <p role="status">Security activity loads separately from staff management.</p>
     </section>
     <dialog id="staffUserDialog" class="workflow-dialog">
       <div class="workflow-dialog-header"><div><small>Identity & access</small><h2 id="staffUserDialogTitle">New Staff Account</h2></div><button type="button" data-close-user-dialog aria-label="Close">×</button></div>
@@ -21690,11 +21693,12 @@ function renderStaffUsers() {
     { key: 'modules', label: 'Enabled modules', icon: '\u25A6', count: organizationModules.filter((module) => module.Enabled).length, nodes: panelEl.querySelector(':scope > .organization-module-settings') },
     { key: 'roleAccess', label: 'Role access', icon: '\u{1F511}', nodes: panelEl.querySelector(':scope > .role-module-settings') },
     { key: 'mfaPolicy', label: 'Two-factor policy', icon: '\u{1F6E1}', nodes: panelEl.querySelector(':scope > .staff-mfa-policy-settings') },
-    { key: 'security', label: 'Security activity', icon: '\u{1F6E1}', count: staffAuditData.length, nodes: panelEl.querySelector(':scope > .staff-security-activity') }
+    { key: 'security', label: 'Security activity', icon: '\u{1F6E1}', nodes: panelEl.querySelector(':scope > .staff-security-activity') }
   ]);
   bindStaffUserEvents();
   renderRoleAccessEditor(staffRoleAccessSelectedRole, policyRoles);
   updateMfaPolicyEditor();
+  renderStaffSecurityActivity();
 }
 
 function renderRoleAccessEditor(role = staffRoleAccessSelectedRole, roles = staffRoleAccessData?.roles || {}) {
@@ -22231,18 +22235,82 @@ async function importStaffCsv(event) {
   }
 }
 
+function renderStaffSecurityActivity() {
+  const panel = panelEl.querySelector('.staff-security-activity');
+  if (!panel || !staffAuditState) return;
+  const state = staffAuditState;
+  const message = state.error || (state.loading ? 'Loading security activity… Staff management remains available.'
+    : !state.loaded ? 'Security activity has not been loaded yet.'
+      : `${staffAuditData.length} records loaded, newest first. ${state.cursor ? 'More history is available.' : 'End of available history.'}`);
+  panel.innerHTML = `<h2>Security Activity</h2>
+    <p class="status${state.error ? ' bad' : ''}" role="status" aria-live="polite">${escapeHtml(message)}</p>
+    <button type="button" data-refresh-staff-audit${state.loading ? ' disabled' : ''}>Refresh security activity</button>
+    <div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>Time</th><th>Action</th><th>Account</th><th>Actor</th><th>Platform</th></tr></thead><tbody>
+      ${staffAuditData.length ? staffAuditData.map((row) => `<tr><td>${escapeHtml(DynamaxTime.formatDateTime(row.Timestamp))}</td><td>${escapeHtml(row.Action)}</td><td>${escapeHtml(row.Username)}</td><td>${escapeHtml(row.Actor)}</td><td>${escapeHtml(row.SourcePlatform)}</td></tr>`).join('')
+        : `<tr><td colspan="5">${state.error ? 'Security history is unavailable; retry below.' : state.loading || !state.loaded ? 'Waiting for security activity.' : state.cursor ? 'No matching entries in the pages checked so far. Load older activity to continue.' : 'No security activity recorded for this branch.'}</td></tr>`}
+    </tbody></table></div>
+    ${state.cursor || state.error ? `<button type="button" data-more-staff-audit${state.loading ? ' disabled' : ''}>${state.error ? 'Retry loading activity' : 'Load older activity'}</button>` : ''}`;
+  panel.querySelector('[data-refresh-staff-audit]')?.addEventListener('click', () => { void loadStaffSecurityActivity(true); });
+  panel.querySelector('[data-more-staff-audit]')?.addEventListener('click', () => { void loadStaffSecurityActivity(); });
+}
+
+async function loadStaffSecurityActivity(reset = false) {
+  if (activeSection !== 'staffUsers' || !staffAuditState || staffAuditState.loading) return;
+  const state = staffAuditState, user = currentUser, branch = selectedBranchId, sessionSignal = staffSessionAbortController.signal;
+  const isCurrent = () => state === staffAuditState && currentUser === user && selectedBranchId === branch && activeSection === 'staffUsers'
+    && sessionSignal === staffSessionAbortController.signal && !sessionSignal.aborted;
+  if (reset) { state.cursor = null; state.loaded = false; staffAuditData = []; }
+  state.loading = true;
+  state.error = '';
+  renderStaffSecurityActivity();
+  const controller = new AbortController();
+  const cancel = () => controller.abort();
+  sessionSignal.addEventListener('abort', cancel, { once: true });
+  if (sessionSignal.aborted) cancel();
+  const timer = setTimeout(() => controller.abort(), 30000);
+  try {
+    const result = await staffUserRequest('list-security-audit', { cursor: state.cursor }, { signal: controller.signal });
+    if (!isCurrent()) return;
+    if (!Array.isArray(result.rows) || !Object.hasOwn(result, 'nextCursor')
+      || result.nextCursor && JSON.stringify(result.nextCursor) === JSON.stringify(state.cursor)) throw new Error('Security activity did not return a complete new page. Refresh security activity.');
+    const existing = new Set(staffAuditData.map((row) => row.AuditId));
+    staffAuditData.push(...result.rows.filter((row) => {
+      if (existing.has(row.AuditId)) return false;
+      existing.add(row.AuditId);
+      return true;
+    }));
+    state.cursor = result.nextCursor;
+    state.loaded = true;
+  } catch (error) {
+    if (isCurrent()) state.error = controller.signal.aborted
+      ? 'Security activity took too long to load. Retry loading activity; staff management is still available.'
+      : `Security activity could not be loaded. ${error.message || 'Retry loading activity.'} Staff management is still available.`;
+  } finally {
+    clearTimeout(timer);
+    sessionSignal.removeEventListener('abort', cancel);
+    state.loading = false;
+    if (isCurrent()) renderStaffSecurityActivity();
+  }
+}
+
 async function loadStaffUsers() {
   if (activeSection !== 'staffUsers') return;
+  const user = currentUser, branch = selectedBranchId, version = ++staffUsersLoadVersion, sessionSignal = staffSessionAbortController.signal;
+  const isCurrent = () => version === staffUsersLoadVersion && currentUser === user && selectedBranchId === branch && activeSection === 'staffUsers'
+    && sessionSignal === staffSessionAbortController.signal && !sessionSignal.aborted;
+  staffAuditState = null;
   try {
     const [data, mfaAdministration] = await Promise.all([
-      staffUserRequest('list'),
+      staffUserRequest('list', { includeAudit: false }),
       clean(currentUser?.role) === 'Super Admin'
         ? mfaRequest('admin-status').catch((error) => ({ policy: null, accounts: [], error: error.message || String(error) }))
         : Promise.resolve(null)
     ]);
+    if (!isCurrent()) return;
     staffUsersData = data.users || [];
     staffSeatUsage = data.seatUsage || null;
-    staffAuditData = data.audit || [];
+    staffAuditData = [];
+    staffAuditState = { cursor: null, loaded: false, loading: false, error: '' };
     staffApprovalAccounts = data.approvalAccounts || [];
     staffRoleAccessData = data.roleAccess || null;
     staffModulePreferencesData = data.modulePreferences || null;
@@ -22259,11 +22327,13 @@ async function loadStaffUsers() {
     staffMfaAdminData = mfaAdministration;
     renderModuleSummary('staffUsers', staffUsersData);
     renderStaffUsers();
+    // This read handles its own failures and must not gate staff administration.
+    void loadStaffSecurityActivity();
     const handoff = takeRecordsDeskHandoff('staffUsers');
     const username = recordsDeskHandoffReference(handoff);
     if (username) openStaffUserDialog(username);
   } catch (error) {
-    if (activeSection === 'staffUsers') panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
+    if (isCurrent()) panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
   }
 }
 

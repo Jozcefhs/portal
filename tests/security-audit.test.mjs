@@ -117,6 +117,7 @@ test('routine page loads and expired-session polling are write-free; changes and
   for (const [pathname, body] of [
     ['/api/admin', { mode: 'shell' }], ['/api/settings', {}],
     ['/api/security-audit', { action: 'list' }], ['/api/staff-attendance', { action: 'quick' }],
+    ['/api/staff-users', { action: 'list-security-audit' }],
     ['/api/desktop-pairing', { action: 'list' }], ['/api/desktop-pairing', { action: 'status' }],
     ['/api/staff-notifications', { action: 'list' }], ['/api/backend', { Action: 'getStudents' }]
   ]) {
