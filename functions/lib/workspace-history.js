@@ -11,15 +11,17 @@ export async function loadWorkspaceHistoryPage(env, user, config, cursor = null,
   const now = Date.now();
   const readTime = cursor === null ? new Date(now).toISOString() : cursor?.readTime;
   if (cursor !== null && (!cursor || typeof cursor !== 'object' || Array.isArray(cursor)
-    || cursor.version !== 1 || cursor.scope !== scope || typeof cursor.pageToken !== 'string'
+    || cursor.version !== 2 || cursor.scope !== scope || typeof cursor.pageToken !== 'string'
     || !cursor.pageToken || cursor.pageToken.length > 12000 || typeof readTime !== 'string'
     || !Number.isFinite(Date.parse(readTime)) || Date.parse(readTime) > now
     || Date.parse(readTime) < now - 50 * 60 * 1000)) fail('This history page expired or belongs to another workspace. Refresh the history.');
   const rows = [], seenTokens = new Set();
   let pageToken = cursor?.pageToken || '';
-  // Name order includes legacy records even when date fields are missing. The
-  // UI labels this as paged history, not a supposedly complete/recent report.
-  const query = new URLSearchParams({ orderBy: '__name__ desc', readTime }).toString();
+  // Firestore's default document-name order needs no custom index and includes
+  // legacy records without dates. Reversing __name__ can require an index.
+  // The UI labels this as paged history, not a complete/recent report. Version 2
+  // rejects tokens from the old descending order before they reach Firestore.
+  const query = new URLSearchParams({ readTime }).toString();
   for (let page = 0; page < 4; page += 1) {
     const pageSize = 100 - rows.length;
     const result = await fetchPage(env, config.collection, { pageSize, pageToken, query });
@@ -31,5 +33,5 @@ export async function loadWorkspaceHistoryPage(env, user, config, cursor = null,
     pageToken = next;
     if (!pageToken || rows.length === 100) break;
   }
-  return { rows, nextCursor: pageToken ? { version: 1, scope, readTime, pageToken } : null };
+  return { rows, nextCursor: pageToken ? { version: 2, scope, readTime, pageToken } : null };
 }

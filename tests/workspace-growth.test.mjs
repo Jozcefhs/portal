@@ -66,12 +66,16 @@ const config = { key: 'tuckShop:movements', collection: 'tuckShopMovements', vis
 
 test('history traverses all 6200 records in bounded requests, including legacy undated rows', async () => {
   const source = Array.from({ length: 6200 }, (_, i) => ({ __id: `movement-${i}`, BranchId: i % 2 ? 'other' : 'main' }));
-  let calls = 0, cursor = null;
+  let calls = 0, cursor = null, snapshot;
   const found = [];
   const db = { listCollectionPage: async (_env, collection, options) => {
     calls++;
     assert.equal(collection, config.collection);
-    assert.equal(new URLSearchParams(options.query).get('orderBy'), '__name__ desc');
+    const params = new URLSearchParams(options.query);
+    assert.equal(params.has('orderBy'), false, 'use default document order without a custom index');
+    snapshot ||= params.get('readTime');
+    assert.ok(snapshot);
+    assert.equal(params.get('readTime'), snapshot, 'all continuations use the same snapshot');
     assert.ok(options.pageSize <= 100);
     const start = Number(options.pageToken || 0), end = Math.min(start + options.pageSize, source.length);
     return { documents: source.slice(start, end), nextPageToken: end < source.length ? String(end) : '' };
@@ -96,6 +100,8 @@ test('filtered empty history pages continue and cursor is bound to user, edition
   assert.equal(count, 4);
   assert.equal(page.rows.length, 0);
   assert.ok(page.nextCursor);
+  assert.equal(page.nextCursor.version, 2);
+  await assert.rejects(loadWorkspaceHistoryPage(env, user, config, { ...page.nextCursor, version: 1 }, db), { status: 400 });
   for (const modified of [{ branchId: 'other' }, { username: 'other' }, { schoolSectionAccess: 'Primary' }, { edition: 'faith' }, { role: 'Vendor User' }]) {
     await assert.rejects(loadWorkspaceHistoryPage(env, { ...user, ...modified }, config, page.nextCursor, db), { status: 400 });
   }

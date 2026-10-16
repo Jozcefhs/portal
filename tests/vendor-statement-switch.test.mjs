@@ -4,6 +4,7 @@ import {readFile} from 'node:fs/promises';
 import {runInNewContext,constants} from 'node:vm';
 import {webcrypto} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
+import {vendorRequestPrintReport} from '../functions/lib/vendor-request-print.js';
 
 const source = await readFile(new URL('../js/vendor-settlements.js',import.meta.url),'utf8');
 const tick = () => new Promise(resolve => setImmediate(resolve));
@@ -68,13 +69,16 @@ async function fixture(options = {}) {
     response(index,amount=0,details={}){const read=reads[index];read.resolve({vendor:{VendorId:read.body.VendorId,Name:read.body.VendorId==='v1'?'First vendor':'Second vendor'},from:read.body.From,to:read.body.To,balance:{Available:amount},availableInPeriod:amount,entries:[],payments:[],...details});}};
 }
 
-test('vendor requisition has an explicit printable preview with its saved snapshot and approval trail', async t => {
-  const f = await fixture({tab:'requests',requests:[{SettlementId:'REQ-1',VendorName:'Vendor <sample>',Status:'Submitted',PaymentStatus:'Unpaid',Revision:1,
+test('vendor requisition has full and summary previews with saved totals and approval trail', async t => {
+  const request = {SettlementId:'REQ-1',VendorName:'Vendor <sample>',Status:'Submitted',PaymentStatus:'Unpaid',Revision:1,
     Amount:5000,Paid:0,Unpaid:5000,From:'2026-10-01',To:'2026-10-13',BankAccountMasked:'****1234',
-    Snapshot:[{SaleNo:'SALE-1',Items:[{Quantity:2,ItemName:'Bread'}],Gross:5500,Refund:0,Charge:500,Net:5000,RuleLabel:'Agreed fee'}],
-    History:[{Action:'Submitted',By:'vendor',At:'2026-10-13',Notes:'Example <note>'}]}]});
+    Allocations:[{LotId:'lot-1',AmountCents:500000}],
+    Snapshot:[{LotId:'lot-1',SaleNo:'SALE-1',Items:[{Quantity:2,ItemName:'Bread'}],Gross:5500,Refund:0,Charge:500,Net:5000,RuleLabel:'Agreed fee'}],
+    History:[{Action:'Submitted',By:'vendor',At:'2026-10-13',Notes:'Example <note>'}]};
+  const f = await fixture({tab:'requests',requests:[{...request,PrintReport:vendorRequestPrintReport(request)}]});
   t.after(()=>f.mounted.destroy());
-  assert.match(f.root.querySelector('[data-panel]').innerHTML, /Preview \/ print requisition/);
+  assert.match(f.root.querySelector('[data-panel]').innerHTML, /Full list preview \/ print/);
+  assert.match(f.root.querySelector('[data-panel]').innerHTML, /Summary preview \/ print/);
   f.root.querySelectorAll('[data-request]').find(node=>node.dataset.action==='print').onclick();
   assert.equal(f.previews.length,1);
   assert.match(f.previews[0],/Print \/ Save as PDF/);
@@ -82,6 +86,16 @@ test('vendor requisition has an explicit printable preview with its saved snapsh
   assert.match(f.previews[0],/2 × Bread/);
   assert.match(f.previews[0],/Approval \/ payment trail/);
   assert.match(f.previews[0],/Example &lt;note&gt;/);
+  f.root.querySelectorAll('[data-request]').find(node=>node.dataset.action==='print-summary').onclick();
+  assert.equal(f.previews.length,2);
+  assert.match(f.previews[1],/Summary — Vendor requisition REQ-1/);
+  assert.doesNotMatch(f.previews[1],/2 × Bread/);
+  for (const preview of f.previews) {
+    assert.match(preview,/5,500\.00/);
+    assert.match(preview,/5,000\.00/);
+    assert.match(preview,/1 sales/);
+    assert.match(preview,/Approval \/ payment trail/);
+  }
   assert.deepEqual(f.calls.map(call=>call.action),['bootstrap']);
 });
 

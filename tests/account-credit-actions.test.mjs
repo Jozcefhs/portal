@@ -77,7 +77,9 @@ test('credit-action subledger, liability journal and idempotency marker commit t
 
 test('payment reconciliation runs before a new receipt is saved, and global sync checks receipts before invoice-credit baselines', async () => {
   const source = await readFile(new URL('../functions/api/backend.js', import.meta.url), 'utf8');
-  const payment = source.split('export async function recordManualPayment(env, body) {', 2)[1]
+  const paymentStart = source.indexOf('export async function recordManualPayment(');
+  assert.ok(paymentStart >= 0);
+  const payment = source.slice(paymentStart + 'export async function '.length)
     .split('export async function ', 1)[0];
   const firstPaymentCreate = payment.indexOf("createDocumentIfAbsent(env, 'payments'");
   const paymentPreflight = payment.indexOf('syncSchoolAccountCreditJournals(env, accountRef', payment.indexOf('if (!payment) {'));

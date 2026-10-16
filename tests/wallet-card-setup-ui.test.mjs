@@ -18,7 +18,9 @@ class Element {
 function walletUi({ account = { AccountRef: 'TEST/A', WalletCardId: 'CARD-A' }, respond } = {}) {
   let lookup, setup, workspace, loaded, empty;
   const requests = [];
+  const feedback = [];
   const context = {
+    window: { DynamaxStaffActionFeedback: { begin: () => feedback.push('begin'), end: () => feedback.push('end') } },
     accountWalletSetupState: { account, accountRef: account?.AccountRef || '', cardId: '' },
     dashboardStatus: new Element(),
     clean: (value) => String(value ?? '').trim(), escapeHtml: (value) => String(value ?? ''), money: (value) => `₦${value || 0}`,
@@ -63,7 +65,7 @@ function walletUi({ account = { AccountRef: 'TEST/A', WalletCardId: 'CARD-A' }, 
   }
   context.refreshAccountWalletSetupWorkspace = mount;
   mount();
-  return { context, requests, lookup: () => lookup, setup: () => setup, empty: () => empty };
+  return { context, requests, feedback, lookup: () => lookup, setup: () => setup, empty: () => empty };
 }
 
 test('an unassigned students card field never falls back to a previously entered lookup card', () => {
@@ -110,6 +112,7 @@ test('a failed lookup leaves no old card assignment form available to save', asy
   await previousForm.fire('submit');
   assert.equal(ui.requests.length, 1);
   assert.equal(ui.requests[0].body.action, 'lookup');
+  assert.deepEqual(ui.feedback, ['begin', 'end']);
 });
 
 test('branch or session changes ignore a delayed lookup response from the old workspace', async () => {
@@ -166,6 +169,7 @@ test('registration prevents repeated submits and changing students during an in-
   finish({ ok: true, account: { AccountRef: 'TEST/A', WalletCardId: 'CARD-A' } });
   await pending;
   assert.equal(ui.lookup().elements.AccountRef.disabled, false);
+  assert.deepEqual(ui.feedback, ['begin', 'end'], 'duplicate submissions cannot start additional action feedback');
 });
 
 test('the wallet API still requires staff account permissions, scoped identity and duplicate-card protection', async () => {

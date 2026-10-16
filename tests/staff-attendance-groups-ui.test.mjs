@@ -242,7 +242,7 @@ test('group editor and staff assignment cards use responsive layouts without nar
 
 test('attendance group assets are versioned, cached and loaded before the admin controller', () => {
   assert.match(html, /css\/staff-attendance-groups\.css\?v=20261011-attendance-groups/);
-  const helper = html.indexOf('src="js/staff-attendance-groups.js?v=20261011-attendance-groups"');
+  const helper = html.search(/src="js\/staff-attendance-groups\.js\?v=20261011-attendance-groups[^"\n]*"/);
   const controller = html.indexOf('src="js/admin.js?v=');
   assert.ok(helper > 0 && controller > helper);
   assert.match(html, /js\/admin\.js\?v=[^"\n]*attendance-groups/);

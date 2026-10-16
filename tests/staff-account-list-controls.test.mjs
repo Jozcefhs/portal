@@ -11,6 +11,7 @@ await import('../js/list-sorting.js');
 const sorting = globalThis.DynamaxListSorting;
 const helperSource = admin.slice(admin.indexOf('function alphabeticalStaffRoles('), admin.indexOf('function renderStaffUsers('));
 const renderSource = admin.slice(admin.indexOf('function renderStaffUsers('), admin.indexOf('function renderRoleAccessEditor('));
+const securityRenderSource = admin.slice(admin.indexOf('function renderStaffSecurityActivity('), admin.indexOf('async function loadStaffSecurityActivity('));
 const clean = (value) => String(value ?? '').trim();
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const users = [
@@ -138,7 +139,7 @@ function renderedFixture(edition, { previous = null, rolePolicy = true, rows = u
     document: { getElementById: () => null }, mountWorkspaceTabs: () => {}, bindStaffUserEvents: () => {},
     renderRoleAccessEditor: () => {}, updateMfaPolicyEditor: () => {}, staffMfaAccountLabel: () => 'Two-factor not enrolled'
   });
-  vm.runInContext(renderSource, context);
+  vm.runInContext(renderSource + securityRenderSource, context);
   context.renderStaffUsers();
   return panel.innerHTML;
 }

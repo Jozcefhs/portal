@@ -6,7 +6,7 @@ import { canEditRequisitions, requisitionEditGrant, assertRequisitionEditPermiss
 import { resolveAuthoritativeDesktopActor, applyAuthoritativeActor } from '../functions/lib/backend-security.js';
 import { buildRequisitionResubmission } from '../functions/api/finance-workflow.js';
 import { requisitionChangedFields, requisitionEditDetails } from '../functions/lib/requisition-edit-history.js';
-import { requisitionWorkflowStatus, REQUISITION_STATUS, assertRequisitionTransition } from '../functions/lib/requisition-workflow.js';
+import { requisitionWorkflowStatus, REQUISITION_STATUS, assertRequisitionTransition, approvalFlowLabel } from '../functions/lib/requisition-workflow.js';
 
 const clean = value => String(value ?? '').trim();
 const lower = value => clean(value).toLowerCase();
@@ -42,7 +42,7 @@ test('desktop grant and revocation use current database permission, not submitte
 function resubmitHarness(existing, writes, reads) {
   const source = workflow.slice(workflow.indexOf('export async function resubmitRequisition('), workflow.indexOf('\nasync function submitBill(')).replace('export ', '');
   return vm.runInNewContext(`(${source})`, {
-    clean, assertRequisitionEditPermission, safeId: value => value,
+    clean, assertRequisitionEditPermission, approvalFlowLabel, safeId: value => value,
     getDocument: async () => { reads.count++; return existing; },
     scopedRows: (rows, user) => rows.filter(row => !user.branchId || row.BranchId === user.branchId),
     capabilities: () => ({}), assertRequisitionResubmittable() {},

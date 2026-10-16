@@ -94,7 +94,9 @@ test('generic modal keeps validation, error feedback and save controls visible; 
   assert.match(source,/submitForm\(form, body => call\(action, body, form\), transform\)/);
   assert.match(source,/submitForm\(form, payload => \{ body = \{ \.\.\.payload, VendorId:selected \}/);
   assert.match(css,/\.vendor-dialog-footer \{ position:sticky; bottom:-18px/);
-  assert.match(html,/vendor-settlements\.js\?v=20261013-vendor-approval-revocation/);
+  const asset = html.match(/src="js\/vendor-settlements\.js\?v=(\d{8})[^"\n]*"/);
+  assert.ok(asset && Number(asset[1]) >= 20261013, 'load the vendor form repair or a newer asset version');
+  assert.ok(asset.index < html.indexOf('src="js/admin.js?v='), 'load vendor workspace before the admin controller');
   assert.match(source,/This form does not create a sign-in account\. Leave it blank to register the vendor without portal access/);
 });
 
