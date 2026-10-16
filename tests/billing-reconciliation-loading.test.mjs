@@ -19,12 +19,13 @@ function buttonState() {
   return { button, classes, attributes };
 }
 
-const plan = (reference = 'TEST/A') => ({ profile: { AccountRef: reference }, previewToken: 'reviewed-token' });
-const result = (overrides = {}) => ({ message: 'Missing charges reconciled.', after: { recordedCredit: 14000, difference: 0 }, ...overrides });
+const plan = (reference = 'TEST/A') => ({ profile: { AccountRef: reference }, postingTotal: 250000, previewToken: 'reviewed-token' });
+const result = (overrides = {}) => ({ message: 'Missing charges reconciled.', added: 250000, after: { recordedCredit: 14000, difference: 0 }, ...overrides });
 
-function reconciliation(respond) {
+function reconciliation(respond, confirm = async () => true) {
   const ui = buttonState(), status = {}, requests = [];
   const context = {
+    window: { DynamaxDialogs: { confirm } },
     reconcileRequest: async (payload) => {
       requests.push(payload);
       assert.equal(ui.classes.has('is-loading'), true);
@@ -49,8 +50,9 @@ test('completed single-account reconciliation clears the spinner and retains the
   const ui = reconciliation(() => result());
   await ui.apply([plan()], ui.button, ui.status);
   assertFinished(ui);
-  assert.match(ui.status.innerHTML, /1 accounts reconciled; 0 require another review/);
-  assert.match(ui.status.innerHTML, /Recorded credit: ₦14000; remaining charge difference: ₦0/);
+  assert.match(ui.status.innerHTML, /Missing charges posted for 1 accounts; 0 submissions need another review/);
+  assert.match(ui.status.innerHTML, /Recorded credit: ₦14000; remaining charge difference \(not balance\): ₦0/);
+  assert.equal(ui.requests[0].PostingMode, 'missing-only-v2');
   await ui.apply([plan()], ui.button, ui.status);
   assert.equal(ui.requests.length, 1, 'completed submission cannot post twice');
 });
@@ -62,7 +64,7 @@ test('multi-account results and credit warnings complete without hiding failed o
   });
   await ui.apply([plan(), plan('TEST/B'), plan('TEST/C')], ui.button, ui.status);
   assertFinished(ui);
-  assert.match(ui.status.innerHTML, /2 accounts reconciled; 1 require another review; 1 credit-allocation warnings/);
+  assert.match(ui.status.innerHTML, /2 accounts; 1 submissions need another review; 0 posted accounts still need finance review; 1 balance\/credit warnings/);
   assert.match(ui.status.innerHTML, /Response lost/);
   assert.equal(ui.requests.length, 3);
 });
@@ -71,7 +73,7 @@ test('all failed responses still clear loading and require a new preview rather 
   const ui = reconciliation(() => { throw new Error('Request timed out.'); });
   await ui.apply([plan()], ui.button, ui.status);
   assertFinished(ui);
-  assert.match(ui.status.innerHTML, /0 accounts reconciled; 1 require another review/);
+  assert.match(ui.status.innerHTML, /0 accounts; 1 submissions need another review/);
   await ui.apply([plan()], ui.button, ui.status);
   assert.equal(ui.requests.length, 1);
 });
@@ -93,6 +95,18 @@ test('a second click during the pending request does not post the same reviewed 
   finish(result());
   await pending;
   assertFinished(ui);
+});
+
+test('confirmation uses the gross missing amount; cancellation posts nothing and permits a later confirmation', async () => {
+  const ui = reconciliation(() => assert.fail('Cancelled action must not post'), async (dialog) => {
+    assert.match(dialog.message, /₦250000/);
+    assert.match(dialog.message, /1 account\(s\) will remain under finance review/);
+    return false;
+  });
+  await ui.apply([{ ...plan(), difference: -1000, requiresReview: true }], ui.button, ui.status);
+  assert.equal(ui.requests.length, 0);
+  assert.equal(ui.button.disabled, false);
+  assert.equal(ui.classes.has('is-loading'), false);
 });
 
 test('single Boarding Wear reversal also ends the loading state while keeping the posted action disabled', async () => {

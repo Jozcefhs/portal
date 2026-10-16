@@ -12,16 +12,18 @@ import { assertServiceWorkerCacheVersion } from './helpers/service-worker-cache-
 test('intake review exposes missing fees and obsolete charges together without calling them duplicate payments', async () => {
   const data = billingFixture(), before = JSON.stringify(data);
   const plan = await studentBillingReconciliationPlan(student, data);
-  assert.equal(plan.ready, false);
+  assert.equal(plan.ready, true);
   assert.equal(plan.missing.length, 4);
   assert.equal(plan.conflicts.length, 2);
   assert.equal(plan.billingReview.missingTotal, 608065);
   assert.equal(plan.expectedTotal, 1488885);
   assert.equal(plan.invoicedTotal, 1008850);
   assert.equal(plan.difference, 480035);
-  assert.match(plan.reason, /TXT_OLD: Posted charge does not apply/);
-  assert.match(plan.reason, /LEG: Posted charge does not apply/);
-  assert.doesNotMatch(plan.reason, /duplicat/i);
+  assert.equal(plan.postingTotal, 608065);
+  assert.equal(plan.requiresReview, true);
+  assert.match(plan.reviewWarning, /TXT_OLD: Posted charge does not apply/);
+  assert.match(plan.reviewWarning, /LEG: Posted charge does not apply/);
+  assert.doesNotMatch(plan.reviewWarning, /duplicat/i);
   assert.equal(plan.recordedCredit, 494035);
   assert.equal(plan.recordedCreditSource, 'saved_summary');
   assert.equal(JSON.stringify(data), before, 'no fee, invoice, payment or summary mutation');
@@ -32,7 +34,8 @@ test('zero net difference cannot hide offsetting missing and obsolete components
   data.feeItems = [{ ...data.feeItems[0], FeeCode: 'REPLACEMENT', Amount: 1008850 }];
   const plan = await studentBillingReconciliationPlan(student, data);
   assert.equal(plan.difference, 0);
-  assert.equal(plan.ready, false);
+  assert.equal(plan.ready, true);
+  assert.equal(plan.postingTotal, 1008850);
   assert.equal(plan.billingReview.status, 'needs_review');
   assert.equal(plan.missing.length, 1);
   assert.equal(plan.conflicts.length, 3);
@@ -49,7 +52,7 @@ test('multiple invoices, altered amounts and zero-value existing invoices have p
 });
 
 test('school-wide counts distinguish missing from ready-to-post, including blocked accounts with missing fees', async () => {
-  const blocked = await studentBillingReconciliationPlan(student, billingFixture());
+  const blocked = await studentBillingReconciliationPlan({ ...student, ProfileCompletionStatus: '' }, billingFixture());
   const data = billingFixture();
   data.invoices = data.invoices.slice(0, 1);
   const ready = await studentBillingReconciliationPlan({ ...student, DisplayName: '<unsafe>' }, data);
@@ -72,11 +75,11 @@ test('school-wide counts distinguish missing from ready-to-post, including block
   assert.match(html, /Invoice\(s\): INV-1/);
   assert.match(html, /&lt;unsafe&gt;/);
   assert.doesNotMatch(html, /<unsafe>/);
-  assert.match(html, /Reconcile 1 reviewed accounts/);
+  assert.match(html, /Post valid missing charges for 1 reviewed accounts/);
 });
 
 test('blocked-only report has no posting button and no misleading zero-missing claim', async () => {
-  const plan = await studentBillingReconciliationPlan(student, billingFixture());
+  const plan = await studentBillingReconciliationPlan({ ...student, ProfileCompletionStatus: '' }, billingFixture());
   const html = await renderBillingReport({ total: 1, matched: 0, incomplete: 0, missingAccounts: 1,
     ready: 0, blockedMissingAccounts: 1, review: 1, rows: [plan] });
   assert.match(html, /1 accounts have missing components: 0 eligible/);

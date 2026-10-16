@@ -125,5 +125,5 @@ export async function studentBillingReviewBatch(env, user, body, overrides = {})
     else rows.push(plan);
   }
   return { ok: true, readOnly: true, checked: profiles.length, matched, rows,
-    ready: rows.filter((row) => row.ready).length, review: rows.filter((row) => !row.ready).length };
+    ready: rows.filter((row) => row.ready).length, review: rows.filter((row) => !row.ready || row.requiresReview).length };
 }

@@ -3885,18 +3885,26 @@ function bindStudentEditor(students) {
     let changed = 0, failed = 0, warnings = 0;
     const outcomes = [];
     let completionText = 'Stopped — load a fresh preview before retrying';
+    let cancelled = false;
     try {
+      if (!await window.DynamaxDialogs.confirm({ title: 'Post valid missing charges only',
+        message: `Add ${money(plans.reduce((sum, plan) => sum + plan.postingTotal, 0))} in valid missing charges across ${plans.length} reviewed account(s)? Existing invoice amounts and payments will not be replaced. ${plans.filter((plan) => plan.requiresReview).length} account(s) will remain under finance review, with existing allocations unchanged.`,
+        confirmText: 'Post missing charges' })) {
+        cancelled = true;
+        completionText = 'Post valid missing charges';
+        return;
+      }
       for (const plan of plans) {
         setStatus(status, `Checking ${outcomes.length + 1} of ${plans.length}: ${plan.profile.AccountRef}. Keep this page open.`, '');
         try {
-          const result = await reconcileRequest({ action: 'apply', AccountRef: plan.profile.AccountRef, PreviewToken: plan.previewToken });
+          const result = await reconcileRequest({ action: 'apply', PostingMode: 'missing-only-v2', AccountRef: plan.profile.AccountRef, PreviewToken: plan.previewToken });
           changed += 1;
           if (result.creditWarning) warnings += 1;
           outcomes.push({ reference: plan.profile.AccountRef, result });
         } catch (error) { failed += 1; outcomes.push({ reference: plan.profile.AccountRef, error: error.message }); }
       }
-      status.innerHTML = `<strong>${changed} accounts reconciled; ${failed} require another review; ${warnings} credit-allocation warnings.</strong><ul>${outcomes.map((row) =>
-        `<li>${escapeHtml(row.reference)}: ${escapeHtml(row.error || row.result.message)}${row.result ? ` Recorded credit: ${money(row.result.after.recordedCredit)}; remaining charge difference: ${money(row.result.after.difference)}.` : ''}</li>`).join('')}</ul>`;
+      status.innerHTML = `<strong>Missing charges posted for ${changed} accounts; ${failed} submissions need another review; ${outcomes.filter((row) => row.result?.requiresReview).length} posted accounts still need finance review; ${warnings} balance/credit warnings.</strong><ul>${outcomes.map((row) =>
+        `<li>${escapeHtml(row.reference)}: ${escapeHtml(row.error || row.result.message)}${row.result ? ` Added charges: ${money(row.result.added)}. Recorded credit${row.result.requiresReview ? ' — provisional' : ''}: ${money(row.result.after.recordedCredit)}; remaining charge difference (not balance): ${money(row.result.after.difference)}.` : ''}</li>`).join('')}</ul>`;
       completionText = 'Review complete — load a fresh preview before retrying';
     } catch (error) {
       setStatus(status, `${error.message} Some changes may already be saved. Load a fresh preview before another submission.`, 'bad');
@@ -3904,7 +3912,7 @@ function bindStudentEditor(students) {
       // Finished does not mean retryable: clear the visual busy state, but keep
       // this reviewed submission disabled to avoid posting it a second time.
       setButtonLoading(button, false, '', completionText);
-      button.disabled = true;
+      button.disabled = !cancelled;
     }
   };
   panelEl.querySelector('[data-review-all-student-billing]')?.addEventListener('click', async (event) => {
@@ -3923,7 +3931,7 @@ function bindStudentEditor(students) {
     dialog.addEventListener('close', cancel);
     try {
       if (!dialog.open) dialog.showModal();
-      const { studentMaintenanceRequest, reviewAllStudentBilling } = await import('./student-maintenance.js?v=20261016-billing-credit-review');
+      const { studentMaintenanceRequest, reviewAllStudentBilling } = await import('./student-maintenance.js?v=20261016-billing-credit-review-missing-only');
       const request = studentMaintenanceRequest(staffFetch, { signal: controller.signal, sessionSignal, isCurrent });
       const report = await reviewAllStudentBilling(request, ({ checked, total }) => {
         if (isCurrent() && !controller.signal.aborted) setStatus(content.querySelector('[data-billing-review-progress]'),
@@ -3935,13 +3943,14 @@ function bindStudentEditor(students) {
         <p>Review complete. No invoices, payments or balances have changed. Posting missing charges is a separate action below.</p>
         <p>${report.total} student profiles checked in this branch (primary and secondary where permitted). ${report.matched} completed profiles already match; ${report.incomplete} incomplete profiles excluded.</p>
         <p><strong>${report.missingAccounts} accounts have missing components: ${report.ready} eligible for missing-charge posting; ${report.blockedMissingAccounts} blocked pending finance review. ${report.review} accounts need finance review in total.</strong></p>
+        <p>${report.readyWithReview} eligible accounts also have components that remain under review. Eligibility means only valid missing charges can be added; it does not clear existing conflicts.</p>
         <p>Charge differences compare the current fee setup with posted invoices; they are not the student's balance. Recorded credit may be overstated when charges are missing or conflicting. It is not confirmed excess money.</p>
-        <p>Only eligible missing charges can be posted below. Conflicting accounts stay blocked. No existing charge is replaced and no payment is duplicated.</p>
+        <p>Only valid missing charges are posted below. Conflicting invoices and blocked components remain untouched. Existing payments are preserved. For accounts still under review, credit allocation is deferred and balances remain provisional.</p>
         <div class="admin-table-wrap billing-review-table"><table class="admin-table"><thead><tr><th>Student / period</th><th>Charge check</th><th>Findings</th></tr></thead><tbody>${report.rows.map((row) =>
           `<tr><td><strong>${escapeHtml(row.profile.DisplayName || '')}</strong><br>${escapeHtml(row.profile.AccountRef)}<br><small>${escapeHtml([row.profile.ClassName, row.profile.StudentType, row.profile.Gender, row.profile.EnrollmentCategory].filter(Boolean).join(' · '))}<br>${escapeHtml([row.profile.AcademicSession, row.profile.Term].filter(Boolean).join(' · '))}</small></td>
-          <td>${Array.isArray(row.rows) ? `Current setup: <strong>${money(row.expectedTotal)}</strong><br>Posted: ${money(row.invoicedTotal)}<br>Difference: ${money(row.difference)}<br><small>Recorded credit: ${row.recordedCreditSource === 'unavailable' ? 'not loaded' : money(row.recordedCredit)} — unverified</small>` : 'Not checked'}</td>
-          <td><strong>${row.ready ? 'Eligible for missing-charge posting' : 'Blocked — finance review required'}</strong><p>${escapeHtml(row.reason || `${row.missing.length} missing component(s)`)}</p>${row.rows?.length ? `<details><summary>View ${row.missing?.length || 0} missing / ${row.conflicts?.length || 0} conflicting components</summary><ul>${row.rows.filter((item) => item.missing || item.conflict).map((item) => `<li><strong>${escapeHtml(item.name || item.code)}</strong> (${escapeHtml(item.code)}): ${escapeHtml(item.review)}. Current setup ${money(item.expected)}; posted ${money(item.invoiced)}.${item.invoiceIds.length ? ` Invoice(s): ${item.invoiceIds.map(escapeHtml).join(', ')}.` : ''}</li>`).join('')}</ul></details>` : ''}</td></tr>`).join('')}</tbody></table></div>
-        <p class="status" data-billing-reconcile-status></p>${ready.length && !currentUser?.subscriptionReadOnly ? `<button type="button" data-apply-billing-plans>Reconcile ${ready.length} reviewed accounts (${money(ready.reduce((sum, row) => sum + row.difference, 0))} missing charges)</button>` : ''}`;
+          <td>${Array.isArray(row.rows) ? `Current setup: <strong>${money(row.expectedTotal)}</strong><br>Posted: ${money(row.invoicedTotal)}<br>Difference: ${money(row.difference)}<br><strong>Valid missing charges to add: ${money(row.ready ? row.postingTotal : 0)}</strong><br><small>Recorded credit: ${row.recordedCreditSource === 'unavailable' ? 'not loaded' : money(row.recordedCredit)} — unverified</small>` : 'Not checked'}</td>
+          <td><strong>${row.ready ? `Eligible for missing-charge posting${row.requiresReview ? ' — other components still need review' : ''}` : 'Blocked — finance review required'}</strong><p>${escapeHtml(row.reason || `${row.eligibleMissing.length} valid missing component(s)`)}</p>${row.reviewWarning ? `<p>${escapeHtml(row.reviewWarning)}</p>` : ''}${row.rows?.length ? `<details><summary>View ${row.missing?.length || 0} missing / ${row.conflicts?.length || 0} conflicting components</summary><ul>${row.rows.filter((item) => item.missing || item.conflict).map((item) => `<li><strong>${escapeHtml(item.name || item.code)}</strong> (${escapeHtml(item.code)}): ${escapeHtml(row.blockedMissing?.find((blocked) => blocked.code === item.code)?.postingBlock || item.review)}. Current setup ${money(item.expected)}; posted ${money(item.invoiced)}.${item.invoiceIds.length ? ` Invoice(s): ${item.invoiceIds.map(escapeHtml).join(', ')}.` : ''}</li>`).join('')}</ul></details>` : ''}</td></tr>`).join('')}</tbody></table></div>
+        <p class="status" data-billing-reconcile-status></p>${ready.length && !currentUser?.subscriptionReadOnly ? `<button type="button" data-apply-billing-plans>Post valid missing charges for ${ready.length} reviewed accounts (${money(ready.reduce((sum, row) => sum + row.postingTotal, 0))})</button>` : ''}`;
       content.querySelector('[data-apply-billing-plans]')?.addEventListener('click', (e) => reconcilePlans(ready, e.currentTarget, content.querySelector('[data-billing-reconcile-status]')));
       setStatus(maintenanceStatus, `Billing review complete: ${report.total} profiles checked; ${report.missingAccounts} with missing components; ${report.ready} eligible for posting; ${report.review} need finance review. No financial records changed by the review.`, 'ok');
     } catch (error) {
@@ -3981,7 +3990,7 @@ function bindStudentEditor(students) {
         <div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>Component / finding</th><th>Current setup</th><th>Posted</th><th>Difference</th></tr></thead><tbody>${preview.rows.map((row) => `<tr><td>${escapeHtml(row.name || row.code)}<br><small>${escapeHtml(row.code)} · ${escapeHtml(row.review)}${row.invoiceIds.length ? `<br>Invoice(s): ${row.invoiceIds.map(escapeHtml).join(', ')}` : ''}</small></td><td>${money(row.expected)}</td><td>${money(row.invoiced)}</td><td>${money(row.difference)}</td></tr>`).join('')}</tbody></table></div>
         <p>Missing or conflicting charges can overstate recorded credit. This figure is unchanged and is not confirmation of money available to refund or transfer. Review the fee setup before approving any corrections.</p>
         <p>Positive differences may require additional charges. Negative differences may require corrections. Finance must check the source invoices and approvals before posting either. No financial changes are made by this preview.</p>
-        ${canReconcile ? `<p>${escapeHtml(preview.reason || 'Only the missing components will be added; existing credit will be applied without creating another payment.')}</p><p class="status" data-billing-reconcile-status></p>${preview.ready ? '<button type="button" data-apply-billing-plans>Reconcile missing charges and existing credit</button>' : ''}` : ''}`;
+        ${canReconcile ? `<p><strong>Valid missing charges to add: ${money(preview.ready ? preview.postingTotal : 0)}</strong></p><p>${escapeHtml(preview.reason || (preview.requiresReview ? 'Only valid missing charges will be added. Existing invoices, payments and allocations remain unchanged; the balance remains provisional pending finance review.' : 'Only missing components will be added; available existing credit will be applied without creating another payment.'))}</p>${preview.reviewWarning ? `<p>${escapeHtml(preview.reviewWarning)}</p>` : ''}<p class="status" data-billing-reconcile-status></p>${preview.ready ? '<button type="button" data-apply-billing-plans>Post valid missing charges</button>' : ''}` : ''}`;
       const content = document.querySelector('[data-billing-preview-content]');
       content.querySelector('[data-apply-billing-plans]')?.addEventListener('click', (e) => reconcilePlans([preview], e.currentTarget, content.querySelector('[data-billing-reconcile-status]')));
       if (canReconcile && profile.EnrollmentCategory === 'Returning' && preview.rows.some((row) => row.code === 'BOW' && row.expected === 0 && row.invoiced > 0)) {

@@ -3433,22 +3433,46 @@ export async function studentBillingReconciliationPlan(student, data) {
   const preview = await buildStudentBillingPreview(student, data);
   const conflicts = preview.rows.filter((row) => row.conflict);
   const missing = preview.rows.filter((row) => row.missing);
+  const eligibleMissing = [], blockedMissing = [];
+  for (const row of missing) {
+    const fees = studentMissingChargeFees(data, preview.profile, row.code);
+    const prior = (data.invoices || []).map(normalizeInvoice).some((invoice) => sameText(row.code, invoice.FeeCode) &&
+      feeFieldMatches(invoice.AcademicSession || 'All', preview.profile.AcademicSession) &&
+      feeFieldMatches(invoice.Term || 'All', preview.profile.Term));
+    const reason = prior ? 'A cancelled or legacy invoice already uses this component; finance review is required.'
+      : !clean(row.code) || fees.length !== 1 || !Number.isFinite(row.expected) || fees[0].Amount !== row.expected
+        ? 'The fee configuration is ambiguous; finance review is required.' : '';
+    (reason ? blockedMissing : eligibleMissing).push({ ...row, ...(reason ? { postingBlock: reason } : {}) });
+  }
+  eligibleMissing.sort((a, b) => lower(a.code).localeCompare(lower(b.code)));
+  blockedMissing.sort((a, b) => lower(a.code).localeCompare(lower(b.code)));
+  const postingTotal = asMoneyNumber(eligibleMissing.reduce((sum, row) => sum + row.expected, 0));
   let reason = '';
-  if (conflicts.length) reason = `Automatic posting blocked: ${conflicts.map((row) => `${row.code}: ${row.review}`).join('; ')}. Review the fee setup and original invoices before approving corrections.`;
-  else if (!missing.length) reason = 'Charges already match the saved profile.';
+  if (!eligibleMissing.length) reason = blockedMissing.length ? blockedMissing.map((row) => `${row.code}: ${row.postingBlock}`).join('; ')
+    : conflicts.length ? 'No valid missing charges to post. Existing invoice conflicts still need finance review.' : 'Charges already match the saved profile.';
   else if (lower(student.ProfileCompletionStatus) !== 'complete') reason = 'Parent profile is not marked complete.';
   else if (!preview.invoicedTotal) reason = 'No existing period billing; use the normal first-time billing process.';
   else if (!preview.profile.AcademicSession || !preview.profile.Term) reason = 'Academic period is not set.';
-  else if (data.invoices.some((row) => missing.some((fee) => sameText(fee.code, row.FeeCode || row.feeCode)) &&
-    sameFinancialPeriod(normalizeInvoice(row), preview.profile.AcademicSession, preview.profile.Term))) {
-    reason = 'A missing component has a cancelled or legacy invoice; finance review is required.';
-  }
-  const signature = JSON.stringify({ profile: preview.profile, revision: student.__updateTime || '',
+  const reviewWarning = [...conflicts.map((row) => `${row.code}: ${row.review}`),
+    ...blockedMissing.map((row) => `${row.code}: ${row.postingBlock}`)].join('; ');
+  const signature = JSON.stringify({ postingMode: 'missing-only-v2', profile: preview.profile, revision: student.__updateTime || '',
+    eligibleMissing, blockedMissing,
+    fees: eligibleMissing.flatMap((row) => studentMissingChargeFees(data, preview.profile, row.code))
+      // Guard-only writes from another student's posting advance the revision
+      // without changing this reviewed rule. Commit still checks fresh revisions.
+      .map((fee) => [fee.__id || '', fee.FeeCode, fee.Amount, fee.Currency, fee.DueDate]),
     rows: preview.rows.map(({ code, expected, invoiced, invoiceIds }) => ({ code, expected, invoiced, invoiceIds: [...invoiceIds].sort() }))
       .sort((a, b) => a.code.localeCompare(b.code)) });
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(signature));
   const previewToken = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-  return { ...preview, ready: !reason, reason, missing, conflicts, previewToken };
+  return { ...preview, ready: !reason, reason, missing, eligibleMissing, blockedMissing, postingTotal,
+    conflicts, requiresReview: Boolean(reviewWarning), reviewWarning, previewToken };
+}
+
+function studentMissingChargeFees(data, profile, code) {
+  return applyBillingCategoryOverrides((data.feeItems || []).map(normalizeFeeItem).filter((fee) =>
+    sameText(fee.FeeCode, code) && yesNo(fee.Active) === 'YES' && yesNo(fee.PayableOnline || 'YES') === 'YES' &&
+    !isWalletFee(fee) && !isOptionalSubscriptionFee(fee) && !isAcceptanceFeeLike(fee) && feeMatchesAccountPeriod(fee, profile)), profile);
 }
 
 // Only absent components are added. Posted amounts and receipts are never rewritten.
@@ -3463,9 +3487,13 @@ export async function reconcileStudentBilling(env, student, token, actor) {
   if (await accountingPeriodIsClosed(env, today)) { const error = new Error('The posting date belongs to a closed accounting period.'); error.status = 409; throw error; }
   // Trace existing receipts and allocations before extending billing. This
   // established routine refuses inconsistent legacy credit instead of inventing it.
-  const preflight = await syncSchoolAccountCreditJournals(env, accountRef, linkedReferences);
-  if (preflight.unreconciledLegacyActions?.length || preflight.unreconciledAllocation) {
-    const error = new Error('Existing payment or credit journals need finance review. No missing charges were added.'); error.status = 409; throw error;
+  // A charge-only posting must not repair journals or allocate credit against
+  // disputed invoices. Retain the established credit preflight for clean bills.
+  if (!plan.requiresReview) {
+    const preflight = await syncSchoolAccountCreditJournals(env, accountRef, linkedReferences);
+    if (preflight.unreconciledLegacyActions?.length || preflight.unreconciledAllocation) {
+      const error = new Error('Existing payment or credit journals need finance review. No missing charges were added.'); error.status = 409; throw error;
+    }
   }
   data = await getStudentBillingData(env, student);
   plan = await studentBillingReconciliationPlan(student, data);
@@ -3482,11 +3510,10 @@ export async function reconcileStudentBilling(env, student, token, actor) {
   for (const invoice of data.invoices) guard(invoice, 'invoices', Object.hasOwn(invoice, 'InvoiceId') ? 'InvoiceId' : 'AccountRef');
   const stamp = nowIso();
   const createdInvoices = [];
-  for (const missing of plan.missing) {
-    const fees = data.feeItems.map(normalizeFeeItem).filter((fee) => sameText(fee.FeeCode, missing.code) &&
-      yesNo(fee.Active) === 'YES' && feeMatchesAccountPeriod(fee, plan.profile));
-    const fee = applyBillingCategoryOverrides(fees, plan.profile)[0];
-    if (!fee || asMoneyNumber(fee.Amount) !== missing.expected) throw new Error('Ambiguous fee configuration; finance review is required.');
+  for (const missing of plan.eligibleMissing) {
+    const fees = studentMissingChargeFees(data, plan.profile, missing.code);
+    const fee = fees[0];
+    if (fees.length !== 1 || asMoneyNumber(fee.Amount) !== missing.expected) throw new Error('Ambiguous fee configuration; finance review is required.');
     const original = data.feeItems.find((row) => row.__id === fee.__id);
     guard(original, 'feeItems', Object.hasOwn(original, 'Amount') ? 'Amount' : 'amount');
     const idDigest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify([
@@ -3508,19 +3535,29 @@ export async function reconcileStudentBilling(env, student, token, actor) {
   }
   const audit = accountingAuditWrite('RECONCILE STUDENT PROFILE BILLING', 'Student account', accountRef, {
     UserRole: actor.role, UserUsername: actor.username, RecordedBy: actor.displayName || actor.username, BranchId: plan.profile.BranchId
-  }, `${createdInvoices.length} missing components added; ${plan.difference}. Existing payments and invoice amounts preserved.`);
+  }, `${createdInvoices.length} missing components added; ${plan.postingTotal}. Existing payments and invoice amounts preserved.${plan.requiresReview ? ` Credit allocation deferred; finance review remains: ${plan.reviewWarning}` : ''}`);
   audit.data.SourcePlatform = 'Web';
   audit.data.Before = { profile: plan.profile, invoices: data.invoices, summaries: data.accountSummaries };
   audit.data.CreatedInvoiceIds = createdInvoices.map((row) => row.InvoiceId);
+  audit.data.RemainingConflicts = plan.conflicts;
+  audit.data.BlockedMissingComponents = plan.blockedMissing;
   writes.push(audit);
   if (writes.length > 450) throw new Error('This account requires a finance-led reconciliation; no charges were added.');
   await batchCommitDocuments(env, writes);
   let creditWarning = '';
-  try { await applyDueSchoolFeeCreditsForAccount(env, accountRef, linkedReferences); }
-  catch (error) { creditWarning = `Charges posted, but existing credit still needs review: ${error.message}`; }
+  try {
+    if (plan.requiresReview) {
+      await refreshAccountFinancialSummary(env, accountRef, linkedReferences, {
+        branchId: plan.profile.BranchId, schoolSectionAccess: plan.profile.SchoolSection
+      });
+    } else await applyDueSchoolFeeCreditsForAccount(env, accountRef, linkedReferences);
+  } catch (error) { creditWarning = `Charges posted, but balance refresh or existing credit still needs review: ${error.message}`; }
   const after = await getStudentBillingPreview(env, student);
-  return { ok: true, created: createdInvoices.length, added: plan.difference, creditWarning, after,
-    message: creditWarning || 'Missing charges reconciled and available existing credit applied. No new payment was created.' };
+  return { ok: true, created: createdInvoices.length, added: plan.postingTotal, creditWarning, after,
+    requiresReview: plan.requiresReview, reviewWarning: plan.reviewWarning, creditAllocationDeferred: plan.requiresReview,
+    message: creditWarning || (plan.requiresReview
+      ? 'Valid missing charges posted. Existing invoices, payments and allocations were preserved. Conflicting or blocked components still need finance review; credit allocation is deferred and the balance remains provisional.'
+      : 'Missing charges reconciled and available existing credit applied. No new payment was created.') };
 }
 
 // A narrowly scoped, reviewed correction for BOW after its intake rule changes.

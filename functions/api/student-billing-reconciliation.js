@@ -23,6 +23,9 @@ export async function onRequestPost({ request, env }) {
     const body = await readJsonBody(request, { maxBytes: 4096 });
     if (!['previewAll', 'previewBatch', 'preview', 'apply', 'previewReversalsAll', 'previewReversal', 'applyReversal'].includes(body.action)) fail('Choose a reconciliation action.', 400);
     if (['apply', 'applyReversal'].includes(body.action) && user.subscriptionReadOnly) fail('The subscription is read-only.', 403);
+    if (body.action === 'apply' && body.PostingMode !== 'missing-only-v2') {
+      fail('Refresh Students and review the valid missing-charge total before posting.', 409);
+    }
     const scope = { branchId: user.branchId, schoolSectionAccess: user.schoolSectionAccess };
     if (body.action === 'previewAll') {
       if (body.paged !== true) fail('Refresh Students before using the school-wide billing review.', 409);

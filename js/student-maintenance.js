@@ -77,7 +77,8 @@ export async function reviewAllStudentBilling(request, onProgress = () => {}) {
     onProgress({ checked, total: roster.total });
   }
   report.ready = report.rows.filter((row) => row.ready).length;
-  report.review = report.rows.length - report.ready;
+  report.review = report.rows.filter((row) => !row.ready || row.requiresReview).length;
+  report.readyWithReview = report.rows.filter((row) => row.ready && row.requiresReview).length;
   report.missingAccounts = report.rows.filter((row) => row.missing?.length).length;
   report.blockedMissingAccounts = report.rows.filter((row) => row.missing?.length && !row.ready).length;
   report.rows.sort((a, b) => a.profile.AccountRef.localeCompare(b.profile.AccountRef));

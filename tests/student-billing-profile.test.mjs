@@ -132,15 +132,17 @@ test('missing-only reconciliation applies to completed primary and secondary stu
   }
 });
 
-test('reconciliation excludes incomplete profiles, unbilled accounts, changed amounts and duplicates', async () => {
+test('reconciliation excludes incomplete and unbilled accounts but preserves conflicting charges separately', async () => {
   assert.equal((await studentBillingReconciliationPlan({ ...student, ProfileCompletionStatus: '' }, reconciliationData())).ready, false);
   assert.equal((await studentBillingReconciliationPlan(student, { ...reconciliationData(), invoices: [] })).ready, false);
   const changed = reconciliationData();
   changed.invoices[0].Amount = 90;
-  assert.equal((await studentBillingReconciliationPlan(student, changed)).ready, false);
+  assert.equal((await studentBillingReconciliationPlan(student, changed)).ready, true);
+  assert.equal((await studentBillingReconciliationPlan(student, changed)).requiresReview, true);
   const duplicates = reconciliationData();
   duplicates.invoices.push({ ...duplicates.invoices[0], InvoiceId: 'INV-2' });
-  assert.equal((await studentBillingReconciliationPlan(student, duplicates)).ready, false);
+  assert.equal((await studentBillingReconciliationPlan(student, duplicates)).ready, true);
+  assert.equal((await studentBillingReconciliationPlan(student, duplicates)).requiresReview, true);
 });
 
 test('obsolete day charges and cancelled components need finance review, not automatic reversal or rebilling', async () => {
@@ -150,7 +152,7 @@ test('obsolete day charges and cancelled components need finance review, not aut
   assert.equal(cancelled.ready, false);
   assert.match(cancelled.reason, /cancelled/);
   data.invoices[1] = { ...data.invoices[0], InvoiceId: 'OLD-DAY', FeeCode: 'DAY', Amount: 50 };
-  assert.equal((await studentBillingReconciliationPlan(student, data)).ready, false);
+  assert.equal((await studentBillingReconciliationPlan(student, data)).ready, true);
 });
 
 test('preview token changes on profile or charge changes but permits newly received real payments', async () => {

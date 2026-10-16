@@ -19,6 +19,29 @@ Other Organisation editions do not acquire school billing permissions.
   only for a writable account. Posting still revalidates each preview token and
   retains the existing audited financial workflow.
 
+### Post valid missing charges
+
+- A completed account can have valid missing charges and conflicting existing
+  charges at the same time. Only `eligibleMissing` components are posted.
+- `postingTotal` is the sum of those new charges, not the net difference between
+  the current fee setup and old invoices. Confirmation displays the full amount.
+- Cancelled/legacy invoices for the same component, ambiguous fee definitions,
+  and existing zero-value or duplicate invoices are never automatically rebilled.
+  Unrelated valid missing components may still be posted.
+- Posting requires a fresh, versioned preview, explicit `missing-only-v2` client
+  acknowledgement, source revision guards and create-only deterministic invoice
+  and journal IDs. Double-clicks and repeated submissions cannot add them twice.
+- Existing invoice amounts and payments are not replaced. When conflicts or
+  blocked components remain, no existing allocations or journals are repaired:
+  only the missing charges and their audit/journals are created, followed by a
+  branch-scoped balance-summary refresh. Credit allocation is deferred, and the
+  remaining conflicts stay visible; balances remain provisional.
+- Clean bills retain their existing credit preflight and allocation workflow.
+  A refresh/allocation warning after posting is not a failed charge creation:
+  run a fresh preview rather than re-entering payments or blindly retrying.
+- Eligible and needs-review account counts can overlap. Posting does not mean
+  that all issues on the account have been resolved.
+
 ## Save missing profile defaults
 
 - Reports progress and completion immediately below the toolbar.
