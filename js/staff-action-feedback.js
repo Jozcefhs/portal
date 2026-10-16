@@ -51,17 +51,5 @@
   }
   root.DynamaxStaffActionFeedback = { isMutation, response, report, inline, uncertain,
     begin: () => { activeActions++; }, end: () => { activeActions = Math.max(0, activeActions - 1); } };
-  // Native required/range validation can stop submit before its handler runs.
-  let invalidPending = false;
-  document.addEventListener('invalid', event => {
-    if (invalidPending || event.target.closest?.('.app-decision-dialog')) return;
-    invalidPending = true;
-    const target = event.target;
-    const label = target.labels?.[0]?.textContent?.trim().split('\n')[0] || target.name || 'Required field';
-    queueMicrotask(() => {
-      invalidPending = false;
-      void Promise.resolve(report(`${label}: ${target.validationMessage || 'Check this field before continuing.'}`, 'bad', { title: 'Check the form' }))
-        .then(() => { if (target.isConnected) target.focus(); });
-    });
-  }, true);
+  // Form validation is shared by all portals in app-dialogs.js.
 })(window);

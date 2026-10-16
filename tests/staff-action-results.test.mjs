@@ -50,14 +50,6 @@ test('client validation errors are visible and background success messages do no
   assert.equal(alerts[1].message, 'Offline draft saved');
 });
 
-test('required-field validation opens one dialog and restores focus to the invalid field', async () => {
-  const { listeners, alerts } = harness();
-  let focused = 0;
-  const target = { labels: [{ textContent: 'Reason' }], validationMessage: 'Please fill out this field.',
-    isConnected: true, focus: () => { focused++; } };
-  listeners.invalid({ target }); listeners.invalid({ target });
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(alerts.length, 1);
-  assert.match(alerts[0].message, /Reason/);
-  assert.equal(focused, 1);
+test('staff feedback leaves form validation to the shared dialogue component', () => {
+  assert.equal(harness().listeners.invalid, undefined);
 });

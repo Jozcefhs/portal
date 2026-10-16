@@ -16,7 +16,7 @@ test('action result dialogs queue without cancelling a confirmation and coalesce
     showModal() { this.open = true; } close() { this.open = false; }
   }
   let dialog;
-  const document = { body: { appendChild(node) { dialog = node; } }, createElement: () => new Element() };
+  const document = { body: { appendChild(node) { dialog = node; } }, createElement: () => new Element(), addEventListener() {} };
   const window = { requestAnimationFrame: callback => callback() };
   vm.runInNewContext(await source('js/app-dialogs.js'), { window, document });
   const confirmation = window.DynamaxDialogs.confirm({ message: 'Approve?' });
@@ -76,11 +76,13 @@ test('subscription transfer decisions use a detailed in-app approval dialog', as
 });
 
 test('custom dialogs are responsive and retain dark-mode contrast', async () => {
-  const styles = await source('css/style.css');
+  const styles = await source('css/app-dialogs.css');
   assert.match(styles, /\.app-decision-dialog \{[^}]*width: min\(500px, calc\(100vw - 24px\)\)/);
   assert.match(styles, /html\[data-theme="dark"\] \.app-decision-dialog/);
   assert.match(styles, /\.app-decision-dialog\.has-details \{[^}]*width: min\(760px/);
   assert.match(styles, /\.app-decision-details ol \{[^}]*max-height: min\(46vh, 420px\)[^}]*overflow-y: auto/);
-  assert.match(styles, /\.platform-transfer-decision-dialog::backdrop/);
-  assert.match(styles, /@media \(max-width: 430px\) \{ \.platform-decision-summary \{ grid-template-columns: 1fr; \} \}/);
+  const mainStyles = await source('css/style.css');
+  assert.match(mainStyles, /@import url\('\.\/app-dialogs\.css\?v=20261016-grouped-form-validation'\)/);
+  assert.match(mainStyles, /\.platform-transfer-decision-dialog::backdrop/);
+  assert.match(mainStyles, /@media \(max-width: 430px\) \{ \.platform-decision-summary \{ grid-template-columns: 1fr; \} \}/);
 });

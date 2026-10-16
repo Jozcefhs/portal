@@ -5,6 +5,10 @@ on:
     paths:
       - "functions/**"
       - "js/admin.js"
+      - "js/app-dialogs.js"
+      - "js/staff-action-feedback.js"
+      - "css/app-dialogs.css"
+      - "tests/form-validation-dialog.test.mjs"
       - "admin.html"
       - "sw.js"
       - "_headers"
@@ -29,6 +33,10 @@ on:
     paths:
       - "functions/**"
       - "js/admin.js"
+      - "js/app-dialogs.js"
+      - "js/staff-action-feedback.js"
+      - "css/app-dialogs.css"
+      - "tests/form-validation-dialog.test.mjs"
       - "admin.html"
       - "sw.js"
       - "_headers"

@@ -30,6 +30,7 @@
   const queue = [];
   let active = null;
   let previousAlert = null;
+  const validationBatches = new Map();
 
   function finish(value) {
     const resolve = resolver;
@@ -43,7 +44,7 @@
 
   function open(options = {}, nextMode = 'confirm') {
     // Results must never dismiss an approval/password/reason confirmation.
-    if (nextMode === 'alert' && options.message) {
+    if (nextMode === 'alert' && options.message && !options.validation) {
       const duplicate = [active, ...queue].find(entry => entry?.mode === 'alert' && entry.options.message === options.message);
       if (duplicate) return duplicate.promise;
       if (previousAlert?.message === options.message && Date.now() - previousAlert.time < 750) return Promise.resolve(true);
@@ -118,8 +119,63 @@
     if (event.target === dialog) finish(mode === 'prompt' ? null : false);
   });
 
+  function validationLabel(target) {
+    const clean = value => String(value || '').replace(/\s+/g, ' ').trim();
+    const labelledBy = clean(target.getAttribute('aria-labelledby')).split(' ')
+      .map(id => document.getElementById(id)?.textContent || '').join(' ');
+    const accessibleLabel = clean(labelledBy) || clean(target.getAttribute('aria-label'));
+    if (accessibleLabel) return accessibleLabel;
+    const labels = Array.from(target.labels || []).map(label => {
+      // Options, entered values and help text are not part of the field name.
+      const copy = label.cloneNode(true);
+      copy.querySelectorAll('input, select, textarea, button, datalist, output, small, [aria-hidden="true"]')
+        .forEach(node => node.remove());
+      return clean(copy.textContent);
+    }).filter(Boolean);
+    return labels.join(' / ') || clean(target.name) || clean(target.id) || 'Required field';
+  }
+
+  // A browser may run microtasks between invalid events from ONE submission.
+  // Collect until the next task, and keep the batch locked until it is dismissed.
+  document.addEventListener('invalid', event => {
+    const target = event.target;
+    if (target.closest('.app-decision-dialog')) return;
+    event.preventDefault(); // Keep native tooltips from competing with the summary.
+    const owner = target.form || target;
+    let batch = validationBatches.get(owner);
+    if (batch) {
+      batch.targets.add(target);
+      return;
+    }
+    batch = { targets: new Set([target]), timer: null };
+    validationBatches.set(owner, batch);
+    batch.timer = setTimeout(() => {
+      if (validationBatches.get(owner) !== batch) return;
+      const targets = Array.from(batch.targets).filter(control =>
+        control.isConnected && control.willValidate && !control.validity.valid);
+      if (!targets.length) { validationBatches.delete(owner); return; }
+      const radioGroups = new Set();
+      const items = targets.filter(control => {
+        if (control.type !== 'radio' || !control.name) return true;
+        if (radioGroups.has(control.name)) return false;
+        radioGroups.add(control.name);
+        return true;
+      }).map(control => `${validationLabel(control)}: ${control.validationMessage || 'Check this field before continuing.'}`);
+      void open({ title: 'Check the form', tone: 'danger', validation: true,
+        message: 'Complete or correct the following fields before continuing.',
+        detailsLabel: 'Fields to review', items }, 'alert').then(() => {
+        if (validationBatches.get(owner) !== batch) return;
+        validationBatches.delete(owner);
+        const first = targets.find(control => control.isConnected && control.willValidate && !control.validity.valid);
+        if (!dialog.open) first?.focus();
+      });
+    }, 0);
+  }, true);
+
   window.DynamaxDialogs = {
     clear: () => {
+      for (const batch of validationBatches.values()) clearTimeout(batch.timer);
+      validationBatches.clear();
       for (const entry of queue.splice(0)) entry.resolve(entry.mode === 'prompt' ? null : false);
       finish(mode === 'prompt' ? null : false);
       previousAlert = null;
