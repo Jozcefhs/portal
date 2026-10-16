@@ -3,6 +3,10 @@ import {createServer} from 'node:http';
 import {readFile} from 'node:fs/promises';
 
 const files = new Map([
+  ['/js/app-dialogs.js',new URL('../../js/app-dialogs.js',import.meta.url)],
+  ['/css/app-dialogs.css',new URL('../../css/app-dialogs.css',import.meta.url)],
+  ['/js/staff-action-feedback.js',new URL('../../js/staff-action-feedback.js',import.meta.url)],
+  ['/js/staff-workspace-cache.js',new URL('../../js/staff-workspace-cache.js',import.meta.url)],
   ['/tests/fixtures/parent-transfer-history.html',new URL('../fixtures/parent-transfer-history.html',import.meta.url)],
   ['/tests/fixtures/item-import.html',new URL('../fixtures/item-import.html',import.meta.url)],
   ['/css/item-import.css',new URL('../../css/item-import.css',import.meta.url)],
@@ -28,6 +32,21 @@ const files = new Map([
 createServer(async(req,res) => {
   try {
     const path = new URL(req.url,'http://localhost').pathname;
+    if (req.method === 'GET' && path === '/tests/fixtures/vendor-pos-transport.js') {
+      const admin = await readFile(new URL('../../js/admin.js',import.meta.url),'utf8');
+      const transport = admin.slice(admin.indexOf('const TRANSIENT_API_STATUS_CODES'),admin.indexOf('async function refreshStaffSiteProfile'));
+      res.writeHead(200,{'Content-Type':'text/javascript; charset=utf-8','Cache-Control':'no-store'});
+      res.end(`const selectedBranchId='main',staffBearerToken='',staffSessionAbortController=new AbortController();
+const staffWorkspaceReads=window.DynamaxWorkspaceCache.create({context:()=>({scope:'fixture|vendor|secondary',signal:staffSessionAbortController.signal})});
+${transport}
+window.vendorFixtureRequest=async(action,payload,signal)=>{
+  const response=await staffFetch('/api/staff-vendor-settlements',{method:'POST',signal,headers:{'Content-Type':'application/json'},body:JSON.stringify({action,...payload})});
+  const result=await response.json();
+  if(!response.ok||!result.ok)throw Object.assign(new Error(result.message||'Vendor checkout failed.'),{status:response.status});
+  return result;
+};`);
+      return;
+    }
     if (req.method === 'GET' && path === '/tests/fixtures/parent-transfer-renderer.js') {
       const source = await readFile(new URL('../../js/parent-dashboard.js',import.meta.url),'utf8');
       const render = source.slice(source.indexOf('function renderTransferRequests(child)'),source.indexOf('function renderPayments(child)'));

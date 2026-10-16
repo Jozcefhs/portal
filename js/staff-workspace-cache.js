@@ -27,7 +27,8 @@
   // device status, money-moving checks, attendance and protected files.
   const liveReads = new Set(['list', 'status', 'admin-status', 'quick', 'presencequick', 'search',
     'detail', 'document', 'catalog', 'findings', 'reports', 'exportregister', 'recordexport',
-    'searchcustomers', 'getbalance', 'tax-breakdown', 'previewhomework']);
+    'searchcustomers', 'getbalance', 'tax-breakdown', 'previewhomework',
+    'salesbootstrap', 'recentvendorsales', 'vendorcustomersearch', 'vendorwalletlookup', 'previewvendorsale']);
   function stable(value) {
     if (Array.isArray(value)) return value.map(stable);
     if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stable(value[key])]));

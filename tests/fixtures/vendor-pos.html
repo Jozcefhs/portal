@@ -1,14 +1,21 @@
 <!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Vendor POS fixture</title>
 <link rel="stylesheet" href="../../css/style.css"><link rel="stylesheet" href="../../css/vendor-settlements.css"><style>body{padding:12px}#root{max-width:1540px;margin:auto;padding:16px;background:#fff;border:1px solid #d4e3ed;border-radius:12px}input,select{box-sizing:border-box}button{cursor:pointer}@media(max-width:680px){body{padding:6px}#root{padding:8px}}</style>
-<main id="root"></main><script src="../../js/display-time.js"></script><script src="vendor-pos-shared-helpers.js"></script><script src="../../js/vendor-pos.js"></script><script>
+<main id="root"></main><p id="fixtureLookupStatus" role="status">Local preview — no live data.</p><script src="../../js/display-time.js"></script><script src="vendor-pos-shared-helpers.js"></script><script src="../../js/app-dialogs.js"></script><script src="../../js/staff-action-feedback.js"></script><script src="../../js/staff-workspace-cache.js"></script><script src="vendor-pos-transport.js"></script><script src="../../js/vendor-pos.js"></script><script>
 window.DynamaxStaffFetch=async()=>new Response(JSON.stringify({ok:true,enabled:true,configured:true,canLookup:true,canManage:false,canErase:false}));
 let quantity=5,posted=false;
 const recentSales=[{SaleNo:'FIXTURE-EARLIER',SaleDate:'2026-10-10T09:00:00Z',CustomerName:'Sample staff member',PaymentMethod:'Cash',CollectionMode:'Vendor collected',Amount:200,Items:[{ItemName:'Bread',Quantity:1}]}];
 const options=new URLSearchParams(location.search);
 const section=['tuckShop','restaurant','organizationStore'].includes(options.get('section'))?options.get('section'):'tuckShop';
 const dense=options.get('dense')==='1';
-DynamaxVendorPOS.mount(document.querySelector('#root'),async(action,body)=>{
- await new Promise(resolve=>setTimeout(resolve,80));
+let searches=0,cancelled=0;
+const showRequests=()=>{document.getElementById('fixtureLookupStatus').textContent=`Local preview — ${searches} searches, ${cancelled} cancelled. No live data.`;};
+async function fixtureResponse(action,body,signal){
+ if(action==='vendorCustomerSearch'){searches++;showRequests();}
+ await new Promise((resolve,reject)=>{
+  const abort=()=>{clearTimeout(timer);if(action==='vendorCustomerSearch'){cancelled++;showRequests();}reject(new DOMException('Search replaced','AbortError'));};
+  const timer=setTimeout(()=>{signal?.removeEventListener('abort',abort);resolve();},action==='vendorCustomerSearch'&&options.get('slow')==='1'?1500:80);
+  if(signal?.aborted)abort();else signal?.addEventListener('abort',abort,{once:true});
+ });
  if(action==='salesBootstrap')return {sellingEnabled:true,message:'LOCAL FIXTURE — no real payment or stock.',products:[
   {InventoryId:'stock-1',ItemCode:'WATER',ItemName:'Water',Category:'Drinks',Unit:'bottle',Price:100,Quantity:quantity},
   {InventoryId:'stock-2',ItemCode:'BREAD',ItemName:'Bread',Category:'Food',Unit:'loaf',Price:200,Quantity:10},
@@ -19,5 +26,13 @@ DynamaxVendorPOS.mount(document.querySelector('#root'),async(action,body)=>{
  if(action==='previewVendorSale')return {Amount:body.Items.reduce((n,i)=>n+i.Quantity*(i.Reference==='stock-1'?100:200),0)};
  if(action.startsWith('record')){if(!posted){quantity-=body.Items[0].Quantity;posted=true;recentSales.unshift({SaleNo:'FIXTURE-RECEIPT',SaleDate:new Date().toISOString(),CustomerName:'Fixture child',PaymentMethod:body.PaymentMethod,CollectionMode:body.CollectionMode,Amount:body.ExpectedAmount,Items:[{ItemName:'Water',Quantity:body.Items[0].Quantity}]});}return {message:'Fixture sale recorded.',sale:{SaleNo:'FIXTURE-RECEIPT',Amount:body.ExpectedAmount}};}
  throw new Error('Unexpected fixture action');
-},section,window.vendorFixtureTools);
+}
+const originalFetch=window.fetch.bind(window);
+window.fetch=async(input,init={})=>{
+ if(new URL(input,location.href).pathname!=='/api/staff-vendor-settlements')return originalFetch(input,init);
+ const body=JSON.parse(init.body);
+ try{return Response.json({ok:true,...await fixtureResponse(body.action,body,init.signal)});}
+ catch(error){if(error.name==='AbortError')throw error;return Response.json({ok:false,message:error.message},{status:error.status||500});}
+};
+DynamaxVendorPOS.mount(document.querySelector('#root'),window.vendorFixtureRequest,section,window.vendorFixtureTools);
 </script></html>
