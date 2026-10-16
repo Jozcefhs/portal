@@ -55,7 +55,7 @@ export async function studentBillingReviewRoster(env, user, overrides = {}) {
   let incomplete = 0;
   for (const raw of students) {
     const student = withStudentDisplayName(raw, config.schoolProfile), AccountRef = referenceFor(student);
-    if (clean(student.ProfileCompletionStatus).toLowerCase() !== 'complete') { incomplete += 1; continue; }
+    if (!overrides.includeIncompleteProfiles && clean(student.ProfileCompletionStatus).toLowerCase() !== 'complete') { incomplete += 1; continue; }
     if (counts.get(studentBillingIdentity(student).reference) !== 1) {
       rows.push(recheckProfile(AccountRef, 'Ambiguous admission number across school sections.'));
     } else pendingProfiles.push({ AccountRef, revision: clean(student.__updateTime) });
@@ -92,7 +92,7 @@ export async function studentBillingReviewBatch(env, user, body, overrides = {})
     const matches = candidates.filter((row) => studentBillingIdentity(row).reference === clean(expected.AccountRef).toLowerCase());
     const reason = !matches.length ? 'This profile is no longer available in the authorised branch and school section.'
       : matches.length !== 1 ? 'This admission number became ambiguous across school sections.'
-        : clean(matches[0].ProfileCompletionStatus).toLowerCase() !== 'complete' ? 'This profile is no longer complete.'
+        : !overrides.includeIncompleteProfiles && clean(matches[0].ProfileCompletionStatus).toLowerCase() !== 'complete' ? 'This profile is no longer complete.'
           : clean(matches[0].__updateTime) !== expected.revision ? 'This profile changed after the review roster was loaded.' : '';
     if (reason) {
       rows.push(recheckProfile(clean(expected.AccountRef), reason));

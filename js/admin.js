@@ -3776,6 +3776,43 @@ function bindStudentEditor(students) {
     if (!response.ok || !data.ok) throw new Error(data.message || 'Billing reconciliation failed.');
     return data;
   };
+  panelEl.querySelector('[data-review-obsolete-charges]')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    if (button.disabled) return;
+    const user = currentUser, branch = selectedBranchId, controller = new AbortController();
+    const dialog = document.getElementById('studentBillingPreviewDialog');
+    const content = document.querySelector('[data-billing-preview-content]');
+    const sessionSignal = staffSessionAbortController.signal;
+    let reviewClosed = false;
+    const abort = () => controller.abort();
+    dialog.addEventListener('close', () => { reviewClosed = true; abort(); }, { once: true });
+    sessionSignal.addEventListener('abort', abort, { once: true });
+    const isCurrent = () => !reviewClosed && !sessionSignal.aborted && dialog.open && currentUser === user && selectedBranchId === branch && activeSection === 'students';
+    const request = async (payload) => {
+      if (!isCurrent() || controller.signal.aborted) throw new Error('The review stopped or the staff workspace changed. Run a fresh review.');
+      const timer = setTimeout(abort, 60000);
+      try {
+        const response = await staffFetch('/api/student-billing-reconciliation', { method: 'POST', credentials: 'same-origin',
+          signal: controller.signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        const data = await response.json();
+        if (!isCurrent() || controller.signal.aborted) throw new Error('The review stopped or its workspace changed.');
+        if (!response.ok || !data.ok) throw new Error(data.message || 'The correction could not be confirmed.');
+        return data;
+      } catch (error) {
+        if (payload.action === 'applyObsoleteReversal') throw new Error(`${error.message} Posting was not confirmed; it may already have saved. Run a fresh review before another submission.`);
+        throw error;
+      } finally { clearTimeout(timer); }
+    };
+    dialog.addEventListener('close', () => sessionSignal.removeEventListener('abort', abort), { once: true });
+    setButtonLoading(button, true, 'Reviewing obsolete charges…');
+    try {
+      const { openObsoleteChargeReview } = await import('./obsolete-charge-review.js?v=20261016-reviewed-reversals');
+      await openObsoleteChargeReview({ dialog, content, request, isCurrent, readOnly: user.subscriptionReadOnly,
+        confirm: options => window.DynamaxDialogs.confirm(options),
+        notify: (title, message, tone) => window.DynamaxDialogs.alert({ title, message, tone: tone === 'error' ? 'danger' : 'success', confirmText: 'Close' }) });
+    } catch (error) { setStatus(maintenanceStatus, error.message, 'bad'); }
+    finally { setButtonLoading(button, false, '', 'Review obsolete textbook / yearbook charges'); }
+  });
   const reviewBoardingWearReversal = async (reference) => {
     const plan = await reconcileRequest({ action: 'previewReversal', AccountRef: reference });
     const content = document.querySelector('[data-billing-preview-content]');
@@ -19296,7 +19333,7 @@ function renderSection(active) {
       ].filter(Boolean).join(' ')
     }) + renderStudentEditor(students);
     if (currentUser?.role === 'Super Admin' && (currentUser.allowedSections || []).includes('accounts')) {
-      panelEl.querySelector('.student-onboarding-link-action')?.insertAdjacentHTML('beforeend', '<button type="button" class="secondary" data-save-student-profile-defaults>Save missing profile defaults</button><button type="button" class="secondary" data-review-boardwear-all>Review returning-student Boarding Wear</button>');
+      panelEl.querySelector('.student-onboarding-link-action')?.insertAdjacentHTML('beforeend', '<button type="button" class="secondary" data-save-student-profile-defaults>Save missing profile defaults</button><button type="button" class="secondary" data-review-boardwear-all>Review returning-student Boarding Wear</button><button type="button" class="secondary" data-review-obsolete-charges>Review obsolete textbook / yearbook charges</button>');
     }
     bindStudentEditor(students);
     bindStudentClassExport(students);

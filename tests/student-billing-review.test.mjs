@@ -84,6 +84,28 @@ test('primary-only roster does not expose secondary profiles', async () => {
   assert.equal(roster.pendingProfiles[0].AccountRef, 'PRIMARY/1');
 });
 
+test('server-selected correction reviews can include incomplete profiles without weakening identity or revision checks', async () => {
+  const f = fixture({ students: [profile({ ProfileCompletionStatus: 'Needs completion' }),
+    profile({ AdmissionNo: 'CHANGED', __id: 'changed' }),
+    profile({ AdmissionNo: 'AMBIGUOUS', __id: 'ambiguous' }),
+    profile({ AdmissionNo: 'AMBIGUOUS', __id: 'ambiguous-primary', __scopePath: primaryPath, SchoolSection: 'primary' }),
+    profile({ AdmissionNo: 'OTHER', BranchId: 'annex', __scopePath: 'students' })] });
+  const overrides = { ...f.deps, includeIncompleteProfiles: true, studentBillingReconciliationPlan: async student => ({
+    profile: { AccountRef: student.AccountRef }, candidateOnly: true, ready: true, previewToken: '',
+    rows: [{ difference: -20, invoiceIds: ['obsolete'] }]
+  }) };
+  const roster = await studentBillingReviewRoster({}, user, overrides);
+  assert.equal(roster.total, 4); assert.equal(roster.incomplete, 0); assert.equal(roster.recheck, 2);
+  assert.equal(roster.pendingProfiles.length, 2);
+  f.students[1].__updateTime = 'changed-after-review';
+  const result = await studentBillingReviewBatch({}, user, { Profiles: roster.pendingProfiles, ConfigurationToken: roster.configurationToken }, overrides);
+  assert.equal(result.checked, 2); assert.equal(result.recheck, 1); assert.equal(result.ready, 1);
+  assert.ok(result.rows.every(row => !row.previewToken));
+  assert.equal(result.rows.find(row => row.ready).profile.AccountRef, 'TEST/001');
+  assert.ok(f.calls.filter(row => ['invoices', 'accountSummaries'].includes(row.type)).every(row =>
+    row.options.filters[0].value.every(ref => ref === 'TEST/001')));
+});
+
 test('billing batches query only requested identities, deduplicate aliases, and keep other branches/sections out', async () => {
   const f = fixture({ invoices: [invoice(), invoice({ __id: 'annex', BranchId: 'annex' }),
     invoice({ __id: 'primary', SchoolSection: 'primary' }), invoice({ __id: 'sibling', AccountRef: 'OTHER/001', AdmissionNo: 'TEST/001' }),

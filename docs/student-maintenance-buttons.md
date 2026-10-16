@@ -50,6 +50,43 @@ Other Organisation editions do not acquire school billing permissions.
 - Eligible and needs-review account counts can overlap. Posting does not mean
   that all issues on the account have been resolved.
 
+## Review obsolete textbook / yearbook charges
+
+In **Students**, a School Super Admin with Accounts and Students access can use
+**Review obsolete textbook / yearbook charges**, then **Prepare correction for
+all affected students**. Check the per-student preview, enter an approval reason,
+and explicitly approve posting. Select each working branch in turn as needed.
+
+- Reviews all classes and permitted school sections, including profiles whose
+  unrelated onboarding fields are incomplete. Required billing classifications
+  must still be saved and verifiable. Changed or ambiguous profiles are flagged
+  for rechecking without stopping the other students.
+- Only current-period textbook/yearbook charges confirmed by an active,
+  matching Returning-only rule on a New Intake student's account qualify.
+  Valid charges, other components and other periods are untouched. Duplicate
+  invoices, missing or changed fee rules, amount/currency mismatches and gaps in
+  payment/journal evidence remain blocked for individual finance review.
+- Preparation performs read-only receipt and journal checks. The preview shows
+  the exact invoice references, charges before/after and existing allocations
+  to release. Candidate previews cannot authorize posting.
+- Each approval freshly validates the account, fee setup and sources. One
+  atomic, revision-guarded commit marks obsolete invoices as reversed, posts
+  balancing journals and audit records, and refreshes the account summary.
+  Gross invoice values and original payments, receipts and journals are kept.
+  Missing baseline journals can be created only in open accounting periods.
+- Paid amounts are released from the obsolete charges for valid school fees.
+  This is not a new receipt, refund or wallet top-up. Remaining legitimate fees
+  are not deleted, and other conflicts remain for review.
+- Deterministic create-only reversal IDs and invoice revision checks prevent
+  duplicate corrections. Results are reported per account; confirmed and
+  unconfirmed submissions are never retried automatically. After a lost
+  response or changed records, close the window and start a fresh review.
+
+Example regression: a bill of ₦1,616,915 containing obsolete textbooks of
+₦118,030 and a yearbook of ₦10,000 becomes ₦1,488,885. School-fee receipts of
+₦1,502,885 are preserved; their net excess is ₦14,000, excluding wallet and
+optional-service funds. This feature does not itself apply live corrections.
+
 ## Save missing profile defaults
 
 - Reports progress and completion immediately below the toolbar.
@@ -68,4 +105,5 @@ incorrect empty report. The admin asset version and offline shell are refreshed.
 
 Regression coverage: `tests/student-maintenance.test.mjs`,
 `tests/student-billing-review.test.mjs`, existing profile/defaults/reconciliation
-tests, and isolated browser checks with simulated responses only.
+tests, `tests/obsolete-school-charge-reversal.test.mjs`, and isolated browser
+checks with simulated responses only.

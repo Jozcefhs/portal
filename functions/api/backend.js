@@ -44,6 +44,9 @@ import { mergedProfileText } from '../lib/profile-settings-update.js';
 import { selectStudentBillingProfile, selectStudentBillingProfiles, studentProfileValue } from '../lib/student-billing-profile.js';
 import { effectiveInvoiceAfterReversal } from '../lib/invoice-charge-reversal.js';
 import { financialPreviewFingerprint } from '../lib/financial-preview-fingerprint.js';
+// Shared audited charge-correction primitives; importing them does not post.
+export { normalizeFeeItem, normalizePayment, feeMatchesAccountPeriod, journalLineSignature,
+  accountingPeriodIsClosed, normalizedJournal, accountingAuditWrite, safeDocumentId, accountRefsFrom };
 import { studentWalletProfile } from '../lib/student-wallet-profile.js';
 import { withStudentProfileDefaults } from '../lib/student-profile-defaults.js';
 import { admissionYearEnrollmentCategory } from '../lib/student-intake-classification.js';
