@@ -6,5 +6,5 @@
 <script src="../../js/club-members.js"></script><script>
 const readTime = new Date().toISOString();
 const people = [['Ada Test','ST/001','Chess','First Term'],['Bola Sample','ST/002','Chess','First Term'],['Chidi Example','ST/003','AI & Robotics','First Term'],['Ada Test','ST/001','Chess','First Term'],['Dami Demo','ST/004','Chess','Second Term']];
-DynamaxClubMembers.mount(document.getElementById('report'), {getContext:()=>({edition:'school',branch:'main'}), fetch:async()=>({ok:true,json:async()=>({ok:true,rows:people.map(([name,student,club,term],index)=>({id:`p${index}`,student,name,club,term,session:'2026/2027',className:'Grade 10',branch:'main',section:'secondary',paidAt:'2026-10-15'})),warnings:{},scope:{branchId:'main',schoolSection:'all',edition:'school'},readTime,scanned:5,next:null,complete:true})})});
+DynamaxClubMembers.mount(document.getElementById('report'), {getContext:()=>({edition:'school',branch:'main'}), fetch:async()=>({ok:true,json:async()=>({ok:true,rows:people.map(([name,student,club,term],index)=>({id:`p${index}`,student,name,club,term,session:'2026/2027',className:'Grade 10',branch:'main',section:'secondary',paidAt:'2026-10-15',paidCents:index===3?500000:1000000,currency:'NGN'})),warnings:{},scope:{branchId:'main',schoolSection:'all',edition:'school'},readTime,scanned:5,next:null,complete:true})})});
 </script></body></html>

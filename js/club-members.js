@@ -2,8 +2,23 @@
   'use strict';
   const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
   const norm = value => String(value || '').normalize('NFKC').trim().replace(/\s+/g, ' ').toLowerCase();
-  const headers = ['S/N', 'Student', 'Admission / account no.', 'Class at payment', 'Club', 'Session', 'Term', 'Branch', 'Receipts'];
-  const note = 'Confirmed club payments only. Pending payments and fully reversed receipts are excluded. A student appears once per club, session, term, branch and school section. This is a payment-backed register, not a manual enrolment list. Names and classes are as recorded on receipts.';
+  const headers = ['S/N', 'Student', 'Admission / account no.', 'Class at payment', 'Club', 'Session', 'Term', 'Branch', 'Receipts', 'Amount paid'];
+  const note = 'Confirmed club payments only. Amount paid combines each member’s receipts less recorded reversals; totals cover the selected filters, with currencies kept separate. Pending payments and fully reversed receipts are excluded. A student appears once per club, session, term, branch and school section. This is a payment-backed register, not a manual enrolment list. Names and classes are as recorded on receipts.';
+
+  function sumAmounts(amounts) {
+    const totals = new Map();
+    for (const { currency, paidCents } of amounts) {
+      if (!/^[A-Z]{3}$/.test(currency || '') || !Number.isSafeInteger(paidCents) || paidCents <= 0) {
+        throw new Error('A club payment amount is missing or invalid. Refresh the app and reload the register.');
+      }
+      const total = (totals.get(currency) || 0) + paidCents;
+      if (!Number.isSafeInteger(total)) throw new Error('Club payment totals exceed the safe reporting range. Accounts review is required.');
+      totals.set(currency, total);
+    }
+    return [...totals].sort(([a], [b]) => a.localeCompare(b)).map(([currency, paidCents]) => ({ currency, paidCents }));
+  }
+  const totalAmounts = rows => sumAmounts(rows.flatMap(row => row.paidTotals));
+  const money = amount => new Intl.NumberFormat('en-NG', { style: 'currency', currency: amount.currency, minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount.paidCents / 100);
 
   function members(receipts) {
     const groups = new Map();
@@ -11,7 +26,8 @@
       const key = JSON.stringify([receipt.branch, receipt.section, norm(receipt.student), norm(receipt.club), norm(receipt.session), norm(receipt.term)]);
       const previous = groups.get(key);
       const newest = !previous || receipt.paidAt > previous.paidAt;
-      groups.set(key, { ...(newest ? receipt : previous), receipts: (previous?.receipts || 0) + 1 });
+      groups.set(key, { ...(newest ? receipt : previous), receipts: (previous?.receipts || 0) + 1,
+        paidTotals: sumAmounts([...(previous?.paidTotals || []), receipt]) });
     }
     return [...groups.values()].sort((a, b) => a.club.localeCompare(b.club) || a.name.localeCompare(b.name) || a.student.localeCompare(b.student));
   }
@@ -33,12 +49,17 @@
       for (const key of Object.keys(warnings)) warnings[key] += Number(page.warnings?.[key] || 0);
       scanned += Number(page.scanned || 0); progress(scanned); next = page.next;
     }
-    return { rows: members(receipts), scope, readTime, warnings };
+    const rows = members(receipts);
+    totalAmounts(rows); // Validate the complete register before displaying or printing any totals.
+    return { rows, scope, readTime, warnings };
   }
   const filterRows = (report, filters) => report.rows.filter(row => ['club', 'session', 'term'].every(key => !filters[key] || (row[key] || 'Not recorded') === filters[key]));
   const values = (row, index) => [index + 1, row.name, row.student, row.className, row.club, row.session || 'Not recorded', row.term || 'Not recorded', row.branch, row.receipts];
   function table(rows) {
-    return `<table><thead><tr>${headers.map(label => `<th scope="col">${label}</th>`).join('')}</tr></thead><tbody>${rows.map((row, index) => `<tr>${values(row, index).map(value => `<td>${esc(value)}</td>`).join('')}</tr>`).join('') || '<tr><td colspan="9">No confirmed club members match these filters.</td></tr>'}</tbody></table>`;
+    const totals = totalAmounts(rows);
+    const footer = totals.map(amount => `<tr class="fee-summary-total"><td colspan="9">Total amount · ${esc(amount.currency)}</td><td class="fee-summary-number">${esc(money(amount))}</td></tr>`).join('')
+      || '<tr class="fee-summary-total"><td colspan="9">Total amount</td><td class="fee-summary-number">0.00</td></tr>';
+    return `<table><thead><tr>${headers.map((label, index) => `<th scope="col"${index >= 8 ? ' class="fee-summary-number"' : ''}>${label}</th>`).join('')}</tr></thead><tbody>${rows.map((row, index) => `<tr>${values(row, index).map((value, column) => `<td${column === 8 ? ' class="fee-summary-number"' : ''}>${esc(value)}</td>`).join('')}<td class="fee-summary-number">${row.paidTotals.map(amount => `<div>${esc(money(amount))}</div>`).join('')}</td></tr>`).join('') || '<tr><td colspan="10">No confirmed club members match these filters.</td></tr>'}</tbody><tfoot>${footer}</tfoot></table>`;
   }
   const caption = (report, filters) => `Club: ${filters.club || 'All'} · Session: ${filters.session || 'All'} · Term: ${filters.term || 'All'} · Branch: ${report.scope.branchId} · Section: ${report.scope.schoolSection}`;
   function warningText(report) {
@@ -48,7 +69,7 @@
   }
   function printHtml(report, filters = {}) {
     const rows = filterRows(report, filters);
-    return `<!doctype html><html><head><meta charset="utf-8"><title>Club member register</title><style>body{font:11px Arial;color:#18354b;margin:24px}h1{font-size:20px;border-bottom:2px solid #18354b;padding-bottom:8px}table{width:100%;border-collapse:collapse}th,td{padding:5px 7px;text-align:left;border:1px solid #d5e0e8}th{background:#edf3f7}tbody tr:nth-child(even){background:#f7fafc}thead{display:table-header-group}tr{break-inside:avoid}p{line-height:1.4}@page{size:landscape;margin:12mm}@media print{button{display:none}body{margin:0}}</style></head><body><button onclick="window.print()">Print / save PDF</button><h1>Club member register</h1><p>${esc(caption(report, filters))}</p><p>${rows.length} membership(s) · Confirmed payments only</p>${table(rows)}<p>${esc(note)}</p><p>${esc(warningText(report))}</p><p>Snapshot: ${esc(report.readTime)}</p></body></html>`;
+    return `<!doctype html><html><head><meta charset="utf-8"><title>Club member register</title><style>body{font:11px Arial;color:#18354b;margin:24px}h1{font-size:20px;border-bottom:2px solid #18354b;padding-bottom:8px}table{width:100%;border-collapse:collapse}th,td{padding:5px 7px;text-align:left;border:1px solid #d5e0e8}th{background:#edf3f7}tbody tr:nth-child(even){background:#f7fafc}thead{display:table-header-group}tfoot{display:table-row-group;font-weight:bold;background:#edf3f7}.fee-summary-number{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}tr{break-inside:avoid}p{line-height:1.4}@page{size:landscape;margin:12mm}@media print{button{display:none}body{margin:0}}</style></head><body><button onclick="window.print()">Print / save PDF</button><h1>Club member register</h1><p>${esc(caption(report, filters))}</p><p>${rows.length} membership(s) · Confirmed payments only</p>${table(rows)}<p>${esc(note)}</p><p>${esc(warningText(report))}</p><p>Snapshot: ${esc(report.readTime)}</p></body></html>`;
   }
   function mount(host, options) {
     host.classList.add('fee-summary', 'club-members');
@@ -102,5 +123,5 @@
       preview.append(close, frame); preview.addEventListener('close', () => { preview.remove(); print.focus(); }, { once: true }); document.body.append(preview); preview.showModal();
     });
   }
-  root.DynamaxClubMembers = { mount, loadReport, members, filterRows, printHtml, warningText };
+  root.DynamaxClubMembers = { mount, loadReport, members, filterRows, totalAmounts, printHtml, warningText };
 })(globalThis);

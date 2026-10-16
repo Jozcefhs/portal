@@ -19,6 +19,14 @@ function confirmed(row) {
   return ['paid', 'completed', 'success', 'successful', 'settled'].includes(lower(pick(row, 'Status') || 'Paid'))
     && ['', 'completed'].includes(lower(pick(row, 'ProcessingStatus')));
 }
+function cents(value) {
+  const text = clean(value ?? 0).replace(/,/g, '');
+  const amount = /^\d+(\.\d+)?$/.test(text) ? Math.round(Number(text) * 100) : NaN;
+  if (!Number.isSafeInteger(amount) || amount < 0) {
+    fail('A club receipt has an invalid payment or correction amount. Accounts review is required.', 409);
+  }
+  return amount;
+}
 
 export function clubMemberReceipts(documents, scope, catalogue = []) {
   const warnings = { missingIdentity: 0, missingPeriod: 0, unfinished: 0 };
@@ -30,12 +38,14 @@ export function clubMemberReceipts(documents, scope, catalogue = []) {
       && lower(pick(fee, 'FeeCode')) === lower(code) && club(fee));
     if (!club(row) && !definitions.length) continue;
     if (!confirmed(row)) { warnings.unfinished++; continue; }
-    const amount = Number(clean(pick(row, 'Amount')).replace(/,/g, ''));
-    const correction = Number(clean(pick(row, 'CorrectionTotal') || 0).replace(/,/g, ''));
-    if (!Number.isFinite(amount) || !Number.isFinite(correction) || amount < 0 || correction < 0 || correction > amount) {
+    const amount = cents(pick(row, 'Amount'));
+    const correction = cents(pick(row, 'CorrectionTotal') || 0);
+    if (correction > amount) {
       fail('A club receipt has an invalid payment or correction amount. Accounts review is required.', 409);
     }
     if (amount - correction <= 0) continue;
+    const currency = clean(pick(row, 'Currency') || 'NGN').toUpperCase();
+    if (!/^[A-Z]{3}$/.test(currency)) fail('A club receipt has an invalid currency. Accounts review is required.', 409);
     const session = clean(pick(row, 'AcademicSession')), term = clean(pick(row, 'Term'));
     if (scope.academicSession && lower(session) !== lower(scope.academicSession)) continue;
     if (scope.term && lower(term) !== lower(scope.term)) continue;
@@ -47,6 +57,7 @@ export function clubMemberReceipts(documents, scope, catalogue = []) {
       className: clean(pick(row, 'ClassName')) || 'Not recorded', code,
       club: clean(pick(row, 'FeeName') || definitions[0]?.FeeName || code) || 'Unnamed club',
       session, term, branch: recordBranchId(row), section: lower(pick(row, 'SchoolSection')),
+      paidCents: amount - correction, currency,
       paidAt: clean(pick(row, 'PaidAt') || pick(row, 'Date')) });
   }
   return { rows, warnings };
