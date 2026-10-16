@@ -166,5 +166,6 @@ test('cancelled clinic visits stay audited but cannot be shown to parents as val
   assert.match(parent, /\(sources\.clinic \|\| \[\]\)\.filter\(isActiveClinicVisit\)/);
   assert.match(parent, /scopedClinicRows\.filter\(isActiveClinicVisit\)/);
   assert.match(staff, /records\.filter\(\(row\) => isActiveClinicVisit\(row\) && sameRef/);
-  assert.match(staff, /records: publicRows\(visible\(records, user\)\.sort/);
+  assert.match(staff, /records: publicRows\(records\.rows\)/);
+  assert.match(staff, /visible: row => visible\(\[row\], user\)\.length === 1/);
 });

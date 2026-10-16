@@ -3071,7 +3071,7 @@ function renderModuleSummary(active, liveData = null) {
   } else if (active === 'clinic') {
     const data = liveData || departments.clinic || {};
     cards = [
-      { icon, label: 'Clinic Records', value: (data.records || []).length },
+      { icon, label: data.historyPaging ? 'Loaded Clinic Records' : 'Clinic Records', value: (data.records || []).length },
       { icon: '\u{1F48A}', label: 'Inventory Items', value: (data.inventory || []).length },
       { icon: '\u26A0', label: 'Low Stock', value: (data.lowStock || []).length }
     ];
@@ -3079,9 +3079,9 @@ function renderModuleSummary(active, liveData = null) {
     const data = liveData || departments[active] || {};
     const commerce = active === 'restaurant' ? commerceSalesSummary(data.sales || []) : null;
     cards = active === 'restaurant' ? [
-      { icon, label: 'Today Sales', value: money(commerce.todayAmount), note: `${commerce.todayTransactions} transaction(s)` },
-      { icon: '\u{1F9FE}', label: 'Paid Sales', value: commerce.paid },
-      { icon: '\u231B', label: 'Pending Online', value: commerce.pending },
+      { icon, label: 'Loaded Today Sales', value: money(commerce.todayAmount), note: 'Loaded history only; use Finance for complete totals' },
+      { icon: '\u{1F9FE}', label: 'Loaded Paid Sales', value: commerce.paid },
+      { icon: '\u231B', label: 'Loaded Pending Online', value: commerce.pending },
       { icon: '\u26A0', label: 'Low Stock', value: (data.lowStock || []).length }
     ] : [
       { icon, label: 'Inventory Items', value: (data.inventory || []).length },
@@ -3092,8 +3092,8 @@ function renderModuleSummary(active, liveData = null) {
     const data = liveData || departments.tuckShop || {};
     const rows = data.purchases || [];
     cards = [
-      { icon, label: 'Purchases', value: rows.length },
-      { icon: '\u20A6', label: 'Sales Value', value: money(sumRows(rows, ['Debit', 'Amount'])) },
+      { icon, label: 'Loaded Purchases', value: rows.length },
+      { icon: '\u20A6', label: 'Loaded Sales Value', value: money(sumRows(rows, ['Debit', 'Amount'])), note: 'Loaded history only; use Finance for complete totals' },
       { icon: '\u{1F4E6}', label: 'Inventory Items', value: (data.inventory || []).length },
       { icon: '\u26A0', label: 'Low Stock', value: (data.lowStock || []).length }
     ];
@@ -3102,9 +3102,9 @@ function renderModuleSummary(active, liveData = null) {
     const orders = liveData.orders || [];
     const commerce = active === 'organizationStore' ? commerceSalesSummary(liveData.sales || []) : null;
     cards = active === 'organizationStore' ? [
-      { icon, label: 'Today Sales', value: money(commerce.todayAmount), note: `${commerce.todayTransactions} transaction(s)` },
-      { icon: '\u{1F9FE}', label: 'Paid Sales', value: commerce.paid },
-      { icon: '\u231B', label: 'Pending Online', value: commerce.pending },
+      { icon, label: 'Loaded Today Sales', value: money(commerce.todayAmount), note: 'Loaded history only; use Finance for complete totals' },
+      { icon: '\u{1F9FE}', label: 'Loaded Paid Sales', value: commerce.paid },
+      { icon: '\u231B', label: 'Loaded Pending Online', value: commerce.pending },
       { icon: '\u{1F4E6}', label: 'Units in Stock', value: sumRows(items, ['Quantity']) }
     ] : [
       { icon, label: 'Store Items', value: items.length },
@@ -4595,9 +4595,9 @@ function renderOrganizationCommerceWorkspace(section, data = {}) {
         <div class="inline-action-group">${section === 'organizationStore' ? '<button type="button" id="organizationStoreQrButton">&#9638; Public store QR</button>' : ''}<span class="workspace-feature-icon" aria-hidden="true">&#128722;</span></div>
       </header>
       <div class="commerce-summary-grid">
-        <div><small>Today's sales</small><strong>${money(summary.todayAmount)}</strong><span>${summary.todayTransactions} transaction(s)</span></div>
-        <div><small>Paid sales</small><strong>${summary.paid}</strong><span>Recorded receipts</span></div>
-        <div><small>Pending online</small><strong>${summary.pending}</strong><span>Awaiting confirmation</span></div>
+        <div><small>Today's sales — loaded page</small><strong>${money(summary.todayAmount)}</strong><span>Use Finance for complete totals</span></div>
+        <div><small>Paid sales — loaded page</small><strong>${summary.paid}</strong><span>Loaded receipts only</span></div>
+        <div><small>Pending online — loaded page</small><strong>${summary.pending}</strong><span>Loaded records awaiting confirmation</span></div>
         <div><small>Available items</small><strong>${available.length}</strong><span>Priced and in stock</span></div>
       </div>
       ${sale ? commerceReceiptPreview(sale) : ''}
@@ -4647,7 +4647,7 @@ function renderOrganizationCommerceWorkspace(section, data = {}) {
         </section>
       </div>
       <details class="commerce-sales-history" ${recentSales.length ? '' : 'open'}>
-        <summary>Recent sales <span>${recentSales.length}</span></summary>
+        <summary>Sales — loaded page <span>${recentSales.length}</span></summary>
         <div class="table-wrap"><table><thead><tr><th>Date</th><th>Receipt</th><th>Customer</th><th>Payment</th><th>Amount</th><th>Print</th></tr></thead><tbody>
           ${recentSales.length ? recentSales.map((row) => `<tr><td>${escapeHtml(DynamaxTime.formatDateTime(row.PaidAt || row.SaleDate || row.CreatedAt))}</td><td>${escapeHtml(row.SaleNo)}</td><td>${escapeHtml(row.CustomerName || 'Walk-in customer')}</td><td>${escapeHtml(row.PaymentMethod)}<br>${commerceSaleStatus(row)}</td><td>${money(row.Amount || row.GrossAmount)}</td><td><button type="button" class="compact-icon-action" data-commerce-print="${escapeHtml(row.SaleNo)}" aria-label="Choose receipt format for ${escapeHtml(row.SaleNo)}" title="Choose receipt format" ${clean(row.PaymentStatus || row.Status).toLowerCase() === 'paid' ? '' : 'disabled'}>&#128424;</button></td></tr>`).join('') : '<tr><td colspan="6">No sales recorded yet.</td></tr>'}
         </tbody></table></div>
@@ -4996,6 +4996,7 @@ function renderStaffStore(section, store) {
     { key: 'orders', label: 'Orders & collection', icon: '\u2713', count: (store.orders || []).length, nodes: document.getElementById('staffStoreOrdersWorkspace') }
   ]);
   if (organisationStore) loadDirectTransferVerification(['organization-store'], 'organizationStoreDirectTransferVerification');
+  bindGrowingHistory(section, '/api/staff-stores', [['orders', 'Orders'], ...(organisationStore ? [['sales', 'Sales']] : [])]);
   if (organisationStore) bindOrganizationCommerceWorkspace(section, store);
   if (!organisationStore) bindModuleItemImport(section);
   bindProcurementDepartmentShortcut(section);
@@ -5652,7 +5653,7 @@ function renderTuckShopPOS(data = {}) {
           ${staff ? `<div class="wallet-account-result"><div><small>Staff customer</small><strong>${escapeHtml(staff.DisplayName || staff.Name)}</strong><span>${escapeHtml(staff.CustomerRef || staff.Username || '')}</span></div></div><div class="tuck-shop-step-heading"><span>3</span><div><small>Payment</small><h5>Complete sale</h5></div></div><form id="tuckShopStaffSaleForm" class="commerce-checkout-form"><label>Payment method<select name="PaymentMethod"><option>Cash</option><option>Bank Transfer</option><option>POS / Card</option></select></label><label>Payment reference<input name="PaymentReference" placeholder="Required for transfer or POS"></label><div class="commerce-checkout-total"><span>Calculated total</span><strong>${money(total)}</strong></div><div class="config-actionbar"><p class="status" data-department-status></p><button type="submit" ${entries.length ? '' : 'disabled'}>Complete staff sale</button></div></form>` : '<p class="tuck-shop-payment-prompt">Select a staff member to continue to payment.</p>'}`}
       </section>
     </div>
-    <div class="tuck-shop-desktop-history">${table('Recent Tuck Shop Sales', sales, [
+    <div class="tuck-shop-desktop-history">${table('Tuck Shop Sales — loaded page', sales, [
       { label: 'Receipt', value: (row) => row.SaleNo }, { label: 'Customer', value: (row) => row.CustomerName },
       { label: 'Payment', value: (row) => row.PaymentMethod }, { label: 'Amount', value: (row) => money(row.Amount) },
       { label: 'Date', value: (row) => row.PaidAt || row.SaleDate },
@@ -5942,7 +5943,7 @@ function renderDepartmentOperations(section, data) {
   }
   const clinicStudent = data.clinicStudent || null;
   const clinicReport = data.clinicReport || null;
-  const purchases = (dashboardData?.departments?.tuckShop || {}).purchases || [];
+  const purchases = data.purchases || [];
   renderModuleSummary(section, {
     ...(dashboardData?.departments?.[section] || {}),
     ...data,
@@ -6035,7 +6036,7 @@ function renderDepartmentOperations(section, data) {
       { label: 'Class', value: (row) => pick(row, ['ClassName']) }, { label: 'Amount', value: (row) => money(pick(row, ['Debit'])) },
       { label: 'Description', value: (row) => pick(row, ['Description']) }
     ])}</div>` : ''}
-    ${table('Recent Stock Movements', data.movements || [], [
+    ${table('Stock Movements — loaded page', data.movements || [], [
       { label: 'Date', value: (row) => pick(row, ['Date']) }, { label: 'Item', value: (row) => pick(row, ['ItemName']) },
       { label: 'Type', value: (row) => pick(row, ['MovementType']) }, { label: 'Quantity', value: (row) => pick(row, ['Quantity']) },
       { label: 'Reason', value: (row) => pick(row, ['Reason']) }, { label: 'Recorded by', value: (row) => pick(row, ['RecordedBy']) }
@@ -6053,9 +6054,13 @@ function renderDepartmentOperations(section, data) {
   }
   if (['clinic', 'kitchen', 'restaurant'].includes(section)) departmentTabs.push({ key: 'procurement', label: 'Market list', icon: '\u{1F4CB}', nodes: departmentCard(/market list/i) });
   departmentTabs.push({ key: 'inventory', label: 'Inventory', icon: '\u{1F4E6}', count: inventory.length, nodes: [document.getElementById('departmentInventoryWorkspace'), workspaceTableNodes(`${label} Inventory`), workspaceTableNodes('Low Stock')] });
-  departmentTabs.push({ key: 'stock', label: 'Stock in / out', icon: '\u21C5', count: (data.movements || []).length, nodes: [document.getElementById('departmentStockWorkspace'), workspaceTableNodes('Recent Stock Movements')] });
+  departmentTabs.push({ key: 'stock', label: 'Stock in / out', icon: '\u21C5', count: (data.movements || []).length, nodes: [document.getElementById('departmentStockWorkspace'), workspaceTableNodes('Stock Movements — loaded page')] });
   if (section === 'tuckShop') departmentTabs.push({ key: 'history', label: 'Purchase history', icon: '\u{1F5C2}', count: purchases.length, nodes: document.getElementById('departmentPurchaseHistory') });
   mountWorkspaceTabs(section, departmentTabs);
+  bindGrowingHistory(section, '/api/staff-departments', [['movements', 'Stock movements'],
+    ...(section === 'clinic' ? [['records', 'Clinic records']] : []),
+    ...(section === 'tuckShop' ? [['purchases', 'Wallet purchases']] : []),
+    ...(['tuckShop', 'restaurant'].includes(section) ? [['sales', 'Sales']] : [])]);
   bindProcurementDepartmentShortcut(section);
   if (['clinic', 'kitchen'].includes(section)) bindModuleItemImport(section);
   if (section === 'restaurant') bindOrganizationCommerceWorkspace(section, data);
@@ -6333,6 +6338,77 @@ function renderDepartmentOperations(section, data) {
     procurementInventoryFields(form, row, data.procurementControlled === true);
     form.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }));
+}
+
+function bindGrowingHistory(section, endpoint, kinds) {
+  const host = panelEl.querySelector('.workflow-intro');
+  if (!host) return;
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = 'Browse all history';
+  host.append(button);
+  button.addEventListener('click', () => {
+    const dialog = document.createElement('dialog');
+    dialog.className = 'workflow-dialog';
+    dialog.setAttribute('aria-label', 'Browse history');
+    dialog.style.width = 'min(1100px, 94vw)';
+    dialog.style.padding = '20px';
+    dialog.style.maxHeight = '88vh';
+    dialog.innerHTML = `<div class="workflow-intro"><h2>Browse history</h2><button type="button" data-history-close>Close</button></div>
+      <label>History <select data-history-kind>${kinds.map(([id, label]) => `<option value="${escapeHtml(id)}">${escapeHtml(label)}</option>`).join('')}</select></label>
+      <p class="muted">One page at a time, in record-ID order (not date order). Search and sorting apply to this page only. Use Finance reports for complete financial totals.</p>
+      <p role="status" aria-live="polite" data-history-status></p><div data-history-rows></div>
+      <div class="inline-action-group"><button type="button" data-history-previous disabled>Previous page</button><button type="button" data-history-next disabled>Next page</button><button type="button" data-history-refresh>Refresh / retry</button></div>`;
+    document.body.append(dialog);
+    const select = dialog.querySelector('[data-history-kind]'), status = dialog.querySelector('[data-history-status]');
+    const previous = dialog.querySelector('[data-history-previous]'), next = dialog.querySelector('[data-history-next]');
+    const refresh = dialog.querySelector('[data-history-refresh]');
+    const branch = clean(selectedBranchId || currentUser?.branchId || 'main');
+    let cursors = [null], position = 0, nextCursor = null, generation = 0, loaded = false;
+    const load = async (target = 0, reset = false) => {
+      const version = ++generation;
+      if (reset) { cursors = [null]; target = 0; position = 0; loaded = false; nextCursor = null; }
+      previous.disabled = next.disabled = refresh.disabled = select.disabled = true;
+      status.textContent = 'Loading history…';
+      try {
+        const response = await staffFetch(endpoint, { method: 'POST', credentials: 'same-origin', cache: 'no-store',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'list', section, historyKind: select.value, cursor: cursors[target] }) });
+        const result = await response.json();
+        if (!response.ok || !result.ok) throw new Error(result.message || 'History could not be loaded.');
+        if (!dialog.isConnected || version !== generation) return;
+        if (activeSection !== section || branch !== clean(selectedBranchId || currentUser?.branchId || 'main')) { dialog.close(); return; }
+        const rows = result.rows || [];
+        position = target; nextCursor = result.nextCursor; loaded = true;
+        cursors = cursors.slice(0, position + 1);
+        if (nextCursor) cursors[position + 1] = nextCursor;
+        dialog.querySelector('[data-history-rows]').innerHTML = table('History page', rows, [
+          { label: 'Reference', value: row => pick(row, ['OrderNo', 'SaleNo', 'MovementId', 'RecordId', 'LedgerNo', '__id']) },
+          { label: 'Date', value: row => pick(row, ['Date', 'PaidAt', 'SaleDate', 'CreatedAt']) },
+          { label: 'Student / customer / item', value: row => pick(row, ['DisplayName', 'StudentName', 'CustomerName', 'ItemName', 'AccountRef', 'AdmissionNo']) },
+          { label: 'Type / status', value: row => pick(row, ['MovementType', 'Status', 'PaymentStatus', 'EntryType']) },
+          { label: 'Quantity', value: row => pick(row, ['Quantity']) },
+          { label: 'Amount', value: row => row.Amount != null || row.Debit != null || row.TotalAmount != null ? money(row.Amount ?? row.Debit ?? row.TotalAmount) : '' },
+          { label: 'Notes', value: row => pick(row, ['Reason', 'Description', 'Complaint', 'Notes']) }
+        ], { searchable: true });
+        status.textContent = `Page ${position + 1}: ${rows.length} records. ${nextCursor ? 'More history is available.' : 'End of history.'}`;
+      } catch (error) {
+        if (dialog.isConnected && version === generation) status.textContent = `${error.message || error} Refresh to retry. The previous page has not been changed.`;
+      } finally {
+        if (dialog.isConnected && version === generation) {
+          previous.disabled = !loaded || position === 0; next.disabled = !loaded || !nextCursor;
+          refresh.disabled = select.disabled = false;
+        }
+      }
+    };
+    dialog.querySelector('[data-history-close]').addEventListener('click', () => dialog.close());
+    dialog.addEventListener('close', () => { generation += 1; dialog.remove(); });
+    select.addEventListener('change', () => { loaded = false; nextCursor = null; dialog.querySelector('[data-history-rows]').replaceChildren(); void load(0, true); });
+    previous.addEventListener('click', () => { void load(position - 1); });
+    next.addEventListener('click', () => { void load(position + 1); });
+    refresh.addEventListener('click', () => { void load(0, true); });
+    dialog.showModal();
+    void load(0, true);
+  });
 }
 
 async function loadDepartmentOperations(section) {

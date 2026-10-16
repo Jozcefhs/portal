@@ -1,4 +1,5 @@
 import { batchCommitDocuments, getDocument, listCollection, queryCollection } from './firestore.js';
+import { academicAttendanceId, findExistingAttendance, attendanceCorrectionMatches } from './academic-attendance-identity.js';
 import { enforceActorBranch } from './branch-scope.js';
 import { normalizeClassKey } from './class-names.js';
 import { staffRecordMatchesEdition } from './records-desk.js';
@@ -4826,12 +4827,20 @@ export async function saveAcademicStudentAttendance(env, user = {}, input = {}) 
   let corrected = 0;
   let requested = 0;
   const absentRecords = [];
-  attendanceRows.forEach((row) => {
-    const attendanceId = academicId(registerId, row.StudentRef);
-    const existing = findById(state.studentAttendance, attendanceId);
+  for (const row of attendanceRows) {
+    const identity = {
+      BranchId: scope.branchId, SchoolSection: scope.section,
+      SessionId: session.SessionId, TermId: term.TermId, AttendanceDate: attendanceDate,
+      ClassId: schoolClass.ClassId, ArmId: arm.ArmId, Mode: mode,
+      SubjectId: mode === 'Subject' ? clean(input.SubjectId) : '',
+      TimetableEntryId: mode === 'Period' ? clean(input.TimetableEntryId) : '', StudentRef: row.StudentRef
+    };
+    const newAttendanceId = await academicAttendanceId(identity);
+    const existing = findExistingAttendance(state.studentAttendance, identity, newAttendanceId);
+    const attendanceId = existing ? recordId(existing) : newAttendanceId;
     if (existing && existing.Status === row.Status && Number(existing.MinutesLate || 0) === row.MinutesLate && clean(existing.Note) === row.Note) {
       if (lower(existing.Status) === 'absent') absentRecords.push(existing);
-      return;
+      continue;
     }
     const record = {
       ...(existing || {}), RecordId: attendanceId, AttendanceId: attendanceId, RegisterId: registerId,
@@ -4854,13 +4863,14 @@ export async function saveAcademicStudentAttendance(env, user = {}, input = {}) 
         ProposedMinutesLate: row.MinutesLate, ProposedNote: row.Note, Reason: correctionReason, Status: 'Pending',
         SessionId: session.SessionId, TermId: term.TermId, AttendanceDate: attendanceDate,
         ClassId: schoolClass.ClassId, ArmId: arm.ArmId, StudentRef: row.StudentRef,
+        Mode: mode, SubjectId: identity.SubjectId, TimetableEntryId: identity.TimetableEntryId,
         BranchId: scope.branchId, SchoolSection: scope.section,
         RequestedAt: timestamp, RequestedBy: actorName(user), RequestedByUsername: actorUsername(user), RequestedByRole: clean(user.role || user.Role)
       };
       writes.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.attendanceCorrections, documentId: correctionId, data: withoutMetadata(correction), exists: false });
       writes.push(auditWrite(user, 'REQUEST_CORRECTION', 'studentAttendance', correction, correctionReason));
       requested += 1;
-      return;
+      continue;
     }
     if (existing && !correctionReason) throw failure(`Enter a correction reason before changing ${row.StudentRef}.`);
     writes.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentAttendance, documentId: attendanceId, data: withoutMetadata({
@@ -4870,7 +4880,7 @@ export async function saveAcademicStudentAttendance(env, user = {}, input = {}) 
       existing ? `${existing.Status} -> ${record.Status}: ${correctionReason}` : record.Status));
     if (lower(record.Status) === 'absent') absentRecords.push(record);
     if (existing) corrected += 1; else created += 1;
-  });
+  }
   if (writes.length) await commitAcademicBatch(env, writes, 'The attendance register changed while it was being saved. Reload and try again.');
   let absenceNotifications = 0;
   if (absentRecords.length) {
@@ -4899,7 +4909,10 @@ export async function decideAcademicAttendanceCorrection(env, user = {}, input =
   if (!reason) throw failure('Enter the decision reason.');
   const existing = findById(state.studentAttendance, correction.AttendanceId);
   if (!existing) throw failure('The original attendance record was not found.', 409);
-  if (clean(existing.__updateTime) !== clean(correction.AttendanceRevision)) {
+  if (decision === 'Approved' && !attendanceCorrectionMatches(correction, existing)) {
+    throw failure('This correction refers to a different attendance day or register. Reject it and mark the intended day separately; the original history is unchanged.', 409, 'ACADEMIC_ATTENDANCE_REGISTER_MISMATCH');
+  }
+  if (decision === 'Approved' && clean(existing.__updateTime) !== clean(correction.AttendanceRevision)) {
     throw failure('The attendance record changed after this correction was requested. Reject it and review the latest record.', 409, 'ACADEMIC_WRITE_CONFLICT');
   }
   const timestamp = nowIso();

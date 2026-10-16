@@ -1,3 +1,4 @@
+import { loadWorkspaceHistoryPage } from './workspace-history.js';
 import {
   batchUpsertDocuments,
   createDocumentIfAbsent,
@@ -509,12 +510,14 @@ async function existingSale(env, id) {
   return getDocument(env, COMMERCE_CONFIG.organizationStore.sales, safeId(id));
 }
 
-export async function listOrganizationCommerceSales(env, section, user) {
+export async function listOrganizationCommerceSalesPage(env, section, user, cursor = null) {
   configFor(section);
-  return (await listCollection(env, COMMERCE_CONFIG.organizationStore.sales))
-    .filter((row) => clean(row.SaleType) === section && visibleInScope(row, user))
-    .sort((left, right) => clean(right.PaidAt || right.SaleDate).localeCompare(clean(left.PaidAt || left.SaleDate)))
-    .slice(0, 200);
+  return loadWorkspaceHistoryPage(env, user, { key: `${section}:sales`, collection: COMMERCE_CONFIG.organizationStore.sales,
+    visible: row => clean(row.SaleType) === section && visibleInScope(row, user) }, cursor);
+}
+
+export async function listOrganizationCommerceSales(env, section, user) {
+  return (await listOrganizationCommerceSalesPage(env, section, user)).rows;
 }
 
 export async function listPublicOrganizationStoreItems(env, branchId = 'main', edition = 'faith') {

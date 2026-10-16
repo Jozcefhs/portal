@@ -11,7 +11,6 @@ import {
 } from '../lib/request-security.js';
 import {
   initializeOnlineOrganizationCommerceSale,
-  listOrganizationCommerceSales,
   normalizeCommercePaymentMethod,
   recordManualOrganizationCommerceSale
 } from '../lib/organization-commerce.js';
@@ -19,6 +18,8 @@ import { recordTuckShopStaffSale, searchTuckShopCustomers } from '../lib/school-
 import { assertProcurementInventoryEdit, assertProcurementInventoryMovement, loadProcurementInventoryControl, procurementMovementBalance } from '../lib/procurement-inventory-guard.js';
 import { commitClinicVisit, isActiveClinicVisit } from '../lib/clinic-stock-usage.js';
 import { handleClinicReferral } from '../lib/clinic-referrals.js';
+import { loadWorkspaceHistoryPage } from '../lib/workspace-history.js';
+import { listOrganizationCommerceSalesPage } from '../lib/organization-commerce.js';
 
 function clean(value) { return String(value ?? '').trim(); }
 function lower(value) { return clean(value).toLowerCase(); }
@@ -93,15 +94,25 @@ function publicRows(rows) {
   return (rows || []).map(({ PasswordHash, WalletPinHash, ...row }) => row);
 }
 
+async function departmentHistory(env, section, user, kind, cursor = null) {
+  if (kind === 'sales' && ['restaurant', 'tuckShop'].includes(section)) return listOrganizationCommerceSalesPage(env, section, user, cursor);
+  const collection = kind === 'movements' ? CONFIG[section].movements
+    : kind === 'records' && section === 'clinic' ? 'clinicRecords'
+      : kind === 'purchases' && section === 'tuckShop' ? 'ledger' : '';
+  if (!collection) throw Object.assign(new Error('Choose a valid department history.'), { status: 400 });
+  return loadWorkspaceHistoryPage(env, user, { key: `${section}:${kind}`, collection,
+    visible: row => visible([row], user).length === 1 && (kind !== 'purchases' || lower(row.EntryType) === 'wallet purchase') }, cursor);
+}
+
 async function loadDepartment(env, section, user) {
   const config = CONFIG[section];
-  const [inventory, movements, records, sales, procurementControlled] = await Promise.all([
+  const [inventory, movements, records, sales, purchases, procurementControlled] = await Promise.all([
     listCollection(env, config.inventory),
-    listCollection(env, config.movements),
-    section === 'clinic' ? listCollection(env, 'clinicRecords') : Promise.resolve([]),
+    departmentHistory(env, section, user, 'movements'),
+    section === 'clinic' ? departmentHistory(env, section, user, 'records') : Promise.resolve({ rows: [] }),
     ['restaurant', 'tuckShop'].includes(section)
-      ? listOrganizationCommerceSales(env, section, user)
-      : Promise.resolve([]),
+      ? departmentHistory(env, section, user, 'sales') : Promise.resolve({ rows: [] }),
+    section === 'tuckShop' ? departmentHistory(env, section, user, 'purchases') : Promise.resolve({ rows: [] }),
     loadProcurementInventoryControl(env, user)
   ]);
   const scopedInventory = visible(inventory, user);
@@ -109,10 +120,12 @@ async function loadDepartment(env, section, user) {
     ok: true,
     procurementControlled,
     inventory: publicRows(scopedInventory),
-    movements: publicRows(visible(movements, user).sort((a, b) => clean(b.Date).localeCompare(clean(a.Date))).slice(0, 100)),
-    records: publicRows(visible(records, user).sort((a, b) => clean(b.Date).localeCompare(clean(a.Date))).slice(0, 100)),
+    movements: publicRows(movements.rows),
+    records: publicRows(records.rows),
+    purchases: publicRows(purchases.rows),
+    historyPaging: Object.fromEntries(Object.entries({ movements, records, purchases, sales }).map(([key, page]) => [key, page.nextCursor || null])),
     lowStock: publicRows(scopedInventory.filter((row) => number(row.ReorderLevel) > 0 && number(row.Quantity) <= number(row.ReorderLevel))),
-    sales: publicRows(sales)
+    sales: publicRows(sales.rows)
   };
 }
 
@@ -396,6 +409,10 @@ export async function onRequestPost(context) {
       const err = new Error('This staff account is not allowed to manage that department.'); err.status = 403; throw err;
     }
     const action = lower(body.action || 'list');
+    if (action === 'list' && body.historyKind) {
+      const page = await departmentHistory(env, section, user, clean(body.historyKind), body.cursor ?? null);
+      return Response.json({ ok: true, rows: publicRows(page.rows), nextCursor: page.nextCursor }, { headers: { 'Cache-Control': 'no-store' } });
+    }
     if (section === 'clinic' && ['prepareclinicreferral', 'previewclinicreferral', 'loadclinicreferral', 'sendclinicreferral'].includes(action)) {
       const result = await handleClinicReferral(env, user, body, value => findScopedStudent(env, user, value));
       return Response.json(result, { headers: { 'Cache-Control': 'no-store' } });

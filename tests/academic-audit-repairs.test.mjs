@@ -7,6 +7,8 @@ import * as management from '../functions/lib/academic-management.js';
 import * as scorebook from '../functions/lib/academic-scorebook.js';
 import * as policies from '../functions/lib/academic-policy.js';
 import * as timetable from '../functions/lib/academic-timetable-attendance.js';
+import * as attendanceIdentity from '../functions/lib/academic-attendance-identity.js';
+import { safeScopeId } from '../functions/lib/school-scope.js';
 import { calculateAcademicMidTermResultDrafts } from '../functions/lib/academic-term-results.js';
 import { evaluateAcademicResultAccess } from '../functions/lib/academic-result-access.js';
 
@@ -23,9 +25,9 @@ const conflict = () => Object.assign(new Error('Concurrent update'), { status: 4
 
 function managementHarness(records = {}) {
   const context = {
-    ...management, ...scorebook, ...timetable, TextEncoder, TextDecoder, crypto: webcrypto,
+    ...management, ...scorebook, ...timetable, ...attendanceIdentity, TextEncoder, TextDecoder, crypto: webcrypto,
     getSchoolStructure: async () => ({ ActiveBranchId: 'main', Branches: [{ Id: 'main' }], Sections: ['primary', 'secondary'] }),
-    enforceActorBranch: (_actor, branch) => branch, safeScopeId: String,
+    enforceActorBranch: (_actor, branch) => branch, safeScopeId,
     queryCollection: async (_env, collection) => structuredClone(records[collection] || []),
     listCollection: async (_env, collection) => structuredClone(records[collection] || []),
     listSchoolCollection: async () => [],
@@ -180,6 +182,109 @@ test('AM-05 an empty classroom roster rejects attendance before any write', asyn
   await assert.rejects(managementHarness(records).saveAcademicStudentAttendance({}, actor, { ...input, AttendanceDate: '2026-10-09', Mode: 'Daily', Entries: [{ StudentRef: 'outside', Status: 'Present' }] }), /not in this classroom/);
   assert.equal(records.academicStudentAttendance, undefined);
   assert.equal(timetable.normalizeAcademicAttendanceEntries([{ StudentRef: 'S1', Status: 'Present' }], ['S1']).length, 1);
+});
+
+function dailyAttendanceFixture() {
+  const scope = { branchId: 'main', section: 'secondary' };
+  const session = management.normalizeAcademicSession({ Name: '2026/2027', StartDate: '2026-09-01', EndDate: '2027-07-31' }, scope);
+  const term = management.normalizeAcademicTerm({ SessionId: session.SessionId, Name: 'First Term', StartDate: '2026-09-01', EndDate: '2026-12-31' }, scope);
+  const schoolClass = management.normalizeAcademicClass({ Name: 'Grade 10' }, scope);
+  const arm = management.normalizeAcademicArm({ ClassId: schoolClass.ClassId, Name: 'Brilliance' }, scope);
+  const register = { SessionId: session.SessionId, TermId: term.TermId, ClassId: schoolClass.ClassId, ArmId: arm.ArmId };
+  const records = { academicSessions: [session], academicTerms: [term], academicClasses: [schoolClass], academicArms: [arm],
+    academicSubjects: [row({ SubjectId: 'math' }), row({ SubjectId: 'english' })],
+    academicStudentMemberships: [row({ ...register, MembershipId: 'membership', StudentRef: 'TEST/24/1633' })],
+    academicTeacherAllocations: [row({ ...register, TeacherUsername: 'teacher', AllocationRole: 'Form Teacher' })] };
+  const teacher = { ...actor, role: 'Teacher', username: 'teacher' };
+  const form = { ...input, ...register, AttendanceDate: '2026-10-15', Mode: 'Daily', Entries: [{ StudentRef: 'TEST/24/1633', Status: 'Absent' }] };
+  const context = managementHarness(records);
+  return { records, teacher, form, context, save: changes => context.saveAcademicStudentAttendance({}, teacher, { ...form, ...changes }) };
+}
+
+test('attendance keeps consecutive days separate with real generated, long session and term IDs', async () => {
+  const h = dailyAttendanceFixture();
+  await h.save({});
+  const original = structuredClone(h.records.academicStudentAttendance[0]);
+  for (const Status of ['Present', 'Absent']) {
+    await h.save({ AttendanceDate: Status === 'Present' ? '2026-10-16' : '2026-10-19', Entries: [{ StudentRef: 'TEST/24/1633', Status }] });
+  }
+  assert.equal(h.records.academicStudentAttendance.length, 3);
+  assert.deepEqual(h.records.academicStudentAttendance[0], original);
+  assert.equal(new Set(h.records.academicStudentAttendance.map(r => r.AttendanceId)).size, 3);
+  await h.save({});
+  assert.equal(h.records.academicStudentAttendance.length, 3, 'same-day repeat is idempotent');
+  assert.equal(h.records.academicAttendanceCorrections, undefined);
+});
+
+test('legacy same-day history keeps its ID, genuine corrections require approval, and the next day creates a new row', async () => {
+  const h = dailyAttendanceFixture();
+  await h.save({});
+  const original = h.records.academicStudentAttendance[0];
+  original.RecordId = original.AttendanceId = `${safeScopeId(original.RegisterId)}__${safeScopeId(original.StudentRef)}`;
+  const legacy = structuredClone(original);
+  await h.save({});
+  assert.deepEqual(h.records.academicStudentAttendance, [legacy]);
+  const Entries = [{ StudentRef: 'TEST/24/1633', Status: 'Present' }];
+  await assert.rejects(h.save({ Entries }), /Explain the correction/);
+  await h.save({ Entries, CorrectionReason: 'Confirmed classroom roll' });
+  assert.deepEqual(h.records.academicStudentAttendance, [legacy]);
+  const correction = h.records.academicAttendanceCorrections[0];
+  assert.equal(correction.AttendanceId, legacy.AttendanceId);
+  await h.save({ AttendanceDate: '2026-10-16', Entries });
+  assert.equal(h.records.academicStudentAttendance.length, 2);
+  await h.context.decideAcademicAttendanceCorrection({}, actor, { ...h.form, CorrectionId: correction.CorrectionId,
+    Decision: 'Approved', Reason: 'Class register checked', RevisionToken: correction.__updateTime });
+  assert.equal(h.records.academicStudentAttendance.find(r => r.AttendanceId === legacy.AttendanceId).Status, 'Present');
+  assert.equal(h.records.academicStudentAttendance.length, 2);
+});
+
+test('old cross-day correction requests cannot alter history but can be rejected', async () => {
+  const h = dailyAttendanceFixture();
+  await h.save({});
+  await h.save({ Entries: [{ StudentRef: 'TEST/24/1633', Status: 'Present' }], CorrectionReason: 'Legacy request' });
+  const correction = h.records.academicAttendanceCorrections[0];
+  correction.AttendanceDate = '2026-10-16';
+  const decision = { ...h.form, CorrectionId: correction.CorrectionId, Decision: 'Approved', Reason: 'Review', RevisionToken: correction.__updateTime };
+  await assert.rejects(h.context.decideAcademicAttendanceCorrection({}, actor, decision), { code: 'ACADEMIC_ATTENDANCE_REGISTER_MISMATCH' });
+  await h.context.decideAcademicAttendanceCorrection({}, actor, { ...decision, Decision: 'Rejected' });
+  assert.equal(h.records.academicStudentAttendance[0].Status, 'Absent');
+});
+
+test('attendance identity distinguishes modes, subjects, periods, classrooms and long student references', async () => {
+  const h = dailyAttendanceFixture();
+  const base = { ...h.form, BranchId: 'main', SchoolSection: 'secondary', StudentRef: 'TEST/24/1633' };
+  const variants = [{}, { AttendanceDate: '2026-10-16' }, { Mode: 'Subject', SubjectId: 'math' },
+    { Mode: 'Subject', SubjectId: 'english' }, { Mode: 'Period', TimetableEntryId: 'lesson1' },
+    { Mode: 'Period', TimetableEntryId: 'lesson2' }, { ArmId: 'another-arm' }, { ClassId: 'another-class' },
+    { BranchId: 'another-branch' }, { SchoolSection: 'primary' }, { TermId: 'another-term' },
+    { StudentRef: `${'student'.repeat(20)}a` }, { StudentRef: `${'student'.repeat(20)}b` }];
+  const ids = await Promise.all(variants.map(v => attendanceIdentity.academicAttendanceId({ ...base, ...v })));
+  assert.equal(new Set(ids).size, variants.length);
+  assert.equal(await attendanceIdentity.academicAttendanceId(base), ids[0]);
+  assert.throws(() => attendanceIdentity.findExistingAttendance([base, base], base, ids[0]), { code: 'ACADEMIC_ATTENDANCE_AMBIGUOUS' });
+  assert.equal(attendanceIdentity.attendanceCorrectionMatches(base, { ...base, BranchId: '', SchoolSection: '' }), true);
+  assert.equal(attendanceIdentity.attendanceCorrectionMatches({ ...base, Mode: undefined }, { ...base, Mode: 'Subject', SubjectId: 'math' }), true);
+  assert.equal(attendanceIdentity.attendanceCorrectionMatches({ ...base, Mode: 'Subject', SubjectId: 'english' }, { ...base, Mode: 'Subject', SubjectId: 'math' }), false);
+});
+
+test('concurrent new attendance saves cannot create duplicate daily records', async () => {
+  const h = dailyAttendanceFixture();
+  const results = await Promise.allSettled([h.save({}), h.save({})]);
+  assert.ok(results.some(result => result.status === 'fulfilled'));
+  assert.equal(h.records.academicStudentAttendance.length, 1);
+  for (const result of results.filter(result => result.status === 'rejected')) assert.equal(result.reason.status, 409);
+});
+
+test('attendance correction approval still checks revisions and marking still checks teacher allocation', async () => {
+  const h = dailyAttendanceFixture();
+  await assert.rejects(h.context.saveAcademicStudentAttendance({}, { ...h.teacher, username: 'unallocated' }, h.form), { status: 403 });
+  await h.save({});
+  await h.save({ Entries: [{ StudentRef: 'TEST/24/1633', Status: 'Present' }], CorrectionReason: 'Correction request' });
+  const correction = h.records.academicAttendanceCorrections[0];
+  h.records.academicStudentAttendance[0].__updateTime = 'newer-revision';
+  await assert.rejects(h.context.decideAcademicAttendanceCorrection({}, actor, { ...h.form, CorrectionId: correction.CorrectionId,
+    Decision: 'Approved', Reason: 'Reviewed', RevisionToken: correction.__updateTime }), { code: 'ACADEMIC_WRITE_CONFLICT' });
+  assert.equal(h.records.academicStudentAttendance[0].Status, 'Absent');
 });
 
 test('AM-06 concurrent timetable additions share an atomic version guard', async () => {

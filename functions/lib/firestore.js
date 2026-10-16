@@ -3,7 +3,10 @@ let cachedToken = null;
 
 const DEFAULT_LIST_PAGE_SIZE = 1000;
 const MAX_LIST_PAGE_SIZE = 1000;
-const DEFAULT_MAX_LIST_PAGES = 5;
+// Complete-list consumers (catalogues, validation and reports) must never get
+// just the first five pages. Interactive histories use listCollectionPage.
+const MAX_COMPLETE_LIST_BYTES = 16 * 1024 * 1024;
+const MAX_COMPLETE_LIST_ROWS = 100000;
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -662,17 +665,43 @@ export async function listCollection(env, collectionPath, query = '') {
   if (explicitToken || options.singlePage) {
     return (await listCollectionPage(env, collectionPath, options)).documents;
   }
-  const maxPagesValue = Number(options.maxPages || DEFAULT_MAX_LIST_PAGES);
-  const maxPages = Math.min(25, Math.max(1, Number.isFinite(maxPagesValue) ? Math.floor(maxPagesValue) : DEFAULT_MAX_LIST_PAGES));
+  const params = new URLSearchParams(clean(options.query));
+  // Use one snapshot across pages so concurrent additions cannot move rows
+  // between pages or change the validation/financial total mid-read.
+  if (!params.has('readTime')) params.set('readTime', new Date().toISOString());
+  return collectWorkspaceCollectionPages(
+    pageToken => listCollectionPage(env, collectionPath, { ...options, query: params.toString(), pageToken }),
+    collectionPath, options
+  );
+}
+
+export async function collectWorkspaceCollectionPages(fetchPage, collectionPath, options = {}) {
+  const maxPages = Math.min(200, options.maxPages == null ? 200 : Math.max(1, Math.floor(Number(options.maxPages) || 1)));
+  const maxBytes = Math.min(MAX_COMPLETE_LIST_BYTES, Math.max(1, Number(options.maxBytes) || MAX_COMPLETE_LIST_BYTES));
+  const maxRows = Math.min(MAX_COMPLETE_LIST_ROWS, Math.max(1, Number(options.maxRows) || MAX_COMPLETE_LIST_ROWS));
   const documents = [];
+  const seenTokens = new Set();
+  const seenDocuments = new Set();
+  let bytes = 0;
   let pageToken = '';
   for (let page = 0; page < maxPages; page += 1) {
-    const result = await listCollectionPage(env, collectionPath, { ...options, pageToken });
+    const result = await fetchPage(pageToken);
+    if (!Array.isArray(result.documents) || typeof result.nextPageToken !== 'string') throw new Error(`Incomplete database page for "${collectionPath}".`);
+    for (const row of result.documents) {
+      const key = clean(row?.__name || row?.__id);
+      if (key && seenDocuments.has(key)) throw new Error(`The database repeated a record in "${collectionPath}". No partial records or totals were returned.`);
+      if (key) seenDocuments.add(key);
+    }
+    bytes += new TextEncoder().encode(JSON.stringify(result.documents)).byteLength;
+    if (bytes > maxBytes || documents.length + result.documents.length > maxRows) break;
     documents.push(...result.documents);
-    pageToken = result.nextPageToken;
+    const next = clean(result.nextPageToken);
+    if (next && (next === pageToken || seenTokens.has(next))) throw new Error(`The database returned a repeated page token for "${collectionPath}".`);
+    if (next) seenTokens.add(next);
+    pageToken = next;
     if (!pageToken) return documents;
   }
-  const error = new Error(`The database collection "${collectionPath}" is too large for an unpaginated request. Use listCollectionPage with nextPageToken.`);
+  const error = new Error(`The selected "${collectionPath}" data exceeds the safe complete-read budget. Narrow the period or use paged history. No partial records or totals were returned. Use listCollectionPage with nextPageToken.`);
   error.status = 413;
   error.code = 'FIRESTORE_PAGINATION_REQUIRED';
   error.nextPageToken = pageToken;
@@ -680,9 +709,8 @@ export async function listCollection(env, collectionPath, query = '') {
   throw error;
 }
 
-// Financial reports need a complete collection, even after historical imports
-// pass the small default list limit. Keep this separate from listCollection so
-// ordinary workspace reads remain bounded and inexpensive.
+// Financial reports retain their explicit complete-report contract and budget.
+// Never substitute a history window for the rows used to compute totals.
 export async function collectCollectionPages(fetchPage, collectionPath, options = {}) {
   const maxPages = Math.max(1, Math.min(40, Math.floor(Number(options.maxPages) || 40)));
   const documents = [];

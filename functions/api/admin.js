@@ -202,6 +202,14 @@ export async function onRequestPost(context) {
         summaryDeferred: true
       }, { headers: { 'Cache-Control': 'no-store' } });
     }
+    // These modules load their inventory and cursor-paged histories through
+    // dedicated endpoints. Do not scan the same growing collections here first.
+    if (['clinic', 'kitchen', 'restaurant', 'tuckShop', 'bookstore', 'uniformStore', 'organizationStore'].includes(requestedSection)) {
+      return Response.json({ ok: true, user, allowedSections: user.allowedSections,
+        availableSections: user.availableSections, restrictedSections: user.restrictedSections,
+        subscriptionPlan: user.subscriptionPlan, summary: {}, charts: {},
+        departments: { [requestedSection]: {} }, summaryDeferred: true }, { headers: { 'Cache-Control': 'no-store' } });
+    }
     const shouldLoad = (section) => {
       if (schoolInsights && ['accounts', 'students'].includes(section)) return true;
       return allowed.has(section)
