@@ -15,6 +15,7 @@ function rootHarness() {
   const decode = value => String(value ?? '').replaceAll('&quot;','"').replaceAll('&#39;',"'").replaceAll('&lt;','<').replaceAll('&gt;','>').replaceAll('&amp;','&');
   const matches = (node,selector) => {
     if (node.removed) return false;
+    if (selector === '*') return true;
     if (selector.includes(',')) return selector.split(',').some(part => matches(node,part));
     const attribute = selector.match(/^\[([^=\]]+)(?:="([^"]*)")?\]$/);
     if (attribute) return Object.hasOwn(node.attrs,attribute[1]) && (attribute[2] === undefined || node.attrs[attribute[1]] === attribute[2]);
@@ -33,6 +34,14 @@ function rootHarness() {
           addEventListener(event,handler) {this[`on${event}`] = handler;},
           remove() {this.removed = true;},closest() {return this;},focus() {},
           querySelector:selector => root.querySelector(selector),querySelectorAll:selector => root.querySelectorAll(selector)};
+        Object.defineProperty(node,'innerHTML',{
+          get() {return this.fragment?.innerHTML || '';},
+          set(value) {
+            this.fragment = rootHarness(); this.fragment.innerHTML = value;
+            this.querySelector = selector => this.fragment.querySelector(selector);
+            this.querySelectorAll = selector => this.fragment.querySelectorAll(selector);
+          }
+        });
         for (const [key,value] of Object.entries(attrs)) if (key.startsWith('data-')) node.dataset[key.slice(5).replace(/-([a-z])/g,(_,letter)=>letter.toUpperCase())] = value;
         if (node.tagName === 'SELECT') {
           const options = html.slice(match.index + match[0].length).split('</select>')[0];
@@ -50,8 +59,8 @@ function rootHarness() {
         form.requestSubmit = () => form.onsubmit({preventDefault(){}});
       }
     },
-    querySelector:selector => nodes.find(node=>matches(node,selector)) || null,
-    querySelectorAll:selector => nodes.filter(node=>matches(node,selector))
+    querySelector:selector => root.querySelectorAll(selector)[0] || null,
+    querySelectorAll:selector => nodes.flatMap(node=>[node,...node.fragment?.querySelectorAll('*') || []]).filter(node=>matches(node,selector))
   };
   return root;
 }
@@ -64,8 +73,13 @@ async function fixture(section = 'tuckShop', options = {}) {
     calls.push({action,body:structuredClone(body)});
     if (action === 'salesBootstrap') return {products,sellingEnabled:options.enabled !== false,message:'Linked vendor products only.'};
     if (action === 'recentVendorSales') {if(options.historyError) throw new Error(options.historyError); return options.historyRequest ? options.historyRequest(body) : {sales:options.recentSales || [],historicalOpenings:options.historicalOpenings || []};}
-    if (action === 'vendorCustomerSearch') return {customers:options.customers || [{CustomerRef:'FIXTURE/001',CustomerName:'Fixture child',Detail:'Grade 7'}]};
-    if (action === 'vendorWalletLookup') {if(options.lookupError) throw new Error(options.lookupError); return {account:{AccountRef:'FIXTURE/001',DisplayName:'Fixture child',WalletBalance:30900,WalletSpentToday:200,...options.walletSummary}};}
+    if (action === 'vendorCustomerSearch') return options.searchRequest ? options.searchRequest(body) : {customers:options.customers || [{CustomerRef:'FIXTURE/001',CustomerName:'Fixture child',Detail:'Grade 7'}]};
+    if (action === 'vendorWalletLookup') {
+      if(options.lookupError) throw new Error(options.lookupError);
+      if(options.lookupRequest) return options.lookupRequest(body);
+      if(!body.WalletCardId && !['fixture001','fixture002','dnx26006'].includes(String(body.AccountRef).toLowerCase().replace(/[^a-z0-9]/g,''))) throw Object.assign(new Error('Account not found in this branch.'),{status:404});
+      return {account:{AccountRef:'FIXTURE/001',DisplayName:'Fixture child',WalletBalance:30900,WalletSpentToday:200,...options.walletSummary}};
+    }
     if (action === 'previewVendorSale') return {Amount:333};
     if (failSale) throw new Error('Fixture response interrupted; retry the same checkout.');
     return {message:'Fixture sale recorded.',sale:{SaleNo:'FIXTURE-SALE',Amount:body.ExpectedAmount}};
@@ -393,13 +407,103 @@ test('zero wallet balances remain visible and the summary clears after checkout 
   f.mounted.destroy();
 });
 
-test('search by name selects one result, while ambiguous names never choose a wallet',async () => {
+test('name matches require an explicit tap, including one result; ambiguous names never choose a wallet',async () => {
   const f=await fixture(); f.input('Query','Fixture child'); await f.find();
-  assert.equal(f.calls.find(row=>row.action==='vendorWalletLookup').body.AccountRef,'FIXTURE/001'); f.mounted.destroy();
+  assert.equal(f.root.querySelector('[data-customer]'),null);
+  assert.equal(f.root.querySelector('[data-customer-matches]').hidden,false);
+  assert.match(f.root.querySelector('[data-customer-matches]').innerHTML,/Fixture child|FIXTURE\/001/);
+  await f.root.querySelector('[data-customer-choice]').onclick();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(f.calls.filter(row=>row.action==='vendorWalletLookup').at(-1).body.AccountRef,'FIXTURE/001');
+  assert.ok(f.root.querySelector('[data-customer]')); f.mounted.destroy();
   const many=await fixture('tuckShop',{customers:[{CustomerRef:'A/001',CustomerName:'James'},{CustomerRef:'A/002',CustomerName:'James'}]});
   many.input('Query','James'); await many.find();
-  assert.equal(many.calls.some(row=>row.action==='vendorWalletLookup'),false);
-  assert.match(many.root.querySelector('[data-department-status]').textContent,/Choose one/); many.mounted.destroy();
+  assert.equal(many.root.querySelector('[data-customer]'),null);
+  assert.equal(many.root.querySelectorAll('[data-customer-choice]').length,2);
+  assert.match(many.root.querySelector('[data-department-status]').textContent,/Tap the correct customer above/); many.mounted.destroy();
+});
+
+test('admission lookup is direct and does not depend on suggestions or their result limit',async()=>{
+  const f=await fixture('tuckShop',{searchRequest:()=>{throw new Error('Suggestion service unavailable');}});
+  assert.doesNotMatch(f.root.innerHTML,/datalist|list="vendorCustomerMatches"/);
+  assert.match(f.root.innerHTML,/autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="search"/);
+  f.input('Query',' fixture-001 '); await f.find();
+  assert.deepEqual(f.calls.map(row=>row.action),['salesBootstrap','vendorWalletLookup']);
+  assert.equal(f.calls[1].body.AccountRef,'fixture-001');
+  assert.equal(f.calls[1].body.Section,'tuckShop');
+  assert.ok(f.root.querySelector('[data-customer]')); f.mounted.destroy();
+});
+
+test('a typed card ID resolves through a tappable restricted match and loads its canonical admission',async()=>{
+  const f=await fixture(); f.input('Query','CARD-FIXTURE'); await f.find();
+  assert.equal(f.calls.find(row=>row.action==='vendorCustomerSearch').body.Query,'CARD-FIXTURE');
+  assert.equal(f.root.querySelector('[data-payment-form]').hidden,true);
+  await f.root.querySelector('[data-customer-choice]').onclick();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(f.calls.filter(row=>row.action==='vendorWalletLookup').at(-1).body.AccountRef,'FIXTURE/001');
+  assert.equal(f.calls.some(row=>row.action.startsWith('record')),false); f.mounted.destroy();
+});
+
+test('permission and service failures do not fall back to name search or masquerade as no matches',async()=>{
+  for(const status of [403,500,undefined]) {
+    const f=await fixture('tuckShop',{lookupRequest:()=>{throw Object.assign(new Error('Vendor lookup unavailable'),{status});}});
+    f.input('Query','FIXTURE/001'); await f.find();
+    assert.equal(f.calls.some(row=>row.action==='vendorCustomerSearch'),false);
+    assert.match(f.root.querySelector('[data-department-status]').textContent,/Vendor lookup unavailable/);
+    assert.equal(f.root.querySelector('[data-payment-form]').hidden,true); f.mounted.destroy();
+  }
+});
+
+test('no matches explain the linked branch and section without enabling payment',async()=>{
+  const f=await fixture('tuckShop',{customers:[]}); f.input('Query','missing'); await f.find();
+  assert.match(f.root.querySelector('[data-department-status]').textContent,/linked vendor’s branch and school section/);
+  assert.equal(f.root.querySelector('[data-customer-matches]').hidden,true);
+  assert.equal(f.root.querySelector('[data-payment-form]').hidden,true); f.mounted.destroy();
+});
+
+test('typing a new search clears old manual/card identities, customer and PIN',async()=>{
+  const f=await fixture(); f.input('WalletCardId','CARD-FIXTURE'); await f.find();
+  f.input('WalletPin','1234'); f.input('Query','missing');
+  assert.equal(f.root.querySelector('[data-customer]'),null);
+  assert.equal(f.root.querySelector('[name="WalletPin"]'),null);
+  assert.equal(f.root.querySelector('[name="AccountRef"]').value,'');
+  assert.equal(f.root.querySelector('[name="WalletCardId"]').value,'');
+  await f.find();
+  assert.equal(f.calls.filter(row=>row.action==='vendorWalletLookup').at(-1).body.AccountRef,'missing');
+  assert.equal(f.root.querySelector('[data-payment-form]').hidden,true); f.mounted.destroy();
+});
+
+test('stale delayed wallet responses cannot restore the previous student after input or navigation changes',async()=>{
+  for(const change of ['input','unmount']) {
+    let resolveLookup;
+    const f=await fixture('tuckShop',{lookupRequest:()=>new Promise(resolve=>{resolveLookup=resolve;})});
+    f.input('Query','FIXTURE/001'); const finding=f.find();
+    if(change==='input') f.input('Query','Another child'); else f.mounted.destroy();
+    resolveLookup({account:{AccountRef:'FIXTURE/001',DisplayName:'Fixture child',WalletBalance:100}}); await finding;
+    assert.equal(f.root.querySelector('[data-customer]'),null);
+    assert.equal(f.calls.some(row=>row.action.startsWith('record')),false); f.mounted.destroy();
+  }
+});
+
+test('live mobile suggestions are escaped buttons and late suggestions cannot overwrite a new search',async()=>{
+  let resolveSearch;
+  const options={searchRequest:()=>new Promise(resolve=>{resolveSearch=resolve;})};
+  const f=await fixture('tuckShop',options); f.input('Query','Fixture');
+  await new Promise(resolve=>setTimeout(resolve,380));
+  f.input('Query','Other'); resolveSearch({customers:[{CustomerRef:'OLD',CustomerName:'Stale'}]});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(f.root.querySelector('[data-customer-matches]').innerHTML,'');
+  options.searchRequest=()=>({customers:[{CustomerRef:'FIXTURE/001',CustomerName:'<script>Unsafe</script>',Detail:'Grade 7'}]});
+  await new Promise(resolve=>setTimeout(resolve,380));
+  assert.doesNotMatch(f.root.querySelector('[data-customer-matches]').innerHTML,/<script>/);
+  assert.match(f.root.querySelector('[data-customer-matches]').innerHTML,/&lt;script&gt;Unsafe/);
+  assert.equal(f.root.querySelector('[data-customer-choice]').attrs.type,'button'); f.mounted.destroy();
+});
+
+test('vendor API adapter retains status codes for safe not-found-only fallback',async()=>{
+  const admin=await readFile(new URL('../js/admin.js',import.meta.url),'utf8');
+  const adapter=admin.slice(admin.indexOf('window.DynamaxVendorPOS?.mount'),admin.indexOf('window.DynamaxVendorPOS?.mount')+1000);
+  assert.match(adapter,/error\.status = response\.status;/);
 });
 
 test('lookup errors appear by the controls and leave payment disabled',async () => {

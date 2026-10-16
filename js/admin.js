@@ -19037,7 +19037,11 @@ function renderSection(active) {
       const response = await staffFetch('/api/staff-vendor-settlements',{method:'POST',signal,
         headers:{'Content-Type':'application/json'},body:JSON.stringify({action,...payload})});
       const result = await response.json();
-      if (!response.ok || !result.ok) throw new Error(result.message || 'Vendor checkout failed.');
+      if (!response.ok || !result.ok) {
+        const error = new Error(result.message || 'Vendor checkout failed.');
+        error.status = response.status;
+        throw error;
+      }
       return result;
     },active,{lookupIcon:tuckShopLookupIcon,scanNfc:scanWalletNfc,openFaceLookup:openStudentFaceLookupDialog});
     return;

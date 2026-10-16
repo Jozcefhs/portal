@@ -6,6 +6,12 @@ const [vendorCss, shellCss, vendorJs, html, posJs] = await Promise.all([
   'css/vendor-settlements.css','css/style.css','js/vendor-settlements.js','admin.html','js/vendor-pos.js'
 ].map(file => readFile(new URL(`../${file}`,import.meta.url),'utf8')));
 
+function assertVersionedAsset(asset, minimumDate) {
+  const version = html.split(`${asset}?v=`)[1]?.split('"')[0];
+  assert.match(version || '', /^\d{8}-[a-z0-9-]+$/, `${asset} must be cache-versioned`);
+  assert.ok(Number(version.slice(0,8)) >= minimumDate, `${asset} must retain this release or a newer one`);
+}
+
 test('live products retain labelled table semantics and separate action controls',()=>{
   const products = vendorJs.slice(vendorJs.indexOf("if (tab === 'products')"),vendorJs.indexOf("if (tab === 'settings')"));
   assert.match(products,/class="vendor-table vendor-product-table" role="table" aria-label="Products and sale status"/);
@@ -35,7 +41,7 @@ test('sales amounts and product request statuses never split across lines on nar
   assert.match(vendorCss,/\.vendor-workspace \.vendor-amount, \.vendor-table \.vendor-request-status \{ white-space:nowrap; overflow-wrap:normal; word-break:normal; \}/);
   assert.match(vendorCss,/\.vendor-table-wrap \{ overflow:auto;/);
   for (const asset of ['css/vendor-settlements.css','js/vendor-settlements.js','js/vendor-pos.js']) {
-    assert.ok(html.includes(asset + '?v=') && html.split(asset + '?v=')[1].split('"')[0].endsWith('-nowrap-columns'));
+    assertVersionedAsset(asset,20261010);
   }
 });
 
@@ -72,6 +78,6 @@ test('sticky vendor search follows portrait, desktop and landscape header height
   assert.match(shellCss,/@media \(max-width:680px\)\{\s*\.staff-page\{--staff-topbar-height:76px/);
   assert.match(vendorCss,/\.staff-page \.vendor-pos \.commerce-search-label\{top:var\(--staff-topbar-height,68px\)\}/);
   assert.match(html,/css\/style\.css\?v=[^"]*responsive-vendor-navigation/);
-  assert.match(html,/css\/vendor-settlements\.css\?v=20261013-vendor-approval-revocation/);
-  assert.match(html,/js\/vendor-settlements\.js\?v=20261013-vendor-approval-revocation/);
+  assertVersionedAsset('css/vendor-settlements.css',20261013);
+  assertVersionedAsset('js/vendor-settlements.js',20261013);
 });

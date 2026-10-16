@@ -5,6 +5,9 @@ on:
     paths:
       - "functions/**"
       - "js/admin.js"
+      - "js/vendor-pos.js"
+      - "tests/vendor-*.test.mjs"
+      - "tests/tuck-shop-*.test.mjs"
       - "js/app-dialogs.js"
       - "js/staff-action-feedback.js"
       - "css/app-dialogs.css"
@@ -33,6 +36,9 @@ on:
     paths:
       - "functions/**"
       - "js/admin.js"
+      - "js/vendor-pos.js"
+      - "tests/vendor-*.test.mjs"
+      - "tests/tuck-shop-*.test.mjs"
       - "js/app-dialogs.js"
       - "js/staff-action-feedback.js"
       - "css/app-dialogs.css"

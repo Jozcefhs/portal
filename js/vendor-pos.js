@@ -38,6 +38,26 @@
       const paymentForm = root.querySelector('[data-payment-form]'); if (paymentForm) paymentForm.hidden = true;
       root.querySelector('[data-complete]')?.remove();
     }
+    function showCustomerMatches(matches = [], message = '') {
+      const list = root.querySelector('[data-customer-matches]');
+      if (!list) return;
+      list.hidden = !matches.length && !message;
+      list.innerHTML = `${message ? `<p>${esc(message)}</p>` : ''}${matches.map((row,index) =>
+        `<button type="button" class="tuck-shop-student-match" data-customer-choice="${index}"><strong>${esc(row.CustomerName || row.CustomerRef)}</strong><span>${esc([row.CustomerRef,row.Detail].filter(Boolean).join(' · '))}</span></button>`).join('')}`;
+      list.querySelectorAll('[data-customer-choice]').forEach(button => button.onclick = async () => {
+        if (busy || disposed) return;
+        const selected = matches[Number(button.dataset.customerChoice)];
+        if (!selected?.CustomerRef) return;
+        stopSearch(); clearCustomer();
+        const form = root.querySelector('[data-lookup-form]');
+        customerSearch = selected.CustomerRef; form.elements.Query.value = customerSearch;
+        draft.AccountRef = customerType === 'Student' ? selected.CustomerRef : '';
+        draft.WalletCardId = '';
+        if (form.elements.AccountRef) form.elements.AccountRef.value = draft.AccountRef;
+        if (form.elements.WalletCardId) form.elements.WalletCardId.value = '';
+        form.requestSubmit();
+      });
+    }
     async function suggestCustomers(query, field) {
       stopSearch();
       if (query.trim().length < 2) return;
@@ -46,13 +66,14 @@
       try {
         const result = await request('vendorCustomerSearch',{Section:section,CustomerType:customerType,Query:query},controller.signal);
         if (disposed || generation !== searchGeneration || !field.isConnected || field.value !== query) return;
-        root.querySelector('[data-customer-matches]').innerHTML = (result.customers || []).map(row => `<option value="${esc(row.CustomerRef)}">${esc([row.CustomerName,row.Detail].filter(Boolean).join(' · '))}</option>`).join('');
+        showCustomerMatches(result.customers || []);
       } catch (error) {
-        if (!disposed && generation === searchGeneration && error.name !== 'AbortError') status(error.message,true);
+        if (!disposed && generation === searchGeneration && field.isConnected && error.name !== 'AbortError')
+          showCustomerMatches([], `Suggestions could not load. Select ${customerType === 'Student' ? 'Find wallet' : 'Find staff'} to retry the lookup.`);
       } finally {clearTimeout(timer); pending.delete(controller); if (searchController === controller) searchController = null;}
     }
     function invalidate() {checkoutId = ''; draw();}
-    async function call(action, body = {}) {
+    async function call(action, body = {}, options = {}) {
       if (busy || disposed) return null;
       busy = true;
       const controls = [...root.querySelectorAll('button,input,select')].map(el => [el,el.disabled]);
@@ -64,6 +85,9 @@
         const result = await request(action,{...body,Section:section},controller.signal);
         return disposed ? null : result;
       } catch (error) {
+        // Only an explicit not-found response can fall back to search. Keep
+        // permission, offline and server failures visible, not "no matches".
+        if (!disposed && options.allowNotFound && Number(error.status) === 404) return {notFound:true};
         if (!disposed) status(error.name === 'AbortError'
           ? action.startsWith('record') ? 'No response was confirmed. Keep this cart and retry the same checkout; the server prevents duplicate posting.'
             : 'This request timed out. Try again; no sale was submitted.' : error.message,true);
@@ -146,7 +170,7 @@
         <div class="commerce-cart-lines" data-cart-lines${entries.length ? '' : ' hidden'}>${entries.map(({ref,qty,product:p}) => `<article class="commerce-cart-line"><div><strong>${esc(p.ItemName)}</strong><span>${money(p.Price)} each</span></div><select data-quantity="${esc(ref)}" aria-label="Cart quantity for ${esc(p.ItemName)}">${quantityOptions(p.Quantity,qty)}</select><strong>${money(Number(p.Price) * qty)}</strong><button type="button" class="compact-icon-action compact-delete-action" data-remove="${esc(ref)}" aria-label="Remove ${esc(p.ItemName)}">&#128465;</button></article>`).join('')}</div>
         <div class="tuck-shop-step-heading"><span>2</span><div><small>Customer</small><h5>Identify the buyer</h5></div></div>
         ${school ? `<label class="tuck-shop-customer-type">Customer type<select data-customer-type><option value="Student"${customerType === 'Student' ? ' selected' : ''}>Student · wallet</option><option value="Staff"${customerType === 'Staff' ? ' selected' : ''}>Staff · cash, transfer or POS</option></select></label>
-        <form data-lookup-form class="tuck-shop-lookup-form"><label>${wallet ? 'Find student' : 'Find staff member'}<input name="Query" data-customer-search type="search" list="vendorCustomerMatches" value="${esc(customerSearch)}" placeholder="${wallet ? 'Name, admission no., card, phone or email' : 'Name, username, staff ID, phone or email'}" autocomplete="off"><datalist id="vendorCustomerMatches" data-customer-matches></datalist></label>
+        <form data-lookup-form class="tuck-shop-lookup-form"><label>${wallet ? 'Find student' : 'Find staff member'}<input name="Query" data-customer-search type="search" value="${esc(customerSearch)}" placeholder="${wallet ? 'Name, admission no., card, phone or email' : 'Name, username, staff ID, phone or email'}" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="search" maxlength="120"></label><div class="tuck-shop-student-matches" data-customer-matches aria-live="polite" hidden></div>
         ${wallet ? `<details class="tuck-shop-manual-lookup" data-manual-lookup${manualLookupOpen ? ' open' : ''}><summary>Enter card ID or admission number manually</summary><div><label>Wallet card ID<input name="WalletCardId" value="${esc(draft.WalletCardId)}" autocomplete="off" placeholder="Scan or enter card ID"></label><label>Admission number<input name="AccountRef" value="${esc(draft.AccountRef)}" autocomplete="off" placeholder="Admission number"></label></div></details>` : ''}
         <div class="tuck-shop-lookup-footer"><p class="status" data-department-status role="status"></p>${wallet ? `<div class="tuck-shop-lookup-actions" role="group" aria-label="Student lookup methods"><button type="submit" data-find class="tuck-shop-lookup-action tuck-shop-lookup-primary" aria-label="Find student wallet" title="Find student wallet">${icon('search')}<span>Find wallet</span></button><button type="button" data-scan class="tuck-shop-lookup-action" aria-label="Scan NFC student card" title="Scan NFC student card">${icon('card')}<span>Scan card</span></button><button type="button" data-face class="tuck-shop-lookup-action" aria-label="Find student by face" title="Find student by face">${icon('face')}<span>Use face</span></button></div>` : '<button type="submit" data-find class="tuck-shop-staff-select">Select staff member</button>'}</div></form>
         ${customer ? `<div class="wallet-account-result vendor-pos-customer" data-customer><div><small>${wallet ? 'Student' : 'Staff customer'}</small><strong>${esc(customer.DisplayName)}</strong><span>${esc([customer.AccountRef,customer.ClassName].filter(Boolean).join(' · '))}</span></div>${wallet ? `<div data-wallet-summary><small>Wallet balance</small><strong>${money(customer.WalletBalance)}</strong><span>Spent today ${money(customer.WalletSpentToday)}</span></div>` : ''}</div>` : ''}` : ''}
@@ -200,12 +224,13 @@
           customerSearch = field.value; draft.AccountRef = ''; draft.WalletCardId = '';
           if (lookupForm.elements.AccountRef) lookupForm.elements.AccountRef.value = '';
           if (lookupForm.elements.WalletCardId) lookupForm.elements.WalletCardId.value = '';
-          stopSearch(); root.querySelector('[data-customer-matches]').innerHTML = '';
+          stopSearch(); showCustomerMatches(); status('');
           searchTimer = setTimeout(() => {void suggestCustomers(customerSearch,field);},350);
         } else {
           stopSearch(); customerSearch = ''; lookupForm.elements.Query.value = ''; draft[field.name] = field.value;
           const other = field.name === 'WalletCardId' ? 'AccountRef' : 'WalletCardId';
           draft[other] = ''; lookupForm.elements[other].value = '';
+          showCustomerMatches(); status('');
         }
       };
       form.oninput = event => {
@@ -216,19 +241,32 @@
       };
       async function findCustomer() {
         if (busy || disposed) return;
-        stopSearch(); scanController?.abort(); clearCustomer();
+        stopSearch(); scanController?.abort(); clearCustomer(); showCustomerMatches();
+        const snapshot = () => JSON.stringify([customerType,customerSearch,draft.AccountRef || '',draft.WalletCardId || '']);
+        const started = snapshot(), current = () => !disposed && lookupForm.isConnected && started === snapshot();
+        const acceptWallet = result => {
+          customer = result.account; draft.AccountRef = customer.AccountRef; draft.WalletCardId = ''; customerSearch = customer.AccountRef;
+          status('Customer found. Check the name and wallet balance before completing the sale.'); draw();
+        };
         let ref = draft.AccountRef;
         if (!wallet || !ref && !draft.WalletCardId) {
           const query = customerSearch.trim();
           if (query.length < 2) return status('Enter a name or reference, or scan a student card.',true);
+          if (wallet) {
+            // Exact admission lookup uses the restricted vendor wallet endpoint;
+            // it must not depend on the browser's native datalist or suggestion cap.
+            const direct = await call('vendorWalletLookup',{AccountRef:query},{allowNotFound:true});
+            if (!current() || !direct) return;
+            if (!direct.notFound) {acceptWallet(direct); return;}
+          }
           const result = await call('vendorCustomerSearch',{Query:query,CustomerType:customerType});
-          if (!result) return;
+          if (!current() || !result) return;
           const matches = result.customers || [], key = value => String(value || '').toLowerCase().replace(/[^a-z0-9]/g,'');
           const exact = matches.filter(row => key(row.CustomerRef) === key(query));
-          const selected = exact.length === 1 ? exact[0] : !exact.length && matches.length === 1 ? matches[0] : null;
+          const selected = exact.length === 1 ? exact[0] : !wallet && !exact.length && matches.length === 1 ? matches[0] : null;
           if (!selected) {
-            root.querySelector('[data-customer-matches]').innerHTML = matches.map(row => `<option value="${esc(row.CustomerRef)}">${esc(row.CustomerName)}</option>`).join('');
-            return status(matches.length ? 'Choose one customer from the suggested results, then select again.' : 'No matching customer found in your permitted branch and section.',true);
+            showCustomerMatches(matches);
+            return status(matches.length ? 'Tap the correct customer above to continue.' : 'No matching customer found in your linked vendor’s branch and school section. Check the full reference or ask Accounts to verify the vendor link.',!matches.length);
           }
           ref = selected.CustomerRef;
           if (!wallet) {
@@ -237,8 +275,7 @@
           }
         }
         const result = await call('vendorWalletLookup',{AccountRef:ref,WalletCardId:draft.WalletCardId});
-        if (result) {customer = result.account; draft.AccountRef = customer.AccountRef; draft.WalletCardId = ''; customerSearch = customer.AccountRef;
-          status('Customer found. Ready to complete the sale.'); draw();}
+        if (current() && result) acceptWallet(result);
       }
       if (lookupForm) lookupForm.onsubmit = async event => {event.preventDefault(); await findCustomer();};
       const scanButton = root.querySelector('[data-scan]');
@@ -246,7 +283,7 @@
         scanButton.classList.toggle('nfc-unavailable',!('NDEFReader' in window));
         scanButton.title = 'NDEFReader' in window ? 'Scan a compatible NFC student card' : 'Direct NFC requires Android Chrome; USB readers and manual entry remain available';
         scanButton.onclick = async () => {
-          stopSearch(); clearCustomer(); scanController?.abort(); scanController = new AbortController();
+          stopSearch(); clearCustomer(); showCustomerMatches(); scanController?.abort(); scanController = new AbortController();
           draft.AccountRef = ''; draft.WalletCardId = ''; customerSearch = '';
           lookupForm.elements.AccountRef.value = ''; lookupForm.elements.WalletCardId.value = ''; lookupForm.elements.Query.value = '';
           if (!tools.scanNfc) return status('Card scanning is unavailable. Refresh the page or enter the card ID manually.',true);
@@ -255,7 +292,7 @@
       }
       const faceButton = root.querySelector('[data-face]');
       if (faceButton) faceButton.onclick = async () => {
-        stopSearch(); scanController?.abort(); clearCustomer(); faceController?.abort(); faceController = new AbortController();
+        stopSearch(); scanController?.abort(); clearCustomer(); showCustomerMatches(); faceController?.abort(); faceController = new AbortController();
         const controller = faceController;
         draft.AccountRef = ''; draft.WalletCardId = ''; customerSearch = '';
         lookupForm.elements.AccountRef.value = ''; lookupForm.elements.WalletCardId.value = ''; lookupForm.elements.Query.value = '';
