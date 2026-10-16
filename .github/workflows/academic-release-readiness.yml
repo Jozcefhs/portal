@@ -74,3 +74,4 @@ jobs:
       - run: npm ci
       - run: npm run test:academic-release
       - run: npm run test:clinic-referrals
+      - run: npm run test:tuck-shop

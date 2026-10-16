@@ -5175,6 +5175,7 @@ async function requestDepartmentAction(section, action, payload = {}, idempotenc
   if (!response.ok || !data.ok) {
     const error = new Error(data.message || 'Could not complete the department action.');
     error.responseReceived = true;
+    error.status = response.status;
     throw error;
   }
   if (options.render !== false) renderDepartmentOperations(section, data);
@@ -5642,6 +5643,71 @@ async function searchTuckShopCustomer(type, query) {
   return result.customers || [];
 }
 
+function showTuckShopStudentMatches(form, matches, message = '') {
+  const results = form.querySelector('[data-student-matches]');
+  if (!results) return;
+  results.replaceChildren();
+  results.hidden = !matches.length && !message;
+  if (message) {
+    const hint = document.createElement('p');
+    hint.textContent = message;
+    results.append(hint);
+  }
+  for (const row of matches) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'tuck-shop-student-match';
+    const name = document.createElement('strong');
+    name.textContent = row.CustomerName || row.CustomerRef;
+    const detail = document.createElement('span');
+    detail.textContent = [row.CustomerRef, row.Detail].filter(Boolean).join(' · ');
+    button.append(name, detail);
+    button.addEventListener('click', () => {
+      form.querySelector('#tuckShopStudentSearch').value = row.CustomerRef;
+      form.elements.AccountRef.value = '';
+      form.elements.WalletCardId.value = '';
+      tuckShopCustomerSearch = row.CustomerRef;
+      form.requestSubmit();
+    });
+    results.append(button);
+  }
+}
+
+function tuckShopLookupSnapshot(form) {
+  return JSON.stringify([form.querySelector('#tuckShopStudentSearch')?.value || '',
+    form.elements.AccountRef.value, form.elements.WalletCardId.value]);
+}
+
+async function loadTuckShopStudentWallet(form) {
+  const payload = Object.fromEntries(new FormData(form).entries());
+  const query = clean(form.querySelector('#tuckShopStudentSearch')?.value);
+  const snapshot = tuckShopLookupSnapshot(form);
+  const current = () => form.isConnected && snapshot === tuckShopLookupSnapshot(form);
+  const manual = clean(payload.AccountRef) || clean(payload.WalletCardId);
+  if (!manual && !query) throw new Error('Enter the student’s admission number, or type a name and select a result.');
+  try {
+    // An admission number is an exact wallet lookup, not a library-borrower
+    // suggestion. Keep the server's existing branch/section and wallet checks.
+    const result = await requestDepartmentAction('tuckShop', 'lookupWallet',
+      manual ? payload : { AccountRef: query }, '', { render: false });
+    return current() ? result : null;
+  } catch (error) {
+    if (!current()) return null;
+    // Only a genuine not-found can fall back to name/card/phone suggestions.
+    // Authentication, network and server failures must remain visible.
+    if (manual || error.status !== 404) throw error;
+  }
+  let matches;
+  try { matches = await searchTuckShopCustomer('Student', query); }
+  catch (error) { if (!current()) return null; throw error; }
+  if (!current()) return null;
+  showTuckShopStudentMatches(form, matches, matches.length
+    ? 'Tap the correct student below, then check the name and wallet balance before completing the sale.'
+    : 'No student found in your permitted branch and school section. Check the full admission number.');
+  if (!matches.length) throw new Error('No student found in your permitted branch and school section. Check the full admission number.');
+  return null;
+}
+
 function tuckShopSaleItems() {
   return [...commerceCart('tuckShop').entries()].map(([Reference, entry]) => ({ Reference, Quantity: entry.quantity }));
 }
@@ -5697,34 +5763,80 @@ function bindTuckShopPOS(data) {
   });
   const customerSearch = workspace.querySelector('#tuckShopStudentSearch, #tuckShopStaffSearch');
   const list = workspace.querySelector('#tuckShopStudentMatches, #tuckShopStaffMatches');
+  const lookupForm = workspace.querySelector('#walletLookupForm');
+  if (lookupForm) {
+    // Native datalist suggestions are not consistently usable on phone keyboards.
+    customerSearch.removeAttribute('list');
+    customerSearch.setAttribute('autocapitalize', 'none');
+    customerSearch.setAttribute('autocorrect', 'off');
+    customerSearch.setAttribute('spellcheck', 'false');
+    customerSearch.setAttribute('enterkeyhint', 'search');
+    const results = document.createElement('div');
+    results.className = 'tuck-shop-student-matches';
+    results.dataset.studentMatches = '';
+    results.setAttribute('aria-live', 'polite');
+    results.hidden = true;
+    customerSearch.closest('label').after(results);
+  }
   let searchTimer;
+  let searchGeneration = 0;
+  const hidePreviousCustomer = () => {
+    workspace.querySelector('.wallet-account-result')?.setAttribute('hidden', '');
+    const payment = workspace.querySelector('#walletPurchaseForm, #tuckShopStaffSaleForm');
+    payment?.setAttribute('hidden', '');
+    if (payment?.previousElementSibling?.classList.contains('tuck-shop-step-heading')) payment.previousElementSibling.hidden = true;
+  };
   customerSearch?.addEventListener('input', () => {
+    const generation = ++searchGeneration;
     tuckShopCustomerSearch = customerSearch.value;
     tuckShopSaleRequestId = '';
     if (tuckShopCustomerType === 'Student') tuckShopWalletAccount = null;
     else tuckShopStaffCustomer = null;
+    hidePreviousCustomer();
     workspace.querySelector('#walletPurchaseForm button[type="submit"], #tuckShopStaffSaleForm button[type="submit"]')?.setAttribute('disabled', '');
     clearTimeout(searchTimer);
     list.replaceChildren();
+    if (lookupForm) {
+      lookupForm.elements.AccountRef.value = '';
+      lookupForm.elements.WalletCardId.value = '';
+      showTuckShopStudentMatches(lookupForm, []);
+    }
     if (clean(customerSearch.value).length < 2) return;
     searchTimer = setTimeout(async () => {
       const query = clean(customerSearch.value);
       try {
         const matches = await searchTuckShopCustomer(tuckShopCustomerType, query);
-        if (query !== clean(customerSearch.value)) return;
+        if (!customerSearch.isConnected || generation !== searchGeneration || query !== clean(customerSearch.value)) return;
+        if (lookupForm) {
+          showTuckShopStudentMatches(lookupForm, matches);
+          return;
+        }
         list.replaceChildren(...matches.map((row) => {
           const option = document.createElement('option');
           option.value = row.CustomerRef;
           option.label = [row.CustomerName, row.Detail].filter(Boolean).join(' · ');
           return option;
         }));
-      } catch (error) { setStatus(workspace.querySelector('[data-department-status]'), error.message, 'bad'); }
+      } catch (error) {
+        if (!customerSearch.isConnected || generation !== searchGeneration) return;
+        // Do not interrupt typing with a modal. Explicit lookup reports failures.
+        if (lookupForm) showTuckShopStudentMatches(lookupForm, [], 'Suggestions could not load. Tap Find wallet to check the admission number.');
+        else setStatus(workspace.querySelector('[data-department-status]'), error.message, 'bad');
+      }
     }, 250);
   });
   workspace.querySelectorAll('#walletLookupForm [name="WalletCardId"], #walletLookupForm [name="AccountRef"]')
     .forEach((input) => input.addEventListener('input', () => {
+      clearTimeout(searchTimer);
+      searchGeneration++;
+      customerSearch.value = '';
+      tuckShopCustomerSearch = '';
+      showTuckShopStudentMatches(lookupForm, []);
+      const other = input.name === 'AccountRef' ? 'WalletCardId' : 'AccountRef';
+      lookupForm.elements[other].value = '';
       tuckShopWalletAccount = null;
       tuckShopSaleRequestId = '';
+      hidePreviousCustomer();
       workspace.querySelector('#walletPurchaseForm button[type="submit"]')?.setAttribute('disabled', '');
     }));
   workspace.querySelector('#tuckShopStaffLookupForm')?.addEventListener('submit', async (event) => {
@@ -6052,18 +6164,13 @@ function renderDepartmentOperations(section, data) {
     const buttonMarkup = section === 'tuckShop' ? button?.innerHTML : '';
     try {
       await runButtonAction(button, 'Looking up...', async () => {
-        if (section === 'tuckShop' && !clean(form.elements.WalletCardId.value) && !clean(form.elements.AccountRef.value)) {
-          const query = clean(document.getElementById('tuckShopStudentSearch')?.value);
-          const matches = await searchTuckShopCustomer('Student', query);
-          const selected = matches.find((row) => clean(row.CustomerRef).toLowerCase() === query.toLowerCase())
-            || (matches.length === 1 ? matches[0] : null);
-          if (!selected) throw new Error(matches.length ? 'Choose one student from the suggested results.' : 'No matching student found.');
-          form.elements.AccountRef.value = selected.CustomerRef;
-          tuckShopCustomerSearch = selected.CustomerRef;
+        const result = section === 'tuckShop' ? await loadTuckShopStudentWallet(form)
+          : await requestDepartmentAction(section, 'lookupWallet', Object.fromEntries(new FormData(form).entries()), '', { render: false });
+        if (!result || !form.isConnected) return;
+        if (section === 'tuckShop') {
+          tuckShopWalletAccount = result.walletAccount || null;
+          tuckShopCustomerSearch = tuckShopWalletAccount?.AccountRef || '';
         }
-        const result = await requestDepartmentAction(section, 'lookupWallet',
-          Object.fromEntries(new FormData(form).entries()), '', { render: false });
-        if (section === 'tuckShop') tuckShopWalletAccount = result.walletAccount || null;
         renderDepartmentOperations(section, result);
         return result;
       });

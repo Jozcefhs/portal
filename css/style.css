@@ -3590,6 +3590,13 @@ html[data-theme="dark"] .commerce-product-action{border-color:#33465c}
 .tuck-shop-lookup-form{display:grid;gap:12px;margin:0;padding:13px;border:1px solid #d6e3ea;border-radius:11px;background:#f8fbfd}
 .tuck-shop-lookup-form input:focus,.tuck-shop-pos-workspace .commerce-checkout-form input:focus{outline:2px solid #91c9f5;outline-offset:1px}
 .tuck-shop-manual-lookup{border-top:1px solid #e2eaf0}
+.tuck-shop-student-matches{display:grid;gap:5px;max-height:240px;overflow-y:auto;min-width:0}
+.tuck-shop-student-matches[hidden]{display:none}
+.tuck-shop-student-matches>p{margin:0;font-size:12px;line-height:1.4}
+.tuck-shop-lookup-form .tuck-shop-student-match{display:flex;flex-direction:column;align-items:flex-start;gap:2px;width:100%;min-height:44px;margin:0;padding:7px 9px;text-align:left;white-space:normal;overflow-wrap:anywhere;border:1px solid #c8d9e8;border-radius:7px;background:#fff;color:#17324d}
+.tuck-shop-student-match span{font-size:11px;font-weight:400}
+.tuck-shop-student-match:focus-visible{outline:2px solid #1769a1;outline-offset:1px}
+html[data-theme="dark"] .tuck-shop-lookup-form .tuck-shop-student-match{background:#152c43;border-color:#49657e;color:#edf4ff}
 .tuck-shop-manual-lookup>summary{padding:10px 0 0;color:#1769a1;font-size:11px;font-weight:700;cursor:pointer}
 .tuck-shop-manual-lookup[open]>summary{padding-bottom:10px}
 .tuck-shop-manual-lookup>div{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
