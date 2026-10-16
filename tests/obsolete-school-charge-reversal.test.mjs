@@ -108,6 +108,126 @@ test('legitimate charges, unrelated fees and old periods are never reversed', as
   assert.equal(returning.ready, false);
 });
 
+test('missing Student Type permits only type-independent reversals without completing or defaulting the profile', async () => {
+  for (const value of [undefined, null, '', '   ']) {
+    const profile = { ...student, StudentType: value, Gender: '', ProfileCompletionStatus: 'Needs completion' };
+    // A cleared canonical field must win over an obsolete import alias.
+    if (value === '') profile.studentType = 'Boarding Student';
+    if (value === undefined) delete profile.StudentType;
+    const data = fixture(), before = copy({ profile, data });
+    for (const candidateOnly of [true, false]) {
+      const plan = await obsoleteSchoolChargeReversalPlan(profile, data, { candidateOnly });
+      assert.equal(plan.ready, true, plan.reason); assert.equal(plan.amount, 128030);
+      assert.equal(plan.profile.StudentType, ''); assert.equal(plan.profile.ProfileCompletionStatus, 'Needs completion');
+      assert.equal(plan.expectedTotal, null); assert.match(plan.eligibilityNote, /obsolete for both day and boarding/);
+      assert.deepEqual({ profile, data }, before);
+    }
+  }
+  for (const StudentType of ['Day Student', 'Boarding Student']) {
+    const plan = await obsoleteSchoolChargeReversalPlan({ ...student, StudentType }, fixture());
+    assert.equal(plan.ready, true, plan.reason); assert.equal(plan.profile.StudentType, StudentType);
+    assert.equal(plan.expectedTotal, 1488885); assert.equal(plan.eligibilityNote, '');
+  }
+});
+
+test('all affected class amounts qualify with missing Student Type; unique rules must agree for both types', async () => {
+  for (const [ClassName, oldTextbook] of [['Grade 8', 118030], ['Grade 9', 105600], ['Grade 10', 148060]]) {
+    const data = fixture(0), profile = { ...student, ClassName, StudentType: '' };
+    data.feeItems.find(row => row.FeeCode === 'TXT_OLD').Amount = oldTextbook;
+    Object.assign(data.invoices[1], { Amount: oldTextbook, Debit: oldTextbook });
+    data.journals = []; // The existing historical-journal reconciliation still runs.
+    const plan = await obsoleteSchoolChargeReversalPlan(profile, data);
+    assert.equal(plan.ready, true, plan.reason); assert.equal(plan.amount, oldTextbook + 10000);
+  }
+  for (const variant of ['same', 'different amount', 'duplicate', 'one type only']) {
+    const data = fixture(), rule = data.feeItems.find(row => row.FeeCode === 'TXT_OLD');
+    rule.StudentType = 'Day Student';
+    if (variant !== 'one type only') data.feeItems.push({ ...rule, __id: 'boarding-rule', StudentType: 'Boarding Student',
+      Amount: rule.Amount + (variant === 'different amount' ? 1 : 0) });
+    if (variant === 'duplicate') data.feeItems.push({ ...rule, __id: 'duplicate-rule' });
+    const plan = await obsoleteSchoolChargeReversalPlan({ ...student, StudentType: '' }, data);
+    assert.equal(plan.ready, variant === 'same', `${variant}: ${plan.reason}`);
+  }
+});
+
+test('a possibly valid New Intake charge for either type stays blocked, including offline and unspecified classifications', async () => {
+  for (const change of [
+    { StudentType: 'Boarding Student' },
+    { StudentType: 'Boarding Student', PayableOnline: 'NO' },
+    { StudentType: 'Boarding Student', Gender: 'Female' },
+    { StudentType: 'Boarding Student', BillingCategories: ['Scholarship'], BillingCategory: 'Scholarship' },
+    { StudentType: 'Boarding Student', AcademicProgress: 'Repeating' },
+    { StudentType: 'Day Student', PayableOnline: 'NO' }
+  ]) {
+    const data = fixture(), profile = { ...student, StudentType: '', Gender: '', BillingCategory: '', AcademicProgress: '' };
+    data.feeItems.push({ ...data.feeItems[1], __id: 'possibly-applicable', EnrollmentCategory: 'New Intake', ...change });
+    for (const candidateOnly of [true, false]) {
+      const plan = await obsoleteSchoolChargeReversalPlan(profile, data, { candidateOnly });
+      assert.equal(plan.ready, false, JSON.stringify(change)); assert.match(plan.reason, /may still apply/);
+    }
+  }
+});
+
+test('missing Student Type does not relax saved identity, period, other rule classifications or financial evidence', async () => {
+  for (const field of ['ClassName', 'AcademicSession', 'Term', 'Gender', 'BillingCategory', 'AcademicProgress']) {
+    const data = fixture(), profile = { ...student, StudentType: '', [field]: '' };
+    profile[field[0].toLowerCase() + field.slice(1)] = student[field];
+    if (['Gender', 'BillingCategory', 'AcademicProgress'].includes(field)) data.feeItems[1][field] = student[field];
+    assert.equal((await obsoleteSchoolChargeReversalPlan(profile, data)).ready, false, field);
+  }
+  for (const change of [
+    d => { d.payments = []; }, d => { d.ledger = []; },
+    d => { d.invoices[1].Currency = 'USD'; }, d => { d.invoices[1].Amount += 1; },
+    d => { d.invoices[1].SchoolSection = 'primary'; }, d => { d.invoices[1].BranchId = 'other'; },
+    d => d.invoices.push({ ...d.invoices[1], __id: 'duplicate', InvoiceId: 'DUP' }),
+    d => { d.journals.find(row => row.SourceId === 'INV-1').Lines[0].Debit = 1; }
+  ]) {
+    const data = fixture(); change(data);
+    assert.equal((await obsoleteSchoolChargeReversalPlan({ ...student, StudentType: '' }, data)).ready, false, String(change));
+  }
+});
+
+test('type-independent posting preserves the unfinished profile, invoices and receipts and cannot be repeated', async () => {
+  const h = harness({ configure: (_data, profile) => { profile.StudentType = ''; profile.Gender = ''; profile.ProfileCompletionStatus = 'Needs completion'; } });
+  const before = h.read(), originalProfile = copy(h.profile), plan = await h.plan();
+  assert.equal(plan.ready, true, plan.reason);
+  const result = await h.post(plan.previewToken), after = h.read();
+  assert.equal(result.reversed, 2); assert.equal(result.amount, 128030); assert.equal(result.releasedCredit, 128030);
+  assert.equal(result.summary.TotalDebit, 1488885); assert.equal(result.summary.TotalCredit, 1502885);
+  assert.deepEqual(withoutRevision(h.db.get(`${h.profile.__scopePath}/${h.profile.__id}`)), withoutRevision(originalProfile));
+  for (const key of ['payments', 'ledger', 'feeItems']) assert.deepEqual(after[key].map(withoutRevision), before[key].map(withoutRevision));
+  for (const row of before.invoices) {
+    const actual = after.invoices.find(item => item.__id === row.__id);
+    for (const [key, value] of Object.entries(withoutRevision(row))) assert.deepEqual(actual[key], value);
+  }
+  for (const row of before.journals) assert.deepEqual(withoutRevision(after.journals.find(item => item.__id === row.__id)), withoutRevision(row));
+  await assert.rejects(h.post(plan.previewToken), /No eligible/); assert.equal(h.commits.length, 1);
+});
+
+test('type-independent approval rechecks new fee rules, completed profiles, profile races and closed periods', async () => {
+  const configure = (_data, profile) => { profile.StudentType = ''; };
+  const changedType = harness({ configure }), plan = await changedType.plan();
+  changedType.profile.StudentType = 'Boarding Student';
+  await assert.rejects(changedType.post(plan.previewToken), /changed/); assert.equal(changedType.commits.length, 0);
+  const changedFee = harness({ configure }), feePlan = await changedFee.plan();
+  changedFee.db.set('feeItems/new-rule', { ...changedFee.read().feeItems[1], __id: 'new-rule', __updateTime: 'v2',
+    EnrollmentCategory: 'New Intake', StudentType: 'Boarding Student' });
+  await assert.rejects(changedFee.post(feePlan.previewToken), /may still apply/); assert.equal(changedFee.commits.length, 0);
+  const race = harness({ configure, beforeCommit: db => { db.get(`${student.__scopePath}/student`).__updateTime = 'parent-edit'; } });
+  await assert.rejects(race.post((await race.plan()).previewToken), /revision/); assert.equal(race.commits.length, 0);
+  const closed = harness({ configure, closed: () => true });
+  await assert.rejects(closed.post((await closed.plan()).previewToken), /closed/); assert.equal(closed.commits.length, 0);
+});
+
+test('type-independent review explains eligibility without presenting a default Day Student fee total', async () => {
+  const plan = await obsoleteSchoolChargeReversalPlan({ ...student, StudentType: '' }, fixture());
+  const html = obsoleteChargeTable([plan], true);
+  assert.match(html, /Verified — included in approval/); assert.match(html, /obsolete for both day and boarding/);
+  assert.match(html, /Full fee comparison awaits profile completion/);
+  assert.doesNotMatch(html, /Current fee setup:/); assert.match(html, /1,616,915.00 → ₦1,488,885.00/);
+  assert.match(obsoleteChargeTable([{ ...plan, eligibilityNote: '<script>' }]), /&lt;script&gt;/);
+});
+
 test('duplicates, unknown rules, mismatched currency/amount/scope/classifications and receipt gaps block approval', async () => {
   for (const change of [
     d => d.invoices.push({ ...d.invoices[1], __id: 'duplicate', InvoiceId: 'DUP' }),

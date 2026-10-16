@@ -1,6 +1,6 @@
 import { batchCommitDocuments, getDocument, queryCollectionPages } from './firestore.js';
 import { financialPreviewFingerprint } from './financial-preview-fingerprint.js';
-import { studentBillingIdentity } from './student-billing-profile.js';
+import { studentBillingIdentity, studentProfileValue } from './student-billing-profile.js';
 import { financeMoney } from './accounting-mutation-guards.js';
 import { getStudentBillingData, buildStudentBillingPreview, normalizeInvoice, normalizeFeeItem, normalizePayment,
   normalizeLedger, feeMatchesAccountPeriod, isSchoolFeeInvoice, sameFinancialPeriod,
@@ -18,6 +18,22 @@ const fail = (message, status = 409) => { throw Object.assign(new Error(message)
 const closedInvoice = row => ['void', 'voided', 'cancelled', 'canceled', 'reversed'].includes(lower(row.Status));
 const supported = row => /^(TXT(?:_|$)|LEG$)/i.test(clean(row.FeeCode)) || /\b(textbooks?|yearbook)\b/i.test(clean(row.FeeName));
 const dbDefaults = { batchCommitDocuments, getDocument, queryCollectionPages, getStudentBillingData, accountingPeriodIsClosed };
+const classificationFields = ['Gender', 'BillingCategory', 'AcademicProgress'];
+const savedValue = (student, field) => studentProfileValue(student, field, [field[0].toLowerCase() + field.slice(1)]);
+
+// An unfinished profile is not a Day Student declaration. For a type-independent
+// reversal, even a potentially applicable New Intake rule must prevent approval.
+// Missing classifications cannot hide such a rule through display defaults.
+function potentiallyApplies(fee, profile, student) {
+  const possibleRule = { ...fee };
+  for (const field of classificationFields) {
+    if (!savedValue(student, field)) {
+      possibleRule[field] = 'All';
+      if (field === 'BillingCategory') possibleRule.BillingCategories = ['All'];
+    }
+  }
+  return feeMatchesAccountPeriod(possibleRule, profile);
+}
 
 // Only release real, reconciled allocations. Restore absent baseline journals
 // within the same commit; never rewrite a receipt or an existing journal.
@@ -72,25 +88,33 @@ function financialEvidence(profile, invoices, data) {
 }
 
 export async function obsoleteSchoolChargeReversalPlan(student, data, { candidateOnly = false } = {}) {
-  const preview = await buildStudentBillingPreview(student, data), profile = preview.profile;
+  const preview = await buildStudentBillingPreview(student, data);
+  const savedType = savedValue(student, 'StudentType');
+  const profile = { ...preview.profile, StudentType: savedType };
+  const profiles = savedType ? [profile] : ['Day Student', 'Boarding Student'].map(StudentType => ({ ...profile, StudentType }));
   const invoices = (data.invoices || []).map(normalizeInvoice);
   const current = invoices.filter(row => sameFinancialPeriod(row, profile.AcademicSession, profile.Term) && !closedInvoice(row));
   const candidates = current.filter(row => supported(row) && isSchoolFeeInvoice(row) && row.Debit > 0 &&
     preview.rows.some(component => same(component.code, row.FeeCode) && component.expected === 0));
   const fees = (data.feeItems || []).map(normalizeFeeItem);
   const charges = candidates.map(invoice => {
-    const rules = fees.filter(fee => same(fee.FeeCode, invoice.FeeCode) && supported(fee) && active(fee.Active) &&
-      feeMatchesAccountPeriod(fee, profile, { enrollmentCategoryOverride: 'Returning' }));
+    const componentFees = fees.filter(fee => same(fee.FeeCode, invoice.FeeCode) && supported(fee) && active(fee.Active));
+    const rulesByType = profiles.map(candidate => componentFees.filter(fee =>
+      feeMatchesAccountPeriod(fee, candidate, { enrollmentCategoryOverride: 'Returning' })));
+    const rules = rulesByType.flat();
     let reason = '';
     if (!same(profile.EnrollmentCategory, 'New Intake')) reason = 'Only obsolete returning-only charges on a verified New Intake profile qualify.';
-    else if (!clean(student.AcademicSession || student.academicSession) || !clean(student.Term || student.term) ||
-      !clean(student.ClassName || student.className) || !clean(student.StudentType || student.studentType)) reason = 'Verify the saved class, student type, session and term first.';
+    else if (['ClassName', 'AcademicSession', 'Term'].some(field => !savedValue(student, field))) reason = 'Verify the saved class, session and term first.';
     else if (current.filter(row => same(row.FeeCode, invoice.FeeCode)).length !== 1) reason = 'Duplicate invoices for this component require individual finance review.';
     else if (invoices.filter(row => same(row.InvoiceId, invoice.InvoiceId)).length !== 1) reason = 'Duplicate invoice references require individual finance review.';
-    else if (rules.length !== 1 || !same(rules[0].EnrollmentCategory, 'Returning')) reason = 'One active returning-only fee rule must confirm that this charge is obsolete.';
-    else if (['Gender', 'BillingCategory', 'AcademicProgress'].some(field => clean(rules[0][field]) && !['all', '*'].includes(lower(rules[0][field])) &&
-      !clean(student[field] || student[field[0].toLowerCase() + field.slice(1)]))) reason = 'Verify the billing classifications required by this fee rule first.';
-    else if (invoice.Debit !== rules[0].Amount || invoice.Credit < 0 || invoice.Credit > invoice.Debit ||
+    else if (rulesByType.some(matches => matches.length !== 1 || !same(matches[0].EnrollmentCategory, 'Returning'))) reason = savedType
+      ? 'One active returning-only fee rule must confirm that this charge is obsolete.'
+      : 'Student Type is not saved. One active returning-only fee rule must confirm this charge for each of day and boarding students.';
+    else if (!savedType && profiles.some(candidate => componentFees.some(fee => potentiallyApplies(fee, candidate, student))))
+      reason = 'Student Type is not saved and this charge may still apply to a day or boarding New Intake student. Review the fee rules first.';
+    else if (rules.some(rule => classificationFields.some(field => clean(rule[field]) && !['all', '*'].includes(lower(rule[field])) &&
+      !savedValue(student, field)))) reason = 'Verify the billing classifications required by this fee rule first.';
+    else if (rules.some(rule => invoice.Debit !== rule.Amount) || invoice.Credit < 0 || invoice.Credit > invoice.Debit ||
       !Number.isFinite(invoice.Debit) || !Number.isFinite(invoice.Credit)) reason = 'Invoice amounts differ from the configured charge; finance review is required.';
     else if (!same(invoice.Currency || invoice.currency || 'NGN', 'NGN')) reason = 'Foreign-currency charges require individual finance review.';
     else if (!same(invoice.BranchId || 'main', profile.BranchId) ||
@@ -112,14 +136,15 @@ export async function obsoleteSchoolChargeReversalPlan(student, data, { candidat
   if (!candidateOnly && writeCount > 450) reason = 'Too many source records for one safe correction; individual finance review is required.';
   const amount = money(charges.reduce((sum, row) => sum + row.amount, 0));
   const releasedCredit = money(charges.reduce((sum, row) => sum + row.releasedCredit, 0));
-  const previewToken = candidateOnly ? '' : await financialPreviewFingerprint({ kind: 'obsolete-school-fees-v1',
+  const previewToken = candidateOnly ? '' : await financialPreviewFingerprint({ kind: 'obsolete-school-fees-v2',
     // Other students' no-op fee guards advance revisions. Keep all rule values
     // in the token; the commit still guards the freshly read fee revisions.
     profile, revision: student.__updateTime, feeItems: (data.feeItems || []).map(({ __updateTime, __createTime, ...rule }) => rule), invoices: data.invoices, ledger: data.ledger,
     payments: data.payments, summaries: data.accountSummaries, journals: data.journals }, ['feeItems', 'invoices', 'ledger', 'payments', 'summaries', 'journals']);
   return { ok: true, readOnly: true, candidateOnly, profile, charges, amount, releasedCredit,
-    outstandingRemoved: money(amount - releasedCredit), expectedTotal: preview.expectedTotal, postedTotal: preview.invoicedTotal,
+    outstandingRemoved: money(amount - releasedCredit), expectedTotal: savedType ? preview.expectedTotal : null, postedTotal: preview.invoicedTotal,
     afterPostedTotal: money(preview.invoicedTotal - amount), ready: !reason, reason, previewToken, baselineJournals, writeCount,
+    eligibilityNote: !savedType && !reason ? 'Student Type not required: these charges are obsolete for both day and boarding students. The incomplete profile is unchanged.' : '',
     rows: charges.map(row => ({ ...row, expected: 0, invoiced: row.amount, difference: -row.amount, invoiceIds: [row.invoiceId] })),
     message: 'Review only. Original charges and receipts remain in the audit trail. Reversals release existing allocations, not new money; no refund or payment is created.' };
 }
