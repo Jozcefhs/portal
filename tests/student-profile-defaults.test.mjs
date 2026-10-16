@@ -64,7 +64,7 @@ test('all student save paths and both web readers share the same defaults', asyn
 test('maintenance is branch-scoped, revision-guarded, audited, and has no financial writes', async () => {
   const route = await readFile(new URL('../functions/api/staff-students.js', import.meta.url), 'utf8');
   const start = route.indexOf("if (['previewprofiledefaults', 'applyprofiledefaults']");
-  const source = route.slice(start, route.indexOf("if (['previewgrade7intake', 'applygrade7intake']", start));
+  const source = route.slice(start, route.indexOf("if (['previewintakecorrection', 'applyintakecorrection']", start));
   assert.match(source, /user.role !== 'Super Admin'/);
   assert.match(source, /user.subscriptionReadOnly/);
   assert.match(source, /visibleToUser\(row, user\)/);

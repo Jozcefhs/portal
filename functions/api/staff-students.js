@@ -1,10 +1,10 @@
-import { batchCommitDocuments, listCollection, patchDocumentFieldsIfCurrent, requireFirestoreEnv } from '../lib/firestore.js';
+import { batchCommitDocuments, listCollection, requireFirestoreEnv } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { listSchoolCollection, schoolSectionFor, upsertSchoolDocument } from '../lib/school-scope.js';
 import { canonicalConfiguredClass } from '../lib/class-names.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { saveStudentLoginPassword } from '../lib/student-login-credentials.js';
-import { gradeSevenIntakeFingerprint, gradeSevenIntakePlan } from '../lib/student-intake-bulk.js';
+import { admissionYearIntakeFingerprint, admissionYearIntakePlan } from '../lib/student-intake-bulk.js';
 import { studentProfileDefaultsPlan, studentProfileDefaultsFingerprint } from '../lib/student-profile-defaults.js';
 import { studentWalletProfile } from '../lib/student-wallet-profile.js';
 
@@ -32,7 +32,10 @@ export async function onRequestPost(context) {
     }
     const body = await readJsonBody(request, { maxBytes: 256 * 1024 });
     const action = lower(body.action);
-    if (!['update', 'reissueparentonboarding', 'previewgrade7intake', 'applygrade7intake', 'previewprofiledefaults', 'applyprofiledefaults'].includes(action)) {
+    if (['previewgrade7intake', 'applygrade7intake'].includes(action)) {
+      const err = new Error('Reload Students to review the new admission-year intake rule across all classes. No records were changed.'); err.status = 409; throw err;
+    }
+    if (!['update', 'reissueparentonboarding', 'previewintakecorrection', 'applyintakecorrection', 'previewprofiledefaults', 'applyprofiledefaults'].includes(action)) {
       const err = new Error('Choose a valid student action.'); err.status = 400; throw err;
     }
     if (['previewprofiledefaults', 'applyprofiledefaults'].includes(action)) {
@@ -70,71 +73,86 @@ export async function onRequestPost(context) {
       await batchCommitDocuments(env, writes);
       return Response.json({ ...summary, updated: next.length, remaining: plan.changes.length - next.length }, { headers: { 'Cache-Control': 'no-store' } });
     }
-    if (['previewgrade7intake', 'applygrade7intake'].includes(action)) {
+    if (['previewintakecorrection', 'applyintakecorrection'].includes(action)) {
       if (user.role !== 'Super Admin' || user.edition !== 'school' || !clean(user.branchId) ||
-          lower(user.schoolSectionAccess) === 'primary') {
-        const err = new Error('Select a school branch and use a Super Admin account to correct Grade 7 intake.');
+          ['all', '*'].includes(lower(user.branchId)) ||
+          !(user.allowedSections || []).includes('accounts') || user.subscriptionReadOnly) {
+        const err = new Error('Select a school branch and use a writable Super Admin account with Students and Accounts access to correct intake.');
         err.status = 403;
         throw err;
       }
-      const rows = await listSchoolCollection(env, 'students', {
+      const rows = (await listSchoolCollection(env, 'students', {
         branchId: user.branchId,
-        schoolSectionAccess: 'secondary'
-      });
-      const plan = gradeSevenIntakePlan(rows, {
+        schoolSectionAccess: user.schoolSectionAccess
+      })).filter((row) => visibleToUser(row, user));
+      const plan = admissionYearIntakePlan(rows, {
         branchId: user.branchId,
-        academicSession: body.AcademicSession
+        academicSession: body.AcademicSession,
+        schoolSectionAccess: user.schoolSectionAccess || 'All'
       });
-      const previewToken = await gradeSevenIntakeFingerprint(plan);
+      const previewToken = await admissionYearIntakeFingerprint(plan);
       const summary = {
         ok: true,
         branchId: plan.branchId,
         academicSession: plan.academicSession,
+        term: plan.term,
+        admissionYear: plan.admissionYear,
+        schoolSectionAccess: plan.schoolSectionAccess,
         total: plan.total,
         alreadyNew: plan.alreadyNew,
         toChange: plan.toChange.length,
         excludedOtherSession: plan.excludedOtherSession,
+        excludedOtherTerm: plan.excludedOtherTerm,
+        excludedAdmissionYear: plan.excludedAdmissionYear,
+        unrecognizedAdmissionNumbers: plan.unrecognizedAdmissionNumbers,
+        excludedInactive: plan.excludedInactive,
         missingRevision: plan.missingRevision,
         previewToken
       };
-      if (action === 'previewgrade7intake') return Response.json(summary);
+      const noStore = { headers: { 'Cache-Control': 'no-store' } };
+      if (action === 'previewintakecorrection') return Response.json(summary, noStore);
       if (!plan.total || !plan.toChange.length) {
-        return Response.json({ ...summary, updated: 0, remaining: 0 });
+        return Response.json({ ...summary, updated: 0, remaining: 0 }, noStore);
       }
       if (clean(body.PreviewToken) !== previewToken) {
-        const err = new Error('Grade 7 records changed after preview. Review the count again before applying.');
+        const err = new Error('Student records changed after preview. Review intake again before applying; no records were changed.');
         err.status = 409;
         throw err;
       }
       if (plan.missingRevision) {
-        const err = new Error('Some Grade 7 records lack a database revision. No changes were made.');
+        const err = new Error('Some student records lack a database revision. No changes were made.');
         err.status = 409;
         throw err;
       }
       const now = new Date().toISOString();
-      const next = plan.toChange.slice(0, 10);
-      const outcomes = await Promise.allSettled(next.map((row) => patchDocumentFieldsIfCurrent(
-        env,
-        row.__scopePath,
-        clean(row.__id || row.AdmissionNo || row.AccountRef),
-        {
-          EnrollmentCategory: 'New Intake',
-          UpdatedAt: now,
-          UpdatedBy: clean(user.displayName || user.username) || 'Super Admin'
-        },
-        row
-      )));
-      const updated = outcomes.filter((result) => result.status === 'fulfilled').length;
-      const failed = outcomes.length - updated;
+      const next = plan.toChange.slice(0, 100);
+      const writes = next.flatMap((row) => {
+        const auditId = crypto.randomUUID();
+        const patch = { EnrollmentCategory: 'New Intake', IntakeCorrectedAt: now, IntakeCorrectedBy: user.username };
+        return [{ collectionPath: row.__scopePath, documentId: row.__id, updateTime: row.__updateTime,
+          updateMask: Object.keys(patch), data: patch },
+          { collectionPath: 'staffRecordsAudit', documentId: auditId, exists: false, data: {
+            AuditId: auditId, Timestamp: now, Action: 'CORRECT STUDENT INTAKE BY ADMISSION YEAR',
+            EntityType: 'Student profile', EntityId: clean(row.AdmissionNo || row.AccountRef || row.__id),
+            BranchId: plan.branchId, SchoolSection: schoolSectionFor(row), ActorUsername: user.username,
+            UserName: user.displayName || user.username, UserRole: user.role, SourcePlatform: 'Web', ScopePath: row.__scopePath,
+            AcademicSession: plan.academicSession, Term: plan.term,
+            Before: { EnrollmentCategory: row.EnrollmentCategory || row.enrollmentCategory || '' },
+            After: { EnrollmentCategory: 'New Intake' },
+            Summary: `${user.displayName || user.username} marked ${clean(row.AdmissionNo || row.AccountRef)} (${clean(row.ClassName || row.ClassAdmitted)}) as New Intake for First Term ${plan.academicSession} because the admission year matches the session start year. Existing invoices and payments were not changed.`,
+            Details: `Enrollment category changed from ${clean(row.EnrollmentCategory || row.enrollmentCategory) || 'not set'} to New Intake. Academic progress and other classifications were preserved.`
+          } }];
+      });
+      // Commit the classification and its audit together, with a revision guard
+      // on every profile. A stale record aborts this whole batch.
+      await batchCommitDocuments(env, writes);
+      const updated = next.length;
       return Response.json({
         ...summary,
         updated,
-        failed,
         remaining: plan.toChange.length - updated,
-        message: failed
-          ? `${updated} record(s) updated; ${failed} failed. Review the live count before continuing.`
-          : `${updated} Grade 7 record(s) marked New Intake.`
-      });
+        message: `${updated} student record(s) marked New Intake for First Term ${plan.academicSession}. Existing invoices and payments were not changed.`
+      }, noStore);
     }
     const accountRef = clean(body.AccountRef || body.accountRef || body.AdmissionNo);
     const rows = await listSchoolCollection(env, 'students', {

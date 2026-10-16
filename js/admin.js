@@ -5303,35 +5303,35 @@ function studentClassExportToolbar(students) {
   </div>`;
 }
 
-function studentGradeSevenIntakeToolbar(students) {
-  if (currentUser?.role !== 'Super Admin' || currentUser?.edition !== 'school') return '';
+function studentAdmissionYearIntakeToolbar(students) {
+  if (currentUser?.role !== 'Super Admin' || currentUser?.edition !== 'school' || !(currentUser.allowedSections || []).includes('accounts')) return '';
   const sessions = [...new Set(students
-    .filter((row) => /^Grade\s*7(?:$|[\s/–-])/i.test(studentExportClass(row)))
-    .map((row) => clean(row.AcademicSession))
+    .map((row) => clean(row.AcademicSession).replace(/\s/g, ''))
     .filter(Boolean))].sort((left, right) => right.localeCompare(left));
-  return `<section class="student-grade7-intake-action" data-grade7-intake-workspace>
-    <h3>Grade 7 intake correction</h3>
-    <p>Review all Grade 7 arms in the working branch, then mark only records not already New Intake. Existing invoices are not rewritten.</p>
+  return `<section class="student-intake-action" data-intake-workspace>
+    <h3>First Term intake correction — all classes</h3>
+    <p>Admission year determines New Intake, not class. For example, DCA/26/… qualifies in First Term 2026/2027, whether in Grade 7, Grade 8 or any other class. Review the working branch and your permitted school sections before applying. Existing invoices and payments are not changed.</p>
     <label>Academic session
-      <select data-grade7-intake-session aria-label="Grade 7 intake academic session">
+      <select data-intake-session aria-label="Intake correction academic session">
         <option value="">Choose session</option>
         ${sessions.map((session) => `<option value="${escapeHtml(session)}">${escapeHtml(session)}</option>`).join('')}
       </select>
     </label>
-    <button type="button" class="secondary" data-grade7-intake-preview>Review Grade 7</button>
-    <p class="status" data-grade7-intake-status aria-live="polite"></p>
-    <button type="button" data-grade7-intake-apply hidden disabled>Mark as New Intake</button>
+    <button type="button" class="secondary" data-intake-preview>Review First Term intake</button>
+    <p class="status" data-intake-status aria-live="polite"></p>
+    <button type="button" data-intake-apply hidden disabled>Mark as New Intake</button>
   </section>`;
 }
 
-function bindStudentGradeSevenIntake() {
-  const workspace = panelEl.querySelector('[data-grade7-intake-workspace]');
+function bindStudentAdmissionYearIntake() {
+  const workspace = panelEl.querySelector('[data-intake-workspace]');
   if (!workspace) return;
-  const select = workspace.querySelector('[data-grade7-intake-session]');
-  const previewButton = workspace.querySelector('[data-grade7-intake-preview]');
-  const applyButton = workspace.querySelector('[data-grade7-intake-apply]');
-  const status = workspace.querySelector('[data-grade7-intake-status]');
+  const select = workspace.querySelector('[data-intake-session]');
+  const previewButton = workspace.querySelector('[data-intake-preview]');
+  const applyButton = workspace.querySelector('[data-intake-apply]');
+  const status = workspace.querySelector('[data-intake-status]');
   let preview = null;
+  let applying = false;
   const request = async (action, extra = {}) => {
     const response = await staffFetch('/api/staff-students', {
       method: 'POST', credentials: 'same-origin', cache: 'no-store',
@@ -5339,17 +5339,19 @@ function bindStudentGradeSevenIntake() {
       body: JSON.stringify({ action, AcademicSession: select.value, ...extra })
     });
     const data = await response.json().catch(() => ({ ok: false, message: 'Student service did not return JSON.' }));
-    if (!response.ok || !data.ok) throw new Error(data.message || 'Could not review Grade 7 intake.');
+    if (!response.ok || !data.ok) throw new Error(data.message || 'Could not review First Term intake.');
     return data;
   };
   const showPreview = (data) => {
     preview = data;
     applyButton.hidden = !data.toChange;
-    applyButton.disabled = !data.toChange || Boolean(data.missingRevision);
+    applyButton.disabled = applying || !data.toChange || Boolean(data.missingRevision);
     applyButton.textContent = `Mark ${data.toChange} as New Intake`;
-    const otherSession = data.excludedOtherSession ? ` ${data.excludedOtherSession} Grade 7 record(s) belong to another or unspecified session and are excluded.` : '';
+    const excluded = [[data.excludedAdmissionYear, 'different admission year'], [data.excludedOtherTerm, 'not First Term or term missing'],
+      [data.excludedOtherSession, 'different or missing session'], [data.unrecognizedAdmissionNumbers, 'unrecognised admission number'],
+      [data.excludedInactive, 'inactive, withdrawn or graduated']].filter(([count]) => count).map(([count, reason]) => `${count} ${reason}`).join('; ');
     setStatus(status,
-      `${data.total} Grade 7 record(s) in ${data.academicSession}: ${data.alreadyNew} already New Intake; ${data.toChange} need correction.${otherSession}${data.missingRevision ? ' Some records lack a safe revision and cannot be updated.' : ''}`,
+      `${data.total} matching student record(s) across all classes in First Term ${data.academicSession}, branch ${data.branchId}, ${data.schoolSectionAccess} section(s): ${data.alreadyNew} already New Intake; ${data.toChange} need correction.${excluded ? ` Excluded: ${excluded}.` : ''}${data.missingRevision ? ' Some records lack a safe revision and cannot be updated.' : ''}`,
       data.missingRevision ? 'bad' : 'ok');
   };
   select.addEventListener('change', () => {
@@ -5360,39 +5362,45 @@ function bindStudentGradeSevenIntake() {
   });
   previewButton.addEventListener('click', async () => {
     if (!select.value) { setStatus(status, 'Choose an academic session first.', 'bad'); return; }
-    setButtonLoading(previewButton, true, 'Reviewing...', 'Review Grade 7');
-    try { showPreview(await request('previewGrade7Intake')); }
+    preview = null;
+    applyButton.disabled = true;
+    select.disabled = true;
+    setButtonLoading(previewButton, true, 'Reviewing...', 'Review First Term intake');
+    try { showPreview(await request('previewIntakeCorrection')); }
     catch (error) { setStatus(status, error.message || String(error), 'bad'); }
-    finally { setButtonLoading(previewButton, false, 'Reviewing...', 'Review Grade 7'); }
+    finally { select.disabled = false; setButtonLoading(previewButton, false, 'Reviewing...', 'Review First Term intake'); }
   });
   applyButton.addEventListener('click', async () => {
-    if (!preview?.toChange || preview.academicSession !== select.value || preview.missingRevision) return;
-    if (!await window.DynamaxDialogs.confirm({
-      title: 'Correct Grade 7 intake',
-      message: `Mark ${preview.toChange} Grade 7 student record(s) in ${preview.academicSession}, ${preview.branchId}, as New Intake? Existing invoices will not be rewritten.`,
-      confirmText: 'Mark as New Intake'
-    })) return;
+    if (applying || !preview?.toChange || preview.academicSession !== select.value || preview.missingRevision) return;
+    applying = true;
     select.disabled = true;
     previewButton.disabled = true;
     applyButton.disabled = true;
     let updated = 0;
     try {
+      if (!await window.DynamaxDialogs.confirm({
+        title: 'Correct First Term intake across all classes',
+        message: `Mark ${preview.toChange} student record(s) as New Intake for First Term ${preview.academicSession} in branch ${preview.branchId}, ${preview.schoolSectionAccess} section(s)? Their admission year matches the session start year. Existing invoices and payments will not be changed.`,
+        confirmText: 'Mark as New Intake'
+      })) return;
       for (let batch = 0; batch < 100 && preview.toChange; batch += 1) {
-        const result = await request('applyGrade7Intake', { PreviewToken: preview.previewToken });
+        const result = await request('applyIntakeCorrection', { PreviewToken: preview.previewToken });
         updated += Number(result.updated || 0);
         if (result.failed) throw new Error(`${result.failed} record(s) could not be updated. Review the live count before continuing.`);
-        setStatus(status, `${updated} updated. Checking remaining Grade 7 records...`, 'ok');
-        showPreview(await request('previewGrade7Intake'));
+        setStatus(status, `${updated} updated. Checking remaining matching students...`, 'ok');
+        showPreview(await request('previewIntakeCorrection'));
       }
-      if (preview.toChange) throw new Error('The correction stopped before all Grade 7 records were updated. Review and continue.');
+      if (preview.toChange) throw new Error('The correction stopped before all matching records were updated. Review and continue.');
       await loadDashboard({ mode: 'section', section: 'students', merge: true });
-      setStatus(dashboardStatus, `Verified: ${updated} Grade 7 record(s) marked New Intake in ${select.value}.`, 'ok');
+      setStatus(dashboardStatus, `Verified: ${updated} student record(s) marked New Intake for First Term ${select.value} across all classes. Existing invoices and payments are unchanged.`, 'ok');
     } catch (error) {
-      setStatus(status, `${error.message || error} ${updated} record(s) were updated before stopping; review again to continue safely.`, 'bad');
+      preview = null;
+      setStatus(status, `${error.message || error} ${updated} update(s) were confirmed before stopping; review the live records again before retrying.`, 'bad');
     } finally {
+      applying = false;
       select.disabled = false;
       previewButton.disabled = false;
-      applyButton.disabled = !preview?.toChange;
+      applyButton.disabled = !preview?.toChange || Boolean(preview?.missingRevision);
     }
   });
 }
@@ -19159,7 +19167,7 @@ function renderSection(active) {
     const learner = staffLearnerTerms();
     const handoff = takeRecordsDeskHandoff('students');
     const reference = recordsDeskHandoffReference(handoff);
-    panelEl.innerHTML = recordsDeskHandoffBanner(handoff, reference) + `<div class="student-onboarding-link-action"><button type="button" class="secondary" data-copy-shared-parent-onboarding>Copy shared parent completion link</button>${currentUser?.role === 'Super Admin' && (currentUser.allowedSections || []).includes('accounts') ? '<button type="button" class="secondary" data-review-all-student-billing>Review all student billing</button>' : ''}</div><p class="status" role="status" aria-live="polite" data-student-maintenance-status></p><button type="button" class="secondary" data-refresh-student-defaults hidden>Refresh Students to view saved defaults</button>` + studentClassExportToolbar(students) + studentGradeSevenIntakeToolbar(students) + table(learner.Plural, students, [
+    panelEl.innerHTML = recordsDeskHandoffBanner(handoff, reference) + `<div class="student-onboarding-link-action"><button type="button" class="secondary" data-copy-shared-parent-onboarding>Copy shared parent completion link</button>${currentUser?.role === 'Super Admin' && (currentUser.allowedSections || []).includes('accounts') ? '<button type="button" class="secondary" data-review-all-student-billing>Review all student billing</button>' : ''}</div><p class="status" role="status" aria-live="polite" data-student-maintenance-status></p><button type="button" class="secondary" data-refresh-student-defaults hidden>Refresh Students to view saved defaults</button>` + studentClassExportToolbar(students) + studentAdmissionYearIntakeToolbar(students) + table(learner.Plural, students, [
       { label: 'Admission No', value: (row) => pick(row, ['AdmissionNo', 'AccountRef', '__id']) },
       { label: 'Name', render: studentSearchIdentity },
       { label: 'Class', value: studentExportClass },
@@ -19193,7 +19201,7 @@ function renderSection(active) {
     }
     bindStudentEditor(students);
     bindStudentClassExport(students);
-    bindStudentGradeSevenIntake();
+    bindStudentAdmissionYearIntake();
     hydrateStudentPassportThumbnails(panelEl);
     if (reference) {
       const student = students.find((row) => recordsDeskRowMatches(

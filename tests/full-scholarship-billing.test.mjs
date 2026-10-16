@@ -16,7 +16,8 @@ import {
 import { defaultAcademicPolicy } from '../functions/lib/academic-policy.js';
 import { isFullScholarship, explicitlyIncludesFullScholarship } from '../functions/lib/full-scholarship.js';
 
-const student = { AdmissionNo: 'TEST/26/001', BillingCategory: 'Full Scholarship',
+// A returning pupil must have an earlier admission year than this session.
+const student = { AdmissionNo: 'TEST/25/001', BillingCategory: 'Full Scholarship',
   ClassName: 'Grade 7', StudentType: 'Day Student', Gender: 'Female', BranchId: 'main',
   SchoolSection: 'secondary', AcademicSession: '2026/2027', Term: 'First Term',
   EnrollmentCategory: 'Returning', AcademicProgress: 'Promoted', Status: 'Active' };

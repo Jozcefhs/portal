@@ -16,6 +16,7 @@ on:
       - "sw.js"
       - "_headers"
       - "tests/academic-*.test.mjs"
+      - "tests/student-intake-*.test.mjs"
       - "tests/clinic-*.test.mjs"
       - "tests/security-audit*.test.mjs"
       - "tests/approval-signatures.test.mjs"
@@ -47,6 +48,7 @@ on:
       - "sw.js"
       - "_headers"
       - "tests/academic-*.test.mjs"
+      - "tests/student-intake-*.test.mjs"
       - "tests/clinic-*.test.mjs"
       - "tests/security-audit*.test.mjs"
       - "tests/approval-signatures.test.mjs"
@@ -81,3 +83,4 @@ jobs:
       - run: npm run test:academic-release
       - run: npm run test:clinic-referrals
       - run: npm run test:tuck-shop
+      - run: npm run test:student-intake

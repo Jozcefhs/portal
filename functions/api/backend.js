@@ -45,6 +45,7 @@ import { effectiveInvoiceAfterReversal } from '../lib/invoice-charge-reversal.js
 import { financialPreviewFingerprint } from '../lib/financial-preview-fingerprint.js';
 import { studentWalletProfile } from '../lib/student-wallet-profile.js';
 import { withStudentProfileDefaults } from '../lib/student-profile-defaults.js';
+import { admissionYearEnrollmentCategory } from '../lib/student-intake-classification.js';
 import { assertManualPaymentDestination, assertManualPaymentRetry, assertManualPaymentScope, bindManualPaymentIdentity, manualPaymentRequestScope, scopedPaymentWriteCondition } from '../lib/manual-payment-scope.js';
 import { reviewManualWalletTopup } from '../lib/manual-wallet-duplicate-review.js';
 import {
@@ -1249,8 +1250,7 @@ export function feeMatchesApplication(fee, app) {
   const appSession = app.AcademicSession || '';
   const appTerm = app.Term || '';
   const appGender = app.Gender || '';
-  const enrollmentCategory = app.EnrollmentCategory || app.IntakeCategory ||
-    (isNewIntakeApplication(app) ? 'New Intake' : 'Returning');
+  const enrollmentCategory = resolveStudentEnrollmentCategory(app);
   const academicProgress = app.AcademicProgress || app.ProgressCategory || 'Promoted';
   if (normalizeMatchText(academicProgress) === 'repeating' && /book|uniform|school wear/.test(normalizeMatchText(`${fee.FeeCategory || ''} ${fee.FeeName || ''}`))) return false;
   return feeClassRuleMatches(fee.ClassName, appClass) &&
@@ -1264,6 +1264,8 @@ export function feeMatchesApplication(fee, app) {
 }
 
 export function isNewIntakeApplication(app = {}) {
+  const byAdmissionYear = admissionYearEnrollmentCategory(app);
+  if (byAdmissionYear) return byAdmissionYear === 'New Intake';
   const value = normalizeMatchText(app.EnrollmentCategory || app.IntakeCategory || '');
   if (value) return ['new intake', 'new', 'newly admitted', 'new admission'].includes(value);
   const resultStatus = normalizeMatchText(app.ResultStatus || app.AdmissionDecision || '');
@@ -1279,6 +1281,11 @@ export function admissionIntakeClassification(record = {}) {
 }
 
 export function resolveStudentEnrollmentCategory(student = {}, application = {}) {
+  const byAdmissionYear = admissionYearEnrollmentCategory(student, {
+    AcademicSession: student.AcademicSession || application.AcademicSession,
+    Term: student.Term || application.Term
+  });
+  if (byAdmissionYear) return byAdmissionYear;
   const configured = clean(student.EnrollmentCategory || student.IntakeCategory);
   const studentReference = clean(student.ApplicationReference || student.applicationReference);
   const applicationReference = clean(
@@ -1312,7 +1319,7 @@ function termRank(value) {
   return 0;
 }
 
-function feeMatchesAccountPeriod(fee, app) {
+function feeMatchesAccountPeriod(fee, app, { enrollmentCategoryOverride = '' } = {}) {
   if (!feeMatchesBranch(fee, app)) return false;
   const appClass = app.ClassApplyingFor || app.ClassAdmitted || app.ClassName || '';
   const appType = app.StudentType || '';
@@ -1323,8 +1330,7 @@ function feeMatchesAccountPeriod(fee, app) {
   if (!feeFieldMatches(fee.StudentType, appType)) return false;
   if (!feeBillingCategoryMatches(fee, app)) return false;
   if (!feeFieldMatches(fee.Gender || 'All', app.Gender || '')) return false;
-  const enrollmentCategory = app.EnrollmentCategory || app.IntakeCategory ||
-    (isNewIntakeApplication(app) ? 'New Intake' : 'Returning');
+  const enrollmentCategory = enrollmentCategoryOverride || resolveStudentEnrollmentCategory(app);
   if (!feeFieldMatches(fee.EnrollmentCategory || 'All', enrollmentCategory, true)) return false;
   if (!feeFieldMatches(fee.AcademicProgress || 'All', app.AcademicProgress || 'Promoted', true)) return false;
   if (!feeFieldMatches(fee.AcademicSession, appSession)) return false;
@@ -3525,7 +3531,9 @@ export async function boardingWearReversalPlan(student, data, { candidateOnly = 
     !['void', 'voided', 'cancelled', 'canceled', 'reversed'].includes(lower(row.Status)));
   const invoice = invoices[0];
   const fees = (data.feeItems || []).map(normalizeFeeItem).filter((fee) => sameText(fee.FeeCode, 'BOW') &&
-    yesNo(fee.Active) === 'YES' && feeMatchesAccountPeriod(fee, { ...profile, EnrollmentCategory: 'New Intake' }));
+    // This is a counterfactual lookup of the erroneous intake-only charge, not
+    // the student's actual fee eligibility (which uses the admission year).
+    yesNo(fee.Active) === 'YES' && feeMatchesAccountPeriod(fee, profile, { enrollmentCategoryOverride: 'New Intake' }));
   let reason = '';
   if (!sameText(student.EnrollmentCategory || student.enrollmentCategory, 'Returning')) reason = 'Only explicitly returning students qualify.';
   else if (!clean(student.AcademicSession || student.academicSession) || !clean(student.Term || student.term)) reason = 'The student accounting period is missing.';

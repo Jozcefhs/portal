@@ -159,6 +159,10 @@ const COMPACT_ACTIONS = Object.freeze({
 });
 
 const MODULE_ACTIONS = Object.freeze({
+  'staff-students': {
+    previewintakecorrection: 'Preview First Term intake classification across all classes by admission year',
+    applyintakecorrection: 'Mark matching First Term students as New Intake across all classes'
+  },
   'staff-procurement': { assignitems: 'Assign central stock items to departments' },
   'staff-library': {
     savetitle: 'Save library book title', addcopy: 'Add library book copy', restorecopy: 'Restore library book copy',
