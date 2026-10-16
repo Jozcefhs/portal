@@ -9,6 +9,10 @@ on:
       - "sw.js"
       - "_headers"
       - "tests/academic-*.test.mjs"
+      - "tests/clinic-*.test.mjs"
+      - "tests/security-audit*.test.mjs"
+      - "tests/approval-signatures.test.mjs"
+      - "js/clinic-referrals.js"
       - "tests/service-worker-cache-version.test.mjs"
       - "tests/helpers/service-worker-cache-version.mjs"
       - "tests/parent-academic-result-access.test.mjs"
@@ -29,6 +33,10 @@ on:
       - "sw.js"
       - "_headers"
       - "tests/academic-*.test.mjs"
+      - "tests/clinic-*.test.mjs"
+      - "tests/security-audit*.test.mjs"
+      - "tests/approval-signatures.test.mjs"
+      - "js/clinic-referrals.js"
       - "tests/service-worker-cache-version.test.mjs"
       - "tests/helpers/service-worker-cache-version.mjs"
       - "tests/parent-academic-result-access.test.mjs"
@@ -57,3 +65,4 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run test:academic-release
+      - run: npm run test:clinic-referrals

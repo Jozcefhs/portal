@@ -18,6 +18,7 @@ import {
 import { recordTuckShopStaffSale, searchTuckShopCustomers } from '../lib/school-tuck-shop.js';
 import { assertProcurementInventoryEdit, assertProcurementInventoryMovement, loadProcurementInventoryControl, procurementMovementBalance } from '../lib/procurement-inventory-guard.js';
 import { commitClinicVisit, isActiveClinicVisit } from '../lib/clinic-stock-usage.js';
+import { handleClinicReferral } from '../lib/clinic-referrals.js';
 
 function clean(value) { return String(value ?? '').trim(); }
 function lower(value) { return clean(value).toLowerCase(); }
@@ -395,6 +396,10 @@ export async function onRequestPost(context) {
       const err = new Error('This staff account is not allowed to manage that department.'); err.status = 403; throw err;
     }
     const action = lower(body.action || 'list');
+    if (section === 'clinic' && ['prepareclinicreferral', 'previewclinicreferral', 'loadclinicreferral', 'sendclinicreferral'].includes(action)) {
+      const result = await handleClinicReferral(env, user, body, value => findScopedStudent(env, user, value));
+      return Response.json(result, { headers: { 'Cache-Control': 'no-store' } });
+    }
     if (['saveitem', 'recordmovement'].includes(action) && (user.subscriptionReadOnly === true || user.subscriptionActive === false)) {
       const err = new Error('Inventory is read-only until the subscription is renewed.'); err.status = 403; throw err;
     }
@@ -465,6 +470,6 @@ export async function onRequestPost(context) {
     return Response.json(data);
   } catch (err) {
     if (idempotency?.owner) await failIdempotentRequest(context.env, idempotency, err);
-    return Response.json({ ok: false, message: err.message || String(err) }, { status: err.status || 500 });
+    return Response.json({ ok: false, message: err.message || String(err) }, { status: err.status || 500, headers: { 'Cache-Control': 'no-store' } });
   }
 }

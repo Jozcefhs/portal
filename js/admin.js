@@ -1326,10 +1326,12 @@ function renderApprovalAssetPreview(kind) {
   empty.hidden = Boolean(dataUrl);
 }
 
-async function approvalImageDataUrl(file) {
-  if (!file || !/^image\/(?:png|jpeg|webp)$/i.test(file.type)) throw new Error('Choose a PNG, JPG or WebP image.');
-  if (file.size > 5 * 1024 * 1024) throw new Error('Choose an image smaller than 5 MB.');
-  const raw = await new Promise((resolve, reject) => {
+async function approvalImageDataUrl(file, format = 'image/webp') {
+  const savedImage = typeof file === 'string';
+  if (savedImage ? !/^data:image\/(?:png|jpe?g|webp);base64,/i.test(file)
+    : !file || !/^image\/(?:png|jpeg|webp)$/i.test(file.type)) throw new Error('Choose a PNG, JPG or WebP image.');
+  if (savedImage ? file.length > 350000 : file.size > 5 * 1024 * 1024) throw new Error('Choose an image smaller than 5 MB.');
+  const raw = savedImage ? file : await new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result);
     reader.onerror = () => reject(new Error('Could not read the selected image.'));
@@ -1346,7 +1348,7 @@ async function approvalImageDataUrl(file) {
   canvas.width = Math.max(1, Math.round(image.width * scale));
   canvas.height = Math.max(1, Math.round(image.height * scale));
   canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
-  const optimized = canvas.toDataURL('image/webp', .82);
+  const optimized = canvas.toDataURL(format, .82);
   if (optimized.length > 350000) throw new Error('The optimized image is still too large. Crop it more closely and try again.');
   return optimized;
 }
@@ -2291,7 +2293,8 @@ function showDashboard(user, options = {}) {
     user.role === 'Super Admin' ||
     user.role === 'Accounts Officer' ||
     isExecutiveRole ||
-    user.approvalEnabled
+    user.approvalEnabled ||
+    (user.edition === 'school' && (user.allowedSections || []).includes('clinic'))
   );
   paymentSettingsButton.hidden = user.role !== 'Super Admin';
   subscriptionButton.hidden = !canManageOrganisationSettings(user);
@@ -5872,6 +5875,7 @@ function renderDepartmentOperations(section, data) {
         <div class="config-actionbar"><p class="status" data-department-status></p><button type="submit" data-normal-text="Record movement">Record movement</button></div>
       </form>
     </section>
+    ${section === 'clinic' ? '<section class="config-card" id="clinicReferralWorkspace"><h3>Hospital referral letter</h3><p>Loading referral form...</p></section>' : ''}
     ${table(`${label} Inventory`, inventory, [...inventoryColumns(), ...(['restaurant', 'tuckShop'].includes(section) ? [
       { label: 'Sale Price', value: (row) => money(pick(row, ['SalePrice', 'Price'])) },
       { label: 'For Sale', value: (row) => clean(row.Active || 'YES').toUpperCase() === 'NO' ? 'No' : 'Yes' }
@@ -5903,6 +5907,7 @@ function renderDepartmentOperations(section, data) {
   if (section === 'clinic') {
     departmentTabs.push({ key: 'visits', label: 'Clinic visits', icon: '\u2695', count: records.length, nodes: [departmentCard(/record a clinic visit/i), workspaceTableNodes('Clinic Records')] });
     departmentTabs.push({ key: 'reports', label: 'Parent reports', icon: '\u2709', nodes: departmentCard(/email a clinic report/i) });
+    departmentTabs.push({ key: 'referrals', label: 'Hospital referrals', icon: '\u2695', nodes: document.getElementById('clinicReferralWorkspace') });
   }
   if (['clinic', 'kitchen', 'restaurant'].includes(section)) departmentTabs.push({ key: 'procurement', label: 'Market list', icon: '\u{1F4CB}', nodes: departmentCard(/market list/i) });
   departmentTabs.push({ key: 'inventory', label: 'Inventory', icon: '\u{1F4E6}', count: inventory.length, nodes: [document.getElementById('departmentInventoryWorkspace'), workspaceTableNodes(`${label} Inventory`), workspaceTableNodes('Low Stock')] });
@@ -5915,6 +5920,23 @@ function renderDepartmentOperations(section, data) {
   if (section === 'tuckShop') bindTuckShopPOS(data);
   const recordsHandoff = takeRecordsDeskHandoff(section);
   const selectedAccountRef = recordsDeskHandoffReference(recordsHandoff);
+  if (section === 'clinic') {
+    const host = document.getElementById('clinicReferralWorkspace');
+    import('./clinic-referrals.js?v=20261016-signed-referrals').then(({ mountClinicReferrals }) => {
+      if (!host?.isConnected) return;
+      mountClinicReferrals(host, { accountRef: selectedAccountRef, today: new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Africa/Lagos', year: 'numeric', month: '2-digit', day: '2-digit'
+      }).format(new Date()), setStatus, openSignatureSettings: openApprovalSettings,
+        request: async (action, payload) => {
+          const response = await staffFetch('/api/staff-departments', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ section: 'clinic', action, ...payload }) });
+          const result = await response.json();
+          if (!response.ok || !result.ok) throw new Error(result.message || 'The referral action could not be completed.');
+          return result;
+        }
+      });
+    }).catch(error => setStatus(host, `Referral form could not load: ${error.message}`, 'bad'));
+  }
   if (selectedAccountRef && section === 'clinic') {
     const clinicRecordForm = document.getElementById('clinicRecordForm');
     const clinicReportForm = document.getElementById('clinicReportForm');
@@ -20935,6 +20957,9 @@ function securityAuditFilteredRows() {
 function securityAuditRoutineSystemSuccess(row) {
   const succeeded = lower(row.Outcome) === 'success' && Number(row.HttpStatus) >= 200 && Number(row.HttpStatus) < 300;
   if (!succeeded) return false;
+  if (row.ActivityClass === 'Routine photograph load' && lower(row.Route).replace(/\/+$/, '') === '/api/passport-photo'
+    && row.Method === 'POST' && row.Action === 'Loaded existing passport photograph for display'
+    && Number(row.HttpStatus) === 200) return true;
   if (row.ActivityClass === 'Routine workspace load' && lower(row.Route).replace(/\/+$/, '') === '/api/staff-academics'
     && /^Loaded Academic Management workspace(?: — (?:Primary section|Secondary section|All school sections))?$/.test(row.Action || '')
     && ![202, 206].includes(Number(row.HttpStatus))) return true;
@@ -22549,7 +22574,7 @@ document.getElementById('removeStaffStamp').addEventListener('click', () => {
     const file = event.target.files?.[0];
     if (!file) return;
     try {
-      approvalAssetState[kind] = await approvalImageDataUrl(file);
+      approvalAssetState[kind] = await approvalImageDataUrl(file, kind === 'signature' ? 'image/png' : 'image/webp');
       renderApprovalAssetPreview(kind);
       setStatus(document.getElementById('staffApprovalSettingsStatus'), `${kind === 'signature' ? 'Signature' : 'Stamp'} ready to save.`, 'ok');
     } catch (error) {
@@ -22563,6 +22588,11 @@ approvalSettingsForm.addEventListener('submit', async (event) => {
   const button = document.getElementById('staffApprovalSettingsSave');
   setButtonLoading(button, true, 'Saving...', 'Save user settings');
   try {
+    // Re-saving an older WebP signature converts the same image for PDF use.
+    if (/^data:image\/webp;/i.test(approvalAssetState.signature)) {
+      approvalAssetState.signature = await approvalImageDataUrl(approvalAssetState.signature, 'image/png');
+      renderApprovalAssetPreview('signature');
+    }
     const data = await approvalProfileRequest('POST', {
       SignatureDataUrl: approvalAssetState.signature,
       StampDataUrl: approvalAssetState.stamp,

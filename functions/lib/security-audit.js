@@ -41,6 +41,7 @@ const ROUTE_MODULES = Object.freeze([
   ['/api/staff-homework', 'Homework'],
   ['/api/staff-cbt', 'CBT'],
   ['/api/staff-student', 'Students'],
+  ['/api/passport-photo', 'Students'],
   ['/api/staff-admission', 'Admissions'],
   ['/api/staff-conduct', 'Student conduct'],
   ['/api/staff-departments', 'Department inventories'],
@@ -112,6 +113,26 @@ function academicWorkspaceLoadPresentation(row) {
     Summary: `${summary} This action reads existing information; it does not save attendance, scores or other academic records.` };
 }
 
+function isPassportPhotoRead(route, method) {
+  return lower(route).replace(/\/+$/, '') === '/api/passport-photo' && clean(method).toUpperCase() === 'POST';
+}
+
+function passportPhotoPresentation(row) {
+  if (!isPassportPhotoRead(row.Route, row.Method)) return null;
+  const status = Number(row.HttpStatus), outcome = lower(row.Outcome);
+  const denied = outcome === 'denied' || [401, 403].includes(status);
+  const failed = outcome === 'failed' || status >= 400;
+  const succeeded = outcome === 'success' && status === 200;
+  const actor = clean(row.Actor || row.ActorUsername) || 'An unidentified account';
+  const action = denied ? 'Access denied: existing passport photograph'
+    : failed ? 'Failed to load existing passport photograph'
+      : succeeded ? 'Loaded existing passport photograph for display' : 'Load existing passport photograph for display';
+  const result = denied ? 'Access was denied.' : failed ? 'The photograph could not be loaded.'
+    : succeeded ? 'The existing photograph was retrieved for display.' : 'Completion was not confirmed.';
+  return { Action: action, Module: 'Students', ActivityClass: 'Routine photograph load',
+    Summary: `The session associated with ${actor} requested an existing student/application passport photograph. ${result} This is a read-only display request, not a photograph upload or change.` };
+}
+
 const ROUTE_TARGETS = Object.freeze({
   'staff-direct-transfers': 'bank transfer', 'staff-payment-corrections': 'manual payment correction',
   'staff-procurement': 'procurement', 'staff-wallet': 'student wallet',
@@ -148,6 +169,10 @@ const MODULE_ACTIONS = Object.freeze({
   'staff-departments': {
     saveclinicrecord: 'Save clinic visit and items dispensed', recordmovement: 'Record department stock movement',
     prepareclinicreport: 'Prepare clinic report for review', sendclinicreport: 'Send clinic report to parent',
+    prepareclinicreferral: 'Find student clinic visits for a hospital referral',
+    previewclinicreferral: 'Prepare hospital referral PDF for review; no email sent',
+    loadclinicreferral: 'Open saved hospital referral PDF',
+    sendclinicreferral: 'Submit hospital referral PDF to the parent email provider',
     sendmarketlist: 'Send supply order to supplier'
   },
   'staff-users': { save: 'Save staff account', delete: 'Delete staff account', import: 'Import staff accounts' },
@@ -209,6 +234,7 @@ export function securityAuditOutcome(status) {
 export function securityAuditAction({ pathname = '', method = 'GET', body = {} } = {}) {
   const path = lower(pathname);
   const verb = clean(method || 'GET').toUpperCase();
+  if (isPassportPhotoRead(path, verb)) return 'Load existing passport photograph for display';
   if (path === '/api/admin' && safeField(body, ['section'])) {
     return sentenceAction(`VIEW ${titleWords(safeField(body, ['section']))}`).slice(0, 120);
   }
@@ -294,9 +320,11 @@ async function requestAuditInput(request, pathname) {
     body,
     action: securityAuditAction({ pathname, method, body }),
     actorHint: safeField(body, ['ActorUsername', 'actorUsername', 'RecordedBy', 'recordedBy', 'UpdatedBy', 'updatedBy', 'Username', 'username', 'Email', 'email']),
-    subject: safeField(body, ['TargetUsername', 'targetUsername', 'Username', 'username', 'AdmissionNo', 'admissionNo', 'Reference', 'reference', 'NotificationId', 'notificationId']),
-    entityType: safeField(body, ['EntityType', 'entityType', 'RecordType', 'recordType', 'section', 'Section']),
-    entityId: safeField(body, ['EntityId', 'entityId', 'RecordId', 'recordId', 'ExpenseNo', 'expenseNo', 'BillNo', 'billNo', 'JournalNo', 'ImprestNo', 'AccountRef', 'AdmissionNo', 'StaffId', 'EmployeeId', 'LeaveId', 'ItemId', 'LoanId', 'BookId', 'VisitId', 'RequestId', 'PurchaseId', 'TransferId', 'BookingId', 'RoomId', 'MemberId', 'DepartmentId', 'ClassId', 'SubjectId', 'HomeworkId', 'Reference', 'reference', 'NotificationId', 'notificationId', 'id', 'Id']),
+    subject: isPassportPhotoRead(pathname, method) ? safeField(body, ['applicationReference', 'ApplicationReference', 'accountRef', 'AccountRef'])
+      : safeField(body, ['TargetUsername', 'targetUsername', 'Username', 'username', 'AdmissionNo', 'admissionNo', 'Reference', 'reference', 'NotificationId', 'notificationId']),
+    entityType: isPassportPhotoRead(pathname, method) ? 'Student/application photograph'
+      : safeField(body, ['EntityType', 'entityType', 'RecordType', 'recordType', 'section', 'Section']),
+    entityId: safeField(body, ['EntityId', 'entityId', 'RecordId', 'recordId', 'ReferralId', 'ExpenseNo', 'expenseNo', 'BillNo', 'billNo', 'JournalNo', 'ImprestNo', 'AccountRef', 'AdmissionNo', 'StaffId', 'EmployeeId', 'LeaveId', 'ItemId', 'LoanId', 'BookId', 'VisitId', 'RequestId', 'PurchaseId', 'TransferId', 'BookingId', 'RoomId', 'MemberId', 'DepartmentId', 'ClassId', 'SubjectId', 'HomeworkId', 'Reference', 'reference', 'NotificationId', 'notificationId', 'id', 'Id']),
     requestedStatus: safeField(body, ['decision', 'Decision', 'Status', 'status']),
     actionContext: auditActionContext(body),
     branchId: safeField(body, ['BranchId', 'branchId'])
@@ -325,6 +353,8 @@ export function shouldPersistSecurityAudit(prepared = {}, actor = null, status =
   // Retain workspace-load records and their failures. The routine-activity
   // checkbox controls their visibility; changing the wording must not lose them.
   if (isAcademicWorkspaceLoad(prepared.action, path)) return true;
+  // Retain photo reads and failures; successful display requests are routine.
+  if (isPassportPhotoRead(path, method)) return true;
   // Scheduler GETs perform work, unlike ordinary page reads. Preserve both
   // service runs and authorization failures; visibility is a separate concern.
   if (path === '/api/notification-scheduler') return true;
@@ -377,6 +407,7 @@ export async function writeSecurityAudit(env, event = {}) {
   payload.ActionContext = clean(event.actionContext).slice(0, 500);
   payload.Summary = auditNarrative({ ...payload, Summary: event.summary, SourceCollection: SECURITY_AUDIT_COLLECTION });
   Object.assign(payload, academicWorkspaceLoadPresentation(payload));
+  Object.assign(payload, passportPhotoPresentation(payload));
   await upsertDocument(env, SECURITY_AUDIT_COLLECTION, id, payload);
   return payload;
 }
@@ -494,6 +525,7 @@ export function normalizedLegacyAudit(row, source) {
   // Interpret old "Bootstrap" rows at read time, including the generic Summary
   // saved by earlier versions. The original database evidence is never rewritten.
   Object.assign(normalized, academicWorkspaceLoadPresentation(normalized));
+  Object.assign(normalized, passportPhotoPresentation(normalized));
   return normalized;
 }
 

@@ -212,7 +212,7 @@ function drawQrCode(page, value, x, y, size) {
   }
 }
 
-async function createAssets(profile) {
+export async function createAssets(profile) {
   const pdf = await PDFDocument.create();
   const regular = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
@@ -233,7 +233,7 @@ function drawWatermark(page, logo) {
   });
 }
 
-function drawLetterBackground(page, assets, profile, title = '') {
+export function drawLetterBackground(page, assets, profile, title = '') {
   const { regular, bold, logo } = assets;
   page.drawRectangle({ x: 28, y: 28, width: 556, height: 736, borderColor: BLUE, borderWidth: 1.2 });
   drawWatermark(page, logo);

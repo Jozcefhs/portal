@@ -382,6 +382,7 @@ export async function sendConfiguredEmail(env, {
   textContent,
   htmlContent,
   attachments = [],
+  requireAttachments = false,
   senderProfile = '',
   branchId = '',
   providerOverride = '',
@@ -442,6 +443,11 @@ export async function sendConfiguredEmail(env, {
     };
   }
   const normalizedAttachments = normalizeAttachments(attachments);
+  if (requireAttachments && (!attachments.length || normalizedAttachments.length !== attachments.length)) {
+    throw Object.assign(new Error('The required email attachment is missing or invalid. Nothing was sent.'), {
+      status: 400, code: 'EMAIL_REQUIRED_ATTACHMENT_INVALID', retrySafe: true
+    });
+  }
   const resolvedSubject = clean(subject) || `Message from ${organization.Name || 'Dynamax'}`;
   if (!validEmail(senderProfileConfig.senderEmail)) {
     const err = new Error(`The ${provider === 'gmail' ? 'Google' : 'Brevo'} sender email could not be resolved for this organisation.`);
@@ -476,7 +482,7 @@ export async function sendConfiguredEmail(env, {
     try {
       delivery = await submitGmailEmail(env, gmailMessage);
     } catch (error) {
-      if (normalizedAttachments.length && error?.code === 'GMAIL_ATTACHMENT_REJECTED') {
+      if (!requireAttachments && normalizedAttachments.length && error?.code === 'GMAIL_ATTACHMENT_REJECTED') {
         console.warn(JSON.stringify({
           event: 'email_attachment_fallback',
           provider: 'gmail',
@@ -491,7 +497,7 @@ export async function sendConfiguredEmail(env, {
         throw error;
       }
     }
-    if (!delivery.ok && normalizedAttachments.length) {
+    if (!delivery.ok && normalizedAttachments.length && !requireAttachments) {
       const initialFailure = classifyGmailFailure(delivery.status, delivery.providerError);
       if (initialFailure.code === 'GMAIL_REQUEST_REJECTED') {
         console.warn(JSON.stringify({
@@ -556,7 +562,7 @@ export async function sendConfiguredEmail(env, {
   if (normalizedAttachments.length) payload.attachment = normalizedAttachments;
   let delivery = await submitBrevoEmail(apiKey, payload);
   let attachmentFallback = false;
-  if (!delivery.ok && normalizedAttachments.length) {
+  if (!delivery.ok && normalizedAttachments.length && !requireAttachments) {
     const initialFailure = classifyBrevoFailure(delivery.status, delivery.providerError);
     if (['BREVO_REQUEST_REJECTED', 'BREVO_ATTACHMENT_REJECTED'].includes(initialFailure.code)) {
       console.warn(JSON.stringify({
