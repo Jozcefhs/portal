@@ -86,6 +86,26 @@ test('blocked-only report has no posting button and no misleading zero-missing c
   assert.doesNotMatch(html, /data-apply-billing-plans/);
 });
 
+test('profile rechecks are visible without invented totals or inclusion in the posting action', async () => {
+  const ready = await studentBillingReconciliationPlan(student, billingFixture());
+  const deferred = { profile: { AccountRef: 'CHANGED/<student>' }, ready: false, needsRecheck: true,
+    reason: 'Profile changed. Recheck this student.' };
+  const report = await reviewAllStudentBilling(async (_url, body) => body.action === 'previewAll'
+    ? { total: 2, incomplete: 0, matched: 0, rows: [], pendingProfiles: [student.AccountRef, deferred.profile.AccountRef]
+      .map(AccountRef => ({ AccountRef, revision: 'v1' })) }
+    : { checked: 2, matched: 0, rows: [ready, deferred] });
+  const html = await renderBillingReport(report);
+  assert.match(html, /1 profiles require rechecking/);
+  assert.match(html, /Recheck required — profile not reviewed/);
+  assert.match(html, /Not checked/);
+  assert.match(html, /CHANGED\/&lt;student&gt;/);
+  assert.match(html, /data-refresh-billing-review/);
+  assert.match(html, /Post valid missing charges for 1 reviewed accounts/);
+  assert.equal(report.review, 1, 'finance conflicts and profile rechecks counted separately');
+  const recheckOnly = await renderBillingReport({ ...report, rows: [deferred], ready: 0 });
+  assert.doesNotMatch(recheckOnly, /data-apply-billing-plans|Recorded credit:/);
+});
+
 test('credit is flagged provisional, never zeroed or mixed with wallet/club receipts', async () => {
   const data = billingFixture();
   data.ledger.push({ AccountRef: student.AccountRef, FeeCategory: 'Wallet', Credit: 93600 },

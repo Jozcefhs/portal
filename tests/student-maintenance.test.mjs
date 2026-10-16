@@ -80,14 +80,32 @@ test('failed or truncated billing batch never returns a partial report', async (
 test('ambiguous, incomplete and conflicting accounts are counted without posting', async () => {
   const initial = roster(2);
   initial.total += 1;
-  initial.rows.push({ profile: { AccountRef: 'AMBIGUOUS' }, ready: false, reason: 'Ambiguous identity.' });
+  initial.rows.push({ profile: { AccountRef: 'AMBIGUOUS' }, ready: false, needsRecheck: true, reason: 'Ambiguous identity.' });
   const report = await reviewAllStudentBilling(async (_url, body) => body.action === 'previewAll' ? initial : {
     checked: 2, matched: 0, rows: [{ profile: { AccountRef: 'TEST/0' }, ready: true, difference: 100 },
       { profile: { AccountRef: 'TEST/1' }, ready: false, reason: 'Duplicate invoice.' }]
   });
   assert.equal(report.ready, 1);
-  assert.equal(report.review, 2);
+  assert.equal(report.review, 1);
+  assert.equal(report.recheck, 1);
   assert.equal(report.incomplete, 1);
+});
+
+test('a deferred profile in one batch does not stop later batches or become eligible for posting', async () => {
+  let batches = 0;
+  const report = await reviewAllStudentBilling(async (_url, body) => {
+    if (body.action === 'previewAll') return roster(11);
+    batches += 1;
+    return batches === 1 ? { checked: 10, matched: 9, rows: [{ profile: { AccountRef: 'TEST/0' },
+      ready: false, needsRecheck: true, reason: 'Profile changed.' }] }
+      : { checked: 1, matched: 0, rows: [{ profile: { AccountRef: 'TEST/10' }, ready: true, postingTotal: 100 }] };
+  });
+  assert.equal(batches, 2);
+  assert.equal(report.matched, 9);
+  assert.equal(report.recheck, 1);
+  assert.equal(report.ready, 1);
+  assert.equal(report.review, 0);
+  assert.deepEqual(report.rows.filter(row => row.ready).map(row => row.profile.AccountRef), ['TEST/10']);
 });
 
 test('incomplete or duplicate roster cannot produce posting controls', async () => {

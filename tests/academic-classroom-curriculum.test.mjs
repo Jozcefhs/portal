@@ -142,6 +142,9 @@ test('web subject register renders mixed Core checkboxes as editable and single-
 test('web save payload includes exactly the selected Core subjects and no personal department', () => {
   const context = browserContext();
   context.academicManagementData = fixture();
+  Object.assign(context.academicManagementData.studentMemberships[0], {
+    SubjectIds: ['history', 'music'], CoreSubjectIds: ['history'], TradeSubjectIds: ['music']
+  });
   const row = {
     dataset: { membershipId: 'membership', revisionToken: 'rev-1', studentName: 'Student' },
     querySelectorAll: selector => (selector.includes('"Core"') ? ['english', 'economics'] : selector.includes('"Trade"') ? ['catering'] : []).map(value => ({ value }))
@@ -200,20 +203,51 @@ test('older clients omitting Core choices preserve the existing mixed Core selec
   assert.deepEqual(writes.find(row => row.collectionPath === 'academicStudentMemberships').data.CoreSubjectIds, base.CoreSubjectIds);
 });
 
-test('empty choices, conflicts, unavailable old subjects and unauthorized teachers fail without writes', async () => {
+test('empty choices, conflicts, unavailable proposed subjects and unauthorized teachers fail without writes', async () => {
   for (const selection of [{ CoreSubjectIds: [] }, { RevisionToken: 'stale' }, { CoreSubjectIds: ['history'] }]) {
     const { save, writes } = batchHarness();
     await assert.rejects(save(selection));
     assert.equal(writes.length, 0);
   }
-  const state = fixture();
-  state.studentMemberships[0].SubjectIds.push('unknown-old-subject');
-  const stale = batchHarness(state);
-  await assert.rejects(stale.save({ CoreSubjectIds: ['english'] }), /not available/);
-  assert.equal(stale.writes.length, 0);
   const unauthorized = batchHarness();
   await assert.rejects(unauthorized.save({}, { edition: 'school', role: 'Teacher', allowedSections: ['academics'], username: 'unassigned' }), /assigned class teacher/);
   assert.equal(unauthorized.writes.length, 0);
+});
+
+test('valid replacements repair obsolete Trade roles and removed subjects instead of validating the old selection', async () => {
+  for (const old of [
+    { SubjectIds: ['english', 'catering', 'music'], TradeSubjectIds: ['music'], OptionalSubjectIds: [] },
+    { SubjectIds: ['english', 'removed-trade'], TradeSubjectIds: ['removed-trade'], OptionalSubjectIds: [] },
+    { SubjectIds: ['history', 'catering'], CoreSubjectIds: ['history'], TradeSubjectIds: ['catering'] }
+  ]) {
+    const state = fixture();
+    Object.assign(state.studentMemberships[0], old);
+    const { save, writes } = batchHarness(state);
+    await save({ CoreSubjectIds: ['english'], TradeSubjectIds: ['catering'] });
+    const saved = writes.find(row => row.collectionPath === 'academicStudentMemberships').data;
+    assert.deepEqual(saved.SubjectIds, ['english', 'catering']);
+    assert.deepEqual(writes.find(row => row.collectionPath === 'academicStudentMovements').data.FromSubjectIds, old.SubjectIds);
+    assert.ok(writes.every(row => row.collectionPath !== 'academicStudentScores'));
+  }
+});
+
+test('older clients cannot silently drop obsolete Core choices when they omit CoreSubjectIds', async () => {
+  const state = fixture();
+  Object.assign(state.studentMemberships[0], { SubjectIds: ['history', 'catering'], CoreSubjectIds: ['history'] });
+  const { save, writes } = batchHarness(state);
+  await assert.rejects(save(), /Core|not available/);
+  assert.equal(writes.length, 0);
+});
+
+test('web choices retain selected subjects under their current category and flag obsolete subjects', () => {
+  const result = clone(browserContext().academicStudentSubjectProfile(fixture(), {
+    ...clone(base), SubjectIds: ['english', 'music', 'catering', 'removed-trade'],
+    TradeSubjectIds: ['music', 'removed-trade'], OptionalSubjectIds: ['catering']
+  }));
+  assert.deepEqual(result.selectedTradeSubjectIds, ['catering']);
+  assert.deepEqual(result.selectedOptionalSubjectIds, ['music']);
+  assert.deepEqual(result.unavailableSubjectIds, ['removed-trade']);
+  assert.deepEqual(result.reclassifiedSubjectIds, ['music', 'catering']);
 });
 
 test('import template accepts mixed Core subject codes and no longer requests a student department', () => {

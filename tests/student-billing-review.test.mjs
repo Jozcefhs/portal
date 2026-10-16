@@ -72,7 +72,8 @@ test('same admission number across primary/secondary is flagged, not silently re
   const roster = await studentBillingReviewRoster({}, user, f.deps);
   assert.equal(roster.total, 2);
   assert.equal(roster.pendingProfiles.length, 0);
-  assert.equal(roster.review, 2);
+  assert.equal(roster.review, 0);
+  assert.equal(roster.recheck, 2);
   assert.ok(roster.rows.every((row) => !row.ready && /Ambiguous/.test(row.reason)));
 });
 
@@ -126,14 +127,64 @@ test('invalid, duplicate or oversized batches fail before any database read', as
   assert.equal(f.calls.length, 0);
 });
 
-test('profile, scope or fee configuration changes stop the batch before loading finances', async () => {
+test('changed or missing profiles are flagged without financial reads or posting tokens', async () => {
   const f = fixture();
   const initial = await studentBillingReviewRoster({}, user, f.deps);
   for (const body of [
     { Profiles: [{ AccountRef: 'MISSING/001', revision: 'revision-1' }], ConfigurationToken: initial.configurationToken },
-    { Profiles: [{ AccountRef: 'TEST/001', revision: 'outdated' }], ConfigurationToken: initial.configurationToken },
-    { Profiles: initial.pendingProfiles, ConfigurationToken: 'old-settings' }
-  ]) await assert.rejects(studentBillingReviewBatch({}, user, body, f.deps), (error) => error.status === 409);
+    { Profiles: [{ AccountRef: 'TEST/001', revision: 'outdated' }], ConfigurationToken: initial.configurationToken }
+  ]) {
+    const result = await studentBillingReviewBatch({}, user, body, f.deps);
+    assert.equal(result.checked, 1);
+    assert.equal(result.recheck, 1);
+    assert.equal(result.review, 0);
+    assert.equal(result.ready, 0);
+    assert.equal(result.rows[0].needsRecheck, true);
+    assert.equal(result.rows[0].previewToken, undefined);
+    assert.equal(result.rows[0].rows, undefined);
+  }
+  assert.ok(f.calls.every((row) => !['invoices', 'accountSummaries'].includes(row.type)));
+});
+
+test('changed, incomplete, ambiguous and out-of-scope accounts do not stop other students in the batch', async () => {
+  const f = fixture({ students: [profile(), ...['CHANGED', 'INCOMPLETE', 'AMBIGUOUS', 'MOVED'].map((id) =>
+    profile({ __id: id, AdmissionNo: id }))], feeItems: [fee(), fee({ __id: 'books', FeeCode: 'BOOK', Amount: 20 })] });
+  const roster = await studentBillingReviewRoster({}, user, f.deps);
+  f.students[1].__updateTime = 'revision-2';
+  f.students[2].ProfileCompletionStatus = 'Needs completion';
+  f.students.push(profile({ __id: 'ambiguous-primary', AdmissionNo: 'AMBIGUOUS', __scopePath: primaryPath, SchoolSection: 'primary' }));
+  f.students[4].__scopePath = 'schoolBranches/annex/sections/secondary/students';
+  f.students[4].BranchId = 'annex';
+  const result = await studentBillingReviewBatch({}, user, { Profiles: roster.pendingProfiles, ConfigurationToken: roster.configurationToken }, f.deps);
+  assert.equal(result.checked, 5);
+  assert.equal(result.rows.length + result.matched, 5);
+  assert.equal(result.recheck, 4);
+  assert.equal(result.ready, 1);
+  assert.ok(result.rows.filter((row) => row.needsRecheck).every((row) => !row.ready && !row.previewToken && !row.rows));
+  assert.ok(f.calls.filter((row) => ['invoices', 'accountSummaries'].includes(row.type)).every((row) =>
+    row.options.filters[0].value.every((ref) => ref === 'TEST/001')));
+  const moved = result.rows.find((row) => row.profile.AccountRef === 'MOVED');
+  assert.deepEqual(moved.profile, { AccountRef: 'MOVED' }, 'no details of an out-of-scope profile leak');
+  assert.match(moved.reason, /authorised branch/);
+});
+
+test('a fresh review can safely prepare a previously changed profile', async () => {
+  const f = fixture({ feeItems: [fee(), fee({ __id: 'books', FeeCode: 'BOOK', Amount: 20 })] });
+  const roster = await studentBillingReviewRoster({}, user, f.deps);
+  f.students[0].__updateTime = 'revision-2';
+  const deferred = await studentBillingReviewBatch({}, user, { Profiles: roster.pendingProfiles, ConfigurationToken: roster.configurationToken }, f.deps);
+  assert.equal(deferred.recheck, 1);
+  const fresh = await batch(f);
+  assert.equal(fresh.ready, 1);
+  assert.equal(fresh.recheck, 0);
+  assert.ok(fresh.rows[0].previewToken);
+});
+
+test('fee configuration changes still stop the batch before loading finances', async () => {
+  const f = fixture();
+  const initial = await studentBillingReviewRoster({}, user, f.deps);
+  await assert.rejects(studentBillingReviewBatch({}, user, { Profiles: initial.pendingProfiles, ConfigurationToken: 'old-settings' }, f.deps),
+    (error) => error.status === 409 && /Fee settings/.test(error.message));
   assert.ok(f.calls.every((row) => !['invoices', 'accountSummaries'].includes(row.type)));
 });
 

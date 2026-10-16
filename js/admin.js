@@ -3931,7 +3931,7 @@ function bindStudentEditor(students) {
     dialog.addEventListener('close', cancel);
     try {
       if (!dialog.open) dialog.showModal();
-      const { studentMaintenanceRequest, reviewAllStudentBilling } = await import('./student-maintenance.js?v=20261016-billing-credit-review-missing-only');
+      const { studentMaintenanceRequest, reviewAllStudentBilling } = await import('./student-maintenance.js?v=20261016-billing-credit-review-missing-only-profile-recheck');
       const request = studentMaintenanceRequest(staffFetch, { signal: controller.signal, sessionSignal, isCurrent });
       const report = await reviewAllStudentBilling(request, ({ checked, total }) => {
         if (isCurrent() && !controller.signal.aborted) setStatus(content.querySelector('[data-billing-review-progress]'),
@@ -3943,16 +3943,21 @@ function bindStudentEditor(students) {
         <p>Review complete. No invoices, payments or balances have changed. Posting missing charges is a separate action below.</p>
         <p>${report.total} student profiles checked in this branch (primary and secondary where permitted). ${report.matched} completed profiles already match; ${report.incomplete} incomplete profiles excluded.</p>
         <p><strong>${report.missingAccounts} accounts have missing components: ${report.ready} eligible for missing-charge posting; ${report.blockedMissingAccounts} blocked pending finance review. ${report.review} accounts need finance review in total.</strong></p>
+        <p>${report.recheck} profiles require rechecking because they changed, became incomplete or could not be uniquely identified. These accounts are excluded from posting; other accounts continue normally. Open the affected student's profile and preview billing again, or run a fresh school-wide review.</p>
         <p>${report.readyWithReview} eligible accounts also have components that remain under review. Eligibility means only valid missing charges can be added; it does not clear existing conflicts.</p>
         <p>Charge differences compare the current fee setup with posted invoices; they are not the student's balance. Recorded credit may be overstated when charges are missing or conflicting. It is not confirmed excess money.</p>
         <p>Only valid missing charges are posted below. Conflicting invoices and blocked components remain untouched. Existing payments are preserved. For accounts still under review, credit allocation is deferred and balances remain provisional.</p>
         <div class="admin-table-wrap billing-review-table"><table class="admin-table"><thead><tr><th>Student / period</th><th>Charge check</th><th>Findings</th></tr></thead><tbody>${report.rows.map((row) =>
           `<tr><td><strong>${escapeHtml(row.profile.DisplayName || '')}</strong><br>${escapeHtml(row.profile.AccountRef)}<br><small>${escapeHtml([row.profile.ClassName, row.profile.StudentType, row.profile.Gender, row.profile.EnrollmentCategory].filter(Boolean).join(' · '))}<br>${escapeHtml([row.profile.AcademicSession, row.profile.Term].filter(Boolean).join(' · '))}</small></td>
           <td>${Array.isArray(row.rows) ? `Current setup: <strong>${money(row.expectedTotal)}</strong><br>Posted: ${money(row.invoicedTotal)}<br>Difference: ${money(row.difference)}<br><strong>Valid missing charges to add: ${money(row.ready ? row.postingTotal : 0)}</strong><br><small>Recorded credit: ${row.recordedCreditSource === 'unavailable' ? 'not loaded' : money(row.recordedCredit)} — unverified</small>` : 'Not checked'}</td>
-          <td><strong>${row.ready ? `Eligible for missing-charge posting${row.requiresReview ? ' — other components still need review' : ''}` : 'Blocked — finance review required'}</strong><p>${escapeHtml(row.reason || `${row.eligibleMissing.length} valid missing component(s)`)}</p>${row.reviewWarning ? `<p>${escapeHtml(row.reviewWarning)}</p>` : ''}${row.rows?.length ? `<details><summary>View ${row.missing?.length || 0} missing / ${row.conflicts?.length || 0} conflicting components</summary><ul>${row.rows.filter((item) => item.missing || item.conflict).map((item) => `<li><strong>${escapeHtml(item.name || item.code)}</strong> (${escapeHtml(item.code)}): ${escapeHtml(row.blockedMissing?.find((blocked) => blocked.code === item.code)?.postingBlock || item.review)}. Current setup ${money(item.expected)}; posted ${money(item.invoiced)}.${item.invoiceIds.length ? ` Invoice(s): ${item.invoiceIds.map(escapeHtml).join(', ')}.` : ''}</li>`).join('')}</ul></details>` : ''}</td></tr>`).join('')}</tbody></table></div>
-        <p class="status" data-billing-reconcile-status></p>${ready.length && !currentUser?.subscriptionReadOnly ? `<button type="button" data-apply-billing-plans>Post valid missing charges for ${ready.length} reviewed accounts (${money(ready.reduce((sum, row) => sum + row.postingTotal, 0))})</button>` : ''}`;
+          <td><strong>${row.needsRecheck ? 'Recheck required — profile not reviewed' : row.ready ? `Eligible for missing-charge posting${row.requiresReview ? ' — other components still need review' : ''}` : 'Blocked — finance review required'}</strong><p>${escapeHtml(row.reason || `${row.eligibleMissing?.length || 0} valid missing component(s)`)}</p>${row.reviewWarning ? `<p>${escapeHtml(row.reviewWarning)}</p>` : ''}${row.rows?.length ? `<details><summary>View ${row.missing?.length || 0} missing / ${row.conflicts?.length || 0} conflicting components</summary><ul>${row.rows.filter((item) => item.missing || item.conflict).map((item) => `<li><strong>${escapeHtml(item.name || item.code)}</strong> (${escapeHtml(item.code)}): ${escapeHtml(row.blockedMissing?.find((blocked) => blocked.code === item.code)?.postingBlock || item.review)}. Current setup ${money(item.expected)}; posted ${money(item.invoiced)}.${item.invoiceIds.length ? ` Invoice(s): ${item.invoiceIds.map(escapeHtml).join(', ')}.` : ''}</li>`).join('')}</ul></details>` : ''}</td></tr>`).join('')}</tbody></table></div>
+        <p class="status" data-billing-reconcile-status></p>${ready.length && !currentUser?.subscriptionReadOnly ? `<button type="button" data-apply-billing-plans>Post valid missing charges for ${ready.length} reviewed accounts (${money(ready.reduce((sum, row) => sum + row.postingTotal, 0))})</button>` : ''}${report.recheck ? '<button type="button" data-refresh-billing-review>Run a fresh review</button>' : ''}`;
       content.querySelector('[data-apply-billing-plans]')?.addEventListener('click', (e) => reconcilePlans(ready, e.currentTarget, content.querySelector('[data-billing-reconcile-status]')));
-      setStatus(maintenanceStatus, `Billing review complete: ${report.total} profiles checked; ${report.missingAccounts} with missing components; ${report.ready} eligible for posting; ${report.review} need finance review. No financial records changed by the review.`, 'ok');
+      content.querySelector('[data-refresh-billing-review]')?.addEventListener('click', () => {
+        if (content.querySelector('[data-apply-billing-plans]')?.getAttribute('aria-busy') === 'true') return;
+        button.click();
+      });
+      setStatus(maintenanceStatus, `Billing review complete: ${report.total} profiles checked; ${report.missingAccounts} with missing components; ${report.ready} eligible for posting; ${report.review} need finance review; ${report.recheck} profiles need rechecking. No financial records changed by the review.`, 'ok');
     } catch (error) {
       if (isCurrent()) {
         if (controller.signal.aborted) setStatus(maintenanceStatus, 'Billing review cancelled. No financial records changed. You can run a fresh review.', '');
@@ -13069,9 +13074,10 @@ function academicStudentSubjectProfile(data, membership) {
   const coreSubjectIds = idsFor('Core');
   const tradeSubjectIds = idsFor('Trade').filter((subjectId) => !coreSubjectIds.includes(subjectId));
   const optionalSubjectIds = idsFor('Optional').filter((subjectId) => !coreSubjectIds.includes(subjectId) && !tradeSubjectIds.includes(subjectId));
-  const selected = new Set(membership.SubjectIds || []);
+  const selected = new Set([...(membership.SubjectIds || []), ...(membership.CoreSubjectIds || []),
+    ...(membership.TradeSubjectIds || []), ...(membership.OptionalSubjectIds || [])]);
   const selectedCoreSubjectIds = mixedClassroom ? coreSubjectIds.filter((id) => selected.has(id)) : coreSubjectIds;
-  const selectedTradeSubjectIds = (membership.TradeSubjectIds || tradeSubjectIds.filter((id) => selected.has(id))).filter((id) => tradeSubjectIds.includes(id));
+  const selectedTradeSubjectIds = tradeSubjectIds.filter((id) => selected.has(id));
   return {
     departmentId,
     mixedClassroom,
@@ -13084,10 +13090,12 @@ function academicStudentSubjectProfile(data, membership) {
           : !tradeSubjectIds.length ? 'Trade Subjects Not Configured'
             : selectedTradeSubjectIds.length ? 'Complete' : 'Pending Trade Selection',
     unavailableSubjectIds: [...selected].filter((id) => !roles.has(id)),
+    reclassifiedSubjectIds: [['Core', membership.CoreSubjectIds], ['Trade', membership.TradeSubjectIds], ['Optional', membership.OptionalSubjectIds]]
+      .flatMap(([role, ids]) => (ids || []).filter((id) => roles.has(id) && roles.get(id) !== role)),
     tradeSubjectIds,
     optionalSubjectIds,
     selectedTradeSubjectIds,
-    selectedOptionalSubjectIds: (membership.OptionalSubjectIds || optionalSubjectIds.filter((id) => selected.has(id))).filter((id) => optionalSubjectIds.includes(id))
+    selectedOptionalSubjectIds: optionalSubjectIds.filter((id) => selected.has(id))
   };
 }
 
@@ -14322,7 +14330,8 @@ function academicArmSubjectRegister(data, rows, canManage) {
         <fieldset><legend>Optional ${countBadge('Optional')}</legend><div class="academic-checkbox-options">${subjectChecks('Optional', profile.optionalSubjectIds, profile.selectedOptionalSubjectIds)}</div></fieldset>
       </div>
       ${membership.PendingSubjectChange ? '<p class="academic-arm-subject-warning">A subject change is awaiting approval. Current subjects remain active; review or cancel the request below.</p>' : ''}
-      ${profile.unavailableSubjectIds.length ? `<p class="academic-arm-subject-warning">Previously selected subjects need curriculum review before saving: ${escapeHtml(profile.unavailableSubjectIds.map((id) => academicLabel(rows.subjects, id, id)).join(', '))}. Existing selections have not been removed.</p>` : ''}
+      ${profile.unavailableSubjectIds.length ? `<p class="academic-arm-subject-warning">Previously selected subjects are outside the current classroom curriculum: ${escapeHtml(profile.unavailableSubjectIds.map((id) => academicLabel(rows.subjects, id, id)).join(', '))}. Choose replacement subjects above and save. Saving replaces the old selection; existing scores stay in history and assessed changes require a reason and approval.</p>` : ''}
+      ${profile.reclassifiedSubjectIds.length ? `<p class="academic-arm-subject-warning">These subjects now appear under their current curriculum category: ${escapeHtml(profile.reclassifiedSubjectIds.map((id) => academicLabel(rows.subjects, id, id)).join(', '))}. Review the choices and save; existing scores are preserved.</p>` : ''}
     </article>`;
   }).join('');
   const tradeConfigured = memberships.length && memberships.every((membership) => academicStudentSubjectProfile(data, membership).tradeSubjectIds.length);
@@ -16332,9 +16341,6 @@ function academicWorkflowPayload(form) {
   if (form.dataset.academicWorkflow === 'bulkAssignAcademicArmStudentSubjects') {
     const assignments = [...form.querySelectorAll('[data-academic-arm-subject-student]')].filter((row) =>
       !academicFind(academicManagementData?.studentMemberships || [], row.dataset.membershipId)?.PendingSubjectChange).map((row) => {
-      const membership = academicFind(academicManagementData?.studentMemberships || [], row.dataset.membershipId);
-      const profile = academicStudentSubjectProfile(academicManagementData || {}, membership || {});
-      if (profile.unavailableSubjectIds.length) throw new Error(`${row.dataset.studentName || 'This student'} has existing subjects outside the classroom curriculum. Review the classroom configuration before saving; no selections have been removed.`);
       const coreSubjectIds = [...row.querySelectorAll('[data-academic-student-subject-role="Core"]:checked')].map((input) => input.value);
       if (!coreSubjectIds.length) {
         row.querySelector('[data-academic-student-subject-role="Core"]')?.focus();

@@ -206,6 +206,22 @@ test('request preserves selections and scores; an independent authorised approva
   assert.equal(h.writes.length, count);
 });
 
+test('an obsolete Trade choice can be replaced through approval without altering its existing scores', async () => {
+  const h = harness();
+  h.state.subjects.find(row => row.SubjectId === 'catering').SeniorChoiceRole = 'Optional';
+  const beforeScores = clone(h.state.studentScores);
+  await assert.rejects(h.request({ Reason: '' }), { code: 'ACADEMIC_SUBJECT_CHANGE_REASON_REQUIRED' });
+  assert.equal(h.writes.length, 0);
+  await h.request();
+  assert.deepEqual(h.member().SubjectIds, membership.SubjectIds);
+  assert.equal(h.member().PendingSubjectChange.Status, 'Pending');
+  await assert.rejects(h.review('Approve', teacher), { status: 403 });
+  await h.review();
+  assert.deepEqual(h.member().SubjectIds, ['english', 'printing']);
+  assert.deepEqual(h.state.studentScores, beforeScores);
+  assert.ok(h.writes.every(row => row.collectionPath !== 'academicStudentScores'));
+});
+
 test('a manager cannot approve their own request; rejection and requester cancellation preserve subjects', async () => {
   const h = harness();
   await h.request({}, admin);

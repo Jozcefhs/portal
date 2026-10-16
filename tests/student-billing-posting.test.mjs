@@ -153,6 +153,23 @@ test('cancelled and ambiguous missing components stay blocked while an independe
   assert.equal(h.read().invoices.filter((row) => row.FeeCode === 'TXT_NEW').length, 0);
 });
 
+test('profile edits after review and immediately before commit still block posting without any financial writes', async () => {
+  const changed = harness(), plan = await changed.plan();
+  changed.profile.__updateTime = 'edited-after-review';
+  changed.profile.ClassName = 'Grade 9';
+  await assert.rejects(changed.apply(plan.previewToken), /changed since preview/);
+  const concurrent = harness({ beforeCommit: (db) => {
+    db.get(`${student.__scopePath}/student`).__updateTime = 'concurrent-profile-edit';
+  } });
+  await assert.rejects(concurrent.apply((await concurrent.plan()).previewToken), /Atomic precondition/);
+  for (const h of [changed, concurrent]) {
+    assert.equal(h.commits.length, 0);
+    assert.equal(h.read().invoices.length, 3);
+    assert.deepEqual(h.read().payments, h.originals.payments);
+    assert.deepEqual(h.read().ledger, h.originals.ledger);
+  }
+});
+
 test('summary refresh failure reports committed charges and does not permit a duplicate retry', async () => {
   const h = harness({ refreshFails: true }), plan = await h.plan();
   const result = await h.apply(plan.previewToken);

@@ -3407,13 +3407,12 @@ export async function bulkAssignAcademicArmStudentSubjects(env, user = {}, input
     }
     const tradeSubjectIds = uniqueIds(assignment.TradeSubjectIds);
     const optionalSubjectIds = uniqueIds(assignment.OptionalSubjectIds);
-    // Do not silently drop existing selections that became unavailable after
-    // a classroom configuration change (including requests from older clients).
-    applyAcademicStudentCurriculum(projected, { ...existing, SchoolStage: schoolStage }, { allowIncompleteCurriculum: true });
+    // Validate the proposed selection, not the obsolete selection it repairs.
+    // Keep the original membership for score-impact checks and movement history.
     // Older desktop clients omit CoreSubjectIds. Retain their existing Core
     // choices instead of clearing them when they save Trade/Optional choices.
     const coreSubjectIds = assignment.CoreSubjectIds === undefined
-      ? uniqueIds(existing.SubjectIds).filter((id) => academicSeniorCoreSubjectIds(state.departments).includes(id))
+      ? uniqueIds(existing.CoreSubjectIds ?? uniqueIds(existing.SubjectIds).filter((id) => academicSeniorCoreSubjectIds(state.departments).includes(id)))
       : uniqueIds(assignment.CoreSubjectIds);
     const record = normalizeAcademicStudentMembership({
       ...withoutMetadata(existing), SubjectIds: [...coreSubjectIds, ...tradeSubjectIds, ...optionalSubjectIds],

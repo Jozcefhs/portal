@@ -12,12 +12,20 @@ Other Organisation editions do not acquire school billing permissions.
   complete school invoice history.
 - Existing billing rules, including full scholarship and acceptance deposits,
   are unchanged. Incomplete and ambiguous profiles cannot be posted.
-- Changed profile revisions or fee settings stop the review. A failed batch
-  never exposes a partial report or reconciliation controls.
+- A profile changed since the roster was loaded, newly incomplete, missing from
+  the authorised scope or ambiguous is flagged **Recheck required**. It has no
+  financial totals or posting token. Other profiles and later batches continue.
+  Profile rechecks are counted separately from finance conflicts; open that
+  student's profile and preview billing again, or use **Run a fresh review**.
+- Changed fee settings, incomplete database reads and overflowing identity
+  queries still stop the review rather than exposing unreliable totals.
 - Closing the window cancels remaining reads. Each request has a finite timeout.
 - Only a completed review may expose the separate reconciliation action, and
   only for a writable account. Posting still revalidates each preview token and
   retains the existing audited financial workflow.
+- Every posting request resolves the current account again, compares its fresh
+  preview token and revision, and applies atomic revision guards. A change after
+  review (including just before commit) cannot post against an outdated profile.
 
 ### Post valid missing charges
 

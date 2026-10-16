@@ -23,6 +23,11 @@ function permitted(row, user) {
     (!['primary', 'secondary'].includes(section) || identity.section === section);
 }
 function referenceFor(row) { return studentProfileValue(row, 'AdmissionNo', ['admissionNo', 'AccountRef', 'accountRef', '__id']); }
+function recheckProfile(AccountRef, reason) {
+  // No financial totals or posting token: this account was not safely reviewed.
+  return { profile: { AccountRef }, ready: false, needsRecheck: true,
+    reason: `${reason} Recheck this student's profile and run a fresh billing preview. No charges were prepared for this account.` };
+}
 async function configuration(env, user, deps) {
   const [schoolProfile, allFees] = await Promise.all([
     deps.getDocument(env, 'settings', 'schoolProfile'), deps.listCollectionForReport(env, 'feeItems')
@@ -52,13 +57,12 @@ export async function studentBillingReviewRoster(env, user, overrides = {}) {
     const student = withStudentDisplayName(raw, config.schoolProfile), AccountRef = referenceFor(student);
     if (clean(student.ProfileCompletionStatus).toLowerCase() !== 'complete') { incomplete += 1; continue; }
     if (counts.get(studentBillingIdentity(student).reference) !== 1) {
-      rows.push({ profile: { AccountRef, DisplayName: student.DisplayName }, ready: false,
-        reason: 'Ambiguous admission number across school sections.', difference: 0 });
+      rows.push(recheckProfile(AccountRef, 'Ambiguous admission number across school sections.'));
     } else pendingProfiles.push({ AccountRef, revision: clean(student.__updateTime) });
   }
   pendingProfiles.sort((a, b) => a.AccountRef.localeCompare(b.AccountRef));
   return { ok: true, readOnly: true, total: students.length, incomplete, matched: 0,
-    ready: 0, review: rows.length, rows, pendingProfiles, configurationToken: config.configurationToken };
+    ready: 0, review: 0, recheck: rows.length, rows, pendingProfiles, configurationToken: config.configurationToken };
 }
 
 export async function studentBillingReviewBatch(env, user, body, overrides = {}) {
@@ -83,16 +87,21 @@ export async function studentBillingReviewBatch(env, user, body, overrides = {})
     return [...counts.values()].some((count) => count >= limit);
   })) fail('Too many copies of a student profile were found. Resolve the duplicate records before reviewing billing.');
   const candidates = selectStudentBillingProfiles(groups.flat()).filter((row) => permitted(row, user));
-  const students = profiles.map((expected) => {
+  const students = [], rows = [];
+  for (const expected of profiles) {
     const matches = candidates.filter((row) => studentBillingIdentity(row).reference === clean(expected.AccountRef).toLowerCase());
-    if (matches.length !== 1 || clean(matches[0].__updateTime) !== expected.revision ||
-        clean(matches[0].ProfileCompletionStatus).toLowerCase() !== 'complete') {
-      fail('A student profile changed or became ambiguous during the review. Run a fresh review; no financial records changed.');
+    const reason = !matches.length ? 'This profile is no longer available in the authorised branch and school section.'
+      : matches.length !== 1 ? 'This admission number became ambiguous across school sections.'
+        : clean(matches[0].ProfileCompletionStatus).toLowerCase() !== 'complete' ? 'This profile is no longer complete.'
+          : clean(matches[0].__updateTime) !== expected.revision ? 'This profile changed after the review roster was loaded.' : '';
+    if (reason) {
+      rows.push(recheckProfile(clean(expected.AccountRef), reason));
+      continue;
     }
     const student = withStudentDisplayName(matches[0], config.schoolProfile), identity = studentBillingIdentity(student);
-    return { ...student, AccountRef: referenceFor(student), AdmissionNo: referenceFor(student), BranchId: identity.branch, SchoolSection: identity.section,
-      ApplicationReference: clean(student.applicationReference || student.ApplicationReference) };
-  });
+    students.push({ ...student, AccountRef: referenceFor(student), AdmissionNo: referenceFor(student), BranchId: identity.branch, SchoolSection: identity.section,
+      ApplicationReference: clean(student.applicationReference || student.ApplicationReference) });
+  }
   const financialReferences = [...new Set(students.flatMap((row) =>
     [row.AccountRef, row.AdmissionNo, row.ApplicationReference, row.ApplicationID, row.AdmissionNumber]).map(clean).filter(Boolean))];
   const financialGroups = { invoices: [], accountSummaries: [] };
@@ -113,7 +122,6 @@ export async function studentBillingReviewBatch(env, user, body, overrides = {})
     financialGroups[collection] = [...new Map(financialGroups[collection].map((row) => [row.__name || row.__id || JSON.stringify(row), row])).values()];
   }
   let matched = 0;
-  const rows = [];
   for (const student of students) {
     const matches = (row) => financialRowMatchesAccount({ ...row, AccountRef: row.AccountRef || row.accountRef,
       AdmissionNo: row.AdmissionNo || row.admissionNo, ApplicationReference: row.ApplicationReference || row.applicationReference }, student) &&
@@ -125,5 +133,7 @@ export async function studentBillingReviewBatch(env, user, body, overrides = {})
     else rows.push(plan);
   }
   return { ok: true, readOnly: true, checked: profiles.length, matched, rows,
-    ready: rows.filter((row) => row.ready).length, review: rows.filter((row) => !row.ready || row.requiresReview).length };
+    ready: rows.filter((row) => row.ready).length,
+    review: rows.filter((row) => !row.needsRecheck && (!row.ready || row.requiresReview)).length,
+    recheck: rows.filter((row) => row.needsRecheck).length };
 }
