@@ -1,5 +1,6 @@
 import { batchCommitDocuments, batchCommitLiteralDocuments, batchUpsertDocuments, createDocumentIfAbsent, deleteDocument, findOneByField, getDocument, listCollection, listCollectionForReport, listCollectionPage, patchDocumentFields, queryCollection, queryCollectionPages, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { feeBranchId, feeRowsForBranch, feeMatchesBranch, feeSetupBranch, resolveFeeDocument, feeDocumentWrite } from '../lib/fee-branch-scope.js';
+import { billingComponentDiagnostics, billingDiagnostics } from '../lib/student-billing-diagnostics.js';
 import { loadBranchFinanceRows, loadBranchFinancePage } from '../lib/finance-branch-reads.js';
 import { financeMoney, financeDate, financeData, financeWrite, financeFailure, financeOperationId, journalFinancialSignature, assertFinanceRoleLimit } from '../lib/accounting-mutation-guards.js';
 import { getAccountingChartRows, invalidateAccountingChartRows, primeAccountingChartRows } from '../lib/accounting-reference-cache.js';
@@ -3312,16 +3313,18 @@ export async function buildStudentBillingPreview(student, data = {}) {
     row.invoiceIds.push(invoice.InvoiceId);
     components.set(key, row);
   }
-  const rows = [...components.values()].map((row) => ({ ...row, difference: asMoneyNumber(row.expected - row.invoiced) }));
+  const rows = [...components.values()].map((row) => billingComponentDiagnostics({ ...row, difference: asMoneyNumber(row.expected - row.invoiced) }));
   const expectedTotal = asMoneyNumber(expected.reduce((sum, fee) => sum + asMoneyNumber(fee.Amount), 0));
   const invoicedTotal = asMoneyNumber(periodInvoices.reduce((sum, invoice) => sum + invoice.Debit, 0));
   return {
     ok: true, readOnly: true, generatedAt: nowIso(),
     profile: Object.fromEntries(['AccountRef', 'DisplayName', 'ClassName', 'StudentType', 'Gender', 'BillingCategory',
-      'EnrollmentCategory', 'AcademicProgress', 'AcademicSession', 'Term', 'BranchId', 'SchoolSection', 'StudentScopePath']
-      .map((field) => [field, account[field] || ''])),
+      'EnrollmentCategory', 'AcademicProgress', 'AcademicSession', 'Term', 'BranchId', 'SchoolSection', 'StudentScopePath', 'ProfileCompletionStatus']
+      .map((field) => [field, (field === 'ProfileCompletionStatus' ? student.ProfileCompletionStatus : account[field]) || ''])),
     expectedTotal, invoicedTotal, difference: asMoneyNumber(expectedTotal - invoicedTotal),
-    recordedCredit: account.ExcessCredit, rows,
+    recordedCredit: account.ExcessCredit, rows, billingReview: billingDiagnostics(rows),
+    recordedCreditSource: data.accountSummaries?.some((row) => financialRowMatchesAccount(row, account))
+      ? 'saved_summary' : data.ledger?.length ? 'ledger' : 'unavailable',
     message: 'Preview only. Posted invoices, payments and credit balances have not been changed. Differences need finance review; this is not a final balance.'
   };
 }
@@ -3428,11 +3431,10 @@ export async function getStudentBillingPreview(env, student) {
 
 export async function studentBillingReconciliationPlan(student, data) {
   const preview = await buildStudentBillingPreview(student, data);
-  const conflicts = preview.rows.filter((row) => row.difference < -0.005 ||
-    (row.difference > 0.005 && row.invoiced > 0.005) || row.invoiceIds.length > 1);
-  const missing = preview.rows.filter((row) => row.expected > 0 && row.invoiced === 0 && !row.invoiceIds.length);
+  const conflicts = preview.rows.filter((row) => row.conflict);
+  const missing = preview.rows.filter((row) => row.missing);
   let reason = '';
-  if (conflicts.length) reason = 'Existing amounts or duplicate invoices need finance review.';
+  if (conflicts.length) reason = `Automatic posting blocked: ${conflicts.map((row) => `${row.code}: ${row.review}`).join('; ')}. Review the fee setup and original invoices before approving corrections.`;
   else if (!missing.length) reason = 'Charges already match the saved profile.';
   else if (lower(student.ProfileCompletionStatus) !== 'complete') reason = 'Parent profile is not marked complete.';
   else if (!preview.invoicedTotal) reason = 'No existing period billing; use the normal first-time billing process.';
@@ -3446,7 +3448,7 @@ export async function studentBillingReconciliationPlan(student, data) {
       .sort((a, b) => a.code.localeCompare(b.code)) });
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(signature));
   const previewToken = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-  return { ...preview, ready: !reason, reason, missing, previewToken };
+  return { ...preview, ready: !reason, reason, missing, conflicts, previewToken };
 }
 
 // Only absent components are added. Posted amounts and receipts are never rewritten.

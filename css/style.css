@@ -164,6 +164,31 @@ html[data-theme="dark"] .admin-list-search input{border-color:#42566d;background
   font-weight: bold;
 }
 
+.metric-row .credit-review-needed,
+.credit-note.credit-review-needed {
+  border-color: #d6a542;
+  background: #fff8e6;
+  color: #684900;
+}
+.metric-row .credit-review-needed strong { color: #684900; }
+#accountCreditSummary { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); overflow: visible; }
+#accountCreditSummary > div { min-width: 0; }
+#accountCreditSummary > .credit-note { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+#accountCreditSummary .credit-review-needed { border-color: #d6a542; background: #fff8e6; color: #684900; }
+@media (max-width: 680px) {
+  #accountCreditSummary { grid-template-columns: repeat(2,minmax(0,1fr)); }
+}
+#studentBillingPreviewDialog [data-billing-preview-content] > p { margin: 8px 0; }
+#studentBillingPreviewDialog .admin-table { width: 100%; min-width: 680px; table-layout: fixed; }
+#studentBillingPreviewDialog .admin-table :is(th,td) { white-space: normal; overflow-wrap: anywhere; }
+#studentBillingPreviewDialog .billing-review-table th:nth-child(1) { width: 25%; }
+#studentBillingPreviewDialog .billing-review-table th:nth-child(2) { width: 27%; }
+#studentBillingPreviewDialog .billing-review-table td { padding: 8px; vertical-align: top; }
+#studentBillingPreviewDialog .billing-review-table p { margin: 4px 0; }
+#studentBillingPreviewDialog .billing-review-table summary { cursor: pointer; font-weight: 600; }
+#studentBillingPreviewDialog .billing-review-table ul { padding-left: 18px; margin: 6px 0; }
+#studentBillingPreviewDialog .billing-review-table li + li { margin-top: 6px; }
+
 /* Responsive portal layout: comfortable touch targets and phone-friendly stacking. */
 img{max-width:100%}
 .card,.hero-card,.panel,.activity-item,.child-card{min-width:0;overflow-wrap:anywhere}

@@ -1002,21 +1002,24 @@ function accountSummaryFor(child) {
     TotalDebit: Number.isFinite(totalDebit) ? totalDebit : 0,
     TotalCredit: Number.isFinite(totalCredit) ? totalCredit : 0,
     OutstandingBalance: Number.isFinite(outstanding) ? outstanding : 0,
-    CreditBalance: Number.isFinite(creditBalance) ? creditBalance : 0
+    CreditBalance: Number.isFinite(creditBalance) ? creditBalance : 0,
+    BillingReview: summary.BillingReview || null
   };
 }
 
 function renderAccountCredit(child) {
   if (!accountCreditSummary) return;
   const summary = accountSummaryFor(child);
+  const provisional = summary.CreditBalance > 0 && summary.BillingReview?.status !== 'matched';
+  const reviewNote = summary.BillingReview?.message || 'The fee bill has not been fully verified. This recorded credit is provisional, not confirmed excess money. Please contact the Accounts Office before requesting a transfer or refund.';
   const creditNote = summary.CreditBalance > 0
-    ? `<p class="credit-note">This excess credit remains available until the next school-fee due date, when it is applied automatically. Ask the Accounts Office if you want it transferred to a sibling or wallet, or refunded instead.</p>`
+    ? `<p class="credit-note${provisional ? ' credit-review-needed' : ''}" role="status">${escapeHtml(reviewNote)}</p>`
     : '';
   accountCreditSummary.innerHTML = `
     <div><strong>${money(summary.TotalDebit)}</strong><span>Total Fee Charges</span></div>
     <div><strong>${money(summary.TotalCredit)}</strong><span>Total Fee Payments</span></div>
-    <div><strong>${money(summary.OutstandingBalance)}</strong><span>Outstanding Balance</span></div>
-    <div class="${summary.CreditBalance > 0 ? 'credit-good' : ''}"><strong>${money(summary.CreditBalance)}</strong><span>Credit Balance</span></div>
+    <div><strong>${money(summary.OutstandingBalance)}</strong><span>${provisional ? 'Outstanding on Posted Charges' : 'Outstanding Balance'}</span></div>
+    <div class="${provisional ? 'credit-review-needed' : summary.CreditBalance > 0 ? 'credit-good' : ''}"><strong>${money(summary.CreditBalance)}</strong><span>${provisional ? 'Provisional Fee Credit — Review Needed' : 'Recorded Fee Credit'}</span></div>
     ${creditNote}
   `;
 }

@@ -2,6 +2,7 @@
 // Parent-facing dashboard for child activity and wallet restrictions.
 
 import { getPayableFees, matchingFullScholarshipFeeItems } from './backend.js';
+import { reviewParentFeeCredit, queryParentFinancialRows } from '../lib/parent-fee-credit-review.js';
 import { isFullScholarship } from '../lib/full-scholarship.js';
 import { withStudentProfileDefaults } from '../lib/student-profile-defaults.js';
 import { studentWalletProfile } from '../lib/student-wallet-profile.js';
@@ -2069,9 +2070,9 @@ async function getChildActivity(env, body, options = {}) {
   child.SchoolSection = selectedScope.schoolSection;
   const keys = accountKeys(child);
   const [ledgerRows, invoiceRows, paymentRows, clinicRows, summaryRows, linkedApplication, storeItems, storeOrderRows, academicResultRows, academicClearanceRows, academicMembershipRows, academicAttendanceRows, timetableVersionRows, timetableEntryRows, academicSubjectRows, schoolCalendarRows, academicTermRows, libraryLoanRows, scholarshipFeeItems, transferRows] = await Promise.all([
-    queryRowsForReferences(env, 'ledger', ['AccountRef', 'AdmissionNo', 'ApplicationReference'], keys),
-    queryRowsForReferences(env, 'invoices', ['AccountRef', 'AdmissionNo', 'ApplicationReference'], keys),
-    queryRowsForReferences(env, 'payments', ['AccountRef', 'AdmissionNo', 'ApplicationReference'], keys),
+    queryParentFinancialRows(env, 'ledger', keys),
+    queryParentFinancialRows(env, 'invoices', keys),
+    queryParentFinancialRows(env, 'payments', keys),
     queryRowsForReferences(env, 'clinicRecords', ['AdmissionNo'], keys),
     Promise.all(keys.slice(0, 3).map((key) => getDocument(env, 'accountSummaries', safeDocumentId(key)).catch(() => null))),
     child.ApplicationReference
@@ -2117,6 +2118,10 @@ async function getChildActivity(env, body, options = {}) {
     .sort((a, b) => clean(b.Date).localeCompare(clean(a.Date)));
   const childLedger = ledger.filter((entry) => financialReferenceMatches(entry.AccountRef, child));
   const accountSummary = accountSummaryForKeys(scopedSummaryRows, keys, childLedger, invoices);
+  accountSummary.BillingReview = await reviewParentFeeCredit(env, child, accountSummary, {
+    schoolProfile, invoices: scopedInvoiceRows, ledger: scopedLedgerRows,
+    payments: scopedPaymentRows, accountSummaries: scopedSummaryRows
+  });
   child.TotalDebit = accountSummary.TotalDebit;
   child.TotalCredit = accountSummary.TotalCredit;
   child.OutstandingBalance = accountSummary.OutstandingBalance;
