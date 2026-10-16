@@ -477,6 +477,7 @@ export async function batchCommitDocuments(env, writes, options = {}) {
   // not REST URLs. Supplying the full https URL triggers "lacks projects at index 0".
   const resourceBase = base.replace(/^https:\/\/firestore\.googleapis\.com\/v1\//, '');
   const body = {
+    ...(options.transaction ? { transaction: options.transaction } : {}),
     writes: items.map((item) => {
       const collection = String(item.collectionPath || '').replace(/^\/+|\/+$/g, '');
       const documentId = String(item.documentId || '').trim();

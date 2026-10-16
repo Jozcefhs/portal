@@ -1,4 +1,10 @@
 .vendor-workspace { --vendor-soft:#edf7f6; color:#143652; }
+.vendor-dialog.card-refund-dialog { width:min(1180px,96vw); max-width:96vw; }
+.card-refund-dialog [hidden] { display:none!important; }
+.vendor-workspace [data-card-refund-review][hidden] { display:none!important; }
+.card-refund-dialog .vendor-amount { white-space:nowrap; text-align:right; }
+.card-refund-dialog [data-report] > .vendor-table-wrap { max-height:45vh; }
+.card-refund-dialog .vendor-table th { position:sticky; top:0; }
 .vendor-workspace *, .vendor-dialog * { box-sizing:border-box; }
 .vendor-header, .vendor-toolbar, .vendor-actions { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; }
 .vendor-header h2 { margin:0 0 5px; }

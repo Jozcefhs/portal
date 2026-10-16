@@ -1,4 +1,6 @@
-import { batchCommitDocuments, getDocument, queryCollectionPages, listCollection } from './firestore.js';
+import { batchCommitDocuments, getDocument, getDocuments, queryCollectionPages, listCollection } from './firestore.js';
+import { commitWithReadChecks } from './firestore-checked-commit.js';
+import { handleCardRefundBatch } from './card-refund-batch.js';
 import { getAccountingChartRows } from './accounting-reference-cache.js';
 import { validateRequisitionPosting } from './requisition-posting.js';
 import { assertRequisitionTransition, withApprovalRoute, requisitionPendingTransition, approvalFlowLabel } from './requisition-workflow.js';
@@ -70,7 +72,7 @@ function requireAccess(user, action) {
   if (!clean(user.username)) fail('Sign in to manage vendor settlements.', 401);
   if (!(user.allowedSections || []).includes('vendorSettlements')) fail('Vendor settlements are not available for this account.', 403);
   if (!operators.has(role(user)) && role(user) !== 'Vendor User') fail('Your role cannot access vendor settlements.', 403);
-  if (!['bootstrap', 'statement', 'previewHistorical', 'previewSale', 'previewProductImport', 'salesBootstrap', 'recentVendorSales', 'previewVendorSale', 'vendorWalletLookup', 'vendorCustomerSearch'].includes(action)
+  if (!['bootstrap', 'statement', 'previewCardRefundBatch', 'previewHistorical', 'previewSale', 'previewProductImport', 'salesBootstrap', 'recentVendorSales', 'previewVendorSale', 'vendorWalletLookup', 'vendorCustomerSearch'].includes(action)
     && (user.subscriptionActive === false || user.subscriptionReadOnly === true)) fail('This workspace is read-only until the subscription is renewed.', 403);
 }
 async function ownVendor(env, user, scope, vendorId) {
@@ -554,6 +556,7 @@ async function refund(env, user, scope, body, options) {
   if (!clean(body.Notes) || !clean(body.Reference) || !clean(body.EvidenceReference)) fail('Provide a refund reason, reference and evidence.');
   const authorizationMethod = await authorize(env, user, body, options), date = dateOnly(body.Date), timestamp = new Date().toISOString();
   const balance = await scoped(env, VENDOR_COLLECTIONS.balances, vendor.VendorId, scope);
+  if (balance.ActiveRefundBatchId) fail('An approved bulk refund is in progress. Complete that batch before recording another refund.', 409);
   const allLots = await rows(env, VENDOR_COLLECTIONS.lots, scope, vendor.VendorId), updates = new Map(), writes = [];
   const changed = { ...lot, RefundedCents: lot.RefundedCents + value };
   let reversal = 0;
@@ -810,6 +813,18 @@ export async function handleVendorSettlementAction(env, user, body = {}, options
     case 'decision': return decision(env, user, scope, body, options);
     case 'pay': return pay(env, user, scope, body, options);
     case 'refund': return refund(env, user, scope, body, options);
+    case 'previewCardRefundBatch':
+    case 'approveCardRefundBatch':
+    case 'postCardRefundBatch': {
+      const { featureFlags } = await staffAccessFor(env, user);
+      if (featureFlags?.vendorSettlements !== true || featureFlags?.accounting !== true || featureFlags?.approvals !== true)
+        fail('Vendor refunds and accounting approvals must be enabled for this workspace.', 403);
+      await ownVendor(env, user, scope, body.VendorId);
+      return handleCardRefundBatch(env, user, scope, { ...body, action }, {
+        get: getDocument, getMany: getDocuments, query: queryCollectionPages, write, audit, commit,
+        commitChecked: commitWithReadChecks, authorize: (env, user, body) => authorize(env, user, body, options), validateJournal
+      });
+    }
     case 'previewHistorical': return historicalPreview(env, user, scope, body);
     case 'recordOpening': return recordOpening(env, user, scope, body, options);
     case 'recordRecovery': return recordRecovery(env, user, scope, body, options);

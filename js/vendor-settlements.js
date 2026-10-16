@@ -69,6 +69,7 @@
     mounted?.destroy();
     let data, tab = 'balances', statement, selected = '', busy = false, notice = '', disposed = false, dialog, statementGeneration = 0, statementController;
     const pending = new Set();
+    let cardRefundDialog;
     let analysisRange = {From:today().slice(0,7)+'-01',To:today()};
     const status = (message, error = false) => { const el = root.querySelector('.vendor-status'); if (el) { el.textContent = message; el.classList.toggle('error', error); } };
     async function call(action, body = {}, form) {
@@ -425,6 +426,21 @@
             <small class="vendor-full">Stock must now cover the entire original order. The original stock issue and settlement holds are completed atomically; no payment or earnings are duplicated. Refunded orders require a separate quantity review.</small>`, 'completeInventoryReview',b => ({...b,VendorId:selected}));
         };
       }
+      if (tab === 'statement' && c.manage && c.edition === 'school' && c.branchId === 'main') {
+        const button = document.createElement('button'); button.type = 'button'; button.textContent = 'Review NFC card refunds';
+        button.dataset.cardRefundReview = '';
+        button.hidden = selected !== 'VND-30ce4d88-e944-43dc-bfc8-5e574b31b439';
+        panel.querySelector('.vendor-actions').append(button);
+        button.onclick = async () => {
+          button.disabled = true;
+          try {
+            const { openCardRefundBatch } = await import('./card-refund-batch.js');
+            if (!disposed) cardRefundDialog = await openCardRefundBatch({ vendorId: selected, canPost: c.pay, request, print,
+              isCurrent: () => !disposed, onClose: () => { if (!disposed) reload(); } });
+          } catch (error) { status(error.message, true); }
+          finally { button.disabled = false; }
+        };
+      }
       root.querySelector('[data-refresh]').onclick = reload;
       root.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { tab = b.dataset.tab; statement = null; statementGeneration++; statementController?.abort(); draw(); if (['statement','analysis'].includes(tab)) loadStatement(); });
       root.querySelector('[data-add-vendor]')?.addEventListener('click', () => vendorForm());
@@ -453,6 +469,8 @@
       const filter = root.querySelector('[data-statement-filter]'); if (filter) {
         filter.onchange = event => {
           selected = filter.elements.VendorId.value; statement = null; statementGeneration++;
+          const refundButton = root.querySelector('[data-card-refund-review]');
+          if (refundButton) refundButton.hidden = selected !== 'VND-30ce4d88-e944-43dc-bfc8-5e574b31b439';
           statementController?.abort();
           root.querySelector('[data-statement-result]').textContent = 'Filters changed. Load a fresh statement before requesting payment.';
           if (event.target.name === 'VendorId') loadStatement();
@@ -490,7 +508,7 @@
         <small class="vendor-full">Commission returned records money already returned to a vendor after a refund reduces an earlier collected charge. No transfer is initiated.</small>`, 'recordRecovery', b => ({ ...b, VendorId:selected })));
     }
     root.innerHTML = '<p class="vendor-status" role="status">Loading vendor workspace…</p>'; reload();
-    mounted = { destroy() { disposed = true; for (const c of pending) c.abort(); dialog?.close(); dialog?.remove(); } };
+    mounted = { destroy() { disposed = true; for (const c of pending) c.abort(); dialog?.close(); dialog?.remove(); cardRefundDialog?.close(); } };
     return mounted;
   }
   window.DynamaxVendors = Object.freeze({ mount, unmount() { mounted?.destroy(); mounted = undefined; } });

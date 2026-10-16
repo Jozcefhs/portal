@@ -19,6 +19,7 @@ const backendSource = await readFile(new URL('../functions/api/backend.js',impor
 const walletSource = backendSource.slice(backendSource.indexOf('export async function recordWalletPurchase('),backendSource.indexOf('export function buildCreditActionAccountingJournal('))
   .replace('export ','').replace(/const \{ assertVendorSaleReplay \} = await import\('[^']+'\);/g,'');
 import { handleProductImport } from '../functions/lib/vendor-product-import.js';
+import { handleCardRefundBatch, CARD_REFUND_CAMPAIGN } from '../functions/lib/card-refund-batch.js';
 import * as productManagement from '../functions/lib/vendor-product-management.js';
 import { assertRequisitionTransition, withApprovalRoute, requisitionPendingTransition, approvalFlowLabel } from '../functions/lib/requisition-workflow.js';
 import { vendorRequestPrintReport } from '../functions/lib/vendor-request-print.js';
@@ -31,6 +32,20 @@ globalThis.crypto ||= webcrypto;
 const source = (await readFile(new URL('../functions/lib/vendor-settlements.js', import.meta.url),'utf8'))
   .replace(/^import[\s\S]*?from '[^']+';\r?\n/gm,'').replace(/export /g,'');
 const timestamp = '2026-10-08T09:00:00.000Z';
+test('card refund routes enforce feature flags, subscription, role and branch before mutation', async () => {
+  const c = CARD_REFUND_CAMPAIGN;
+  for (const flag of ['vendorSettlements','accounting','approvals']) {
+    const f=fixture([], {featureFlags:{[flag]:false}});
+    await assert.rejects(f.run('previewCardRefundBatch',{VendorId:c.VendorId}),/must be enabled/);
+    assert.equal(f.commits.length,0);
+  }
+  const f=fixture([['commerceVendors',c.VendorId,vendor(c.VendorId)]]);
+  await assert.rejects(f.run('approveCardRefundBatch',{VendorId:c.VendorId},{...user,subscriptionReadOnly:true}),/read-only/);
+  await assert.rejects(f.run('approveCardRefundBatch',{VendorId:c.VendorId},{...user,role:'Super Admin'}),/Accounts Officer/);
+  await assert.rejects(f.run('postCardRefundBatch',{VendorId:c.VendorId},{...user,role:'Tuck Shop User'}),/Accounts Officer/);
+  await assert.rejects(f.run('previewCardRefundBatch',{VendorId:c.VendorId},{...user,branchId:'other'}),/unavailable/);
+  assert.equal(f.commits.length,0);
+});
 const scope = { ScopeKey:'school--main', BranchId:'main', OrganisationEdition:'school', SchoolSection:'Secondary' };
 const user = { username:'accounts', role:'Accounts Officer', branchId:'main', edition:'school', allowedSections:['vendorSettlements'], schoolSectionAccess:'All' };
 const vendor = (id = 'v1', extra = {}) => ({ ...scope, VendorId:id, Name:`Vendor ${id}`, Active:'YES', BankName:'Test bank',
@@ -69,11 +84,12 @@ function fixture(initial = [], options = {}) {
     commits.push(structuredClone(writes)); for (const w of writes) put(w.collectionPath,w.documentId,w.data);
   };
   const functions = vm.runInNewContext(`${source}\n({ handleVendorSettlementAction, prepareVendorSale, snapshotVendorCart })`, {
-    ...rules, ...productManagement, handleProductImport, crypto:webcrypto, Intl, Date, TextEncoder, console, assertRequisitionTransition, validateRequisitionPosting, accountingChartChoicesForEdition,
+    ...rules, ...productManagement, handleProductImport, handleCardRefundBatch, commitWithReadChecks:commit, crypto:webcrypto, Intl, Date, TextEncoder, console, assertRequisitionTransition, validateRequisitionPosting, accountingChartChoicesForEdition,
     withApprovalRoute, requisitionPendingTransition, approvalFlowLabel, vendorRequestPrintReport,
     approvalSnapshot: async () => ({ Version: 1, Kind: 'vendor', Stages: [...(options.approvalStages || ['accounts', 'admin-review', 'director'])] }),
     staffAccessFor:async (_env, actor) => { accessReads.push(actor); return { featureFlags }; },
     getDocument:async (_env,c,id) => structuredClone(get(c,id) || null), listCollection:async (_env,c) => c === 'accountingPeriods' ? list(c) : list(c),
+    getDocuments:async (_env,c,ids) => ids.map(id => structuredClone(get(c,id) || null)),
     getAccountingChartRows:async (_env, params) => { chartReads.push(params); return currentChart; }, verifyStaffApprovalPassword:async (_env,username,password) => password === 'test-confirmation',
     findStaffUserRecord:staffLookups.findStaffUserRecord, findStaffLoginRecord:staffLookups.findStaffLoginRecord,
     queryCollectionPages:async (_env,c,opts) => list(c).filter(row => opts.filters.every(f => f.op === 'in' ? f.value.includes(row[f.field]) : row[f.field] === f.value)), batchCommitDocuments:commit
@@ -102,6 +118,16 @@ const pay = async (amount,id = 'pay1') => { const r = get('vendorSettlementReque
     setFeatureFlags: flags => { featureFlags = flags; },
     setChart: rows => { currentChart = rows; }, conflict:() => { forcedConflict = true; } };
 }
+
+test('active bulk refund hold blocks other refunds, new vendor requests and payment recording', async () => {
+  const f = fixture(); await f.sale(); await f.request(); await f.approve();
+  const balance = f.get('vendorBalances','v1'); f.put('vendorBalances','v1',{...balance,ActiveRefundBatchId:'reviewed-batch'});
+  const before = f.commits.length;
+  await assert.rejects(f.refund(20),/bulk refund/);
+  await assert.rejects(f.request(10,'another-request'),/requires review/);
+  await assert.rejects(f.pay(10),/require review/);
+  assert.equal(f.commits.length,before);
+});
 test('all configured vendor paths reach final approval without granting skipped offices authority', async () => {
   for (let mask = 1; mask < 8; mask++) {
     const stages = ['accounts','admin-review','director'].filter((_, i) => mask & (1 << i));
