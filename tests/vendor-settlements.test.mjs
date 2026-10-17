@@ -21,7 +21,8 @@ const walletSource = backendSource.slice(backendSource.indexOf('export async fun
 import { handleProductImport } from '../functions/lib/vendor-product-import.js';
 import { handleCardRefundBatch, CARD_REFUND_CAMPAIGN } from '../functions/lib/card-refund-batch.js';
 import * as productManagement from '../functions/lib/vendor-product-management.js';
-import { assertRequisitionTransition, withApprovalRoute, requisitionPendingTransition, approvalFlowLabel } from '../functions/lib/requisition-workflow.js';
+import { assertRequisitionTransition, withApprovalRoute, requisitionPendingTransition, approvalFlowLabel, requisitionCapabilities, hasPrincipalApprovalGrant } from '../functions/lib/requisition-workflow.js';
+import { assertFinanceRoleLimit } from '../functions/lib/accounting-mutation-guards.js';
 import { vendorRequestPrintReport } from '../functions/lib/vendor-request-print.js';
 import { validateRequisitionPosting } from '../functions/lib/requisition-posting.js';
 import { accountingChartChoicesForEdition } from '../functions/lib/accounting-edition-scope.js';
@@ -32,6 +33,49 @@ globalThis.crypto ||= webcrypto;
 const source = (await readFile(new URL('../functions/lib/vendor-settlements.js', import.meta.url),'utf8'))
   .replace(/^import[\s\S]*?from '[^']+';\r?\n/gm,'').replace(/export /g,'');
 const timestamp = '2026-10-08T09:00:00.000Z';
+test('principal final approval respects earlier stages, grant limits and Accounts-only payment', async () => {
+  const f=fixture(); await f.sale(); await f.request();
+  const principal={...user,role:'Principal',username:'principal',approvalEnabled:true,approvalMaxAmount:100,approvalAccounts:['2000'],vendorSettlementApprovalOnly:true};
+  let sequence=0;
+  const decide=(actor=principal,extra={})=>{const r=f.get('vendorSettlementRequests','VREQ-claim1');return f.run('decision',{
+    SettlementId:r.SettlementId,RequestId:`principal-${++sequence}`,Status:'Approved',RecordVersion:r.__updateTime,
+    approvalPassword:'test-confirmation',...extra},actor);};
+  const boot=await f.run('bootstrap',{},principal);
+  assert.equal(boot.requests.length,1); assert.equal(boot.capabilities.approve,true);
+  for(const cap of ['pay','confirm','review','operate','products','manage']) assert.equal(boot.capabilities[cap],false,cap);
+  await assert.rejects(decide(),/Only Accounts Officer/);
+  await f.decision('Accounts Confirmed','Accounts Officer'); await assert.rejects(decide(),/Only Admin/);
+  await f.decision('Admin Reviewed','Admin'); const before=f.commits.length;
+  for(const actor of [{...principal,approvalEnabled:false},{...principal,approvalMaxAmount:99},{...principal,approvalAccounts:['6090']}]) {
+    await assert.rejects(decide(actor),e=>e.status===403);
+  }
+  await assert.rejects(decide(principal,{Status:'Cancelled'}),/final approval or rejection/);
+  await assert.rejects(decide(principal,{RecordVersion:'stale'}),/changed/);
+  await assert.rejects(f.run('pay',{},principal),/reviewing and approving/);
+  await assert.rejects(f.run('saveProduct',{},principal),/reviewing and approving/);
+  assert.equal(f.commits.length,before);
+  const balances=structuredClone(f.get('vendorBalances','v1'));
+  await decide(principal,{AmountCents:1,PayableAccount:'6090'});
+  const saved=f.get('vendorSettlementRequests','VREQ-claim1');
+  assert.equal(saved.Status,'Approved'); assert.equal(saved.FinalApprovedRole,'Principal'); assert.equal(saved.AmountCents,10000);
+  assert.equal(saved.PaidCents,0); assert.equal(saved.History.at(-1).Username,'principal');
+  assert.deepEqual(f.get('vendorBalances','v1'),balances);
+  assert.equal(f.list('vendorSettlementPayments').length,0);
+  assert.ok(!f.commits.at(-1).some(w=>['accountingJournals','payments','vendorBalances'].includes(w.collectionPath)));
+});
+
+test('principal vendor approval enforces saved role policy and all allocated payable accounts',async()=>{
+  const f=fixture(); await f.sale(); await f.request(); await f.decision('Accounts Confirmed','Accounts Officer'); await f.decision('Admin Reviewed','Admin');
+  const principal={...user,role:'Principal',username:'principal',approvalEnabled:true,approvalMaxAmount:200,approvalAccounts:['2000']};
+  const decide=()=>{const r=f.get('vendorSettlementRequests','VREQ-claim1');return f.run('decision',{SettlementId:r.SettlementId,RequestId:'limited',Status:'Approved',RecordVersion:r.__updateTime,approvalPassword:'test-confirmation'},principal);};
+  f.put('accountingApprovalLimits','principal',{Role:'Principal',TransactionType:'Vendor Payment Request',MaxAmount:50,Active:'YES'});
+  await assert.rejects(decide(),/configured approval limit/);
+  f.put('accountingApprovalLimits','principal',{Role:'Principal',TransactionType:'Vendor Payment Request',MaxAmount:200,Active:'YES'});
+  const r=f.get('vendorSettlementRequests','VREQ-claim1');
+  f.put('vendorSettlementRequests',r.SettlementId,{...r,Allocations:r.Allocations.map(a=>({...a,PayableAccount:'2100'}))});
+  await assert.rejects(decide(),/account code/);
+  assert.equal(f.get('vendorSettlementRequests',r.SettlementId).Status,'Admin Reviewed');
+});
 test('card refund routes enforce feature flags, subscription, role and branch before mutation', async () => {
   const c = CARD_REFUND_CAMPAIGN;
   for (const flag of ['vendorSettlements','accounting','approvals']) {
@@ -85,7 +129,7 @@ function fixture(initial = [], options = {}) {
   };
   const functions = vm.runInNewContext(`${source}\n({ handleVendorSettlementAction, prepareVendorSale, snapshotVendorCart })`, {
     ...rules, ...productManagement, handleProductImport, handleCardRefundBatch, commitWithReadChecks:commit, crypto:webcrypto, Intl, Date, TextEncoder, console, assertRequisitionTransition, validateRequisitionPosting, accountingChartChoicesForEdition,
-    withApprovalRoute, requisitionPendingTransition, approvalFlowLabel, vendorRequestPrintReport,
+    withApprovalRoute, requisitionPendingTransition, approvalFlowLabel, vendorRequestPrintReport, requisitionCapabilities, hasPrincipalApprovalGrant, assertFinanceRoleLimit,
     approvalSnapshot: async () => ({ Version: 1, Kind: 'vendor', Stages: [...(options.approvalStages || ['accounts', 'admin-review', 'director'])] }),
     staffAccessFor:async (_env, actor) => { accessReads.push(actor); return { featureFlags }; },
     getDocument:async (_env,c,id) => structuredClone(get(c,id) || null), listCollection:async (_env,c) => c === 'accountingPeriods' ? list(c) : list(c),
@@ -484,8 +528,26 @@ test('vendor access returns only own data and masks other payment details', asyn
   await assert.rejects(f.run('statement',{VendorId:'v2'},owner),/not linked/);
   await assert.rejects(f.run('saveSettings',{},owner),/role/);
   await assert.rejects(f.run('requestSettlement',{}, {...user,subscriptionReadOnly:true}),/read-only/);
-  await assert.rejects(f.run('bootstrap',{}, {...user,role:'Teacher'}),/role/);
+  await assert.rejects(f.run('bootstrap',{}, {...user,role:'Teacher',allowedSections:[]}),/not available/);
 });
+test('configured roles can operate vendor workspace without gaining financial or vendor-administration powers', async () => {
+  for (const assignedRole of ['Teacher','Principal','ICT','Church Administrator','Records Officer']) {
+    const f = fixture();
+    const actor = {...user,role:assignedRole,assignedRole,username:'delegated'};
+    const data = await f.run('bootstrap',{},actor);
+    assert.equal(data.capabilities.operate,true);
+    assert.equal(data.capabilities.products,true);
+    for (const key of ['manage','reviewProducts','configureApprovals','confirm','review','approve','pay']) assert.equal(data.capabilities[key],false,key);
+    for (const action of ['saveSettings','saveVendor','pay','refund','recordOpening']) {
+      await assert.rejects(f.run(action,{},actor),error=>error.status===403,action);
+    }
+    await assert.rejects(f.run('bootstrap',{}, {...actor,allowedSections:[]}),error=>error.status===403);
+    await assert.rejects(f.run('saveProduct',{}, {...actor,subscriptionReadOnly:true}),/read-only/);
+    await assert.rejects(f.run('statement',{VendorId:'v1'}, {...actor,branchId:'other'}),/unavailable/);
+    assert.equal(f.commits.length,0);
+  }
+});
+
 test('idempotency records and audit never capture credentials posted by desktop', async () => {
   const f = fixture(); await f.sale(); await f.request(100,'claim1',{ActorPassword:'sensitive',secret:'device-secret'});
   assert.ok(!JSON.stringify(f.list('vendorSettlementOperations')).includes('sensitive'));

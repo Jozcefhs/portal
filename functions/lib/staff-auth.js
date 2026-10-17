@@ -358,6 +358,19 @@ export function sectionAccessFor(user = {}, organization = {}, roleAccess = null
     edition,
     roleModules: planRoleModules
   });
+  // The personal grant opens a review-only vendor workspace when Role Access
+  // has not separately granted vendor operations. Feature/subscription gates remain.
+  const principalApproval = clean(user.assignedRole || user.AssignedRole || user.role || user.Role) === 'Principal'
+    && user.approvalEnabled === true;
+  const vendorSettlementApprovalOnly = edition === 'school' && principalApproval
+    && !allowedSections.includes('vendorSettlements');
+  if (edition === 'school' && principalApproval) {
+    for (const [sections, flags] of [[allowedSections, featureFlags], [availableSections, editionFeatureFlags], [planSections, planFeatureFlags]]) {
+      for (const section of filterSectionsForFeatures(['financeRequests', 'vendorSettlements'], flags)) {
+        if (!sections.includes(section)) sections.push(section);
+      }
+    }
+  }
   const customUserModules = Array.isArray(user.tabAccess || user.TabAccess)
     ? (user.tabAccess || user.TabAccess).map(clean).filter(Boolean)
     : [];
@@ -393,6 +406,7 @@ export function sectionAccessFor(user = {}, organization = {}, roleAccess = null
     dataRetentionEndsAt: clean(organization.DataRetentionEndsAt || organization.dataRetentionEndsAt),
     subscriptionMessage: clean(organization.SubscriptionMessage || organization.subscriptionMessage),
     allowedSections: effectiveAllowedSections,
+    vendorSettlementApprovalOnly,
     availableSections,
     disabledSections: subscriptionActive
       ? planSections.filter((section) => !allowedSet.has(section))

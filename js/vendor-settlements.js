@@ -96,6 +96,7 @@
     }
     async function reload() {
       const result = await call('bootstrap'); if (!result || disposed || !root.isConnected) return;
+      if (!data && result.capabilities.approvalOnly) tab = 'requests';
       data = result; if (!data.vendors.some(v => v.VendorId === selected)) selected = data.vendors[0]?.VendorId || '';
       draw(); if (['statement','analysis'].includes(tab)) await loadStatement();
     }
@@ -317,8 +318,8 @@
         ${stage ? `<small>Next: ${esc(stage.role)} — ${esc(stage.verb)}</small>` : ''}
         ${next ? `<button data-request="${esc(r.SettlementId)}" data-action="${next}">${esc(next)}</button><button data-request="${esc(r.SettlementId)}" data-action="Rejected">Reject</button>` : ''}
         ${c.pay && r.Status === 'Approved' && r.Unpaid > 0 ? `<button data-request="${esc(r.SettlementId)}" data-action="pay">Record payment</button>` : ''}
-        ${r.PaymentStatus !== 'Paid' && !['Cancelled','Rejected'].includes(r.Status) && (c.manage || c.vendor || r.Status === 'Submitted') ? `<button data-request="${esc(r.SettlementId)}" data-action="Cancelled">Withdraw unpaid claim</button>` : ''}
-        ${['Cancelled','Rejected'].includes(r.Status) && !r.ReplacedBy ? `<button data-request="${esc(r.SettlementId)}" data-action="revise">Revise & resubmit</button>` : ''}</div></article>`;
+        ${!c.approvalOnly && r.PaymentStatus !== 'Paid' && !['Cancelled','Rejected'].includes(r.Status) && (c.manage || c.vendor || r.Status === 'Submitted') ? `<button data-request="${esc(r.SettlementId)}" data-action="Cancelled">Withdraw unpaid claim</button>` : ''}
+        ${!c.approvalOnly && ['Cancelled','Rejected'].includes(r.Status) && !r.ReplacedBy ? `<button data-request="${esc(r.SettlementId)}" data-action="revise">Revise & resubmit</button>` : ''}</div></article>`;
     }
     function printRequest(r, summary) {
       const report = r.PrintReport;
@@ -463,6 +464,7 @@
           ...Object.fromEntries(['RequireNewApproval','RequireEditApproval','RequireStockApproval'].map(key => [key,productPolicyForm.elements[key].value === 'true']))},productPolicyForm);
         if (result) { notice = result.message; await reload(); }
       };
+      if (c.approvalOnly) root.querySelector('[data-request-new]')?.remove();
       root.querySelector('[data-request-new]')?.addEventListener('click', () => requestForm());
       root.querySelector('[data-payment-approvals]')?.addEventListener('click', options.configureApprovals);
       root.querySelector('[data-print-statement]')?.addEventListener('click', () => statement ? print(`Vendor statement — ${statement.vendor.Name}`,statementHTML(statement)) : status('Load a statement first.',true));

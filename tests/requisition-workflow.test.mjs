@@ -111,7 +111,7 @@ test('each requisition notification targets only the next office or requester', 
 });
 
 test('shared web and desktop backends enforce the workflow without edition gates', () => {
-  assert.match(workflowSource, /assertRequisitionTransition\(existing, user\.assignedRole \|\| user\.role, requestedStatus\)/);
+  assert.match(workflowSource, /assertRequisitionTransition\(existing, user, requestedStatus\)/);
   assert.match(backendSource, /assertRequisitionTransition\(existing, actorRole, requestedStatus\)/);
   assert.match(adminSource, /data-workflow-action="advanceRequisition"/);
   assert.match(adminSource, /canConfirmRequisitions/);

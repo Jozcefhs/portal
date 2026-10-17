@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { buildRequisitionResubmission } from '../functions/api/finance-workflow.js';
 import { buildRequisitionPosting } from '../functions/lib/requisition-posting.js';
-import { assertRequisitionTransition, requisitionCapabilities, REQUISITION_STATUS, requisitionPendingTransition, approvalFlowLabel } from '../functions/lib/requisition-workflow.js';
+import { assertRequisitionTransition, requisitionCapabilities, REQUISITION_STATUS, requisitionPendingTransition, approvalFlowLabel, hasPrincipalApprovalGrant } from '../functions/lib/requisition-workflow.js';
 
 const [adminSource, workflowSource] = await Promise.all([
   readFile(new URL('../js/admin.js', import.meta.url), 'utf8'),
@@ -27,7 +27,7 @@ function approvalHarness(initial) {
   const journals = [];
   const source = workflowSource.slice(workflowSource.indexOf('function requestedRequisitionStatus('), workflowSource.indexOf('\nasync function reviewRecord('));
   const advance = vm.runInNewContext(`(() => { ${source}; return advanceRequisition; })()`, {
-    clean, lower, REQUISITION_STATUS, assertRequisitionTransition, requisitionPendingTransition, approvalFlowLabel,
+    clean, lower, REQUISITION_STATUS, assertRequisitionTransition, requisitionPendingTransition, approvalFlowLabel, hasPrincipalApprovalGrant,
     getDocument: async () => record, findOneByField: async () => null, safeId: value => value,
     scopedRows: rows => rows, capabilities: requisitionCapabilities, nowIso: () => timestamp,
     requireDecisionAuthorization: async () => 'Password', buildEndorsement: async () => ({}),
@@ -60,7 +60,7 @@ test('Director sees why approval is unavailable at Accounts Confirmed, while Adm
   for (const role of ['Director', 'Super Admin']) {
     const html = render(record, 'requisition', access(role));
     assert.match(html, /Awaiting Admin review/);
-    assert.match(html, /Director approval becomes available after Admin review/);
+    assert.match(html, /Final approval becomes available after the enabled earlier stages/);
     assert.match(html, /earlier approvals were reset/);
     assert.doesNotMatch(html, /data-decision="Approved"/);
   }

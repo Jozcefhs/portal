@@ -911,6 +911,7 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
   'archiveAcademicRecord', 'deleteAcademicRecord',
   'syncAcademicCbtScores', 'syncLocalCbtStudentPasswords',
   'rescheduleAcademicCbtTest', 'downloadAcademicCbtTestPackage', 'acknowledgeAcademicCbtImport',
+  'previewAcademicCbtRoster', 'refreshAcademicCbtRoster',
   'calculateAcademicTermResults', 'calculateAcademicMidTermResults', 'previewAcademicTermResultWithdrawal',
   'changeAcademicTermResultStatus', 'saveAcademicTermResultRemarks',
   'calculateAcademicCumulativeResults', 'changeAcademicCumulativeStatus', 'saveAcademicCumulativeResultRemarks',
@@ -979,6 +980,7 @@ const BRANCH_BOUND_DEVICE_ACTIONS = new Set([
   'reactivateAcademicScoreEditing', 'changeAcademicScoreSheetStatus', 'previewAcademicScoreImport',
   'importAcademicScores', 'rollbackAcademicScoreImport', 'syncAcademicCbtScores',
   'syncLocalCbtStudentPasswords', 'rescheduleAcademicCbtTest', 'downloadAcademicCbtTestPackage',
+  'previewAcademicCbtRoster', 'refreshAcademicCbtRoster',
   'acknowledgeAcademicCbtImport', 'prepareLocalCbtIdentityPackage',
   'calculateAcademicTermResults', 'calculateAcademicMidTermResults', 'previewAcademicTermResultWithdrawal',
   'changeAcademicTermResultStatus', 'saveAcademicTermResultRemarks',
@@ -8782,6 +8784,8 @@ function accountingRequisitionActor(body) {
     department: accountingDepartment(body), branchId: requestedBranch === 'all' ? '' : requestedBranch,
     schoolSectionAccess: clean(body.UserSchoolSectionAccess) || 'All',
     approvalEnabled: body.UserApprovalEnabled === true,
+    approvalMaxAmount: Number(body.UserApprovalMaxAmount || 0),
+    approvalAccounts: Array.isArray(body.UserApprovalAccounts) ? body.UserApprovalAccounts : [],
     requisitionEditEnabled: body.UserRequisitionEditEnabled === true,
     sourcePlatform: 'Desktop'
   };
@@ -11441,12 +11445,14 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     }
     case 'vendorSettlements': {
       const access = await staffAccessFor(env, {
+        ...accountingRequisitionActor(body),
         username: clean(body.UserUsername), role: clean(body.UserRole),
         assignedRole: clean(body.UserAssignedRole || body.UserRole),
         branchId: clean(body.UserBranchId), schoolSectionAccess: clean(body.UserSchoolSectionAccess),
         tabAccess: body.UserTabAccess, department: clean(body.UserDepartment)
       });
       return handleVendorSettlementAction(env, { ...access,
+        ...accountingRequisitionActor(body),
         username: clean(body.UserUsername), displayName: clean(body.RecordedBy || body.UserUsername),
         role: clean(body.UserRole), assignedRole: clean(body.UserAssignedRole || body.UserRole),
         branchId: clean(body.UserBranchId || body.BranchId), schoolSectionAccess: clean(body.UserSchoolSectionAccess || 'All'),
@@ -11636,6 +11642,8 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     case 'syncAcademicCbtScores':
     case 'syncLocalCbtStudentPasswords':
     case 'rescheduleAcademicCbtTest':
+    case 'previewAcademicCbtRoster':
+    case 'refreshAcademicCbtRoster':
     case 'downloadAcademicCbtTestPackage':
     case 'acknowledgeAcademicCbtImport':
     case 'prepareLocalCbtIdentityPackage':

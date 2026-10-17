@@ -18,7 +18,7 @@ import { approvalSnapshot, canManageApprovalSettings } from '../lib/approval-set
 import {
   REQUISITION_STATUS,
   assertRequisitionTransition,
-  requisitionCapabilities, withApprovalRoute, approvalFlowLabel, requisitionPendingTransition
+  requisitionCapabilities, withApprovalRoute, approvalFlowLabel, requisitionPendingTransition, hasPrincipalApprovalGrant
 } from '../lib/requisition-workflow.js';
 import {
   IMPREST_ADVANCE_ACCOUNT,
@@ -358,7 +358,8 @@ function scopedRows(rows, user, access) {
   });
   if (access.canViewAll) return schoolRows;
   const department = userDepartment(user);
-  return schoolRows.filter((row) => same(row.Department, department));
+  return schoolRows.filter((row) => same(row.Department, department)
+    || (row.ExpenseNo && hasPrincipalApprovalGrant(user)));
 }
 
 function auditWrite(user, action, recordType, recordId, details = '', timestamp = nowIso(), scope = {}) {
@@ -716,7 +717,10 @@ async function advanceRequisition(env, user, body, request) {
   }
 
   const requestedStatus = requestedRequisitionStatus(body.decision || body.status);
-  const transition = assertRequisitionTransition(existing, user.assignedRole || user.role, requestedStatus);
+  const transition = assertRequisitionTransition(existing, user, requestedStatus);
+  if (hasPrincipalApprovalGrant(user)) {
+    assertFinanceRoleLimit(await listCollection(env, 'accountingApprovalLimits'), 'Principal', 'Expense', amount(existing.Amount));
+  }
   if (transition.event === 'Posted') {
     if (!clean(body.recordVersion) || clean(body.recordVersion) !== clean(existing.__updateTime)) {
       const err = new Error('Refresh the requisition before posting it; its version has changed or was not supplied.');

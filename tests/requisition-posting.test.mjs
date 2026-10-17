@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { buildRequisitionPosting, validateRequisitionPosting } from '../functions/lib/requisition-posting.js';
-import { assertRequisitionTransition, requisitionWorkflowStatus, requisitionCapabilities, REQUISITION_STATUS } from '../functions/lib/requisition-workflow.js';
+import { assertRequisitionTransition, requisitionWorkflowStatus, requisitionCapabilities, REQUISITION_STATUS, hasPrincipalApprovalGrant } from '../functions/lib/requisition-workflow.js';
 import { requisitionChangedFields } from '../functions/lib/requisition-edit-history.js';
 import { resolveOrganizationConfig } from '../functions/lib/organization-config.js';
 import { validDocumentApprovalScope } from '../functions/api/staff-passkey.js';
@@ -140,7 +140,7 @@ test('concurrent web/desktop posting commits exactly one journal, requisition an
 function webHarness(store, authorized = true) {
   const source = workflowSource.slice(workflowSource.indexOf('function requestedRequisitionStatus('), workflowSource.indexOf('\nasync function reviewRecord('));
   return vm.runInNewContext(`(() => { ${source}; return advanceRequisition; })()`, {
-    clean, lower, REQUISITION_STATUS, assertRequisitionTransition, safeId: value => value,
+    clean, lower, REQUISITION_STATUS, assertRequisitionTransition, hasPrincipalApprovalGrant, safeId: value => value,
     getDocument: async () => store.record(), findOneByField: async () => null,
     scopedRows: (rows, user) => rows.filter(row => !user.branchId || row.BranchId === user.branchId), capabilities: requisitionCapabilities,
     validIsoDate: value => { if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) throw new Error('valid posting date required'); return value; },

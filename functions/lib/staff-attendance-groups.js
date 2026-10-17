@@ -25,6 +25,7 @@ export function canManageAttendanceGroups(user = {}) {
   const role = clean(user.role || user.Role);
   const edition = canonicalRecordEdition(user.edition || user.Edition || user.OrganisationEdition);
   return MANAGE_ROLES.has(role)
+    || (edition === 'school' && role === 'ICT')
     || (edition === 'faith' && role === 'Church Administrator')
     || (edition === 'organization' && ['Executive Director', 'Organisation Administrator'].includes(role));
 }

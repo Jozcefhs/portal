@@ -1,4 +1,5 @@
 import { batchCommitDocuments, getDocument, listCollection, queryCollection } from './firestore.js';
+import { commitAcademicCbtRoster } from './academic-cbt-roster-commit.js';
 import { academicAttendanceId, findExistingAttendance, attendanceCorrectionMatches } from './academic-attendance-identity.js';
 import { enforceActorBranch } from './branch-scope.js';
 import { normalizeClassKey } from './class-names.js';
@@ -463,13 +464,13 @@ export const ACADEMIC_TEACHER_ALLOCATION_ROLES = Object.freeze(['Subject Teacher
 
 const STRUCTURE_MANAGERS = new Set([
   'Super Admin', 'Principal', 'Vice Principal Academics', 'Vice Principal Administration',
-  'Head Teacher', 'Assistant Head Teacher', 'Management'
+  'Head Teacher', 'Assistant Head Teacher', 'Management', 'ICT'
 ]);
 const ALLOCATION_MANAGERS = new Set([...STRUCTURE_MANAGERS, 'Admissions Officer']);
 const TIMETABLE_MANAGERS = new Set([...STRUCTURE_MANAGERS, 'Examination Officer']);
 const TIMETABLE_PUBLISHERS = new Set([
   'Super Admin', 'Principal', 'Vice Principal Academics', 'Vice Principal Administration',
-  'Head Teacher', 'Assistant Head Teacher', 'Management'
+  'Head Teacher', 'Assistant Head Teacher', 'Management', 'ICT'
 ]);
 const SCORE_REVIEWERS = new Set([...STRUCTURE_MANAGERS, 'Examination Officer']);
 const SCORE_APPROVERS = new Set([...STRUCTURE_MANAGERS, 'Examination Officer']);
@@ -6775,8 +6776,8 @@ function academicCbtAuthority(user, context, record) {
   return record;
 }
 
-async function academicCbtClassContext(env, user = {}, input = {}) {
-  const context = await academicOperationalContext(env, user, input, 'canCreateCbt', {
+async function academicCbtClassContext(env, user = {}, input = {}, loadedContext = null) {
+  const context = loadedContext || await academicOperationalContext(env, user, input, 'canCreateCbt', {
     stateKeys: ACADEMIC_CBT_STATE_KEYS
   });
   const { permissions, scope, state, session, term } = context;
@@ -6802,7 +6803,10 @@ async function academicCbtClassContext(env, user = {}, input = {}) {
   }
   const roster = (state.studentMemberships || []).filter((row) => statusActive(row)
     && row.SessionId === session.SessionId && row.TermId === term.TermId
-    && row.ClassId === schoolClass.ClassId && (row.SubjectIds || []).includes(subject.SubjectId));
+    && row.ClassId === schoolClass.ClassId
+    // Junior subjects are compulsory for the class, including memberships
+    // created before its curriculum was configured or transferred into it.
+    && (schoolClass.SchoolStage === 'junior-secondary' || (row.SubjectIds || []).includes(subject.SubjectId)));
   if (!roster.length) {
     throw failure('No students in this class offer the selected subject.', 409, 'ACADEMIC_CBT_ROSTER_EMPTY');
   }
@@ -6951,7 +6955,7 @@ export async function validateAcademicCbtTestInput(env, user = {}, input = {}) {
   if (requestedId && !existing) throw failure('The selected CBT test was not found.', 404, 'ACADEMIC_CBT_TEST_NOT_FOUND');
   if (existing) {
     academicCbtAuthority(user, context, existing);
-    if (clean(existing.LocalDownloadedAt)) {
+    if (clean(existing.LocalDownloadedAt || existing.LocalPackageIssuedAt)) {
       throw failure('This test has already been downloaded to a local CBT server. Create a corrected test instead of changing its package.', 409, 'ACADEMIC_CBT_ALREADY_DOWNLOADED');
     }
   }
@@ -7133,6 +7137,67 @@ export async function saveAcademicCbtTest(env, user = {}, input = {}, options = 
   };
 }
 
+export function academicCbtRosterRefreshPlan(record = {}, roster = [], timestamp = Date.now()) {
+  if (lower(record.Status) !== 'scheduled' || clean(record.LocalDownloadedAt || record.LocalPackageIssuedAt)
+    || !Number.isFinite(Date.parse(record.StartsAt)) || Date.parse(record.StartsAt) <= timestamp) {
+    throw failure('Only scheduled tests that have not started or been downloaded can refresh their student list. Existing local tests and attempts are preserved.', 409, 'ACADEMIC_CBT_ROSTER_LOCKED');
+  }
+  const canonicalRefs = values => [...new Map(values.map(clean).filter(Boolean).map(value => [lower(value),value])).values()]
+    .sort((a,b)=>lower(a).localeCompare(lower(b)));
+  const previous = canonicalRefs(record.StudentRefs || []);
+  const StudentRefs = canonicalRefs(roster.map(row => row.StudentRef));
+  if (!StudentRefs.length) throw failure('No eligible students remain for this test. Review the class and subject assignments.', 409, 'ACADEMIC_CBT_ROSTER_EMPTY');
+  if (StudentRefs.length > 1000) throw failure('A CBT student list cannot exceed 1,000 students.', 413);
+  const previousSet = new Set(previous.map(lower)), currentSet = new Set(StudentRefs.map(lower));
+  return { StudentRefs, PreviousCount: previous.length, RosterCount: StudentRefs.length,
+    Added: StudentRefs.filter(ref => !previousSet.has(lower(ref))), Removed: previous.filter(ref => !currentSet.has(lower(ref))) };
+}
+
+export async function refreshAcademicCbtRoster(env, user = {}, input = {}, post = false) {
+  const context = await academicOperationalContext(env, user, input, 'canCreateCbt', { stateKeys: ACADEMIC_CBT_STATE_KEYS });
+  const record = findById(context.state.cbtTests, input.CbtTestId);
+  if (!record || record.SessionId !== context.session.SessionId || record.TermId !== context.term.TermId) {
+    throw failure('The selected CBT test was not found in this academic period.', 404, 'ACADEMIC_CBT_TEST_NOT_FOUND');
+  }
+  academicCbtAuthority(user, context, record);
+  const { roster, schoolClass } = await academicCbtClassContext(env, user, {
+    ClassId: record.ClassId, SubjectId: record.SubjectId, TeacherUsername: record.TeacherUsername
+  }, context);
+  const plan = academicCbtRosterRefreshPlan(record, roster);
+  const revision = clean(record.__updateTime);
+  if (!revision) throw failure('Reload the test before reviewing its student list.', 409);
+  // Rebuild from current server state on both preview and confirmation. The
+  // reviewed token is invalidated by changes to the test or eligible memberships.
+  const material = JSON.stringify([record.CbtTestId, revision, record.PackageDigest, plan,
+    roster.map(row => [row.MembershipId, row.__updateTime]).sort((a,b)=>String(a[0]).localeCompare(String(b[0])))]);
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(material));
+  const PreviewToken = [...new Uint8Array(digest)].map(value=>value.toString(16).padStart(2,'0')).join('');
+  const review = { ...plan, PreviewToken, RevisionToken: revision,
+    Rule: schoolClass.SchoolStage === 'junior-secondary' ? 'All active students in this junior class.' : 'Active students in this class who offer the selected subject.' };
+  if (!post) return { ok:true, rosterReview:review, message:'Student list reviewed. No test or attempt has changed.' };
+  if (clean(input.PreviewToken) !== PreviewToken || clean(input.RevisionToken) !== revision) {
+    throw failure('The test or student list changed after review. Review it again before confirming.', 409, 'ACADEMIC_CBT_ROSTER_CHANGED');
+  }
+  if (!plan.Added.length && !plan.Removed.length && record.RosterCount === plan.RosterCount) {
+    return { ok:true, partialAcademicManagement:true, cbtTest:publicRecord(record), message:'The student list already matches. No changes were needed.' };
+  }
+  const timestamp = nowIso();
+  const updated = { ...record, StudentRefs:plan.StudentRefs, RosterCount:plan.RosterCount,
+    PackageRevision:Number(record.PackageRevision || 0) + 1, RosterRefreshedAt:timestamp, RosterRefreshedBy:actorName(user),
+    UpdatedAt:timestamp, UpdatedBy:actorName(user) };
+  updated.PackageDigest = await academicCbtPackageDigest(updated);
+  academicCbtRosterRefreshPlan(record, roster); // Recheck the start-time boundary before writing.
+  const result = await commitAcademicCbtRoster(env, [
+    { collectionPath:ACADEMIC_MANAGEMENT_COLLECTIONS.cbtTests, documentId:record.CbtTestId,
+      data:withoutMetadata(updated), updateTime:revision },
+    auditWrite(user,'REFRESH_ROSTER','cbtTests',updated,
+      `${plan.PreviousCount} -> ${plan.RosterCount} students; added ${plan.Added.join(', ') || 'none'}; removed ${plan.Removed.join(', ') || 'none'}; papers, answers, schedule and attempts preserved`)
+  ], record, context.state.studentMemberships);
+  return { ok:true, partialAcademicManagement:true,
+    cbtTest:publicRecord({...updated,__updateTime:clean(result?.writeResults?.[0]?.updateTime)}),
+    message:`Student list refreshed: ${plan.RosterCount} eligible students. Papers, schedule and attempts were not changed.` };
+}
+
 export async function rescheduleAcademicCbtTest(env, user = {}, input = {}) {
   const context = await academicOperationalContext(env, user, input, 'canCreateCbt', {
     stateKeys: ['sessions', 'terms', 'cbtTests']
@@ -7280,7 +7345,7 @@ export async function deleteAcademicCbtTest(env, user = {}, input = {}) {
   const record = findById(context.state.cbtTests, input.CbtTestId);
   if (!record) throw failure('The selected CBT test was not found.', 404, 'ACADEMIC_CBT_TEST_NOT_FOUND');
   academicCbtAuthority(user, context, record);
-  if (clean(record.LocalDownloadedAt)) {
+  if (clean(record.LocalDownloadedAt || record.LocalPackageIssuedAt)) {
     throw failure('This test has already reached a local CBT server and cannot be deleted online.', 409, 'ACADEMIC_CBT_ALREADY_DOWNLOADED');
   }
   const revisionToken = clean(input.RevisionToken);
@@ -7385,11 +7450,23 @@ export async function downloadAcademicCbtTestPackage(env, user = {}, input = {})
   }
   const papers = await loadAcademicCbtPapers(env, record);
   const theoryPapers = record.PaperMode === 'split' ? await loadAcademicCbtPapers(env, record, 'theory') : [];
+  // Freeze the roster before releasing a package, not only after the desktop's
+  // acknowledgement. This serializes downloads against reviewed roster edits.
+  let releasedRecord = record;
+  if (!clean(record.LocalPackageIssuedAt || record.LocalDownloadedAt)) {
+    releasedRecord = { ...record, LocalPackageIssuedAt:nowIso(), LocalPackageIssuedBy:actorName(user) };
+    const commit = await commitAcademicBatch(env, [
+      { collectionPath:ACADEMIC_MANAGEMENT_COLLECTIONS.cbtTests, documentId:record.CbtTestId,
+        data:withoutMetadata(releasedRecord), ...writePrecondition(record, record.__updateTime) },
+      auditWrite(user,'ISSUE_LOCAL_PACKAGE','cbtTests',releasedRecord,'Student list locked before releasing the local CBT package.')
+    ], 'The CBT test changed while preparing its download. Reload and download the current package.');
+    releasedRecord.__updateTime = clean(commit?.writeResults?.[0]?.updateTime);
+  }
   return {
     ok: true,
     message: 'The scheduled CBT package is ready for local import.',
     cbtPackage: {
-      ...publicRecord(record),
+      ...publicRecord(releasedRecord),
       Paper: papers[0], Papers: papers,
       TheoryPaper: theoryPapers[0] || null, TheoryPapers: theoryPapers
     }
@@ -7809,6 +7886,8 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
   if (['createacademictranscriptdraft', 'createtranscript'].includes(action)) return createAcademicTranscriptDraft(env, user, input);
   if (['changeacademictranscriptstatus', 'changetranscriptstatus'].includes(action)) return changeAcademicTranscriptStatus(env, user, input);
   if (['rescheduleacademiccbttest', 'reschedulecbttest'].includes(action)) return rescheduleAcademicCbtTest(env, user, input);
+  if (action === 'previewacademiccbtroster') return refreshAcademicCbtRoster(env, user, input, false);
+  if (action === 'refreshacademiccbtroster') return refreshAcademicCbtRoster(env, user, input, true);
   if (['deleteacademiccbttest', 'deletecbttest'].includes(action)) return deleteAcademicCbtTest(env, user, input);
   if (['removeacademiccbtcloudpapers', 'removecbtcloudpapers'].includes(action)) return removeAcademicCbtCloudPapers(env, user, input);
   if (['downloadacademiccbttestpackage', 'downloadcbttestpackage'].includes(action)) return downloadAcademicCbtTestPackage(env, user, input);

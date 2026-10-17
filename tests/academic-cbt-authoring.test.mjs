@@ -58,6 +58,36 @@ test('server accepts each of a teacher’s subjects independently and rejects ot
   }
   await assert.rejects(context.academicCbtClassContext({}, { username: 'other' }, { ClassId: 'class', SubjectId: 'history', TeacherUsername: 'teacher' }), { code: 'ACADEMIC_CBT_ALLOCATION_FORBIDDEN' });
   await assert.rejects(context.academicCbtClassContext({}, { username: 'teacher' }, { ClassId: 'class', SubjectId: 'printing' }), { code: 'ACADEMIC_CBT_ROSTER_EMPTY' });
+  state.classes[0].SchoolStage = 'junior-secondary';
+  state.studentMemberships[0].StudentRef = 'original';
+  state.studentMemberships.push(
+    { ...active, ...period, StudentRef:'transferred', SubjectIds:[], ArmId:'other-arm' },
+    { ...active, ...period, StudentRef:'withdrawn', Status:'Withdrawn', SubjectIds:['printing'] },
+    { ...active, ...period, StudentRef:'other-class', ClassId:'other', SubjectIds:['printing'] },
+    { ...active, ...period, StudentRef:'other-term', TermId:'other', SubjectIds:['printing'] },
+    { ...active, ...period, StudentRef:'other-session', SessionId:'other', SubjectIds:['printing'] }
+  );
+  const before = JSON.stringify(state);
+  for (const SubjectId of ['english','history','printing']) {
+    const result = await context.academicCbtClassContext({}, {username:'teacher'}, {ClassId:'class', SubjectId});
+    assert.deepEqual(Array.from(result.roster, row=>row.StudentRef), ['original','transferred']);
+  }
+  assert.equal(JSON.stringify(state),before,'Eligibility must not rewrite memberships or historical records');
+  state.classes[0].SchoolStage = 'senior-secondary';
+  const senior = await context.academicCbtClassContext({}, {username:'teacher'}, {ClassId:'class',SubjectId:'history'});
+  assert.equal(senior.roster.length,1,'Senior choices are still respected');
+});
+
+test('junior authoring preview includes current students without cached subject choices', async () => {
+  const source = await readFile(new URL('js/admin.js', portalRoot),'utf8');
+  const rows = { classes:[{ClassId:'junior',SchoolStage:'junior-secondary'}], subjects:[],
+    teacherAllocations:['english','maths'].map(SubjectId=>({Status:'Active',ClassId:'junior',SubjectId,AllocationRole:'Subject Teacher',TeacherUsername:'teacher'})),
+    studentMemberships:[{Status:'Active',ClassId:'junior',SubjectIds:['english']},{Status:'Active',ClassId:'junior',SubjectIds:[]},
+      {Status:'Withdrawn',ClassId:'junior',SubjectIds:['maths']},{Status:'Active',ClassId:'senior',SubjectIds:['maths']}] };
+  const context = vm.createContext({clean:v=>String(v||'').trim(),academicIsActive:r=>r.Status==='Active',
+    academicFind:(rows,id)=>rows?.find(r=>r.ClassId===id||r.SubjectId===id),academicLabel:(_rows,id)=>id});
+  vm.runInContext(source.slice(source.indexOf('function academicCbtContexts('),source.indexOf('function academicCbtStatus(')),context);
+  assert.deepEqual(Array.from(context.academicCbtContexts({staff:[]},rows),r=>r.rosterCount),[2,2]);
 });
 
 test('teacher subject menu spans assigned classes and selecting a different class keeps the correct subject', async () => {

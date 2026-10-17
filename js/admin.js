@@ -352,7 +352,7 @@ const schoolOnlyWebSections = new Set([
 const staffRoleOptions = [
   'Vendor User',
   'Super Admin', 'Director', 'Admin', 'Principal', 'Vice Principal Academics', 'Vice Principal Administration',
-  'Head Teacher', 'Assistant Head Teacher', 'Teacher', 'Librarian', 'Senior Pastor', 'Head Minister',
+  'Head Teacher', 'Assistant Head Teacher', 'Teacher', 'ICT', 'Librarian', 'Senior Pastor', 'Head Minister',
   'Admissions Officer', 'Student Welfare Officer', 'Accounts Officer',
   'Management', 'Department User', 'Tuck Shop User', 'Clinic User',
   'Kitchen User', 'Store User', 'Restaurant User', 'Hotel User', 'Front Desk', 'Pastor',
@@ -368,7 +368,7 @@ const staffRoleOptions = [
 
 const schoolOnlyStaffRoles = new Set([
   'Principal', 'Vice Principal Academics', 'Vice Principal Administration',
-  'Head Teacher', 'Assistant Head Teacher', 'Teacher', 'Librarian', 'Admissions Officer', 'Student Welfare Officer',
+  'Head Teacher', 'Assistant Head Teacher', 'Teacher', 'ICT', 'Librarian', 'Admissions Officer', 'Student Welfare Officer',
   'Tuck Shop User', 'Clinic User', 'Kitchen User'
 ]);
 
@@ -15925,9 +15925,10 @@ function academicCbtContexts(data, rows) {
   const contexts = [];
   const seen = new Set();
   allocations.forEach((allocation) => {
+    const juniorClass = academicFind(rows.classes, allocation.ClassId)?.SchoolStage === 'junior-secondary';
     const roster = rows.studentMemberships.filter((membership) => academicIsActive(membership)
       && membership.ClassId === allocation.ClassId
-      && (membership.SubjectIds || []).includes(allocation.SubjectId));
+      && (juniorClass || (membership.SubjectIds || []).includes(allocation.SubjectId)));
     // An empty roster is a setup issue, not a reason to hide an assigned subject.
     const teacherUsername = clean(allocation.TeacherUsername).toLowerCase();
     const key = `${allocation.ClassId}|${allocation.SubjectId}|${teacherUsername}`;
@@ -15966,6 +15967,7 @@ function academicCbtStatus(record = {}) {
   const ends = new Date(record.EndsAt).getTime();
   if (Number.isFinite(ends) && ends <= now) return { label: 'Ended', className: 'ended' };
   if (Number.isFinite(starts) && starts <= now) return { label: 'Active', className: 'active' };
+  if (clean(record.LocalPackageIssuedAt)) return { label: 'Download issued · student list locked', className: 'synced' };
   return { label: 'Scheduled', className: 'scheduled' };
 }
 
@@ -16065,13 +16067,13 @@ function academicCbtWorkspace(data, rows) {
     { label: 'Class', value: (row) => academicLabel(rows.classes, row.ClassId) },
     { label: 'Subject', value: (row) => academicLabel(rows.subjects, row.SubjectId, row.SubjectName) },
     { label: 'Questions', value: (row) => row.NumberOfQuestions },
-    { label: 'Students', value: (row) => row.RosterCount },
+    { label: 'Saved student list', value: (row) => row.RosterCount },
     { label: 'Status', render: (row) => { const status = academicCbtStatus(row); return `<span class="academic-cbt-status academic-cbt-status-${status.className}">${escapeHtml(status.label)}</span>`; } },
-    { label: 'Actions', render: (row) => `<div class="academic-management-row-actions"><button type="button" class="compact-icon-action compact-edit-action" data-academic-cbt-reschedule="${escapeHtml(row.CbtTestId)}" title="Reschedule date and time" aria-label="Reschedule date and time"><span aria-hidden="true">&#128197;</span></button>${clean(row.LocalDownloadedAt)
-      ? (academicCbtHasCloudPapers(row) ? `<button type="button" class="compact-icon-action academic-archive-action" data-academic-cbt-remove-cloud-paper="${escapeHtml(row.CbtTestId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="Remove paper files from Cloudflare R2" aria-label="Remove paper files from Cloudflare R2"><span aria-hidden="true">&#128465;</span></button>` : '')
+    { label: 'Actions', render: (row) => `<div class="academic-management-row-actions">${!clean(row.LocalDownloadedAt || row.LocalPackageIssuedAt) && row.Status === 'Scheduled' && Date.parse(row.StartsAt) > Date.now() ? `<button type="button" data-academic-cbt-refresh-roster="${escapeHtml(row.CbtTestId)}">Refresh student list</button>` : ''}<button type="button" class="compact-icon-action compact-edit-action" data-academic-cbt-reschedule="${escapeHtml(row.CbtTestId)}" title="Reschedule date and time" aria-label="Reschedule date and time"><span aria-hidden="true">&#128197;</span></button>${clean(row.LocalDownloadedAt || row.LocalPackageIssuedAt)
+      ? (clean(row.LocalDownloadedAt) && academicCbtHasCloudPapers(row) ? `<button type="button" class="compact-icon-action academic-archive-action" data-academic-cbt-remove-cloud-paper="${escapeHtml(row.CbtTestId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="Remove paper files from Cloudflare R2" aria-label="Remove paper files from Cloudflare R2"><span aria-hidden="true">&#128465;</span></button>` : '')
       : `<button type="button" class="compact-icon-action compact-edit-action" data-academic-cbt-edit="${escapeHtml(row.CbtTestId)}" title="Edit test package" aria-label="Edit test package"><span aria-hidden="true">&#9998;</span></button><button type="button" class="compact-icon-action academic-archive-action" data-academic-cbt-delete="${escapeHtml(row.CbtTestId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="Delete test" aria-label="Delete test"><span aria-hidden="true">&#128465;</span></button>`}</div>` }
   ], { emptyMessage: 'No online CBT tests have been scheduled for this period.' });
-  return `${editor}${register}`;
+  return `${editor}<p class="muted">Scheduled tests keep the student list saved at upload. After transfers or subject changes, use Refresh student list to review additions and removals before download. Junior classes include all active students; senior classes use their selected subjects.</p>${register}`;
 }
 
 function academicFinanceClearanceWorkspace(data, rows) {
@@ -17247,9 +17249,32 @@ function bindAcademicManagement() {
     const record = academicFind(academicManagementData?.cbtTests || [], button.dataset.academicCbtReschedule);
     if (record) openAcademicCbtRescheduleDialog(record);
   }));
+  panelEl.querySelectorAll('[data-academic-cbt-refresh-roster]').forEach((button) => button.addEventListener('click', async () => {
+    const record = academicFind(academicManagementData?.cbtTests || [], button.dataset.academicCbtRefreshRoster);
+    if (!record) return;
+    await runButtonAction(button, 'Reviewing...', async () => {
+      try {
+        const payload = { SchoolSection:record.SchoolSection || academicManagementFilters.section,
+          SessionId:record.SessionId, TermId:record.TermId, CbtTestId:record.CbtTestId };
+        const preview = await academicManagementRequest('previewAcademicCbtRoster', payload);
+        const review = preview.rosterReview;
+        const confirmed = await window.DynamaxDialogs.confirm({ title:'Review CBT student list',
+          message:`${review.PreviousCount} saved students → ${review.RosterCount} eligible students. ${review.Rule} Papers, answers, schedule and attempts remain unchanged.`,
+          detailsLabel:`${review.Added.length} additions / ${review.Removed.length} removals`,
+          items:[...review.Added.map(ref=>`Add: ${ref}`), ...review.Removed.map(ref=>`Remove: ${ref}`)],
+          confirmText:'Confirm student list' });
+        if (!confirmed) return;
+        const result = await academicManagementRequest('refreshAcademicCbtRoster', {
+          ...payload, PreviewToken:review.PreviewToken, RevisionToken:review.RevisionToken
+        });
+        mergeAcademicCbtTest(result);
+        renderAcademicManagement(academicManagementData || {}, result.message);
+      } catch (error) { setStatus(document.getElementById('academicManagementStatus'),error.message || String(error),'bad'); }
+    });
+  }));
   panelEl.querySelectorAll('[data-academic-cbt-edit]').forEach((button) => button.addEventListener('click', () => {
     const record = academicFind(academicManagementData?.cbtTests || [], button.dataset.academicCbtEdit);
-    if (!record || clean(record.LocalDownloadedAt)) return;
+    if (!record || clean(record.LocalDownloadedAt || record.LocalPackageIssuedAt)) return;
     const schedule = academicCbtLocalParts(record.StartsAt);
     academicCbtDraft = {
       step: 1,
@@ -19903,14 +19928,14 @@ function financeRequisitionStageHelp(record, capabilities) {
   const next = {
     submitted: 'Awaiting Accounts confirmation',
     'accounts confirmed': 'Awaiting Admin review',
-    'admin reviewed': 'Awaiting Director / Super Admin approval',
-    'management authorized': 'Awaiting Director / Super Admin approval',
+    'admin reviewed': 'Awaiting final approval',
+    'management authorized': 'Awaiting final approval',
     approved: 'Awaiting Accounts posting / payment'
   }[status];
   if (!next) return '';
   const directorWaiting = capabilities.canApproveRequisitions && ['submitted', 'accounts confirmed'].includes(status);
   const revised = clean(record.ResubmittedAt) && ['submitted', 'accounts confirmed', 'admin reviewed'].includes(status);
-  return `<small class="finance-next-step">${escapeHtml(next)}${directorWaiting ? '<br>Director approval becomes available after Admin review.' : ''}${revised ? '<br>Edited and resubmitted: earlier approvals were reset.' : ''}</small>`;
+  return `<small class="finance-next-step">${escapeHtml(next)}${directorWaiting ? '<br>Final approval becomes available after the enabled earlier stages.' : ''}${revised ? '<br>Edited and resubmitted: earlier approvals were reset.' : ''}</small>`;
 }
 
 function financeRecordRow(record, type, capabilities) {

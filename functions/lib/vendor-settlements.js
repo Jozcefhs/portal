@@ -3,7 +3,8 @@ import { commitWithReadChecks } from './firestore-checked-commit.js';
 import { handleCardRefundBatch } from './card-refund-batch.js';
 import { getAccountingChartRows } from './accounting-reference-cache.js';
 import { validateRequisitionPosting } from './requisition-posting.js';
-import { assertRequisitionTransition, withApprovalRoute, requisitionPendingTransition, approvalFlowLabel } from './requisition-workflow.js';
+import { assertRequisitionTransition, withApprovalRoute, requisitionPendingTransition, approvalFlowLabel, requisitionCapabilities, hasPrincipalApprovalGrant } from './requisition-workflow.js';
+import { assertFinanceRoleLimit } from './accounting-mutation-guards.js';
 import { approvalSnapshot } from './approval-settings.js';
 import { vendorRequestPrintReport } from './vendor-request-print.js';
 import { findStaffLoginRecord, findStaffUserRecord, staffAccessFor, verifyStaffApprovalPassword } from './staff-auth.js';
@@ -18,8 +19,13 @@ export const VENDOR_COLLECTIONS = Object.freeze({ vendors: 'commerceVendors', ba
   entries: 'vendorEarnings', lots: 'vendorClaimLots', requests: 'vendorSettlementRequests',
   payments: 'vendorSettlementPayments', periods: 'vendorChargePeriods', operations: 'vendorSettlementOperations' });
 const management = new Set(['Super Admin', 'Director', 'Accounts Officer']);
-const operators = new Set([...management, 'Admin', 'Management', 'Tuck Shop User', 'Store User', 'Restaurant User', 'Operations Manager']);
 const role = user => clean(user.assignedRole || user.UserAssignedRole || user.role || user.Role);
+// requireStaffSession resolves this grant from current Role Access settings.
+// Module operators do not inherit accounting, approval or vendor-admin powers.
+const canOperate = user => role(user) !== 'Vendor User' && !user.vendorSettlementApprovalOnly && (user.allowedSections || []).includes('vendorSettlements');
+function requireOperator(user) {
+  if (!canOperate(user)) fail('Your role cannot perform this vendor action.', 403);
+}
 const actor = user => clean(user.displayName || user.username);
 const defaults = Object.freeze({ Enabled: false, AccountingConfirmed: false, PayableAccount: '2000', CommissionAccount: '4090',
   VendorReceivableAccount: '1110', BusinessTimezone: 'Africa/Lagos', RuleHistory: [] });
@@ -71,7 +77,9 @@ function requireRole(user, allowed) {
 function requireAccess(user, action) {
   if (!clean(user.username)) fail('Sign in to manage vendor settlements.', 401);
   if (!(user.allowedSections || []).includes('vendorSettlements')) fail('Vendor settlements are not available for this account.', 403);
-  if (!operators.has(role(user)) && role(user) !== 'Vendor User') fail('Your role cannot access vendor settlements.', 403);
+  if (user.vendorSettlementApprovalOnly && !['bootstrap', 'statement', 'decision'].includes(action)) {
+    fail('Your permission is for reviewing and approving vendor payment requests only.', 403);
+  }
   if (!['bootstrap', 'statement', 'previewCardRefundBatch', 'previewHistorical', 'previewSale', 'previewProductImport', 'salesBootstrap', 'recentVendorSales', 'previewVendorSale', 'vendorWalletLookup', 'vendorCustomerSearch'].includes(action)
     && (user.subscriptionActive === false || user.subscriptionReadOnly === true)) fail('This workspace is read-only until the subscription is renewed.', 403);
 }
@@ -255,10 +263,11 @@ async function bootstrap(env, user, scope) {
     settings: { ...plain(settings), RecordVersion: settings.__updateTime || '' },
     chart: accountingChartChoicesForEdition(chart, scope.OrganisationEdition).map(row => ({ Code: clean(row.Code || row.__id),
       Name: row.Name, Type: row.Type, Active: activeAccount(row) ? 'YES' : 'NO' })),
-    capabilities: { manage: management.has(role(user)), operate: operators.has(role(user)), vendor: role(user) === 'Vendor User',
-      products: operators.has(role(user)) || vendors.some(v => !['no','false','0','inactive','disabled'].includes(lower(v.Active ?? 'YES'))), reviewProducts: management.has(role(user)),
+    capabilities: { manage: management.has(role(user)), operate: canOperate(user), vendor: role(user) === 'Vendor User',
+      approvalOnly: user.vendorSettlementApprovalOnly === true,
+      products: canOperate(user) || role(user) === 'Vendor User' && vendors.some(v => !['no','false','0','inactive','disabled'].includes(lower(v.Active ?? 'YES'))), reviewProducts: management.has(role(user)),
       configureApprovals: role(user) === 'Super Admin',
-      confirm: role(user) === 'Accounts Officer', review: role(user) === 'Admin', approve: ['Director', 'Super Admin'].includes(role(user)), pay: role(user) === 'Accounts Officer',
+      confirm: role(user) === 'Accounts Officer', review: role(user) === 'Admin', approve: requisitionCapabilities(user).canApproveRequisitions, pay: role(user) === 'Accounts Officer',
       saleSections: (scope.OrganisationEdition === 'school' ? ['tuckShop'] : ['organizationStore','restaurant']).filter(section => (user.allowedSections || []).includes(section)),
       edition: scope.OrganisationEdition, section: scope.SchoolSection, branchId: scope.BranchId } };
 }
@@ -354,7 +363,7 @@ async function products(env, scope) {
 }
 async function saveProduct(env, user, scope, body) {
   if (role(user) === 'Vendor User') return handleVendorProductAction(env,user,scope,{...body,action:'saveProduct'},productDependencies());
-  requireRole(user, operators);
+  requireOperator(user);
   const section = clean(body.Section || (scope.OrganisationEdition === 'school' ? 'tuckShop' : 'organizationStore'));
   if (!(scope.OrganisationEdition === 'school' ? ['tuckShop'] : ['organizationStore', 'restaurant']).includes(section)) fail('Choose a store available in this edition.');
   const vendor = body.VendorId ? await ownVendor(env, user, scope, body.VendorId) : null;
@@ -450,6 +459,9 @@ async function decision(env, user, scope, body, options) {
   const op = await operation(env, scope, user, { ...body, VendorId: request.VendorId }, 'decision'); if (op.replay) return op.replay;
   checkVersion(body, request);
   const next = clean(body.Status), timestamp = new Date().toISOString();
+  if (user.vendorSettlementApprovalOnly && !['Approved', 'Rejected'].includes(next)) {
+    fail('Your permission is for final approval or rejection only.', 403);
+  }
   let method = 'Authenticated session', transition = null;
   if (next === 'Cancelled') {
     if (request.RequestedByUsername !== user.username && !management.has(role(user))) fail('Only the requester or Accounts can cancel this request.', 403);
@@ -461,7 +473,13 @@ async function decision(env, user, scope, body, options) {
     }
   } else if (next === 'Posted') {
     fail('Use Record payment; approval alone cannot mark a vendor paid.', 409);
-  } else { transition = assertRequisitionTransition(request, role(user), next); method = await authorize(env, user, body, options); }
+  } else {
+    transition = assertRequisitionTransition(request, user, next);
+    if (hasPrincipalApprovalGrant(user)) {
+      assertFinanceRoleLimit(await listCollection(env, 'accountingApprovalLimits'), 'Principal', 'Vendor Payment Request', amount(request.AmountCents));
+    }
+    method = await authorize(env, user, body, options);
+  }
   if (next === 'Rejected' && !clean(body.Notes)) fail('Give a reason for rejecting the request.');
   const previous = await scoped(env, VENDOR_COLLECTIONS.balances, request.VendorId, scope), writes = [];
   if (['Rejected', 'Cancelled'].includes(next) && request.Status !== 'Rejected') {
@@ -777,7 +795,7 @@ export async function handleVendorSettlementAction(env, user, body = {}, options
     }
     case 'previewSale':
     case 'recordSale': {
-      requireRole(user, operators);
+      requireOperator(user);
       const section = clean(body.Section);
       if (!(scope.OrganisationEdition === 'school' ? ['tuckShop'] : ['organizationStore','restaurant']).includes(section)
         || !(user.allowedSections || []).includes(section)) fail('This sales workspace is not assigned to your account.',403);
@@ -787,6 +805,7 @@ export async function handleVendorSettlementAction(env, user, body = {}, options
     }
     case 'bootstrap': {
       const data = await bootstrap(env, user, scope);
+      if (user.vendorSettlementApprovalOnly) return { ...data, productPolicy:productPolicy(data.settings), productChanges:[], products:[], productCount:0 };
       const allowed = new Set(data.vendors.map(vendor => vendor.VendorId));
       const changes = await rows(env,PRODUCT_CHANGES,scope);
       const stock = (await products(env,scope)).filter(item => role(user) !== 'Vendor User' || data.vendors.some(v => v.VendorId === item.VendorId
@@ -805,7 +824,7 @@ export async function handleVendorSettlementAction(env, user, body = {}, options
     case 'reviewProductChange': return handleVendorProductAction(env,user,scope,{...body,action},productDependencies());
     case 'previewProductImport':
     case 'importProducts': return handleProductImport(env, user, scope, { ...body, action }, {
-      requireOperator: actor => requireRole(actor, new Set([...operators,'Vendor User'])), vendors: (env, scope) => rows(env, VENDOR_COLLECTIONS.vendors, scope),
+      requireOperator: actor => { if (role(actor) !== 'Vendor User') requireOperator(actor); }, vendors: (env, scope) => rows(env, VENDOR_COLLECTIONS.vendors, scope),
       productContext: role(user) === 'Vendor User' ? (env,user,scope) => vendorProductContext(env,user,scope,productDependencies()) : null,
       prepareProductWrites:(env,user,scope,items,context) => prepareVendorProductWrites(env,user,scope,items,context,productDependencies()),
       get: getDocument, query: queryCollectionPages, write, audit, commit, operation, operationWrite });

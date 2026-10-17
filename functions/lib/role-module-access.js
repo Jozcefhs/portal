@@ -66,7 +66,7 @@ export const ORGANIZATION_SECTION_LABELS = Object.freeze({
 export const STAFF_ROLE_OPTIONS = Object.freeze([
   'Vendor User',
   'Super Admin', 'Director', 'Admin', 'Principal', 'Vice Principal Academics', 'Vice Principal Administration',
-  'Head Teacher', 'Assistant Head Teacher', 'Teacher', 'Librarian', 'Senior Pastor', 'Head Minister',
+  'Head Teacher', 'Assistant Head Teacher', 'Teacher', 'ICT', 'Librarian', 'Senior Pastor', 'Head Minister',
   'Admissions Officer', 'Student Welfare Officer', 'Accounts Officer',
   'Management', 'Department User', 'Tuck Shop User', 'Clinic User',
   'Kitchen User', 'Store User', 'Restaurant User', 'Hotel User', 'Front Desk', 'Pastor',
@@ -91,6 +91,7 @@ const LEGACY_ROLE_DEFAULTS = Object.freeze({
   'Head Teacher': ['recordsDesk', 'executiveOffice', 'academics', 'studentConduct'],
   'Assistant Head Teacher': ['recordsDesk', 'executiveOffice', 'academics', 'studentConduct'],
   Teacher: ['academics'],
+  ICT: ['students', 'academics', 'staffAttendance'],
   Librarian: ['library'],
   'Admissions Officer': ['recordsDesk', 'admissions', 'formPurchases', 'students', 'academics', 'studentConduct', 'financeRequests', 'payroll'],
   'Accounts Officer': ['recordsDesk', 'students', 'academics', 'accounts', 'incomeAnalytics', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore'],

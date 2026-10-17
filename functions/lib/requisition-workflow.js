@@ -87,9 +87,32 @@ export function requisitionCapabilities(user = {}) {
   return {
     canConfirmRequisitions: role === 'Accounts Officer',
     canReviewRequisitions: role === 'Admin',
-    canApproveRequisitions: ['Director', 'Super Admin'].includes(role),
+    canApproveRequisitions: ['Director', 'Super Admin'].includes(role) || hasPrincipalApprovalGrant(user),
     canPostRequisitions: role === 'Accounts Officer'
   };
+}
+
+// This is an approval grant, not accounting or payment-posting authority.
+// Callers supply the server-resolved staff identity, never request-body grants.
+export function hasPrincipalApprovalGrant(user = {}) {
+  return clean(user.assignedRole || user.AssignedRole || user.role || user.Role) === 'Principal'
+    && user.approvalEnabled === true;
+}
+
+export function assertPrincipalApprovalScope(user, record) {
+  const value = record.SettlementId ? Number(record.AmountCents) / 100 : Number(record.Amount);
+  const maximum = Number(user.approvalMaxAmount);
+  const accounts = Array.isArray(user.approvalAccounts) ? user.approvalAccounts.map(lower) : [];
+  const required = record.SettlementId
+    ? [record.PayableAccount, ...(record.Allocations || []).map(row => row.PayableAccount || record.PayableAccount)]
+    : [record.ExpenseAccount];
+  if (!hasPrincipalApprovalGrant(user) || !Number.isFinite(value) || value <= 0
+      || !Number.isFinite(maximum) || maximum <= 0 || value > maximum) {
+    throw Object.assign(new Error('This request exceeds your financial document approval amount limit.'), { status: 403 });
+  }
+  if (required.some(code => !clean(code) || !accounts.includes(lower(code)))) {
+    throw Object.assign(new Error('This request uses an account code outside your financial document approval permission.'), { status: 403 });
+  }
 }
 
 export function requisitionPendingTransition(record = {}) {
@@ -110,7 +133,7 @@ export function requisitionPendingTransition(record = {}) {
 export const APPROVAL_STAGES = Object.freeze([
   { id: 'accounts', label: 'Accounts confirmation' },
   { id: 'admin-review', label: 'Admin review' },
-  { id: 'director', label: 'Director / Super Admin approval' }
+  { id: 'director', label: 'Final approval (Director / Super Admin / authorised Principal)' }
 ]);
 
 export function validateApprovalStages(stages) {
@@ -127,13 +150,16 @@ export function approvalFlowLabel(record = {}) {
 }
 
 export function withApprovalRoute(record) {
-  return { ...record, PendingApproval: requisitionPendingTransition(record), ApprovalFlowLabel: approvalFlowLabel(record) };
+  const pending = requisitionPendingTransition(record);
+  return { ...record, PendingApproval: pending?.stage === 'director'
+    ? { ...pending, role: 'Director, Super Admin or authorised Principal' } : pending, ApprovalFlowLabel: approvalFlowLabel(record) };
 }
 
 export function assertRequisitionTransition(record = {}, userRole = '', requestedStatus = '') {
   const currentStatus = requisitionWorkflowStatus(record);
   const transition = requisitionPendingTransition(record);
-  const role = clean(userRole);
+  const user = typeof userRole === 'object' && userRole !== null ? userRole : { role: userRole };
+  const role = clean(user.assignedRole || user.role);
   const nextStatus = requisitionWorkflowStatus({
     Status: requestedStatus,
     AdminReviewedAt: lower(requestedStatus) === 'approved' ? 'pending' : ''
@@ -145,12 +171,14 @@ export function assertRequisitionTransition(record = {}, userRole = '', requeste
     err.code = 'REQUISITION_STAGE_COMPLETE';
     throw err;
   }
-  if (!(transition.roles || [transition.role]).includes(role)) {
+  const delegated = transition.stage === 'director' && hasPrincipalApprovalGrant(user);
+  if (!(transition.roles || [transition.role]).includes(role) && !delegated) {
     const err = new Error(`Only ${transition.role} can ${transition.verb} a requisition at the ${currentStatus} stage.`);
     err.status = 403;
     err.code = 'REQUISITION_STAGE_ROLE_REQUIRED';
     throw err;
   }
+  if (delegated) assertPrincipalApprovalScope(user, record);
   if (nextStatus === REQUISITION_STATUS.REJECTED) {
     if (currentStatus === REQUISITION_STATUS.APPROVED) {
       const err = new Error('An approved requisition must be posted and paid by Accounts; it can no longer be rejected in this workflow.');
