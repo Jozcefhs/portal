@@ -11236,13 +11236,16 @@ async function saveStaffUserFromDesktop(env, body) {
   }
   const profile = await loadOrganizationNameProfile(env);
   const identity = { ...(existing || {}), ...incoming };
+  const recoveryEmail = normalizeRecoveryEmail(incoming.RecoveryEmail ?? existing?.RecoveryEmail);
   const payload = {
     ...(existing || {}),
     Username: username,
     UsernameKey: lower(username),
     LoginUsername: loginUsername,
     LoginUsernameKey: lower(loginUsername),
-    RecoveryEmail: normalizeRecoveryEmail(incoming.RecoveryEmail ?? existing?.RecoveryEmail),
+    RecoveryEmail: recoveryEmail,
+    RecoveryEmailChangedAt: lower(existing?.RecoveryEmail) === recoveryEmail
+      ? clean(existing?.RecoveryEmailChangedAt) : new Date().toISOString(),
     DisplayName: formatPersonName(identity, profile || {}, clean(incoming.DisplayName || existing?.DisplayName) || username),
     FirstName: clean(incoming.FirstName || incoming.firstName || existing?.FirstName || existing?.firstName),
     MiddleName: clean(incoming.MiddleName || incoming.middleName || existing?.MiddleName || existing?.middleName),

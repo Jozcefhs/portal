@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
+import vm from 'node:vm';
 import { findStaffLoginUser, findStaffUser } from '../functions/lib/staff-auth.js';
 import { staffProfileImageIds } from '../functions/api/staff-session.js';
 
@@ -109,8 +110,38 @@ test('staff can securely change their own login details from the web profile', (
 test('self-service login settings are shared by school and religious-organisation editions', () => {
   const profileOpener = adminJs.match(/function openStaffProfile\(\) \{[\s\S]*?\n\}/)?.[0] || '';
   assert.match(profileOpener, /staffProfileLoginUsername/);
+  assert.match(profileOpener, /staffProfileRecoveryEmail.*currentUser.recoveryEmail/);
   assert.doesNotMatch(profileOpener, /schoolEdition|isFaith|isOrganisationOperations/);
   assert.match(adminHtml, /accessing organisation records/);
+});
+
+test('login settings submit the account email with the password and clear secrets after saving', async () => {
+  const values = { staffProfileLoginUsername: 'my.login', staffProfileRecoveryEmail: ' me@example.test ',
+    staffProfileCurrentPassword: 'fixture-current-password', staffProfileNewPassword: '', staffProfileConfirmPassword: '' };
+  const elements = Object.fromEntries(Object.entries(values).map(([id, value]) => [id, { value }]));
+  let listener, posted, shown;
+  const form = { addEventListener: (_event, fn) => { listener = fn; }, elements: {
+    currentPassword: elements.staffProfileCurrentPassword, newPassword: elements.staffProfileNewPassword,
+    confirmPassword: elements.staffProfileConfirmPassword,
+  } };
+  const context = vm.createContext({
+    document: { getElementById: id => id === 'staffLoginDetailsForm' ? form : elements[id] || {} },
+    clean: value => String(value || '').trim(), setButtonLoading: () => {}, setStatus: () => {},
+    sessionRequest: async (method, body) => { posted = { method, ...body };
+      return { response: { ok: true }, data: { ok: true, user: { recoveryEmail: body.recoveryEmail }, message: 'Saved' } }; },
+    showDashboard: user => { shown = user; },
+  });
+  const start = adminJs.indexOf("document.getElementById('staffLoginDetailsForm').addEventListener('submit'");
+  vm.runInContext(adminJs.slice(start, adminJs.indexOf('async function signOutFromPortal(', start)), context);
+  await listener({ preventDefault() {}, currentTarget: form });
+  assert.equal(posted.method, 'POST');
+  assert.equal(posted.action, 'updateLoginDetails');
+  assert.equal(posted.recoveryEmail, 'me@example.test');
+  assert.equal(posted.currentPassword, 'fixture-current-password');
+  assert.equal(shown.recoveryEmail, 'me@example.test');
+  assert.equal(elements.staffProfileCurrentPassword.value, '');
+  assert.match(adminHtml, /id="staffProfileRecoveryEmail"[^>]*type="email"/);
+  assert.match(staffAuth, /delete sessionUser.recoveryEmail/);
 });
 
 test('login usernames remain separate from immutable staff identity', () => {

@@ -7,12 +7,12 @@ import { credentialStateId } from './staff-credential-state.js';
 
 const clean = value => String(value ?? '').trim();
 const TOKEN_COLLECTION = 'staffPasswordRecovery';
-export const RECOVERY_REQUEST_MESSAGE = 'If this is an active staff account with a recovery email configured, a one-time code will be sent. Check your inbox and spam folder. If it does not arrive, contact your administrator.';
+export const RECOVERY_REQUEST_MESSAGE = 'If this is an active staff account with an email saved on the login account, a one-time code will be sent. Check your inbox and spam folder. No administrator email verification is needed. If it does not arrive, try again later or contact your administrator.';
 
 export function normalizeRecoveryEmail(value) {
   const email = clean(value).toLowerCase();
   if (email && (email.length > 254 || !/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(email))) {
-    throw Object.assign(new Error('Enter a valid recovery email address.'), { status: 400 });
+    throw Object.assign(new Error('Enter a valid login-account email address.'), { status: 400 });
   }
   return email;
 }
@@ -37,7 +37,7 @@ async function digest(value) {
 
 async function fingerprint(row) {
   return digest(JSON.stringify([row.Username, row.LoginUsername || row.Username, row.Salt,
-    row.PasswordHash, row.PasswordIterations, row.RecoveryEmail]));
+    row.PasswordHash, row.PasswordIterations, row.RecoveryEmail, row.RecoveryEmailChangedAt]));
 }
 
 function invalidCode() {
@@ -45,8 +45,9 @@ function invalidCode() {
 }
 
 // Called in waitUntil: the public response does not reveal lookup or delivery
-// timing. Only an administrator-configured LOGIN recovery email is trusted;
-// display-only HR contacts and request-supplied emails are never used.
+// timing. The saved LOGIN email is used without an administrator verification
+// requirement: the one-time code proves inbox access. Display-only HR contacts
+// and request-supplied emails are never used.
 export async function requestStaffPasswordRecovery(env, username) {
   const identity = requiredDeploymentIdentity(env);
   const login = clean(username).toLowerCase();

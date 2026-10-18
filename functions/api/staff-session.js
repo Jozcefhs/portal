@@ -28,6 +28,7 @@ import { formatPersonName } from '../lib/person-name-format.js';
 import { loadStaffProfileImage } from '../lib/staff-profile-image.js';
 import { externalAuditAccessExpired } from '../lib/external-audit.js';
 import { withStaffEmployment } from '../lib/staff-employment.js';
+import { normalizeRecoveryEmail } from '../lib/staff-password-recovery.js';
 export { staffProfileImageIds } from '../lib/staff-profile-image.js';
 
 function response(data, status = 200, cookies = [], extraHeaders = {}) {
@@ -117,6 +118,7 @@ function authoritativeSessionUser(record, sessionUser, profilePhotoUrl = '', sch
     authEpoch: clean(sessionUser.authEpoch ?? record.PasswordRecoveryEpoch),
     username: clean(record.Username || record.__id || sessionUser.username),
     loginUsername: clean(record.LoginUsername || sessionUser.loginUsername || record.Username || sessionUser.username),
+    recoveryEmail: clean(record.RecoveryEmail),
     displayName: sessionStaffDisplayName(
       record,
       schoolProfile,
@@ -371,6 +373,9 @@ export async function onRequestPost(context) {
         return response({ ok: false, message: 'New password must contain at least 6 characters.' }, 400);
       }
       const passwordFields = newPassword ? await hashStaffPassword(newPassword) : {};
+      // Only this password-confirmed account-security action may change the
+      // recovery destination. Profile/HR edits must never become reset authority.
+      const recoveryEmail = normalizeRecoveryEmail(body.recoveryEmail ?? existing.RecoveryEmail);
       const changedAt = new Date().toISOString();
       const canonicalUsername = clean(existing.Username || existing.__id || sessionUser.username);
       const priorLoginUsername = clean(existing.LoginUsername || canonicalUsername);
@@ -378,6 +383,9 @@ export async function onRequestPost(context) {
         ...existing,
         LoginUsername: loginUsername,
         LoginUsernameKey: lower(loginUsername),
+        RecoveryEmail: recoveryEmail,
+        RecoveryEmailChangedAt: lower(existing.RecoveryEmail) === recoveryEmail
+          ? clean(existing.RecoveryEmailChangedAt) : changedAt,
         ...passwordFields,
         ...(newPassword ? { MustChangePassword: false, PasswordChangedAt: changedAt } : {}),
         LoginUsernameChangedAt: lower(priorLoginUsername) === lower(loginUsername)
@@ -404,6 +412,7 @@ export async function onRequestPost(context) {
             SourcePlatform: 'Web',
             Details: [
               lower(priorLoginUsername) === lower(loginUsername) ? '' : 'Login username changed',
+              lower(existing.RecoveryEmail) === recoveryEmail ? '' : 'Login-account email changed after current-password verification',
               newPassword ? 'Password changed' : ''
             ].filter(Boolean).join(' | ') || 'Login details confirmed'
           }
@@ -425,8 +434,8 @@ export async function onRequestPost(context) {
         ok: true,
         authenticated: true,
         message: newPassword
-          ? 'Login username and password updated successfully.'
-          : 'Login username updated successfully.',
+          ? 'Login details and password updated successfully.'
+          : 'Login details updated successfully.',
         user: staffUserForAccess(refreshedUser, access)
       }, 200, staffSessionCookie(refreshedToken));
     }

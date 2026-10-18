@@ -216,13 +216,17 @@
       <div class="profile-security-heading">
         <small>Account security</small>
         <h3>Login details</h3>
-        <p class="muted">Change the username used to sign in and, if needed, set a new password. Your internal staff identity and records remain unchanged.</p>
+        <p class="muted">Manage your login username, account email and password. Your internal staff identity and records remain unchanged.</p>
       </div>
       <label>Login username <span class="required">*</span>
         <input id="staffProfileLoginUsername" name="loginUsername" minlength="3" maxlength="80" autocomplete="username" required>
       </label>
       <label>Current password <span class="required">*</span>
         <input id="staffProfileCurrentPassword" name="currentPassword" type="password" autocomplete="current-password" required>
+      </label>
+      <label>Login-account email
+        <input id="staffProfileRecoveryEmail" name="recoveryEmail" type="email" maxlength="254" autocomplete="email">
+        <small class="muted">Use an inbox only you control. Forgot password sends a one-time code here; no administrator verification is needed. Saving or changing this email requires your current password. HR Work email is not used. Leaving this empty disables self-service password recovery.</small>
       </label>
       <label>New password
         <input id="staffProfileNewPassword" name="newPassword" type="password" minlength="6" autocomplete="new-password">

@@ -102,8 +102,9 @@ for (const edition of ['school', 'faith', 'organization']) {
   });
 }
 
-test('only the configured login recovery address is used; missing/inactive/expired/cross-edition accounts send nothing', async () => {
-  for (const fields of [{ RecoveryEmail: '', Email: 'hr@example.test' }, { Active: false },
+test('only the saved login-account email is used; HR contacts and ineligible accounts send nothing', async () => {
+  for (const fields of [{ RecoveryEmail: '', Email: 'hr@example.test', WorkEmail: 'hr@example.test',
+    Employment: { WorkEmail: 'hr@example.test' } }, { Active: false },
     { OrganisationEdition: 'faith' }, { Role: 'External Auditor', AuditExpiresAt: '2020-01-01' }]) {
     const f = await fixture('school', fields);
     await f.context.requestStaffPasswordRecovery(f.env, 'my.login');
@@ -113,6 +114,31 @@ test('only the configured login recovery address is used; missing/inactive/expir
   await f.context.requestStaffPasswordRecovery(f.env, 'not-found');
   await f.context.requestStaffPasswordRecovery(f.env, 'teacher'); // Alias must be used.
   assert.equal(f.emails.length, 0);
+});
+
+test('saved account emails need no administrator verification and requests cannot choose another address', async () => {
+  for (const edition of ['school', 'faith', 'organization']) {
+    const f = await fixture(edition, { RecoveryEmailVerified: false, RecoveryEmailVerifiedBy: '',
+      WorkEmail: 'hr@example.test', Employment: { WorkEmail: 'hr@example.test' } });
+    f.put('hrEmployees', 'teacher', { Username: 'teacher', WorkEmail: 'hr@example.test' });
+    const response = await f.post({ username: 'my.login', email: 'attacker@example.test', RecoveryEmail: 'attacker@example.test' });
+    assert.equal(response.status, 200);
+    await Promise.all(f.pending);
+    assert.equal(f.emails.length, 1);
+    assert.equal(f.emails[0].toEmail, 'teacher@example.test');
+    await f.context.resetStaffPassword(f.env, f.code(), 'new-test-password');
+    assert.notEqual(f.docs.get('staffUsers/legacy-id').PasswordHash, f.original.PasswordHash);
+    assert.equal(f.docs.get('hrEmployees/teacher').WorkEmail, 'hr@example.test');
+  }
+});
+
+test('changing and later restoring a login email never revives an older code', async () => {
+  const f = await fixture();
+  await f.context.requestStaffPasswordRecovery(f.env, 'my.login');
+  // Same address after two password-confirmed edits; the change stamp must still invalidate the old code.
+  f.docs.get('staffUsers/legacy-id').RecoveryEmailChangedAt = '2026-10-18T12:00:00Z';
+  await assert.rejects(f.context.resetStaffPassword(f.env, f.code(), 'new-test-password'), /invalid/);
+  assert.equal(f.docs.get('staffUsers/legacy-id').PasswordHash, f.original.PasswordHash);
 });
 
 test('cooldown and concurrent requests cannot send repeated emails', async () => {
@@ -209,5 +235,6 @@ test('recovery UI and backup rules keep secrets out of URLs, storage, HR and por
   assert.match(html, /autocomplete="new-password"/);
   assert.doesNotMatch(js, /localStorage|sessionStorage|location\.search|innerHTML/);
   for (const collection of ['staffPasswordRecovery', 'staffPasswordRecoveryLimits', 'staffCredentialRevocations']) assert.ok(backup.includes(`'${collection}'`));
-  assert.match(desktopBackend, /RecoveryEmail: normalizeRecoveryEmail\(incoming.RecoveryEmail \?\? existing\?\.RecoveryEmail\)/);
+  assert.match(desktopBackend, /const recoveryEmail = normalizeRecoveryEmail\(incoming.RecoveryEmail \?\? existing\?\.RecoveryEmail\)/);
+  assert.match(desktopBackend, /RecoveryEmailChangedAt: lower\(existing\?\.RecoveryEmail\) === recoveryEmail/);
 });

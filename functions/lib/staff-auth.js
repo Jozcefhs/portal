@@ -249,6 +249,7 @@ function publicUser(user) {
     username: clean(user.Username || user.username || user.__id),
     authEpoch: clean(user.PasswordRecoveryEpoch ?? user.authEpoch),
     loginUsername: clean(user.LoginUsername || user.loginUsername || user.Username || user.username || user.__id),
+    recoveryEmail: clean(user.RecoveryEmail ?? user.recoveryEmail),
     displayName: clean(user.DisplayName || user.displayName || user.Username || user.username || user.__id),
     profilePhotoUrl: clean(user.ProfilePhotoDataUrl || user.profilePhotoUrl),
     role: assignedRole === 'Director' ? 'Super Admin' : assignedRole === 'Admin' ? 'Management' : assignedRole,
@@ -636,6 +637,7 @@ export async function createStaffSession(env, user) {
     throw Object.assign(new Error('Your password changed. Please sign in again.'), { status: 401 });
   }
   delete sessionUser.profilePhotoUrl;
+  delete sessionUser.recoveryEmail;
   const payload = {
     ...sessionUser,
     purpose: 'staff-session',

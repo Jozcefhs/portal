@@ -158,7 +158,7 @@ test('web and desktop staff editors pass explicit original identities for edits 
 
 function sessionHarness(h, overrides = {}) {
   const context = vm.createContext({
-    crypto, Date, console, Headers, Response,
+    crypto, Date, console, Headers, Response, normalizeRecoveryEmail,
     ...h.database,
     ...Object.fromEntries(['beginStaffAccountChange', 'commitStaffAccountChanges', 'staffAccountCondition', 'staffAccountWrite']
       .map(name => [name, h.core[name]])),
@@ -194,6 +194,72 @@ test('self-service profile and password edits preserve the stored ID and authori
     assert.equal(h.docs.get('staffUsers/legacy@owner').Role, 'Super Admin');
     assert.equal(h.docs.has('staffUsers/owner'), false);
   }
+});
+
+test('staff can save their own login-account email with the current password in every edition', async () => {
+  for (const edition of ['school', 'faith', 'organization']) {
+    const h = harness([{ ...admin('owner'), __id: 'legacy@owner', OrganisationEdition: edition,
+      RecoveryEmail: 'old@example.test', Salt: 'existing-salt', PasswordHash: 'existing-hash',
+      ApprovalEnabled: true, TabAccess: ['accounts'], BranchId: 'east' }, admin('someone-else')]);
+    const response = await sessionHarness(h)({ ...loginBody, username: 'someone-else',
+      recoveryEmail: '  Staff@Example.test  ' });
+    const data = await response.json();
+    assert.equal(response.status, 200, JSON.stringify(data));
+    assert.equal(data.user.recoveryEmail, 'staff@example.test');
+    const saved = h.docs.get('staffUsers/legacy@owner');
+    assert.equal(saved.RecoveryEmail, 'staff@example.test');
+    assert.ok(saved.RecoveryEmailChangedAt);
+    assert.equal(saved.PasswordHash, 'existing-hash');
+    assert.equal(saved.Salt, 'existing-salt');
+    assert.equal(saved.Role, 'Super Admin');
+    assert.equal(saved.ApprovalEnabled, true);
+    assert.deepEqual(saved.TabAccess, ['accounts']);
+    assert.equal(saved.BranchId, 'east');
+    assert.equal(saved.OrganisationEdition, edition);
+    assert.equal(h.docs.get('staffUsers/someone-else').RecoveryEmail, undefined);
+    const audit = [...h.docs].find(([key]) => key.startsWith('staffSecurityAudit/'))[1];
+    assert.match(audit.Details, /email changed after current-password verification/);
+    assert.doesNotMatch(JSON.stringify(audit), /Staff@|staff@example|test-only/);
+  }
+});
+
+test('login email edits require authentication and the current password; invalid email writes nothing', async () => {
+  for (const overrides of [{ readStaffSession: async () => null }, { verifyStaffApprovalPassword: async () => false }]) {
+    const h = harness([admin('owner')]);
+    const response = await sessionHarness(h, overrides)({ ...loginBody, recoveryEmail: 'new@example.test' });
+    assert.equal(response.status, 401);
+    assert.equal(h.batches.length, 0);
+  }
+  const h = harness([admin('owner')]);
+  const response = await sessionHarness(h)({ ...loginBody, recoveryEmail: 'not-an-email' });
+  assert.equal(response.status, 400);
+  assert.equal(h.batches.length, 0);
+});
+
+test('ordinary profile edits cannot change login email; older clients preserve it and explicit clearing disables it', async () => {
+  for (const body of [{ ...profileBody, recoveryEmail: 'attacker@example.test', RecoveryEmail: 'attacker@example.test' }, loginBody]) {
+    const h = harness([{ ...admin('owner'), RecoveryEmail: 'original@example.test', RecoveryEmailChangedAt: 'previous' }]);
+    const response = await sessionHarness(h)(body);
+    assert.equal(response.status, 200);
+    assert.equal(h.docs.get('staffUsers/owner').RecoveryEmail, 'original@example.test');
+    assert.equal(h.docs.get('staffUsers/owner').RecoveryEmailChangedAt, 'previous');
+  }
+  const h = harness([{ ...admin('owner'), RecoveryEmail: 'original@example.test' }]);
+  assert.equal((await sessionHarness(h)({ ...loginBody, recoveryEmail: '' })).status, 200);
+  assert.equal(h.docs.get('staffUsers/owner').RecoveryEmail, '');
+});
+
+test('a concurrent account change prevents stale recovery-email changes from committing', async () => {
+  const h = harness([{ ...admin('owner'), RecoveryEmail: 'original@example.test' }]);
+  const response = await sessionHarness(h, { verifyStaffApprovalPassword: async () => {
+    h.docs.set('staffUsers/owner', { ...h.docs.get('staffUsers/owner'), Active: false, __updateTime: 'changed' });
+    return true;
+  } })({ ...loginBody, recoveryEmail: 'new@example.test' });
+  assert.equal(response.status, 409);
+  assert.match((await response.json()).message, /accounts changed while saving/);
+  assert.equal(h.docs.get('staffUsers/owner').RecoveryEmail, 'original@example.test');
+  assert.equal(h.docs.get('staffUsers/owner').Active, false);
+  assert.equal(h.batches.length, 0);
 });
 
 test('concurrent profile/password edits cannot replay a stale role or re-enable a disabled account', async () => {

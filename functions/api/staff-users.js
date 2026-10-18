@@ -301,11 +301,14 @@ async function saveUser(env, actor, body) {
   if (splitNameSubmitted && (!identity.FirstName || !identity.Surname)) {
     const err = new Error('First name and surname are required.'); err.status = 400; throw err;
   }
+  const recoveryEmail = normalizeRecoveryEmail(body.RecoveryEmail ?? existing?.RecoveryEmail);
   const payload = {
     ...(existing || {}),
     Username: username,
     UsernameKey: lower(username),
-    RecoveryEmail: normalizeRecoveryEmail(body.RecoveryEmail ?? existing?.RecoveryEmail),
+    RecoveryEmail: recoveryEmail,
+    RecoveryEmailChangedAt: lower(existing?.RecoveryEmail) === recoveryEmail
+      ? clean(existing?.RecoveryEmailChangedAt) : new Date().toISOString(),
     LoginUsername: clean(existing?.LoginUsername || username),
     LoginUsernameKey: lower(existing?.LoginUsername || username),
     DisplayName: identity.DisplayName || username,
