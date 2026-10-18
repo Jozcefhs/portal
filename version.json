@@ -1,7 +1,7 @@
 {
-  "version": "3.1.29",
+  "version": "3.1.30",
   "channel": "stable",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.29.exe",
-  "sha256": "e6ebd921b851e5857641a9f599bb031f55c8251db36b6e375b894e7d9a34f8ae",
-  "notes": "Dynamax Desktop v3.1.29 includes the responsive General Ledger search repair for all editions. Typing is debounced and visible rows are paginated; totals, printing and CSV exports retain every matching entry. All previous desktop improvements are retained. The current online companion additionally includes reviewed obsolete-fee reversals, Accounts-approved card refunds visible in parent wallets, club paid totals, daily attendance and growing-history repairs. Companion features require internet access and are not new offline desktop screens. Installation preserves organisation settings and does not post charges, refunds or payments or change existing balances, stock or academic history."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.30.exe",
+  "sha256": "7edbd78956c233119ec50244d0c7aef380efda8103a700103dcb936520d43ecf",
+  "notes": "Dynamax Desktop v3.1.30 connects scoped HR positions and staff details to letters and directories across all editions. Includes automatic directory search with a Search button, configured manual-payment amount autofill, subscriber-branded letter formatting, PDF preview lock protection, ICT and delegated approval entry points, and responsive CBT controls with school branding. The 5,000-candidate CBT software target requires a successful rehearsal on the actual school server and network; it is not a hardware capacity guarantee. Includes all previous desktop repairs. Connected HR data and online approval features require the current organisation backend. Installation preserves organisation settings and does not change payments, receipts, balances, stock, permissions or previously issued documents."
 }
