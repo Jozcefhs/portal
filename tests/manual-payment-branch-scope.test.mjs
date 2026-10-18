@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { generateKeyPairSync, webcrypto } from 'node:crypto';
 import { recordManualPayment, enforceDesktopDeviceActionScope, syncSchoolAccountCreditJournals } from '../functions/api/backend.js';
 import { handleManualPaymentCorrection } from '../functions/lib/manual-payment-corrections.js';
+import { handleWebManualPayment } from '../functions/lib/web-manual-payments.js';
 import { objectToFirestoreFields, firestoreDocumentToObject } from '../functions/lib/firestore.js';
 
 // Exercise the real backend and Firestore REST serialization. Every request is
@@ -190,6 +191,36 @@ function fixture(t, branch = 'main', section = 'secondary') {
 }
 
 const denied = error => [403, 404, 409].includes(error.status);
+
+test('web manual payment uses the real account snapshot, preserves a batch credit and retries without another deposit', async t => {
+  const f = fixture(t); f.student();
+  await f.record({ Reference: 'BATCH-WEB', Channel: 'Historical Payment Import', Amount: 3500 });
+  const original = structuredClone(f.get('payments', 'BATCH-WEB'));
+  const user = { username: 'accounts@example.test', displayName: 'Test Accounts Officer', role: 'Accounts Officer',
+    edition: 'school', allowedSections: ['accounts'], branchId: 'main', schoolSectionAccess: 'secondary' };
+  const io = { record: (env, body, options) => recordManualPayment(env, { ...body, DeferNotifications: true }, options) };
+  const beforeLookup = f.mutations.length;
+  const lookup = await handleWebManualPayment(f.env, user, { action: 'lookup', AccountRef: 'STU-001' }, io);
+  assert.equal(lookup.account.AccountRef, 'STU-001');
+  assert.equal(f.mutations.length, beforeLookup);
+  const fee = lookup.choices.find(row => row.FeeCode === 'WALLET_TOPUP');
+  assert.ok(fee);
+  const input = { action: 'post', AccountRef: 'STU-001', ChoiceId: fee.ChoiceId, Amount: '3500',
+    Reference: 'WEB-MANUAL-12345678-1234-1234-1234-123456789012', Description: 'Student Wallet Top-up',
+    PaidAt: '2026-10-18', Method: 'Cash', PaymentProof: 'Independent second payment' };
+  const warning = await handleWebManualPayment(f.env, user, input, io);
+  assert.equal(warning.code, 'WALLET_DUPLICATE_REVIEW_REQUIRED');
+  assert.equal(warning.duplicateReview.Matches[0].Source, 'Batch upload');
+  assert.equal(f.mutations.length, beforeLookup);
+  const posted = await handleWebManualPayment(f.env, user, { ...input, DuplicateWalletReviewDigest: warning.duplicateReview.ReviewDigest }, io);
+  assert.equal(posted.ok, true); assert.ok(posted.payment.ReceiptNo);
+  const retry = await handleWebManualPayment(f.env, user, input, io);
+  assert.equal(retry.duplicate, true);
+  assert.equal(retry.payment.ReceiptNo, posted.payment.ReceiptNo);
+  assert.equal(f.rows('payments').length, 2);
+  assert.equal(f.rows('ledger').reduce((sum, row) => sum + Number(row.Credit || 0) - Number(row.Debit || 0), 0), 7000);
+  assert.deepEqual(f.get('payments', 'BATCH-WEB'), original);
+});
 
 test('interactive wallet top-up stops before any writes for a prior batch credit, and explicit review preserves the original', async t => {
   const f=fixture(t);f.student();await f.record({Reference:'BATCH-1',Channel:'Historical Payment Import',Amount:22400});

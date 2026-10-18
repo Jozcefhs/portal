@@ -1,3 +1,4 @@
+import { desktopExecutiveLetterHtml } from './executive-letter-layout.js';
 import {
   createDocumentIfAbsent,
   deleteDocument,
@@ -10,6 +11,7 @@ import { resolveOrganizationConfig } from './organization-config.js';
 import { requiredDeploymentIdentity } from './deployment-identity.js';
 import { effectiveBranchProfile } from './branch-profile-settings.js';
 import { staffRecordMatchesEdition } from './records-desk.js';
+import { findStaffUserRecord } from './staff-auth.js';
 import { listSchoolCollection, safeScopeId, schoolSectionFor } from './school-scope.js';
 import { escapeEmailHtml, sendConfiguredEmail } from './email-service.js';
 import { loadStaffApprovalProfile, publicStaffApprovalProfile } from './staff-approval-profile.js';
@@ -897,9 +899,14 @@ async function loadBrandingContext(env, identity, correspondence, user, issuance
         LogoUrl: clean(identity.LogoUrl)
       }
     : identity;
-  const effectiveCorrespondence = snapshotRecipient
+  let effectiveCorrespondence = snapshotRecipient
     ? { ...correspondence, ...snapshotRecipient }
     : correspondence;
+  if (!immutable) {
+    effectiveCorrespondence = { ...effectiveCorrespondence,
+      IssuedBy: clean(user.displayName || user.username),
+      IssuerTitle: await loadExecutiveSignatoryTitle(env, user) };
+  }
   // Draft previews may follow current directory data. Issued documents must never
   // be re-hydrated from mutable student, staff, member, class or department rows.
   const authoritative = immutable
@@ -931,7 +938,7 @@ async function loadBrandingContext(env, identity, correspondence, user, issuance
     DATE: issuedAt.slice(0, 10),
     REFERENCE: correspondence.Reference,
     SIGNATORY_NAME: correspondence.IssuedBy || clean(user.displayName || user.username),
-    SIGNATORY_TITLE: correspondence.IssuerTitle || canonicalExecutiveRole(user.role),
+    SIGNATORY_TITLE: clean(effectiveCorrespondence.IssuerTitle) || 'Authorised Officer',
     ACADEMIC_SESSION: savedTokens.ACADEMIC_SESSION || effectiveIdentity.CurrentAcademicSession
   };
   const subject = renderTokenTemplate(correspondence.SubjectTemplate || correspondence.Subject, tokenValues);
@@ -1004,6 +1011,8 @@ function renderedParagraphs(body) {
 }
 
 export function buildPrintableCorrespondence(correspondence, identity, rendered, endorsement = {}) {
+  correspondence = { ...correspondence, IssuerTitle: clean(correspondence.IssuerTitle) || 'Authorised Officer' };
+  const subscriberLabel = clean(identity.Code) || clean(identity.Name) || 'Organisation';
   const reference = clean(correspondence.Reference || correspondence.CorrespondenceId);
   const documentTypeTitle = correspondence.Kind === 'transfer-certificate' ? 'Transfer Certificate' : 'Official Correspondence';
   const normalizedBody = normalizeRenderedLetterBody(rendered.body, correspondence);
@@ -1015,9 +1024,6 @@ export function buildPrintableCorrespondence(correspondence, identity, rendered,
     ? `<img src="${escapeEmailHtml(publicLogoSource)}" alt="${escapeEmailHtml(identity.Name)}" width="72" height="72" style="display:block; width:72px; height:72px; object-fit:contain; border:0;">`
     : '';
   const watermarkImage = cssImageUrl(logoSource);
-  const watermarkStyle = watermarkImage
-    ? `background-image:linear-gradient(rgba(255,255,255,.93),rgba(255,255,255,.93)),${watermarkImage};background-position:center 55%;background-repeat:no-repeat;background-size:360px auto;`
-    : '';
   const signature = correspondence.SignatureApplied
     ? imageTag(endorsement.SignatureDataUrl, 'Signature', 'signature-image')
     : '';
@@ -1039,15 +1045,7 @@ export function buildPrintableCorrespondence(correspondence, identity, rendered,
   const attachmentNotice = attachmentLabels.length
     ? `<div class="attachment-note">${escapeEmailHtml(attachmentLabels.join(' · '))}<br><small>The endorsements are retained with the official document record.</small></div>`
     : '';
-  const html = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeEmailHtml(rendered.subject)}</title>
-<style>
-@page{size:A4;margin:16mm}*{box-sizing:border-box}body{margin:0;background:#eef3f8;color:#15283f;font:16px/1.62 Arial,sans-serif}.document{position:relative;max-width:760px;margin:22px auto;background:#fff;border:1px solid #cbd9e7;box-shadow:0 14px 40px rgba(17,42,70,.12);overflow:hidden}.accent{height:7px;background:linear-gradient(90deg,#0b4a78,#0d9488,#d39a18)}header{display:grid;grid-template-columns:72px minmax(0,1fr) 72px;align-items:center;gap:18px;padding:21px 30px 18px;border-bottom:2px solid #194f7d}.brand-mark,.brand-spacer{width:72px}.brand-logo{display:block;width:72px;height:72px;object-fit:contain}.identity{text-align:center}.identity h1{margin:0 0 3px;color:#123f68;font-size:24px;line-height:1.2}.identity div{color:#587086;font-size:14px}.meta{display:grid;grid-template-columns:1fr 1fr;gap:8px 28px;padding:13px 30px;background:#eef6ff}.meta>div:last-child{text-align:right}.meta b{color:#173f65}.content{position:relative;z-index:1;padding:30px 40px 34px;${watermarkStyle}}.recipient{white-space:pre-line;margin-bottom:24px}.subject{margin:0 0 25px;text-align:center;text-transform:uppercase;text-decoration:underline;font-size:20px;line-height:1.35}.content p{margin:0 0 17px}.endorsement{display:flex;align-items:flex-end;justify-content:space-between;gap:26px;margin-top:48px}.signature-image{display:block;max-width:190px;max-height:72px;object-fit:contain;margin-bottom:5px}.stamp-image{display:block;max-width:120px;max-height:95px;object-fit:contain}.signatory{min-width:260px;border-top:1px solid #536b84;padding-top:8px}.attachment-note{margin-bottom:10px;padding:9px 12px;border-left:4px solid #0d9488;background:#eef9f7;color:#17485a;font-weight:700}.attachment-note small{font-weight:400}.footer{padding:12px 30px;background:#123f68;color:#fff;font-size:12px;text-align:center}@media print{body{background:#fff}.document{margin:0;min-height:250mm;border:0;box-shadow:none}}
-</style></head><body><article class="document"><div class="accent"></div><header><div class="brand-mark">${logo}</div><div class="identity"><h1>${escapeEmailHtml(identity.Name)}</h1><div>${escapeEmailHtml(identity.Address)}</div><div>${escapeEmailHtml([identity.Email, identity.Phone].filter(Boolean).join(' · '))}</div></div><span class="brand-spacer" aria-hidden="true"></span></header><section class="meta"><div><b>Reference:</b> ${escapeEmailHtml(reference)}</div><div><b>Date:</b> ${escapeEmailHtml(clean(correspondence.IssuedAt || correspondence.UpdatedAt).slice(0, 10))}</div></section><main class="content"><div class="recipient">${escapeEmailHtml([
-    correspondence.RecipientTitle,
-    correspondence.RecipientName,
-    correspondence.RecipientOrganisation,
-    correspondence.RecipientAddress
-  ].map(clean).filter(Boolean).join('\n'))}</div><h2 class="subject">${escapeEmailHtml(rendered.subject)}</h2>${paragraphs}<div class="endorsement"><div><div style="margin-bottom:12px">Yours faithfully,</div><div class="signatory">${signature}<strong>${escapeEmailHtml(correspondence.IssuedBy)}</strong><br>${escapeEmailHtml(correspondence.IssuerTitle)}</div></div>${stamp}</div></main><footer class="footer">Official document · ${escapeEmailHtml(reference)} · ${escapeEmailHtml(identity.Name)}</footer></article></body></html>`;
+  const html = desktopExecutiveLetterHtml({ correspondence, identity, rendered, logo, watermarkImage, signature, stamp, paragraphs });
   const recipient = [
     correspondence.RecipientTitle,
     correspondence.RecipientName,
@@ -1070,13 +1068,6 @@ export function buildPrintableCorrespondence(correspondence, identity, rendered,
     ? `background-image:linear-gradient(rgba(255,255,255,.94),rgba(255,255,255,.94)),url('${escapeEmailHtml(publicLogoSource)}'); background-position:center center; background-repeat:no-repeat; background-size:300px auto;`
     : '';
   const emailHtml = `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="width:100%; max-width:760px; margin:22px auto; border-collapse:collapse; border:1px solid #cbd9e7; background:#ffffff; color:#15283f; font-family:Arial,sans-serif;">
-    <tr><td style="padding:0;">
-      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="width:100%; border-collapse:collapse;"><tr>
-        <td width="33%" height="7" style="width:33%; height:7px; line-height:7px; font-size:0; background:#0b4a78;">&nbsp;</td>
-        <td width="34%" height="7" style="width:34%; height:7px; line-height:7px; font-size:0; background:#0d9488;">&nbsp;</td>
-        <td width="33%" height="7" style="width:33%; height:7px; line-height:7px; font-size:0; background:#d39a18;">&nbsp;</td>
-      </tr></table>
-    </td></tr>
     <tr><td style="padding:20px 30px 18px; border-bottom:2px solid #194f7d;">
       <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="width:100%; border-collapse:collapse;">
         <tr>
@@ -1118,7 +1109,7 @@ export function buildPrintableCorrespondence(correspondence, identity, rendered,
         </table>
       </div>
     </td></tr>
-    <tr><td align="center" style="padding:12px 30px; background:#123f68; color:#ffffff; font-size:12px; text-align:center;">Official document · ${escapeEmailHtml(reference)} · ${escapeEmailHtml(identity.Name)}</td></tr>
+    <tr><td align="center" style="padding:12px 30px; background:#123f68; color:#ffffff; font-size:12px; text-align:center;">Official document · ${escapeEmailHtml(reference)} · ${escapeEmailHtml(subscriberLabel)}</td></tr>
   </table>`;
   const text = [
     identity.Name,
@@ -1149,6 +1140,16 @@ export function buildPrintableCorrespondence(correspondence, identity, rendered,
     emailHtml,
     emailAttachments
   };
+}
+
+export function executiveSignatoryTitle(staff = {}) {
+  return clean(staff.Position || staff.position) || 'Authorised Officer';
+}
+
+async function loadExecutiveSignatoryTitle(env, user) {
+  // Resolve the authenticated issuing officer, never a title supplied in the form.
+  const staff = await findStaffUserRecord(env, user.username);
+  return executiveSignatoryTitle(staff || {});
 }
 
 async function printableFor(env, user, identity, correspondence) {
@@ -1296,7 +1297,7 @@ async function issueCorrespondence(env, user, body, scope, identity, authorizati
   }
   try {
     const actor = clean(user.displayName || user.username);
-    const role = canonicalExecutiveRole(user.role);
+    const issuerTitle = await loadExecutiveSignatoryTitle(env, user);
     const profile = await loadStaffApprovalProfile(env, user.username).catch(() => null);
     const applySignature = body.applySignature === true || body.ApplySignature === true;
     const applyStamp = body.applyStamp === true || body.ApplyStamp === true;
@@ -1328,7 +1329,7 @@ async function issueCorrespondence(env, user, body, scope, identity, authorizati
       IssuedAt: issuedAt,
       IssuedBy: actor,
       IssuedByUsername: clean(user.username),
-      IssuerTitle: role,
+      IssuerTitle: issuerTitle,
       SignatureApplied: applySignature,
       StampApplied: applyStamp,
       UpdatedAt: issuedAt,
@@ -1604,6 +1605,23 @@ export async function handleExecutiveOfficeAction(env, user, body = {}, options 
   if (action === 'savedraft') {
     const draft = await saveDraft(env, user, body, scope);
     return { ok: true, message: 'Official correspondence draft saved.', correspondence: publicCorrespondence(draft) };
+  }
+  if (action === 'preview') {
+    // Preview is never issuance: ignore caller-supplied record identity and use
+    // the same scoped recipient/branding renderer without saving a draft.
+    const draft = normalizeCorrespondenceDraft({ ...body, CorrespondenceId: 'Preview', correspondenceId: 'Preview' }, {
+      edition: scope.edition, branchId: scope.branchId, schoolSection: scope.schoolSection,
+      actor: clean(user.displayName || user.username), username: clean(user.username)
+    });
+    draft.Reference = 'Draft';
+    draft.SignatureApplied = body.applySignature === true || body.ApplySignature === true;
+    draft.StampApplied = body.applyStamp === true || body.ApplyStamp === true;
+    const profile = draft.SignatureApplied || draft.StampApplied ? await loadStaffApprovalProfile(env, user.username) : null;
+    if (draft.SignatureApplied && !clean(profile?.SignatureDataUrl)) throw inputError('Save your signature in User settings before applying it.');
+    if (draft.StampApplied && !clean(profile?.StampDataUrl)) throw inputError('Save your stamp in User settings before applying it.');
+    const rendered = await loadBrandingContext(env, identity, draft, user);
+    return { ok: true, message: 'Draft preview prepared. No letter was saved or issued.',
+      printable: buildPrintableCorrespondence(rendered.correspondence, rendered.identity, rendered, profile || {}) };
   }
   if (action === 'savetemplate') {
     const requestedId = clean(body.TemplateId || body.templateId);

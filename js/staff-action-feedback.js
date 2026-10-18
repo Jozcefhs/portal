@@ -23,6 +23,8 @@
     // The reviewed card batch owns its progress, final success and error dialogs.
     // Do not interrupt 255 sequential credits with 255 competing modal dialogs.
     if (url.pathname === '/api/staff-vendor-settlements' && ['approvecardrefundbatch', 'postcardrefundbatch'].includes(action)) return false;
+    // This form owns its reviewed duplicate warning and final receipt outcome.
+    if (url.pathname === '/api/staff-manual-payments') return false;
     return true;
   }
   function report(message, type = 'ok', options = {}) {

@@ -328,12 +328,12 @@ test('printable official documents use branding and safely escape plain-text con
   assert.equal(printable.documentTypeTitle, 'Transfer Certificate');
   assert.match(printable.html, /class="signature-image"/);
   assert.match(printable.html, /class="stamp-image"/);
-  assert.doesNotMatch(printable.html, /class="watermark"/);
+  assert.match(printable.html, /class="watermark"/);
   assert.match(printable.html, /background-image:/);
-  assert.match(printable.html, /header\{[^}]*grid-template-columns:72px minmax\(0,1fr\) 72px/);
-  assert.match(printable.html, /\.identity\{text-align:center\}/);
-  assert.match(printable.html, /\.meta>div:last-child\{text-align:right\}/);
-  assert.match(printable.html, /\.footer\{[^}]*text-align:center/);
+  assert.match(printable.html, /header\{text-align:center\}/);
+  assert.match(printable.html, /width:22mm;height:22mm/);
+  assert.match(printable.html, /<table class="meta">/);
+  assert.match(printable.html, /Generated from the Dynamax School Executive Office/);
   assert.match(printable.emailHtml, /Digitally signed/);
   assert.match(printable.emailHtml, /Official stamp applied/);
   assert.doesNotMatch(printable.emailHtml, /data:image/);

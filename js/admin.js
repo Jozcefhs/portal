@@ -183,6 +183,10 @@ let executiveOfficeTab = 'overview';
 let executiveDirectoryType = '';
 let executiveDirectoryQuery = '';
 let executiveDirectoryResults = [];
+let executiveDirectoryTimer = null;
+let executiveDirectorySequence = 0;
+let executiveDirectoryBusy = false;
+let executiveDirectoryPending = null;
 let executiveAvailableDirectoryTypes = [];
 let executiveSelectedRecipient = null;
 let studentConductData = null;
@@ -11654,8 +11658,6 @@ function renderExecutiveOverview() {
 function renderExecutiveDirectory() {
   const types = executiveDirectoryTypes();
   if (!executiveDirectoryType || !types.some((type) => type.id === executiveDirectoryType)) executiveDirectoryType = types[0]?.id || '';
-  const classMode = /class/i.test(executiveDirectoryType);
-  const rows = classMode && !executiveDirectoryQuery ? executiveClassRows() : executiveDirectoryResults;
   return `
     <section class="executive-directory-layout">
       <aside class="executive-directory-filters">
@@ -11666,20 +11668,23 @@ function renderExecutiveDirectory() {
       <div class="executive-directory-main">
         <form id="executiveDirectorySearch" class="executive-directory-search" role="search">
           <label>Search ${escapeHtml(types.find((type) => type.id === executiveDirectoryType)?.label || 'directory')}
-            <span><input name="query" value="${escapeHtml(executiveDirectoryQuery)}" placeholder="${executiveDirectoryType === 'student' ? 'Name, admission number, card, email or class' : 'Name, ID, email, phone or class'}"><button type="submit">Search</button></span>
+            <span><input name="query" maxlength="120" autocomplete="off" aria-describedby="executiveDirectoryStatus" value="${escapeHtml(executiveDirectoryQuery)}" placeholder="${executiveDirectoryType === 'student' ? 'Name, admission number, card, email or class' : 'Name, ID, email, phone or class'}"><button type="submit">Search</button></span>
           </label>
         </form>
-        <p id="executiveDirectoryStatus" class="status"></p>
-        <div class="executive-directory-results">
-          ${rows.length ? rows.map((row) => `
+        <p id="executiveDirectoryStatus" class="status" role="status" aria-live="polite">Type at least two characters. Results update as you type.</p>
+        <div class="executive-directory-results">${executiveDirectoryResultsMarkup()}</div>
+      </div>
+    </section>`;
+}
+
+function executiveDirectoryResultsMarkup() {
+  const rows = /class/i.test(executiveDirectoryType) && !executiveDirectoryQuery ? executiveClassRows() : executiveDirectoryResults;
+  return rows.length ? rows.map((row) => `
             <article class="executive-directory-record">
               <span class="executive-record-avatar">${escapeHtml(executiveRecordName(row).split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase())}</span>
               <div><strong>${escapeHtml(executiveRecordName(row))}</strong><small>${escapeHtml(executiveRecordMeta(row) || executiveRecordId(row))}</small>${executiveRecordEmail(row) ? `<a href="mailto:${escapeHtml(executiveRecordEmail(row))}">${escapeHtml(executiveRecordEmail(row))}</a>` : ''}</div>
               <button type="button" class="secondary compact-action" data-executive-recipient="${escapeHtml(executiveRecordId(row))}">Write</button>
-            </article>`).join('') : `<div class="executive-directory-empty"><span aria-hidden="true">&#128269;</span><p>${executiveDirectoryQuery ? 'No permitted records matched this search.' : 'Search to display permitted records here.'}</p></div>`}
-        </div>
-      </div>
-    </section>`;
+            </article>`).join('') : '<div class="executive-directory-empty"><span aria-hidden="true">&#128269;</span><p>Search to display permitted records here.</p></div>';
 }
 
 function renderExecutiveTemplates() {
@@ -11838,6 +11843,7 @@ function renderExecutiveOffice(draft = null) {
 
 function switchExecutiveOfficeTab(tab, draft = null) {
   if (!['overview', 'directory', 'templates', 'compose', 'register'].includes(tab)) return;
+  cancelExecutiveDirectorySearch();
   executiveOfficeTab = tab;
   try { window.localStorage.setItem(workspaceViewStorageKey('executiveOffice'), tab); } catch (_error) { /* optional */ }
   const url = new URL(window.location.href);
@@ -11901,23 +11907,7 @@ function openExecutivePrint(record = {}, printable = {}, targetWindow = null) {
     printableWindow.document.close();
     return;
   }
-  const organisation = clean(document.querySelector('[data-school-name]')?.textContent) || 'Dynamax';
-  const reference = clean(printable.reference || pick(record, ['reference', 'Reference', 'correspondenceId', 'CorrespondenceId'])) || 'PREVIEW';
-  const subject = clean(printable.title || pick(record, ['subject', 'Subject'])) || 'Official correspondence';
-  const recipient = clean(pick(record, ['recipientName', 'RecipientName', 'recipientOrganisation', 'RecipientOrganisation']));
-  const body = clean(printable.text || pick(record, ['body', 'Body', 'bodyText', 'BodyText']));
-  const status = executiveCorrespondenceStatus(record);
-  const logo = safeExecutiveImage(document.querySelector('.nav-logo')?.getAttribute('src') || 'images/Logo.png');
-  const signature = yes(pick(record, ['applySignature', 'ApplySignature']))
-    ? safeExecutiveImage(pick(record, ['signatureUrl', 'SignatureUrl']) || executiveOfficeData?.approvalProfile?.SignatureDataUrl)
-    : '';
-  const stamp = yes(pick(record, ['applyStamp', 'ApplyStamp']))
-    ? safeExecutiveImage(pick(record, ['stampUrl', 'StampUrl']) || executiveOfficeData?.approvalProfile?.StampDataUrl)
-    : '';
-  const filename = clean(printable.filename || `${reference}.pdf`);
-  printableWindow.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(filename)}</title><style>
-    @page{size:A4;margin:18mm}*{box-sizing:border-box}body{margin:0;color:#18324d;font:15px/1.65 Georgia,serif}.sheet{position:relative;min-height:250mm;padding:10mm;border:1px solid #c9d8e7;background:#fff;overflow:hidden}.watermark{position:absolute;inset:25% 25%;width:50%;height:50%;object-fit:contain;opacity:.045}.letterhead{position:relative;display:flex;align-items:center;gap:16px;padding:0 0 17px;border-bottom:4px solid #0c8b78}.letterhead img{width:68px;height:68px;object-fit:contain}.letterhead h1{margin:0;color:#123f6d;font:700 25px/1.2 Arial,sans-serif}.letterhead p{margin:4px 0 0;color:#61758a;font:12px Arial,sans-serif}.meta{display:flex;justify-content:space-between;gap:20px;margin:22px 0;color:#587087;font:12px Arial,sans-serif}.subject{margin:24px 0 18px;color:#123f6d;font:700 19px Arial,sans-serif}.recipient{margin-bottom:18px}.body{position:relative;min-height:330px;white-space:pre-wrap}.endorsements{display:flex;gap:50px;margin-top:40px}.endorsement{min-width:210px;padding-top:8px;border-top:1px solid #8499ad;font:12px Arial,sans-serif}.endorsement img{display:block;max-width:150px;max-height:70px;object-fit:contain;margin:-65px 0 4px}.footer{position:absolute;right:10mm;bottom:8mm;left:10mm;display:flex;justify-content:space-between;border-top:1px solid #d6e1ec;padding-top:8px;color:#71869a;font:10px Arial,sans-serif}.print{position:fixed;top:12px;right:12px;padding:10px 14px;border:0;border-radius:7px;background:#1769e0;color:white;font:bold 12px Arial;cursor:pointer}@media print{.print{display:none}.sheet{border:0;padding:0;min-height:auto}}</style></head><body><button class="print" onclick="window.print()">Print / Save as PDF</button><main class="sheet">${logo ? `<img class="watermark" src="${escapeHtml(logo)}" alt="">` : ''}<header class="letterhead">${logo ? `<img src="${escapeHtml(logo)}" alt="">` : ''}<div><h1>${escapeHtml(organisation)}</h1><p>${escapeHtml(executiveOfficeTitle())} · Official communication</p></div></header><div class="meta"><span>Reference: <strong>${escapeHtml(reference)}</strong></span><span>Status: <strong>${escapeHtml(status)}</strong></span></div>${recipient ? `<div class="recipient">To:<br><strong>${escapeHtml(recipient)}</strong></div>` : ''}<h2 class="subject">${escapeHtml(subject)}</h2><div class="body">${escapeHtml(body)}</div><div class="endorsements">${signature ? `<div class="endorsement"><img src="${escapeHtml(signature)}" alt=""><strong>${escapeHtml(currentUser?.displayName || currentUser?.username || '')}</strong><br>${escapeHtml(currentUser?.role || '')}</div>` : ''}${stamp ? `<div class="endorsement"><img src="${escapeHtml(stamp)}" alt="Official stamp"><strong>Official stamp</strong></div>` : ''}</div><footer class="footer"><span>Generated by Dynamax</span><span>${escapeHtml(DynamaxTime.formatDateTime(new Date()))}</span></footer></main></body></html>`);
-  printableWindow.document.close();
+  throw new Error('The branded letter could not be prepared. Refresh and try again; no substitute layout was printed.');
 }
 
 function updateExecutiveComposerVisibility() {
@@ -11950,24 +11940,70 @@ function openExecutiveSendDialog(correspondenceId) {
   window.requestAnimationFrame(() => form.elements.recipientEmail.focus());
 }
 
-async function searchExecutiveDirectory() {
+function cancelExecutiveDirectorySearch() {
+  window.clearTimeout(executiveDirectoryTimer);
+  executiveDirectoryTimer = null;
+  executiveDirectorySequence += 1;
+  executiveDirectoryPending = null;
+}
+
+function executiveDirectorySearchIsCurrent(request) {
+  return request.sequence === executiveDirectorySequence && request.form.isConnected
+    && document.getElementById('executiveDirectorySearch') === request.form
+    && request.branch === selectedBranchId && request.user === currentUser
+    && request.signal === staffSessionAbortController.signal && !request.signal.aborted
+    && activeSection === 'executiveOffice' && executiveOfficeTab === 'directory';
+}
+
+function executiveDirectoryStatus(message, type = '') {
   const status = document.getElementById('executiveDirectoryStatus');
-  setStatus(status, 'Searching permitted records...');
+  // Searches are reads: even failures stay inline and never interrupt typing.
+  if (status) { status.textContent = message; status.className = type ? `status ${type}` : 'status'; }
+}
+
+function scheduleExecutiveDirectorySearch(form, immediate = false) {
+  cancelExecutiveDirectorySearch();
+  executiveDirectoryQuery = clean(form.elements.query.value).slice(0, 120);
+  executiveDirectoryResults = [];
+  const results = panelEl.querySelector('.executive-directory-results');
+  if (results) results.innerHTML = executiveDirectoryResultsMarkup();
+  if (executiveDirectoryQuery.length < 2) {
+    executiveDirectoryStatus('Type at least two characters. Results update as you type.');
+    return;
+  }
+  const request = { form, sequence: executiveDirectorySequence, query: executiveDirectoryQuery,
+    type: executiveDirectoryType, branch: selectedBranchId, user: currentUser, signal: staffSessionAbortController.signal };
+  executiveDirectoryStatus('Searching permitted records...');
+  if (immediate) void searchExecutiveDirectory(request);
+  else executiveDirectoryTimer = window.setTimeout(() => { void searchExecutiveDirectory(request); }, 350);
+}
+
+async function searchExecutiveDirectory(request) {
+  if (!executiveDirectorySearchIsCurrent(request)) return;
+  // Only one request at a time; retain only the latest query while it completes.
+  if (executiveDirectoryBusy) { executiveDirectoryPending = request; return; }
+  executiveDirectoryBusy = true;
   try {
-    const data = await executiveOfficeRequest('search', { query: executiveDirectoryQuery, type: executiveDirectoryType });
+    const data = await executiveOfficeRequest('search', { query: request.query, type: request.type });
+    if (!executiveDirectorySearchIsCurrent(request)) return;
     executiveDirectoryResults = data.results || [];
     executiveAvailableDirectoryTypes = data.availableTypes || executiveAvailableDirectoryTypes;
-    if (activeSection === 'executiveOffice' && executiveOfficeTab === 'directory') {
-      renderExecutiveOffice();
-      setStatus(document.getElementById('executiveDirectoryStatus'), `${executiveDirectoryResults.length} permitted record${executiveDirectoryResults.length === 1 ? '' : 's'} found.`, 'ok');
-    }
+    panelEl.querySelector('.executive-directory-results').innerHTML = executiveDirectoryResultsMarkup();
+    const count = executiveDirectoryResults.length;
+    executiveDirectoryStatus(count ? `${count} permitted record${count === 1 ? '' : 's'} found.${count >= 40 ? ' Refine your search to find more specific matches.' : ''}` : 'No permitted records matched this search.', count ? 'ok' : '');
   } catch (error) {
-    setStatus(status, error.message || String(error), 'bad');
+    if (executiveDirectorySearchIsCurrent(request)) executiveDirectoryStatus(error.message || String(error), 'bad');
+  } finally {
+    executiveDirectoryBusy = false;
+    const pending = executiveDirectoryPending;
+    executiveDirectoryPending = null;
+    if (pending) void searchExecutiveDirectory(pending);
   }
 }
 
 function bindExecutiveOfficeEvents() {
   document.getElementById('refreshExecutiveOffice')?.addEventListener('click', (event) => {
+    cancelExecutiveDirectorySearch();
     executiveDirectoryQuery = '';
     executiveDirectoryResults = [];
     runButtonAction(event.currentTarget, 'Refreshing...', loadExecutiveOffice);
@@ -11998,20 +12034,28 @@ function bindExecutiveOfficeEvents() {
   });
   document.getElementById('executiveDirectorySearch')?.addEventListener('submit', (event) => {
     event.preventDefault();
-    executiveDirectoryQuery = clean(new FormData(event.currentTarget).get('query'));
-    searchExecutiveDirectory();
+    scheduleExecutiveDirectorySearch(event.currentTarget, true);
   });
+  const directoryInput = document.getElementById('executiveDirectorySearch')?.elements.query;
+  directoryInput?.addEventListener('input', (event) => {
+    if (event.isComposing) { cancelExecutiveDirectorySearch(); return; }
+    scheduleExecutiveDirectorySearch(event.currentTarget.form);
+  });
+  directoryInput?.addEventListener('compositionend', (event) => scheduleExecutiveDirectorySearch(event.currentTarget.form));
   panelEl.querySelectorAll('[data-executive-directory-type]').forEach((button) => button.addEventListener('click', () => {
+    cancelExecutiveDirectorySearch();
     executiveDirectoryType = button.dataset.executiveDirectoryType;
     executiveDirectoryQuery = '';
     executiveDirectoryResults = [];
     renderExecutiveOffice();
   }));
-  panelEl.querySelectorAll('[data-executive-recipient]').forEach((button) => button.addEventListener('click', () => {
+  panelEl.querySelector('.executive-directory-results')?.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-executive-recipient]');
+    if (!button) return;
     const rows = /class/i.test(executiveDirectoryType) && !executiveDirectoryQuery ? executiveClassRows() : executiveDirectoryResults;
     executiveSelectedRecipient = rows.find((row) => executiveRecordId(row) === button.dataset.executiveRecipient) || null;
     switchExecutiveOfficeTab('compose');
-  }));
+  });
   panelEl.querySelectorAll('[data-use-executive-template]').forEach((button) => button.addEventListener('click', () => {
     const template = executiveTemplateRows().find((row) => executiveTemplateId(row) === button.dataset.useExecutiveTemplate);
     executiveSelectedRecipient = null;
@@ -12103,8 +12147,22 @@ function bindExecutiveOfficeEvents() {
     textarea.setRangeText(token, start, end, 'end');
     textarea.focus();
   }));
-  composer?.querySelector('[data-preview-executive]')?.addEventListener('click', () => {
-    try { openExecutivePrint(executiveComposerPayload(composer)); } catch (error) { setStatus(document.getElementById('executiveComposerStatus'), error.message || String(error), 'bad'); }
+  composer?.querySelector('[data-preview-executive]')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    const printableWindow = window.open('', '_blank', 'width=960,height=760');
+    if (!printableWindow) { setStatus(document.getElementById('executiveComposerStatus'), 'Allow pop-ups to preview this letter.', 'bad'); return; }
+    printableWindow.opener = null;
+    printableWindow.document.write('<p style="font:14px Arial;padding:24px">Preparing draft preview...</p>');
+    setButtonLoading(button, true, 'Preparing...', 'Preview');
+    try {
+      const payload = executiveComposerPayload(composer);
+      delete payload.approvalPassword;
+      const data = await executiveOfficeRequest('preview', payload);
+      openExecutivePrint({}, data.printable || {}, printableWindow);
+    } catch (error) {
+      printableWindow.close();
+      setStatus(document.getElementById('executiveComposerStatus'), error.message || String(error), 'bad');
+    } finally { setButtonLoading(button, false, 'Preparing...', 'Preview'); }
   });
   composer?.querySelector('[data-save-executive-template]')?.addEventListener('click', async (event) => {
     const button = event.currentTarget;
@@ -19445,6 +19503,17 @@ function renderSection(active) {
       button.type = 'button'; button.className = 'secondary'; button.textContent = 'Correct manual payment';
       button.addEventListener('click', () => window.DynamaxPaymentCorrections.open({ fetch: staffFetch, user: currentUser,
         payments: accounts.payments || [], accounts: accounts.accounts || [], onSaved: () => refreshDashboard() }));
+      panelEl.querySelector('.workflow-intro')?.append(button);
+    }
+    if (window.DynamaxManualPayments?.canAccess(currentUser)) {
+      const button = document.createElement('button');
+      button.type = 'button'; button.textContent = 'Record manual payment';
+      button.addEventListener('click', () => {
+        const user = currentUser, branch = selectedBranchId, signal = staffSessionAbortController.signal;
+        window.DynamaxManualPayments.open({ fetch: staffFetch, user, signal,
+          isCurrent: () => currentUser === user && selectedBranchId === branch && !signal.aborted,
+          onSaved: () => refreshDashboard() });
+      });
       panelEl.querySelector('.workflow-intro')?.append(button);
     }
     bindAccountWalletSetupWorkspace();

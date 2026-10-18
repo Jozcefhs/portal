@@ -33,6 +33,7 @@ const ROUTE_MODULES = Object.freeze([
   ['/api/accounting', 'Finance & accounting'],
   ['/api/staff-direct-transfers', 'Finance & accounting'],
   ['/api/staff-payment-corrections', 'Finance & accounting'],
+  ['/api/staff-manual-payments', 'Finance & accounting'],
   ['/api/staff-wallet', 'Student wallets'],
   ['/api/staff-procurement', 'Procurement'],
   ['/api/staff-vendor', 'Vendor sales & settlements'],
@@ -245,6 +246,8 @@ export function securityAuditAction({ pathname = '', method = 'GET', body = {} }
   const declared = safeField(body, ['action', 'Action', 'mode', 'Mode', 'operation', 'Operation']);
   if (declared) {
     const key = lower(declared);
+    if (path === '/api/staff-manual-payments') return key === 'lookup'
+      ? 'Look up account and payable fee components' : 'Record manual payment';
     if (isAcademicWorkspaceLoad(declared, path)) return 'Load Academic Management workspace';
     if (path === '/api/staff-payment-corrections' || path === '/api/backend' && key === 'manualpaymentcorrection') {
       const command = path === '/api/backend' ? lower(body.Command) : key;

@@ -1,4 +1,4 @@
-const CACHE = 'dynamax-v413-ict-role-vendor-access-cbt-rosters';
+const CACHE = 'dynamax-v414-web-directory-manual-payments-letter-parity';
 const SHELL = ['/', '/index.html', '/school.html', '/admin.html', '/setup.html', '/activate-account.html', '/onboarding-status.html', '/parent-dashboard.html', '/payments.html', '/buy-form.html', '/register-organization.html', '/subscription-payment.html', '/plan-management.html', '/give.html', '/store.html', '/hotel-booking.html', '/verify-result.html', '/verify-transcript.html', '/css/style.css', '/css/school-landing.css', '/css/guest-fee-payment.css', '/css/notifications.css', '/css/payment-methods.css', '/css/store.css', '/css/store-compact.css', '/css/hotel-booking.css', '/js/preferences.js', '/js/action-feedback.js', '/js/app-dialogs.js', '/js/activate-account.js', '/js/onboarding-status.js', '/js/financial-values.js', '/js/launcher.js', '/js/site-config.js', '/js/list-sorting.js', '/js/academic-results-analysis.js', '/js/admin.js', '/js/student-face-lookup.js', '/js/setup.js', '/js/paystack-connection-status.js', '/js/tutorial-module-catalogue.js', '/js/payment-methods.js', '/js/buy-form.js', '/js/give.js', '/js/payments.js', '/js/store.js', '/js/hotel-booking.js', '/js/notifications.js', '/js/web-push.js', '/js/parent-dashboard.js', '/js/verify-result.js', '/js/verify-transcript.js', '/js/register-organization.js', '/js/subscription-payment.js', '/js/plan-management.js', '/images/Logo.png'];
 
 SHELL.push('/js/spoken-notifications.js', '/js/display-time.js');
@@ -22,6 +22,7 @@ SHELL.push('/js/school-menu.js');
 SHELL.push('/css/payment-corrections.css', '/js/payment-corrections.js');
 SHELL.push('/css/fee-collection-summary.css', '/js/fee-collection-summary.js', '/js/club-members.js');
 SHELL.push('/js/requisition-approval-settings.js');
+SHELL.push('/js/manual-payments.js');
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
