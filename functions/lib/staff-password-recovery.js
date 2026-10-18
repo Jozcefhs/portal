@@ -87,8 +87,8 @@ export async function resetStaffPassword(env, code, password) {
   const identity = requiredDeploymentIdentity(env);
   const token = clean(code).toLowerCase();
   if (!/^[a-f0-9]{48}$/.test(token)) throw invalidCode();
-  if (typeof password !== 'string' || password.length < 12 || password.length > 128) {
-    throw Object.assign(new Error('Use a password between 12 and 128 characters.'), { status: 400 });
+  if (typeof password !== 'string' || password.length < 6 || password.length > 128) {
+    throw Object.assign(new Error('Use a password between 6 and 128 characters.'), { status: 400 });
   }
   const id = await digest(token);
   const recovery = await getDocument(env, TOKEN_COLLECTION, id);

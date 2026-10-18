@@ -70,6 +70,29 @@ async function fixture(edition = 'school', overrides = {}) {
 }
 
 for (const edition of ['school', 'faith', 'organization']) {
+  test(`${edition}: recovery accepts 6–128 characters and rejects out-of-range passwords without consuming the code`, async () => {
+    for (const length of [6, 128]) {
+      const f = await fixture(edition);
+      await f.context.requestStaffPasswordRecovery(f.env, 'my.login');
+      for (const password of ['', 'a'.repeat(5), 'a'.repeat(129), 123456, null]) {
+        const response = await f.post({ action:'reset', code:f.code(), password });
+        assert.equal(response.status,400);
+        assert.match((await response.json()).message,/between 6 and 128/);
+        assert.equal(f.docs.get('staffUsers/legacy-id').PasswordHash,f.original.PasswordHash);
+        assert.equal(f.batches.filter(writes=>writes.length===4).length,0);
+      }
+      const password = 'a'.repeat(length);
+      const response = await f.post({action:'reset',code:f.code(),password});
+      assert.equal(response.status,200);
+      const saved = f.docs.get('staffUsers/legacy-id');
+      const verifier = await crypto.subtle.importKey('raw',new TextEncoder().encode(password),{name:'PBKDF2'},false,['deriveBits']);
+      const hash = await crypto.subtle.deriveBits({name:'PBKDF2',hash:'SHA-256',salt:new TextEncoder().encode(saved.Salt),iterations:saved.PasswordIterations},verifier,256);
+      assert.equal(Buffer.from(hash).toString('hex'),saved.PasswordHash);
+      assert.equal(f.batches.filter(writes=>writes.length===4).length,1);
+      await assert.rejects(f.context.resetStaffPassword(f.env,f.code(),password),/already used/);
+    }
+  });
+
   test(`${edition}: recovery updates only credentials, preserves permissions and revokes old sessions`, async () => {
     const f = await fixture(edition);
     const oldSession = await f.auth.createStaffSession(f.env, { username: 'teacher', role: 'Teacher' });
@@ -233,6 +256,12 @@ test('recovery UI and backup rules keep secrets out of URLs, storage, HR and por
     read('admin.html'), read('functions/api/backend.js')]);
   assert.match(admin, /href="staff-password-recovery.html"/);
   assert.match(html, /autocomplete="new-password"/);
+  assert.match(html, /New password \(6–128 characters\)/);
+  for (const id of ['newPassword','confirmPassword']) {
+    const field = html.match(new RegExp(`<input id="${id}"[^>]+>`))?.[0];
+    assert.match(field, /minlength="6"/);
+    assert.match(field, /maxlength="128"/);
+  }
   assert.doesNotMatch(js, /localStorage|sessionStorage|location\.search|innerHTML/);
   for (const collection of ['staffPasswordRecovery', 'staffPasswordRecoveryLimits', 'staffCredentialRevocations']) assert.ok(backup.includes(`'${collection}'`));
   assert.match(desktopBackend, /const recoveryEmail = normalizeRecoveryEmail\(incoming.RecoveryEmail \?\? existing\?\.RecoveryEmail\)/);
