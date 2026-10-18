@@ -1,5 +1,6 @@
 import { batchCommitDocuments, getDocument, listCollection, queryCollection } from './firestore.js';
 import { commitAcademicCbtRoster } from './academic-cbt-roster-commit.js';
+import { academicCbtScoreSources } from './academic-cbt-multiserver.js';
 import { academicAttendanceId, findExistingAttendance, attendanceCorrectionMatches } from './academic-attendance-identity.js';
 import { enforceActorBranch } from './branch-scope.js';
 import { normalizeClassKey } from './class-names.js';
@@ -6553,7 +6554,8 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
         const previousBatch = await getDocument(
           env, ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSyncBatches, prepared.SyncId
         ).catch(() => null);
-        if (previousBatch && lower(previousBatch.BatchDigest) === lower(prepared.BatchDigest)) {
+        if (previousBatch && lower(previousBatch.BatchDigest) === lower(prepared.BatchDigest)
+            && lower(previousBatch.SigningKeyId) === lower(prepared.Receipt?.SigningKeyId)) {
           return {
             ok: true,
             refreshAcademicManagement: true,
@@ -6627,16 +6629,16 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
   let signingKeyId = '';
   if (sourceType === 'BuiltInCBT') {
     signingKeyId = await verifyAcademicCbtScoreSignature(input);
-    const pinned = state.scoreSyncBatches.find((row) => row.SourceType === 'BuiltInCBT' && clean(row.SigningKeyId));
-    if (pinned && lower(pinned.SigningKeyId) !== lower(signingKeyId)) {
-      throw failure('This branch is already linked to another local CBT score-signing key. Use the controlled recovery process before replacing it.', 409, 'ACADEMIC_CBT_SIGNING_KEY_CHANGED');
-    }
+    // The authorised review and verified signature approve this server's batch.
+    // Do not pin the entire branch to its first server: each result retains its
+    // signer/attempt identity and conflicting attempts are blocked per score cell.
   }
   const batchKey = normalizedImportKey(input.BatchId);
   const SyncId = academicId('score-sync', SheetId, batchKey);
   const previousBatch = findById(state.scoreSyncBatches, SyncId);
   if (previousBatch) {
-    if (lower(previousBatch.BatchDigest) !== expectedDigest) {
+    if (lower(previousBatch.BatchDigest) !== expectedDigest
+        || lower(previousBatch.SigningKeyId) !== lower(signingKeyId)) {
       throw failure('This CBT synchronization key was already used for a different score payload.', 409, 'ACADEMIC_CBT_SYNC_KEY_REUSED');
     }
     return {
@@ -6651,6 +6653,9 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
   const updatedScores = preview.Rows.map((row) => {
     const ScoreId = academicStudentScoreId(SheetId, row.StudentRef);
     const previous = findById(state.studentScores, ScoreId);
+    const cbtSources = sourceType === 'BuiltInCBT'
+      ? academicCbtScoreSources(previous, component, row, input, signingKeyId, SyncId, state.scoreSyncBatches)
+      : null;
     const componentScores = normalizeAcademicComponentScores([
       component.ScoreEntryMode === 'objective-theory' ? {
         ComponentId: component.Id,
@@ -6678,6 +6683,7 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
         ClassId: context.schoolClass.ClassId, ArmId: context.arm.ArmId, SubjectId: context.subject.SubjectId,
         AssessmentRevisionId: scheme.RevisionId,
         ...calculated,
+        ...(cbtSources ? { CbtScoreSources: cbtSources } : {}),
         LockedComponentIds: academicRecordedScoreComponentIds(calculated.ComponentScores),
         LockedScoreCellIds: academicRecordedScoreCellIds(calculated.ComponentScores),
         ScoreCellsLockedAt: timestamp, ScoreCellsLockedBy: actorName(user),
@@ -7455,12 +7461,30 @@ export async function downloadAcademicCbtTestPackage(env, user = {}, input = {})
   let releasedRecord = record;
   if (!clean(record.LocalPackageIssuedAt || record.LocalDownloadedAt)) {
     releasedRecord = { ...record, LocalPackageIssuedAt:nowIso(), LocalPackageIssuedBy:actorName(user) };
-    const commit = await commitAcademicBatch(env, [
-      { collectionPath:ACADEMIC_MANAGEMENT_COLLECTIONS.cbtTests, documentId:record.CbtTestId,
-        data:withoutMetadata(releasedRecord), ...writePrecondition(record, record.__updateTime) },
-      auditWrite(user,'ISSUE_LOCAL_PACKAGE','cbtTests',releasedRecord,'Student list locked before releasing the local CBT package.')
-    ], 'The CBT test changed while preparing its download. Reload and download the current package.');
-    releasedRecord.__updateTime = clean(commit?.writeResults?.[0]?.updateTime);
+    try {
+      const commit = await commitAcademicBatch(env, [
+        { collectionPath:ACADEMIC_MANAGEMENT_COLLECTIONS.cbtTests, documentId:record.CbtTestId,
+          data:withoutMetadata(releasedRecord), ...writePrecondition(record, record.__updateTime) },
+        auditWrite(user,'ISSUE_LOCAL_PACKAGE','cbtTests',releasedRecord,'Student list locked before releasing the local CBT package.')
+      ], 'The CBT test changed while preparing its download. Reload and download the current package.');
+      releasedRecord.__updateTime = clean(commit?.writeResults?.[0]?.updateTime);
+    } catch (error) {
+      if (Number(error.status) !== 409) throw error;
+      const fresh = await academicOperationalContext(env, user, input, 'canCreateCbt', {
+        stateKeys: ['sessions', 'terms', 'cbtTests']
+      });
+      const current = findById(fresh.state.cbtTests, input.CbtTestId);
+      if (!current) throw error;
+      academicCbtAuthority(user, fresh, current);
+      // Another centre can freeze the SAME package first. A changed paper,
+      // schedule or roster must still be downloaded again, never silently reused.
+      if (!clean(current.LocalPackageIssuedAt || current.LocalDownloadedAt)
+          || clean(current.CloudPaperRemovedAt)
+          || !clean(record.PackageDigest) || record.PackageDigest !== current.PackageDigest
+          || Number(record.PackageRevision) !== Number(current.PackageRevision)
+          || JSON.stringify(record.StudentRefs) !== JSON.stringify(current.StudentRefs)) throw error;
+      releasedRecord = current;
+    }
   }
   return {
     ok: true,
@@ -7474,34 +7498,43 @@ export async function downloadAcademicCbtTestPackage(env, user = {}, input = {})
 }
 
 export async function acknowledgeAcademicCbtImport(env, user = {}, input = {}) {
-  const context = await academicOperationalContext(env, user, input, 'canCreateCbt', {
-    stateKeys: ['sessions', 'terms', 'cbtTests']
-  });
-  const record = findById(context.state.cbtTests, input.CbtTestId);
-  if (!record) throw failure('The selected CBT test was not found.', 404, 'ACADEMIC_CBT_TEST_NOT_FOUND');
-  academicCbtAuthority(user, context, record);
-  if (Number(input.PackageRevision) !== Number(record.PackageRevision)) {
-    throw failure('The online CBT package changed before the local import completed. Download it again.', 409, 'ACADEMIC_CBT_PACKAGE_CHANGED');
+  // Acknowledgements from other servers only change download metadata. Validate
+  // the package revision and CAS the freshly read record, not a previous server's
+  // revision token. Re-read once if two centres acknowledge simultaneously.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const context = await academicOperationalContext(env, user, input, 'canCreateCbt', {
+      stateKeys: ['sessions', 'terms', 'cbtTests']
+    });
+    const record = findById(context.state.cbtTests, input.CbtTestId);
+    if (!record) throw failure('The selected CBT test was not found.', 404, 'ACADEMIC_CBT_TEST_NOT_FOUND');
+    academicCbtAuthority(user, context, record);
+    if (Number(input.PackageRevision) !== Number(record.PackageRevision)) {
+      throw failure('The online CBT package changed before the local import completed. Download it again.', 409, 'ACADEMIC_CBT_PACKAGE_CHANGED');
+    }
+    const updated = {
+      ...record,
+      LocalDownloadedAt: clean(record.LocalDownloadedAt) || nowIso(),
+      LocalDownloadedBy: clean(record.LocalDownloadedBy) || actorName(user),
+      LocalPackageDigest: clean(input.LocalPackageDigest),
+      LocalPackageRevision: Number(input.PackageRevision || record.PackageRevision || 0),
+      LocalScheduleSyncedAt: nowIso(),
+      UpdatedAt: nowIso(), UpdatedBy: actorName(user)
+    };
+    try {
+      const commit = await commitAcademicBatch(env, [
+        { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.cbtTests, documentId: record.CbtTestId, data: withoutMetadata(updated), ...writePrecondition(record, record.__updateTime) },
+        auditWrite(user, 'DOWNLOAD', 'cbtTests', updated, 'Scheduled test imported into the desktop local CBT server.')
+      ], 'The CBT test changed before its local import could be acknowledged.');
+      return {
+        ok: true,
+        partialAcademicManagement: true,
+        message: 'The local CBT import was acknowledged online.',
+        cbtTest: publicRecord({ ...updated, __updateTime: clean(commit?.writeResults?.[0]?.updateTime) })
+      };
+    } catch (error) {
+      if (Number(error.status) !== 409 || attempt === 1) throw error;
+    }
   }
-  const updated = {
-    ...record,
-    LocalDownloadedAt: clean(record.LocalDownloadedAt) || nowIso(),
-    LocalDownloadedBy: clean(record.LocalDownloadedBy) || actorName(user),
-    LocalPackageDigest: clean(input.LocalPackageDigest),
-    LocalPackageRevision: Number(input.PackageRevision || record.PackageRevision || 0),
-    LocalScheduleSyncedAt: nowIso(),
-    UpdatedAt: nowIso(), UpdatedBy: actorName(user)
-  };
-  const commit = await commitAcademicBatch(env, [
-    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.cbtTests, documentId: record.CbtTestId, data: withoutMetadata(updated), ...writePrecondition(record, input.RevisionToken) },
-    auditWrite(user, 'DOWNLOAD', 'cbtTests', updated, 'Scheduled test imported into the desktop local CBT server.')
-  ], 'The CBT test changed before its local import could be acknowledged.');
-  return {
-    ok: true,
-    partialAcademicManagement: true,
-    message: 'The local CBT import was acknowledged online.',
-    cbtTest: publicRecord({ ...updated, __updateTime: clean(commit?.writeResults?.[0]?.updateTime) })
-  };
 }
 
 export async function prepareLocalCbtIdentityPackage(env, user = {}, input = {}) {
