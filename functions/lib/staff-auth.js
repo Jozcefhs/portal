@@ -18,6 +18,7 @@ import { applyStaffBranchContext } from './staff-branch-context.js';
 import { refreshOrganizationPlanPolicy } from './plan-policy-sync.js';
 import { loadStaffProfileImage } from './staff-profile-image.js';
 import { EXTERNAL_AUDITOR_ROLE, externalAuditAccessExpired } from './external-audit.js';
+import { staffCredentialEpochCurrent } from './staff-credential-state.js';
 
 const encoder = new TextEncoder();
 const SESSION_COOKIE = '__Host-digc_staff_session';
@@ -246,6 +247,7 @@ function publicUser(user) {
   const assignedRole = clean(user.AssignedRole || user.assignedRole || user.Role || user.role) || 'Front Desk';
   return {
     username: clean(user.Username || user.username || user.__id),
+    authEpoch: clean(user.PasswordRecoveryEpoch ?? user.authEpoch),
     loginUsername: clean(user.LoginUsername || user.loginUsername || user.Username || user.username || user.__id),
     displayName: clean(user.DisplayName || user.displayName || user.Username || user.username || user.__id),
     profilePhotoUrl: clean(user.ProfilePhotoDataUrl || user.profilePhotoUrl),
@@ -563,9 +565,10 @@ export async function authenticateStaff(env, username, password, options = {}) {
   return null;
 }
 
-export async function finalizeStaffAuthentication(env, username, sourcePlatform = 'Web') {
+export async function finalizeStaffAuthentication(env, username, sourcePlatform = 'Web', expectedEpoch = undefined) {
   const wanted = lower(username);
   if (!wanted) return null;
+  if (expectedEpoch !== undefined && !await staffCredentialEpochCurrent(env, wanted, expectedEpoch)) return null;
   let user = null;
   try {
     user = await findStaffUserRecord(env, wanted);
@@ -582,6 +585,7 @@ export async function finalizeStaffAuthentication(env, username, sourcePlatform 
     delete saved.__name;
     await patchDocumentFields(env, 'staffUsers', user.__id, { LastLoginAt: loginAt });
     authenticated = publicUser(saved);
+    if (expectedEpoch !== undefined) authenticated.authEpoch = expectedEpoch;
   } else if (wanted === lower(env.ADMIN_WEB_USERNAME || 'admin')) {
     authenticated = publicUser({
       username: clean(env.ADMIN_WEB_USERNAME || 'admin'),
@@ -628,6 +632,9 @@ export async function verifyStaffApprovalPassword(env, username, password) {
 
 export async function createStaffSession(env, user) {
   const sessionUser = publicUser(user);
+  if (!await staffCredentialEpochCurrent(env, sessionUser.username, sessionUser.authEpoch)) {
+    throw Object.assign(new Error('Your password changed. Please sign in again.'), { status: 401 });
+  }
   delete sessionUser.profilePhotoUrl;
   const payload = {
     ...sessionUser,
@@ -641,6 +648,7 @@ export async function createStaffSession(env, user) {
 export async function createStaffApprovalProof(env, user, scope = {}) {
   const payload = {
     username: lower(user.username),
+    authEpoch: clean(user.authEpoch),
     purpose: 'finance-approval',
     recordId: clean(scope.recordId),
     recordType: lower(scope.recordType),
@@ -664,7 +672,8 @@ export async function readStaffApprovalProof(env, request, username, scope = {})
     clean(payload.recordId) === clean(scope.recordId) &&
     lower(payload.recordType) === lower(scope.recordType) &&
     clean(payload.action) === clean(scope.action) &&
-    Number(payload.exp) > Math.floor(Date.now() / 1000));
+    Number(payload.exp) > Math.floor(Date.now() / 1000) &&
+    await staffCredentialEpochCurrent(env, payload.username, payload.authEpoch));
 }
 
 function cookieValue(request, name) {
@@ -694,6 +703,7 @@ export async function readStaffSession(env, request) {
   const purpose = lower(payload.purpose);
   if (bearer.present && purpose !== 'staff-session') return null;
   if (!bearer.present && purpose && purpose !== 'staff-session') return null;
+  if (!await staffCredentialEpochCurrent(env, payload.username, payload.authEpoch)) return null;
   return publicUser(payload);
 }
 

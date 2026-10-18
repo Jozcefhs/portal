@@ -21909,6 +21909,7 @@ function renderStaffUsers() {
         <section class="config-group" data-staff-tabs-group><header><strong>Additional module access</strong><small>Select extra modules for this staff member. Their role's default modules remain available automatically, including future role changes. Unchecked boxes do not remove role access. Leave all clear to use only the role defaults. My Payroll and Finance Requests &amp; Imprest remain available to ordinary staff accounts.</small></header><div class="approval-account-list config-option-list config-option-grid">${permissionTabs.map(([key, label]) => `<label class="check-row"><input type="checkbox" name="TabAccessOption" value="${escapeHtml(key)}"> ${escapeHtml(label)}</label>`).join('')}</div></section>
         <section class="config-group"><header><strong>Security</strong><small>Password and account-state controls.</small></header><div class="config-grid">
           <label>New or reset password<input name="Password" type="password" minlength="6" autocomplete="new-password"><small>Required for a new account. Leave blank when editing unless resetting it.</small></label>
+          <label>Recovery email<input name="RecoveryEmail" type="email" maxlength="254" autocomplete="off"><small>Verify this address with the staff member. Password recovery codes go here, not to HR contact details. Leave empty to require administrator-assisted recovery.</small></label>
           <div class="config-toggle-stack"><label class="check-row"><input name="Active" type="checkbox" checked> Account active</label><label class="check-row"><input name="MustChangePassword" type="checkbox" checked> Require password change at next sign-in</label>${schoolEdition ? '<label class="check-row sensitive-access-toggle"><input name="BiometricLookupEnabled" type="checkbox"> Allow student face-enrollment management</label>' : ''}</div>
         </div></section>
         <div class="config-dialog-actions"><p class="status" data-user-form-status></p><div class="config-dialog-action-buttons"><a class="subscription-plans-link" data-subscription-plans-link href="register-organization.html#plans" target="_blank" rel="noopener" hidden>View Dynamax plans</a><button type="submit">Save staff account</button></div></div>
@@ -22044,6 +22045,7 @@ function openStaffUserDialog(username = '') {
   document.getElementById('staffUserDialogTitle').textContent = user ? 'Manage Staff Account' : 'New Staff Account';
   if (user) {
     form.elements.Username.value = user.Username;
+    form.elements.RecoveryEmail.value = user.RecoveryEmail || '';
     form.elements.FirstName.value = user.FirstName || '';
     form.elements.MiddleName.value = user.MiddleName || '';
     form.elements.Surname.value = user.Surname || '';

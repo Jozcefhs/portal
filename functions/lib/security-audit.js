@@ -357,6 +357,9 @@ export function shouldPersistSecurityAudit(prepared = {}, actor = null, status =
   const action = titleWords(prepared.action);
   const path = lower(prepared.pathname);
   if (method === 'OPTIONS' || method === 'HEAD') return false;
+  // Recovery success is atomically audited by the reset transaction. Requests
+  // deliberately have a generic result and must not imply an email was sent.
+  if (path === '/api/staff-password-recovery') return false;
   // Retain workspace-load records and their failures. The routine-activity
   // checkbox controls their visibility; changing the wording must not lose them.
   if (isAcademicWorkspaceLoad(prepared.action, path)) return true;

@@ -9,6 +9,7 @@ import { objectToFirestoreFields, firestoreDocumentToObject } from '../functions
 import { actorBranchScope } from '../functions/lib/branch-scope.js';
 
 const authSource = await readFile(new URL('../functions/lib/staff-auth.js', import.meta.url), 'utf8');
+const credentialSource = await readFile(new URL('../functions/lib/staff-credential-state.js', import.meta.url), 'utf8');
 const usersSource = await readFile(new URL('../functions/api/staff-users.js', import.meta.url), 'utf8');
 const sessionSource = await readFile(new URL('../functions/api/staff-session.js', import.meta.url), 'utf8');
 const adminSource = await readFile(new URL('../js/admin.js', import.meta.url), 'utf8');
@@ -57,6 +58,7 @@ function fixture(edition = 'school') {
   };
   const worker = () => {
     const context = vm.createContext({ ...common });
+    vm.runInContext(unmodule(credentialSource), context);
     vm.runInContext(unmodule(authSource), context);
     return context;
   };

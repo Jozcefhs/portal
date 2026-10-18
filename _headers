@@ -31,3 +31,7 @@
 
 /app-icon.svg
   Cache-Control: public, max-age=86400, stale-while-revalidate=604800
+
+/staff-password-recovery*
+  Cache-Control: no-store
+  Referrer-Policy: no-referrer

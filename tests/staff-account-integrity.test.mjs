@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import vm from 'node:vm';
+import { normalizeRecoveryEmail } from '../functions/lib/staff-password-recovery.js';
 import { resolveStaffAssignmentBranch, staffAssignmentActor } from '../functions/lib/staff-branch-context.js';
 import { actorBranchScope, branchRecordVisible } from '../functions/lib/branch-scope.js';
 import { staffRoleAllowedForEdition, normalizeOrganizationEdition } from '../functions/lib/organization-config.js';
@@ -40,7 +41,7 @@ function harness(users = []) {
       await database.batchCommitLiteralDocuments(env, [{ collectionPath, documentId, data, ...options }]);
     },
   };
-  const common = { crypto, Date, console, ...database };
+  const common = { crypto, Date, console, normalizeRecoveryEmail, ...database };
   const core = vm.createContext(common);
   vm.runInContext(unmodule(integrity), core);
   const context = vm.createContext({

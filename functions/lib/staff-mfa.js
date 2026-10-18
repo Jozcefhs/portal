@@ -1,4 +1,5 @@
 import QRCode from 'qrcode';
+import { staffCredentialEpochCurrent } from './staff-credential-state.js';
 import {
   batchUpsertDocuments,
   createDocumentIfAbsent,
@@ -360,6 +361,7 @@ async function createLoginChallenge(env, user, details = {}) {
     const now = Date.now();
     const created = await createDocumentIfAbsent(env, CHALLENGE_COLLECTION, id, {
       Username: clean(user.username || user.Username),
+      AuthEpoch: clean(user.authEpoch ?? user.PasswordRecoveryEpoch),
       UsernameKey: lower(user.username || user.Username),
       Role: clean(user.role || user.Role),
       Methods: details.methods || [],
@@ -418,7 +420,8 @@ export async function readStaffMfaLoginChallenge(env, ticket) {
   }
   const id = await tokenDocumentId(token);
   const challenge = await getDocument(env, CHALLENGE_COLLECTION, id);
-  if (!challenge || Date.parse(challenge.ExpiresAt) <= Date.now()) {
+  if (!challenge || Date.parse(challenge.ExpiresAt) <= Date.now()
+      || !await staffCredentialEpochCurrent(env, challenge.Username, challenge.AuthEpoch)) {
     const error = new Error('The two-factor sign-in request expired. Please sign in again.');
     error.status = 401;
     throw error;
@@ -455,8 +458,8 @@ async function consumeChallenge(env, id, challenge) {
   }
 }
 
-async function completedSession(env, username, sourcePlatform) {
-  const user = await finalizeStaffAuthentication(env, username, sourcePlatform);
+async function completedSession(env, username, sourcePlatform, expectedEpoch = '') {
+  const user = await finalizeStaffAuthentication(env, username, sourcePlatform, expectedEpoch);
   if (!user) {
     const error = new Error('This staff account is inactive or no longer exists.');
     error.status = 401;
@@ -481,7 +484,7 @@ export async function completeStaffMfaPasskeyLogin(env, ticket, username) {
     throw error;
   }
   await consumeChallenge(env, id, challenge);
-  return completedSession(env, challenge.Username, 'Web Password + Passkey');
+  return completedSession(env, challenge.Username, 'Web Password + Passkey', challenge.AuthEpoch || '');
 }
 
 async function verifyProfileTotp(env, username, profile, code, options = {}) {
@@ -540,7 +543,7 @@ export async function verifyStaffMfaLogin(env, ticket, methodValue, code) {
     throw error;
   }
   await consumeChallenge(env, id, challenge);
-  return completedSession(env, username, method === 'totp' ? 'Web Password + Authenticator' : 'Web Password + Recovery Code');
+  return completedSession(env, username, method === 'totp' ? 'Web Password + Authenticator' : 'Web Password + Recovery Code', challenge.AuthEpoch || '');
 }
 
 async function organizationMfaName(env) {
@@ -641,7 +644,7 @@ export async function confirmTotpSetup(env, actor, code, currentPassword = '') {
   let session = null;
   if (actor.viaTicket) {
     await consumeChallenge(env, actor.challengeId, actor.challenge);
-    session = await completedSession(env, username, 'Web Password + Authenticator Enrollment');
+    session = await completedSession(env, username, 'Web Password + Authenticator Enrollment', actor.challenge.AuthEpoch || '');
   }
   await writeMfaAudit(env, {
     action: 'ENABLE TWO-FACTOR AUTHENTICATION',

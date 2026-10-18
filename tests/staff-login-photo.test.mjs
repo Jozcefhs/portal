@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
 import { createStaffSession, readStaffSession } from '../functions/lib/staff-auth.js';
+import { staffCredentialEpochCurrent } from '../functions/lib/staff-credential-state.js';
 
 const authSource = await readFile(new URL('../functions/lib/staff-auth.js', import.meta.url), 'utf8');
 const adminSource = await readFile(new URL('../js/admin.js', import.meta.url), 'utf8');
@@ -19,6 +20,7 @@ function finalizer(record = user, image = photo) {
   const writes = [];
   const context = vm.createContext({
     TextEncoder, crypto, Date,
+    staffCredentialEpochCurrent,
     clean, lower: value => clean(value).toLowerCase(),
     externalAuditAccessExpired: () => false,
     findStaffUserRecord: async () => record,

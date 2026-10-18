@@ -1,6 +1,7 @@
 import { getDocument, listCollection, patchDocumentFields, requireFirestoreEnv, updateDocumentIfCurrent, upsertDocument } from '../lib/firestore.js';
 import { hashStaffPassword, invalidateStaffAccessCache, requireStaffSession } from '../lib/staff-auth.js';
 import { readJsonBody } from '../lib/request-security.js';
+import { normalizeRecoveryEmail } from '../lib/staff-password-recovery.js';
 import { staffRecordMatchesEdition } from '../lib/records-desk.js';
 import { actorBranchScope, branchRecordVisible } from '../lib/branch-scope.js';
 import { getSchoolStructure } from '../lib/school-scope.js';
@@ -152,6 +153,7 @@ function publicUser(row, edition = 'school', featureFlags = null, profile = {}) 
   return {
     Username: clean(row.Username || row.username || row.__id),
     LoginUsername: clean(row.LoginUsername || row.loginUsername || row.Username || row.username || row.__id),
+    RecoveryEmail: clean(row.RecoveryEmail),
     DisplayName: staffDisplayName(row, profile),
     FirstName: clean(row.FirstName || row.firstName),
     MiddleName: clean(row.MiddleName || row.middleName),
@@ -303,6 +305,7 @@ async function saveUser(env, actor, body) {
     ...(existing || {}),
     Username: username,
     UsernameKey: lower(username),
+    RecoveryEmail: normalizeRecoveryEmail(body.RecoveryEmail ?? existing?.RecoveryEmail),
     LoginUsername: clean(existing?.LoginUsername || username),
     LoginUsernameKey: lower(existing?.LoginUsername || username),
     DisplayName: identity.DisplayName || username,

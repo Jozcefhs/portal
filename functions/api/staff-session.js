@@ -114,6 +114,7 @@ function authoritativeSessionUser(record, sessionUser, profilePhotoUrl = '', sch
     ? value.map(clean).filter(Boolean)
     : clean(value).split(',').map(clean).filter(Boolean);
   return {
+    authEpoch: clean(sessionUser.authEpoch ?? record.PasswordRecoveryEpoch),
     username: clean(record.Username || record.__id || sessionUser.username),
     loginUsername: clean(record.LoginUsername || sessionUser.loginUsername || record.Username || sessionUser.username),
     displayName: sessionStaffDisplayName(
@@ -456,7 +457,7 @@ export async function onRequestPost(context) {
     if (mfa.required) {
       return response({ ok: true, ...mfa });
     }
-    const user = await finalizeStaffAuthentication(env, passwordUser.username, 'Web Password');
+    const user = await finalizeStaffAuthentication(env, passwordUser.username, 'Web Password', passwordUser.authEpoch || '');
     if (!user) return response({ ok: false, message: 'This staff account is inactive or no longer exists.' }, 401);
     const staffRecord = await findStaffUserRecord(env, user.username).catch(() => null);
     const schoolProfile = await loadOrganizationNameProfile(env);

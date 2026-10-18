@@ -1,5 +1,6 @@
 import { batchCommitDocuments, batchCommitLiteralDocuments, batchUpsertDocuments, createDocumentIfAbsent, deleteDocument, findOneByField, getDocument, listCollection, listCollectionForReport, listCollectionPage, patchDocumentFields, queryCollection, queryCollectionPages, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { feeBranchId, feeRowsForBranch, feeMatchesBranch, feeSetupBranch, resolveFeeDocument, feeDocumentWrite } from '../lib/fee-branch-scope.js';
+import { normalizeRecoveryEmail } from '../lib/staff-password-recovery.js';
 import { billingComponentDiagnostics, billingDiagnostics } from '../lib/student-billing-diagnostics.js';
 import { loadBranchFinanceRows, loadBranchFinancePage } from '../lib/finance-branch-reads.js';
 import { financeMoney, financeDate, financeData, financeWrite, financeFailure, financeOperationId, journalFinancialSignature, assertFinanceRoleLimit } from '../lib/accounting-mutation-guards.js';
@@ -11241,6 +11242,7 @@ async function saveStaffUserFromDesktop(env, body) {
     UsernameKey: lower(username),
     LoginUsername: loginUsername,
     LoginUsernameKey: lower(loginUsername),
+    RecoveryEmail: normalizeRecoveryEmail(incoming.RecoveryEmail ?? existing?.RecoveryEmail),
     DisplayName: formatPersonName(identity, profile || {}, clean(incoming.DisplayName || existing?.DisplayName) || username),
     FirstName: clean(incoming.FirstName || incoming.firstName || existing?.FirstName || existing?.firstName),
     MiddleName: clean(incoming.MiddleName || incoming.middleName || existing?.MiddleName || existing?.middleName),

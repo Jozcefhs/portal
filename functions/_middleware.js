@@ -3,6 +3,7 @@ import { hasPlatformFirestoreConfiguration } from './lib/platform-firestore.js';
 import { persistRequestSecurityAudit, prepareSecurityAudit } from './lib/security-audit.js';
 
 const LOW_READ_IDENTITY_PATHS = new Set([
+  '/api/staff-password-recovery',
   '/api/staff-session',
   '/api/staff-passkey',
   '/api/staff-mfa',
@@ -31,6 +32,7 @@ const PLATFORM_SUBSCRIPTION_PROXY_PATHS = new Set([
 ]);
 
 const SUBSCRIPTION_RECOVERY_PATHS = new Set([
+  '/api/staff-password-recovery',
   '/api/admin',
   '/api/staff-session',
   '/api/staff-passkey',
