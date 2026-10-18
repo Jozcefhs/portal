@@ -1,7 +1,7 @@
 {
-  "version": "3.1.30",
+  "version": "3.1.31",
   "channel": "stable",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.30.exe",
-  "sha256": "7edbd78956c233119ec50244d0c7aef380efda8103a700103dcb936520d43ecf",
-  "notes": "Dynamax Desktop v3.1.30 connects scoped HR positions and staff details to letters and directories across all editions. Includes automatic directory search with a Search button, configured manual-payment amount autofill, subscriber-branded letter formatting, PDF preview lock protection, ICT and delegated approval entry points, and responsive CBT controls with school branding. The 5,000-candidate CBT software target requires a successful rehearsal on the actual school server and network; it is not a hardware capacity guarantee. Includes all previous desktop repairs. Connected HR data and online approval features require the current organisation backend. Installation preserves organisation settings and does not change payments, receipts, balances, stock, permissions or previously issued documents."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.31.exe",
+  "sha256": "2be183a3b4caa5f1aa5ae27e131bf515448b7156749fcc618173bf1a2213c90e",
+  "notes": "Dynamax Desktop v3.1.31 includes self-service staff password recovery through the saved login-account email across all editions, with 6–128-character passwords on the updated companion. Recovery codes remain single-use and time-limited, and existing MFA and permissions are preserved. Independent CBT centres can pull the same available tests and full eligible rosters without centre assignments; signed result uploads retain per-attempt safeguards and safe concurrent retries. The student CBT page keeps the subscriber school logo. Students must complete each test at one centre; disconnected servers cannot transfer active attempts. Includes the connected HR, directory search, payment autofill, letter formatting and all previous repairs. Online features require the updated organisation backend. The 5,000-candidate software target still requires a rehearsal on the actual school server and network. Installation preserves organisation settings, payments, receipts, balances, stock and existing records."
 }
