@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import vm from 'node:vm';
 import { canonicalRecordEdition, staffRecordMatchesEdition } from '../functions/lib/records-desk.js';
+import { staffEmploymentDetails } from '../functions/lib/staff-employment.js';
 import { requiredDeploymentIdentity } from '../functions/lib/deployment-identity.js';
 import { canonicalStaffAttendanceCollectionPath, resolveStaffAttendanceBranch, safeStaffAttendanceDocumentId,
   staffAttendanceWriteDocumentId } from '../functions/lib/staff-attendance-storage.js';
@@ -77,7 +78,7 @@ function attendanceHarness(h, overrides = {}) {
       'loadAttendanceRoster', 'requireAttendanceStaff', 'attendanceHrRecordMatchesScope', 'getStaffAttendanceDocument', 'listCollection',
       'staffAttendanceCollectionPath'].map((name) => [name, h.context[name]])),
     Date, Intl, crypto, resolveStaffAttendanceBranch, safeStaffAttendanceDocumentId, staffAttendanceWriteDocumentId,
-    addAttendanceDays, attendanceGroupFor, attendanceShiftForDate, resolveAttendanceShift, staffRecordMatchesEdition,
+    addAttendanceDays, attendanceGroupFor, attendanceShiftForDate, resolveAttendanceShift, staffRecordMatchesEdition, staffEmploymentDetails,
     batchCommitDocuments: h.context.batchCommitLiteralDocuments,
     listStaffAttendanceCollection: async () => [], queryStaffAttendanceCollection: async () => [],
     ...overrides

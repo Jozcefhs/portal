@@ -107,17 +107,17 @@ function optionalMoney(value, label) {
 export function normalizeHrEmployee(input = {}, existing = {}) {
   const username = lower(input.Username || input.username || existing.Username);
   return {
-    EmployeeId: clean(input.EmployeeId || existing.EmployeeId),
+    EmployeeId: clean(input.EmployeeId ?? existing.EmployeeId),
     Username: required(username, 'Staff username'),
     DisplayName: required(input.DisplayName || existing.DisplayName || username, 'Staff name'),
-    Position: clean(input.Position || existing.Position),
-    Department: clean(input.Department || existing.Department),
+    Position: clean(input.Position ?? existing.Position),
+    Department: clean(input.Department ?? existing.Department),
     EmploymentType: clean(input.EmploymentType || existing.EmploymentType || 'Permanent'),
-    HireDate: clean(input.HireDate || existing.HireDate),
-    ManagerUsername: lower(input.ManagerUsername || existing.ManagerUsername),
-    WorkEmail: clean(input.WorkEmail || existing.WorkEmail),
-    Phone: clean(input.Phone || existing.Phone),
-    EmergencyContact: clean(input.EmergencyContact || existing.EmergencyContact),
+    HireDate: clean(input.HireDate ?? existing.HireDate),
+    ManagerUsername: lower(input.ManagerUsername ?? existing.ManagerUsername),
+    WorkEmail: clean(input.WorkEmail ?? existing.WorkEmail),
+    Phone: clean(input.Phone ?? existing.Phone),
+    EmergencyContact: clean(input.EmergencyContact ?? existing.EmergencyContact),
     Status: clean(input.Status || existing.Status || 'Active')
   };
 }

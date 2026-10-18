@@ -6,6 +6,7 @@ import { webcrypto } from 'node:crypto';
 import { requiredDeploymentIdentity } from '../functions/lib/deployment-identity.js';
 import { safeScopeId } from '../functions/lib/school-scope.js';
 import { canonicalRecordEdition, staffRecordMatchesEdition } from '../functions/lib/records-desk.js';
+import { staffEmploymentDetails } from '../functions/lib/staff-employment.js';
 import { hrCapabilitiesFor } from '../functions/lib/human-resources.js';
 
 const sources = Object.fromEntries(await Promise.all(['firestore', 'staff-attendance-storage', 'staff-attendance-schedules', 'staff-attendance-groups', 'staff-time-attendance', 'attendance-presence-notifications'].map(async name => [
@@ -114,7 +115,8 @@ function fixture(edition = 'school', username = 'teacher@example.test') {
   const attendance = loadModule(sources['staff-time-attendance'], {
     './firestore.js': firestore, './staff-attendance-storage.js': storage,
     './staff-attendance-schedules.js': schedules, './staff-attendance-groups.js': groups,
-    './records-desk.js': { staffRecordMatchesEdition }, './human-resources.js': { hrCapabilitiesFor }
+    './records-desk.js': { staffRecordMatchesEdition }, './human-resources.js': { hrCapabilitiesFor },
+    './staff-employment.js': { staffEmploymentDetails }
   }, globals);
   const notifications = loadModule(sources['attendance-presence-notifications'], {
     './firestore.js': firestore, './staff-attendance-storage.js': storage,

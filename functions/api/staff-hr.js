@@ -4,6 +4,7 @@ import { beginStaffAccountChange, commitStaffAccountChanges, staffAccountConditi
 import { readJsonBody } from '../lib/request-security.js';
 import { branchRecordVisible, enforceActorBranch, recordBranchId } from '../lib/branch-scope.js';
 import { staffRecordMatchesEdition } from '../lib/records-desk.js';
+import { staffEmploymentDetails } from '../lib/staff-employment.js';
 import {
   hrCapabilitiesFor,
   normalizeHrCandidate,
@@ -62,9 +63,15 @@ function inferredHrBranch(row = {}, staffBranches = new Map(), vacancyBranches =
 }
 
 function visibleHrRows(rows, user, staffBranches, vacancyBranches = new Map()) {
-  return (rows || []).filter((row) => branchRecordVisible(row, user, {
+  return (rows || []).filter((row) => {
+    const username = lower(row.Username || row.username);
+    if (username && !staffBranches.has(username)) return false;
+    const edition = clean(row.Edition || row.OrganisationEdition || row.OrganizationEdition);
+    if (edition && !staffRecordMatchesEdition(row, user)) return false;
+    return branchRecordVisible(row, user, {
     inferredBranchId: inferredHrBranch(row, staffBranches, vacancyBranches)
-  }));
+    });
+  });
 }
 
 function requireVisibleStaff(row, user) {
@@ -144,8 +151,14 @@ async function listWorkspace(env, user) {
   const exits = lifecycle('Exit');
   const safeStaff = editionStaff.filter((row) => branchRecordVisible(row, user))
     .map(safeHrStaffUser).filter((row) => row.Username);
-  const employeeByUsername = new Map(scopedEmployees.map((row) => [lower(row.Username), row]));
-  const directory = safeStaff.map((row) => ({ ...row, ...(employeeByUsername.get(lower(row.Username)) || {}) }));
+  const directory = safeStaff.map((row) => {
+    const employment = staffEmploymentDetails(row, scopedEmployees, user.edition || 'school');
+    // Private fields remain in HR, but only on the matching scoped employee.
+    const employee = scopedEmployees.find(item => lower(item.Username) === lower(row.Username)
+      && recordBranchId(item, row.BranchId) === recordBranchId(row)
+      && staffRecordMatchesEdition(item, { ...user, username: row.Username }));
+    return { ...row, ...(employee || {}), ...employment, Username: row.Username, Role: row.Role, BranchId: row.BranchId };
+  });
   const role = clean(user.role || user.Role);
   const directReports = new Set(directory
     .filter((row) => lower(row.ManagerUsername) === username)
@@ -257,7 +270,17 @@ async function saveEmployee(env, user, body, capabilities) {
   const username = lower(body.Username);
   const staff = await knownStaff(env, user, username);
   const id = safeId(username);
-  const existing = await getDocument(env, 'hrEmployees', id).catch(() => null);
+  const existing = await getDocument(env, 'hrEmployees', id);
+  if (existing && (lower(existing.Username) !== username
+      || !staffRecordMatchesEdition(existing, { ...user, username })
+      || recordBranchId(existing, staff.BranchId) !== recordBranchId(staff))) {
+    fail('This employment record is linked to a different staff account, branch or edition.', 409);
+  }
+  const managerUsername = lower(body.ManagerUsername ?? existing?.ManagerUsername);
+  if (managerUsername) {
+    if (managerUsername === username) fail('A staff member cannot be their own line manager.');
+    await knownStaff(env, user, managerUsername);
+  }
   const branchId = enforceActorBranch(
     user,
     body.BranchId || body.branchId,
@@ -269,9 +292,10 @@ async function saveEmployee(env, user, body, capabilities) {
     ...normalizeHrEmployee({
       ...body,
       DisplayName: clean(body.DisplayName || staff.DisplayName || username),
-      Department: clean(body.Department || staff.Department)
+      Department: clean(body.Department ?? existing?.Department ?? staff.Department)
     }, existing || {}),
     BranchId: branchId,
+    OrganisationEdition: user.edition || 'school',
     UpdatedAt: nowIso(),
     UpdatedBy: actorName(user),
     CreatedAt: clean(existing?.CreatedAt) || nowIso(),
@@ -281,7 +305,8 @@ async function saveEmployee(env, user, body, capabilities) {
   delete record.__name;
   delete record.__createTime;
   delete record.__updateTime;
-  await upsertDocument(env, 'hrEmployees', id, record);
+  await upsertDocument(env, 'hrEmployees', id, record,
+    existing?.__updateTime ? { updateTime: existing.__updateTime } : { exists: false });
   await audit(env, user, existing ? 'UPDATE EMPLOYEE' : 'CREATE EMPLOYEE', username, record.Position, branchId);
   return { ok: true, message: 'Employment record saved.', employee: record };
 }

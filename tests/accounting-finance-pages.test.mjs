@@ -87,6 +87,7 @@ test('paged overview skips entire invoice/payment scans and withholds incomplete
   for (const edition of ['school', 'church', 'organization', 'hotel']) {
     const calls = [];
     const handler = vm.runInNewContext(`(${handlerSource})`, { clean, lower: v => clean(v).toLowerCase(),
+      withStaffEmployment: async (_env, rows) => rows, employmentPayrollProfile: row => row,
       accountingEditionForRequest: () => edition, accountingRequestBranch: () => 'main', accountingRowsForBranch,
       requireAccountingRole: () => {}, DEPARTMENT_ACCOUNTING_ROLES: [],
       isDepartmentAccountingUser: () => false, listCollection: async (_env, collection) => { calls.push(collection); return []; },

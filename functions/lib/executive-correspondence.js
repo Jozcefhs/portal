@@ -11,7 +11,8 @@ import { resolveOrganizationConfig } from './organization-config.js';
 import { requiredDeploymentIdentity } from './deployment-identity.js';
 import { effectiveBranchProfile } from './branch-profile-settings.js';
 import { staffRecordMatchesEdition } from './records-desk.js';
-import { findStaffUserRecord } from './staff-auth.js';
+import { loadStaffPosition } from './staff-position.js';
+import { withStaffEmployment, employmentDirectoryRow } from './staff-employment.js';
 import { listSchoolCollection, safeScopeId, schoolSectionFor } from './school-scope.js';
 import { escapeEmailHtml, sendConfiguredEmail } from './email-service.js';
 import { loadStaffApprovalProfile, publicStaffApprovalProfile } from './staff-approval-profile.js';
@@ -293,6 +294,7 @@ function publicCorrespondence(row = {}, includeBody = true) {
     UpdatedBy: clean(row.UpdatedBy),
     IssuedAt: clean(row.IssuedAt),
     IssuedBy: clean(row.IssuedBy),
+    IssuerTitle: clean(row.IssuerTitle),
     SentAt: clean(row.SentAt),
     SentBy: clean(row.SentBy),
     DeliveryStatus: clean(row.DeliveryStatus)
@@ -613,9 +615,10 @@ async function saveMetricPreferences(env, user, scope, input) {
 async function metricData(env, scope, selectedIds, correspondenceRows = null, user = {}) {
   const selected = new Set(selectedIds);
   const needStaff = ['staffTotal', 'activeStaff', 'staffByDepartment'].some((id) => selected.has(id));
-  const staff = needStaff
+  let staff = needStaff
     ? (await listCollection(env, 'staffUsers')).filter((row) => visibleExecutiveStaffRow(row, scope, user))
     : [];
+  if (selected.has('staffByDepartment')) staff = (await withStaffEmployment(env, staff)).map(employmentDirectoryRow);
   const correspondence = correspondenceRows || await loadScopedCorrespondence(env, scope);
   let students = [];
   let classes = [];
@@ -742,8 +745,9 @@ async function searchDirectory(env, body, capabilities, scope, user = {}) {
         ));
     }
     if (type === 'staff') {
-      return (await listCollection(env, 'staffUsers'))
-        .filter((row) => visibleExecutiveStaffRow(row, scope, user))
+      return (await withStaffEmployment(env, (await listCollection(env, 'staffUsers'))
+        .filter((row) => visibleExecutiveStaffRow(row, scope, user))))
+        .map(employmentDirectoryRow)
         .map((row) => searchResult(
           type,
           row.Username || row.__id,
@@ -1148,8 +1152,7 @@ export function executiveSignatoryTitle(staff = {}) {
 
 async function loadExecutiveSignatoryTitle(env, user) {
   // Resolve the authenticated issuing officer, never a title supplied in the form.
-  const staff = await findStaffUserRecord(env, user.username);
-  return executiveSignatoryTitle(staff || {});
+  return (await loadStaffPosition(env, user)).IssuerTitle;
 }
 
 async function printableFor(env, user, identity, correspondence) {
@@ -1532,12 +1535,13 @@ async function sendCorrespondence(env, user, body, scope, identity, authorizatio
 }
 
 async function bootstrap(env, user, scope, capabilities, identity) {
-  const [customTemplates, correspondence, classes, metricIds, approvalProfile] = await Promise.all([
+  const [customTemplates, correspondence, classes, metricIds, approvalProfile, signatory] = await Promise.all([
     loadCustomTemplates(env, scope),
     loadScopedCorrespondence(env, scope),
     scope.edition === 'school' ? listCollection(env, 'settings/academics/classes') : [],
     loadMetricPreferences(env, user, scope),
-    loadStaffApprovalProfile(env, user.username).catch(() => null)
+    loadStaffApprovalProfile(env, user.username).catch(() => null),
+    loadStaffPosition(env, user)
   ]);
   const availableTypes = requestedSearchTypes({}, capabilities).available;
   return {
@@ -1565,6 +1569,7 @@ async function bootstrap(env, user, scope, capabilities, identity) {
       arms: clean(row.Arms)
     })),
     approvalProfile: publicStaffApprovalProfile(approvalProfile || {}),
+    signatory,
     metricPreferences: metricIds,
     availableMetrics: metricDefinitions(scope.edition),
     metrics: await metricData(env, scope, metricIds, correspondence, user)

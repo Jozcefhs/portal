@@ -95,6 +95,7 @@ export function mountClinicReferrals(host, { request, setStatus, accountRef = ''
       host.querySelector('[data-referral-student]').textContent = `${student.StudentName} · ${student.AccountRef} · ${student.ClassName} · Parent: ${student.ParentEmail || 'No parent email saved (download / print only)'}`;
       form.elements.VisitId.innerHTML = `<option value="">Choose the visit being referred</option>${visits.map(row => `<option value="${escape(row.VisitId)}">${escape(row.Date)} · ${escape(row.Complaint)} · ${escape(row.Disposition)}</option>`).join('')}`;
       form.reset(); form.elements.ReferralDate.value = today;
+      form.elements.ClinicianTitle.value = result.signatory?.Position || 'Clinic staff';
       history.innerHTML = '<option value="">Choose a saved referral</option>' + result.referrals.map(row => `<option value="${escape(row.ReferralId)}">${escape(row.ReferralDate)} · ${escape(row.Hospital)} · ${escape(row.Status)}</option>`).join('');
       workspace.hidden = false;
       setStatus(status, visits.length ? result.message : 'No active clinic visits found. Save a clinic visit first.', visits.length ? 'ok' : 'bad');

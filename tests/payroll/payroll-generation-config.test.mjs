@@ -29,6 +29,7 @@ for (const edition of ['school', 'faith', 'organization']) {
       let writes = 0, calculations = 0, strict = false;
       const clean = value => String(value ?? '').trim();
       const context = {
+        withStaffEmployment: async (_env, rows) => rows, employmentPayrollProfile: row => row,
         ...branch, clean, lower: value => clean(value).toLowerCase(), assertPayrollCanRegenerate,
         sameText: (a, b) => clean(a).toLowerCase() === clean(b).toLowerCase(), safeDocumentId: clean,
         requireAccountingRole: () => {}, yesNo: value => clean(value).toUpperCase(), PAYROLL_GENERATION_PROFILE_LIMIT: 250,

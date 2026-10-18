@@ -46,6 +46,7 @@ function fixture(extra = {}) {
       for (const write of writes) put(write.collectionPath, write.documentId, write.data);
     },
     requiredDeploymentIdentity: () => ({ edition: 'school', workspaceId: 'test-school' }),
+    loadStaffPosition: async () => ({ Username: 'nurse', Position: 'School Nurse', IssuerTitle: 'School Nurse' }),
     getDocumentBranding: async () => ({ DocumentLogoDataUrl: 'branded-logo', DocumentSignatureDataUrl: 'principal-signature' }),
     documentBrandingMatchesDeployment: () => true,
     effectiveBranchProfile: async (_, defaults, branch) => ({ ...defaults, SchoolName: `School ${branch}` }),

@@ -60,6 +60,7 @@ function fixture(edition = 'school', overrides = {}, realApproval = false) {
     }
   };
   const context = {
+    withStaffEmployment: async (_env, rows) => rows, employmentPayrollProfile: row => row,
     ...guards, ...imprest, ...branches, ...runGuards, clean, lower,
     calculateLegacyPayroll, buildPayrollJournalLines, PAYROLL_GENERATION_PROFILE_LIMIT: 250,
     PAYROLL_TAX_COLLECTIONS: { mappings: 'payrollLedgerMappings', overrides: 'payrollTaxOverrides' },

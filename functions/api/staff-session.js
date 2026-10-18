@@ -27,6 +27,7 @@ import { loadOrganizationNameProfile } from '../lib/organization-name-format.js'
 import { formatPersonName } from '../lib/person-name-format.js';
 import { loadStaffProfileImage } from '../lib/staff-profile-image.js';
 import { externalAuditAccessExpired } from '../lib/external-audit.js';
+import { withStaffEmployment } from '../lib/staff-employment.js';
 export { staffProfileImageIds } from '../lib/staff-profile-image.js';
 
 function response(data, status = 200, cookies = [], extraHeaders = {}) {
@@ -174,6 +175,13 @@ export async function onRequestGet(context) {
       schoolProfile || {}
     );
     const scopedUser = user ? await staffUserForRequest(context.env, user, context.request) : null;
+    // Employment is display-only. Do not feed HR department/status back into
+    // authorization, login identity, branch or approval permissions.
+    if (scopedUser && stored && new URL(context.request.url).searchParams.get('employment') === '1') {
+      const [linked] = await withStaffEmployment(context.env, [stored]);
+      scopedUser.employment = linked.Employment;
+      scopedUser.position = linked.Position;
+    }
     return response({
       ok: true,
       authenticated: Boolean(user),

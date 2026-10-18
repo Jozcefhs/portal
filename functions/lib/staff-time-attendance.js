@@ -1,4 +1,5 @@
 import { batchCommitLiteralDocuments as batchCommitDocuments, listCollection, patchDocumentFields, upsertDocument } from './firestore.js';
+import { staffEmploymentDetails } from './staff-employment.js';
 import {
   cleanupLegacyStaffAttendanceStorage,
   getCanonicalStaffAttendanceDocument,
@@ -526,11 +527,13 @@ export function staffAttendanceDirectoryFor(staffUsers = [], employees = [], use
     if (!username || identities.has(username) || !staffRecordMatchesEdition(row, user)
       || !staffBranchMatches(row, branchId)
       || !activeStaffValue(row.Active === undefined ? true : row.Active) || exited.has(username)) continue;
+    const employment = staffEmploymentDetails(row, employees, user.edition || 'school');
     identities.set(username, {
       Username: username,
-      DisplayName: clean(row.DisplayName || row.Username || row.__id),
+      DisplayName: clean(employment.DisplayName || row.DisplayName || row.Username || row.__id),
       Role: clean(row.Role),
-      Department: clean(row.Department)
+      Department: clean(employment.Department || row.Department),
+      Position: clean(employment.Position || row.Position)
     });
   }
   return [...identities.values()].sort((a, b) => a.DisplayName.localeCompare(b.DisplayName));

@@ -1,4 +1,5 @@
 import { effectiveInvoiceAfterReversal } from '../lib/invoice-charge-reversal.js';
+import { withStaffEmployment, employmentDirectoryRow } from '../lib/staff-employment.js';
 import {
   firestoreDocumentToObject,
   firestoreRequest,
@@ -243,8 +244,9 @@ async function rowsForType(env, user, type, branchId) {
       schoolSectionAccess: user.schoolSectionAccess
     })).filter((row) => visibleSchoolRecord(row, user, branchId));
   } else if (type === 'staff') {
-    rows = (await listCollection(env, 'staffUsers'))
-      .filter((row) => visibleStaffDirectoryRecord(row, user, branchId))
+    rows = (await withStaffEmployment(env, (await listCollection(env, 'staffUsers'))
+      .filter((row) => visibleStaffDirectoryRecord(row, user, branchId))))
+      .map(employmentDirectoryRow)
       .map((row) => {
         const safe = { ...row };
         delete safe.PasswordHash;

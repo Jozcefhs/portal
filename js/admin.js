@@ -1425,6 +1425,26 @@ function openStaffProfile() {
   setStatus(document.getElementById('staffProfileStatus'), '');
   setStatus(document.getElementById('staffLoginDetailsStatus'), '');
   staffProfileDialog.showModal();
+  const employmentSummary = document.getElementById('staffEmploymentSummary');
+  employmentSummary.textContent = 'Loading current HR employment details…';
+  const profileUsername = currentUser.username;
+  sessionRequest('GET', null, { employment: true }).then(({ response, data }) => {
+    if (!staffProfileDialog.open || currentUser?.username !== profileUsername) return;
+    if (!response.ok || !data?.user) throw new Error(data?.message || 'Employment details could not be loaded.');
+    const employment = data.user.employment || {};
+    employmentSummary.textContent = [
+      `Position: ${employment.Position || data.user.position || 'Not set'}`,
+      employment.Department && `Department: ${employment.Department}`,
+      employment.EmploymentType,
+      employment.HireDate && `Joined: ${employment.HireDate}`,
+      employment.ManagerUsername && `Manager: ${employment.ManagerUsername}`,
+      employment.WorkEmail,
+      employment.Phone,
+      'Managed in Human Resources.'
+    ].filter(Boolean).join(' · ');
+  }).catch(error => {
+    if (staffProfileDialog.open && currentUser?.username === profileUsername) employmentSummary.textContent = error.message;
+  });
 }
 
 async function openApprovalSettings() {
@@ -2329,10 +2349,11 @@ async function continueAfterAuthentication(user) {
   await loadDashboard({ mode: 'shell' });
 }
 
-async function sessionRequest(method = 'GET', body = null) {
+async function sessionRequest(method = 'GET', body = null, { employment = false } = {}) {
   const normalizedMethod = clean(method || 'GET').toUpperCase();
+  const endpoint = employment ? '/api/staff-session?employment=1' : '/api/staff-session';
   const retrySafe = normalizedMethod === 'GET' || clean(body?.action).toLowerCase() === 'login';
-  const response = await staffFetch('/api/staff-session', {
+  const response = await staffFetch(endpoint, {
     method: normalizedMethod,
     credentials: 'same-origin',
     cache: 'no-store',

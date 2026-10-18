@@ -21,6 +21,7 @@ import { calculateConfigurablePayroll, calculateLegacyPayroll } from '../lib/pay
 import { assertPayrollCanRegenerate, buildFinalizedRunSnapshot, validatePayrollForSubmission } from '../lib/payroll/payroll-run-guards.js';
 import { buildPayrollJournalLines } from '../lib/payroll/payroll-ledger-service.js';
 import { payrollImportRows, payrollProfileValues } from '../lib/payroll/profile-input.js';
+import { withStaffEmployment, employmentPayrollProfile } from '../lib/staff-employment.js';
 import { financeReportDate, financeReportWithinCutoff, financeStoredCreditAsOf, financeDepartmentJournals, financeInvoiceAsOf } from '../lib/accounting-report-scope.js';
 import {
   applyDesktopDeviceBranchScope,
@@ -10443,7 +10444,8 @@ async function getAccountingOverview(env, body = {}) {
   const scopedPayments = branchRows(payments);
   const scopedFormSales = branchRows(formSales);
   const scopedGatewayCharges = branchRows(gatewayCharges);
-  const scopedPayrollProfiles = branchRows(payrollProfiles);
+  const scopedPayrollProfiles = (await withStaffEmployment(env, branchRows(payrollProfiles)))
+    .map(row => employmentPayrollProfile(row, row));
   const scopedPayrollRuns = branchRows(payrollRuns);
   const scopedPayrollItems = branchRows(payrollItems);
   const scopedPayrollPayments = branchRows(payrollPayments);
@@ -10633,7 +10635,7 @@ async function createPayrollProfilesFromStaff(env, body) {
     listCollection(env, 'staffUsers'),
     listCollection(env, 'payrollProfiles')
   ]);
-  const staffUsers = accountingRowsForBranch(allStaffUsers, branchId);
+  const staffUsers = await withStaffEmployment(env, accountingRowsForBranch(allStaffUsers, branchId));
   const profiles = accountingRowsForBranch(allProfiles, branchId);
   const orderedStaffUsers = [...staffUsers].sort((left, right) =>
     lower(left.Username || left.__id).localeCompare(lower(right.Username || right.__id)));
@@ -10658,10 +10660,10 @@ async function createPayrollProfilesFromStaff(env, body) {
         ...body,
         EmployeeId: ledgerDocumentId('EMP'),
         Username: username,
-        DisplayName: clean(staff.DisplayName) || username,
-        Department: clean(staff.Department),
+        DisplayName: clean(staff.Employment?.DisplayName || staff.DisplayName) || username,
+        Department: clean(staff.Employment?.Department || staff.Department),
         Position: clean(staff.Position),
-        EmploymentType: clean(staff.EmploymentType) || 'Permanent',
+        EmploymentType: clean(staff.Employment?.EmploymentType || staff.EmploymentType) || 'Permanent',
         BasicSalary: 0,
         Active: 'YES',
         Notes: 'Created from staff account; complete salary and bank details before payroll generation.'
@@ -10854,7 +10856,7 @@ async function generatePayrollRun(env, body) {
   const existing = runs.find((row) => sameText(row.RunId, runId) || sameText(row.__id, safeDocumentId(runId))) || {};
   accountingWriteBranch(body, existing);
   assertPayrollCanRegenerate(existing);
-  const profiles = accountingRowsForBranch(await listCollection(env, 'payrollProfiles'), branchId).filter((row) => yesNo(row.Active ?? 'YES') === 'YES');
+  let profiles = accountingRowsForBranch(await listCollection(env, 'payrollProfiles'), branchId).filter((row) => yesNo(row.Active ?? 'YES') === 'YES');
   if (!profiles.length) { const err = new Error('Create at least one active payroll profile first.'); err.status = 400; throw err; }
   if (profiles.length > PAYROLL_GENERATION_PROFILE_LIMIT) {
     const err = new Error(`A payroll run supports at most ${PAYROLL_GENERATION_PROFILE_LIMIT} active profiles per request. Reduce the run scope before generating.`);
@@ -10862,6 +10864,7 @@ async function generatePayrollRun(env, body) {
     err.code = 'PAYROLL_RUN_TOO_LARGE';
     throw err;
   }
+  profiles = (await withStaffEmployment(env, profiles)).map(row => employmentPayrollProfile(row, row));
   const existingItems = accountingRowsForBranch(await listCollection(env, 'payrollItems'), branchId).filter((row) => sameText(row.RunId, runId));
   const usesConfigurablePaye = profiles.some((row) => clean(row.CalculationMode).toUpperCase() === 'CONFIGURABLE_PAYE');
   const configuration = usesConfigurablePaye ? await getPayrollTaxConfiguration(env, { strictReads: true }) : null;
@@ -11180,7 +11183,7 @@ async function getStaffUsersForDesktop(env, body) {
     message: deviceBranchId
       ? `Staff users assigned to branch ${deviceBranchId}, including organisation-wide Super Admins, loaded from the database.`
       : 'Staff users loaded from the database.',
-    users: users.map((row) => ({
+    users: (await withStaffEmployment(env, users)).map((row) => ({
       ...row,
       DisplayName: formatPersonName(row, profile || {}, row.DisplayName || row.Username || row.__id)
     }))

@@ -40,6 +40,7 @@ function directorySearch(staff, students = []) {
     .replace(/^export /gm, '');
   const visibility = source.slice(source.indexOf('function visibleSchoolRow('), source.indexOf('export function visibleExecutiveStaffRow('));
   return runInNewContext(`${helpers}\n${visibility}\n${source.slice(start, end)}\nsearchDirectory`, {
+    withStaffEmployment: async (_env, rows) => rows, employmentDirectoryRow: row => row,
     clean, lower, visibleExecutiveStaffRow, schoolSectionFor,
     TOKEN_SET: new Set(EXECUTIVE_TEMPLATE_TOKENS),
     inputError: (message) => new Error(message),

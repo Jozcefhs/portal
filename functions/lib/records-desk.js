@@ -340,6 +340,11 @@ export function staffDetailProjection(row = {}, capabilities = {}) {
       item('Role', row.Role),
       item('Department', row.Department),
       item('Position', row.Position),
+      item('HR employee ID', row.Employment?.EmployeeId),
+      item('Employment type', row.Employment?.EmploymentType),
+      item('Hire date', row.Employment?.HireDate),
+      item('Line manager', row.Employment?.ManagerUsername),
+      item('Work email', row.Employment?.WorkEmail),
       item('Branch', row.BranchId),
       item('School section', row.SchoolSectionAccess)
     ])

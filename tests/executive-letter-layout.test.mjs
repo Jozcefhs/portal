@@ -11,7 +11,7 @@ test('the saved staff position is used, not a permission role or generic officer
   const source = fs.readFileSync(new URL('../functions/lib/executive-correspondence.js', import.meta.url), 'utf8');
   assert.match(source, /if \(!immutable\) \{[\s\S]*?IssuerTitle: await loadExecutiveSignatoryTitle\(env, user\)/);
   assert.match(source, /const issuerTitle = await loadExecutiveSignatoryTitle\(env, user\)/);
-  assert.match(source, /findStaffUserRecord\(env, user.username\)/);
+  assert.match(source, /loadStaffPosition\(env, user\)/);
 });
 
 for (const Edition of ['school', 'faith', 'organization']) {

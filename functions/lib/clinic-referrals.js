@@ -7,6 +7,7 @@ import { isActiveClinicVisit } from './clinic-stock-usage.js';
 import { sendConfiguredEmail, escapeEmailHtml } from './email-service.js';
 import { createClinicReferralPdf } from './clinic-referral-pdf.js';
 import { loadStaffApprovalProfile, validateApprovalImage } from './staff-approval-profile.js';
+import { loadStaffPosition } from './staff-position.js';
 
 const clean = value => String(value ?? '').trim();
 const lower = value => clean(value).toLowerCase();
@@ -63,7 +64,7 @@ function base64(bytes) {
 export function clinicReferralService(overrides = {}) {
   const db = { getDocument, listCollection, queryCollection, createDocumentIfAbsent, updateDocumentIfCurrent,
     batchCommitLiteralDocuments, getDocumentBranding, documentBrandingMatchesDeployment,
-    effectiveBranchProfile, requiredDeploymentIdentity, sendConfiguredEmail, createClinicReferralPdf, loadStaffApprovalProfile, ...overrides };
+    effectiveBranchProfile, requiredDeploymentIdentity, sendConfiguredEmail, createClinicReferralPdf, loadStaffApprovalProfile, loadStaffPosition, ...overrides };
   return async function handle(env, user, body, findStudent) {
     const identity = db.requiredDeploymentIdentity(env);
     if (identity.edition !== 'school' || lower(user.edition || 'school') !== 'school'
@@ -86,12 +87,13 @@ export function clinicReferralService(overrides = {}) {
     };
     if (action === 'prepareclinicreferral') {
       const student = await resolveStudent(body.AccountRef);
+      const signatory = await db.loadStaffPosition(env, user);
       const [visits, letters] = await Promise.all([db.listCollection(env, 'clinicRecords'), db.queryCollection(env, collection, {
         filters: [{ field: 'AccountRef', op: '==', value: studentRef(student) }],
         select: ['WorkspaceId', 'OrganisationEdition', 'BranchId', 'SchoolSection', 'ReferralId', 'ReferralDate', 'VisitId', 'VisitDate',
           'StudentName', 'AccountRef', 'ClassName', 'ParentEmail', 'Hospital', 'Status', 'PreparedBy', 'CreatedAt', 'SentAt', 'FileName', 'SignatureApplied']
       })]);
-      return { ok: true, student: { AccountRef: studentRef(student), StudentName: clean(student.DisplayName || student.StudentName || student.ApplicantName),
+      return { ok: true, signatory, student: { AccountRef: studentRef(student), StudentName: clean(student.DisplayName || student.StudentName || student.ApplicantName),
         ClassName: clean(student.ClassName || student.ClassAdmitted), ParentEmail: clinicParentEmail(student) },
       visits: visits.filter(row => sameScope(row, student) && isActiveClinicVisit(row)
         && ref(row.AdmissionNo || row.AccountRef) === ref(studentRef(student)))
