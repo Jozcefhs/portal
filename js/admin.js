@@ -16152,7 +16152,9 @@ function academicCbtWorkspace(data, rows) {
     { label: 'Actions', render: (row) => `<div class="academic-management-row-actions">${!clean(row.LocalDownloadedAt || row.LocalPackageIssuedAt) && row.Status === 'Scheduled' && Date.parse(row.StartsAt) > Date.now() ? `<button type="button" data-academic-cbt-refresh-roster="${escapeHtml(row.CbtTestId)}">Refresh student list</button>` : ''}<button type="button" class="compact-icon-action compact-edit-action" data-academic-cbt-reschedule="${escapeHtml(row.CbtTestId)}" title="Reschedule date and time" aria-label="Reschedule date and time"><span aria-hidden="true">&#128197;</span></button>${clean(row.LocalDownloadedAt || row.LocalPackageIssuedAt)
       ? (clean(row.LocalDownloadedAt) && academicCbtHasCloudPapers(row) ? `<button type="button" class="compact-icon-action academic-archive-action" data-academic-cbt-remove-cloud-paper="${escapeHtml(row.CbtTestId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="Remove paper files from Cloudflare R2" aria-label="Remove paper files from Cloudflare R2"><span aria-hidden="true">&#128465;</span></button>` : '')
       : `<button type="button" class="compact-icon-action compact-edit-action" data-academic-cbt-edit="${escapeHtml(row.CbtTestId)}" title="Edit test package" aria-label="Edit test package"><span aria-hidden="true">&#9998;</span></button><button type="button" class="compact-icon-action academic-archive-action" data-academic-cbt-delete="${escapeHtml(row.CbtTestId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="Delete test" aria-label="Delete test"><span aria-hidden="true">&#128465;</span></button>`}</div>` }
-  ], { emptyMessage: 'No online CBT tests have been scheduled for this period.' });
+  ], { emptyMessage: 'No online CBT tests have been scheduled for this period.',
+    searchable: true, searchLabel: 'tests', searchPlaceholder: 'Subject, class, test type or date',
+    searchValue: (row) => [row.SubjectName, row.Title, academicCbtStatus(row).label].join(' ') });
   return `${editor}<p class="muted">Scheduled tests keep the student list saved at upload. After transfers or subject changes, use Refresh student list to review additions and removals before download. Junior classes include all active students; senior classes use their selected subjects.</p>${register}`;
 }
 
@@ -16847,10 +16849,12 @@ function openAcademicCbtRescheduleDialog(record = {}) {
     dialog.className = 'workflow-dialog';
     dialog.innerHTML = `<div class="workflow-dialog-header"><div><small>Online CBT schedule</small><h2 data-academic-cbt-reschedule-title>Reschedule test</h2></div><button type="button" data-academic-cbt-reschedule-close aria-label="Close">&times;</button></div>
       <form class="workflow-form config-dialog-form" data-academic-cbt-reschedule-form>
-        <p class="muted">Only the activation date and time will change. The paper, answer key and submitted attempts remain unchanged. Candidates who have already submitted cannot take the test again.</p>
+        <p class="muted">Change the activation date, time and duration for new attempts. Running timers, papers, answer keys and submitted attempts remain unchanged. Pull Online Tests on each CBT server to apply this schedule.</p>
         <div class="config-grid">
           <label>New test date<input type="date" name="StartDate" required></label>
           <label>New start time<input type="time" name="StartTime" required></label>
+          <label><span data-academic-cbt-duration-label>Duration (minutes)</span><input type="number" name="DurationMinutes" min="1" max="480" step="1" required></label>
+          <label data-academic-cbt-theory-duration>Paper 2 duration (minutes)<input type="number" name="TheoryDurationMinutes" min="1" max="480" step="1"></label>
         </div>
         <p class="status" data-academic-cbt-reschedule-status></p>
         <div class="config-dialog-actions"><button type="button" class="secondary" data-academic-cbt-reschedule-cancel>Cancel</button><button type="submit">Save new schedule</button></div>
@@ -16864,6 +16868,13 @@ function openAcademicCbtRescheduleDialog(record = {}) {
   const schedule = academicCbtLocalParts(record.StartsAt);
   form.elements.StartDate.value = schedule.date;
   form.elements.StartTime.value = schedule.time;
+  const split = record.PaperMode === 'split';
+  form.elements.DurationMinutes.value = record.ObjectiveDurationMinutes || record.DurationMinutes || 40;
+  form.elements.TheoryDurationMinutes.value = split ? record.TheoryDurationMinutes : '';
+  form.elements.TheoryDurationMinutes.required = split;
+  form.elements.TheoryDurationMinutes.disabled = !split;
+  form.querySelector('[data-academic-cbt-theory-duration]').hidden = !split;
+  form.querySelector('[data-academic-cbt-duration-label]').textContent = split ? 'Paper 1 duration (minutes)' : 'Duration (minutes)';
   dialog.querySelector('[data-academic-cbt-reschedule-title]').textContent = `Reschedule ${clean(record.AssessmentComponentName) || 'CBT test'}`;
   setStatus(dialog.querySelector('[data-academic-cbt-reschedule-status]'), '', '');
   form.onsubmit = async (event) => {
@@ -16873,8 +16884,12 @@ function openAcademicCbtRescheduleDialog(record = {}) {
       const status = dialog.querySelector('[data-academic-cbt-reschedule-status]');
       try {
         const startsAt = new Date(`${form.elements.StartDate.value}T${form.elements.StartTime.value}:00`);
-        const duration = Number(record.DurationMinutes || 0);
-        if (!Number.isFinite(startsAt.getTime()) || startsAt.getTime() + duration * 60 * 1000 <= Date.now()) {
+        const duration = Number(form.elements.DurationMinutes.value);
+        const theoryDuration = split ? Number(form.elements.TheoryDurationMinutes.value) : 0;
+        if (![duration, ...(split ? [theoryDuration] : [])].every(value => Number.isInteger(value) && value >= 1 && value <= 480)) {
+          throw new Error('Each paper duration must be a whole number between 1 and 480 minutes.');
+        }
+        if (!Number.isFinite(startsAt.getTime()) || startsAt.getTime() + (duration + theoryDuration) * 60 * 1000 <= Date.now()) {
           throw new Error('Choose a date and time that leaves the full test duration available.');
         }
         const result = await academicManagementRequest('rescheduleAcademicCbtTest', {
@@ -16883,7 +16898,9 @@ function openAcademicCbtRescheduleDialog(record = {}) {
           TermId: record.TermId,
           CbtTestId: record.CbtTestId,
           RevisionToken: record.RevisionToken,
-          StartsAt: startsAt.toISOString()
+          StartsAt: startsAt.toISOString(),
+          DurationMinutes: duration,
+          TheoryDurationMinutes: theoryDuration
         });
         mergeAcademicCbtTest(result);
         dialog.close();

@@ -7217,8 +7217,15 @@ export async function rescheduleAcademicCbtTest(env, user = {}, input = {}) {
   if (!Number.isFinite(startsAt.getTime())) {
     throw failure('Choose a valid new test date and start time.', 400, 'ACADEMIC_CBT_SCHEDULE_INVALID');
   }
-  const durationMinutes = Number(record.ObjectiveDurationMinutes || record.DurationMinutes || 0);
-  const theoryDurationMinutes = record.PaperMode === 'split' ? Number(record.TheoryDurationMinutes || 0) : 0;
+  // Older clients send date/time only. Omitted durations retain their saved values.
+  const durationMinutes = Number(input.DurationMinutes ?? record.ObjectiveDurationMinutes ?? record.DurationMinutes ?? 0);
+  const theoryDurationMinutes = record.PaperMode === 'split' ? Number(input.TheoryDurationMinutes ?? record.TheoryDurationMinutes ?? 0) : 0;
+  if (!Number.isInteger(durationMinutes) || durationMinutes < 1 || durationMinutes > 480) {
+    throw failure('Duration must be a whole number between 1 and 480 minutes.', 400, 'ACADEMIC_CBT_DURATION_INVALID');
+  }
+  if (record.PaperMode === 'split' && (!Number.isInteger(theoryDurationMinutes) || theoryDurationMinutes < 1 || theoryDurationMinutes > 480)) {
+    throw failure('Paper 2 duration must be a whole number between 1 and 480 minutes.', 400, 'ACADEMIC_CBT_THEORY_DURATION_INVALID');
+  }
   const endsAt = new Date(startsAt.getTime() + (durationMinutes + theoryDurationMinutes) * 60 * 1000);
   if (!Number.isInteger(durationMinutes) || durationMinutes < 1
     || (record.PaperMode === 'split' && (!Number.isInteger(theoryDurationMinutes) || theoryDurationMinutes < 1))
@@ -7231,6 +7238,9 @@ export async function rescheduleAcademicCbtTest(env, user = {}, input = {}) {
     StartsAt: startsAt.toISOString(),
     EndsAt: endsAt.toISOString(),
     Status: 'Scheduled',
+    DurationMinutes: durationMinutes,
+    ObjectiveDurationMinutes: durationMinutes,
+    TheoryDurationMinutes: theoryDurationMinutes,
     PackageRevision: Number(record.PackageRevision || 0) + 1,
     ScheduleRevision: Number(record.ScheduleRevision || 0) + 1,
     ScheduleUpdatedAt: timestamp,
@@ -7247,13 +7257,13 @@ export async function rescheduleAcademicCbtTest(env, user = {}, input = {}) {
       ...writePrecondition(record, input.RevisionToken)
     },
     auditWrite(user, 'RESCHEDULE', 'cbtTests', updated,
-      `${clean(record.StartsAt)} -> ${updated.StartsAt}; completed local attempts preserved`)
+      `${clean(record.StartsAt)} -> ${updated.StartsAt}; duration ${record.DurationMinutes} -> ${durationMinutes} minutes; theory ${record.TheoryDurationMinutes || 0} -> ${theoryDurationMinutes} minutes; running timers and completed local attempts preserved`)
   ], 'The CBT schedule changed while it was being updated. Reload and try again.');
   const savedRecord = publicRecord({ ...updated, __updateTime: clean(commit?.writeResults?.[0]?.updateTime) });
   return {
     ok: true,
     partialAcademicManagement: true,
-    message: 'The CBT activation date and time were updated. Pull Online Tests on the desktop to apply the new schedule; submitted attempts will remain unchanged.',
+    message: 'The CBT date, time and duration were updated. Pull Online Tests on every CBT server to apply the new schedule. Running timers and submitted attempts will remain unchanged.',
     CbtTest: savedRecord,
     cbtTest: savedRecord
   };
