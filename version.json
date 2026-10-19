@@ -1,7 +1,7 @@
 {
-  "version": "3.1.34",
+  "version": "3.1.35",
   "channel": "stable",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.34.exe",
-  "sha256": "b5a7e34c70ffe0bd4ef9784d3a071dd4459efdf5f2c79243292079719ddff34b",
-  "notes": "Dynamax Desktop v3.1.34 adds ICT self-approved, multi-test background CBT uploads with progress. Missing classroom arms and duplicate attempts no longer block other students; the first accepted online score is preserved. Stopped servers can upload submitted scores while unfinished attempts remain resumable. Interrupted tests restore saved answers and checkpoint time after the missed-heartbeat grace period. Student passwords sync independently, and authorised handlers can issue a temporary password requiring a personal-password change. The web companion repairs mobile scorebook scrolling and removes the arbitrary vendor-request sale-count ceiling while retaining atomic financial safeguards. Install on each CBT server between examinations after backing up, then reopen student pages. No tablet APK update is required. School branding and existing records are preserved."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.35.exe",
+  "sha256": "92f95e083f8b575fc6411665bf70183a1f168a2cacea96ad5c5df109d1a867a9",
+  "notes": "Dynamax Desktop v3.1.35 adds weighted CA1, CA2, CA3 and examination marks alongside result totals and grades, using saved assessment snapshots. Authorised score editing now includes recorded CBT marks with before-and-after audits, automatic relocking and protection against later upload overwrites. Academic reviewers can open a whole-class score register across all arms, with student search, test filters and pagination. Existing scores, attempts and published results are preserved. Install on each desktop between examinations after backing up. No tablet APK update is required."
 }
