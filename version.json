@@ -1,7 +1,7 @@
 {
-  "version": "3.1.32",
+  "version": "3.1.33",
   "channel": "stable",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.32.exe",
-  "sha256": "ed41922e8313d0036a70152ea64583692159e66f8d3cdfdd7b855ef9fbea4790",
-  "notes": "Dynamax Desktop v3.1.32 repairs online CBT downloads. Pull Online Tests defaults to today (server local date), lets officers load another date and select individual tests or all tests for that date, and downloads in the background with progress and a complete report. Ordinary compressed PDF data no longer causes false active-content rejections; real scripts, attachments and unsafe actions remain blocked. Failed papers do not stop later subjects, retries preserve tests already saved, and local student logins keep eligible downloaded tests available. Existing attempts and online roster safeguards are preserved. Includes the subscriber school logo, independent CBT centres, staff recovery, HR repairs and previous updates. Install on each CBT server while exams are stopped. Installation preserves organisation settings and existing records."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.33.exe",
+  "sha256": "cf434df26ca48cc207a68db7843a4d7d592aeb27c73ba120a7728cc9011d9c55",
+  "notes": "Dynamax Desktop v3.1.33 repairs tablet question-paper navigation and adds editable CBT duration. Narrow landscape tablets keep the paper in the correct column with larger page controls; delayed page loads cannot overwrite the selected paper. Edit objective and theory durations independently and pull updated online schedules onto each server. Running timers, answers and submitted attempts are preserved. The web companion adds uploaded-subject search and schedule duration editing. Includes all previous updates and subscriber school branding. Install on each CBT server between examinations, then pull any changed schedules and reopen the student CBT page. Organisation settings and existing records are preserved."
 }
