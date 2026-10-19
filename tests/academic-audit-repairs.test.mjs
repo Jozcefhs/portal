@@ -11,6 +11,7 @@ import * as attendanceIdentity from '../functions/lib/academic-attendance-identi
 import { safeScopeId } from '../functions/lib/school-scope.js';
 import { calculateAcademicMidTermResultDrafts } from '../functions/lib/academic-term-results.js';
 import { evaluateAcademicResultAccess } from '../functions/lib/academic-result-access.js';
+import { academicResultWithWeightedComponents } from '../functions/lib/academic-result-marks.js';
 
 const stripModules = source => source.replace(/^import[\s\S]*?;\r?\n/gm, '').replace(/^export /gm, '');
 const managementSource = await readFile(new URL('../functions/lib/academic-management.js', import.meta.url), 'utf8');
@@ -25,7 +26,7 @@ const conflict = () => Object.assign(new Error('Concurrent update'), { status: 4
 
 function managementHarness(records = {}) {
   const context = {
-    ...management, ...scorebook, ...timetable, ...attendanceIdentity, TextEncoder, TextDecoder, crypto: webcrypto,
+    ...management, ...scorebook, ...timetable, ...attendanceIdentity, academicResultWithWeightedComponents, TextEncoder, TextDecoder, crypto: webcrypto,
     getSchoolStructure: async () => ({ ActiveBranchId: 'main', Branches: [{ Id: 'main' }], Sections: ['primary', 'secondary'] }),
     enforceActorBranch: (_actor, branch) => branch, safeScopeId,
     queryCollection: async (_env, collection) => structuredClone(records[collection] || []),

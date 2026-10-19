@@ -1651,9 +1651,25 @@ function renderPayments(child) {
   });
 }
 
+function academicResultComponentColumns(record) {
+  return [...new Map((record.Subjects || []).flatMap(subject => (subject.WeightedComponents || [])
+    .map(component => [component.ComponentId, component]))).values()];
+}
+
+function academicResultSubjectHeaders(record) {
+  return `<th>Subject</th>${academicResultComponentColumns(record).map(component =>
+    `<th>${escapeHtml(component.Name || component.ComponentId)}<br><small>Weighted</small></th>`).join('')}<th>Total</th><th>Grade</th><th>Point</th><th>Position / assessed</th><th>Remark</th>`;
+}
+
 function academicResultSubjectRows(record) {
+  const columns = academicResultComponentColumns(record);
   return (record.Subjects || []).map((subject) => `<tr>
     <td>${escapeHtml(subject.SubjectName || subject.SubjectId || 'Subject')}</td>
+    ${columns.map(column => {
+      const component = (subject.WeightedComponents || []).find(row => row.ComponentId === column.ComponentId);
+      return `<td>${component?.State === 'Exempt' ? 'Exempt' : component?.WeightedMark == null ? '—'
+        : `${escapeHtml(component.WeightedMark)}<small> / ${escapeHtml(component.MaximumMark)}</small>`}</td>`;
+    }).join('')}
     <td>${escapeHtml(subject.Total ?? '-')}</td>
     <td>${escapeHtml(subject.Grade || '-')}</td>
     <td>${escapeHtml(subject.GradePoint ?? '-')}</td>
@@ -1779,9 +1795,11 @@ function academicResultPrintMarkup(child, record, options = {}) {
     ? `<img class="passport" src="${escapeHtml(options.passportDataUrl)}" alt="Student passport photograph">`
     : `<div class="passport passport-empty" aria-label="Passport photograph unavailable">${escapeHtml(childInitials(child))}</div>`;
   return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(record.Term || 'Academic Result')}</title><style>
+    .subject-table{font-size:10px}.subject-table th,.subject-table td{overflow-wrap:anywhere}.subject-table th:first-child{width:19%}.subject-table th:last-child{width:15%}.subject-table tr{break-inside:avoid}
     @page{size:A4 portrait;margin:12mm}*{box-sizing:border-box}body{font:12px/1.4 Arial,sans-serif;color:#17324d;margin:22px}.report{border:2px solid #42576b;padding:18px}.letterhead{display:grid;grid-template-columns:82px 1fr 92px;align-items:center;gap:14px;border-bottom:3px solid #08735f;padding-bottom:12px}.logo{width:76px;height:76px;object-fit:contain}.school{text-align:center}.school h1{margin:0;color:#123f6d;font-size:23px}.school p{margin:3px 0;color:#526b80}.passport{width:82px;height:96px;border:2px solid #c5d2dd;border-radius:12px;object-fit:cover}.passport-empty{display:grid;place-items:center;background:#eef3f7;color:#63788c;font-size:22px;font-weight:800}.title{text-align:center;margin:14px 0 10px}.title h2{margin:0;color:#123f6d}.report-table{width:100%;border-collapse:collapse;margin-top:10px;table-layout:fixed}.report-table th,.report-table td{border:1px solid #cad8e3;padding:6px;text-align:left;vertical-align:top}.report-table th{background:#164a78;color:#fff;font-size:9px;text-transform:uppercase}.identity-table{margin-top:0;background:#eef6fb}.identity-table td{padding:7px 9px}.identity-table span{display:block;color:#61768a;font-size:8px;font-weight:700;text-transform:uppercase}.identity-table strong{display:block;margin-top:3px}.subject-table td:not(:first-child),.subject-table th:not(:first-child),.summary-table td,.summary-table th{text-align:center}.summary-table th{background:#edf8f5;color:#08735f}.summary-table td{font-weight:800}.remarks-table td:first-child{width:72%}.remarks-table p{margin:5px 0}.endorsement{text-align:center}.endorsement .decision{display:block;margin-bottom:4px;color:#08735f}.stamp{display:block;width:105px;height:82px;margin:0 auto 4px;object-fit:contain}.criteria-table th{background:#eef4f8;color:#123f6d}.criteria-table ul{margin:0;padding-left:17px;font-size:9px}.verification-table td:first-child{width:90px;text-align:center}.verification-table img{width:74px;height:74px}.reference{font-size:9px;color:#647b90;overflow-wrap:anywhere}@media print{body{margin:0}.report{border-color:#42576b}}
   </style></head><body><main class="report"><header class="letterhead"><img class="logo" src="${escapeHtml(logoUrl)}" alt="${escapeHtml(schoolName)} logo" onerror="this.style.visibility='hidden'"><div class="school"><h1>${escapeHtml(schoolName)}</h1><p>${escapeHtml(profile.SchoolAddress || '')}</p><p>${escapeHtml([profile.SchoolPhone, profile.SchoolEmail].filter(Boolean).join(' · '))}</p></div>${passport}</header><section class="title"><h2>${escapeHtml(reportTitle)}</h2></section>${academicResultIdentityMarkup(child, record, learnerLabel)}
-  <table class="report-table subject-table"><thead><tr><th>Subject</th><th>Total</th><th>Grade</th><th>Point</th><th>Position / assessed</th><th>Remark</th></tr></thead><tbody>${academicResultSubjectRows(record)}</tbody></table>
+  <table class="report-table subject-table"><thead><tr>${academicResultSubjectHeaders(record)}</tr></thead><tbody>${academicResultSubjectRows(record)}</tbody></table>
+  <p class="reference">Assessment columns show weighted marks / applicable maximum, not raw scores. Exempt assessments are excluded and remaining weights are adjusted. — means no reliable saved breakdown; rounded columns may differ by 0.01 from the total.</p>
   ${academicResultSummaryMarkup(record)}
   <table class="report-table remarks-table"><tbody><tr><td><p><strong>Form Teacher:</strong> ${escapeHtml(record.TeacherRemark || '-')}</p><p><strong>${executiveLabel}:</strong> ${escapeHtml(record.PrincipalRemark || '-')}</p></td><td class="endorsement"><strong class="decision">${escapeHtml(record.Recommendation || record.OverallRemark || 'Pending review')}</strong><img class="stamp" src="${escapeHtml(stampUrl)}" alt="Official stamp" onerror="this.style.visibility='hidden'"><strong>${escapeHtml(profile.ResultSignatoryName || 'Authorized school officer')}</strong><br><small>${escapeHtml(profile.ResultSignatoryTitle || 'Official result signatory')}</small></td></tr></tbody></table>
   ${academicResultCriteriaMarkup(record)}
@@ -1872,7 +1890,7 @@ function renderAcademicResults(child) {
     if ((record.Subjects || []).length) {
       const table = document.createElement('div');
       table.className = 'admin-table-wrap academic-result-subject-table';
-      table.innerHTML = `<table><thead><tr><th>Subject</th><th>Total</th><th>Grade</th><th>Point</th><th>Position / assessed</th><th>Remark</th></tr></thead><tbody>${academicResultSubjectRows(record)}</tbody></table>`;
+      table.innerHTML = `<table><thead><tr>${academicResultSubjectHeaders(record)}</tr></thead><tbody>${academicResultSubjectRows(record)}</tbody></table><p class="muted">Weighted marks / applicable maximum. Exempt assessments are excluded; — means no reliable saved breakdown. Totals use unrounded marks.</p>`;
       item.appendChild(table);
     }
     const actions = document.createElement('div');

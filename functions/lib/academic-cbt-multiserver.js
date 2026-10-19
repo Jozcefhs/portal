@@ -22,6 +22,9 @@ export function academicCbtScoreSources(previous, component, row, input, signing
     throw Object.assign(new Error('Each built-in CBT score needs its test and attempt identity. Update the desktop app and retry.'),
       { status: 409, code: 'ACADEMIC_CBT_SYNC_ATTEMPT_REQUIRED' });
   }
+  if ((previous?.ManualScoreCorrections || []).some(row => row.CellId === cellId)) {
+    conflict('has an authorised manual correction that an upload cannot replace');
+  }
   if (prior) {
     if (lower(prior.SigningKeyId) !== lower(signingKeyId)
         || clean(prior.AttemptId) !== attemptId || clean(prior.SourceTestId) !== testId) {

@@ -44,9 +44,9 @@ function fixture() {
     }
   });
   vm.runInContext(source.replace(/^import[\s\S]*?;\r?\n/gm,'').replace(/^export /gm,''),ctx);
-  ctx.academicScoreSheetContext = async(_env,user,input)=>{
+  ctx.academicScoreSheetContext = async(_env,user,input,capability='canImportScores')=>{
     ctx.requireWritableSubscription(user);
-    const permissions=ctx.requireCapability(user,'canImportScores');
+    const permissions=ctx.requireCapability(user,capability);
     ctx.assertUserSection(user,input.SchoolSection);
     assert.equal(input.BranchId,user.branchId);
     const state=Object.fromEntries(Object.entries(collections).map(([key,col])=>[key,rows(col)]));
@@ -79,6 +79,59 @@ async function server() {
   }};
 }
 const [a,b]=await Promise.all([server(),server()]);
+
+test('authorised CBT correction is atomic, audited, relocked and protected against later uploads', async () => {
+  const f=fixture(), first=await a.batch([['DCA/001',81,'a1']]); await f.post(first);
+  const original=f.rows(collections.studentScores)[0];
+  const save=()=>f.ctx.saveAcademicScoreDraft(env,actor,{...scope,SheetId:'sheet',
+    SheetRevisionToken:f.rows(collections.scoreSheets)[0].__updateTime,
+    Rows:[{StudentRef:'DCA/001',RevisionToken:f.rows(collections.studentScores)[0].__updateTime,
+      ComponentScores:[{ComponentId:'exam',RawScore:90}]}]});
+  await assert.rejects(save(),{code:'ACADEMIC_SCORE_CELL_LOCKED'});
+  const request={...scope,SheetId:'sheet',Reason:'Answer key reviewed by the principal',RevisionToken:f.rows(collections.scoreSheets)[0].__updateTime};
+  await assert.rejects(f.ctx.reactivateAcademicScoreEditing(env,{...actor,role:'Teacher'},request),error=>error.status===403);
+  await f.ctx.reactivateAcademicScoreEditing(env,actor,request);
+  await save();
+  const corrected=f.rows(collections.studentScores)[0];
+  assert.equal(corrected.ComponentScores[0].RawScore,90);
+  assert.deepEqual(corrected.CbtScoreSources,original.CbtScoreSources);
+  assert.equal(corrected.ManualScoreCorrections[0].Before.RawScore,81);
+  assert.equal(corrected.ManualScoreCorrections[0].After.RawScore,90);
+  assert.equal(f.rows(collections.scoreSheets)[0].ScoreEditingReactivated,false);
+  const audit=f.rows(collections.audit).find(row=>row.Action==='CORRECT_CBT_SCORE');
+  assert.equal(audit.ScoreCorrections[0].Cells[0].After.RawScore,90);
+  const retry=await f.post(first); assert.equal(retry.ok,true);
+  assert.equal(f.rows(collections.studentScores)[0].ComponentScores[0].RawScore,90);
+  // Even another unlock cannot let an unattended upload erase the correction.
+  await f.ctx.reactivateAcademicScoreEditing(env,actor,{...request,RevisionToken:f.rows(collections.scoreSheets)[0].__updateTime});
+  const result=await f.post(await a.batch([['DCA/001',81,'a1'],['DCA/002',92,'a2']]));
+  assert.equal(result.scoreSyncReceipt.ImportedRows,1);
+  assert.equal(f.rows(collections.studentScores).find(row=>row.StudentRef==='DCA/001').ComponentScores[0].RawScore,90);
+  assert.equal(f.rows(collections.studentScores).find(row=>row.StudentRef==='DCA/002').ComponentScores[0].RawScore,92);
+});
+
+test('a stale correction request cannot change either score or audit history', async () => {
+  const f=fixture(); await f.post(await a.batch([['DCA/001',81,'a1']]));
+  await f.ctx.reactivateAcademicScoreEditing(env,actor,{...scope,SheetId:'sheet',Reason:'Review marking',RevisionToken:f.rows(collections.scoreSheets)[0].__updateTime});
+  const before=structuredClone([...f.db]);
+  await assert.rejects(f.ctx.saveAcademicScoreDraft(env,actor,{...scope,SheetId:'sheet',SheetRevisionToken:'stale',
+    Rows:[{StudentRef:'DCA/001',RevisionToken:f.rows(collections.studentScores)[0].__updateTime,ComponentScores:[{ComponentId:'exam',RawScore:90}]}]}),error=>error.status===409);
+  assert.deepEqual([...f.db],before);
+});
+
+test('200 corrected students retain complete audit evidence in one bounded atomic commit', async () => {
+  const f=fixture();
+  const refs=Array.from({length:200},(_,index)=>`DCA/${String(index+1).padStart(3,'0')}`);
+  for(const ref of refs) f.put(collections.studentMemberships,ref.replace('/','-'),{...scope,RecordId:ref.replace('/','-'),StudentRef:ref,Status:'Active'});
+  await f.post(await a.batch(refs.map((ref,index)=>[ref,81,`attempt-${index}`])));
+  await f.ctx.reactivateAcademicScoreEditing(env,actor,{...scope,SheetId:'sheet',Reason:'Verified marking correction for batch',RevisionToken:f.rows(collections.scoreSheets)[0].__updateTime});
+  const Rows=f.rows(collections.studentScores).map(score=>({StudentRef:score.StudentRef,RevisionToken:score.__updateTime,ComponentScores:[{ComponentId:'exam',RawScore:90}]}));
+  await f.ctx.saveAcademicScoreDraft(env,actor,{...scope,SheetId:'sheet',SheetRevisionToken:f.rows(collections.scoreSheets)[0].__updateTime,Rows});
+  assert.ok(f.commits.at(-1).length<=500);
+  const audited=f.rows(collections.audit).filter(row=>row.Action==='CORRECT_CBT_SCORE').flatMap(row=>row.ScoreCorrections);
+  assert.equal(audited.length,200);
+  assert.ok(audited.every(row=>row.Cells[0].Before.RawScore===81 && row.Cells[0].After.RawScore===90));
+});
 
 test('ICT can prepare and commit its own signed upload without a separate reviewer',async()=>{
   const f=fixture(),ict={...actor,role:'ICT',username:'ict-officer'};

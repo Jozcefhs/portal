@@ -144,6 +144,7 @@ function subjectSnapshot(score, sheet, subject) {
     AssessmentRevisionId: clean(score.AssessmentRevisionId || sheet.AssessmentRevisionId),
     ComponentScores: (score.ComponentScores || []).map((component) => ({
       ComponentId: clean(component.ComponentId),
+      ComponentName: clean(component.ComponentName || (sheet.AssessmentComponents || []).find(row => row.Id === component.ComponentId)?.Name),
       State: clean(component.State),
       RawScore: component.RawScore ?? null,
       MaximumScore: component.MaximumScore ?? null,

@@ -13660,6 +13660,7 @@ function academicTaskDefinitions(view, root) {
       { key: 'corrections', label: 'Corrections', title: 'Late correction requests', description: 'Teachers submit corrections for approval; academic administrators approve or reject them with a reason.', nodes: nodes(register('Attendance Correction Requests')) }
     ],
     scorebook: [
+      { key: 'classRegister', label: 'Class score register', title: 'All-arm class score register', description: 'Select a whole class to review every student and their raw marks per subject and test. Read-only; includes Draft scores.', nodes: nodes(form('[data-academic-class-score-register]')) },
       { key: 'entry', label: 'Enter scores', title: 'Class subject scorebook', description: 'Choose one allocated classroom and subject, then enter every configured assessment component for its students.', nodes: nodes(form('[data-academic-scorebook]')) },
       { key: 'workflow', label: 'Review and approval', title: 'Score-sheet workflow', description: 'Submit complete sheets, review them, approve them and lock final score records without silent edits.', nodes: nodes(register('Score Sheet Workflow')) },
       { key: 'imports', label: 'Spreadsheet imports', title: 'Preview and import scores', description: 'Download a stable template, preview CSV or XLSX rows, choose the commit policy, and roll back unpublished imports.', nodes: nodes(form('[data-academic-score-import]'), register('Score Import History')) },
@@ -15319,7 +15320,9 @@ function academicScorebookWorkspace(data, rows) {
       const entry = !savedEntry || automaticMissing ? { ...(savedEntry || {}), State: 'Numeric', RawScore: '' } : savedEntry;
       const numeric = entry.State === 'Numeric';
       const sourceMode = clean(field.sourceMode || 'any').toLowerCase();
-      const manualAllowed = ['any', 'manual'].includes(sourceMode);
+      const manualAllowed = ['any', 'manual'].includes(sourceMode)
+        || (correctionActive && (['Numeric', 'Absent', 'Exempt'].includes(clean(savedEntry?.State))
+          || (score.ManualScoreCorrections || []).some(row => row.CellId === field.cellId)));
       const cellLocked = lockedScoreCellIds.has(field.cellId) && !correctionActive;
       const cellEditable = canEdit && manualAllowed && !cellLocked;
       if (cellEditable) editableCellCount += 1;
@@ -15337,7 +15340,7 @@ function academicScorebookWorkspace(data, rows) {
     : '';
   const lockingNotice = sheet
     ? correctionActive
-      ? `<div class="academic-score-lock-banner is-reactivated"><strong>Correction access active</strong><span>Admin/Management reactivated this subject and arm. All recorded cells will lock again after the next save.</span></div>`
+      ? `<div class="academic-score-lock-banner is-reactivated"><strong>Correction access active</strong><span>Recorded marks, including CBT marks, may be corrected. Enter raw marks, not weighted marks. Corrections are audited; all recorded cells lock again after the next save. Published results still require withdrawal and reapproval.</span></div>`
       : `<div class="academic-score-lock-banner"><strong>Saved cells are protected</strong><span>Recorded scores are locked. Blank and incomplete cells remain available for entry.</span></div>`
     : '';
   const reactivateButton = sheet && data.permissions?.canManageScoreCorrections && !correctionActive
@@ -15412,7 +15415,91 @@ function academicScorebookWorkspace(data, rows) {
     ${blocking}
     <div class="academic-assessment-scheme-grid"><section><h4>Assessment components</h4>${(scheme.Components || []).map((row) => `<div><strong>${escapeHtml(row.Name)}</strong><span>${row.MaximumScore} marks · ${row.WeightPercentage}% · ${escapeHtml(row.SourceMode || 'any source')}</span></div>`).join('') || '<p>No components configured.</p>'}</section><section><h4>Grading bands</h4>${(scheme.GradeBands || []).map((row) => `<div><strong>${escapeHtml(row.Grade)}</strong><span>${row.MinimumPercentage}–${row.MaximumPercentage}% · ${row.GradePoint} points · ${escapeHtml(row.Remark || row.Classification)}</span></div>`).join('') || '<p>No grading bands configured.</p>'}</section></div>
   </section>`;
-  return `${scorebook}${workflow}${importPanel}${imports}${externalCbtPanel}${scoreSyncHistory}${schemePanel}`;
+  const classRegister = data.permissions?.canReviewScores ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-class-score-register>
+    <div class="academic-management-editor-heading"><div><h3>Class score register — all arms</h3><p>Read-only raw marks / maximum, including Draft scores. This is not a published result. Choose a class, not a classroom.</p></div></div>
+    <div class="academic-management-form-grid"><label>Class<select name="ClassId" required>${academicSelectOptions(rows.classes.filter(academicIsActive), '', row => row.Name, 'Choose class')}</select></label>
+    <label>Test<select name="TestId"><option value="">All tests</option></select></label><label>Find student<input name="Query" type="search" placeholder="Name or admission number"></label></div>
+    <button type="submit">Load class scores</button><p role="status" data-class-register-status>Select a class to load its students and scores.</p>
+    <div class="admin-table-wrap" data-class-register-table style="max-width:100%;overflow:auto"></div>
+    <div class="academic-management-form-actions"><button type="button" data-class-register-page="-1" disabled>Previous</button><span data-class-register-count></span><button type="button" data-class-register-page="1" disabled>Next</button></div>
+  </form>` : '';
+  return `${scorebook}${classRegister}${workflow}${importPanel}${imports}${externalCbtPanel}${scoreSyncHistory}${schemePanel}`;
+}
+
+function bindAcademicClassScoreRegister(form) {
+  if (!form) return;
+  let register = null, page = 0;
+  const status = form.querySelector('[data-class-register-status]');
+  const render = () => {
+    const columns = (register?.Columns || []).filter(row => !form.elements.TestId.value || row.TestId === form.elements.TestId.value);
+    const query = clean(form.elements.Query.value).toLowerCase();
+    const rows = (register?.Rows || []).filter(row => `${row.StudentName} ${row.StudentRef}`.toLowerCase().includes(query));
+    page = Math.min(page, Math.max(0, Math.ceil(rows.length / 25) - 1));
+    const start = page * 25;
+    form.querySelector('[data-class-register-table]').innerHTML = register ? `<table style="min-width:100%;width:max-content"><thead><tr><th>Student</th><th>Admission number</th><th>Arm</th>${columns.map(column => `<th>${escapeHtml(column.SubjectName)}<br>${escapeHtml(column.TestName)}</th>`).join('')}</tr></thead><tbody>${rows.slice(start, start + 25).map(row => {
+      const byColumn = new Map(row.Cells.map(cell => [cell.ColumnId, cell]));
+      return `<tr><td>${escapeHtml(row.StudentName)}${row.RosterConflict ? '<small>Review duplicate membership</small>' : ''}</td><td>${escapeHtml(row.StudentRef)}</td><td>${escapeHtml(row.ArmName)}</td>${columns.map(column => {
+        const cell = byColumn.get(column.Id);
+        return `<td title="${escapeHtml(cell?.SheetStatus || '')}">${cell?.State === 'Numeric' ? `${escapeHtml(cell.RawScore)} / ${escapeHtml(cell.MaximumScore)}` : escapeHtml(cell?.State || 'Not recorded')}</td>`;
+      }).join('')}</tr>`;
+    }).join('') || `<tr><td colspan="${columns.length + 3}">No matching students.</td></tr>`}</tbody></table>` : '';
+    form.querySelector('[data-class-register-count]').textContent = register ? `${rows.length ? start + 1 : 0}–${Math.min(start + 25, rows.length)} of ${rows.length} students` : '';
+    form.querySelector('[data-class-register-page="-1"]').disabled = page <= 0;
+    form.querySelector('[data-class-register-page="1"]').disabled = start + 25 >= rows.length;
+  };
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (!form.reportValidity()) return;
+    const button = form.querySelector('[type="submit"]'); button.disabled = true;
+    form.elements.ClassId.disabled = true;
+    register = null; page = 0; render(); status.textContent = 'Loading class scores…';
+    try {
+      const result = await academicManagementRequest('getAcademicClassScoreRegister', {
+        SchoolSection: academicManagementFilters.section, SessionId: academicManagementFilters.sessionId,
+        TermId: academicManagementFilters.termId, ClassId: form.elements.ClassId.value
+      });
+      if (!form.isConnected) return;
+      register = result.classScoreRegister;
+      const tests = [...new Map(register.Columns.map(column => [column.TestId, column.TestName])).entries()];
+      form.elements.TestId.innerHTML = '<option value="">All tests</option>' + tests.map(([id, name]) => `<option value="${escapeHtml(id)}">${escapeHtml(name)}</option>`).join('');
+      status.textContent = `${register.ClassName}: ${register.StudentCount} students across all arms · ${register.SubjectCount} subjects. Raw marks / maximum. Scroll horizontally to see subjects; hover a mark for sheet status.`;
+      render();
+    } catch (error) { status.textContent = error.message || String(error); }
+    finally { button.disabled = false; form.elements.ClassId.disabled = false; }
+  });
+  form.elements.ClassId.addEventListener('change', () => { register = null; page = 0; render(); status.textContent = 'Load the selected class to review its scores.'; });
+  form.elements.Query.addEventListener('input', () => { page = 0; render(); });
+  form.elements.TestId.addEventListener('change', () => { page = 0; render(); });
+  form.querySelectorAll('[data-class-register-page]').forEach(button => button.addEventListener('click', () => { page += Number(button.dataset.classRegisterPage); render(); }));
+}
+
+function academicWeightedResultMarkup(record) {
+  const columns = [...new Map((record.Subjects || []).flatMap(subject => (subject.WeightedComponents || [])
+    .map(component => [component.ComponentId, component]))).values()];
+  return `<table class="report-table subject-table"><thead><tr><th>Subject</th>${columns.map(component =>
+    `<th>${escapeHtml(component.Name || component.ComponentId)}<br><small>Weighted</small></th>`).join('')}<th>Total</th><th>Grade</th></tr></thead><tbody>${(record.Subjects || []).map(subject =>
+    `<tr><td>${escapeHtml(subject.SubjectName || subject.SubjectId)}</td>${columns.map(column => {
+      const component = (subject.WeightedComponents || []).find(row => row.ComponentId === column.ComponentId);
+      return `<td>${component?.State === 'Exempt' ? 'Exempt' : component?.WeightedMark == null ? '—'
+        : `${escapeHtml(component.WeightedMark)} / ${escapeHtml(component.MaximumMark)}`}</td>`;
+    }).join('')}<td>${escapeHtml(subject.Total ?? '—')}</td><td>${escapeHtml(subject.Grade || '—')}</td></tr>`).join('')}</tbody></table>
+    <p class="reference">Weighted marks / applicable maximum. Exempt assessments are excluded and remaining weights adjusted. — means no reliable saved breakdown. Totals use unrounded marks.</p>`;
+}
+
+function printAcademicWeightedResult(record) {
+  const popup = window.open('', '_blank');
+  if (!popup) return setStatus(document.getElementById('academicManagementStatus'), 'Allow pop-ups to preview this result.', 'bad');
+  popup.opener = null;
+  const profile = academicManagementData?.reportProfile || {};
+  const student = academicLabel(academicManagementData?.students || [], record.StudentRef, record.StudentRef);
+  const status = ['Published', 'Locked'].includes(record.Status) ? record.Status : `${record.Status || 'Draft'} — STAFF PREVIEW, NOT A PUBLISHED RESULT`;
+  popup.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Academic result</title><style>
+    @page{size:A4 portrait;margin:12mm}*{box-sizing:border-box}body{font:13px/1.5 Arial,sans-serif;margin:24px;color:#17324d}h1{color:#123f6d}table{width:100%;border-collapse:collapse}th,td{padding:8px;border:1px solid #cad8e3;text-align:center;overflow-wrap:anywhere}th{background:#edf3f8}td:first-child{text-align:left}.table-wrap{overflow-x:auto}.reference{font-size:11px;color:#526b80}.logo{width:65px;height:65px;object-fit:contain}@media print{body{margin:0}button{display:none}table{table-layout:fixed;font-size:10px}th,td{padding:5px}th:first-child{width:24%}tr{break-inside:avoid}}
+    </style></head><body><button onclick="window.print()">Print result</button><header><img class="logo" src="${escapeHtml(profile.DocumentLogoUrl || '/api/document-logo')}" alt="School logo"><h1>${escapeHtml(profile.SchoolName || 'School')}</h1></header><h2>${escapeHtml(record.ResultType || 'Academic result')}</h2>
+    <p>${escapeHtml([student, record.StudentRef, record.AcademicSession, record.Term, record.ClassName, record.ArmName].filter(Boolean).join(' · '))}</p><p><strong>${escapeHtml(status)}</strong> · ${escapeHtml(record.ResultReference || '')}</p>
+    <div class="table-wrap">${academicWeightedResultMarkup(record)}</div><p><strong>Overall average:</strong> ${escapeHtml(record.OverallAverage ?? '—')}% · <strong>Grade:</strong> ${escapeHtml(record.OverallGrade || '—')}</p>
+    <p><strong>Teacher:</strong> ${escapeHtml(record.TeacherRemark || '')}</p><p><strong>Head of school:</strong> ${escapeHtml(record.PrincipalRemark || '')}</p></body></html>`);
+  popup.document.close();
 }
 
 function academicTermResultActions(row, permissions = {}) {
@@ -15427,7 +15514,7 @@ function academicTermResultActions(row, permissions = {}) {
   const remarkButton = status === 'Calculated Draft' && permissions.canEnterScores
     ? `<button type="button" class="compact-icon-action compact-edit-action" data-academic-result-remarks="${escapeHtml(row.ResultId)}" title="Edit draft remarks" aria-label="Edit draft remarks">&#9998;</button>` : '';
   const workflow = actions.map(([target, title, icon]) => `<button type="button" class="compact-icon-action ${target === 'Withdrawn' ? 'academic-archive-action' : 'compact-edit-action'}" data-academic-result-status="${escapeHtml(target)}" data-academic-result-id="${escapeHtml(row.ResultId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">${icon}</button>`).join('');
-  return remarkButton || workflow ? `<div class="academic-management-row-actions">${remarkButton}${workflow}</div>` : '<span class="muted">View only</span>';
+  return `<div class="academic-management-row-actions"><button type="button" class="secondary" data-academic-weighted-result="${escapeHtml(row.ResultId)}">View / Print</button>${remarkButton}${workflow}</div>`;
 }
 
 function academicTermResultsWorkspace(data, rows) {
@@ -15704,6 +15791,13 @@ function printAcademicResultSample(stage = 'primary') {
   </style></head><body><main class="report"><header class="letterhead"><img class="logo" src="${escapeHtml(profile.DocumentLogoUrl || '/api/document-logo')}" alt="${escapeHtml(profile.SchoolName || 'School')} logo" onerror="this.style.visibility='hidden'"><div class="school"><h1>${escapeHtml(profile.SchoolName || 'Your School')}</h1><p>${escapeHtml(profile.SchoolAddress || '')}</p><p>${escapeHtml([profile.SchoolPhone, profile.SchoolEmail].filter(Boolean).join(' · '))}</p></div><div class="passport" aria-label="Sample passport photograph">SL</div></header><section class="title"><h2>Academic Result</h2></section><table class="report-table identity-table"><tbody><tr><td><span>${pupil ? 'Pupil' : 'Student'}</span><strong>Sample Learner</strong></td><td><span>Admission number</span><strong>SAMPLE/001</strong></td><td><span>Class</span><strong>${escapeHtml(className)}</strong></td></tr><tr><td><span>Gender</span><strong>Female</strong></td><td><span>Academic session</span><strong>2026/2027</strong></td><td><span>Period</span><strong>First Term · End of Term</strong></td></tr></tbody></table><table class="report-table subject-table"><thead><tr><th>Subject</th><th>Total</th><th>Grade</th><th>Point</th><th>Position / assessed</th><th>Remark</th></tr></thead><tbody>${subjects.map(([name, total, grade, point, position]) => `<tr><td>${escapeHtml(name)}</td><td>${total}</td><td>${grade}</td><td>${point}</td><td>${escapeHtml(position)}</td><td>${total >= 70 ? 'Excellent progress' : 'Good progress'}</td></tr>`).join('')}</tbody></table><table class="report-table summary-table"><thead><tr><th>Overall average</th><th>Class average</th><th>Overall grade</th><th>Attendance</th><th>Decision</th></tr></thead><tbody><tr><td>75.5%</td><td>68.2%</td><td>A · 4 of ${primary ? 35 : nursery ? 28 : 42}</td><td>96%</td><td>Promoted</td></tr></tbody></table><table class="report-table remarks-table"><tbody><tr><td><p><strong>Form Teacher:</strong> A commendable performance has been recorded. Continue consistent study habits.</p><p><strong>${executiveLabel}:</strong> Current performance meets the configured promotion benchmark.</p></td><td class="endorsement result-signatory"><strong class="decision">Promoted to the next class</strong><img class="stamp" src="${escapeHtml(profile.DocumentStampUrl || '/api/document-stamp')}" alt="Official stamp" onerror="this.style.visibility='hidden'"><strong>${escapeHtml(profile.ResultSignatoryName || `Authorized ${executiveLabel}`)}</strong><br><small>${escapeHtml(profile.ResultSignatoryTitle || 'Official result signatory')}</small></td></tr></tbody></table><table class="report-table criteria-table"><thead><tr><th>Grade key</th><th>Junior</th><th>Senior</th></tr></thead><tbody><tr><td><ul><li><strong>A</strong> 70-100% - Excellent</li><li><strong>B</strong> 60-69% - Very good</li><li><strong>C</strong> 50-59% - Good</li></ul></td><td><ul><li>Promoted: 50% and above</li><li>Maximum failed subjects: 2</li><li>Minimum attendance: 75%</li></ul></td><td><ul><li>Promoted: minimum required Core credits</li><li>English and Mathematics requirements apply</li><li>Minimum attendance: 75%</li></ul></td></tr></tbody></table><table class="report-table verification-table"><tbody><tr><td><img src="${escapeHtml(`${location.origin}/api/academic-result-qr?reference=${encodeURIComponent(resultReference)}`)}" alt="Result verification QR code" onerror="this.style.visibility='hidden'"></td><td><strong>Result verification</strong><p class="reference">Result reference: ${escapeHtml(resultReference)}<br>Verification: ${escapeHtml(verificationUrl)}</p></td></tr></tbody></table><p class="sample">${escapeHtml(previewLabel.toUpperCase())} SAMPLE PREVIEW · NOT AN OFFICIAL RESULT</p><button class="no-print" onclick="window.print()">Print preview</button></main></body></html>`);
   popup.document.close();
   popup.focus();
+  // Samples use illustrative 10/10/10/70 weights, never live student marks.
+  const sample = { Subjects: subjects.map(([name, total, grade]) => ({ SubjectName: name, Total: total, Grade: grade,
+    WeightedComponents: [['CA1', 10], ['CA2', 10], ['CA3', 10], ['Exam', 70]].map(([Name, weight]) => ({
+      ComponentId: Name, Name, State: 'Numeric', WeightedMark: Math.round(total * weight) / 100, MaximumMark: weight
+    }))
+  })) };
+  popup.document.querySelector('.subject-table').outerHTML = academicWeightedResultMarkup(sample);
 }
 
 function academicAnalysisSelectOptions(items = [], selected = '', allLabel = 'All') {
@@ -18182,6 +18276,11 @@ function bindAcademicManagement() {
     });
   }));
   const resultCalculator = panelEl.querySelector('[data-academic-result-calculator]');
+  panelEl.querySelectorAll('[data-academic-weighted-result]').forEach(button => button.addEventListener('click', () => {
+    const record = academicFind(academicManagementData?.termResults || [], button.dataset.academicWeightedResult);
+    if (record) printAcademicWeightedResult(record);
+  }));
+  bindAcademicClassScoreRegister(panelEl.querySelector('[data-academic-class-score-register]'));
   panelEl.querySelectorAll('[data-academic-result-sample]').forEach((button) => button.addEventListener('click', () => {
     printAcademicResultSample(button.dataset.academicResultSample);
   }));

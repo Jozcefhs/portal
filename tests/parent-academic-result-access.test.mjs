@@ -50,8 +50,9 @@ test('Milestone 9 parent progress and printing use only permitted result fields 
 
 test('academic result samples mirror the official printable result structure', () => {
   const officialColumns = '<th>Subject</th><th>Total</th><th>Grade</th><th>Point</th><th>Position / assessed</th><th>Remark</th>';
-  assert.equal(dashboardSource.includes(officialColumns), true);
+  assert.equal(dashboardSource.includes('academicResultSubjectHeaders(record)'), true);
   assert.equal(adminSource.includes(officialColumns), true);
+  assert.equal(adminSource.includes('academicWeightedResultMarkup(sample)'), true);
   for (const source of [dashboardSource, adminSource]) {
     assert.match(source, /class="report-table identity-table"/);
     assert.match(source, /class="report-table subject-table"/);

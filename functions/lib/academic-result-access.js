@@ -1,4 +1,5 @@
 import { normalizeAcademicPolicy } from './academic-policy.js';
+import { academicWeightedResultComponents } from './academic-result-marks.js';
 import { isFullScholarship } from './full-scholarship.js';
 
 const clean = (value) => String(value ?? '').trim();
@@ -163,14 +164,15 @@ export function evaluateAcademicResultAccess({
     : accessDecision(false, 'FINANCIAL_CLEARANCE_REQUIRED', 'This result is currently unavailable under the school’s financial-clearance policy. Please contact the school accounts office.');
 }
 
-function publicSubjectResult(subject = {}, positionMode = 'none') {
+function publicSubjectResult(subject = {}, positionMode = 'none', snapshot = {}) {
   const output = {
     SubjectId: clean(subject.SubjectId || subject.Id),
     SubjectName: clean(subject.SubjectName || subject.Name || subject.Subject),
     Total: subject.Total ?? subject.Score ?? '',
     Grade: clean(subject.Grade),
     GradePoint: subject.GradePoint ?? subject.Point ?? '',
-    Remark: clean(subject.Remark)
+    Remark: clean(subject.Remark),
+    WeightedComponents: academicWeightedResultComponents(subject, snapshot)
   };
   if (positionMode === 'subject-only') output.Position = subject.Position ?? subject.SubjectPosition ?? '';
   if (positionMode === 'assessed-count') output.AssessedCount = subject.AssessedCount ?? '';
@@ -233,7 +235,7 @@ export function publicAcademicResult(result = {}, access = {}, policyValue = {})
     })
   };
   if (!access.Allowed) return output;
-  output.Subjects = (result.Subjects || result.SubjectResults || []).map((subject) => publicSubjectResult(subject, policy.Position.Mode));
+  output.Subjects = (result.Subjects || result.SubjectResults || []).map((subject) => publicSubjectResult(subject, policy.Position.Mode, result.PolicySnapshot || {}));
   output.OverallAverage = result.OverallAverage ?? result.Average ?? '';
   output.OverallGrade = clean(result.OverallGrade || result.Grade);
   output.TotalScore = result.TotalScore ?? result.Total ?? '';

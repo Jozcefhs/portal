@@ -1,6 +1,8 @@
 import { batchCommitDocuments, getDocument, getDocuments, listCollection, queryCollection } from './firestore.js';
 import { commitAcademicCbtRoster } from './academic-cbt-roster-commit.js';
 import { academicCbtScoreSources } from './academic-cbt-multiserver.js';
+import { academicResultWithWeightedComponents } from './academic-result-marks.js';
+import { buildAcademicClassScoreRegister } from './academic-class-score-register.js';
 import { academicAttendanceId, findExistingAttendance, attendanceCorrectionMatches } from './academic-attendance-identity.js';
 import { enforceActorBranch } from './branch-scope.js';
 import { normalizeClassKey } from './class-names.js';
@@ -1946,7 +1948,7 @@ function sortAcademicState(state) {
     scoreImports: [...state.scoreImports].sort((a, b) => clean(b.CommittedAt || b.CreatedAt).localeCompare(clean(a.CommittedAt || a.CreatedAt))),
     scoreSyncBatches: [...state.scoreSyncBatches].sort((a, b) => clean(b.SynchronizedAt || b.CreatedAt).localeCompare(clean(a.SynchronizedAt || a.CreatedAt))),
     cbtTests: [...state.cbtTests].sort((a, b) => clean(b.StartsAt || b.CreatedAt).localeCompare(clean(a.StartsAt || a.CreatedAt))),
-    termResults: [...state.termResults].sort((a, b) => clean(a.ClassId).localeCompare(clean(b.ClassId))
+    termResults: [...state.termResults].map(academicResultWithWeightedComponents).sort((a, b) => clean(a.ClassId).localeCompare(clean(b.ClassId))
       || clean(a.ArmId).localeCompare(clean(b.ArmId)) || clean(a.StudentRef).localeCompare(clean(b.StudentRef))),
     resultClearances: [...state.resultClearances].sort((a, b) => clean(a.StudentRef).localeCompare(clean(b.StudentRef))
       || clean(b.ApprovedAt || b.UpdatedAt).localeCompare(clean(a.ApprovedAt || a.UpdatedAt))),
@@ -5105,6 +5107,17 @@ function academicScoreRowsInput(value) {
   return Array.isArray(rows) ? rows : [];
 }
 
+export async function getAcademicClassScoreRegister(env, user = {}, input = {}) {
+  requireCapability(user, 'canReviewScores');
+  const data = await bootstrapAcademicManagement(env, user, { ...input, View: 'scorebook', IncludePeople: true });
+  if (!(data.sessions || []).some(row => row.SessionId === input.SessionId)
+      || !(data.terms || []).some(row => row.TermId === input.TermId && row.SessionId === input.SessionId)
+      || !(data.classes || []).some(row => row.ClassId === input.ClassId)) {
+    throw failure('Choose a permitted class, academic session and term.', 403, 'ACADEMIC_CLASS_REGISTER_FORBIDDEN');
+  }
+  return { ok: true, partialAcademicManagement: true, classScoreRegister: buildAcademicClassScoreRegister(data, input) };
+}
+
 export async function getAcademicScorebookContext(env, user = {}, input = {}) {
   const context = await academicScoreSheetContext(env, user, input, 'canEnterScores');
   let activeScheme = context.scheme;
@@ -5223,6 +5236,45 @@ function academicChangedComponentScores(previousScores = [], nextScores = []) {
   });
 }
 
+// Only an existing recorded CBT cell may use the server-authorised unlock.
+// Empty CBT fields still require a signed/imported result, not manual entry.
+export function academicManualScoreCorrection(scheme, previous, nextScores, sheet = {}) {
+  const before = new Map(academicScoreCells(previous?.ComponentScores).map(cell => [cell.CellId, cell]));
+  const previousScores = normalizeAcademicComponentScores(previous?.ComponentScores || [], scheme);
+  const changes = academicChangedComponentScores(previousScores, nextScores);
+  const corrections = [];
+  const requiresSourceValidation = changes.flatMap(componentScore => {
+    const definition = scheme.Components.find(row => row.Id === componentScore.ComponentId);
+    const check = (cell, part) => {
+      const cellId = `${componentScore.ComponentId}${part ? `:${cell.PartId}` : ''}`;
+      const old = before.get(cellId);
+      const source = lower(part ? definition?.ScoreParts?.find(row => row.Id === cell.PartId)?.SourceMode : definition?.SourceMode);
+      const hasCbtSource = (previous?.CbtScoreSources || []).some(row => row.CellId === cellId)
+        || (previous?.ManualScoreCorrections || []).some(row => row.CellId === cellId);
+      const cbt = ['built-in-cbt', 'external-cbt'].includes(source) || hasCbtSource;
+      if (!cbt) return true;
+      if (sheet.ScoreEditingReactivated !== true || clean(sheet.ScoreEditingReactivationReason).length < 5
+          || (!ACADEMIC_RECORDED_SCORE_STATES.has(clean(old?.State))
+            && !(previous?.ManualScoreCorrections || []).some(row => row.CellId === cellId))) {
+        throw failure('Reactivate score editing with a reason before correcting a recorded CBT score. Empty CBT fields must be uploaded.', 409, 'ACADEMIC_SCORE_SOURCE_FORBIDDEN');
+      }
+      corrections.push({ CellId: cellId,
+        Before: { State: old.State, RawScore: old.RawScore ?? null },
+        After: { State: cell.State, RawScore: cell.RawScore ?? null },
+        Reason: clean(sheet.ScoreEditingReactivationReason),
+        AuthorisedBy: clean(sheet.ScoreEditingReactivatedByUsername || sheet.ScoreEditingReactivatedBy),
+        AuthorisedAt: clean(sheet.ScoreEditingReactivatedAt) });
+      return false;
+    };
+    if (!componentScore.Parts?.length) return check(componentScore, false) ? [componentScore] : [];
+    const Parts = componentScore.Parts.filter(cell => check(cell, true));
+    return Parts.length ? [{ ...componentScore, Parts }] : [];
+  });
+  const issues = academicScoreSourceIssues(scheme, requiresSourceValidation, 'manual');
+  if (issues.length) throw failure(issues[0], 409, 'ACADEMIC_SCORE_SOURCE_FORBIDDEN');
+  return corrections;
+}
+
 export async function saveAcademicScoreDraft(env, user = {}, input = {}) {
   const context = await academicScoreSheetContext(env, user, input, 'canEnterScores');
   const { scope, state, SheetId, existing, roster, scheme } = context;
@@ -5248,13 +5300,12 @@ export async function saveAcademicScoreDraft(env, user = {}, input = {}) {
     if (lockedChanges.length) {
       throw failure('One or more saved score cells are locked. Ask an Admin or Management user to reactivate this subject and arm before editing them.', 409, 'ACADEMIC_SCORE_CELL_LOCKED');
     }
-    const previousScores = normalizeAcademicComponentScores(previous?.ComponentScores || [], scheme);
-    const changedScores = academicChangedComponentScores(previousScores, normalizedScores);
-    const sourceIssues = academicScoreSourceIssues(scheme, changedScores, 'manual');
-    if (sourceIssues.length) throw failure(sourceIssues[0], 409, 'ACADEMIC_SCORE_SOURCE_FORBIDDEN');
+    const corrections = academicManualScoreCorrection(scheme, previous, normalizedScores, existing || {})
+      .map(correction => ({ ...correction, CorrectedAt: timestamp, CorrectedBy: actorName(user), CorrectedByUsername: actorUsername(user) }));
     const calculated = calculateAcademicStudentScore(scheme, normalizedScores);
     return {
       previous,
+      corrections,
       record: {
         ...(previous || {}), RecordId: ScoreId, ScoreId, SheetId, StudentRef: studentRef,
         SessionId: context.session.SessionId, TermId: context.term.TermId,
@@ -5265,7 +5316,11 @@ export async function saveAcademicScoreDraft(env, user = {}, input = {}) {
         LockedScoreCellIds: academicRecordedScoreCellIds(calculated.ComponentScores),
         ScoreCellsLockedAt: timestamp, ScoreCellsLockedBy: actorName(user),
         ScoreCellsLockedByUsername: actorUsername(user),
-        SourceType: 'Manual', SourceId: '',
+        SourceType: corrections.length ? 'ManualCorrection' : 'Manual', SourceId: '',
+        ...(corrections.length ? { ManualScoreCorrections: [
+          ...(previous?.ManualScoreCorrections || []).filter(old => !corrections.some(row => row.CellId === old.CellId)),
+          ...corrections
+        ] } : {}),
         BranchId: scope.branchId, SchoolSection: scope.section,
         CreatedAt: clean(previous?.CreatedAt) || timestamp,
         CreatedBy: clean(previous?.CreatedBy) || actorName(user),
@@ -5295,6 +5350,16 @@ export async function saveAcademicScoreDraft(env, user = {}, input = {}) {
     documentId: SheetId, data: withoutMetadata(sheet), ...writePrecondition(existing, input.SheetRevisionToken)
   });
   writes.push(auditWrite(user, 'SAVE_DRAFT', 'scoreSheet', sheet, `${updatedScores.length} student score${updatedScores.length === 1 ? '' : 's'}`));
+  const corrected = updatedScores.filter(item => item.corrections.length);
+  // Structured audit chunks retain complete before/after evidence without
+  // exceeding Firestore's 500-write transaction limit for a 200-student save.
+  for (let index = 0; index < corrected.length; index += 25) {
+    const audit = auditWrite(user, 'CORRECT_CBT_SCORE', 'scoreSheet', sheet, 'Authorised CBT score corrections');
+    audit.data.ScoreCorrections = corrected.slice(index, index + 25).map(item => ({
+      ScoreId: item.record.ScoreId, StudentRef: item.record.StudentRef, Cells: item.corrections
+    }));
+    writes.push(audit);
+  }
   await commitAcademicBatch(env, writes, 'The score sheet changed while it was being saved. Reload before entering scores again.');
   return {
     ok: true,
@@ -6659,6 +6724,10 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
     const previous = findById(state.studentScores, ScoreId);
     let cbtSources = null;
     try {
+      const correctedCellId = `${component.Id}${component.ScoreEntryMode === 'objective-theory' ? ':objective' : ''}`;
+      if ((previous?.ManualScoreCorrections || []).some(cell => cell.CellId === correctedCellId)) {
+        throw failure('An authorised manual correction is preserved; this upload cannot replace it.', 409, 'ACADEMIC_CBT_SYNC_ATTEMPT_CONFLICT');
+      }
       if (sourceType === 'BuiltInCBT') cbtSources = academicCbtScoreSources(
         previous, component, row, input, signingKeyId, SyncId, state.scoreSyncBatches
       );
@@ -6667,7 +6736,9 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
       // only this result; signature, scope, roster and CAS checks still apply.
       if (error?.code !== 'ACADEMIC_CBT_SYNC_ATTEMPT_CONFLICT') throw error;
       rejectedScores.push({ StudentRef: row.StudentRef, Code: error.code,
-        Reason: 'An earlier accepted result is preserved. This attempt was not posted.' });
+        Reason: (previous?.ManualScoreCorrections || []).length
+          ? 'An authorised score correction is preserved. This attempt was not posted.'
+          : 'An earlier accepted result is preserved. This attempt was not posted.' });
       return [];
     }
     const componentScores = normalizeAcademicComponentScores([
@@ -7937,6 +8008,7 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
   if (['decideacademicattendancecorrection', 'decideattendancecorrection'].includes(action)) return decideAcademicAttendanceCorrection(env, user, input);
   if (['saveacademicscoredraft', 'saveacademicstudentscores'].includes(action)) return saveAcademicScoreDraft(env, user, input);
   if (['getacademicscorebookcontext', 'openscorebook'].includes(action)) return getAcademicScorebookContext(env, user, input);
+  if (action === 'getacademicclassscoreregister') return getAcademicClassScoreRegister(env, user, input);
   if (['applyactiveacademicscorelayout', 'applyactivescorelayout'].includes(action)) return applyActiveAcademicScoreLayout(env, user, input);
   if (['reactivateacademicscoreediting', 'reactivatescoreediting'].includes(action)) return reactivateAcademicScoreEditing(env, user, input);
   if (['changeacademicscoresheetstatus', 'changescoresheetstatus'].includes(action)) return changeAcademicScoreSheetStatus(env, user, input);
