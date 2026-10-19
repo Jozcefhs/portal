@@ -1,4 +1,4 @@
-import { batchCommitDocuments, getDocument, listCollection, queryCollection } from './firestore.js';
+import { batchCommitDocuments, getDocument, getDocuments, listCollection, queryCollection } from './firestore.js';
 import { commitAcademicCbtRoster } from './academic-cbt-roster-commit.js';
 import { academicCbtScoreSources } from './academic-cbt-multiserver.js';
 import { academicAttendanceId, findExistingAttendance, attendanceCorrectionMatches } from './academic-attendance-identity.js';
@@ -204,7 +204,10 @@ export async function verifyAcademicCbtSyncPreparation(env, user, input = {}) {
     ACADEMIC_MANAGEMENT_COLLECTIONS.audit
   ]);
   const writes = Array.isArray(prepared.Writes) ? prepared.Writes : [];
-  if (writes.length < 4 || writes.length > 500
+  const rejectionOnly = prepared.Receipt?.ImportedRows === 0 && prepared.Receipt?.RejectedCount > 0
+    && writes.length === 2 && writes.every(write => [ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSyncBatches,
+      ACADEMIC_MANAGEMENT_COLLECTIONS.audit].includes(write.collectionPath));
+  if ((!rejectionOnly && writes.length < 4) || writes.length > 500
       || writes.some((write) => !allowedCollections.has(clean(write?.collectionPath)))) {
     throw failure('The CBT score synchronization preparation contains invalid database writes.', 409, 'ACADEMIC_CBT_SYNC_PREPARATION_INVALID');
   }
@@ -212,7 +215,7 @@ export async function verifyAcademicCbtSyncPreparation(env, user, input = {}) {
       && clean(write.documentId) === clean(prepared.SyncId))) {
     throw failure('The CBT score synchronization preparation is incomplete.', 409, 'ACADEMIC_CBT_SYNC_PREPARATION_INVALID');
   }
-  if (!writes.some((write) => write.collectionPath === ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships
+  if (!rejectionOnly && !writes.some((write) => write.collectionPath === ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships
     && write.updateMask?.includes('ScoreHistoryRevision') && clean(write.updateTime))) {
     throw failure('Prepare the CBT batch again so its student memberships can be checked safely.', 409, 'ACADEMIC_CBT_SYNC_PREPARATION_EXPIRED');
   }
@@ -6650,12 +6653,23 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
   }
   const timestamp = nowIso();
   const component = preview.Component;
-  const updatedScores = preview.Rows.map((row) => {
+  const rejectedScores = [];
+  const updatedScores = preview.Rows.flatMap((row) => {
     const ScoreId = academicStudentScoreId(SheetId, row.StudentRef);
     const previous = findById(state.studentScores, ScoreId);
-    const cbtSources = sourceType === 'BuiltInCBT'
-      ? academicCbtScoreSources(previous, component, row, input, signingKeyId, SyncId, state.scoreSyncBatches)
-      : null;
+    let cbtSources = null;
+    try {
+      if (sourceType === 'BuiltInCBT') cbtSources = academicCbtScoreSources(
+        previous, component, row, input, signingKeyId, SyncId, state.scoreSyncBatches
+      );
+    } catch (error) {
+      // A second centre must never replace the first accepted attempt. Reject
+      // only this result; signature, scope, roster and CAS checks still apply.
+      if (error?.code !== 'ACADEMIC_CBT_SYNC_ATTEMPT_CONFLICT') throw error;
+      rejectedScores.push({ StudentRef: row.StudentRef, Code: error.code,
+        Reason: 'An earlier accepted result is preserved. This attempt was not posted.' });
+      return [];
+    }
     const componentScores = normalizeAcademicComponentScores([
       component.ScoreEntryMode === 'objective-theory' ? {
         ComponentId: component.Id,
@@ -6718,8 +6732,10 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
     SigningKeyId: signingKeyId,
     AssessmentComponentId: component.Id,
     MaximumScore: component.ScoreEntryMode === 'objective-theory' ? component.ObjectiveMaximumScore : component.MaximumScore,
-    NumericCount: preview.NumericCount, AbsentCount: preview.AbsentCount,
+    NumericCount: updatedScores.filter(({ record }) => preview.Rows.some(row => row.StudentRef === record.StudentRef && row.State === 'Numeric')).length,
+    AbsentCount: updatedScores.filter(({ record }) => preview.Rows.some(row => row.StudentRef === record.StudentRef && row.State === 'Absent')).length,
     ImportedRows: updatedScores.length, RosterCount: preview.RosterCount,
+    RejectedCount: rejectedScores.length, RejectedScores: rejectedScores,
     AffectedScoreIds: updatedScores.map((row) => row.record.ScoreId),
     SessionId: context.session.SessionId, TermId: context.term.TermId,
     ClassId: context.schoolClass.ClassId, ArmId: context.arm.ArmId, SubjectId: context.subject.SubjectId,
@@ -6732,7 +6748,7 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
     ...(previous ? { updateTime: previous.__updateTime } : { exists: false })
   }));
   writes.push(...academicScoreMembershipGuards(state, updatedScores.map((item) => item.record)));
-  writes.push({
+  if (updatedScores.length) writes.push({
     collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSheets,
     documentId: SheetId, data: withoutMetadata(sheet),
     ...(existing ? { updateTime: existing.__updateTime } : { exists: false })
@@ -6743,7 +6759,8 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
   });
   writes.push(auditWrite(user, 'SYNC_CBT_SCORES', 'scoreSyncBatch', syncRecord,
     `${sourceType}; ${updatedScores.length} students; ${preview.AbsentCount} absent`));
-  const message = `${updatedScores.length} approved CBT score${updatedScores.length === 1 ? '' : 's'} synchronized into the Draft scorebook.`;
+  const message = `${updatedScores.length} approved CBT score${updatedScores.length === 1 ? '' : 's'} synchronized into the Draft scorebook.`
+    + (rejectedScores.length ? ` ${rejectedScores.length} conflicting attempt(s) rejected; earlier accepted scores are unchanged.` : '');
   const scoreSyncPreparation = await createAcademicCbtSyncPreparation(env, user, {
     BranchId: scope.branchId,
     SchoolSection: scope.section,
@@ -7729,7 +7746,7 @@ export async function syncLocalCbtStudentPasswords(env, user = {}, input = {}) {
     }
     return {
       studentRef,
-      changedAt: clean(row.PasswordChangedAt) || timestamp,
+      changedAt: Number.isFinite(Date.parse(row.PasswordChangedAt)) ? new Date(row.PasswordChangedAt).toISOString() : timestamp,
       password: {
         Salt: lower(password.Salt), PasswordHash: lower(password.PasswordHash),
         PasswordIterations: 10000, PasswordHashVersion: 'pbkdf2-sha256-v1'
@@ -7740,9 +7757,23 @@ export async function syncLocalCbtStudentPasswords(env, user = {}, input = {}) {
     BranchId: context.scope.branchId, SchoolSection: context.scope.section
   });
   const documentIds = await Promise.all(normalized.map((row) => studentLoginCredentialId(row.studentRef)));
-  const writes = normalized.map((row, index) => ({
+  const previousCredentials = await getDocuments(env, collectionPath, documentIds);
+  const synchronizedStudentRefs = [], supersededStudentRefs = [];
+  const writes = normalized.flatMap((row, index) => {
+    const previous = previousCredentials[index];
+    if (previous && (lower(previous.StudentRef) !== lower(row.studentRef) || !previous.__updateTime)) {
+      throw failure('The saved student credential changed. Refresh before retrying.', 409, 'ACADEMIC_WRITE_CONFLICT');
+    }
+    if (previous && Date.parse(previous.PasswordChangedAt || previous.UpdatedAt) >= Date.parse(row.changedAt)) {
+      if (previous.PasswordHash === row.password.PasswordHash && previous.Salt === row.password.Salt) synchronizedStudentRefs.push(row.studentRef);
+      else supersededStudentRefs.push(row.studentRef);
+      return [];
+    }
+    synchronizedStudentRefs.push(row.studentRef);
+    return {
     collectionPath,
     documentId: documentIds[index],
+    ...(previous ? { updateTime: previous.__updateTime } : { exists: false }),
     data: {
       StudentRef: row.studentRef,
       BranchId: context.scope.branchId,
@@ -7752,19 +7783,19 @@ export async function syncLocalCbtStudentPasswords(env, user = {}, input = {}) {
       PasswordChangedAt: row.changedAt,
       UpdatedAt: timestamp,
       UpdatedBy: actorName(user),
-      CreatedAt: row.changedAt,
-      CreatedBy: actorName(user)
+      CreatedAt: previous?.CreatedAt || row.changedAt,
+      CreatedBy: previous?.CreatedBy || actorName(user)
     }
-  }));
+  }; });
   writes.push(auditWrite(user, 'SYNC_LOCAL_CBT_PASSWORDS', 'studentCredentials', {
     BranchId: context.scope.branchId, SchoolSection: context.scope.section,
     SessionId: context.session.SessionId, TermId: context.term.TermId
-  }, `${normalized.length} student password verifier${normalized.length === 1 ? '' : 's'}`));
+  }, `${synchronizedStudentRefs.length} student password verifiers acknowledged; ${supersededStudentRefs.length} newer online passwords preserved`));
   await commitAcademicBatch(env, writes, 'Student password changes could not be synchronized. Retry the same results push.');
   return {
     ok: true,
-    message: `${normalized.length} student password change${normalized.length === 1 ? '' : 's'} synchronized securely.`,
-    synchronizedStudentRefs: normalized.map((row) => row.studentRef)
+    message: `${synchronizedStudentRefs.length} student password changes synchronized securely; ${supersededStudentRefs.length} newer online passwords preserved.`,
+    synchronizedStudentRefs, supersededStudentRefs
   };
 }
 

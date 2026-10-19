@@ -80,6 +80,16 @@ async function server() {
 }
 const [a,b]=await Promise.all([server(),server()]);
 
+test('ICT can prepare and commit its own signed upload without a separate reviewer',async()=>{
+  const f=fixture(),ict={...actor,role:'ICT',username:'ict-officer'};
+  const payload=await a.batch([['DCA/001',81,'ict-attempt']]);
+  const prepared=await f.prepare(payload,ict);
+  assert.equal(prepared.commitRequired,true);
+  const posted=await f.commit(payload,prepared,ict);
+  assert.equal(posted.scoreSyncReceipt.ImportedRows,1);
+  assert.equal(f.rows(collections.studentScores)[0].ComponentScores[0].RawScore,81);
+});
+
 test('independent servers merge different students into one scorebook without absence or centre assignments',async()=>{
   const f=fixture();
   const first=await a.batch([['DCA/001',81,'a1']]),second=await b.batch([['DCA/002',92,'b1']]);
@@ -95,12 +105,18 @@ test('independent servers merge different students into one scorebook without ab
   assert.equal(JSON.stringify([...f.db]),snapshot,'Retries change no records or counts');
 });
 
-test('a second attempt is blocked even with the same mark, on either server, and mixed batches are atomic',async()=>{
-  const f=fixture(); await f.post(await a.batch([['DCA/001',81,'a1']]));
-  const snapshot=JSON.stringify([...f.db]);
+test('a second attempt is rejected per student while the other student posts, with duplicate-safe receipts',async()=>{
   for(const [origin,score,attempt] of [[b,81,'b1'],[b,70,'b2'],[a,81,'a2']]) {
+    const f=fixture(); await f.post(await a.batch([['DCA/001',81,'a1']]));
+    const original=JSON.stringify(f.rows(collections.studentScores)[0]);
     const duplicate=await origin.batch([['DCA/002',90,'new'],['DCA/001',score,attempt]]);
-    await assert.rejects(f.post(duplicate),{code:'ACADEMIC_CBT_SYNC_ATTEMPT_CONFLICT'});
+    const receipt=(await f.post(duplicate)).scoreSyncReceipt;
+    assert.equal(receipt.ImportedRows,1); assert.equal(receipt.RejectedCount,1);
+    assert.equal(receipt.RejectedScores[0].StudentRef,'DCA/001');
+    assert.equal(JSON.stringify(f.rows(collections.studentScores).find(r=>r.StudentRef==='DCA/001')),original);
+    assert.equal(f.rows(collections.studentScores).find(r=>r.StudentRef==='DCA/002').ComponentScores[0].RawScore,90);
+    const snapshot=JSON.stringify([...f.db]);
+    await f.post(duplicate);
     assert.equal(JSON.stringify([...f.db]),snapshot);
   }
 });
@@ -121,7 +137,11 @@ test('same-student concurrent preparations conflict on retry rather than overwri
   const [pa,pb]=await Promise.all([f.prepare(first),f.prepare(second)]);
   await f.commit(first,pa);
   await assert.rejects(f.commit(second,pb),{code:'ACADEMIC_WRITE_CONFLICT'});
-  await assert.rejects(f.post(second),{code:'ACADEMIC_CBT_SYNC_ATTEMPT_CONFLICT'});
+  const sheet=JSON.stringify(f.rows(collections.scoreSheets)), scores=JSON.stringify(f.rows(collections.studentScores));
+  const result=await f.post(second);
+  assert.equal(result.scoreSyncReceipt.ImportedRows,0); assert.equal(result.scoreSyncReceipt.RejectedCount,1);
+  assert.equal(JSON.stringify(f.rows(collections.scoreSheets)),sheet);
+  assert.equal(JSON.stringify(f.rows(collections.studentScores)),scores);
   assert.equal(f.rows(collections.studentScores)[0].CbtScoreSources[0].SigningKeyId,a.id);
 });
 

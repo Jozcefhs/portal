@@ -4183,3 +4183,10 @@ html[data-theme="dark"] .external-audit-finding{background:#0d1a29}
 .paystack-connection-heading>div{flex:1 1 220px;min-width:0}
 #checkPaystackActivation{justify-self:start;width:fit-content;margin:0;min-height:40px}
 #checkPaystackActivation[hidden]{display:none!important}
+/* On phones the frozen identity columns consume the entire scorebook viewport. */
+@media (max-width:700px){
+  .academic-scorebook-table{overflow-x:auto;overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch}
+  .academic-scorebook-table :is(th,td).academic-serial,
+  .academic-scorebook-table :is(th,td).academic-student-cell{position:static;left:auto;z-index:auto}
+  .academic-scorebook-table :is(th,td).academic-student-cell{min-width:170px;max-width:220px;white-space:normal}
+}

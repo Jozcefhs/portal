@@ -1,7 +1,7 @@
 {
-  "version": "3.1.33",
+  "version": "3.1.34",
   "channel": "stable",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.33.exe",
-  "sha256": "cf434df26ca48cc207a68db7843a4d7d592aeb27c73ba120a7728cc9011d9c55",
-  "notes": "Dynamax Desktop v3.1.33 repairs tablet question-paper navigation and adds editable CBT duration. Narrow landscape tablets keep the paper in the correct column with larger page controls; delayed page loads cannot overwrite the selected paper. Edit objective and theory durations independently and pull updated online schedules onto each server. Running timers, answers and submitted attempts are preserved. The web companion adds uploaded-subject search and schedule duration editing. Includes all previous updates and subscriber school branding. Install on each CBT server between examinations, then pull any changed schedules and reopen the student CBT page. Organisation settings and existing records are preserved."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.34.exe",
+  "sha256": "b5a7e34c70ffe0bd4ef9784d3a071dd4459efdf5f2c79243292079719ddff34b",
+  "notes": "Dynamax Desktop v3.1.34 adds ICT self-approved, multi-test background CBT uploads with progress. Missing classroom arms and duplicate attempts no longer block other students; the first accepted online score is preserved. Stopped servers can upload submitted scores while unfinished attempts remain resumable. Interrupted tests restore saved answers and checkpoint time after the missed-heartbeat grace period. Student passwords sync independently, and authorised handlers can issue a temporary password requiring a personal-password change. The web companion repairs mobile scorebook scrolling and removes the arbitrary vendor-request sale-count ceiling while retaining atomic financial safeguards. Install on each CBT server between examinations after backing up, then reopen student pages. No tablet APK update is required. School branding and existing records are preserved."
 }

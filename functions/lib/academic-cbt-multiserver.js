@@ -14,7 +14,7 @@ export function academicCbtScoreSources(previous, component, row, input, signing
   const conflict = (detail) => {
     throw Object.assign(new Error(
       `${row.StudentRef}: ${component.Name || component.Id} ${detail}. `
-      + 'This batch was not posted and the existing result was preserved. '
+      + 'This student result was not posted and the existing result was preserved. '
       + 'Review the attempts from both centres before making an authorised score correction; do not repeat the test.'
     ), { status: 409, code: 'ACADEMIC_CBT_SYNC_ATTEMPT_CONFLICT' });
   };

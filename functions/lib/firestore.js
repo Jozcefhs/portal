@@ -470,7 +470,9 @@ function batchWritePrecondition(item = {}) {
 export async function batchCommitDocuments(env, writes, options = {}) {
   const items = Array.isArray(writes) ? writes : [];
   if (!items.length) return { writeResults: [] };
-  if (items.length > 500) throw new Error('A database batch may contain at most 500 writes.');
+  // Firestore removed its 500-write Commit limit in March 2023. Opt in only
+  // for workflows that need one atomic reservation; never split money writes.
+  if (items.length > 500 && options.allowLargeAtomicBatch !== true) throw new Error('A database batch may contain at most 500 writes.');
   const token = await getFirestoreAccessToken(env);
   const base = firestoreBaseUrl(env);
   // Firestore commit write names are resource names (projects/.../documents/...),
@@ -505,10 +507,21 @@ export async function batchCommitDocuments(env, writes, options = {}) {
       return write;
     })
   };
+  const serialized = JSON.stringify(body);
+  if (options.allowLargeAtomicBatch === true) {
+    const encoder = new TextEncoder();
+    if (encoder.encode(serialized).byteLength > 8 * 1024 * 1024
+        || body.writes.some(write => write.update && encoder.encode(JSON.stringify(write.update)).byteLength > 900 * 1024)) {
+      const error = new Error('The request exceeds the database document or transaction size limit. Nothing was posted. Accounts must review the request size.');
+      error.status = 413;
+      error.code = 'DATABASE_ATOMIC_SIZE_LIMIT';
+      throw error;
+    }
+  }
   const response = await fetch(`${base}:commit`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
+    body: serialized
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {

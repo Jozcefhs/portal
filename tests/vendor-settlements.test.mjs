@@ -95,6 +95,34 @@ const user = { username:'accounts', role:'Accounts Officer', branchId:'main', ed
 const vendor = (id = 'v1', extra = {}) => ({ ...scope, VendorId:id, Name:`Vendor ${id}`, Active:'YES', BankName:'Test bank',
   BankAccountName:'Vendor name', BankAccountNumber:'1234567890', BankDetailsVersion:'bank1', RuleHistory:[], ...extra });
 const settings = { ...scope, Enabled:true, AccountingConfirmed:true, PayableAccount:'2000', CommissionAccount:'4090', VendorReceivableAccount:'1110', BusinessTimezone:'Africa/Lagos', RuleHistory:[] };
+test('large vendor requests reserve and pay all 600 sales atomically, with retry and conflict protection',async()=>{
+  const f=fixture();
+  for(let i=0;i<600;i++) await f.sale(`large-${i}`,10);
+  const before=JSON.stringify([...f.store]); f.conflict();
+  await assert.rejects(f.request(6000),{code:'VENDOR_WRITE_CONFLICT'});
+  assert.equal(JSON.stringify([...f.store]),before);
+  await f.request(6000);
+  const request=f.get('vendorSettlementRequests','VREQ-claim1');
+  assert.equal(request.Allocations.length,600); assert.equal(request.Snapshot.length,600);
+  assert.equal(request.AmountCents,600000); assert.ok(f.commits.at(-1).length>500);
+  assert.equal(f.get('vendorBalances','v1').ReservedCents,600000);
+  const reserved=JSON.stringify([...f.store]); await f.request(6000);
+  assert.equal(JSON.stringify([...f.store]),reserved);
+  await f.approve(); await f.pay(6000);
+  assert.equal(f.get('vendorBalances','v1').ReservedCents,0);
+  assert.equal(f.get('vendorBalances','v1').PaidCents,600000);
+  assert.equal(f.list('vendorClaimLots').reduce((sum,lot)=>sum+lot.PaidCents,0),600000);
+  const paid=JSON.stringify([...f.store]); await f.pay(6000);
+  assert.equal(JSON.stringify([...f.store]),paid);
+});
+
+test('large vendor request cancellation releases every reservation without paying',async()=>{
+  const f=fixture(); for(let i=0;i<160;i++) await f.sale(`cancel-${i}`,1);
+  await f.request(160); await f.decision('Cancelled','Accounts Officer');
+  assert.equal(f.get('vendorBalances','v1').ReservedCents,0);
+  assert.equal(f.list('vendorClaimLots').reduce((sum,lot)=>sum+lot.ReservedCents,0),0);
+  assert.equal(f.list('vendorSettlementPayments').length,0);
+});
 const chart = [['1010','Asset'],['1020','Asset'],['1030','Asset'],['1110','Asset'],['2000','Liability'],['2100','Liability'],['2200','Liability'],['4090','Revenue'],['4040','Revenue'],['4120','Revenue'],['4130','Revenue'],['6060','Expense'],['3000','Equity']].map(([Code,Type]) => ({Code,Name:Code,Type,Active:'YES'}));
 function fixture(initial = [], options = {}) {
   const store = new Map(), commits = []; let version = 0, forcedConflict = false;

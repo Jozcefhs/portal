@@ -46,7 +46,7 @@ function audit(scope, user, action, entityId, details, operationId = crypto.rand
     ActorUsername: clean(user.username), SourcePlatform: clean(user.sourcePlatform || 'Web'), Details: details });
 }
 async function commit(env, writes) {
-  try { return await batchCommitDocuments(env, writes); }
+  try { return await batchCommitDocuments(env, writes, { allowLargeAtomicBatch: true }); }
   catch (error) {
     if ([409, 412].includes(Number(error.status))) fail('A vendor balance, rule or request changed. Refresh before retrying; nothing was partially posted.', 409, 'VENDOR_WRITE_CONFLICT');
     throw error;
@@ -425,7 +425,8 @@ async function requestSettlement(env, user, scope, body) {
   const lots = (await rows(env, VENDOR_COLLECTIONS.lots, scope, vendor.VendorId)).filter(row => row.Date.slice(0, 10) >= from && row.Date.slice(0, 10) <= to)
     .sort((a, b) => clean(a.Date).localeCompare(clean(b.Date)));
   const allocations = allocateClaim(lots, wanted);
-  if (allocations.length > 150) fail('This request spans too many sales. Choose a shorter period.', 413);
+  const lotsById = new Map(lots.map(lot => [lot.LotId, lot]));
+  const selectedLots = new Set(allocations.map(allocation => allocation.LotId));
   const timestamp = new Date().toISOString(), settlementId = `VREQ-${id(body.RequestId)}`;
   let replaced = null;
   if (body.ReplacesSettlementId) {
@@ -437,15 +438,15 @@ async function requestSettlement(env, user, scope, body) {
   const request = { ...scope, SchoolSection: vendor.SchoolSection, SettlementId: settlementId, VendorId: vendor.VendorId, VendorName: vendor.Name,
     From: from, To: to, AmountCents: wanted, PaidCents: 0, Status: 'Submitted', PaymentStatus: 'Awaiting approval',
     ...(replaced ? (replaced.ApprovalFlow ? { ApprovalFlow: replaced.ApprovalFlow } : {}) : { ApprovalFlow: await approvalSnapshot(env, 'vendor') }),
-    Allocations: allocations.map(allocation => ({ ...allocation, PayableAccount: lots.find(row => row.LotId === allocation.LotId).PayableAccount })),
-    Snapshot: lots.filter(row => allocations.some(allocation => allocation.LotId === row.LotId)).map(row => ({ LotId: row.LotId, SaleNo: row.SaleNo, Date: row.Date,
+    Allocations: allocations.map(allocation => ({ ...allocation, PayableAccount: lotsById.get(allocation.LotId).PayableAccount })),
+    Snapshot: lots.filter(row => selectedLots.has(row.LotId)).map(row => ({ LotId: row.LotId, SaleNo: row.SaleNo, Date: row.Date,
       Gross: amount(row.GrossCents), Refund: amount(row.RefundedCents), Charge: amount(row.ChargeCents), Net: amount(row.NetCents), RuleSnapshot: row.RuleSnapshot,
       RuleLabel: ruleDescription(row.RuleSnapshot), Items: row.Items })),
     PayableAccount: settings.PayableAccount, BankName: vendor.BankName, BankAccountName: vendor.BankAccountName, BankAccountNumber: vendor.BankAccountNumber,
     BankDetailsVersion: vendor.BankDetailsVersion, Revision: replaced ? replaced.Revision + 1 : 1,
     ReplacesSettlementId: replaced?.SettlementId || '', RequestedByUsername: user.username, RequestedBy: actor(user), RequestedAt: timestamp,
     Notes: clean(body.Notes).slice(0, 2000), History: [{ Action: 'Submitted', By: actor(user), Username: user.username, At: timestamp }], UpdatedAt: timestamp };
-  const writes = allocations.map(allocation => { const lot = lots.find(row => row.LotId === allocation.LotId);
+  const writes = allocations.map(allocation => { const lot = lotsById.get(allocation.LotId);
     return write(VENDOR_COLLECTIONS.lots, lot.LotId, { ...lot, ReservedCents: lot.ReservedCents + allocation.AmountCents }, lot); });
   await commit(env, [...writes, ...(replaced ? [write(VENDOR_COLLECTIONS.requests, replaced.SettlementId, { ...replaced, ReplacedBy: settlementId }, replaced)] : []),
     write(VENDOR_COLLECTIONS.balances, vendor.VendorId, { ...balance, ReservedCents: balance.ReservedCents + wanted }, previous),
