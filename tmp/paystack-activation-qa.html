@@ -1,0 +1,148 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/css/style.css"></head><body style="padding:24px"><main style="max-width:1050px;margin:auto"><h1>Organisation payments — local test</h1><p>Simulated credentials only. No payment or external request is made.</p><form id="setupForm"><input id="settingsScope" value="organisation" hidden><input id="settingsBranch" value="" hidden><label>Unsaved organisation name<input id="draftName" value="My unsaved draft"></label>            <div class="settings-field full-width paystack-connection-card" id="paystackConnectionPanel">
+              <div class="paystack-connection-heading">
+                <div>
+                  <label for="paystackSecretKey">Organisation Paystack account</label>
+                  <strong id="paystackConnectionState">Checking secure connection…</strong>
+                  <small id="paystackConnectionHelp" class="settings-help">The secret key is sent once over HTTPS and installed directly as an encrypted Cloudflare secret. It is never saved in the browser or database.</small>
+                </div>
+                <span id="paystackConnectionBadge" class="paystack-connection-badge">Not connected</span>
+              </div>
+              <div class="paystack-connection-controls">
+                <label for="paystackSecretKey"><span>Paystack secret key</span><input id="paystackSecretKey" type="password" maxlength="200" autocomplete="new-password" spellcheck="false" placeholder="sk_live_… or sk_test_…"></label>
+                <label id="paystackReplaceConfirmation" class="paystack-replace-confirmation" hidden><input id="confirmPaystackReplacement" type="checkbox"><span>I understand that pending payments created with the previous Paystack account must be reconciled before replacement.</span></label>
+                <button id="connectPaystackButton" type="button">Connect Paystack</button>
+              </div>
+              <div class="paystack-webhook-row">
+                <span>Paystack webhook URL</span>
+                <code id="paystackWebhookUrl"></code>
+                <button id="copyPaystackWebhook" type="button" class="settings-secondary-action">Copy URL</button>
+              </div>
+              <p id="paystackConnectionStatus" class="status paystack-connection-status" role="status"></p>
+              <button type="button" id="checkPaystackActivation" class="settings-secondary-action" hidden>Check activation</button>
+            </div>
+</form><p id="qaStatus"></p><button id="saveTest">Save settings</button><button id="activateTest">Simulate deployment activation</button></main><script src="/js/paystack-connection-status.js"></script><script src="/js/action-feedback.js"></script><script>
+const paystackSecretKeyField=document.getElementById('paystackSecretKey');
+const confirmPaystackReplacement=document.getElementById('confirmPaystackReplacement');
+const connectPaystackButton=document.getElementById('connectPaystackButton');
+const paystackConnectionStatus=document.getElementById('paystackConnectionStatus');
+const checkPaystackActivationButton=document.getElementById('checkPaystackActivation');
+const settingsScopeField=document.getElementById('settingsScope');
+const settingsBranchField=document.getElementById('settingsBranch');
+let paystackConnectionMode='not-configured', paystackWorkspaceId='', paystackActivationTracker=null, paystackSelfServiceAvailable=false, unlockedPassword='fixture-only';
+const fingerprint='live:'+'a'.repeat(24);
+const profile=()=>({WorkspaceId:'qa-school',PaystackConnectionMode:sessionStorage.qaActive==='true'?'live':'test',PaystackCredentialFingerprint:sessionStorage.qaActive==='true'?fingerprint:'test:'+'b'.repeat(24),PaystackSelfServiceAvailable:true});
+function setStatus(message){document.getElementById('qaStatus').textContent=message;}
+window.fetch=async function(url){return {ok:true,json:async()=>url==='/api/paystack-connection'?{ok:true,mode:'live',activeMode:profile().PaystackConnectionMode,credentialFingerprint:fingerprint,deploymentQueued:true}:{ok:true,profile:profile()}};};
+function paystackConfigured() {
+  return paystackConnectionMode !== 'not-configured' || Boolean(paystackActivationTracker?.pending());
+}
+
+function setPaystackConnectionStatus(message, type = '') {
+  if (!paystackConnectionStatus) return;
+  paystackConnectionStatus.textContent = message || '';
+  paystackConnectionStatus.className = `status paystack-connection-status ${type}`.trim();
+}
+
+function updatePaystackConnectionUI(profile = {}) {
+  const workspaceId = String(profile.WorkspaceId || paystackWorkspaceId || window.location.host);
+  if (!paystackActivationTracker || workspaceId !== paystackWorkspaceId) {
+    paystackWorkspaceId = workspaceId;
+    let storage;
+    try { storage = window.sessionStorage; } catch (_error) { /* Private browsing may block storage. */ }
+    paystackActivationTracker = window.DynamaxPaystackConnectionStatus.createTracker(storage, workspaceId);
+  }
+  const pending = paystackActivationTracker.reconcile(profile);
+  paystackConnectionMode = String(profile.PaystackConnectionMode || paystackConnectionMode || 'not-configured').trim().toLowerCase();
+  paystackSelfServiceAvailable = profile.PaystackSelfServiceAvailable === true;
+  const configured = paystackConfigured();
+  const display = window.DynamaxPaystackConnectionStatus.presentation(paystackConnectionMode, pending);
+  const state = document.getElementById('paystackConnectionState');
+  const badge = document.getElementById('paystackConnectionBadge');
+  const confirmation = document.getElementById('paystackReplaceConfirmation');
+  const webhook = document.getElementById('paystackWebhookUrl');
+  if (state) state.textContent = display.title;
+  if (badge) {
+    badge.textContent = display.badge;
+    badge.classList.toggle('is-connected', configured);
+    badge.classList.toggle('is-live', display.live);
+  }
+  if (checkPaystackActivationButton) checkPaystackActivationButton.hidden = !configured;
+  if (confirmation) confirmation.hidden = !configured;
+  if (confirmPaystackReplacement && !configured) confirmPaystackReplacement.checked = false;
+  if (connectPaystackButton) connectPaystackButton.textContent = configured ? 'Replace Paystack account' : 'Connect Paystack';
+  if (webhook) webhook.textContent = `${window.location.origin}/api/paystack-webhook`;
+  if (!paystackSelfServiceAvailable) {
+    setPaystackConnectionStatus('This tenant still needs the one-time secure onboarding upgrade before it can connect Paystack.', 'bad');
+  } else {
+    setPaystackConnectionStatus(display.message, pending || !configured ? '' : 'ok');
+  }
+}
+
+
+connectPaystackButton?.addEventListener('click', async () => {
+  const secret = String(paystackSecretKeyField?.value || '').trim();
+  if (!secret) {
+    setPaystackConnectionStatus('Paste the Paystack secret key first.', 'bad');
+    paystackSecretKeyField?.focus();
+    return;
+  }
+  if (paystackConfigured() && !confirmPaystackReplacement?.checked) {
+    setPaystackConnectionStatus('Confirm the replacement after reconciling payments created with the current account.', 'bad');
+    return;
+  }
+  if (!window.DynamaxActionFeedback.begin(connectPaystackButton, 'Validating and connecting…')) return;
+  try {
+    setPaystackConnectionStatus('Validating the key with Paystack and installing the encrypted Cloudflare secret…');
+    const response = await fetch('/api/paystack-connection', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        password: unlockedPassword,
+        SettingsScope: 'organisation',
+        paystackSecretKey: secret,
+        confirmReplacement: confirmPaystackReplacement?.checked === true
+      })
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok || !data?.ok) throw new Error(data?.message || 'Paystack could not be connected.');
+    paystackActivationTracker.remember({ mode: data.mode, fingerprint: data.credentialFingerprint });
+    if (confirmPaystackReplacement) confirmPaystackReplacement.checked = false;
+    updatePaystackConnectionUI({ PaystackConnectionMode: data.activeMode || paystackConnectionMode, PaystackSelfServiceAvailable: true });
+    setStatus('Paystack key saved securely. Activation is pending deployment. Add the webhook URL shown above in Paystack API Keys & Webhooks.', 'ok');
+  } catch (error) {
+    setPaystackConnectionStatus(error.message, 'bad');
+  } finally {
+    if (paystackSecretKeyField) paystackSecretKeyField.value = '';
+    window.DynamaxActionFeedback.end(connectPaystackButton);
+    connectPaystackButton.textContent = paystackConfigured() ? 'Replace Paystack account' : 'Connect Paystack';
+  }
+});
+
+checkPaystackActivationButton?.addEventListener('click', async () => {
+  if (!window.DynamaxActionFeedback.begin(checkPaystackActivationButton, 'Checking…')) return;
+  try {
+    const response = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'load', password: unlockedPassword,
+        SettingsScope: settingsScopeField.value,
+        BranchId: settingsScopeField.value === 'branch' ? settingsBranchField.value : ''
+      })
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok || !data?.ok) throw new Error(data?.message || 'Could not check payment activation. Try again.');
+    // Do not reload the form: unrelated, unsaved settings must remain intact.
+    updatePaystackConnectionUI(data.profile || {});
+  } catch (error) {
+    setPaystackConnectionStatus(error.message, 'bad');
+  } finally {
+    window.DynamaxActionFeedback.end(checkPaystackActivationButton);
+  }
+});
+
+
+document.getElementById('saveTest').onclick=()=>{updatePaystackConnectionUI(profile());setStatus('Settings saved; deployment still reports '+profile().PaystackConnectionMode+'.');};
+document.getElementById('activateTest').onclick=()=>{sessionStorage.qaActive='true';setStatus('Simulated runtime changed. Click Check activation.');};
+updatePaystackConnectionUI(profile());
+</script></body></html>

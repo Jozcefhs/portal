@@ -1,0 +1,174 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Settings layout preview — sample data</title><link rel="stylesheet" href="/css/style.css"></head><body class="settings-page"><main class="settings-shell"><p>Local layout preview · sample settings</p><form class="settings-layout"><section class="settings-scope-toolbar" aria-labelledby="settingsScopeTitle">
+        <div class="settings-scope-copy">
+          <p class="settings-eyebrow">Configuration scope</p>
+          <strong id="settingsScopeTitle">Organisation defaults with branch overrides</strong>
+          <small id="settingsScopeSummary">Edit the defaults inherited by every branch.</small>
+        </div>
+        <label class="settings-scope-control" for="settingsScope">
+          <span>Editing</span>
+          <select id="settingsScope">
+            <option value="organisation">Organisation defaults</option>
+            <option value="branch">Selected branch overrides</option>
+          </select>
+        </label>
+        <label class="settings-scope-control" for="settingsBranch">
+          <span>Branch</span>
+          <select id="settingsBranch" disabled></select>
+        </label>
+        <button id="resetBranchSettings" class="settings-text-button" type="button" hidden>Reset overrides</button>
+      </section><aside class="settings-sidebar">
+        <div class="settings-sidebar-title" data-edition-copy="sidebar-title">Organisation settings</div>
+        <nav aria-label="Settings sections">
+          <a href="#general-settings" class="settings-nav-link active"><span>01</span><div><strong>General</strong><small>Identity and contact</small></div></a>
+          <a href="#document-settings" class="settings-nav-link"><span>02</span><div><strong>Documents</strong><small>Signatories and email</small></div></a>
+          <a href="#parent-settings" class="settings-nav-link" data-school-settings-only><span>03</span><div><strong>Parent portal</strong><small>Results and visibility</small></div></a>
+          <a href="#academic-policy-settings" class="settings-nav-link" data-school-settings-only><span>04</span><div><strong>Academics</strong><small>Policies and grading</small></div></a>
+          <a href="#brand-settings" class="settings-nav-link"><span>05</span><div><strong>Branding</strong><small>Web logo</small></div></a>
+          <a href="#landing-settings" class="settings-nav-link"><span>06</span><div><strong>Landing page</strong><small>Public portal content</small></div></a>
+          <a href="#licence-settings" class="settings-nav-link"><span>07</span><div><strong>Licensing</strong><small>Product access</small></div></a>
+          <a href="#storage-settings" class="settings-nav-link"><span>08</span><div><strong>Storage</strong><small>Google documents</small></div></a>
+          <a href="#payment-settings" class="settings-nav-link"><span>09</span><div><strong>Payments</strong><small>Online and bank transfer</small></div></a>
+        </nav>
+        <div class="settings-sidebar-note">
+          <strong>Tip</strong>
+          <p>Changes become public only after you save them.</p>
+        </div>
+      </aside><div class="settings-content"><section id="branch-school-terminology" class="settings-section" data-school-settings-only>
+          <div class="settings-section-heading"><div><h2>Branch school terminology</h2><p>Choose the section type by stable branch ID. Names do not determine the type. Records and staff permissions are unchanged.</p></div></div>
+          <div class="settings-fields two-column">
+            <div class="settings-field"><label for="terminologyBranch">Branch</label><select id="terminologyBranch"></select><small id="terminologyBranchId" class="settings-help"></small></div>
+            <div class="settings-field"><label for="branchSchoolSectionMode">School section type</label><select id="branchSchoolSectionMode"><option value="">Existing terminology (not configured)</option><option value="primary">Primary / Nursery</option><option value="secondary">Secondary</option><option value="mixed">Mixed primary and secondary</option></select></div>
+          </div>
+          <p class="settings-help">Primary uses Pupils and Head Teacher's Office; Secondary uses Students and Principal's Office. Mixed uses the staff member's assigned section, or neutral Learners and Executive Office when both are accessible.</p>
+          <button id="saveBranchSchoolSection" type="button" class="settings-text-button">Save branch terminology</button>
+          <p id="branchSchoolSectionStatus" class="status"></p>
+        </section><section id="general-settings" class="settings-section">
+          <div class="settings-section-heading">
+            <div><span class="settings-section-icon">G</span></div>
+            <div>
+              <p class="settings-eyebrow" data-edition-copy="profile-eyebrow">Organisation profile</p>
+              <h2>General information</h2>
+              <p>Core identity and contact details used across the portal.</p>
+            </div>
+          </div>
+          <div class="settings-fields two-column">
+            <div class="settings-field">
+              <label for="schoolName"><span data-edition-copy="name-label">Organisation name</span> <span class="required">*</span></label>
+              <input id="schoolName" name="SchoolName" required>
+            </div>
+            <div class="settings-field compact-field">
+              <label for="schoolCode" data-edition-copy="code-label">Organisation code</label>
+              <input id="schoolCode" name="SchoolCode">
+            </div>
+            <div class="settings-field">
+              <label for="schoolEmail" data-edition-copy="email-label">Organisation email</label>
+              <input id="schoolEmail" name="SchoolEmail" type="email">
+            </div>
+            <div class="settings-field">
+              <label for="schoolPhone" data-edition-copy="phone-label">Organisation phone</label>
+              <input id="schoolPhone" name="SchoolPhone" inputmode="tel">
+            </div>
+            <div class="settings-field full-width">
+              <label for="schoolAddress" data-edition-copy="address-label">Organisation address</label>
+              <input id="schoolAddress" name="SchoolAddress">
+            </div>
+            <div class="settings-field">
+              <label for="organisationEdition">Organisation type</label>
+              <select id="organisationEdition" name="OrganisationEdition">
+                <option value="school">School</option>
+                <option value="faith">Religious organisation</option>
+                <option value="organization">Other organisation</option>
+              </select>
+            </div>
+            <div class="settings-field full-width">
+              <label for="nameFormat" data-edition-copy="name-format-label">Personnel and contact name format</label>
+              <select id="nameFormat" name="NameFormat">
+                <option value="First name, middle name, surname">First name, middle name, surname</option>
+                <option value="First name, surname, middle name">First name, surname, middle name</option>
+                <option value="Surname, first name, middle name">Surname, first name, middle name</option>
+                <option value="Surname, middle name, first name">Surname, middle name, first name</option>
+                <option value="Middle name, first name, surname">Middle name, first name, surname</option>
+                <option value="Middle name, surname, first name">Middle name, surname, first name</option>
+              </select>
+              <small class="settings-help">Controls how names appear whenever separate first, middle and surname fields are available.</small>
+            </div>
+          </div>
+        </section><div class="settings-savebar"><div><strong id="settingsSaveScopeLabel">Organisation settings</strong><p class="status">Sample preview — nothing is saved</p></div><button type="submit">Save changes</button></div></div></form></main><script>function updateSettingsScopeUI(profile = {}) {
+  const scopeLocked = activeSettingsAccess.scopeLocked === true;
+  if (scopeLocked) {
+    settingsScopeField.value = 'branch';
+    if (activeSettingsAccess.branchId) settingsBranchField.value = activeSettingsAccess.branchId;
+  }
+  const branchMode = settingsScopeField.value === 'branch';
+  document.getElementById('branch-school-terminology').hidden = activeSettingsEdition !== 'school' || branchMode || scopeLocked;
+  if (academicPolicyScopeMode) academicPolicyScopeMode.hidden = !branchMode;
+  settingsScopeField.disabled = scopeLocked;
+  settingsBranchField.disabled = !branchMode || scopeLocked;
+  resetBranchSettingsButton.hidden = !branchMode;
+  const branchName = settingsBranchField.selectedOptions[0]?.textContent || 'Selected branch';
+  const overrideCount = Array.isArray(profile.BranchOverrideFields) ? profile.BranchOverrideFields.length : 0;
+  settingsScopeSummary.textContent = branchMode
+    ? scopeLocked
+      ? `Branch administrator access is locked to ${branchName}. You may change its ${overrideCount} current override${overrideCount === 1 ? '' : 's'} and other branch-level fields; organisation settings remain locked.`
+      : `${branchName} currently overrides ${overrideCount} field${overrideCount === 1 ? '' : 's'}; every other value is inherited automatically.`
+    : 'Edit the defaults inherited automatically by every branch.';
+  settingsSaveScopeLabel.textContent = branchMode ? `${branchName} overrides` : 'Organisation settings';
+  organisationOnlyControlIds.forEach((id) => {
+    const control = document.getElementById(id);
+    if (!control) return;
+    control.disabled = branchMode || id === 'organisationEdition';
+    control.closest('.settings-section, .settings-field, .settings-logo-card')?.classList.toggle('settings-scope-locked', branchMode);
+  });
+  const paystackSubaccountCode = document.getElementById('paystackSubaccountCode');
+  const paystackSubaccountField = document.getElementById('paystackSubaccountField');
+  const paystackSubaccountHelp = document.getElementById('paystackSubaccountHelp');
+  if (paystackSubaccountCode) paystackSubaccountCode.disabled = !branchMode;
+  paystackSubaccountField?.classList.toggle('settings-scope-locked', !branchMode);
+  if (paystackSubaccountHelp) {
+    paystackSubaccountHelp.textContent = branchMode
+      ? 'Payments for this branch settle to this Paystack subaccount, and the branch bears the Paystack fee. Leave blank to use the organisation Paystack account.'
+      : 'Select a branch override to configure its Paystack subaccount. The organisation payment gateway remains protected in Cloudflare.';
+  }
+  const connectionLocked = branchMode || !paystackSelfServiceAvailable;
+  [paystackSecretKeyField, confirmPaystackReplacement, connectPaystackButton].forEach((control) => {
+    if (control) control.disabled = connectionLocked;
+  });
+  paystackConnectionPanel?.classList.toggle('settings-scope-locked', branchMode);
+  const providerChangeLocked = branchMode || !emailProviderSelfServiceAvailable;
+  [connectGoogleEmailButton, useBrevoEmailButton].forEach((control) => {
+    if (control) control.disabled = providerChangeLocked;
+  });
+  if (emailProviderTestRecipient) emailProviderTestRecipient.disabled = branchMode || !emailProviderConnectionReady;
+  if (testEmailProviderButton) testEmailProviderButton.disabled = branchMode || !emailProviderConnectionReady;
+  emailProviderPanel?.classList.toggle('settings-scope-locked', branchMode);
+  const emailProviderScopeHelp = document.getElementById('emailProviderScopeHelp');
+  if (emailProviderScopeHelp) {
+    emailProviderScopeHelp.textContent = branchMode
+      ? `${branchName} inherits the organisation email provider. Only its sender and reply-to identities below can be overridden here.`
+      : 'Every branch uses this provider while retaining its own sender and reply-to identities.';
+  }
+  if (branchMode) {
+    webLogoDataUrl = '';
+    webLogoChanged = false;
+  }
+}
+
+
+const settingsScopeField = document.getElementById('settingsScope');
+const settingsBranchField = document.getElementById('settingsBranch');
+const resetBranchSettingsButton = document.getElementById('resetBranchSettings');
+const settingsScopeSummary = document.getElementById('settingsScopeSummary');
+const settingsSaveScopeLabel = document.getElementById('settingsSaveScopeLabel');
+const activeSettingsAccess = {}, activeSettingsEdition = 'school', organisationOnlyControlIds = [];
+const academicPolicyScopeMode = null, paystackSelfServiceAvailable = false, emailProviderSelfServiceAvailable = false, emailProviderConnectionReady = false;
+const paystackSecretKeyField = null, confirmPaystackReplacement = null, connectPaystackButton = null, paystackConnectionPanel = null;
+const connectGoogleEmailButton = null, useBrevoEmailButton = null, emailProviderTestRecipient = null, testEmailProviderButton = null, emailProviderPanel = null;
+let webLogoDataUrl = '', webLogoChanged = false;
+settingsBranchField.innerHTML = '<option value="main">Main Branch</option>';
+document.getElementById('terminologyBranch').innerHTML = '<option value="main">Main Branch</option>';
+document.getElementById('terminologyBranchId').textContent = 'Branch ID: main';
+settingsScopeField.value = 'branch';
+settingsScopeField.addEventListener('change', () => updateSettingsScopeUI());
+document.querySelector('form').addEventListener('submit', event => event.preventDefault());
+updateSettingsScopeUI();
+</script></body></html>

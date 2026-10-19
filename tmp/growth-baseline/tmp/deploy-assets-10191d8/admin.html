@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>School Staff Portal</title>
+  <link rel="stylesheet" href="css/style.css?v=20260723-student-profiles">
+</head>
+<body class="staff-page">
+  <header class="staff-topbar">
+    <a class="staff-brand" href="index.html">
+      <img src="images/logo.png" alt="" class="nav-logo" onerror="this.style.display='none'">
+      <span><strong data-school-name>School Management Suite</strong><small>Web Companion</small></span>
+    </a>
+    <div id="staffIdentity" class="staff-identity" hidden>
+      <button type="button" id="staffMenuToggle" class="staff-menu-toggle" aria-controls="staffSidebar" aria-expanded="false"><span aria-hidden="true">☰</span> Menu</button>
+      <span><strong id="staffDisplayName"></strong><small id="staffRole"></small></span>
+      <button type="button" id="staffSignOut" class="dashboard-signout">Sign Out</button>
+    </div>
+  </header>
+
+  <main class="staff-shell">
+    <section id="staffLoginCard" class="card staff-login-card">
+      <p class="eyebrow">Authorized staff only</p>
+      <h1>Staff Web Companion</h1>
+      <p class="lead">Sign in to access the Firestore records permitted for your role.</p>
+      <form id="staffLoginForm" autocomplete="on">
+        <label for="staffUsername">Username</label>
+        <input id="staffUsername" name="username" autocomplete="username" required>
+        <label for="staffPassword">Password</label>
+        <input id="staffPassword" name="password" type="password" autocomplete="current-password" required>
+        <button id="staffLoginButton" type="submit">Sign In</button>
+        <p id="staffLoginStatus" class="status" role="status"></p>
+      </form>
+      <p class="muted staff-login-note">This web portal complements the desktop application. Both use the same Firestore data.</p>
+    </section>
+
+    <section id="staffDashboard" class="staff-dashboard" hidden>
+      <div class="staff-app-layout">
+        <aside class="staff-sidebar" id="staffSidebar">
+          <div class="staff-sidebar-heading">
+            <small>Workspace</small>
+            <strong>Financial Operations</strong>
+          </div>
+          <nav class="admin-tabs staff-tabs" id="adminTabs" aria-label="Staff dashboard sections"></nav>
+          <div class="staff-sidebar-note">
+            <span class="staff-live-dot"></span>
+            <div><strong>Firestore Live</strong><small>Desktop and web are synchronized</small></div>
+          </div>
+        </aside>
+        <button type="button" id="staffSidebarScrim" class="staff-sidebar-scrim" aria-label="Close navigation menu" hidden></button>
+        <div class="staff-main-content">
+          <div class="staff-welcome">
+            <div>
+              <p class="eyebrow">Operations overview</p>
+              <h1 id="staffWelcomeTitle">Dashboard</h1>
+              <p class="muted">Monitor records, requests and departmental activity.</p>
+            </div>
+            <button type="button" id="staffRefresh">Refresh Data</button>
+          </div>
+          <p id="staffDashboardStatus" class="status" role="status"></p>
+          <div id="adminSummary" class="metric-row staff-summary"></div>
+          <section id="dashboardCharts" class="dashboard-charts" aria-label="Student and school fee charts"></section>
+          <section id="adminPanel" class="panel full-panel staff-panel"></section>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="staffPasswordDialog" class="workflow-dialog staff-password-dialog">
+    <div class="workflow-dialog-header"><div><small>Security required</small><h2>Change Temporary Password</h2></div></div>
+    <form id="staffPasswordForm" class="workflow-form">
+      <p class="muted">Create a permanent password before accessing school records.</p>
+      <label>New password<input id="staffNewPassword" type="password" minlength="6" autocomplete="new-password" required></label>
+      <label>Confirm password<input id="staffConfirmPassword" type="password" minlength="6" autocomplete="new-password" required></label>
+      <button id="staffPasswordButton" type="submit">Change Password</button>
+      <button id="staffPasswordSignOut" type="button" class="dashboard-signout">Sign Out Instead</button>
+      <p id="staffPasswordStatus" class="status" role="status"></p>
+    </form>
+  </dialog>
+
+  <script src="js/site-config.js?v=20260718-personalized-ui"></script>
+  <script src="js/password-toggle.js?v=20260718-password-toggle"></script>
+  <script src="js/admin.js?v=20260723-student-profiles"></script>
+</body>
+</html>

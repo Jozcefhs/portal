@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Upload Admission Documents</title>
+  <script src="js/preferences.js?v=20260726-biometric"></script>
+  <link rel="stylesheet" href="css/style.css?v=20260730-student-face-lookup">
+</head>
+<body>
+  <main class="page-wrap narrow">
+    <section class="card">
+      <div class="form-header">
+        <img src="images/Logo.png" alt="School logo" class="logo small" onerror="this.style.display='none'">
+        <div>
+          <h1>Upload Admission Documents</h1>
+          <p class="muted"><span data-school-name>School Portal</span> - use the admission verification credentials or the parent dashboard credentials linked to the student.</p>
+        </div>
+      </div>
+
+      <form id="uploadDocumentForm" autocomplete="on">
+        <label for="email">Verification Email <span class="required">*</span></label>
+        <input id="email" name="email" type="email" required>
+
+        <label for="code">Verification or Parent Login Code <span class="required">*</span></label>
+        <input id="code" name="code" type="text" required>
+        <p class="muted compact-note">Use the verification code from the admission form or the parent login code. Do not enter an admission number.</p>
+
+        <fieldset>
+          <legend>Documents</legend>
+          <p class="muted">Choose files for all documents you want to upload now. Leave any row blank if it is not ready.</p>
+
+          <div class="document-upload-row" data-document-row="BirthCertificate">
+            <label for="birthCertificate">Birth Certificate</label>
+            <input id="birthCertificate" data-document-type="BirthCertificate" type="file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx">
+          </div>
+
+          <div class="document-upload-row" data-document-row="PreviousSchoolReport">
+            <label for="previousSchoolReport">Previous School Report</label>
+            <input id="previousSchoolReport" data-document-type="PreviousSchoolReport" type="file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx">
+          </div>
+
+          <div class="document-upload-row" data-document-row="PassportPhotograph">
+            <label for="passportPhotograph">Passport Photograph</label>
+            <input id="passportPhotograph" data-document-type="PassportPhotograph" type="file" accept=".pdf,.jpg,.jpeg,.png">
+          </div>
+
+          <div class="document-upload-row" data-document-row="MedicalReport">
+            <label for="medicalReport">Medical Report</label>
+            <input id="medicalReport" data-document-type="MedicalReport" type="file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx">
+          </div>
+
+          <div class="document-upload-row" data-document-row="TransferCertificateDoc">
+            <label for="transferCertificate">Transfer Certificate</label>
+            <input id="transferCertificate" data-document-type="TransferCertificateDoc" type="file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx">
+          </div>
+
+          <div class="document-upload-row" data-document-row="AcceptanceForm">
+            <label for="acceptanceForm">Acceptance Form</label>
+            <input id="acceptanceForm" data-document-type="AcceptanceForm" type="file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx">
+          </div>
+        </fieldset>
+
+        <label class="check-row">
+          <input id="replaceExisting" type="checkbox">
+          <span>Replace documents that were already uploaded</span>
+        </label>
+
+        <p class="muted">Accepted files: PDF, JPG, PNG, DOC, DOCX. Maximum size per file: 8 MB.</p>
+
+        <button type="submit" id="uploadBtn">Upload Selected Documents</button>
+        <div id="documentUploadProgress" class="document-progress" hidden>
+          <div class="document-progress-track">
+            <div id="documentUploadProgressFill" class="document-progress-fill"></div>
+          </div>
+          <p id="documentUploadProgressText" class="muted">Preparing upload...</p>
+        </div>
+        <p id="uploadStatus" class="status" aria-live="polite"></p>
+        <div id="uploadResults" class="upload-results"></div>
+      </form>
+
+      <p>
+        <a href="index.html">Return to admission portal</a>
+      </p>
+    </section>
+  </main>
+
+  <script src="js/site-config.js?v=20260728-quota-safety"></script>
+  <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
+  <script src="js/upload-documents.js?v=20260729-action-feedback"></script>
+</body>
+</html>

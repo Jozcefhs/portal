@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Buy Admission Form</title>
+  <link rel="stylesheet" href="css/style.css?v=20260718-personalized-ui">
+</head>
+<body>
+  <main class="page-wrap narrow">
+    <section class="card">
+      <div class="form-header">
+        <img src="images/logo.png" alt="School logo" class="logo small" onerror="this.style.display='none'">
+        <div>
+          <h1>Buy Admission Form</h1>
+          <p class="muted"><span data-school-name>School Portal</span> - pay online and receive your verification code by email.</p>
+        </div>
+      </div>
+
+      <form id="formPurchaseForm" autocomplete="on">
+        <label for="applicantName">Applicant Name <span class="required">*</span></label>
+        <input id="applicantName" name="applicantName" required>
+
+        <label for="email">Parent Email <span class="required">*</span></label>
+        <input id="email" name="email" type="email" required>
+
+        <label for="phone">Parent Phone</label>
+        <input id="phone" name="phone" inputmode="tel">
+
+        <label for="classApplyingFor">Class Applying For <span class="required">*</span></label>
+        <select id="classApplyingFor" name="classApplyingFor" required>
+          <option value="">Loading available classes...</option>
+        </select>
+
+        <button type="submit" id="purchaseBtn">Proceed to Payment</button>
+        <p id="purchaseStatus" class="status"></p>
+      </form>
+
+      <p>
+        <a href="verify.html">Already paid? Register</a>
+      </p>
+      <p>
+        <a href="index.html">Return to admission portal</a>
+      </p>
+    </section>
+  </main>
+
+  <script src="js/site-config.js?v=20260718-personalized-ui"></script>
+  <script src="js/buy-form.js"></script>
+</body>
+</html>

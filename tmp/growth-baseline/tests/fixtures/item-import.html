@@ -1,0 +1,28 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Batch item upload · isolated sample</title><link rel="stylesheet" href="/css/style.css"><link rel="stylesheet" href="/css/item-import.css">
+<main style="padding:20px"><h1>Batch item upload</h1><p>Local sample only. No live records or credentials.</p><div id="modules"></div><p id="result"></p></main>
+<script type="module">
+import { openItemImportDialog } from '/js/item-import-dialog.js';
+import { ITEM_IMPORT_MODULES, normalizeItemImportRow } from '/js/item-import-csv.js';
+import { productCsv } from '/js/vendor-product-import.js';
+for (const [section, config] of Object.entries(ITEM_IMPORT_MODULES)) {
+  const button = document.createElement('button'); button.textContent = config.label; document.querySelector('#modules').append(button);
+  button.onclick = () => {
+    const modal = openItemImportDialog({ section, isCurrent: () => true, reload: () => { document.querySelector('#result').textContent = 'Sample inventory refreshed.'; },
+      request: async body => {
+        const rows = body.Rows.map(raw => { const { row, errors } = normalizeItemImportRow(raw, section); return { RowNumber: row.RowNumber, ItemName: row.ItemName || row.Title, Reference: row.ItemCode || row.Barcode || row.ItemName, SchoolSection: row.SchoolSection || (section === 'library' ? '' : 'Secondary'), Quantity: section === 'library' ? 1 : row.Quantity, Errors: errors, Status: errors.length ? 'Error' : 'Create' }; });
+        return { ok: true, valid: rows.every(row => !row.Errors.length), rows, PreviewDigest: 'sample-digest', created: rows.length, skipped: 0 };
+      }
+    });
+    const sample = document.createElement('button'); sample.type = 'button'; sample.textContent = 'Use sample CSV';
+    modal.querySelector('.item-import-tools').prepend(sample);
+    sample.onclick = () => {
+      const row = section === 'library' ? { Title: 'Sample mathematics', Author: 'Sample writer', Barcode: 'SAMPLE-001', Shelf: 'A1', Condition: 'Good' }
+        : ['clinic', 'kitchen'].includes(section) ? { ItemName: 'Sample supply', Quantity: '25.5' }
+          : { ItemCode: 'SAMPLE-001', ItemName: 'Sample product', Quantity: '20', Price: '1300' };
+      const transfer = new DataTransfer(); transfer.items.add(new File([productCsv(config.columns, [row])], 'sample-items.csv', { type: 'text/csv' }));
+      modal.querySelector('[name=File]').files = transfer.files; modal.querySelector('[name=File]').dispatchEvent(new Event('change'));
+    };
+  };
+}
+</script></html>

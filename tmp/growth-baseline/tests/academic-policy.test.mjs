@@ -1,0 +1,393 @@
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import test from 'node:test';
+
+import {
+  academicPolicyAssignmentId,
+  academicPolicyIssues,
+  academicPolicyScopeChain,
+  applyAcademicPolicyOverrides,
+  assertAcademicPolicyActivatable,
+  defaultAcademicPolicy,
+  deriveAcademicPolicyOverrides,
+  normalizeAcademicPolicy,
+  normalizeAcademicPolicyScope,
+  resolveAcademicPolicyChain
+} from '../functions/lib/academic-policy.js';
+
+const [policyApiSource, policyStoreSource, backupSource, setupHtmlSource, setupJsSource, styleSource] = await Promise.all([
+  readFile(new URL('../functions/api/academic-policy.js', import.meta.url), 'utf8'),
+  readFile(new URL('../functions/lib/academic-policy-store.js', import.meta.url), 'utf8'),
+  readFile(new URL('../functions/lib/organization-backup.js', import.meta.url), 'utf8'),
+  readFile(new URL('../setup.html', import.meta.url), 'utf8'),
+  readFile(new URL('../js/setup.js', import.meta.url), 'utf8'),
+  readFile(new URL('../css/style.css', import.meta.url), 'utf8')
+]);
+
+function completePolicy() {
+  return normalizeAcademicPolicy({
+    ResultAccess: {
+      VisibilityMode: 'current-term',
+      FinancialClearance: {
+        Mode: 'minimum-paid-percentage',
+        MinimumPaidPercentage: 75,
+        RecognizeScholarships: true,
+        RecognizePaymentPlans: true,
+        AllowManualExemptions: true
+      }
+    },
+    Position: {
+      Mode: 'internal-only',
+      TieMode: 'dense',
+      MinimumAssessedSubjects: 5
+    },
+    Assessment: {
+      Components: [
+        { Id: 'ca', Name: 'Continuous assessment', MaximumScore: 40, WeightPercentage: 40, SourceMode: 'any' },
+        { Id: 'exam', Name: 'Examination', MaximumScore: 60, WeightPercentage: 60, SourceMode: 'built-in-cbt' }
+      ],
+      GradeBands: [
+        { Grade: 'A', MinimumPercentage: 70, MaximumPercentage: 100, GradePoint: 5, Remark: 'Excellent' },
+        { Grade: 'B', MinimumPercentage: 40, MaximumPercentage: 69.99, GradePoint: 3, Remark: 'Pass' },
+        { Grade: 'F', MinimumPercentage: 0, MaximumPercentage: 39.99, GradePoint: 0, Remark: 'Needs improvement', Classification: 'fail' }
+      ]
+    },
+    Cumulative: {
+      Terms: [
+        { Id: 'first', TermName: 'First Term', WeightPercentage: 30, Required: true, Order: 1 },
+        { Id: 'second', TermName: 'Second Term', WeightPercentage: 30, Required: true, Order: 2 },
+        { Id: 'third', TermName: 'Third Term', WeightPercentage: 40, Required: true, Order: 3 }
+      ],
+      MissingTermMode: 'block',
+      MissingSubjectMode: 'manual-review',
+      IncludeTransferredResults: true
+    },
+    Promotion: {
+      Mode: 'criteria',
+      MinimumOverallAverage: 50,
+      RequiredCoreSubjectIds: ['english', 'mathematics'],
+      MaximumFailedSubjects: 3,
+      MinimumAttendancePercentage: 75,
+      RequireAllTerms: true,
+      ManualReviewMinimum: 45,
+      ManualReviewMaximum: 49.99
+    }
+  });
+}
+
+test('academic policy starts explicitly unconfigured instead of hardcoding school decisions', () => {
+  const policy = defaultAcademicPolicy();
+
+  assert.equal(policy.ResultAccess.VisibilityMode, 'unconfigured');
+  assert.equal(policy.ResultAccess.FinancialClearance.Mode, 'unconfigured');
+  assert.equal(policy.Position.Mode, 'unconfigured');
+  assert.equal(policy.Promotion.Mode, 'unconfigured');
+  assert.equal(policy.Promotion.ProbationResit.Enabled, false);
+  assert.equal(policy.Promotion.ProbationResit.PassPercentage, 50);
+  assert.deepEqual(policy.Assessment.Components, []);
+  assert.deepEqual(policy.Assessment.GradeBands, []);
+});
+
+test('normalization supports configurable result, finance, grading and promotion choices', () => {
+  const policy = completePolicy();
+
+  assert.equal(policy.ResultAccess.VisibilityMode, 'current-term');
+  assert.equal(policy.ResultAccess.FinancialClearance.MinimumPaidPercentage, 75);
+  assert.equal(policy.Position.Mode, 'internal-only');
+  assert.equal(policy.Assessment.Components.reduce((sum, row) => sum + row.WeightPercentage, 0), 100);
+  assert.equal(policy.Cumulative.Terms.reduce((sum, row) => sum + row.WeightPercentage, 0), 100);
+  assert.equal(policy.Cumulative.MissingSubjectMode, 'manual-review');
+  assert.deepEqual(policy.Promotion.RequiredCoreSubjectIds, ['english', 'mathematics']);
+  assert.equal(policy.Promotion.MinimumAttendancePercentage, 75);
+  assert.equal(policy.Promotion.ProbationResit.Enabled, false);
+});
+
+test('separate Junior and Senior promotion rules are normalized and validated without hardcoded thresholds', () => {
+  const policy = completePolicy();
+  policy.Promotion = {
+    Mode: 'division-rules',
+    ProbationResit: { Enabled: true, PassPercentage: 60 },
+    RequireAllTerms: true,
+    MinimumAttendancePercentage: null,
+    JuniorSecondary: { PromotedMinimumAverage: 54.5, ProbationMinimumAverage: 49.5 },
+    SeniorSecondary: {
+      CreditMinimumPercentage: 50,
+      ExpectedCoreSubjectCount: 5,
+      PromotedMinimumCredits: 3,
+      PromotedRequiredSubjectIds: ['mathematics', 'english'],
+      PromotedRequiredSubjectMode: 'all',
+      ProbationCreditCount: 2,
+      ProbationCreditCountMode: 'exactly',
+      ProbationRequiredSubjectIds: ['mathematics', 'english'],
+      ProbationRequiredSubjectMode: 'any'
+    }
+  };
+  const normalized = normalizeAcademicPolicy(policy);
+  assert.equal(normalized.Promotion.JuniorSecondary.PromotedMinimumAverage, 54.5);
+  assert.equal(normalized.Promotion.ProbationResit.Enabled, true);
+  assert.equal(normalized.Promotion.ProbationResit.PassPercentage, 60);
+  assert.equal(normalized.Promotion.SeniorSecondary.ExpectedCoreSubjectCount, 5);
+  assert.deepEqual(normalized.Promotion.SeniorSecondary.PromotedRequiredSubjectIds, ['mathematics', 'english']);
+  assert.equal(academicPolicyIssues(normalized, { forActivation: true }).filter((issue) => issue.path.startsWith('Promotion')).length, 0);
+
+  normalized.Promotion.JuniorSecondary.ProbationMinimumAverage = 60;
+  assert.ok(academicPolicyIssues(normalized).some((issue) => issue.code === 'JUNIOR_PROMOTION_THRESHOLDS_INVALID'));
+});
+
+test('activation fails closed while required policy choices are incomplete', () => {
+  const issues = academicPolicyIssues(defaultAcademicPolicy(), { forActivation: true });
+
+  assert.ok(issues.some((issue) => issue.code === 'RESULT_VISIBILITY_REQUIRED'));
+  assert.ok(issues.some((issue) => issue.code === 'FEE_CLEARANCE_REQUIRED'));
+  assert.ok(issues.some((issue) => issue.code === 'POSITION_POLICY_REQUIRED'));
+  assert.ok(issues.some((issue) => issue.code === 'ASSESSMENT_COMPONENTS_REQUIRED'));
+  assert.ok(issues.some((issue) => issue.code === 'GRADE_BANDS_REQUIRED'));
+  assert.ok(issues.some((issue) => issue.code === 'PROMOTION_POLICY_REQUIRED'));
+  assert.throws(() => assertAcademicPolicyActivatable(defaultAcademicPolicy()), {
+    code: 'ACADEMIC_POLICY_INCOMPLETE'
+  });
+});
+
+test('a complete configured policy can be activated', () => {
+  const policy = assertAcademicPolicyActivatable(completePolicy());
+
+  assert.equal(policy.Assessment.Components.length, 2);
+  assert.equal(policy.Assessment.GradeBands.length, 3);
+});
+
+test('A through F bands can classify E as probation without losing full grading coverage', () => {
+  const policy = completePolicy();
+  policy.Assessment.GradeBands = [
+    { Grade: 'A', MinimumPercentage: 80, MaximumPercentage: 100, GradePoint: 5, Classification: 'pass' },
+    { Grade: 'B', MinimumPercentage: 70, MaximumPercentage: 79.99, GradePoint: 4, Classification: 'pass' },
+    { Grade: 'C', MinimumPercentage: 60, MaximumPercentage: 69.99, GradePoint: 3, Classification: 'pass' },
+    { Grade: 'D', MinimumPercentage: 50, MaximumPercentage: 59.99, GradePoint: 2, Classification: 'pass' },
+    { Grade: 'E', MinimumPercentage: 40, MaximumPercentage: 49.99, GradePoint: 1, Classification: 'probation' },
+    { Grade: 'F', MinimumPercentage: 0, MaximumPercentage: 39.99, GradePoint: 0, Classification: 'fail' }
+  ];
+  const activated = assertAcademicPolicyActivatable(policy);
+
+  assert.equal(activated.Assessment.GradeBands.find((band) => band.Grade === 'E').Classification, 'probation');
+  assert.match(setupJsSource, /\['probation', 'Probation'\]/);
+});
+
+test('invalid component totals and grade ranges are reported before activation', () => {
+  const policy = completePolicy();
+  policy.Assessment.Components[0].WeightPercentage = 30;
+  policy.Assessment.GradeBands[1].MinimumPercentage = 60;
+  policy.Assessment.GradeBands[1].MaximumPercentage = 80;
+
+  const issues = academicPolicyIssues(policy, { forActivation: true });
+
+  assert.ok(issues.some((issue) => issue.code === 'ASSESSMENT_WEIGHT_TOTAL_INVALID'));
+  assert.ok(issues.some((issue) => issue.code === 'GRADE_BAND_OVERLAP'));
+});
+
+test('assessment policy can create separate Objective A and Theory B scorebook fields', () => {
+  const policy = completePolicy();
+  policy.Assessment.Components[0] = {
+    ...policy.Assessment.Components[0],
+    ScoreEntryMode: 'objective-theory',
+    ObjectiveMaximumScore: 25,
+    TheoryMaximumScore: 15,
+    SourceMode: 'built-in-cbt'
+  };
+  const normalized = normalizeAcademicPolicy(policy);
+  assert.equal(normalized.Assessment.Components[0].ScoreEntryMode, 'objective-theory');
+  assert.equal(normalized.Assessment.Components[0].ObjectiveMaximumScore, 25);
+  assert.equal(normalized.Assessment.Components[0].TheoryMaximumScore, 15);
+  assert.equal(academicPolicyIssues(normalized, { forActivation: true }).filter((issue) => issue.path.startsWith('Assessment.Components.0')).length, 0);
+
+  normalized.Assessment.Components[0].TheoryMaximumScore = 10;
+  assert.ok(academicPolicyIssues(normalized).some((issue) => issue.code === 'ASSESSMENT_SPLIT_MAXIMUM_INVALID'));
+  assert.match(setupHtmlSource, /Split A\/B/);
+  assert.match(setupJsSource, /ScoreEntryMode: split\.checked \? 'objective-theory' : 'single'/);
+});
+
+test('mid-term release is policy-controlled and limited to one or two configured components', () => {
+  const policy = completePolicy();
+  policy.MidTerm = { Enabled: true, ComponentIds: ['ca'] };
+  const normalized = normalizeAcademicPolicy(policy);
+  assert.equal(normalized.MidTerm.Enabled, true);
+  assert.deepEqual(normalized.MidTerm.ComponentIds, ['ca']);
+  assert.equal(academicPolicyIssues(normalized, { forActivation: true }).filter((issue) => issue.path.startsWith('MidTerm')).length, 0);
+
+  normalized.MidTerm.ComponentIds = [];
+  assert.ok(academicPolicyIssues(normalized).some((issue) => issue.code === 'MIDTERM_COMPONENTS_REQUIRED'));
+  normalized.MidTerm.ComponentIds = ['ca', 'exam', 'invented'];
+  const issues = academicPolicyIssues(normalized);
+  assert.ok(issues.some((issue) => issue.code === 'MIDTERM_COMPONENT_LIMIT'));
+  assert.ok(issues.some((issue) => issue.code === 'MIDTERM_COMPONENT_UNKNOWN'));
+});
+
+test('lower academic scopes store only intentional differences and inherit the rest', () => {
+  const organisation = completePolicy();
+  const branchSubmission = structuredClone(organisation);
+  branchSubmission.ResultAccess.FinancialClearance.Mode = 'any-balance';
+  branchSubmission.Position.Mode = 'none';
+
+  const overrides = deriveAcademicPolicyOverrides(organisation, branchSubmission);
+  const effective = applyAcademicPolicyOverrides(organisation, overrides);
+
+  assert.deepEqual(overrides, {
+    ResultAccess: { FinancialClearance: { Mode: 'any-balance' } },
+    Position: { Mode: 'none' }
+  });
+  assert.equal(effective.ResultAccess.FinancialClearance.Mode, 'any-balance');
+  assert.equal(effective.Position.Mode, 'none');
+  assert.deepEqual(effective.Assessment.Components, organisation.Assessment.Components);
+  assert.equal(effective.Promotion.MinimumOverallAverage, 50);
+});
+
+test('policy chains resolve organisation, branch, section, class and subject precedence', () => {
+  const effective = resolveAcademicPolicyChain([
+    { Overrides: deriveAcademicPolicyOverrides(defaultAcademicPolicy(), completePolicy()) },
+    { Overrides: { Position: { Mode: 'none' } } },
+    { Overrides: { ResultAccess: { VisibilityMode: 'current-session' } } },
+    { Overrides: { Promotion: { MinimumOverallAverage: 55 } } },
+    { Overrides: { Assessment: { Components: [
+      { Id: 'exam', Name: 'Subject examination', MaximumScore: 100, WeightPercentage: 100, SourceMode: 'built-in-cbt', Required: true, Order: 1 }
+    ] } } }
+  ]);
+
+  assert.equal(effective.Position.Mode, 'none');
+  assert.equal(effective.ResultAccess.VisibilityMode, 'current-session');
+  assert.equal(effective.Promotion.MinimumOverallAverage, 55);
+  assert.equal(effective.Assessment.Components.length, 1);
+  assert.equal(effective.Assessment.Components[0].WeightPercentage, 100);
+});
+
+test('independent branch policies isolate the complete policy and test components from organisation changes', () => {
+  const organisation = completePolicy();
+  organisation.Assessment.Components = [{
+    Id: 'organisation-exam', Name: 'Organisation exam', MaximumScore: 100,
+    WeightPercentage: 100, SourceMode: 'built-in-cbt', Required: true, Order: 1
+  }];
+  const branch = completePolicy();
+  branch.Assessment.Components = [
+    { Id: 'branch-test', Name: 'Branch test', MaximumScore: 30, WeightPercentage: 30, SourceMode: 'any', Required: true, Order: 1 },
+    { Id: 'branch-exam', Name: 'Branch exam', MaximumScore: 70, WeightPercentage: 70, SourceMode: 'built-in-cbt', Required: true, Order: 2 }
+  ];
+
+  const effective = resolveAcademicPolicyChain([
+    {
+      Scope: { Type: 'organisation', Id: 'organisation' },
+      InheritanceMode: 'independent',
+      Overrides: deriveAcademicPolicyOverrides(defaultAcademicPolicy(), organisation)
+    },
+    {
+      Scope: { Type: 'branch', Id: 'area-one' },
+      InheritanceMode: 'independent',
+      Overrides: deriveAcademicPolicyOverrides(defaultAcademicPolicy(), branch)
+    }
+  ]);
+
+  assert.deepEqual(effective.Assessment.Components.map((row) => row.Id), ['branch-test', 'branch-exam']);
+  assert.equal(effective.Position.Mode, branch.Position.Mode);
+  assert.equal(effective.ResultAccess.FinancialClearance.Mode, branch.ResultAccess.FinancialClearance.Mode);
+});
+
+test('effective-dated assignment ids are stable and isolated by scope', () => {
+  const organisationId = academicPolicyAssignmentId(
+    { Type: 'organisation' },
+    { Session: '2026/2027', Term: 'First Term' }
+  );
+  const branchId = academicPolicyAssignmentId(
+    { Type: 'branch', Id: 'North Campus' },
+    { Session: '2026/2027', Term: 'First Term' }
+  );
+
+  assert.equal(organisationId, 'policy__organisation__organisation__2026-2027__first-term');
+  assert.equal(branchId, 'policy__branch__north-campus__2026-2027__first-term');
+  assert.notEqual(organisationId, branchId);
+  assert.deepEqual(normalizeAcademicPolicyScope({ Type: 'organization' }), {
+    Type: 'organisation',
+    Id: 'organisation'
+  });
+});
+
+test('scope chains preserve the documented policy inheritance order', () => {
+  assert.deepEqual(academicPolicyScopeChain({
+    BranchId: 'North',
+    SectionId: 'Secondary',
+    ClassId: 'JSS 1',
+    SubjectId: 'Mathematics'
+  }), [
+    { Type: 'organisation', Id: 'organisation' },
+    { Type: 'branch', Id: 'north' },
+    { Type: 'section', Id: 'secondary' },
+    { Type: 'class', Id: 'jss-1' },
+    { Type: 'subject', Id: 'mathematics' }
+  ]);
+});
+
+test('protected academic policy persistence keeps immutable revisions separate from active assignments', () => {
+  assert.match(policyApiSource, /requireSetupAdministrator/);
+  assert.match(policyApiSource, /deployment\.edition !== 'school'/);
+  assert.match(policyApiSource, /saveAcademicPolicyDraft/);
+  assert.match(policyApiSource, /activateAcademicPolicyDraft/);
+  assert.match(policyApiSource, /inheritAcademicPolicyAtScope/);
+  assert.match(policyStoreSource, /academicPolicyRevisions/);
+  assert.match(policyStoreSource, /academicPolicyAssignments/);
+  assert.match(policyStoreSource, /createDocumentIfAbsent/);
+  assert.match(policyStoreSource, /ActiveRevisionId/);
+  assert.match(policyStoreSource, /DraftRevisionId/);
+  assert.match(policyStoreSource, /ActiveRevisionId: view\.DraftRevisionId,[\s\S]*DraftRevisionId: ''/);
+  assert.match(policyStoreSource, /assertAcademicPolicyActivatable/);
+  assert.match(policyStoreSource, /InheritanceMode: mode/);
+  assert.match(policyStoreSource, /mode === 'independent' \? defaultAcademicPolicy\(\) : view\.InheritedPolicy/);
+});
+
+test('academic policy assignments and immutable revisions are covered by dynamic backup and restore', () => {
+  assert.match(backupSource, /listRootCollectionIds/);
+  assert.match(backupSource, /rootIds[\s\S]*filter\(\(collection\) => !EXCLUDED_ROOT_COLLECTIONS\.has\(collection\)\)/);
+  assert.doesNotMatch(backupSource, /EXCLUDED_ROOT_COLLECTIONS[\s\S]{0,500}academicPolicy(?:Assignments|Revisions)/);
+  assert.match(backupSource, /if \(parts\.length === 1\) return \/\^\[A-Za-z0-9\._-\]/);
+});
+
+test('School settings expose configurable result, grading and promotion policy controls', () => {
+  assert.match(setupHtmlSource, /id="academic-policy-settings"[^>]*data-school-settings-only/);
+  assert.match(setupHtmlSource, /id="academicResultVisibility"/);
+  assert.match(setupHtmlSource, /id="academicFeeClearanceMode"/);
+  assert.match(setupHtmlSource, /id="academicPositionMode"/);
+  assert.match(setupHtmlSource, /id="academicComponents"/);
+  assert.match(setupHtmlSource, /id="academicPolicyInheritanceMode"/);
+  assert.match(setupHtmlSource, /Independent branch policy/);
+  assert.match(setupHtmlSource, /id="academicMidTermEnabled"/);
+  assert.match(setupHtmlSource, /id="academicGradeBands"/);
+  assert.match(setupHtmlSource, /id="academicCumulativeTerms"/);
+  assert.match(setupHtmlSource, /id="academicMissingTermMode"/);
+  assert.match(setupHtmlSource, /id="academicMissingSubjectMode"/);
+  assert.match(setupHtmlSource, /id="academicIncludeTransferredResults"/);
+  assert.match(setupHtmlSource, /id="academicPromotionMode"/);
+  assert.match(setupHtmlSource, /id="academicProbationResitEnabled"/);
+  assert.match(setupHtmlSource, /id="academicProbationResitPassPercentage"/);
+  assert.match(setupHtmlSource, /id="academicJuniorPromotedMinimum"/);
+  assert.match(setupHtmlSource, /id="academicJuniorProbationMinimum"/);
+  assert.match(setupHtmlSource, /id="academicSeniorCreditMinimum"/);
+  assert.match(setupHtmlSource, /id="academicSeniorPromotedRequiredSubjects"/);
+  assert.match(setupHtmlSource, /id="academicSeniorProbationRequiredSubjects"/);
+  assert.match(setupHtmlSource, /id="saveAcademicPolicyButton"/);
+  assert.match(setupHtmlSource, /id="activateAcademicPolicyButton"/);
+  assert.match(setupHtmlSource, /protected result module will enforce the active policy when it is introduced/);
+  assert.match(setupJsSource, /fetch\('\/api\/academic-policy'/);
+  assert.match(setupJsSource, /function academicPolicyFromForm\(\)/);
+  assert.match(setupJsSource, /InheritanceMode: settingsScopeField\.value === 'branch'/);
+  assert.match(setupJsSource, /MidTermIncluded/);
+  assert.match(setupJsSource, /function renderAcademicCumulativeTerms\(/);
+  assert.match(setupJsSource, /function renderAcademicPolicyView\(view = \{\}, message = ''\)/);
+  assert.match(setupJsSource, /DynamaxDialogs\.confirm\(\{/);
+  assert.match(setupJsSource, /activateAcademicPolicyButton\?\.addEventListener\('click', async \(event\) => \{\s*const button = event\.currentTarget;\s*if \(!await window\.DynamaxDialogs\.confirm/);
+  assert.match(setupJsSource, /inheritAcademicPolicyButton\?\.addEventListener\('click', async \(event\) => \{\s*const button = event\.currentTarget;/);
+  assert.doesNotMatch(setupJsSource, /DynamaxDialogs\.confirm\([\s\S]{0,500}\)\) return;\s*const button = event\.currentTarget;/);
+  assert.match(setupJsSource, /requestAcademicPolicy\('activate'\);\s*announceSettingsChange\(\);/);
+  assert.match(setupJsSource, /requestAcademicPolicy\('inherit'\);\s*announceSettingsChange\(\);/);
+  assert.match(setupHtmlSource, /css\/style\.css\?v=20260923-youtube-tutorials/);
+  assert.match(setupHtmlSource, /js\/setup\.js\?v=20261003-no-school-code-default/);
+  assert.match(setupHtmlSource, /<span>Split A\/B<\/span><span>A objective<\/span><span>B theory<\/span><span>Required<\/span><span>Mid-term<\/span>/);
+  assert.match(setupJsSource, /row\.append\(name, maximum, weight, source, split, objective, theory, required, midTerm, remove\)/);
+  assert.match(styleSource, /\.academic-component-grid/);
+  assert.match(styleSource, /\.academic-grade-grid/);
+  assert.match(styleSource, /\.academic-cumulative-grid/);
+  assert.match(styleSource, /html\[data-theme="dark"\] \.academic-policy-state/);
+});

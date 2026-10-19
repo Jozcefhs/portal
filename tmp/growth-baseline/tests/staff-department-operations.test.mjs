@@ -1,0 +1,155 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { staffDepartmentIdempotencyOptions } from '../functions/api/staff-departments.js';
+
+const portalRoot = new URL('../', import.meta.url);
+const [api, adminApi, adminJs, backend, emailService] = await Promise.all([
+  readFile(new URL('functions/api/staff-departments.js', portalRoot), 'utf8'),
+  readFile(new URL('functions/api/admin.js', portalRoot), 'utf8'),
+  readFile(new URL('js/admin.js', portalRoot), 'utf8'),
+  readFile(new URL('functions/api/backend.js', portalRoot), 'utf8'),
+  readFile(new URL('functions/lib/email-service.js', portalRoot), 'utf8')
+]);
+
+test('clinic, kitchen, restaurant and tuck shop operations require staff section access', () => {
+  assert.match(api, /requireStaffSession\(env, request\)/);
+  assert.match(api, /!\(user\.allowedSections \|\| \[\]\)\.includes\(section\)/);
+  assert.match(api, /clinicInventory/);
+  assert.match(api, /kitchenInventory/);
+  assert.match(api, /restaurantInventory/);
+  assert.match(api, /tuckShopInventory/);
+});
+
+test('department inventory writes carry branch, school section and staff audit fields', () => {
+  assert.match(api, /BranchId: clean\(user\.branchId\) \|\| 'main'/);
+  assert.match(api, /SchoolSection:/);
+  assert.match(api, /UpdatedBy: user\.displayName \|\| user\.username/);
+  assert.match(api, /RecordedBy: user\.displayName \|\| user\.username/);
+});
+
+test('stock issues cannot exceed available stock', () => {
+  assert.match(api, /movementType === 'OUT' && quantity > current/);
+  assert.match(api, /Only \$\{current\} \$\{clean\(item\.Unit\) \|\| 'units'\} are currently available/);
+});
+
+test('clinic web workflow records visits and all departments manage stock', () => {
+  assert.match(adminJs, /id="clinicRecordForm"/);
+  assert.match(adminJs, /saveClinicRecord/);
+  assert.match(adminJs, /id="departmentInventoryForm"/);
+  assert.match(adminJs, /id="departmentMovementForm"/);
+  assert.match(adminJs, /active === 'clinic' \|\| active === 'kitchen' \|\| active === 'restaurant' \|\| active === 'tuckShop'/);
+});
+
+test('tuck shop dashboard includes inventory without bypassing wallet purchase history', () => {
+  assert.match(adminApi, /tuckShopInventory/);
+  assert.match(adminApi, /tuckShopMovements/);
+  assert.match(adminApi, /purchases: publicRows\(sortRecent\(walletPurchases/);
+  assert.match(adminJs, /Wallet Purchases/);
+});
+
+test('tuck shop web POS reuses the authoritative wallet and accounting workflow', () => {
+  assert.match(backend, /export async function getWalletCardAccount/);
+  assert.match(backend, /export async function recordWalletPurchase/);
+  assert.match(api, /recordWalletPurchase\(env/);
+  assert.match(api, /Department: 'Tuck Shop'/);
+  assert.match(api, /Terminal: 'Web Tuck Shop POS'/);
+  assert.match(api, /findScopedStudent/);
+  assert.match(adminJs, /id="walletLookupForm"/);
+  assert.match(adminJs, /id="walletPurchaseForm"/);
+});
+
+test('tuck shop exposes a stock-linked student and staff POS workspace', () => {
+  assert.match(adminJs, /data-department-jump="tuckShopPOS"/);
+  assert.match(adminJs, /<h3>Tuck Shop POS<\/h3>/);
+  assert.match(adminJs, /aria-label="Find student wallet"/);
+  assert.match(adminJs, /Complete wallet sale/);
+  assert.match(adminJs, /id="tuckShopStaffSaleForm"/);
+  assert.match(adminJs, /data-tuck-shop-add/);
+  assert.match(adminJs, /departmentPurchaseHistory/);
+});
+
+test('tuck shop supports Web NFC with manual and USB-reader fallbacks', () => {
+  assert.match(adminJs, /id="tuckShopNfcScan"/);
+  assert.match(adminJs, /'NDEFReader' in window/);
+  assert.match(adminJs, /new NDEFReader\(\)/);
+  assert.match(adminJs, /reader\.scan\(\{ signal: controller\.signal \}\)/);
+  assert.match(adminJs, /event\?\.serialNumber/);
+  assert.match(adminJs, /form\.requestSubmit\(\)/);
+  assert.match(adminJs, /USB reader/);
+});
+
+test('clinic reports use the parent email stored on the scoped student record', () => {
+  assert.match(api, /function parentEmailFor/);
+  assert.match(api, /sendClinicReport/);
+  assert.match(api, /RecipientEmail: report\.ParentEmail/);
+  assert.match(api, /Type: type/);
+  assert.match(adminJs, /id="clinicReportForm"/);
+});
+
+test('clinic student lookup accepts either admission number or wallet card ID', () => {
+  assert.match(api, /findScopedStudent\(env, user, searchValue, searchValue\)/);
+  assert.match(api, /\[row\.WalletCardId, row\.walletCardId, row\.CardId, row\.cardId\]/);
+  assert.match(api, /some\(\(value\) => sameRef\(value, card\)\)/);
+  assert.match(api, /async function lookupClinicStudent/);
+  assert.match(api, /action === 'lookupclinicstudent' && section === 'clinic'/);
+  assert.match(adminJs, /Admission number or card ID/);
+  assert.match(adminJs, /id="clinicStudentSearch"/);
+  assert.match(adminJs, /requestDepartmentAction\(section, 'lookupClinicStudent'/);
+  assert.match(adminJs, /lookupClinicStudent'[\s\S]*?\{ render: false \}/);
+  assert.match(adminJs, /clinicStudentInput\?\.addEventListener\('keydown'/);
+  assert.match(adminJs, /clinicLookupTimer = window\.setTimeout/);
+  assert.match(adminJs, /Find student \/ Prepare report/);
+  assert.match(adminJs, /clinicReportForm['"]\)\?\.elements\?\.AccountRef\?\.addEventListener\('keydown'/);
+  assert.match(adminJs, /event\.key !== 'Enter'/);
+});
+
+test('clinic, kitchen and restaurant market lists are emailed and audited without exposing credentials', () => {
+  assert.match(api, /\['clinic', 'kitchen', 'restaurant'\]\.includes\(section\)/);
+  assert.match(api, /Supplier Market List/);
+  assert.match(adminJs, /id="marketListForm"/);
+  assert.match(emailService, /env\.BREVO_API_KEY/);
+  assert.doesNotMatch(emailService, /return \{[^}]*apiKey/);
+});
+
+test('irreversible wallet and email actions have workspace-scoped durable idempotency', () => {
+  const user = {
+    username: 'Cashier.One',
+    branchId: 'North Branch',
+    edition: 'school'
+  };
+  assert.deepEqual(
+    staffDepartmentIdempotencyOptions('recordWalletPurchase', 'tuckShop', user),
+    {
+      scope: 'staff-department-wallet-purchase',
+      actor: 'school:north branch:cashier.one',
+      ttlMinutes: 30 * 24 * 60
+    }
+  );
+  assert.equal(
+    staffDepartmentIdempotencyOptions('sendClinicReport', 'clinic', user)?.scope,
+    'staff-department-clinic-report-email'
+  );
+  assert.equal(
+    staffDepartmentIdempotencyOptions('sendMarketList', 'kitchen', user)?.scope,
+    'staff-department-kitchen-market-list-email'
+  );
+  assert.equal(
+    staffDepartmentIdempotencyOptions('sendMarketList', 'restaurant', user)?.scope,
+    'staff-department-restaurant-market-list-email'
+  );
+  assert.deepEqual(
+    staffDepartmentIdempotencyOptions('recordSale', 'restaurant', user),
+    {
+      scope: 'restaurant-record-sale',
+      actor: 'Cashier.One',
+      ttlMinutes: 30 * 24 * 60
+    }
+  );
+  assert.equal(staffDepartmentIdempotencyOptions('lookupWallet', 'tuckShop', user), null);
+  assert.equal(staffDepartmentIdempotencyOptions('sendMarketList', 'tuckShop', user), null);
+  assert.match(api, /if \(idempotencyOptions\) await completeIdempotentRequest\(env, idempotency, data, 200\)/);
+  assert.match(api, /if \(idempotency\.replay\)/);
+  assert.match(api, /Idempotency-Replayed/);
+  assert.match(api, /if \(idempotency\?\.owner\) await failIdempotentRequest/);
+});

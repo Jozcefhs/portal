@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Payment Confirmation</title>
+  <script src="js/preferences.js?v=20260726-biometric"></script>
+  <link rel="stylesheet" href="css/style.css?v=20260903-hotel-tabs">
+</head>
+<body>
+  <main class="page-wrap narrow">
+    <section class="card">
+      <div class="form-header">
+        <img src="images/Logo.png" alt="Organisation logo" class="logo small" onerror="this.style.display='none'">
+        <div>
+          <h1>Payment Confirmation</h1>
+          <p id="confirmationLead" class="muted">Please wait while we confirm your payment.</p>
+        </div>
+      </div>
+
+      <div id="confirmationBox" class="payment-confirmation">
+        <p id="confirmationStatus" class="status">Verifying payment...</p>
+      </div>
+
+      <p id="anotherPaymentRow">
+        <a id="anotherPaymentLink" href="payments.html">Make another payment</a>
+      </p>
+      <p id="returnPortalRow">
+        <a id="returnPortalLink" href="index.html">Return to admission portal</a>
+      </p>
+    </section>
+  </main>
+
+  <script src="js/site-config.js?v=20260910-branch-profile"></script>
+  <script src="js/payment-success.js?v=20261013-hotel-key-collection"></script>
+</body>
+</html>

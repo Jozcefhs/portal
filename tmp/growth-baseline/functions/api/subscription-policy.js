@@ -1,0 +1,62 @@
+import { queryCollection } from '../lib/firestore.js';
+import { requirePlatformFirestoreEnv } from '../lib/platform-firestore.js';
+import { SUBSCRIPTION_MODULE_CATALOG_VERSION, subscriptionModulesForEdition } from '../lib/subscription-plans.js';
+
+const clean = (value) => String(value ?? '').trim();
+
+export function publicPolicy(row = {}) {
+  const ownerDemo = row.OwnerDemo === true || clean(row.Plan).toLowerCase() === 'owner demo';
+  return {
+    WorkspaceId: clean(row.WorkspaceId),
+    Edition: clean(row.Edition),
+    Plan: clean(row.Plan),
+    BillingCycle: clean(row.BillingCycle || 'monthly'),
+    UserLimit: Math.max(1, Number(row.UserLimit || 5) || 5),
+    FeatureEntitlements: ownerDemo
+      ? subscriptionModulesForEdition(row.Edition).map((module) => module.Key)
+      : Array.isArray(row.FeatureEntitlements) ? row.FeatureEntitlements.map(clean).filter(Boolean) : [],
+    Price: Number(row.Price || 0),
+    Currency: clean(row.Currency || 'NGN'),
+    PriceSnapshot: row.PriceSnapshot && typeof row.PriceSnapshot === 'object' ? row.PriceSnapshot : null,
+    PlanModuleCatalogVersion: ownerDemo ? SUBSCRIPTION_MODULE_CATALOG_VERSION
+      : Math.max(0, Number(row.PlanModuleCatalogVersion ?? row.PriceSnapshot?.ModuleCatalogVersion) || 0),
+    SubscriptionStatus: clean(row.SubscriptionStatus),
+    PaymentStatus: clean(row.PaymentStatus),
+    OwnerDemo: ownerDemo,
+    NonBillable: ownerDemo || row.NonBillable === true,
+    SyntheticDataOnly: ownerDemo || row.SyntheticDataOnly === true,
+    TrialStartedAt: clean(row.TrialStartedAt),
+    TrialEndsAt: clean(row.TrialEndsAt),
+    LifecycleStage: clean(row.LifecycleStage),
+    PaidAt: clean(row.PaidAt),
+    LastSuccessfulPaymentAt: clean(row.LastSuccessfulPaymentAt || row.PaidAt),
+    PaidThroughAt: clean(row.PaidThroughAt),
+    RenewalDueAt: clean(row.RenewalDueAt || row.PaidThroughAt),
+    GracePeriodEndsAt: clean(row.GracePeriodEndsAt),
+    DataRetentionEndsAt: clean(row.DataRetentionEndsAt),
+    PlanCatalogRevision: clean(row.PlanCatalogRevision),
+    PendingPlan: clean(row.PendingPlan),
+    PendingBillingCycle: clean(row.PendingBillingCycle),
+    UpdatedAt: clean(row.UpdatedAt || row.CreatedAt)
+  };
+}
+
+export async function onRequestGet({ request, env }) {
+  try {
+    const platformEnv = requirePlatformFirestoreEnv(env);
+    const url = new URL(request.url);
+    const workspaceId = clean(request.headers.get('X-Dynamax-Workspace') || url.searchParams.get('workspace')).toLowerCase();
+    if (!workspaceId) return Response.json({ ok: false, message: 'Workspace is required.' }, { status: 400 });
+    const rows = await queryCollection(platformEnv, 'tenantRegistrations', {
+      filters: [{ field: 'WorkspaceId', op: '==', value: workspaceId }],
+      limit: 20
+    });
+    const registration = rows
+      .filter((row) => !['rejected', 'cancelled', 'retired', 'terminated', 'deleted'].includes(clean(row.Status).toLowerCase()))
+      .sort((left, right) => clean(right.UpdatedAt || right.CreatedAt).localeCompare(clean(left.UpdatedAt || left.CreatedAt)))[0];
+    if (!registration) return Response.json({ ok: false, message: 'No active subscription record was found for this workspace.' }, { status: 404 });
+    return Response.json({ ok: true, policy: publicPolicy(registration) }, { headers: { 'Cache-Control': 'no-store' } });
+  } catch (error) {
+    return Response.json({ ok: false, message: error.message || String(error) }, { status: error.status || 500, headers: { 'Cache-Control': 'no-store' } });
+  }
+}

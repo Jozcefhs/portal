@@ -1,0 +1,48 @@
+{
+  "title": "Academic Management, Academic Policies and shared student CBT integrity repairs",
+  "date": "2026-10-11",
+  "status": "All 13 audited findings repaired and regression verified; deployment requires the updated portal and local CBT server",
+  "originalAudit": "../../outputs/academic-management-audit.json",
+  "scope": "School academic workflows and the local CBT server/shared client used by browser and Android students. Existing finance changes are preserved.",
+  "repairs": [
+    {"id": "AM-01", "status": "repaired", "change": "Omitted/all section requests inherit a restricted actor's assigned section; explicit disallowed sections still fail."},
+    {"id": "AM-02", "status": "repaired", "change": "Teacher memberships and related records are period-scoped; score sheets require the allocated subject/classroom or explicit form-teacher/substitute authority. Ordinary teaching allocations do not expose historical transcripts. Intentional class-wide CBT rosters are retained."},
+    {"id": "AM-03", "status": "repaired", "change": "Midterm calculations reuse the scorebook's Objective/Theory exemption handling and reweight selected components. Result snapshots preserve part states."},
+    {"id": "AM-04", "status": "repaired", "change": "Policy save, activation and inheritance reset use conditional assignment writes. Settings sends the reviewed revision and exact draft ID and blocks activation of unsaved edits."},
+    {"id": "AM-05", "status": "repaired", "change": "Attendance always requires membership in the selected classroom, including when its roster is empty."},
+    {"id": "AM-06", "status": "repaired", "change": "Single, batch, copy and delete timetable mutations share an atomic draft-version guard read before lesson data. Concurrent changes reject rather than double-book. Targeted copies are atomic and capped at 498 new lessons."},
+    {"id": "AM-07", "status": "repaired", "change": "Midterm selection retains the original assessment-component row mapping before filtering checked components."},
+    {"id": "AM-08", "status": "repaired", "change": "Removed unsupported scholarship/payment-plan switches and explain the existing clearance rules. Full-scholarship eligibility, billing, payments and legacy stored fields remain unchanged; agreed payment-plan exceptions use approved result clearance."},
+    {"id": "CBT-01", "status": "repaired", "change": "IndexedDB answer writes and acknowledgement deletes compare revisions transactionally. Replay preserves newer answers, and delayed saves remain bound to their original authenticated attempt."},
+    {"id": "CBT-02", "status": "repaired", "change": "Submission flushes debounced text, freezes answer controls, waits for persistence/uploads and checks both recovery storage and in-memory unsaved revisions. Unconfirmed answers block manual finalization and show an explicit deadline warning; delayed text events cannot write into another attempt."},
+    {"id": "CBT-03", "status": "repaired", "change": "Objective and theory submissions persist terminal receipts keyed by hashed session token and bound to device/tab. Retrying after a lost acknowledgement or restart returns the receipt without reopening answer access."},
+    {"id": "CBT-04", "status": "repaired", "change": "Startup, monitoring, exam-status changes and marking finalize overdue disconnected attempts server-side with confirmed answers intact. Theory expiry is also finalized without creating typed response records."},
+    {"id": "CBT-05", "status": "repaired", "change": "A lost paper-save acknowledgement is reconciled against the exact persisted record/digest. Uncertain saves retain uploaded files; definite rejected saves may clean them up."}
+  ],
+  "validation": [
+    {"repository": "portal", "command": "node --test tests/*.test.mjs tests/payroll/*.test.mjs", "passed": 2482, "failed": 0},
+    {"repository": "portal", "command": "node scripts/academic-release-readiness.mjs", "status": "PASS", "note": "Read-only release checks; no release performed."},
+    {"repository": "suite", "command": "python -B -m unittest discover -s tests", "passed": 686, "failed": 0, "note": "Includes loopback-server tests. Existing HTTPError cleanup ResourceWarnings and a Tk after-callback warning were emitted; unittest result was OK."},
+    {"repository": "suite", "command": "node --test tests/cbt-client-*.test.mjs", "passed": 10, "failed": 0},
+    {"repository": "suite", "command": "python -B tools/run_local_cbt_readiness.py --candidates 200 --safety-margin 20 --workers 24", "status": "PASS", "candidates": 220, "workers": 24, "databaseIntegrity": "ok", "note": "All attempts and answers survived restart and encrypted backup/restore. Synthetic temporary data only; not a multi-device Wi-Fi test."},
+    {"repositories": ["portal", "suite"], "command": "git diff --check and JavaScript syntax checks", "status": "PASS"}
+  ],
+  "regressionTests": [
+    "../tests/academic-audit-repairs.test.mjs",
+    "../../suite/tests/cbt-client-reliability.test.mjs",
+    "../../suite/tests/test_local_cbt_reliability.py"
+  ],
+  "deploymentNotes": [
+    "Portal policy API and Settings assets must be deployed together; old clients without reviewed revision tokens are rejected safely.",
+    "The local CBT receipt table is created additively on startup. Existing data is not rewritten by this repair session.",
+    "Local CBT startup will finalize overdue attempts once the updated server is run against a school database.",
+    "Existing published results are not recalculated automatically; affected midterms require the normal authorized review/recalculation workflow.",
+    "Validation used synthetic data only and did not package applications, install APKs or change production records. Pushing the source is separate from desktop packaging and deployment."
+  ],
+  "remainingValidationLimits": [
+    "Physical Android camera, orientation, kiosk behaviour, process death and background behaviour remain untested in this repair session.",
+    "No real access-point loss, multi-device Wi-Fi load or tablet battery interruption tests were performed.",
+    "Firestore/R2 concurrency and uncertain saves were tested with controlled fault injection, not production writes.",
+    "Uncertain paper uploads are intentionally retained; this change does not introduce an automatic orphan-deletion job."
+  ]
+}

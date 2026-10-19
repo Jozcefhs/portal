@@ -1,0 +1,306 @@
+// Authenticated, lazy passport-photo proxy for Firestore applications.
+// Firestore remains authoritative; Cloudflare R2 stores the private bytes.
+
+import { getDocument, requireFirestoreEnv } from '../lib/firestore.js';
+import { getSchoolDocumentById, querySchoolCollection } from '../lib/school-scope.js';
+import { getStoredDocument } from '../lib/document-storage.js';
+import { readJsonBody } from '../lib/request-security.js';
+import { readParentSession, verifyStoredParentPassword } from '../lib/parent-auth.js';
+import { requireStaffSession } from '../lib/staff-auth.js';
+import { applyDesktopDeviceBranchScope, verifyDesktopCredential } from '../lib/backend-security.js';
+import {
+  admissionApplicationScopePath,
+  admissionStudentScopePath,
+  admissionThumbnailDocumentId,
+  validateAdmissionThumbnail
+} from '../lib/document-files.js';
+import { findFirestoreApplication } from './upload-document.js';
+
+function clean(value) {
+  return String(value ?? '').trim();
+}
+
+function lower(value) {
+  return clean(value).toLowerCase();
+}
+
+function sameText(a, b) {
+  return lower(a) === lower(b);
+}
+
+function pick(row, keys, fallback = '') {
+  for (const key of keys) {
+    if (row && row[key] !== undefined && row[key] !== null && clean(row[key])) return row[key];
+  }
+  return fallback;
+}
+
+function applicationReference(row) {
+  return clean(pick(row, [
+    'ApplicationReference', 'applicationReference',
+    'ApplicationID', 'applicationId',
+    'AdmissionNo', 'admissionNo', 'AdmissionNumber',
+    'AccountRef', 'accountRef', '__id'
+  ]));
+}
+
+function passportTargetCollection(row = {}) {
+  return lower(row.__uploadCollection) === 'students' || /(?:^|\/)students$/i.test(clean(row.__scopePath))
+    ? 'students'
+    : 'applications';
+}
+
+function passportTargetScopePath(row = {}) {
+  return passportTargetCollection(row) === 'students'
+    ? (admissionStudentScopePath(row.__scopePath) || 'students')
+    : (admissionApplicationScopePath(row.__scopePath) || 'applications');
+}
+
+function safeDocumentId(value) {
+  return clean(value).replace(/[\/\\?#\[\]]/g, '-').replace(/\s+/g, '_').replace(/_+/g, '_').replace(/-+/g, '-').slice(0, 140);
+}
+
+function passportEntry(row) {
+  const documents = row && row.documents && typeof row.documents === 'object' ? row.documents : {};
+  return documents.PassportPhotograph && typeof documents.PassportPhotograph === 'object'
+    ? documents.PassportPhotograph
+    : {};
+}
+
+function passportUrl(row) {
+  const passport = passportEntry(row);
+  return clean(passport.url || row.DocPassportPhotographUrl || row.PassportPhotographUrl || row.PassportPhotographLink);
+}
+
+function parentEmailOwnsApplication(row, email) {
+  const parent = row && row.parent && typeof row.parent === 'object' ? row.parent : {};
+  const emails = [
+    row.VerificationEmail, row.verificationEmail,
+    row.ParentEmail, row.parentEmail,
+    row.Email, row.email,
+    row.FatherEmail, row.fatherEmail,
+    row.MotherEmail, row.motherEmail,
+    row.GuardianEmail, row.guardianEmail,
+    parent.email, parent.Email
+  ]
+    .map(lower)
+    .filter(Boolean);
+  return emails.includes(lower(email));
+}
+
+function parentOwnsApplication(row, email, code) {
+  const wantedCode = clean(code).toUpperCase();
+  const codes = [
+    row.VerificationCode, row.verificationCode,
+    row.ParentLoginCode, row.parentLoginCode,
+    row.LoginCode, row.loginCode
+  ].map((value) => clean(value).toUpperCase()).filter(Boolean);
+  return parentEmailOwnsApplication(row, email) && codes.includes(wantedCode);
+}
+
+export async function parentCanAccessPassportApplication(env, application, email, code, options = {}) {
+  if (options.authenticated === true) return parentEmailOwnsApplication(application, email);
+  if (parentOwnsApplication(application, email, code)) return true;
+  const resolveApplication = options.findFirestoreApplication || findFirestoreApplication;
+  const reference = applicationReference(application);
+  const scopePath = passportTargetScopePath(application);
+  if (!reference || !email || !code) return false;
+  const authorized = await resolveApplication(env, email, code, {
+    targetReference: reference,
+    targetScopePath: scopePath
+  }).catch(() => null);
+  if (!authorized || !sameText(applicationReference(authorized), reference)) return false;
+  const authorizedScope = passportTargetScopePath(authorized);
+  return sameText(authorizedScope, scopePath);
+}
+
+function decodeBase64(value) {
+  const binary = atob(clean(value));
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+
+function uniqueApplications(rows = []) {
+  const seen = new Set();
+  return rows.filter((row) => {
+    if (!row) return false;
+    const key = `${clean(row.__scopePath)}|${clean(row.__id || applicationReference(row))}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function legacyThumbnailBelongsToApplication(thumbnail, application, scopePath) {
+  if (!thumbnail) return false;
+  const savedScope = admissionApplicationScopePath(thumbnail.ApplicationScopePath);
+  if (savedScope) return lower(savedScope) === lower(scopePath);
+  if (scopePath === 'applications') return true;
+  const thumbnailOperationId = clean(thumbnail.UploadOperationId);
+  const applicationOperationId = clean(passportEntry(application).uploadOperationId);
+  return Boolean(thumbnailOperationId && applicationOperationId && thumbnailOperationId === applicationOperationId);
+}
+
+export async function onRequestPost(context) {
+  try {
+    const { request, env } = context;
+    requireFirestoreEnv(env);
+    let body = await readJsonBody(request, { maxBytes: 64 * 1024 });
+    const suppliedSecret = clean(body.Secret || body.secret);
+    let desktopAuthentication = null;
+    if (suppliedSecret) {
+      desktopAuthentication = await verifyDesktopCredential(env, suppliedSecret, 'passport photograph endpoint')
+        .catch(() => null);
+      if (desktopAuthentication) body = applyDesktopDeviceBranchScope(body, desktopAuthentication);
+    }
+    const desktopBranchId = clean(desktopAuthentication?.branchId);
+    const reference = clean(body.applicationReference || body.ApplicationReference || body.accountRef || body.AccountRef);
+    if (!reference) return Response.json({ ok: false, message: 'Student or application reference is required.' }, { status: 400 });
+    const requestedScopePath = clean(body.scopePath || body.ScopePath);
+    const targetCollection = /(?:^|\/)students$/i.test(requestedScopePath) ? 'students' : 'applications';
+    const targetScopePath = targetCollection === 'students'
+      ? admissionStudentScopePath(requestedScopePath)
+      : admissionApplicationScopePath(requestedScopePath);
+    if (requestedScopePath && !targetScopePath) {
+      return Response.json({ ok: false, message: 'The student/application scope is invalid.' }, { status: 400 });
+    }
+
+    const direct = targetScopePath
+      ? await getDocument(env, targetScopePath, safeDocumentId(reference)).catch(() => null)
+      : await getSchoolDocumentById(
+          env,
+          targetCollection,
+          safeDocumentId(reference),
+          desktopBranchId ? { branchId: desktopBranchId } : null
+        ).catch(() => null);
+    const directApplication = direct
+      ? {
+          ...direct,
+          __scopePath: direct.__scopePath || targetScopePath || targetCollection,
+          __uploadCollection: targetCollection
+        }
+      : null;
+    let candidates = directApplication &&
+      (sameText(applicationReference(directApplication), reference) || sameText(directApplication.__id, reference))
+      ? [directApplication]
+      : [];
+    if (!candidates.length || !targetScopePath) {
+      const queried = await querySchoolCollection(env, targetCollection, {
+        filters: targetCollection === 'students'
+          ? [
+              { field: 'ApplicationReference', op: '==', value: reference },
+              { field: 'AdmissionNo', op: '==', value: reference },
+              { field: 'AccountRef', op: '==', value: reference }
+            ]
+          : [
+              { field: 'ApplicationReference', op: '==', value: reference },
+              { field: 'ApplicationID', op: '==', value: reference }
+            ],
+        filterJoin: 'OR',
+        limit: 20,
+        ...(targetScopePath
+          ? { scopePath: targetScopePath }
+          : desktopBranchId ? { scope: { branchId: desktopBranchId } } : {})
+      }).catch(() => []);
+      candidates = uniqueApplications([...candidates, ...queried.map((row) => ({
+        ...row,
+        __uploadCollection: targetCollection
+      }))]).filter((row) =>
+        sameText(applicationReference(row), reference) || sameText(row.__id, reference)
+      );
+    }
+    if (desktopAuthentication?.branchId) {
+      candidates = candidates.filter((row) => {
+        try {
+          applyDesktopDeviceBranchScope({ Application: row }, desktopAuthentication);
+          return true;
+        } catch (error) {
+          if (error?.code === 'DESKTOP_DEVICE_BRANCH_MISMATCH') return false;
+          throw error;
+        }
+      });
+    }
+    const application = candidates.length === 1 ? candidates[0] : null;
+    if (!application) return Response.json({ ok: false, message: 'Student or application was not found in the database.' }, { status: 404 });
+    if (desktopAuthentication) applyDesktopDeviceBranchScope({ Application: application }, desktopAuthentication);
+
+    const desktopAuthorized = Boolean(desktopAuthentication);
+    let signedInStaff = null;
+    try {
+      signedInStaff = await requireStaffSession(env, request);
+    } catch (_error) {
+      signedInStaff = null;
+    }
+    const staffAuthorized = Boolean(signedInStaff) || desktopAuthorized;
+    if (!staffAuthorized) {
+      const session = await readParentSession(env, request);
+      const email = lower(session?.email || body.email || body.ParentEmail || body.Email);
+      const code = clean(body.code || body.VerificationCode);
+      const storedPassword = session || !email || !code
+        ? { configured: false, valid: false }
+        : await verifyStoredParentPassword(env, email, code);
+      const authenticated = Boolean(session || storedPassword.valid);
+      const allowed = email && (authenticated || code) &&
+        await parentCanAccessPassportApplication(env, application, email, code, { authenticated });
+      if (storedPassword.configured && !storedPassword.valid) {
+        return Response.json({ ok: false, message: 'Invalid parent email or password.' }, { status: 401 });
+      }
+      if (!allowed) {
+        return Response.json({ ok: false, message: 'Unauthorized passport photograph request.' }, { status: 403 });
+      }
+    }
+
+    const url = passportUrl(application);
+    if (!url) return Response.json({ ok: false, message: 'No passport photograph has been uploaded.' }, { status: 404 });
+    const scopePath = admissionApplicationScopePath(application.__scopePath) || 'applications';
+    const referenceValue = applicationReference(application);
+    const scopedThumbnailId = await admissionThumbnailDocumentId(referenceValue, scopePath);
+    let thumbnail = await getDocument(env, 'applicationPassportThumbnails', scopedThumbnailId).catch(() => null);
+    if (!thumbnail) {
+      const legacyThumbnail = await getDocument(
+        env,
+        'applicationPassportThumbnails',
+        safeDocumentId(referenceValue)
+      ).catch(() => null);
+      if (legacyThumbnailBelongsToApplication(legacyThumbnail, application, scopePath)) {
+        thumbnail = legacyThumbnail;
+      }
+    }
+    if (thumbnail && clean(thumbnail.FileBase64)) {
+      let validatedThumbnail = null;
+      try {
+        validatedThumbnail = validateAdmissionThumbnail(thumbnail.FileBase64);
+      } catch {
+        validatedThumbnail = null;
+      }
+      if (validatedThumbnail) {
+        return new Response(decodeBase64(thumbnail.FileBase64), {
+          status: 200,
+          headers: {
+            'Content-Type': validatedThumbnail.mimeType,
+            'Content-Disposition': 'inline',
+            'Cache-Control': 'private, max-age=300',
+            'X-Content-Type-Options': 'nosniff'
+          }
+        });
+      }
+    }
+    const file = await getStoredDocument(env, url);
+    const mimeType = clean(file.mimeType) || 'application/octet-stream';
+    if (!mimeType.toLowerCase().startsWith('image/')) {
+      return Response.json({ ok: false, message: 'The uploaded passport document is not a previewable image.' }, { status: 415 });
+    }
+    return new Response(file.object.body, {
+      status: 200,
+      headers: {
+        'Content-Type': mimeType,
+        'Content-Disposition': 'inline',
+        'Cache-Control': 'private, max-age=300',
+        'X-Content-Type-Options': 'nosniff'
+      }
+    });
+  } catch (err) {
+    return Response.json({ ok: false, message: clean(err && err.message ? err.message : err) }, { status: err.status || 500 });
+  }
+}

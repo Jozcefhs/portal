@@ -1,0 +1,16 @@
+.wrangler/
+.wrangler-config-local/
+.notification-scheduler.wrangler.json
+node_modules/
+.npm-cache/
+node_modules/.mf/
+.mf/
+.dev.vars
+.dev.vars.*
+.env
+.env.*
+!.env.example
+dist/
+.pages-deploy/
+*.log
+.tmp-vendor-worker-build/

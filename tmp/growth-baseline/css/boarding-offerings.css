@@ -1,0 +1,16 @@
+.boarding-offerings-dialog{width:min(1160px,96vw);max-width:96vw;max-height:90dvh;padding:22px;overflow:auto}
+.boarding-offering-heading,.boarding-offering-counts,.boarding-offering-history{display:flex;align-items:center;justify-content:space-between;gap:16px}
+.boarding-offering-heading h2{margin:4px 0 12px}.boarding-offering-heading>button{min-width:44px;min-height:44px;align-self:flex-start}
+.boarding-offering-tools,.boarding-offering-actions,.boarding-offering-approval{display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin:14px 0}
+.boarding-offering-tools label{flex:1 1 160px;min-width:0}.boarding-offering-tools label:has([data-search]){flex:2 1 220px;min-width:200px}.boarding-offering-tools [data-search]{min-width:0}
+.boarding-offering-tools label:has([data-flat]){flex:0 1 140px}.boarding-offering-tools input,.boarding-offering-tools select,.boarding-offering-approval input[type=password]{width:100%;box-sizing:border-box}
+.boarding-offering-counts{margin:12px 0;flex-wrap:wrap}.boarding-offering-table{overflow:auto;max-height:55dvh;border:1px solid var(--line,#d5e1eb);border-radius:10px}
+.boarding-offering-table table{width:100%;min-width:700px;border-collapse:collapse}.boarding-offering-table th{position:sticky;top:0;background:var(--panel,#edf4f8);z-index:1;text-align:left}
+.boarding-offering-table td,.boarding-offering-table th{padding:10px;border-bottom:1px solid var(--line,#d5e1eb)}
+.boarding-offering-table tr[hidden]{display:none}.boarding-offering-table td small,.boarding-offering-history small{display:block;margin-top:5px}
+.boarding-offering-table [data-amount]{width:120px}.boarding-offering-table [data-pin]{width:120px}.boarding-offering-table td:first-child{width:44px}
+.boarding-offering-approval{align-items:center}.boarding-offering-approval>label:first-child{flex:1 1 420px}.boarding-offering-approval>label:last-child{flex:0 1 240px}
+.boarding-offerings-dialog label:has(>input[type=checkbox]){display:flex;flex-direction:row;align-items:flex-start;gap:8px}.boarding-offerings-dialog label>input[type=checkbox]{width:auto;flex-shrink:0;margin-top:4px}
+.boarding-offering-history{padding:14px 0;border-top:1px solid var(--line,#d5e1eb);flex-wrap:wrap}.boarding-offering-history>div:first-child{flex:1 1 280px}
+.boarding-offering-actions button{min-height:44px;word-break:normal;overflow-wrap:normal}.boarding-full{grid-column:1/-1}
+@media(max-width:600px){.boarding-offerings-dialog{padding:14px;width:96vw}.boarding-offering-tools{align-items:stretch}.boarding-offering-tools label{flex:1 1 100%}.boarding-offering-tools button{flex:1 1 140px}.boarding-offering-actions{width:100%}.boarding-offering-actions button{flex:1 1 140px}.boarding-offering-approval>label:last-child{flex:1 1 100%}}

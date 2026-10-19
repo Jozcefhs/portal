@@ -1,0 +1,116 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { onboardingStatus } from '../functions/api/parent-dashboard.js';
+
+const [backend, api, html, script, css, staffStudents, admin] = await Promise.all([
+  readFile(new URL('../functions/api/backend.js', import.meta.url), 'utf8'),
+  readFile(new URL('../functions/api/parent-dashboard.js', import.meta.url), 'utf8'),
+  readFile(new URL('../parent-dashboard.html', import.meta.url), 'utf8'),
+  readFile(new URL('../js/parent-dashboard.js', import.meta.url), 'utf8'),
+  readFile(new URL('../css/style.css', import.meta.url), 'utf8'),
+  readFile(new URL('../functions/api/staff-students.js', import.meta.url), 'utf8'),
+  readFile(new URL('../js/admin.js', import.meta.url), 'utf8')
+]);
+
+test('minimal student import keeps separate names and applies the configured display-name format', () => {
+  const importer = backend.slice(backend.indexOf('async function importStudents'), backend.indexOf('async function promoteStudents'));
+  assert.match(importer, /FirstName/);
+  assert.match(importer, /MiddleName/);
+  assert.match(importer, /Surname/);
+  assert.match(importer, /missing first name or surname/);
+  assert.match(importer, /missing admission number/);
+  assert.match(importer, /missing gender/);
+  assert.match(importer, /missing class/);
+  assert.match(importer, /formatPersonName\([^;]+schoolProfile/);
+  assert.match(importer, /ParentOnboardingTokenHash: ''/);
+  assert.match(importer, /ParentOnboardingStatus: 'PendingProfile'/);
+  assert.match(importer, /TemporaryPassword: '12345678'/);
+  assert.match(importer, /ParentOnboardingPath: '\/parent-dashboard#onboarding=1'/);
+
+  const persistedStudent = importer.slice(importer.indexOf('const student = {'), importer.indexOf('const saved ='));
+  assert.doesNotMatch(persistedStudent, /TemporaryPassword|ParentOnboardingToken:/);
+  assert.match(persistedStudent, /ParentLoginCode: ''/);
+  assert.match(persistedStudent, /VerificationCode: ''/);
+});
+
+test('shared parent completion link becomes unusable after profile completion and dashboard access waits for a private password', () => {
+  const verifier = api.slice(api.indexOf('async function requireParentOnboardingStudent'), api.indexOf('function publicOnboardingStudent'));
+  assert.doesNotMatch(verifier, /onboardingToken|ParentOnboardingToken/);
+  assert.match(verifier, /admissionNo/);
+  assert.match(verifier, /PARENT_ONBOARDING_TEMPORARY_PASSWORD/);
+  assert.match(api, /ParentOnboardingTokenHash: ''/);
+  assert.match(api, /updateTime: student\.__updateTime/);
+  assert.match(api, /onboardingStatus\(student\) !== expectedStatus/);
+  assert.match(api, /ParentOnboardingStatus: existingCredential \? 'Complete' : 'AwaitingPassword'/);
+  assert.match(api, /passwordChangeRequired: true/);
+  assert.match(api, /completeParentPasswordSetup/);
+  assert.match(api, /parentSessionCookie\(await createParentSession\(env, data\.parentEmail\)\)/);
+  assert.match(html, /Complete an imported student profile/);
+  assert.match(html, /id="onboardingAdmissionNo"/);
+  assert.match(html, /id="onboardingParentEmail"/);
+  assert.match(html, /for="onboardingStudentNin">Student's NIN/);
+  assert.match(html, /id="onboardingStudentNin"[^>]+pattern="\[0-9\]\{11\}"/);
+  assert.match(html, /id="onboardingPreviousSchool"/);
+  assert.match(html, /id="requiredNewParentPassword"/);
+  assert.match(script, /onboardingHash\.has\('onboarding'\)/);
+  assert.match(script, /onboardingStudentNin: student\.studentNin/);
+  assert.match(script, /studentNin: document\.getElementById\('onboardingStudentNin'\)\.value/);
+  assert.match(api, /studentNin: clean\(student\.NIN\)/);
+  assert.match(api, /NIN: clean\(profile\.studentNin \|\| profile\.NIN\)/);
+  assert.match(api, /values\.NIN && !\/\^\\d\{11\}\$\//);
+  assert.match(api.slice(api.indexOf('function publicOnboardingStudent'), api.indexOf('async function assertParentOnboardingAllowance')), /previousSchool: clean\(student\.PreviousSchool\)/);
+  assert.match(script, /window\.history\.replaceState/);
+  assert.doesNotMatch(script, /(?:localStorage|sessionStorage)\.setItem\([^\n]*(?:onboard|passwordSetupToken|temporaryPassword)/i);
+});
+
+test('staff can re-enable onboarding for an existing student and copy the shared link', () => {
+  assert.match(staffStudents, /reissueparentonboarding/);
+  assert.match(staffStudents, /ParentOnboardingStatus: 'PendingProfile'/);
+  assert.match(staffStudents, /onboardingPath: '\/parent-dashboard#onboarding=1'/);
+  assert.match(admin, /data-parent-onboarding-student/);
+  assert.match(admin, /data-copy-shared-parent-onboarding/);
+  assert.match(admin, /\/parent-dashboard#onboarding=1/);
+  assert.match(admin, /copyTextToClipboard\(onboardingUrl\)/);
+});
+
+test('shared onboarding stays open after refresh and mobile layout gives the form room', () => {
+  const bootstrap = script.slice(script.indexOf('const onboardingHash ='), script.indexOf('const PARENT_DOCUMENT_MAX_FILE_SIZE'));
+  const opening = script.slice(script.indexOf('function openParentOnboarding()'), script.indexOf('function closeParentOnboarding()'));
+  const closing = script.slice(script.indexOf('function closeParentOnboarding()'), script.indexOf('parentOnboardingAccessForm?.addEventListener'));
+  assert.match(bootstrap, /window\.location\.hash && !parentOnboardingRequested/);
+  assert.match(opening, /#onboarding=1/);
+  assert.match(closing, /replaceState\(window\.history\.state, '', `\$\{window\.location\.pathname\}\$\{window\.location\.search\}`\)/);
+  assert.match(script, /if \(parentOnboardingRequested\) \{\s*openParentOnboarding\(\);\s*return;/);
+  assert.match(html, /class="parent-header-description"/);
+  assert.match(css, /@media \(max-width:680px\)\{[\s\S]*?\.parent-dashboard-page \.form-header\{display:grid/);
+  assert.match(css, /\.parent-dashboard-page \.form-header \.parent-header-description\{display:none\}/);
+  assert.match(css, /\.parent-dashboard-page \.parent-onboarding-form button\[type="submit"\]\{width:100%/);
+});
+
+test('parent completion can correct the full student identity and profile without changing school-issued identifiers', () => {
+  for (const field of ['FirstName', 'MiddleName', 'Surname', 'Gender', 'PreviousSchool']) {
+    assert.match(api, new RegExp(`${field}: clean\\(profile\\.`));
+  }
+  for (const id of ['onboardingFirstName', 'onboardingMiddleName', 'onboardingSurname', 'onboardingGender', 'onboardingPreviousSchool']) {
+    assert.match(html, new RegExp(`id="${id}"`));
+    assert.match(script, new RegExp(`${id}: student\\.`));
+    assert.match(script, new RegExp(`getElementById\\('${id}'\\)\\.value`));
+  }
+  assert.match(api, /DisplayName: correctedName/);
+  assert.match(api, /ApplicantName: correctedName/);
+  assert.match(api, /formatPersonName\(values, schoolProfile\)/);
+  const completion = api.slice(api.indexOf('async function completeParentOnboardingProfile'), api.indexOf('async function pendingParentPasswordStudent'));
+  assert.doesNotMatch(completion, /ClassName: clean\(profile\.|AdmissionNo: clean\(profile\./);
+});
+
+test('legacy incomplete student profiles can begin onboarding without an explicit status', () => {
+  assert.equal(onboardingStatus({ ProfileCompletionStatus: 'Needs completion' }), 'pendingprofile');
+  assert.equal(onboardingStatus({ ParentOnboardingStatus: 'PendingProfile' }), 'pendingprofile');
+  assert.equal(onboardingStatus({ ParentOnboardingStatus: 'Complete', ProfileCompletionStatus: 'Needs completion' }), 'complete');
+  assert.equal(onboardingStatus({ ParentOnboardingStatus: 'AwaitingPassword', ProfileCompletionStatus: 'Needs completion' }), 'awaitingpassword');
+  assert.equal(onboardingStatus({ ProfileCompletionStatus: 'Complete' }), '');
+  assert.equal(onboardingStatus({ ProfileCompletionStatus: 'Needs completion', ParentOnboardingProfileCompletedAt: '2026-09-28T12:00:00Z' }), '');
+  assert.equal(onboardingStatus({ ProfileCompletionStatus: 'Needs completion', ParentOnboardingCompletedAt: '2026-09-28T12:00:00Z' }), '');
+  assert.equal(onboardingStatus({}), '');
+});

@@ -1,0 +1,373 @@
+{
+  "date": "2026-10-11",
+  "editions": [
+    "school",
+    "faith (church alias)",
+    "organization"
+  ],
+  "scope": "Source repairs and offline regression tests. Validation did not change live data, compile or package applications, or deploy. Publishing these source changes is separate from desktop packaging and rollout.",
+  "findingCount": 34,
+  "validation": {
+    "portal": {
+      "command": "node --test (all tests/**/*.test.mjs discovered with rg)",
+      "passed": 2470,
+      "failed": 0,
+      "skipped": 0
+    },
+    "desktop": {
+      "command": "C:/Python314/python.exe -B -m unittest discover -s tests",
+      "passed": 679,
+      "failed": 0,
+      "notes": "Full suite passed with local loopback access and a workspace-owned temporary directory. Benign pre-existing Tk callback/HTTPError cleanup warnings remain in test output."
+    },
+    "syntax": "Node syntax checks passed for changed backend entry points and payroll tax configuration.",
+    "whitespace": "git diff --check passed in both repositories.",
+    "editionCoverage": "Shared financial mutation regressions cover School, Faith and Organization. Desktop report parity additionally covers Church aliases and hotel mode."
+  },
+  "preservedWork": {
+    "description": "Pending bounded, resumable revenue synchronization repair retained and regression tested.",
+    "portal": [
+      "functions/lib/accounting-revenue-sync.js",
+      "tests/accounting-revenue-sync.test.mjs",
+      "docs/accounting-revenue-sync.md"
+    ],
+    "desktop": [
+      "modules/accounting_revenue_sync.py",
+      "tests/test_accounting_revenue_sync.py"
+    ]
+  },
+  "deploymentNotes": [
+    "Backend changes must be deployed and desktop changes must be included in a future build to take effect for users.",
+    "New desktop forms retain payment/source IDs across retries. Salary payment requires a stable PaymentNo; old installed forms without it must be updated.",
+    "No historical financial records were rewritten. Orphaned journals, ambiguous duplicate references and inconsistent historical records are refused with an Accounts-review message.",
+    "Historical reports exclude undated receipts and unsupported current balance snapshots from earlier cutoffs and display reconciliation warnings.",
+    "Existing limits retained: payroll CSV imports support 500 rows in 15-row batches; payroll generation supports up to 250 active profiles.",
+    "Payroll transitions that would exceed 500 atomic writes stop before changing any records; no partial payroll is saved.",
+    "Bank statement imports continue in bounded 10-row batches. Desktop continuation support is included.",
+    "Cloudflare/Workers guidance informed bounded reads/writes, explicit concurrency guards and retry-safe financial mutations."
+  ],
+  "findings": [
+    {
+      "id": "A01",
+      "issue": "Payroll import nested actor/branch override",
+      "owner": "root",
+      "status": "repaired; offline regression verified",
+      "regressions": [
+        "portal/tests/payroll/profile-import-safety.test.mjs"
+      ]
+    },
+    {
+      "id": "A02",
+      "issue": "Payroll import workspace/auth drift",
+      "owner": "desktop",
+      "status": "repaired; offline regression verified",
+      "regressions": [
+        "suite/tests/test_accounting_safety.py"
+      ]
+    },
+    {
+      "id": "A03",
+      "issue": "Whole-import duplicates across batches",
+      "owner": "root/desktop",
+      "status": "repaired; offline regression verified",
+      "regressions": [
+        "portal/tests/payroll/profile-import-safety.test.mjs",
+        "suite/tests/test_accounting_safety.py"
+      ]
+    },
+    {
+      "id": "A04",
+      "issue": "Strict import amounts, nonfinite and surplus CSV cells",
+      "owner": "root/desktop",
+      "status": "repaired; offline regression verified",
+      "regressions": [
+        "portal/tests/payroll/profile-import-safety.test.mjs",
+        "suite/tests/test_accounting_safety.py"
+      ]
+    },
+    {
+      "id": "A05",
+      "issue": "Partial payroll updates preserve omitted optional fields",
+      "owner": "root",
+      "status": "repaired; offline regression verified",
+      "regressions": [
+        "portal/tests/payroll/profile-import-safety.test.mjs"
+      ]
+    },
+    {
+      "id": "F01",
+      "issue": "Desktop accounting read role authorization",
+      "owner": "root",
+      "status": "repaired; offline regression verified",
+      "regressions": [
+        "portal/tests/accounting-audit-repairs.test.mjs"
+      ]
+    },
+    {
+      "id": "F02",
+      "issue": "Cache identity/role/workspace and exact edition isolation",
+      "owner": "desktop",
+      "status": "repaired; offline regression verified",
+      "regressions": [
+        "suite/tests/test_accounting_safety.py"
+      ]
+    },
+    {
+      "id": "F03",
+      "issue": "Concurrent posted-journal immutability",
+      "owner": "backend",
+      "status": "repaired; offline regression verified",
+      "regressions": [
+        "portal/tests/accounting-mutation-safety.test.mjs"
+      ]
+    },
+    {
+      "id": "F04",
+      "issue": "Opening-balance/reversal replay protection",
+      "owner": "backend/desktop",
+      "status": "repaired; offline regression verified",
+      "regressions": [
+        "portal/tests/accounting-mutation-safety.test.mjs",
+        "suite/tests/test_accounting_safety.py"
+      ]
+    },
+    {
+      "id": "F05",
+      "issue": "Atomic/idempotent supplier payments",
+      "owner": "backend",
+      "status": "repaired; offline regression verified",
+      "regressions": [
+        "portal/tests/accounting-mutation-safety.test.mjs"
+      ]
+    },
+    {
+      "id": "F06",
+      "issue": "Atomic/idempotent salary payments",
+      "owner": "workflow",
+      "status": "repaired; offline regression verified",
+      "regressions": [
+        "portal/tests/finance-workflow-integrity.test.mjs",
+        "suite/tests/test_accounting_safety.py"
+      ]
+    },
+    {
+      "id": "F07",
+      "issue": "Payroll payment retained net-liability mapping",
+      "owner": "workflow",
+      "status": "repaired; offline regression verified",
+      "regressions": [
+        "portal/tests/finance-workflow-integrity.test.mjs"
+      ]
+    },
+    {
+      "id": "F08",
+      "issue": "Atomic/versioned imprest lifecycle",
+      "owner": "workflow",
+      "status": "repaired; offline regression verified",
+      "regressions": [
+        "portal/tests/finance-workflow-integrity.test.mjs"
+      ]
+    },
+    {
+      "id": "F09",
+      "issue": "Imprest closed-period fail-closed/edition checks",
+      "owner": "workflow",
+      "status": "repaired; offline regression verified",
+      "regressions": [
+        "portal/tests/finance-workflow-integrity.test.mjs"
+      ]
+    },
+    {
+      "id": "F10",
+      "issue": "Pending retirement outstanding summary",
+      "owner": "workflow",
+      "status": "repaired; offline regression verified",
+      "regressions": [
+        "portal/tests/finance-workflow-integrity.test.mjs"
+      ]
+    },
+    {
+      "id": "F11",
+      "issue": "Supplier web branch/section review scopes",
+      "owner": "workflow",
+      "status": "repaired; offline regression verified",
+      "regressions": [
+        "portal/tests/finance-workflow-integrity.test.mjs"
+      ]
+    },
+    {
+      "id": "F12",
+      "issue": "Visible role/type approval-limit enforcement",
+      "owner": "backend",
+      "status": "repaired; offline regression verified",
+      "regressions": [
+        "portal/tests/accounting-mutation-safety.test.mjs",
+        "portal/tests/finance-workflow-integrity.test.mjs"
+      ]
+    },
+    {
+      "id": "F13",
+      "issue": "Unique posted-only bank matching",
+      "owner": "backend",
+      "status": "repaired; offline regression verified",
+      "regressions": [
+        "portal/tests/accounting-mutation-safety.test.mjs",
+        "suite/tests/test_accounting_safety.py"
+      ]
+    },
+    {
+      "id": "F14",
+      "issue": "Asset acquisition/register consistency",
+      "owner": "backend",
+      "status": "repaired; offline regression verified",
+      "regressions": [
+        "portal/tests/accounting-mutation-safety.test.mjs"
+      ]
+    },
+    {
+      "id": "F15",
+      "issue": "Depreciation atomicity and retry recovery",
+      "owner": "backend",
+      "status": "repaired; offline regression verified",
+      "regressions": [
+        "portal/tests/accounting-mutation-safety.test.mjs"
+      ]
+    },
+    {
+      "id": "F16",
+      "issue": "Historical receivables/payables ageing cutoff",
+      "owner": "root/desktop",
+      "status": "repaired; offline regression verified",
+      "regressions": [
+        "portal/tests/accounting-audit-repairs.test.mjs",
+        "suite/tests/test_accounting_safety.py"
+      ]
+    },
+    {
+      "id": "F17",
+      "issue": "Department line report isolation",
+      "owner": "root/desktop",
+      "status": "repaired; offline regression verified",
+      "regressions": [
+        "portal/tests/accounting-audit-repairs.test.mjs",
+        "suite/tests/test_accounting_safety.py"
+      ]
+    },
+    {
+      "id": "F18",
+      "issue": "Custom cash/bank accounts in cashflow",
+      "owner": "desktop",
+      "status": "repaired; offline regression verified",
+      "regressions": [
+        "suite/tests/test_accounting_safety.py"
+      ]
+    },
+    {
+      "id": "F19",
+      "issue": "Printed filters match applied report data",
+      "owner": "desktop",
+      "status": "repaired; offline regression verified",
+      "regressions": [
+        "suite/tests/test_accounting_safety.py"
+      ]
+    },
+    {
+      "id": "F20",
+      "issue": "Consistent School session/term filtering",
+      "owner": "desktop",
+      "status": "repaired; offline regression verified",
+      "regressions": [
+        "suite/tests/test_accounting_safety.py",
+        "suite/tests/test_accounting_finance_parity.py"
+      ]
+    },
+    {
+      "id": "A06",
+      "issue": "Unspecified pension override must retain configured rate fallback",
+      "owner": "root",
+      "status": "repaired; offline regression verified",
+      "regressions": [
+        "portal/tests/payroll/profile-import-safety.test.mjs"
+      ]
+    },
+    {
+      "id": "F21",
+      "issue": "Ageing branch identity, date aliases, undated-receipt warnings and later reversal cutoff",
+      "owner": "root/desktop",
+      "status": "repaired; offline regression verified",
+      "regressions": [
+        "portal/tests/accounting-audit-repairs.test.mjs",
+        "suite/tests/test_accounting_safety.py"
+      ]
+    },
+    {
+      "id": "A07",
+      "issue": "Advanced payroll CSV JSON fields must be parsed and validated, not silently discarded",
+      "owner": "desktop",
+      "status": "repaired; offline regression verified",
+      "regressions": [
+        "portal/tests/payroll/profile-import-safety.test.mjs",
+        "suite/tests/test_accounting_safety.py"
+      ]
+    },
+    {
+      "id": "F22",
+      "issue": "Atomic payroll generation, approval, posting and tax-override decisions; fail closed on incomplete configuration reads",
+      "owner": "workflow",
+      "status": "repaired; offline regression verified",
+      "regressions": [
+        "portal/tests/finance-workflow-integrity.test.mjs",
+        "portal/tests/payroll/payroll-generation-config.test.mjs"
+      ]
+    },
+    {
+      "id": "F23",
+      "issue": "Older open imprests must not disappear behind a twenty-record history limit",
+      "owner": "workflow",
+      "status": "repaired; offline regression verified",
+      "regressions": [
+        "portal/tests/finance-workflow-integrity.test.mjs"
+      ]
+    },
+    {
+      "id": "F24",
+      "issue": "Legacy payroll migration must not overwrite concurrent run or payment changes",
+      "owner": "backend",
+      "status": "repaired; offline regression verified",
+      "regressions": [
+        "portal/tests/payroll/payroll-migration.test.mjs"
+      ]
+    },
+    {
+      "id": "F25",
+      "issue": "Strict journal validation must retain internal ISO dates and machine-precision arithmetic compatibility",
+      "owner": "backend",
+      "status": "repaired; offline regression verified",
+      "regressions": [
+        "portal/tests/accounting-mutation-safety.test.mjs",
+        "portal/tests/accounting-revenue-sync.test.mjs"
+      ]
+    },
+    {
+      "id": "F26",
+      "issue": "Ageing and dashboard fallback must honor applied academic/department scopes after payment allocation",
+      "owner": "root/desktop",
+      "status": "repaired; offline regression verified",
+      "regressions": [
+        "portal/tests/accounting-audit-repairs.test.mjs",
+        "suite/tests/test_accounting_safety.py",
+        "suite/tests/test_accounting_finance_parity.py"
+      ]
+    },
+    {
+      "id": "F27",
+      "issue": "Atomic concession/refund posting, actual-account approval checks and stable desktop source IDs for retry safety",
+      "owner": "workflow/desktop",
+      "status": "repaired; offline regression verified",
+      "regressions": [
+        "portal/tests/finance-workflow-integrity.test.mjs",
+        "suite/tests/test_accounting_safety.py"
+      ]
+    }
+  ]
+}

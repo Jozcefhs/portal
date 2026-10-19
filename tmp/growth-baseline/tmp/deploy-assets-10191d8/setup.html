@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Settings</title>
+  <link rel="stylesheet" href="css/style.css?v=20260722-settings-ui">
+</head>
+<body class="settings-page">
+  <main class="settings-shell">
+    <header class="settings-topbar">
+      <div class="settings-brand">
+        <span class="settings-logo-wrap"><img src="images/logo.png" alt="School logo" class="settings-logo" onerror="this.style.display='none'"></span>
+        <div>
+          <p class="settings-eyebrow">Administration</p>
+          <h1>Settings</h1>
+          <p>Manage your school identity, documents and portal experience.</p>
+        </div>
+      </div>
+      <div class="settings-top-actions">
+        <a href="admin.html" class="settings-link">Web admin</a>
+        <a href="index.html" class="settings-link">View portal</a>
+      </div>
+    </header>
+
+    <form id="setupLoginForm" class="settings-unlock-card">
+      <div class="settings-lock-icon" aria-hidden="true">&#128274;</div>
+      <div class="settings-unlock-copy">
+        <p class="settings-eyebrow">Restricted area</p>
+        <h2>Unlock school settings</h2>
+        <p>Enter the setup password to view and update configuration.</p>
+      </div>
+      <div class="settings-unlock-control">
+        <label for="setupPassword">Setup password <span class="required">*</span></label>
+        <input id="setupPassword" type="password" autocomplete="current-password" required>
+      </div>
+      <button type="submit">Unlock settings</button>
+      <p id="setupLoginStatus" class="status settings-login-status"></p>
+    </form>
+
+    <form id="setupForm" class="settings-layout" hidden>
+      <aside class="settings-sidebar">
+        <div class="settings-sidebar-title">School settings</div>
+        <nav aria-label="Settings sections">
+          <a href="#general-settings" class="settings-nav-link active"><span>01</span><div><strong>General</strong><small>Identity and contact</small></div></a>
+          <a href="#document-settings" class="settings-nav-link"><span>02</span><div><strong>Documents</strong><small>Signatories and email</small></div></a>
+          <a href="#parent-settings" class="settings-nav-link"><span>03</span><div><strong>Parent portal</strong><small>Results and visibility</small></div></a>
+          <a href="#brand-settings" class="settings-nav-link"><span>04</span><div><strong>Branding</strong><small>Web logo</small></div></a>
+          <a href="#landing-settings" class="settings-nav-link"><span>05</span><div><strong>Landing page</strong><small>Public portal content</small></div></a>
+          <a href="#licence-settings" class="settings-nav-link"><span>06</span><div><strong>Licensing</strong><small>Product access</small></div></a>
+        </nav>
+        <div class="settings-sidebar-note">
+          <strong>Tip</strong>
+          <p>Changes become public only after you save them.</p>
+        </div>
+      </aside>
+
+      <div class="settings-content">
+        <section id="general-settings" class="settings-section">
+          <div class="settings-section-heading">
+            <div><span class="settings-section-icon">G</span></div>
+            <div>
+              <p class="settings-eyebrow">School profile</p>
+              <h2>General information</h2>
+              <p>Core identity and contact details used across the portal.</p>
+            </div>
+          </div>
+          <div class="settings-fields two-column">
+            <div class="settings-field">
+              <label for="schoolName">School name <span class="required">*</span></label>
+              <input id="schoolName" name="SchoolName" required>
+            </div>
+            <div class="settings-field compact-field">
+              <label for="schoolCode">School code</label>
+              <input id="schoolCode" name="SchoolCode" placeholder="DCA">
+            </div>
+            <div class="settings-field">
+              <label for="schoolEmail">School email</label>
+              <input id="schoolEmail" name="SchoolEmail" type="email">
+            </div>
+            <div class="settings-field">
+              <label for="schoolPhone">School phone</label>
+              <input id="schoolPhone" name="SchoolPhone" inputmode="tel">
+            </div>
+            <div class="settings-field full-width">
+              <label for="schoolAddress">School address</label>
+              <input id="schoolAddress" name="SchoolAddress">
+            </div>
+            <div class="settings-field full-width">
+              <label for="nameFormat">Student and applicant name format</label>
+              <select id="nameFormat" name="NameFormat">
+                <option value="First name, middle name, surname">First name, middle name, surname</option>
+                <option value="First name, surname, middle name">First name, surname, middle name</option>
+                <option value="Surname, first name, middle name">Surname, first name, middle name</option>
+                <option value="Surname, middle name, first name">Surname, middle name, first name</option>
+                <option value="Middle name, first name, surname">Middle name, first name, surname</option>
+                <option value="Middle name, surname, first name">Middle name, surname, first name</option>
+              </select>
+              <small class="settings-help">Controls how names appear whenever separate first, middle and surname fields are available.</small>
+            </div>
+          </div>
+        </section>
+
+        <section id="document-settings" class="settings-section">
+          <div class="settings-section-heading">
+            <div><span class="settings-section-icon">D</span></div>
+            <div>
+              <p class="settings-eyebrow">Communication</p>
+              <h2>Documents and signatories</h2>
+              <p>Set the default signatory and optional document-specific alternatives.</p>
+            </div>
+          </div>
+          <div class="settings-subsection">
+            <div class="settings-subsection-title"><strong>Default signatory</strong><span>Used when a document-specific name is blank.</span></div>
+            <div class="settings-fields two-column">
+              <div class="settings-field"><label for="schoolSignatoryName">Signatory name</label><input id="schoolSignatoryName" name="SchoolSignatoryName" placeholder="Example: Principal name"></div>
+              <div class="settings-field"><label for="schoolSignatoryTitle">Signatory title</label><input id="schoolSignatoryTitle" name="SchoolSignatoryTitle" placeholder="Example: Principal"></div>
+            </div>
+          </div>
+          <div class="settings-subsection">
+            <div class="settings-subsection-title"><strong>Document-specific signatories</strong><span>Leave any pair blank to use the default above.</span></div>
+            <div class="settings-fields two-column">
+              <div class="settings-field"><label for="resultSignatoryName">Result slip signatory</label><input id="resultSignatoryName" name="ResultSignatoryName"></div>
+              <div class="settings-field"><label for="resultSignatoryTitle">Result slip title</label><input id="resultSignatoryTitle" name="ResultSignatoryTitle"></div>
+              <div class="settings-field"><label for="offerSignatoryName">Offer letter signatory</label><input id="offerSignatoryName" name="OfferSignatoryName"></div>
+              <div class="settings-field"><label for="offerSignatoryTitle">Offer letter title</label><input id="offerSignatoryTitle" name="OfferSignatoryTitle"></div>
+              <div class="settings-field"><label for="admissionSignatoryName">Admission letter signatory</label><input id="admissionSignatoryName" name="AdmissionSignatoryName"></div>
+              <div class="settings-field"><label for="admissionSignatoryTitle">Admission letter title</label><input id="admissionSignatoryTitle" name="AdmissionSignatoryTitle"></div>
+            </div>
+          </div>
+          <div class="settings-subsection">
+            <div class="settings-fields">
+              <div class="settings-field">
+                <label for="emailGreetingTemplate">Email greeting template</label>
+                <input id="emailGreetingTemplate" name="EmailGreetingTemplate" placeholder="Dear Parent/Guardian,">
+                <small class="settings-help">Available placeholders: <code>{FULL_NAME}</code>, <code>{FIRST_NAME}</code> and <code>{SCHOOL_NAME}</code>.</small>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="parent-settings" class="settings-section">
+          <div class="settings-section-heading">
+            <div><span class="settings-section-icon">P</span></div>
+            <div>
+              <p class="settings-eyebrow">Portal access</p>
+              <h2>Parent portal</h2>
+              <p>Control the level of entrance-result information visible to parents.</p>
+            </div>
+          </div>
+          <div class="settings-fields two-column">
+            <div class="settings-field">
+              <label for="resultDisplayMode">Parent result display</label>
+              <select id="resultDisplayMode" name="ResultDisplayMode">
+                <option value="subjects">Show subjects and scores</option>
+                <option value="percentage">Show average/percentage only</option>
+              </select>
+            </div>
+            <div class="settings-field">
+              <label for="showResultsOnline">Entrance results on parent portal</label>
+              <select id="showResultsOnline" name="ShowResultsOnline">
+                <option value="NO">Hide for all applicants</option>
+                <option value="YES">Show when applicant result is enabled</option>
+              </select>
+            </div>
+          </div>
+        </section>
+
+        <section id="brand-settings" class="settings-section">
+          <div class="settings-section-heading">
+            <div><span class="settings-section-icon">B</span></div>
+            <div>
+              <p class="settings-eyebrow">Appearance</p>
+              <h2>Branding</h2>
+              <p>Choose the logo displayed on public web pages.</p>
+            </div>
+          </div>
+          <div class="settings-logo-card">
+            <div class="settings-logo-preview"><img id="webLogoPreview" src="images/logo.png" alt="Current web logo"></div>
+            <div class="settings-logo-copy">
+              <strong>School web logo</strong>
+              <p>PNG, JPG or WebP. The image is resized automatically and does not affect PDF documents.</p>
+              <div class="settings-file-actions">
+                <label for="webLogoFile" class="settings-file-button">Choose image</label>
+                <input id="webLogoFile" type="file" accept="image/png,image/jpeg,image/webp">
+                <button id="removeWebLogo" type="button" class="settings-text-button">Use default logo</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="landing-settings" class="settings-section">
+          <div class="settings-section-heading">
+            <div><span class="settings-section-icon">L</span></div>
+            <div>
+              <p class="settings-eyebrow">Public experience</p>
+              <h2>Landing page</h2>
+              <p>Edit the headline and notice shown before a visitor signs in.</p>
+            </div>
+          </div>
+          <div class="settings-fields">
+            <div class="settings-field"><label for="portalHeadline">Headline</label><input id="portalHeadline" name="PortalHeadline"></div>
+            <div class="settings-field"><label for="portalSubheading">Subheading</label><textarea id="portalSubheading" name="PortalSubheading" rows="3"></textarea></div>
+            <div class="settings-field"><label for="portalNotice">Optional notice</label><textarea id="portalNotice" name="PortalNotice" rows="2" placeholder="Example: Admission into JSS 1 closes on Friday."></textarea></div>
+          </div>
+        </section>
+
+        <section id="licence-settings" class="settings-section">
+          <div class="settings-section-heading">
+            <div><span class="settings-section-icon">K</span></div>
+            <div>
+              <p class="settings-eyebrow">Application access</p>
+              <h2>Product licensing</h2>
+              <p>Configure whether a product key is required before application use.</p>
+            </div>
+          </div>
+          <div class="settings-fields">
+            <div class="settings-field">
+              <label for="productKeyMode">Product key requirement</label>
+              <select id="productKeyMode" name="ProductKeyMode">
+                <option value="off">Off for now</option>
+                <option value="required">Require product key before app use</option>
+              </select>
+              <small class="settings-help">Enforcement should be connected to a school-specific license or activation record.</small>
+            </div>
+          </div>
+        </section>
+
+        <div class="settings-savebar">
+          <div><strong>School settings</strong><p id="setupStatus" class="status">Review your changes before saving.</p></div>
+          <button id="saveSetupButton" type="submit">Save changes</button>
+        </div>
+      </div>
+    </form>
+  </main>
+
+  <script src="js/password-toggle.js?v=20260718-password-toggle"></script>
+  <script src="js/setup.js?v=20260722-settings-ui"></script>
+</body>
+</html>

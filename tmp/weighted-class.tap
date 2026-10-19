@@ -1,0 +1,32 @@
+✔ AM-01 all or omitted sections remain confined to the assigned section (12.9032ms)
+✔ AM-02 teachers cannot read another subject or period; form teachers retain classroom access (9.5811ms)
+✔ AM-03 midterm uses part-aware exemption weights and retains incomplete states (6.8115ms)
+✔ AM-04 draft creation, activation and inheritance require the reviewed version (5.889ms)
+✔ AM-04 a concurrent activation cannot be overwritten by draft save (1.0328ms)
+✔ AM-04 inheritance reset cannot overwrite a concurrent policy activation (1.2079ms)
+✔ AM-05 an empty classroom roster rejects attendance before any write (4.5571ms)
+✔ attendance keeps consecutive days separate with real generated, long session and term IDs (21.0557ms)
+✔ legacy same-day history keeps its ID, genuine corrections require approval, and the next day creates a new row (10.1966ms)
+✔ old cross-day correction requests cannot alter history but can be rejected (5.7895ms)
+✔ attendance identity distinguishes modes, subjects, periods, classrooms and long student references (2.9747ms)
+✔ concurrent new attendance saves cannot create duplicate daily records (4.3636ms)
+✔ attendance correction approval still checks revisions and marking still checks teacher allocation (6.3688ms)
+✔ AM-06 concurrent timetable additions share an atomic version guard (4.1761ms)
+✔ AM-07 newly added and existing midterm components serialize their own IDs (1.7114ms)
+✔ AM-08 settings explain clearance without offering unsupported switches or changing scholarship billing (1.8566ms)
+✔ CBT-05 upload cleanup preserves files on uncertain save and removes them on definite rejection (20.4788ms)
+✔ CBT-05 a committed paper save with a lost acknowledgement is reconciled by its exact record (6.4089ms)
+✔ whole class includes all arms and unassigned students with subject/test columns (10.2142ms)
+✔ other classes, terms and inactive memberships cannot enter the selected class register (0.4857ms)
+✔ conflicting transferred-arm scores are flagged instead of silently choosing a mark (0.509ms)
+✔ split tests, exemptions and absence retain their meaning and do not become zero or total marks (0.4784ms)
+✔ class-wide API refuses ordinary teachers before any data loading (0.7613ms)
+✔ class-wide API uses scoped bootstrap and rejects unpermitted class or period identifiers (6.4851ms)
+ℹ tests 24
+ℹ suites 0
+ℹ pass 24
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 303.7747

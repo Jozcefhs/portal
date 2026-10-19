@@ -1,0 +1,5 @@
+{
+  "version": "3.0.1",
+  "installer_url": "https://github.com/Jozcefhs/dcs/releases/download/v3.0.1/Integrated_School_Management_Suite_Setup_v3.0.1.exe",
+  "notes": "Integrated School Management Suite v3.0.1 fixes admission form expiry consistency, adds Accounts access to form purchases, and expands Firestore write support for Accounts, Clinic, and Kitchen."
+}

@@ -1,0 +1,88 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import vm from 'node:vm';
+
+const source = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
+const nativeDialogPattern = /window\.(?:prompt|confirm|alert)\s*\(/;
+
+test('action result dialogs queue without cancelling a confirmation and coalesce duplicate messages', async () => {
+  class Element {
+    nodes = new Map(); listeners = {}; open = false; classList = { toggle() {} };
+    setAttribute() {} focus() {} replaceChildren(...nodes) { this.children = nodes; }
+    querySelector(selector) { if (!this.nodes.has(selector)) this.nodes.set(selector, new Element()); return this.nodes.get(selector); }
+    querySelectorAll() { return []; }
+    addEventListener(event, handler) { this.listeners[event] = handler; }
+    showModal() { this.open = true; } close() { this.open = false; }
+  }
+  let dialog;
+  const document = { body: { appendChild(node) { dialog = node; } }, createElement: () => new Element(), addEventListener() {} };
+  const window = { requestAnimationFrame: callback => callback() };
+  vm.runInNewContext(await source('js/app-dialogs.js'), { window, document });
+  const confirmation = window.DynamaxDialogs.confirm({ message: 'Approve?' });
+  const result = window.DynamaxDialogs.alert({ message: 'Saved successfully' });
+  const duplicate = window.DynamaxDialogs.alert({ message: 'Saved successfully' });
+  assert.equal(duplicate, result);
+  assert.equal(dialog.querySelector('.app-decision-message').textContent, 'Approve?');
+  dialog.querySelector('form').listeners.submit({ preventDefault() {} });
+  assert.equal(await confirmation, true);
+  assert.equal(dialog.querySelector('.app-decision-message').textContent, 'Saved successfully');
+  dialog.querySelector('form').listeners.submit({ preventDefault() {} });
+  assert.equal(await result, true);
+  assert.equal(dialog.open, false);
+  const privateResult = window.DynamaxDialogs.alert({ message: 'Previous user’s result' });
+  const pendingPrompt = window.DynamaxDialogs.prompt({ message: 'Pending confirmation' });
+  window.DynamaxDialogs.clear();
+  assert.equal(await privateResult, false);
+  assert.equal(await pendingPrompt, null);
+  assert.equal(dialog.open, false);
+});
+
+test('shared Dynamax dialogs replace native JavaScript prompts and confirmations', async () => {
+  const [dialogs, admin, notifications, setup, faceLookup, pwa, plan] = await Promise.all([
+    source('js/app-dialogs.js'), source('js/admin.js'), source('js/notifications.js'), source('js/setup.js'),
+    source('js/student-face-lookup.js'), source('js/pwa-install.js'), source('js/plan-management.js')
+  ]);
+  assert.match(dialogs, /window\.DynamaxDialogs = \{/);
+  assert.match(dialogs, /confirm: \(options\) => open\(options, 'confirm'\)/);
+  assert.match(dialogs, /prompt: \(options\) => open\(options, 'prompt'\)/);
+  assert.match(dialogs, /alert: \(options\) => open\(options, 'alert'\)/);
+  assert.match(dialogs, /class="app-decision-details"/);
+  assert.match(dialogs, /Array\.isArray\(options\.items\)/);
+  assert.match(dialogs, /detailsList\.replaceChildren/);
+  for (const code of [admin, notifications, setup, faceLookup, pwa, plan]) assert.doesNotMatch(code, nativeDialogPattern);
+});
+
+test('parent and staff portals load the branded dialog component before their application code', async () => {
+  for (const [htmlFile, consumer] of [
+    ['admin.html', 'js/admin.js'], ['parent-dashboard.html', 'js/parent-dashboard.js'],
+    ['setup.html', 'js/setup.js'], ['plan-management.html', 'js/plan-management.js'],
+    ['index.html', 'js/pwa-install.js'], ['school.html', 'js/pwa-install.js']
+  ]) {
+    const html = await source(htmlFile);
+    assert.match(html, /js\/app-dialogs\.js/);
+    assert.ok(html.indexOf('js/app-dialogs.js') < html.indexOf(consumer), `${htmlFile} must load branded dialogs before ${consumer}`);
+  }
+});
+
+test('subscription transfer decisions use a detailed in-app approval dialog', async () => {
+  const [html, client] = await Promise.all([source('plan-management.html'), source('js/plan-management.js')]);
+  assert.match(html, /id="platformTransferDecisionDialog"/);
+  assert.match(html, /id="platformDecisionSubscriber"/);
+  assert.match(html, /id="platformDecisionAmount"/);
+  assert.match(client, /requestPlatformTransferDecision\(approve, decisionButton\.dataset\.reference\)/);
+  assert.match(client, /Approval note \(optional\)/);
+  assert.match(client, /Rejection reason/);
+});
+
+test('custom dialogs are responsive and retain dark-mode contrast', async () => {
+  const styles = await source('css/app-dialogs.css');
+  assert.match(styles, /\.app-decision-dialog \{[^}]*width: min\(500px, calc\(100vw - 24px\)\)/);
+  assert.match(styles, /html\[data-theme="dark"\] \.app-decision-dialog/);
+  assert.match(styles, /\.app-decision-dialog\.has-details \{[^}]*width: min\(760px/);
+  assert.match(styles, /\.app-decision-details ol \{[^}]*max-height: min\(46vh, 420px\)[^}]*overflow-y: auto/);
+  const mainStyles = await source('css/style.css');
+  assert.match(mainStyles, /@import url\('\.\/app-dialogs\.css\?v=20261016-grouped-form-validation'\)/);
+  assert.match(mainStyles, /\.platform-transfer-decision-dialog::backdrop/);
+  assert.match(mainStyles, /@media \(max-width: 430px\) \{ \.platform-decision-summary \{ grid-template-columns: 1fr; \} \}/);
+});

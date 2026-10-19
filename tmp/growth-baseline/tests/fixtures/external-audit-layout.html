@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Journal register layout fixture</title>
+<link rel="stylesheet" href="../../css/style.css">
+<body class="staff-page">
+<main style="padding:16px;max-width:1560px;margin:auto">
+  <p>Layout test with simulated records only. No database connection.</p>
+  <div class="staff-panel" id="fixture"></div>
+</main>
+<script type="module">
+const source = await (await fetch('../../js/admin.js')).text();
+const extract = (from, to) => source.slice(source.indexOf(`function ${from}(`), source.indexOf(to));
+const functions = [extract('externalAuditJournalRows', 'function externalAuditFindingRows('),
+  extract('renderExternalAudit', 'async function loadExternalAudit('),
+  extract('bindExternalAuditEvents', 'function exportIncomeAnalyticsCsv(')].join('\n');
+const journals = [27500, 42000, 18000].map((amount, index) => ({
+  RecordId: `TEST-${index}`, JournalNo: `SYS-INVCREDIT-AUTO-INV-20260930172916-4806FC78-${index}-${amount * 100}`,
+  Date: '2026-09-30', Status: 'Posted', BranchId: 'main',
+  Description: 'Parent credit applied: INV-20260930172916-4806FC78',
+  SourceType: 'Student Invoice Credit', SourceId: 'INV-20260930172916-4806FC78',
+  TotalDebit: amount, TotalCredit: amount,
+  Lines: [{ AccountCode: '2310', Description: 'TEST/001', Department: '', Debit: amount, Credit: 0 },
+    { AccountCode: '1100', Description: 'Cambridge Checkpoint Textbooks', Department: 'Books & Supplies', Debit: 0, Credit: amount }]
+}));
+const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+new Function('externalAuditState', 'currentUser', 'panelEl', 'escapeHtml', `
+  const activeSection = 'externalAudit';
+  const externalAuditFindingRows = () => '';
+  const externalAuditRequest = async () => { throw new Error('Fixture only: no API requests'); };
+  ${functions}
+  renderExternalAudit();
+`)({ journals, findings: [], tab: 'journals', scope: { branchId: 'main' }, page: 1, pageSize: 3,
+  history: [], findingHistory: [], findingPage: 1, dateFrom: '2026-09-01', dateTo: '2026-10-13' },
+  { role: 'Super Admin' }, document.getElementById('fixture'), escapeHtml);
+</script></body></html>

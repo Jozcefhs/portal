@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pay Admission Fees</title>
+  <link rel="stylesheet" href="css/style.css?v=20260718-personalized-ui">
+</head>
+<body>
+  <main class="page-wrap narrow">
+    <section class="card">
+      <div class="form-header">
+        <img src="images/logo.png" alt="School logo" class="logo small" onerror="this.style.display='none'">
+        <div>
+          <h1>Pay School Fees</h1>
+          <p class="muted"><span data-school-name>School Portal</span> - use the same email address and verification code used for your admission application.</p>
+        </div>
+      </div>
+
+      <form id="paymentLookupForm" autocomplete="on">
+        <label for="email">Verification Email <span class="required">*</span></label>
+        <input id="email" name="email" type="email" required>
+
+        <label for="code">Verification Code <span class="required">*</span></label>
+        <input id="code" name="code" type="text" required>
+
+        <button type="submit" id="lookupBtn">Find Payable Fees</button>
+        <p id="paymentStatus" class="status" aria-live="polite"></p>
+      </form>
+
+      <section id="feePanel" class="fee-panel" hidden>
+        <div class="verified-box" id="accountSummary"></div>
+        <div id="schoolFeeBreakdown" class="fee-breakdown" hidden></div>
+        <fieldset>
+          <legend>Payable Items</legend>
+          <div id="feeList"></div>
+        </fieldset>
+        <div id="walletAmountBox" hidden>
+          <label for="walletAmount">Wallet Top-up Amount</label>
+          <input id="walletAmount" type="number" min="0" step="100" inputmode="numeric">
+        </div>
+        <button type="button" id="payBtn">Pay Now</button>
+      </section>
+
+      <p>
+        <a href="index.html">Return to admission portal</a>
+      </p>
+    </section>
+  </main>
+
+  <script src="js/site-config.js?v=20260718-personalized-ui"></script>
+  <script src="js/payments.js?v=20260723-credit-labels"></script>
+</body>
+</html>

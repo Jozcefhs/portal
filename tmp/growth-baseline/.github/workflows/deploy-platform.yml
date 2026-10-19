@@ -1,0 +1,82 @@
+name: Deploy Dynamax platform
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  deployments: write
+
+concurrency:
+  group: dynamax-platform-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy central plan and subscriber platform
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_ACCOUNT_ID: a5aa57ffa1fd00e4fd98e78ee7d32f01
+      CLOUDFLARE_PROJECT: dynamaxms
+      PLATFORM_URL: https://dynamax.cc
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Verify platform deployment contract
+        run: node --test tests/platform-deployment-workflow.test.mjs
+
+      - name: Synchronize optional Google email OAuth credentials
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${GOOGLE_OAUTH_CLIENT_ID}" && -z "${GOOGLE_OAUTH_CLIENT_SECRET}" ]]; then
+            response="$(curl --fail-with-body --silent --show-error --request PATCH \
+              "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects/${CLOUDFLARE_PROJECT}" \
+              --header "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+              --header 'Content-Type: application/json' \
+              --data '{"deployment_configs":{"production":{"env_vars":{"GOOGLE_OAUTH_CLIENT_ID":null,"GOOGLE_OAUTH_CLIENT_SECRET":null}}}}')"
+            jq -e '.success == true' <<<"${response}" >/dev/null
+            echo 'Google email OAuth is disabled; stale central OAuth secrets were removed and Brevo remains available.'
+            exit 0
+          fi
+          [[ -n "${GOOGLE_OAUTH_CLIENT_ID}" && -n "${GOOGLE_OAUTH_CLIENT_SECRET}" ]] || {
+            echo '::error::GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET must be configured together.'
+            exit 1
+          }
+          umask 077
+          secret_file="$(mktemp)"
+          cleanup() { rm -f "${secret_file}"; }
+          trap cleanup EXIT
+          SECRET_FILE="${secret_file}" node -e 'const fs = require("node:fs"); fs.writeFileSync(process.env.SECRET_FILE, JSON.stringify({ GOOGLE_OAUTH_CLIENT_ID: process.env.GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET: process.env.GOOGLE_OAUTH_CLIENT_SECRET }), { mode: 0o600 });'
+          npx --yes wrangler@4.125.0 pages secret bulk "${secret_file}" --project-name "${CLOUDFLARE_PROJECT}"
+
+      - name: Prepare production files
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .pages-deploy
+          mkdir .pages-deploy
+          cp -R css functions images js vendor .pages-deploy/
+          cp _headers _routes.json .pages-deploy/
+          cp ./*.html .pages-deploy/
+          cp app-icon.svg manifest.webmanifest sw.js version.json .pages-deploy/
+
+      - name: Deploy Cloudflare Pages production
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: "4.125.0"
+          command: pages deploy .pages-deploy --project-name=${{ env.CLOUDFLARE_PROJECT }} --branch=main --commit-hash=${{ github.sha }} --commit-dirty=false
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify live platform catalogue
+        run: node scripts/verify-platform-deployment.mjs --url "${PLATFORM_URL}"

@@ -1,0 +1,475 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <script src="js/display-time.js?v=20261010-wat-timestamps"></script>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Organisation Staff Portal</title>
+  <meta name="theme-color" content="#071b33">
+  <script src="js/preferences.js?v=20260812-audio-face-guidance"></script>
+  <link rel="stylesheet" href="css/style.css?v=20261006-student-actions-mobile-20261007-face-auto-start-compact-pos-v2-timetable-generator-20261009-staff-account-search-20261010-pos-catalogue-width-sidebar-collapse-pos-catalogue-height-responsive-vendor-navigation-sales-analysis-20261012-help-access-audit-journal-layout-20261013-academic-register-20261014-audit-language-academic-serial-search-20261016-tuck-shop-mobile-student-lookup-admission-year-intake-billing-credit-review-missing-only">
+  <link rel="stylesheet" href="css/notifications.css?v=20260804-read-efficiency">
+  <link rel="stylesheet" href="css/teacher-homework.css?v=20261005-homework">
+  <link rel="stylesheet" href="css/vendor-settlements.css?v=20261013-vendor-approval-revocation-nowrap-columns">
+  <link rel="stylesheet" href="css/item-import.css?v=20261010-batch-items">
+  <link rel="stylesheet" href="css/boarding-offerings.css?v=20261010-boarding-offerings">
+    <link rel="stylesheet" href="css/payment-corrections.css?v=20261015-full-payment-history">
+  <link rel="stylesheet" href="css/fee-collection-summary.css?v=20261015-compact-clubs">
+  <link rel="stylesheet" href="css/staff-attendance-groups.css?v=20261011-attendance-groups">
+  <link rel="stylesheet" href="css/procurement.css?v=20261015-stock-value-alignment">
+  <link rel="stylesheet" href="css/hotel-self-service.css?v=20261013">
+  <script src="js/hotel-self-service-admin.js?v=20261013"></script>
+</head>
+<body class="staff-page">
+  <header class="staff-topbar">
+    <div class="staff-brand-controls">
+      <button type="button" id="staffSidebarToggle" class="staff-header-icon staff-sidebar-toggle" aria-controls="staffSidebar" aria-expanded="true" aria-label="Hide navigation menu" title="Hide navigation menu" hidden>
+        <span aria-hidden="true">&#9776;</span>
+      </button>
+      <a id="staffBrand" class="staff-brand" href="index.html">
+        <img src="images/Logo.png" alt="" class="nav-logo" onerror="this.style.display='none'">
+        <span><strong data-school-name>Organisation Management Suite</strong><small id="staffEditionLabel">Web Companion</small></span>
+      </a>
+    </div>
+    <div id="staffIdentity" class="staff-identity" hidden>
+      <div class="staff-desktop-tools" aria-label="Dashboard controls">
+        <button type="button" id="staffTutorialButton" class="staff-header-icon staff-tutorial-button" aria-label="Open tutorial for this module" title="Open tutorial for this module">
+          <span aria-hidden="true">&#9654;</span>
+        </button>
+        <button type="button" id="staffHeaderRefresh" class="staff-header-icon" aria-label="Refresh dashboard" title="Refresh dashboard">
+          <span aria-hidden="true">&#8635;</span>
+        </button>
+        <button type="button" id="staffThemeToggle" class="staff-header-icon" aria-label="Switch colour theme" title="Switch colour theme">
+          <span id="staffThemeToggleIcon" aria-hidden="true">&#9790;</span>
+        </button>
+      </div>
+      <a href="help.html" class="staff-header-icon staff-help-button" target="_blank" rel="noopener" aria-label="Help, support and devices" title="Help, support and devices"><span aria-hidden="true">?</span></a>
+      <button type="button" id="staffProfileTrigger" class="staff-profile-trigger" aria-label="Edit my profile" title="Edit my profile">
+        <span id="staffAvatar" class="staff-avatar" aria-hidden="true"><img id="staffAvatarImage" alt="" hidden><span id="staffAvatarFallback">S</span></span>
+        <span class="staff-identity-copy"><strong id="staffDisplayName"></strong><small id="staffRole"></small></span>
+      </button>
+      <button type="button" id="staffSwitchUser" class="dashboard-signout staff-header-signout" aria-label="Switch user" title="Switch user">
+        <span aria-hidden="true">&#8644;</span>
+      </button>
+      <button type="button" id="staffSignOut" class="dashboard-signout staff-header-signout" aria-label="Sign out" title="Sign out">
+        <span aria-hidden="true">&#8618;</span>
+      </button>
+    </div>
+  </header>
+  <!--Empty. commit-->
+  <main class="staff-shell">
+    <section id="staffLoginCard" class="card staff-login-card">
+      <p class="eyebrow">Authorized staff only</p>
+      <h1>Operations Companion</h1>
+      <p class="lead">Sign in to access the organisation records permitted for your role.</p>
+      <form id="staffLoginForm" autocomplete="on">
+        <label for="staffUsername">Username</label>
+        <input id="staffUsername" name="username" autocomplete="username webauthn" required>
+        <label for="staffPassword">Password</label>
+        <input id="staffPassword" name="password" type="password" autocomplete="current-password" required>
+        <button id="staffLoginButton" type="submit">Sign In</button>
+        <button id="staffPasskeyLogin" type="button" class="staff-passkey-button" hidden>
+          <span aria-hidden="true">◉</span> Sign in with biometrics
+        </button>
+        <p id="staffLoginStatus" class="status" role="status"></p>
+      </form>
+      <p class="muted staff-login-note">This web portal complements the desktop application. Both use the same database.</p>
+      <p class="staff-login-note"><a href="help.html" target="_blank" rel="noopener">Help, support &amp; devices</a></p>
+    </section>
+
+    <section id="staffDashboard" class="staff-dashboard" hidden>
+      <div class="staff-app-layout">
+        <aside class="staff-sidebar" id="staffSidebar">
+          <div class="staff-sidebar-heading">
+            <button type="button" id="staffSidebarThemeToggle" class="staff-sidebar-theme" aria-label="Switch colour theme" title="Switch colour theme">
+              <span id="staffSidebarThemeToggleIcon" aria-hidden="true">&#9790;</span>
+            </button>
+            <small>Workspace</small>
+            <strong id="staffWorkspaceTitle">Operations Centre</strong>
+          </div>
+          <nav class="admin-tabs staff-tabs" id="adminTabs" aria-label="Staff dashboard sections"></nav>
+          <div class="staff-sidebar-actions">
+            <small class="staff-swipe-hint">Swipe left to close this panel</small>
+            <details id="staffAccountMenu" class="staff-account-menu">
+              <summary>
+                <span class="staff-account-menu-icon" aria-hidden="true">&#9881;</span>
+                <span class="staff-account-menu-label">Account &amp; settings</span>
+                <span class="staff-account-live" title="Desktop and web are synchronized"><span class="staff-live-dot"></span> Live</span>
+                <span class="staff-account-chevron" aria-hidden="true">&#8963;</span>
+              </summary>
+              <div id="staffAccountMenuPanel" class="staff-account-menu-panel">
+                <button type="button" id="staffApprovalSettings" class="staff-profile-settings" hidden>
+                  <span aria-hidden="true">&#9881;</span> User settings
+                </button>
+                <button type="button" id="staffPaymentSettings" class="staff-profile-settings" hidden>
+                  <span aria-hidden="true">&#8358;</span> Payment settings
+                </button>
+                <button type="button" id="staffSubscriptionButton" class="staff-profile-settings" hidden>
+                  <span aria-hidden="true">&#8593;</span> Subscription
+                </button>
+                <button type="button" id="staffDesktopSetup" class="staff-profile-settings" hidden>
+                  <span aria-hidden="true">&#128187;</span> Desktop setup
+                </button>
+                <button type="button" id="staffMfaSettings" class="staff-profile-settings">
+                  <span aria-hidden="true">&#128737;</span> Two-factor security
+                </button>
+                <button type="button" id="staffTutorialMenu" class="staff-profile-settings">
+                  <span aria-hidden="true">&#9654;</span> Tutorial for this page
+                </button>
+                <a href="help.html" class="staff-profile-settings" target="_blank" rel="noopener"><span aria-hidden="true">?</span> Help &amp; devices</a>
+                <button type="button" id="staffPasskeySetup" class="staff-passkey-setup" hidden>
+                  <span aria-hidden="true">&#9673;</span> Set up biometric sign-in
+                </button>
+                <button type="button" id="staffSidebarSwitchUser" class="staff-sidebar-signout"><span aria-hidden="true">&#8644;</span> Switch user</button>
+                <button type="button" id="staffSidebarSignOut" class="staff-sidebar-signout"><span aria-hidden="true">&#8618;</span> Sign out</button>
+                <div class="staff-account-sync"><span class="staff-live-dot"></span><span><strong>Database live</strong><small>Desktop and web are synchronized</small></span></div>
+              </div>
+            </details>
+          </div>
+        </aside>
+        <button type="button" id="staffSidebarScrim" class="staff-sidebar-scrim" aria-label="Close navigation menu" hidden></button>
+        <div class="staff-main-content">
+          <div class="staff-welcome">
+            <div>
+              <p id="staffOverviewLabel" class="eyebrow">Operations overview</p>
+              <h1 id="staffWelcomeTitle">Dashboard</h1>
+              <p id="staffWelcomeCopy" class="muted">Monitor records, requests and departmental activity.</p>
+            </div>
+            <label id="staffBranchControl" class="staff-branch-control" for="staffBranchSelector" hidden>
+              <span>Working branch</span>
+              <select id="staffBranchSelector" aria-label="Working branch"></select>
+            </label>
+          </div>
+          <p id="staffDashboardStatus" class="status" role="status"></p>
+          <aside id="subscriptionAccessBanner" class="subscription-access-banner" role="status" hidden></aside>
+          <div id="adminSummary" class="metric-row staff-summary"></div>
+          <section id="staffDashboardClock" class="dashboard-time-attendance" aria-label="Current time and staff attendance"></section>
+          <section id="dashboardCharts" class="dashboard-charts" aria-label="Operational summary charts"></section>
+          <section id="adminPanel" class="panel full-panel staff-panel"></section>
+        </div>
+      </div>
+    </section>
+
+    <nav id="staffMobileNav" class="staff-mobile-nav" aria-label="Mobile portal navigation" hidden></nav>
+
+    <dialog id="staffModuleDialog" class="staff-module-dialog" aria-labelledby="staffModuleDialogTitle">
+      <div class="staff-module-sheet">
+        <header>
+          <div><small>Quick access</small><h2 id="staffModuleDialogTitle">All Modules</h2></div>
+          <button type="button" id="staffModuleClose" aria-label="Close all modules">×</button>
+        </header>
+        <div id="staffModuleGrid" class="staff-module-grid"></div>
+      </div>
+    </dialog>
+  </main>
+
+  <dialog id="staffPasswordDialog" class="workflow-dialog staff-password-dialog">
+    <div class="workflow-dialog-header"><div><small>Security required</small><h2>Change Temporary Password</h2></div></div>
+    <form id="staffPasswordForm" class="workflow-form">
+      <p class="muted">Create a permanent password before accessing organisation records.</p>
+      <label>New password<input id="staffNewPassword" type="password" minlength="6" autocomplete="new-password" required></label>
+      <label>Confirm password<input id="staffConfirmPassword" type="password" minlength="6" autocomplete="new-password" required></label>
+      <button id="staffPasswordButton" type="submit">Change Password</button>
+      <button id="staffPasswordSwitchUser" type="button" class="dashboard-signout">Switch user</button>
+      <button id="staffPasswordSignOut" type="button" class="dashboard-signout">Sign Out Instead</button>
+      <p id="staffPasswordStatus" class="status" role="status"></p>
+    </form>
+  </dialog>
+
+  <dialog id="staffProfileDialog" class="workflow-dialog staff-profile-dialog">
+    <div class="workflow-dialog-header">
+      <div><small>My account</small><h2>Edit Profile</h2></div>
+      <button type="button" id="staffProfileClose" aria-label="Close profile">&times;</button>
+    </div>
+    <section id="staffProfileSubscription" class="workflow-form staff-login-details-form" hidden>
+      <div class="profile-security-heading">
+        <small>Organisation subscription</small>
+        <h3 id="staffProfileSubscriptionPlan">Current plan</h3>
+        <p id="staffProfileSubscriptionCopy" class="muted">Compare plans, change billing frequency and upgrade securely.</p>
+      </div>
+      <button type="button" id="staffProfileSubscriptionOpen">Manage subscription / Upgrade plan</button>
+    </section>
+    <form id="staffProfileForm" class="workflow-form">
+      <div class="config-grid">
+        <label>First name <span class="required">*</span><input id="staffProfileFirstName" name="firstName" autocomplete="given-name" required></label>
+        <label>Surname <span class="required">*</span><input id="staffProfileSurname" name="surname" autocomplete="family-name" required></label>
+        <label>Middle name<input id="staffProfileMiddleName" name="middleName" autocomplete="additional-name"></label>
+        <label>Display name<input id="staffProfileDisplayName" name="displayName" readonly><small id="staffProfileNameFormat" class="muted">Generated from the organisation name format.</small></label>
+      </div>
+      <div class="profile-photo-editor">
+        <div class="profile-photo-preview">
+          <img id="staffProfilePhotoPreview" alt="Profile picture preview" hidden>
+          <span id="staffProfilePhotoFallback" aria-hidden="true">S</span>
+        </div>
+        <div>
+          <label>Profile picture<input id="staffProfilePhotoFile" type="file" accept="image/png,image/jpeg,image/webp"></label>
+          <small class="muted">PNG, JPG or WebP. The image is optimized before saving.</small>
+          <button type="button" id="staffProfilePhotoRemove" class="profile-photo-remove">Remove picture</button>
+        </div>
+      </div>
+      <button type="submit" id="staffProfileSave">Save profile</button>
+      <p id="staffProfileStatus" class="status" role="status"></p>
+    </form>
+    <form id="staffLoginDetailsForm" class="workflow-form staff-login-details-form">
+      <div class="profile-security-heading">
+        <small>Account security</small>
+        <h3>Login details</h3>
+        <p class="muted">Change the username used to sign in and, if needed, set a new password. Your internal staff identity and records remain unchanged.</p>
+      </div>
+      <label>Login username <span class="required">*</span>
+        <input id="staffProfileLoginUsername" name="loginUsername" minlength="3" maxlength="80" autocomplete="username" required>
+      </label>
+      <label>Current password <span class="required">*</span>
+        <input id="staffProfileCurrentPassword" name="currentPassword" type="password" autocomplete="current-password" required>
+      </label>
+      <label>New password
+        <input id="staffProfileNewPassword" name="newPassword" type="password" minlength="6" autocomplete="new-password">
+        <small class="muted">Leave blank to keep the current password.</small>
+      </label>
+      <label>Confirm new password
+        <input id="staffProfileConfirmPassword" name="confirmPassword" type="password" minlength="6" autocomplete="new-password">
+      </label>
+      <button type="submit" id="staffLoginDetailsSave">Update login details</button>
+      <p id="staffLoginDetailsStatus" class="status" role="status"></p>
+    </form>
+  </dialog>
+
+  <dialog id="staffMfaLoginDialog" class="workflow-dialog staff-mfa-dialog" aria-labelledby="staffMfaLoginTitle">
+    <div class="workflow-dialog-header">
+      <div><small>Protected sign-in</small><h2 id="staffMfaLoginTitle">Two-factor verification</h2></div>
+      <button type="button" id="staffMfaLoginCancel" aria-label="Cancel two-factor sign-in">&times;</button>
+    </div>
+    <section class="workflow-form staff-mfa-login-content">
+      <p id="staffMfaLoginMessage" class="muted">Complete one more security check to open your workspace.</p>
+      <div id="staffMfaLoginMethods" class="staff-mfa-methods" role="group" aria-label="Available verification methods">
+        <button type="button" id="staffMfaLoginPasskey" class="staff-mfa-method" hidden><span aria-hidden="true">&#128273;</span><strong>Use device unlock</strong><small>Fingerprint, face, PIN or device password</small></button>
+        <button type="button" id="staffMfaLoginTotp" class="staff-mfa-method" hidden><span aria-hidden="true">&#9201;</span><strong>Authenticator app</strong><small>Enter the current six-digit code</small></button>
+        <button type="button" id="staffMfaLoginRecovery" class="staff-mfa-method" hidden><span aria-hidden="true">&#128272;</span><strong>Recovery code</strong><small>Use one saved, single-use code</small></button>
+      </div>
+      <form id="staffMfaLoginCodeForm" class="staff-mfa-code-form" hidden>
+        <label id="staffMfaLoginCodeLabel">Authenticator code
+          <input id="staffMfaLoginCode" inputmode="numeric" autocomplete="one-time-code" maxlength="20" required>
+        </label>
+        <button id="staffMfaLoginVerify" type="submit">Verify and sign in</button>
+      </form>
+      <section id="staffMfaLoginSetup" class="staff-mfa-setup" hidden>
+        <div class="staff-mfa-setup-heading"><strong>Set up an authenticator app</strong><small>Use Google Authenticator, Microsoft Authenticator, 1Password, Authy or another standards-based app.</small></div>
+        <div id="staffMfaLoginQr" class="staff-mfa-qr"></div>
+        <div class="staff-mfa-secret"><span>Manual setup key</span><code id="staffMfaLoginSecret"></code></div>
+        <form id="staffMfaLoginSetupForm" class="staff-mfa-code-form">
+          <label>Six-digit code from the app<input id="staffMfaLoginSetupCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" required></label>
+          <button id="staffMfaLoginSetupVerify" type="submit">Finish setup and sign in</button>
+        </form>
+      </section>
+      <section id="staffMfaLoginRecoveryCodes" class="staff-mfa-recovery" hidden>
+        <div><strong>Save your recovery codes before continuing</strong><small>They will not be shown again. Each code can be used only once.</small></div>
+        <pre id="staffMfaLoginRecoveryCodeList"></pre>
+        <div class="staff-mfa-primary-actions">
+          <button type="button" id="staffMfaLoginDownloadRecovery" class="secondary">Download codes</button>
+          <button type="button" id="staffMfaLoginContinue">Continue to workspace</button>
+        </div>
+      </section>
+      <p id="staffMfaLoginStatus" class="status" role="status"></p>
+    </section>
+  </dialog>
+
+  <dialog id="staffMfaDialog" class="workflow-dialog staff-mfa-dialog" aria-labelledby="staffMfaTitle">
+    <div class="workflow-dialog-header">
+      <div><small>Account security</small><h2 id="staffMfaTitle">Two-factor authentication</h2></div>
+      <button type="button" id="staffMfaClose" aria-label="Close two-factor settings">&times;</button>
+    </div>
+    <section class="workflow-form">
+      <div id="staffMfaSummary" class="staff-mfa-summary"></div>
+      <div class="staff-mfa-primary-actions">
+        <button type="button" id="staffMfaSetupTotp">Set up authenticator app</button>
+        <button type="button" id="staffMfaAddPasskey" class="secondary">Add a device passkey</button>
+      </div>
+      <section id="staffMfaSetupPanel" class="staff-mfa-setup" hidden>
+        <div class="staff-mfa-setup-heading"><strong>Connect your authenticator app</strong><small>Scan this QR code. If scanning is unavailable, enter the setup key manually.</small></div>
+        <div id="staffMfaQr" class="staff-mfa-qr"></div>
+        <div class="staff-mfa-secret"><span>Manual setup key</span><code id="staffMfaSecret"></code></div>
+        <form id="staffMfaSetupForm" class="staff-mfa-code-form">
+          <label>Current password<input name="currentPassword" type="password" autocomplete="current-password" required></label>
+          <label>Six-digit code<input id="staffMfaSetupCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" required></label>
+          <button id="staffMfaSetupVerify" type="submit">Verify and enable</button>
+        </form>
+      </section>
+      <section id="staffMfaRecoveryCodes" class="staff-mfa-recovery" hidden>
+        <div><strong>Save these recovery codes now</strong><small>Each code works once. Keep them somewhere private, outside this device.</small></div>
+        <pre id="staffMfaRecoveryCodeList"></pre>
+        <button type="button" id="staffMfaDownloadRecovery" class="secondary">Download recovery codes</button>
+      </section>
+      <details class="staff-mfa-maintenance">
+        <summary>Recovery and method management</summary>
+        <form id="staffMfaRecoveryForm" class="staff-mfa-inline-form">
+          <strong>Replace recovery codes</strong>
+          <label>Current password<input name="currentPassword" type="password" autocomplete="current-password" required></label>
+          <label>Authenticator or recovery code<input name="code" autocomplete="one-time-code" required></label>
+          <button type="submit">Generate new codes</button>
+        </form>
+        <form id="staffMfaDisableForm" class="staff-mfa-inline-form">
+          <strong>Remove authenticator app</strong>
+          <small>A registered device passkey remains active. Organisation policy may prevent removal of the last factor.</small>
+          <label>Current password<input name="currentPassword" type="password" autocomplete="current-password" required></label>
+          <label>Authenticator or recovery code<input name="code" autocomplete="one-time-code" required></label>
+          <button type="submit" class="danger-button">Remove authenticator</button>
+        </form>
+      </details>
+      <p id="staffMfaStatus" class="status" role="status"></p>
+    </section>
+  </dialog>
+
+  <dialog id="staffApprovalSettingsDialog" class="workflow-dialog staff-approval-settings-dialog">
+    <div class="workflow-dialog-header">
+      <div><small>User settings</small><h2>Approval Signature & Stamp</h2></div>
+      <button type="button" id="staffApprovalSettingsClose" aria-label="Close user settings">&times;</button>
+    </div>
+    <form id="staffApprovalSettingsForm" class="workflow-form">
+      <p class="muted">Save your own signature and stamp. For approvals and posting, they are applied only when selected. When you prepare a clinic hospital referral, your saved signature is added automatically; your stamp is not added. Previously prepared documents remain unchanged.</p>
+      <div class="approval-asset-grid">
+        <label>Signature image
+          <input id="staffSignatureFile" type="file" accept="image/png,image/jpeg,image/webp">
+          <small>PNG, JPG or WebP. A transparent background is recommended.</small>
+        </label>
+        <div class="approval-asset-preview">
+          <img id="staffSignaturePreview" alt="Saved signature preview" hidden>
+          <span id="staffSignatureEmpty">No signature saved</span>
+          <button type="button" id="removeStaffSignature" class="secondary">Remove signature</button>
+        </div>
+        <label>Official stamp image
+          <input id="staffStampFile" type="file" accept="image/png,image/jpeg,image/webp">
+          <small>Use a clear cropped image of the authorized stamp.</small>
+        </label>
+        <div class="approval-asset-preview">
+          <img id="staffStampPreview" alt="Saved stamp preview" hidden>
+          <span id="staffStampEmpty">No stamp saved</span>
+          <button type="button" id="removeStaffStamp" class="secondary">Remove stamp</button>
+        </div>
+      </div>
+      <fieldset class="approval-defaults">
+        <legend>Default choices</legend>
+        <label class="check-row"><input name="ApplySignatureOnApproval" type="checkbox"> Select signature when approving</label>
+        <label class="check-row"><input name="ApplyStampOnApproval" type="checkbox"> Select stamp when approving</label>
+        <label class="check-row"><input name="ApplySignatureOnPosting" type="checkbox"> Select signature when reviewing/posting</label>
+        <label class="check-row"><input name="ApplyStampOnPosting" type="checkbox"> Select stamp when reviewing/posting</label>
+      </fieldset>
+      <button id="staffApprovalSettingsSave" type="submit">Save user settings</button>
+      <p id="staffApprovalSettingsStatus" class="status" role="status"></p>
+    </form>
+  </dialog>
+
+  <dialog id="staffSubscriptionDialog" class="workflow-dialog staff-subscription-dialog">
+    <div class="workflow-dialog-header">
+      <div><small>Organisation account</small><h2>Subscription &amp; billing</h2></div>
+      <button type="button" id="staffSubscriptionClose" aria-label="Close subscription">&times;</button>
+    </div>
+    <section class="staff-subscription-content">
+      <div id="staffSubscriptionSummary" class="staff-subscription-summary"></div>
+      <div class="staff-subscription-toolbar">
+        <div class="subscription-cycle" role="group" aria-label="Billing cycle">
+          <button type="button" data-subscription-cycle="monthly" class="active">Monthly</button>
+          <button type="button" data-subscription-cycle="yearly">Yearly</button>
+        </div>
+        <small>Checkout is completed securely on Paystack. Your current plan remains active until payment is confirmed.</small>
+      </div>
+      <div id="staffSubscriptionPlans" class="staff-subscription-plans"></div>
+      <p id="staffSubscriptionStatus" class="status" role="status"></p>
+    </section>
+  </dialog>
+
+  <dialog id="staffDesktopSetupDialog" class="workflow-dialog staff-desktop-setup-dialog">
+    <div class="workflow-dialog-header">
+      <div><small>Secure device access</small><h2>Desktop setup</h2></div>
+      <button type="button" id="staffDesktopSetupClose" aria-label="Close desktop setup">&times;</button>
+    </div>
+    <section class="staff-desktop-setup-content">
+      <p class="muted">Approve a Dynamax desktop from anywhere without exposing the organisation's Cloudflare backend secret or sending a pairing code to the remote user.</p>
+      <div class="desktop-pairing-steps">
+        <div><span>1</span><p>The remote user opens Dynamax desktop, chooses <strong>Sign in to existing organisation</strong> and enters this portal address.</p></div>
+        <div><span>2</span><p>The computer submits a secure request. Confirm its reference with the remote user, then choose the branch that computer is allowed to use.</p></div>
+        <div><span>3</span><p>After approval, the desktop connects automatically with its own revocable, branch-bound credential.</p></div>
+      </div>
+      <label>Organisation portal address
+        <div class="desktop-pairing-copy-row"><input id="staffDesktopPortalUrl" readonly><button type="button" id="staffDesktopPortalCopy" class="secondary">Copy</button></div>
+      </label>
+
+      <div class="desktop-device-heading"><div><small>Awaiting your decision</small><h3>Desktop requests</h3></div><button type="button" id="staffDesktopRequestsRefresh" class="secondary">Refresh</button></div>
+      <div id="staffDesktopRequests" class="desktop-pairing-request-list" aria-live="polite"></div>
+
+      <div class="desktop-device-heading"><div><small>Authorised installations</small><h3>Desktop devices</h3></div><button type="button" id="staffDesktopDevicesRefresh" class="secondary">Refresh</button></div>
+      <div id="staffDesktopDevices" class="desktop-device-list"></div>
+
+      <details class="desktop-pairing-legacy">
+        <summary>Legacy one-time code for older desktop builds</summary>
+        <p class="muted">Use this only when a desktop version cannot submit an approval request. The code expires after 15 minutes and works once.</p>
+        <button type="button" id="staffDesktopPairingGenerate">Generate one-time pairing code</button>
+        <section id="staffDesktopPairingPanel" class="desktop-pairing-code-panel" hidden>
+          <small>One-time pairing code</small>
+          <div class="desktop-pairing-copy-row"><code id="staffDesktopPairingCode"></code><button type="button" id="staffDesktopPairingCopy" class="secondary">Copy code</button></div>
+          <p id="staffDesktopPairingExpiry" class="muted"></p>
+        </section>
+      </details>
+      <p id="staffDesktopSetupStatus" class="status" role="status"></p>
+    </section>
+  </dialog>
+
+  <dialog id="financeDecisionDialog" class="workflow-dialog finance-decision-dialog">
+    <div class="workflow-dialog-header">
+      <div><small>Secure decision</small><h2 id="financeDecisionTitle">Approve Document</h2></div>
+      <button type="button" id="financeDecisionClose" aria-label="Close decision">&times;</button>
+    </div>
+    <form id="financeDecisionForm" class="workflow-form">
+      <p id="financeDecisionRecord" class="decision-record-reference"></p>
+      <p id="financePostingSummary" class="muted" hidden></p>
+      <label>Decision notes<textarea name="notes" rows="2"></textarea></label>
+      <fieldset id="financeDecisionExtra" class="decision-verification" hidden>
+        <legend id="financeDecisionExtraLegend">Imprest details</legend>
+        <label data-decision-extra="approvedAmount">Approved amount<input name="approvedAmount" type="number" min="0.01" step="0.01" inputmode="decimal" data-finance-input></label>
+        <label data-decision-extra="paymentAccount">Payment account code<input name="paymentAccount" value="1020"></label>
+        <label data-decision-extra="disbursementReference">Disbursement reference<input name="disbursementReference"></label>
+        <label data-decision-extra="issueDate">Issue date<input name="issueDate" type="date"></label>
+        <label data-decision-extra="retirementDate">Retirement date<input name="retirementDate" type="date"></label>
+        <label data-decision-extra="postingDate">Posting / payment date<input name="postingDate" type="date"></label>
+        <label data-decision-extra="paymentReference">Payment / posting reference<input name="paymentReference" placeholder="Bank transfer, cheque, cash voucher or payable reference"></label>
+      </fieldset>
+      <fieldset id="financeEndorsementOptions" class="approval-defaults">
+        <legend>Apply to this document</legend>
+        <label class="check-row"><input name="applySignature" type="checkbox"> Signature</label>
+        <label class="check-row"><input name="applyStamp" type="checkbox"> Official stamp</label>
+      </fieldset>
+      <fieldset id="financeDecisionVerification" class="decision-verification">
+        <legend>Confirm your identity</legend>
+        <label>Current password<input name="approvalPassword" type="password" autocomplete="current-password"></label>
+        <div class="decision-verification-divider"><span>or</span></div>
+        <button id="financeDecisionBiometric" type="button" class="staff-passkey-button"><span aria-hidden="true">◉</span> Verify with biometric</button>
+        <p id="financeDecisionVerificationStatus" class="status" role="status"></p>
+      </fieldset>
+      <button id="financeDecisionSubmit" type="submit">Confirm Decision</button>
+      <p id="financeDecisionStatus" class="status" role="status"></p>
+    </form>
+  </dialog>
+
+  <script src="js/site-config.js?v=20260809-branded-app-icon"></script>
+  <script src="js/password-toggle.js?v=20260718-password-toggle"></script>
+  <script src="js/financial-values.js?v=20260803-finance-commas"></script>
+  <script src="js/payment-methods.js?v=20260831-flex-proration"></script>
+  <script src="js/app-dialogs.js?v=20261016-grouped-form-validation"></script>
+  <script src="js/staff-action-feedback.js?v=20261016-grouped-form-validation-quiet-vendor-lookups"></script>
+  <script src="js/list-sorting.js?v=20260815-shared-list-sorting"></script>
+  <script src="js/academic-results-analysis.js?v=20260918-academic-readability"></script>
+  <script src="js/staff-workspace-cache.js?v=20261005-teacher-homework-20261016-quiet-vendor-lookups-staff-security-history"></script>
+  <script src="js/teacher-homework.js?v=20261011-module-tutorials"></script>
+  <script src="js/boarding-offerings.js?v=20261011-module-tutorials-cbt-transfers-action-results"></script>
+    <script src="js/payment-corrections.js?v=20261015-full-payment-history-cbt-transfers-action-results"></script>
+  <script src="js/fee-collection-summary.js?v=20261015-compact-clubs"></script>
+  <script src="js/club-members.js?v=20261015-clubs"></script>
+  <script src="js/vendor-settlements.js?v=20261015-configurable-approvals-full-summary-print"></script>
+  <script src="js/vendor-pos.js?v=20261010-vendor-historical-sales-wat-timestamps-nowrap-columns-20261016-vendor-student-lookup"></script>
+  <script src="js/staff-attendance-groups.js?v=20261011-attendance-groups-cbt-transfers-action-results"></script>
+  <script src="js/procurement.js?v=20261015-stock-value-alignment-cbt-transfers-action-results"></script>
+  <script src="js/admin.js?v=20261008-wallet-card-setup-billing-review-completion-student-maintenance-library-returns-vendor-sales-settlements-summary-ready-timetable-generator-20261009-original-pos-lookup-staff-account-search-20261010-sidebar-collapse-product-count-staff-search-default-teacher-selection-boarding-offerings-wat-timestamps-batch-items-20261011-module-tutorials-integrity-repairs-attendance-groups-procurement-clinic-usage-visible-items-delivery-email-payment-corrections-audit-journal-layout-fee-summary-20261013-academic-register-hotel-self-service-20261014-audit-language-workspace-loads-academic-serial-search-autoselect-classroom-curriculum-20261015-controlled-subject-changes-fees-club-register-approval-settings-cbt-transfers-action-results-20261016-signed-clinic-referrals-photo-audit-tuck-shop-mobile-student-lookup-vendor-student-lookup-admission-year-intake-billing-credit-review-missing-only-profile-recheck-subject-reselection-staff-security-history"></script>
+  <script src="js/web-push.js?v=20260927-spoken-alerts"></script>
+  <script src="js/spoken-notifications.js?v=20260927-spoken-alerts"></script>
+  <script src="js/notifications.js?v=20260927-spoken-alerts-wat-timestamps"></script>
+</body>
+</html> 

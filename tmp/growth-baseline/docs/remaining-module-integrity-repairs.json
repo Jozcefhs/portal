@@ -1,0 +1,61 @@
+{
+  "title": "Remaining-module audit repairs",
+  "date": "2026-10-11",
+  "status": "All 23 audited defects and three additional observations repaired in source; not deployed",
+  "scope": "Shared and edition-specific modules in School, Faith and Organisation editions, including their web and desktop entry points. Prior finance, academic, plan-management and tutorial-link changes were preserved.",
+  "repairs": [
+    {"id": "R01", "status": "repaired", "change": "New staff creation rejects existing usernames; web and desktop edits must name the original immutable account identity. Concurrent creation is create-only."},
+    {"id": "R02", "status": "repaired", "change": "Staff saves and CSV imports check storage-ID and login-name collisions and preserve existing document IDs, including legacy IDs."},
+    {"id": "R03", "status": "repaired", "change": "Staff imports validate their final administrator state. A shared atomic directory guard prevents concurrent management changes from removing the last active Super Admin. HR exits and staff restore use the same guard; self-service profile/password writes require the current record version."},
+    {"id": "R04", "status": "repaired", "change": "Branch settings propagate failed reads instead of treating them as missing. Saves and resets preserve omitted fields and require the current version."},
+    {"id": "R05", "status": "repaired", "change": "Restore stops when protected live settings cannot be read or their version is unknown; live identity and redacted credentials are preserved. Staff restore protects the signed-in administrator by actual destination ID and login aliases."},
+    {"id": "R06", "status": "repaired", "change": "Enrolment uses the application's verified branch and section, reconciles existing legacy/scoped student records, and atomically commits student and application status with version conditions."},
+    {"id": "R07", "status": "repaired", "change": "Clinic reads and writes require verified actor/module access and student scope; desktop records retain authoritative branch, section and student identity."},
+    {"id": "R08", "status": "repaired", "change": "HR review updates authorize the stored review owner, reject reassignment and require the reviewed version."},
+    {"id": "R09", "status": "repaired", "change": "Student Conduct requires the effective module entitlement and role capability on web and desktop, including read-only subscription enforcement."},
+    {"id": "R10", "status": "repaired", "change": "Authorized manual attendance corrections replace the selected timestamp, recalculate daily metrics, reject impossible endpoint ordering and preserve historical/live clock state correctly."},
+    {"id": "R11", "status": "repaired", "change": "School Store checkout records the exact stock document ID; payment processing resolves stock in its recorded branch and section. Ambiguous legacy codes are rejected."},
+    {"id": "R12", "status": "repaired", "change": "Organisation Store direct-transfer approval resolves the stored stock document identity correctly."},
+    {"id": "R13", "status": "repaired", "change": "Hotel operations enforce the actor's branch. The desktop bridge also applies effective hotel entitlement and subscription read-only access."},
+    {"id": "R14", "status": "repaired", "change": "Hotel bookings and moves use shared room-version guards so simultaneous reservations cannot claim overlapping availability."},
+    {"id": "R15", "status": "repaired", "change": "Reservation editor saves cannot bypass check-in/check-out transitions. Reservation, payment and charge updates share version guards so balance checks cannot use a stale reservation."},
+    {"id": "R16", "status": "repaired", "change": "Clinic and kitchen stock movements commit inventory changes and movement logs atomically with current-version checks. Inventory metadata edits also reject stale writes."},
+    {"id": "R17", "status": "repaired", "change": "Legacy desktop stock operations preserve immutable stock IDs and school scope, reuse guarded shared handlers, and reject negative stock."},
+    {"id": "R18", "status": "repaired", "change": "Department responses omit confidential pastoral notes for actors without pastoral access."},
+    {"id": "R19", "status": "repaired", "change": "Compact member edits preserve profile fields that were not submitted."},
+    {"id": "R20", "status": "repaired", "change": "Service/program edits do not trust browser-submitted paid assertions and reject stale overwrites of offering state."},
+    {"id": "R21", "status": "repaired", "change": "Organisation personnel, departments, meetings and programs accept appropriate edition-specific roles without granting pastoral or remittance privileges."},
+    {"id": "R22", "status": "repaired", "change": "Organisation announcements use the proper recipient/composer rules, scheduler inclusion and push audience family."},
+    {"id": "R23", "status": "repaired", "change": "Changing attendance breakdown mode clears obsolete totals rather than retaining stale breakdown values."},
+    {"id": "OBS01", "status": "repaired", "change": "Batch department assignment preserves existing assignments instead of silently replacing them."},
+    {"id": "OBS02", "status": "repaired", "change": "Visitor attendance requires a stable identity rather than accepting anonymous colliding entries."},
+    {"id": "OBS03", "status": "repaired", "change": "Desktop bulk email has an in-progress guard and correctly restores controls after completion or failure."}
+  ],
+  "regressionTests": [
+    "../tests/staff-account-integrity.test.mjs",
+    "../tests/settings-restore-integrity.test.mjs",
+    "../tests/backup-staff-identity.test.mjs",
+    "../tests/people-operations-repairs.test.mjs",
+    "../tests/staff-attendance-email-storage.test.mjs",
+    "../tests/remaining-commerce-safety.test.mjs",
+    "../tests/faith-organization-repairs.test.mjs",
+    "../../suite/tests/test_staff_account_integrity.py",
+    "../../suite/tests/test_operations_clinic_scope.py",
+    "../../suite/tests/test_operations_inventory_identity.py",
+    "../../suite/tests/test_bulk_send_guard.py"
+  ],
+  "validation": [
+    {"repository": "portal", "command": "node --test tests/*.test.mjs tests/payroll/*.test.mjs", "passed": 2603, "failed": 0},
+    {"repository": "suite", "command": "python -B -m unittest discover -s tests", "passed": 708, "failed": 0, "note": "Synthetic local tests including loopback CBT server. Existing HTTPError cleanup ResourceWarnings and a Tk after-callback warning remain; unittest result was OK."},
+    {"repository": "suite", "command": "node --test tests/cbt-client-crypto.test.mjs tests/cbt-client-reliability.test.mjs", "passed": 10, "failed": 0},
+    {"repositories": ["portal", "suite"], "command": "git diff --check and JavaScript syntax checks", "status": "PASS"}
+  ],
+  "deploymentNotes": [
+    "No source push, application compilation, release, deployment or production data mutation was performed in this repair session.",
+    "Deploy updated portal API and client assets together. Older staff editors that omit the explicit original identity are safely rejected when attempting an edit; refreshed web assets and a later desktop release provide that field.",
+    "The staff directory guard is created on the first authorized management change. Existing staff document IDs and passwords are not migrated by these repairs.",
+    "Hotel branch queries reject results exceeding the 1,000-record safety bound instead of silently computing partial availability or balances.",
+    "Existing overwritten accounts, malformed clinic records, duplicate enrolments, stock discrepancies and historical attendance totals are not rewritten automatically. Correcting existing records requires a separately reviewed reconciliation.",
+    "Runtime and concurrency tests use synthetic data and fault injection. Real payment processing, email/push delivery and physical-device workflows were not executed against production. Passing these tests is not a guarantee that every module is free of defects."
+  ]
+}

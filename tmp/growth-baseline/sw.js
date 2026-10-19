@@ -1,0 +1,112 @@
+const CACHE = 'dynamax-v407-staff-security-history';
+const SHELL = ['/', '/index.html', '/school.html', '/admin.html', '/setup.html', '/activate-account.html', '/onboarding-status.html', '/parent-dashboard.html', '/payments.html', '/buy-form.html', '/register-organization.html', '/subscription-payment.html', '/plan-management.html', '/give.html', '/store.html', '/hotel-booking.html', '/verify-result.html', '/verify-transcript.html', '/css/style.css', '/css/school-landing.css', '/css/guest-fee-payment.css', '/css/notifications.css', '/css/payment-methods.css', '/css/store.css', '/css/store-compact.css', '/css/hotel-booking.css', '/js/preferences.js', '/js/action-feedback.js', '/js/app-dialogs.js', '/js/activate-account.js', '/js/onboarding-status.js', '/js/financial-values.js', '/js/launcher.js', '/js/site-config.js', '/js/list-sorting.js', '/js/academic-results-analysis.js', '/js/admin.js', '/js/student-face-lookup.js', '/js/setup.js', '/js/paystack-connection-status.js', '/js/tutorial-module-catalogue.js', '/js/payment-methods.js', '/js/buy-form.js', '/js/give.js', '/js/payments.js', '/js/store.js', '/js/hotel-booking.js', '/js/notifications.js', '/js/web-push.js', '/js/parent-dashboard.js', '/js/verify-result.js', '/js/verify-transcript.js', '/js/register-organization.js', '/js/subscription-payment.js', '/js/plan-management.js', '/images/Logo.png'];
+
+SHELL.push('/js/spoken-notifications.js', '/js/display-time.js');
+SHELL.push('/js/staff-action-feedback.js');
+SHELL.push('/css/app-dialogs.css');
+SHELL.push('/js/clinic-referrals.js');
+SHELL.push('/css/hotel-self-service.css', '/js/hotel-self-service-admin.js', '/hotel-key-collection.html', '/js/hotel-key-collection.js', '/hotel-dispenser-guide.html');
+SHELL.push('/css/parent-store.css');
+SHELL.push('/js/parent-store-layout.js');
+SHELL.push('/js/student-maintenance.js');
+SHELL.push('/css/vendor-settlements.css', '/js/vendor-settlements.js', '/js/vendor-product-import.js', '/js/vendor-pos.js', '/js/vendor-sales-analysis.js');
+SHELL.push('/css/item-import.css', '/js/item-import-csv.js', '/js/item-import-dialog.js');
+SHELL.push('/css/boarding-offerings.css', '/js/boarding-offerings.js');
+SHELL.push('/css/staff-attendance-groups.css', '/js/staff-attendance-groups.js');
+SHELL.push('/css/procurement.css', '/js/procurement.js', '/js/procurement-item-import.js');
+SHELL.push('/js/clinic-dispensing.js');
+SHELL.push('/help.html', '/css/help.css', '/js/help.js', '/js/owner-help-settings.js');
+SHELL.push('/css/launcher-layout.css');
+SHELL.push('/js/school-menu.js');
+SHELL.push('/css/payment-corrections.css', '/js/payment-corrections.js');
+SHELL.push('/css/fee-collection-summary.css', '/js/fee-collection-summary.js', '/js/club-members.js');
+SHELL.push('/js/requisition-approval-settings.js');
+
+self.addEventListener('install', (event) => {
+  event.waitUntil(
+    caches.open(CACHE)
+      .then((cache) => cache.addAll(SHELL))
+      .then(() => self.skipWaiting())
+      .catch(() => null)
+  );
+});
+
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    caches.keys()
+      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key))))
+      .then(() => self.clients.claim())
+  );
+});
+
+self.addEventListener('fetch', (event) => {
+  const url = new URL(event.request.url);
+  if (
+    event.request.method !== 'GET'
+    || url.origin !== self.location.origin
+    || url.pathname === '/api'
+    || url.pathname.startsWith('/api/')
+  ) return;
+
+  const networkResponse = fetch(event.request);
+  const cacheUpdate = networkResponse
+    .then((response) => {
+      if (!response.ok || response.type !== 'basic') return undefined;
+      return caches.open(CACHE).then((cache) => cache.put(event.request, response.clone()));
+    })
+    .catch(() => undefined);
+
+  event.waitUntil(cacheUpdate);
+  event.respondWith(
+    networkResponse.catch(async () => {
+      const cached = await caches.match(event.request, { ignoreSearch: true });
+      if (cached) return cached;
+      if (event.request.mode === 'navigate') {
+        const shell = await caches.match('/index.html');
+        if (shell) return shell;
+      }
+      return Response.error();
+    })
+  );
+});
+
+self.addEventListener('push', (event) => {
+  let payload = {};
+  try { payload = event.data ? event.data.json() : {}; } catch { payload = { notification: { body: event.data?.text?.() || '' } }; }
+  const notification = payload.notification || {};
+  const data = payload.data || {};
+  const title = notification.title || data.title || 'Dynamax notification';
+  const tag = data.notificationId || undefined;
+  event.waitUntil((async () => {
+    if (data.expiresAt && Date.parse(data.expiresAt) <= Date.now()) return;
+    // The page validates the signed-in recipient before speaking. Service workers
+    // cannot use speech synthesis, but can wake the open notification centre.
+    const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    windows.forEach((client) => client.postMessage({ type: 'dynamax:push-notification', payload }));
+    if (tag) {
+      const visible = await self.registration.getNotifications({ tag });
+      if (visible.length) return;
+    }
+    const options = {
+      body: notification.body || data.message || '',
+      silent: false,
+      vibrate: [200, 100, 200],
+      data: { actionUrl: data.actionUrl || notification.click_action || '/' }
+    };
+    if (tag) {
+      options.tag = tag;
+      options.renotify = true;
+    }
+    await self.registration.showNotification(title, options);
+  })());
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const target = new URL(event.notification.data?.actionUrl || '/', self.location.origin).href;
+  event.waitUntil(clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windows) => {
+    const existing = windows.find((client) => client.url === target || client.url.startsWith(target));
+    if (existing) return existing.focus();
+    return clients.openWindow(target);
+  }));
+});

@@ -1,0 +1,1802 @@
+{
+  "summary": {
+    "readOnly": true,
+    "readTime": "2026-10-16T18:19:49.132Z",
+    "students": 249,
+    "directParentEmail": 110,
+    "linkedViaApplication": 0,
+    "noParentEmailFound": 139,
+    "noEmailByProfileStatus": {
+      "Needs completion": 139
+    },
+    "doubleBuyerLinks": [
+      {
+        "admissionNo": "DCA/21/0883",
+        "directEmail": false,
+        "linkedApplicationEmail": false,
+        "profileStatus": "Needs completion",
+        "onboardingStatus": ""
+      },
+      {
+        "admissionNo": "DCA/26/160",
+        "directEmail": false,
+        "linkedApplicationEmail": false,
+        "profileStatus": "Needs completion",
+        "onboardingStatus": ""
+      },
+      {
+        "admissionNo": "DCA/25/0163",
+        "directEmail": true,
+        "linkedApplicationEmail": false,
+        "profileStatus": "Complete",
+        "onboardingStatus": "Complete"
+      },
+      {
+        "admissionNo": "DCA/24/1660",
+        "directEmail": true,
+        "linkedApplicationEmail": false,
+        "profileStatus": "Complete",
+        "onboardingStatus": "AwaitingPassword"
+      },
+      {
+        "admissionNo": "DCA/26/137",
+        "directEmail": false,
+        "linkedApplicationEmail": false,
+        "profileStatus": "Needs completion",
+        "onboardingStatus": ""
+      },
+      {
+        "admissionNo": "DCA/26/186",
+        "directEmail": false,
+        "linkedApplicationEmail": false,
+        "profileStatus": "Needs completion",
+        "onboardingStatus": ""
+      }
+    ]
+  },
+  "results": [
+    {
+      "admissionNo": "DCA/21/0883",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/22/1076",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/22/1131",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/23/1462",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/23/1591",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/24/1603",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/24/1610",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/24/1780",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/25/0098",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/25/0147",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/25/0166",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/25/0170",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/25/0198",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/26/063",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/26/130",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/21/0897",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/21/0903",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/22/1117",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/23/1391",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/23/1402",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/23/1407",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/23/1455",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/23/1459",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/24/1611",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "AwaitingPassword"
+    },
+    {
+      "admissionNo": "DCA/24/1770",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/24/1848",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/25/0119",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/26/035",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/26/134",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/26/173",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/21/0949",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/21/0963",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/21/1008",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/22/1192",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/23/1521",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/24/1606",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/24/1651",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "AwaitingPassword"
+    },
+    {
+      "admissionNo": "DCA/25/0105",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/25/0229",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/26/072",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/26/092",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/26/123",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/26/160",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/26/164",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/26/179",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/22/1107",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/22/1162",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/24/1594",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "AwaitingPassword"
+    },
+    {
+      "admissionNo": "DCA/24/1596",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/24/1607",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/24/1625",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/24/1658",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/24/1778",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/24/1789",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/24/1865",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/25/0041",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/26/011",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/26/014",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "AwaitingPassword"
+    },
+    {
+      "admissionNo": "DCA/26/158",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/26/215",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/21/0960",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/21/1088",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/22/1189",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/22/1252",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/22/1284",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/23/1540",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/24/1640",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/24/1643",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/24/1717",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/24/1799",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/24/1831",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/25/0168",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/25/0180",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/26/034",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/26/061",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/21/0922",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/22/1074",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/22/1130",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/23/1381",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/23/1471",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/24/1598",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "AwaitingPassword"
+    },
+    {
+      "admissionNo": "DCA/24/1676",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/24/1744",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/24/1755",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/24/1861",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/25/0163",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/25/0215",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/25/0239",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/26/154",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/26/261",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/22/1137",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/22/1273",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/23/1377",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/24/1747",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/24/1753",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/24/1870",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/25/0051",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/25/0116",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/25/2047",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/26/049",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/26/109",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/26/127",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/26/142",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/26/155",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/26/162",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/21/0875",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/21/0930",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/21/1029",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/22/1311",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/23/1489",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/24/1824",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "AwaitingPassword"
+    },
+    {
+      "admissionNo": "DCA/24/1860",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/25/0037",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/25/0043",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/25/0217",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/25/0223",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/26/082",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "AwaitingPassword"
+    },
+    {
+      "admissionNo": "DCA/26/096",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/26/101",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/42/1808",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/21/0914",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/21/1006",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/22/1150",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/22/1230",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/22/1264",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/23/1488",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/24/1703",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/24/1704",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/24/1734",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/24/1782",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/24/1818",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/24/1879",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/25/0010",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": "PendingProfile"
+    },
+    {
+      "admissionNo": "DCA/25/0018",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/25/0114",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/21/0863",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/21/0972",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/23/1373",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/23/1525",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/24/1660",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "AwaitingPassword"
+    },
+    {
+      "admissionNo": "DCA/24/1670",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/24/1754",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/24/1817",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/24/1855",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/24/1866",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/25/0197",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/25/0205",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/25/1901",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/26/143",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/26/267",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/21/0891",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/21/0945",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/21/0947",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/22/1071",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/22/1089",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/23/1341",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/23/1372",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/23/1379",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "AwaitingPassword"
+    },
+    {
+      "admissionNo": "DCA/23/1405",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/24/1711",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/24/1802",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/25/0023",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/25/0040",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/25/0049",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/26/053",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "PendingProfile"
+    },
+    {
+      "admissionNo": "DCA/21/0967",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/22/1191",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/24/1613",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "AwaitingPassword"
+    },
+    {
+      "admissionNo": "DCA/24/1619",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/24/1665",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "AwaitingPassword"
+    },
+    {
+      "admissionNo": "DCA/24/1673",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/24/1686",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/24/1693",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/24/1733",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/24/1761",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/24/1822",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/24/1872",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/25/0046",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/25/233",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/26/161",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/21/1063",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/22/1262",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/23/1328",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/23/1476",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/24/1612",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/24/1615",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/24/1644",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/24/1701",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/24/1797",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/24/1815",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/24/1871",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/25/0007",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/25/0210",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/26/071",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/26/147",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/21/0884",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/21/0951",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/22/1248",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/22/1250",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/23/1325",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/23/1505",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/24/1752",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/24/1786",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/24/1842",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/25/0003",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/25/0028",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/25/0069",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/26/085",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "AwaitingPassword"
+    },
+    {
+      "admissionNo": "DCA/26/233",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/26/242",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/21/1282",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/22/1093",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/22/1095",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/22/1310",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/23/1385",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/24/1623",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/24/1729",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "AwaitingPassword"
+    },
+    {
+      "admissionNo": "DCA/25/0058",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/25/0156",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/25/0207",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/26/078",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/26/137",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/26/186",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/26/220",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/26/260",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "AwaitingPassword"
+    },
+    {
+      "admissionNo": "DCA/21/0939",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/23/1429",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/23/1437",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/24/1636",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/24/1637",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/24/1801",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/24/1835",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/25/0009",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/25/0020",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/25/0145",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/25/0162",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/25/0232",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/26/102",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/26/159",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/26/230",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/21/0866",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/23/1518",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/24/1877",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/25/0015",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/25/0039",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/25/0110",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/25/0175",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "Complete"
+    },
+    {
+      "admissionNo": "DCA/26/015",
+      "directEmail": false,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Needs completion",
+      "onboardingStatus": ""
+    },
+    {
+      "admissionNo": "DCA/26/148",
+      "directEmail": true,
+      "linkedApplicationEmail": false,
+      "profileStatus": "Complete",
+      "onboardingStatus": "AwaitingPassword"
+    }
+  ]
+}

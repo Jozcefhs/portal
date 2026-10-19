@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Browse organisation store items and pay securely online.">
+  <title>Organisation Store</title>
+  <meta name="theme-color" content="#071b38">
+  <link rel="icon" href="images/Logo.png">
+  <script src="js/preferences.js?v=20260726-biometric"></script>
+  <link rel="stylesheet" href="css/store.css?v=20260802-public-store">
+  <link rel="stylesheet" href="css/store-compact.css?v=20260802-compact-sticky-header">
+  <link rel="stylesheet" href="css/app-dialogs.css?v=20261016-grouped-form-validation">
+</head>
+<body class="public-store-page">
+  <main class="public-store-shell">
+    <header class="public-store-header" id="publicStoreHeader">
+      <a href="index.html" class="public-store-brand">
+        <img id="publicStoreLogo" src="images/Logo.png" alt="">
+        <span><strong id="publicStoreOrganisation">Dynamax</strong></span>
+      </a>
+      <div>
+        <p>Self-service shopping</p>
+        <h1>Choose items and pay securely</h1>
+        <span>Build your order here. After payment is confirmed, your receipt will be sent to your email.</span>
+        <button type="button" id="publicStoreCartShortcut" class="public-store-cart-shortcut" aria-label="Cart is empty" disabled>
+          <span aria-hidden="true">&#128722;</span>
+          <strong id="publicStoreCartBadge" aria-hidden="true">0</strong>
+        </button>
+      </div>
+    </header>
+
+    <div class="public-store-layout">
+      <section class="public-store-catalogue" aria-labelledby="storeCatalogueTitle">
+        <div class="public-store-section-heading">
+          <div><p>Available now</p><h2 id="storeCatalogueTitle">Store items</h2></div>
+          <span id="publicStoreItemCount">0 items</span>
+        </div>
+        <label class="public-store-search">Search items
+          <input id="publicStoreSearch" type="search" placeholder="Name, code, barcode, category or size" autocomplete="off">
+        </label>
+        <div id="publicStoreProducts" class="public-store-products" aria-live="polite">
+          <p class="public-store-empty">Loading available items&hellip;</p>
+        </div>
+      </section>
+
+      <aside class="public-store-checkout" id="publicStoreCheckout" tabindex="-1" aria-labelledby="publicStoreCartTitle">
+        <div class="public-store-cart-heading">
+          <div><p>Your order</p><h2 id="publicStoreCartTitle">Cart</h2></div>
+          <strong id="publicStoreTotal">&#8358;0.00</strong>
+        </div>
+        <div id="publicStoreCart" class="public-store-cart-lines">
+          <p class="public-store-empty">Choose an item to begin.</p>
+        </div>
+        <form id="publicStoreCheckoutForm" class="public-store-form">
+          <input type="hidden" id="publicStoreBranch" name="BranchId" value="main">
+          <label class="public-store-honeypot" aria-hidden="true">Website<input name="CompanyWebsite" tabindex="-1" autocomplete="off"></label>
+          <label>Full name<input name="CustomerName" autocomplete="name" maxlength="160" required></label>
+          <label>Email address<input name="CustomerEmail" type="email" autocomplete="email" maxlength="254" required><small>Your paid receipt will be sent here.</small></label>
+          <label>Phone number <span>(optional)</span><input name="CustomerPhone" type="tel" autocomplete="tel" maxlength="40"></label>
+          <div class="public-store-payment-note"><span aria-hidden="true">&#128274;</span><div><strong>Secure payment choices</strong><small>Choose online payment or direct bank transfer. Stock is deducted only after payment is verified.</small></div></div>
+          <p id="publicStoreStatus" class="public-store-status" role="status" aria-live="polite"></p>
+          <button type="submit" id="publicStoreCheckoutButton" disabled>Choose payment method</button>
+        </form>
+      </aside>
+    </div>
+  </main>
+  <script src="js/site-config.js?v=20260809-branded-app-icon"></script>
+  <script src="js/payment-methods.js?v=20260809-direct-transfer-sharp-text"></script>
+  <script src="js/app-dialogs.js?v=20261016-grouped-form-validation"></script>
+  <script src="js/store.js?v=20260930-identifier-search"></script>
+</body>
+</html>

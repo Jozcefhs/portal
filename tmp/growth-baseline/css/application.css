@@ -1,0 +1,6 @@
+.historical-date-picker{display:grid;grid-template-columns:minmax(78px,.85fr) minmax(112px,1.25fr) minmax(68px,.7fr);gap:8px;align-items:end}
+.historical-date-picker label{display:grid;gap:4px;min-width:0;margin:0;color:#56657a;font-size:10px;font-weight:700}
+.historical-date-picker select{min-width:0;margin:0;padding:10px 8px;background-color:#fff}
+.historical-date-picker select:focus{border-color:#174a7c;outline:3px solid rgba(23,74,124,.13)}
+.historical-date-help{display:block;margin-top:5px;color:#68778a;font-size:10px;line-height:1.35}
+@media (max-width:380px){.historical-date-picker{grid-template-columns:minmax(72px,.9fr) minmax(100px,1.2fr) minmax(62px,.7fr);gap:5px}.historical-date-picker select{padding:9px 5px;font-size:13px}}

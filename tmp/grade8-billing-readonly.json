@@ -1,0 +1,681 @@
+{
+  "readOnly": true,
+  "checkedAt": "2026-10-16T15:22:19.678Z",
+  "reference": "DCA/26/263",
+  "profile": {
+    "AdmissionNo": "DCA/26/263",
+    "admissionNo": "",
+    "AccountRef": "DCA/26/263",
+    "accountRef": "",
+    "ApplicationReference": "",
+    "ClassName": "Grade 8",
+    "ClassAdmitted": "Grade 8",
+    "AcademicSession": "2026/2027",
+    "Term": "First Term",
+    "StudentType": "Boarding Student",
+    "Gender": "Male",
+    "BillingCategory": "Regular",
+    "EnrollmentCategory": "New Intake",
+    "AcademicProgress": "Promoted",
+    "ProfileCompletionStatus": "Complete",
+    "Status": "Active",
+    "BranchId": "main",
+    "SchoolSection": "secondary",
+    "UpdatedAt": "2026-10-16T10:11:10.793Z",
+    "IntakeCorrectedAt": ""
+  },
+  "expected": 1488885,
+  "posted": 1616915,
+  "difference": -128030,
+  "girlSetupExpected": 1502885,
+  "parentSummary": {
+    "TotalDebit": 1616915,
+    "TotalCredit": 1502885,
+    "AccountCreditDebits": 0,
+    "OutstandingBalance": 114030,
+    "CreditBalance": 0
+  },
+  "calculatedSummary": {
+    "AccountRef": "DCA/26/263",
+    "AccountRefNormalized": "dca26263",
+    "TotalDebit": 1616915,
+    "TotalCredit": 1592885,
+    "AccountCreditDebits": 0,
+    "OutstandingBalance": 114030,
+    "CreditBalance": 0,
+    "WalletBalance": 93600,
+    "UpdatedAt": "2026-10-16T15:22:19.680Z"
+  },
+  "savedSummaries": [
+    {
+      "TotalDebit": 1616915,
+      "TotalCredit": 1592885,
+      "OutstandingBalance": 114030,
+      "CreditBalance": 0,
+      "UpdatedAt": "2026-10-16T14:05:27.897Z"
+    }
+  ],
+  "componentReview": [
+    {
+      "code": "BOA",
+      "name": "Boarding fee",
+      "expected": 405720,
+      "invoiced": 405720,
+      "invoiceIds": [
+        "INV-PROFILE-a7782b36a168cace3aa114b4b1c261d4ab69e7b13b05ecc17e1f4acca9b02246"
+      ],
+      "difference": 0,
+      "missing": false,
+      "conflict": false,
+      "review": "Matches the current fee setup"
+    },
+    {
+      "code": "BOW",
+      "name": "Boarding Wear (Compound and Church)",
+      "expected": 60000,
+      "invoiced": 60000,
+      "invoiceIds": [
+        "INV-PROFILE-30d0610e5252a8422d0144da8bb4cd388355679263fffed77a2aeb6ba1aa4f5b"
+      ],
+      "difference": 0,
+      "missing": false,
+      "conflict": false,
+      "review": "Matches the current fee setup"
+    },
+    {
+      "code": "CAE",
+      "name": "CA & Examination E-Results",
+      "expected": 18000,
+      "invoiced": 18000,
+      "invoiceIds": [
+        "INV-20260930181420-A9066260"
+      ],
+      "difference": 0,
+      "missing": false,
+      "conflict": false,
+      "review": "Matches the current fee setup"
+    },
+    {
+      "code": "CAM_GRADE_7_TO_GRADE_9_FIRST_TERM",
+      "name": "Cambridge Checkpoint Textbooks",
+      "expected": 42000,
+      "invoiced": 42000,
+      "invoiceIds": [
+        "INV-20260930181420-1151AE9D"
+      ],
+      "difference": 0,
+      "missing": false,
+      "conflict": false,
+      "review": "Matches the current fee setup"
+    },
+    {
+      "code": "CBT",
+      "name": "CBT & Examination fees",
+      "expected": 27500,
+      "invoiced": 27500,
+      "invoiceIds": [
+        "INV-20260930181420-7FB370F9"
+      ],
+      "difference": 0,
+      "missing": false,
+      "conflict": false,
+      "review": "Matches the current fee setup"
+    },
+    {
+      "code": "DEV_1T",
+      "name": "Development fees",
+      "expected": 90000,
+      "invoiced": 90000,
+      "invoiceIds": [
+        "INV-20260930181420-B03D21A6"
+      ],
+      "difference": 0,
+      "missing": false,
+      "conflict": false,
+      "review": "Matches the current fee setup"
+    },
+    {
+      "code": "MED",
+      "name": "Medicals",
+      "expected": 18000,
+      "invoiced": 18000,
+      "invoiceIds": [
+        "INV-20260930181420-A0F99D0F"
+      ],
+      "difference": 0,
+      "missing": false,
+      "conflict": false,
+      "review": "Matches the current fee setup"
+    },
+    {
+      "code": "NBK_JNR_GRADE_7_TO_GRADE_9_FIRST_TERM",
+      "name": "Notebooks",
+      "expected": 27000,
+      "invoiced": 27000,
+      "invoiceIds": [
+        "INV-20260930181420-DD4E80F6"
+      ],
+      "difference": 0,
+      "missing": false,
+      "conflict": false,
+      "review": "Matches the current fee setup"
+    },
+    {
+      "code": "PTA",
+      "name": "PTA Levy",
+      "expected": 5000,
+      "invoiced": 5000,
+      "invoiceIds": [
+        "INV-20260930181420-DED9E016"
+      ],
+      "difference": 0,
+      "missing": false,
+      "conflict": false,
+      "review": "Matches the current fee setup"
+    },
+    {
+      "code": "SPO",
+      "name": "Co-Curricular/Sports Activities",
+      "expected": 28000,
+      "invoiced": 28000,
+      "invoiceIds": [
+        "INV-20260930181420-EA8F8C8C"
+      ],
+      "difference": 0,
+      "missing": false,
+      "conflict": false,
+      "review": "Matches the current fee setup"
+    },
+    {
+      "code": "STA",
+      "name": "Stationeries",
+      "expected": 15000,
+      "invoiced": 15000,
+      "invoiceIds": [
+        "INV-20260930181420-FCB76518"
+      ],
+      "difference": 0,
+      "missing": false,
+      "conflict": false,
+      "review": "Matches the current fee setup"
+    },
+    {
+      "code": "TAB",
+      "name": "E-Learning Tablet Device",
+      "expected": 250000,
+      "invoiced": 250000,
+      "invoiceIds": [
+        "INV-PROFILE-d62365bab29b8a743b3d9215b794184e58a62092903fc1d24ec02df65fb3369d"
+      ],
+      "difference": 0,
+      "missing": false,
+      "conflict": false,
+      "review": "Matches the current fee setup"
+    },
+    {
+      "code": "TUI_1T",
+      "name": "Tuition",
+      "expected": 204600,
+      "invoiced": 204600,
+      "invoiceIds": [
+        "INV-20260930181420-00105C0D"
+      ],
+      "difference": 0,
+      "missing": false,
+      "conflict": false,
+      "review": "Matches the current fee setup"
+    },
+    {
+      "code": "TXT_JNR_NEW_GRADE_7_TO_GRADE_8_FIRST_TERM",
+      "name": "Textbooks (All Subjects)",
+      "expected": 120065,
+      "invoiced": 120065,
+      "invoiceIds": [
+        "INV-PROFILE-4714f5506294a3acc49e5b8b424fbf878cb0454ee1fa0c04fa938a8781b1a825"
+      ],
+      "difference": 0,
+      "missing": false,
+      "conflict": false,
+      "review": "Matches the current fee setup"
+    },
+    {
+      "code": "UNI_M",
+      "name": "School Uniforms - Boys (2 Trousers, 2 Waistcoats, 2 Shirts, 2 Ties, 1 Sweater, 1 Sportwear)",
+      "expected": 178000,
+      "invoiced": 178000,
+      "invoiceIds": [
+        "INV-PROFILE-f39d07dcfdcb2fb41db7c32fa9ee357843d8f7cd99d88ba22b4d0cb3d1b18ec0"
+      ],
+      "difference": 0,
+      "missing": false,
+      "conflict": false,
+      "review": "Matches the current fee setup"
+    },
+    {
+      "code": "TXT_JNR_8",
+      "name": "Textbooks (All Subjects)",
+      "expected": 0,
+      "invoiced": 118030,
+      "invoiceIds": [
+        "INV-20260930181420-F33C82D7"
+      ],
+      "difference": -118030,
+      "missing": false,
+      "conflict": true,
+      "review": "Posted charge does not apply under the current fee setup"
+    },
+    {
+      "code": "LEG",
+      "name": "Legacy Magazine/Yearbook",
+      "expected": 0,
+      "invoiced": 10000,
+      "invoiceIds": [
+        "INV-20261005215801-526FC068"
+      ],
+      "difference": -10000,
+      "missing": false,
+      "conflict": true,
+      "review": "Posted charge does not apply under the current fee setup"
+    }
+  ],
+  "remainingConflicts": [
+    {
+      "code": "TXT_JNR_8",
+      "name": "Textbooks (All Subjects)",
+      "expected": 0,
+      "invoiced": 118030,
+      "invoiceIds": [
+        "INV-20260930181420-F33C82D7"
+      ],
+      "difference": -118030,
+      "missing": false,
+      "conflict": true,
+      "review": "Posted charge does not apply under the current fee setup"
+    },
+    {
+      "code": "LEG",
+      "name": "Legacy Magazine/Yearbook",
+      "expected": 0,
+      "invoiced": 10000,
+      "invoiceIds": [
+        "INV-20261005215801-526FC068"
+      ],
+      "difference": -10000,
+      "missing": false,
+      "conflict": true,
+      "review": "Posted charge does not apply under the current fee setup"
+    }
+  ],
+  "missing": [],
+  "invoices": [
+    {
+      "InvoiceId": "INV-20260930181420-00105C0D",
+      "FeeCode": "TUI_1T",
+      "FeeName": "Tuition",
+      "Amount": 204600,
+      "Debit": 204600,
+      "Credit": 204600,
+      "Balance": 0,
+      "Status": "Paid",
+      "AcademicSession": "2026/2027",
+      "Term": "First Term",
+      "Date": "2026-09-30",
+      "CreatedAt": "2026-09-30T18:14:20.051Z",
+      "UpdatedAt": "2026-10-15T08:59:56.276Z",
+      "Source": "",
+      "FeeChargeReversed": "",
+      "FeeChargeReversalAmount": ""
+    },
+    {
+      "InvoiceId": "INV-20260930181420-1151AE9D",
+      "FeeCode": "CAM_GRADE_7_TO_GRADE_9_FIRST_TERM",
+      "FeeName": "Cambridge Checkpoint Textbooks",
+      "Amount": 42000,
+      "Debit": 42000,
+      "Credit": 42000,
+      "Balance": 0,
+      "Status": "Paid",
+      "AcademicSession": "2026/2027",
+      "Term": "First Term",
+      "Date": "2026-09-30",
+      "CreatedAt": "2026-09-30T18:14:20.051Z",
+      "UpdatedAt": "2026-10-15T08:59:56.276Z",
+      "Source": "",
+      "FeeChargeReversed": "",
+      "FeeChargeReversalAmount": ""
+    },
+    {
+      "InvoiceId": "INV-20260930181420-7FB370F9",
+      "FeeCode": "CBT",
+      "FeeName": "CBT & Examination fees",
+      "Amount": 27500,
+      "Debit": 27500,
+      "Credit": 27500,
+      "Balance": 0,
+      "Status": "Paid",
+      "AcademicSession": "2026/2027",
+      "Term": "First Term",
+      "Date": "2026-09-30",
+      "CreatedAt": "2026-09-30T18:14:20.051Z",
+      "UpdatedAt": "2026-10-15T08:59:56.276Z",
+      "Source": "",
+      "FeeChargeReversed": "",
+      "FeeChargeReversalAmount": ""
+    },
+    {
+      "InvoiceId": "INV-20260930181420-A0F99D0F",
+      "FeeCode": "MED",
+      "FeeName": "Medicals",
+      "Amount": 18000,
+      "Debit": 18000,
+      "Credit": 18000,
+      "Balance": 0,
+      "Status": "Paid",
+      "AcademicSession": "2026/2027",
+      "Term": "First Term",
+      "Date": "2026-09-30",
+      "CreatedAt": "2026-09-30T18:14:20.051Z",
+      "UpdatedAt": "2026-10-15T08:59:56.276Z",
+      "Source": "",
+      "FeeChargeReversed": "",
+      "FeeChargeReversalAmount": ""
+    },
+    {
+      "InvoiceId": "INV-20260930181420-A9066260",
+      "FeeCode": "CAE",
+      "FeeName": "CA & Examination E-Results",
+      "Amount": 18000,
+      "Debit": 18000,
+      "Credit": 18000,
+      "Balance": 0,
+      "Status": "Paid",
+      "AcademicSession": "2026/2027",
+      "Term": "First Term",
+      "Date": "2026-09-30",
+      "CreatedAt": "2026-09-30T18:14:20.051Z",
+      "UpdatedAt": "2026-10-15T08:59:56.276Z",
+      "Source": "",
+      "FeeChargeReversed": "",
+      "FeeChargeReversalAmount": ""
+    },
+    {
+      "InvoiceId": "INV-20260930181420-B03D21A6",
+      "FeeCode": "DEV_1T",
+      "FeeName": "Development fees",
+      "Amount": 90000,
+      "Debit": 90000,
+      "Credit": 90000,
+      "Balance": 0,
+      "Status": "Paid",
+      "AcademicSession": "2026/2027",
+      "Term": "First Term",
+      "Date": "2026-09-30",
+      "CreatedAt": "2026-09-30T18:14:20.051Z",
+      "UpdatedAt": "2026-10-15T08:59:56.276Z",
+      "Source": "",
+      "FeeChargeReversed": "",
+      "FeeChargeReversalAmount": ""
+    },
+    {
+      "InvoiceId": "INV-20260930181420-DD4E80F6",
+      "FeeCode": "NBK_JNR_GRADE_7_TO_GRADE_9_FIRST_TERM",
+      "FeeName": "Notebooks",
+      "Amount": 27000,
+      "Debit": 27000,
+      "Credit": 27000,
+      "Balance": 0,
+      "Status": "Paid",
+      "AcademicSession": "2026/2027",
+      "Term": "First Term",
+      "Date": "2026-09-30",
+      "CreatedAt": "2026-09-30T18:14:20.051Z",
+      "UpdatedAt": "2026-10-15T08:59:56.276Z",
+      "Source": "",
+      "FeeChargeReversed": "",
+      "FeeChargeReversalAmount": ""
+    },
+    {
+      "InvoiceId": "INV-20260930181420-DED9E016",
+      "FeeCode": "PTA",
+      "FeeName": "PTA Levy",
+      "Amount": 5000,
+      "Debit": 5000,
+      "Credit": 5000,
+      "Balance": 0,
+      "Status": "Paid",
+      "AcademicSession": "2026/2027",
+      "Term": "First Term",
+      "Date": "2026-09-30",
+      "CreatedAt": "2026-09-30T18:14:20.051Z",
+      "UpdatedAt": "2026-10-15T08:59:56.276Z",
+      "Source": "",
+      "FeeChargeReversed": "",
+      "FeeChargeReversalAmount": ""
+    },
+    {
+      "InvoiceId": "INV-20260930181420-EA8F8C8C",
+      "FeeCode": "SPO",
+      "FeeName": "Co-Curricular/Sports Activities",
+      "Amount": 28000,
+      "Debit": 28000,
+      "Credit": 28000,
+      "Balance": 0,
+      "Status": "Paid",
+      "AcademicSession": "2026/2027",
+      "Term": "First Term",
+      "Date": "2026-09-30",
+      "CreatedAt": "2026-09-30T18:14:20.051Z",
+      "UpdatedAt": "2026-10-15T08:59:56.276Z",
+      "Source": "",
+      "FeeChargeReversed": "",
+      "FeeChargeReversalAmount": ""
+    },
+    {
+      "InvoiceId": "INV-20260930181420-F33C82D7",
+      "FeeCode": "TXT_JNR_8",
+      "FeeName": "Textbooks (All Subjects)",
+      "Amount": 118030,
+      "Debit": 118030,
+      "Credit": 118030,
+      "Balance": 0,
+      "Status": "Paid",
+      "AcademicSession": "2026/2027",
+      "Term": "First Term",
+      "Date": "2026-09-30",
+      "CreatedAt": "2026-09-30T18:14:20.051Z",
+      "UpdatedAt": "2026-10-15T08:59:56.276Z",
+      "Source": "",
+      "FeeChargeReversed": "",
+      "FeeChargeReversalAmount": ""
+    },
+    {
+      "InvoiceId": "INV-20260930181420-FCB76518",
+      "FeeCode": "STA",
+      "FeeName": "Stationeries",
+      "Amount": 15000,
+      "Debit": 15000,
+      "Credit": 15000,
+      "Balance": 0,
+      "Status": "Paid",
+      "AcademicSession": "2026/2027",
+      "Term": "First Term",
+      "Date": "2026-09-30",
+      "CreatedAt": "2026-09-30T18:14:20.051Z",
+      "UpdatedAt": "2026-10-15T08:59:56.276Z",
+      "Source": "",
+      "FeeChargeReversed": "",
+      "FeeChargeReversalAmount": ""
+    },
+    {
+      "InvoiceId": "INV-20261005215801-526FC068",
+      "FeeCode": "LEG",
+      "FeeName": "Legacy Magazine/Yearbook",
+      "Amount": 10000,
+      "Debit": 10000,
+      "Credit": 10000,
+      "Balance": 0,
+      "Status": "Paid",
+      "AcademicSession": "2026/2027",
+      "Term": "First Term",
+      "Date": "2026-10-05",
+      "CreatedAt": "2026-10-05T21:58:01.554Z",
+      "UpdatedAt": "2026-10-15T08:59:56.276Z",
+      "Source": "",
+      "FeeChargeReversed": "",
+      "FeeChargeReversalAmount": ""
+    },
+    {
+      "InvoiceId": "INV-PROFILE-30d0610e5252a8422d0144da8bb4cd388355679263fffed77a2aeb6ba1aa4f5b",
+      "FeeCode": "BOW",
+      "FeeName": "Boarding Wear (Compound and Church)",
+      "Amount": 60000,
+      "Debit": 60000,
+      "Credit": 0,
+      "Balance": 60000,
+      "Status": "Unpaid",
+      "AcademicSession": "2026/2027",
+      "Term": "First Term",
+      "Date": "2026-10-16T14:05:27.394Z",
+      "CreatedAt": "2026-10-16T14:05:27.394Z",
+      "UpdatedAt": "2026-10-16T14:05:27.394Z",
+      "Source": "Student profile reconciliation",
+      "FeeChargeReversed": "",
+      "FeeChargeReversalAmount": ""
+    },
+    {
+      "InvoiceId": "INV-PROFILE-4714f5506294a3acc49e5b8b424fbf878cb0454ee1fa0c04fa938a8781b1a825",
+      "FeeCode": "TXT_JNR_NEW_GRADE_7_TO_GRADE_8_FIRST_TERM",
+      "FeeName": "Textbooks (All Subjects)",
+      "Amount": 120065,
+      "Debit": 120065,
+      "Credit": 0,
+      "Balance": 120065,
+      "Status": "Unpaid",
+      "AcademicSession": "2026/2027",
+      "Term": "First Term",
+      "Date": "2026-10-16T14:05:27.394Z",
+      "CreatedAt": "2026-10-16T14:05:27.394Z",
+      "UpdatedAt": "2026-10-16T14:05:27.394Z",
+      "Source": "Student profile reconciliation",
+      "FeeChargeReversed": "",
+      "FeeChargeReversalAmount": ""
+    },
+    {
+      "InvoiceId": "INV-PROFILE-a7782b36a168cace3aa114b4b1c261d4ab69e7b13b05ecc17e1f4acca9b02246",
+      "FeeCode": "BOA",
+      "FeeName": "Boarding fee",
+      "Amount": 405720,
+      "Debit": 405720,
+      "Credit": 405720,
+      "Balance": 0,
+      "Status": "Paid",
+      "AcademicSession": "2026/2027",
+      "Term": "First Term",
+      "Date": "2026-10-08",
+      "CreatedAt": "2026-10-08T18:32:39.493Z",
+      "UpdatedAt": "2026-10-15T08:59:56.276Z",
+      "Source": "Student profile reconciliation",
+      "FeeChargeReversed": "",
+      "FeeChargeReversalAmount": ""
+    },
+    {
+      "InvoiceId": "INV-PROFILE-d62365bab29b8a743b3d9215b794184e58a62092903fc1d24ec02df65fb3369d",
+      "FeeCode": "TAB",
+      "FeeName": "E-Learning Tablet Device",
+      "Amount": 250000,
+      "Debit": 250000,
+      "Credit": 0,
+      "Balance": 250000,
+      "Status": "Unpaid",
+      "AcademicSession": "2026/2027",
+      "Term": "First Term",
+      "Date": "2026-10-16T14:05:27.394Z",
+      "CreatedAt": "2026-10-16T14:05:27.394Z",
+      "UpdatedAt": "2026-10-16T14:05:27.394Z",
+      "Source": "Student profile reconciliation",
+      "FeeChargeReversed": "",
+      "FeeChargeReversalAmount": ""
+    },
+    {
+      "InvoiceId": "INV-PROFILE-f39d07dcfdcb2fb41db7c32fa9ee357843d8f7cd99d88ba22b4d0cb3d1b18ec0",
+      "FeeCode": "UNI_M",
+      "FeeName": "School Uniforms - Boys (2 Trousers, 2 Waistcoats, 2 Shirts, 2 Ties, 1 Sweater, 1 Sportwear)",
+      "Amount": 178000,
+      "Debit": 178000,
+      "Credit": 0,
+      "Balance": 178000,
+      "Status": "Unpaid",
+      "AcademicSession": "2026/2027",
+      "Term": "First Term",
+      "Date": "2026-10-16T14:05:27.394Z",
+      "CreatedAt": "2026-10-16T14:05:27.394Z",
+      "UpdatedAt": "2026-10-16T14:05:27.394Z",
+      "Source": "Student profile reconciliation",
+      "FeeChargeReversed": "",
+      "FeeChargeReversalAmount": ""
+    }
+  ],
+  "ledgerDebits": [],
+  "payments": [
+    {
+      "PaymentId": "PAY-20260930181419-B8EAF908",
+      "Reference": "BANK-20260901-EXAMPLE955",
+      "FeeCode": "SCHOOL_FEES_TOTAL",
+      "FeeCategory": "School Fee",
+      "Amount": 1502885,
+      "CreditedAmount": "",
+      "Status": "Paid",
+      "AcademicSession": "2026/2027",
+      "Term": "First Term",
+      "Date": ""
+    },
+    {
+      "PaymentId": "PAY-20261008151442-73BE0AE1",
+      "Reference": "BANK-DCA-261191",
+      "FeeCode": "WALLET_TOPUP",
+      "FeeCategory": "Wallet",
+      "Amount": 93600,
+      "CreditedAmount": "",
+      "Status": "Paid",
+      "AcademicSession": "2026/2027",
+      "Term": "First Term",
+      "Date": ""
+    },
+    {
+      "PaymentId": "PAY-20261014140617-5D8BE297",
+      "Reference": "PAYMENT-20261014150553",
+      "FeeCode": "CLUB_AI_ROBOTICS",
+      "FeeCategory": "Club",
+      "Amount": 90000,
+      "CreditedAmount": "",
+      "Status": "Paid",
+      "AcademicSession": "2026/2027",
+      "Term": "First Term",
+      "Date": ""
+    }
+  ],
+  "matchingFeeRules": [
+    {
+      "FeeCode": "LEG",
+      "FeeName": "Legacy Magazine/Yearbook",
+      "Amount": 10000,
+      "ClassName": "All",
+      "StudentType": "All",
+      "Gender": "All",
+      "EnrollmentCategory": "Returning",
+      "AcademicSession": "2026/2027",
+      "Term": "First Term"
+    },
+    {
+      "FeeCode": "TXT_JNR_8",
+      "FeeName": "Textbooks (All Subjects)",
+      "Amount": 118030,
+      "ClassName": "Grade 8",
+      "StudentType": "All",
+      "Gender": "All",
+      "EnrollmentCategory": "Returning",
+      "AcademicSession": "2026/2027",
+      "Term": "First Term"
+    }
+  ]
+}

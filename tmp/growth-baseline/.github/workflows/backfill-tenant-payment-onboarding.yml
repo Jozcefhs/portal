@@ -1,0 +1,76 @@
+name: Enable tenant Paystack onboarding
+
+on:
+  workflow_dispatch:
+    inputs:
+      project:
+        description: Cloudflare tenant project name, or all
+        required: true
+        default: all
+        type: string
+      clear_paystack_keys:
+        description: Delete PAYSTACK_SECRET_KEY from the selected tenant projects before redeploying
+        required: true
+        default: false
+        type: boolean
+      include_managed_organisations:
+        description: Include dedicated organisations from deploy/organisations.json
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: dynamax-tenant-payment-onboarding
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    name: Configure secure tenant payment onboarding
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DYNAMAX_PLATFORM_URL: ${{ vars.DYNAMAX_PLATFORM_URL || 'https://dynamax.cc' }}
+      DYNAMAX_PLATFORM_PROJECT: dynamaxms
+      DYNAMAX_TENANT_PROJECT: ${{ inputs.project || 'all' }}
+      DYNAMAX_CLEAR_TENANT_PAYSTACK_KEYS: ${{ inputs.clear_paystack_keys || false }}
+      DYNAMAX_INCLUDE_MANAGED_ORGANISATIONS: ${{ inputs.include_managed_organisations || false }}
+      DYNAMAX_TENANT_PROVISIONER_SECRET: ${{ secrets.DYNAMAX_TENANT_PROVISIONER_SECRET }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate security and tenant-pool contracts
+        run: node --test tests/tenant-payment-onboarding.test.mjs tests/tenant-project-pool.test.mjs
+
+      - name: Enable secure payment onboarding
+        id: enable
+        run: node scripts/backfill-tenant-payment-onboarding.mjs
+
+      - name: Redeploy the central control plane
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run deploy-platform.yml
+
+      - name: Redeploy tenant projects with their encrypted signing keys
+        if: steps.enable.outputs.pool_updated == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run deploy-tenant-pool.yml -f project="${{ steps.enable.outputs.pool_target }}"
+
+      - name: Redeploy managed organisations with their encrypted signing keys
+        if: steps.enable.outputs.managed_updated == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run deploy-organisations.yml -f organisation="${{ steps.enable.outputs.managed_target }}"

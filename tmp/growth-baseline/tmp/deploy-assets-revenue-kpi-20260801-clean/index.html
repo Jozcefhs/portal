@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Dynamax management software for schools, religious bodies and other organisations.">
+  <title>Dynamax — Choose a workspace</title>
+  <meta name="theme-color" content="#071b38">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="images/Logo.png">
+  <script src="js/preferences.js?v=20260726-biometric"></script>
+  <link rel="stylesheet" href="css/style.css?v=20260730-student-face-lookup">
+</head>
+<body class="suite-launcher-page">
+  <main class="suite-launcher">
+    <section class="launcher-showcase" aria-labelledby="launcherTitle">
+      <div class="launcher-showcase-top">
+        <span class="launcher-logo"><img src="images/Logo.png" alt=""></span>
+        <span class="launcher-product">Dynamax</span>
+      </div>
+      <div class="launcher-art" aria-hidden="true">
+        <span></span><span></span><span></span>
+      </div>
+      <div class="launcher-message">
+        <p>One connected platform</p>
+        <h1 id="launcherTitle">Serve people.<br><strong>Manage better.</strong></h1>
+        <span>Schools, religious bodies and other organisations—thoughtfully brought together.</span>
+      </div>
+    </section>
+
+    <section class="launcher-directory" aria-labelledby="workspaceTitle">
+      <header class="launcher-heading">
+        <p class="launcher-kicker">Welcome to Dynamax</p>
+        <h2 id="workspaceTitle">Where would you like to go?</h2>
+        <p>Select a workspace to continue.</p>
+      </header>
+
+      <div class="launcher-channels">
+        <a class="launcher-channel" href="school.html">
+          <span class="channel-mark" aria-hidden="true">SC</span>
+          <span class="channel-copy">
+            <strong>School</strong>
+            <small>Admissions, parents, students and payments</small>
+          </span>
+          <span class="channel-arrow" aria-hidden="true">→</span>
+        </a>
+        <a class="launcher-channel" href="admin.html?workspace=faith">
+          <span class="channel-mark" aria-hidden="true">FA</span>
+          <span class="channel-copy">
+            <strong>Religious organisation</strong>
+            <small>Departments, meetings, offerings, programs and visitors</small>
+          </span>
+          <span class="channel-arrow" aria-hidden="true">→</span>
+        </a>
+        <a class="launcher-channel" href="admin.html?workspace=organization">
+          <span class="channel-mark" aria-hidden="true">OR</span>
+          <span class="channel-copy">
+            <strong>Other organisation</strong>
+            <small>People, departments, finance, payroll and operations</small>
+          </span>
+          <span class="channel-arrow" aria-hidden="true">→</span>
+        </a>
+        <button class="launcher-channel" type="button" id="openServices" aria-haspopup="dialog" aria-controls="servicesSheet">
+          <span class="channel-mark" aria-hidden="true">+</span>
+          <span class="channel-copy">
+            <strong>Other services</strong>
+            <small>Parents, staff, payments, setup and more</small>
+          </span>
+          <span class="channel-arrow" aria-hidden="true">→</span>
+        </button>
+      </div>
+
+      <p class="launcher-help">Need staff access? <a href="admin.html">Sign in to the staff portal</a></p>
+      <div class="launcher-public-actions">
+        <a href="register-organization.html">Register & choose a plan</a>
+        <button type="button" id="installDynamaxApp">Install app</button>
+      </div>
+    </section>
+  </main>
+
+  <button class="launcher-settings-button" type="button" id="openSettings" aria-label="Open general settings" aria-haspopup="dialog" aria-controls="settingsPanel">
+    <span aria-hidden="true">⚙</span>
+  </button>
+
+  <div class="launcher-overlay" id="servicesSheet" role="dialog" aria-modal="true" aria-labelledby="servicesTitle" hidden>
+    <div class="launcher-sheet services-sheet">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <header class="sheet-header">
+        <div><p>Quick access</p><h2 id="servicesTitle">Other services</h2></div>
+        <button type="button" class="sheet-close" data-close-panel aria-label="Close other services">×</button>
+      </header>
+      <div class="services-grid">
+        <a href="parent-dashboard.html"><span>PA</span><strong>Parent portal</strong><small>Children and activity</small></a>
+        <a href="buy-form.html"><span>AD</span><strong>Admissions</strong><small>Buy an application</small></a>
+        <a href="payments.html"><span>₦</span><strong>Payments</strong><small>Pay approved fees</small></a>
+        <a href="verify.html"><span>RG</span><strong>Registration</strong><small>Continue an application</small></a>
+        <a href="admin.html"><span>ST</span><strong>Staff portal</strong><small>Operations sign-in</small></a>
+        <a href="setup.html"><span>SE</span><strong>Suite setup</strong><small>Organisation settings</small></a>
+      </div>
+    </div>
+  </div>
+
+  <div class="launcher-overlay" id="settingsPanel" role="dialog" aria-modal="true" aria-labelledby="settingsTitle" hidden>
+    <div class="launcher-sheet settings-sheet">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <header class="sheet-header">
+        <div><p>Personalise your experience</p><h2 id="settingsTitle">General settings</h2></div>
+        <button type="button" class="sheet-close" data-close-panel aria-label="Close general settings">×</button>
+      </header>
+
+      <form id="preferenceForm">
+        <fieldset class="preference-group">
+          <legend>Appearance</legend>
+          <div class="preference-options preference-options-three">
+            <label><input type="radio" name="theme" value="light"><span>Light</span></label>
+            <label><input type="radio" name="theme" value="dark"><span>Dark</span></label>
+            <label><input type="radio" name="theme" value="system"><span>System</span></label>
+          </div>
+        </fieldset>
+
+        <fieldset class="preference-group">
+          <legend>Accent colour</legend>
+          <div class="accent-options">
+            <label title="DIGC blue"><input type="radio" name="accent" value="blue"><span class="accent-blue"></span><small>Blue</small></label>
+            <label title="Gold"><input type="radio" name="accent" value="gold"><span class="accent-gold"></span><small>Gold</small></label>
+            <label title="Emerald"><input type="radio" name="accent" value="emerald"><span class="accent-emerald"></span><small>Emerald</small></label>
+          </div>
+        </fieldset>
+
+        <div class="preference-switch-row">
+          <span><strong>Larger text</strong><small>Increase text size throughout the portal</small></span>
+          <label class="preference-switch"><input type="checkbox" name="largeText"><span></span></label>
+        </div>
+        <div class="preference-switch-row">
+          <span><strong>Compact layout</strong><small>Show more information on each screen</small></span>
+          <label class="preference-switch"><input type="checkbox" name="compact"><span></span></label>
+        </div>
+        <div class="preference-switch-row">
+          <span><strong>Reduce motion</strong><small>Limit animation and movement</small></span>
+          <label class="preference-switch"><input type="checkbox" name="reduceMotion"><span></span></label>
+        </div>
+        <div class="preference-switch-row" id="biometricPreferenceRow">
+          <span>
+            <strong>Biometric sign-in</strong>
+            <small id="biometricPreferenceHint">Use face, fingerprint or PIN; sign in once with your password to set it up</small>
+          </span>
+          <label class="preference-switch"><input type="checkbox" name="biometric"><span></span></label>
+        </div>
+
+        <div class="settings-actions">
+          <button type="button" class="settings-reset" id="resetPreferences">Reset</button>
+          <button type="submit" class="settings-save">Save settings</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="js/launcher.js?v=20260726-biometric"></script>
+  <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
+  <script src="js/pwa-install.js?v=20260729-action-feedback"></script>
+</body>
+</html>

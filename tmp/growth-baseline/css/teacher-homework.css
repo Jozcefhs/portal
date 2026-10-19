@@ -1,0 +1,18 @@
+.teacher-homework-dialog { width: min(760px, calc(100vw - 32px)); max-height: 90vh; overflow: auto; border: 1px solid #d1e1ef; border-radius: 16px; padding: 24px; color: #12324c; background: #fff; }
+.teacher-homework-dialog::backdrop { background: rgb(12 30 50 / 65%); }
+.academic-homework-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.academic-homework-actions button { width: auto; margin: 0; }
+.teacher-homework-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; position: sticky; top: -24px; z-index: 1; margin: 0; padding: 8px 0; background: #fff; border-bottom: 1px solid #e3edf5; }
+.teacher-homework-heading button { width: auto; flex: 0 0 auto; }
+.teacher-homework-heading h2 { margin: 4px 0 12px; }
+.teacher-homework-dialog [data-homework-compose] { display: grid; gap: 12px; margin: 0; }
+.teacher-homework-dialog label { display: grid; gap: 6px; margin: 0; }
+.teacher-homework-dialog input:not([type=checkbox]), .teacher-homework-dialog select, .teacher-homework-dialog textarea { width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #bacddd; border-radius: 8px; color: inherit; background: #fff; font: inherit; }
+.teacher-homework-dialog fieldset, .teacher-homework-dialog [data-homework-confirm] { border: 1px solid #cce3df; border-radius: 10px; padding: 16px; margin: 0; }
+.teacher-homework-dialog [data-homework-arms] { display: flex; flex-wrap: wrap; gap: 18px; }
+.teacher-homework-dialog label.teacher-homework-arm { display: flex; align-items: center; }
+.teacher-homework-arm input { width: auto; }
+.teacher-homework-message { white-space: pre-wrap; overflow-wrap: anywhere; }
+.teacher-homework-dialog button { cursor: pointer; }
+.teacher-homework-dialog button:disabled { opacity: .55; cursor: default; }
+@media (max-width: 560px) { .teacher-homework-dialog { padding: 16px; } .teacher-homework-heading { align-items: flex-start; top: -16px; } }

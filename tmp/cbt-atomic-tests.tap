@@ -1,0 +1,12 @@
+✔ a CBT password synchronizes to a verifiable online credential; retries do not overwrite newer passwords (18.6803ms)
+✔ password sync retains scope, verifier validation and concurrent-change guards (3.4763ms)
+✔ opted-in large reservations use one atomic commit retaining every version precondition (8.5178ms)
+✔ large atomic writes fail before commit when document or request byte budgets would be exceeded (31.254ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 143.175

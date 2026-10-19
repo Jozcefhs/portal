@@ -1,0 +1,497 @@
+/* Shared-server vendor workflow; this client never calculates payable amounts. */
+(function () {
+  'use strict';
+  const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]);
+  const money = v => new Intl.NumberFormat('en-NG', { style:'currency', currency:'NGN' }).format(Number(v || 0));
+  const productIcon = kind => `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${kind === 'edit'
+    ? '<path d="m15 5 4 4M4 20l4-1L20 7a2.8 2.8 0 0 0-4-4L4 15l-1 6Z"/>'
+    : '<path d="M3 5h11v12H3zM14 9h4l3 4v4h-7M18 9v5h3"/><circle cx="7" cy="18" r="2"/><circle cx="18" cy="18" r="2"/>'}</svg>`;
+  const today = () => new Date().toISOString().slice(0, 10);
+  const option = (value, label = value, selected = '') => `<option value="${esc(value)}"${String(value) === String(selected) ? ' selected' : ''}>${esc(label)}</option>`;
+  const input = (name, label, value = '', type = 'text', extra = '') => `<label>${esc(label)}<input name="${esc(name)}" type="${type}" value="${esc(value)}" ${extra}></label>`;
+  const select = (name, label, values, chosen = '') => `<label>${esc(label)}<select name="${esc(name)}">${values.map(v => Array.isArray(v) ? option(v[0], v[1], chosen) : option(v, v, chosen)).join('')}</select></label>`;
+  const accountSelect = (name, label, chart, types, chosen = '') => {
+    const selected = String(chosen ?? '').trim();
+    const accounts = (chart || []).filter(a => types.includes(a.Type)
+      && !['no','false','inactive','disabled','0'].includes(String(a.Active ?? 'YES').trim().toLowerCase()))
+      .map(a => [String(a.Code || a.__id || '').trim(), `${a.Code || a.__id} · ${a.Name}`]).filter(([code]) => code);
+    const values = [['','Choose an account'], ...accounts];
+    // Never silently replace an unavailable saved mapping with the first account.
+    if (selected && !accounts.some(([code]) => code === selected)) values.splice(1,0,[selected,`${selected} · Unavailable — review mapping`]);
+    return `<label>${esc(label)}<select name="${esc(name)}" required>${values.map(([code,title]) => option(code,title,selected)).join('')}</select></label>`;
+  };
+  const metrics = balance => `<div class="vendor-metrics">${['GrossSales','Refunds','SchoolDeductions','NetEntitlement','Paid','Reserved','Outstanding','Available'].map(key =>
+    `<div class="vendor-metric"><span>${esc(({ GrossSales:'Confirmed sales', SchoolDeductions:'Organisation deductions', NetEntitlement:'Net entitlement', Reserved:'Reserved in requests', Available:'Available to request' })[key] || key)}</span><strong>${money(balance?.[key])}</strong></div>`).join('')}</div>`;
+  const ruleFields = (rule = {}, inherited = false) => `<fieldset class="vendor-rule vendor-full"><legend>Agreed settlement rule</legend><div class="vendor-form">
+    ${select('RuleMode','Payment arrangement',[...(inherited ? ['Inherit default'] : []),'Full payment','Percentage','Fixed charge'],rule.Mode || (inherited ? 'Inherit default' : 'Full payment'))}
+    ${input('EffectiveDate','Effective from (prospective only)',today(),'date','required')}
+    ${input('Rate','Commission (%)',rule.Rate || 0,'number','min="0" max="100" step="0.01" data-rule="Percentage"')}
+    ${input('FixedAmount','Fixed charge',Number(rule.FixedCents || 0) / 100,'number','min="0" step="0.01" data-rule="Fixed charge"')}
+    ${select('Basis','Fixed-charge basis',['Per sale','Per period'],rule.Basis || 'Per sale')}
+    ${select('Cycle','Period schedule',['Daily','Weekly','Monthly'],rule.Cycle || 'Monthly')}
+    <small class="vendor-full">Full payment retains no charge, even if the default does. Charges are capped at confirmed sales after refunds. A period charge is deducted once across sales, not once per request; its first sale fixes that period’s rule. Per-sale deductions reverse proportionally on refund.</small>
+  </div></fieldset>`;
+  const formBody = form => {
+    const body = Object.fromEntries(new FormData(form));
+    if (body.RuleMode) { body.Rule = { Mode:body.RuleMode, Rate:body.Rate, FixedAmount:body.FixedAmount, Basis:body.Basis, Cycle:body.Cycle, EffectiveDate:body.EffectiveDate };
+      ['RuleMode','Rate','FixedAmount','Basis','Cycle','EffectiveDate'].forEach(key => delete body[key]); }
+    return body;
+  };
+  function ruleVisibility(form) {
+    if (!form.elements.RuleMode) return;
+    const mode = form.elements.RuleMode.value;
+    const enabled = !form.elements.ChangeRule || form.elements.ChangeRule.checked;
+    ['RuleMode','EffectiveDate'].forEach(name => { form.elements[name].disabled = !enabled; });
+    form.querySelectorAll('[data-rule]').forEach(el => {
+      const applicable = el.dataset.rule === mode;
+      el.closest('label').hidden = !applicable; el.disabled = !enabled || !applicable;
+    });
+    ['Basis','Cycle'].forEach(name => {
+      const applicable = mode === 'Fixed charge' && (name !== 'Cycle' || form.elements.Basis.value === 'Per period');
+      form.elements[name].closest('label').hidden = !applicable; form.elements[name].disabled = !enabled || !applicable;
+    });
+  }
+  async function submitForm(form, save, transform = body => body) {
+    const progress = form.querySelector('[role=status]');
+    if (!form.checkValidity()) {
+      const field = Array.from(form.elements).find(el => el.willValidate && !el.validity.valid);
+      const label = field?.labels?.[0]?.firstChild?.textContent.trim() || field?.name || 'Required field';
+      if (progress) progress.textContent = `${label}: ${field?.validationMessage || 'Check this field before saving.'}`;
+      field?.focus(); field?.reportValidity();
+      return null;
+    }
+    if (progress) progress.textContent = '';
+    try { return await save(transform(formBody(form))); }
+    catch (error) { if (progress) progress.textContent = error.message || 'Could not prepare this form. Your entries have been kept; please try again.'; return null; }
+  }
+  let mounted;
+  function mount(root, request, options = {}) {
+    mounted?.destroy();
+    let data, tab = 'balances', statement, selected = '', busy = false, notice = '', disposed = false, dialog, statementGeneration = 0, statementController;
+    const pending = new Set();
+    let analysisRange = {From:today().slice(0,7)+'-01',To:today()};
+    const status = (message, error = false) => { const el = root.querySelector('.vendor-status'); if (el) { el.textContent = message; el.classList.toggle('error', error); } };
+    async function call(action, body = {}, form) {
+      if (busy || disposed) {
+        const target = form?.querySelector('[role=status]');
+        if (target && !disposed) target.textContent = 'Another request is still processing. Please wait, then save again.';
+        return null;
+      }
+      busy = true;
+      const controller = new AbortController(); pending.add(controller);
+      const submit = form?.querySelector('[type=submit]'); if (submit) { submit.disabled = true; submit.textContent = 'Processing…'; }
+      const timer = setTimeout(() => controller.abort(), 45000);
+      try {
+        if (!['bootstrap','statement','previewHistorical','previewProductImport','saveVendor','saveSettings'].includes(action)) {
+          body.RequestId ||= form ? (form.dataset.requestId ||= crypto.randomUUID()) : crypto.randomUUID();
+        }
+        return await request(action, body, controller.signal);
+      } catch (error) {
+        if (disposed) return null;
+        const message = error.name === 'AbortError' ? 'Request timed out. Refresh before retrying: the server may already have recorded it.' : error.message;
+        const target = form?.querySelector('[role=status]'); if (target) target.textContent = message; else status(message, true);
+        return null;
+      } finally { clearTimeout(timer); pending.delete(controller); busy = false; if (submit?.isConnected) { submit.disabled = false; submit.textContent = submit.dataset.label || 'Save'; } }
+    }
+    async function reload() {
+      const result = await call('bootstrap'); if (!result || disposed || !root.isConnected) return;
+      data = result; if (!data.vendors.some(v => v.VendorId === selected)) selected = data.vendors[0]?.VendorId || '';
+      draw(); if (['statement','analysis'].includes(tab)) await loadStatement();
+    }
+    function vendorOptions(chosen = selected, empty = false) { return `${empty ? option('','Organisation-owned stock',chosen) : ''}${data.vendors.map(v => option(v.VendorId,v.Name,chosen)).join('')}`; }
+    const activeVendors = () => data.vendors.filter(v => !['no','false','0','inactive','disabled'].includes(String(v.Active ?? 'YES').trim().toLowerCase()));
+    const approvalPolicy = () => Object.fromEntries(['RequireNewApproval','RequireEditApproval','RequireStockApproval'].map(k => [k,data.productPolicy?.[k] !== false]));
+    async function productImportDialog() {
+      if (busy || disposed) return;
+      let csv;
+      try { csv = await import('./vendor-product-import.js'); }
+      catch { return status('Could not load the CSV tools. Refresh this page and try again.',true); }
+      if (disposed) return;
+      dialog?.remove();
+      const modal = document.createElement('dialog'); dialog = modal; modal.className = 'vendor-dialog vendor-import-dialog';
+      const vendorOnly = data.capabilities.vendor;
+      modal.innerHTML = `<div class="vendor-header"><h3>${vendorOnly ? 'Batch products' : 'Batch products & owners'}</h3><button type="button" data-close aria-label="Close">×</button></div>
+        <form class="vendor-form">
+          ${select('Mode','What would you like to do?',vendorOnly ? [['create','Create new products']] : [['assign','Assign owners to existing products'],['create','Create new products']],vendorOnly ? 'create' : 'assign')}
+          <label>Completed CSV<input name="File" type="file" accept=".csv,text/csv"></label>
+          <p class="vendor-full" data-help></p>
+          <div class="vendor-actions vendor-full"><a class="vendor-download" data-template download></a><a class="vendor-download" data-owners download>Download vendor IDs</a><button type="button" data-preview>Preview CSV</button></div>
+          <p class="vendor-full vendor-status" role="status" aria-live="polite"></p>
+          <div class="vendor-table-wrap vendor-full" data-preview-table></div>
+          <label class="vendor-check vendor-full"><input type="checkbox" name="Confirmed" disabled> I have checked the products and owners shown in this preview.</label>
+          <button type="submit" class="vendor-full" data-label="Import confirmed rows" disabled>Import confirmed rows</button>
+        </form>`;
+      document.body.append(modal); modal.showModal();
+      const form = modal.querySelector('form'), progress = form.querySelector('[role=status]'), table = form.querySelector('[data-preview-table]');
+      const submit = form.querySelector('[type=submit]'), previewButton = form.querySelector('[data-preview]');
+      let batches = [], previews = [], requestIds = [], next = 0, running = false, complete = false, changed = false;
+      let downloadUrls = [];
+      const totals = { created:0, assigned:0, skipped:0, pending:0 };
+      const say = message => { progress.textContent = message; };
+      function controls() {
+        for (const name of ['Mode','File']) form.elements[name].disabled = running || next > 0;
+        previewButton.disabled = running || next > 0;
+        form.elements.Confirmed.disabled = running || !previews.length || !previews.every(p => p.valid) || complete;
+        submit.disabled = running || complete || !form.elements.Confirmed.checked || form.elements.Confirmed.disabled;
+        modal.querySelector('[data-close]').disabled = running;
+      }
+      function reset() {
+        batches = []; previews = []; requestIds = []; next = 0; complete = false;
+        Object.keys(totals).forEach(key => { totals[key] = 0; });
+        form.elements.Confirmed.checked = false; table.innerHTML = ''; controls(); say('');
+        const assign = form.elements.Mode.value === 'assign';
+        form.querySelector('[data-template]').textContent = assign ? 'Download existing products' : 'Download new-product template';
+        form.querySelector('[data-help]').textContent = assign
+          ? 'Download existing products, fill in Owner using a registered vendor ID / name (or ORGANISATION), and upload. Keep stock IDs unchanged. Stock, prices, and past sales are not changed.'
+          : vendorOnly ? `Use an Owner ID from your linked vendor accounts only. With one linked vendor you can leave Owner blank. Existing stock is never overwritten; use Record delivery to add stock.${approvalPolicy().RequireNewApproval ? ' New products require school / organisation approval before appearing for sale.' : ''}`
+          : 'Enter new products and registered owners. Existing matching stock is skipped, never overwritten. Identical products from different owners receive separate stock records.';
+        setDownloadLinks(assign);
+      }
+      function downloadLink(el, filename, contents) {
+        const url = URL.createObjectURL(new Blob([contents],{type:'text/csv;charset=utf-8'}));
+        downloadUrls.push(url); el.href = url; el.download = filename;
+      }
+      function setDownloadLinks(assign) {
+        downloadUrls.forEach(url => URL.revokeObjectURL(url)); downloadUrls = [];
+        const rows = assign ? data.products.map(p => ({ ...p, Store:p.Section, Owner:p.VendorId || 'ORGANISATION',
+          CurrentOwner:data.vendors.find(v => v.VendorId === p.VendorId)?.Name || p.VendorId || 'Organisation' })) : [];
+        downloadLink(form.querySelector('[data-template]'),assign ? 'existing-product-owners.csv' : 'new-products.csv',csv.productCsv(assign
+          ? ['InventoryId','ItemCode','ItemName','Store','SchoolSection','CurrentOwner','Owner']
+          : ['ItemCode','ItemName','Owner','Store','Quantity','Price','Category','Unit','Active','SchoolSection'],rows));
+        downloadLink(form.querySelector('[data-owners]'),'registered-vendor-ids.csv',csv.productCsv(['Owner','Name','SchoolSection'],
+          activeVendors().map(v => ({Owner:v.VendorId,Name:v.Name,SchoolSection:v.SchoolSection}))));
+      }
+      form.elements.Mode.onchange = reset; form.elements.File.onchange = reset;
+      form.elements.Confirmed.onchange = controls;
+      previewButton.onclick = async () => {
+        const file = form.elements.File.files[0];
+        if (!file) return say('Choose a completed CSV first. Maximum 1,000 rows / 512 KB.');
+        reset(); running = true; controls();
+        try {
+          if (file.size > csv.PRODUCT_IMPORT_LIMITS.bytes) throw new Error('CSV exceeds 512 KB. Split it into smaller files.');
+          batches = csv.productChunks(csv.parseProductCsv(await file.text(),form.elements.Mode.value));
+          for (let i = 0; i < batches.length; i++) {
+            say(`Checking batch ${i + 1} of ${batches.length}… No products have been saved.`);
+            const result = await call('previewProductImport',{Mode:form.elements.Mode.value,Rows:batches[i]},form);
+            if (!result || disposed || !modal.isConnected) { previews = []; return; }
+            previews.push(result);
+          }
+          const duplicates = csv.duplicatePreviewRows(previews);
+          for (const preview of previews) for (const row of preview.rows) if (duplicates.has(row.RowNumber)) {
+            row.Errors.push('Duplicate stock record in this CSV. Keep only one row per product.'); row.Status = 'Error'; preview.valid = false;
+          }
+          const rows = previews.flatMap(p => p.rows), errors = rows.filter(r => r.Errors.length).length;
+          table.innerHTML = `<table class="vendor-table"><thead><tr><th>CSV row / product</th><th>Owner change</th><th>Stock / price (kept for existing products)</th><th>Action / errors</th></tr></thead><tbody>${rows.map(r =>
+            `<tr class="${r.Errors.length ? 'vendor-import-error' : ''}"><td>${r.RowNumber} · ${esc(r.ItemName)}<small>${esc(r.InventoryId || r.ItemCode)} · ${esc(r.Section)}</small></td>
+            <td>${esc(r.CurrentOwner)} → <strong>${esc(r.Owner)}</strong><small>${esc(r.SchoolSection)}</small></td><td>${esc(r.Quantity)} · ${money(r.Price)}</td><td>${esc(r.Status)}<small>${r.Errors.map(esc).join(' ')}</small></td></tr>`).join('')}</tbody></table>`;
+          requestIds = batches.map(() => crypto.randomUUID());
+          say(errors ? `${errors} row(s) need correction. Nothing has been saved. Correct the CSV and preview again.`
+            : `${rows.length} rows checked: ${rows.filter(r => r.Status === 'Assign owner').length} owner changes, ${rows.filter(r => r.Status === 'Create').length} new products. Other rows will be kept unchanged. Confirm to import in batches of 20.${previews.some(p => p.approvalRequired) ? ' New products will await approval, not become live stock yet.' : ''}`);
+        } catch (error) { previews = []; say(error.message); }
+        finally { running = false; controls(); }
+      };
+      form.onsubmit = async event => {
+        event.preventDefault(); if (running || submit.disabled) return;
+        running = true; controls();
+        try {
+          while (next < batches.length) {
+            say(`Saving batch ${next + 1} of ${batches.length}… ${next * csv.PRODUCT_IMPORT_LIMITS.batch} earlier rows completed.`);
+            const result = await call('importProducts',{Mode:form.elements.Mode.value,Rows:batches[next],Confirmed:true,
+              PreviewDigest:previews[next].PreviewDigest,RequestId:requestIds[next]},form);
+            if (!result || disposed || !modal.isConnected) {
+              if (!disposed) say(`${progress.textContent} Completed ${next} of ${batches.length} batches. Use Import to safely retry this batch. If stock / owner details changed, close and load a fresh preview; earlier completed batches remain saved.`);
+              return;
+            }
+            for (const key of Object.keys(totals)) totals[key] += Number(result[key] || 0);
+            next++; changed = true;
+          }
+          complete = true; say(`Complete: ${totals.assigned} owners assigned, ${totals.created} products created, ${totals.pending} awaiting approval, ${totals.skipped} unchanged. Existing stock and past sales were preserved.`);
+        } finally { running = false; controls(); }
+      };
+      modal.querySelector('[data-close]').onclick = () => { if (!running) modal.close(); };
+      modal.addEventListener('cancel',event => { if (running) event.preventDefault(); });
+      modal.addEventListener('close',() => { downloadUrls.forEach(url => URL.revokeObjectURL(url)); modal.remove(); if (changed && !disposed) reload(); });
+      reset();
+    }
+    function showDialog(title, html, action, transform = b => b) {
+      dialog?.remove(); const modal = document.createElement('dialog'); dialog = modal; modal.className = 'vendor-dialog';
+      modal.innerHTML = `<div class="vendor-header"><h3>${esc(title)}</h3><button type="button" data-close aria-label="Close">×</button></div><form class="vendor-form" novalidate>${html}
+        <div class="vendor-full vendor-dialog-footer"><p class="vendor-status" role="status" aria-live="polite"></p><button type="submit" data-label="${esc(title)}">${esc(title)}</button></div></form>`;
+      document.body.append(modal); modal.showModal(); modal.querySelector('[data-close]').onclick = () => modal.close();
+      modal.addEventListener('close', () => modal.remove());
+      const form = modal.querySelector('form'); ruleVisibility(form); form.onchange = () => ruleVisibility(form);
+      form.onsubmit = async event => { event.preventDefault(); const result = await submitForm(form, body => call(action, body, form), transform);
+        if (result && !disposed) { notice = result.message; modal.close(); await reload(); } };
+    }
+    const auth = () => input('approvalPassword','Confirm with your current password','','password','autocomplete="current-password" required');
+    const notes = () => `<label class="vendor-full">Reason / notes<textarea name="Notes" rows="2" maxlength="2000" required></textarea></label>`;
+    const paymentFields = (value = 0) => `${input('Amount','Amount',value,'number','min="0.01" step="0.01" required')}${input('Date','Date',today(),'date','required')}
+      ${select('PaymentAccount','Cash / bank account',[['1020','1020 · Bank'],['1010','1010 · Cash'],['1030','1030 · Clearing']])}
+      ${select('PaymentMethod','Method',['Bank Transfer','Cash','POS / Card'])}${input('Reference','Payment / refund reference','','text','required maxlength="200"')}
+      ${input('EvidenceReference','Evidence reference (bank slip / document)','','text','required maxlength="2000"')}`;
+    function vendorForm(v = {}) {
+      const chosen = v.RuleHistory?.at(-1) || {}, vendorId = v.VendorId || `VND-${crypto.randomUUID()}`;
+      showDialog(v.VendorId ? 'Save vendor' : 'Register vendor', `${input('Name','Vendor name',v.Name,'text','required maxlength="160"')}${input('ContactPerson','Contact person',v.ContactPerson)}
+        ${input('Phone','Phone',v.Phone,'tel')}${input('Email','Email',v.Email,'email')}${input('LoginUsername','Restricted Vendor User login (optional)',v.LoginUsername)}
+        ${select('SupplierId','Link existing supplier (optional)',[['','Separate sales vendor'],...(data.suppliers || []).map(s => [s.SupplierId,s.Name])],v.SupplierId)}
+        <small class="vendor-full">The optional login must already exist in Staff & Permissions with the Vendor User role and access to this branch${data.capabilities.edition === 'school' ? ' and school section' : ''}. This form does not create a sign-in account. Leave it blank to register the vendor without portal access; you can link an account later.</small>
+        ${data.capabilities.edition === 'school' ? select('SchoolSection','School section',['Primary','Secondary'],v.SchoolSection || (data.capabilities.section === 'Primary' ? 'Primary' : 'Secondary')) : ''}
+        ${select('Active','Active',['YES','NO'],v.Active || 'YES')}${input('BankName','Bank name',v.BankName)}${input('BankAccountName','Account name',v.BankAccountName)}
+        <label class="vendor-check vendor-full"><input name="PosEnabled" type="checkbox" ${v.PosEnabled !== false ? 'checked' : ''}> Allow this vendor login to sell its assigned products at the counter</label>
+        ${input('BankAccountNumber',`Account number${v.BankAccountMasked ? ` (saved ${v.BankAccountMasked}; blank keeps it)` : ''}`,'','text','inputmode="numeric" pattern="[0-9]{6,34}"')}
+        ${v.VendorId ? '<label class="vendor-check vendor-full"><input name="ChangeRule" type="checkbox"> Change the payment arrangement prospectively (leave unchecked for contact or bank changes only)</label>' : ''}${ruleFields(chosen,true)}`,
+        'saveVendor', b => { if (v.VendorId && !b.ChangeRule) delete b.Rule; delete b.ChangeRule; return { ...b, PosEnabled:!!b.PosEnabled, VendorId:vendorId, RecordVersion:v.RecordVersion }; });
+    }
+    function productForm(p = {}) {
+      const stockId = p.InventoryId || `ITEM-${crypto.randomUUID()}`;
+      const vendorOnly = data.capabilities.vendor, editing = !!p.InventoryId;
+      const stores = data.capabilities.edition === 'school' ? [['tuckShop','Tuck shop']] : [['organizationStore','Organisation store'],['restaurant','Restaurant']];
+      const owners = activeVendors().filter(v => !editing || v.VendorId === p.VendorId);
+      showDialog(vendorOnly ? (editing ? 'Save product details' : 'Add vendor product') : 'Save product ownership', `${input('ItemName','Item name',p.ItemName,'text','required')}${vendorOnly
+        ? select('VendorId','Owner',owners.map(v => [v.VendorId,v.Name]),p.VendorId || selected)
+        : `<label>Owner<select name="VendorId">${vendorOptions(p.VendorId || '',true)}</select></label>`}
+        ${select('Section','Store',vendorOnly && editing ? stores.filter(([key]) => key === p.Section) : stores,p.Section)}
+        ${vendorOnly && editing ? `<p>Stock available: <strong>${esc(p.Quantity)}</strong>. Use Record delivery to add stock.</p>` : input('Quantity',vendorOnly ? 'Opening stock' : 'Stock available',p.Quantity || 0,'number','min="0" step="1" required')}${input('Price','Selling price',p.Price || 0,'number','min="0.01" step="0.01" required')}
+        ${input('Category','Category',p.Category || 'General Item')}${input('Unit','Unit',p.Unit || 'pcs')}${select('Active','Active',p.VendorSaleRevoked ? ['NO'] : ['YES','NO'],p.VendorSaleRevoked ? 'NO' : p.Active || 'YES')}
+        ${p.VendorSaleRevoked ? '<p class="vendor-full vendor-notice">Revoked by Accounts. Only Accounts can use Restore for sale to make this item available again.</p>' : ''}
+        <small class="vendor-full">${vendorOnly ? `${approvalPolicy()[editing ? 'RequireEditApproval' : 'RequireNewApproval'] ? 'Changes require school / organisation approval. ' : 'Changes apply immediately. '}Only your linked vendor’s products can be changed. Existing stock and past sales are preserved.` : 'Separate stock records are used for identical products from different vendors. Ownership changes affect new sales only.'}</small>`, 'saveProduct',
+        b => ({ ...b, InventoryId:stockId, RecordVersion:p.RecordVersion }));
+    }
+    function deliveryForm(p) {
+      showDialog('Record delivery', `<p class="vendor-full">${esc(p.ItemName)} · ${esc(p.Quantity)} in stock. Delivered units are added to the latest remaining stock, never used to overwrite it.</p>
+        ${input('Quantity','Quantity delivered',1,'number','min="1" step="1" required')}${input('Reference','Delivery reference','','text','required maxlength="200"')}${notes()}
+        <small class="vendor-full">${approvalPolicy().RequireStockApproval ? 'Stock becomes available after school / organisation approval.' : 'Stock becomes available immediately.'}</small>`,
+        'recordProductDelivery',b => ({...b,VendorId:p.VendorId,InventoryId:p.InventoryId,Section:p.Section,RecordVersion:p.RecordVersion}));
+    }
+    function productRequestsHTML() {
+      const changes = [...(data.productChanges || [])].sort((a,b) => Number(b.Status === 'Pending') - Number(a.Status === 'Pending') || String(b.RequestedAt).localeCompare(String(a.RequestedAt)));
+      if (!changes.length) return '';
+      return `<h3>Product change requests</h3><div class="vendor-table-wrap vendor-product-requests"><table class="vendor-table"><thead><tr><th>Product / owner</th><th>Requested change</th><th class="vendor-request-status">Status</th><th>Review</th></tr></thead><tbody>${changes.map(r => `<tr><td>${esc(r.Data.ItemName || data.products.find(p => p.InventoryId === r.InventoryId)?.ItemName || r.InventoryId)}<small>${esc(data.vendors.find(v => v.VendorId === r.VendorId)?.Name || r.VendorId)}</small></td>
+        <td>${esc(r.Kind)}${r.Kind === 'Delivery' ? ` · +${esc(r.Data.Quantity)} units` : ` · ${money(r.Data.Price)} · ${esc(r.Data.Active)}`}${r.Kind === 'Create' ? ` · ${esc(r.Data.Quantity)} opening units` : ''}<small>${esc(r.RequestedBy)} · ${esc(r.RequestedAt.slice(0,10))}</small><small>${esc(r.Reference)} ${esc(r.Notes)}</small></td>
+        <td class="vendor-request-status">${esc(r.Status)}<small>${esc(r.ReviewNotes)}</small></td><td>${data.capabilities.reviewProducts && r.Status === 'Pending' ? `<button data-review-product="${esc(r.ChangeId)}" data-decision="Approved">Approve</button> <button data-review-product="${esc(r.ChangeId)}" data-decision="Rejected">Reject</button>` : '—'}</td></tr>`).join('')}</tbody></table></div>`;
+    }
+    function productPolicyHTML() {
+      if (!data.capabilities.reviewProducts) return '';
+      if (tab === 'products') return '<div class="vendor-card vendor-actions"><span>Decide whether vendors need approval to add items or restock.</span><button type="button" data-approval-settings>Approval settings</button></div>';
+      const policy = approvalPolicy();
+      const editable = data.capabilities.edition !== 'school' || String(data.capabilities.section).toLowerCase() === 'all';
+      return `<h3>Vendor approval settings</h3><p>Choose separately for all vendors in branch <strong>${esc(data.capabilities.branchId)}</strong>. Approval is required by default.</p>
+        ${editable ? '' : '<p class="vendor-notice">These settings apply to all school sections in this branch. An Accounts Officer, Director or Super Admin with All school sections access must change them.</p>'}
+        <form class="vendor-form" data-product-policy>${[
+          ['RequireNewApproval','Adding new items','Includes opening stock and batch product uploads.'],
+          ['RequireStockApproval','Restocking items','Applies to vendor stock deliveries. Without approval, stock increases immediately.'],
+          ['RequireEditApproval','Editing details / selling prices','Does not allow vendors to restore items revoked by Accounts.']
+        ].map(([key,label,help]) => `<label class="vendor-card"><strong>${label}</strong><select name="${key}" ${editable ? '' : 'disabled'}>${option('true','Approval required',String(policy[key]))}${option('false','No approval — apply immediately',String(policy[key]))}</select><small>${help}</small></label>`).join('')}
+        <p class="vendor-full">Changes apply to future submissions only. Existing pending requests still need review in Product ownership. Payment approvals and settlement rules are unchanged.</p>
+        ${editable ? '<button type="submit" data-label="Save approval settings">Save approval settings</button>' : ''}<p role="status" aria-live="polite"></p></form>`;
+    }
+    function productAvailabilityForm(p) {
+      const revoked = !p.VendorSaleRevoked;
+      showDialog(revoked ? 'Revoke item from sale' : 'Restore for sale', `<p class="vendor-full">${esc(p.ItemName)} · ${esc(p.Quantity)} in stock.</p>
+        <p class="vendor-full">${revoked ? 'This item will no longer be available for new sales. Vendors cannot reactivate it themselves.' : 'This item will be available for new sales again.'} Stock quantities, past sales and vendor earnings are preserved.</p>
+        ${input('Notes','Reason','','text','required maxlength="2000"')}`, 'setProductAvailability',
+        body => ({...body,InventoryId:p.InventoryId,Section:p.Section,RecordVersion:p.RecordVersion,Revoked:revoked}));
+    }
+    function productRowsHTML() {
+      const c = data.capabilities;
+      return data.products.map((p,index) => `<tr role="row"><td role="cell">${esc(p.ItemName)}<small>${esc(p.InventoryId)} · ${esc(p.Section)}</small>
+        <small class="${p.VendorSaleRevoked ? 'vendor-revoked' : ''}">${p.VendorSaleRevoked ? 'Revoked by Accounts' : p.Active === 'NO' ? 'Inactive' : 'Live'}${p.VendorSaleRevoked && p.VendorSaleStatusReason ? ` · ${esc(p.VendorSaleStatusReason)}` : ''}</small></td>
+        <td role="cell" data-label="Owner">${esc(data.vendors.find(v => v.VendorId === p.VendorId)?.Name || 'Organisation')}</td><td role="cell" data-label="Stock / price">${esc(p.Quantity)} · ${money(p.Price)}</td><td role="cell"><div class="vendor-product-actions">
+        <button data-edit-product="${index}" type="button" ${c.vendor ? `class="vendor-icon-action" title="Edit product" aria-label="Edit product: ${esc(p.ItemName)}"` : ''}>${c.vendor ? productIcon('edit') : 'Review ownership'}</button>
+        ${c.vendor ? `<button data-delivery="${index}" type="button" class="vendor-icon-action" title="Record delivery" aria-label="Record delivery: ${esc(p.ItemName)}">${productIcon('delivery')}</button>` : ''}
+        ${c.reviewProducts && p.VendorId ? `<button type="button" data-product-availability="${index}" class="${p.VendorSaleRevoked ? '' : 'vendor-revoke-action'}">${p.VendorSaleRevoked ? 'Restore for sale' : 'Revoke item'}</button>` : ''}</div></td></tr>`).join('') || '<tr role="row"><td role="cell" colspan="4">No products yet. Add a product or upload a CSV; pending products appear above for review.</td></tr>';
+    }
+    function print(title, html) {
+      const win = window.open('','_blank'); if (!win) return status('Allow pop-ups to open the print preview.',true);
+      win.document.write(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title><style>body{font:14px Arial;color:#143652;padding:24px}table{width:100%;border-collapse:collapse}td,th{padding:8px;text-align:left;border-bottom:1px solid #ccd}.vendor-amount{text-align:right;white-space:nowrap}thead{display:table-header-group}tr{break-inside:avoid}small{display:block}button{padding:10px}@page{size:landscape;margin:12mm}@media print{button{display:none}body{padding:0;font-size:11px}}</style></head><body><button onclick="window.print()">Print / Save as PDF</button><h1>${esc(title)}</h1><p>Branch: ${esc(data.capabilities.branchId)} · Generated ${esc(DynamaxTime.formatDateTime(new Date()))}</p>${html}</body></html>`);
+      win.document.close();
+    }
+    function requestCard(r) {
+      const c = data.capabilities, stage = r.PendingApproval;
+      const next = stage && ({ accounts: c.confirm, 'admin-review': c.review, director: c.approve })[stage.stage] && stage.nextStatus;
+      return `<article class="vendor-card"><h3>${esc(r.VendorName)}</h3><span class="vendor-badge">${esc(r.Status)} · ${esc(r.PaymentStatus)}</span><small>${esc(r.SettlementId)} · revision ${r.Revision}</small>
+        <p>${money(r.Amount)} requested · ${money(r.Paid)} paid<br>${esc(r.From)} — ${esc(r.To)}</p><div class="vendor-actions">
+        <button data-request="${esc(r.SettlementId)}" data-action="print">Full list preview / print</button>
+        <button data-request="${esc(r.SettlementId)}" data-action="print-summary">Summary preview / print</button>
+        ${stage ? `<small>Next: ${esc(stage.role)} — ${esc(stage.verb)}</small>` : ''}
+        ${next ? `<button data-request="${esc(r.SettlementId)}" data-action="${next}">${esc(next)}</button><button data-request="${esc(r.SettlementId)}" data-action="Rejected">Reject</button>` : ''}
+        ${c.pay && r.Status === 'Approved' && r.Unpaid > 0 ? `<button data-request="${esc(r.SettlementId)}" data-action="pay">Record payment</button>` : ''}
+        ${r.PaymentStatus !== 'Paid' && !['Cancelled','Rejected'].includes(r.Status) && (c.manage || c.vendor || r.Status === 'Submitted') ? `<button data-request="${esc(r.SettlementId)}" data-action="Cancelled">Withdraw unpaid claim</button>` : ''}
+        ${['Cancelled','Rejected'].includes(r.Status) && !r.ReplacedBy ? `<button data-request="${esc(r.SettlementId)}" data-action="revise">Revise & resubmit</button>` : ''}</div></article>`;
+    }
+    function printRequest(r, summary) {
+      const report = r.PrintReport;
+      if (!report) return status('Refresh requests to load the complete print report.', true);
+      const columns = ['Gross','Refund','Charge','Net','Claimed'];
+      const cells = row => columns.map(k => `<td class="vendor-amount">${money(row[k])}</td>`).join('');
+      const heading = `${summary ? 'Summary' : 'Full sales list'} — Vendor requisition ${r.SettlementId}`;
+      const rows = summary ? '' : report.rows.map(s => `<tr><td>${s.Serial}</td><td>${esc(s.Date?.slice(0,10))}<small>${esc(s.SaleNo)}</small></td><td>${esc((s.Items || []).map(i => `${i.Quantity} × ${i.ItemName}`).join(', '))}<small>${esc(s.RuleLabel || JSON.stringify(s.RuleSnapshot || {}))}</small></td>${cells(s)}</tr>`).join('');
+      print(heading, `<h3>${esc(r.VendorName)}</h3><p>Period: ${esc(r.From)} — ${esc(r.To)} · Revision ${esc(r.Revision)}</p>
+        <p>${esc(r.Status)} · ${esc(r.PaymentStatus)}<br>${esc(r.ApprovalFlowLabel)}</p>
+        <p><strong>Requested ${money(r.Amount)} · Paid ${money(r.Paid)} · Unpaid ${money(r.Unpaid)}</strong></p>
+        <p>${esc(r.BankName)} · ${esc(r.BankAccountName)} · ${esc(r.BankAccountNumber || r.BankAccountMasked)}</p>
+        <table><thead><tr>${summary ? '<th>Included sales</th>' : '<th>S/N</th><th>Date / sale</th><th>Products / agreed rule</th>'}<th>Gross</th><th>Refunds</th><th>Deductions</th><th>Net entitlement</th><th>Claimed in this request</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><th colspan="${summary ? 1 : 3}">Total: ${report.total.Count} sales</th>${cells(report.total)}</tr></tfoot></table>
+        <p>Saved submission snapshot. Sales may be partly claimed; net entitlement is not the requested payment. Later refunds and payments do not rewrite this snapshot.</p>
+        <p>Requested by ${esc(r.RequestedBy)} · ${esc(r.RequestedAt)}<br>${esc(r.Notes)}</p>
+        <h4>Approval / payment trail</h4><table><thead><tr><th>Action</th><th>Officer</th><th>Date / time</th><th>Notes / reference</th></tr></thead><tbody>${(r.History || []).map(h => `<tr><td>${esc(h.Action)}</td><td>${esc(h.By)}</td><td>${esc(h.At)}</td><td>${esc(h.Notes)} ${esc(h.PaymentId)}</td></tr>`).join('')}</tbody></table>`);
+    }
+    function statementHTML(s) { return `<h3>${esc(s.vendor.Name)}</h3><p>${esc(s.from)} — ${esc(s.to)} · ${esc(s.vendor.BankName)} ${esc(s.vendor.BankAccountMasked)}</p>${metrics(s.balance)}
+      ${s.balance.NeedsReview ? '<p class="vendor-notice">Refunds, overpayments or an unissued paid-sale stock movement require review. Accounts must reconcile the affected records before further requests or payments.</p>' : ''}
+      <p>Available from this period: <strong class="vendor-amount">${money(s.availableInPeriod)}</strong> · Direct-collection charges due: <span class="vendor-amount">${money(s.directChargeDue)}</span></p>
+      <div class="vendor-table-wrap"><table class="vendor-table vendor-statement-table"><thead><tr><th>Date / reference</th><th>Products / rule</th><th class="vendor-amount">Sales</th><th class="vendor-amount">Refunds</th><th class="vendor-amount">Deduction</th><th class="vendor-amount">Net</th></tr></thead><tbody>${s.entries.map(e => `<tr><td>${esc(e.Date.slice(0,10))}<small>${esc(e.SaleNo || e.EntryId)} · ${esc(e.Type)}</small></td>
+        <td>${esc((e.Items || []).map(i => `${i.Quantity} × ${i.ItemName}`).join(', '))}<small>${esc(e.RuleLabel)}</small></td><td class="vendor-amount">${money(e.Gross)}</td><td class="vendor-amount">${money(e.Refund)}</td><td class="vendor-amount">${money(e.SchoolCharge)}</td><td class="vendor-amount">${money(e.Net)}</td></tr>`).join('') || '<tr><td colspan="6">No confirmed vendor earnings in this period.</td></tr>'}</tbody></table></div>
+      <h4>Recorded payments / receipts</h4><div class="vendor-table-wrap"><table class="vendor-table vendor-payment-table"><thead><tr><th>Date</th><th>Reference</th><th>Type / method</th><th class="vendor-amount">Amount</th></tr></thead><tbody>${s.payments.map(p => `<tr><td>${esc(p.Date)}</td><td>${esc(p.Reference)}<small>${esc(p.EvidenceReference)}</small></td><td>${esc(p.Type || p.PaymentMethod || 'Settlement')}</td><td class="vendor-amount">${money(p.Amount)}</td></tr>`).join('') || '<tr><td colspan="4">No payments recorded.</td></tr>'}</tbody></table></div><small>The summary is the full vendor balance; rows are filtered by date. Payments are recorded separately, never initiated by this page.</small>`; }
+    async function loadStatement() {
+      if (!selected || !data || disposed) return;
+      const analysis = tab === 'analysis', label = analysis ? 'sales analysis' : 'statement', retry = analysis ? 'Load analysis' : 'Load statement';
+      const form = root.querySelector(analysis ? '[data-analysis-filter]' : '[data-statement-filter]'), range = form ? formBody(form) : { From:today().slice(0,7) + '-01', To:today() };
+      const generation = ++statementGeneration, vendorId = selected;
+      statement = null; statementController?.abort();
+      const target = root.querySelector(analysis ? '[data-analysis-result]' : '[data-statement-result]');
+      if (!target) return;
+      if (!range.From || !range.To || range.From > range.To) {
+        target.textContent = `Choose a valid date range before loading the ${label}.`; return;
+      }
+      target.textContent = `Loading ${label}…`; target.setAttribute?.('aria-busy','true'); status(notice);
+      // Reads have their own cancellation lifecycle; switching vendors must not
+      // be dropped by the single-flight guard for financial mutations.
+      const controller = new AbortController(); statementController = controller; pending.add(controller);
+      const timer = setTimeout(() => controller.abort(),45000);
+      const current = () => !disposed && generation === statementGeneration && vendorId === selected && target.isConnected;
+      try {
+        const result = await request('statement',{ ...range, VendorId:vendorId },controller.signal);
+        if (result && current()) {
+          if (analysis) {
+            const {renderVendorSalesAnalysis} = await import('./vendor-sales-analysis.js');
+            if (current()) target.innerHTML = renderVendorSalesAnalysis(result);
+          } else { statement = result; target.innerHTML = statementHTML(result); }
+        }
+      } catch (error) {
+        if (current()) {
+          target.textContent = `Could not load this vendor’s ${label}. Use ${retry} to retry.`;
+          status(error.name === 'AbortError' ? `${retry} request timed out. Please retry.` : error.message,true);
+        }
+      } finally {
+        clearTimeout(timer); pending.delete(controller);
+        if (current()) target.setAttribute?.('aria-busy','false');
+        if (statementController === controller) statementController = null;
+      }
+    }
+    function requestForm(replaced) {
+      if (!selected) return status('Register or select a vendor first.',true);
+      const currentStatement = statement?.vendor.VendorId === selected ? statement : null;
+      if (!replaced && !currentStatement) return status('Load a fresh statement for the selected vendor and period before requesting payment.',true);
+      showDialog('Submit vendor requisition', `${input('From','From',replaced?.From || currentStatement?.from || today().slice(0,7) + '-01','date','required')}
+        ${input('To','To',replaced?.To || currentStatement?.to || today(),'date','required')}${input('Amount','Amount requested',currentStatement?.availableInPeriod ?? replaced?.Amount ?? 0,'number','min="0.01" step="0.01" required')}${notes()}
+        <small class="vendor-full">Confirmed unclaimed earnings are reserved on submission. Approval does not send money. Revisions require the complete approval chain again.</small>`,
+        'requestSettlement', b => ({ ...b, VendorId:selected, ...(replaced ? { ReplacesSettlementId:replaced.SettlementId, RecordVersion:replaced.RecordVersion } : {}) }));
+    }
+    function historicalForm() {
+      showDialog('Preview reviewed opening', `${input('OpeningReference','Unique historical reference','','text','required pattern="[A-Za-z0-9_-]{1,120}"')}${input('Date','Opening date',today(),'date','required')}
+        ${['GrossSales','Refunds','SchoolDeductions','PriorPayments'].map(k => input(k,({GrossSales:'Historical sales collected',SchoolDeductions:'Agreed past deductions',PriorPayments:'Already paid to vendor'})[k] || k,0,'number','min="0" step="0.01" required')).join('')}
+        ${accountSelect('OffsetAccount','Reviewed revenue / equity offset',data.chart,['Revenue','Equity'])}
+        ${input('EvidenceReference','Reviewed statement / evidence reference','','text','required')}${notes()}`, 'previewHistorical',b => ({ ...b, VendorId:selected }));
+      const form = dialog.querySelector('form');
+      form.onsubmit = async event => { event.preventDefault(); let body;
+        const result = await submitForm(form, payload => { body = { ...payload, VendorId:selected }; return call('previewHistorical',body,form); }); if (!result || disposed) return;
+        dialog.close();
+        showDialog('Confirm historical opening', `<p class="vendor-full">Outstanding vendor opening: <strong>${money(result.Outstanding)}</strong>. ${esc(result.message)}</p>
+          <label class="vendor-check vendor-full"><input name="Confirmed" type="checkbox" required> Accounts has reviewed ownership, sales, prior payments, the statement and the accounting offset.</label>${auth()}`, 'recordOpening', b => ({ ...body, ...b, Confirmed:true, PreviewDigest:result.PreviewDigest }));
+      };
+    }
+    function draw() {
+      const c = data.capabilities;
+      root.innerHTML = `<section class="vendor-workspace"><header class="vendor-header"><div><h2>Vendor Sales & Settlements</h2><p>Vendor earnings, approved requisitions and recorded payments in one place.</p></div><button data-refresh>Refresh</button></header>
+        ${!data.settings.Enabled || !data.settings.AccountingConfirmed ? '<div class="vendor-notice">Setup only — vendor sales are disabled until Accounts confirms the arrangement and account mappings. Existing organisation-owned sales are unchanged.</div>' : ''}
+        <p class="vendor-status" role="status">${esc(notice)}</p><nav class="vendor-tabs" aria-label="Vendor sections">${[['balances','Vendors & balances'],['statement','Statement & request'],['analysis','Sales analysis'],['requests','Payment requests'],...(c.products || c.operate ? [['products',`Product ownership (${data.products.length})`]] : []),...(c.reviewProducts ? [['approvals','Approval settings']] : []),...(c.manage ? [['settings','Organisation default']] : [])].map(([key,label]) => `<button data-tab="${key}" aria-pressed="${tab === key}">${label}</button>`).join('')}</nav><div class="vendor-panel" data-panel></div></section>`;
+      const panel = root.querySelector('[data-panel]');
+      if (tab === 'balances') panel.innerHTML = `${c.manage ? '<div class="vendor-actions"><button data-add-vendor>Register vendor</button></div>' : ''}<div class="vendor-grid">${data.vendors.map(v => { const b = data.balances.find(r => r.VendorId === v.VendorId) || {}; return `<article class="vendor-card"><h3>${esc(v.Name)}</h3><small>${esc(v.SchoolSection)} · ${v.Active === 'NO' ? 'Inactive' : 'Active'} · ${esc(v.BankAccountMasked)}</small><p>Available <strong>${money(b.Available)}</strong><br>Reserved ${money(b.Reserved)} · Paid ${money(b.Paid)}</p>${b.NeedsReview ? '<span class="vendor-badge">Needs reconciliation</span>' : ''}<div class="vendor-actions"><button data-view-vendor="${esc(v.VendorId)}">Open statement</button>${c.manage ? `<button data-edit-vendor="${esc(v.VendorId)}">Edit vendor / rule</button>` : ''}</div></article>`; }).join('') || '<p>No vendor accounts yet. Existing unassigned stock stays organisation-owned until reviewed.</p>'}</div>`;
+      if (tab === 'statement') panel.innerHTML = `<form class="vendor-form" data-statement-filter><label class="vendor-full">Vendor<select name="VendorId">${vendorOptions()}</select></label>${input('From','From',today().slice(0,7)+'-01','date','required')}${input('To','To',today(),'date','required')}<button type="submit" data-label="Load statement">Load statement</button></form><div class="vendor-actions"><button data-request-new>Request payment</button><button data-print-statement>Print / Save PDF</button>${c.pay ? '<button data-refund>Record linked refund</button><button data-recovery>Record money received</button><button data-opening>Reviewed historical opening</button>' : ''}</div><div data-statement-result><p>Select a vendor and load a statement.</p></div>`;
+      if (tab === 'analysis') panel.innerHTML = `<form class="vendor-form" data-analysis-filter><label class="vendor-full">Vendor<select name="VendorId">${vendorOptions()}</select></label>${input('From','From',analysisRange.From,'date','required')}${input('To','To',analysisRange.To,'date','required')}<button type="submit">Load analysis</button></form><div data-analysis-result role="region" aria-label="Vendor sales analysis" aria-live="polite">${selected ? 'Loading sales analysis…' : 'No vendor accounts available for analysis.'}</div>`;
+      if (tab === 'requests') panel.innerHTML = `<p>Each request follows its saved approval path. Payment recording is separate.</p>${options.configureApprovals ? '<button type="button" data-payment-approvals>Requisition approval settings</button>' : ''}<div class="vendor-grid">${data.requests.map(requestCard).join('') || '<p>No vendor payment requests yet.</p>'}</div>`;
+      if (tab === 'products') panel.innerHTML = `<div class="vendor-actions"><p><strong>Products: ${data.products.length}</strong> · Awaiting approval: ${(data.productChanges || []).filter(r => r.Status === 'Pending').length}<br>${c.vendor ? 'Only products belonging to your linked vendor accounts are shown. Stock reduces automatically on completed sales.' : 'Ownership applies to future sales only.'}</p><button data-import-products>${c.vendor ? 'Batch products' : 'Batch products & owners'}</button><button data-add-product>Add vendor product</button></div>${productPolicyHTML()}${productRequestsHTML()}<h3>Products & sale status</h3><div class="vendor-table-wrap"><table class="vendor-table vendor-product-table" role="table" aria-label="Products and sale status"><thead role="rowgroup"><tr role="row"><th scope="col">Product</th><th scope="col">Owner</th><th scope="col">Stock / price</th><th scope="col">Action</th></tr></thead><tbody role="rowgroup">${productRowsHTML()}</tbody></table></div>`;
+      if (tab === 'approvals') panel.innerHTML = productPolicyHTML();
+      if (tab === 'settings') { const s = data.settings; panel.innerHTML = `<h3>Default settlement arrangement</h3><p>Individual vendors may inherit this rule or explicitly receive full payment.</p><form class="vendor-form" data-settings>${ruleFields(s.RuleHistory?.at(-1))}
+        ${[['PayableAccount','Vendor payable account','Liability'],['CommissionAccount','Commission / charge income','Revenue'],['VendorReceivableAccount','Direct-collection charge receivable','Asset']].map(([key,label,type]) => accountSelect(key,label,data.chart,[type],s[key])).join('')}
+        ${input('BusinessTimezone','Business timezone',s.BusinessTimezone)}<label class="vendor-check vendor-full"><input name="AccountingConfirmed" type="checkbox" ${s.AccountingConfirmed ? 'checked' : ''}> Accounts has confirmed the collection arrangement and account mappings.</label>
+        <label class="vendor-check vendor-full"><input name="Enabled" type="checkbox" ${s.Enabled ? 'checked' : ''}> Enable reviewed vendor sales and settlements in this branch</label><button type="submit" data-label="Save default arrangement">Save default arrangement</button><p class="vendor-full" role="status"></p></form>`; }
+      if (tab === 'statement' && c.pay) {
+        const button = document.createElement('button'); button.type = 'button'; button.textContent = 'Complete paid sale stock issue';
+        root.querySelector('[data-refund]').after(button);
+        button.onclick = () => {
+          const held = statement?.entries.filter(e => e.SettlementHold && e.Type === 'Sale') || [];
+          if (!held.length) return status('Load a statement containing an original paid sale held for inventory review.',true);
+          showDialog('Complete paid sale stock issue', `${select('EntryId','Paid sale awaiting stock issue',held.map(e => [e.EntryId,e.SaleNo]))}${input('EvidenceReference','Stock issue / delivery evidence','','text','required')}${notes()}${auth()}
+            <small class="vendor-full">Stock must now cover the entire original order. The original stock issue and settlement holds are completed atomically; no payment or earnings are duplicated. Refunded orders require a separate quantity review.</small>`, 'completeInventoryReview',b => ({...b,VendorId:selected}));
+        };
+      }
+      root.querySelector('[data-refresh]').onclick = reload;
+      root.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { tab = b.dataset.tab; statement = null; statementGeneration++; statementController?.abort(); draw(); if (['statement','analysis'].includes(tab)) loadStatement(); });
+      root.querySelector('[data-add-vendor]')?.addEventListener('click', () => vendorForm());
+      root.querySelectorAll('[data-edit-vendor]').forEach(b => b.onclick = () => vendorForm(data.vendors.find(v => v.VendorId === b.dataset.editVendor)));
+      root.querySelectorAll('[data-view-vendor]').forEach(b => b.onclick = () => { selected = b.dataset.viewVendor; tab = 'statement'; draw(); loadStatement(); });
+      root.querySelector('[data-add-product]')?.addEventListener('click', () => productForm());
+      root.querySelector('[data-approval-settings]')?.addEventListener('click', () => { tab = 'approvals'; draw(); });
+      root.querySelector('[data-import-products]')?.addEventListener('click', productImportDialog);
+      root.querySelectorAll('[data-edit-product]').forEach(b => b.onclick = () => productForm(data.products[Number(b.dataset.editProduct)]));
+      root.querySelectorAll('[data-delivery]').forEach(b => b.onclick = () => deliveryForm(data.products[Number(b.dataset.delivery)]));
+      root.querySelectorAll('[data-product-availability]').forEach(b => b.onclick = () => productAvailabilityForm(data.products[Number(b.dataset.productAvailability)]));
+      root.querySelectorAll('[data-review-product]').forEach(b => b.onclick = () => {
+        const r = data.productChanges.find(row => row.ChangeId === b.dataset.reviewProduct);
+        showDialog(`${b.dataset.decision === 'Approved' ? 'Approve' : 'Reject'} product change`, `<p class="vendor-full">${esc(r.Kind)} · ${esc(r.Data.ItemName || r.InventoryId)}${r.Kind === 'Delivery' ? ` · +${esc(r.Data.Quantity)} units` : ` · ${money(r.Data.Price)} · ${esc(r.Data.Category)} · ${esc(r.Data.Unit)} · ${esc(r.Data.Active)}${r.Kind === 'Create' ? ` · ${esc(r.Data.Quantity)} opening units` : ''}`}</p>${notes()}`,
+          'reviewProductChange',body => ({...body,ChangeId:r.ChangeId,RecordVersion:r.RecordVersion,Decision:b.dataset.decision}));
+      });
+      const productPolicyForm = root.querySelector('[data-product-policy]');
+      if (productPolicyForm) productPolicyForm.onsubmit = async event => {
+        event.preventDefault(); const result = await call('saveProductPolicy',{RecordVersion:data.settings.RecordVersion,
+          ...Object.fromEntries(['RequireNewApproval','RequireEditApproval','RequireStockApproval'].map(key => [key,productPolicyForm.elements[key].value === 'true']))},productPolicyForm);
+        if (result) { notice = result.message; await reload(); }
+      };
+      root.querySelector('[data-request-new]')?.addEventListener('click', () => requestForm());
+      root.querySelector('[data-payment-approvals]')?.addEventListener('click', options.configureApprovals);
+      root.querySelector('[data-print-statement]')?.addEventListener('click', () => statement ? print(`Vendor statement — ${statement.vendor.Name}`,statementHTML(statement)) : status('Load a statement first.',true));
+      const filter = root.querySelector('[data-statement-filter]'); if (filter) {
+        filter.onchange = event => {
+          selected = filter.elements.VendorId.value; statement = null; statementGeneration++;
+          statementController?.abort();
+          root.querySelector('[data-statement-result]').textContent = 'Filters changed. Load a fresh statement before requesting payment.';
+          if (event.target.name === 'VendorId') loadStatement();
+        };
+        filter.onsubmit = e => { e.preventDefault(); selected = filter.elements.VendorId.value; loadStatement(); };
+      }
+      const analysisFilter = root.querySelector('[data-analysis-filter]'); if (analysisFilter) {
+        const update = () => {
+          selected = analysisFilter.elements.VendorId.value;
+          analysisRange = {From:analysisFilter.elements.From.value,To:analysisFilter.elements.To.value};
+          loadStatement();
+        };
+        analysisFilter.onchange = update;
+        analysisFilter.onsubmit = event => { event.preventDefault(); update(); };
+      }
+      const settings = root.querySelector('[data-settings]'); if (settings) { ruleVisibility(settings); settings.onchange = () => ruleVisibility(settings); settings.onsubmit = async e => { e.preventDefault();
+        const result = await call('saveSettings',{ ...formBody(settings), RecordVersion:data.settings.RecordVersion, AccountingConfirmed:settings.elements.AccountingConfirmed.checked, Enabled:settings.elements.Enabled.checked },settings);
+        if (result) { notice = result.message; await reload(); } }; }
+      root.querySelectorAll('[data-request]').forEach(b => b.onclick = () => {
+        const r = data.requests.find(r => r.SettlementId === b.dataset.request), action = b.dataset.action;
+        if (action === 'print' || action === 'print-summary') return printRequest(r, action === 'print-summary');
+        if (action === 'revise') { selected = r.VendorId; return requestForm(r); }
+        const payment = action === 'pay';
+        showDialog(payment ? 'Record vendor payment' : action, payment ? `<p class="vendor-full">${esc(r.BankName)} · ${esc(r.BankAccountName)} · ${esc(r.BankAccountNumber || r.BankAccountMasked)}. Maximum unpaid ${money(r.Unpaid)}. Record an already-made payment; this does not send money.</p>${paymentFields(r.Unpaid)}${auth()}` : `${notes()}${action === 'Cancelled' && ['Submitted','Rejected'].includes(r.Status) ? '' : auth()}`,
+          payment ? 'pay' : 'decision', body => ({ ...body, SettlementId:r.SettlementId, VendorId:r.VendorId, RecordVersion:r.RecordVersion, ...(payment ? {} : { Status:action }) }));
+      });
+      root.querySelector('[data-opening]')?.addEventListener('click', () => selected ? historicalForm() : status('Select a vendor first.',true));
+      root.querySelector('[data-refund]')?.addEventListener('click', () => {
+        if (!statement) return status('Load the original sale’s statement first.',true);
+        const originals = statement.entries.filter(e => ['Sale','Vendor collected sale'].includes(e.Type));
+        showDialog('Record linked vendor refund', `${select('EntryId','Original sale',originals.map(e => [e.EntryId,`${e.Date.slice(0,10)} · ${e.SaleNo} · ${money(e.Gross)}`]))}${paymentFields()}${notes()}${auth()}
+          <small class="vendor-full">Wallet sales refund the original wallet. Other refunds record money already returned. Affected claims must be reconciled. Stock is restocked separately after physical inspection.</small>`, 'refund', b => ({ ...b, VendorId:selected }));
+      });
+      root.querySelector('[data-recovery]')?.addEventListener('click', () => showDialog('Record vendor receipt / commission return', `${select('Kind','Movement type',['Commission received','Commission returned','Overpayment recovery'])}${paymentFields()}${auth()}
+        <small class="vendor-full">Commission returned records money already returned to a vendor after a refund reduces an earlier collected charge. No transfer is initiated.</small>`, 'recordRecovery', b => ({ ...b, VendorId:selected })));
+    }
+    root.innerHTML = '<p class="vendor-status" role="status">Loading vendor workspace…</p>'; reload();
+    mounted = { destroy() { disposed = true; for (const c of pending) c.abort(); dialog?.close(); dialog?.remove(); } };
+    return mounted;
+  }
+  window.DynamaxVendors = Object.freeze({ mount, unmount() { mounted?.destroy(); mounted = undefined; } });
+})();

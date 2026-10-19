@@ -1,0 +1,1626 @@
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import test from 'node:test';
+import { runInNewContext } from 'node:vm';
+
+import {
+  ACADEMIC_CLASS_TEACHER_STATE_KEYS,
+  ACADEMIC_MANAGEMENT_COLLECTIONS,
+  ACADEMIC_SUBJECT_TEACHER_STATE_KEYS,
+  ACADEMIC_STUDENT_IMPORT_COLUMNS,
+  ACADEMIC_STUDENT_IMPORT_REQUIRED_COLUMNS,
+  ACADEMIC_SUMMARY_STATE_KEYS,
+  ACADEMIC_VIEW_STATE_KEYS,
+  applyAcademicStudentCurriculum,
+  assertAcademicMembershipCapacity,
+  academicPermanentDeleteDependants,
+  academicCanConfigureClassStudentSubjects,
+  academicManagementCapabilities,
+  academicManagementSummary,
+  academicFormTeacherForClassroom,
+  academicManagementViewStateKeys,
+  academicMembershipCanReceiveInitialArm,
+  academicLegacyClassCompatibilityEnabled,
+  academicOfferingSubjectRole,
+  academicSeniorCoreSubjectIds,
+  academicStudentDepartmentForClassroom,
+  academicStudentMatchesClass,
+  academicSubjectTeacherCandidates,
+  academicTeacherVisibleMemberships,
+  academicTeacherVisibleTimetable,
+  importedAcademicStudentProfile,
+  normalizeAcademicArm,
+  normalizeAcademicArmTemplate,
+  normalizeAcademicClass,
+  normalizeAcademicClassTeacherAssignments,
+  normalizeAcademicDepartment,
+  normalizeAcademicOffering,
+  normalizeAcademicSession,
+  normalizeAcademicStudentMembership,
+  normalizeAcademicStudentImportRows,
+  normalizeAcademicStudentMovement,
+  normalizeAcademicSubject,
+  normalizeAcademicTeacherAllocation,
+  normalizeAcademicTerm,
+  parseAcademicArmTemplateBatch,
+  parseAcademicClassBatch,
+  parseAcademicSubjectBatch,
+  scopedAcademicRows,
+  scopedSection
+} from '../functions/lib/academic-management.js';
+import { staffRoleAllowedForEdition } from '../functions/lib/organization-config.js';
+import { defaultModulesForRole, modulesForEdition } from '../functions/lib/role-module-access.js';
+
+const [librarySource, apiSource, backendSource, staffStudentsSource, backupSource, adminSource, styleSource, adminHtml] = await Promise.all([
+  readFile(new URL('../functions/lib/academic-management.js', import.meta.url), 'utf8'),
+  readFile(new URL('../functions/api/staff-academics.js', import.meta.url), 'utf8'),
+  readFile(new URL('../functions/api/backend.js', import.meta.url), 'utf8'),
+  readFile(new URL('../functions/api/staff-students.js', import.meta.url), 'utf8'),
+  readFile(new URL('../functions/lib/organization-backup.js', import.meta.url), 'utf8'),
+  readFile(new URL('../js/admin.js', import.meta.url), 'utf8'),
+  readFile(new URL('../css/style.css', import.meta.url), 'utf8'),
+  readFile(new URL('../admin.html', import.meta.url), 'utf8')
+]);
+
+const scope = { branchId: 'north-campus', section: 'secondary' };
+
+test('every academic workspace stays focused below the Worker subrequest ceiling', () => {
+  assert.deepEqual(ACADEMIC_SUBJECT_TEACHER_STATE_KEYS, [
+    'sessions', 'terms', 'classes', 'arms', 'subjects', 'departments',
+    'offerings', 'teacherAllocations'
+  ]);
+  assert.deepEqual(ACADEMIC_CLASS_TEACHER_STATE_KEYS, [
+    'sessions', 'terms', 'classes', 'arms', 'teacherAllocations'
+  ]);
+  assert.deepEqual(Object.keys(ACADEMIC_VIEW_STATE_KEYS), [
+    'classrooms', 'classstaff', 'structure', 'bulksetup', 'departments', 'offerings', 'teachers',
+    'students', 'timetable', 'presence', 'attendance', 'scorebook', 'results', 'outcomes',
+    'analysis', 'clearances', 'readiness', 'cbt'
+  ]);
+  const validKeys = new Set(Object.keys(ACADEMIC_MANAGEMENT_COLLECTIONS));
+  Object.entries(ACADEMIC_VIEW_STATE_KEYS).forEach(([view, keys]) => {
+    assert.ok(keys.length > 0 && keys.length < 50, `${view} must stay below the Worker subrequest ceiling`);
+    assert.equal(new Set(keys).size, keys.length, `${view} must not repeat collections`);
+    keys.forEach((key) => assert.ok(validKeys.has(key) && key !== 'audit', `${view} contains invalid state key ${key}`));
+  });
+  assert.equal(academicManagementViewStateKeys('subject-teachers'), ACADEMIC_SUBJECT_TEACHER_STATE_KEYS);
+  assert.equal(academicManagementViewStateKeys('class-teachers'), ACADEMIC_CLASS_TEACHER_STATE_KEYS);
+  assert.equal(academicManagementViewStateKeys('unknown-view'), ACADEMIC_VIEW_STATE_KEYS.classrooms);
+  assert.equal(academicManagementViewStateKeys('teachers', { financeView: true }), ACADEMIC_VIEW_STATE_KEYS.clearances);
+  const saveSource = librarySource.slice(
+    librarySource.indexOf('export async function bulkAssignAcademicSubjectTeacher'),
+    librarySource.indexOf('export async function bulkAllocateAcademicStudents')
+  );
+  assert.match(saveSource, /loadScopedAcademicState\(env, scope, ACADEMIC_SUBJECT_TEACHER_STATE_KEYS\)/);
+  assert.match(saveSource, /loadPeople\(env, user, scope, \{ students: false \}\)/);
+  assert.match(saveSource, /View: 'teachers'/);
+  assert.doesNotMatch(librarySource, /loadAcademicState\(env,\s*scope\.branchId\s*\)/);
+  assert.match(librarySource, /ACADEMIC_STATE_BUNDLE_REQUIRED/);
+  assert.match(librarySource, /focusedStateKeys = academicManagementViewStateKeys/);
+  assert.match(librarySource, /queryCollection\(env, collection, \{\s*filters: \[\{ field: 'BranchId', op: '==', value: branchId \}\]/);
+  assert.doesNotMatch(librarySource, /collections\.map\(\(\[, collection\]\) => listCollection\(env, collection\)/);
+  assert.match(adminSource, /data-academic-view-select/);
+  assert.match(adminSource, /academicManagementView = select\.value;[\s\S]{0,400}void loadAcademicManagement\(\);/);
+  assert.match(adminSource, /availableViews\.some\(\(\[key\]\) => key === academicManagementView\)/);
+});
+
+test('Academic Management cards count active records in the selected section without expanding focused payloads', () => {
+  assert.deepEqual(ACADEMIC_SUMMARY_STATE_KEYS, [
+    'classes', 'arms', 'armTemplates', 'subjects', 'departments',
+    'teacherAllocations', 'studentMemberships'
+  ]);
+  const scoped = (rows) => scopedAcademicRows(rows, {
+    section: 'secondary', structure: { Sections: ['primary', 'secondary'] }
+  });
+  const state = {
+    classes: scoped([{ SchoolSection: 'secondary', Status: 'Active' }, { SchoolSection: 'primary', Status: 'Active' }]),
+    arms: scoped([{ SchoolSection: 'secondary' }, { SchoolSection: 'secondary', Status: 'Archived' }]),
+    armTemplates: scoped([{ SchoolSection: 'secondary', Status: 'Active' }]),
+    subjects: scoped([{ SchoolSection: 'secondary' }, { SchoolSection: 'secondary', Status: 'Inactive' }]),
+    departments: scoped([{ SchoolSection: 'secondary', Status: 'Active' }]),
+    teacherAllocations: scoped([{ SchoolSection: 'secondary', Status: 'Active' }, { SchoolSection: 'primary', Status: 'Active' }]),
+    studentMemberships: scoped([{ SchoolSection: 'secondary', Status: 'Active' }, { SchoolSection: 'secondary', Status: 'Withdrawn' }])
+  };
+  assert.deepEqual(academicManagementSummary(state), {
+    Classes: 1, Arms: 1, ArmTemplates: 1, Subjects: 1,
+    Departments: 1, TeacherAllocations: 1, StudentMemberships: 1
+  });
+  assert.match(librarySource, /summary = await loadAcademicManagementSummary\(env, scope, rawState, focusedStateKeys\)/);
+  assert.match(librarySource, /permissions,\s*summary,\s*scope:/);
+  assert.match(adminSource, /summary\.Classes \?\? '—'/);
+});
+
+test('AM-003 sessions and terms are effective-dated and date validated', () => {
+  const session = normalizeAcademicSession({
+    Name: '2026/2027', StartDate: '2026-09-01', EndDate: '2027-07-31', Status: 'Active'
+  }, scope);
+  const term = normalizeAcademicTerm({
+    SessionId: session.SessionId, Name: 'First Term', StartDate: '2026-09-01', EndDate: '2026-12-18'
+  }, scope);
+
+  assert.equal(session.SessionId, 'session__north-campus__secondary__2026-2027');
+  assert.equal(term.TermId, `${session.SessionId}__term__secondary__first-term`);
+  assert.equal(session.BranchId, 'north-campus');
+  assert.equal(session.SchoolSection, 'secondary');
+  assert.equal(term.SchoolSection, 'secondary');
+  assert.throws(() => normalizeAcademicSession({
+    Name: 'Invalid', StartDate: '2027-01-01', EndDate: '2026-01-01'
+  }, scope), /end date cannot be before/);
+});
+
+test('AM-003 classes and arms retain branch and school-section isolation', () => {
+  const schoolClass = normalizeAcademicClass({ Name: 'JSS 1', Code: 'JSS1', Capacity: 90 }, scope);
+  const arm = normalizeAcademicArm({ ClassId: schoolClass.ClassId, Name: 'Excellence', Capacity: 30 }, scope);
+  const classroom = normalizeAcademicArm({ ClassId: schoolClass.ClassId, Name: 'Brilliance', IsClassroom: 'YES' }, scope);
+  const departmentalArm = normalizeAcademicArm({ ClassId: 'sss-1', Name: 'Science', DepartmentId: 'science' }, scope);
+  const otherBranch = normalizeAcademicClass({ Name: 'JSS 1', Code: 'JSS1' }, { branchId: 'south', section: 'secondary' });
+  const otherSection = normalizeAcademicClass({ Name: 'JSS 1', Code: 'JSS1' }, { branchId: 'north-campus', section: 'primary' });
+
+  assert.equal(schoolClass.ClassId, 'class__north-campus__secondary__jss-1');
+  assert.equal(arm.ArmId, `${schoolClass.ClassId}__arm__excellence`);
+  assert.equal(departmentalArm.DepartmentId, 'science');
+  assert.equal(arm.IsClassroom, false);
+  assert.equal(classroom.IsClassroom, true);
+  assert.notEqual(schoolClass.ClassId, otherBranch.ClassId);
+  assert.notEqual(schoolClass.ClassId, otherSection.ClassId);
+  assert.equal(schoolClass.LegacyDocumentId, 'JSS_1');
+  assert.equal(schoolClass.SchoolStage, 'junior-secondary');
+  assert.equal(normalizeAcademicClass({ Name: 'SS 2', Code: 'SS2', SchoolStage: 'senior-secondary' }, scope).SchoolStage, 'senior-secondary');
+  assert.equal(normalizeAcademicClass({ Name: 'Grade 10', Code: 'G10' }, scope).SchoolStage, 'senior-secondary');
+  assert.throws(() => normalizeAcademicClass({ Name: 'Year 10', Code: 'Y10' }, scope), /Junior Secondary or Senior Secondary/);
+});
+
+test('AM-003 classes and reusable arm templates stay school-section scoped', () => {
+  const secondaryClasses = parseAcademicClassBatch({
+    ClassLines: 'JSS 1 | JSS1 | Junior Secondary | 120\nSS 1 | SS1 | Senior Secondary | 100'
+  }, scope);
+  const primaryClasses = parseAcademicClassBatch({ ClassLines: 'Primary 1 | PRI1 | 40' }, { ...scope, section: 'primary' });
+  const armRows = parseAcademicArmTemplateBatch({ ArmTemplateLines: 'A | A | 40\nGold | GOLD | 35' });
+  const template = normalizeAcademicArmTemplate(armRows[1], scope);
+  const appliedArm = normalizeAcademicArm({
+    ClassId: 'class-1', Name: template.Name, Code: template.Code,
+    ArmTemplateId: template.ArmTemplateId, Capacity: template.DefaultCapacity
+  }, scope);
+
+  assert.deepEqual(secondaryClasses.map((row) => row.SchoolStage), ['Junior Secondary', 'Senior Secondary']);
+  assert.equal(secondaryClasses[0].Capacity, '120');
+  assert.equal(primaryClasses[0].SchoolStage, 'primary');
+  assert.equal(template.ArmTemplateId, 'arm-template__north-campus__secondary__gold');
+  assert.equal(template.SchoolSection, 'secondary');
+  assert.equal(template.DefaultCapacity, 35);
+  assert.equal(scopedSection({ SchoolSection: template.SchoolSection }, false), 'secondary');
+  assert.equal(appliedArm.ArmTemplateId, template.ArmTemplateId);
+  assert.equal(appliedArm.Capacity, 35);
+  assert.throws(() => parseAcademicArmTemplateBatch({ ArmTemplateLines: 'Brilliance BRI 30' }), /Line 1 is not in the required format/);
+  assert.throws(() => parseAcademicClassBatch({ ClassLines: 'Grade 7 JSS1 Junior Secondary 200' }, scope), /Line 1 is not in the required format/);
+});
+
+test('editing a legacy arm template retains the selected school section when saving', () => {
+  const elements = {
+    SchoolSection: { value: 'secondary' },
+    RecordId: { value: '' },
+    RevisionToken: { value: '' },
+    Name: { value: '' },
+    Code: { value: '' }
+  };
+  Object.defineProperty(elements, 'namedItem', { value: (name) => elements[name] || null });
+  const form = {
+    elements,
+    dataset: { academicForm: 'armTemplate' },
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    hasAttribute: () => false,
+    scrollIntoView: () => {}
+  };
+  const context = {
+    panelEl: { querySelector: () => form },
+    academicManagementFilters: { section: 'secondary' },
+    academicRecordId: (record) => record.ArmTemplateId,
+    validateAcademicCheckboxFields: () => {},
+    FormData: class {
+      constructor(source) { this.source = source; }
+      entries() { return Object.entries(this.source.elements).map(([name, control]) => [name, control.value]); }
+    }
+  };
+  const populateSource = adminSource.slice(
+    adminSource.indexOf('function populateAcademicForm('),
+    adminSource.indexOf('function academicScorebookRowPayload(')
+  );
+  const payloadSource = adminSource.slice(
+    adminSource.indexOf('function academicFormPayload('),
+    adminSource.indexOf('function academicWorkflowPayload(')
+  );
+  const populate = runInNewContext(`${populateSource}; populateAcademicForm`, context);
+  const payload = runInNewContext(`${payloadSource}; academicFormPayload`, context);
+  populate('armTemplate', {
+    ArmTemplateId: 'arm-template-1', SchoolSection: '', Name: 'Brilliance', Code: 'BRI', RevisionToken: 'revision-1'
+  });
+  assert.equal(elements.SchoolSection.value, 'secondary');
+  assert.equal(elements.Code.value, 'BRI');
+  assert.equal(elements.RecordId.value, 'arm-template-1');
+  elements.SchoolSection.value = '';
+  assert.equal(payload(form).SchoolSection, 'secondary');
+});
+
+test('checking an existing class selects its classroom arms without losing manual choices', () => {
+  const selectSource = adminSource.slice(
+    adminSource.indexOf('function academicExistingClassroomTemplateIds'),
+    adminSource.indexOf('function bindAcademicClassroomArmSelection')
+  );
+  const selectExisting = new Function('academicIsActive', 'clean', `${selectSource}; return academicExistingClassroomTemplateIds;`)(
+    (row) => row && !/archived|inactive|closed|withdrawn/i.test(String(row.Status || '')),
+    (value) => String(value ?? '').trim()
+  );
+  const templates = [
+    { ArmTemplateId: 'brilliance', Name: 'Brilliance', Code: 'BRI', Status: 'Active' },
+    { ArmTemplateId: 'classic', Name: 'Classic', Code: 'CLA', Status: 'Active' },
+    { ArmTemplateId: 'distinction', Name: 'Distinction', Code: 'DIS', Status: 'Active' }
+  ];
+  const arms = [
+    { ClassId: 'grade-7', ArmTemplateId: 'brilliance', Name: 'Brilliance', IsClassroom: true, Status: 'Active' },
+    { ClassId: 'grade-7', Name: 'Classic', Code: 'CLA', IsClassroom: true, Status: 'Active' },
+    { ClassId: 'grade-7', ArmTemplateId: 'distinction', IsClassroom: true, Status: 'Archived' },
+    { ClassId: 'grade-8', ArmTemplateId: 'distinction', IsClassroom: true, Status: 'Active' },
+    { ClassId: 'grade-8', ArmTemplateId: 'classic', IsClassroom: false, Status: 'Active' }
+  ];
+  assert.deepEqual(selectExisting('grade-7', arms, templates), ['brilliance', 'classic']);
+  assert.deepEqual(selectExisting('grade-8', arms, templates), ['distinction']);
+
+  const bindSource = adminSource.slice(
+    adminSource.indexOf('function bindAcademicClassroomArmSelection'),
+    adminSource.indexOf('function academicClassroomCheckboxField')
+  );
+  const checked = (form, name) => form.inputs.filter((input) => input.name === name && input.checked).map((input) => input.value);
+  const setChecked = (form, name, values) => {
+    const selected = new Set(values);
+    form.inputs.filter((input) => input.name === name).forEach((input) => { input.checked = selected.has(input.value); });
+  };
+  const bind = new Function('academicCheckedValues', 'setAcademicCheckedValues', 'academicExistingClassroomTemplateIds',
+    `${bindSource}; return bindAcademicClassroomArmSelection;`)(checked, setChecked, selectExisting);
+  const inputs = [
+    ...['grade-7', 'grade-8'].map((value) => ({ name: 'ClassIds', value, checked: false })),
+    ...templates.map((template) => ({ name: 'ArmTemplateIds', value: template.ArmTemplateId, checked: false }))
+  ];
+  const form = {
+    inputs,
+    querySelectorAll: (selector) => selector === 'input[name="ClassIds"]' ? inputs.filter((input) => input.name === 'ClassIds') : [],
+    addEventListener: (_name, listener) => { form.onChange = listener; }
+  };
+  bind(form, arms, templates);
+  const change = (name, value, isChecked) => {
+    const input = inputs.find((row) => row.name === name && row.value === value);
+    input.checked = isChecked;
+    form.onChange({ target: input });
+  };
+  change('ClassIds', 'grade-7', true);
+  assert.deepEqual(checked(form, 'ArmTemplateIds'), ['brilliance', 'classic']);
+  change('ClassIds', 'grade-8', true);
+  assert.deepEqual(checked(form, 'ArmTemplateIds'), ['brilliance', 'classic', 'distinction']);
+  change('ClassIds', 'grade-7', false);
+  assert.deepEqual(checked(form, 'ArmTemplateIds'), ['distinction']);
+  change('ArmTemplateIds', 'classic', true);
+  change('ClassIds', 'grade-8', false);
+  assert.deepEqual(checked(form, 'ArmTemplateIds'), ['classic']);
+  change('ClassIds', 'grade-7', true);
+  change('ArmTemplateIds', 'brilliance', false);
+  change('ClassIds', 'grade-7', false);
+  change('ClassIds', 'grade-7', true);
+  assert.deepEqual(checked(form, 'ArmTemplateIds'), ['brilliance', 'classic']);
+});
+
+test('selecting a class checks its saved subjects for the period without copying subjects from other classes', () => {
+  const selectionSource = adminSource.slice(
+    adminSource.indexOf('function academicSavedClassSubjectIds'),
+    adminSource.indexOf('function academicClassroomCheckboxField')
+  );
+  const checked = (form, name) => form.inputs.filter((input) => input.name === name && input.checked).map((input) => input.value);
+  const setChecked = (form, name, values) => {
+    const selected = new Set(values);
+    form.inputs.filter((input) => input.name === name).forEach((input) => { input.checked = selected.has(input.value); });
+  };
+  const { academicSavedClassSubjectIds, bindAcademicClassSubjectSelection } = new Function(
+    'academicIsActive', 'clean', 'academicCheckedValues', 'setAcademicCheckedValues',
+    `${selectionSource}; return { academicSavedClassSubjectIds, bindAcademicClassSubjectSelection };`
+  )((row) => row && !/archived|inactive|closed|withdrawn/i.test(String(row.Status || '')),
+    (value) => String(value ?? '').trim(), checked, setChecked);
+  const offering = (classId, subjectId, overrides = {}) => ({
+    ClassId: classId, SubjectId: subjectId, SessionId: 'session-1', TermId: 'term-1', ArmId: '', Status: 'Active', ...overrides
+  });
+  const offerings = [
+    offering('grade-7', 'math'), offering('grade-7', 'english'),
+    offering('grade-8', 'math'), offering('grade-8', 'science'),
+    offering('grade-7', 'french', { ArmId: 'arm-a' }),
+    offering('grade-7', 'geography', { Status: 'Archived' }),
+    offering('grade-7', 'biology', { TermId: 'term-2' })
+  ];
+  assert.deepEqual(academicSavedClassSubjectIds('grade-7', 'session-1', 'term-1', offerings), ['math', 'english']);
+  const inputs = [
+    ...['grade-7', 'grade-8'].map((value) => ({ name: 'ClassIds', value, checked: false })),
+    ...['math', 'english', 'science', 'french', 'biology'].map((value) => ({ name: 'SubjectIds', value, checked: false, indeterminate: false }))
+  ];
+  const summary = { textContent: '' };
+  const form = {
+    inputs, elements: { SessionId: { value: 'session-1' }, TermId: { value: 'term-1' } },
+    querySelector: (selector) => selector === '[data-academic-curriculum-summary]' ? summary : null,
+    querySelectorAll: (selector) => selector === 'input[name="SubjectIds"]' ? inputs.filter((input) => input.name === 'SubjectIds') : [],
+    addEventListener: (_name, listener) => { form.onChange = listener; }
+  };
+  const change = (name, value, isChecked) => {
+    const input = inputs.find((row) => row.name === name && row.value === value);
+    input.checked = isChecked;
+    form.onChange({ target: input });
+  };
+  bindAcademicClassSubjectSelection(form, offerings);
+  change('ClassIds', 'grade-7', true);
+  assert.deepEqual(checked(form, 'SubjectIds'), ['math', 'english']);
+  change('ClassIds', 'grade-8', true);
+  assert.deepEqual(checked(form, 'SubjectIds'), ['math']);
+  assert.equal(inputs.find((input) => input.value === 'english').indeterminate, true);
+  assert.equal(inputs.find((input) => input.value === 'science').indeterminate, true);
+  assert.match(summary.textContent, /saved in only some classes and not auto-checked/);
+  change('SubjectIds', 'english', true);
+  assert.deepEqual(checked(form, 'SubjectIds'), ['math', 'english']);
+  change('ClassIds', 'grade-7', false);
+  assert.deepEqual(checked(form, 'SubjectIds'), ['math', 'english', 'science']);
+  change('SubjectIds', 'science', false);
+  assert.deepEqual(checked(form, 'SubjectIds'), ['math', 'english']);
+  form.elements.TermId.value = 'term-2';
+  form.onChange({ target: { name: 'TermId' } });
+  assert.deepEqual(checked(form, 'SubjectIds'), ['english']);
+});
+
+test('selecting a subject teacher restores saved subjects and classrooms for the exact period', () => {
+  const helpersSource = adminSource.slice(
+    adminSource.indexOf('function academicSavedSubjectTeacherAllocations'),
+    adminSource.indexOf('function bindAcademicSubjectTeacherSelection')
+  );
+  const cleanValue = (value) => String(value ?? '').trim();
+  const isActive = (row) => row && !/archived|inactive|closed|withdrawn/i.test(cleanValue(row.Status));
+  const helpers = new Function('clean', 'academicIsActive',
+    `${helpersSource}; return { academicSavedSubjectTeacherAllocations, academicSavedSubjectTeacherClassroomIds };`)(cleanValue, isActive);
+  const classrooms = [
+    { ArmId: 'a', ClassId: 'grade-7', IsClassroom: true, Status: 'Active' },
+    { ArmId: 'b', ClassId: 'grade-7', IsClassroom: true, Status: 'Active' },
+    { ArmId: 'c', ClassId: 'grade-8', IsClassroom: true, Status: 'Active' }
+  ];
+  const allocation = (teacher, subject, arm, term = 'term-1', status = 'Active') => ({
+    TeacherUsername: teacher, SubjectId: subject, ArmId: arm,
+    ClassId: arm === 'c' ? 'grade-8' : 'grade-7', SessionId: 'session-1', TermId: term,
+    AllocationRole: 'Subject Teacher', Status: status
+  });
+  const data = {
+    subjects: [
+      { SubjectId: 'english', Code: 'ENG', Name: 'English Studies', Status: 'Active' },
+      { SubjectId: 'math', Code: 'MTH', Name: 'Mathematics', Status: 'Active' }
+    ],
+    arms: classrooms,
+    terms: [
+      { TermId: 'term-1', SessionId: 'session-1', Name: 'First Term', Status: 'Active' },
+      { TermId: 'term-2', SessionId: 'session-1', Name: 'Second Term', Status: 'Active' },
+      { TermId: 'term-3', SessionId: 'session-2', Name: 'First Term', Status: 'Active' }
+    ],
+    teacherAllocations: [
+      allocation('ada', 'english', 'a'), allocation('ADA', 'english', 'b'),
+      allocation('ada', 'math', 'b'), allocation('bob', 'english', 'c'),
+      allocation('ada', 'english', 'c', 'term-2'),
+      { ...allocation('ada', 'math', 'a'), SessionId: 'session-2', TermId: 'term-3' },
+      allocation('ada', 'english', 'c', 'term-1', 'Archived'),
+      { ...allocation('ada', 'english', 'c'), AllocationRole: 'Form Teacher' }
+    ]
+  };
+  const saved = helpers.academicSavedSubjectTeacherAllocations(data.teacherAllocations, 'Ada', 'session-1', 'term-1');
+  assert.equal(saved.length, 3);
+  assert.deepEqual(helpers.academicSavedSubjectTeacherClassroomIds(saved, 'english', classrooms), ['a', 'b']);
+  assert.deepEqual(helpers.academicSavedSubjectTeacherClassroomIds([
+    { SubjectId: 'english', ClassId: 'grade-7', ArmId: '' }
+  ], 'english', classrooms), ['a', 'b']);
+
+  const bindSource = adminSource.slice(
+    adminSource.indexOf('function bindAcademicSubjectTeacherSelection'),
+    adminSource.indexOf('function academicCheckedValues')
+  );
+  const select = (value = '') => {
+    let current = value;
+    return {
+      get value() { return current; },
+      set value(next) { current = next; },
+      set innerHTML(markup) {
+        this.markup = markup;
+        current = markup.match(/<option value="([^"]+)" selected>/)?.[1] || '';
+      },
+      addEventListener(_name, listener) { this.onChange = listener; }
+    };
+  };
+  const controls = {
+    TeacherUsername: select(), SubjectId: select(), SessionId: select('session-1'), TermId: select('term-1')
+  };
+  const inputs = classrooms.map((row) => ({ name: 'ClassroomIds', value: row.ArmId, checked: false }));
+  const help = { textContent: '' };
+  const form = {
+    elements: { namedItem: (name) => controls[name] },
+    inputs,
+    querySelector: (selector) => selector === '[data-academic-teacher-subject-help]' ? help : null,
+    addEventListener: (_name, listener) => { form.onChange = listener; }
+  };
+  const checked = (target, name) => target.inputs.filter((input) => input.name === name && input.checked).map((input) => input.value);
+  const setChecked = (target, name, values) => {
+    const selected = new Set(values);
+    target.inputs.filter((input) => input.name === name).forEach((input) => { input.checked = selected.has(input.value); });
+  };
+  const options = (rows, selected, label) => `<option value=""></option>${rows.map((row) => {
+    const value = row.SubjectId || row.TermId;
+    return `<option value="${value}"${value === selected ? ' selected' : ''}>${label(row)}</option>`;
+  }).join('')}`;
+  const bind = new Function('clean', 'academicIsActive', 'academicSavedSubjectTeacherAllocations',
+    'academicSavedSubjectTeacherClassroomIds', 'academicSelectOptions', 'setAcademicCheckedValues', 'academicCheckedValues',
+    `${bindSource}; return bindAcademicSubjectTeacherSelection;`)(
+    cleanValue, isActive, helpers.academicSavedSubjectTeacherAllocations,
+    helpers.academicSavedSubjectTeacherClassroomIds, options, setChecked, checked
+  );
+  bind(form, data);
+  controls.TeacherUsername.value = 'ada';
+  controls.TeacherUsername.onChange();
+  assert.equal(controls.SubjectId.value, 'english');
+  assert.match(controls.SubjectId.markup, /English Studies \(saved\)/);
+  assert.deepEqual(checked(form, 'ClassroomIds'), ['a', 'b']);
+  controls.SubjectId.value = 'math';
+  controls.SubjectId.onChange();
+  assert.deepEqual(checked(form, 'ClassroomIds'), ['b']);
+  inputs[0].checked = true;
+  form.onChange({ target: inputs[0] });
+  controls.TeacherUsername.value = 'bob';
+  controls.TeacherUsername.onChange();
+  assert.equal(controls.SubjectId.value, 'english');
+  assert.deepEqual(checked(form, 'ClassroomIds'), ['c']);
+  controls.TeacherUsername.value = 'ada';
+  controls.TeacherUsername.onChange();
+  assert.equal(controls.SubjectId.value, 'math');
+  assert.deepEqual(checked(form, 'ClassroomIds'), ['a', 'b']);
+  controls.TermId.value = 'term-2';
+  controls.TermId.onChange();
+  assert.equal(controls.SubjectId.value, 'english');
+  assert.deepEqual(checked(form, 'ClassroomIds'), ['c']);
+  controls.TermId.value = 'term-1';
+  controls.TermId.onChange();
+  assert.equal(controls.SubjectId.value, 'math');
+  assert.deepEqual(checked(form, 'ClassroomIds'), ['a', 'b']);
+  controls.SessionId.value = 'session-2';
+  controls.SessionId.onChange();
+  assert.equal(controls.TermId.value, 'term-3');
+  assert.equal(controls.SubjectId.value, 'math');
+  assert.deepEqual(checked(form, 'ClassroomIds'), ['a']);
+  controls.SessionId.value = 'session-1';
+  controls.SessionId.onChange();
+  assert.equal(controls.TermId.value, 'term-1');
+  assert.deepEqual(checked(form, 'ClassroomIds'), ['a', 'b']);
+  assert.match(help.textContent, /saved subject/);
+});
+
+test('AM-003 legacy shared academic records remain in Secondary and never leak into Primary', () => {
+  const rows = [
+    { RecordId: 'legacy', SchoolSection: 'all' },
+    { RecordId: 'missing-section' },
+    { RecordId: 'primary', SchoolSection: 'Primary' },
+    { RecordId: 'secondary', SchoolSection: 'Secondary' }
+  ];
+
+  assert.deepEqual(
+    scopedAcademicRows(rows, { section: 'primary' }).map((row) => row.RecordId),
+    ['primary']
+  );
+  assert.deepEqual(
+    scopedAcademicRows(rows, { section: 'secondary' }).map((row) => row.RecordId),
+    ['legacy', 'missing-section', 'secondary']
+  );
+  assert.deepEqual(
+    scopedAcademicRows(rows, {
+      section: 'primary', structure: { Sections: ['primary'] }
+    }).map((row) => row.RecordId),
+    ['legacy', 'missing-section', 'primary']
+  );
+});
+
+test('AM-002 subjects are bulk-created once and reused through class offerings', () => {
+  const rows = parseAcademicSubjectBatch({
+    SubjectLines: 'Mathematics | MATH\nComputer Studies | COMP'
+  });
+  const subjects = rows.map((row) => normalizeAcademicSubject({ ...row, Category: 'Core' }, scope));
+  const offering = normalizeAcademicOffering({
+    SessionId: 'session-1', TermId: 'term-1', ClassId: 'jss-1',
+    SubjectId: subjects[0].SubjectId, Compulsory: true
+  }, scope);
+
+  assert.deepEqual(rows, [
+    { Name: 'Mathematics', Code: 'MATH' },
+    { Name: 'Computer Studies', Code: 'COMP' }
+  ]);
+  assert.equal(subjects[0].SubjectId, 'subject__north-campus__secondary__math');
+  assert.equal('Category' in subjects[0], false);
+  assert.equal(offering.SubjectId, subjects[0].SubjectId);
+  assert.throws(() => parseAcademicSubjectBatch({ SubjectLines: 'Mathematics MATH Core' }), /Line 1 is not in the required format/);
+});
+
+test('subjects can be timetable-only without changing their curriculum role', () => {
+  const rows = parseAcademicSubjectBatch({ SubjectLines: 'L.E.A.P | LEAP | TimetableOnly\nDIY | DIY\nLIB | LIB | TimetableOnly' });
+  assert.deepEqual(rows.map((row) => row.AssessmentCategory || 'Graded'), ['TimetableOnly', 'Graded', 'TimetableOnly']);
+  const leap = normalizeAcademicSubject(rows[0], scope);
+  assert.equal(leap.AssessmentCategory, 'TimetableOnly');
+  assert.equal(normalizeAcademicSubject({ Name: 'DIY', Code: 'DIY' }, scope).AssessmentCategory, 'Graded');
+  assert.equal(normalizeAcademicSubject({ Name: 'DIY', Code: 'DIY', AssessmentCategory: 'TimetableOnly' }, scope,
+    { ...normalizeAcademicSubject({ Name: 'DIY', Code: 'DIY' }, scope) }).AssessmentCategory, 'TimetableOnly');
+  assert.throws(() => normalizeAcademicSubject({ Name: 'LIB', Code: 'LIB', AssessmentCategory: 'Core' }, scope), /assessment category/);
+  assert.deepEqual(parseAcademicSubjectBatch({
+    AssessmentCategory: 'TimetableOnly', SubjectLines: 'L.E.A.P | LEAP\nMathematics | MATH | Graded'
+  }).map((row) => row.AssessmentCategory), ['TimetableOnly', 'Graded']);
+  assert.match(adminSource, /data-academic-workflow="bulkCreateAcademicSubjects"[\s\S]{0,600}name="AssessmentCategory"/);
+  assert.match(adminSource, /register\('Reusable Subject Catalogue'\)/);
+});
+
+test('AM-002 reusable Secondary subjects carry one school-wide Senior choice role', () => {
+  const trade = normalizeAcademicSubject({ Name: 'Catering Craft', Code: 'CATER', SeniorChoiceRole: 'Trade' }, scope);
+  const optional = normalizeAcademicSubject({ Name: 'Music', Code: 'MUSIC', SeniorChoiceRole: 'Optional' }, scope);
+  const primary = normalizeAcademicSubject(
+    { Name: 'Creative Arts', Code: 'CCA', SeniorChoiceRole: 'Trade' },
+    { ...scope, section: 'primary' }
+  );
+
+  assert.equal(trade.SeniorChoiceRole, 'Trade');
+  assert.equal(optional.SeniorChoiceRole, 'Optional');
+  assert.equal(primary.SeniorChoiceRole, '');
+});
+
+test('AM-002 active Senior departments reserve their Core subjects from school-wide choices', () => {
+  assert.deepEqual(academicSeniorCoreSubjectIds([
+    { DepartmentId: 'science', CoreSubjectIds: ['physics', 'chemistry'], Status: 'Active' },
+    { DepartmentId: 'arts', CoreSubjectIds: ['literature', 'physics'], Status: 'Active' },
+    { DepartmentId: 'old', CoreSubjectIds: ['history'], Status: 'Archived' },
+    null
+  ]), ['physics', 'chemistry', 'literature']);
+});
+
+test('Senior classrooms determine departments and mixed classrooms preserve individual Core selections', () => {
+  const departments = [
+    { DepartmentId: 'science', Name: 'Science', SchoolStage: 'senior-secondary', CoreSubjectIds: ['english', 'math', 'physics'], Status: 'Active' },
+    { DepartmentId: 'arts', Name: 'Arts', SchoolStage: 'senior-secondary', CoreSubjectIds: ['english', 'literature'], Status: 'Active' },
+    { DepartmentId: 'business', Name: 'Business', SchoolStage: 'senior-secondary', CoreSubjectIds: ['english', 'math'], Status: 'Active' },
+    { DepartmentId: 'old', Name: 'Old', SchoolStage: 'senior-secondary', CoreSubjectIds: ['physics'], Status: 'Inactive' }
+  ];
+  assert.deepEqual(academicSeniorCoreSubjectIds(departments), ['english', 'math', 'physics', 'literature']);
+  const classroom = { DepartmentId: 'science' };
+  assert.equal(academicStudentDepartmentForClassroom({ DepartmentId: 'arts' }, classroom), 'science');
+  assert.equal(academicStudentDepartmentForClassroom({ DepartmentId: 'business' }, classroom), 'science');
+  assert.equal(academicStudentDepartmentForClassroom({}, classroom), 'science');
+  assert.equal(academicStudentDepartmentForClassroom({}, {}), '');
+  const sameClassroom = {
+    SessionId: 'session-1', TermId: 'term-1', ClassId: 'ss1', ArmId: 'brilliance',
+    SchoolStage: 'senior-secondary', SubjectIds: []
+  };
+  const state = { offerings: [], subjects: [], departments, arms: [{ ArmId: 'brilliance', ClassId: 'ss1', DepartmentId: '' }] };
+  const scienceStudent = applyAcademicStudentCurriculum(state, {
+    ...sameClassroom, DepartmentId: 'science', SubjectIds: ['english', 'math', 'physics']
+  }, { allowIncompleteCurriculum: true });
+  const artsStudent = applyAcademicStudentCurriculum(state, {
+    ...sameClassroom, DepartmentId: 'arts', SubjectIds: ['english', 'literature']
+  }, { allowIncompleteCurriculum: true });
+  assert.deepEqual(scienceStudent.CoreSubjectIds, ['english', 'math', 'physics']);
+  assert.deepEqual(artsStudent.CoreSubjectIds, ['english', 'literature']);
+  assert.equal(scienceStudent.DepartmentId, '');
+  assert.equal(artsStudent.DepartmentId, '');
+  assert.match(librarySource, /academicSeniorCoreSubjectIds\(state\.departments\)\.includes\(record\.SubjectId\)/);
+  assert.doesNotMatch(librarySource, /ACADEMIC_CLASSROOM_DEPARTMENT_MISMATCH/);
+});
+
+test('Senior classroom departments can be changed without rewriting existing student selections or scores', () => {
+  const batchSource = librarySource.slice(
+    librarySource.indexOf('export async function bulkAssignAcademicClassroomDepartments'),
+    librarySource.indexOf('export function academicMembershipCanReceiveInitialArm')
+  );
+  assert.match(batchSource, /requireCapability\(user, 'canManageStructure'\)/);
+  assert.match(batchSource, /loadScopedAcademicState\(env, scope, ACADEMIC_RECORD_STATE_KEYS\.arm\)/);
+  assert.match(batchSource, /validateAcademicRecord\(state, 'arm', record, \{ existing \}\)/);
+  assert.match(batchSource, /writePrecondition\(existing, assignment\.RevisionToken\)/);
+  assert.match(batchSource, /commitAcademicBatch\(env, writes/);
+  assert.match(librarySource, /bulkassignacademicclassroomdepartments/);
+  assert.match(backendSource, /case 'bulkAssignAcademicClassroomDepartments':/);
+  assert.match(adminSource, /data-academic-classroom-departments/);
+  assert.match(adminSource, /data-original-department-id/);
+  assert.match(adminSource, /Mixed departments/);
+  assert.match(adminSource, /Change a classroom department or choose Mixed departments before saving/);
+  assert.doesNotMatch(adminSource, /Department for selected students/);
+  assert.match(adminSource, /departmentControl\.required = false/);
+  assert.match(adminSource, /departmentControl\.value = seniorClass \? clean\(classroom\?\.DepartmentId\) : ''/);
+  assert.doesNotMatch(librarySource, /ACADEMIC_CLASSROOM_DEPARTMENT_CONFLICT/);
+  assert.match(librarySource, /DepartmentId: clean\(destinationArm\.DepartmentId\)/);
+  assert.doesNotMatch(batchSource, /collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS\.(studentMemberships|studentScores)/);
+});
+
+test('AM-003 permanent deletion detects current and historical academic references', () => {
+  const state = {
+    classes: [{ ClassId: 'jss-2', NextClassId: 'jss-3' }],
+    arms: [{ ArmId: 'arm-a', ArmTemplateId: 'template-a', ClassId: 'jss-1', DepartmentId: 'science' }],
+    subjects: [], departments: [{ DepartmentId: 'science', CoreSubjectIds: ['physics'], Status: 'Archived' }],
+    offerings: [], teacherAllocations: [], studentMemberships: [],
+    studentMovements: [{ MovementId: 'move-1', FromClassId: 'jss-1', ToClassId: 'jss-2', FromArmId: 'arm-a', FromDepartmentId: 'science', FromSubjectIds: ['physics'] }]
+  };
+
+  assert.equal(academicPermanentDeleteDependants(state, 'class', { ClassId: 'jss-1' }).length, 2);
+  assert.equal(academicPermanentDeleteDependants(state, 'arm', { ArmId: 'arm-a' }).length, 1);
+  assert.equal(academicPermanentDeleteDependants(state, 'armTemplate', { ArmTemplateId: 'template-a' }).length, 1);
+  assert.equal(academicPermanentDeleteDependants(state, 'subject', { SubjectId: 'physics' }).length, 2);
+  assert.equal(academicPermanentDeleteDependants(state, 'department', { DepartmentId: 'science' }).length, 2);
+  assert.equal(academicPermanentDeleteDependants(state, 'class', { ClassId: 'unused' }).length, 0);
+
+  const offering = { OfferingId: 'offering-1', SessionId: 'session-1', TermId: 'term-1', ClassId: 'jss-1', ArmId: '', SubjectId: 'physics' };
+  const offeringState = {
+    teacherAllocations: [{ SessionId: 'session-1', TermId: 'term-1', ClassId: 'jss-1', ArmId: '', SubjectId: 'physics' }],
+    studentMemberships: [{ SessionId: 'session-1', TermId: 'term-1', ClassId: 'jss-1', ArmId: 'arm-a', SubjectIds: ['physics'] }],
+    studentMovements: [{ SessionId: 'session-1', TermId: 'term-1', FromClassId: 'jss-1', FromArmId: 'arm-a', FromSubjectIds: ['physics'] }]
+  };
+  assert.equal(academicPermanentDeleteDependants(offeringState, 'offering', offering).length, 3);
+  assert.equal(academicPermanentDeleteDependants(offeringState, 'offering', { ...offering, SubjectId: 'music' }).length, 0);
+});
+
+test('AM-002 senior departments own reusable core-subject sets', () => {
+  const department = normalizeAcademicDepartment({
+    Name: 'Sciences', Code: 'sci', CoreSubjectIds: ['math', 'physics', 'math']
+  }, scope);
+
+  assert.equal(department.DepartmentId, 'department__north-campus__senior-secondary__sci');
+  assert.equal(department.SchoolStage, 'senior-secondary');
+  assert.deepEqual(department.CoreSubjectIds, ['math', 'physics']);
+  assert.throws(() => normalizeAcademicDepartment({ Name: 'Sciences', Code: 'SCI' }, { branchId: 'north-campus', section: 'primary' }), /only in Secondary/);
+});
+
+test('AM-002 subjects, offerings and teacher allocations retain period scope', () => {
+  const subject = normalizeAcademicSubject({ Name: 'Mathematics', Code: 'MATH' }, scope);
+  const offering = normalizeAcademicOffering({
+    SessionId: 'session-1', TermId: 'term-1', ClassId: 'class-1', ArmId: 'arm-a',
+    SubjectId: subject.SubjectId, Compulsory: true
+  }, scope);
+  const allocation = normalizeAcademicTeacherAllocation({
+    SessionId: 'session-1', TermId: 'term-1', TeacherUsername: 'Ada.Teacher',
+    ClassId: 'class-1', ArmId: 'arm-a', SubjectId: subject.SubjectId,
+    AllocationRole: 'Subject Teacher'
+  }, scope);
+
+  assert.equal(subject.Code, 'MATH');
+  assert.equal(offering.Compulsory, true);
+  assert.equal(offering.SubjectRole, 'Core');
+  const tradeOffering = normalizeAcademicOffering({
+    SessionId: 'session-1', TermId: 'term-1', ClassId: 'class-1', SubjectId: subject.SubjectId,
+    SubjectRole: 'Trade'
+  }, scope);
+  assert.equal(tradeOffering.SubjectRole, 'Trade');
+  assert.equal(tradeOffering.Compulsory, false);
+  assert.equal(academicOfferingSubjectRole({ Compulsory: false }), 'Optional');
+  assert.match(offering.OfferingId, /session-1__term-1__class-1__arm-a/);
+  assert.match(allocation.AllocationId, /ada\.teacher/);
+  assert.equal(allocation.TeacherUsername, 'ada.teacher');
+});
+
+test('AM-002 one staff member can combine form, assistant and subject responsibilities', () => {
+  const common = { SessionId: 'session-1', TermId: 'term-1', TeacherUsername: 'Ada.Teacher' };
+  const assignments = [
+    normalizeAcademicTeacherAllocation({ ...common, ClassId: 'jss-1', ArmId: 'arm-a', AllocationRole: 'Form Teacher' }, scope),
+    normalizeAcademicTeacherAllocation({ ...common, ClassId: 'jss-2', ArmId: 'arm-b', AllocationRole: 'Assistant Teacher' }, scope),
+    normalizeAcademicTeacherAllocation({ ...common, ClassId: 'jss-3', ArmId: 'arm-a', SubjectId: 'math', AllocationRole: 'Subject Teacher' }, scope),
+    normalizeAcademicTeacherAllocation({ ...common, ClassId: 'sss-2', ArmId: 'arm-b', SubjectId: 'physics', AllocationRole: 'Subject Teacher' }, scope)
+  ];
+
+  assert.equal(new Set(assignments.map((row) => row.AllocationId)).size, 4);
+  assert.ok(assignments.every((row) => row.TeacherUsername === 'ada.teacher'));
+  assert.equal(assignments[0].SubjectId, '');
+  assert.equal(assignments[1].SubjectId, '');
+  assert.equal(assignments[2].SubjectId, 'math');
+  assert.throws(() => normalizeAcademicTeacherAllocation({ ...common, ClassId: 'jss-3', ArmId: 'arm-a', AllocationRole: 'Subject Teacher' }, scope), /Choose a subject/);
+  assert.throws(() => normalizeAcademicTeacherAllocation({ ...common, ClassId: 'jss-3', AllocationRole: 'Form Teacher' }, scope), /Choose the class arm/);
+});
+
+test('AM-002 student memberships allocate one arm and a unique subject set per term', () => {
+  const membership = normalizeAcademicStudentMembership({
+    SessionId: 'session-1', TermId: 'term-1', StudentRef: 'DCA/2026/001',
+    ClassId: 'class-1', ArmId: 'arm-a', SubjectIds: ['math', 'eng', 'math']
+  }, scope);
+
+  assert.deepEqual(membership.SubjectIds, ['math', 'eng']);
+  assert.match(membership.MembershipId, /session-1__term-1__dca-2026-001$/);
+  assert.throws(() => normalizeAcademicStudentMembership({
+    SessionId: 'session-1', TermId: 'term-1', StudentRef: 'DCA/2026/001', ClassId: 'class-1'
+  }, scope), /class and arm/);
+  const importedWithoutArm = normalizeAcademicStudentMembership({
+    SessionId: 'session-1', TermId: 'term-1', StudentRef: 'DCA/2026/002', ClassId: 'class-1'
+  }, { ...scope, allowMissingArm: true });
+  assert.equal(importedWithoutArm.ArmId, '');
+});
+
+test('class-teacher batches require one unique classroom, one class teacher and a different optional assistant', () => {
+  assert.deepEqual(normalizeAcademicClassTeacherAssignments({ Assignments: [{
+    ClassroomId: 'classroom-a', ClassTeacherUsername: ' ADA.FORM ', AssistantTeacherUsername: 'BEN.ASSIST'
+  }] }), [{
+    ClassroomId: 'classroom-a', FormTeacherUsername: 'ada.form', AssistantTeacherUsername: 'ben.assist',
+    FormTeacherAllocationId: '', FormTeacherRevisionToken: '',
+    AssistantTeacherAllocationId: '', AssistantTeacherRevisionToken: ''
+  }]);
+  assert.throws(() => normalizeAcademicClassTeacherAssignments({ Assignments: [] }), /at least one classroom/);
+  assert.throws(() => normalizeAcademicClassTeacherAssignments({ Assignments: [
+    { ClassroomId: 'classroom-a', FormTeacherUsername: 'ada.form' },
+    { ClassroomId: 'classroom-a', FormTeacherUsername: 'ben.form' }
+  ] }), /each classroom can appear only once/);
+  assert.throws(() => normalizeAcademicClassTeacherAssignments({ Assignments: [{
+    ClassroomId: 'classroom-a', FormTeacherUsername: 'ada.form', AssistantTeacherUsername: 'ADA.FORM'
+  }] }), /must be different staff members/);
+});
+
+test('AM-002 existing-student import rows use reusable codes and semicolon subject lists', () => {
+  assert.deepEqual(ACADEMIC_STUDENT_IMPORT_COLUMNS, [
+    'StudentRef', 'FirstName', 'Surname', 'MiddleName', 'ClassCode', 'ArmCode', 'CoreSubjectCodes',
+    'TradeSubjectCodes', 'OptionalSubjectCodes', 'Reason'
+  ]);
+  assert.deepEqual(ACADEMIC_STUDENT_IMPORT_REQUIRED_COLUMNS, ['StudentRef', 'FirstName', 'Surname', 'ClassCode']);
+  assert.deepEqual(normalizeAcademicStudentImportRows([{
+    AdmissionNo: 'DCA/2026/001', FirstName: 'Ada', MiddleName: 'Grace', Surname: 'Okafor', ClassCode: 'SS1', ArmCode: 'EXC',
+    DepartmentCode: 'SCI', TradeSubjectCodes: 'CATER; AGR | CATER', OptionalSubjectCodes: 'BIO;MUSIC'
+  }]), [{
+    StudentRef: 'DCA/2026/001', FirstName: 'Ada', Surname: 'Okafor', MiddleName: 'Grace', ClassCode: 'SS1', ArmCode: 'EXC',
+    DepartmentCode: 'SCI', CoreSubjectCodes: [], TradeSubjectCodes: ['CATER', 'AGR'], OptionalSubjectCodes: ['BIO', 'MUSIC'], Reason: ''
+  }]);
+  assert.deepEqual(normalizeAcademicStudentImportRows('not-json'), []);
+  assert.deepEqual(normalizeAcademicStudentImportRows([{
+    StudentRef: 'DCA/2026/002', FirstName: 'No Arm', Surname: 'Student', ClassCode: 'JSS1'
+  }]), [{
+    StudentRef: 'DCA/2026/002', FirstName: 'No Arm', Surname: 'Student', MiddleName: '', ClassCode: 'JSS1', ArmCode: '',
+    DepartmentCode: '', CoreSubjectCodes: [], TradeSubjectCodes: [], OptionalSubjectCodes: [], Reason: ''
+  }]);
+});
+
+test('AM-002 migration can stage a missing student profile for completion in Students', () => {
+  const profile = importedAcademicStudentProfile(
+    { StudentRef: 'DCA/21/0777', FirstName: 'Nnaemeka', MiddleName: 'Jerry', Surname: 'Okafor' },
+    scope,
+    { ClassId: 'jss-1', Name: 'JSS 1', SchoolStage: 'junior-secondary' },
+    { ArmId: 'jss-1-bri', Name: 'Brilliance' },
+    { Name: '2026/2027' },
+    { Name: 'First Term' },
+    { displayName: 'School Admin' },
+    { NameFormat: 'First name, middle name, surname' }
+  );
+  assert.equal(profile.AdmissionNo, 'DCA/21/0777');
+  assert.equal(profile.__id, 'DCA-21-0777');
+  assert.equal(profile.__scopePath, 'schoolBranches/north-campus/sections/secondary/students');
+  assert.equal(profile.ProfileCompletionStatus, 'Needs completion');
+  assert.equal(profile.ClassName, 'JSS 1');
+  assert.equal(profile.ClassArm, 'Brilliance');
+  assert.equal(profile.DisplayName, 'Nnaemeka Jerry Okafor');
+  assert.equal(profile.FirstName, 'Nnaemeka');
+  assert.equal(profile.MiddleName, 'Jerry');
+  assert.equal(profile.Surname, 'Okafor');
+});
+
+test('AM-002 arm allocation candidates must belong to the selected existing class', () => {
+  const gradeSeven = { ClassId: 'grade-7', Name: 'Grade 7', Code: 'JSS1', LegacyDocumentId: 'Grade_7' };
+  assert.equal(academicStudentMatchesClass({ ClassName: 'Grade 7' }, gradeSeven), true);
+  assert.equal(academicStudentMatchesClass({ ClassAdmitted: 'JSS 1' }, gradeSeven), true);
+  assert.equal(academicStudentMatchesClass({ AcademicClassId: 'grade-7', ClassName: 'Grade 8' }, gradeSeven), true);
+  assert.equal(academicStudentMatchesClass({ AcademicClassId: 'grade-8', ClassName: 'Grade 7' }, gradeSeven), false);
+  assert.equal(academicStudentMatchesClass({ ClassName: 'Grade 8' }, gradeSeven), false);
+});
+
+test('AM-002 Junior takes all offerings while Senior inherits department core subjects', () => {
+  const offerings = [
+    { SessionId: 'session-1', TermId: 'term-1', ClassId: 'class-1', ArmId: '', SubjectId: 'english', Compulsory: true, Status: 'Active' },
+    { SessionId: 'session-1', TermId: 'term-1', ClassId: 'class-1', ArmId: 'arm-a', SubjectId: 'french', SubjectRole: 'Trade', Status: 'Active' },
+    { SessionId: 'session-1', TermId: 'term-1', ClassId: 'class-1', ArmId: 'arm-a', SubjectId: 'music', Compulsory: false, Status: 'Active' }
+  ];
+  const subjects = [
+    { SubjectId: 'french', SchoolSection: 'secondary', SeniorChoiceRole: '', Status: 'Active' },
+    { SubjectId: 'music', SchoolSection: 'secondary', SeniorChoiceRole: 'Optional', Status: 'Active' }
+  ];
+  const departments = [{ DepartmentId: 'science', SchoolStage: 'senior-secondary', CoreSubjectIds: ['physics'], Status: 'Active' }];
+  const arms = [{ ArmId: 'arm-a', ClassId: 'class-1', DepartmentId: 'science' }];
+  const base = { SessionId: 'session-1', TermId: 'term-1', ClassId: 'class-1', ArmId: 'arm-a' };
+  const junior = applyAcademicStudentCurriculum({ offerings, subjects, departments }, {
+    ...base, SchoolStage: 'junior-secondary', DepartmentId: 'science', SubjectIds: []
+  });
+  const senior = applyAcademicStudentCurriculum({ offerings, subjects, departments, arms }, {
+    ...base, SchoolStage: 'senior-secondary', DepartmentId: 'science', SubjectIds: ['music']
+  });
+
+  assert.equal(junior.DepartmentId, '');
+  assert.deepEqual(junior.SubjectIds, ['english', 'french', 'music']);
+  assert.deepEqual(senior.CoreSubjectIds, ['physics']);
+  assert.deepEqual(senior.OptionalSubjectIds, ['music']);
+  assert.deepEqual(senior.SubjectIds, ['music', 'physics']);
+  assert.equal(senior.SubjectIds.includes('english'), false);
+  assert.equal(senior.SubjectIds.includes('french'), false);
+  const incompleteSenior = applyAcademicStudentCurriculum({ offerings: [], subjects: [], departments, arms }, {
+    ...base, SchoolStage: 'senior-secondary', DepartmentId: 'science', SubjectIds: []
+  }, { allowIncompleteCurriculum: true });
+  assert.deepEqual(incompleteSenior.SubjectIds, ['physics']);
+  assert.equal(incompleteSenior.CurriculumStatus, 'Trade Subjects Not Configured');
+});
+
+test('AM-002 Senior arm subjects lock core, require Trade and retain optional selections', () => {
+  const state = {
+    arms: [{ ArmId: 'excellence', ClassId: 'sss-1', DepartmentId: 'science' }],
+    offerings: [
+      { SessionId: 'session-1', TermId: 'term-1', ClassId: 'sss-1', ArmId: '', SubjectId: 'english', SubjectRole: 'Core', Status: 'Active' },
+      { SessionId: 'session-1', TermId: 'term-1', ClassId: 'sss-1', ArmId: '', SubjectId: 'french', SubjectRole: 'Trade', Status: 'Active' }
+    ],
+    subjects: [
+      { SubjectId: 'physics', SchoolSection: 'secondary', SeniorChoiceRole: '', Status: 'Active' },
+      { SubjectId: 'french', SchoolSection: 'secondary', SeniorChoiceRole: '', Status: 'Active' },
+      { SubjectId: 'catering', SchoolSection: 'secondary', SeniorChoiceRole: 'Trade', Status: 'Active' },
+      { SubjectId: 'music', SchoolSection: 'secondary', SeniorChoiceRole: 'Optional', Status: 'Active' }
+    ],
+    departments: [{ DepartmentId: 'science', SchoolStage: 'senior-secondary', CoreSubjectIds: ['physics'], Status: 'Active' }]
+  };
+  const base = {
+    SessionId: 'session-1', TermId: 'term-1', ClassId: 'sss-1', ArmId: 'excellence',
+    SchoolStage: 'senior-secondary', DepartmentId: 'science', SubjectIds: []
+  };
+  const pending = applyAcademicStudentCurriculum(state, { ...base });
+  assert.deepEqual(pending.CoreSubjectIds, ['physics']);
+  assert.deepEqual(pending.TradeSubjectIds, []);
+  assert.equal(pending.CurriculumStatus, 'Pending Trade Selection');
+  assert.equal(pending.SubjectIds.includes('french'), false);
+  assert.throws(() => applyAcademicStudentCurriculum(state, { ...base }, { requireTradeSelection: true }), /at least one Trade subject/);
+  const complete = applyAcademicStudentCurriculum(state, {
+    ...base, TradeSubjectIds: ['catering'], OptionalSubjectIds: ['music'], SubjectIds: ['catering', 'music']
+  }, { requireTradeSelection: true });
+  assert.deepEqual(complete.CoreSubjectIds, ['physics']);
+  assert.deepEqual(complete.TradeSubjectIds, ['catering']);
+  assert.deepEqual(complete.OptionalSubjectIds, ['music']);
+  assert.deepEqual(complete.SubjectIds, ['catering', 'music', 'physics']);
+  assert.equal(complete.CurriculumStatus, 'Complete');
+  assert.throws(() => applyAcademicStudentCurriculum(state, {
+    ...base, TradeSubjectIds: ['french'], SubjectIds: ['french']
+  }, { requireTradeSelection: true }), /not available/);
+  const pendingDepartment = applyAcademicStudentCurriculum({ ...state, arms: [] }, {
+    ...base, DepartmentId: '', TradeSubjectIds: [], OptionalSubjectIds: [], SubjectIds: []
+  }, { allowIncompleteCurriculum: true });
+  assert.deepEqual(pendingDepartment.CoreSubjectIds, []);
+  assert.equal(pendingDepartment.CurriculumStatus, 'Pending Classroom Assignment');
+  assert.throws(() => applyAcademicStudentCurriculum({ ...state, arms: [] }, {
+    ...base, DepartmentId: '', TradeSubjectIds: [], OptionalSubjectIds: [], SubjectIds: []
+  }), /Assign this student to a classroom/);
+});
+
+test('AM-003 movements preserve before and after membership snapshots', () => {
+  const before = {
+    StudentRef: 'DCA/2026/001', SessionId: 'session-1', TermId: 'term-1',
+    ClassId: 'jss-1', ArmId: 'a', DepartmentId: '', SubjectIds: ['math'],
+    BranchId: scope.branchId, SchoolSection: scope.section
+  };
+  const after = { ...before, ClassId: 'jss-2', ArmId: 'b', SubjectIds: ['math', 'english'] };
+  const movement = normalizeAcademicStudentMovement({
+    EffectiveDate: '2026-10-02', Reason: 'Approved class correction'
+  }, scope, before, after);
+
+  assert.equal(movement.MovementType, 'Class Transfer');
+  assert.equal(movement.FromClassId, 'jss-1');
+  assert.equal(movement.ToClassId, 'jss-2');
+  assert.deepEqual(movement.FromSubjectIds, ['math']);
+  assert.deepEqual(movement.ToSubjectIds, ['math', 'english']);
+  assert.throws(() => normalizeAcademicStudentMovement({ EffectiveDate: '2026-10-02' }, scope, before, after), /reason/);
+});
+
+test('AM-003 class and arm capacities fail closed during allocation', () => {
+  const capacityState = {
+    classes: [{ ClassId: 'class-1', Name: 'JSS 1', Capacity: 2, Status: 'Active' }],
+    arms: [{ ArmId: 'arm-a', ClassId: 'class-1', Name: 'A', Capacity: 1, Status: 'Active' }],
+    studentMemberships: [{
+      MembershipId: 'existing', SessionId: 'session-1', TermId: 'term-1',
+      ClassId: 'class-1', ArmId: 'arm-a', Status: 'Active'
+    }]
+  };
+  const candidate = { SessionId: 'session-1', TermId: 'term-1', ClassId: 'class-1', ArmId: 'arm-a', Status: 'Active' };
+  assert.throws(() => assertAcademicMembershipCapacity(capacityState, candidate), /configured capacity/);
+  assert.doesNotThrow(() => assertAcademicMembershipCapacity(capacityState, candidate, 'existing'));
+  assert.deepEqual(
+    assertAcademicMembershipCapacity(capacityState, { ...candidate, ArmId: '' }),
+    { ClassCount: 1, ClassCapacity: 2, ArmCount: 0, ArmCapacity: 0 }
+  );
+});
+
+test('Academic Management is a School-only role module with a constrained Teacher role', () => {
+  assert.equal(staffRoleAllowedForEdition('Teacher', 'school'), true);
+  assert.equal(staffRoleAllowedForEdition('Teacher', 'faith'), false);
+  assert.equal(modulesForEdition('school').some((module) => module.key === 'academics'), true);
+  assert.equal(modulesForEdition('faith').some((module) => module.key === 'academics'), false);
+  assert.deepEqual(defaultModulesForRole('Teacher', { edition: 'school' }), [
+    'academics', 'humanResources', 'staffAttendance', 'financeRequests', 'payroll'
+  ]);
+
+  const teacher = academicManagementCapabilities({ edition: 'school', role: 'Teacher', allowedSections: ['academics'] });
+  assert.equal(teacher.enabled, true);
+  assert.equal(teacher.teacherView, true);
+  assert.equal(teacher.canManageStructure, false);
+  assert.equal(teacher.canManageAllocations, false);
+  assert.equal(teacher.canConfigureClassStudentSubjects, true);
+  assert.equal(teacher.canDelete, false);
+  const academicsDepartmentUser = academicManagementCapabilities({
+    edition: 'school', role: 'Department User', department: 'Academics', allowedSections: []
+  });
+  assert.equal(academicsDepartmentUser.enabled, true);
+  assert.equal(academicsDepartmentUser.teacherView, true);
+  assert.equal(academicsDepartmentUser.canManageStructure, false);
+  assert.equal(academicsDepartmentUser.canManageAllocations, false);
+  assert.equal(academicsDepartmentUser.canConfigureClassStudentSubjects, true);
+  assert.equal(academicManagementCapabilities({
+    edition: 'school', role: 'Department User', department: 'Accounts', allowedSections: []
+  }).enabled, false);
+  assert.equal(academicManagementCapabilities({ edition: 'faith', role: 'Teacher', allowedSections: ['academics'] }).enabled, false);
+});
+
+test('a subject teacher can load every student in the class who offers that subject across arms', () => {
+  const visible = academicTeacherVisibleMemberships({
+    teacherAllocations: [
+      { TeacherUsername: 'math.teacher', AllocationRole: 'Subject Teacher', ClassId: 'grade-1', ArmId: 'distinction', SubjectId: 'math', Status: 'Active' },
+      { TeacherUsername: 'other.teacher', AllocationRole: 'Subject Teacher', ClassId: 'grade-1', ArmId: 'excellence', SubjectId: 'english', Status: 'Active' }
+    ],
+    studentMemberships: [
+      { StudentRef: 'G1-D-1', ClassId: 'grade-1', ArmId: 'distinction', SubjectIds: ['math'] },
+      { StudentRef: 'G1-E-1', ClassId: 'grade-1', ArmId: 'excellence', SubjectIds: ['math', 'english'] },
+      { StudentRef: 'G1-E-2', ClassId: 'grade-1', ArmId: 'excellence', SubjectIds: ['english'] },
+      { StudentRef: 'G2-D-1', ClassId: 'grade-2', ArmId: 'distinction', SubjectIds: ['math'] }
+    ]
+  }, 'math.teacher');
+
+  assert.deepEqual(visible.map((row) => row.StudentRef), ['G1-D-1', 'G1-E-1']);
+});
+
+test('Academic writes are audited, optimistic and preserve legacy class/student compatibility', () => {
+  assert.match(librarySource, /batchCommitDocuments/);
+  assert.match(librarySource, /ACADEMIC_WRITE_CONFLICT/);
+  assert.match(librarySource, /academicManagementAudit/);
+  assert.match(librarySource, /settings\/academics\/classes/);
+  assert.match(librarySource, /ClassName: clean\(schoolClass\?\.Name\)/);
+  assert.match(librarySource, /SubjectIds: uniqueIds/);
+  assert.match(librarySource, /record\.CoreSubjectIds = coreSubjectIds/);
+  assert.match(librarySource, /record\.CurriculumStatus = !classroom/);
+  assert.match(librarySource, /department\.CoreSubjectIds/);
+  assert.match(librarySource, /AcademicDepartment: clean\(department\?\.Name\)/);
+  assert.match(librarySource, /ACADEMIC_MOVEMENT_REQUIRED/);
+  assert.match(librarySource, /academicStudentMovements/);
+  assert.match(librarySource, /Allocate at most 100 students in one batch/);
+  assert.match(librarySource, /Import at most 100 student memberships at a time/);
+  assert.match(librarySource, /ProfileCompletionStatus: 'Needs completion'/);
+  assert.match(librarySource, /scopedCollectionPath\('students', scope\.branchId, scope\.section\)/);
+  assert.match(librarySource, /ACADEMIC_IMPORT_STUDENT_SCOPE_CONFLICT/);
+  assert.match(librarySource, /allowIncompleteCurriculum: true/);
+  assert.match(adminSource, /Core subject codes for mixed classrooms, Trade and Optional subject codes may be left blank and completed in the app/);
+  assert.match(adminSource, /ProfileCompletionStatus/);
+  assert.match(backendSource, /ProfileCompletionStatus/);
+  assert.match(staffStudentsSource, /ProfileCompletionStatus/);
+  assert.match(librarySource, /ACADEMIC_IMPORT_MEMBERSHIP_CONFLICT/);
+  assert.match(librarySource, /Imported into Academic Management/);
+  assert.match(librarySource, /Update at most 200 student subject selections in one arm batch/);
+  assert.match(librarySource, /ACADEMIC_SUBJECT_ROLES/);
+  assert.match(librarySource, /ACADEMIC_SENIOR_CHOICE_ROLES/);
+  assert.match(librarySource, /configureAcademicSeniorChoiceSubjects/);
+  assert.match(librarySource, /SeniorChoiceRole/);
+  assert.match(librarySource, /Subjects already assigned as department Core cannot be selected as Senior Trade or Optional subjects/);
+  assert.match(librarySource, /A department Core subject cannot also be a school-wide Senior Trade or Optional subject/);
+  assert.match(librarySource, /Every Senior Secondary student must select at least one Trade subject/);
+  assert.match(librarySource, /const curriculumOfferings = record\.SchoolStage === 'senior-secondary' \? \[\] : offerings/);
+  assert.match(librarySource, /ACADEMIC_SENIOR_OFFERING_DEPRECATED/);
+  assert.match(librarySource, /ACADEMIC_STUDENT_CLASS_MISMATCH/);
+  assert.match(librarySource, /AcademicClassId: academicStudentClassId\(row, classes\)/);
+  assert.match(librarySource, /Create at most 50 classes in one batch/);
+  assert.match(librarySource, /Apply at most 200 class-arm combinations in one batch/);
+  assert.match(librarySource, /Create at most 50 subjects in one batch/);
+  assert.match(librarySource, /Apply at most 200 class-subject combinations in one batch/);
+  assert.doesNotMatch(librarySource, /ACADEMIC_SUBJECT_CATEGORIES/);
+  assert.match(librarySource, /ACADEMIC_DELETE_REFERENCED/);
+  assert.match(librarySource, /unused structure record, subject offering or teacher allocation can be permanently deleted/);
+  assert.match(librarySource, /academicArmTemplates/);
+  assert.match(librarySource, /ACADEMIC_TEACHER_SECTION_INVALID/);
+  assert.match(librarySource, /activeValue\(row\.Active, true\)/);
+  assert.match(librarySource, /Department: clean\(row\.Department/);
+  assert.match(librarySource, /Archive the \$\{dependants\.length\} active dependent record/);
+});
+
+test('Web and desktop transports share one protected Academic Management handler', () => {
+  assert.match(apiSource, /requiredDeploymentIdentity/);
+  assert.match(apiSource, /deployment\.edition !== 'school'/);
+  assert.match(apiSource, /requireStaffSession/);
+  assert.match(apiSource, /handleAcademicManagementAction/);
+  assert.match(apiSource, /Cache-Control': 'no-store/);
+  assert.match(backendSource, /case 'getAcademicManagement'/);
+  assert.match(backendSource, /case 'saveAcademicTeacherAllocation'/);
+  assert.match(backendSource, /case 'saveAcademicDepartment'/);
+  assert.match(backendSource, /case 'saveAcademicArmTemplate'/);
+  assert.match(backendSource, /case 'bulkCreateAcademicClasses'/);
+  assert.match(backendSource, /case 'bulkCreateAcademicArmTemplates'/);
+  assert.match(backendSource, /case 'bulkApplyAcademicArmTemplates'/);
+  assert.match(backendSource, /case 'bulkCreateAcademicSubjects'/);
+  assert.match(backendSource, /case 'configureAcademicSeniorChoiceSubjects'/);
+  assert.match(backendSource, /case 'bulkApplyAcademicSubjects'/);
+  assert.match(backendSource, /case 'bulkAssignAcademicClassTeachers'/);
+  assert.match(backendSource, /case 'bulkAssignAcademicSubjectTeacher'/);
+  assert.match(backendSource, /case 'updateAcademicSubjectTeacherAllocation'/);
+  assert.match(backendSource, /case 'deleteAcademicRecord'/);
+  assert.match(backendSource, /case 'saveAcademicStudentMembership'/);
+  assert.match(backendSource, /case 'bulkAllocateAcademicStudents'/);
+  assert.match(backendSource, /case 'bulkImportAcademicStudentMemberships'/);
+  assert.match(backendSource, /department: clean\(body\.UserDepartment\)/);
+  assert.match(backendSource, /case 'bulkAssignAcademicArmStudentSubjects'/);
+  assert.match(backendSource, /case 'saveAcademicProbationResit'/);
+  assert.match(backendSource, /'calculateAcademicPromotionDecisions', 'saveAcademicPromotionOutcome', 'saveAcademicProbationResit'/);
+  assert.match(librarySource, /assignments\.length > 200/);
+  assert.match(backendSource, /case 'moveAcademicStudentMembership'/);
+  assert.match(backendSource, /case 'withdrawAcademicStudentMembership'/);
+  assert.match(backendSource, /handleAcademicManagementAction/);
+});
+
+test('bulk student allocation maps every selected reference into membership and movement records', () => {
+  const bulkAllocationSource = librarySource.slice(
+    librarySource.indexOf('export async function bulkAllocateAcademicStudents'),
+    librarySource.indexOf('export async function bulkImportAcademicStudentMemberships')
+  );
+  assert.equal([...bulkAllocationSource.matchAll(/StudentRef: studentRef/g)].length, 3);
+  assert.doesNotMatch(bulkAllocationSource, /\.\.\.input,\s*StudentRef(?:\s*[,}])/);
+  assert.match(librarySource, /record\.DepartmentId = academicStudentDepartmentForClassroom\(record, arm\)/);
+  assert.match(bulkAllocationSource, /allowIncompleteCurriculum: true/);
+  assert.match(bulkAllocationSource, /academicMembershipCanReceiveInitialArm/);
+  assert.match(bulkAllocationSource, /writePrecondition\(existing, clean\(existing\.__updateTime\)\)/);
+  assert.match(bulkAllocationSource, /MovementType: 'Allocation'/);
+});
+
+test('a subject teacher sees only their saved lessons, including provisional versions', () => {
+  const context = { SessionId: 'session-1', TermId: 'term-1', ClassId: 'class-1', ArmId: 'arm-1' };
+  const state = {
+    teacherAllocations: [
+      { ...context, TeacherUsername: 'math.teacher', AllocationRole: 'Subject Teacher', SubjectId: 'math', Status: 'Active' }
+    ],
+    timetableVersions: [
+      { VersionId: 'draft', Status: 'Draft' }, { VersionId: 'approved', Status: 'Approved' },
+      { VersionId: 'published', Status: 'Published' }, { VersionId: 'withdrawn', Status: 'Withdrawn' }
+    ],
+    timetableEntries: [
+      { ...context, EntryId: 'own-draft', VersionId: 'draft', TeacherUsername: 'math.teacher' },
+      { ...context, EntryId: 'other-draft', VersionId: 'draft', TeacherUsername: 'english.teacher' },
+      { ...context, EntryId: 'own-approved', VersionId: 'approved', TeacherUsername: 'math.teacher' },
+      { ...context, EntryId: 'own-published', VersionId: 'published', TeacherUsername: 'math.teacher' },
+      { ...context, EntryId: 'own-withdrawn', VersionId: 'withdrawn', TeacherUsername: 'math.teacher' }
+    ],
+    timetableSubstitutions: []
+  };
+  const timetable = academicTeacherVisibleTimetable(state, 'math.teacher');
+  assert.deepEqual(timetable.versions.map((row) => row.VersionId), ['draft', 'approved', 'published']);
+  assert.deepEqual(timetable.entries.map((row) => row.EntryId), ['own-draft', 'own-approved', 'own-published']);
+  const operational = academicTeacherVisibleTimetable(state, 'math.teacher', 'attendance');
+  assert.deepEqual(operational.versions.map((row) => row.VersionId), ['published']);
+  assert.deepEqual(operational.entries.map((row) => row.EntryId), ['own-published']);
+  const homeroom = academicTeacherVisibleTimetable({ ...state, teacherAllocations: [
+    { ...context, TeacherUsername: 'math.teacher', AllocationRole: 'Form Teacher', Status: 'Active' }
+  ] }, 'math.teacher');
+  assert.ok(homeroom.entries.some((row) => row.EntryId === 'other-draft'));
+});
+
+test('class teachers configure subjects only for their own active classroom and academic period', () => {
+  const teacher = { edition: 'school', role: 'Teacher', username: 'ADA', allowedSections: ['academics'] };
+  const target = { SessionId: 'session-1', TermId: 'term-1', ClassId: 'class-10', ArmId: 'arm-a' };
+  const allocation = { ...target, TeacherUsername: 'ada', AllocationRole: 'Form Teacher', Status: 'Active' };
+  assert.equal(academicCanConfigureClassStudentSubjects(teacher, [allocation], target), true);
+  assert.equal(academicCanConfigureClassStudentSubjects(teacher, [allocation], { ...target, ArmId: 'arm-b' }), false);
+  assert.equal(academicCanConfigureClassStudentSubjects(teacher, [allocation], { ...target, TermId: 'term-2' }), false);
+  assert.equal(academicCanConfigureClassStudentSubjects(teacher, [{ ...allocation, Status: 'Archived' }], target), false);
+  assert.equal(academicCanConfigureClassStudentSubjects(teacher, [{ ...allocation, AllocationRole: 'Subject Teacher' }], target), false);
+  assert.equal(academicCanConfigureClassStudentSubjects({ ...teacher, username: 'ben' }, [allocation], target), false);
+  assert.equal(academicCanConfigureClassStudentSubjects({ ...teacher, role: 'Principal' }, [], target), true);
+  assert.match(librarySource, /Only this classroom’s assigned class teacher or an authorised administrator/);
+  assert.match(adminSource, /Only classrooms where you are the assigned class teacher are shown/);
+});
+
+test('class-teacher student-subject form follows the selected period and remains discoverable', () => {
+  const helperStart = adminSource.indexOf('function academicIsSeniorClass(');
+  const helperEnd = adminSource.indexOf('function academicOfferingSubjectRole(', helperStart);
+  assert.ok(helperStart >= 0 && helperEnd > helperStart);
+  const clean = (value) => String(value ?? '').trim();
+  const academicIsSeniorClass = runInNewContext(`${adminSource.slice(helperStart, helperEnd)}\nacademicIsSeniorClass`, { clean });
+  assert.equal(academicIsSeniorClass({ Name: 'Grade 10', SchoolStage: '' }), true);
+  assert.equal(academicIsSeniorClass({ Name: 'Grade 8', SchoolStage: '' }), false);
+  const start = adminSource.indexOf('function academicSubjectChangeRequests(');
+  const end = adminSource.indexOf('function academicStudentWorkspace(', start);
+  assert.ok(start >= 0 && end > start);
+  const context = {
+    academicManagementFilters: { section: 'secondary', sessionId: 'current-session', termId: 'current-term' },
+    academicArmSubjectDraft: { sessionId: 'old-session', termId: 'old-term', classId: '', armId: '' },
+    currentUser: { username: 'teacher-a' },
+    academicStudentAllocationDraft: { classId: '', armId: '' },
+    clean,
+    academicIsSeniorClass,
+    academicIsActive: (row) => !['archived', 'inactive'].includes(String(row?.Status || '').toLowerCase()),
+    academicFind: (items, id) => items.find((row) => id && Object.values(row).includes(id)),
+    academicSelectOptions: () => '<option>Choose</option>',
+    escapeHtml: (value) => String(value ?? ''),
+    academicLabel: (_items, id, fallback) => id || fallback || '',
+    academicRecordId: (row) => row.MembershipId || row.RecordId || ''
+  };
+  const profileStart = adminSource.indexOf('function academicStudentSubjectProfile(');
+  const profileEnd = adminSource.indexOf('function academicStudentBelongsToClass(', profileStart);
+  context.academicStudentSubjectProfile = runInNewContext(`${adminSource.slice(profileStart, profileEnd)}\nacademicStudentSubjectProfile`, context);
+  const render = runInNewContext(`${adminSource.slice(start, end)}\nacademicArmSubjectRegister`, context);
+  const data = { permissions: { teacherView: true, canManageAllocations: false },
+    classes: [{ ClassId: 'class-10', SchoolStage: '', Status: 'Active', Name: 'Grade 10' }],
+    subjects: [{ SubjectId: 'trade-1', SeniorChoiceRole: 'Trade', Status: 'Active' }],
+    departments: [{ DepartmentId: 'dept-1', CoreSubjectIds: [] }],
+    students: [],
+    studentMemberships: [{ MembershipId: 'membership-1', StudentRef: 'student-1', SessionId: 'current-session', TermId: 'current-term', ClassId: 'class-10', ArmId: 'arm-a', DepartmentId: 'dept-1', SubjectIds: [], Status: 'Active' }]
+  };
+  const rows = {
+    classes: [{ ClassId: 'class-10', SchoolStage: '', Status: 'Active', Name: 'Grade 10' }],
+    arms: [{ ArmId: 'arm-a', ClassId: 'class-10', Status: 'Active', Name: 'Brilliance' }],
+    teacherAllocations: [{ TeacherUsername: 'teacher-a', AllocationRole: 'Form Teacher', SessionId: 'current-session', TermId: 'current-term', ClassId: 'class-10', ArmId: 'arm-a', Status: 'Active' }]
+  };
+  const html = render(data, rows, false);
+  assert.match(html, /data-academic-arm-subject-register/);
+  assert.match(html, /name="SessionId" value="current-session"/);
+  assert.match(html, /name="TermId" value="current-term"/);
+  assert.match(html, /Only classrooms where you are the assigned class teacher are shown/);
+  assert.match(html, /trade-1/);
+  assert.match(html, /<button type="submit">Save subject selections for this arm<\/button>/);
+  assert.match(adminSource, /\['students', 'My students & subjects'\]/);
+  assert.match(adminSource, /label: 'Student subjects'/);
+  const missing = render(data, { ...rows, teacherAllocations: [] }, true);
+  assert.match(missing, /No active Form Teacher assignment is linked to your account/);
+  assert.match(missing, /data-academic-arm-subject-info/);
+});
+
+test('an active class membership without an arm remains eligible for initial arm allocation', () => {
+  const period = { sessionId: 'session-1', termId: 'term-1', classId: 'grade-8' };
+  assert.equal(academicMembershipCanReceiveInitialArm({}, period), false);
+  assert.equal(academicMembershipCanReceiveInitialArm({
+    StudentRef: 'DCA/1', SessionId: 'session-1', TermId: 'term-1', ClassId: 'grade-8', ArmId: '', Status: 'Active'
+  }, period), true);
+  assert.equal(academicMembershipCanReceiveInitialArm({
+    StudentRef: 'DCA/1', SessionId: 'session-1', TermId: 'term-1', ClassId: 'grade-8', ArmId: 'brilliance', Status: 'Active'
+  }, period), false);
+  assert.equal(academicMembershipCanReceiveInitialArm({
+    StudentRef: 'DCA/1', SessionId: 'session-1', TermId: 'term-1', ClassId: 'grade-8', ArmId: '', Status: 'Withdrawn'
+  }, period), false);
+  assert.equal(academicMembershipCanReceiveInitialArm({
+    StudentRef: 'DCA/1', SessionId: 'session-1', TermId: 'term-1', ClassId: 'grade-9', ArmId: '', Status: 'Active'
+  }, period), false);
+  const candidateSource = adminSource.slice(
+    adminSource.indexOf('function academicStudentAllocationCandidates'),
+    adminSource.indexOf('const ACADEMIC_STUDENT_IMPORT_COLUMNS')
+  );
+  assert.match(candidateSource, /academicIsActive\(membership\).*membership\.ClassId === classId.*!clean\(membership\.ArmId\)/s);
+});
+
+test('subject teachers are batch-assigned only to the exact selected classrooms', () => {
+  const bulkTeacherSource = librarySource.slice(
+    librarySource.indexOf('export async function bulkAssignAcademicSubjectTeacher'),
+    librarySource.indexOf('export async function bulkAllocateAcademicStudents')
+  );
+  assert.match(bulkTeacherSource, /const classroomIds = uniqueIds\(input\.ClassroomIds/);
+  assert.match(bulkTeacherSource, /for \(const \[index, classroom\] of classrooms\.entries\(\)\)/);
+  assert.match(bulkTeacherSource, /activeValue\(classroom\.IsClassroom, false\)/);
+  assert.doesNotMatch(bulkTeacherSource, /for \(const schoolClass of classes\)/);
+  assert.doesNotMatch(bulkTeacherSource, /for \(const armTemplate of armTemplates\)/);
+  assert.match(bulkTeacherSource, /AllocationRole: 'Subject Teacher'/);
+  assert.match(librarySource, /academicSeniorCoreSubjectIds\(state\.departments\)\.includes\(record\.SubjectId\)/);
+  assert.match(librarySource, /function statusActive\(row\) \{\s*if \(!row \|\| typeof row !== 'object'\) return false;/);
+  assert.match(bulkTeacherSource, /Repeat for another subject if needed/);
+  assert.match(librarySource, /bulkassignacademicsubjectteacher/);
+});
+
+test('selected timetable-only subjects can be assigned to each classroom’s saved form teacher', () => {
+  const bulkTeacherSource = librarySource.slice(
+    librarySource.indexOf('export async function bulkAssignAcademicSubjectTeacher'),
+    librarySource.indexOf('export async function updateAcademicSubjectTeacherAllocation')
+  );
+  assert.match(bulkTeacherSource, /assignToFormTeachers = input\.AssignToFormTeachers/);
+  assert.match(bulkTeacherSource, /uniqueIds\(input\.SubjectIds \|\| input\.SubjectId\)/);
+  assert.match(bulkTeacherSource, /subject\.AssessmentCategory !== 'TimetableOnly'/);
+  assert.match(bulkTeacherSource, /academicFormTeacherForClassroom\(state\.teacherAllocations, classroom, sessionId, termId\)/);
+  assert.match(bulkTeacherSource, /assertAcademicClassTeacherSnapshot\(\[formTeacher\]/);
+  assert.match(bulkTeacherSource, /formTeacherSnapshots\.get\(classroom\.ArmId\)/);
+  assert.match(bulkTeacherSource, /supplied\.length !== classroomIds\.length/);
+  assert.match(bulkTeacherSource, /formTeacherSnapshots\.has\(classroomId\)/);
+  assert.doesNotMatch(bulkTeacherSource, /classroomIds\.length !== 1/);
+  assert.match(bulkTeacherSource, /TeacherUsername: classroomTeacherUsername/);
+  assert.match(bulkTeacherSource, /validateAcademicRecord\(projected, 'teacherallocation', record/);
+  const formClassroom = { ClassId: 'grade-7', ArmId: 'arm-a', Name: 'Brilliance' };
+  const savedFormTeacher = { ClassId: 'grade-7', ArmId: 'arm-a', SessionId: 'session-1', TermId: 'term-1',
+    AllocationRole: 'Form Teacher', TeacherUsername: 'ada', Status: 'Active' };
+  assert.equal(academicFormTeacherForClassroom([savedFormTeacher], formClassroom, 'session-1', 'term-1'), savedFormTeacher);
+  assert.throws(() => academicFormTeacherForClassroom([], formClassroom, 'session-1', 'term-1'),
+    /must have one assigned class teacher/);
+  assert.throws(() => academicFormTeacherForClassroom([savedFormTeacher, { ...savedFormTeacher }], formClassroom, 'session-1', 'term-1'),
+    /must have one assigned class teacher/);
+  const eligibilitySource = adminSource.slice(
+    adminSource.indexOf('function academicTimetableOnlySubjectAvailable'),
+    adminSource.indexOf('function bindAcademicFormTeacherSubjects')
+  );
+  const available = new Function('academicIsActive', 'academicFind', 'clean', 'academicManagementFilters',
+    `${eligibilitySource}; return academicTimetableOnlySubjectAvailable;`)(
+    (row) => row && !/archived|inactive|closed|withdrawn/i.test(String(row.Status || '')),
+    (rows, id) => rows.find((row) => [row.ClassId, row.SubjectId].includes(id)) || null,
+    (value) => String(value ?? '').trim(), { sessionId: 'session-1', termId: 'term-1' }
+  );
+  const classroom = { ClassId: 'grade-7', ArmId: 'arm-a' };
+  const leap = { SubjectId: 'leap', AssessmentCategory: 'TimetableOnly', Status: 'Active' };
+  const graded = { SubjectId: 'math', AssessmentCategory: 'Graded', Status: 'Active' };
+  const junior = { classes: [{ ClassId: 'grade-7', SchoolStage: 'junior-secondary' }], offerings: [
+    { ClassId: 'grade-7', ArmId: '', SubjectId: 'leap', SessionId: 'session-1', TermId: 'term-1', Status: 'Active' }
+  ] };
+  assert.equal(available(junior, classroom, leap), true);
+  assert.equal(available(junior, classroom, graded), false);
+  assert.equal(available({ ...junior, offerings: [{ ...junior.offerings[0], TermId: 'term-2' }] }, classroom, leap), false);
+  const senior = { classes: [{ ClassId: 'grade-7', SchoolStage: 'senior-secondary' }], departments: [
+    { CoreSubjectIds: ['leap'], Status: 'Active' }
+  ] };
+  assert.equal(available(senior, classroom, leap), true);
+  assert.match(adminSource, /data-academic-form-teacher-subjects/);
+  assert.match(adminSource, /data-academic-form-teacher-select-all/);
+  assert.match(adminSource, /academicClassroomCheckboxField\(classes, classTeacherClassrooms/);
+  assert.match(adminSource, /payload\.FormTeacherSnapshots = selectedClassrooms\.map/);
+  assert.match(adminSource, /selectedClassrooms\.length \* \(payload\.SubjectIds \|\| \[\]\)\.length > 200/);
+  assert.match(adminSource, /academicTimetableOnlySubjectAvailable\(academicManagementData \|\| \{\}, classroom, subject\)/);
+  assert.match(adminSource, /name="AssignToFormTeachers" value="true"/);
+  assert.match(adminSource, /bindAcademicFormTeacherSubjects\(panelEl\.querySelector/);
+});
+
+test('class-teacher timetable-only picker exposes unique multi-class and all-class controls', () => {
+  const fieldSource = adminSource.slice(
+    adminSource.indexOf('function academicClassroomCheckboxField'),
+    adminSource.indexOf('function academicSavedSubjectTeacherAllocations')
+  );
+  const renderField = new Function('escapeHtml', `${fieldSource}; return academicClassroomCheckboxField;`)(
+    (value) => String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;')
+  );
+  const html = renderField(
+    [{ ClassId: 'g7', Name: 'Grade 7' }, { ClassId: 'g8', Name: 'Grade 8' }],
+    [{ ClassId: 'g7', ArmId: 'a', Name: 'Brilliance' }, { ClassId: 'g7', ArmId: 'b', Name: 'Classic' },
+      { ClassId: 'g8', ArmId: 'c', Name: 'Distinction' }],
+    { prefix: 'form-teacher-subject', label: 'Classrooms for these timetable-only subjects' }
+  );
+  assert.equal((html.match(/<input type="checkbox" id="form-teacher-subject-arm-[^"]+" name="ClassroomIds"/g) || []).length, 3);
+  assert.equal((html.match(/data-academic-checkbox-group-toggle/g) || []).length, 2);
+  assert.match(html, /id="form-teacher-subject-arm-3"/);
+  assert.match(html, /Classrooms for these timetable-only subjects/);
+  assert.match(adminSource, /Select all classrooms with class teachers/);
+  assert.match(adminSource, /inputs\.forEach\(\(input\) => \{ input\.checked = checkAll; \}\)/);
+});
+
+test('class teachers and assistants are assigned across multiple classroom rows in one protected batch', () => {
+  const bulkClassStaffSource = librarySource.slice(
+    librarySource.indexOf('export async function bulkAssignAcademicClassTeachers'),
+    librarySource.indexOf('export async function bulkAssignAcademicSubjectTeacher')
+  );
+  assert.match(bulkClassStaffSource, /normalizeAcademicClassTeacherAssignments\(input\)/);
+  assert.match(bulkClassStaffSource, /loadScopedAcademicState\(env, scope, ACADEMIC_CLASS_TEACHER_STATE_KEYS\)/);
+  assert.match(bulkClassStaffSource, /role: 'Form Teacher'/);
+  assert.match(bulkClassStaffSource, /role: 'Assistant Teacher'/);
+  assert.match(bulkClassStaffSource, /assertAcademicClassTeacherSnapshot/);
+  assert.match(bulkClassStaffSource, /operation: 'delete'/);
+  assert.match(bulkClassStaffSource, /commitAcademicBatch\(env, writes/);
+  assert.match(bulkClassStaffSource, /View: 'classStaff'/);
+  assert.match(librarySource, /bulkassignacademicclassteachers/);
+
+  const workspaceSource = adminSource.slice(
+    adminSource.indexOf('function academicClassStaffWorkspace'),
+    adminSource.indexOf('function academicStructureWorkspace')
+  );
+  assert.match(adminSource, /\['classStaff', 'Assign class teachers'\]/);
+  assert.match(workspaceSource, /data-academic-workflow="bulkAssignAcademicClassTeachers"/);
+  assert.match(workspaceSource, /data-academic-class-staff-row/);
+  assert.match(workspaceSource, /data-academic-classroom-select/);
+  assert.match(workspaceSource, /data-academic-class-teacher/);
+  assert.match(workspaceSource, /data-academic-assistant-teacher/);
+  assert.match(workspaceSource, /data-academic-class-staff-add/);
+  assert.match(workspaceSource, /Class Teacher Assignments/);
+  assert.match(workspaceSource, /Leaving Assistant blank removes the current assistant/);
+  assert.match(adminSource, /function syncAcademicClassStaffRow/);
+  assert.match(adminSource, /data-academic-class-staff-edit/);
+  assert.match(adminSource, /FormTeacherRevisionToken: clean\(row\.dataset\.formRevision\)/);
+  assert.match(adminSource, /AssistantTeacherRevisionToken: clean\(row\.dataset\.assistantRevision\)/);
+  assert.match(styleSource, /\.academic-class-staff-row\{display:grid;grid-template-columns:repeat\(3,minmax\(0,1fr\)\) 36px/);
+});
+
+test('branch-paired class and arm actions never write the organisation legacy class catalogue', () => {
+  for (const Action of [
+    'saveAcademicClass',
+    'saveAcademicArm',
+    'bulkCreateAcademicClasses',
+    'bulkApplyAcademicArmTemplates',
+    'archiveAcademicRecord',
+    'deleteAcademicRecord'
+  ]) {
+    assert.equal(
+      academicLegacyClassCompatibilityEnabled({ Action, DeviceBranchId: 'north-campus' }),
+      false,
+      `${Action} must suppress organisation-wide legacy class compatibility for branch devices`
+    );
+  }
+  assert.equal(academicLegacyClassCompatibilityEnabled({ Action: 'saveAcademicClass' }), true);
+
+  assert.match(
+    librarySource,
+    /legacyClassCompatibility: academicLegacyClassCompatibilityEnabled\(input\)/
+  );
+  const saveSource = librarySource.slice(
+    librarySource.indexOf('export async function saveAcademicManagementRecord'),
+    librarySource.indexOf('function uniqueStudentReferences')
+  );
+  assert.match(saveSource, /legacyClassWrite\(state, record, type, scope\)/);
+  const bulkClassSource = librarySource.slice(
+    librarySource.indexOf('export async function bulkCreateAcademicClasses'),
+    librarySource.indexOf('export async function bulkCreateAcademicArmTemplates')
+  );
+  assert.match(bulkClassSource, /legacyClassWrite\(projected, record, 'class', scope\)/);
+  const bulkArmSource = librarySource.slice(
+    librarySource.indexOf('export async function bulkApplyAcademicArmTemplates'),
+    librarySource.indexOf('export async function bulkApplyAcademicSubjects')
+  );
+  assert.match(bulkArmSource, /legacyClassWrite\(projected, schoolClass, 'class', scope\)/);
+  assert.match(bulkArmSource, /IsClassroom: true/);
+  assert.match(bulkArmSource, /!activeValue\(existing\.IsClassroom, false\)/);
+  assert.match(bulkArmSource, /existing arm\(s\) upgraded to classrooms/);
+  assert.match(bulkArmSource, /Upgraded: upgradedRecords\.length/);
+  const archiveSource = librarySource.slice(
+    librarySource.indexOf('export async function archiveAcademicManagementRecord'),
+    librarySource.indexOf('export async function deleteAcademicManagementRecord')
+  );
+  assert.match(archiveSource, /legacyClassWrite\(state, archived, type, scope\)/);
+  const deleteSource = librarySource.slice(
+    librarySource.indexOf('export async function deleteAcademicManagementRecord'),
+    librarySource.indexOf('function academicOperationalViewForCapability')
+  );
+  assert.match(deleteSource, /if \(type === 'class' && scope\.legacyClassCompatibility\)/);
+  assert.match(deleteSource, /legacyClassWrite\(projected, schoolClass, 'class', scope\)/);
+});
+
+test('Academic Management staff candidates include active Teachers and exact Academics Department Users', () => {
+  const candidates = academicSubjectTeacherCandidates([
+    { Username: 'academics-all', Role: 'Department User', Department: 'Academics', Active: true, SchoolSectionAccess: 'All' },
+    { Username: 'academics-primary', Role: 'Department User', Department: 'Academics', Active: 'YES', SchoolSectionAccess: 'Primary' },
+    { Username: 'teacher', Role: 'Teacher', Department: '', Active: true, SchoolSectionAccess: 'All' },
+    { Username: 'wrong-department', Role: 'Department User', Department: 'Academic Department', Active: true, SchoolSectionAccess: 'All' },
+    { Username: 'inactive', Role: 'Department User', Department: 'Academics', Active: false, SchoolSectionAccess: 'All' },
+    { Username: 'secondary', Role: 'Department User', Department: 'Academics', Active: true, SchoolSectionAccess: 'Secondary' }
+  ], 'primary');
+  assert.deepEqual(candidates.map((row) => row.Username), ['academics-all', 'academics-primary', 'teacher']);
+  assert.match(librarySource, /ACADEMIC_TEACHER_DEPARTMENT_INVALID/);
+  assert.match(librarySource, /staff: displayStaff\(academicSubjectTeacherCandidates\(visibleStaff, scope\.section\)\)/);
+  assert.match(adminSource, /function academicManagementStaffCandidates/);
+  assert.match(adminSource, /role === 'teacher' \|\| \(role === 'department user' && department === 'academics'\)/);
+});
+
+test('subject-teacher allocations can be corrected atomically or permanently deleted', () => {
+  const updateSource = librarySource.slice(
+    librarySource.indexOf('export async function updateAcademicSubjectTeacherAllocation'),
+    librarySource.indexOf('export async function bulkAllocateAcademicStudents')
+  );
+  assert.match(updateSource, /existing\.AllocationRole !== 'Subject Teacher'/);
+  assert.match(updateSource, /const changedIdentity = recordId\(record\) !== recordId\(existing\)/);
+  assert.match(updateSource, /operation: 'delete'/);
+  assert.match(updateSource, /exists: false/);
+  assert.match(updateSource, /ACADEMIC_TEACHER_ALLOCATION_DUPLICATE/);
+  assert.match(librarySource, /type === 'teacherallocation' \? 'canManageAllocations' : 'canDelete'/);
+  assert.match(librarySource, /'offering', 'teacherallocation'/);
+});
+
+test('student withdrawal sends its reason and withdrawn memberships can be reassigned safely', () => {
+  const movementSource = librarySource.slice(
+    librarySource.indexOf('export async function manageAcademicStudentMembership'),
+    librarySource.indexOf('function activeDependants')
+  );
+  assert.match(adminSource, /Reason: reason, EffectiveDate/);
+  assert.doesNotMatch(adminSource, /SchoolSection: record\.SchoolSection, Reason, EffectiveDate/);
+  assert.match(adminSource, /const movableMemberships = rows\.studentMemberships\.filter/);
+  assert.match(adminSource, /Reassign to another classroom/);
+  assert.match(adminSource, /Withdrawal is for a student leaving the current term/);
+  assert.match(movementSource, /const reassigningWithdrawn = !reinstating/);
+  assert.match(movementSource, /active or withdrawn membership can be transferred or changed/);
+  assert.match(movementSource, /use Reinstate to restore the student to the original classroom/);
+  assert.match(movementSource, /reinstating \|\| reassigningWithdrawn/);
+});
+
+test('staff web workspace exposes responsive academic registers and online-only success', () => {
+  assert.match(adminSource, /\['academics', 'Academic Management'\]/);
+  assert.match(adminSource, /function renderAcademicManagement/);
+  assert.match(adminSource, /let academicManagementView = 'classrooms'/);
+  assert.match(adminSource, /function academicClassroomWorkspace/);
+  const classroomWorkspace = adminSource.slice(
+    adminSource.indexOf('function academicClassroomWorkspace'),
+    adminSource.indexOf('function academicStructureWorkspace')
+  );
+  assert.match(classroomWorkspace, /data-academic-workflow="bulkApplyAcademicArmTemplates" data-academic-classroom-creator/);
+  assert.match(classroomWorkspace, /name: 'ClassIds', label: 'Classes'/);
+  assert.match(classroomWorkspace, /name: 'ArmTemplateIds', label: 'Reusable arms'/);
+  assert.match(classroomWorkspace, /Every selected arm will be applied to every selected class/);
+  assert.match(classroomWorkspace, /existing matching classrooms are skipped and none is overwritten/);
+  assert.match(adminSource, /data-academic-class-arm-selection/);
+  assert.match(adminSource, /bindAcademicClassroomArmSelection\(/);
+  assert.equal([...adminSource.matchAll(/data-academic-workflow="bulkApplyAcademicArmTemplates" data-academic-class-arm-selection/g)].length, 1);
+  assert.match(classroomWorkspace, /Create selected classrooms/);
+  assert.doesNotMatch(classroomWorkspace, /data-academic-classroom-editor/);
+  assert.doesNotMatch(classroomWorkspace, /<select name="(?:ClassId|ArmTemplateId)"/);
+  assert.match(adminSource, /row\.IsClassroom === true/);
+  assert.match(adminSource, /if \(!wanted\) return null/);
+  assert.match(adminSource, /Students ready for this classroom/);
+  assert.match(adminSource, /data-academic-classroom-staff-role/);
+  assert.match(adminSource, /\['classrooms', 'Classrooms'\]/);
+  assert.match(adminSource, /function academicManagementRequest/);
+  assert.match(adminSource, /function academicDepartmentsWorkspace/);
+  assert.match(adminSource, /Junior Secondary offerings become Core automatically/);
+  assert.match(adminSource, /row\.Department \? ` · \$\{row\.Department\}`/);
+  const teacherWorkspace = adminSource.slice(
+    adminSource.indexOf('function academicTeacherWorkspace'),
+    adminSource.indexOf('function academicStudentMembershipActions')
+  );
+  assert.match(teacherWorkspace, /const classrooms = rows\.arms\.filter/);
+  assert.match(teacherWorkspace, /data-academic-workflow="bulkAssignAcademicSubjectTeacher"/);
+  assert.match(teacherWorkspace, /data-academic-subject-teacher-selection/);
+  assert.match(teacherWorkspace, /data-academic-teacher-subject-help/);
+  assert.match(adminSource, /bindAcademicSubjectTeacherSelection\(/);
+  assert.match(teacherWorkspace, /academic-management-form-grid academic-management-form-grid-4/);
+  assert.match(teacherWorkspace, /academicClassroomCheckboxField\(classes, classrooms\)/);
+  assert.match(teacherWorkspace, /academicManagementStaffCandidates\(data\.staff \|\| \[\], academicManagementFilters\.section\)/);
+  assert.match(teacherWorkspace, /Repeat the process if the teacher handles another subject/);
+  assert.doesNotMatch(teacherWorkspace, /<select name="AllocationRole"/);
+  assert.match(teacherWorkspace, /data-academic-form="teacherAllocation"/);
+  assert.match(teacherWorkspace, /data-academic-action="updateAcademicSubjectTeacherAllocation"/);
+  assert.match(teacherWorkspace, /data-academic-teacher-edit/);
+  assert.match(teacherWorkspace, /academicActionButtons\('teacherAllocation', row, canManage, false, canManage\)/);
+  assert.match(teacherWorkspace, /Update this allocation/);
+  assert.match(adminSource, /function syncAcademicTeacherEditPeriod/);
+  assert.match(teacherWorkspace, /Subject Teacher Allocations/);
+  assert.match(teacherWorkspace, /subjectAllocations/);
+  assert.match(librarySource, /export async function bulkAssignAcademicSubjectTeacher/);
+  assert.match(librarySource, /Assign at most 200 classrooms/);
+  assert.match(librarySource, /ACADEMIC_CLASSROOM_REQUIRED/);
+  assert.match(adminSource, /function academicCheckboxField/);
+  assert.match(adminSource, /function academicClassroomCheckboxField/);
+  assert.match(adminSource, /data-academic-checkbox-group-toggle/);
+  assert.match(adminSource, /name="ClassroomIds"/);
+  assert.match(adminSource, /Tick a class to select all its arms/);
+  assert.match(adminSource, /function updateAcademicCheckboxGroups/);
+  assert.match(adminSource, /\.result-signatory strong\{max-width:100%;white-space:nowrap\}/);
+  assert.match(adminSource, /data-academic-checkbox-count/);
+  assert.match(adminSource, /const legacySection = configuredSections\.length === 1 \? configuredSections\[0\] : 'secondary'/);
+  assert.match(adminSource, /academicManagementFilters\.sessionId = '';[\s\S]{0,120}academicManagementData = null/);
+  assert.match(adminSource, /function bindAcademicCheckboxField/);
+  assert.match(adminSource, /event\.shiftKey && anchor/);
+  assert.match(adminSource, /academicCheckboxInputs\(field, true\)/);
+  assert.match(adminSource, /field\._academicShiftAnchor = target/);
+  assert.match(adminSource, /Shift-click to select a range/);
+  assert.match(adminSource, /function validateAcademicCheckboxFields/);
+  assert.match(adminSource, /payload\[name\] = academicCheckedValues\(form, name\)/);
+  assert.match(adminSource, /name: 'StudentRefs'/);
+  assert.match(adminSource, /name: 'CoreSubjectIds'/);
+  assert.doesNotMatch(adminSource, /select name="(?:CoreSubjectIds|StudentRefs|SubjectIds)" multiple/);
+  assert.match(adminSource, /data-academic-workflow="bulkAllocateAcademicStudents"/);
+  assert.match(adminSource, /data-academic-student-membership-import/);
+  assert.match(adminSource, /data-academic-download-student-import/);
+  assert.match(adminSource, /bulkImportAcademicStudentMemberships/);
+  assert.match(adminSource, /function academicStudentMembershipImportCsv/);
+  assert.match(adminSource, /profile marked Needs completion will be created automatically/);
+  assert.match(adminSource, /Blank student migration template downloaded/);
+  assert.match(adminSource, /ACADEMIC_STUDENT_IMPORT_REQUIRED_COLUMNS = \['StudentRef', 'FirstName', 'Surname', 'ClassCode'\]/);
+  assert.match(adminSource, /Arm codes are optional/);
+  assert.match(adminSource, /data-academic-workflow="bulkAssignAcademicArmStudentSubjects"/);
+  assert.match(adminSource, /function academicArmSubjectRegister/);
+  assert.match(adminSource, /profile\.mixedClassroom \? 'choose for this student' : 'locked'/);
+  assert.match(adminSource, /Trade · choose at least one/);
+  assert.match(adminSource, /must have at least one Trade subject/);
+  assert.match(adminSource, /Assignments: assignments/);
+  assert.match(adminSource, /function updateAcademicArmStudentSubjectCounts/);
+  assert.match(adminSource, /data-academic-student-subject-count/);
+  assert.match(adminSource, /data-academic-student-subject-total/);
+  assert.doesNotMatch(adminSource, /name: 'SubjectIds', label: 'Optional subjects'/);
+  assert.match(adminSource, /data-academic-student-placement="bulk"/);
+  assert.doesNotMatch(adminSource, /data-academic-form="studentMembership"/);
+  assert.doesNotMatch(adminSource, /Single allocation/);
+  assert.match(adminSource, /class="academic-student-allocation-layout"/);
+  assert.match(adminSource, /One or up to 100 at once/);
+  assert.match(adminSource, /function academicStudentAllocationCandidates/);
+  assert.match(adminSource, /data-academic-checkbox-purpose="student-arm-candidates"/);
+  assert.match(adminSource, /data-academic-search-text/);
+  assert.match(adminSource, /row\.StudentName, row\.StudentRef, row\.WalletCardId/);
+  assert.match(adminSource, /Search by name, admission number or card/);
+  assert.match(librarySource, /WalletCardId: clean\(row\.WalletCardId/);
+  assert.match(adminSource, /remain unassigned for this period/);
+  assert.match(adminSource, /Students awaiting an arm/);
+  assert.match(adminSource, /function academicBulkSetupWorkspace/);
+  assert.match(adminSource, /data-academic-workflow="bulkCreateAcademicClasses"/);
+  assert.match(adminSource, /data-academic-workflow="bulkCreateAcademicArmTemplates"/);
+  assert.match(adminSource, /data-academic-workflow="bulkApplyAcademicArmTemplates"/);
+  assert.match(adminSource, /data-academic-workflow="bulkCreateAcademicSubjects"/);
+  assert.match(adminSource, /data-academic-workflow="bulkApplyAcademicSubjects"/);
+  assert.match(adminSource, /data-academic-workflow="configureAcademicSeniorChoiceSubjects"/);
+  assert.match(adminSource, /name: 'TradeSubjectIds', label: 'Trade subjects'/);
+  assert.match(adminSource, /name: 'OptionalSubjectIds', label: 'Optional subjects'/);
+  assert.match(adminSource, /every current and future Senior Secondary classroom/);
+  assert.match(adminSource, /subject\.SeniorChoiceRole === 'Trade'/);
+  assert.match(adminSource, /subject\.SeniorChoiceRole === 'Optional'/);
+  assert.match(adminSource, /disabled: departments\.length > 0/);
+  assert.match(adminSource, /Department Core subjects are disabled/);
+  assert.match(adminSource, /const applicable = stage === 'senior-secondary' \? \[\]/);
+  assert.match(adminSource, /Legacy · ignored/);
+  assert.match(adminSource, /legacy Senior class assignment/);
+  assert.match(adminSource, /const form = canManage && !secondary/);
+  assert.match(adminSource, /option\.disabled \? ' disabled' : ''/);
+  assert.match(adminSource, /input\.checked = !input\.disabled && selected\.has/);
+  assert.match(adminSource, /Select subjects applicable to \$\{secondary \? 'Junior Secondary' : 'Primary'\}/);
+  assert.match(adminSource, /name: 'ClassIds', label: secondary \? 'Junior Secondary classes' : 'Primary classes'/);
+  assert.match(adminSource, /name: 'SubjectIds', label: secondary \? 'Applicable Junior Secondary subjects' : 'Applicable Primary subjects'/);
+  assert.match(adminSource, /label: sectionName === 'secondary' \? 'Junior curriculum' : 'Primary curriculum'/);
+  assert.match(adminSource, /Every selected subject is assigned to every selected class and is compulsory/);
+  const bulkSetupWorkspace = adminSource.slice(
+    adminSource.indexOf('function academicBulkSetupWorkspace'),
+    adminSource.indexOf('function academicDepartmentsWorkspace')
+  );
+  assert.doesNotMatch(bulkSetupWorkspace, /bulkApplyAcademicSubjects/);
+  assert.doesNotMatch(adminSource, /key: 'applySubjects'/);
+  assert.match(librarySource, /ACADEMIC_JUNIOR_SUBJECT_APPLICATION_ONLY/);
+  assert.match(librarySource, /scope\.section === 'secondary' \? 'Core'/);
+  assert.match(adminSource, /\['offerings', 'Class subjects'\]/);
+  assert.match(adminSource, /Core status is assigned within each Senior Secondary department/);
+  assert.doesNotMatch(adminSource, /data-academic-form="subject"[\s\S]{0,1200}name="Category"/);
+  assert.match(adminSource, /data-academic-delete=/);
+  assert.match(adminSource, /Permanently delete academic record/);
+  assert.match(adminSource, /academicActionButtons\('offering', row, canManage, data\.permissions\?\.canArchive, data\.permissions\?\.canDelete\)/);
+  assert.doesNotMatch(adminSource, /Reusable Arm Definitions \(not class arms\)/);
+  const structureWorkspace = adminSource.slice(
+    adminSource.indexOf('function academicStructureWorkspace'),
+    adminSource.indexOf('function academicBulkSetupWorkspace')
+  );
+  assert.match(structureWorkspace, /table\('Reusable Arm Catalogue', rows\.armTemplates/);
+  assert.match(structureWorkspace, /data-academic-apply-arm-template/);
+  assert.match(structureWorkspace, /table\('Applied Class Arms', rows\.arms/);
+  assert.match(structureWorkspace, /No reusable arm has been applied to a class yet/);
+  assert.ok(
+    structureWorkspace.indexOf("table('Reusable Arm Catalogue'") > structureWorkspace.indexOf('academic-management-registers'),
+    'the reusable arm catalogue should render inside the Structure register grid'
+  );
+  assert.match(adminSource, /type === 'armTemplate' && !panelEl\.querySelector\('\[data-academic-form="armTemplate"\]'\)/);
+  assert.match(adminSource, /setAcademicCheckedValues\(form, 'ArmTemplateIds', \[templateId\]\)/);
+  assert.match(adminSource, /This step does not create class arms/);
+  assert.match(adminSource, /academicActionButtons\('department',[\s\S]{0,150}permissions\?\.canDelete/);
+  assert.match(adminSource, /academicActionButtons\('armTemplate',[\s\S]{0,150}permissions\?\.canDelete/);
+  assert.match(adminSource, /Reusable Arm Catalogue/);
+  assert.match(adminSource, /Student Movement History/);
+  assert.match(adminSource, /staffFetch\('\/api\/staff-academics'/);
+  assert.match(adminSource, /active === 'academics'/);
+  assert.match(styleSource, /\.academic-management-editor-grid/);
+  assert.match(styleSource, /\.academic-checkbox-options/);
+  assert.match(styleSource, /\.academic-classroom-checkbox-group/);
+  assert.match(styleSource, /\.academic-classroom-arm-options/);
+  assert.match(styleSource, /\.academic-checkbox-count\{/);
+  assert.match(styleSource, /\.academic-checkbox-count-limit\{/);
+  assert.match(styleSource, /\.academic-classroom-flow-grid\{/);
+  assert.match(styleSource, /\.academic-classroom-current\{/);
+  assert.match(styleSource, /\.academic-classroom-staff-grid\{/);
+  assert.match(styleSource, /\.academic-checkbox-option input\[type="checkbox"\]/);
+  assert.match(styleSource, /\[data-academic-checkbox-purpose="student-arm-candidates"\] \.academic-checkbox-options\{max-height:320px\}/);
+  assert.match(styleSource, /\.academic-student-allocation-layout\{grid-column:1\/-1/);
+  assert.match(styleSource, /\.academic-arm-student-subject-list/);
+  assert.match(styleSource, /\.academic-subject-locked/);
+  assert.match(styleSource, /\.academic-arm-student-subject-status/);
+  assert.match(styleSource, /grid-template-areas:"register controls"/);
+  assert.match(styleSource, /grid-template-areas:"controls" "register"/);
+  assert.match(styleSource, /\.academic-management-filterbar\{[^}]*grid-template-columns:repeat\(4,minmax\(135px,1fr\)\) minmax\(120px,\.65fr\)/);
+  assert.match(styleSource, /\.academic-management-editor-heading small\{[^}]*font-size:11px/);
+  assert.match(adminSource, /<div class="academic-management-filterbar">[\s\S]{0,1200}id="academicManagementWorkspace"/);
+  assert.doesNotMatch(adminSource, /class="academic-management-view-switcher"/);
+  assert.match(styleSource, /@media\(max-width:560px\)[\s\S]*\.academic-management-filterbar/);
+  assert.match(adminSource, /function organizeAcademicManagementWorkspace/);
+  assert.match(adminSource, /function academicManagementHeader\(data, rows, message = ''\) \{\s*const learner = academicLearnerTerms\(\);/);
+  assert.match(adminSource, /Only the selected task is shown/);
+  assert.match(adminSource, /data-academic-task-panel/);
+  assert.match(adminSource, /showAcademicManagementTask\('students', 'transfer'\)/);
+  assert.match(styleSource, /\.academic-task-workspace\{display:grid/);
+  assert.match(styleSource, /\.academic-register-card/);
+  assert.match(adminHtml, /js\/academic-results-analysis\.js\?v=20260918-academic-readability/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20261008-wallet-card-setup/);
+});
+
+test('Academic root collections are included in dynamic organisation backup and restore', () => {
+  assert.match(backupSource, /listRootCollectionIds/);
+  assert.doesNotMatch(backupSource, /EXCLUDED_ROOT_COLLECTIONS[\s\S]{0,500}academic(?:Sessions|Terms|Classes|ArmTemplates|Arms|Subjects|StudentMovements)/);
+});

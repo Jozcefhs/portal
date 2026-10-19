@@ -1,0 +1,28 @@
+import { readFile, writeFile } from 'node:fs/promises';
+const html = await readFile(new URL('../setup.html', import.meta.url), 'utf8');
+const js = await readFile(new URL('../js/setup.js', import.meta.url), 'utf8');
+const scope = html.match(/<section class="settings-scope-toolbar"[\s\S]*?<\/section>/)[0];
+const sidebar = html.match(/<aside class="settings-sidebar">[\s\S]*?<\/aside>/)[0];
+const terminology = html.match(/<section id="branch-school-terminology"[\s\S]*?<\/section>/)[0];
+const general = html.match(/<section id="general-settings"[\s\S]*?<\/section>/)[0];
+const scopeFunction = js.slice(js.indexOf('function updateSettingsScopeUI('), js.indexOf('\nasync function loadProfile('));
+const declarations = `
+const settingsScopeField = document.getElementById('settingsScope');
+const settingsBranchField = document.getElementById('settingsBranch');
+const resetBranchSettingsButton = document.getElementById('resetBranchSettings');
+const settingsScopeSummary = document.getElementById('settingsScopeSummary');
+const settingsSaveScopeLabel = document.getElementById('settingsSaveScopeLabel');
+const activeSettingsAccess = {}, activeSettingsEdition = 'school', organisationOnlyControlIds = [];
+const academicPolicyScopeMode = null, paystackSelfServiceAvailable = false, emailProviderSelfServiceAvailable = false, emailProviderConnectionReady = false;
+const paystackSecretKeyField = null, confirmPaystackReplacement = null, connectPaystackButton = null, paystackConnectionPanel = null;
+const connectGoogleEmailButton = null, useBrevoEmailButton = null, emailProviderTestRecipient = null, testEmailProviderButton = null, emailProviderPanel = null;
+let webLogoDataUrl = '', webLogoChanged = false;
+settingsBranchField.innerHTML = '<option value="main">Main Branch</option>';
+document.getElementById('terminologyBranch').innerHTML = '<option value="main">Main Branch</option>';
+document.getElementById('terminologyBranchId').textContent = 'Branch ID: main';
+settingsScopeField.value = 'branch';
+settingsScopeField.addEventListener('change', () => updateSettingsScopeUI());
+document.querySelector('form').addEventListener('submit', event => event.preventDefault());
+updateSettingsScopeUI();
+`;
+await writeFile(new URL('settings-heading-qa.html', import.meta.url), `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Settings layout preview — sample data</title><link rel="stylesheet" href="/css/style.css"></head><body class="settings-page"><main class="settings-shell"><p>Local layout preview · sample settings</p><form class="settings-layout">${scope}${sidebar}<div class="settings-content">${terminology}${general}<div class="settings-savebar"><div><strong id="settingsSaveScopeLabel">Organisation settings</strong><p class="status">Sample preview — nothing is saved</p></div><button type="submit">Save changes</button></div></div></form></main><script>${scopeFunction}\n${declarations}</script></body></html>`);

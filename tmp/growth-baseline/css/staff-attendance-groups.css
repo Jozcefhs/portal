@@ -1,0 +1,42 @@
+.attendance-groups-workspace { min-width: 0; }
+.attendance-groups-workspace [hidden] { display: none !important; }
+.attendance-groups-workspace label { display: flex; flex-direction: column; gap: .35rem; min-width: 0; }
+.attendance-groups-workspace input, .attendance-groups-workspace select { width: 100%; min-width: 0; box-sizing: border-box; }
+.attendance-group-toolbar, .attendance-group-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; }
+.attendance-group-toolbar { justify-content: space-between; margin: .75rem 0; }
+.attendance-groups-workspace button { width: auto; min-height: 40px; white-space: normal; word-break: normal; overflow-wrap: normal; }
+.attendance-group-toolbar span, .attendance-group-actions span, .attendance-group-card small, .attendance-group-person small { color: var(--muted, #60758c); font-size: .82rem; }
+.attendance-group-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: .65rem; }
+.attendance-group-card { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .6rem; padding: .85rem; border: 1px solid var(--border, #d0dfeb); border-radius: 10px; }
+.attendance-group-card strong, .attendance-group-card small, .attendance-group-person strong, .attendance-group-person small { display: block; }
+.attendance-group-editor { display: block; padding: 1rem; margin-top: 1rem; border: 1px solid var(--border, #caddeb); border-radius: 10px; background: var(--surface, #f7fafc); }
+.attendance-group-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); align-items: end; gap: .8rem; }
+.attendance-group-cycle { display: flex; align-items: end; flex-wrap: wrap; gap: .6rem; margin-top: .85rem; }
+.attendance-group-cycle label { flex: 1 1 155px; }
+.attendance-group-schedule { display: grid; gap: .5rem; max-height: 520px; overflow-y: auto; padding: 2px; }
+.attendance-group-schedule-row { display: grid; grid-template-columns: minmax(110px, 1.1fr) 1fr 1fr minmax(135px, 1.2fr); gap: .65rem; align-items: end; padding: .65rem; border: 1px solid var(--border, #d0dfeb); border-radius: 8px; }
+.attendance-group-schedule-row label { font-size: .8rem; }
+.attendance-group-schedule-row .attendance-group-working { flex-direction: row; align-items: center; align-self: center; }
+.attendance-group-working input { width: 18px; height: 18px; flex: 0 0 18px; }
+.attendance-group-working small { display: block; color: var(--muted, #60758c); }
+.attendance-group-preview { margin: 1rem 0; font-size: .8rem; }
+.attendance-group-preview-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: .4rem; margin-top: .5rem; }
+.attendance-group-preview-grid > div { padding: .5rem; border-radius: 6px; background: var(--surface-alt, #eaf5f3); }
+.attendance-group-preview-grid span, .attendance-group-preview-grid strong { display: block; white-space: nowrap; }
+.attendance-group-assignments { margin-top: 1.5rem; }
+.attendance-group-filters { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: .75rem; }
+.attendance-group-staff-list { max-height: 520px; overflow-y: auto; margin: .65rem 0; padding: 2px; }
+.attendance-groups-workspace .attendance-group-person { display: grid; grid-template-columns: minmax(0, 1fr) minmax(170px, .7fr); align-items: center; gap: .75rem; padding: .75rem; border-bottom: 1px solid var(--border, #d0dfeb); }
+.attendance-group-person small { margin-top: .25rem; }
+.attendance-group-my-shift { margin: .5rem 0; }
+html[data-theme="dark"] .attendance-group-editor { background: #102338; border-color: var(--line); }
+html[data-theme="dark"] .attendance-group-preview-grid > div { background: #163b3b; }
+html[data-theme="dark"] .attendance-group-card, html[data-theme="dark"] .attendance-group-schedule-row, html[data-theme="dark"] .attendance-group-person { border-color: var(--line); }
+@media (max-width: 640px) {
+  .attendance-group-editor { padding: .65rem; }
+  .attendance-group-schedule-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: .6rem; }
+  .attendance-group-filters, .attendance-groups-workspace .attendance-group-person { grid-template-columns: minmax(0, 1fr); }
+  .attendance-group-preview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .attendance-group-preview-grid span, .attendance-group-preview-grid strong { white-space: normal; }
+  .attendance-group-actions button { flex: 1 1 auto; }
+}

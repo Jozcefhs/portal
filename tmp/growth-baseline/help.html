@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#102d48">
+  <title>Help &amp; devices — Dynamax</title>
+  <link rel="icon" href="images/Logo.png">
+  <script src="js/preferences.js?v=20260812-audio-face-guidance"></script>
+  <link rel="stylesheet" href="css/style.css?v=20261011-help-devices">
+  <link rel="stylesheet" href="css/help.css?v=20261011-help-devices">
+  <script src="js/help.js?v=20261011-help-devices" defer></script>
+</head>
+<body class="help-page">
+  <a class="help-skip" href="#helpMain">Skip to help</a>
+  <header class="help-topbar">
+    <a class="help-brand" href="index.html"><img src="images/Logo.png" alt=""><span>Dynamax<small>Help &amp; devices</small></span></a>
+    <nav aria-label="Help navigation"><a href="index.html">Suite home</a><a href="admin.html">Staff portal</a></nav>
+  </header>
+  <main id="helpMain" class="help-shell">
+    <div class="help-heading"><p class="eyebrow">Get more from your workspace</p><h1>Help &amp; devices</h1><p>Find answers, contact platform support, and find hardware to use with Dynamax.</p></div>
+    <div class="help-cards">
+      <section class="help-card" aria-labelledby="helpDevicesTitle">
+        <span class="help-card-icon" aria-hidden="true">&#9638;</span>
+        <h2 id="helpDevicesTitle">Cards &amp; readers</h2>
+        <p>Browse NFC cards, readers and other accessories in the Dynamax shop. Confirm compatibility with your device and intended use before ordering.</p>
+        <a id="helpShopLink" class="help-action" href="https://vehiclepass.dynamax.cc/shop" target="_blank" rel="noopener noreferrer">Visit hardware shop <span aria-hidden="true">&#8599;</span></a>
+        <small>Opens the external shop in a new tab.</small>
+      </section>
+      <section class="help-card" aria-labelledby="helpSupportTitle">
+        <span class="help-card-icon" aria-hidden="true">?</span>
+        <h2 id="helpSupportTitle">Contact support</h2>
+        <p>For app or device assistance, include your organisation name, the affected feature, and a brief description of the issue.</p>
+        <a id="helpSupportLink" class="help-action" hidden>Email support</a>
+        <p id="helpSupportUnavailable" class="muted">Loading support contact…</p>
+        <small>Never send passwords, verification codes or private student records by email. Contact your organisation directly about its payments and account decisions.</small>
+      </section>
+    </div>
+    <section class="help-faq" aria-labelledby="helpFaqTitle">
+      <div class="help-faq-heading"><div><p class="eyebrow">Quick answers</p><h2 id="helpFaqTitle">Frequently asked questions</h2></div><label for="helpFaqSearch">Search FAQs<input id="helpFaqSearch" type="search" placeholder="Cards, support, CBT…" autocomplete="off" disabled></label></div>
+      <p id="helpFaqCount" class="muted" aria-live="polite"></p>
+      <div id="helpFaqList"></div>
+      <p id="helpStatus" class="status" role="status" aria-live="polite">Loading help…</p>
+      <button id="helpRetry" type="button" class="secondary" hidden>Retry loading help</button>
+    </section>
+    <noscript><p>Enable JavaScript to load the configured support email and FAQs. The hardware shop link above is still available.</p></noscript>
+  </main>
+</body>
+</html>

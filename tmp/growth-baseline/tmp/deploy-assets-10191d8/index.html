@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>School Admission Portal</title>
+  <meta name="theme-color" content="#0f3d66"><link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="app-icon.svg">
+  <link rel="stylesheet" href="css/style.css?v=20260718-personalized-ui">
+</head>
+<body>
+  <main class="landing-page">
+    <nav class="landing-nav">
+      <div class="brand-lockup">
+        <img src="images/logo.png" alt="School logo" class="logo nav-logo" onerror="this.style.display='none'">
+        <div>
+          <strong data-school-name>School Portal</strong>
+          <span data-school-address></span>
+        </div>
+      </div>
+      <div class="nav-actions">
+        <a href="parent-dashboard.html">Parent Dashboard</a>
+        <a href="admin.html">Staff Portal</a>
+      </div>
+    </nav>
+
+    <section class="landing-hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Integrated School Management Suite</p>
+        <h1 data-portal-headline>Admissions and parent services in one place</h1>
+        <p class="lead" data-portal-subheading>Buy forms, complete applications, upload documents, pay fees, and monitor student activity from a secure school portal.</p>
+        <p class="portal-notice" data-portal-notice hidden></p>
+        <div class="hero-actions">
+          <a class="btn" href="buy-form.html">Buy Admission Form</a>
+          <a class="btn secondary" href="verify.html">Register Application</a>
+        </div>
+      </div>
+      <div class="hero-service-panel" aria-label="Portal services">
+        <div>
+          <strong>Admission</strong>
+          <span>Purchase forms and submit applications securely.</span>
+        </div>
+        <div>
+          <strong>Payments</strong>
+          <span>Pay approved fees and view payment status.</span>
+        </div>
+        <div>
+          <strong>Parent View</strong>
+          <span>Track results, clinic visits, wallet activity, and notices.</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="service-grid">
+      <a class="service-tile" href="buy-form.html">
+        <strong>Buy Admission Form</strong>
+        <span>Start a new application and receive a verification code.</span>
+      </a>
+      <a class="service-tile" href="verify.html">
+        <strong>Register</strong>
+        <span>Continue after purchasing an admission form.</span>
+      </a>
+      <a class="service-tile" href="payments.html">
+        <strong>Pay Fees</strong>
+        <span>Review payable items and proceed to secure checkout.</span>
+      </a>
+      <a class="service-tile" href="parent-dashboard.html">
+        <strong>Parent Dashboard</strong>
+        <span>Monitor linked children, payments, results, and activity.</span>
+      </a>
+      <a class="service-tile" href="upload-documents.html">
+        <strong>Upload Documents</strong>
+        <span>Submit missing documents requested by the admissions office.</span>
+      </a>
+      <a class="service-tile" href="setup.html">
+        <strong>School Setup</strong>
+        <span>Configure the school profile and portal display.</span>
+      </a>
+    </section>
+  </main>
+  <script src="js/site-config.js?v=20260718-personalized-ui"></script>
+  <script src="js/pwa-install.js?v=20260722"></script>
+</body>
+</html>

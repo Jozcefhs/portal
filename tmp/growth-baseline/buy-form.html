@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Buy Admission Form</title>
+  <script src="js/preferences.js?v=20260726-biometric"></script>
+  <link rel="stylesheet" href="css/style.css?v=20260903-hotel-tabs">
+</head>
+<body>
+  <main class="page-wrap narrow">
+    <section class="card">
+      <div class="form-header">
+        <img src="images/Logo.png" alt="School logo" class="logo small" onerror="this.style.display='none'">
+        <div>
+          <h1>Buy Admission Form</h1>
+          <p class="muted"><span data-school-name>School Portal</span> - choose online payment or direct bank transfer. Your verification code is issued after payment confirmation.</p>
+        </div>
+      </div>
+
+      <form id="formPurchaseForm" autocomplete="on">
+        <label for="applicantName">Applicant Name <span class="required">*</span></label>
+        <input id="applicantName" name="applicantName" required>
+
+        <label for="email">Parent Email <span class="required">*</span></label>
+        <input id="email" name="email" type="email" required>
+
+        <label for="phone">Parent Phone</label>
+        <input id="phone" name="phone" inputmode="tel">
+
+        <div id="admissionBranchField">
+          <label for="admissionBranch">Branch <span class="required">*</span></label>
+          <select id="admissionBranch" name="branchId" required>
+            <option value="">Loading available branches...</option>
+          </select>
+        </div>
+
+        <label for="classApplyingFor">Class Applying For <span class="required">*</span></label>
+        <select id="classApplyingFor" name="classApplyingFor" required>
+          <option value="">Loading available classes...</option>
+        </select>
+
+        <button type="submit" id="purchaseBtn">Proceed to Payment</button>
+        <p id="purchaseStatus" class="status"></p>
+      </form>
+
+      <p>
+        <a href="verify.html" id="alreadyPaidLink">Already paid? Register</a>
+      </p>
+      <p>
+        <a href="index.html">Return to admission portal</a> 
+      </p>
+    </section>
+  </main>
+
+  <script src="js/site-config.js?v=20260910-branch-profile"></script>
+  <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
+  <script src="js/payment-methods.js?v=20260809-direct-transfer-sharp-text"></script>
+  <script src="js/app-dialogs.js?v=20261016-grouped-form-validation"></script>
+  <script src="js/buy-form.js?v=20260910-branch-admissions"></script>
+</body>
+</html>

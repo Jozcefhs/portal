@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Verify Admission Form Purchase</title>
+  <script src="js/preferences.js?v=20260726-biometric"></script>
+  <link rel="stylesheet" href="css/style.css?v=20260730-student-face-lookup">
+</head>
+<body>
+  <main class="page-wrap narrow">
+    <section class="card">
+      <h1>Verify Admission Form Purchase</h1>
+      <p><span data-school-name>School Portal</span> - enter the email address and verification code sent after payment.</p>
+
+      <form id="verifyForm" autocomplete="on">
+        <label for="email">Email Address</label>
+        <input id="email" name="email" type="email" required placeholder="parent@example.com">
+
+        <label for="code">Verification Code</label>
+        <input id="code" name="code" type="text" required placeholder="ABC123" maxlength="12" autocomplete="one-time-code">
+
+        <button type="submit" id="verifyBtn">Verify and Continue</button>
+      </form>
+
+      <p id="status" class="status" aria-live="polite"></p>
+    </section>
+  </main>
+  <script src="js/site-config.js?v=20260728-quota-safety"></script>
+  <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
+  <script src="js/verify.js?v=20260729-action-feedback"></script>
+</body>
+</html>

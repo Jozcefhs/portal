@@ -1,0 +1,22 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Staff account search sample preview</title>
+<link rel="stylesheet" href="../../css/style.css"><style>body{padding:20px}main{max-width:1400px;margin:auto;padding:24px;background:white;border:1px solid #d4e3ed;border-radius:12px}.staff-user-list{max-height:460px}.sample-controls{display:flex;gap:12px;margin-bottom:16px}</style>
+<p>LOCAL SAMPLE — production staff-list rendering and controls; no database or live accounts.</p>
+<nav class="sample-controls" aria-label="Sample verification"><button id="sampleRefresh">Refresh sample list</button><button id="sampleReopen">Reopen Staff &amp; Permissions</button></nav><main id="root"></main>
+<script src="../../js/list-sorting.js"></script><script>
+const clean=value=>String(value??'').trim();
+const escapeHtml=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const yes=value=>value===true||['yes','true','1','active'].includes(clean(value).toLowerCase());
+const panelEl=document.querySelector('#root'),activeSection='staffUsers',currentUser={username:'admin'};
+const staffUsersData=[{Username:'admin',DisplayName:'Sample Administrator',Role:'Super Admin',BranchId:'main',Active:'YES'},{Username:'sample.teacher',DisplayName:'Alice Teacher',Role:'Teacher',Department:'Academics',BranchId:'main',Active:'YES'},{Username:'sample.accounts',DisplayName:'Zoe Accounts',Role:'Accounts Officer',Department:'Finance',BranchId:'main',Active:'NO'}];
+const staffSeatUsage=null,staffRoleAccessData=null,staffModulePreferencesData=null,staffMfaAdminData=null,staffNameMigration=null,staffAuditData=[],staffApprovalAccounts=[],availableBranches=[],canAssignStaffBranches=false,staffNameFormat='First name, surname';
+let staffRoleAccessSelectedRole='';
+const resolveDashboardEdition=()=> 'school',staffRolesForEdition=()=>['Super Admin','Accounts Officer','Teacher'],webTabsForEdition=()=>[],canManageOrganisationSettings=()=>false,staffMfaAccountLabel=()=> 'Two-factor not enrolled';
+const adminListTimestamp=DynamaxListSorting.timestamp,sortAdminListEntries=DynamaxListSorting.sortEntries,ADMIN_LIST_CREATED_FIELDS=DynamaxListSorting.createdFields,ADMIN_LIST_MODIFIED_FIELDS=DynamaxListSorting.modifiedFields,ADMIN_LIST_SORT_MODES=DynamaxListSorting.modes;
+const savedAdminListSort=()=> 'name-asc',adminListStorageKey=()=> 'sample-staff-list-sort',renderRoleAccessEditor=()=>{},updateMfaPolicyEditor=()=>{};
+function mountWorkspaceTabs(){
+ for(const element of panelEl.children)if(!element.matches('.workflow-intro,.staff-account-register'))element.hidden=true;
+}
+function bindStaffUserEvents(){bindStaffUserListControls(panelEl.querySelector('[data-staff-account-register]'));}
+document.querySelector('#sampleRefresh').onclick=()=>renderStaffUsers();
+document.querySelector('#sampleReopen').onclick=()=>{resetStaffUserListSearch(panelEl.querySelector('[data-staff-account-register]'));renderStaffUsers();};
+</script><script src="staff-account-list-production.js"></script></html>

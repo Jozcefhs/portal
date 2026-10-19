@@ -1,0 +1,448 @@
+import {
+  SUBSCRIPTION_MODULE_CATALOG_VERSION,
+  migrateSubscriptionModuleEntitlements,
+  normalizeSubscriptionPlan,
+  subscriptionAccessState,
+  subscriptionModulesForEdition,
+  subscriptionPlanEntitlements,
+  subscriptionPlanUserLimit
+} from './subscription-plans.js';
+import { normalizeNameFormat, personNameFormatProfile } from './person-name-format.js';
+
+const clean = (value) => String(value ?? '').trim();
+
+export const ORGANIZATION_EDITIONS = Object.freeze(['school', 'faith', 'organization']);
+
+export const SCHOOL_ONLY_SECTION_KEYS = Object.freeze([
+  'admissions', 'formPurchases', 'students', 'academics', 'library', 'studentConduct', 'accounts',
+  'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore'
+]);
+
+export const SCHOOL_ONLY_STAFF_ROLES = Object.freeze([
+  'Principal', 'Vice Principal Academics', 'Vice Principal Administration',
+  'Head Teacher', 'Assistant Head Teacher', 'Teacher', 'Librarian', 'Admissions Officer', 'Student Welfare Officer',
+  'Tuck Shop User', 'Clinic User', 'Kitchen User'
+]);
+
+export const FAITH_ONLY_STAFF_ROLES = Object.freeze([
+  'Senior Pastor', 'Head Minister', 'Pastor', 'Church Administrator',
+  'Membership Officer'
+]);
+
+export const ORGANIZATION_ONLY_STAFF_ROLES = Object.freeze([
+  'Executive Director', 'Organisation Administrator', 'Operations Manager',
+  'Records Officer'
+]);
+
+export const SHARED_STAFF_ROLES = Object.freeze([
+  'Vendor User',
+  'Super Admin', 'Director', 'Admin', 'Accounts Officer', 'Management', 'Department User',
+  'Procurement Officer',
+  'External Auditor',
+  'Front Desk', 'HR Director', 'HR Manager', 'HR Business Partner',
+  'HR Officer', 'HR Assistant', 'Recruitment Officer',
+  'Learning & Development Officer', 'Employee Relations Officer',
+  'Performance Management Officer', 'Compensation & Benefits Officer',
+  'Payroll Officer', 'Health & Safety Officer', 'Line Manager'
+]);
+
+export const NON_SCHOOL_OPERATION_ROLES = Object.freeze([
+  'Store User', 'Restaurant User', 'Hotel User', 'Treasurer', 'Auditor'
+]);
+
+const EDITION_STAFF_ROLE_SETS = Object.freeze({
+  school: new Set([...SHARED_STAFF_ROLES, ...SCHOOL_ONLY_STAFF_ROLES]),
+  faith: new Set([...SHARED_STAFF_ROLES, ...FAITH_ONLY_STAFF_ROLES, ...NON_SCHOOL_OPERATION_ROLES]),
+  organization: new Set([
+    ...SHARED_STAFF_ROLES,
+    ...ORGANIZATION_ONLY_STAFF_ROLES,
+    ...NON_SCHOOL_OPERATION_ROLES
+  ])
+});
+
+const NON_SCHOOL_DISABLED_FEATURES = new Set([
+  'admissions', 'students', 'academics', 'library', 'studentConduct', 'parentPortal',
+  'stores', 'clinic', 'kitchen'
+]);
+
+export const EDITION_FEATURE_DEFAULTS = Object.freeze({
+  school: Object.freeze({
+    branches: true,
+    branding: true,
+    approvals: true,
+    procurement: true,
+    executiveOffice: true,
+    humanResources: true,
+    staffAttendance: true,
+    bulkCommunication: true,
+    accounting: true,
+    vendorSettlements: true,
+    externalAudit: true,
+    payroll: true,
+    admissions: true,
+    students: true,
+    academics: true,
+    library: true,
+    studentConduct: true,
+    parentPortal: true,
+    stores: true,
+    clinic: true,
+    kitchen: true,
+    members: false,
+    services: false,
+    funds: false,
+    offerings: false
+  }),
+  faith: Object.freeze({
+    branches: true,
+    branding: true,
+    approvals: true,
+    procurement: true,
+    executiveOffice: true,
+    humanResources: true,
+    staffAttendance: true,
+    bulkCommunication: true,
+    accounting: true,
+    vendorSettlements: true,
+    externalAudit: true,
+    payroll: true,
+    admissions: false,
+    students: false,
+    academics: false,
+    library: false,
+    studentConduct: false,
+    parentPortal: false,
+    stores: false,
+    clinic: false,
+    kitchen: false,
+    members: true,
+    services: true,
+    funds: true,
+    offerings: true,
+    donations: true,
+    departments: true,
+    programs: true,
+    retail: true,
+    restaurant: true,
+    hotel: true
+  }),
+  organization: Object.freeze({
+    branches: true,
+    branding: true,
+    approvals: true,
+    procurement: true,
+    executiveOffice: true,
+    humanResources: true,
+    staffAttendance: true,
+    bulkCommunication: true,
+    accounting: true,
+    vendorSettlements: true,
+    externalAudit: true,
+    payroll: true,
+    admissions: false,
+    students: false,
+    academics: false,
+    library: false,
+    studentConduct: false,
+    parentPortal: false,
+    stores: false,
+    clinic: false,
+    kitchen: false,
+    members: true,
+    services: true,
+    funds: true,
+    offerings: true,
+    donations: true,
+    departments: true,
+    programs: true,
+    retail: true,
+    restaurant: true,
+    hotel: true
+  })
+});
+
+function booleanValue(value, fallback) {
+  if (typeof value === 'boolean') return value;
+  const normalized = clean(value).toLowerCase();
+  if (['yes', 'true', '1', 'on', 'enabled'].includes(normalized)) return true;
+  if (['no', 'false', '0', 'off', 'disabled'].includes(normalized)) return false;
+  return fallback;
+}
+
+export function normalizeOrganizationEdition(value) {
+  const normalized = clean(value).toLowerCase();
+  if (['church', 'religious', 'religious body', 'religious organisation', 'religious organization'].includes(normalized)) return 'faith';
+  if (normalized === 'other') return 'organization';
+  return ORGANIZATION_EDITIONS.includes(normalized) ? normalized : 'school';
+}
+
+export function staffRoleAllowedForEdition(role, edition) {
+  return EDITION_STAFF_ROLE_SETS[normalizeOrganizationEdition(edition)].has(clean(role));
+}
+
+function explicitOrganizationEdition(value) {
+  const normalized = clean(value).toLowerCase();
+  if (!normalized) return '';
+  if (['church', 'religious', 'religious body', 'religious organisation', 'religious organization'].includes(normalized)) return 'faith';
+  if (normalized === 'other') return 'organization';
+  return ORGANIZATION_EDITIONS.includes(normalized) ? normalized : '';
+}
+
+export function featureFlagsForEdition(edition, overrides = {}) {
+  const normalizedEdition = normalizeOrganizationEdition(edition);
+  const defaults = EDITION_FEATURE_DEFAULTS[normalizedEdition];
+  const supplied = overrides && typeof overrides === 'object' && !Array.isArray(overrides) ? overrides : {};
+  return Object.fromEntries(Object.entries(defaults).map(([feature, enabled]) => [
+    feature,
+    normalizedEdition !== 'school' && NON_SCHOOL_DISABLED_FEATURES.has(feature)
+      ? false
+      : Object.prototype.hasOwnProperty.call(supplied, feature)
+      ? booleanValue(supplied[feature], enabled)
+      : enabled
+  ]));
+}
+
+export function featureFlagsForPlan(edition, plan, overrides = {}, configuredEntitlements = null, moduleCatalogVersion = 0) {
+  const normalizedPlan = normalizeSubscriptionPlan(plan);
+  const editionFlags = featureFlagsForEdition(edition, overrides);
+  const entitlements = Array.isArray(configuredEntitlements) || configuredEntitlements === '*'
+    ? migrateSubscriptionModuleEntitlements(edition, configuredEntitlements, moduleCatalogVersion)
+    : subscriptionPlanEntitlements(normalizedPlan, normalizeOrganizationEdition(edition));
+  if (entitlements === '*') return editionFlags;
+  const allowed = new Set(entitlements);
+  return Object.fromEntries(Object.entries(editionFlags).map(([feature, enabled]) => [
+    feature,
+    enabled === true && allowed.has(feature)
+  ]));
+}
+
+export function organizationModulePreferences(edition, planFeatureFlags = {}, disabledModules = []) {
+  const modules = subscriptionModulesForEdition(normalizeOrganizationEdition(edition))
+    .filter((module) => planFeatureFlags[module.Key] === true);
+  const planKeys = new Set(modules.map((module) => module.Key));
+  const disabled = new Set((Array.isArray(disabledModules) ? disabledModules : [])
+    .map(clean)
+    .filter((key) => planKeys.has(key)));
+  const enabled = new Set([...planKeys].filter((key) => !disabled.has(key)));
+  let changed = true;
+  while (changed) {
+    changed = false;
+    modules.forEach((module) => {
+      if (!enabled.has(module.Key)) return;
+      if (module.Requires.some((required) => !enabled.has(required))) {
+        enabled.delete(module.Key);
+        changed = true;
+      }
+    });
+  }
+  const enabledModules = modules.map((module) => module.Key).filter((key) => enabled.has(key));
+  const effectiveDisabledModules = modules.map((module) => module.Key).filter((key) => !enabled.has(key));
+  return {
+    modules: modules.map((module) => ({ ...module, Enabled: enabled.has(module.Key) })),
+    enabledModules,
+    disabledModules: effectiveDisabledModules,
+    featureFlags: Object.fromEntries(Object.entries(planFeatureFlags).map(([feature, allowed]) => [
+      feature,
+      allowed === true && (!planKeys.has(feature) || enabled.has(feature))
+    ]))
+  };
+}
+
+export function resolveOrganizationConfig({ env = {}, organizationProfile = {}, legacyProfile = {} } = {}) {
+  const profile = organizationProfile && typeof organizationProfile === 'object' ? organizationProfile : {};
+  const legacy = legacyProfile && typeof legacyProfile === 'object' ? legacyProfile : {};
+  const { NameFormat } = personNameFormatProfile({ env, organizationProfile: profile, legacyProfile: legacy });
+  const britishEnvironmentEdition = clean(env.ORGANISATION_EDITION);
+  const americanEnvironmentEdition = clean(env.ORGANIZATION_EDITION);
+  const environmentEdition = britishEnvironmentEdition || americanEnvironmentEdition;
+  const configuredEdition = explicitOrganizationEdition(environmentEdition);
+  if (environmentEdition && !configuredEdition) {
+    const error = new Error('The deployment organisation edition is invalid.');
+    error.status = 503;
+    error.code = 'DEPLOYMENT_EDITION_INVALID';
+    throw error;
+  }
+  if (britishEnvironmentEdition && americanEnvironmentEdition
+    && explicitOrganizationEdition(britishEnvironmentEdition) !== explicitOrganizationEdition(americanEnvironmentEdition)) {
+    const error = new Error('ORGANISATION_EDITION and ORGANIZATION_EDITION identify different deployments.');
+    error.status = 503;
+    error.code = 'DEPLOYMENT_EDITION_CONFLICT';
+    throw error;
+  }
+  const profileEdition = clean(profile.Edition || profile.OrganisationEdition || profile.OrganizationEdition);
+  if (environmentEdition && profileEdition) {
+    const storedEdition = explicitOrganizationEdition(profileEdition);
+    if (!storedEdition || (configuredEdition && storedEdition !== configuredEdition)) {
+      const error = new Error('The database organisation profile conflicts with this deployment edition.');
+      error.status = 503;
+      error.code = storedEdition
+        ? 'DEPLOYMENT_PROFILE_EDITION_CONFLICT'
+        : 'DEPLOYMENT_PROFILE_EDITION_INVALID';
+      throw error;
+    }
+  }
+  const edition = normalizeOrganizationEdition(
+    environmentEdition
+      || profileEdition
+      || legacy.OrganisationEdition || legacy.OrganizationEdition
+  );
+  const fallbackName = edition === 'school' ? 'Your School Name' : 'Your Organisation Name';
+  const name = clean(
+    profile.Name || profile.OrganisationName || profile.OrganizationName
+      || legacy.OrganisationName || legacy.OrganizationName || legacy.SchoolName
+      || env.ORGANISATION_NAME || env.ORGANIZATION_NAME || env.SCHOOL_NAME
+  ) || fallbackName;
+  const code = clean(
+    profile.Code || profile.OrganisationCode || profile.OrganizationCode
+      || legacy.OrganisationCode || legacy.OrganizationCode || legacy.SchoolCode
+      || env.ORGANISATION_CODE || env.ORGANIZATION_CODE || env.SCHOOL_CODE
+  ).toUpperCase().replace(/[^A-Z0-9]/g, '') || 'ORG';
+  // FeatureFlags is the calculated output saved by older releases. Treating
+  // that output as an override made a later plan upgrade remain artificially
+  // locked. Only the explicit override field is authoritative.
+  const overrides = profile.FeatureOverrides
+    || legacy.FeatureOverrides || {};
+  const configuredEntitlements = profile.PlanEntitlements ?? profile.FeatureEntitlements
+    ?? legacy.PlanEntitlements ?? legacy.FeatureEntitlements ?? null;
+  const sourceModuleCatalogVersion = profile.PlanModuleCatalogVersion ?? legacy.PlanModuleCatalogVersion
+    ?? profile.SubscriptionPriceSnapshot?.ModuleCatalogVersion ?? legacy.SubscriptionPriceSnapshot?.ModuleCatalogVersion ?? 0;
+  const planEntitlements = Array.isArray(configuredEntitlements) || configuredEntitlements === '*'
+    ? migrateSubscriptionModuleEntitlements(edition, configuredEntitlements, sourceModuleCatalogVersion)
+    : null;
+  const configuredPlan = clean(
+    profile.Plan || profile.SubscriptionPlan
+      || legacy.Plan || legacy.SubscriptionPlan
+      || env.SUBSCRIPTION_PLAN
+  );
+  const ownerDemo = profile.OwnerDemo === true
+    || legacy.OwnerDemo === true
+    || configuredPlan.toLowerCase() === 'owner demo';
+  // Profiles created before subscription plans existed retain full operations
+  // until an explicit plan is selected. New profiles are written with Starter.
+  const plan = ownerDemo ? 'Owner Demo' : normalizeSubscriptionPlan(configuredPlan || 'Professional');
+  const defaultLimit = ownerDemo ? 250 : subscriptionPlanUserLimit(plan);
+  const subscription = subscriptionAccessState({
+    Plan: plan,
+    OwnerDemo: ownerDemo,
+    SubscriptionStatus: profile.SubscriptionStatus || legacy.SubscriptionStatus || env.SUBSCRIPTION_STATUS,
+    TrialStartedAt: profile.TrialStartedAt || legacy.TrialStartedAt || env.TRIAL_STARTED_AT,
+    TrialEndsAt: profile.TrialEndsAt || legacy.TrialEndsAt || env.TRIAL_ENDS_AT,
+    LifecycleStage: profile.LifecycleStage || legacy.LifecycleStage,
+    PaidThroughAt: profile.PaidThroughAt || legacy.PaidThroughAt,
+    RenewalDueAt: profile.RenewalDueAt || legacy.RenewalDueAt,
+    GracePeriodEndsAt: profile.GracePeriodEndsAt || legacy.GracePeriodEndsAt,
+    DataRetentionEndsAt: profile.DataRetentionEndsAt || legacy.DataRetentionEndsAt
+  });
+  const planFlags = featureFlagsForPlan(edition, plan, overrides, planEntitlements, SUBSCRIPTION_MODULE_CATALOG_VERSION);
+  const modulePreferences = organizationModulePreferences(
+    edition,
+    planFlags,
+    profile.DisabledFeatureEntitlements ?? profile.DisabledModules
+      ?? legacy.DisabledFeatureEntitlements ?? legacy.DisabledModules ?? []
+  );
+  return {
+    Edition: edition,
+    Name: name,
+    Code: code,
+    NameFormat,
+    Plan: plan,
+    OwnerDemo: ownerDemo,
+    NonBillable: ownerDemo || profile.NonBillable === true,
+    SyntheticDataOnly: ownerDemo || profile.SyntheticDataOnly === true,
+    UserLimit: Math.max(1, Number(profile.UserLimit || legacy.UserLimit || env.USER_LIMIT || defaultLimit) || defaultLimit),
+    FeatureOverrides: overrides,
+    PlanEntitlements: planEntitlements,
+    PlanModuleCatalogVersion: SUBSCRIPTION_MODULE_CATALOG_VERSION,
+    EnabledFeatureEntitlements: modulePreferences.enabledModules,
+    DisabledFeatureEntitlements: modulePreferences.disabledModules,
+    PlanFeatureFlags: planFlags,
+    ModulePreferences: modulePreferences.modules,
+    FeatureFlags: subscription.SubscriptionActive
+      ? modulePreferences.featureFlags
+      : Object.fromEntries(Object.keys(modulePreferences.featureFlags).map((feature) => [feature, false])),
+    ...subscription
+  };
+}
+
+export function organizationProfileDocument(config, audit = {}) {
+  const resolved = resolveOrganizationConfig({ organizationProfile: config });
+  return {
+    WorkspaceId: clean(config.WorkspaceId || config.workspaceId),
+    Edition: resolved.Edition,
+    Name: resolved.Name,
+    Code: resolved.Code,
+    NameFormat: normalizeNameFormat(config.NameFormat || config.nameFormat || resolved.NameFormat),
+    FeatureOverrides: config.FeatureOverrides || config.featureOverrides || resolved.FeatureOverrides || {},
+    PlanEntitlements: resolved.PlanEntitlements,
+    PlanModuleCatalogVersion: resolved.PlanModuleCatalogVersion,
+    SubscriptionPriceSnapshot: config.SubscriptionPriceSnapshot ?? null,
+    DisabledFeatureEntitlements: config.DisabledFeatureEntitlements
+      ?? config.DisabledModules ?? resolved.DisabledFeatureEntitlements ?? [],
+    PlanCatalogRevision: clean(config.PlanCatalogRevision || config.planCatalogRevision),
+    FeatureFlags: resolved.FeatureFlags,
+    UpdatedAt: clean(audit.UpdatedAt),
+    UpdatedBy: clean(audit.UpdatedBy),
+    Plan: (config.OwnerDemo === true || clean(config.Plan || config.plan || resolved.Plan).toLowerCase() === 'owner demo')
+      ? 'Owner Demo'
+      : normalizeSubscriptionPlan(config.Plan || config.plan || resolved.Plan || 'Starter'),
+    OwnerDemo: config.OwnerDemo === true || resolved.OwnerDemo === true,
+    NonBillable: config.NonBillable === true || resolved.NonBillable === true,
+    SyntheticDataOnly: config.SyntheticDataOnly === true || resolved.SyntheticDataOnly === true,
+    UserLimit: Math.max(1, Number(config.UserLimit || config.userLimit || resolved.UserLimit || 5) || 5),
+    SubscriptionStatus: clean(config.SubscriptionStatus || config.subscriptionStatus || resolved.SubscriptionStatus),
+    TrialStartedAt: clean(config.TrialStartedAt || config.trialStartedAt || resolved.TrialStartedAt),
+    TrialEndsAt: clean(config.TrialEndsAt || config.trialEndsAt || resolved.TrialEndsAt),
+    LifecycleStage: clean(config.LifecycleStage || config.lifecycleStage),
+    PaidThroughAt: clean(config.PaidThroughAt || config.paidThroughAt || resolved.PaidThroughAt),
+    RenewalDueAt: clean(config.RenewalDueAt || config.renewalDueAt || resolved.RenewalDueAt),
+    GracePeriodEndsAt: clean(config.GracePeriodEndsAt || config.gracePeriodEndsAt || resolved.GracePeriodEndsAt),
+    DataRetentionEndsAt: clean(config.DataRetentionEndsAt || config.dataRetentionEndsAt || resolved.DataRetentionEndsAt),
+    BrandName: clean(config.BrandName || config.brandName) || 'Dynamax',
+    BrandLogoUrl: clean(config.BrandLogoUrl || config.brandLogoUrl)
+  };
+}
+
+const SECTION_FEATURES = Object.freeze({
+  executiveOffice: 'executiveOffice',
+  humanResources: 'humanResources',
+  admissions: 'admissions',
+  formPurchases: 'admissions',
+  students: 'students',
+  academics: Object.freeze(['students', 'academics']),
+  library: Object.freeze(['students', 'library']),
+  studentConduct: 'studentConduct',
+  accounts: Object.freeze(['students', 'accounting']),
+  incomeAnalytics: 'accounting',
+  externalAudit: Object.freeze(['accounting', 'externalAudit']),
+  financeRequests: 'approvals',
+  procurement: 'procurement',
+  vendorSettlements: Object.freeze(['accounting', 'approvals', 'vendorSettlements']),
+  payroll: 'payroll',
+  clinic: 'clinic',
+  kitchen: 'kitchen',
+  tuckShop: 'stores',
+  bookstore: 'stores',
+  uniformStore: 'stores',
+  organizationStore: 'retail',
+  restaurant: 'restaurant',
+  hotel: 'hotel',
+  members: 'members',
+  services: 'services',
+  staffAttendance: 'staffAttendance',
+  funds: 'funds',
+  offerings: 'offerings',
+  donations: 'donations',
+  departments: 'departments',
+  programs: 'programs'
+});
+
+export function filterSectionsForFeatures(sections, featureFlags) {
+  const flags = featureFlags && typeof featureFlags === 'object' ? featureFlags : null;
+  if (!flags) return [...new Set((sections || []).map(clean).filter(Boolean))];
+  return [...new Set((sections || []).map(clean).filter((section) => {
+    const requirements = SECTION_FEATURES[section];
+    if (!requirements) return true;
+    const features = Array.isArray(requirements) ? requirements : [requirements];
+    return features.every((feature) => flags[feature] === true);
+  }))];
+}

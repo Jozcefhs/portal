@@ -1,0 +1,581 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Settings</title>
+  <script src="js/preferences.js?v=20260726-biometric"></script>
+  <link rel="stylesheet" href="css/style.css?v=20260923-youtube-tutorials-20261013-settings-heading-paystack-activation">
+</head>
+<body class="settings-page">
+  <main class="settings-shell">
+    <header class="settings-topbar">
+      <div class="settings-brand">
+        <span class="settings-logo-wrap"><img src="images/Logo.png" alt="Dynamax logo" class="settings-logo" onerror="this.style.display='none'"></span>
+        <div>
+          <p class="settings-eyebrow">Administration</p>
+          <h1>Settings</h1>
+          <p data-edition-copy="settings-description">Manage your organisation identity, documents and portal experience.</p>
+        </div>
+      </div>
+      <div class="settings-top-actions">
+        <a href="admin.html" class="settings-link">Web admin</a>
+        <a href="index.html" class="settings-link">View portal</a>
+      </div>
+    </header>
+
+    <form id="setupLoginForm" class="settings-unlock-card">
+      <div class="settings-lock-icon" aria-hidden="true">&#128274;</div>
+      <div class="settings-unlock-copy">
+        <p class="settings-eyebrow">Restricted area</p>
+        <h2 data-edition-copy="unlock-title">Unlock organisation settings</h2>
+        <p>Enter the setup password to view and update configuration.</p>
+      </div>
+      <div class="settings-unlock-control">
+        <label for="setupPassword">Setup password <span class="required">*</span></label>
+        <input id="setupPassword" type="password" autocomplete="current-password" required>
+      </div>
+      <button type="submit">Unlock settings</button>
+      <p id="setupLoginStatus" class="status settings-login-status"></p>
+    </form>
+
+    <form id="setupForm" class="settings-layout" hidden>
+      <section class="settings-scope-toolbar" aria-labelledby="settingsScopeTitle">
+        <div class="settings-scope-copy">
+          <p class="settings-eyebrow">Configuration scope</p>
+          <strong id="settingsScopeTitle">Organisation defaults with branch overrides</strong>
+          <small id="settingsScopeSummary">Edit the defaults inherited by every branch.</small>
+        </div>
+        <label class="settings-scope-control" for="settingsScope">
+          <span>Editing</span>
+          <select id="settingsScope">
+            <option value="organisation">Organisation defaults</option>
+            <option value="branch">Selected branch overrides</option>
+          </select>
+        </label>
+        <label class="settings-scope-control" for="settingsBranch">
+          <span>Branch</span>
+          <select id="settingsBranch" disabled></select>
+        </label>
+        <button id="resetBranchSettings" class="settings-text-button" type="button" hidden>Reset overrides</button>
+      </section>
+      <aside class="settings-sidebar">
+        <div class="settings-sidebar-title" data-edition-copy="sidebar-title">Organisation settings</div>
+        <nav aria-label="Settings sections">
+          <a href="#general-settings" class="settings-nav-link active"><span>01</span><div><strong>General</strong><small>Identity and contact</small></div></a>
+          <a href="#document-settings" class="settings-nav-link"><span>02</span><div><strong>Documents</strong><small>Signatories and email</small></div></a>
+          <a href="#parent-settings" class="settings-nav-link" data-school-settings-only><span>03</span><div><strong>Parent portal</strong><small>Results and visibility</small></div></a>
+          <a href="#academic-policy-settings" class="settings-nav-link" data-school-settings-only><span>04</span><div><strong>Academics</strong><small>Policies and grading</small></div></a>
+          <a href="#brand-settings" class="settings-nav-link"><span>05</span><div><strong>Branding</strong><small>Web logo</small></div></a>
+          <a href="#landing-settings" class="settings-nav-link"><span>06</span><div><strong>Landing page</strong><small>Public portal content</small></div></a>
+          <a href="#licence-settings" class="settings-nav-link"><span>07</span><div><strong>Licensing</strong><small>Product access</small></div></a>
+          <a href="#storage-settings" class="settings-nav-link"><span>08</span><div><strong>Storage</strong><small>Google documents</small></div></a>
+          <a href="#payment-settings" class="settings-nav-link"><span>09</span><div><strong>Payments</strong><small>Online and bank transfer</small></div></a>
+        </nav>
+        <div class="settings-sidebar-note">
+          <strong>Tip</strong>
+          <p>Changes become public only after you save them.</p>
+        </div>
+      </aside>
+
+      <div class="settings-content">
+        <section id="branch-school-terminology" class="settings-section" data-school-settings-only>
+          <div class="settings-section-heading"><div><h2>Branch school terminology</h2><p>Choose the section type by stable branch ID. Names do not determine the type. Records and staff permissions are unchanged.</p></div></div>
+          <div class="settings-fields two-column">
+            <div class="settings-field"><label for="terminologyBranch">Branch</label><select id="terminologyBranch"></select><small id="terminologyBranchId" class="settings-help"></small></div>
+            <div class="settings-field"><label for="branchSchoolSectionMode">School section type</label><select id="branchSchoolSectionMode"><option value="">Existing terminology (not configured)</option><option value="primary">Primary / Nursery</option><option value="secondary">Secondary</option><option value="mixed">Mixed primary and secondary</option></select></div>
+          </div>
+          <p class="settings-help">Primary uses Pupils and Head Teacher's Office; Secondary uses Students and Principal's Office. Mixed uses the staff member's assigned section, or neutral Learners and Executive Office when both are accessible.</p>
+          <button id="saveBranchSchoolSection" type="button" class="settings-text-button">Save branch terminology</button>
+          <p id="branchSchoolSectionStatus" class="status"></p>
+        </section>
+        <section id="general-settings" class="settings-section">
+          <div class="settings-section-heading">
+            <div><span class="settings-section-icon">G</span></div>
+            <div>
+              <p class="settings-eyebrow" data-edition-copy="profile-eyebrow">Organisation profile</p>
+              <h2>General information</h2>
+              <p>Core identity and contact details used across the portal.</p>
+            </div>
+          </div>
+          <div class="settings-fields two-column">
+            <div class="settings-field">
+              <label for="schoolName"><span data-edition-copy="name-label">Organisation name</span> <span class="required">*</span></label>
+              <input id="schoolName" name="SchoolName" required>
+            </div>
+            <div class="settings-field compact-field">
+              <label for="schoolCode" data-edition-copy="code-label">Organisation code</label>
+              <input id="schoolCode" name="SchoolCode">
+            </div>
+            <div class="settings-field">
+              <label for="schoolEmail" data-edition-copy="email-label">Organisation email</label>
+              <input id="schoolEmail" name="SchoolEmail" type="email">
+            </div>
+            <div class="settings-field">
+              <label for="schoolPhone" data-edition-copy="phone-label">Organisation phone</label>
+              <input id="schoolPhone" name="SchoolPhone" inputmode="tel">
+            </div>
+            <div class="settings-field full-width">
+              <label for="schoolAddress" data-edition-copy="address-label">Organisation address</label>
+              <input id="schoolAddress" name="SchoolAddress">
+            </div>
+            <div class="settings-field">
+              <label for="organisationEdition">Organisation type</label>
+              <select id="organisationEdition" name="OrganisationEdition">
+                <option value="school">School</option>
+                <option value="faith">Religious organisation</option>
+                <option value="organization">Other organisation</option>
+              </select>
+            </div>
+            <div class="settings-field full-width">
+              <label for="nameFormat" data-edition-copy="name-format-label">Personnel and contact name format</label>
+              <select id="nameFormat" name="NameFormat">
+                <option value="First name, middle name, surname">First name, middle name, surname</option>
+                <option value="First name, surname, middle name">First name, surname, middle name</option>
+                <option value="Surname, first name, middle name">Surname, first name, middle name</option>
+                <option value="Surname, middle name, first name">Surname, middle name, first name</option>
+                <option value="Middle name, first name, surname">Middle name, first name, surname</option>
+                <option value="Middle name, surname, first name">Middle name, surname, first name</option>
+              </select>
+              <small class="settings-help">Controls how names appear whenever separate first, middle and surname fields are available.</small>
+            </div>
+          </div>
+        </section>
+
+        <section id="document-settings" class="settings-section">
+          <div class="settings-section-heading">
+            <div><span class="settings-section-icon">D</span></div>
+            <div>
+              <p class="settings-eyebrow">Communication</p>
+              <h2>Documents and signatories</h2>
+              <p data-edition-copy="documents-description">Set the default signatory used on organisation documents and correspondence.</p>
+            </div>
+          </div>
+          <div class="settings-subsection">
+            <div class="settings-subsection-title"><strong>Default signatory</strong><span data-edition-copy="default-signatory-help">Used as the standard signatory on generated documents.</span></div>
+            <div class="settings-fields two-column">
+              <div class="settings-field"><label for="schoolSignatoryName">Signatory name</label><input id="schoolSignatoryName" name="SchoolSignatoryName" placeholder="Example: Authorised signatory name" data-edition-placeholder="signatory-name"></div>
+              <div class="settings-field"><label for="schoolSignatoryTitle">Signatory title</label><input id="schoolSignatoryTitle" name="SchoolSignatoryTitle" placeholder="Example: Authorised signatory title" data-edition-placeholder="signatory-title"></div>
+            </div>
+          </div>
+          <div class="settings-subsection" data-school-settings-only>
+            <div class="settings-subsection-title"><strong>Document-specific signatories</strong><span>Leave any pair blank to use the default above.</span></div>
+            <div class="settings-fields two-column">
+              <div class="settings-field"><label for="resultSignatoryName">Result slip signatory</label><input id="resultSignatoryName" name="ResultSignatoryName"></div>
+              <div class="settings-field"><label for="resultSignatoryTitle">Result slip title</label><input id="resultSignatoryTitle" name="ResultSignatoryTitle"></div>
+              <div class="settings-field"><label for="offerSignatoryName">Offer letter signatory</label><input id="offerSignatoryName" name="OfferSignatoryName"></div>
+              <div class="settings-field"><label for="offerSignatoryTitle">Offer letter title</label><input id="offerSignatoryTitle" name="OfferSignatoryTitle"></div>
+              <div class="settings-field"><label for="admissionSignatoryName">Admission letter signatory</label><input id="admissionSignatoryName" name="AdmissionSignatoryName"></div>
+              <div class="settings-field"><label for="admissionSignatoryTitle">Admission letter title</label><input id="admissionSignatoryTitle" name="AdmissionSignatoryTitle"></div>
+            </div>
+          </div>
+          <div class="settings-subsection" data-school-settings-only>
+            <div class="settings-fields">
+              <div class="settings-field">
+                <label for="emailGreetingTemplate">Email greeting template</label>
+                <input id="emailGreetingTemplate" name="EmailGreetingTemplate" placeholder="Dear Parent/Guardian,">
+                <small class="settings-help">Available placeholders: <code>{FULL_NAME}</code>, <code>{FIRST_NAME}</code> and <code>{SCHOOL_NAME}</code>.</small>
+              </div>
+            </div>
+          </div>
+          <div class="settings-subsection">
+            <div class="settings-subsection-title">
+              <strong>Email delivery provider</strong>
+              <span>Choose the organisation account used for transactional messages.</span>
+            </div>
+            <div id="emailProviderPanel" class="email-provider-card">
+              <div class="email-provider-heading">
+                <div>
+                  <small class="settings-eyebrow">Organisation-wide delivery</small>
+                  <strong id="emailProviderState">Checking email provider…</strong>
+                  <span id="emailProviderAccount">No connected mailbox reported.</span>
+                </div>
+                <span id="emailProviderBadge" class="email-provider-badge">Checking</span>
+              </div>
+              <p id="emailProviderScopeHelp" class="settings-help">Branches use this organisation provider while retaining their own sender and reply-to identities below.</p>
+              <div class="email-provider-actions">
+                <button id="connectGoogleEmail" type="button">Connect Google account</button>
+                <button id="useBrevoEmail" type="button" class="settings-secondary-action" hidden>Use Brevo instead</button>
+              </div>
+              <div class="email-provider-test">
+                <label for="emailProviderTestRecipient"><span>Send a test email to</span><input id="emailProviderTestRecipient" type="email" autocomplete="email" placeholder="administrator@example.org"></label>
+                <button id="testEmailProvider" type="button" class="settings-secondary-action">Send test email</button>
+              </div>
+              <p id="emailProviderStatus" class="status email-provider-status" role="status"></p>
+              <small class="settings-help">Google connects securely with OAuth. Dynamax never asks for or stores a Gmail password in this page.</small>
+            </div>
+          </div>
+          <div class="settings-subsection">
+            <div class="settings-subsection-title">
+              <strong>Transactional email identity</strong>
+              <span>Brevo uses this address as the sender. Google sends from the connected mailbox and uses this address as Reply-To when they differ.</span>
+            </div>
+            <div class="settings-fields two-column">
+              <div class="settings-field"><label for="senderName">Sender name</label><input id="senderName" autocomplete="organization"></div>
+              <div class="settings-field"><label for="senderEmail">Sender / reply-to email</label><input id="senderEmail" type="email" autocomplete="email"></div>
+              <div class="settings-field"><label for="replyToName">Reply-to name</label><input id="replyToName"></div>
+              <div class="settings-field"><label for="replyToEmail">Reply-to email</label><input id="replyToEmail" type="email"></div>
+            </div>
+          </div>
+          <div class="settings-subsection">
+            <div class="settings-subsection-title">
+              <strong>Executive office email (optional)</strong>
+              <span>Leave blank to use the identity above. With Google, a different address is used as Reply-To.</span>
+            </div>
+            <div class="settings-fields two-column">
+              <div class="settings-field"><label for="executiveSenderName">Sender name</label><input id="executiveSenderName"></div>
+              <div class="settings-field"><label for="executiveSenderEmail">Verified sender email</label><input id="executiveSenderEmail" type="email"></div>
+              <div class="settings-field"><label for="executiveReplyToName">Reply-to name</label><input id="executiveReplyToName"></div>
+              <div class="settings-field"><label for="executiveReplyToEmail">Reply-to email</label><input id="executiveReplyToEmail" type="email"></div>
+            </div>
+          </div>
+          <p class="settings-help">Branches inherit these sender identities until an administrator saves different values for that branch. Email-provider credentials remain organisation-wide and are never exposed here.</p>
+        </section>
+
+        <section id="parent-settings" class="settings-section" data-school-settings-only>
+          <div class="settings-section-heading">
+            <div><span class="settings-section-icon">P</span></div>
+            <div>
+              <p class="settings-eyebrow">Portal access</p>
+              <h2>Parent portal</h2>
+              <p>Control the level of entrance-result information visible to parents.</p>
+            </div>
+          </div>
+          <div class="settings-fields two-column">
+            <div class="settings-field">
+              <label for="resultDisplayMode">Parent result display</label>
+              <select id="resultDisplayMode" name="ResultDisplayMode">
+                <option value="subjects">Show subjects and scores</option>
+                <option value="percentage">Show average/percentage only</option>
+              </select>
+            </div>
+            <div class="settings-field">
+              <label for="showResultsOnline">Entrance results on parent portal</label>
+              <select id="showResultsOnline" name="ShowResultsOnline">
+                <option value="NO">Hide for all applicants</option>
+                <option value="YES">Show when applicant result is enabled</option>
+              </select>
+            </div>
+          </div>
+        </section>
+
+        <section id="academic-policy-settings" class="settings-section" data-school-settings-only>
+          <div class="settings-section-heading">
+            <div><span class="settings-section-icon">A</span></div>
+            <div>
+              <p class="settings-eyebrow">Academic policy</p>
+              <h2>Results, grading and promotion</h2>
+              <p>Configure an effective-dated draft, review validation, then activate it for the selected scope.</p>
+            </div>
+          </div>
+
+          <div class="academic-policy-state" id="academicPolicyState">
+            <div><strong id="academicPolicyStateTitle">No policy loaded</strong><small id="academicPolicyStateSummary">Choose a session and term to begin.</small></div>
+            <button id="loadAcademicPolicyButton" type="button" class="settings-text-button">Load policy</button>
+          </div>
+
+          <div class="settings-subsection">
+            <div class="settings-subsection-title"><strong>Effective period</strong><span>Policies are saved separately for each academic period.</span></div>
+            <div class="settings-fields two-column">
+              <div class="settings-field"><label for="academicPolicySession">Academic session</label><input id="academicPolicySession" name="CurrentAcademicSession" placeholder="2026/2027" autocomplete="off"></div>
+              <div class="settings-field"><label for="academicPolicyTerm">Term</label><select id="academicPolicyTerm" name="CurrentTerm"><option>First Term</option><option>Second Term</option><option>Third Term</option></select></div>
+            </div>
+          </div>
+
+          <div id="academicPolicyScopeMode" class="settings-subsection" hidden>
+            <div class="settings-subsection-title"><strong>Branch policy source</strong><span>Choose whether organisation changes may flow into this branch.</span></div>
+            <div class="settings-fields">
+              <div class="settings-field">
+                <label for="academicPolicyInheritanceMode">Academic policy and test components</label>
+                <select id="academicPolicyInheritanceMode">
+                  <option value="inherit">Organisation policy with branch overrides</option>
+                  <option value="independent">Independent branch policy</option>
+                </select>
+                <small id="academicPolicyInheritanceHelp" class="settings-help">Independent mode snapshots the complete branch policy, including assessment components, so later organisation changes cannot replace it.</small>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-subsection">
+            <div class="settings-subsection-title"><strong>Parent result access</strong><span>The protected result module will enforce the active policy when it is introduced.</span></div>
+            <div class="settings-fields two-column">
+              <div class="settings-field">
+                <label for="academicResultVisibility">Published results parents may access</label>
+                <select id="academicResultVisibility">
+                  <option value="unconfigured">Choose a policy</option>
+                  <option value="current-term">Current published term only</option>
+                  <option value="current-session">Published terms in the current session</option>
+                  <option value="all-published">All published term results</option>
+                  <option value="published-and-transcripts">Published results and approved transcripts</option>
+                </select>
+              </div>
+              <div class="settings-field">
+                <label for="academicFeeClearanceMode">Financial-clearance rule</label>
+                <select id="academicFeeClearanceMode">
+                  <option value="unconfigured">Choose a policy</option>
+                  <option value="none">Do not restrict results by fee balance</option>
+                  <option value="any-balance">Block when any applicable balance remains</option>
+                  <option value="minimum-paid-percentage">Require a minimum percentage paid</option>
+                  <option value="maximum-outstanding">Allow up to a maximum outstanding amount</option>
+                  <option value="selected-fee-categories">Check selected fee categories</option>
+                  <option value="manual-clearance">Require explicit manual clearance</option>
+                </select>
+              </div>
+              <div class="settings-field" data-fee-policy-field="minimum-paid-percentage"><label for="academicMinimumPaidPercentage">Minimum paid percentage</label><input id="academicMinimumPaidPercentage" type="number" min="0" max="100" step="0.01" value="100"></div>
+              <div class="settings-field" data-fee-policy-field="maximum-outstanding"><label for="academicMaximumOutstanding">Maximum outstanding amount</label><input id="academicMaximumOutstanding" type="number" min="0" step="0.01" value="0"></div>
+              <div class="settings-field full-width" data-fee-policy-field="selected-fee-categories"><label for="academicFeeCategoryIds">Applicable fee-category IDs</label><input id="academicFeeCategoryIds" placeholder="tuition, examination, boarding"><small class="settings-help">Enter stable fee-category IDs separated by commas.</small></div>
+            </div>
+            <div class="academic-policy-checks">
+              <p class="muted">Full-scholarship financial clearance follows the student's assigned scholarship charges. Publication and visibility rules still apply. Payment plans do not automatically release results; use an approved result-clearance entry for an agreed exception. These settings do not change scholarship billing or recorded payments.</p>
+              <label><input id="academicAllowManualExemptions" type="checkbox" checked> Allow audited manual exemptions</label>
+            </div>
+          </div>
+
+          <div class="settings-subsection">
+            <div class="settings-subsection-title"><strong>Position policy</strong><span>Calculation and parent display remain separate choices.</span></div>
+            <div class="settings-fields two-column">
+              <div class="settings-field">
+                <label for="academicPositionMode">Position handling</label>
+                <select id="academicPositionMode">
+                  <option value="unconfigured">Choose a policy</option>
+                  <option value="none">Do not calculate positions</option>
+                  <option value="internal-only">Calculate but hide from parents</option>
+                  <option value="exact-overall">Display exact overall position</option>
+                  <option value="subject-only">Display subject positions only</option>
+                  <option value="percentile-band">Display percentile or performance band</option>
+                  <option value="assessed-count">Display assessed-student count only</option>
+                </select>
+              </div>
+              <div class="settings-field"><label for="academicTieMode">Tied-score handling</label><select id="academicTieMode"><option value="competition">Competition ranking</option><option value="dense">Dense ranking</option><option value="shared">Shared position</option></select></div>
+              <div class="settings-field"><label for="academicMinimumAssessedSubjects">Minimum assessed subjects</label><input id="academicMinimumAssessedSubjects" type="number" min="1" max="100" value="1"></div>
+            </div>
+          </div>
+
+          <div class="settings-subsection">
+            <div class="settings-subsection-title"><strong>Assessment components</strong><span>Component weights must total 100%.</span></div>
+            <div class="academic-policy-checks"><label><input id="academicMidTermEnabled" type="checkbox"> Release a separately approved mid-term result</label></div>
+            <p class="settings-help">Mark one or two components below for the mid-term report. Mid-term drafts follow the same review, approval and publication controls as end-of-term results.</p>
+            <div class="academic-policy-grid-head academic-component-grid"><span>Name</span><span>Maximum</span><span>Weight %</span><span>Source</span><span>Split A/B</span><span>A objective</span><span>B theory</span><span>Required</span><span>Mid-term</span><span></span></div>
+            <div id="academicComponents" class="academic-policy-rows"></div>
+            <button id="addAcademicComponent" type="button" class="settings-text-button academic-add-row">Add component</button>
+          </div>
+
+          <div class="settings-subsection">
+            <div class="settings-subsection-title"><strong>Grade bands</strong><span>Bands must cover 0 through 100 without gaps or overlaps. Probation is a non-passing subject classification; the final student promotion outcome follows the separate promotion rules.</span></div>
+            <div class="academic-policy-grid-head academic-grade-grid"><span>Grade</span><span>Minimum</span><span>Maximum</span><span>Point</span><span>Class</span><span>Remark</span><span></span></div>
+            <div id="academicGradeBands" class="academic-policy-rows"></div>
+            <button id="addAcademicGradeBand" type="button" class="settings-text-button academic-add-row">Add grade band</button>
+          </div>
+
+          <div class="settings-subsection">
+            <div class="settings-subsection-title"><strong>Cumulative session results</strong><span>Choose the terms and weights used for annual results; weights must total 100%.</span></div>
+            <div class="academic-policy-grid-head academic-cumulative-grid"><span>Term name</span><span>Weight %</span><span>Required</span><span></span></div>
+            <div id="academicCumulativeTerms" class="academic-policy-rows"></div>
+            <button id="addAcademicCumulativeTerm" type="button" class="settings-text-button academic-add-row">Add term weight</button>
+            <div class="settings-fields two-column academic-cumulative-options">
+              <div class="settings-field"><label for="academicMissingTermMode">Missing term handling</label><select id="academicMissingTermMode"><option value="block">Block calculation</option><option value="exclude">Exclude and reweight completed terms</option><option value="zero">Count the missing term as zero</option><option value="manual-review">Calculate and require manual review</option></select></div>
+              <div class="settings-field"><label for="academicMissingSubjectMode">Missing subject handling</label><select id="academicMissingSubjectMode"><option value="block">Block calculation</option><option value="exclude">Exclude and reweight available subjects</option><option value="zero">Count the missing subject as zero</option><option value="manual-review">Calculate and require manual review</option></select></div>
+            </div>
+            <div class="academic-policy-checks"><label><input id="academicIncludeTransferredResults" type="checkbox" checked> Include locked results earned before a student transferred class or arm during the session</label></div>
+          </div>
+
+          <div class="settings-subsection">
+            <div class="settings-subsection-title"><strong>Promotion</strong><span>Junior and Senior rules are independent; authorized staff still approve final decisions.</span></div>
+            <div class="settings-fields">
+              <div class="settings-field"><label for="academicPromotionMode">Promotion method</label><select id="academicPromotionMode"><option value="unconfigured">Choose a policy</option><option value="manual-review">Manual review only</option><option value="division-rules">Separate Junior and Senior rules</option><option value="criteria">General criteria (legacy)</option></select></div>
+            </div>
+            <div class="settings-fields two-column" data-promotion-policy-field="criteria">
+              <div class="settings-field"><label for="academicMinimumOverallAverage">Minimum overall average</label><input id="academicMinimumOverallAverage" type="number" min="0" max="100" step="0.01"></div>
+              <div class="settings-field"><label for="academicRequiredCoreSubjects">Required core-subject IDs</label><input id="academicRequiredCoreSubjects" placeholder="english, mathematics"></div>
+              <div class="settings-field"><label for="academicMaximumFailedSubjects">Maximum failed subjects</label><input id="academicMaximumFailedSubjects" type="number" min="0" max="100"></div>
+              <div class="settings-field"><label for="academicManualReviewMinimum">Manual-review minimum</label><input id="academicManualReviewMinimum" type="number" min="0" max="100" step="0.01"></div>
+              <div class="settings-field"><label for="academicManualReviewMaximum">Manual-review maximum</label><input id="academicManualReviewMaximum" type="number" min="0" max="100" step="0.01"></div>
+            </div>
+            <div data-promotion-policy-field="division-rules">
+              <div class="academic-promotion-rule-card">
+                <div class="settings-subsection-title"><strong>Junior Secondary</strong><span>Average at or above the promoted minimum is Promoted; the next band is Probation; anything below it is Not promoted.</span></div>
+                <div class="settings-fields two-column">
+                  <div class="settings-field"><label for="academicJuniorPromotedMinimum">Promoted minimum average</label><input id="academicJuniorPromotedMinimum" type="number" min="0" max="100" step="0.01" placeholder="54.5"></div>
+                  <div class="settings-field"><label for="academicJuniorProbationMinimum">Probation minimum average</label><input id="academicJuniorProbationMinimum" type="number" min="0" max="100" step="0.01" placeholder="49.5"></div>
+                </div>
+              </div>
+              <div class="academic-promotion-rule-card">
+                <div class="settings-subsection-title"><strong>Senior Secondary</strong><span>Credits are calculated only from the student's department Core subjects.</span></div>
+                <div class="settings-fields two-column">
+                  <div class="settings-field"><label for="academicSeniorCreditMinimum">Credit minimum percentage</label><input id="academicSeniorCreditMinimum" type="number" min="0" max="100" step="0.01" placeholder="50"></div>
+                  <div class="settings-field"><label for="academicSeniorCoreSubjectCount">Expected Core-subject count</label><input id="academicSeniorCoreSubjectCount" type="number" min="1" max="100" step="1" placeholder="5"></div>
+                  <div class="settings-field"><label for="academicSeniorPromotedCredits">Credits required for promotion</label><input id="academicSeniorPromotedCredits" type="number" min="1" max="100" step="1" placeholder="3"></div>
+                  <div class="settings-field"><label for="academicSeniorPromotedRequiredSubjects">Required promoted-subject IDs or codes</label><input id="academicSeniorPromotedRequiredSubjects" placeholder="mathematics, english"></div>
+                  <div class="settings-field"><label for="academicSeniorPromotedRequiredMode">Promoted-subject rule</label><select id="academicSeniorPromotedRequiredMode"><option value="all">Credit in all listed subjects</option><option value="any">Credit in any listed subject</option><option value="none">No named-subject requirement</option></select></div>
+                  <div class="settings-field"><label for="academicSeniorProbationCredits">Credits used for probation</label><input id="academicSeniorProbationCredits" type="number" min="1" max="100" step="1" placeholder="2"></div>
+                  <div class="settings-field"><label for="academicSeniorProbationCreditMode">Probation credit rule</label><select id="academicSeniorProbationCreditMode"><option value="exactly">Exactly this many credits</option><option value="at-least">At least this many credits</option></select></div>
+                  <div class="settings-field"><label for="academicSeniorProbationRequiredSubjects">Required probation-subject IDs or codes</label><input id="academicSeniorProbationRequiredSubjects" placeholder="mathematics, english"></div>
+                  <div class="settings-field"><label for="academicSeniorProbationRequiredMode">Probation-subject rule</label><select id="academicSeniorProbationRequiredMode"><option value="any">Credit in any listed subject</option><option value="all">Credit in all listed subjects</option><option value="none">No named-subject requirement</option></select></div>
+                </div>
+              </div>
+            </div>
+            <div class="settings-fields two-column" data-promotion-shared-fields>
+              <div class="settings-field"><label for="academicMinimumAttendance">Minimum attendance percentage (optional)</label><input id="academicMinimumAttendance" type="number" min="0" max="100" step="0.01"></div>
+              <div class="settings-field"><label for="academicRequireAllTerms">Completed terms</label><select id="academicRequireAllTerms"><option value="YES">Require every configured term</option><option value="NO">Allow incomplete-term review</option></select></div>
+              <div class="settings-field"><label for="academicProbationResitEnabled">Student probation re-sit</label><select id="academicProbationResitEnabled"><option value="NO">Not allowed</option><option value="YES">Allowed by this policy</option></select><small>This is optional for each student. Enabling it only makes the re-sit workflow available for promotion decisions on Probation.</small></div>
+              <div class="settings-field"><label for="academicProbationResitPassPercentage">Re-sit pass percentage</label><input id="academicProbationResitPassPercentage" type="number" min="0" max="100" step="0.01" value="50"></div>
+            </div>
+          </div>
+
+          <div class="academic-policy-validation"><strong>Activation readiness</strong><ul id="academicPolicyIssues"><li>Load or save a policy to review its requirements.</li></ul></div>
+          <div class="academic-policy-actions">
+            <button id="inheritAcademicPolicyButton" type="button" class="settings-text-button" hidden>Use organisation policy</button>
+            <button id="saveAcademicPolicyButton" type="button" class="settings-text-button">Save draft</button>
+            <button id="activateAcademicPolicyButton" type="button" disabled>Activate policy</button>
+          </div>
+        </section>
+
+        <section id="brand-settings" class="settings-section">
+          <div class="settings-section-heading">
+            <div><span class="settings-section-icon">B</span></div>
+            <div>
+              <p class="settings-eyebrow">Appearance</p>
+              <h2>Branding</h2>
+              <p>Choose the logo displayed on public web pages.</p>
+            </div>
+          </div>
+          <div class="settings-logo-card">
+            <div class="settings-logo-preview"><img id="webLogoPreview" src="images/Logo.png" alt="Current web logo"></div>
+            <div class="settings-logo-copy">
+              <strong data-edition-copy="web-logo-label">Organisation web logo</strong>
+              <p>PNG, JPG or WebP. The image is resized automatically and does not affect PDF documents.</p>
+              <div class="settings-file-actions">
+                <label for="webLogoFile" class="settings-file-button">Choose image</label>
+                <input id="webLogoFile" type="file" accept="image/png,image/jpeg,image/webp">
+                <button id="removeWebLogo" type="button" class="settings-text-button">Use default logo</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="landing-settings" class="settings-section">
+          <div class="settings-section-heading">
+            <div><span class="settings-section-icon">L</span></div>
+            <div>
+              <p class="settings-eyebrow">Public experience</p>
+              <h2>Landing page</h2>
+              <p>Edit the headline and notice shown before a visitor signs in.</p>
+            </div>
+          </div>
+          <div class="settings-fields">
+            <div class="settings-field"><label for="portalHeadline">Headline</label><input id="portalHeadline" name="PortalHeadline"></div>
+            <div class="settings-field"><label for="portalSubheading">Subheading</label><textarea id="portalSubheading" name="PortalSubheading" rows="3"></textarea></div>
+            <div class="settings-field"><label for="portalNotice">Optional notice</label><textarea id="portalNotice" name="PortalNotice" rows="2" placeholder="Example: Add an important public announcement." data-edition-placeholder="portal-notice"></textarea></div>
+          </div>
+        </section>
+
+        <section id="licence-settings" class="settings-section">
+          <div class="settings-section-heading">
+            <div><span class="settings-section-icon">K</span></div>
+            <div>
+              <p class="settings-eyebrow">Application access</p>
+              <h2>Subscription access</h2>
+              <p>Review the organisation's current plan and staff-user allowance.</p>
+            </div>
+          </div>
+          <div class="settings-fields">
+            <div class="settings-field">
+              <label for="subscriptionPlan">Subscription plan</label>
+              <input id="subscriptionPlan" type="text" value="Starter" readonly aria-readonly="true">
+            </div>
+            <div class="settings-field">
+              <label for="userLimit">Maximum active users</label>
+              <input id="userLimit" type="number" min="1" value="5" readonly aria-readonly="true">
+            </div>
+          </div>
+
+          <small class="settings-help">Plan, module access, activation, renewal and staff-user allowance are managed by the organisation's online subscription.</small>
+        </section>
+
+        <section id="storage-settings" class="settings-section">
+          <div class="settings-section-heading">
+            <div><span class="settings-section-icon">S</span></div>
+            <div>
+              <p class="settings-eyebrow">Private document storage</p>
+              <h2>Cloudflare R2</h2>
+              <p>Uploaded documents are stored in the workspace-isolated R2 bucket connected during deployment. There is no storage URL to configure here.</p>
+            </div>
+          </div>
+          <div class="settings-fields">
+            <div class="settings-field">
+              <label>Deployment storage status</label>
+              <div id="r2StorageStatus" class="settings-help" role="status">Checking the R2 binding…</div>
+              <small class="settings-help">Storage is configured in Cloudflare and applies to every edition. Branch, section and workspace isolation is enforced in each object key.</small>
+            </div>
+          </div>
+        </section>
+
+        <section id="payment-settings" class="settings-section">
+          <div class="settings-notice"><strong>Requisition approvals</strong><p>Super Admin can choose separate approval stages for staff requisitions and vendor payment requests. These settings apply across all branches.</p><a href="admin.html?section=financeRequests">Open Finance Requests → Requisition approval settings</a></div>
+          <div class="settings-section-heading">
+            <div><span class="settings-section-icon">&#8358;</span></div>
+            <div>
+              <p class="settings-eyebrow">Collection methods</p>
+              <h2>Payments and direct transfer</h2>
+              <p>Choose the payment routes customers can use. Direct transfers remain pending until an authorised user verifies them.</p>
+            </div>
+          </div>
+          <div class="settings-fields two-column">
+            <div class="settings-field">
+              <label for="onlinePaymentEnabled">Automated online payment</label>
+              <select id="onlinePaymentEnabled" name="OnlinePaymentEnabled"><option value="YES">Enabled &mdash; Card, USSD and bank through Paystack</option><option value="NO">Disabled</option></select>
+            </div>
+            <div class="settings-field full-width paystack-connection-card" id="paystackConnectionPanel">
+              <div class="paystack-connection-heading">
+                <div>
+                  <label for="paystackSecretKey">Organisation Paystack account</label>
+                  <strong id="paystackConnectionState">Checking secure connection…</strong>
+                  <small id="paystackConnectionHelp" class="settings-help">The secret key is sent once over HTTPS and installed directly as an encrypted Cloudflare secret. It is never saved in the browser or database.</small>
+                </div>
+                <span id="paystackConnectionBadge" class="paystack-connection-badge">Not connected</span>
+              </div>
+              <div class="paystack-connection-controls">
+                <label for="paystackSecretKey"><span>Paystack secret key</span><input id="paystackSecretKey" type="password" maxlength="200" autocomplete="new-password" spellcheck="false" placeholder="sk_live_… or sk_test_…"></label>
+                <label id="paystackReplaceConfirmation" class="paystack-replace-confirmation" hidden><input id="confirmPaystackReplacement" type="checkbox"><span>I understand that pending payments created with the previous Paystack account must be reconciled before replacement.</span></label>
+                <button id="connectPaystackButton" type="button">Connect Paystack</button>
+              </div>
+              <div class="paystack-webhook-row">
+                <span>Paystack webhook URL</span>
+                <code id="paystackWebhookUrl"></code>
+                <button id="copyPaystackWebhook" type="button" class="settings-secondary-action">Copy URL</button>
+              </div>
+              <p id="paystackConnectionStatus" class="status paystack-connection-status" role="status"></p>
+              <button type="button" id="checkPaystackActivation" class="settings-secondary-action" hidden>Check activation</button>
+            </div>
+            <div class="settings-field" id="paystackSubaccountField">
+              <label for="paystackSubaccountCode">Branch Paystack subaccount</label>
+              <input id="paystackSubaccountCode" name="PaystackSubaccountCode" maxlength="80" autocomplete="off" placeholder="ACCT_xxxxxxxxxxxxxxxx">
+              <small id="paystackSubaccountHelp" class="settings-help">Available for branch overrides. Payments for this branch settle to this Paystack subaccount, and the branch bears the Paystack fee.</small>
+            </div>
+            <div class="settings-field">
+              <label for="directBankTransferEnabled">Direct bank transfer</label>
+              <select id="directBankTransferEnabled" name="DirectBankTransferEnabled"><option value="NO">Disabled</option><option value="YES">Enabled &mdash; manual verification required</option></select>
+            </div>
+            <div class="settings-field"><label for="paymentBankName">Bank name</label><input id="paymentBankName" name="PaymentBankName" autocomplete="organization"></div>
+            <div class="settings-field"><label for="paymentAccountName">Account name</label><input id="paymentAccountName" name="PaymentAccountName" autocomplete="organization"></div>
+            <div class="settings-field"><label for="paymentAccountNumber">Account number</label><input id="paymentAccountNumber" name="PaymentAccountNumber" inputmode="numeric" autocomplete="off"></div>
+            <div class="settings-field"><label for="paymentBankCurrency">Account currency</label><select id="paymentBankCurrency" name="PaymentBankCurrency"><option>NGN</option><option>USD</option><option>GBP</option><option>EUR</option><option>GHS</option><option>KES</option></select></div>
+            <div class="settings-field full-width"><label for="paymentTransferInstructions">Additional transfer instructions</label><textarea id="paymentTransferInstructions" name="PaymentTransferInstructions" rows="3" maxlength="500" placeholder="Example: Use the generated reference as the transfer narration."></textarea><small class="settings-help">Customers must enter a bank transaction reference. Proof upload is optional, and a receipt is issued only after verification.</small></div>
+          </div>
+        </section>
+
+        <div class="settings-savebar">
+          <div><strong id="settingsSaveScopeLabel">Organisation settings</strong><p id="setupStatus" class="status">Review your changes before saving.</p></div>
+          <button id="saveSetupButton" type="submit">Save changes</button>
+        </div>
+      </div>
+    </form>
+  </main>
+
+  <script src="js/password-toggle.js?v=20260718-password-toggle"></script>
+  <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
+  <script src="js/app-dialogs.js?v=20261016-grouped-form-validation"></script>
+  <script src="js/paystack-connection-status.js?v=20261013-paystack-activation"></script>
+  <script src="js/setup.js?v=20261003-no-school-code-default-20261013-paystack-activation"></script>
+</body>
+</html>

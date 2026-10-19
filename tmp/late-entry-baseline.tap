@@ -1,0 +1,27 @@
+✔ CBT lists every assigned subject, deduplicates arms and retains subjects with an empty roster (25.8737ms)
+✔ server accepts each of a teacher’s subjects independently and rejects other teachers and empty rosters (7.3678ms)
+✔ junior authoring preview includes current students without cached subject choices (8.8262ms)
+✔ teacher subject menu spans assigned classes and selecting a different class keeps the correct subject (12.0424ms)
+✔ CBT papers accept only safe PDF/JPEG/PNG content and retain an upload digest (5.4962ms)
+✔ teachers may author online packages that are pulled onto the local desktop network (44.9411ms)
+✔ reviewed junior refresh adds current students, removes transfers and preserves paper/schedule (30.9512ms)
+✔ senior refresh respects selected subjects after transfers (5.1862ms)
+✔ preview is scope/owner protected and blocks started, ended, downloaded and issued tests (13.5811ms)
+✔ stale review and concurrent download never overwrite the test (3.9162ms)
+✔ download locks the roster before releasing a package and returns the new revision for acknowledgement (5.3849ms)
+✔ roster refresh deduplicates references and rejects an empty roster (0.5956ms)
+✔ two centres can download the same locked package with the complete eligible roster (10.5462ms)
+✔ independent and simultaneous server import acknowledgements preserve the test and roster (3.0101ms)
+✔ browser refresh requires a preview confirmation, displays changes and submits its token (9.8138ms)
+✔ reschedule updates duration and revisions but preserves roster, papers and historical metadata (3.8158ms)
+✔ split timers can be edited independently and legacy date-only requests retain durations (0.9937ms)
+✔ invalid durations, dates and missing tests never commit (11.7222ms)
+✔ scheduled register opts into existing local search and dialog submits durations with revision guard (3.2649ms)
+ℹ tests 19
+ℹ suites 0
+ℹ pass 19
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 935.9692

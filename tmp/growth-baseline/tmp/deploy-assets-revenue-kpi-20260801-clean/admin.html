@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Organisation Staff Portal</title>
+  <meta name="theme-color" content="#071b33">
+  <script src="js/preferences.js?v=20260726-biometric"></script>
+  <link rel="stylesheet" href="css/style.css?v=20260730-student-face-lookup">
+  <link rel="stylesheet" href="css/notifications.css?v=20260730-notifications">
+</head>
+<body class="staff-page">
+  <header class="staff-topbar">
+    <a id="staffBrand" class="staff-brand" href="index.html">
+      <img src="images/Logo.png" alt="" class="nav-logo" onerror="this.style.display='none'">
+      <span><strong data-school-name>Organisation Management Suite</strong><small id="staffEditionLabel">Web Companion</small></span>
+    </a>
+    <div id="staffIdentity" class="staff-identity" hidden>
+      <div class="staff-desktop-tools" aria-label="Dashboard controls">
+        <button type="button" id="staffHeaderRefresh" class="staff-header-icon" aria-label="Refresh dashboard" title="Refresh dashboard">
+          <span aria-hidden="true">&#8635;</span>
+        </button>
+        <button type="button" id="staffThemeToggle" class="staff-header-icon" aria-label="Switch colour theme" title="Switch colour theme">
+          <span id="staffThemeToggleIcon" aria-hidden="true">&#9790;</span>
+        </button>
+      </div>
+      <button type="button" id="staffProfileTrigger" class="staff-profile-trigger" aria-label="Edit my profile" title="Edit my profile">
+        <span id="staffAvatar" class="staff-avatar" aria-hidden="true"><img id="staffAvatarImage" alt="" hidden><span id="staffAvatarFallback">S</span></span>
+        <span class="staff-identity-copy"><strong id="staffDisplayName"></strong><small id="staffRole"></small></span>
+      </button>
+      <button type="button" id="staffSwitchUser" class="dashboard-signout staff-header-signout" aria-label="Switch user" title="Switch user">
+        <span aria-hidden="true">&#8644;</span>
+      </button>
+      <button type="button" id="staffSignOut" class="dashboard-signout staff-header-signout" aria-label="Sign out" title="Sign out">
+        <span aria-hidden="true">&#8618;</span>
+      </button>
+    </div>
+  </header>
+
+  <main class="staff-shell">
+    <section id="staffLoginCard" class="card staff-login-card">
+      <p class="eyebrow">Authorized staff only</p>
+      <h1>Operations Companion</h1>
+      <p class="lead">Sign in to access the organisation records permitted for your role.</p>
+      <form id="staffLoginForm" autocomplete="on">
+        <label for="staffUsername">Username</label>
+        <input id="staffUsername" name="username" autocomplete="username webauthn" required>
+        <label for="staffPassword">Password</label>
+        <input id="staffPassword" name="password" type="password" autocomplete="current-password" required>
+        <button id="staffLoginButton" type="submit">Sign In</button>
+        <button id="staffPasskeyLogin" type="button" class="staff-passkey-button" hidden>
+          <span aria-hidden="true">◉</span> Sign in with biometrics
+        </button>
+        <p id="staffLoginStatus" class="status" role="status"></p>
+      </form>
+      <p class="muted staff-login-note">This web portal complements the desktop application. Both use the same database.</p>
+    </section>
+
+    <section id="staffDashboard" class="staff-dashboard" hidden>
+      <div class="staff-app-layout">
+        <aside class="staff-sidebar" id="staffSidebar">
+          <div class="staff-sidebar-heading">
+            <button type="button" id="staffSidebarThemeToggle" class="staff-sidebar-theme" aria-label="Switch colour theme" title="Switch colour theme">
+              <span id="staffSidebarThemeToggleIcon" aria-hidden="true">&#9790;</span>
+            </button>
+            <small>Workspace</small>
+            <strong id="staffWorkspaceTitle">Operations Centre</strong>
+          </div>
+          <nav class="admin-tabs staff-tabs" id="adminTabs" aria-label="Staff dashboard sections"></nav>
+          <div class="staff-sidebar-actions">
+            <small class="staff-swipe-hint">Swipe left to close this panel</small>
+            <button type="button" id="staffApprovalSettings" class="staff-profile-settings" hidden>
+              <span aria-hidden="true">⚙</span> User settings
+            </button>
+            <button type="button" id="staffPasskeySetup" class="staff-passkey-setup" hidden>
+              <span aria-hidden="true">◉</span> Set up biometric sign-in
+            </button>
+            <button type="button" id="staffSidebarSwitchUser" class="staff-sidebar-signout"><span aria-hidden="true">&#8644;</span> Switch user</button>
+            <button type="button" id="staffSidebarSignOut" class="staff-sidebar-signout"><span aria-hidden="true">↪</span> Sign out</button>
+          </div>
+          <div class="staff-sidebar-note">
+            <span class="staff-live-dot"></span>
+            <div><strong>Database Live</strong><small>Desktop and web are synchronized</small></div>
+          </div>
+        </aside>
+        <button type="button" id="staffSidebarScrim" class="staff-sidebar-scrim" aria-label="Close navigation menu" hidden></button>
+        <div class="staff-main-content">
+          <div class="staff-welcome">
+            <div>
+              <p id="staffOverviewLabel" class="eyebrow">Operations overview</p>
+              <h1 id="staffWelcomeTitle">Dashboard</h1>
+              <p id="staffWelcomeCopy" class="muted">Monitor records, requests and departmental activity.</p>
+            </div>
+          </div>
+          <p id="staffDashboardStatus" class="status" role="status"></p>
+          <div id="adminSummary" class="metric-row staff-summary"></div>
+          <section id="dashboardCharts" class="dashboard-charts" aria-label="Operational summary charts"></section>
+          <section id="adminPanel" class="panel full-panel staff-panel"></section>
+        </div>
+      </div>
+    </section>
+
+    <nav id="staffMobileNav" class="staff-mobile-nav" aria-label="Mobile portal navigation" hidden></nav>
+
+    <dialog id="staffModuleDialog" class="staff-module-dialog" aria-labelledby="staffModuleDialogTitle">
+      <div class="staff-module-sheet">
+        <header>
+          <div><small>Quick access</small><h2 id="staffModuleDialogTitle">All Modules</h2></div>
+          <button type="button" id="staffModuleClose" aria-label="Close all modules">×</button>
+        </header>
+        <div id="staffModuleGrid" class="staff-module-grid"></div>
+      </div>
+    </dialog>
+  </main>
+
+  <dialog id="staffPasswordDialog" class="workflow-dialog staff-password-dialog">
+    <div class="workflow-dialog-header"><div><small>Security required</small><h2>Change Temporary Password</h2></div></div>
+    <form id="staffPasswordForm" class="workflow-form">
+      <p class="muted">Create a permanent password before accessing organisation records.</p>
+      <label>New password<input id="staffNewPassword" type="password" minlength="6" autocomplete="new-password" required></label>
+      <label>Confirm password<input id="staffConfirmPassword" type="password" minlength="6" autocomplete="new-password" required></label>
+      <button id="staffPasswordButton" type="submit">Change Password</button>
+      <button id="staffPasswordSwitchUser" type="button" class="dashboard-signout">Switch user</button>
+      <button id="staffPasswordSignOut" type="button" class="dashboard-signout">Sign Out Instead</button>
+      <p id="staffPasswordStatus" class="status" role="status"></p>
+    </form>
+  </dialog>
+
+  <dialog id="staffProfileDialog" class="workflow-dialog staff-profile-dialog">
+    <div class="workflow-dialog-header">
+      <div><small>My account</small><h2>Edit Profile</h2></div>
+      <button type="button" id="staffProfileClose" aria-label="Close profile">&times;</button>
+    </div>
+    <form id="staffProfileForm" class="workflow-form">
+      <label>Display name <span class="required">*</span><input id="staffProfileDisplayName" name="displayName" required></label>
+      <div class="profile-photo-editor">
+        <div class="profile-photo-preview">
+          <img id="staffProfilePhotoPreview" alt="Profile picture preview" hidden>
+          <span id="staffProfilePhotoFallback" aria-hidden="true">S</span>
+        </div>
+        <div>
+          <label>Profile picture<input id="staffProfilePhotoFile" type="file" accept="image/png,image/jpeg,image/webp"></label>
+          <small class="muted">PNG, JPG or WebP. The image is optimized before saving.</small>
+          <button type="button" id="staffProfilePhotoRemove" class="profile-photo-remove">Remove picture</button>
+        </div>
+      </div>
+      <button type="submit" id="staffProfileSave">Save profile</button>
+      <p id="staffProfileStatus" class="status" role="status"></p>
+    </form>
+    <form id="staffLoginDetailsForm" class="workflow-form staff-login-details-form">
+      <div class="profile-security-heading">
+        <small>Account security</small>
+        <h3>Login details</h3>
+        <p class="muted">Change the username used to sign in and, if needed, set a new password. Your internal staff identity and records remain unchanged.</p>
+      </div>
+      <label>Login username <span class="required">*</span>
+        <input id="staffProfileLoginUsername" name="loginUsername" minlength="3" maxlength="80" autocomplete="username" required>
+      </label>
+      <label>Current password <span class="required">*</span>
+        <input id="staffProfileCurrentPassword" name="currentPassword" type="password" autocomplete="current-password" required>
+      </label>
+      <label>New password
+        <input id="staffProfileNewPassword" name="newPassword" type="password" minlength="6" autocomplete="new-password">
+        <small class="muted">Leave blank to keep the current password.</small>
+      </label>
+      <label>Confirm new password
+        <input id="staffProfileConfirmPassword" name="confirmPassword" type="password" minlength="6" autocomplete="new-password">
+      </label>
+      <button type="submit" id="staffLoginDetailsSave">Update login details</button>
+      <p id="staffLoginDetailsStatus" class="status" role="status"></p>
+    </form>
+  </dialog>
+
+  <dialog id="staffApprovalSettingsDialog" class="workflow-dialog staff-approval-settings-dialog">
+    <div class="workflow-dialog-header">
+      <div><small>User settings</small><h2>Approval Signature & Stamp</h2></div>
+      <button type="button" id="staffApprovalSettingsClose" aria-label="Close user settings">&times;</button>
+    </div>
+    <form id="staffApprovalSettingsForm" class="workflow-form">
+      <p class="muted">Save your own approval identity. It is applied only when you select it during an approval or posting decision.</p>
+      <div class="approval-asset-grid">
+        <label>Signature image
+          <input id="staffSignatureFile" type="file" accept="image/png,image/jpeg,image/webp">
+          <small>PNG, JPG or WebP. A transparent background is recommended.</small>
+        </label>
+        <div class="approval-asset-preview">
+          <img id="staffSignaturePreview" alt="Saved signature preview" hidden>
+          <span id="staffSignatureEmpty">No signature saved</span>
+          <button type="button" id="removeStaffSignature" class="secondary">Remove signature</button>
+        </div>
+        <label>Official stamp image
+          <input id="staffStampFile" type="file" accept="image/png,image/jpeg,image/webp">
+          <small>Use a clear cropped image of the authorized stamp.</small>
+        </label>
+        <div class="approval-asset-preview">
+          <img id="staffStampPreview" alt="Saved stamp preview" hidden>
+          <span id="staffStampEmpty">No stamp saved</span>
+          <button type="button" id="removeStaffStamp" class="secondary">Remove stamp</button>
+        </div>
+      </div>
+      <fieldset class="approval-defaults">
+        <legend>Default choices</legend>
+        <label class="check-row"><input name="ApplySignatureOnApproval" type="checkbox"> Select signature when approving</label>
+        <label class="check-row"><input name="ApplyStampOnApproval" type="checkbox"> Select stamp when approving</label>
+        <label class="check-row"><input name="ApplySignatureOnPosting" type="checkbox"> Select signature when reviewing/posting</label>
+        <label class="check-row"><input name="ApplyStampOnPosting" type="checkbox"> Select stamp when reviewing/posting</label>
+      </fieldset>
+      <button id="staffApprovalSettingsSave" type="submit">Save user settings</button>
+      <p id="staffApprovalSettingsStatus" class="status" role="status"></p>
+    </form>
+  </dialog>
+
+  <dialog id="financeDecisionDialog" class="workflow-dialog finance-decision-dialog">
+    <div class="workflow-dialog-header">
+      <div><small>Secure decision</small><h2 id="financeDecisionTitle">Approve Document</h2></div>
+      <button type="button" id="financeDecisionClose" aria-label="Close decision">&times;</button>
+    </div>
+    <form id="financeDecisionForm" class="workflow-form">
+      <p id="financeDecisionRecord" class="decision-record-reference"></p>
+      <label>Decision notes<textarea name="notes" rows="2"></textarea></label>
+      <fieldset id="financeEndorsementOptions" class="approval-defaults">
+        <legend>Apply to this document</legend>
+        <label class="check-row"><input name="applySignature" type="checkbox"> Signature</label>
+        <label class="check-row"><input name="applyStamp" type="checkbox"> Official stamp</label>
+      </fieldset>
+      <fieldset id="financeDecisionVerification" class="decision-verification">
+        <legend>Confirm your identity</legend>
+        <label>Current password<input name="approvalPassword" type="password" autocomplete="current-password"></label>
+        <div class="decision-verification-divider"><span>or</span></div>
+        <button id="financeDecisionBiometric" type="button" class="staff-passkey-button"><span aria-hidden="true">◉</span> Verify with biometric</button>
+        <p id="financeDecisionVerificationStatus" class="status" role="status"></p>
+      </fieldset>
+      <button id="financeDecisionSubmit" type="submit">Confirm Decision</button>
+      <p id="financeDecisionStatus" class="status" role="status"></p>
+    </form>
+  </dialog>
+
+  <script src="js/site-config.js?v=20260728-quota-safety"></script>
+  <script src="js/password-toggle.js?v=20260718-password-toggle"></script>
+  <script src="js/admin.js?v=20260730-face-direct-enrollment"></script>
+  <script src="js/notifications.js?v=20260730-notifications"></script>
+</body>
+</html>

@@ -1,0 +1,161 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import {
+  attendancePresenceNotificationCandidate,
+  processAttendancePresenceNotifications
+} from '../functions/lib/attendance-presence-notifications.js';
+
+const schedulerSource = await readFile(new URL('../functions/api/notification-scheduler.js', import.meta.url), 'utf8');
+const workflowSource = await readFile(new URL('../.github/workflows/attendance-presence-notifications.yml', import.meta.url), 'utf8');
+const adminSource = await readFile(new URL('../js/admin.js', import.meta.url), 'utf8');
+const attendanceSource = await readFile(new URL('../functions/lib/staff-time-attendance.js', import.meta.url), 'utf8');
+
+const policy = {
+  ResumptionTime: '08:00', ClosingTime: '17:00', WorkDays: ['MON', 'TUE', 'WED', 'THU', 'FRI'],
+  TimeZone: 'Africa/Lagos', PresenceCheckMode: 'RANDOM', PresenceCheckMinimumMinutes: 90,
+  PresenceCheckMaximumMinutes: 180, PresenceCheckGraceMinutes: 20, PresenceCheckPushEnabled: 'YES'
+};
+
+test('presence push candidate is due only for the current active attendance day', () => {
+  const now = new Date('2026-08-13T10:05:00.000Z');
+  const state = {
+    Username: 'staff.one', State: 'CLOCKED_IN', AttendanceDate: '2026-08-13',
+    NextPresenceNotificationAt: '2026-08-13T10:00:00.000Z'
+  };
+  assert.equal(attendancePresenceNotificationCandidate(policy, state, now).eligible, true);
+  assert.equal(attendancePresenceNotificationCandidate({ ...policy, PresenceCheckPushEnabled: 'NO' }, state, now).eligible, false);
+  assert.equal(attendancePresenceNotificationCandidate(policy, { ...state, State: 'COMPLETED' }, now).eligible, false);
+  assert.equal(attendancePresenceNotificationCandidate(policy, { ...state, PresenceNotificationSentForDueAt: state.NextPresenceNotificationAt }, now).eligible, false);
+});
+
+test('an open overnight group snapshot permits a due confirmation after midnight in every edition', () => {
+  const now = new Date('2026-10-10T02:05:00.000Z');
+  const state = {
+    Username: 'nurse.one', State: 'CLOCKED_IN', AttendanceDate: '2026-10-09',
+    NextPresenceNotificationAt: '2026-10-10T02:00:00.000Z',
+    ShiftSnapshot: { GroupId: 'night-nurses', GroupName: 'Night nurses', AttendanceDate: '2026-10-09',
+      StartAt: '2026-10-09T20:00:00.000Z', EndAt: '2026-10-10T06:00:00.000Z', TimeZone: 'Africa/Lagos' }
+  };
+  for (const Edition of ['school', 'faith', 'organization']) {
+    const branchPolicy = { ...policy, Edition };
+    const candidate = attendancePresenceNotificationCandidate(branchPolicy, state, now);
+    assert.equal(candidate.eligible, true);
+    assert.equal(candidate.currentDate, '2026-10-10');
+    assert.equal(candidate.graceEndsAt, '2026-10-10T02:20:00.000Z');
+    assert.equal(attendancePresenceNotificationCandidate({ ...branchPolicy, PresenceCheckPushEnabled: 'NO' }, state, now).eligible, false);
+    assert.equal(attendancePresenceNotificationCandidate(branchPolicy, { ...state, State: 'COMPLETED' }, now).eligible, false);
+    assert.equal(attendancePresenceNotificationCandidate(branchPolicy, { ...state, PresenceNotificationSentForDueAt: state.NextPresenceNotificationAt }, now).eligible, false);
+  }
+});
+
+test('past, malformed or mismatched group snapshots cannot revive stale presence alerts', () => {
+  const state = {
+    Username: 'guard.one', State: 'CLOCKED_IN', AttendanceDate: '2026-10-09',
+    NextPresenceNotificationAt: '2026-10-10T02:00:00.000Z',
+    ShiftSnapshot: { GroupId: 'security', AttendanceDate: '2026-10-09', StartAt: '2026-10-09T08:00:00.000Z', EndAt: '2026-10-10T08:00:00.000Z' }
+  };
+  const now = new Date('2026-10-10T02:05:00.000Z');
+  assert.equal(attendancePresenceNotificationCandidate(policy, state, now).eligible, true);
+  assert.equal(attendancePresenceNotificationCandidate(policy, state, new Date('2026-10-10T08:00:00.000Z')).eligible, false);
+  assert.equal(attendancePresenceNotificationCandidate(policy, state, new Date('2026-10-11T02:05:00.000Z')).eligible, false);
+  for (const changes of [{ GroupId: '' }, { AttendanceDate: '2026-10-08' }, { EndAt: 'bad' }, { StartAt: '2026-10-11T08:00:00.000Z' }, { EndAt: '2026-10-08T08:00:00.000Z' }]) {
+    assert.equal(attendancePresenceNotificationCandidate(policy, { ...state, ShiftSnapshot: { ...state.ShiftSnapshot, ...changes } }, now).eligible, false);
+  }
+});
+
+test('scheduler delivers an overnight confirmation instead of retiring its prior-date state', async () => {
+  const states = [{ __id: 'nurse.one', __updateTime: 'night-version', Username: 'nurse.one', State: 'CLOCKED_IN',
+    AttendanceDate: '2026-10-09', NextPresenceNotificationAt: '2026-10-10T02:00:00.000Z',
+    ShiftSnapshot: { GroupId: 'nurses', AttendanceDate: '2026-10-09', StartAt: '2026-10-09T20:00:00.000Z', EndAt: '2026-10-10T06:00:00.000Z' }
+  }];
+  const notices = [];
+  const result = await processAttendancePresenceNotifications({}, {
+    now: '2026-10-10T02:05:00.000Z', structure: { Branches: [{ Id: 'main' }] },
+    getDocument: async () => policy, queryCollection: async () => states,
+    patchDocumentFields: async (_env, _path, id, fields, condition) => {
+      assert.equal(id, 'nurse.one');
+      assert.equal(condition.updateTime, 'night-version');
+      Object.assign(states[0], fields);
+    },
+    createNotification: async (_env, notice) => { notices.push(notice); return { created: true }; }
+  });
+  assert.equal(result.created, 1);
+  assert.equal(notices.length, 1);
+  assert.deepEqual(notices[0].TargetUsernames, ['nurse.one']);
+  assert.equal(states[0].PresenceNotificationSentForDueAt, '2026-10-10T02:00:00.000Z');
+  assert.equal(states[0].AttendanceDate, '2026-10-09');
+});
+
+test('scheduler creates one urgent targeted notification and clears its due delivery marker', async () => {
+  const notices = [];
+  const patches = [];
+  const result = await processAttendancePresenceNotifications({}, {
+    now: '2026-08-13T10:05:00.000Z',
+    structure: { Branches: [{ Id: 'main' }] },
+    getDocument: async () => policy,
+    queryCollection: async () => [{
+      __id: 'staff.one', __updateTime: '2026-08-13T10:01:00.000Z', Username: 'staff.one',
+      State: 'CLOCKED_IN', AttendanceDate: '2026-08-13', LastEventId: 'TIME-1',
+      NextPresenceNotificationAt: '2026-08-13T10:00:00.000Z'
+    }],
+    createNotification: async (_env, notification, options) => {
+      notices.push({ notification, options });
+      return { created: true, notification, pushDeliveries: [{ status: 'Delivered' }] };
+    },
+    patchDocumentFields: async (...args) => { patches.push(args); }
+  });
+  assert.equal(result.created, 1);
+  assert.equal(result.delivered, 1);
+  assert.equal(notices.length, 1);
+  assert.deepEqual(notices[0].notification.TargetUsernames, ['staff.one']);
+  assert.equal(notices[0].notification.Category, 'Attendance');
+  assert.equal(notices[0].notification.Severity, 'Urgent');
+  assert.match(notices[0].notification.ActionUrl, /section=overview/);
+  assert.equal(notices[0].options.retryDelivery, false);
+  assert.equal(patches.length, 1);
+  assert.equal(patches[0][3].NextPresenceNotificationAt, '');
+  assert.equal(patches[0][3].PresenceNotificationSentForDueAt, '2026-08-13T10:00:00.000Z');
+});
+
+test('attendance settings and protected scheduler expose configurable push delivery', () => {
+  assert.match(adminSource, /name="PresenceCheckPushEnabled"/);
+  assert.match(adminSource, /Send a push notification when each random confirmation becomes due/);
+  assert.match(adminSource, /payload\.PresenceCheckPushEnabled = formData\.has\('PresenceCheckPushEnabled'\) \? 'YES' : 'NO'/);
+  assert.match(attendanceSource, /PresenceCheckPushEnabled: 'YES'/);
+  assert.match(attendanceSource, /NextPresenceNotificationAt: direction === 'IN' && presencePushEnabled \? nextPresenceDueAt : ''/);
+  assert.match(attendanceSource, /presenceCheck\r?\n  };/);
+  assert.match(schedulerSource, /attendanceOnly = body\.attendanceOnly === true/);
+  assert.match(schedulerSource, /processAttendancePresenceNotifications/);
+  assert.match(schedulerSource, /announcementsOnly \? \{ skipped: true \} : await retryFailedPushDeliveries/);
+  assert.match(workflowSource, /cron: "\*\/5 \* \* \* \*"/);
+  assert.match(workflowSource, /organisation-deployment-matrix\.mjs/);
+  assert.match(workflowSource, /matrix\.organisation\.githubEnvironment/);
+  assert.match(workflowSource, /expectedWorkspaceId/);
+  assert.match(workflowSource, /expectedEdition/);
+  assert.doesNotMatch(workflowSource, /NOTIFICATION_SCHEDULER_URL/);
+});
+
+test('empty completed markers and stale attendance days cannot starve due presence alerts', async () => {
+  const states = [
+    { __id: 'finished', Username: 'finished', NextPresenceNotificationAt: '' },
+    { __id: 'old', __updateTime: 'old-version', Username: 'old', State: 'CLOCKED_IN', AttendanceDate: '2026-08-12', NextPresenceNotificationAt: '2026-08-12T10:00:00.000Z' },
+    { __id: 'due', Username: 'due', State: 'CLOCKED_IN', AttendanceDate: '2026-08-13', NextPresenceNotificationAt: '2026-08-13T10:00:00.000Z' }
+  ];
+  const notices = [];
+  const options = {
+    now: '2026-08-13T10:05:00.000Z', limit: 1, structure: { Branches: [{ Id: 'main' }] },
+    getDocument: async () => policy,
+    queryCollection: async (_env, _path, query) => states.filter((row) => query.filters.every((filter) => filter.op === '>'
+      ? row[filter.field] > filter.value : row[filter.field] <= filter.value)).sort((a,b) => a.NextPresenceNotificationAt.localeCompare(b.NextPresenceNotificationAt)).slice(0, query.limit),
+    patchDocumentFields: async (_env, _path, id, fields, condition) => {
+      if (id === 'old') assert.equal(condition.updateTime, 'old-version');
+      Object.assign(states.find((row) => row.__id === id), fields);
+    },
+    createNotification: async (_env, row) => { notices.push(row); return { created: true }; }
+  };
+  await processAttendancePresenceNotifications({}, options);
+  await processAttendancePresenceNotifications({}, options);
+  assert.equal(notices.length, 1);
+  assert.deepEqual(notices[0].TargetUsernames, ['due']);
+});

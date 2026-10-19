@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>School Admission Portal</title>
+  <meta name="theme-color" content="#0f3d66">
+  <link rel="manifest" href="/api/app-manifest?v=20260809-branded-app-icon">
+  <link rel="icon" type="image/png" href="images/Logo.png?v=20260801-transparent-app-logo">
+  <link rel="apple-touch-icon" href="images/Logo.png?v=20260801-transparent-app-logo">
+  <script src="js/preferences.js?v=20260726-biometric"></script>
+  <link rel="stylesheet" href="css/style.css?v=20260903-hotel-tabs">
+  <link rel="stylesheet" href="css/school-landing.css?v=20261012-menu-dismissal">
+  <script src="js/school-menu.js?v=20261012-menu-dismissal" defer></script>
+</head>
+<body data-fresh-site-profile>
+  <main class="landing-page">
+    <nav class="landing-nav">
+      <div class="brand-lockup">
+        <img src="images/Logo.png" alt="School logo" class="logo nav-logo" onerror="this.style.display='none'">
+        <div>
+          <strong data-school-name>School Portal</strong>
+          <span data-school-address></span>
+        </div>
+      </div>
+      <div class="nav-actions landing-desktop-actions">
+        <a href="index.html">Suite home</a>
+        <a href="parent-dashboard.html">Parent dashboard</a>
+        <a href="help.html">Help &amp; devices</a>
+        <a class="nav-action-primary" href="admin.html">Staff portal</a>
+      </div>
+      <details class="landing-mobile-menu">
+        <summary aria-label="Portal navigation menu">
+          <span>Menu</span>
+          <span class="landing-mobile-menu-icon" aria-hidden="true"><i></i><i></i><i></i></span>
+        </summary>
+        <div class="landing-mobile-menu-panel" aria-label="Portal navigation">
+          <a href="index.html">Suite home</a>
+          <a href="parent-dashboard.html">Parent dashboard</a>
+          <a href="help.html">Help &amp; devices</a>
+          <a class="nav-action-primary" href="admin.html">Staff portal</a>
+        </div>
+      </details>
+    </nav>
+
+    <aside class="landing-announcement portal-notice" data-portal-notice role="status" aria-live="polite" hidden></aside>
+
+    <section class="landing-hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Integrated School Management Suite</p>
+        <h1 data-portal-headline>Admissions and parent services in one place</h1>
+        <p class="lead" data-portal-subheading>Buy forms, complete applications, upload documents, pay fees, and monitor student activity from a secure school portal.</p>
+        <div class="hero-actions">
+          <a class="btn" href="buy-form.html">Buy Admission Form</a>
+          <a class="btn secondary" href="verify.html">Register Application</a>
+        </div>
+        <div class="hero-trust" aria-label="Portal benefits">
+          <span><b aria-hidden="true">&#10003;</b> Secure payments</span>
+          <span><b aria-hidden="true">&#10003;</b> Parent-approved access</span>
+          <span><b aria-hidden="true">&#10003;</b> Mobile friendly</span>
+        </div>
+      </div>
+      <div class="hero-service-panel" aria-label="Portal services">
+        <div class="service-panel-heading">
+          <span class="service-panel-kicker">Secure self-service</span>
+          <h2>Everything families need</h2>
+          <p>Complete common school services online, without unnecessary office visits.</p>
+        </div>
+        <div class="service-summary">
+          <span class="summary-icon" aria-hidden="true">01</span>
+          <span><strong>Apply for admission</strong><small>Purchase forms and complete applications securely.</small></span>
+        </div>
+        <div class="service-summary">
+          <span class="summary-icon" aria-hidden="true">02</span>
+          <span><strong>Make a payment</strong><small>Pay approved fees with short-lived parent authorization.</small></span>
+        </div>
+        <div class="service-summary">
+          <span class="summary-icon" aria-hidden="true">03</span>
+          <span><strong>Follow student progress</strong><small>View results, payments, documents and school activity.</small></span>
+        </div>
+      </div>
+    </section>
+
+    <section class="service-directory" aria-labelledby="serviceDirectoryTitle">
+      <header class="service-directory-heading">
+        <div>
+          <p class="eyebrow">Quick access</p>
+          <h2 id="serviceDirectoryTitle">Choose a service</h2>
+        </div>
+        <p>Start with the action you need. Each service opens in its own secure workspace.</p>
+      </header>
+      <div class="service-grid">
+        <a class="service-tile" href="buy-form.html">
+          <span class="service-icon" aria-hidden="true">A</span>
+          <span class="service-copy"><strong>Buy Admission Form</strong><span>Start a new application and receive a verification code.</span></span>
+          <span class="service-arrow" aria-hidden="true">&rarr;</span>
+        </a>
+        <a class="service-tile" href="verify.html">
+          <span class="service-icon" aria-hidden="true">R</span>
+          <span class="service-copy"><strong>Register Application</strong><span>Continue an application after purchasing a form.</span></span>
+          <span class="service-arrow" aria-hidden="true">&rarr;</span>
+        </a>
+        <a class="service-tile service-tile-featured" href="payments.html">
+          <span class="service-icon" aria-hidden="true">&#8358;</span>
+          <span class="service-copy"><strong>Pay Fees</strong><span>Use an admission number and a parent-approved OTP to pay securely.</span></span>
+          <span class="service-arrow" aria-hidden="true">&rarr;</span>
+        </a>
+        <a class="service-tile" href="parent-dashboard.html">
+          <span class="service-icon" aria-hidden="true">P</span>
+          <span class="service-copy"><strong>Parent Dashboard</strong><span>Monitor linked children, payments, results and activity.</span></span>
+          <span class="service-arrow" aria-hidden="true">&rarr;</span>
+        </a>
+        <a class="service-tile" href="upload-documents.html">
+          <span class="service-icon" aria-hidden="true">D</span>
+          <span class="service-copy"><strong>Upload Documents</strong><span>Submit documents requested by the Admissions Office.</span></span>
+          <span class="service-arrow" aria-hidden="true">&rarr;</span>
+        </a>
+        <a class="service-tile" href="setup.html">
+          <span class="service-icon" aria-hidden="true">S</span>
+          <span class="service-copy"><strong>School Setup</strong><span>Manage the school profile, branding and public portal display.</span></span>
+          <span class="service-arrow" aria-hidden="true">&rarr;</span>
+        </a>
+      </div>
+    </section>
+  </main>
+  <script src="js/site-config.js?v=20260809-fresh-landing-notice"></script>
+  <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
+  <script src="js/app-dialogs.js?v=20261016-grouped-form-validation"></script>
+  <script src="js/pwa-install.js?v=20260809-custom-dialogs"></script>
+</body>
+</html>

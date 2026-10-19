@@ -1,0 +1,89 @@
+name: Attendance presence notifications
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  prepare:
+    name: Load school scheduler targets
+    runs-on: ubuntu-latest
+    outputs:
+      organisations: ${{ steps.matrix.outputs.organisations }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Build enabled school matrix
+        id: matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          organisations="$(node scripts/organisation-deployment-matrix.mjs --target all)"
+          schools="$(printf '%s' "$organisations" | jq -c '[.[] | select(.edition == "school")]')"
+          echo "organisations=${schools}" >> "${GITHUB_OUTPUT}"
+
+  process:
+    name: ${{ matrix.organisation.name }}
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: ${{ matrix.organisation.githubEnvironment }}
+      url: https://${{ matrix.organisation.cloudflareProject }}.pages.dev
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        organisation: ${{ fromJSON(needs.prepare.outputs.organisations) }}
+    concurrency:
+      group: attendance-presence-notifications-${{ matrix.organisation.id }}
+      cancel-in-progress: false
+    steps:
+      - name: Notify staff of due presence checks
+        shell: bash
+        env:
+          ENDPOINT: https://${{ matrix.organisation.cloudflareProject }}.pages.dev/api/notification-scheduler
+          EXPECTED_WORKSPACE_ID: ${{ matrix.organisation.workspaceId }}
+          EXPECTED_EDITION: ${{ matrix.organisation.edition }}
+          SCHEDULER_SECRET: ${{ secrets.NOTIFICATION_SCHEDULER_SECRET }}
+        run: |
+          set -euo pipefail
+          test -n "$SCHEDULER_SECRET"
+          payload="$(jq -nc \
+            --arg workspace "$EXPECTED_WORKSPACE_ID" \
+            --arg edition "$EXPECTED_EDITION" \
+            '{attendanceOnly:true,attendanceLimit:10,expectedWorkspaceId:$workspace,expectedEdition:$edition}')"
+          for attempt in $(seq 1 5); do
+            response_file="$(mktemp)"
+            if ! http_status="$(curl --silent --show-error \
+              --retry 3 --retry-all-errors \
+              --output "$response_file" \
+              --write-out '%{http_code}' \
+              -X POST "$ENDPOINT" \
+              -H "Authorization: Bearer $SCHEDULER_SECRET" \
+              -H "Content-Type: application/json" \
+              --data "$payload")"; then
+              rm -f "$response_file"
+              echo '::error title=Attendance scheduler unreachable::The tenant notification endpoint could not be reached after automatic retries.'
+              exit 1
+            fi
+            response="$(cat "$response_file")"
+            rm -f "$response_file"
+            printf '%s\n' "$response"
+            if [[ "$http_status" -lt 200 || "$http_status" -ge 300 ]]; then
+              message="$(printf '%s' "$response" | jq -r '.message // "The tenant notification endpoint rejected the scheduler request."' 2>/dev/null || printf '%s' 'The tenant notification endpoint rejected the scheduler request.')"
+              echo "::error title=Attendance scheduler HTTP ${http_status}::${message}"
+              exit 1
+            fi
+            printf '%s' "$response" | jq -e \
+              --arg workspace "${EXPECTED_WORKSPACE_ID,,}" \
+              --arg edition "${EXPECTED_EDITION,,}" \
+              '.ok == true and (.workspaceId | ascii_downcase) == $workspace and (.edition | ascii_downcase) == $edition' >/dev/null
+            eligible="$(printf '%s' "$response" | jq -r '.attendancePresence.eligible // 0')"
+            retry_backlog="$(printf '%s' "$response" | jq -r '.pushRetries.inspected // 0')"
+            if [[ "$eligible" -lt 10 && "$retry_backlog" -lt 50 ]]; then
+              break
+            fi
+          done

@@ -1,0 +1,615 @@
+import {
+  batchCommitDocuments,
+  getDocument,
+  listCollectionPage,
+  listRootCollectionIds,
+  upsertDocument
+} from './firestore.js';
+import { requiredDeploymentIdentity } from './deployment-identity.js';
+import { CHURCH_COLLECTIONS, churchCollectionPath } from './church-foundation.js';
+import { getSchoolStructure, schoolCollectionPaths } from './school-scope.js';
+import {
+  beginStaffAccountChange,
+  commitStaffAccountChanges,
+  staffAccountCondition,
+  staffAccountDocumentId
+} from './staff-account-integrity.js';
+import {
+  STAFF_ATTENDANCE_COLLECTIONS,
+  canonicalStaffAttendanceCollectionPath,
+  legacyStaffAttendanceCollectionPath
+} from './staff-attendance-storage.js';
+
+const clean = (value) => String(value ?? '').trim();
+const lower = (value) => clean(value).toLowerCase();
+const nowIso = () => new Date().toISOString();
+
+export const ORGANIZATION_BACKUP_FORMAT = 'dynamax-organization-backup';
+export const ORGANIZATION_BACKUP_VERSION = 3;
+const RESTORE_JOB_COLLECTION = 'systemRestoreJobs';
+const MAX_RESTORE_DOCUMENTS = 200;
+
+const EXCLUDED_ROOT_COLLECTIONS = new Set([
+  RESTORE_JOB_COLLECTION,
+  'requestIdempotency',
+  'requestRateLimits',
+  'staffLoginAttempts',
+  'staffMfaChallenges',
+  'staffMfaProfiles',
+  'staffPasskeys',
+  'staffPasskeyChallenges',
+  'staffPasskeyOptionAttempts',
+  'applicationSubmissionClaims'
+]);
+
+const SCHOOL_SCOPED_COLLECTIONS = Object.freeze([
+  'applications',
+  'students',
+  'studentConductCases',
+  'studentConductAudit'
+]);
+
+const SCHOOL_BRANCH_SETTING_COLLECTIONS = Object.freeze([
+  'schoolClasses',
+  'admissionClasses'
+]);
+
+const EXTRA_NESTED_COLLECTIONS = Object.freeze([
+  'settings/academics/classes',
+  'settings/admission/classes'
+]);
+
+const SENSITIVE_SETTING_FIELDS = Object.freeze([
+  'BrevoApiKey', 'ApiKey', 'Secret', 'PrivateKey', 'AccessToken',
+  'GoogleAppsScriptSecret', 'DocumentStorageSecret'
+]);
+
+const SUBSCRIPTION_IDENTITY_SETTING_FIELDS = Object.freeze([
+  'Plan', 'PlanEntitlements', 'PlanModuleCatalogVersion', 'SubscriptionPriceSnapshot'
+]);
+
+const IDENTITY_SETTING_FIELDS = Object.freeze([
+  'WorkspaceId', 'DeploymentWorkspaceId', 'Edition', 'OrganisationEdition', 'OrganizationEdition',
+  'SubscriptionPlan', 'SubscriptionStatus', 'SubscriptionActive', 'SubscriptionExpiresAt',
+  'SubscriptionStartedAt', 'FeatureEntitlements', 'FeatureFlags', 'MaximumActiveUsers', 'MaxUsers',
+  ...SUBSCRIPTION_IDENTITY_SETTING_FIELDS
+]);
+
+const RESET_PRESERVED_ROOT_COLLECTIONS = new Set([
+  'settings',
+  'organisationbranches',
+  'organizationbranches',
+  'rolemoduleaccess',
+  'subscriptions',
+  'subscriptionpayments',
+  'tenantregistrations',
+  'tenantprojectpool',
+  'managedorganisations',
+  'managedorganizations'
+]);
+
+const RESET_PRESERVED_ROOT_PREFIXES = Object.freeze([
+  'deployment',
+  'feature',
+  'integration',
+  'permission',
+  'role',
+  'subscription',
+  'tenant',
+  'workspace'
+]);
+
+function safePath(value) {
+  const path = clean(value).replace(/^\/+|\/+$/g, '');
+  if (!path || path.split('/').some((part) => !part || part === '.' || part === '..')) return '';
+  return path;
+}
+
+export function isOrganizationResetProtectedPath(value) {
+  const path = safePath(value);
+  if (!path) return true;
+  const parts = path.split('/');
+  const root = lower(parts[0]);
+  // Preserve branch identity documents, while allowing their explicitly
+  // discovered operational subcollections (students, applications, conduct)
+  // to be cleared.
+  if (root === 'schoolbranches') return parts.length === 1;
+  if (RESET_PRESERVED_ROOT_COLLECTIONS.has(root)) return true;
+  if (RESET_PRESERVED_ROOT_PREFIXES.some((prefix) => root.startsWith(prefix))) return true;
+  return /(?:config|configuration|policies|policy|settings|structures|structure|templates|template)$/.test(root);
+}
+
+async function organizationResetPlan(env) {
+  const identity = requiredDeploymentIdentity(env);
+  const bucket = env?.DYNAMAX_DOCUMENTS;
+  if (!bucket || typeof bucket.list !== 'function' || typeof bucket.delete !== 'function') {
+    throw restoreError('Cloudflare R2 document storage is not connected, so a coordinated reset cannot start.', 503, 'RESET_R2_NOT_CONFIGURED');
+  }
+  const descriptors = await organizationBackupDescriptors(env);
+  const collectionPaths = descriptors
+    .map(({ path }) => safePath(path))
+    .filter((path) => path && !isOrganizationResetProtectedPath(path));
+  const protectedPaths = descriptors
+    .map(({ path }) => safePath(path))
+    .filter((path) => path && isOrganizationResetProtectedPath(path));
+  return {
+    identity,
+    bucket,
+    collectionPaths,
+    protectedPaths,
+    r2Prefix: `v1/${identity.edition}/`
+  };
+}
+
+export async function previewOrganizationReset(env, user) {
+  const actor = restoreActor(user);
+  if (actor.role !== 'Super Admin') throw restoreError('Only a Super Administrator can preview a test-data reset.', 403, 'RESET_FORBIDDEN');
+  const plan = await organizationResetPlan(env);
+  const listed = await plan.bucket.list({ prefix: plan.r2Prefix, limit: 1000 });
+  return {
+    ok: true,
+    workspaceId: plan.identity.workspaceId,
+    edition: plan.identity.edition,
+    collectionPaths: plan.collectionPaths,
+    protectedPaths: plan.protectedPaths,
+    r2Prefix: plan.r2Prefix,
+    r2ObjectCount: Array.isArray(listed?.objects) ? listed.objects.length : 0,
+    r2ObjectCountTruncated: listed?.truncated === true,
+    message: 'Test-data reset preview prepared.'
+  };
+}
+
+function withoutTransportMetadata(row = {}) {
+  const copy = { ...row };
+  delete copy.__name;
+  delete copy.__createTime;
+  delete copy.__updateTime;
+  delete copy.__scopePath;
+  return copy;
+}
+
+export function sanitizeBackupDocument(collectionPath, row = {}) {
+  const copy = withoutTransportMetadata(row);
+  const redactedFields = [];
+  if (safePath(collectionPath) === 'settings') {
+    SENSITIVE_SETTING_FIELDS.forEach((field) => {
+      if (Object.prototype.hasOwnProperty.call(copy, field)) {
+        delete copy[field];
+        redactedFields.push(field);
+      }
+    });
+  }
+  if (redactedFields.length) copy.__redactedFields = redactedFields;
+  return copy;
+}
+
+export async function organizationBackupDescriptors(env) {
+  const identity = requiredDeploymentIdentity(env);
+  const [rootIds, structure] = await Promise.all([
+    listRootCollectionIds(env),
+    getSchoolStructure(env)
+  ]);
+  const descriptors = rootIds
+    .filter((collection) => !EXCLUDED_ROOT_COLLECTIONS.has(collection))
+    .map((path) => ({ key: path, path, type: 'root' }));
+  descriptors.push(...EXTRA_NESTED_COLLECTIONS.map((path) => ({ key: path, path, type: 'nested' })));
+  const branches = structure.Branches?.length ? structure.Branches : [{ Id: 'main' }];
+  branches.forEach((branch) => Object.keys(STAFF_ATTENDANCE_COLLECTIONS).forEach((key) => {
+    const branchId = branch.Id || branch.id || 'main';
+    const canonicalPath = canonicalStaffAttendanceCollectionPath(identity.edition, key, branchId);
+    const legacyPath = legacyStaffAttendanceCollectionPath(key, branchId);
+    descriptors.push({ key: canonicalPath, path: canonicalPath, type: 'staff-attendance' });
+    descriptors.push({ key: legacyPath, path: legacyPath, type: 'staff-attendance-legacy' });
+  }));
+  if (identity.edition === 'school') {
+    const schoolPaths = (await Promise.all(
+      SCHOOL_SCOPED_COLLECTIONS.map((collection) => schoolCollectionPaths(env, collection))
+    )).flat();
+    descriptors.push(...schoolPaths.map((path) => ({ key: path, path, type: 'school' })));
+    branches.forEach((branch) => SCHOOL_BRANCH_SETTING_COLLECTIONS.forEach((collection) => {
+      const branchId = clean(branch.Id || branch.id || 'main').toLowerCase() || 'main';
+      const path = `organisationBranches/${branchId}/${collection}`;
+      descriptors.push({ key: path, path, type: 'branch-school-setting' });
+    }));
+  } else {
+    branches.forEach((branch) => Object.values(CHURCH_COLLECTIONS).forEach((collection) => {
+      const path = churchCollectionPath(collection, branch.Id || branch.id || 'main');
+      descriptors.push({ key: path, path, type: 'organisation' });
+    }));
+  }
+  const unique = new Map();
+  descriptors.forEach((descriptor) => {
+    const path = safePath(descriptor.path);
+    if (path && !unique.has(path)) unique.set(path, { ...descriptor, key: path, path });
+  });
+  return [...unique.values()].sort((a, b) => a.path.localeCompare(b.path));
+}
+
+export async function exportOrganizationBackupPage(env, options = {}) {
+  const descriptors = await organizationBackupDescriptors(env);
+  const cursor = Math.floor(Math.max(0, Number(options.cursor || 0) || 0));
+  const pageToken = clean(options.pageToken);
+  if (cursor >= descriptors.length && descriptors.length) {
+    const error = new Error('The backup cursor is invalid. Start a new backup.');
+    error.status = 400;
+    error.code = 'BACKUP_CURSOR_INVALID';
+    throw error;
+  }
+  const descriptor = descriptors[cursor];
+  const page = descriptor
+    ? await listCollectionPage(env, descriptor.path, {
+        pageSize: Math.min(500, Math.max(25, Number(options.pageSize || 200) || 200)),
+        pageToken
+      })
+    : { documents: [], nextPageToken: '' };
+  const nextCursor = page.nextPageToken ? cursor : cursor + (descriptor ? 1 : 0);
+  const complete = !page.nextPageToken && nextCursor >= descriptors.length;
+  const identity = requiredDeploymentIdentity(env);
+  return {
+    ok: true,
+    message: complete ? 'Database backup completed.' : 'Backup page prepared.',
+    exportedAt: nowIso(),
+    identity,
+    collections: descriptor
+      ? { [descriptor.path]: page.documents.map((row) => sanitizeBackupDocument(descriptor.path, row)) }
+      : {},
+    backup: {
+      format: ORGANIZATION_BACKUP_FORMAT,
+      version: ORGANIZATION_BACKUP_VERSION,
+      complete,
+      cursor,
+      nextCursor: complete ? null : nextCursor,
+      nextPageToken: complete ? null : (page.nextPageToken || null),
+      currentCollection: descriptor?.path || '',
+      totalCollections: descriptors.length,
+      processedCollections: complete ? descriptors.length : nextCursor,
+      pageSize: Number(options.pageSize || 200) || 200
+    }
+  };
+}
+
+function restoreError(message, status = 400, code = 'BACKUP_RESTORE_INVALID') {
+  const error = new Error(message);
+  error.status = status;
+  error.code = code;
+  return error;
+}
+
+function restoreActor(user = {}) {
+  return {
+    username: lower(user.username || user.Username || user.__id),
+    displayName: clean(user.displayName || user.DisplayName || user.username || user.Username),
+    role: clean(user.role || user.Role)
+  };
+}
+
+function protectRestoreStaffActor(env, actor, rows) {
+  // Resolve the destination from live records, never the backup's Username.
+  // Legacy account document IDs may differ from the canonical/login username.
+  const matches = rows.filter((row) => [row.Username, row.username, row.__id]
+    .some((value) => lower(value) === actor.username));
+  if (matches.length > 1) {
+    throw restoreError('The signed-in administrator has conflicting account records. Resolve them before restoring staff.', 409);
+  }
+  const current = matches[0];
+  const environmentAdmin = actor.role === 'Super Admin'
+    && actor.username === lower(env.ADMIN_WEB_USERNAME || 'admin');
+  if (!current && !environmentAdmin) {
+    throw restoreError('The signed-in administrator account could not be verified. Sign in again before restoring staff.', 409);
+  }
+  if (current && !clean(current.__id)) {
+    throw restoreError('The administrator document identity is missing. Reload before restoring staff.', 409);
+  }
+  return {
+    ...actor,
+    protectedStaffIds: new Set([current ? clean(current.__id) : '', staffAccountDocumentId(actor.username)].filter(Boolean)),
+    protectedStaffNames: new Set([actor.username, current?.Username, current?.username,
+      current?.LoginUsername, current?.loginUsername].map(lower).filter(Boolean))
+  };
+}
+
+function isProtectedRestoreStaff(row, actor) {
+  return actor.protectedStaffIds?.has(clean(row.__id))
+    || [row.Username, row.username, row.UsernameKey, row.LoginUsername, row.loginUsername, row.LoginUsernameKey]
+      .some((value) => actor.protectedStaffNames?.has(lower(value)) || lower(value) === actor.username);
+}
+
+function validateManifest(identity, manifest = {}) {
+  if (clean(manifest.format) !== ORGANIZATION_BACKUP_FORMAT) throw restoreError('This is not a Dynamax organisation backup.');
+  if (Number(manifest.formatVersion || manifest.version) > ORGANIZATION_BACKUP_VERSION) {
+    throw restoreError('This backup was created by a newer Dynamax version. Update the application before restoring it.', 409, 'BACKUP_VERSION_NEWER');
+  }
+  if (lower(manifest.workspaceId) !== identity.workspaceId || lower(manifest.edition) !== identity.edition) {
+    throw restoreError('This backup belongs to a different organisation workspace or edition.', 409, 'BACKUP_IDENTITY_MISMATCH');
+  }
+}
+
+function restoreCollectionPathAllowed(path, discoveredPaths, edition) {
+  if (discoveredPaths.has(path)) return true;
+  const parts = path.split('/');
+  if (EXCLUDED_ROOT_COLLECTIONS.has(parts[0])) return false;
+  // Firestore removes a collection from discovery when its final document is
+  // deleted. Permit a well-formed root collection from an older backup so it
+  // can genuinely recover data that no longer exists in the live database.
+  if (parts.length === 1) return /^[A-Za-z0-9._-]{1,128}$/.test(parts[0]);
+  if (EXTRA_NESTED_COLLECTIONS.includes(path)) return true;
+  const canonicalAttendanceCollections = new Set(Object.values(STAFF_ATTENDANCE_COLLECTIONS));
+  const legacyAttendanceCollections = new Set(
+    Object.keys(STAFF_ATTENDANCE_COLLECTIONS).map((key) => legacyStaffAttendanceCollectionPath(key, 'main').split('/')[2])
+  );
+  const isAttendancePath = parts.length === 3
+    && /^[a-z0-9._-]+$/i.test(parts[1])
+    && (
+      (parts[0] === (edition === 'school' ? 'schoolBranches' : 'organisationBranches')
+        && canonicalAttendanceCollections.has(parts[2]))
+      || (parts[0] === 'organisationBranches' && legacyAttendanceCollections.has(parts[2]))
+    );
+  if (isAttendancePath) return true;
+  if (edition === 'school') {
+    return /^schoolBranches\/[a-z0-9._-]+\/sections\/(?:primary|secondary)\/(?:applications|students|studentConductCases|studentConductAudit)$/i.test(path)
+      || /^organisationBranches\/[a-z0-9._-]+\/(?:schoolClasses|admissionClasses)$/i.test(path);
+  }
+  const churchCollections = new Set(Object.values(CHURCH_COLLECTIONS));
+  return parts.length === 3
+    && parts[0] === 'organisationBranches'
+    && /^[a-z0-9._-]+$/i.test(parts[1])
+    && churchCollections.has(parts[2]);
+}
+
+async function currentRestoreJob(env, jobId, actor) {
+  const id = clean(jobId);
+  if (!id) throw restoreError('Restore job ID is required.');
+  const job = await getDocument(env, RESTORE_JOB_COLLECTION, id);
+  if (!job) throw restoreError('This restore session no longer exists.', 404, 'BACKUP_RESTORE_JOB_MISSING');
+  if (lower(job.ActorUsername) !== actor.username) throw restoreError('This restore session belongs to another administrator.', 403, 'BACKUP_RESTORE_ACTOR_MISMATCH');
+  if (Date.parse(clean(job.ExpiresAt)) <= Date.now()) throw restoreError('This restore session has expired. Start again.', 410, 'BACKUP_RESTORE_EXPIRED');
+  if (!['Prepared', 'Restoring'].includes(clean(job.Status))) throw restoreError('This restore session is no longer active.', 409, 'BACKUP_RESTORE_NOT_ACTIVE');
+  return job;
+}
+
+export async function prepareOrganizationRestore(env, user, manifest = {}, collectionPaths = [], safetyBackupCreated = false) {
+  const actor = restoreActor(user);
+  if (actor.role !== 'Super Admin') throw restoreError('Only a Super Administrator can restore organisation data.', 403, 'BACKUP_RESTORE_FORBIDDEN');
+  if (!safetyBackupCreated) throw restoreError('Create and download the automatic safety backup before restoring older data.', 409, 'BACKUP_SAFETY_REQUIRED');
+  const identity = requiredDeploymentIdentity(env);
+  validateManifest(identity, manifest);
+  const allowed = new Set((await organizationBackupDescriptors(env)).map(({ path }) => path));
+  const requested = [...new Set((Array.isArray(collectionPaths) ? collectionPaths : []).map(safePath).filter(Boolean))];
+  if (!requested.length) throw restoreError('The selected backup contains no restorable collections.');
+  requested.forEach((path) => {
+    if (!restoreCollectionPathAllowed(path, allowed, identity.edition)) {
+      throw restoreError(`The backup collection "${path}" is not valid for this organisation.`, 409, 'BACKUP_COLLECTION_NOT_ALLOWED');
+    }
+  });
+  const jobId = `RESTORE-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  const createdAt = nowIso();
+  await upsertDocument(env, RESTORE_JOB_COLLECTION, jobId, {
+    JobId: jobId,
+    Status: 'Prepared',
+    ActorUsername: actor.username,
+    Actor: actor.displayName,
+    WorkspaceId: identity.workspaceId,
+    Edition: identity.edition,
+    BackupCreatedAt: clean(manifest.createdAt),
+    CollectionPaths: requested,
+    CreatedAt: createdAt,
+    UpdatedAt: createdAt,
+    ExpiresAt: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString()
+  });
+  return { ok: true, jobId, message: 'Secure restore session prepared.', collections: requested.length };
+}
+
+export async function prepareOrganizationReset(env, user, options = {}) {
+  const actor = restoreActor(user);
+  if (actor.role !== 'Super Admin') throw restoreError('Only a Super Administrator can reset organisation test data.', 403, 'RESET_FORBIDDEN');
+  if (options.safetyBackupCreated !== true) {
+    throw restoreError('Download the automatic encrypted safety backup before resetting test data.', 409, 'RESET_SAFETY_REQUIRED');
+  }
+  const plan = await organizationResetPlan(env);
+  const identity = plan.identity;
+  const expectedConfirmation = `RESET ${identity.workspaceId}`.toUpperCase();
+  if (clean(options.confirmation).toUpperCase() !== expectedConfirmation) {
+    throw restoreError(`Type ${expectedConfirmation} exactly to reset this workspace.`, 409, 'RESET_CONFIRMATION_INVALID');
+  }
+  const collectionPaths = plan.collectionPaths;
+  if (!collectionPaths.length) {
+    throw restoreError('No operational collections were found to reset.', 409, 'RESET_NOTHING_TO_CLEAR');
+  }
+  const jobId = `RESET-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  const createdAt = nowIso();
+  const r2Prefix = plan.r2Prefix;
+  await upsertDocument(env, RESTORE_JOB_COLLECTION, jobId, {
+    JobId: jobId,
+    JobType: 'Reset',
+    Status: 'Prepared',
+    ActorUsername: actor.username,
+    Actor: actor.displayName,
+    WorkspaceId: identity.workspaceId,
+    Edition: identity.edition,
+    CollectionPaths: collectionPaths,
+    R2Prefix: r2Prefix,
+    RemovedRecords: 0,
+    RemovedObjects: 0,
+    CreatedAt: createdAt,
+    UpdatedAt: createdAt,
+    ExpiresAt: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString()
+  });
+  return {
+    ok: true,
+    jobId,
+    workspaceId: identity.workspaceId,
+    edition: identity.edition,
+    collectionPaths,
+    r2Prefix,
+    message: 'Protected test-data reset prepared.'
+  };
+}
+
+function jobAllowsCollection(job, collectionPath) {
+  const path = safePath(collectionPath);
+  if (!path || !(Array.isArray(job.CollectionPaths) ? job.CollectionPaths : []).includes(path)) {
+    throw restoreError('This collection is outside the prepared restore session.', 409, 'BACKUP_COLLECTION_NOT_PREPARED');
+  }
+  return path;
+}
+
+export async function clearOrganizationRestoreCollection(env, user, jobId, collectionPath) {
+  let actor = restoreActor(user);
+  const job = await currentRestoreJob(env, jobId, actor);
+  const path = jobAllowsCollection(job, collectionPath);
+  // Settings contain the live deployment and subscription bridge. Keep the
+  // collection available while restored fields are overlaid so a recovery
+  // cannot lock the administrator out between restore requests. Backup rows
+  // still replace their corresponding settings documents during the write.
+  if (path === 'settings') {
+    await upsertDocument(env, RESTORE_JOB_COLLECTION, clean(jobId), {
+      ...withoutTransportMetadata(job),
+      Status: 'Restoring',
+      UpdatedAt: nowIso()
+    });
+    return { ok: true, message: 'Settings are ready for protected restore.', removed: 0, more: false };
+  }
+  const staffState = path === 'staffUsers' ? await beginStaffAccountChange(env) : null;
+  if (staffState) actor = protectRestoreStaffActor(env, actor, staffState.rows);
+  const page = await listCollectionPage(env, path, { pageSize: 400 });
+  const rows = path === 'staffUsers'
+    ? page.documents.filter((row) => !isProtectedRestoreStaff(row, actor))
+    : page.documents;
+  if (rows.length) {
+    const writes = rows.map((row) => ({
+      operation: 'delete', collectionPath: path, documentId: clean(row.__id),
+      ...(staffState ? staffAccountCondition(row) : {})
+    }));
+    if (staffState) await commitStaffAccountChanges(env, staffState, writes);
+    else await batchCommitDocuments(env, writes);
+  }
+  await upsertDocument(env, RESTORE_JOB_COLLECTION, clean(jobId), {
+    ...withoutTransportMetadata(job),
+    Status: 'Restoring',
+    ...(clean(job.JobType) === 'Reset' ? { RemovedRecords: Math.max(0, Number(job.RemovedRecords || 0)) + rows.length } : {}),
+    UpdatedAt: nowIso()
+  });
+  return {
+    ok: true,
+    message: rows.length ? `Cleared ${rows.length} current record(s).` : 'Collection is ready.',
+    removed: rows.length,
+    more: page.documents.length >= 400
+  };
+}
+
+async function protectedRestoreDocument(env, path, row, actor) {
+  const copy = withoutTransportMetadata(row);
+  const id = clean(copy.__id);
+  delete copy.__id;
+  if (!id) throw restoreError(`A record in "${path}" has no document ID.`);
+  if (path === 'staffUsers' && isProtectedRestoreStaff({ ...copy, __id: id }, actor)) return null;
+  let condition = {};
+  if (path === 'settings') {
+    // An unavailable read is not evidence that protected live values are absent.
+    const current = await getDocument(env, path, id);
+    const redacted = Array.isArray(copy.__redactedFields) ? copy.__redactedFields.map(clean).filter(Boolean) : [];
+    if (!current && (id === 'organisationProfile' || redacted.length)) {
+      throw restoreError('Protected live settings are missing. Restore cannot safely preserve organisation identity or credentials.', 409);
+    }
+    if (current && !clean(current.__updateTime)) {
+      throw restoreError('Reload the live settings before restoring this chunk.', 409);
+    }
+    condition = current ? { updateTime: current.__updateTime } : { exists: false };
+    delete copy.__redactedFields;
+    [...redacted, ...(id === 'organisationProfile' ? IDENTITY_SETTING_FIELDS : [])].forEach((field) => {
+      if (current && Object.prototype.hasOwnProperty.call(current, field)) copy[field] = current[field];
+      else if (current) {
+        // Absence is also part of the live identity/credential configuration.
+        // A backup must not inject an old entitlement, identity or secret.
+        delete copy[field];
+      }
+    });
+  }
+  return { collectionPath: path, documentId: id, data: copy, ...condition };
+}
+
+export async function writeOrganizationRestoreChunk(env, user, jobId, collectionPath, documents = []) {
+  let actor = restoreActor(user);
+  const job = await currentRestoreJob(env, jobId, actor);
+  if (clean(job.JobType) === 'Reset') throw restoreError('Reset sessions cannot write records.', 409, 'RESET_WRITE_FORBIDDEN');
+  const path = jobAllowsCollection(job, collectionPath);
+  const rows = Array.isArray(documents) ? documents : [];
+  if (!rows.length || rows.length > MAX_RESTORE_DOCUMENTS) {
+    throw restoreError(`Each restore write must contain between 1 and ${MAX_RESTORE_DOCUMENTS} records.`);
+  }
+  const staffState = path === 'staffUsers' ? await beginStaffAccountChange(env) : null;
+  if (staffState) actor = protectRestoreStaffActor(env, actor, staffState.rows);
+  const prepared = (await Promise.all(rows.map((row) => protectedRestoreDocument(env, path, row, actor)))).filter(Boolean);
+  if (prepared.length) {
+    if (staffState) {
+      const existingById = new Map(staffState.rows.map((row) => [clean(row.__id), row]));
+      await commitStaffAccountChanges(env, staffState, prepared.map((write) => ({
+        ...write, ...staffAccountCondition(existingById.get(write.documentId))
+      })));
+    } else await batchCommitDocuments(env, prepared);
+  }
+  return { ok: true, message: `Restored ${prepared.length} record(s).`, restored: prepared.length };
+}
+
+export async function completeOrganizationRestore(env, user, jobId) {
+  const actor = restoreActor(user);
+  const job = await currentRestoreJob(env, jobId, actor);
+  if (clean(job.JobType) === 'Reset') throw restoreError('Complete this operation as a test-data reset.', 409, 'RESET_COMPLETION_REQUIRED');
+  await upsertDocument(env, RESTORE_JOB_COLLECTION, clean(jobId), {
+    ...withoutTransportMetadata(job),
+    Status: 'Completed',
+    CompletedAt: nowIso(),
+    UpdatedAt: nowIso()
+  });
+  return { ok: true, message: 'Organisation data restore completed successfully.', restoredAt: nowIso() };
+}
+
+export async function clearOrganizationResetObjects(env, user, jobId) {
+  const actor = restoreActor(user);
+  const job = await currentRestoreJob(env, jobId, actor);
+  if (clean(job.JobType) !== 'Reset') throw restoreError('This session is not a test-data reset.', 409, 'RESET_JOB_REQUIRED');
+  const bucket = env?.DYNAMAX_DOCUMENTS;
+  if (!bucket || typeof bucket.list !== 'function' || typeof bucket.delete !== 'function') {
+    throw restoreError('Cloudflare R2 document storage is not connected.', 503, 'RESET_R2_NOT_CONFIGURED');
+  }
+  const prefix = clean(job.R2Prefix);
+  const listed = await bucket.list({ prefix, limit: 1000 });
+  const keys = (Array.isArray(listed?.objects) ? listed.objects : [])
+    .map((object) => clean(object?.key))
+    .filter(Boolean);
+  if (keys.length) await bucket.delete(keys);
+  const removedObjects = Math.max(0, Number(job.RemovedObjects || 0)) + keys.length;
+  await upsertDocument(env, RESTORE_JOB_COLLECTION, clean(jobId), {
+    ...withoutTransportMetadata(job),
+    Status: 'Restoring',
+    RemovedObjects: removedObjects,
+    UpdatedAt: nowIso()
+  });
+  return {
+    ok: true,
+    removed: keys.length,
+    removedObjects,
+    more: listed?.truncated === true,
+    message: keys.length ? `Removed ${keys.length} private file(s).` : 'Private document storage is clear.'
+  };
+}
+
+export async function completeOrganizationReset(env, user, jobId) {
+  const actor = restoreActor(user);
+  const job = await currentRestoreJob(env, jobId, actor);
+  if (clean(job.JobType) !== 'Reset') throw restoreError('This session is not a test-data reset.', 409, 'RESET_JOB_REQUIRED');
+  const completedAt = nowIso();
+  await upsertDocument(env, RESTORE_JOB_COLLECTION, clean(jobId), {
+    ...withoutTransportMetadata(job),
+    Status: 'Completed',
+    CompletedAt: completedAt,
+    UpdatedAt: completedAt
+  });
+  return {
+    ok: true,
+    message: 'Test records and private files were cleared. Organisation configuration and the active Super Administrator were preserved.',
+    removedRecords: Math.max(0, Number(job.RemovedRecords || 0)),
+    removedObjects: Math.max(0, Number(job.RemovedObjects || 0)),
+    resetAt: completedAt
+  };
+}

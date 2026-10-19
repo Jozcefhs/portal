@@ -1,0 +1,742 @@
+import { getDocument, listCollection, patchDocumentFields, requireFirestoreEnv, updateDocumentIfCurrent, upsertDocument } from '../lib/firestore.js';
+import { hashStaffPassword, invalidateStaffAccessCache, requireStaffSession } from '../lib/staff-auth.js';
+import { readJsonBody } from '../lib/request-security.js';
+import { staffRecordMatchesEdition } from '../lib/records-desk.js';
+import { actorBranchScope, branchRecordVisible } from '../lib/branch-scope.js';
+import { getSchoolStructure } from '../lib/school-scope.js';
+import { configuredStaffBranches, resolveStaffAssignmentBranch, staffAssignmentActor } from '../lib/staff-branch-context.js';
+import {
+  accountingChartChoicesForEdition,
+  accountingCodeAllowedForEdition
+} from '../lib/accounting-edition-scope.js';
+import {
+  filterSectionsForFeatures,
+  normalizeOrganizationEdition,
+  organizationModulePreferences,
+  resolveOrganizationConfig,
+  staffRoleAllowedForEdition
+} from '../lib/organization-config.js';
+import {
+  WEB_SECTION_KEYS,
+  roleAccessScope,
+  roleAccessView,
+  rolesForEdition,
+  withRoleModules,
+  withoutRoleModules
+} from '../lib/role-module-access.js';
+import {
+  activeStaffAccountCount,
+  assertSubscriptionSeatAvailable,
+  enforceSubscriptionUserLimit,
+  loadSubscriptionUserLimit,
+  staffAccountsForSubscription
+} from '../lib/subscription-user-limit.js';
+import { refreshOrganizationPlanPolicy } from '../lib/plan-policy-sync.js';
+import { loadOrganizationNameProfile } from '../lib/organization-name-format.js';
+import { formatPersonName } from '../lib/person-name-format.js';
+import { canEditRequisitions, requisitionEditGrant, requisitionEditPermissionAuditWrite } from '../lib/requisition-edit-permission.js';
+import { EXTERNAL_AUDITOR_ROLE, normalizeExternalAuditGrant } from '../lib/external-audit.js';
+import { assertStaffAccountFinalState, beginStaffAccountChange, commitStaffAccountChanges, resolveStaffAccountTarget, staffAccountCondition, staffAccountWrite } from '../lib/staff-account-integrity.js';
+import { loadStaffSecurityHistory } from '../lib/staff-security-history.js';
+
+function clean(value) { return String(value ?? '').trim(); }
+function lower(value) { return clean(value).toLowerCase(); }
+function safeId(value) { return lower(value).replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 120); }
+function nowIso() { return new Date().toISOString(); }
+function activeValue(value) { return !['no', 'false', '0', 'inactive', 'disabled'].includes(lower(value)); }
+function explicitOptIn(value) { return ['yes', 'true', '1', 'enabled', 'on'].includes(lower(value)); }
+
+function firstValue(row = {}, keys = []) {
+  for (const key of keys) {
+    const value = clean(row?.[key]);
+    if (value) return value;
+  }
+  return '';
+}
+
+export const STAFF_IMPORT_REQUIRED_COLUMNS = Object.freeze(['Username', 'FirstName', 'Surname']);
+
+export function requiredStaffImportIdentity(row = {}) {
+  const identity = {
+    Username: firstValue(row, ['Username', 'username']),
+    FirstName: firstValue(row, ['FirstName', 'First Name', 'GivenName', 'Given Name']),
+    Surname: firstValue(row, ['Surname', 'LastName', 'Last Name', 'FamilyName', 'Family Name'])
+  };
+  const missing = STAFF_IMPORT_REQUIRED_COLUMNS.filter((column) => !identity[column]);
+  if (missing.length) {
+    const error = new Error(`${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} required.`);
+    error.status = 400;
+    throw error;
+  }
+  return identity;
+}
+
+export function staffDisplayName(row = {}, profile = {}) {
+  return formatPersonName(row, profile);
+}
+
+function staffSplitNameState(row = {}) {
+  const firstName = clean(row.FirstName || row.firstName);
+  const middleName = clean(row.MiddleName || row.middleName);
+  const surname = clean(row.Surname || row.surname || row.LastName || row.lastName);
+  if (firstName && surname) return 'complete';
+  if (firstName || middleName || surname) return 'partial';
+  return 'empty';
+}
+
+function staffNameMigrationSummary(rows = []) {
+  let requiresReview = 0;
+  rows.forEach((row) => {
+    const state = staffSplitNameState(row);
+    if (state === 'complete') return;
+    requiresReview += 1;
+  });
+  return { migratable: 0, requiresReview };
+}
+
+export function staffImportIdentity(row = {}, existing = {}, profile = {}) {
+  const firstName = firstValue(row, ['FirstName', 'First Name', 'GivenName', 'Given Name'])
+    || clean(existing.FirstName || existing.firstName);
+  const middleName = firstValue(row, ['MiddleName', 'Middle Name', 'OtherName', 'Other Name'])
+    || clean(existing.MiddleName || existing.middleName);
+  const surname = firstValue(row, ['Surname', 'LastName', 'Last Name', 'FamilyName', 'Family Name'])
+    || clean(existing.Surname || existing.surname || existing.LastName || existing.lastName);
+  const legacyDisplayName = firstValue(row, ['DisplayName', 'Display Name', 'FullName', 'Full Name', 'Name'])
+    || clean(existing.DisplayName || existing.displayName);
+  const displayName = formatPersonName(
+    { FirstName: firstName, MiddleName: middleName, Surname: surname },
+    profile,
+    legacyDisplayName
+  );
+  return { FirstName: firstName, MiddleName: middleName, Surname: surname, DisplayName: displayName };
+}
+
+const WEB_SECTION_KEY_SET = new Set(WEB_SECTION_KEYS);
+const PRIMARY_LEADERSHIP_ROLES = new Set(['Head Teacher', 'Assistant Head Teacher']);
+const SECONDARY_LEADERSHIP_ROLES = new Set(['Vice Principal Academics', 'Vice Principal Administration']);
+
+function schoolSectionAccessForRole(role, value, edition) {
+  if (normalizeOrganizationEdition(edition) !== 'school') return 'All';
+  if (PRIMARY_LEADERSHIP_ROLES.has(clean(role))) return 'Primary';
+  if (SECONDARY_LEADERSHIP_ROLES.has(clean(role))) return 'Secondary';
+  const requested = clean(value).toLowerCase();
+  if (requested === 'primary') return 'Primary';
+  if (requested === 'secondary') return 'Secondary';
+  return 'All';
+}
+
+function listValue(value, separator = ',') {
+  return Array.isArray(value)
+    ? value.map(clean).filter(Boolean)
+    : clean(value).split(separator).map(clean).filter(Boolean);
+}
+
+function scopedApprovalAccounts(value, edition) {
+  return listValue(value, /[;,]/).filter((code) => accountingCodeAllowedForEdition(code, edition));
+}
+
+function scopedTabAccess(value, actor) {
+  return filterSectionsForFeatures(listValue(value, /[;,]/), actor.featureFlags)
+    .filter((section) => WEB_SECTION_KEY_SET.has(section));
+}
+
+function ensureRoleAvailable(role, edition) {
+  if (staffRoleAllowedForEdition(role, edition)) return;
+  const err = new Error(`${role} is a school-only role and is not available in this organisation.`);
+  err.status = 400;
+  throw err;
+}
+
+function publicUser(row, edition = 'school', featureFlags = null, profile = {}) {
+  const normalizedEdition = normalizeOrganizationEdition(edition);
+  return {
+    Username: clean(row.Username || row.username || row.__id),
+    LoginUsername: clean(row.LoginUsername || row.loginUsername || row.Username || row.username || row.__id),
+    DisplayName: staffDisplayName(row, profile),
+    FirstName: clean(row.FirstName || row.firstName),
+    MiddleName: clean(row.MiddleName || row.middleName),
+    Surname: clean(row.Surname || row.surname || row.LastName || row.lastName),
+    Role: clean(row.Role || row.role) || 'Front Desk',
+    Department: clean(row.Department || row.department),
+    BranchId: clean(row.BranchId || row.branchId),
+    AuditDateFrom: clean(row.AuditDateFrom || row.auditDateFrom),
+    AuditDateTo: clean(row.AuditDateTo || row.auditDateTo),
+    AuditExpiresAt: clean(row.AuditExpiresAt || row.auditExpiresAt),
+    SchoolSectionAccess: normalizedEdition === 'school'
+      ? schoolSectionAccessForRole(row.Role || row.role, row.SchoolSectionAccess || row.schoolSectionAccess, normalizedEdition)
+      : '',
+    OrganisationEdition: clean(
+      row.OrganisationEdition || row.organisationEdition
+        || row.OrganizationEdition || row.organizationEdition
+        || row.Edition || row.edition
+    ),
+    ApprovalEnabled: row.ApprovalEnabled === undefined ? false : activeValue(row.ApprovalEnabled),
+    RequisitionEditEnabled: canEditRequisitions(row),
+    ApprovalMaxAmount: Number(row.ApprovalMaxAmount || 0) || 0,
+    ApprovalAccounts: scopedApprovalAccounts(row.ApprovalAccounts, normalizedEdition),
+    BiometricLookupEnabled: explicitOptIn(row.BiometricLookupEnabled) && normalizedEdition === 'school',
+    TabAccess: filterSectionsForFeatures(listValue(row.TabAccess), featureFlags)
+      .filter((section) => WEB_SECTION_KEY_SET.has(section)),
+    Active: row.Active === undefined ? true : activeValue(row.Active),
+    PasswordSetupRequired: activeValue(row.PasswordSetupRequired ?? false),
+    MustChangePassword: row.MustChangePassword === undefined ? false : activeValue(row.MustChangePassword),
+    CreatedAt: clean(row.CreatedAt),
+    UpdatedAt: clean(row.UpdatedAt),
+    LastLoginAt: clean(row.LastLoginAt)
+  };
+}
+
+async function audit(env, actor, action, username, details = '', branchId = '') {
+  const id = `STAFF-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  await upsertDocument(env, 'staffSecurityAudit', id, {
+    AuditId: id,
+    Timestamp: nowIso(),
+    Action: action,
+    Username: username,
+    Details: clean(details),
+    Actor: actor.displayName || actor.username,
+    ActorUsername: actor.username,
+    BranchId: clean(branchId || actorBranchScope(actor)) || 'main',
+    SourcePlatform: 'Web'
+  });
+}
+
+function ensureSuperAdmin(actor) {
+  if (actor.role === 'Super Admin') return;
+  const err = new Error('Only Super Admin can manage staff accounts.');
+  err.status = 403;
+  throw err;
+}
+
+function ensureOrganisationWideSuperAdmin(actor) {
+  ensureSuperAdmin(actor);
+  const assignedBranchId = clean(
+    actor.assignedBranchId || (actor.canSwitchBranches === false ? actor.branchId : '')
+  );
+  if (!assignedBranchId) return;
+  const err = new Error('Only an organisation-wide Super Admin can change organisation modules.');
+  err.status = 403;
+  throw err;
+}
+
+function assignmentActor(env, actor) {
+  return staffAssignmentActor(actor, clean(env.ADMIN_WEB_USERNAME || 'admin'));
+}
+
+function activeSuperAdmins(rows, excluding = '') {
+  return rows.filter((row) => lower(row.Username || row.__id) !== lower(excluding) &&
+    clean(row.Role) === 'Super Admin' && (row.Active === undefined || activeValue(row.Active)));
+}
+
+function listUsers(rows, actor, profile = {}) {
+  return rows
+    .filter((row) => staffRecordMatchesEdition(row, actor) && branchRecordVisible(row, actor))
+    .map((row) => publicUser(row, actor.edition, actor.featureFlags, profile))
+    .sort((a, b) => a.LoginUsername.localeCompare(b.LoginUsername));
+}
+
+async function listSecurityAudit(env, actor) {
+  try { return { ...(await loadStaffSecurityHistory(env, actor)), warning: '' }; }
+  catch (_error) {
+    // Compatibility for older clients. Optional history must not block the
+    // directory, and an unavailable history is not an empty history.
+    return { rows: [], nextCursor: null,
+      warning: 'Security activity could not be loaded. Staff management is available. Refresh security activity to retry.' };
+  }
+}
+
+async function saveUser(env, actor, body) {
+  const username = clean(body.Username || body.username);
+  if (!username) { const err = new Error('Username is required.'); err.status = 400; throw err; }
+  const state = await beginStaffAccountChange(env);
+  const rows = state.rows;
+  const { existing } = resolveStaffAccountTarget(rows, username, body.OriginalUsername);
+  if (existing && !staffRecordMatchesEdition(existing, actor)) {
+    const err = new Error('This staff account belongs to another organisation workspace.'); err.status = 403; throw err;
+  }
+  if (existing && !branchRecordVisible(existing, actor)) {
+    const err = new Error('This staff account belongs to another branch.'); err.status = 403; throw err;
+  }
+  const role = clean(body.Role || body.role) || 'Front Desk';
+  const edition = normalizeOrganizationEdition(actor.edition);
+  ensureRoleAvailable(role, edition);
+  const externalAuditor = role === EXTERNAL_AUDITOR_ROLE;
+  const auditGrant = externalAuditor ? normalizeExternalAuditGrant(body) : {
+    AuditDateFrom: '', AuditDateTo: '', AuditExpiresAt: ''
+  };
+  const department = clean(body.Department || body.department);
+  const active = activeValue(body.Active === undefined ? true : body.Active);
+  const subscriptionRows = staffAccountsForSubscription(rows, actor.edition, actor.username);
+  await enforceSubscriptionUserLimit(env, subscriptionRows, existing, active);
+  if (role === 'Department User' && !department) { const err = new Error('Department is required for a Department User.'); err.status = 400; throw err; }
+  if (existing && clean(existing.Role) === 'Super Admin' && activeValue(existing.Active === undefined ? true : existing.Active) &&
+      (role !== 'Super Admin' || !active) && activeSuperAdmins(rows, username).length === 0) {
+    const err = new Error('At least one active Super Admin must remain.'); err.status = 409; throw err;
+  }
+  const password = String(body.Password || body.password || '');
+  if (!existing && !password) { const err = new Error('Password is required for a new staff account.'); err.status = 400; throw err; }
+  const passwordFields = password ? await hashStaffPassword(password) : {};
+  const [structure, profile] = await Promise.all([
+    getSchoolStructure(env),
+    loadOrganizationNameProfile(env)
+  ]);
+  const branchId = resolveStaffAssignmentBranch(
+    assignmentActor(env, actor),
+    body.BranchId || body.branchId,
+    existing?.BranchId || existing?.branchId,
+    structure
+  );
+  const splitNameSubmitted = ['FirstName', 'firstName', 'MiddleName', 'middleName', 'Surname', 'surname', 'LastName', 'lastName']
+    .some((key) => Object.prototype.hasOwnProperty.call(body, key));
+  const identity = splitNameSubmitted
+    ? staffImportIdentity({
+        FirstName: clean(body.FirstName || body.firstName),
+        MiddleName: clean(body.MiddleName || body.middleName),
+        Surname: clean(body.Surname || body.surname || body.LastName || body.lastName),
+        DisplayName: clean(body.DisplayName || body.displayName)
+      }, {}, profile || {})
+    : staffImportIdentity(body, existing || {}, profile || {});
+  if (splitNameSubmitted && (!identity.FirstName || !identity.Surname)) {
+    const err = new Error('First name and surname are required.'); err.status = 400; throw err;
+  }
+  const payload = {
+    ...(existing || {}),
+    Username: username,
+    UsernameKey: lower(username),
+    LoginUsername: clean(existing?.LoginUsername || username),
+    LoginUsernameKey: lower(existing?.LoginUsername || username),
+    DisplayName: identity.DisplayName || username,
+    FirstName: identity.FirstName,
+    MiddleName: identity.MiddleName,
+    Surname: identity.Surname,
+    Role: role,
+    Department: externalAuditor ? '' : department,
+    OrganisationEdition: clean(actor.edition) || 'school',
+    BranchId: branchId,
+    ...auditGrant,
+    SchoolSectionAccess: schoolSectionAccessForRole(
+      role, body.SchoolSectionAccess || body.schoolSectionAccess, edition
+    ),
+    ApprovalEnabled: externalAuditor ? false : role === 'Super Admin' ? true : activeValue(body.ApprovalEnabled ?? false),
+    RequisitionEditEnabled: externalAuditor ? false : requisitionEditGrant(body.RequisitionEditEnabled ?? existing?.RequisitionEditEnabled, {
+      Role: role, ApprovalEnabled: activeValue(body.ApprovalEnabled ?? false)
+    }),
+    ApprovalMaxAmount: externalAuditor ? 0 : Math.max(0, Number(body.ApprovalMaxAmount || 0) || 0),
+    ApprovalAccounts: externalAuditor ? [] : scopedApprovalAccounts(body.ApprovalAccounts, edition),
+    BiometricLookupEnabled: !externalAuditor && explicitOptIn(body.BiometricLookupEnabled) && edition === 'school',
+    TabAccess: externalAuditor ? [] : scopedTabAccess(body.TabAccess, actor),
+    Active: active,
+    PasswordSetupRequired: password ? false : activeValue(existing?.PasswordSetupRequired ?? false),
+    MustChangePassword: password ? activeValue(body.MustChangePassword === undefined ? true : body.MustChangePassword) : activeValue(existing?.MustChangePassword || false),
+    ...passwordFields,
+    CreatedAt: existing?.CreatedAt || nowIso(),
+    CreatedBy: existing?.CreatedBy || actor.displayName || actor.username,
+    UpdatedAt: nowIso(),
+    UpdatedBy: actor.displayName || actor.username
+  };
+  delete payload.__id;
+  delete payload.__name;
+  const permissionAudit = requisitionEditPermissionAuditWrite(existing || {}, payload, actor);
+  await commitStaffAccountChanges(env, state, [
+    staffAccountWrite(existing, username, payload),
+    ...(permissionAudit ? [permissionAudit] : [])
+  ]);
+  await audit(env, actor, existing ? 'UPDATE USER' : 'CREATE USER', username, `${role}${department ? ` | ${department}` : ''}`, branchId);
+  return { ok: true, message: existing ? 'Staff account updated.' : 'Staff account created.', user: publicUser(payload, edition, actor.featureFlags, profile || {}) };
+}
+
+async function migrateStaffNames(env, actor) {
+  const rows = await listCollection(env, 'staffUsers');
+  const visibleRows = rows.filter((row) => staffRecordMatchesEdition(row, actor) && branchRecordVisible(row, actor));
+  const review = visibleRows
+    .filter((row) => staffSplitNameState(row) !== 'complete')
+    .map((row) => ({
+      Username: clean(row.Username || row.username || row.__id),
+      DisplayName: clean(row.DisplayName || row.displayName)
+    }));
+  const message = review.length
+    ? `No names were changed. Automatic splitting is disabled because the name-format setting only controls display order. Review ${review.length} account${review.length === 1 ? '' : 's'} manually.`
+    : 'All visible staff accounts already use separate name fields.';
+  return { ok: true, message, migrated: 0, requiresReview: review.length, review };
+}
+
+async function importUsers(env, actor, body) {
+  const users = Array.isArray(body.users) ? body.users.slice(0, 500) : [];
+  if (!users.length) { const err = new Error('Choose a CSV containing at least one staff row.'); err.status = 400; throw err; }
+  let state = await beginStaffAccountChange(env);
+  const existingRows = state.rows;
+  const edition = normalizeOrganizationEdition(actor.edition);
+  const userLimit = await loadSubscriptionUserLimit(env);
+  const subscriptionRows = staffAccountsForSubscription(existingRows, edition, actor.username);
+  const plannedRows = subscriptionRows.map((row) => ({ ...row }));
+  const [structure, profile] = await Promise.all([
+    getSchoolStructure(env),
+    loadOrganizationNameProfile(env)
+  ]);
+  const writes = []; const writeGroups = []; const failures = []; const seen = new Set();
+  const identityRows = [...existingRows];
+  for (let index = 0; index < users.length; index += 1) {
+    try {
+      const row = users[index] || {};
+      const requiredIdentity = requiredStaffImportIdentity(row);
+      const username = requiredIdentity.Username;
+      if (seen.has(lower(username))) throw new Error('Duplicate username in this CSV.');
+      seen.add(lower(username));
+      const { existing, id } = resolveStaffAccountTarget(identityRows, username, '', { importing: true });
+      if (existing && !staffRecordMatchesEdition(existing, actor)) throw new Error('This staff account belongs to another organisation workspace.');
+      if (existing && !branchRecordVisible(existing, actor)) throw new Error('This staff account belongs to another branch.');
+      const password = String(row.Password || row.password || '');
+      const identity = staffImportIdentity({
+        ...row,
+        FirstName: requiredIdentity.FirstName,
+        Surname: requiredIdentity.Surname
+      }, existing || {}, profile || {});
+      const role = clean(row.Role || row.role) || clean(existing?.Role || existing?.role) || 'Front Desk';
+      ensureRoleAvailable(role, edition);
+      if (role === EXTERNAL_AUDITOR_ROLE) throw new Error('Create external auditor accounts individually and set their audit period and expiry.');
+      const department = clean(row.Department || row.department) || clean(existing?.Department || existing?.department);
+      const requestedActive = clean(row.Active) === ''
+        ? activeValue(existing?.Active ?? true)
+        : activeValue(row.Active);
+      assertSubscriptionSeatAvailable(plannedRows, existing, requestedActive, userLimit);
+      const plannedIndex = existing ? plannedRows.findIndex((planned) => (
+        clean(planned.__id) && clean(planned.__id) === clean(existing.__id)
+      )) : -1;
+      if (plannedIndex >= 0) plannedRows[plannedIndex] = { ...plannedRows[plannedIndex], Active: requestedActive };
+      else plannedRows.push({ Username: username, LoginUsername: username, Active: requestedActive });
+      const branchId = resolveStaffAssignmentBranch(
+        assignmentActor(env, actor),
+        row.BranchId || row.branchId,
+        existing?.BranchId || existing?.branchId,
+        structure
+      );
+      const payload = {
+        ...(existing || {}), Username: username,
+        UsernameKey: lower(username),
+        LoginUsername: clean(existing?.LoginUsername || username),
+        LoginUsernameKey: lower(existing?.LoginUsername || username),
+        DisplayName: identity.DisplayName || username,
+        FirstName: identity.FirstName,
+        MiddleName: identity.MiddleName,
+        Surname: identity.Surname,
+        Role: role, Department: department,
+        OrganisationEdition: clean(actor.edition) || 'school',
+        BranchId: branchId,
+        SchoolSectionAccess: schoolSectionAccessForRole(
+          role,
+          row.SchoolSectionAccess || row.schoolSectionAccess || existing?.SchoolSectionAccess || existing?.schoolSectionAccess,
+          edition
+        ),
+        ApprovalEnabled: role === 'Super Admin'
+          ? true
+          : clean(row.ApprovalEnabled) === ''
+            ? activeValue(existing?.ApprovalEnabled ?? false)
+            : activeValue(row.ApprovalEnabled),
+        ApprovalMaxAmount: clean(row.ApprovalMaxAmount) === ''
+          ? Math.max(0, Number(existing?.ApprovalMaxAmount || 0) || 0)
+          : Math.max(0, Number(row.ApprovalMaxAmount || 0) || 0),
+        RequisitionEditEnabled: requisitionEditGrant(
+          clean(row.RequisitionEditEnabled) === '' ? existing?.RequisitionEditEnabled : row.RequisitionEditEnabled,
+          { Role: role, ApprovalEnabled: clean(row.ApprovalEnabled) === '' ? existing?.ApprovalEnabled : row.ApprovalEnabled }
+        ),
+        ApprovalAccounts: scopedApprovalAccounts(
+          clean(row.ApprovalAccounts) === '' ? existing?.ApprovalAccounts : row.ApprovalAccounts,
+          edition
+        ),
+        BiometricLookupEnabled: edition === 'school' && (clean(row.BiometricLookupEnabled) === ''
+          ? explicitOptIn(existing?.BiometricLookupEnabled)
+          : explicitOptIn(row.BiometricLookupEnabled)),
+        TabAccess: scopedTabAccess(clean(row.TabAccess) === '' ? existing?.TabAccess : row.TabAccess, actor),
+        Active: requestedActive,
+        PasswordSetupRequired: password ? false : activeValue(existing?.PasswordSetupRequired ?? !existing),
+        MustChangePassword: password
+          ? activeValue(row.MustChangePassword === undefined ? true : row.MustChangePassword)
+          : activeValue(existing?.MustChangePassword || false),
+        ...(password ? await hashStaffPassword(password) : {}),
+        CreatedAt: existing?.CreatedAt || nowIso(), CreatedBy: existing?.CreatedBy || actor.displayName || actor.username,
+        UpdatedAt: nowIso(), UpdatedBy: actor.displayName || actor.username
+      };
+      delete payload.__id; delete payload.__name;
+      const write = staffAccountWrite(existing, username, payload);
+      const permissionAudit = requisitionEditPermissionAuditWrite(existing || {}, payload, actor);
+      writes.push(write);
+      writeGroups.push([write, ...(permissionAudit ? [permissionAudit] : [])]);
+      if (!existing) identityRows.push({ ...payload, __id: id });
+    } catch (error) {
+      failures.push({ row: index + 2, username: clean(users[index]?.Username), message: error.message || String(error) });
+    }
+  }
+  // Validate the whole import before any write. Promotions go first so a
+  // legitimate administrator handover is also safe across chunk boundaries.
+  assertStaffAccountFinalState(existingRows, writes);
+  writeGroups.sort((a, b) => Number(b[0].data.Role === 'Super Admin' && activeValue(b[0].data.Active))
+    - Number(a[0].data.Role === 'Super Admin' && activeValue(a[0].data.Active)));
+  let batch = [];
+  for (const group of writeGroups) {
+    if (batch.length + group.length > 499) {
+      await commitStaffAccountChanges(env, state, batch);
+      state = await beginStaffAccountChange(env);
+      batch = [];
+    }
+    batch.push(...group);
+  }
+  if (batch.length) await commitStaffAccountChanges(env, state, batch);
+  const imported = writes.length;
+  const passwordSetupRequired = writes.filter((write) => write.data.PasswordSetupRequired === true).length;
+  await audit(env, actor, 'BULK IMPORT', `${imported} staff`, `${failures.length} failed`, actorBranchScope(actor) || 'main');
+  return {
+    ok: true,
+    message: `${imported} staff account(s) uploaded${failures.length ? `; ${failures.length} failed` : ''}${passwordSetupRequired ? `; ${passwordSetupRequired} require password setup` : ''}.`,
+    imported,
+    failures,
+    passwordSetupRequired
+  };
+}
+
+async function deleteUser(env, actor, body) {
+  const username = clean(body.Username || body.username);
+  const state = await beginStaffAccountChange(env);
+  const rows = state.rows;
+  const existing = rows.find((row) => lower(row.Username || row.__id) === lower(username));
+  if (!existing) { const err = new Error('Staff account was not found.'); err.status = 404; throw err; }
+  if (!staffRecordMatchesEdition(existing, actor)) { const err = new Error('This staff account belongs to another organisation workspace.'); err.status = 403; throw err; }
+  if (!branchRecordVisible(existing, actor)) { const err = new Error('This staff account belongs to another branch.'); err.status = 403; throw err; }
+  if (lower(username) === lower(actor.username)) { const err = new Error('You cannot delete the account currently signed in.'); err.status = 409; throw err; }
+  if (clean(existing.Role) === 'Super Admin' && activeValue(existing.Active === undefined ? true : existing.Active) && activeSuperAdmins(rows, username).length === 0) {
+    const err = new Error('At least one active Super Admin must remain.'); err.status = 409; throw err;
+  }
+  await commitStaffAccountChanges(env, state, [{ collectionPath: 'staffUsers',
+    documentId: existing.__id || safeId(username), operation: 'delete', ...staffAccountCondition(existing) }]);
+  await audit(env, actor, 'DELETE USER', username, clean(existing.Role), clean(existing.BranchId || 'main'));
+  return { ok: true, message: 'Staff account deleted.' };
+}
+
+async function roleAccessSettings(env, actor) {
+  const document = await getDocument(env, 'settings', 'roleModuleAccess');
+  return roleAccessView(document, actor, actor.edition, actor.featureFlags);
+}
+
+function modulePreferencesView(organization = {}) {
+  return {
+    plan: clean(organization.Plan),
+    enabledModules: [...(organization.EnabledFeatureEntitlements || [])],
+    disabledModules: [...(organization.DisabledFeatureEntitlements || [])],
+    modules: (organization.ModulePreferences || []).map((module) => ({
+      Key: clean(module.Key),
+      Label: clean(module.Label || module.Key),
+      Description: clean(module.Description),
+      Requires: Array.isArray(module.Requires) ? module.Requires.map(clean).filter(Boolean) : [],
+      Surface: clean(module.Surface),
+      Enabled: module.Enabled === true
+    }))
+  };
+}
+
+async function organizationModuleSettings(env, options = {}) {
+  let organizationProfile = await getDocument(env, 'settings', 'organisationProfile').catch(() => null);
+  if (!organizationProfile) {
+    if (options.required) {
+      const error = new Error('Complete organisation setup before changing enabled modules.');
+      error.status = 409;
+      throw error;
+    }
+    return { organizationProfile: null, organization: resolveOrganizationConfig({ env }) };
+  }
+  organizationProfile = await refreshOrganizationPlanPolicy(env, organizationProfile);
+  return {
+    organizationProfile,
+    organization: resolveOrganizationConfig({ env, organizationProfile })
+  };
+}
+
+async function saveOrganizationModules(env, actor, body) {
+  ensureOrganisationWideSuperAdmin(actor);
+  if (!Array.isArray(body.EnabledModules || body.enabledModules)) {
+    const error = new Error('Choose the plan modules this organisation should keep enabled.');
+    error.status = 400;
+    throw error;
+  }
+  const { organizationProfile, organization } = await organizationModuleSettings(env, { required: true });
+  if (!organization.SubscriptionActive || organization.SubscriptionReadOnly) {
+    const error = new Error(organization.SubscriptionMessage || 'Renew the subscription before changing enabled modules.');
+    error.status = 409;
+    throw error;
+  }
+  const planKeys = new Set((organization.ModulePreferences || []).map((module) => module.Key));
+  const requested = [...new Set((body.EnabledModules || body.enabledModules).map(clean).filter(Boolean))];
+  const outsidePlan = requested.filter((key) => !planKeys.has(key));
+  if (outsidePlan.length) {
+    const error = new Error('One or more selected modules are not included in this organisation plan.');
+    error.status = 400;
+    throw error;
+  }
+  const preferences = organizationModulePreferences(
+    organization.Edition,
+    organization.PlanFeatureFlags,
+    [...planKeys].filter((key) => !requested.includes(key))
+  );
+  await patchDocumentFields(env, 'settings', 'organisationProfile', {
+    DisabledFeatureEntitlements: preferences.disabledModules,
+    FeatureFlags: preferences.featureFlags,
+    ModulePreferencesUpdatedAt: nowIso(),
+    ModulePreferencesUpdatedBy: actor.displayName || actor.username
+  });
+  invalidateStaffAccessCache();
+  const updated = resolveOrganizationConfig({
+    env,
+    organizationProfile: {
+      ...organizationProfile,
+      DisabledFeatureEntitlements: preferences.disabledModules
+    }
+  });
+  await audit(
+    env,
+    actor,
+    'UPDATE ORGANISATION MODULES',
+    'organisationProfile',
+    `${updated.EnabledFeatureEntitlements.length} enabled; ${updated.DisabledFeatureEntitlements.length} disabled`,
+    actorBranchScope(actor) || 'main'
+  );
+  return {
+    ok: true,
+    message: 'Organisation modules updated. Billing and plan entitlements were not changed.',
+    modulePreferences: modulePreferencesView(updated)
+  };
+}
+
+async function saveRoleAccess(env, actor, body) {
+  const role = clean(body.Role || body.role);
+  if (!role || !rolesForEdition(actor.edition).includes(role)) {
+    const err = new Error('Choose an available staff role.');
+    err.status = 400;
+    throw err;
+  }
+  if (!Array.isArray(body.Modules || body.modules)) {
+    const err = new Error('Choose the modules this role may access.');
+    err.status = 400;
+    throw err;
+  }
+  const existing = await getDocument(env, 'settings', 'roleModuleAccess');
+  const scope = roleAccessScope(actor);
+  const scopes = withRoleModules(
+    existing,
+    scope,
+    role,
+    body.Modules || body.modules,
+    actor.edition,
+    actor.featureFlags
+  );
+  const saved = {
+    ...(existing || {}),
+    Edition: normalizeOrganizationEdition(actor.edition),
+    Scopes: scopes,
+    UpdatedAt: nowIso(),
+    UpdatedBy: actor.displayName || actor.username
+  };
+  delete saved.__id;
+  delete saved.__name;
+  delete saved.__createTime;
+  delete saved.__updateTime;
+  if (existing?.__updateTime) await updateDocumentIfCurrent(env, 'settings', 'roleModuleAccess', saved, existing);
+  else await upsertDocument(env, 'settings', 'roleModuleAccess', saved, { exists: false });
+  invalidateStaffAccessCache();
+  await audit(env, actor, 'UPDATE ROLE ACCESS', role, `${scope} | ${(scopes[scope]?.[role] || []).join(', ')}`, actorBranchScope(actor) || 'main');
+  return {
+    ok: true,
+    message: `${role} module access saved for ${scope === 'global' ? 'all branches' : `branch ${scope}`}. Refresh the affected staff workspace to load the new access.`,
+    roleAccess: roleAccessView(saved, actor, actor.edition, actor.featureFlags)
+  };
+}
+
+async function resetRoleAccess(env, actor, body) {
+  const role = clean(body.Role || body.role);
+  if (!role || !rolesForEdition(actor.edition).includes(role)) {
+    const err = new Error('Choose an available staff role.');
+    err.status = 400;
+    throw err;
+  }
+  const existing = await getDocument(env, 'settings', 'roleModuleAccess');
+  const scope = roleAccessScope(actor);
+  const saved = {
+    ...(existing || {}),
+    Edition: normalizeOrganizationEdition(actor.edition),
+    Scopes: withoutRoleModules(existing, scope, role),
+    UpdatedAt: nowIso(),
+    UpdatedBy: actor.displayName || actor.username
+  };
+  delete saved.__id;
+  delete saved.__name;
+  delete saved.__createTime;
+  delete saved.__updateTime;
+  if (existing?.__updateTime) await updateDocumentIfCurrent(env, 'settings', 'roleModuleAccess', saved, existing);
+  else await upsertDocument(env, 'settings', 'roleModuleAccess', saved, { exists: false });
+  invalidateStaffAccessCache();
+  await audit(env, actor, 'RESET ROLE ACCESS', role, scope, actorBranchScope(actor) || 'main');
+  return {
+    ok: true,
+    message: `${role} now inherits ${scope === 'global' ? 'the system default' : 'the organisation-wide policy or system default'}.`,
+    roleAccess: roleAccessView(saved, actor, actor.edition, actor.featureFlags)
+  };
+}
+
+export async function onRequestPost(context) {
+  try {
+    const { request, env } = context;
+    requireFirestoreEnv(env);
+    const actor = await requireStaffSession(env, request);
+    ensureSuperAdmin(actor);
+    const body = await readJsonBody(request, { maxBytes: 4 * 1024 * 1024 });
+    const action = lower(body.action || 'list');
+    let result;
+    if (action === 'list') {
+      const [staffRows, audit, accounts, roleAccess, userLimit, moduleSettings, structure, profile] = await Promise.all([
+        listCollection(env, 'staffUsers'),
+        body.includeAudit === false ? Promise.resolve(null) : listSecurityAudit(env, actor),
+        listCollection(env, 'chartOfAccounts'),
+        roleAccessSettings(env, actor),
+        loadSubscriptionUserLimit(env),
+        organizationModuleSettings(env),
+        getSchoolStructure(env),
+        loadOrganizationNameProfile(env)
+      ]);
+      const visibleRows = staffRows.filter((row) => staffRecordMatchesEdition(row, actor) && branchRecordVisible(row, actor));
+      const subscriptionRows = staffAccountsForSubscription(staffRows, actor.edition, actor.username);
+      const users = listUsers(staffRows, actor, profile || {});
+      const visibleActive = activeStaffAccountCount(visibleRows);
+      const organisationActive = activeStaffAccountCount(subscriptionRows);
+      const scopedAccounts = accountingChartChoicesForEdition(accounts, actor.edition);
+      result = {
+        ok: true,
+        users,
+        audit: audit?.rows || [],
+        auditWarning: audit?.warning || '',
+        auditNextCursor: audit?.nextCursor || null,
+        roleAccess,
+        nameFormat: clean(profile?.NameFormat || profile?.nameFormat) || 'Surname, first name, middle name',
+        nameMigration: staffNameMigrationSummary(visibleRows),
+        branches: configuredStaffBranches(structure),
+        canAssignStaffBranches: assignmentActor(env, actor).canSwitchBranches === true,
+        modulePreferences: modulePreferencesView(moduleSettings.organization),
+        seatUsage: {
+          active: organisationActive,
+          visibleActive,
+          otherBranchActive: Math.max(0, organisationActive - visibleActive),
+          limit: userLimit
+        },
+        approvalAccounts: scopedAccounts.filter((row) => activeValue(row.Active === undefined ? true : row.Active)).map((row) => ({ Code: clean(row.Code || row.__id), Name: clean(row.Name) })).filter((row) => row.Code).sort((a, b) => a.Code.localeCompare(b.Code))
+      };
+    }
+    else if (action === 'list-security-audit') result = { ok: true, ...(await loadStaffSecurityHistory(env, actor, body.cursor ?? null)) };
+    else if (action === 'save') result = await saveUser(env, actor, body);
+    else if (action === 'delete') result = await deleteUser(env, actor, body);
+    else if (action === 'import') result = await importUsers(env, actor, body);
+    else if (action === 'migrate-names') result = await migrateStaffNames(env, actor);
+    else if (action === 'save-role-access') result = await saveRoleAccess(env, actor, body);
+    else if (action === 'reset-role-access') result = await resetRoleAccess(env, actor, body);
+    else if (action === 'save-organization-modules') result = await saveOrganizationModules(env, actor, body);
+    else { const err = new Error('Unknown staff-user action.'); err.status = 400; throw err; }
+    return Response.json(result, { headers: { 'Cache-Control': 'no-store' } });
+  } catch (err) {
+    return Response.json({ ok: false, message: err.message || String(err) }, { status: err.status || 500, headers: { 'Cache-Control': 'no-store' } });
+  }
+}

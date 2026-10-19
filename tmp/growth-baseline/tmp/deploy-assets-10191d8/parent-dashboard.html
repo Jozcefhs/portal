@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Parent Dashboard</title>
+  <meta name="theme-color" content="#0f3d66"><link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="app-icon.svg">
+  <link rel="stylesheet" href="css/style.css?v=20260723-store-eligibility">
+</head>
+<body>
+  <main class="page-wrap">
+    <section class="card dashboard-card">
+      <div class="form-header">
+        <img src="images/logo.png" alt="School logo" class="logo small" onerror="this.style.display='none'">
+        <div>
+          <h1>Parent Dashboard</h1>
+          <p class="muted"><span data-school-name>School Portal</span> - monitor results, payments, wallet spending, clinic visits, and student activity.</p>
+        </div>
+      </div>
+
+      <form id="parentLoginForm" class="dashboard-login" autocomplete="on">
+        <div class="grid two">
+          <div>
+            <label for="parentEmail">Parent Email <span class="required">*</span></label>
+            <input id="parentEmail" type="email" required>
+          </div>
+          <div>
+            <label for="verificationCode">Parent Login / Verification Code <span class="required">*</span></label>
+            <input id="verificationCode" required>
+            <small class="muted">For imported students, use the Parent Login Code supplied by the school.</small>
+          </div>
+        </div>
+        <button type="submit" id="loadDashboardBtn">Open Dashboard</button>
+        <p id="parentStatus" class="status"></p>
+      </form>
+
+      <section id="dashboardContent" hidden>
+        <div class="dashboard-actions">
+          <button type="button" id="refreshDashboardBtn">Refresh Dashboard</button>
+          <button type="button" id="signOutDashboardBtn" class="dashboard-signout">Sign Out</button>
+        </div>
+        <div id="childrenList" class="child-list"></div>
+
+        <nav class="dashboard-nav" id="dashboardNav" aria-label="Parent dashboard sections">
+          <button type="button" class="selected" data-dashboard-target="overview" aria-selected="true">Overview</button>
+          <button type="button" data-dashboard-target="payments" aria-selected="false">Payments</button>
+          <button type="button" data-dashboard-target="optional" aria-selected="false">Optional Payments</button>
+          <button type="button" data-dashboard-target="results" aria-selected="false">Results</button>
+          <button type="button" data-dashboard-target="wallet" aria-selected="false">Wallet</button>
+          <button type="button" data-dashboard-target="clinic" aria-selected="false">Clinic</button>
+          <button type="button" data-dashboard-target="stores" aria-selected="false">School Store</button>
+        </nav>
+
+        <div class="dashboard-grid">
+          <section class="panel full-panel dashboard-view-panel" data-dashboard-view="overview">
+            <h2>Payment Notifications</h2>
+            <div id="dueNotifications" class="activity-list"></div>
+          </section>
+
+          <section class="panel full-panel dashboard-view-panel" data-dashboard-view="payments" hidden>
+            <h2>Pay Now</h2>
+            <div id="payableItems" class="activity-list"></div>
+          </section>
+
+          <section class="panel full-panel dashboard-view-panel" data-dashboard-view="optional" hidden>
+            <h2>Optional Payments</h2>
+            <div id="optionalPayments" class="activity-list"></div>
+          </section>
+
+          <section class="panel full-panel dashboard-view-panel" data-dashboard-view="overview">
+            <h2>Account Credit</h2>
+            <div id="accountCreditSummary" class="metric-row"></div>
+          </section>
+
+          <section class="panel full-panel dashboard-view-panel" data-dashboard-view="results" id="entranceResultPanel" hidden>
+            <h2>Entrance Result</h2>
+            <div id="entranceResults" class="activity-list"></div>
+          </section>
+
+          <section class="panel dashboard-view-panel" data-dashboard-view="wallet" hidden>
+            <h2>Wallet Activity</h2>
+            <div id="walletSummary" class="metric-row"></div>
+            <div id="walletLedger" class="activity-list"></div>
+          </section>
+
+          <section class="panel dashboard-view-panel" data-dashboard-view="wallet" hidden>
+            <h2>Wallet Restrictions</h2>
+            <form id="restrictionForm">
+              <label for="walletStatus">Wallet Card Status</label>
+              <select id="walletStatus">
+                <option>Active</option>
+                <option>Blocked</option>
+              </select>
+
+              <label for="txnLimit">Maximum Per Purchase</label>
+              <input id="txnLimit" inputmode="decimal" placeholder="Example: 1000">
+
+              <label for="dailyLimit">Maximum Per Day</label>
+              <input id="dailyLimit" inputmode="decimal" placeholder="Example: 3000">
+
+              <label for="pinThreshold">Require PIN From</label>
+              <input id="pinThreshold" inputmode="decimal" placeholder="Example: 500">
+
+              <button type="submit" id="saveRestrictionBtn">Save Restriction</button>
+            </form>
+          </section>
+
+          <section class="panel full-panel dashboard-view-panel" data-dashboard-view="payments" hidden>
+            <h2>Payments & Fees</h2>
+            <div id="paymentRecords" class="activity-list"></div>
+          </section>
+
+          <section class="panel full-panel dashboard-view-panel" data-dashboard-view="clinic" hidden>
+            <h2>Clinic Visits</h2>
+            <div id="clinicRecords" class="activity-list"></div>
+          </section>
+
+          <section class="panel full-panel dashboard-view-panel" data-dashboard-view="stores" hidden>
+            <h2>School Store</h2>
+            <p class="muted">Buy replacements or extra items. First-term items already included in school fees appear in your collection records after payment is confirmed.</p>
+            <div id="schoolStores" class="activity-list"></div>
+            <section class="store-cart-panel">
+              <h3>Shopping Cart</h3>
+              <div id="storeCart" class="activity-list"><p class="muted">Your cart is empty.</p></div>
+              <button type="button" id="checkoutStoreCartBtn" disabled>Checkout Cart</button>
+              <p id="storeCheckoutStatus" class="status" role="status" aria-live="polite"></p>
+            </section>
+            <h3>My Orders & Collection</h3>
+            <div id="storeOrders" class="activity-list"></div>
+          </section>
+        </div>
+      </section>
+
+      <p><a href="index.html">Return to admission portal</a></p>
+    </section>
+  </main>
+
+  <script src="js/site-config.js?v=20260718-personalized-ui"></script>
+  <script src="js/pwa-install.js?v=20260722"></script>
+  <script src="js/parent-dashboard.js?v=20260723-acceptance-targeted-load"></script>
+</body>
+</html>

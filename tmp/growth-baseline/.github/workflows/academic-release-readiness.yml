@@ -1,0 +1,102 @@
+name: Academic release readiness
+
+on:
+  pull_request:
+    paths:
+      - "functions/**"
+      - "js/admin.js"
+      - "js/parent-dashboard.js"
+      - "js/student-maintenance.js"
+      - "parent-dashboard.html"
+      - "tests/student-billing*.test.mjs"
+      - "tests/student-maintenance.test.mjs"
+      - "tests/billing-reconciliation-loading.test.mjs"
+      - "tests/parent-document-family-access.test.mjs"
+      - "tests/helpers/billing-credit-review.mjs"
+      - "js/vendor-pos.js"
+      - "tests/vendor-*.test.mjs"
+      - "tests/tuck-shop-*.test.mjs"
+      - "js/app-dialogs.js"
+      - "js/staff-action-feedback.js"
+      - "css/app-dialogs.css"
+      - "tests/form-validation-dialog.test.mjs"
+      - "admin.html"
+      - "sw.js"
+      - "_headers"
+      - "tests/academic-*.test.mjs"
+      - "tests/student-intake-*.test.mjs"
+      - "tests/clinic-*.test.mjs"
+      - "tests/security-audit*.test.mjs"
+      - "tests/approval-signatures.test.mjs"
+      - "js/clinic-referrals.js"
+      - "tests/service-worker-cache-version.test.mjs"
+      - "tests/helpers/service-worker-cache-version.mjs"
+      - "tests/parent-academic-result-access.test.mjs"
+      - "tests/student-cbt-login.test.mjs"
+      - "tests/data-backup-restore.test.mjs"
+      - "tests/edition-aware-settings.test.mjs"
+      - "docs/academic-*.md"
+      - "scripts/academic-release-readiness.mjs"
+      - ".github/workflows/academic-release-readiness.yml"
+      - "package.json"
+      - "package-lock.json"
+  push:
+    branches: [main]
+    paths:
+      - "functions/**"
+      - "js/admin.js"
+      - "js/parent-dashboard.js"
+      - "js/student-maintenance.js"
+      - "parent-dashboard.html"
+      - "tests/student-billing*.test.mjs"
+      - "tests/student-maintenance.test.mjs"
+      - "tests/billing-reconciliation-loading.test.mjs"
+      - "tests/parent-document-family-access.test.mjs"
+      - "tests/helpers/billing-credit-review.mjs"
+      - "js/vendor-pos.js"
+      - "tests/vendor-*.test.mjs"
+      - "tests/tuck-shop-*.test.mjs"
+      - "js/app-dialogs.js"
+      - "js/staff-action-feedback.js"
+      - "css/app-dialogs.css"
+      - "tests/form-validation-dialog.test.mjs"
+      - "admin.html"
+      - "sw.js"
+      - "_headers"
+      - "tests/academic-*.test.mjs"
+      - "tests/student-intake-*.test.mjs"
+      - "tests/clinic-*.test.mjs"
+      - "tests/security-audit*.test.mjs"
+      - "tests/approval-signatures.test.mjs"
+      - "js/clinic-referrals.js"
+      - "tests/service-worker-cache-version.test.mjs"
+      - "tests/helpers/service-worker-cache-version.mjs"
+      - "tests/parent-academic-result-access.test.mjs"
+      - "tests/student-cbt-login.test.mjs"
+      - "tests/data-backup-restore.test.mjs"
+      - "tests/edition-aware-settings.test.mjs"
+      - "docs/academic-*.md"
+      - "scripts/academic-release-readiness.mjs"
+      - ".github/workflows/academic-release-readiness.yml"
+      - "package.json"
+      - "package-lock.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test:academic-release
+      - run: npm run test:clinic-referrals
+      - run: npm run test:tuck-shop
+      - run: npm run test:student-intake

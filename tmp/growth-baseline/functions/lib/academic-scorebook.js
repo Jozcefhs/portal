@@ -1,0 +1,534 @@
+const clean = (value) => String(value ?? '').trim();
+const lower = (value) => clean(value).toLowerCase();
+
+export const ACADEMIC_SCORE_STATES = Object.freeze(['Numeric', 'Missing', 'Absent', 'Exempt', 'Incomplete']);
+export const ACADEMIC_SCORE_SHEET_STATUSES = Object.freeze(['Draft', 'Submitted', 'Approved', 'Locked']);
+export const ACADEMIC_SCORE_IMPORT_MODES = Object.freeze(['all-or-nothing', 'valid-rows-only']);
+export const ACADEMIC_SCORE_IMPORT_BASE_COLUMNS = Object.freeze(['StudentRef', 'StudentName']);
+
+function oneOf(value, choices, fallback = '') {
+  const wanted = lower(value);
+  return choices.find((choice) => lower(choice) === wanted) || fallback;
+}
+
+function finiteNumber(value) {
+  if (value === '' || value === undefined || value === null) return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function rounded(value, places = 2) {
+  const factor = 10 ** places;
+  return Math.round((Number(value) + Number.EPSILON) * factor) / factor;
+}
+
+function componentId(row = {}) {
+  return clean(row.Id || row.ComponentId || row.Code || row.Name);
+}
+
+function normalizedComponents(policy = {}) {
+  const assessment = policy.Assessment || policy.assessment || {};
+  return (Array.isArray(assessment.Components) ? assessment.Components : [])
+    .map((row, index) => {
+      const MaximumScore = finiteNumber(row.MaximumScore) ?? 0;
+      const ScoreEntryMode = lower(row.ScoreEntryMode || row.ScoreLayout) === 'objective-theory'
+        ? 'objective-theory'
+        : 'single';
+      const ObjectiveMaximumScore = ScoreEntryMode === 'objective-theory'
+        ? finiteNumber(row.ObjectiveMaximumScore) ?? 0
+        : MaximumScore;
+      const TheoryMaximumScore = ScoreEntryMode === 'objective-theory'
+        ? finiteNumber(row.TheoryMaximumScore) ?? 0
+        : 0;
+      return {
+        Id: componentId(row),
+        Name: clean(row.Name || row.Label || componentId(row)),
+        MaximumScore,
+        WeightPercentage: finiteNumber(row.WeightPercentage) ?? 0,
+        SourceMode: clean(row.SourceMode || 'any'),
+        Required: row.Required !== false,
+        Order: Number(row.Order || index + 1),
+        ScoreEntryMode,
+        ObjectiveMaximumScore,
+        TheoryMaximumScore,
+        ScoreParts: ScoreEntryMode === 'objective-theory' ? [
+          { Id: 'objective', Name: 'A · Objective', MaximumScore: ObjectiveMaximumScore, SourceMode: 'built-in-cbt', Required: row.Required !== false },
+          { Id: 'theory', Name: 'B · Theory', MaximumScore: TheoryMaximumScore, SourceMode: 'manual', Required: row.Required !== false }
+        ] : []
+      };
+    })
+    .filter((row) => row.Id)
+    .sort((a, b) => a.Order - b.Order || a.Name.localeCompare(b.Name));
+}
+
+function normalizedGradeBands(policy = {}) {
+  const assessment = policy.Assessment || policy.assessment || {};
+  return (Array.isArray(assessment.GradeBands) ? assessment.GradeBands : [])
+    .map((row, index) => ({
+      Id: clean(row.Id || row.Grade || `grade-${index + 1}`),
+      Grade: clean(row.Grade || row.Name).toUpperCase(),
+      MinimumPercentage: finiteNumber(row.MinimumPercentage) ?? 0,
+      MaximumPercentage: finiteNumber(row.MaximumPercentage) ?? 100,
+      GradePoint: finiteNumber(row.GradePoint) ?? 0,
+      Remark: clean(row.Remark),
+      Classification: oneOf(row.Classification, ['pass', 'probation', 'fail'], 'pass'),
+      Order: Number(row.Order || index + 1)
+    }))
+    .filter((row) => row.Grade)
+    .sort((a, b) => b.MinimumPercentage - a.MinimumPercentage || a.Order - b.Order);
+}
+
+export function academicAssessmentScheme(policy = {}, options = {}) {
+  const Components = normalizedComponents(policy);
+  const GradeBands = normalizedGradeBands(policy);
+  const Issues = [];
+  const componentIds = new Set();
+  Components.forEach((component) => {
+    if (componentIds.has(lower(component.Id))) Issues.push(`Assessment component ${component.Id} is duplicated.`);
+    componentIds.add(lower(component.Id));
+    if (component.MaximumScore <= 0) Issues.push(`${component.Name} needs a maximum score greater than zero.`);
+    if (component.WeightPercentage <= 0) Issues.push(`${component.Name} needs a weight greater than zero.`);
+    if (component.ScoreEntryMode === 'objective-theory') {
+      if (component.ObjectiveMaximumScore <= 0) Issues.push(`${component.Name} needs an Objective (A) maximum greater than zero.`);
+      if (component.TheoryMaximumScore <= 0) Issues.push(`${component.Name} needs a Theory (B) maximum greater than zero.`);
+      if (Math.abs(component.ObjectiveMaximumScore + component.TheoryMaximumScore - component.MaximumScore) > 0.001) {
+        Issues.push(`${component.Name} Objective (A) and Theory (B) marks must total ${component.MaximumScore}.`);
+      }
+    }
+  });
+  const weight = rounded(Components.reduce((sum, row) => sum + row.WeightPercentage, 0), 4);
+  if (!Components.length) Issues.push('No active assessment components are configured.');
+  else if (Math.abs(weight - 100) > 0.001) Issues.push(`Assessment component weights total ${weight}; they must total 100.`);
+  const ascending = [...GradeBands].sort((a, b) => a.MinimumPercentage - b.MinimumPercentage);
+  if (!ascending.length) Issues.push('No active grading bands are configured.');
+  ascending.forEach((band, index) => {
+    if (band.MinimumPercentage > band.MaximumPercentage) Issues.push(`${band.Grade} has an invalid percentage range.`);
+    const previous = ascending[index - 1];
+    if (previous && band.MinimumPercentage <= previous.MaximumPercentage) Issues.push(`${previous.Grade} overlaps ${band.Grade}.`);
+    if (previous && band.MinimumPercentage - previous.MaximumPercentage > 0.011) Issues.push(`${previous.Grade} and ${band.Grade} leave a grading gap.`);
+  });
+  if (ascending.length && (ascending[0].MinimumPercentage !== 0 || ascending.at(-1).MaximumPercentage !== 100)) {
+    Issues.push('Grading bands must cover 0 through 100 percent.');
+  }
+  return {
+    Ready: Issues.length === 0,
+    RevisionId: clean(options.RevisionId || options.revisionId),
+    Components,
+    GradeBands,
+    TotalWeightPercentage: weight,
+    Issues
+  };
+}
+
+function suppliedComponentMap(value) {
+  const map = new Map();
+  if (Array.isArray(value)) {
+    value.forEach((row = {}) => {
+      const id = componentId(row);
+      if (id) map.set(lower(id), row);
+    });
+  } else if (value && typeof value === 'object') {
+    Object.entries(value).forEach(([id, score]) => {
+      map.set(lower(id), score && typeof score === 'object' ? { ...score, ComponentId: id } : { ComponentId: id, RawScore: score });
+    });
+  }
+  return map;
+}
+
+function inferredScoreState(row = {}) {
+  const explicit = oneOf(row.State || row.Status, ACADEMIC_SCORE_STATES, '');
+  if (explicit) return explicit;
+  const value = clean(row.RawScore ?? row.Score ?? row.Value);
+  if (!value) return 'Missing';
+  const token = lower(value).replace(/[\s_-]+/g, '');
+  const tokens = {
+    absent: 'Absent', abs: 'Absent', a: 'Absent', exempt: 'Exempt', ex: 'Exempt',
+    missing: 'Missing', miss: 'Missing', m: 'Missing', incomplete: 'Incomplete', inc: 'Incomplete', i: 'Incomplete'
+  };
+  return tokens[token] || 'Numeric';
+}
+
+function suppliedScorePartMap(value) {
+  const map = new Map();
+  const rows = Array.isArray(value) ? value : [];
+  rows.forEach((row = {}) => {
+    const id = clean(row.PartId || row.Id || row.Code);
+    if (id) map.set(lower(id), row);
+  });
+  return map;
+}
+
+function normalizeScorePart(row = {}, definition = {}) {
+  const State = inferredScoreState(row);
+  let RawScore = null;
+  if (State === 'Numeric') {
+    RawScore = finiteNumber(row.RawScore ?? row.Score ?? row.Value);
+    if (RawScore === null) throw new Error(`Enter a numeric score for ${definition.Name}.`);
+    if (RawScore < 0 || RawScore > definition.MaximumScore) {
+      throw new Error(`${definition.Name} must be between 0 and ${definition.MaximumScore}.`);
+    }
+    RawScore = rounded(RawScore, 4);
+  }
+  return {
+    PartId: definition.Id,
+    State,
+    RawScore,
+    MaximumScore: definition.MaximumScore,
+    SourceMode: definition.SourceMode,
+    Note: clean(row.Note).slice(0, 300),
+    ...(row.StateExplicit === true ? { StateExplicit: true } : {})
+  };
+}
+
+export function normalizeAcademicComponentScores(value, schemeValue = {}, options = {}) {
+  const scheme = schemeValue.Components ? schemeValue : academicAssessmentScheme(schemeValue);
+  if (!scheme.Ready && options.requireReady !== false) throw new Error(scheme.Issues[0] || 'Configure an active assessment scheme first.');
+  const supplied = suppliedComponentMap(value);
+  const existing = suppliedComponentMap(options.existing || []);
+  const known = new Set(scheme.Components.map((row) => lower(row.Id)));
+  const unknown = [...supplied.keys()].filter((id) => !known.has(id));
+  if (unknown.length) throw new Error(`Unknown assessment component: ${unknown.join(', ')}.`);
+  return scheme.Components.map((component) => {
+    const row = supplied.get(lower(component.Id)) || (options.partial ? existing.get(lower(component.Id)) : null) || {};
+    if (component.ScoreEntryMode === 'objective-theory') {
+      const suppliedRow = supplied.get(lower(component.Id)) || {};
+      const existingRow = existing.get(lower(component.Id)) || {};
+      const suppliedParts = suppliedScorePartMap(suppliedRow.Parts || suppliedRow.ScoreParts);
+      const existingParts = suppliedScorePartMap(existingRow.Parts || existingRow.ScoreParts);
+      const Parts = component.ScoreParts.map((definition) => normalizeScorePart(
+        suppliedParts.get(lower(definition.Id))
+          || (options.partial ? existingParts.get(lower(definition.Id)) : null)
+          || {},
+        definition
+      ));
+      const unresolved = Parts.filter((part) => ['Missing', 'Incomplete'].includes(part.State));
+      const recorded = Parts.filter((part) => ['Numeric', 'Absent'].includes(part.State));
+      const allExempt = Parts.length > 0 && Parts.every((part) => part.State === 'Exempt');
+      const State = allExempt ? 'Exempt' : unresolved.some((part) => part.State === 'Incomplete')
+        ? 'Incomplete'
+        : unresolved.length ? 'Missing' : 'Numeric';
+      const RawScore = State === 'Numeric'
+        ? rounded(recorded.reduce((sum, part) => sum + (part.State === 'Numeric' ? Number(part.RawScore || 0) : 0), 0), 4)
+        : null;
+      return {
+        ComponentId: component.Id,
+        State,
+        RawScore,
+        MaximumScore: component.MaximumScore,
+        WeightPercentage: component.WeightPercentage,
+        Parts,
+        Note: clean(suppliedRow.Note || existingRow.Note).slice(0, 300)
+      };
+    }
+    const State = inferredScoreState(row);
+    let RawScore = null;
+    if (State === 'Numeric') {
+      RawScore = finiteNumber(row.RawScore ?? row.Score ?? row.Value);
+      if (RawScore === null) throw new Error(`Enter a numeric score for ${component.Name}.`);
+      if (RawScore < 0 || RawScore > component.MaximumScore) {
+        throw new Error(`${component.Name} must be between 0 and ${component.MaximumScore}.`);
+      }
+      RawScore = rounded(RawScore, 4);
+    }
+    return {
+      ComponentId: component.Id,
+      State,
+      RawScore,
+      MaximumScore: component.MaximumScore,
+      WeightPercentage: component.WeightPercentage,
+      Note: clean(row.Note).slice(0, 300),
+      ...(row.StateExplicit === true ? { StateExplicit: true } : {})
+    };
+  });
+}
+
+export function gradeAcademicPercentage(percentage, schemeValue = {}) {
+  const scheme = schemeValue.GradeBands ? schemeValue : academicAssessmentScheme(schemeValue);
+  const value = finiteNumber(percentage);
+  if (value === null) return null;
+  return scheme.GradeBands.find((band) => value >= band.MinimumPercentage && value <= band.MaximumPercentage + 0.0001) || null;
+}
+
+export function calculateAcademicStudentScore(schemeValue = {}, componentScores = []) {
+  const scheme = schemeValue.Components ? schemeValue : academicAssessmentScheme(schemeValue);
+  if (!scheme.Ready) throw new Error(scheme.Issues[0] || 'Configure an active assessment scheme first.');
+  const Scores = normalizeAcademicComponentScores(componentScores, scheme);
+  let includedWeight = 0;
+  let weightedEarned = 0;
+  const unresolved = [];
+  Scores.forEach((score) => {
+    const component = scheme.Components.find((row) => row.Id === score.ComponentId);
+    if (component.ScoreEntryMode === 'objective-theory') {
+      (score.Parts || []).forEach((part) => {
+        const definition = component.ScoreParts.find((row) => row.Id === part.PartId);
+        if (!definition) return;
+        const partWeight = component.MaximumScore > 0
+          ? component.WeightPercentage * definition.MaximumScore / component.MaximumScore
+          : 0;
+        if (part.State === 'Exempt') return;
+        includedWeight += partWeight;
+        if (part.State === 'Numeric') weightedEarned += (part.RawScore / definition.MaximumScore) * partWeight;
+        if (['Missing', 'Incomplete'].includes(part.State) && definition.Required) unresolved.push(`${component.Id}:${definition.Id}`);
+      });
+      return;
+    }
+    if (score.State === 'Exempt') return;
+    includedWeight += component.WeightPercentage;
+    if (score.State === 'Numeric') weightedEarned += (score.RawScore / component.MaximumScore) * component.WeightPercentage;
+    if (['Missing', 'Incomplete'].includes(score.State) && component.Required) unresolved.push(component.Id);
+  });
+  const Percentage = includedWeight > 0 ? rounded(weightedEarned * 100 / includedWeight, 2) : null;
+  const complete = unresolved.length === 0 && includedWeight > 0;
+  const band = complete ? gradeAcademicPercentage(Percentage, scheme) : null;
+  return {
+    ComponentScores: Scores,
+    WeightedTotal: rounded(weightedEarned, 2),
+    IncludedWeightPercentage: rounded(includedWeight, 2),
+    Percentage,
+    Grade: band?.Grade || '',
+    GradePoint: band?.GradePoint ?? null,
+    Remark: band?.Remark || '',
+    Classification: band?.Classification || '',
+    CompletionStatus: complete ? 'Complete' : 'Incomplete',
+    UnresolvedComponentIds: unresolved
+  };
+}
+
+function scoreStateRecorded(value) {
+  return ['Numeric', 'Absent', 'Exempt'].includes(clean(value));
+}
+
+function componentHasRecordedScore(score = {}) {
+  const parts = Array.isArray(score.Parts) ? score.Parts : [];
+  return parts.length
+    ? parts.some((part) => scoreStateRecorded(part.State))
+    : scoreStateRecorded(score.State);
+}
+
+export function migrateAcademicScoreLayout(previousSchemeValue = {}, nextSchemeValue = {}, scoreRecord = {}) {
+  const previousScheme = previousSchemeValue.Components ? previousSchemeValue : academicAssessmentScheme(previousSchemeValue);
+  const nextScheme = nextSchemeValue.Components ? nextSchemeValue : academicAssessmentScheme(nextSchemeValue);
+  if (!previousScheme.Ready) throw new Error(previousScheme.Issues?.[0] || 'The previous scorebook layout is invalid.');
+  if (!nextScheme.Ready) throw new Error(nextScheme.Issues?.[0] || 'The active scorebook layout is invalid.');
+  const previousDefinitions = new Map(previousScheme.Components.map((component) => [lower(component.Id), component]));
+  const nextDefinitions = new Map(nextScheme.Components.map((component) => [lower(component.Id), component]));
+  const previousScores = suppliedComponentMap(scoreRecord.ComponentScores || []);
+  previousScores.forEach((score, id) => {
+    if (!nextDefinitions.has(id) && componentHasRecordedScore(score)) {
+      const name = previousDefinitions.get(id)?.Name || score.ComponentId || id;
+      throw new Error(`${name} has a recorded score but is not present in the active assessment layout.`);
+    }
+  });
+  const sourceType = lower(scoreRecord.SourceType).replace(/[^a-z]/g, '');
+  const migrated = nextScheme.Components.map((nextComponent) => {
+    const previousComponent = previousDefinitions.get(lower(nextComponent.Id));
+    const previousScore = previousScores.get(lower(nextComponent.Id));
+    if (!previousComponent || !previousScore) return { ComponentId: nextComponent.Id };
+    const previousMode = previousComponent.ScoreEntryMode || 'single';
+    const nextMode = nextComponent.ScoreEntryMode || 'single';
+    if (previousMode === nextMode) {
+      return nextMode === 'objective-theory'
+        ? { ComponentId: nextComponent.Id, Parts: previousScore.Parts || [], Note: previousScore.Note }
+        : { ...previousScore, ComponentId: nextComponent.Id };
+    }
+    if (previousMode === 'single' && nextMode === 'objective-theory') {
+      const state = inferredScoreState(previousScore);
+      if (!scoreStateRecorded(state)) return { ComponentId: nextComponent.Id };
+      if (state === 'Exempt') {
+        return {
+          ComponentId: nextComponent.Id,
+          Parts: nextComponent.ScoreParts.map((part) => ({ PartId: part.Id, State: 'Exempt', RawScore: null, Note: previousScore.Note }))
+        };
+      }
+      const looksLikeCbt = ['builtincbt', 'externalcbt'].includes(sourceType)
+        || /\bcbt\b/i.test(clean(previousScore.Note))
+        || ['built-in-cbt', 'external-cbt'].includes(lower(previousComponent.SourceMode));
+      return {
+        ComponentId: nextComponent.Id,
+        Parts: [{
+          PartId: looksLikeCbt ? 'objective' : 'theory',
+          State: state,
+          RawScore: previousScore.RawScore,
+          Note: previousScore.Note
+        }]
+      };
+    }
+    if (previousMode === 'objective-theory' && nextMode === 'single') {
+      const parts = Array.isArray(previousScore.Parts) ? previousScore.Parts : [];
+      if (!parts.some((part) => scoreStateRecorded(part.State))) return { ComponentId: nextComponent.Id };
+      if (parts.length && parts.every((part) => clean(part.State) === 'Exempt')) {
+        return { ComponentId: nextComponent.Id, State: 'Exempt', RawScore: null, Note: previousScore.Note };
+      }
+      if (parts.some((part) => !['Numeric', 'Absent'].includes(clean(part.State)))) {
+        throw new Error(`${nextComponent.Name} has an incomplete A/B score that cannot be merged into one field.`);
+      }
+      return {
+        ComponentId: nextComponent.Id,
+        State: 'Numeric',
+        RawScore: rounded(parts.reduce((sum, part) => sum + (clean(part.State) === 'Numeric' ? Number(part.RawScore || 0) : 0), 0), 4),
+        Note: previousScore.Note
+      };
+    }
+    throw new Error(`${nextComponent.Name} cannot be converted to the active assessment layout.`);
+  });
+  return calculateAcademicStudentScore(nextScheme, migrated);
+}
+
+export function academicScoreSourceIssues(schemeValue = {}, componentScores = [], sourceMode = 'manual') {
+  const scheme = schemeValue.Components ? schemeValue : academicAssessmentScheme(schemeValue);
+  const supplied = suppliedComponentMap(componentScores);
+  const source = lower(sourceMode);
+  return scheme.Components.flatMap((component) => {
+    const row = supplied.get(lower(component.Id));
+    if (!row) return [];
+    if (component.ScoreEntryMode === 'objective-theory') {
+      const parts = suppliedScorePartMap(row.Parts || row.ScoreParts);
+      return component.ScoreParts.flatMap((part) => {
+        const partRow = parts.get(lower(part.Id));
+        if (!partRow || ['missing', 'incomplete'].includes(lower(inferredScoreState(partRow)))) return [];
+        const allowed = lower(part.SourceMode);
+        return ['any', source].includes(allowed) ? [] : [`${component.Name} ${part.Name} accepts scores only from ${part.SourceMode}.`];
+      });
+    }
+    if (['missing', 'incomplete'].includes(lower(inferredScoreState(row)))) return [];
+    const allowed = lower(component.SourceMode || 'any');
+    return ['any', source].includes(allowed) ? [] : [`${component.Name} accepts scores only from ${component.SourceMode}.`];
+  });
+}
+
+export function validateAcademicCbtScoreBatch(value = {}, options = {}) {
+  let payload = value;
+  if (typeof payload === 'string') {
+    try { payload = JSON.parse(payload); } catch (_error) { payload = {}; }
+  }
+  const scheme = options.scheme?.Components ? options.scheme : academicAssessmentScheme(options.policy || {}, options);
+  const requestedSource = lower(options.sourceMode || payload.SourceType).replace(/[^a-z]/g, '');
+  const sourceMode = requestedSource === 'builtincbt' ? 'built-in-cbt' : requestedSource === 'externalcbt' ? 'external-cbt' : '';
+  const componentIdValue = clean(payload.AssessmentComponentId);
+  const component = scheme.Components.find((row) => lower(row.Id) === lower(componentIdValue));
+  const roster = new Map((options.roster || []).map((row) => [lower(row.StudentRef || row.AdmissionNo), row]));
+  const supplied = Array.isArray(payload.Scores) ? payload.Scores : [];
+  const Issues = [];
+  const seen = new Set();
+  if (!scheme.Ready) Issues.push(scheme.Issues[0] || 'Configure an active assessment scheme first.');
+  if (!sourceMode) Issues.push('Choose BuiltInCBT or ExternalCBT as the score source.');
+  if (!component) Issues.push('The CBT batch assessment component is not configured for this scorebook.');
+  const cbtMaximum = component?.ScoreEntryMode === 'objective-theory'
+    ? Number(component.ObjectiveMaximumScore)
+    : Number(component?.MaximumScore);
+  if (component && Math.abs(Number(payload.MaximumScore) - cbtMaximum) > 0.0001) {
+    Issues.push(`${component.Name}${component.ScoreEntryMode === 'objective-theory' ? ' Objective (A)' : ''} is marked over ${cbtMaximum}; the CBT batch uses ${payload.MaximumScore}.`);
+  }
+  if (component && sourceMode) {
+    const sourceIssues = academicScoreSourceIssues(scheme, [component.ScoreEntryMode === 'objective-theory' ? {
+      ComponentId: component.Id,
+      Parts: [{ PartId: 'objective', State: 'Numeric', RawScore: 0 }]
+    } : { ComponentId: component.Id, State: 'Numeric', RawScore: 0 }], sourceMode);
+    Issues.push(...sourceIssues);
+  }
+  if (!supplied.length) Issues.push('The CBT score batch has no student scores.');
+  if (supplied.length > 200) Issues.push('Synchronize at most 200 student scores in one CBT batch.');
+  const Rows = supplied.map((row = {}, index) => {
+    const RowIssues = [];
+    const StudentRef = clean(row.StudentRef || row.AdmissionNo);
+    const key = lower(StudentRef);
+    const State = oneOf(row.State, ['Numeric', 'Absent'], '');
+    let RawScore = null;
+    if (!StudentRef) RowIssues.push('StudentRef is required.');
+    else if (!roster.has(key)) RowIssues.push(`${StudentRef} is not in the selected subject roster.`);
+    else if (seen.has(key)) RowIssues.push(`${StudentRef} appears more than once in this CBT batch.`);
+    seen.add(key);
+    if (!State) RowIssues.push(`${StudentRef || `Row ${index + 1}`} must be Numeric or Absent.`);
+    if (State === 'Numeric') {
+      RawScore = finiteNumber(row.RawScore);
+      if (RawScore === null) RowIssues.push(`${StudentRef || `Row ${index + 1}`} needs a numeric CBT score.`);
+      else if (component && (RawScore < 0 || RawScore > cbtMaximum)) {
+        RowIssues.push(`${StudentRef} must be between 0 and ${cbtMaximum}.`);
+      } else RawScore = rounded(RawScore, 4);
+    }
+    return {
+      RowNumber: index + 1, StudentRef, State, RawScore,
+      AttemptId: clean(row.AttemptId), AttemptStatus: clean(row.AttemptStatus),
+      SubmittedAt: clean(row.SubmittedAt), Valid: RowIssues.length === 0, Issues: RowIssues
+    };
+  });
+  Rows.filter((row) => !row.Valid).forEach((row) => Issues.push(...row.Issues));
+  return {
+    Ready: Issues.length === 0,
+    Issues: [...new Set(Issues)],
+    Rows,
+    Component: component || null,
+    RosterCount: roster.size,
+    SubmittedCount: Rows.length,
+    UntouchedRosterCount: Math.max(0, roster.size - seen.size),
+    NumericCount: Rows.filter((row) => row.State === 'Numeric').length,
+    AbsentCount: Rows.filter((row) => row.State === 'Absent').length
+  };
+}
+
+function importComponentEntry(row = {}, component = {}) {
+  if (row.ComponentScores) {
+    const map = suppliedComponentMap(row.ComponentScores);
+    const key = map.has(lower(component.Id)) ? lower(component.Id) : lower(component.Name);
+    return { found: map.has(key), value: map.get(key) };
+  }
+  const matchingKey = Object.keys(row).find((key) => lower(key) === lower(component.Id) || lower(key) === lower(component.Name));
+  return { found: Boolean(matchingKey), value: matchingKey ? row[matchingKey] : '' };
+}
+
+export function normalizeAcademicScoreImportRows(value, schemeValue = {}) {
+  const scheme = schemeValue.Components ? schemeValue : academicAssessmentScheme(schemeValue);
+  let supplied = value;
+  if (typeof supplied === 'string') {
+    try { supplied = JSON.parse(supplied); } catch (_error) { supplied = []; }
+  }
+  if (!Array.isArray(supplied)) return [];
+  return supplied.map((row = {}, index) => ({
+    RowNumber: Number(row.RowNumber || index + 2),
+    StudentRef: clean(row.StudentRef || row.AdmissionNo || row.AccountRef),
+    StudentName: clean(row.StudentName || row.DisplayName),
+    ComponentScores: scheme.Components.flatMap((component) => {
+      const entry = importComponentEntry(row, component);
+      if (!entry.found) return [];
+      const suppliedScore = entry.value;
+      return suppliedScore && typeof suppliedScore === 'object'
+        ? [{ ...suppliedScore, ComponentId: component.Id }]
+        : [{ ComponentId: component.Id, RawScore: suppliedScore }];
+    })
+  }));
+}
+
+export function validateAcademicScoreImport(value, options = {}) {
+  const scheme = options.scheme?.Components ? options.scheme : academicAssessmentScheme(options.policy || {}, options);
+  const rows = normalizeAcademicScoreImportRows(value, scheme);
+  const roster = new Map((options.roster || []).map((row) => [lower(row.StudentRef || row.AdmissionNo), row]));
+  const existingScores = new Map((options.existingScores || []).map((row) => [lower(row.StudentRef), row]));
+  const seen = new Set();
+  const Results = rows.map((row) => {
+    const Issues = [];
+    const key = lower(row.StudentRef);
+    if (!key) Issues.push('StudentRef is required.');
+    else if (seen.has(key)) Issues.push(`Student ${row.StudentRef} is duplicated in this import.`);
+    else if (!roster.has(key)) Issues.push(`Student ${row.StudentRef} is not in the selected subject roster.`);
+    seen.add(key);
+    let Calculated = null;
+    if (!row.ComponentScores.length) Issues.push('No recognized assessment component columns were supplied.');
+    try {
+      const merged = normalizeAcademicComponentScores(row.ComponentScores, scheme, {
+        existing: existingScores.get(key)?.ComponentScores || [], partial: true
+      });
+      Calculated = calculateAcademicStudentScore(scheme, merged);
+    } catch (error) {
+      Issues.push(clean(error?.message || error));
+    }
+    Issues.push(...academicScoreSourceIssues(scheme, row.ComponentScores, options.sourceMode || 'spreadsheet'));
+    return { ...row, Valid: Issues.length === 0, Issues, Calculated };
+  });
+  return {
+    Rows: Results,
+    TotalRows: Results.length,
+    ValidRows: Results.filter((row) => row.Valid).length,
+    InvalidRows: Results.filter((row) => !row.Valid).length,
+    Ready: Results.length > 0 && Results.every((row) => row.Valid)
+  };
+}

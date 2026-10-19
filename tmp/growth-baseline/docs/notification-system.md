@@ -1,0 +1,208 @@
+# Notification and reminder system
+
+## Architecture
+
+The web application uses one server-owned notification engine for staff and parent audiences. Cloudflare Pages Functions authenticate the caller, enforce workspace/branch/section scope, read and write Firestore through the service account, and send browser push through Firebase Cloud Messaging (FCM) HTTP v1.
+
+The browser never receives a service-account private key or an FCM server credential. It receives only Firebase's public web application identifiers and public VAPID key after successful staff or parent authentication. Firestore is not accessed directly from browser code.
+
+Notification categories are Fees, Payments, Requisitions, Attendance, Academics, Announcements, and System. Supported channels are InApp and Push.
+
+## Firestore collections
+
+### `notifications`
+
+One immutable event record. Important fields include `SchoolId`, `NotificationId`, `EventKey`, `Category`, `Type`, `Audience`, `Channels`, `Severity`, `TargetRoles`, `TargetUsernames`, `TargetDepartments`, `TargetEmails`, `TargetAccountRefs`, `Title`, `Message`, `ActionUrl`, `RecordType`, `RecordId`, `DueDate`, `ScheduleStage`, `TemplateKey`, `TemplateVersion`, `ActorType`, `ActorId`, `BranchId`, `SchoolSection`, `CreatedAt`, `CreatedBy`, `ExpiresAt`, and `DeliveryStatus`.
+
+`EventKey` produces a deterministic document ID. Creating the same business event twice therefore returns the existing document instead of creating a duplicate.
+
+### `notificationReads`
+
+Per-recipient state. `NotificationId` plus `RecipientKey` produces a deterministic document ID. `ReadAt` records read status and `ArchivedAt` records archive status. One user's state cannot change another user's notification state.
+
+### `notificationSubscriptions`
+
+One active FCM registration per recipient/device. It stores audience, recipient key, device ID/name/platform, token, activity state, and timestamps. API responses remove the token before returning device lists. Re-registering a browser token to a different account removes the prior binding.
+
+### `notificationDeliveries`
+
+One idempotent delivery record per notification/channel/recipient/device. Status is Pending, Delivered, Failed, Invalid subscription, or Suppressed. It also records attempt count, provider message ID, delivery time, and a bounded last error.
+
+### `notificationSettings`
+
+The `system` document contains organisation defaults: timezone, fee reminder intervals, templates, and workflow recipient rules. `PREF-*` documents contain per-user category/channel preferences and quiet hours.
+
+Invoice documents now contain `ReminderEligible`, `NextReminderDate`, `NextReminderStage`, `SentReminderStages`, `LastReminderStage`, `LastReminderAt`, and `ReminderBalance`.
+
+### `notificationAnnouncements` and `notificationAnnouncementPushJobs`
+
+`notificationAnnouncements` is the audit trail for management-composed school messages. It records the title, message, selected recipient groups and channels, schedule, sender, recipient totals, status, and push counts. `notificationAnnouncementPushJobs` divides bulk browser-push work into small idempotent batches so one request cannot exceed the Cloudflare Worker subrequest allowance.
+
+## Event flows
+
+### Verified payment
+
+Paystack is verified before `recordManualPayment` completes. After ledger/invoice allocation and final `ProcessingStatus: Completed`, one Payment Received event is created. Its recipients are the student account reference and every known parent/guardian email stored on the student/payment. Replaying payment verification uses the same payment reference and notification event key.
+
+### Rejected school bank transfer
+
+Rejecting a school-payment transfer atomically saves the rejected request and a
+parent Payments notification containing the rejection reason. The write checks
+the transfer's database version so it cannot race with approval. Push uses the
+existing device subscriptions, preferences and per-device delivery deduplication;
+in-app notification persistence does not depend on push being enabled or working.
+Retrying the same rejection reuses its event and saved reason, without creating a
+receipt, wallet credit or accounting entry.
+
+Parents can also see bank-transfer submissions and their rejection notes under
+Payments & Fees, separately from completed payments. This read-only history covers
+older rejected submissions too, without retroactively sending notifications or
+rewriting financial records. Results are limited to the authenticated parent's
+selected child, branch and school section; payment proofs and internal payloads
+are not returned. No email delivery is implied by a successful in-app notice.
+
+### Fee reminders
+
+Invoice generation calculates the next reminder from the configured due-date schedule. Payment allocation immediately recalculates eligibility and the remaining balance. Paid invoices are not queried by the scheduler.
+
+The daily scheduler uses bounded indexed queries for eligible `NextReminderDate` values and a 44-day due-date window for legacy invoices that predate reminder metadata. Default stages are:
+
+- Before due: 14, 7, 3, 1, and 0 days.
+- After due: 1, 7, 14, and 30 days.
+
+School-fee components for the same student, period, currency, due date, and stage are combined into one parent notification. The event key includes the stage, so retries are safe while distinct stages remain distinct.
+
+### Requisitions
+
+Notifications are emitted when a requisition or supplier bill is submitted/resubmitted, approved, rejected, pushed to Accounts for desktop processing, or posted to accounting. Recipient resolution supports explicit usernames, roles, departments, branch/section scope, the original requester, and configurable workflow roles.
+
+### School announcements
+
+Super Admin and Management users in the school edition can compose an announcement for day students, boarding students, staff, or any combination. Student-group messages target the linked parent accounts; staff messages target active staff usernames. The sender can choose in-app, browser push, or both, and may send immediately or schedule a future delivery. Duplicate parent addresses are collapsed, inactive students and staff are excluded, and branch scope is retained.
+
+In-app records are created immediately. Bulk push work is divided into small jobs and drained by the authenticated composer while the page remains open; the protected scheduler safely resumes any pending jobs and processes future scheduled announcements.
+
+## Web interfaces
+
+### Spoken staff alerts and presence push
+
+In the staff notification bell, open **View all notifications → Devices** (or **Settings & devices** for administrators). **Enable on this device** registers background push; **Read requisition and presence notifications aloud** controls speech for the signed-in staff account on that browser. Use **Test voice** after clicking or tapping the page. Speech requires the app to be visible and the browser to allow it; background/closed-app push uses the operating system's notification sound, not arbitrary spoken text. Mute, Do Not Disturb and quiet hours can suppress alerts.
+
+The service worker wakes the open notification centre on push. The centre fetches the authenticated inbox before speaking; raw push messages are never read aloud without current-account authorization. Requisitions older than ten minutes, read/archived records, expired presence checks and other branches are not spoken. Event IDs are remembered across reloads; due-date keys deduplicate dashboard and push presence alerts. Switching users clears queued speech. Camera guidance takes precedence.
+
+Presence push is generated by the existing attendance scheduler, including when the portal is closed. It must be deployed with working FCM configuration and the staff device must be subscribed. Empty completed delivery markers are excluded from the due query; stale markers are cleared using update-time preconditions to avoid overwriting concurrent clock-ins.
+
+### Camera capture
+
+Staff enrollment/verification and assisted student enrollment/search share the on-device Human model. Capture now waits for actual video frames, offers available camera devices, requests continuous autofocus when supported, and preserves the uncropped preview aspect ratio. A live preview gives positioning feedback before capture. Inference is serialized; closing, restarting or losing the camera cancels the capture before submission. Blink detection uses roll-invariant eyelid/eye-corner ratios calibrated against the person's open eyes. Missing/multiple faces reset the live check, and templates are sampled only while frontal with eyes open.
+
+Match thresholds, encrypted template storage, authorization and human confirmation of student search results are unchanged. These interaction checks are not certified presentation-attack detection or a claim of banking-grade face verification. Physical-device testing under normal/poor lighting remains necessary.
+
+Staff and parent portals provide:
+
+- Notification bell, unread badge, latest items, timestamps, and deep links.
+- Full history with category, unread, archived, and cursor-based older-item filtering.
+- Mark one or all as read, archive, and restore.
+- Archive/restore controls block repeat clicks while a request is pending. Recipient-state writes use database version checks; repeated requests for an already-completed state do not write or create another successful action audit. Failed/denied attempts remain audited, request diagnostics are retained, and real state changes record the notification ID. Existing audit records are never removed. The shared handlers cover all three editions and their web/mobile/desktop-launched portals.
+- Category/channel preferences, timezone, and quiet hours.
+- Browser push opt-in, current-device status, device removal, and staff test notification.
+- Super Admin settings for reminder intervals and templates.
+- A school-only message composer with recipient checkboxes, channel selection, scheduling, confirmation, and sent-message audit history.
+
+Browser permission is requested only after the user selects **Enable on this device**. Denial leaves in-app notifications operating normally.
+
+## Firebase and Cloudflare configuration
+
+1. In the Firebase project, enable **Firebase Cloud Messaging API (V1)**.
+2. Register a Firebase web application for the deployed portal.
+3. In Firebase **Project settings → Cloud Messaging → Web configuration**, create or import a Web Push certificate and retain its public VAPID key.
+4. Keep the existing service-account variables in Cloudflare Pages:
+   - `FIREBASE_PROJECT_ID`
+   - `FIREBASE_CLIENT_EMAIL`
+   - `FIREBASE_PRIVATE_KEY` as an encrypted secret
+5. Add the public web configuration variables in Cloudflare Pages:
+   - `FIREBASE_WEB_API_KEY`
+   - `FIREBASE_APP_ID`
+   - `FIREBASE_MESSAGING_SENDER_ID`
+   - `FCM_VAPID_KEY`
+6. Add a long random `NOTIFICATION_SCHEDULER_SECRET` as a Cloudflare encrypted secret.
+7. Deploy `firestore.school.indexes.json` through `firebase.school.json` to the same Firebase project. The reminder query requires the `ReminderEligible` + `NextReminderDate` composite index.
+8. In the GitHub repository, configure Actions secrets:
+   - `NOTIFICATION_SCHEDULER_URL`: the full deployed URL ending in `/api/notification-scheduler`
+   - `NOTIFICATION_SCHEDULER_SECRET`: the same value configured in Cloudflare
+
+The `Notification reminders` workflow runs daily at 05:15 UTC (06:15 Africa/Lagos). It is also manually runnable with an optional processing date. A separate `School announcement delivery` workflow calls the same protected endpoint every 15 minutes in announcement-only mode, using several bounded invocations to drain push batches without exceeding one Worker's subrequest allowance. Both workflows use the same school scheduler URL and Bearer secret.
+
+The `Attendance presence notifications` workflow calls the same protected scheduler every five minutes. For branches where **Staff Attendance → Work hours → Presence → Send a push notification** is enabled, each due random check creates one idempotent, urgent staff notification and clears its delivery marker after processing. Delivery still requires an active push subscription on the staff device and the Staff audience's Push channel and Attendance category to remain enabled. GitHub schedules can occasionally start late, so five minutes is the target interval rather than a guaranteed exact delivery time.
+
+For existing invoices, run the reminder metadata migration first in dry-run mode with the four required Firebase/workspace environment variables loaded in the shell:
+
+```powershell
+npm run migrate:notification-reminders
+```
+
+Review the counts, then apply the same bounded, optimistic-concurrency-safe writes:
+
+```powershell
+npm run migrate:notification-reminders -- --apply
+```
+
+## Security rules and indexes
+
+No browser code reads or writes Firestore. Consequently, this implementation does not add permissive Firestore client rules; the existing rules should continue to deny untrusted client access. Staff authorization is enforced by the signed staff session, parent authorization is revalidated with the existing parent email/login code and owned-child scope, scheduler authorization uses its dedicated secret, and every returned record is checked against workspace, branch, section, audience, and recipient targeting.
+
+The index file adds the scheduler composite index on `invoices(ReminderEligible, NextReminderDate)`. Existing notification target indexes cover role, username, email, and account-reference delivery; new equivalents cover department targeting. `notificationReads(RecipientKey, NotificationId)` remains the per-recipient state index. Single-field token and subscription queries use Firestore's automatic indexes.
+
+## Templates
+
+Super Admin can edit templates as a JSON object. Missing templates use the tested built-in text. Supported template keys include `payment_received`, `fee_due`, `fee_overdue`, and `requisition_submitted`, `requisition_approved`, `requisition_rejected`, `requisition_pushed`, or `requisition_posted`.
+
+Example:
+
+```json
+{
+  "fee_due": {
+    "Version": "2",
+    "Title": "Fee reminder",
+    "Message": "{fee} of {amount} is due on {dueDate}."
+  },
+  "requisition_rejected": {
+    "Version": "1",
+    "Title": "Requisition update",
+    "Message": "{recordId} was rejected. {notes}"
+  }
+}
+```
+
+Template substitutions are plain text. The application escapes notification content before placing it in HTML.
+
+## Validation
+
+Run the notification suites with:
+
+```powershell
+node --test tests/notifications.test.mjs tests/notification-system.test.mjs tests/school-announcements.test.mjs
+```
+
+The suites cover central metadata, event idempotency, recipient isolation, unread/read state, payment confirmation, all default fee stages, paid and part-paid invoices, overdue processing, every requisition transition, per-device identity, push denial, invalid-token cleanup, protected APIs, and the absence of portal-open notification side effects.
+
+## Monitoring and troubleshooting
+
+- Scheduler output reports the processing date, invoices inspected, groups processed, events created or deduplicated, and invoice documents updated.
+- The same daily run retries failed push deliveries up to five attempts. Delivered and invalid-subscription records are never resent.
+- Inspect `notificationDeliveries` for provider message IDs, failures, and attempt counts.
+- `Invalid subscription` means FCM rejected a stale token; the subscription is removed automatically and the user can enable push again.
+- If in-app works but push is unavailable, confirm all four public Firebase web variables and that FCM API v1 is enabled.
+- If reminders do not run, confirm both scheduler secrets match and that the Firestore indexes are deployed.
+- Quiet hours suppress non-urgent push only; the in-app history remains available.
+
+## Rollback
+
+The existing `notifications` and `notificationReads` fields remain compatible. A code rollback can ignore the additional collections and invoice fields without data migration. Disable the scheduled GitHub workflow to stop new reminders, then roll back the web deployment. Existing invoices, payments, requisitions, and accounting records are not deleted or renamed.
+
+## Assumptions
+
+- Each deployed school workspace has a stable `DYNAMAX_WORKSPACE_ID`; the deployment identity and branch/section scope are authoritative.
+- A parent/guardian is reachable when a supported email field is present on the validated student/payment record. Duplicate addresses are collapsed.
+- GitHub Actions is the scheduler for the current Cloudflare Pages architecture. The HTTP scheduler remains provider-neutral and may instead be called by another trusted daily scheduler with the same Bearer secret.
+- Browser push requires HTTPS, except for browser-supported localhost development. In-app notifications remain available when FCM is not configured or permission is denied.

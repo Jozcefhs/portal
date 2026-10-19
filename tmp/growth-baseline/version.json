@@ -1,0 +1,7 @@
+{
+  "version": "3.1.28",
+  "channel": "stable",
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.28.exe",
+  "sha256": "52d75934aab9dfea12ae7fec22246a31ba8ba85a1a9c7dccb3ac8fa6798cf4f3",
+  "notes": "Dynamax Desktop v3.1.28 packages the latest desktop source for all editions, including explicit review of matching wallet credits before a manual top-up, with batch-upload evidence and safe cancellation. Requires the current companion backend for this review. The online companion also provides full student receipt-history searches, improved CBT subject selection and controlled transfers, signed clinic referral PDFs, clearer passport-photo audit labels and one combined missing-field dialogue. These companion features require internet access and are not new offline desktop screens. Existing procurement, finance, academic and approval improvements are retained. Installation preserves organisation settings and does not change existing stock, wallet balances or student scores."
+}

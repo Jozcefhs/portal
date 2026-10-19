@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Application Submitted Successfully</title>
+  <link rel="stylesheet" href="css/style.css?v=20260718-personalized-ui">
+</head>
+<body>
+  <main class="page-wrap narrow">
+    <section class="card">
+      <h1>Application Submitted Successfully</h1>
+      <p class="status ok">Your application has been received successfully.</p>
+
+      <div id="referenceBox" class="status"></div>
+
+      <p>
+        Thank you for applying to <strong data-school-name>the school</strong>.
+        Our Admissions Office will review the application and contact you through the email address provided.
+      </p>
+
+      <p>
+        Please keep your application reference safely. You may need it when contacting the school about this application.
+      </p>
+
+      <p>
+        If the Admissions Office asks for additional documents, you can upload them here using your verification email and code.
+      </p>
+
+      <p>
+        <a href="payments.html">
+          <button type="button">Pay Admission Fees</button>
+        </a>
+        <a href="upload-documents.html">
+          <button type="button">Upload Documents</button>
+        </a>
+        <a href="index.html">
+          <button type="button">Return to Home</button>
+        </a>
+      </p>
+    </section>
+  </main>
+
+  <script src="js/site-config.js?v=20260718-personalized-ui"></script>
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const ref = params.get('ref') || '';
+    const name = params.get('name') || '';
+
+    const box = document.getElementById('referenceBox');
+
+    if (ref) {
+      box.innerHTML = `
+        ${name ? `<p><strong>Applicant:</strong> ${name}</p>` : ''}
+        <p><strong>Application Reference:</strong> ${ref}</p>
+      `;
+    } else {
+      try {
+        const stored = JSON.parse(sessionStorage.getItem('dcaApplicationSuccess') || 'null');
+        if (stored && stored.reference) {
+          box.innerHTML = `
+            ${stored.applicantName ? `<p><strong>Applicant:</strong> ${stored.applicantName}</p>` : ''}
+            <p><strong>Application Reference:</strong> ${stored.reference}</p>
+          `;
+        } else {
+          box.textContent = 'Application received.';
+        }
+      } catch (_) {
+        box.textContent = 'Application received.';
+      }
+    }
+  </script>
+</body>
+</html>

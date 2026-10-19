@@ -1,0 +1,42 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Hotel physical-key dispenser integration</title>
+<link rel="stylesheet" href="css/hotel-self-service.css?v=20261013"></head><body><main class="hotel-collection-pass">
+<p>DYNAMAX · HOTEL SERVICES</p><h1>Physical-key dispenser integration</h1>
+<p>This is an HTTPS software contract, not firmware for a particular motor or controller. Do not enable the dispenser for guests until its mechanical, power-loss and sensor tests pass. It dispenses ordinary physical keys, not NFC access cards.</p>
+<h2>1. Prepare the branch</h2><ol><li>In Hotel Services → QR, room previews &amp; keys, upload a picture or short video for each room type (up to 8 MB). The existing QR automatically shows these previews.</li>
+<li>Register a dispenser, initially disabled. Copy its Device ID and one-time device token into the controller's protected configuration. Tokens are branch-specific; never embed one in a public web page.</li>
+<li>Configure check-in/check-out hours and the local UTC offset (Nigeria: 60 minutes). For locations with daylight-saving time, update the offset when it changes.</li>
+<li>Map each room to one unique machine slot. Verify the room is vacant and clean and that the correct room key is physically loaded. Mark the slot loaded. After every stay, key return and reloading require explicit staff confirmation.</li></ol>
+<h2>2. Reserve and pay</h2><p>The guest scans the existing hotel QR, previews room types, chooses a room and dates, and pays through Paystack. Payment verification is server-side. The payment-success page links to a private collection pass in the same browser. Guests should save that private link or print the pass. This version does not send collection codes by email or SMS.</p>
+<p>A six-digit code is displayed only for a paid booking with an enabled, mapped dispenser. It is accepted only during the collection window, while the reservation is still eligible, the room is ready and its key is loaded. Without a configured dispenser, the guest is directed to reception.</p>
+<h2>3. Claim a release</h2><p>POST to <code>/api/hotel-key-device</code> on the organisation's HTTPS portal. Set <code>Content-Type: application/json</code> and <code>Authorization: Bearer DEVICE_TOKEN</code>. Verify the TLS certificate. Do not log guest codes or device tokens.</p>
+<pre>{
+  "Action": "redeem",
+  "DeviceId": "DEVICE_ID_FROM_SETTINGS",
+  "RequestId": "a-new-persisted-UUID-for-this-attempt",
+  "Code": "012345"
+}</pre>
+<p>Persist the request ID before sending. A successful first response contains:</p>
+<pre>{
+  "ok": true,
+  "commandId": "SERVER_COMMAND_ID",
+  "state": "Issued",
+  "newCommand": true,
+  "slot": "A01"
+}</pre>
+<p>Persist the command ID and intended slot before any motor operation. Persist an <em>actuation started</em> marker before energising the motor. Use only the slot returned by the server; never calculate a room number from the six digits. Only one command may be active at a time.</p>
+<p><strong>A replay has <code>newCommand: false</code> and no slot. Never actuate from a replay.</strong> If a response is lost, retry the same request ID, not a new one. If the controller cannot prove whether it acted, stop and require physical staff inspection. The protocol provides at-most-once authorization; only correctly designed persistent controller state and release sensors can prevent duplicate physical actuation.</p>
+<h2>4. Confirm the physical result</h2>
+<pre>{
+  "Action": "confirm",
+  "DeviceId": "DEVICE_ID_FROM_SETTINGS",
+  "CommandId": "SERVER_COMMAND_ID",
+  "Outcome": "released"
+}</pre>
+<p>Send <code>released</code> only after the release sensor proves the key was dispensed. Persist that sensor result before sending it. The server consumes the code, marks the key slot empty, checks the guest in and marks the room occupied in one atomic change. Re-sending the same confirmed result is safe and must never restart the motor.</p>
+<p>Send <code>failed</code> or <code>unknown</code> after a jam or ambiguous sensor result. This disables the dispenser and holds the room/reservation for review. Lost acknowledgements should be retried with the same command ID. There is no automatic expiry that releases an uncertain handoff for another attempt.</p>
+<h2>5. Recover safely</h2><p>Disable the dispenser, stop its controller physically, inspect the slot and key, and use <em>Inspect and resolve</em> with a written explanation. A confirmed release checks the guest in. No release invalidates the old code; inspect/reload the key, re-enable collection, and have the guest refresh the private pass for a new code. A late device acknowledgement for a resolved command cannot cause a new release.</p>
+<h2>Required acceptance tests</h2><ul><li>Wrong, used, expired and not-yet-active codes; unpaid/cancelled bookings; dirty, occupied or unstocked rooms.</li><li>Two simultaneous attempts, double button presses, duplicated requests and another branch's device token.</li><li>Power failure before/after request persistence, before/after motor start and before/after the sensor result.</li><li>Network loss after claim and after confirmation; jam, empty slot, sensor failure and controller reboot.</li><li>Manual check-in/cancellation while a handoff is pending; staff resolution with the controller stopped; returned-key inspection and restocking.</li></ul>
+<p>Twenty new code attempts per device per 15 minutes are allowed. HTTP 429 means wait; never bypass throttling. HTTP 409 means no new actuation is authorized—refresh or contact reception. HTTP 401 means credentials must be checked. Any other error or incomplete response means stop; do not actuate.</p>
+<h2>Hosting and credentials</h2><p>Media uses the existing private <code>DYNAMAX_DOCUMENTS</code> R2 binding. Only the currently published room-type reference is served publicly; replaced objects remain recoverable in storage. Code HMACs use <code>HOTEL_KEY_SECRET</code> when configured, otherwise the existing staff-session/backend signing secret. Changing that secret invalidates existing collection codes; guests can refresh their private pass. Keep Firestore service collections inaccessible to public clients. Guest tokens and six-digit plaintext codes are not included in ordinary staff lists or audit records.</p>
+<p>Web setup is available in hotel-enabled Religious Organisation and Other Organisation editions. Desktop has the equivalent <em>Room previews &amp; key dispenser</em> control. No physical machine has been commissioned by this software update.</p>
+</main></body></html>

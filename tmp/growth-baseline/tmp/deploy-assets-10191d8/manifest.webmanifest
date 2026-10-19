@@ -1,0 +1,11 @@
+{
+  "name": "School Parent Portal",
+  "short_name": "School Portal",
+  "start_url": "/parent-dashboard.html",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f4f7fb",
+  "theme_color": "#0f3d66",
+  "description": "School admissions, payments, results and parent services",
+  "icons": [{ "src": "/app-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}

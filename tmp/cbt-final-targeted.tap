@@ -1,0 +1,21 @@
+✔ ICT can prepare and commit its own signed upload without a separate reviewer (27.8834ms)
+✔ independent servers merge different students into one scorebook without absence or centre assignments (15.5498ms)
+✔ a second attempt is rejected per student while the other student posts, with duplicate-safe receipts (38.1047ms)
+✔ concurrent centres reprepare against the latest sheet and never lose other results (15.1223ms)
+✔ same-student concurrent preparations conflict on retry rather than overwrite (12.0449ms)
+✔ genuine same-attempt marking corrections retain existing approval and cell-lock requirements (10.9143ms)
+✔ server signature, reviewer permission, scope, roster and prepared membership checks still apply (14.6809ms)
+✔ an existing batch ID cannot be reused by a different signing server (8.5275ms)
+✔ a concurrent batch-ID collision from another signer is not mistaken for a successful retry (9.588ms)
+✔ legacy provenance permits original-server compatibility but protects existing manual or other-server results (0.6243ms)
+✔ split-paper provenance protects only the objective cell and preserves other component sources (0.1708ms)
+✔ a CBT password synchronizes to a verifiable online credential; retries do not overwrite newer passwords (20.904ms)
+✔ password sync retains scope, verifier validation and concurrent-change guards (4.1126ms)
+ℹ tests 13
+ℹ suites 0
+ℹ pass 13
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 393.2571

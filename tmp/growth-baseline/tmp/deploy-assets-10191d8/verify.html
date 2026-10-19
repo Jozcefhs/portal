@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Verify Admission Form Purchase</title>
+  <link rel="stylesheet" href="css/style.css?v=20260718-personalized-ui">
+</head>
+<body>
+  <main class="page-wrap narrow">
+    <section class="card">
+      <h1>Verify Admission Form Purchase</h1>
+      <p><span data-school-name>School Portal</span> - enter the email address and verification code sent after payment.</p>
+
+      <form id="verifyForm" autocomplete="on">
+        <label for="email">Email Address</label>
+        <input id="email" name="email" type="email" required placeholder="parent@example.com">
+
+        <label for="code">Verification Code</label>
+        <input id="code" name="code" type="text" required placeholder="ABC123" maxlength="12" autocomplete="one-time-code">
+
+        <button type="submit" id="verifyBtn">Verify and Continue</button>
+      </form>
+
+      <p id="status" class="status" aria-live="polite"></p>
+    </section>
+  </main>
+  <script src="js/site-config.js?v=20260718-personalized-ui"></script>
+  <script src="js/verify.js"></script>
+</body>
+</html>

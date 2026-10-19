@@ -1,0 +1,7817 @@
+import { batchCommitDocuments, getDocument, listCollection, queryCollection } from './firestore.js';
+import { enforceActorBranch } from './branch-scope.js';
+import { normalizeClassKey } from './class-names.js';
+import { staffRecordMatchesEdition } from './records-desk.js';
+import { createNotification } from './notifications.js';
+import { normalizeSchoolCalendar, schoolCalendarDayIsOpen, schoolCalendarSummary } from './academic-school-calendar.js';
+import {
+  advanceAcademicTimetableGeneration, buildAcademicGenerationProblem,
+  normalizeAcademicGenerationRules, validateAcademicGeneratedEntries
+} from './academic-timetable-generator.js';
+import { academicCumulativePolicyIssues, academicPolicyIssues, academicPolicyScopeChain, normalizeAcademicPolicy } from './academic-policy.js';
+import { loadAcademicPolicyView } from './academic-policy-store.js';
+import { deleteStoredDocument, getStoredDocument } from './document-storage.js';
+import { safeStoredDocument } from './document-files.js';
+import { academicCbtPaperDigest } from './academic-cbt-papers.js';
+import { studentLoginCredentialCollection, studentLoginCredentialId } from './student-login-credentials.js';
+import { loadOrganizationNameProfile } from './organization-name-format.js';
+import { formatPersonName } from './person-name-format.js';
+import {
+  STUDENT_FACE_MODEL_ID,
+  decryptFaceDescriptor,
+  faceTemplateIsUsable,
+  studentFaceTemplateEncryptionSecret,
+  studentFaceTemplateMeta
+} from './student-face-templates.js';
+import {
+  getSchoolStructure, listSchoolCollection, safeScopeId, schoolSectionFor, scopedCollectionPath
+} from './school-scope.js';
+import {
+  ACADEMIC_ATTENDANCE_MODES,
+  ACADEMIC_ATTENDANCE_STATUSES,
+  ACADEMIC_TIMETABLE_VERSION_STATUSES,
+  academicTeacherLoadIssues,
+  academicAttendanceSummary,
+  academicTimetableConflicts,
+  normalizeAcademicAttendanceEntries,
+  normalizeAcademicTeacherUnavailableSlots,
+  normalizeAcademicTimetableDays,
+  normalizeAcademicTimetableEntry,
+  normalizeAcademicTimetablePeriods
+} from './academic-timetable-attendance.js';
+import {
+  ACADEMIC_SCORE_IMPORT_MODES,
+  ACADEMIC_SCORE_SHEET_STATUSES,
+  academicAssessmentScheme,
+  academicScoreSourceIssues,
+  calculateAcademicStudentScore,
+  migrateAcademicScoreLayout,
+  normalizeAcademicComponentScores,
+  validateAcademicCbtScoreBatch,
+  validateAcademicScoreImport
+} from './academic-scorebook.js';
+import {
+  ACADEMIC_TERM_RESULT_STATUSES,
+  academicTermResultTransition,
+  calculateAcademicMidTermResultDrafts,
+  calculateAcademicTermResultDrafts
+} from './academic-term-results.js';
+import {
+  ACADEMIC_CUMULATIVE_STATUSES,
+  ACADEMIC_PROMOTION_OUTCOMES,
+  ACADEMIC_PROMOTION_STATUSES,
+  ACADEMIC_TRANSCRIPT_STATUSES,
+  academicCumulativeTransition,
+  academicPromotionTransition,
+  academicTranscriptTransition,
+  buildAcademicProbationResit,
+  buildAcademicTranscriptDraft,
+  calculateAcademicCumulativeDrafts,
+  evaluateAcademicPromotionDecision
+} from './academic-session-outcomes.js';
+
+const clean = (value) => String(value ?? '').trim();
+const lower = (value) => clean(value).toLowerCase();
+const nowIso = () => new Date().toISOString();
+const identityEncoder = new TextEncoder();
+
+function identityBase64Url(value) {
+  const bytes = typeof value === 'string' ? identityEncoder.encode(value) : new Uint8Array(value);
+  let binary = '';
+  bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function identityBase64UrlBytes(value) {
+  const text = clean(value).replace(/-/g, '+').replace(/_/g, '/');
+  try {
+    const binary = atob(text + '='.repeat((4 - text.length % 4) % 4));
+    return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  } catch (_error) {
+    throw failure('The local CBT score signature is invalid.', 409, 'ACADEMIC_CBT_SIGNATURE_INVALID');
+  }
+}
+
+function identityBase64UrlText(value, message = 'The CBT score synchronization preparation is invalid.') {
+  try {
+    return new TextDecoder().decode(identityBase64UrlBytes(value));
+  } catch (_error) {
+    throw failure(message, 409, 'ACADEMIC_CBT_SYNC_PREPARATION_INVALID');
+  }
+}
+
+async function academicCbtSyncPreparationKey(env = {}) {
+  const privateMaterial = String(env.FIREBASE_PRIVATE_KEY || '');
+  if (!privateMaterial.trim()) {
+    throw failure(
+      'The online score synchronization signer is not configured.',
+      503,
+      'ACADEMIC_CBT_SYNC_SIGNER_REQUIRED'
+    );
+  }
+  const material = identityEncoder.encode([
+    'dynamax-academic-cbt-sync-preparation-v1',
+    clean(env.FIREBASE_PROJECT_ID),
+    clean(env.DYNAMAX_WORKSPACE_ID),
+    privateMaterial
+  ].join('|'));
+  const derived = await crypto.subtle.digest('SHA-256', material);
+  return crypto.subtle.importKey(
+    'raw', derived, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']
+  );
+}
+
+export async function createAcademicCbtSyncPreparation(env, user, details = {}) {
+  const prepared = {
+    Version: 'dynamax-academic-cbt-sync-preparation-v1',
+    ExpiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+    WorkspaceId: clean(env.DYNAMAX_WORKSPACE_ID),
+    ActorUsername: actorUsername(user),
+    BranchId: clean(details.BranchId),
+    SchoolSection: clean(details.SchoolSection),
+    BatchDigest: clean(details.BatchDigest).toLowerCase(),
+    SyncId: clean(details.SyncId),
+    Message: clean(details.Message),
+    Writes: Array.isArray(details.Writes) ? details.Writes : [],
+    Receipt: details.Receipt || {}
+  };
+  const payload = identityBase64Url(JSON.stringify(prepared));
+  const signature = await crypto.subtle.sign(
+    'HMAC', await academicCbtSyncPreparationKey(env), identityEncoder.encode(payload)
+  );
+  return { Payload: payload, Signature: identityBase64Url(signature) };
+}
+
+export async function verifyAcademicCbtSyncPreparation(env, user, input = {}) {
+  const token = input.ScoreSyncPreparation;
+  const payload = clean(token?.Payload);
+  const signature = clean(token?.Signature);
+  if (!payload || !signature) {
+    throw failure(
+      'The CBT score synchronization preparation is missing.',
+      409,
+      'ACADEMIC_CBT_SYNC_PREPARATION_REQUIRED'
+    );
+  }
+  let verified = false;
+  try {
+    verified = await crypto.subtle.verify(
+      'HMAC', await academicCbtSyncPreparationKey(env),
+      identityBase64UrlBytes(signature), identityEncoder.encode(payload)
+    );
+  } catch (_error) {
+    verified = false;
+  }
+  if (!verified) {
+    throw failure(
+      'The CBT score synchronization preparation could not be verified.',
+      409,
+      'ACADEMIC_CBT_SYNC_PREPARATION_INVALID'
+    );
+  }
+  let prepared;
+  try {
+    prepared = JSON.parse(identityBase64UrlText(payload));
+  } catch (_error) {
+    throw failure(
+      'The CBT score synchronization preparation is invalid.',
+      409,
+      'ACADEMIC_CBT_SYNC_PREPARATION_INVALID'
+    );
+  }
+  if (clean(prepared.Version) !== 'dynamax-academic-cbt-sync-preparation-v1') {
+    throw failure('The CBT score synchronization preparation uses an unsupported version.', 409, 'ACADEMIC_CBT_SYNC_PREPARATION_INVALID');
+  }
+  const expiresAt = Date.parse(clean(prepared.ExpiresAt));
+  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+    throw failure('The CBT score synchronization preparation expired. Retry Push Results Online.', 409, 'ACADEMIC_CBT_SYNC_PREPARATION_EXPIRED');
+  }
+  if (lower(prepared.WorkspaceId) !== lower(env.DYNAMAX_WORKSPACE_ID)
+      || lower(prepared.ActorUsername) !== actorUsername(user)
+      || lower(prepared.BranchId) !== lower(input.BranchId)
+      || lower(prepared.SchoolSection) !== lower(input.SchoolSection)
+      || lower(prepared.BatchDigest) !== lower(input.BatchDigest)) {
+    throw failure('The CBT score synchronization preparation does not match this workspace or approved batch.', 409, 'ACADEMIC_CBT_SYNC_PREPARATION_MISMATCH');
+  }
+  const allowedCollections = new Set([
+    ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships,
+    ACADEMIC_MANAGEMENT_COLLECTIONS.studentScores,
+    ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSheets,
+    ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSyncBatches,
+    ACADEMIC_MANAGEMENT_COLLECTIONS.audit
+  ]);
+  const writes = Array.isArray(prepared.Writes) ? prepared.Writes : [];
+  if (writes.length < 4 || writes.length > 500
+      || writes.some((write) => !allowedCollections.has(clean(write?.collectionPath)))) {
+    throw failure('The CBT score synchronization preparation contains invalid database writes.', 409, 'ACADEMIC_CBT_SYNC_PREPARATION_INVALID');
+  }
+  if (!writes.some((write) => clean(write.collectionPath) === ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSyncBatches
+      && clean(write.documentId) === clean(prepared.SyncId))) {
+    throw failure('The CBT score synchronization preparation is incomplete.', 409, 'ACADEMIC_CBT_SYNC_PREPARATION_INVALID');
+  }
+  if (!writes.some((write) => write.collectionPath === ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships
+    && write.updateMask?.includes('ScoreHistoryRevision') && clean(write.updateTime))) {
+    throw failure('Prepare the CBT batch again so its student memberships can be checked safely.', 409, 'ACADEMIC_CBT_SYNC_PREPARATION_EXPIRED');
+  }
+  return prepared;
+}
+
+function identityPublicKeyBytes(pem) {
+  const normalized = clean(pem)
+    .replace(/\\n/g, '\n')
+    .replace('-----BEGIN PUBLIC KEY-----', '')
+    .replace('-----END PUBLIC KEY-----', '')
+    .replace(/\s+/g, '');
+  if (!normalized) throw failure('The local CBT encryption key is missing.');
+  try {
+    const binary = atob(normalized);
+    return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  } catch (_error) {
+    throw failure('The local CBT encryption key is invalid.');
+  }
+}
+
+export async function encryptLocalCbtIdentityPackage(publicKeyPem, payload, aad) {
+  let publicKey;
+  try {
+    publicKey = await crypto.subtle.importKey(
+      'spki',
+      identityPublicKeyBytes(publicKeyPem),
+      { name: 'RSA-OAEP', hash: 'SHA-256' },
+      false,
+      ['encrypt']
+    );
+  } catch (_error) {
+    throw failure('The local CBT encryption key is invalid.');
+  }
+  const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt']);
+  const rawKey = await crypto.subtle.exportKey('raw', key);
+  const nonce = crypto.getRandomValues(new Uint8Array(12));
+  const ciphertext = await crypto.subtle.encrypt({
+    name: 'AES-GCM', iv: nonce, additionalData: identityEncoder.encode(aad)
+  }, key, identityEncoder.encode(JSON.stringify(payload)));
+  const wrappedKey = await crypto.subtle.encrypt({ name: 'RSA-OAEP' }, publicKey, rawKey);
+  return {
+    Version: 'dynamax-local-cbt-identity-v1',
+    Algorithm: 'RSA-OAEP-256+A256GCM',
+    Aad: aad,
+    WrappedKey: identityBase64Url(wrappedKey),
+    Nonce: identityBase64Url(nonce),
+    Ciphertext: identityBase64Url(ciphertext)
+  };
+}
+
+export const ACADEMIC_MANAGEMENT_COLLECTIONS = Object.freeze({
+  sessions: 'academicSessions',
+  terms: 'academicTerms',
+  classes: 'academicClasses',
+  armTemplates: 'academicArmTemplates',
+  arms: 'academicArms',
+  subjects: 'academicSubjects',
+  departments: 'academicDepartments',
+  offerings: 'academicSubjectOfferings',
+  teacherAllocations: 'academicTeacherAllocations',
+  studentMemberships: 'academicStudentMemberships',
+  studentMovements: 'academicStudentMovements',
+  timetableSettings: 'academicTimetableSettings',
+  schoolCalendars: 'academicSchoolCalendars',
+  timetableConstraints: 'academicTimetableConstraints',
+  timetableVersions: 'academicTimetableVersions',
+  timetableEntries: 'academicTimetableEntries',
+  timetableSubstitutions: 'academicTimetableSubstitutions',
+  studentAttendance: 'academicStudentAttendance',
+  attendanceCorrections: 'academicAttendanceCorrections',
+  scoreSheets: 'academicScoreSheets',
+  studentScores: 'academicStudentScores',
+  scoreImports: 'academicScoreImports',
+  scoreSyncBatches: 'academicScoreSyncBatches',
+  cbtTests: 'academicCbtTests',
+  termResults: 'academicResults',
+  resultClearances: 'academicResultClearances',
+  resultEvents: 'academicResultEvents',
+  cumulativeResults: 'academicCumulativeResults',
+  cumulativeEvents: 'academicCumulativeEvents',
+  promotionDecisions: 'academicPromotionDecisions',
+  promotionEvents: 'academicPromotionEvents',
+  transcripts: 'academicTranscripts',
+  transcriptEvents: 'academicTranscriptEvents',
+  audit: 'academicManagementAudit'
+});
+
+export const ACADEMIC_SCOREBOOK_STATE_KEYS = Object.freeze([
+  'sessions', 'terms', 'classes', 'arms', 'subjects', 'teacherAllocations',
+  'studentMemberships', 'scoreSheets', 'studentScores', 'scoreImports', 'scoreSyncBatches'
+]);
+
+export const ACADEMIC_CBT_STATE_KEYS = Object.freeze([
+  'sessions', 'terms', 'classes', 'arms', 'subjects', 'teacherAllocations',
+  'studentMemberships', 'cbtTests'
+]);
+
+export const ACADEMIC_SUBJECT_TEACHER_STATE_KEYS = Object.freeze([
+  'sessions', 'terms', 'classes', 'arms', 'subjects', 'departments',
+  'offerings', 'teacherAllocations'
+]);
+
+export const ACADEMIC_CLASS_TEACHER_STATE_KEYS = Object.freeze([
+  'sessions', 'terms', 'classes', 'arms', 'teacherAllocations'
+]);
+
+export const ACADEMIC_CLASSROOM_STATE_KEYS = Object.freeze([
+  'sessions', 'terms', 'classes', 'armTemplates', 'arms', 'departments',
+  'teacherAllocations', 'studentMemberships'
+]);
+
+export const ACADEMIC_STRUCTURE_STATE_KEYS = Object.freeze([
+  'sessions', 'terms', 'classes', 'armTemplates', 'arms', 'subjects',
+  'departments', 'studentMemberships'
+]);
+
+export const ACADEMIC_BULK_SETUP_STATE_KEYS = Object.freeze([
+  'sessions', 'terms', 'classes', 'armTemplates', 'arms'
+]);
+
+export const ACADEMIC_DEPARTMENT_STATE_KEYS = Object.freeze(['subjects', 'departments']);
+
+export const ACADEMIC_OFFERING_STATE_KEYS = Object.freeze([
+  'sessions', 'terms', 'classes', 'arms', 'subjects', 'departments', 'offerings'
+]);
+
+export const ACADEMIC_STUDENT_STATE_KEYS = Object.freeze([
+  'sessions', 'terms', 'classes', 'arms', 'subjects', 'departments', 'offerings',
+  'teacherAllocations', 'studentMemberships', 'studentMovements'
+]);
+
+export const ACADEMIC_TIMETABLE_STATE_KEYS = Object.freeze([
+  'sessions', 'terms', 'classes', 'arms', 'subjects', 'teacherAllocations',
+  'studentMemberships', 'timetableSettings', 'schoolCalendars', 'timetableConstraints',
+  'timetableVersions', 'timetableEntries', 'timetableSubstitutions', 'studentAttendance'
+]);
+
+export const ACADEMIC_ATTENDANCE_STATE_KEYS = Object.freeze([
+  'sessions', 'terms', 'classes', 'arms', 'subjects', 'teacherAllocations',
+  'studentMemberships', 'schoolCalendars', 'timetableVersions', 'timetableEntries',
+  'studentAttendance', 'attendanceCorrections'
+]);
+
+export const ACADEMIC_RESULTS_STATE_KEYS = Object.freeze([
+  'sessions', 'terms', 'classes', 'arms', 'subjects', 'teacherAllocations',
+  'studentMemberships', 'schoolCalendars', 'studentAttendance', 'scoreSheets', 'studentScores',
+  'termResults', 'resultEvents'
+]);
+
+export const ACADEMIC_OUTCOMES_STATE_KEYS = Object.freeze([
+  'sessions', 'terms', 'classes', 'arms', 'subjects', 'teacherAllocations',
+  'studentMemberships', 'termResults', 'cumulativeResults', 'cumulativeEvents',
+  'promotionDecisions', 'promotionEvents', 'transcripts', 'transcriptEvents'
+]);
+
+export const ACADEMIC_ANALYSIS_STATE_KEYS = Object.freeze([
+  'sessions', 'terms', 'classes', 'arms', 'subjects', 'departments',
+  'teacherAllocations', 'studentMemberships', 'termResults',
+  'cumulativeResults', 'promotionDecisions'
+]);
+
+export const ACADEMIC_CLEARANCE_STATE_KEYS = Object.freeze([
+  'sessions', 'terms', 'classes', 'arms', 'studentMemberships', 'resultClearances'
+]);
+
+export const ACADEMIC_READINESS_STATE_KEYS = Object.freeze([
+  'sessions', 'terms', 'classes', 'armTemplates', 'arms', 'subjects', 'departments',
+  'offerings', 'teacherAllocations', 'studentMemberships'
+]);
+
+export const ACADEMIC_SUMMARY_STATE_KEYS = Object.freeze([
+  'classes', 'arms', 'armTemplates', 'subjects', 'departments',
+  'teacherAllocations', 'studentMemberships'
+]);
+
+export const ACADEMIC_VIEW_STATE_KEYS = Object.freeze({
+  classrooms: ACADEMIC_CLASSROOM_STATE_KEYS,
+  classstaff: ACADEMIC_CLASS_TEACHER_STATE_KEYS,
+  structure: ACADEMIC_STRUCTURE_STATE_KEYS,
+  bulksetup: ACADEMIC_BULK_SETUP_STATE_KEYS,
+  departments: ACADEMIC_DEPARTMENT_STATE_KEYS,
+  offerings: ACADEMIC_OFFERING_STATE_KEYS,
+  teachers: ACADEMIC_SUBJECT_TEACHER_STATE_KEYS,
+  students: ACADEMIC_STUDENT_STATE_KEYS,
+  timetable: ACADEMIC_TIMETABLE_STATE_KEYS,
+  presence: ACADEMIC_ATTENDANCE_STATE_KEYS,
+  attendance: ACADEMIC_ATTENDANCE_STATE_KEYS,
+  scorebook: ACADEMIC_SCOREBOOK_STATE_KEYS,
+  results: ACADEMIC_RESULTS_STATE_KEYS,
+  outcomes: ACADEMIC_OUTCOMES_STATE_KEYS,
+  analysis: ACADEMIC_ANALYSIS_STATE_KEYS,
+  clearances: ACADEMIC_CLEARANCE_STATE_KEYS,
+  readiness: ACADEMIC_READINESS_STATE_KEYS,
+  cbt: ACADEMIC_CBT_STATE_KEYS
+});
+
+function normalizedAcademicView(value = '') {
+  const view = lower(value).replace(/[^a-z]/g, '');
+  if (['teacher', 'subjectteacher', 'subjectteachers'].includes(view)) return 'teachers';
+  if (['classteacher', 'classteachers', 'classstaff'].includes(view)) return 'classstaff';
+  if (['catalogue', 'catalogues'].includes(view)) return 'structure';
+  return Object.hasOwn(ACADEMIC_VIEW_STATE_KEYS, view) ? view : 'classrooms';
+}
+
+export function academicManagementViewStateKeys(value = '', permissions = {}) {
+  const view = permissions.financeView ? 'clearances' : normalizedAcademicView(value);
+  return ACADEMIC_VIEW_STATE_KEYS[view];
+}
+
+const ACADEMIC_VIEW_PEOPLE = Object.freeze({
+  classrooms: { staff: true, students: true },
+  classstaff: { staff: true, students: false },
+  structure: { staff: false, students: false },
+  bulksetup: { staff: false, students: false },
+  departments: { staff: false, students: false },
+  offerings: { staff: false, students: false },
+  teachers: { staff: true, students: false },
+  students: { staff: true, students: true },
+  timetable: { staff: true, students: true },
+  presence: { staff: false, students: true },
+  attendance: { staff: false, students: true },
+  scorebook: { staff: true, students: true },
+  results: { staff: false, students: true },
+  outcomes: { staff: true, students: true },
+  analysis: { staff: true, students: true },
+  clearances: { staff: false, students: true },
+  readiness: { staff: false, students: true },
+  cbt: { staff: true, students: true }
+});
+
+export const ACADEMIC_SESSION_STATUSES = Object.freeze(['Planned', 'Active', 'Closed', 'Archived']);
+export const ACADEMIC_TERM_STATUSES = Object.freeze(['Planned', 'Active', 'Closed', 'Archived']);
+export const ACADEMIC_RECORD_STATUSES = Object.freeze(['Active', 'Inactive', 'Archived']);
+export const ACADEMIC_MEMBERSHIP_STATUSES = Object.freeze(['Active', 'Inactive', 'Withdrawn', 'Archived']);
+export const ACADEMIC_SUBJECT_ROLES = Object.freeze(['Core', 'Trade', 'Optional']);
+export const ACADEMIC_SENIOR_CHOICE_ROLES = Object.freeze(['Trade', 'Optional']);
+export const ACADEMIC_STUDENT_IMPORT_COLUMNS = Object.freeze([
+  'StudentRef', 'FirstName', 'Surname', 'MiddleName', 'ClassCode', 'ArmCode', 'CoreSubjectCodes',
+  'TradeSubjectCodes', 'OptionalSubjectCodes', 'Reason'
+]);
+export const ACADEMIC_STUDENT_IMPORT_REQUIRED_COLUMNS = Object.freeze([
+  'StudentRef', 'FirstName', 'Surname', 'ClassCode'
+]);
+export const ACADEMIC_STUDENT_MOVEMENT_TYPES = Object.freeze([
+  'Allocation', 'Class Transfer', 'Arm Transfer', 'Department Change', 'Subject Change', 'Withdrawal', 'Reinstatement'
+]);
+export const ACADEMIC_SCHOOL_STAGES = Object.freeze(['primary', 'junior-secondary', 'senior-secondary']);
+export const ACADEMIC_TEACHER_ALLOCATION_ROLES = Object.freeze(['Subject Teacher', 'Form Teacher', 'Assistant Teacher']);
+
+const STRUCTURE_MANAGERS = new Set([
+  'Super Admin', 'Principal', 'Vice Principal Academics', 'Vice Principal Administration',
+  'Head Teacher', 'Assistant Head Teacher', 'Management'
+]);
+const ALLOCATION_MANAGERS = new Set([...STRUCTURE_MANAGERS, 'Admissions Officer']);
+const TIMETABLE_MANAGERS = new Set([...STRUCTURE_MANAGERS, 'Examination Officer']);
+const TIMETABLE_PUBLISHERS = new Set([
+  'Super Admin', 'Principal', 'Vice Principal Academics', 'Vice Principal Administration',
+  'Head Teacher', 'Assistant Head Teacher', 'Management'
+]);
+const SCORE_REVIEWERS = new Set([...STRUCTURE_MANAGERS, 'Examination Officer']);
+const SCORE_APPROVERS = new Set([...STRUCTURE_MANAGERS, 'Examination Officer']);
+const FINANCE_CLEARANCE_MANAGERS = new Set([...STRUCTURE_MANAGERS, 'Accounts Officer', 'Finance Officer']);
+
+function failure(message, status = 400, code = '', details = {}) {
+  const error = new Error(message);
+  error.status = status;
+  if (code) error.code = code;
+  if (Array.isArray(details.issues)) {
+    error.issues = details.issues.map(clean).filter(Boolean);
+    error.issueCount = Math.max(error.issues.length, Number(details.issueCount || 0));
+  }
+  return error;
+}
+
+function activeValue(value, fallback = true) {
+  if (typeof value === 'boolean') return value;
+  const normalized = lower(value);
+  if (!normalized) return fallback;
+  return !['no', 'false', '0', 'inactive', 'disabled', 'archived', 'closed'].includes(normalized);
+}
+
+function oneOf(value, choices, fallback) {
+  const wanted = lower(value);
+  return choices.find((choice) => lower(choice) === wanted) || fallback;
+}
+
+export function academicOfferingSubjectRole(offering = {}, schoolStage = '') {
+  if (schoolStageValue(schoolStage) === 'junior-secondary') return 'Core';
+  return oneOf(
+    offering.SubjectRole || offering.RequirementType,
+    ACADEMIC_SUBJECT_ROLES,
+    offering.Compulsory === true ? 'Core' : 'Optional'
+  );
+}
+
+function wholeNumber(value, fallback = 0, minimum = 0, maximum = 1000000) {
+  if (value === '' || value === undefined || value === null) return fallback;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.min(maximum, Math.max(minimum, Math.floor(number)));
+}
+
+function dateValue(value, label, required = true) {
+  const date = clean(value);
+  if (!date && !required) return '';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw failure(`Enter a valid ${label}.`);
+  return date;
+}
+
+function assertDateOrder(start, end, label) {
+  if (start && end && start > end) throw failure(`${label} end date cannot be before its start date.`);
+}
+
+function uniqueIds(value) {
+  const supplied = Array.isArray(value) ? value : clean(value).split(',');
+  return [...new Set(supplied.map((item) => clean(item)).filter(Boolean))];
+}
+
+function schoolStageValue(value, section = '', className = '') {
+  if (lower(section) === 'primary') return 'primary';
+  const wanted = lower(value).replace(/[\s_]+/g, '-');
+  if (['junior', 'jss', 'junior-secondary'].includes(wanted)) return 'junior-secondary';
+  if (['senior', 'sss', 'senior-secondary'].includes(wanted)) return 'senior-secondary';
+  const name = lower(className);
+  if (/\b(jss|junior)(?:[\s_-]*\d+)?\b/.test(name)) return 'junior-secondary';
+  if (/\b(sss?|senior)(?:[\s_-]*\d+)?\b/.test(name)) return 'senior-secondary';
+  if (/\bgrade[\s_-]*(?:10|11|12)\b/.test(name)) return 'senior-secondary';
+  return '';
+}
+
+function academicId(...parts) {
+  const normalized = parts.map((part) => safeScopeId(part, '')).filter(Boolean);
+  if (normalized.length !== parts.length) throw failure('Academic record identifiers cannot be blank.');
+  return normalized.join('__');
+}
+
+function legacyDocumentId(value) {
+  return clean(value)
+    .replace(/[\/\\?#\[\]]/g, '-')
+    .replace(/\s+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/-+/g, '-')
+    .slice(0, 140);
+}
+
+function actorName(user = {}) {
+  return clean(user.displayName || user.DisplayName || user.username || user.Username) || 'Administrator';
+}
+
+function actorUsername(user = {}) {
+  return lower(user.username || user.Username);
+}
+
+function recordId(row = {}) {
+  return clean(
+    row.RecordId || row.recordId || row.ClearanceId || row.TranscriptEventId || row.TranscriptId || row.PromotionEventId || row.PromotionDecisionId || row.CumulativeEventId || row.CumulativeResultId || row.ResultEventId || row.ResultId || row.CbtTestId || row.ImportId || row.ScoreId || row.SheetId || row.SubstitutionId || row.AttendanceId || row.EntryId || row.VersionId || row.ConstraintId || row.SchoolCalendarId || row.TimetableSettingId
+      || row.MovementId || row.MembershipId || row.AllocationId || row.OfferingId
+      || row.DepartmentId || row.SubjectId || row.ArmId || row.ArmTemplateId || row.ClassId || row.TermId || row.SessionId || row.__id
+  );
+}
+
+function statusActive(row) {
+  if (!row || typeof row !== 'object') return false;
+  return !['archived', 'inactive', 'closed', 'withdrawn', 'cancelled'].includes(lower(row.Status));
+}
+
+export function academicSeniorCoreSubjectIds(departments = []) {
+  return uniqueIds((departments || []).filter(statusActive).flatMap((department) => department.CoreSubjectIds || []));
+}
+
+export function academicStudentDepartmentForClassroom(membership = {}, classroom = {}) {
+  // Department is a classroom property. Blank means mixed, not a fallback to
+  // the student's legacy department (which may describe an old placement).
+  return clean(classroom?.DepartmentId);
+}
+
+function publicRecord(row = {}) {
+  const copy = { ...row, RecordId: recordId(row), RevisionToken: clean(row.__updateTime) };
+  delete copy.__name;
+  delete copy.__id;
+  delete copy.__createTime;
+  delete copy.__updateTime;
+  delete copy.__scopePath;
+  delete copy.GenerationPlan;
+  return copy;
+}
+
+function isSchoolEdition(user = {}) {
+  return lower(user.edition || user.Edition || user.OrganisationEdition || user.OrganizationEdition) === 'school';
+}
+
+function isAcademicsDepartmentUser(user = {}) {
+  const role = lower(user.role || user.Role);
+  const department = lower(user.department || user.Department);
+  return role === 'department user' && department === 'academics';
+}
+
+function isAcademicsDepartmentStaff(row = {}) {
+  return lower(row.Role || row.role) === 'teacher' || isAcademicsDepartmentUser(row);
+}
+
+export function academicSubjectTeacherCandidates(rows = [], schoolSection = '') {
+  const section = lower(schoolSection);
+  return (rows || []).filter((row) => {
+    if (!activeValue(row.Active, true) || !isAcademicsDepartmentStaff(row)) return false;
+    const assignedSection = lower(row.SchoolSectionAccess || row.schoolSectionAccess || 'all');
+    return !section || !['primary', 'secondary'].includes(assignedSection) || assignedSection === section;
+  });
+}
+
+export function academicManagementCapabilities(user = {}) {
+  const role = clean(user.role || user.Role);
+  const allowed = new Set((user.allowedSections || user.TabAccess || []).map(clean).filter(Boolean));
+  const school = isSchoolEdition(user);
+  const academicsDepartmentUser = isAcademicsDepartmentUser(user);
+  const enabled = school && (allowed.has('academics') || academicsDepartmentUser);
+  return {
+    enabled,
+    canManageStructure: enabled && STRUCTURE_MANAGERS.has(role),
+    canManageAllocations: enabled && ALLOCATION_MANAGERS.has(role),
+    canConfigureClassStudentSubjects: enabled && (ALLOCATION_MANAGERS.has(role) || role === 'Teacher' || academicsDepartmentUser),
+    canApproveSubjectChanges: enabled && STRUCTURE_MANAGERS.has(role),
+    canManageTimetables: enabled && TIMETABLE_MANAGERS.has(role),
+    canPublishTimetables: enabled && TIMETABLE_PUBLISHERS.has(role),
+    canMarkAttendance: enabled && (TIMETABLE_MANAGERS.has(role) || role === 'Teacher' || academicsDepartmentUser),
+    canEnterScores: enabled && (SCORE_REVIEWERS.has(role) || role === 'Teacher' || academicsDepartmentUser),
+    canCreateCbt: enabled && (SCORE_REVIEWERS.has(role) || role === 'Teacher' || academicsDepartmentUser),
+    canReviewScores: enabled && SCORE_REVIEWERS.has(role),
+    canApproveScores: enabled && SCORE_APPROVERS.has(role),
+    canManageScoreCorrections: enabled && STRUCTURE_MANAGERS.has(role),
+    canCalculateResults: enabled && SCORE_REVIEWERS.has(role),
+    canReviewResults: enabled && SCORE_REVIEWERS.has(role),
+    canPublishResults: enabled && SCORE_APPROVERS.has(role),
+    canCalculateCumulativeResults: enabled && SCORE_REVIEWERS.has(role),
+    canViewResultsAnalysis: enabled && STRUCTURE_MANAGERS.has(role),
+    canManagePromotions: enabled && SCORE_APPROVERS.has(role),
+    canIssueTranscripts: enabled && SCORE_APPROVERS.has(role),
+    canManageFinancialClearance: enabled && FINANCE_CLEARANCE_MANAGERS.has(role),
+    canImportScores: enabled && (SCORE_REVIEWERS.has(role) || role === 'Teacher' || academicsDepartmentUser),
+    canArchive: enabled && STRUCTURE_MANAGERS.has(role),
+    canDelete: enabled && STRUCTURE_MANAGERS.has(role),
+    teacherView: enabled && (role === 'Teacher' || academicsDepartmentUser),
+    financeView: enabled && ['Accounts Officer', 'Finance Officer'].includes(role)
+  };
+}
+
+function requireCapability(user, capability = 'enabled') {
+  const permissions = academicManagementCapabilities(user);
+  if (permissions[capability]) return permissions;
+  throw failure('This staff account is not permitted to use Academic Management.', 403, 'ACADEMIC_ACCESS_FORBIDDEN');
+}
+
+function requireWritableSubscription(user = {}) {
+  if (user.subscriptionActive === false) {
+    throw failure(user.subscriptionMessage || 'The organisation subscription is not active.', 402, 'SUBSCRIPTION_REQUIRED');
+  }
+  if (user.subscriptionReadOnly === true) {
+    throw failure(user.subscriptionMessage || 'Academic records are read-only during the payment grace period.', 403, 'SUBSCRIPTION_READ_ONLY');
+  }
+}
+
+export function scopedSection(input = {}, required = true) {
+  const value = lower(input.SchoolSection || input.schoolSection || input.Section || input.section);
+  if (!value && !required) return '';
+  if (value === 'all' && !required) return '';
+  if (!['primary', 'secondary'].includes(value)) throw failure('Choose Primary or Secondary school section.');
+  return value;
+}
+
+export function academicCanConfigureClassStudentSubjects(user = {}, allocations = [], input = {}, permissions = academicManagementCapabilities(user)) {
+  if (permissions.canManageAllocations) return true;
+  if (!permissions.canConfigureClassStudentSubjects || !permissions.teacherView) return false;
+  const username = actorUsername(user);
+  return (allocations || []).some((row) => statusActive(row)
+    && lower(row.AllocationRole) === 'form teacher'
+    && lower(row.TeacherUsername) === username
+    && row.SessionId === input.SessionId && row.TermId === input.TermId
+    && row.ClassId === input.ClassId && row.ArmId === input.ArmId);
+}
+
+export function academicLegacyClassCompatibilityEnabled(input = {}) {
+  return !clean(input.DeviceBranchId || input.deviceBranchId);
+}
+
+function assertUserSection(user = {}, section = '') {
+  const assigned = lower(user.schoolSectionAccess || user.SchoolSectionAccess || 'all');
+  if (assigned !== 'all' && section && assigned !== section) {
+    throw failure('This staff account is restricted to another school section.', 403, 'ACADEMIC_SECTION_FORBIDDEN');
+  }
+}
+
+async function academicScope(env, user = {}, input = {}, { requireSection = false } = {}) {
+  const structure = await getSchoolStructure(env);
+  const requestedBranch = clean(input.BranchId || input.branchId || user.branchId || user.BranchId);
+  if (!requestedBranch || lower(requestedBranch) === 'all') {
+    throw failure('Select one school branch before opening Academic Management.', 400, 'ACADEMIC_BRANCH_REQUIRED');
+  }
+  const branchId = enforceActorBranch(user, requestedBranch, '', structure.ActiveBranchId || 'main');
+  const branch = structure.Branches.find((row) => lower(row.Id || row.id) === lower(branchId));
+  if (!branch) throw failure('The selected branch is not configured for this school.', 403, 'ACADEMIC_BRANCH_FORBIDDEN');
+  const requestedSection = scopedSection(input, requireSection);
+  const assignedSection = lower(user.schoolSectionAccess || user.SchoolSectionAccess || 'all');
+  const section = requestedSection || (assignedSection !== 'all' ? assignedSection : '');
+  assertUserSection(user, section);
+  return {
+    branchId: safeScopeId(branchId),
+    section,
+    structure,
+    legacyClassCompatibility: academicLegacyClassCompatibilityEnabled(input)
+  };
+}
+
+export function normalizeAcademicSession(input = {}, context = {}, existing = null) {
+  const name = clean(input.Name || input.SessionName || input.AcademicSession);
+  if (!name) throw failure('Enter the academic session name, for example 2026/2027.');
+  const startDate = dateValue(input.StartDate, 'session start date');
+  const endDate = dateValue(input.EndDate, 'session end date');
+  assertDateOrder(startDate, endDate, 'Academic session');
+  const branchId = safeScopeId(context.branchId || input.BranchId || existing?.BranchId);
+  const section = scopedSection({ SchoolSection: context.section || input.SchoolSection || existing?.SchoolSection });
+  const sessionId = clean(existing?.SessionId || input.SessionId || input.RecordId)
+    || academicId('session', branchId, section, name);
+  return {
+    ...(existing || {}), RecordId: sessionId, SessionId: sessionId, Name: name,
+    StartDate: startDate, EndDate: endDate,
+    Status: oneOf(input.Status, ACADEMIC_SESSION_STATUSES, existing?.Status || 'Planned'),
+    BranchId: branchId, SchoolSection: section
+  };
+}
+
+export function normalizeAcademicTerm(input = {}, context = {}, existing = null) {
+  const sessionId = clean(input.SessionId || existing?.SessionId);
+  const name = clean(input.Name || input.TermName || input.Term);
+  if (!sessionId) throw failure('Choose the academic session for this term.');
+  if (!name) throw failure('Enter the term name.');
+  const startDate = dateValue(input.StartDate, 'term start date');
+  const endDate = dateValue(input.EndDate, 'term end date');
+  assertDateOrder(startDate, endDate, 'Academic term');
+  const branchId = safeScopeId(context.branchId || input.BranchId || existing?.BranchId);
+  const section = scopedSection({ SchoolSection: context.section || input.SchoolSection || existing?.SchoolSection });
+  const termId = clean(existing?.TermId || input.TermId || input.RecordId)
+    || academicId(sessionId, 'term', section, name);
+  return {
+    ...(existing || {}), RecordId: termId, TermId: termId, SessionId: sessionId, Name: name,
+    StartDate: startDate, EndDate: endDate,
+    Status: oneOf(input.Status, ACADEMIC_TERM_STATUSES, existing?.Status || 'Planned'),
+    BranchId: branchId, SchoolSection: section
+  };
+}
+
+export function normalizeAcademicClass(input = {}, context = {}, existing = null) {
+  const name = clean(input.Name || input.ClassName);
+  if (!name) throw failure('Enter the class name.');
+  const branchId = safeScopeId(context.branchId || input.BranchId || existing?.BranchId);
+  const section = scopedSection({ SchoolSection: context.section || input.SchoolSection || existing?.SchoolSection });
+  const schoolStage = schoolStageValue(input.SchoolStage || input.SecondaryDivision || existing?.SchoolStage, section, name);
+  if (section === 'secondary' && !schoolStage) throw failure('Choose Junior Secondary or Senior Secondary for this class.');
+  const classId = clean(existing?.ClassId || input.ClassId || input.RecordId) || academicId('class', branchId, section, name);
+  return {
+    ...(existing || {}), RecordId: classId, ClassId: classId, Name: name,
+    Code: clean(input.Code || input.ClassCode || existing?.Code) || safeScopeId(name, 'class').toUpperCase(),
+    Capacity: wholeNumber(input.Capacity, wholeNumber(existing?.Capacity, 0), 0, 10000),
+    SortOrder: wholeNumber(input.SortOrder, wholeNumber(existing?.SortOrder, 100), 1, 10000),
+    NextClassId: clean(input.NextClassId ?? existing?.NextClassId),
+    SchoolStage: schoolStage,
+    Status: oneOf(input.Status, ACADEMIC_RECORD_STATUSES, existing?.Status || 'Active'),
+    LegacyDocumentId: clean(existing?.LegacyDocumentId) || legacyDocumentId(name),
+    BranchId: branchId, SchoolSection: section
+  };
+}
+
+export function normalizeAcademicDepartment(input = {}, context = {}, existing = null) {
+  const name = clean(input.Name || input.DepartmentName);
+  const code = clean(input.Code || input.DepartmentCode).toUpperCase();
+  if (!name) throw failure('Enter the senior secondary department name.');
+  if (!code) throw failure('Enter a stable department code.');
+  const branchId = safeScopeId(context.branchId || input.BranchId || existing?.BranchId);
+  const section = scopedSection({ SchoolSection: context.section || input.SchoolSection || existing?.SchoolSection });
+  if (section !== 'secondary') throw failure('Academic departments are available only in Secondary school.');
+  const departmentId = clean(existing?.DepartmentId || input.DepartmentId || input.RecordId)
+    || academicId('department', branchId, 'senior-secondary', code);
+  return {
+    ...(existing || {}), RecordId: departmentId, DepartmentId: departmentId,
+    Name: name, Code: code,
+    CoreSubjectIds: uniqueIds(input.CoreSubjectIds ?? existing?.CoreSubjectIds ?? []),
+    Status: oneOf(input.Status, ACADEMIC_RECORD_STATUSES, existing?.Status || 'Active'),
+    BranchId: branchId, SchoolSection: 'secondary', SchoolStage: 'senior-secondary'
+  };
+}
+
+export function normalizeAcademicArm(input = {}, context = {}, existing = null) {
+  const classId = clean(input.ClassId || existing?.ClassId);
+  const name = clean(input.Name || input.ArmName || input.ClassArm);
+  if (!classId) throw failure('Choose the class for this arm.');
+  if (!name) throw failure('Enter the arm name.');
+  const branchId = safeScopeId(context.branchId || input.BranchId || existing?.BranchId);
+  const section = scopedSection({ SchoolSection: context.section || input.SchoolSection || existing?.SchoolSection });
+  const armId = clean(existing?.ArmId || input.ArmId || input.RecordId) || academicId(classId, 'arm', name);
+  return {
+    ...(existing || {}), RecordId: armId, ArmId: armId, ClassId: classId, Name: name,
+    ArmTemplateId: clean(input.ArmTemplateId ?? existing?.ArmTemplateId),
+    DepartmentId: clean(input.DepartmentId ?? existing?.DepartmentId),
+    IsClassroom: activeValue(input.IsClassroom ?? existing?.IsClassroom, false),
+    Code: clean(input.Code || input.ArmCode || existing?.Code).toUpperCase(),
+    Capacity: wholeNumber(input.Capacity, wholeNumber(existing?.Capacity, 0), 0, 10000),
+    Room: clean(input.Room ?? existing?.Room),
+    SortOrder: wholeNumber(input.SortOrder, wholeNumber(existing?.SortOrder, 100), 1, 10000),
+    Status: oneOf(input.Status, ACADEMIC_RECORD_STATUSES, existing?.Status || 'Active'),
+    BranchId: branchId, SchoolSection: section
+  };
+}
+
+export function normalizeAcademicArmTemplate(input = {}, context = {}, existing = null) {
+  const name = clean(input.Name || input.ArmName || input.TemplateName);
+  if (!name) throw failure('Enter the reusable arm name.');
+  const code = clean(input.Code || input.ArmCode || existing?.Code).toUpperCase()
+    || safeScopeId(name, 'ARM').toUpperCase();
+  const branchId = safeScopeId(context.branchId || input.BranchId || existing?.BranchId);
+  const section = scopedSection({ SchoolSection: context.section || input.SchoolSection || existing?.SchoolSection });
+  const templateId = clean(existing?.ArmTemplateId || input.ArmTemplateId || input.RecordId)
+    || academicId('arm-template', branchId, section, code);
+  return {
+    ...(existing || {}), RecordId: templateId, ArmTemplateId: templateId,
+    Name: name, Code: code,
+    DefaultCapacity: wholeNumber(input.DefaultCapacity ?? input.Capacity, wholeNumber(existing?.DefaultCapacity, 0), 0, 10000),
+    SortOrder: wholeNumber(input.SortOrder, wholeNumber(existing?.SortOrder, 100), 1, 10000),
+    Status: oneOf(input.Status, ACADEMIC_RECORD_STATUSES, existing?.Status || 'Active'),
+    BranchId: branchId, SchoolSection: section
+  };
+}
+
+export function normalizeAcademicSubject(input = {}, context = {}, existing = null) {
+  const name = clean(input.Name || input.SubjectName);
+  const code = clean(input.Code || input.SubjectCode).toUpperCase();
+  if (!name) throw failure('Enter the subject name.');
+  if (!code) throw failure('Enter a stable subject code.');
+  const branchId = safeScopeId(context.branchId || input.BranchId || existing?.BranchId);
+  const section = scopedSection({ SchoolSection: context.section || input.SchoolSection || existing?.SchoolSection });
+  const subjectId = clean(existing?.SubjectId || input.SubjectId || input.RecordId) || academicId('subject', branchId, section, code);
+  const seniorChoiceRole = input.SeniorChoiceRole === undefined
+    ? oneOf(existing?.SeniorChoiceRole, ACADEMIC_SENIOR_CHOICE_ROLES, '')
+    : oneOf(input.SeniorChoiceRole, ACADEMIC_SENIOR_CHOICE_ROLES, '');
+  const assessmentCategory = clean(input.AssessmentCategory ?? existing?.AssessmentCategory ?? 'Graded');
+  if (!['Graded', 'TimetableOnly'].includes(assessmentCategory)) {
+    throw failure('Choose Graded or Timetable-only for the subject assessment category.');
+  }
+  const record = {
+    ...(existing || {}), RecordId: subjectId, SubjectId: subjectId, Name: name, Code: code,
+    SeniorChoiceRole: section === 'secondary' ? seniorChoiceRole : '',
+    AssessmentCategory: assessmentCategory,
+    Status: oneOf(input.Status, ACADEMIC_RECORD_STATUSES, existing?.Status || 'Active'),
+    BranchId: branchId, SchoolSection: section
+  };
+  delete record.Category;
+  delete record.SubjectCategory;
+  return record;
+}
+
+export function normalizeAcademicOffering(input = {}, context = {}, existing = null) {
+  const sessionId = clean(input.SessionId || existing?.SessionId);
+  const termId = clean(input.TermId || existing?.TermId);
+  const classId = clean(input.ClassId || existing?.ClassId);
+  const armId = clean(input.ArmId ?? existing?.ArmId);
+  const subjectId = clean(input.SubjectId || existing?.SubjectId);
+  if (!sessionId || !termId || !classId || !subjectId) throw failure('Choose a session, term, class and subject for the offering.');
+  const branchId = safeScopeId(context.branchId || input.BranchId || existing?.BranchId);
+  const section = scopedSection({ SchoolSection: context.section || input.SchoolSection || existing?.SchoolSection });
+  const offeringId = clean(existing?.OfferingId || input.OfferingId || input.RecordId)
+    || academicId('offering', branchId, section, sessionId, termId, classId, armId || 'all-arms', subjectId);
+  const suppliedRole = clean(input.SubjectRole || input.RequirementType);
+  const fallbackRole = input.Compulsory !== undefined
+    ? (activeValue(input.Compulsory, false) ? 'Core' : 'Optional')
+    : academicOfferingSubjectRole(existing || {});
+  const subjectRole = oneOf(suppliedRole, ACADEMIC_SUBJECT_ROLES, fallbackRole);
+  return {
+    ...(existing || {}), RecordId: offeringId, OfferingId: offeringId,
+    SessionId: sessionId, TermId: termId, ClassId: classId, ArmId: armId, SubjectId: subjectId,
+    SubjectRole: subjectRole, Compulsory: subjectRole === 'Core',
+    Status: oneOf(input.Status, ACADEMIC_RECORD_STATUSES, existing?.Status || 'Active'),
+    BranchId: branchId, SchoolSection: section
+  };
+}
+
+export function normalizeAcademicTeacherAllocation(input = {}, context = {}, existing = null) {
+  const sessionId = clean(input.SessionId || existing?.SessionId);
+  const termId = clean(input.TermId || existing?.TermId);
+  const teacherUsername = lower(input.TeacherUsername || input.Username || existing?.TeacherUsername);
+  const classId = clean(input.ClassId || existing?.ClassId);
+  const armId = clean(input.ArmId ?? existing?.ArmId);
+  const allocationRole = oneOf(input.AllocationRole, ACADEMIC_TEACHER_ALLOCATION_ROLES, existing?.AllocationRole || 'Subject Teacher');
+  const subjectTeacher = allocationRole === 'Subject Teacher';
+  const subjectId = subjectTeacher ? clean(input.SubjectId ?? existing?.SubjectId) : '';
+  if (!sessionId || !termId || !teacherUsername || !classId) {
+    throw failure('Choose a session, term, teacher and class for this allocation.');
+  }
+  if (subjectTeacher && !subjectId) throw failure('Choose a subject for a Subject Teacher assignment.');
+  if (!subjectTeacher && !armId) throw failure('Choose the class arm for a Form Teacher or Assistant Teacher assignment.');
+  const branchId = safeScopeId(context.branchId || input.BranchId || existing?.BranchId);
+  const section = scopedSection({ SchoolSection: context.section || input.SchoolSection || existing?.SchoolSection });
+  const responsibilityId = subjectTeacher ? subjectId : lower(allocationRole);
+  const allocationId = clean(existing?.AllocationId || input.AllocationId || input.RecordId)
+    || academicId('teacher', branchId, section, sessionId, termId, teacherUsername, classId, armId || 'all-arms', responsibilityId);
+  return {
+    ...(existing || {}), RecordId: allocationId, AllocationId: allocationId,
+    SessionId: sessionId, TermId: termId, TeacherUsername: teacherUsername,
+    ClassId: classId, ArmId: armId, SubjectId: subjectId,
+    AllocationRole: allocationRole,
+    Status: oneOf(input.Status, ACADEMIC_RECORD_STATUSES, existing?.Status || 'Active'),
+    BranchId: branchId, SchoolSection: section
+  };
+}
+
+export function normalizeAcademicStudentMembership(input = {}, context = {}, existing = null) {
+  const sessionId = clean(input.SessionId || existing?.SessionId);
+  const termId = clean(input.TermId || existing?.TermId);
+  const studentRef = clean(input.StudentRef || input.AdmissionNo || existing?.StudentRef);
+  const classId = clean(input.ClassId || existing?.ClassId);
+  const armId = clean(input.ArmId || existing?.ArmId);
+  if (!sessionId || !termId || !studentRef || !classId || (!armId && context.allowMissingArm !== true)) {
+    throw failure('Choose a session, term, student, class and arm for this membership.');
+  }
+  const branchId = safeScopeId(context.branchId || input.BranchId || existing?.BranchId);
+  const section = scopedSection({ SchoolSection: context.section || input.SchoolSection || existing?.SchoolSection });
+  const membershipId = clean(existing?.MembershipId || input.MembershipId || input.RecordId)
+    || academicId('student', branchId, section, sessionId, termId, studentRef);
+  return {
+    ...(existing || {}), RecordId: membershipId, MembershipId: membershipId,
+    SessionId: sessionId, TermId: termId, StudentRef: studentRef,
+    ClassId: classId, ArmId: armId, DepartmentId: clean(input.DepartmentId ?? existing?.DepartmentId),
+    SubjectIds: uniqueIds(input.SubjectIds ?? existing?.SubjectIds ?? []),
+    CoreSubjectIds: uniqueIds(input.CoreSubjectIds ?? existing?.CoreSubjectIds ?? []),
+    TradeSubjectIds: uniqueIds(input.TradeSubjectIds ?? existing?.TradeSubjectIds ?? []),
+    OptionalSubjectIds: uniqueIds(input.OptionalSubjectIds ?? existing?.OptionalSubjectIds ?? []),
+    CurriculumStatus: clean(input.CurriculumStatus ?? existing?.CurriculumStatus),
+    Status: oneOf(input.Status, ACADEMIC_MEMBERSHIP_STATUSES, existing?.Status || 'Active'),
+    BranchId: branchId, SchoolSection: section
+  };
+}
+
+export function normalizeAcademicResultClearance(input = {}, context = {}, existing = null) {
+  const branchId = safeScopeId(context.branchId);
+  const section = scopedSection({ SchoolSection: context.section });
+  const sessionId = clean(input.SessionId ?? existing?.SessionId);
+  const termId = clean(input.TermId ?? existing?.TermId);
+  const studentRef = clean(input.StudentRef ?? existing?.StudentRef);
+  const clearanceId = clean(existing?.ClearanceId || input.ClearanceId || input.RecordId)
+    || academicId('clearance', branchId, section, sessionId, termId, studentRef);
+  const expiryDate = dateValue(input.ExpiryDate ?? existing?.ExpiryDate, 'clearance expiry date', false);
+  return {
+    ...(existing || {}), RecordId: clearanceId, ClearanceId: clearanceId,
+    StudentRef: studentRef, ResultId: clean(input.ResultId ?? existing?.ResultId),
+    SessionId: sessionId, TermId: termId,
+    AcademicSession: clean(input.AcademicSession ?? existing?.AcademicSession),
+    Term: clean(input.Term ?? existing?.Term),
+    Reason: clean(input.Reason ?? existing?.Reason).slice(0, 1000),
+    ExpiryDate: expiryDate,
+    ExpiresAt: expiryDate ? `${expiryDate}T23:59:59.999Z` : '',
+    Status: oneOf(input.Status, ['Approved', 'Revoked'], existing?.Status || 'Approved'),
+    BranchId: branchId, SchoolSection: section
+  };
+}
+
+const RECORD_TYPES = Object.freeze({
+  session: { collection: ACADEMIC_MANAGEMENT_COLLECTIONS.sessions, normalize: normalizeAcademicSession, capability: 'canManageStructure' },
+  term: { collection: ACADEMIC_MANAGEMENT_COLLECTIONS.terms, normalize: normalizeAcademicTerm, capability: 'canManageStructure' },
+  class: { collection: ACADEMIC_MANAGEMENT_COLLECTIONS.classes, normalize: normalizeAcademicClass, capability: 'canManageStructure' },
+  armtemplate: { collection: ACADEMIC_MANAGEMENT_COLLECTIONS.armTemplates, normalize: normalizeAcademicArmTemplate, capability: 'canManageStructure' },
+  arm: { collection: ACADEMIC_MANAGEMENT_COLLECTIONS.arms, normalize: normalizeAcademicArm, capability: 'canManageStructure' },
+  subject: { collection: ACADEMIC_MANAGEMENT_COLLECTIONS.subjects, normalize: normalizeAcademicSubject, capability: 'canManageStructure' },
+  department: { collection: ACADEMIC_MANAGEMENT_COLLECTIONS.departments, normalize: normalizeAcademicDepartment, capability: 'canManageStructure' },
+  offering: { collection: ACADEMIC_MANAGEMENT_COLLECTIONS.offerings, normalize: normalizeAcademicOffering, capability: 'canManageStructure' },
+  teacherallocation: { collection: ACADEMIC_MANAGEMENT_COLLECTIONS.teacherAllocations, normalize: normalizeAcademicTeacherAllocation, capability: 'canManageAllocations' },
+  studentmembership: { collection: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships, normalize: normalizeAcademicStudentMembership, capability: 'canManageAllocations' }
+});
+
+function normalizedRecordType(value) {
+  return lower(value).replace(/[^a-z]/g, '');
+}
+
+const ACADEMIC_RECORD_STATE_KEYS = Object.freeze({
+  session: Object.freeze(['sessions']),
+  term: Object.freeze(['sessions', 'terms']),
+  class: Object.freeze(['classes', 'arms', 'studentMemberships']),
+  armtemplate: Object.freeze(['armTemplates']),
+  arm: Object.freeze(['classes', 'arms', 'departments', 'studentMemberships']),
+  subject: Object.freeze(['subjects', 'scoreSheets', 'cbtTests']),
+  department: Object.freeze(['subjects', 'departments']),
+  offering: Object.freeze(['sessions', 'terms', 'classes', 'arms', 'subjects', 'offerings']),
+  teacherallocation: ACADEMIC_SUBJECT_TEACHER_STATE_KEYS,
+  studentmembership: ACADEMIC_STUDENT_STATE_KEYS
+});
+
+const ACADEMIC_RECORD_DEPENDENCY_STATE_KEYS = Object.freeze({
+  session: Object.freeze(['sessions', 'terms', 'offerings', 'teacherAllocations', 'studentMemberships']),
+  term: Object.freeze(['terms', 'offerings', 'teacherAllocations', 'studentMemberships']),
+  class: Object.freeze(['classes', 'arms', 'offerings', 'teacherAllocations', 'studentMemberships', 'studentMovements']),
+  armtemplate: Object.freeze(['armTemplates', 'arms']),
+  arm: Object.freeze(['classes', 'arms', 'offerings', 'teacherAllocations', 'studentMemberships', 'studentMovements']),
+  subject: Object.freeze(['subjects', 'departments', 'offerings', 'teacherAllocations', 'studentMemberships', 'studentMovements']),
+  department: Object.freeze(['departments', 'arms', 'studentMemberships', 'studentMovements']),
+  offering: Object.freeze(['offerings', 'teacherAllocations', 'studentMemberships', 'studentMovements']),
+  teacherallocation: Object.freeze(['teacherAllocations'])
+});
+
+const ACADEMIC_RECORD_DEFAULT_VIEW = Object.freeze({
+  session: 'structure', term: 'structure', class: 'structure', armtemplate: 'bulksetup',
+  arm: 'classrooms', subject: 'structure', department: 'departments', offering: 'offerings',
+  teacherallocation: 'teachers', studentmembership: 'students'
+});
+
+function academicRecordResponseView(input = {}, type = '') {
+  const supplied = clean(input.View || input.Workspace);
+  return supplied ? normalizedAcademicView(supplied) : (ACADEMIC_RECORD_DEFAULT_VIEW[type] || 'classrooms');
+}
+
+async function loadAcademicState(env, branchId, requestedKeys = null) {
+  if (!Array.isArray(requestedKeys) || !requestedKeys.length) {
+    throw failure('Academic Management must request a focused workspace data bundle.', 500, 'ACADEMIC_STATE_BUNDLE_REQUIRED');
+  }
+  const unknownKeys = requestedKeys.filter((key) => !Object.hasOwn(ACADEMIC_MANAGEMENT_COLLECTIONS, key) || key === 'audit');
+  if (unknownKeys.length) {
+    throw failure(`Academic Management requested an invalid data bundle: ${unknownKeys.join(', ')}.`, 500, 'ACADEMIC_STATE_BUNDLE_INVALID');
+  }
+  const requested = new Set(requestedKeys);
+  const allCollections = Object.entries(ACADEMIC_MANAGEMENT_COLLECTIONS).filter(([key]) => key !== 'audit');
+  // Read the version before lessons. Every lesson mutation also conditionally
+  // advances it, so a later write cannot validate against a stale lesson snapshot.
+  const collections = allCollections.filter(([key]) => requested.has(key))
+    .sort(([left], [right]) => Number(right === 'timetableVersions') * 2 + Number(right === 'studentMemberships')
+      - Number(left === 'timetableVersions') * 2 - Number(left === 'studentMemberships'));
+  const loadCollection = ([, collection]) => queryCollection(env, collection, {
+    filters: [{ field: 'BranchId', op: '==', value: branchId }]
+  });
+  // Establish the shared Firestore access token before parallel focused reads. On a
+  // cold Worker instance, starting every query together otherwise creates one OAuth
+  // request per collection and can exceed the invocation subrequest allowance.
+  const groups = [];
+  if (collections.length) {
+    // Membership revisions also serialize score writes against subject changes.
+    // Read memberships before scores, never concurrently with their evidence.
+    const membershipIndex = collections.findIndex(([key]) => key === 'studentMemberships');
+    const sequentialCount = membershipIndex < 0 ? 1 : membershipIndex + 1;
+    for (const collection of collections.slice(0, sequentialCount)) groups.push(await loadCollection(collection));
+    groups.push(...await Promise.all(collections.slice(sequentialCount).map(loadCollection)));
+  }
+  const loaded = new Map(collections.map(([key], index) => [
+    key, groups[index].filter((row) => lower(row.BranchId || 'main') === lower(branchId))
+  ]));
+  return Object.fromEntries(allCollections.map(([key]) => [key, loaded.get(key) || []]));
+}
+
+function findById(rows = [], id = '') {
+  return rows.find((row) => lower(recordId(row)) === lower(id)) || null;
+}
+
+function studentReference(row = {}) {
+  return clean(row.AdmissionNo || row.AccountRef || row.ApplicationReference || row.__id);
+}
+
+export function academicMigrationReadiness(state = {}, students = []) {
+  const issues = [];
+  const add = (severity, code, message, recordType = '', recordIdValue = '', recordLabel = '') => issues.push({
+    Severity: severity, Code: code, Message: message,
+    RecordType: recordType, RecordId: clean(recordIdValue), RecordLabel: clean(recordLabel)
+  });
+  const sessionRows = new Map((state.sessions || []).map((row) => [recordId(row), row]));
+  const termRows = new Map((state.terms || []).map((row) => [recordId(row), row]));
+  const classes = new Map((state.classes || []).map((row) => [recordId(row), row]));
+  const arms = new Map((state.arms || []).map((row) => [recordId(row), row]));
+  const subjectRows = new Map((state.subjects || []).map((row) => [recordId(row), row]));
+  const departments = new Map((state.departments || []).map((row) => [recordId(row), row]));
+  const studentRows = new Map((students || []).map((row) => [lower(studentReference(row)), row]).filter(([key]) => key));
+  const sessions = new Set(sessionRows.keys());
+  const terms = new Set(termRows.keys());
+  const subjects = new Set(subjectRows.keys());
+  const studentRefs = new Set(studentRows.keys());
+  const readableName = (row = {}, fallback = '') => clean(
+    row.Name || row.DisplayName || row.StudentName || row.FullName
+      || [row.FirstName, row.MiddleName, row.Surname || row.LastName].map(clean).filter(Boolean).join(' ')
+      || fallback
+  );
+  const academicPeriodLabel = (row = {}) => {
+    const termName = readableName(termRows.get(row.TermId), row.Term || row.TermName || row.TermId);
+    const sessionName = readableName(sessionRows.get(row.SessionId), row.AcademicSession || row.SessionId);
+    return [termName, sessionName].filter(Boolean).join(', ');
+  };
+  const classroomLabel = (row = {}) => {
+    const className = readableName(classes.get(row.ClassId), row.ClassName || row.ClassId || 'Unknown class');
+    const armName = row.ArmId
+      ? readableName(arms.get(row.ArmId), row.ArmName || row.ArmId || 'Unknown arm')
+      : 'All arms';
+    return `${className} / ${armName}`;
+  };
+  const offeringLabel = (row = {}) => {
+    const subjectName = readableName(subjectRows.get(row.SubjectId), row.SubjectName || row.SubjectId || 'Unknown subject');
+    return [subjectName, classroomLabel(row), academicPeriodLabel(row)].filter(Boolean).join(' — ');
+  };
+  const membershipLabel = (row = {}) => {
+    const studentName = readableName(studentRows.get(lower(row.StudentRef)), row.StudentName || row.StudentRef || 'Unknown student');
+    return [studentName, classroomLabel(row), academicPeriodLabel(row)].filter(Boolean).join(' — ');
+  };
+
+  (state.arms || []).forEach((row) => {
+    if (!classes.has(row.ClassId)) add('Error', 'ORPHAN_ARM_CLASS', 'This classroom references a class that no longer exists.', 'arm', recordId(row), readableName(row, 'Unlinked classroom'));
+  });
+  (state.departments || []).forEach((row) => (row.CoreSubjectIds || []).forEach((subjectId) => {
+    if (!subjects.has(subjectId)) add('Error', 'ORPHAN_DEPARTMENT_SUBJECT', 'This department references a Core subject that no longer exists.', 'department', recordId(row), `${readableName(row, 'Unnamed department')} — Missing Core subject`);
+  }));
+  (state.offerings || []).forEach((row) => {
+    const schoolClass = classes.get(row.ClassId);
+    if (!sessions.has(row.SessionId) || !terms.has(row.TermId) || !schoolClass || !subjects.has(row.SubjectId) || (row.ArmId && !arms.has(row.ArmId))) {
+      add('Error', 'ORPHAN_SUBJECT_OFFERING', 'This subject offering contains a missing session, term, class, arm or subject reference.', 'offering', recordId(row), offeringLabel(row));
+    } else if (schoolStageValue(schoolClass.SchoolStage, schoolClass.SchoolSection, schoolClass.Name) === 'senior-secondary') {
+      add('Warning', 'LEGACY_SENIOR_OFFERING', 'This legacy Senior class offering no longer controls Core, Trade or Optional curriculum and should be reviewed.', 'offering', recordId(row), offeringLabel(row));
+    }
+  });
+
+  const currentMemberships = new Map();
+  (state.studentMemberships || []).forEach((row) => {
+    const id = recordId(row);
+    const schoolClass = classes.get(row.ClassId);
+    const arm = arms.get(row.ArmId);
+    if (!sessions.has(row.SessionId) || !terms.has(row.TermId) || !schoolClass || !arm || arm.ClassId !== row.ClassId) {
+      add('Error', 'ORPHAN_STUDENT_MEMBERSHIP', 'This membership contains a missing or mismatched session, term, class or arm reference.', 'student membership', id, membershipLabel(row));
+    }
+    if (!studentRefs.has(lower(row.StudentRef))) {
+      add('Error', 'MISSING_STUDENT_PROFILE', 'This academic membership has no matching branch and section student profile.', 'student membership', id, membershipLabel(row));
+    }
+    const stage = schoolStageValue(row.SchoolStage || schoolClass?.SchoolStage, row.SchoolSection, schoolClass?.Name);
+    if (stage === 'senior-secondary' && arm?.DepartmentId && !departments.has(arm.DepartmentId)) {
+      add('Warning', 'PENDING_SENIOR_DEPARTMENT', 'Choose a valid department for this classroom, or set it to Mixed departments.', 'student membership', id, membershipLabel(row));
+    }
+    if (stage === 'senior-secondary' && !(row.TradeSubjectIds || []).length) {
+      add('Warning', 'PENDING_TRADE_SUBJECT', 'This Senior student must choose at least one Trade subject.', 'student membership', id, membershipLabel(row));
+    }
+    if (/pending/i.test(clean(row.CurriculumStatus))) {
+      add('Warning', 'PENDING_CURRICULUM', 'This student curriculum is still marked for completion.', 'student membership', id, membershipLabel(row));
+    }
+    if (lower(row.Status) === 'active') {
+      const key = [lower(row.BranchId), lower(row.SchoolSection), row.SessionId, row.TermId, lower(row.StudentRef)].join('|');
+      if (currentMemberships.has(key)) {
+        add('Error', 'DUPLICATE_CURRENT_MEMBERSHIP', 'The student has more than one active membership in the same academic period.', 'student membership', id, membershipLabel(row));
+      } else currentMemberships.set(key, id);
+    }
+  });
+
+  const errors = issues.filter((issue) => issue.Severity === 'Error').length;
+  const warnings = issues.filter((issue) => issue.Severity === 'Warning').length;
+  return {
+    Status: errors ? 'Blocked' : warnings ? 'Review required' : 'Ready',
+    Errors: errors,
+    Warnings: warnings,
+    Issues: issues,
+    Counts: {
+      Sessions: (state.sessions || []).length,
+      Terms: (state.terms || []).length,
+      Classes: (state.classes || []).length,
+      Arms: (state.arms || []).length,
+      Subjects: (state.subjects || []).length,
+      Departments: (state.departments || []).length,
+      Offerings: (state.offerings || []).length,
+      Memberships: (state.studentMemberships || []).length,
+      StudentProfiles: studentRefs.size
+    }
+  };
+}
+
+function academicStudentDocumentId(reference) {
+  return clean(reference)
+    .replace(/[\/\\?#\[\]]/g, '-')
+    .replace(/\s+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/-+/g, '-')
+    .slice(0, 140);
+}
+
+export function importedAcademicStudentProfile(row, scope, schoolClass, arm, session, term, user, nameProfile = {}) {
+  const timestamp = nowIso();
+  const studentRef = clean(row.StudentRef);
+  const firstName = clean(row.FirstName);
+  const middleName = clean(row.MiddleName);
+  const surname = clean(row.Surname);
+  const studentName = formatPersonName({ FirstName: firstName, MiddleName: middleName, Surname: surname }, nameProfile);
+  const documentId = academicStudentDocumentId(studentRef);
+  return {
+    __id: documentId,
+    __scopePath: scopedCollectionPath('students', scope.branchId, scope.section),
+    AdmissionNo: studentRef,
+    AccountRef: studentRef,
+    DisplayName: studentName,
+    ApplicantName: studentName,
+    FirstName: firstName,
+    MiddleName: middleName,
+    Surname: surname,
+    BranchId: scope.branchId,
+    SchoolSection: scope.section,
+    ClassName: clean(schoolClass?.Name),
+    ClassAdmitted: clean(schoolClass?.Name),
+    ClassArm: clean(arm?.Name),
+    AcademicClassId: clean(schoolClass?.ClassId),
+    AcademicArmId: clean(arm?.ArmId),
+    AcademicSession: clean(session?.Name),
+    Term: clean(term?.Name),
+    EnrollmentCategory: 'Returning',
+    Status: 'Active',
+    ProfileCompletionStatus: 'Needs completion',
+    ParentOnboardingStatus: 'PendingProfile',
+    ImportedAt: timestamp,
+    ImportedBy: actorName(user),
+    ImportSource: 'Academic Management',
+    CreatedAt: timestamp,
+    CreatedBy: actorName(user),
+    UpdatedAt: timestamp,
+    UpdatedBy: actorName(user)
+  };
+}
+
+export function academicStudentMatchesClass(student = {}, schoolClass = {}) {
+  const selectedClassId = clean(schoolClass.ClassId || schoolClass.RecordId);
+  const existingClassId = clean(student.AcademicClassId);
+  if (existingClassId && selectedClassId) return lower(existingClassId) === lower(selectedClassId);
+  const studentClassKeys = [
+    student.ClassName, student.ClassAdmitted, student.ClassApplyingFor, student.CurrentClass
+  ].map(normalizeClassKey).filter(Boolean);
+  const selectedClassKeys = [
+    schoolClass.Name, schoolClass.Code, schoolClass.LegacyDocumentId
+  ].map(normalizeClassKey).filter(Boolean);
+  return studentClassKeys.some((key) => selectedClassKeys.includes(key));
+}
+
+function academicStudentClassId(student = {}, classes = []) {
+  const direct = findById(classes, student.AcademicClassId);
+  if (direct) return clean(direct.ClassId);
+  return clean(classes.find((schoolClass) => academicStudentMatchesClass(student, schoolClass))?.ClassId);
+}
+
+function assertReference(row, message) {
+  if (!row || !statusActive(row)) throw failure(message, 409, 'ACADEMIC_REFERENCE_INVALID');
+  return row;
+}
+
+export function applyAcademicStudentCurriculum(state = {}, record = {}, options = {}) {
+  const offerings = (state.offerings || []).filter((row) => statusActive(row)
+    && row.SessionId === record.SessionId && row.TermId === record.TermId && row.ClassId === record.ClassId
+    && (!row.ArmId || row.ArmId === record.ArmId));
+  // Senior curriculum belongs to the classroom. Mixed classrooms offer the
+  // union of department Core subjects, but only explicitly selected subjects
+  // are assigned to a student. Legacy student departments cannot narrow it.
+  const classroom = (state.arms || []).find((row) => clean(row.ArmId) === clean(record.ArmId) && row.ClassId === record.ClassId && statusActive(row));
+  const mixedClassroom = record.SchoolStage === 'senior-secondary' && Boolean(classroom) && !clean(classroom.DepartmentId);
+  const curriculumOfferings = record.SchoolStage === 'senior-secondary' ? [] : offerings;
+  const roleBySubject = new Map();
+  const rolePriority = { Optional: 1, Trade: 2, Core: 3 };
+  curriculumOfferings.forEach((offering) => {
+    const role = academicOfferingSubjectRole(offering, record.SchoolStage);
+    const current = roleBySubject.get(offering.SubjectId) || 'Optional';
+    if (rolePriority[role] >= rolePriority[current]) roleBySubject.set(offering.SubjectId, role);
+  });
+  const seniorChoiceSubjects = record.SchoolStage === 'senior-secondary'
+    ? (state.subjects || []).filter((subject) => statusActive(subject)
+      && subject.SchoolSection === 'secondary'
+      && ACADEMIC_SENIOR_CHOICE_ROLES.includes(subject.SeniorChoiceRole))
+    : [];
+  seniorChoiceSubjects.forEach((subject) => {
+    const role = subject.SeniorChoiceRole;
+    const current = roleBySubject.get(subject.SubjectId) || 'Optional';
+    if (rolePriority[role] >= rolePriority[current]) roleBySubject.set(subject.SubjectId, role);
+  });
+  const available = new Set([...curriculumOfferings.map((row) => row.SubjectId), ...seniorChoiceSubjects.map((row) => row.SubjectId)]);
+  const offeredCore = curriculumOfferings.map((row) => row.SubjectId).filter((subjectId) => roleBySubject.get(subjectId) === 'Core');
+  let coreSubjectIds = uniqueIds(offeredCore);
+  if (record.SchoolStage === 'junior-secondary') {
+    record.DepartmentId = '';
+    coreSubjectIds = uniqueIds(curriculumOfferings.map((row) => row.SubjectId));
+  } else if (record.SchoolStage === 'senior-secondary') {
+    record.DepartmentId = academicStudentDepartmentForClassroom(record, classroom);
+    const department = findById(state.departments || [], record.DepartmentId);
+    if (!classroom && options.allowIncompleteCurriculum !== true) {
+      throw failure('Assign this student to a classroom before choosing Senior subjects.');
+    }
+    if (record.DepartmentId && !department) {
+      throw failure('Choose an active Senior department for this classroom, or set it to Mixed departments.');
+    }
+    if (department) {
+      assertReference(department, 'Choose an active Senior department for this classroom.');
+      if (department.SchoolStage !== 'senior-secondary') throw failure('The selected department is not a Senior Secondary department.');
+      coreSubjectIds = uniqueIds([...coreSubjectIds, ...(department.CoreSubjectIds || [])]);
+      coreSubjectIds.forEach((subjectId) => {
+        available.add(subjectId);
+        roleBySubject.set(subjectId, 'Core');
+      });
+    }
+    if (mixedClassroom) {
+      const offered = academicSeniorCoreSubjectIds(state.departments);
+      offered.forEach((subjectId) => { available.add(subjectId); roleBySubject.set(subjectId, 'Core'); });
+      const selected = new Set(uniqueIds(record.SubjectIds));
+      coreSubjectIds = offered.filter((subjectId) => selected.has(subjectId));
+      if (options.requireTradeSelection === true && !coreSubjectIds.length) {
+        throw failure('Choose at least one Core subject for each student in this mixed classroom.');
+      }
+    }
+  } else {
+    record.DepartmentId = '';
+  }
+  if (!available.size && options.allowIncompleteCurriculum !== true) {
+    throw failure(record.SchoolStage === 'senior-secondary'
+      ? 'Configure department core subjects and the Senior Trade subject list before allocating students.'
+      : 'Offer subjects to this class or arm before allocating students.');
+  }
+  const requestedSubjects = uniqueIds(record.SubjectIds);
+  const invalidSubjects = requestedSubjects.filter((subjectId) => !available.has(subjectId));
+  if (invalidSubjects.length) throw failure('One or more selected subjects are not available to this class or arm.');
+  const coreSet = new Set(coreSubjectIds);
+  const tradeAvailable = [...available].filter((subjectId) => !coreSet.has(subjectId) && roleBySubject.get(subjectId) === 'Trade');
+  const tradeSet = new Set(tradeAvailable);
+  const optionalAvailable = [...available].filter((subjectId) => !coreSet.has(subjectId)
+    && !tradeSet.has(subjectId) && roleBySubject.get(subjectId) === 'Optional');
+  const optionalSet = new Set(optionalAvailable);
+  const suppliedTrade = uniqueIds(record.TradeSubjectIds);
+  const suppliedOptional = uniqueIds(record.OptionalSubjectIds);
+  if (suppliedTrade.some((subjectId) => !tradeSet.has(subjectId))) {
+    throw failure('One or more selected Trade subjects are not offered as Trade subjects to this class or arm.');
+  }
+  if (suppliedOptional.some((subjectId) => !optionalSet.has(subjectId))) {
+    throw failure('One or more selected optional subjects are not offered as optional subjects to this class or arm.');
+  }
+  const selectedTrade = uniqueIds([...suppliedTrade, ...requestedSubjects.filter((subjectId) => tradeSet.has(subjectId))]);
+  const selectedOptional = uniqueIds([...suppliedOptional, ...requestedSubjects.filter((subjectId) => optionalSet.has(subjectId))]);
+  if (record.SchoolStage === 'senior-secondary' && options.requireTradeSelection === true) {
+    if (!tradeAvailable.length) throw failure('Configure at least one school-wide Senior Trade subject before completing subject selection.');
+    if (!selectedTrade.length) throw failure('Every Senior Secondary student must select at least one Trade subject.');
+  }
+  record.CoreSubjectIds = coreSubjectIds;
+  record.TradeSubjectIds = record.SchoolStage === 'senior-secondary' ? selectedTrade : [];
+  record.OptionalSubjectIds = record.SchoolStage === 'junior-secondary' ? [] : selectedOptional;
+  record.SubjectIds = record.SchoolStage === 'junior-secondary'
+    ? coreSubjectIds
+    : uniqueIds([...requestedSubjects, ...coreSubjectIds, ...record.TradeSubjectIds, ...record.OptionalSubjectIds]);
+  if (record.SchoolStage === 'senior-secondary') {
+    record.CurriculumStatus = !classroom
+      ? 'Pending Classroom Assignment'
+      : !coreSubjectIds.length
+        ? 'Pending Core Selection'
+      : !tradeAvailable.length
+        ? 'Trade Subjects Not Configured'
+        : record.TradeSubjectIds.length ? 'Complete' : 'Pending Trade Selection';
+  } else {
+    record.CurriculumStatus = coreSubjectIds.length ? 'Complete' : 'Subjects Not Configured';
+  }
+  if (!record.SubjectIds.length && options.allowIncompleteCurriculum !== true) {
+    throw failure('Choose at least one offered subject for this student.');
+  }
+  return record;
+}
+
+function sortedIds(value) {
+  return uniqueIds(value).sort((a, b) => a.localeCompare(b));
+}
+
+function membershipMateriallyChanged(before = {}, after = {}) {
+  return ['ClassId', 'ArmId', 'DepartmentId', 'Status'].some((key) => clean(before[key]) !== clean(after[key]))
+    || ['SubjectIds', 'CoreSubjectIds', 'TradeSubjectIds', 'OptionalSubjectIds'].some((key) => (
+      JSON.stringify(sortedIds(before[key])) !== JSON.stringify(sortedIds(after[key]))
+    ))
+    || clean(before.CurriculumStatus) !== clean(after.CurriculumStatus);
+}
+
+const SUBJECT_SELECTION_FIELDS = ['SubjectIds', 'CoreSubjectIds', 'TradeSubjectIds', 'OptionalSubjectIds'];
+
+function subjectSelection(record = {}) {
+  return Object.fromEntries(SUBJECT_SELECTION_FIELDS.map((key) => [key, uniqueIds(record[key])]));
+}
+
+export function academicSubjectSelectionChanged(before = {}, after = {}) {
+  return SUBJECT_SELECTION_FIELDS.some((key) => JSON.stringify(sortedIds(before[key])) !== JSON.stringify(sortedIds(after[key])));
+}
+
+export function academicSubjectChangeImpact(before, after, evidence = {}, scope = {}) {
+  const classroomChanged = Boolean(after.ClassId && after.ClassId !== before.ClassId)
+    || (after.ArmId !== undefined && after.ArmId !== before.ArmId);
+  const changed = new Set(SUBJECT_SELECTION_FIELDS.flatMap((key) => {
+    const from = uniqueIds(before[key]);
+    const to = uniqueIds(after[key]);
+    return [...from.filter((id) => !to.includes(id)), ...to.filter((id) => !from.includes(id))];
+  }));
+  const matchesStudent = (row) => lower(row.StudentRef) === lower(before.StudentRef)
+    && row.SessionId === before.SessionId && row.TermId === before.TermId
+    && lower(row.BranchId) === lower(before.BranchId)
+    && effectiveAcademicSection(row, scope) === effectiveAcademicSection(before, scope);
+  // Even an incomplete/zero/absent score record is assessment history. Do not
+  // infer that a falsey total means there is nothing to protect.
+  const scores = (evidence.studentScores || []).filter((row) => matchesStudent(row) && (classroomChanged || changed.has(row.SubjectId)));
+  const results = (evidence.termResults || []).filter(matchesStudent);
+  return {
+    RequiresApproval: (classroomChanged || changed.size > 0) && (scores.length > 0 || results.length > 0),
+    ClassroomChanged: classroomChanged,
+    ChangedSubjectIds: [...changed],
+    RecordedSubjectIds: uniqueIds(scores.map((row) => row.SubjectId)),
+    ScoreRecordCount: scores.length,
+    Results: results.map((row) => ({ ResultId: row.ResultId, ResultType: row.ResultType || 'End of Term', Status: row.Status }))
+  };
+}
+
+async function loadAcademicSubjectChangeEvidence(env, scope, membership) {
+  // Include history from earlier classrooms in the same term. Bound each query
+  // to the actual students, never scan every branch/term's scores.
+  const refs = uniqueIds(membership.StudentRefs || [membership.StudentRef]);
+  const evidence = { studentScores: [], termResults: [] };
+  // Four predicates per disjunct: 20 references keep the expanded query bounded.
+  for (let offset = 0; offset < refs.length; offset += 20) {
+    const filters = ['SessionId', 'TermId'].map((field) => ({ field, op: '==', value: membership[field] }));
+    filters.push({ field: 'BranchId', op: '==', value: scope.branchId },
+      { field: 'StudentRef', op: 'in', value: refs.slice(offset, offset + 20) });
+    await Promise.all(Object.keys(evidence).map(async (key) => {
+      const rows = await queryCollection(env, ACADEMIC_MANAGEMENT_COLLECTIONS[key], { filters, limit: 10001 });
+      if (rows.length > 10000) throw failure('Too much assessment history to check safely. No subject changes were saved.', 413, 'ACADEMIC_SUBJECT_HISTORY_LIMIT');
+      evidence[key].push(...scopedAcademicRows(rows, scope));
+    }));
+  }
+  return evidence;
+}
+
+function assertNoPendingSubjectChange(membership) {
+  if (membership?.PendingSubjectChange) throw failure(`${membership.StudentRef} has a subject change awaiting approval. Resolve or cancel it before changing this membership.`, 409, 'ACADEMIC_SUBJECT_CHANGE_PENDING');
+}
+
+export function academicScoreMembershipGuards(state, scores) {
+  const memberships = new Map();
+  for (const score of scores) {
+    const membership = (state.studentMemberships || []).find((row) => lower(row.StudentRef) === lower(score.StudentRef)
+      && row.SessionId === score.SessionId && row.TermId === score.TermId);
+    if (!membership || !clean(membership.__updateTime)) throw failure('Reload the classroom before saving scores; its membership revision is missing.', 409, 'ACADEMIC_WRITE_CONFLICT');
+    memberships.set(recordId(membership), membership);
+  }
+  return [...memberships.values()].map((membership) => ({
+    collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships,
+    documentId: recordId(membership), updateTime: membership.__updateTime,
+    data: { ScoreHistoryRevision: crypto.randomUUID() }, updateMask: ['ScoreHistoryRevision']
+  }));
+}
+
+function membershipSnapshot(record = {}, prefix = '') {
+  return {
+    [`${prefix}ClassId`]: clean(record.ClassId),
+    [`${prefix}ArmId`]: clean(record.ArmId),
+    [`${prefix}DepartmentId`]: clean(record.DepartmentId),
+    [`${prefix}SubjectIds`]: uniqueIds(record.SubjectIds),
+    [`${prefix}CoreSubjectIds`]: uniqueIds(record.CoreSubjectIds),
+    [`${prefix}TradeSubjectIds`]: uniqueIds(record.TradeSubjectIds),
+    [`${prefix}OptionalSubjectIds`]: uniqueIds(record.OptionalSubjectIds),
+    [`${prefix}CurriculumStatus`]: clean(record.CurriculumStatus)
+  };
+}
+
+function movementType(before, after, operation = '') {
+  const requested = lower(operation);
+  if (requested === 'withdraw') return 'Withdrawal';
+  if (requested === 'reinstate') return 'Reinstatement';
+  if (!before) return 'Allocation';
+  if (before.ClassId !== after.ClassId) return 'Class Transfer';
+  if (before.ArmId !== after.ArmId) return 'Arm Transfer';
+  if (before.DepartmentId !== after.DepartmentId) return 'Department Change';
+  return 'Subject Change';
+}
+
+export function normalizeAcademicStudentMovement(input = {}, context = {}, before = null, after = null) {
+  const branchId = safeScopeId(context.branchId || input.BranchId || before?.BranchId || after?.BranchId);
+  const section = scopedSection({ SchoolSection: context.section || input.SchoolSection || before?.SchoolSection || after?.SchoolSection });
+  const studentRef = clean(input.StudentRef || before?.StudentRef || after?.StudentRef);
+  const sessionId = clean(input.SessionId || before?.SessionId || after?.SessionId);
+  const termId = clean(input.TermId || before?.TermId || after?.TermId);
+  if (!studentRef || !sessionId || !termId) throw failure('Student, session and term are required for an academic movement.');
+  const type = oneOf(input.MovementType || movementType(before, after, input.Operation), ACADEMIC_STUDENT_MOVEMENT_TYPES, 'Allocation');
+  const effectiveDate = dateValue(input.EffectiveDate || nowIso().slice(0, 10), 'movement effective date');
+  const reason = clean(input.Reason || input.MovementReason);
+  if (type !== 'Allocation' && !reason) throw failure('Enter the reason for this student movement.');
+  const token = globalThis.crypto.randomUUID();
+  const movementId = clean(input.MovementId) || academicId('movement', branchId, section, sessionId, termId, studentRef, token);
+  return {
+    RecordId: movementId, MovementId: movementId, MovementType: type,
+    StudentRef: studentRef, SessionId: sessionId, TermId: termId,
+    ...membershipSnapshot(before || {}, 'From'),
+    ...membershipSnapshot(after || {}, 'To'),
+    EffectiveDate: effectiveDate, Reason: reason,
+    BranchId: branchId, SchoolSection: section, Status: 'Applied'
+  };
+}
+
+function academicMovementForState(state, input, context, before = null, after = null) {
+  const termId = clean(input.TermId || before?.TermId || after?.TermId);
+  const term = assertReference(findById(state.terms || [], termId), 'The selected term is not active.');
+  const effectiveDate = clean(input.EffectiveDate) || clean(term.StartDate) || nowIso().slice(0, 10);
+  if (term.StartDate && effectiveDate < term.StartDate) throw failure('Movement date cannot be before the selected term starts.');
+  if (term.EndDate && effectiveDate > term.EndDate) throw failure('Movement date cannot be after the selected term ends.');
+  return normalizeAcademicStudentMovement({ ...input, EffectiveDate: effectiveDate }, context, before, after);
+}
+
+export function assertAcademicMembershipCapacity(state = {}, record = {}, excludeMembershipId = '') {
+  if (!statusActive(record)) return { ClassCount: 0, ClassCapacity: 0, ArmCount: 0, ArmCapacity: 0 };
+  const activeMemberships = (state.studentMemberships || []).filter((row) => statusActive(row)
+    && recordId(row) !== clean(excludeMembershipId)
+    && row.SessionId === record.SessionId && row.TermId === record.TermId);
+  const schoolClass = assertReference(findById(state.classes || [], record.ClassId), 'The selected class is not active.');
+  const classCapacity = wholeNumber(schoolClass.Capacity, 0, 0, 10000);
+  const classCount = activeMemberships.filter((row) => row.ClassId === record.ClassId).length;
+  if (classCapacity && classCount >= classCapacity) {
+    throw failure(`${schoolClass.Name || 'The selected class'} has reached its configured capacity.`, 409, 'ACADEMIC_CLASS_CAPACITY_REACHED');
+  }
+  if (!clean(record.ArmId)) {
+    return { ClassCount: classCount, ClassCapacity: classCapacity, ArmCount: 0, ArmCapacity: 0 };
+  }
+  const arm = assertReference(findById(state.arms || [], record.ArmId), 'The selected class arm is not active.');
+  const armCapacity = wholeNumber(arm.Capacity, 0, 0, 10000);
+  const armCount = activeMemberships.filter((row) => row.ClassId === record.ClassId && row.ArmId === record.ArmId).length;
+  if (armCapacity && armCount >= armCapacity) {
+    throw failure(`${arm.Name || 'The selected arm'} has reached its configured capacity.`, 409, 'ACADEMIC_ARM_CAPACITY_REACHED');
+  }
+  return { ClassCount: classCount, ClassCapacity: classCapacity, ArmCount: armCount, ArmCapacity: armCapacity };
+}
+
+function validateActiveConflict(state, type, record, existing) {
+  if (!statusActive(record)) return;
+  if (type === 'session') {
+    const conflict = state.sessions.find((row) => statusActive(row) && lower(row.Status) === 'active' && recordId(row) !== recordId(existing || record));
+    if (lower(record.Status) === 'active' && conflict) throw failure(`Close ${conflict.Name || 'the current session'} before activating another academic session.`, 409);
+  }
+  if (type === 'term') {
+    const conflict = state.terms.find((row) => row.SessionId === record.SessionId && statusActive(row) && lower(row.Status) === 'active' && recordId(row) !== recordId(existing || record));
+    if (lower(record.Status) === 'active' && conflict) throw failure(`Close ${conflict.Name || 'the current term'} before activating another term in this session.`, 409);
+  }
+}
+
+function validateAcademicRecord(state, type, record, people = {}) {
+  validateActiveConflict(state, type, record, people.existing);
+  if (type === 'term') {
+    const session = assertReference(findById(state.sessions, record.SessionId), 'The selected academic session is not active.');
+    if (record.StartDate < session.StartDate || record.EndDate > session.EndDate) throw failure('Term dates must fall within the selected academic session.');
+  }
+  if (type === 'arm') {
+    const schoolClass = assertReference(findById(state.classes, record.ClassId), 'The selected class is not active.');
+    if (schoolClass.SchoolSection !== record.SchoolSection) throw failure('The class arm must belong to the same school section as its class.');
+    const schoolStage = schoolStageValue(schoolClass.SchoolStage, schoolClass.SchoolSection, schoolClass.Name);
+    if (record.DepartmentId) {
+      if (schoolStage !== 'senior-secondary') throw failure('Academic departments can be assigned only to Senior Secondary classrooms.');
+      const department = assertReference(findById(state.departments, record.DepartmentId), 'Choose an active Senior Secondary department for this classroom.');
+      if (department.SchoolStage !== 'senior-secondary' || department.SchoolSection !== 'secondary') {
+        throw failure('The selected department is not a Senior Secondary academic department.');
+      }
+    }
+  }
+  if (type === 'class') {
+    if (record.NextClassId) {
+      if (record.NextClassId === record.ClassId) throw failure('A class cannot be its own next class.');
+      const nextClass = assertReference(findById(state.classes, record.NextClassId), 'The selected next class is not active.');
+      if (nextClass.SchoolSection !== record.SchoolSection) throw failure('The next class must belong to the same school section.');
+      const visited = new Set([record.ClassId]);
+      let cursor = nextClass;
+      while (cursor) {
+        if (visited.has(cursor.ClassId)) throw failure('The next-class sequence cannot contain a cycle.');
+        visited.add(cursor.ClassId);
+        cursor = cursor.NextClassId ? findById(state.classes, cursor.NextClassId) : null;
+      }
+    }
+    const capacity = wholeNumber(record.Capacity, 0, 0, 10000);
+    const periodCounts = new Map();
+    state.studentMemberships.filter((row) => statusActive(row) && row.ClassId === record.ClassId).forEach((row) => {
+      const key = `${row.SessionId}|${row.TermId}`;
+      periodCounts.set(key, (periodCounts.get(key) || 0) + 1);
+    });
+    const highestEnrollment = Math.max(0, ...periodCounts.values());
+    if (capacity && highestEnrollment > capacity) throw failure(`Class capacity cannot be below its current enrollment of ${highestEnrollment}.`, 409);
+  }
+  if (type === 'arm') {
+    const capacity = wholeNumber(record.Capacity, 0, 0, 10000);
+    const periodCounts = new Map();
+    state.studentMemberships.filter((row) => statusActive(row) && row.ArmId === record.ArmId).forEach((row) => {
+      const key = `${row.SessionId}|${row.TermId}`;
+      periodCounts.set(key, (periodCounts.get(key) || 0) + 1);
+    });
+    const highestEnrollment = Math.max(0, ...periodCounts.values());
+    if (capacity && highestEnrollment > capacity) throw failure(`Arm capacity cannot be below its current enrollment of ${highestEnrollment}.`, 409);
+  }
+  if (type === 'department') {
+    if (!record.CoreSubjectIds.length) throw failure('Assign at least one core subject to this senior secondary department.');
+    const invalidSubjects = record.CoreSubjectIds.filter((subjectId) => {
+      const subject = findById(state.subjects, subjectId);
+      return !subject || !statusActive(subject) || subject.SchoolSection !== 'secondary';
+    });
+    if (invalidSubjects.length) throw failure('Every department core subject must be an active Secondary subject.');
+    const seniorChoiceSubjects = record.CoreSubjectIds.filter((subjectId) => {
+      const subject = findById(state.subjects, subjectId);
+      return ACADEMIC_SENIOR_CHOICE_ROLES.includes(subject?.SeniorChoiceRole);
+    });
+    if (seniorChoiceSubjects.length) {
+      throw failure('A department Core subject cannot also be a school-wide Senior Trade or Optional subject. Remove it from Senior choices first.');
+    }
+  }
+  if (['offering', 'teacherallocation', 'studentmembership'].includes(type)) {
+    const session = assertReference(findById(state.sessions, record.SessionId), 'The selected session is not active.');
+    const term = assertReference(findById(state.terms, record.TermId), 'The selected term is not active.');
+    const schoolClass = assertReference(findById(state.classes, record.ClassId), 'The selected class is not active.');
+    if (term.SessionId !== session.SessionId) throw failure('The selected term does not belong to this academic session.');
+    if (schoolClass.SchoolSection !== record.SchoolSection) throw failure('The selected class belongs to another school section.');
+    record.SchoolStage = schoolStageValue(schoolClass.SchoolStage, schoolClass.SchoolSection, schoolClass.Name);
+    if (schoolClass.SchoolSection === 'secondary' && !record.SchoolStage) {
+      throw failure('Classify this class as Junior Secondary or Senior Secondary before using it for allocations.');
+    }
+    if (record.ArmId) {
+      const arm = assertReference(findById(state.arms, record.ArmId), 'The selected class arm is not active.');
+      if (arm.ClassId !== record.ClassId) throw failure('The selected class arm does not belong to this class.');
+      if (type === 'studentmembership') record.DepartmentId = academicStudentDepartmentForClassroom(record, arm);
+    }
+  }
+  if (type === 'offering' || (type === 'teacherallocation' && record.AllocationRole === 'Subject Teacher')) {
+    const subject = assertReference(findById(state.subjects, record.SubjectId), 'The selected subject is not active.');
+    if (subject.SchoolSection !== record.SchoolSection) throw failure('The selected subject belongs to another school section.');
+  }
+  if (type === 'offering' && record.SchoolStage === 'junior-secondary') {
+    record.SubjectRole = 'Core';
+    record.Compulsory = true;
+  }
+  if (type === 'offering' && record.SchoolStage === 'senior-secondary') {
+    throw failure('Senior subjects are configured through Senior departments and Senior choices. Legacy Senior class offerings can be removed from the Offering register.', 409, 'ACADEMIC_SENIOR_OFFERING_DEPRECATED');
+  }
+  if (type === 'offering' && record.SubjectRole === 'Trade' && record.SchoolStage !== 'senior-secondary') {
+    throw failure('Trade subjects can be configured only for Senior Secondary classes.');
+  }
+  if (type === 'teacherallocation') {
+    const teacher = people.staff.find((row) => lower(row.Username || row.username || row.__id) === record.TeacherUsername);
+    if (!teacher || !activeValue(teacher.Active, true)) throw failure('The selected teacher is not an active staff account in this branch.');
+    if (!isAcademicsDepartmentStaff(teacher)) {
+      throw failure('Academic Management staff must have the Teacher role or the Department User role in the Academics department.', 409, 'ACADEMIC_TEACHER_DEPARTMENT_INVALID');
+    }
+    const teacherSection = lower(teacher.SchoolSectionAccess || teacher.schoolSectionAccess || 'all');
+    if (['primary', 'secondary'].includes(teacherSection) && teacherSection !== record.SchoolSection) {
+      throw failure('The selected teacher is restricted to another school section.', 409, 'ACADEMIC_TEACHER_SECTION_INVALID');
+    }
+    if (record.AllocationRole === 'Subject Teacher') {
+      const offering = record.SchoolStage === 'senior-secondary' ? null : state.offerings.find((row) => statusActive(row)
+        && row.SessionId === record.SessionId && row.TermId === record.TermId
+        && row.ClassId === record.ClassId && row.SubjectId === record.SubjectId
+        && (!row.ArmId || !record.ArmId || row.ArmId === record.ArmId));
+      const subject = findById(state.subjects, record.SubjectId);
+      const globallyAvailableSeniorChoice = record.SchoolStage === 'senior-secondary'
+        && ACADEMIC_SENIOR_CHOICE_ROLES.includes(subject?.SeniorChoiceRole);
+      const classroom = findById(state.arms, record.ArmId);
+      const availableSeniorCore = record.SchoolStage === 'senior-secondary'
+        && academicSeniorCoreSubjectIds(state.departments).includes(record.SubjectId);
+      if (!offering && !globallyAvailableSeniorChoice && !availableSeniorCore) {
+        const schoolClass = findById(state.classes, record.ClassId);
+        const classroomName = `${schoolClass?.Name || 'Class'} / ${classroom?.Name || 'arm'}`;
+        if (record.SchoolStage === 'senior-secondary') {
+          throw failure(`${subject?.Name || 'This subject'} is not Core in any active Senior department or configured as a Senior Trade or Optional subject. Configure its curriculum role before allocating a teacher to ${classroomName}.`, 409, 'ACADEMIC_SENIOR_SUBJECT_NOT_CONFIGURED');
+        }
+        throw failure(`${subject?.Name || 'This subject'} is not offered to ${classroomName} for this session and term. Configure the class subject before allocating a teacher.`, 409, 'ACADEMIC_SUBJECT_NOT_OFFERED');
+      }
+    }
+  }
+  if (type === 'studentmembership') {
+    const student = people.students.find((row) => lower(studentReference(row)) === lower(record.StudentRef));
+    if (!student) throw failure('The selected student was not found in this branch and school section.', 404);
+    const schoolClass = findById(state.classes, record.ClassId);
+    if (!people.existing && !academicStudentMatchesClass(student, schoolClass)) {
+      const currentClass = clean(student.ClassName || student.ClassAdmitted || student.ClassApplyingFor) || 'another class';
+      throw failure(`${record.StudentRef} belongs to ${currentClass}. Choose an arm within that student\u2019s existing class.`, 409, 'ACADEMIC_STUDENT_CLASS_MISMATCH');
+    }
+    applyAcademicStudentCurriculum(state, record, {
+      allowIncompleteCurriculum: people.allowIncompleteCurriculum === true
+    });
+    assertAcademicMembershipCapacity(state, record, recordId(people.existing || {}));
+  }
+}
+
+function writePrecondition(existing, revisionToken) {
+  if (!existing) return { exists: false };
+  const expected = clean(revisionToken);
+  if (!expected || expected !== clean(existing.__updateTime)) {
+    throw failure('This academic record changed after it was loaded. Reload before saving.', 409, 'ACADEMIC_WRITE_CONFLICT');
+  }
+  return { updateTime: expected };
+}
+
+function auditWrite(user, action, type, record, details = '', summary = '') {
+  const id = `ACADEMIC-${Date.now()}-${globalThis.crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+  return {
+    collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.audit,
+    documentId: id,
+    exists: false,
+    data: {
+      AuditId: id, Timestamp: nowIso(), Action: clean(action).toUpperCase(), RecordType: type,
+      RecordId: recordId(record), BranchId: record.BranchId, SchoolSection: record.SchoolSection,
+      SessionId: clean(record.SessionId), TermId: clean(record.TermId),
+      Actor: actorName(user), ActorUsername: actorUsername(user), ActorRole: clean(user.role || user.Role),
+      Details: clean(details).slice(0, 1000),
+      ...(summary ? { Summary: clean(summary).slice(0, 700) } : {})
+    }
+  };
+}
+
+function movementWrite(user, movement) {
+  const recordedAt = nowIso();
+  return {
+    collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMovements,
+    documentId: movement.MovementId,
+    exists: false,
+    data: {
+      ...withoutMetadata(movement), RecordedAt: recordedAt,
+      RecordedBy: actorName(user), RecordedByUsername: actorUsername(user), RecordedByRole: clean(user.role || user.Role)
+    }
+  };
+}
+
+function withoutMetadata(row = {}) {
+  const copy = { ...row };
+  ['__id', '__name', '__createTime', '__updateTime', '__scopePath', 'RevisionToken'].forEach((key) => delete copy[key]);
+  return copy;
+}
+
+function legacyClassWrite(state, projectedRecord, type, scope = {}) {
+  if (scope.legacyClassCompatibility === false) return null;
+  const schoolClass = type === 'class'
+    ? projectedRecord
+    : findById(state.classes, projectedRecord.ClassId);
+  if (!schoolClass) return null;
+  const projectedArms = type === 'arm'
+    ? [...state.arms.filter((row) => recordId(row) !== recordId(projectedRecord)), projectedRecord]
+    : state.arms;
+  const arms = projectedArms.filter((row) => row.ClassId === schoolClass.ClassId && statusActive(row))
+    .sort((a, b) => clean(a.Name).localeCompare(clean(b.Name), undefined, { numeric: true, sensitivity: 'base' }))
+    .map((row) => clean(row.Name)).filter(Boolean);
+  return {
+    collectionPath: 'settings/academics/classes',
+    documentId: clean(schoolClass.LegacyDocumentId) || legacyDocumentId(schoolClass.Name),
+    data: {
+      ClassName: schoolClass.Name,
+      SchoolStage: schoolClass.SchoolStage,
+      Arms: arms.join(', '),
+      Active: statusActive(schoolClass) ? 'YES' : 'NO',
+      SortOrder: Number(schoolClass.SortOrder || 100),
+      UpdatedAt: nowIso(),
+      UpdatedBy: 'Academic Management'
+    }
+  };
+}
+
+function studentCompatibilityWrite(people, state, record) {
+  const student = people.students.find((row) => lower(studentReference(row)) === lower(record.StudentRef));
+  const schoolClass = findById(state.classes, record.ClassId);
+  const arm = findById(state.arms, record.ArmId);
+  const session = findById(state.sessions, record.SessionId);
+  const term = findById(state.terms, record.TermId);
+  const department = findById(state.departments, record.DepartmentId);
+  if (!student || !student.__scopePath || !student.__id || !student.__updateTime) return null;
+  return {
+    collectionPath: student.__scopePath,
+    documentId: student.__id,
+    updateTime: student.__updateTime,
+    data: {
+      ...withoutMetadata(student),
+      ClassName: clean(schoolClass?.Name),
+      ClassAdmitted: clean(schoolClass?.Name),
+      ClassArm: clean(arm?.Name),
+      AcademicClassId: clean(record.ClassId),
+      AcademicArmId: clean(record.ArmId),
+      AcademicMembershipId: clean(record.MembershipId),
+      AcademicEnrollmentStatus: clean(record.Status),
+      SchoolStage: clean(record.SchoolStage || schoolClass?.SchoolStage),
+      AcademicDepartmentId: clean(record.DepartmentId),
+      AcademicDepartment: clean(department?.Name),
+      AcademicDepartmentCode: clean(department?.Code),
+      AcademicSession: clean(session?.Name),
+      Term: clean(term?.Name),
+      UpdatedAt: nowIso(),
+      UpdatedBy: 'Academic Management'
+    }
+  };
+}
+
+async function loadPeople(env, user, scope, options = {}) {
+  const includeStaff = options.staff !== false;
+  const includeStudents = options.students !== false;
+  const [staff, students] = await Promise.all([
+    includeStaff ? listCollection(env, 'staffUsers') : Promise.resolve([]),
+    includeStudents ? listSchoolCollection(env, 'students', {
+      branchId: scope.branchId,
+      schoolSectionAccess: scope.section || user.schoolSectionAccess || 'All'
+    }) : Promise.resolve([])
+  ]);
+  return {
+    staff: staff.filter((row) => staffRecordMatchesEdition(row, { ...user, edition: 'school' })
+      && activeValue(row.Active, true)
+      && lower(row.BranchId || 'main') === lower(scope.branchId)),
+    students
+  };
+}
+
+function effectiveAcademicSection(row = {}, scope = {}) {
+  const section = lower(row.SchoolSection);
+  if (['primary', 'secondary'].includes(section)) return section;
+  const configuredSections = [...new Set((scope.structure?.Sections || [])
+    .map(lower).filter((value) => ['primary', 'secondary'].includes(value)))];
+  if (configuredSections.length === 1) return configuredSections[0];
+  // Academic periods and reusable arms created before section isolation were
+  // stored as organisation-wide records. The legacy desktop workflow was the
+  // Secondary workflow, so preserve those records there without leaking them
+  // into a newly configured Primary section.
+  return 'secondary';
+}
+
+export function scopedAcademicRows(rows, scope) {
+  if (!scope.section) return rows;
+  return rows.filter((row) => effectiveAcademicSection(row, scope) === scope.section);
+}
+
+function scopedAcademicState(state, scope) {
+  return Object.fromEntries(Object.entries(state).map(([key, rows]) => [key, scopedAcademicRows(rows, scope)]));
+}
+
+async function loadScopedAcademicState(env, scope, requestedKeys) {
+  return scopedAcademicState(await loadAcademicState(env, scope.branchId, requestedKeys), scope);
+}
+
+export function academicManagementSummary(state = {}) {
+  const count = (key) => (state[key] || []).filter(statusActive).length;
+  return {
+    Classes: count('classes'),
+    Arms: count('arms'),
+    ArmTemplates: count('armTemplates'),
+    Subjects: count('subjects'),
+    Departments: count('departments'),
+    TeacherAllocations: count('teacherAllocations'),
+    StudentMemberships: count('studentMemberships')
+  };
+}
+
+async function loadAcademicManagementSummary(env, scope, focusedState, focusedStateKeys) {
+  const missingKeys = ACADEMIC_SUMMARY_STATE_KEYS.filter((key) => !focusedStateKeys.includes(key));
+  // Only status and section are needed for counts. Avoid transferring entire student
+  // membership and allocation documents into every focused academic workspace.
+  const additional = await Promise.all(missingKeys.map(async (key) => {
+    const rows = await queryCollection(env, ACADEMIC_MANAGEMENT_COLLECTIONS[key], {
+      filters: [{ field: 'BranchId', op: '==', value: scope.branchId }],
+      select: ['BranchId', 'SchoolSection', 'Status']
+    });
+    return [key, scopedAcademicRows(rows.filter((row) => lower(row.BranchId) === lower(scope.branchId)), scope)];
+  }));
+  return academicManagementSummary({ ...focusedState, ...Object.fromEntries(additional) });
+}
+
+function displayStaff(rows = []) {
+  return rows.map((row) => ({
+    Username: clean(row.Username || row.username || row.__id),
+    DisplayName: clean(row.DisplayName || row.displayName || row.Username || row.__id),
+    Role: clean(row.Role || row.role), Department: clean(row.Department || row.department),
+    SchoolSectionAccess: clean(row.SchoolSectionAccess || row.schoolSectionAccess || 'All')
+  })).sort((a, b) => a.DisplayName.localeCompare(b.DisplayName));
+}
+
+function displayStudents(rows = [], classes = []) {
+  return rows.map((row) => ({
+    StudentRef: studentReference(row),
+    StudentName: clean(row.DisplayName || row.ApplicantName || row.StudentName || studentReference(row)),
+    AcademicClassId: academicStudentClassId(row, classes),
+    AcademicArmId: clean(row.AcademicArmId), AcademicDepartmentCode: clean(row.AcademicDepartmentCode),
+    ClassName: clean(row.ClassName || row.ClassAdmitted), ClassAdmitted: clean(row.ClassAdmitted),
+    ClassArm: clean(row.ClassArm), SchoolSection: clean(row.SchoolSection),
+    Gender: clean(row.Gender || row.gender), StudentType: clean(row.StudentType || row.studentType),
+    WalletCardId: clean(row.WalletCardId || row.walletCardId || row.CardId || row.cardId),
+    PassportPhotoAvailable: Boolean(clean(
+      row.documents?.PassportPhotograph?.url
+      || row.DocPassportPhotographUrl
+      || row.PassportPhotographUrl
+      || row.PassportPhotographLink
+    )),
+    PassportPhotoApplicationReference: clean(
+      row.ApplicationReference || row.AdmissionNo || row.AccountRef || studentReference(row)
+    ),
+    PassportPhotoScopePath: clean(row.__scopePath)
+  })).filter((row) => row.StudentRef).sort((a, b) => a.StudentName.localeCompare(b.StudentName));
+}
+
+function publicAcademicReportProfile(profile = {}) {
+  return {
+    SchoolName: clean(profile.SchoolName || profile.OrganisationName || profile.OrganizationName),
+    SchoolAddress: clean(profile.SchoolAddress),
+    SchoolPhone: clean(profile.SchoolPhone),
+    SchoolEmail: clean(profile.SchoolEmail),
+    ResultSignatoryName: clean(profile.ResultSignatoryName || profile.SchoolSignatoryName),
+    ResultSignatoryTitle: clean(profile.ResultSignatoryTitle || profile.SchoolSignatoryTitle),
+    DocumentLogoUrl: '/api/document-logo',
+    DocumentStampUrl: '/api/document-stamp'
+  };
+}
+
+function sortAcademicState(state) {
+  const byName = (a, b) => clean(a.Name).localeCompare(clean(b.Name), undefined, { numeric: true, sensitivity: 'base' });
+  const byOrder = (a, b) => Number(a.SortOrder || 100) - Number(b.SortOrder || 100) || byName(a, b);
+  return {
+    sessions: [...state.sessions].sort((a, b) => clean(b.StartDate).localeCompare(clean(a.StartDate))),
+    terms: [...state.terms].sort((a, b) => clean(a.StartDate).localeCompare(clean(b.StartDate))),
+    classes: [...state.classes].sort(byOrder), armTemplates: [...state.armTemplates].sort(byName), arms: [...state.arms].sort(byName),
+    subjects: [...state.subjects].sort(byName), departments: [...state.departments].sort(byName),
+    offerings: [...state.offerings].sort((a, b) => clean(a.ClassId).localeCompare(clean(b.ClassId)) || clean(a.SubjectId).localeCompare(clean(b.SubjectId))),
+    teacherAllocations: [...state.teacherAllocations].sort((a, b) =>
+      clean(a.TeacherUsername).localeCompare(clean(b.TeacherUsername))
+      || clean(a.ClassId).localeCompare(clean(b.ClassId))
+      || clean(a.ArmId).localeCompare(clean(b.ArmId))
+      || clean(a.SubjectId).localeCompare(clean(b.SubjectId))),
+    studentMemberships: [...state.studentMemberships].sort((a, b) => clean(a.StudentRef).localeCompare(clean(b.StudentRef))),
+    studentMovements: [...state.studentMovements].sort((a, b) => clean(b.RecordedAt || b.EffectiveDate).localeCompare(clean(a.RecordedAt || a.EffectiveDate))),
+    timetableSettings: [...state.timetableSettings].sort((a, b) => clean(b.UpdatedAt).localeCompare(clean(a.UpdatedAt))),
+    schoolCalendars: [...state.schoolCalendars].sort((a, b) => clean(b.UpdatedAt).localeCompare(clean(a.UpdatedAt))),
+    timetableConstraints: [...state.timetableConstraints].sort((a, b) => clean(a.TeacherUsername).localeCompare(clean(b.TeacherUsername))),
+    timetableVersions: [...state.timetableVersions].sort((a, b) => clean(b.CreatedAt).localeCompare(clean(a.CreatedAt))),
+    timetableEntries: [...state.timetableEntries].sort((a, b) => clean(a.DayCode).localeCompare(clean(b.DayCode))
+      || clean(a.StartPeriodCode).localeCompare(clean(b.StartPeriodCode))
+      || clean(a.ClassId).localeCompare(clean(b.ClassId))),
+    timetableSubstitutions: [...state.timetableSubstitutions].sort((a, b) => clean(b.SubstitutionDate).localeCompare(clean(a.SubstitutionDate))
+      || clean(a.TimetableEntryId).localeCompare(clean(b.TimetableEntryId))),
+    studentAttendance: [...state.studentAttendance].sort((a, b) => clean(b.AttendanceDate).localeCompare(clean(a.AttendanceDate))
+      || clean(a.StudentRef).localeCompare(clean(b.StudentRef))),
+    attendanceCorrections: [...state.attendanceCorrections].sort((a, b) => clean(b.RequestedAt).localeCompare(clean(a.RequestedAt))),
+    scoreSheets: [...state.scoreSheets].sort((a, b) => clean(a.ClassId).localeCompare(clean(b.ClassId))
+      || clean(a.ArmId).localeCompare(clean(b.ArmId)) || clean(a.SubjectId).localeCompare(clean(b.SubjectId))),
+    studentScores: [...state.studentScores].sort((a, b) => clean(a.SheetId).localeCompare(clean(b.SheetId))
+      || clean(a.StudentRef).localeCompare(clean(b.StudentRef))),
+    scoreImports: [...state.scoreImports].sort((a, b) => clean(b.CommittedAt || b.CreatedAt).localeCompare(clean(a.CommittedAt || a.CreatedAt))),
+    scoreSyncBatches: [...state.scoreSyncBatches].sort((a, b) => clean(b.SynchronizedAt || b.CreatedAt).localeCompare(clean(a.SynchronizedAt || a.CreatedAt))),
+    cbtTests: [...state.cbtTests].sort((a, b) => clean(b.StartsAt || b.CreatedAt).localeCompare(clean(a.StartsAt || a.CreatedAt))),
+    termResults: [...state.termResults].sort((a, b) => clean(a.ClassId).localeCompare(clean(b.ClassId))
+      || clean(a.ArmId).localeCompare(clean(b.ArmId)) || clean(a.StudentRef).localeCompare(clean(b.StudentRef))),
+    resultClearances: [...state.resultClearances].sort((a, b) => clean(a.StudentRef).localeCompare(clean(b.StudentRef))
+      || clean(b.ApprovedAt || b.UpdatedAt).localeCompare(clean(a.ApprovedAt || a.UpdatedAt))),
+    resultEvents: [...state.resultEvents].sort((a, b) => clean(b.CreatedAt).localeCompare(clean(a.CreatedAt))),
+    cumulativeResults: [...state.cumulativeResults].sort((a, b) => clean(a.ClassId).localeCompare(clean(b.ClassId))
+      || clean(a.ArmId).localeCompare(clean(b.ArmId)) || clean(a.StudentRef).localeCompare(clean(b.StudentRef))),
+    cumulativeEvents: [...state.cumulativeEvents].sort((a, b) => clean(b.CreatedAt).localeCompare(clean(a.CreatedAt))),
+    promotionDecisions: [...state.promotionDecisions].sort((a, b) => clean(a.ClassId).localeCompare(clean(b.ClassId))
+      || clean(a.ArmId).localeCompare(clean(b.ArmId)) || clean(a.StudentRef).localeCompare(clean(b.StudentRef))),
+    promotionEvents: [...state.promotionEvents].sort((a, b) => clean(b.CreatedAt).localeCompare(clean(a.CreatedAt))),
+    transcripts: [...state.transcripts].sort((a, b) => clean(a.StudentName || a.StudentRef).localeCompare(clean(b.StudentName || b.StudentRef))),
+    transcriptEvents: [...state.transcriptEvents].sort((a, b) => clean(b.CreatedAt).localeCompare(clean(a.CreatedAt)))
+  };
+}
+
+function currentSelection(state, input = {}) {
+  const session = findById(state.sessions, input.SessionId)
+    || state.sessions.find((row) => lower(row.Status) === 'active') || state.sessions.find(statusActive) || null;
+  const terms = state.terms.filter((row) => !session || row.SessionId === session.SessionId);
+  const term = findById(terms, input.TermId) || terms.find((row) => lower(row.Status) === 'active') || terms.find(statusActive) || null;
+  return { SessionId: clean(session?.SessionId), TermId: clean(term?.TermId) };
+}
+
+export function academicTeacherVisibleMemberships(state = {}, username = '', substituteClassrooms = []) {
+  const teacherUsername = lower(username);
+  const allocations = (state.teacherAllocations || []).filter((row) => statusActive(row)
+    && lower(row.TeacherUsername) === teacherUsername);
+  const homeroomKeys = new Set(allocations
+    .filter((row) => lower(row.AllocationRole) !== 'subject teacher')
+    .map((row) => `${row.SessionId}|${row.TermId}|${row.ClassId}|${row.ArmId || '*'}`));
+  (substituteClassrooms || []).forEach((row) => homeroomKeys.add(`${row.SessionId}|${row.TermId}|${row.ClassId}|${row.ArmId}`));
+  const subjectKeys = new Set(allocations
+    .filter((row) => lower(row.AllocationRole) === 'subject teacher' && clean(row.SubjectId))
+    .map((row) => `${row.SessionId}|${row.TermId}|${row.ClassId}|${row.SubjectId}`));
+  return (state.studentMemberships || []).filter((row) => (
+    homeroomKeys.has(`${row.SessionId}|${row.TermId}|${row.ClassId}|${row.ArmId}`)
+    || homeroomKeys.has(`${row.SessionId}|${row.TermId}|${row.ClassId}|*`)
+    || (row.SubjectIds || []).some((subjectId) => subjectKeys.has(`${row.SessionId}|${row.TermId}|${row.ClassId}|${subjectId}`))
+  ));
+}
+
+export function academicTeacherCanReadScoreSheet(row = {}, allocations = [], substituteClassrooms = []) {
+  const classroomMatches = (allocation) => allocation.SessionId === row.SessionId
+    && allocation.TermId === row.TermId && allocation.ClassId === row.ClassId
+    && (!clean(allocation.ArmId) || allocation.ArmId === row.ArmId);
+  return allocations.some((allocation) => statusActive(allocation) && classroomMatches(allocation)
+    && (lower(allocation.AllocationRole) !== 'subject teacher' || allocation.SubjectId === row.SubjectId))
+    || substituteClassrooms.some((allocation) => classroomMatches(allocation) && allocation.SubjectId === row.SubjectId);
+}
+
+export function academicTeacherVisibleTimetable(state = {}, username = '', focusedView = 'timetable') {
+  const teacherUsername = lower(username);
+  const timetableView = focusedView === 'timetable';
+  const allowedStatuses = new Set(timetableView ? ['draft', 'approved', 'published'] : ['published']);
+  const versions = (state.timetableVersions || []).filter((row) => allowedStatuses.has(lower(row.Status)));
+  const allowedVersionIds = new Set(versions.map((row) => row.VersionId));
+  const homerooms = new Set((state.teacherAllocations || []).filter((row) => statusActive(row)
+    && lower(row.TeacherUsername) === teacherUsername
+    && ['form teacher', 'assistant teacher'].includes(lower(row.AllocationRole)))
+    .map((row) => `${row.SessionId}|${row.TermId}|${row.ClassId}|${row.ArmId}`));
+  const substitutions = new Set((state.timetableSubstitutions || []).filter((row) => lower(row.Status) === 'scheduled'
+    && lower(row.SubstituteTeacherUsername) === teacherUsername).map((row) => row.TimetableEntryId));
+  const entries = (state.timetableEntries || []).filter((row) => allowedVersionIds.has(row.VersionId)
+    && (lower(row.TeacherUsername) === teacherUsername || substitutions.has(row.EntryId)
+      || homerooms.has(`${row.SessionId}|${row.TermId}|${row.ClassId}|${row.ArmId}`)));
+  const visibleVersionIds = new Set(entries.map((row) => row.VersionId));
+  return {
+    versions: timetableView ? versions.filter((row) => visibleVersionIds.has(row.VersionId)) : versions,
+    entries
+  };
+}
+
+export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
+  const permissions = requireCapability(user, 'enabled');
+  const scope = await academicScope(env, user, input, { requireSection: false });
+  const focusedView = permissions.financeView ? 'clearances' : normalizedAcademicView(input.View || input.Workspace);
+  if (focusedView === 'analysis' && !permissions.canViewResultsAnalysis) {
+    throw failure('Only school management may open the end-of-session results analysis.', 403, 'ACADEMIC_ANALYSIS_FORBIDDEN');
+  }
+  const focusedStateKeys = academicManagementViewStateKeys(focusedView, permissions);
+  const includePeople = input.IncludePeople !== false && lower(input.IncludePeople) !== 'false';
+  const peopleOptions = includePeople
+    ? (ACADEMIC_VIEW_PEOPLE[focusedView] || ACADEMIC_VIEW_PEOPLE.classrooms)
+    : { staff: false, students: false };
+  const includeReportProfile = ['results', 'outcomes'].includes(focusedView);
+  const [rawState, people, reportProfile] = await Promise.all([
+    loadScopedAcademicState(env, scope, focusedStateKeys),
+    loadPeople(env, user, scope, peopleOptions),
+    includeReportProfile
+      ? getDocument(env, 'settings', 'schoolProfile').catch(() => ({}))
+      : Promise.resolve(null)
+  ]);
+  const summary = await loadAcademicManagementSummary(env, scope, rawState, focusedStateKeys);
+  let state = rawState;
+  let students = people.students;
+  if (permissions.financeView) {
+    const visibleStudents = new Set(state.studentMemberships.map((row) => lower(row.StudentRef)));
+    students = students.filter((row) => visibleStudents.has(lower(studentReference(row))));
+  } else if (permissions.teacherView) {
+    const username = actorUsername(user);
+    const substituteEntryIds = new Set(state.timetableSubstitutions.filter((row) => lower(row.Status) === 'scheduled'
+      && lower(row.SubstituteTeacherUsername) === username).map((row) => row.TimetableEntryId));
+    const substituteClassrooms = state.timetableEntries.filter((row) => substituteEntryIds.has(row.EntryId));
+    state.teacherAllocations = state.teacherAllocations.filter((row) => lower(row.TeacherUsername) === username);
+    state.studentMemberships = academicTeacherVisibleMemberships(state, username, substituteClassrooms);
+    const ownDailyClassrooms = new Set(state.teacherAllocations.filter((row) => statusActive(row)
+      && ['form teacher', 'assistant teacher'].includes(lower(row.AllocationRole)))
+      .map((row) => `${row.SessionId}|${row.TermId}|${row.ClassId}|${row.ArmId}`));
+    if (focusedView === 'presence') {
+      state.studentMemberships = state.studentMemberships.filter((row) => ownDailyClassrooms.has(
+        `${row.SessionId}|${row.TermId}|${row.ClassId}|${row.ArmId}`));
+    }
+    const visibleStudents = new Set(state.studentMemberships.map((row) => lower(row.StudentRef)));
+    const membershipKey = (row) => `${row.SessionId}|${row.TermId}|${row.ClassId}|${row.ArmId}|${lower(row.StudentRef)}`;
+    const visibleMemberships = new Set(state.studentMemberships.map(membershipKey));
+    const sessionKey = (row) => `${row.SessionId}|${row.ClassId}|${row.ArmId}|${lower(row.StudentRef)}`;
+    const visibleSessions = new Set(state.studentMemberships.map(sessionKey));
+    state.studentMovements = state.studentMovements.filter((row) => state.studentMemberships.some((membership) =>
+      lower(row.StudentRef) === lower(membership.StudentRef) && row.SessionId === membership.SessionId && row.TermId === membership.TermId));
+    const visibleTimetable = academicTeacherVisibleTimetable(state, username, focusedView);
+    state.timetableVersions = visibleTimetable.versions;
+    state.timetableEntries = visibleTimetable.entries;
+    const visibleEntries = new Set(state.timetableEntries.map((row) => row.EntryId));
+    state.timetableSubstitutions = state.timetableSubstitutions.filter((row) => visibleEntries.has(row.TimetableEntryId)
+      || lower(row.SubstituteTeacherUsername) === username);
+    state.timetableConstraints = state.timetableConstraints.filter((row) => lower(row.TeacherUsername) === username);
+    state.studentAttendance = state.studentAttendance.filter((row) => visibleMemberships.has(membershipKey(row))
+      && (focusedView !== 'presence' || (lower(row.Mode) === 'daily' && ownDailyClassrooms.has(
+        `${row.SessionId}|${row.TermId}|${row.ClassId}|${row.ArmId}`))));
+    const visibleAttendanceIds = new Set(state.studentAttendance.map((row) => row.AttendanceId));
+    state.attendanceCorrections = state.attendanceCorrections.filter((row) => lower(row.RequestedByUsername) === username
+      && (focusedView !== 'presence' || visibleAttendanceIds.has(row.AttendanceId)));
+    state.scoreSheets = state.scoreSheets.filter((row) => academicTeacherCanReadScoreSheet(row, state.teacherAllocations, substituteClassrooms));
+    const visibleScoreSheets = new Set(state.scoreSheets.map((row) => row.SheetId));
+    state.studentScores = state.studentScores.filter((row) => visibleScoreSheets.has(row.SheetId) && visibleStudents.has(lower(row.StudentRef)));
+    state.scoreImports = state.scoreImports.filter((row) => visibleScoreSheets.has(row.SheetId));
+    state.scoreSyncBatches = state.scoreSyncBatches.filter((row) => visibleScoreSheets.has(row.SheetId));
+    state.cbtTests = state.cbtTests.filter((row) => lower(row.TeacherUsername) === username);
+    state.termResults = state.termResults.filter((row) => visibleMemberships.has(membershipKey(row)));
+    const visibleResults = new Set(state.termResults.map((row) => row.ResultId));
+    state.resultEvents = state.resultEvents.filter((row) => visibleResults.has(row.ResultId));
+    state.cumulativeResults = state.cumulativeResults.filter((row) => visibleSessions.has(sessionKey(row)));
+    const visibleCumulative = new Set(state.cumulativeResults.map((row) => row.CumulativeResultId));
+    state.cumulativeEvents = state.cumulativeEvents.filter((row) => visibleCumulative.has(row.CumulativeResultId));
+    state.promotionDecisions = state.promotionDecisions.filter((row) => visibleSessions.has(sessionKey(row)));
+    const visiblePromotions = new Set(state.promotionDecisions.map((row) => row.PromotionDecisionId));
+    state.promotionEvents = state.promotionEvents.filter((row) => visiblePromotions.has(row.PromotionDecisionId));
+    // Transcripts span historical periods outside an ordinary teaching allocation.
+    state.transcripts = [];
+    const visibleTranscripts = new Set(state.transcripts.map((row) => row.TranscriptId));
+    state.transcriptEvents = state.transcriptEvents.filter((row) => visibleTranscripts.has(row.TranscriptId));
+    students = students.filter((row) => visibleStudents.has(lower(studentReference(row))));
+  }
+  state = sortAcademicState(state);
+  const migrationReadiness = permissions.canManageStructure && focusedView === 'readiness'
+    ? academicMigrationReadiness(state, students)
+    : null;
+  const includesAcademicPeriod = focusedStateKeys.includes('sessions') && focusedStateKeys.includes('terms');
+  const selection = includesAcademicPeriod ? currentSelection(state, input) : null;
+  const selectedSession = selection ? findById(state.sessions, selection.SessionId) : null;
+  const selectedTerm = selection ? findById(state.terms, selection.TermId) : null;
+  let assessmentScheme = academicAssessmentScheme({});
+  const includeAssessmentPolicy = input.IncludeAssessmentPolicy !== false && lower(input.IncludeAssessmentPolicy) !== 'false';
+  if (includeAssessmentPolicy && selectedSession && selectedTerm && ['scorebook', 'cbt'].includes(focusedView)) {
+    try {
+      assessmentScheme = await academicAssessmentForPeriod(env, scope, selectedSession, selectedTerm, { required: false });
+    } catch (error) {
+      assessmentScheme = { ...academicAssessmentScheme({}), Issues: [clean(error?.message || error)] };
+    }
+  }
+  const visibleStaff = permissions.teacherView
+    ? people.staff.filter((row) => lower(row.Username || row.__id) === actorUsername(user))
+    : people.staff;
+  return {
+    ok: true,
+    partialAcademicManagement: true,
+    loadedAcademicView: focusedView,
+    message: focusedView === 'cbt'
+      ? 'Online CBT schedule and class-wide rosters loaded.'
+      : `${focusedView.charAt(0).toUpperCase()}${focusedView.slice(1)} academic workspace loaded.`,
+    permissions,
+    summary,
+    scope: { BranchId: scope.branchId, SchoolSection: scope.section || 'all' },
+    sections: scope.structure.Sections,
+    ...(selection ? { selection } : {}),
+    ...(includeAssessmentPolicy && ['scorebook', 'cbt'].includes(focusedView) ? { assessmentScheme } : {}),
+    ...(migrationReadiness ? { migrationReadiness } : {}),
+    ...(reportProfile ? { reportProfile: publicAcademicReportProfile(reportProfile) } : {}),
+    ...Object.fromEntries(Object.entries(state)
+      .filter(([key]) => focusedStateKeys.includes(key))
+      .map(([key, rows]) => [key, rows.map(publicRecord)])),
+    ...(peopleOptions.staff ? { staff: displayStaff(academicSubjectTeacherCandidates(visibleStaff, scope.section)) } : {}),
+    ...(peopleOptions.students ? { students: displayStudents(students, state.classes) } : {})
+  };
+}
+
+export async function saveAcademicManagementRecord(env, user = {}, input = {}) {
+  requireWritableSubscription(user);
+  const type = normalizedRecordType(input.RecordType || input.recordType || input.Type);
+  const definition = RECORD_TYPES[type];
+  if (!definition) throw failure('Choose a valid academic record type.');
+  requireCapability(user, definition.capability);
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  const peopleOptions = type === 'teacherallocation'
+    ? { students: false }
+    : type === 'studentmembership'
+    ? { staff: false }
+    : { staff: false, students: false };
+  const [state, people] = await Promise.all([
+    loadScopedAcademicState(env, scope, ACADEMIC_RECORD_STATE_KEYS[type]),
+    loadPeople(env, user, scope, peopleOptions)
+  ]);
+  const requestedId = clean(input.RecordId || input.recordId);
+  const existing = requestedId ? findById(state[Object.keys(ACADEMIC_MANAGEMENT_COLLECTIONS).find((key) => ACADEMIC_MANAGEMENT_COLLECTIONS[key] === definition.collection)] || [], requestedId) : null;
+  if (requestedId && !existing) throw failure('The academic record was not found in the selected branch.', 404);
+  if (existing && effectiveAcademicSection(existing, scope) !== scope.section) throw failure('This academic record belongs to another school section.', 403);
+  const normalizedInput = type === 'studentmembership' && !existing ? { ...input, Status: 'Active' } : input;
+  const record = definition.normalize(normalizedInput, scope, existing);
+  validateAcademicRecord(state, type, record, { ...people, existing });
+  if (type === 'subject' && existing && clean(existing.AssessmentCategory || 'Graded') !== record.AssessmentCategory
+    && record.AssessmentCategory === 'TimetableOnly'
+    && (state.scoreSheets.some((row) => lower(row.SubjectId) === lower(record.SubjectId))
+      || state.cbtTests.some((row) => lower(row.SubjectId) === lower(record.SubjectId)))) {
+    throw failure('This subject already has score sheets or CBT tests. Keep it Graded so existing assessment history is not hidden.', 409, 'ACADEMIC_SUBJECT_ASSESSMENT_HISTORY');
+  }
+  if (type === 'studentmembership' && existing && membershipMateriallyChanged(existing, record)) {
+    throw failure('Use the transfer, curriculum-change, withdrawal or reinstatement workflow so this membership change is preserved in history.', 409, 'ACADEMIC_MOVEMENT_REQUIRED');
+  }
+  const timestamp = nowIso();
+  record.CreatedAt = clean(existing?.CreatedAt) || timestamp;
+  record.CreatedBy = clean(existing?.CreatedBy) || actorName(user);
+  record.UpdatedAt = timestamp;
+  record.UpdatedBy = actorName(user);
+  const precondition = writePrecondition(existing, input.RevisionToken);
+  const writes = [{ collectionPath: definition.collection, documentId: recordId(record), data: withoutMetadata(record), ...precondition }];
+  writes.push(auditWrite(user, existing ? 'UPDATE' : 'CREATE', type, record, clean(record.Name || record.StudentRef || record.TeacherUsername)));
+  if (type === 'studentmembership' && !existing) {
+    writes.push(movementWrite(user, academicMovementForState(state, input, scope, null, record)));
+  }
+  if (['class', 'arm'].includes(type)) {
+    const compatibility = legacyClassWrite(state, record, type, scope);
+    if (compatibility) writes.push(compatibility);
+  }
+  if (type === 'studentmembership') {
+    const projected = { ...state, studentMemberships: [...state.studentMemberships.filter((row) => recordId(row) !== recordId(record)), record] };
+    const compatibility = studentCompatibilityWrite(people, projected, record);
+    if (compatibility) writes.push(compatibility);
+  }
+  try {
+    await batchCommitDocuments(env, writes);
+  } catch (error) {
+    if ([409, 412].includes(Number(error?.status))) {
+      throw failure('This academic record changed while it was being saved. Reload and try again.', 409, 'ACADEMIC_WRITE_CONFLICT');
+    }
+    throw error;
+  }
+  return bootstrapAcademicManagement(env, user, {
+    ...input, BranchId: scope.branchId, SchoolSection: scope.section,
+    View: academicRecordResponseView(input, type)
+  });
+}
+
+function uniqueStudentReferences(value) {
+  const supplied = Array.isArray(value) ? value : clean(value).split(',');
+  const seen = new Set();
+  return supplied.map(clean).filter((reference) => {
+    const key = lower(reference);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function importCodeList(value) {
+  const seen = new Set();
+  return clean(value).split(/[;|]/).map(clean).filter((item) => {
+    const key = lower(item);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+export function normalizeAcademicStudentImportRows(value) {
+  let supplied = value;
+  if (typeof supplied === 'string') {
+    try { supplied = JSON.parse(supplied); } catch (_error) { supplied = []; }
+  }
+  if (!Array.isArray(supplied)) return [];
+  return supplied.map((row = {}) => ({
+    StudentRef: clean(row.StudentRef || row.AdmissionNo || row.AccountRef),
+    FirstName: clean(row.FirstName || row.firstName || row.GivenName || row.givenName),
+    Surname: clean(row.Surname || row.surname || row.LastName || row.lastName || row.FamilyName || row.familyName),
+    MiddleName: clean(row.MiddleName || row.middleName || row.OtherName || row.otherName),
+    ClassCode: clean(row.ClassCode || row.ClassId || row.ClassName),
+    ArmCode: clean(row.ArmCode || row.ArmId || row.ArmName),
+    DepartmentCode: clean(row.DepartmentCode || row.DepartmentId || row.DepartmentName),
+    CoreSubjectCodes: importCodeList(row.CoreSubjectCodes || row.CoreSubjects),
+    TradeSubjectCodes: importCodeList(row.TradeSubjectCodes || row.TradeSubjects),
+    OptionalSubjectCodes: importCodeList(row.OptionalSubjectCodes || row.OptionalSubjects),
+    Reason: clean(row.Reason)
+  }));
+}
+
+function academicImportReference(rows, suppliedValue, keys, label, rowNumber) {
+  const value = clean(suppliedValue);
+  if (!value) throw failure(`Row ${rowNumber}: enter the ${label}.`);
+  const wanted = lower(value);
+  const matches = rows.filter((row) => statusActive(row)
+    && keys.some((key) => lower(row[key]) === wanted));
+  if (!matches.length) throw failure(`Row ${rowNumber}: ${label} "${value}" was not found or is inactive.`, 404, 'ACADEMIC_IMPORT_REFERENCE_INVALID');
+  if (matches.length > 1) throw failure(`Row ${rowNumber}: ${label} "${value}" is ambiguous. Use its unique code.`, 409, 'ACADEMIC_IMPORT_REFERENCE_AMBIGUOUS');
+  return matches[0];
+}
+
+function stampAcademicRecord(record, user, existing = null) {
+  const timestamp = nowIso();
+  record.CreatedAt = clean(existing?.CreatedAt) || timestamp;
+  record.CreatedBy = clean(existing?.CreatedBy) || actorName(user);
+  record.UpdatedAt = timestamp;
+  record.UpdatedBy = actorName(user);
+  return record;
+}
+
+function batchLines(value) {
+  return clean(value).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+}
+
+function batchParts(line, index, expectedCount, format) {
+  const parts = line.split('|').map((part) => part.trim());
+  if (parts.length !== expectedCount) {
+    throw failure(`Line ${index + 1} is not in the required format. Use ${format}.`);
+  }
+  return parts;
+}
+
+export function parseAcademicClassBatch(input = {}, context = {}) {
+  const section = scopedSection({ SchoolSection: context.section || input.SchoolSection });
+  if (Array.isArray(input.Classes)) return input.Classes.map((row, index) => ({ ...row, SortOrder: row.SortOrder || (index + 1) * 10 }));
+  return batchLines(input.ClassLines || input.Classes).map((line, index) => {
+    const parts = batchParts(
+      line, index, section === 'secondary' ? 4 : 3,
+      section === 'secondary' ? 'Name | Code | Junior Secondary or Senior Secondary | Capacity' : 'Name | Code | Capacity'
+    );
+    return section === 'secondary'
+      ? { Name: parts[0], Code: parts[1], SchoolStage: parts[2], Capacity: parts[3], SortOrder: (index + 1) * 10 }
+      : { Name: parts[0], Code: parts[1], Capacity: parts[2], SchoolStage: 'primary', SortOrder: (index + 1) * 10 };
+  });
+}
+
+export function parseAcademicArmTemplateBatch(input = {}) {
+  if (Array.isArray(input.ArmTemplates)) return input.ArmTemplates.map((row, index) => ({ ...row, SortOrder: row.SortOrder || (index + 1) * 10 }));
+  return batchLines(input.ArmTemplateLines || input.ArmTemplates).map((line, index) => {
+    const parts = batchParts(line, index, 3, 'Name | Code | Default capacity');
+    return { Name: parts[0], Code: parts[1], DefaultCapacity: parts[2], SortOrder: (index + 1) * 10 };
+  });
+}
+
+export function parseAcademicSubjectBatch(input = {}) {
+  if (Array.isArray(input.Subjects)) return input.Subjects.map((row) => ({
+    ...row, AssessmentCategory: row.AssessmentCategory || input.AssessmentCategory || 'Graded'
+  }));
+  return batchLines(input.SubjectLines || input.Subjects).map((line, index) => {
+    const count = line.split('|').length;
+    if (![2, 3].includes(count)) throw failure(`Line ${index + 1} is not in the required format. Use Name | Code | optional TimetableOnly.`);
+    const parts = batchParts(line, index, count, 'Name | Code | optional TimetableOnly');
+    const assessmentCategory = parts[2] || clean(input.AssessmentCategory);
+    return { Name: parts[0], Code: parts[1], ...(assessmentCategory ? { AssessmentCategory: assessmentCategory } : {}) };
+  });
+}
+
+function sameSetupRecord(existing, record, keys) {
+  return statusActive(existing) && keys.every((key) => {
+    if (['Capacity', 'DefaultCapacity', 'SortOrder'].includes(key)) return Number(existing[key] || 0) === Number(record[key] || 0);
+    if (key === 'AssessmentCategory') return clean(existing[key] || 'Graded') === clean(record[key] || 'Graded');
+    return clean(existing[key]) === clean(record[key]);
+  });
+}
+
+async function commitAcademicBatch(env, writes, conflictMessage) {
+  if (!writes.length) return { writeResults: [] };
+  try {
+    return await batchCommitDocuments(env, writes);
+  } catch (error) {
+    if ([409, 412].includes(Number(error?.status))) {
+      throw failure(conflictMessage, 409, 'ACADEMIC_WRITE_CONFLICT');
+    }
+    throw error;
+  }
+}
+
+export async function bulkCreateAcademicClasses(env, user = {}, input = {}) {
+  requireWritableSubscription(user);
+  requireCapability(user, 'canManageStructure');
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  const rows = parseAcademicClassBatch(input, scope);
+  if (!rows.length) throw failure('Enter at least one class definition.');
+  if (rows.length > 50) throw failure('Create at most 50 classes in one batch.');
+  const state = await loadScopedAcademicState(env, scope, ACADEMIC_RECORD_STATE_KEYS.class);
+  const projected = { ...state, classes: [...state.classes] };
+  const writes = [];
+  let skipped = 0;
+  const createdRecords = [];
+  for (const row of rows) {
+    const record = normalizeAcademicClass({ ...row, Status: 'Active' }, scope);
+    const existing = findById(projected.classes, record.ClassId);
+    if (existing) {
+      if (sameSetupRecord(existing, record, ['Name', 'Code', 'SchoolStage', 'Capacity'])) {
+        skipped += 1;
+        continue;
+      }
+      throw failure(`${record.Name} already exists with different class settings. Edit that class instead.`, 409, 'ACADEMIC_BULK_CLASS_CONFLICT');
+    }
+    validateAcademicRecord(projected, 'class', record, {});
+    stampAcademicRecord(record, user);
+    projected.classes.push(record);
+    createdRecords.push(record);
+    writes.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.classes, documentId: record.ClassId, data: withoutMetadata(record), exists: false });
+  }
+  createdRecords.forEach((record) => {
+    const compatibility = legacyClassWrite(projected, record, 'class', scope);
+    if (compatibility) writes.push(compatibility);
+  });
+  if (createdRecords.length) writes.push(auditWrite(user, 'BULK CREATE', 'class', {
+    BranchId: scope.branchId, SchoolSection: scope.section, ClassId: `bulk-${Date.now()}`
+  }, `${createdRecords.length} class(es) created; ${skipped} already matched.`));
+  await commitAcademicBatch(env, writes, 'The class catalogue changed while this batch was being saved. Reload and try again.');
+  const response = await bootstrapAcademicManagement(env, user, {
+    ...input, BranchId: scope.branchId, SchoolSection: scope.section, View: 'bulksetup'
+  });
+  response.message = createdRecords.length
+    ? `${createdRecords.length} class${createdRecords.length === 1 ? '' : 'es'} created online${skipped ? `; ${skipped} already matched and were skipped` : ''}.`
+    : 'Every submitted class already exists with the same settings.';
+  response.bulkResult = { Requested: rows.length, Created: createdRecords.length, Skipped: skipped };
+  return response;
+}
+
+export async function bulkCreateAcademicArmTemplates(env, user = {}, input = {}) {
+  requireWritableSubscription(user);
+  requireCapability(user, 'canManageStructure');
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  const rows = parseAcademicArmTemplateBatch(input);
+  if (!rows.length) throw failure('Enter at least one reusable arm definition.');
+  if (rows.length > 50) throw failure('Create at most 50 reusable arms in one batch.');
+  const state = await loadScopedAcademicState(env, scope, ACADEMIC_RECORD_STATE_KEYS.armtemplate);
+  const projected = { ...state, armTemplates: [...state.armTemplates] };
+  const writes = [];
+  const createdRecords = [];
+  let skipped = 0;
+  for (const row of rows) {
+    const record = normalizeAcademicArmTemplate({ ...row, Status: 'Active' }, scope);
+    const existing = findById(projected.armTemplates, record.ArmTemplateId);
+    if (existing) {
+      if (sameSetupRecord(existing, record, ['Name', 'Code', 'DefaultCapacity'])) {
+        skipped += 1;
+        continue;
+      }
+      throw failure(`${record.Name} already exists with different reusable-arm settings. Edit that catalogue entry instead.`, 409, 'ACADEMIC_BULK_ARM_TEMPLATE_CONFLICT');
+    }
+    stampAcademicRecord(record, user);
+    projected.armTemplates.push(record);
+    createdRecords.push(record);
+    writes.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.armTemplates, documentId: record.ArmTemplateId, data: withoutMetadata(record), exists: false });
+  }
+  if (createdRecords.length) writes.push(auditWrite(user, 'BULK CREATE', 'armtemplate', {
+    BranchId: scope.branchId, SchoolSection: scope.section, ArmTemplateId: `bulk-${Date.now()}`
+  }, `${createdRecords.length} reusable arm(s) created; ${skipped} already matched.`));
+  await commitAcademicBatch(env, writes, 'The reusable arm catalogue changed while this batch was being saved. Reload and try again.');
+  const response = await bootstrapAcademicManagement(env, user, {
+    ...input, BranchId: scope.branchId, SchoolSection: scope.section, View: 'bulksetup'
+  });
+  response.message = createdRecords.length
+    ? `${createdRecords.length} reusable arm${createdRecords.length === 1 ? '' : 's'} created online${skipped ? `; ${skipped} already matched and were skipped` : ''}.`
+    : 'Every submitted reusable arm already exists with the same settings.';
+  response.bulkResult = { Requested: rows.length, Created: createdRecords.length, Skipped: skipped };
+  return response;
+}
+
+export async function bulkCreateAcademicSubjects(env, user = {}, input = {}) {
+  requireWritableSubscription(user);
+  requireCapability(user, 'canManageStructure');
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  const rows = parseAcademicSubjectBatch(input);
+  if (!rows.length) throw failure('Enter at least one subject definition.');
+  if (rows.length > 50) throw failure('Create at most 50 subjects in one batch.');
+  const state = await loadScopedAcademicState(env, scope, ACADEMIC_RECORD_STATE_KEYS.subject);
+  const projected = { ...state, subjects: [...state.subjects] };
+  const writes = [];
+  const createdRecords = [];
+  let skipped = 0;
+  for (const row of rows) {
+    const record = normalizeAcademicSubject({ ...row, Status: 'Active' }, scope);
+    const existing = findById(projected.subjects, record.SubjectId);
+    if (existing) {
+      if (sameSetupRecord(existing, record, ['Name', 'Code', 'AssessmentCategory'])) {
+        skipped += 1;
+        continue;
+      }
+      throw failure(`${record.Name} already exists with different subject settings. Edit that subject instead.`, 409, 'ACADEMIC_BULK_SUBJECT_CONFLICT');
+    }
+    stampAcademicRecord(record, user);
+    projected.subjects.push(record);
+    createdRecords.push(record);
+    writes.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.subjects, documentId: record.SubjectId, data: withoutMetadata(record), exists: false });
+  }
+  if (createdRecords.length) writes.push(auditWrite(user, 'BULK CREATE', 'subject', {
+    BranchId: scope.branchId, SchoolSection: scope.section, SubjectId: `bulk-${Date.now()}`
+  }, `${createdRecords.length} reusable subject(s) created; ${skipped} already matched.`));
+  await commitAcademicBatch(env, writes, 'The subject catalogue changed while this batch was being saved. Reload and try again.');
+  const response = await bootstrapAcademicManagement(env, user, {
+    ...input, BranchId: scope.branchId, SchoolSection: scope.section, View: 'bulksetup'
+  });
+  response.message = createdRecords.length
+    ? `${createdRecords.length} reusable subject${createdRecords.length === 1 ? '' : 's'} created online${skipped ? `; ${skipped} already matched and were skipped` : ''}.`
+    : 'Every submitted subject already exists with the same settings.';
+  response.bulkResult = { Requested: rows.length, Created: createdRecords.length, Skipped: skipped };
+  return response;
+}
+
+export async function configureAcademicSeniorChoiceSubjects(env, user = {}, input = {}) {
+  requireWritableSubscription(user);
+  requireCapability(user, 'canManageStructure');
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  if (scope.section !== 'secondary') {
+    throw failure('Senior Trade and Optional subjects can be configured only in the Secondary school section.');
+  }
+  const tradeSubjectIds = uniqueIds(input.TradeSubjectIds || input.TradeSubjectId);
+  const optionalSubjectIds = uniqueIds(input.OptionalSubjectIds || input.OptionalSubjectId);
+  if (!tradeSubjectIds.length) throw failure('Choose at least one school-wide Senior Trade subject.');
+  const tradeSet = new Set(tradeSubjectIds);
+  const overlap = optionalSubjectIds.filter((subjectId) => tradeSet.has(subjectId));
+  if (overlap.length) throw failure('A subject cannot be both Trade and Optional. Choose only one category for each subject.');
+
+  const state = await loadScopedAcademicState(env, scope, ACADEMIC_DEPARTMENT_STATE_KEYS);
+  const configuredIds = new Set([...tradeSubjectIds, ...optionalSubjectIds]);
+  const coreSubjectIds = new Set(academicSeniorCoreSubjectIds(state.departments));
+  if ([...configuredIds].some((subjectId) => coreSubjectIds.has(subjectId))) {
+    throw failure('Subjects already assigned as department Core cannot be selected as Senior Trade or Optional subjects.');
+  }
+  configuredIds.forEach((subjectId) => {
+    const subject = assertReference(findById(state.subjects, subjectId), 'Every selected Senior choice subject must be active.');
+    if (lower(subject.SchoolSection) !== 'secondary') {
+      throw failure('Every selected Senior choice subject must belong to the Secondary subject catalogue.');
+    }
+  });
+
+  const writes = [];
+  let updated = 0;
+  state.subjects.filter((subject) => lower(subject.SchoolSection) === 'secondary').forEach((subject) => {
+    const desiredRole = tradeSet.has(subject.SubjectId)
+      ? 'Trade'
+      : optionalSubjectIds.includes(subject.SubjectId) ? 'Optional' : '';
+    if (clean(subject.SeniorChoiceRole) === desiredRole) return;
+    const record = normalizeAcademicSubject({
+      ...subject,
+      SeniorChoiceRole: desiredRole
+    }, scope, subject);
+    stampAcademicRecord(record, user, subject);
+    writes.push({
+      collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.subjects,
+      documentId: record.SubjectId,
+      data: withoutMetadata(record),
+      updateTime: subject.__updateTime
+    });
+    updated += 1;
+  });
+  if (updated) writes.push(auditWrite(user, 'CONFIGURE', 'subject', {
+    BranchId: scope.branchId,
+    SchoolSection: scope.section,
+    SubjectId: `senior-choices-${Date.now()}`
+  }, `${tradeSubjectIds.length} school-wide Senior Trade subject(s) and ${optionalSubjectIds.length} Optional subject(s) configured.`));
+  await commitAcademicBatch(env, writes, 'The subject catalogue changed while Senior choices were being saved. Reload and try again.');
+  const response = await bootstrapAcademicManagement(env, user, {
+    ...input,
+    BranchId: scope.branchId,
+    SchoolSection: scope.section,
+    View: 'offerings'
+  });
+  response.message = updated
+    ? 'Senior Trade and Optional subjects saved online and made available to every Senior classroom.'
+    : 'Senior Trade and Optional subjects already match the saved configuration.';
+  response.seniorChoiceResult = {
+    TradeSubjects: tradeSubjectIds.length,
+    OptionalSubjects: optionalSubjectIds.length,
+    Updated: updated
+  };
+  return response;
+}
+
+export async function bulkApplyAcademicArmTemplates(env, user = {}, input = {}) {
+  requireWritableSubscription(user);
+  requireCapability(user, 'canManageStructure');
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  const classIds = uniqueIds(input.ClassIds || input.ClassId);
+  const templateIds = uniqueIds(input.ArmTemplateIds || input.ArmTemplateId);
+  if (!classIds.length || !templateIds.length) throw failure('Choose at least one class and one reusable arm.');
+  if (classIds.length * templateIds.length > 200) throw failure('Apply at most 200 class-arm combinations in one batch.');
+  const state = await loadScopedAcademicState(env, scope, [
+    'classes', 'armTemplates', 'arms', 'departments', 'studentMemberships'
+  ]);
+  const projected = { ...state, arms: [...state.arms] };
+  const classes = classIds.map((id) => assertReference(findById(state.classes, id), 'One selected class is not active.'));
+  const templates = templateIds.map((id) => assertReference(findById(state.armTemplates, id), 'One selected reusable arm is not active.'));
+  if (classes.some((row) => lower(row.SchoolSection) !== scope.section)) {
+    throw failure('Every selected class must belong to the selected school section.', 409, 'ACADEMIC_SECTION_MISMATCH');
+  }
+  const writes = [];
+  const createdRecords = [];
+  const upgradedRecords = [];
+  let skipped = 0;
+  for (const schoolClass of classes) {
+    for (const template of templates) {
+      const record = normalizeAcademicArm({
+        ClassId: schoolClass.ClassId, Name: template.Name, Code: template.Code,
+        ArmTemplateId: template.ArmTemplateId, Capacity: template.DefaultCapacity,
+        SortOrder: template.SortOrder, IsClassroom: true, Status: 'Active'
+      }, scope);
+      const existing = findById(projected.arms, record.ArmId);
+      if (existing) {
+        if (statusActive(existing) && lower(existing.Name) === lower(record.Name)) {
+          if (!activeValue(existing.IsClassroom, false)) {
+            const upgraded = normalizeAcademicArm({ ...existing, IsClassroom: true }, scope, existing);
+            stampAcademicRecord(upgraded, user, existing);
+            projected.arms = projected.arms.map((row) => recordId(row) === recordId(existing) ? upgraded : row);
+            upgradedRecords.push(upgraded);
+            writes.push({
+              collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.arms,
+              documentId: upgraded.ArmId,
+              data: withoutMetadata(upgraded),
+              updateTime: existing.__updateTime
+            });
+            continue;
+          }
+          skipped += 1;
+          continue;
+        }
+        throw failure(`${schoolClass.Name} / ${template.Name} already exists with different arm settings. Edit that arm instead.`, 409, 'ACADEMIC_BULK_ARM_CONFLICT');
+      }
+      validateAcademicRecord(projected, 'arm', record, {});
+      stampAcademicRecord(record, user);
+      projected.arms.push(record);
+      createdRecords.push(record);
+      writes.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.arms, documentId: record.ArmId, data: withoutMetadata(record), exists: false });
+    }
+  }
+  const changedRecords = [...createdRecords, ...upgradedRecords];
+  const affectedClassIds = new Set(changedRecords.map((row) => row.ClassId));
+  classes.filter((row) => affectedClassIds.has(row.ClassId)).forEach((schoolClass) => {
+    const compatibility = legacyClassWrite(projected, schoolClass, 'class', scope);
+    if (compatibility) writes.push(compatibility);
+  });
+  if (changedRecords.length) writes.push(auditWrite(user, 'BULK APPLY', 'arm', {
+    BranchId: scope.branchId, SchoolSection: scope.section, ArmId: `bulk-${Date.now()}`
+  }, `${createdRecords.length} classroom(s) created; ${upgradedRecords.length} existing arm(s) upgraded to classrooms; ${skipped} already matched.`));
+  await commitAcademicBatch(env, writes, 'The class or arm catalogue changed while assignments were being saved. Reload and try again.');
+  const response = await bootstrapAcademicManagement(env, user, {
+    ...input, BranchId: scope.branchId, SchoolSection: scope.section, View: 'bulksetup'
+  });
+  response.message = changedRecords.length
+    ? `${createdRecords.length} classroom${createdRecords.length === 1 ? '' : 's'} created online${upgradedRecords.length ? `; ${upgradedRecords.length} existing arm${upgradedRecords.length === 1 ? '' : 's'} upgraded to ${upgradedRecords.length === 1 ? 'a classroom' : 'classrooms'}` : ''}${skipped ? `; ${skipped} already matched and were skipped` : ''}.`
+    : 'Every selected class already has the selected reusable-arm classrooms.';
+  response.bulkResult = {
+    Requested: classIds.length * templateIds.length,
+    Created: createdRecords.length,
+    Upgraded: upgradedRecords.length,
+    Skipped: skipped
+  };
+  return response;
+}
+
+export async function bulkApplyAcademicSubjects(env, user = {}, input = {}) {
+  requireWritableSubscription(user);
+  requireCapability(user, 'canManageStructure');
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  const classIds = uniqueIds(input.ClassIds || input.ClassId);
+  const subjectIds = uniqueIds(input.SubjectIds || input.SubjectId);
+  if (!clean(input.SessionId) || !clean(input.TermId)) throw failure('Choose the academic session and term.');
+  if (!classIds.length || !subjectIds.length) throw failure('Choose at least one class and one reusable subject.');
+  if (classIds.length * subjectIds.length > 200) throw failure('Apply at most 200 class-subject combinations in one batch.');
+  const state = await loadScopedAcademicState(env, scope, ACADEMIC_OFFERING_STATE_KEYS);
+  const projected = { ...state, offerings: [...state.offerings] };
+  const classes = classIds.map((id) => assertReference(findById(state.classes, id), 'One selected class is not active.'));
+  const subjects = subjectIds.map((id) => assertReference(findById(state.subjects, id), 'One selected subject is not active.'));
+  if (classes.some((row) => lower(row.SchoolSection) !== scope.section)) {
+    throw failure('Every selected class must belong to the selected school section.', 409, 'ACADEMIC_SECTION_MISMATCH');
+  }
+  if (scope.section === 'secondary' && classes.some((row) => schoolStageValue(row.SchoolStage, row.SchoolSection, row.Name) !== 'junior-secondary')) {
+    throw failure('Bulk subject application in the Secondary section is only for Junior Secondary classes. Configure Senior subjects through departments and Senior choices.', 409, 'ACADEMIC_JUNIOR_SUBJECT_APPLICATION_ONLY');
+  }
+  if (subjects.some((row) => lower(row.SchoolSection) !== scope.section)) {
+    throw failure('Every selected subject must belong to the selected school section.', 409, 'ACADEMIC_SECTION_MISMATCH');
+  }
+  const writes = [];
+  const createdRecords = [];
+  let skipped = 0;
+  for (const schoolClass of classes) {
+    for (const subject of subjects) {
+      const record = normalizeAcademicOffering({
+        SessionId: input.SessionId, TermId: input.TermId, ClassId: schoolClass.ClassId,
+        ArmId: '', SubjectId: subject.SubjectId,
+        SubjectRole: scope.section === 'secondary' ? 'Core' : (input.SubjectRole || input.RequirementType || 'Core'),
+        Compulsory: scope.section === 'secondary' ? true : input.Compulsory,
+        Status: 'Active'
+      }, scope);
+      validateAcademicRecord(projected, 'offering', record, {});
+      const existing = findById(projected.offerings, record.OfferingId);
+      if (existing) {
+        if (sameSetupRecord(existing, record, ['SessionId', 'TermId', 'ClassId', 'ArmId', 'SubjectId'])
+          && academicOfferingSubjectRole(existing, record.SchoolStage) === record.SubjectRole) {
+          skipped += 1;
+          continue;
+        }
+        throw failure(`${schoolClass.Name} / ${subject.Name} already exists with different offering settings. Edit that offering instead.`, 409, 'ACADEMIC_BULK_SUBJECT_OFFERING_CONFLICT');
+      }
+      stampAcademicRecord(record, user);
+      projected.offerings.push(record);
+      createdRecords.push(record);
+      writes.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.offerings, documentId: record.OfferingId, data: withoutMetadata(record), exists: false });
+    }
+  }
+  if (createdRecords.length) writes.push(auditWrite(user, 'BULK APPLY', 'offering', {
+    BranchId: scope.branchId, SchoolSection: scope.section,
+    SessionId: clean(input.SessionId), TermId: clean(input.TermId), OfferingId: `bulk-${Date.now()}`
+  }, `${createdRecords.length} class-subject offering(s) created; ${skipped} already matched.`));
+  await commitAcademicBatch(env, writes, 'The class or subject catalogue changed while offerings were being saved. Reload and try again.');
+  const response = await bootstrapAcademicManagement(env, user, {
+    ...input, BranchId: scope.branchId, SchoolSection: scope.section, View: 'offerings'
+  });
+  response.message = createdRecords.length
+    ? `${createdRecords.length} class-subject offering${createdRecords.length === 1 ? '' : 's'} created online${skipped ? `; ${skipped} already matched and were skipped` : ''}.`
+    : 'Every selected class already has the selected reusable subjects.';
+  response.bulkResult = { Requested: classIds.length * subjectIds.length, Created: createdRecords.length, Skipped: skipped };
+  return response;
+}
+
+export async function bulkAssignAcademicClassroomDepartments(env, user = {}, input = {}) {
+  requireWritableSubscription(user);
+  requireCapability(user, 'canManageStructure');
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  if (scope.section !== 'secondary') throw failure('Senior classroom departments are available only in Secondary school.');
+  const assignments = Array.isArray(input.Assignments) ? input.Assignments : [];
+  if (!assignments.length || assignments.length > 100) throw failure('Choose between 1 and 100 Senior classroom departments to update.');
+  const state = await loadScopedAcademicState(env, scope, ACADEMIC_RECORD_STATE_KEYS.arm);
+  const seen = new Set();
+  const writes = [];
+  for (const assignment of assignments) {
+    const armId = clean(assignment?.ClassroomId);
+    const departmentId = clean(assignment?.DepartmentId);
+    if (!armId) throw failure('Choose a Senior classroom for every changed department.');
+    if (seen.has(armId)) throw failure('Each classroom may appear only once in this batch.');
+    seen.add(armId);
+    const existing = assertReference(findById(state.arms, armId), 'One selected classroom is not active.');
+    const schoolClass = assertReference(findById(state.classes, existing.ClassId), 'One selected classroom belongs to an inactive class.');
+    if (!activeValue(existing.IsClassroom, false) || schoolStageValue(schoolClass.SchoolStage, schoolClass.SchoolSection, schoolClass.Name) !== 'senior-secondary') {
+      throw failure(`${schoolClass.Name} / ${existing.Name} is not a Senior Secondary classroom.`);
+    }
+    if (existing.DepartmentId === departmentId) continue;
+    const record = normalizeAcademicArm({ ...existing, DepartmentId: departmentId }, scope, existing);
+    validateAcademicRecord(state, 'arm', record, { existing });
+    stampAcademicRecord(record, user, existing);
+    writes.push({
+      collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.arms,
+      documentId: record.ArmId,
+      data: withoutMetadata(record),
+      ...writePrecondition(existing, assignment.RevisionToken)
+    });
+    writes.push(auditWrite(user, 'UPDATE', 'arm', record, `Classroom department: ${schoolClass.Name} / ${record.Name} -> ${findById(state.departments, departmentId)?.Name || 'Mixed departments'}. Existing student subject selections and scores were not changed.`));
+  }
+  await commitAcademicBatch(env, writes, 'A classroom changed while its department was being saved. Reload and try again.');
+  const response = await bootstrapAcademicManagement(env, user, {
+    ...input, BranchId: scope.branchId, SchoolSection: scope.section, View: 'classrooms'
+  });
+  const changed = writes.length / 2;
+  response.message = changed
+    ? `${changed} Senior classroom department${changed === 1 ? '' : 's'} saved. Existing subject selections and scores are unchanged; review student subjects before saving new selections.`
+    : 'The selected classroom departments already match the saved settings.';
+  response.bulkResult = { Requested: assignments.length, Updated: changed };
+  return response;
+}
+
+export function academicMembershipCanReceiveInitialArm(membership = {}, context = {}) {
+  return Boolean(clean(membership.MembershipId || membership.RecordId || membership.StudentRef))
+    && statusActive(membership)
+    && clean(membership.SessionId) === clean(context.sessionId || context.SessionId)
+    && clean(membership.TermId) === clean(context.termId || context.TermId)
+    && clean(membership.ClassId) === clean(context.classId || context.ClassId)
+    && !clean(membership.ArmId);
+}
+
+export function normalizeAcademicClassTeacherAssignments(input = {}) {
+  const supplied = Array.isArray(input.Assignments) ? input.Assignments : [];
+  if (!supplied.length) throw failure('Choose at least one classroom and class teacher.');
+  if (supplied.length > 100) throw failure('Assign class teachers to at most 100 classrooms in one batch.');
+  const seen = new Set();
+  return supplied.map((row, index) => {
+    const rowNumber = index + 1;
+    const classroomId = clean(row.ClassroomId || row.ArmId);
+    const formTeacherUsername = lower(row.FormTeacherUsername || row.ClassTeacherUsername);
+    const assistantTeacherUsername = lower(row.AssistantTeacherUsername);
+    if (!classroomId) throw failure(`Row ${rowNumber}: choose a classroom.`);
+    if (!formTeacherUsername) throw failure(`Row ${rowNumber}: choose a class teacher.`);
+    if (assistantTeacherUsername && assistantTeacherUsername === formTeacherUsername) {
+      throw failure(`Row ${rowNumber}: the class teacher and assistant must be different staff members.`);
+    }
+    const classroomKey = lower(classroomId);
+    if (seen.has(classroomKey)) throw failure(`Row ${rowNumber}: each classroom can appear only once.`);
+    seen.add(classroomKey);
+    return {
+      ClassroomId: classroomId,
+      FormTeacherUsername: formTeacherUsername,
+      AssistantTeacherUsername: assistantTeacherUsername,
+      FormTeacherAllocationId: clean(row.FormTeacherAllocationId),
+      FormTeacherRevisionToken: clean(row.FormTeacherRevisionToken),
+      AssistantTeacherAllocationId: clean(row.AssistantTeacherAllocationId),
+      AssistantTeacherRevisionToken: clean(row.AssistantTeacherRevisionToken)
+    };
+  });
+}
+
+function assertAcademicClassTeacherSnapshot(current = [], allocationId = '', revisionToken = '', rowNumber = 0, role = '') {
+  const expectedId = clean(allocationId);
+  const expectedRevision = clean(revisionToken);
+  const matches = current.length === 1
+    && recordId(current[0]) === expectedId
+    && clean(current[0].__updateTime) === expectedRevision;
+  if ((!current.length && !expectedId && !expectedRevision) || matches) return;
+  throw failure(
+    `Row ${rowNumber}: this classroom's ${role.toLowerCase()} changed after the page loaded. Refresh before saving.`,
+    409,
+    'ACADEMIC_WRITE_CONFLICT'
+  );
+}
+
+export function academicFormTeacherForClassroom(allocations = [], classroom = {}, sessionId = '', termId = '') {
+  const matches = allocations.filter((row) => statusActive(row)
+    && row.SessionId === sessionId && row.TermId === termId
+    && row.ClassId === classroom.ClassId && row.ArmId === classroom.ArmId
+    && row.AllocationRole === 'Form Teacher');
+  if (matches.length !== 1) {
+    throw failure(`${classroom.Name || 'This classroom'} must have one assigned class teacher before adding timetable-only subjects.`,
+      409, 'ACADEMIC_FORM_TEACHER_REQUIRED');
+  }
+  return matches[0];
+}
+
+export async function bulkAssignAcademicClassTeachers(env, user = {}, input = {}) {
+  requireWritableSubscription(user);
+  requireCapability(user, 'canManageAllocations');
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  const assignments = normalizeAcademicClassTeacherAssignments(input);
+  const sessionId = clean(input.SessionId);
+  const termId = clean(input.TermId);
+  if (!sessionId || !termId) throw failure('Choose the academic session and term.');
+  const [state, people] = await Promise.all([
+    loadScopedAcademicState(env, scope, ACADEMIC_CLASS_TEACHER_STATE_KEYS),
+    loadPeople(env, user, scope, { students: false })
+  ]);
+  const writes = [];
+  const changedClassrooms = new Set();
+  let savedRoles = 0;
+  let clearedAssistants = 0;
+  let unchangedClassrooms = 0;
+
+  assignments.forEach((assignment, index) => {
+    const rowNumber = index + 1;
+    const classroom = assertReference(findById(state.arms, assignment.ClassroomId), `Row ${rowNumber}: choose an active classroom.`);
+    if (!activeValue(classroom.IsClassroom, false)) {
+      throw failure(`Row ${rowNumber}: ${classroom.Name} is an arm definition, not an opened classroom.`, 409, 'ACADEMIC_CLASSROOM_REQUIRED');
+    }
+    const schoolClass = assertReference(findById(state.classes, classroom.ClassId), `Row ${rowNumber}: the classroom class is not active.`);
+    if (lower(classroom.SchoolSection) !== scope.section || lower(schoolClass.SchoolSection) !== scope.section) {
+      throw failure(`Row ${rowNumber}: the classroom belongs to another school section.`, 409, 'ACADEMIC_SECTION_MISMATCH');
+    }
+    let rowChanged = false;
+    const roles = [
+      {
+        role: 'Form Teacher', username: assignment.FormTeacherUsername,
+        allocationId: assignment.FormTeacherAllocationId,
+        revisionToken: assignment.FormTeacherRevisionToken
+      },
+      {
+        role: 'Assistant Teacher', username: assignment.AssistantTeacherUsername,
+        allocationId: assignment.AssistantTeacherAllocationId,
+        revisionToken: assignment.AssistantTeacherRevisionToken
+      }
+    ];
+
+    roles.forEach(({ role, username, allocationId, revisionToken }) => {
+      const current = state.teacherAllocations.filter((row) => statusActive(row)
+        && row.SessionId === sessionId && row.TermId === termId
+        && row.ArmId === classroom.ArmId && row.AllocationRole === role);
+      assertAcademicClassTeacherSnapshot(current, allocationId, revisionToken, rowNumber, role);
+      if (!username) {
+        current.forEach((existing) => writes.push({
+          collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.teacherAllocations,
+          documentId: recordId(existing), operation: 'delete', updateTime: clean(existing.__updateTime)
+        }));
+        if (current.length) {
+          clearedAssistants += 1;
+          rowChanged = true;
+        }
+        return;
+      }
+      if (current.length === 1 && lower(current[0].TeacherUsername) === username) return;
+      const candidate = normalizeAcademicTeacherAllocation({
+        SessionId: sessionId, TermId: termId, TeacherUsername: username,
+        ClassId: schoolClass.ClassId, ArmId: classroom.ArmId,
+        AllocationRole: role, Status: 'Active'
+      }, scope);
+      const exactExisting = findById(state.teacherAllocations, candidate.AllocationId);
+      validateAcademicRecord(state, 'teacherallocation', candidate, { ...people, existing: exactExisting });
+      current.forEach((existing) => writes.push({
+        collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.teacherAllocations,
+        documentId: recordId(existing), operation: 'delete', updateTime: clean(existing.__updateTime)
+      }));
+      const record = exactExisting
+        ? normalizeAcademicTeacherAllocation({ ...candidate, Status: 'Active' }, scope, exactExisting)
+        : candidate;
+      delete record.ArchivedAt;
+      delete record.ArchivedBy;
+      stampAcademicRecord(record, user, exactExisting);
+      writes.push({
+        collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.teacherAllocations,
+        documentId: record.AllocationId,
+        data: withoutMetadata(record),
+        ...(exactExisting ? { updateTime: clean(exactExisting.__updateTime) } : { exists: false })
+      });
+      savedRoles += 1;
+      rowChanged = true;
+    });
+    if (rowChanged) changedClassrooms.add(classroom.ArmId);
+    else unchangedClassrooms += 1;
+  });
+
+  if (writes.length > 498) {
+    throw failure('This batch is too large to save atomically. Save fewer classroom rows at once.', 400, 'ACADEMIC_CLASS_TEACHER_BATCH_TOO_LARGE');
+  }
+  if (writes.length) {
+    writes.push(auditWrite(user, 'BULK ASSIGN', 'classroom staff', {
+      BranchId: scope.branchId, SchoolSection: scope.section,
+      SessionId: sessionId, TermId: termId, AllocationId: `class-staff-${Date.now()}`
+    }, `${changedClassrooms.size} classroom(s) updated; ${savedRoles} role(s) assigned; ${clearedAssistants} assistant assignment(s) cleared.`));
+  }
+  await commitAcademicBatch(env, writes, 'A classroom or teacher assignment changed while the batch was being saved. Refresh and try again.');
+  const response = await bootstrapAcademicManagement(env, user, {
+    ...input, BranchId: scope.branchId, SchoolSection: scope.section, View: 'classStaff'
+  });
+  response.message = changedClassrooms.size
+    ? `${changedClassrooms.size} classroom staff assignment${changedClassrooms.size === 1 ? '' : 's'} saved online.`
+    : 'Every selected classroom assignment is already up to date.';
+  response.bulkResult = {
+    Requested: assignments.length,
+    Updated: changedClassrooms.size,
+    RolesSaved: savedRoles,
+    AssistantsCleared: clearedAssistants,
+    Unchanged: unchangedClassrooms
+  };
+  return response;
+}
+
+export async function bulkAssignAcademicSubjectTeacher(env, user = {}, input = {}) {
+  requireWritableSubscription(user);
+  requireCapability(user, 'canManageAllocations');
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  const classroomIds = uniqueIds(input.ClassroomIds || input.ArmIds || input.ArmId);
+  const sessionId = clean(input.SessionId);
+  const termId = clean(input.TermId);
+  const assignToFormTeachers = input.AssignToFormTeachers === true || lower(input.AssignToFormTeachers) === 'true';
+  const teacherUsername = lower(input.TeacherUsername || input.Username);
+  const subjectIds = assignToFormTeachers ? uniqueIds(input.SubjectIds || input.SubjectId) : uniqueIds(input.SubjectId);
+  if (!sessionId || !termId || (!assignToFormTeachers && !teacherUsername) || !subjectIds.length) {
+    throw failure(assignToFormTeachers
+      ? 'Choose the session, term and at least one timetable-only subject.'
+      : 'Choose the session, term, teacher and subject.');
+  }
+  if (!classroomIds.length) {
+    throw failure('Choose at least one classroom.');
+  }
+  if (!assignToFormTeachers && subjectIds.length !== 1) {
+    throw failure('Choose one subject for a named subject teacher.');
+  }
+  if (classroomIds.length > 200) {
+    throw failure('Assign at most 200 classrooms in one batch.');
+  }
+  if (classroomIds.length * subjectIds.length > 200) {
+    throw failure('Assign at most 200 classroom-subject combinations in one batch.');
+  }
+  const formTeacherSnapshots = new Map();
+  if (assignToFormTeachers) {
+    const supplied = Array.isArray(input.FormTeacherSnapshots) ? input.FormTeacherSnapshots : [];
+    if (supplied.length) {
+      if (supplied.length !== classroomIds.length) throw failure('Provide a class-teacher snapshot for every selected classroom.');
+      supplied.forEach((snapshot) => {
+        const classroomId = clean(snapshot?.ClassroomId);
+        if (!classroomIds.includes(classroomId) || formTeacherSnapshots.has(classroomId)) {
+          throw failure('Class-teacher snapshots must match the selected classrooms exactly.');
+        }
+        formTeacherSnapshots.set(classroomId, snapshot);
+      });
+    } else if (classroomIds.length === 1) {
+      formTeacherSnapshots.set(classroomIds[0], {
+        FormTeacherAllocationId: input.FormTeacherAllocationId,
+        FormTeacherRevisionToken: input.FormTeacherRevisionToken
+      });
+    } else {
+      throw failure('Refresh and select the classrooms again before assigning their class teachers.');
+    }
+  }
+  const [state, people] = await Promise.all([
+    loadScopedAcademicState(env, scope, ACADEMIC_SUBJECT_TEACHER_STATE_KEYS),
+    loadPeople(env, user, scope, { students: false })
+  ]);
+  const projected = { ...state, teacherAllocations: [...state.teacherAllocations] };
+  const classrooms = classroomIds.map((id) => assertReference(findById(state.arms, id), 'One selected classroom is not active.'));
+  const subjects = subjectIds.map((id) => assertReference(findById(state.subjects, id), 'One selected subject is not active.'));
+  subjects.forEach((subject) => {
+    if (lower(subject.SchoolSection) !== scope.section) {
+      throw failure('Every subject must belong to the selected school section.', 409, 'ACADEMIC_SECTION_MISMATCH');
+    }
+    if (assignToFormTeachers && subject.AssessmentCategory !== 'TimetableOnly') {
+      throw failure('Only timetable-only subjects can be assigned through the class-teacher option.', 409, 'ACADEMIC_TIMETABLE_ONLY_REQUIRED');
+    }
+  });
+  const writes = [];
+  let created = 0;
+  let restored = 0;
+  let skipped = 0;
+  const assignedClassTeacherUsernames = new Set();
+  for (const [index, classroom] of classrooms.entries()) {
+    if (!activeValue(classroom.IsClassroom, false)) {
+      throw failure(`${classroom.Name} is an arm definition, not an opened classroom.`, 409, 'ACADEMIC_CLASSROOM_REQUIRED');
+    }
+    const schoolClass = assertReference(findById(state.classes, classroom.ClassId), 'The class for one selected classroom is not active.');
+    if (lower(schoolClass.SchoolSection) !== scope.section || lower(classroom.SchoolSection) !== scope.section) {
+      throw failure('Every selected classroom must belong to the selected school section.', 409, 'ACADEMIC_SECTION_MISMATCH');
+    }
+    const formTeacher = assignToFormTeachers
+      ? academicFormTeacherForClassroom(state.teacherAllocations, classroom, sessionId, termId) : null;
+    if (assignToFormTeachers) {
+      const snapshot = formTeacherSnapshots.get(classroom.ArmId);
+      assertAcademicClassTeacherSnapshot([formTeacher], snapshot?.FormTeacherAllocationId,
+        snapshot?.FormTeacherRevisionToken, index + 1, 'Form Teacher');
+    }
+    const classroomTeacherUsername = assignToFormTeachers ? lower(formTeacher.TeacherUsername) : teacherUsername;
+    if (assignToFormTeachers) assignedClassTeacherUsernames.add(classroomTeacherUsername);
+    for (const subject of subjects) {
+      const candidate = normalizeAcademicTeacherAllocation({
+        SessionId: sessionId, TermId: termId, TeacherUsername: classroomTeacherUsername,
+        ClassId: schoolClass.ClassId, ArmId: classroom.ArmId, SubjectId: subject.SubjectId,
+        AllocationRole: 'Subject Teacher', Status: 'Active'
+      }, scope);
+      const existing = findById(projected.teacherAllocations, candidate.AllocationId);
+      if (existing && statusActive(existing)) {
+        skipped += 1;
+        continue;
+      }
+      const record = existing
+        ? normalizeAcademicTeacherAllocation({ ...candidate, Status: 'Active' }, scope, existing)
+        : candidate;
+      if (existing) {
+        delete record.ArchivedAt;
+        delete record.ArchivedBy;
+      }
+      validateAcademicRecord(projected, 'teacherallocation', record, { ...people, existing });
+      stampAcademicRecord(record, user, existing);
+      if (existing) {
+        projected.teacherAllocations = projected.teacherAllocations.map((row) => recordId(row) === record.AllocationId ? record : row);
+        writes.push({
+          collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.teacherAllocations,
+          documentId: record.AllocationId, data: withoutMetadata(record), updateTime: clean(existing.__updateTime)
+        });
+        restored += 1;
+      } else {
+        projected.teacherAllocations.push(record);
+        writes.push({
+          collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.teacherAllocations,
+          documentId: record.AllocationId, data: withoutMetadata(record), exists: false
+        });
+        created += 1;
+      }
+    }
+  }
+  if (created || restored) {
+    writes.push(auditWrite(user, 'BULK ASSIGN', 'teacherallocation', {
+      BranchId: scope.branchId, SchoolSection: scope.section, SessionId: sessionId, TermId: termId,
+      TeacherUsername: assignToFormTeachers && assignedClassTeacherUsernames.size === 1
+        ? [...assignedClassTeacherUsernames][0] : (assignToFormTeachers ? '' : teacherUsername),
+      SubjectId: subjects.length === 1 ? subjects[0].SubjectId : '', AllocationId: `bulk-${Date.now()}`
+    }, `${created} subject-teacher allocation(s) created; ${restored} restored; ${skipped} already active${assignToFormTeachers ? ` across ${classrooms.length} classroom(s) and ${assignedClassTeacherUsernames.size} class teacher(s): ${subjects.map((subject) => subject.Name).join(', ')}` : ''}.`));
+  }
+  await commitAcademicBatch(env, writes, 'A selected class, arm or teacher allocation changed while the batch was being saved. Reload and try again.');
+  const response = await bootstrapAcademicManagement(env, user, {
+    ...input, BranchId: scope.branchId, SchoolSection: scope.section, View: 'teachers'
+  });
+  response.message = created || restored
+    ? `${created + restored} subject-teacher assignment${created + restored === 1 ? '' : 's'} saved online${skipped ? `; ${skipped} already existed` : ''}.${assignToFormTeachers ? ' Each uses the selected classroom’s current form teacher.' : ' Repeat for another subject if needed.'}`
+    : 'Every selected subject-teacher assignment already exists.';
+  response.bulkResult = { Requested: classroomIds.length * subjectIds.length, Created: created, Restored: restored, Skipped: skipped };
+  return response;
+}
+
+export async function updateAcademicSubjectTeacherAllocation(env, user = {}, input = {}) {
+  requireWritableSubscription(user);
+  requireCapability(user, 'canManageAllocations');
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  const recordIdToReplace = clean(input.RecordId || input.AllocationId);
+  const revisionToken = clean(input.RevisionToken);
+  if (!recordIdToReplace || !revisionToken) throw failure('Reload the saved allocation before editing it.');
+  const [state, people] = await Promise.all([
+    loadScopedAcademicState(env, scope, ACADEMIC_SUBJECT_TEACHER_STATE_KEYS),
+    loadPeople(env, user, scope, { students: false })
+  ]);
+  const existing = findById(state.teacherAllocations, recordIdToReplace);
+  if (!existing) throw failure('The subject-teacher allocation was not found in the selected branch.', 404);
+  if (existing.AllocationRole !== 'Subject Teacher') throw failure('Form and Assistant Teachers must be changed inside their classroom.');
+  if (lower(existing.SchoolSection) !== scope.section) throw failure('This allocation belongs to another school section.', 403);
+  const precondition = writePrecondition(existing, revisionToken);
+  const classroom = assertReference(findById(state.arms, input.ClassroomId || input.ArmId), 'Choose an active classroom.');
+  if (!activeValue(classroom.IsClassroom, false)) {
+    throw failure(`${classroom.Name} is an arm definition, not an opened classroom.`, 409, 'ACADEMIC_CLASSROOM_REQUIRED');
+  }
+  const schoolClass = assertReference(findById(state.classes, classroom.ClassId), 'The selected classroom class is not active.');
+  if (lower(classroom.SchoolSection) !== scope.section || lower(schoolClass.SchoolSection) !== scope.section) {
+    throw failure('The selected classroom belongs to another school section.', 409, 'ACADEMIC_SECTION_MISMATCH');
+  }
+  const record = normalizeAcademicTeacherAllocation({
+    ...input, RecordId: '', AllocationId: '', ClassId: schoolClass.ClassId, ArmId: classroom.ArmId,
+    AllocationRole: 'Subject Teacher', Status: clean(input.Status) || 'Active'
+  }, scope);
+  const duplicate = state.teacherAllocations.find((row) => recordId(row) !== recordId(existing) && statusActive(row)
+    && row.SessionId === record.SessionId && row.TermId === record.TermId
+    && row.TeacherUsername === record.TeacherUsername && row.ClassId === record.ClassId
+    && row.ArmId === record.ArmId && row.SubjectId === record.SubjectId
+    && row.AllocationRole === 'Subject Teacher');
+  if (duplicate) throw failure('This subject-teacher allocation already exists.', 409, 'ACADEMIC_TEACHER_ALLOCATION_DUPLICATE');
+  validateAcademicRecord(state, 'teacherallocation', record, { ...people, existing });
+  stampAcademicRecord(record, user, existing);
+  const changedIdentity = recordId(record) !== recordId(existing);
+  const writes = changedIdentity
+    ? [
+      { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.teacherAllocations, documentId: recordId(existing), operation: 'delete', ...precondition },
+      { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.teacherAllocations, documentId: recordId(record), data: withoutMetadata(record), exists: false }
+    ]
+    : [{
+      collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.teacherAllocations,
+      documentId: recordId(existing), data: withoutMetadata(record), ...precondition
+    }];
+  writes.push(auditWrite(user, 'UPDATE', 'teacherallocation', record, `${record.TeacherUsername} · ${record.SubjectId}`));
+  await commitAcademicBatch(env, writes, 'This subject-teacher allocation changed while it was being updated. Reload and try again.');
+  const response = await bootstrapAcademicManagement(env, user, {
+    ...input, BranchId: scope.branchId, SchoolSection: scope.section, View: 'teachers'
+  });
+  response.message = 'Subject-teacher allocation updated online.';
+  return response;
+}
+
+export async function bulkAllocateAcademicStudents(env, user = {}, input = {}) {
+  requireWritableSubscription(user);
+  requireCapability(user, 'canManageAllocations');
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  const studentRefs = uniqueStudentReferences(input.StudentRefs || input.StudentRef);
+  if (!studentRefs.length) throw failure('Choose at least one student for bulk allocation.');
+  if (studentRefs.length > 100) throw failure('Allocate at most 100 students in one batch.');
+  const [state, people] = await Promise.all([
+    loadScopedAcademicState(env, scope, ACADEMIC_STUDENT_STATE_KEYS),
+    loadPeople(env, user, scope, { staff: false })
+  ]);
+  const projected = { ...state, studentMemberships: [...state.studentMemberships] };
+  const writes = [];
+  const skipped = [];
+  let created = 0;
+  let completed = 0;
+  for (const studentRef of studentRefs) {
+    const existingId = academicId('student', scope.branchId, scope.section, input.SessionId, input.TermId, studentRef);
+    const existing = findById(projected.studentMemberships, existingId);
+    const record = normalizeAcademicStudentMembership({
+      ...input, StudentRef: studentRef, Status: 'Active',
+      ...(existing ? {} : { SubjectIds: [], CoreSubjectIds: [], TradeSubjectIds: [], OptionalSubjectIds: [] })
+    }, scope, existing);
+    validateAcademicRecord(projected, 'studentmembership', record, {
+      ...people, existing, allowIncompleteCurriculum: true
+    });
+    if (existing) {
+      if (!membershipMateriallyChanged(existing, record)) {
+        skipped.push(studentRef);
+        continue;
+      }
+      if (!academicMembershipCanReceiveInitialArm(existing, {
+        sessionId: input.SessionId, termId: input.TermId, classId: input.ClassId
+      })) {
+        throw failure(`${studentRef} already has a different membership in this term. Use the transfer workflow instead.`, 409, 'ACADEMIC_BULK_MEMBERSHIP_CONFLICT');
+      }
+      assertNoPendingSubjectChange(existing);
+      if (academicSubjectSelectionChanged(existing, record)) {
+        const evidence = await loadAcademicSubjectChangeEvidence(env, scope, existing);
+        if (academicSubjectChangeImpact(existing, record, evidence, scope).RequiresApproval) throw failure('Use Student subjects to request approval before changing assessed subjects.', 409, 'ACADEMIC_SUBJECT_CHANGE_APPROVAL_REQUIRED');
+      }
+      stampAcademicRecord(record, user, existing);
+      projected.studentMemberships = projected.studentMemberships.map((row) => recordId(row) === existingId ? record : row);
+      writes.push({
+        collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships,
+        documentId: recordId(existing), data: withoutMetadata(record),
+        ...writePrecondition(existing, clean(existing.__updateTime))
+      });
+      writes.push(movementWrite(user, academicMovementForState(projected, {
+        ...input, StudentRef: studentRef, MovementType: 'Allocation'
+      }, scope, existing, record)));
+      completed += 1;
+    } else {
+      stampAcademicRecord(record, user);
+      projected.studentMemberships.push(record);
+      writes.push({
+        collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships,
+        documentId: record.MembershipId, data: withoutMetadata(record), exists: false
+      });
+      writes.push(movementWrite(user, academicMovementForState(projected, { ...input, StudentRef: studentRef }, scope, null, record)));
+      created += 1;
+    }
+    const compatibility = studentCompatibilityWrite(people, projected, record);
+    if (compatibility) writes.push(compatibility);
+  }
+  const allocated = created + completed;
+  if (allocated) {
+    writes.push(auditWrite(user, 'BULK ALLOCATE', 'studentmembership', {
+      BranchId: scope.branchId, SchoolSection: scope.section,
+      SessionId: clean(input.SessionId), TermId: clean(input.TermId),
+      MembershipId: `bulk-${Date.now()}`
+    }, `${allocated} student(s) allocated; ${created} new membership(s); ${completed} pending arm assignment(s) completed; ${skipped.length} already matched.`));
+    try {
+      await batchCommitDocuments(env, writes);
+    } catch (error) {
+      if ([409, 412].includes(Number(error?.status))) {
+        throw failure('A selected student changed while the batch was being saved. Reload and try again.', 409, 'ACADEMIC_WRITE_CONFLICT');
+      }
+      throw error;
+    }
+  }
+  const response = await bootstrapAcademicManagement(env, user, {
+    ...input, BranchId: scope.branchId, SchoolSection: scope.section, View: 'students'
+  });
+  response.message = allocated
+    ? `${allocated} student${allocated === 1 ? '' : 's'} allocated online${completed ? `; ${completed} existing class membership${completed === 1 ? '' : 's'} completed with an arm` : ''}${skipped.length ? `; ${skipped.length} already matched and were skipped` : ''}.`
+    : 'Every selected student already has this exact allocation.';
+  response.bulkResult = {
+    Requested: studentRefs.length, Allocated: allocated, Created: created,
+    Updated: completed, Skipped: skipped.length
+  };
+  return response;
+}
+
+export async function bulkImportAcademicStudentMemberships(env, user = {}, input = {}) {
+  requireWritableSubscription(user);
+  requireCapability(user, 'canManageAllocations');
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  const rows = normalizeAcademicStudentImportRows(input.Rows || input.StudentMemberships || input.Students);
+  if (!rows.length) throw failure('The student membership CSV has no data rows.');
+  if (rows.length > 100) throw failure('Import at most 100 student memberships at a time.');
+  const sessionId = clean(input.SessionId);
+  const termId = clean(input.TermId);
+  if (!sessionId || !termId) throw failure('Choose the academic session and term for this import.');
+  const [state, people, allStudents, nameProfile] = await Promise.all([
+    loadScopedAcademicState(env, scope, ACADEMIC_STUDENT_STATE_KEYS),
+    loadPeople(env, user, scope, { staff: false }),
+    listSchoolCollection(env, 'students'),
+    loadOrganizationNameProfile(env)
+  ]);
+  const session = assertReference(findById(state.sessions, sessionId), 'The selected session is not active.');
+  const term = assertReference(findById(state.terms, termId), 'The selected term is not active.');
+  if (term.SessionId !== session.SessionId) throw failure('The selected term does not belong to this academic session.');
+  const projected = { ...state, studentMemberships: [...state.studentMemberships] };
+  const writes = [];
+  const skipped = [];
+  const imported = [];
+  const createdProfiles = [];
+  const seenStudents = new Set();
+
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    const rowNumber = index + 2;
+    try {
+      if (!row.StudentRef) throw failure(`Row ${rowNumber}: enter the student admission or account reference.`);
+      if (!row.FirstName) throw failure(`Row ${rowNumber}: enter FirstName.`, 400, 'ACADEMIC_IMPORT_FIRST_NAME_REQUIRED');
+      if (!row.Surname) throw failure(`Row ${rowNumber}: enter Surname.`, 400, 'ACADEMIC_IMPORT_SURNAME_REQUIRED');
+      const studentKey = lower(row.StudentRef);
+      if (seenStudents.has(studentKey)) throw failure(`Row ${rowNumber}: ${row.StudentRef} appears more than once in this import.`);
+      seenStudents.add(studentKey);
+      const schoolClass = academicImportReference(
+        state.classes.filter((candidate) => lower(candidate.SchoolSection) === scope.section),
+        row.ClassCode,
+        ['ClassId', 'RecordId', 'Code', 'Name', 'LegacyDocumentId'],
+        'class code',
+        rowNumber
+      );
+      const arm = row.ArmCode
+        ? academicImportReference(
+          state.arms.filter((candidate) => candidate.ClassId === schoolClass.ClassId),
+          row.ArmCode,
+          ['ArmId', 'RecordId', 'Code', 'Name'],
+          'arm code',
+          rowNumber
+        )
+        : null;
+      let student = people.students.find((candidate) => lower(studentReference(candidate)) === studentKey);
+      let createdProfile = null;
+      if (!student) {
+        const conflictingStudent = allStudents.find((candidate) => lower(studentReference(candidate)) === studentKey);
+        if (conflictingStudent) {
+          const conflictingBranch = safeScopeId(conflictingStudent.BranchId || conflictingStudent.branchId || 'main');
+          const conflictingSection = schoolSectionFor(conflictingStudent);
+          throw failure(
+            `Row ${rowNumber}: student "${row.StudentRef}" already exists in branch "${conflictingBranch}", ${conflictingSection}. Switch to that scope or correct the student profile first.`,
+            409,
+            'ACADEMIC_IMPORT_STUDENT_SCOPE_CONFLICT'
+          );
+        }
+        const documentId = academicStudentDocumentId(row.StudentRef);
+        const documentConflict = allStudents.find((candidate) => lower(candidate.__id) === lower(documentId));
+        if (documentConflict) {
+          throw failure(`Row ${rowNumber}: student reference "${row.StudentRef}" conflicts with another student record.`, 409, 'ACADEMIC_IMPORT_STUDENT_ID_CONFLICT');
+        }
+        createdProfile = importedAcademicStudentProfile(row, scope, schoolClass, arm, session, term, user, nameProfile);
+        student = createdProfile;
+        people.students.push(student);
+        allStudents.push(student);
+      }
+      const schoolStage = schoolStageValue(schoolClass.SchoolStage, schoolClass.SchoolSection, schoolClass.Name);
+      // Legacy DepartmentCode columns are accepted but cannot override the classroom.
+      const departmentId = schoolStage === 'senior-secondary' ? clean(arm?.DepartmentId) : '';
+      const resolveSubjectIds = (codes, label) => codes.map((code) => academicImportReference(
+        state.subjects.filter((candidate) => lower(candidate.SchoolSection) === scope.section),
+        code,
+        ['SubjectId', 'RecordId', 'Code', 'Name'],
+        label,
+        rowNumber
+      ).SubjectId);
+      const coreSubjectIds = resolveSubjectIds(row.CoreSubjectCodes, 'Core subject code');
+      const tradeSubjectIds = resolveSubjectIds(row.TradeSubjectCodes, 'Trade subject code');
+      const optionalSubjectIds = resolveSubjectIds(row.OptionalSubjectCodes, 'optional subject code');
+      const existingId = academicId('student', scope.branchId, scope.section, sessionId, termId, row.StudentRef);
+      const existing = findById(projected.studentMemberships, existingId);
+      const record = normalizeAcademicStudentMembership({
+        SessionId: sessionId, TermId: termId, StudentRef: row.StudentRef,
+        ClassId: schoolClass.ClassId, ArmId: arm?.ArmId || '', DepartmentId: departmentId,
+        SubjectIds: [...coreSubjectIds, ...tradeSubjectIds, ...optionalSubjectIds], CoreSubjectIds: [],
+        TradeSubjectIds: tradeSubjectIds, OptionalSubjectIds: optionalSubjectIds, CurriculumStatus: '', Status: 'Active'
+      }, { ...scope, allowMissingArm: true }, existing);
+      validateAcademicRecord(projected, 'studentmembership', record, {
+        ...people, existing, allowIncompleteCurriculum: true
+      });
+      if (createdProfile) {
+        const department = findById(projected.departments, record.DepartmentId);
+        createdProfile.AcademicDepartmentId = clean(record.DepartmentId);
+        createdProfile.AcademicDepartment = clean(department?.Name);
+        createdProfile.AcademicDepartmentCode = clean(department?.Code);
+        createdProfile.AcademicMembershipId = clean(record.MembershipId);
+        createdProfile.AcademicEnrollmentStatus = clean(record.Status);
+        createdProfile.SchoolStage = clean(record.SchoolStage || schoolClass.SchoolStage);
+        createdProfiles.push(createdProfile);
+        writes.push({
+          collectionPath: createdProfile.__scopePath,
+          documentId: createdProfile.__id,
+          data: withoutMetadata(createdProfile),
+          exists: false
+        });
+      }
+      if (existing) {
+        if (!membershipMateriallyChanged(existing, record)) {
+          skipped.push(row.StudentRef);
+          continue;
+        }
+        throw failure(`${row.StudentRef} already has a different membership in this term. Use the transfer workflow instead.`, 409, 'ACADEMIC_IMPORT_MEMBERSHIP_CONFLICT');
+      }
+      stampAcademicRecord(record, user);
+      projected.studentMemberships.push(record);
+      imported.push(record);
+      writes.push({
+        collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships,
+        documentId: record.MembershipId, data: withoutMetadata(record), exists: false
+      });
+      writes.push(movementWrite(user, academicMovementForState(projected, {
+        ...input, StudentRef: row.StudentRef,
+        Reason: row.Reason || clean(input.Reason) || 'Imported into Academic Management.'
+      }, scope, null, record)));
+      const compatibility = studentCompatibilityWrite(people, projected, record);
+      if (compatibility) writes.push(compatibility);
+    } catch (error) {
+      if (clean(error?.message).startsWith(`Row ${rowNumber}:`)) throw error;
+      throw failure(`Row ${rowNumber}: ${clean(error?.message) || 'The membership is invalid.'}`, Number(error?.status) || 400, clean(error?.code));
+    }
+  }
+
+  if (imported.length || createdProfiles.length) {
+    writes.push(auditWrite(user, 'BULK IMPORT', 'studentmembership', {
+      BranchId: scope.branchId, SchoolSection: scope.section,
+      SessionId: sessionId, TermId: termId, MembershipId: `import-${Date.now()}`
+    }, `${imported.length} student membership(s) imported; ${createdProfiles.length} incomplete student profile(s) created; ${skipped.length} exact match(es) skipped.`));
+    await commitAcademicBatch(env, writes, 'A selected student changed while the CSV was being imported. Reload and try again.');
+  }
+  const response = await bootstrapAcademicManagement(env, user, {
+    ...input, BranchId: scope.branchId, SchoolSection: scope.section, View: 'students'
+  });
+  response.message = imported.length || createdProfiles.length
+    ? `${imported.length} student membership${imported.length === 1 ? '' : 's'} imported online${createdProfiles.length ? `; ${createdProfiles.length} missing student profile${createdProfiles.length === 1 ? '' : 's'} created for completion in Students` : ''}${skipped.length ? `; ${skipped.length} exact match${skipped.length === 1 ? '' : 'es'} skipped` : ''}.`
+    : 'Every CSV row already has this exact academic membership.';
+  response.importResult = {
+    Requested: rows.length,
+    Imported: imported.length,
+    ProfilesCreated: createdProfiles.length,
+    Skipped: skipped.length
+  };
+  return response;
+}
+
+export async function bulkAssignAcademicArmStudentSubjects(env, user = {}, input = {}) {
+  requireWritableSubscription(user);
+  const permissions = requireCapability(user, 'canConfigureClassStudentSubjects');
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  let assignments = input.Assignments || input.StudentSubjectAssignments || [];
+  if (typeof assignments === 'string') {
+    try { assignments = JSON.parse(assignments); } catch (_error) { assignments = []; }
+  }
+  if (!Array.isArray(assignments) || !assignments.length) throw failure('Choose at least one student subject selection to save.');
+  if (assignments.length > 200) throw failure('Update at most 200 student subject selections in one arm batch.');
+  const sessionId = clean(input.SessionId);
+  const termId = clean(input.TermId);
+  const classId = clean(input.ClassId);
+  const armId = clean(input.ArmId);
+  if (!sessionId || !termId || !classId || !armId) throw failure('Choose the session, term, Senior Secondary class and arm.');
+  const state = await loadScopedAcademicState(env, scope, ACADEMIC_STUDENT_STATE_KEYS);
+  const session = assertReference(findById(state.sessions, sessionId), 'The selected session is not active.');
+  const term = assertReference(findById(state.terms, termId), 'The selected term is not active.');
+  if (term.SessionId !== session.SessionId) throw failure('The selected term does not belong to this academic session.');
+  const schoolClass = assertReference(findById(state.classes, classId), 'The selected class is not active.');
+  if (schoolClass.SchoolSection !== scope.section) throw failure('The selected class belongs to another school section.');
+  const schoolStage = schoolStageValue(schoolClass.SchoolStage, schoolClass.SchoolSection, schoolClass.Name);
+  if (schoolStage !== 'senior-secondary') throw failure('Trade and optional subject selection is available only for Senior Secondary classes.');
+  const arm = assertReference(findById(state.arms, armId), 'The selected class arm is not active.');
+  if (arm.ClassId !== classId) throw failure('The selected class arm does not belong to this class.');
+  if (!academicCanConfigureClassStudentSubjects(user, state.teacherAllocations,
+    { SessionId: sessionId, TermId: termId, ClassId: classId, ArmId: armId }, permissions)) {
+    throw failure('Only this classroom’s assigned class teacher or an authorised administrator may configure its student subjects.',
+      403, 'ACADEMIC_CLASS_SUBJECTS_FORBIDDEN');
+  }
+
+  const projected = { ...state, studentMemberships: [...state.studentMemberships] };
+  const writes = [];
+  const skipped = [];
+  const seen = new Set();
+  const reason = clean(input.Reason) || 'Classroom student subject selections updated.';
+  let evidence;
+  let pendingCount = 0;
+  for (const assignment of assignments) {
+    const membershipId = clean(assignment?.MembershipId || assignment?.RecordId);
+    if (!membershipId || seen.has(lower(membershipId))) throw failure('Every student subject selection must identify one unique membership.');
+    seen.add(lower(membershipId));
+    const existing = findById(projected.studentMemberships, membershipId);
+    if (!existing || !statusActive(existing)) throw failure('One selected student membership is not active.', 409, 'ACADEMIC_REFERENCE_INVALID');
+    if (existing.SessionId !== sessionId || existing.TermId !== termId || existing.ClassId !== classId || existing.ArmId !== armId) {
+      throw failure(`${existing.StudentRef || 'A selected student'} does not belong to the selected class arm and period.`, 409, 'ACADEMIC_MEMBERSHIP_SCOPE_MISMATCH');
+    }
+    const revisionToken = clean(assignment.RevisionToken);
+    if (!revisionToken || revisionToken !== clean(existing.__updateTime)) {
+      throw failure(`${existing.StudentRef || 'A selected student'} changed after this arm register was loaded. Reload before saving.`, 409, 'ACADEMIC_WRITE_CONFLICT');
+    }
+    const tradeSubjectIds = uniqueIds(assignment.TradeSubjectIds);
+    const optionalSubjectIds = uniqueIds(assignment.OptionalSubjectIds);
+    // Validate the proposed selection, not the obsolete selection it repairs.
+    // Keep the original membership for score-impact checks and movement history.
+    // Older desktop clients omit CoreSubjectIds. Retain their existing Core
+    // choices instead of clearing them when they save Trade/Optional choices.
+    const coreSubjectIds = assignment.CoreSubjectIds === undefined
+      ? uniqueIds(existing.CoreSubjectIds ?? uniqueIds(existing.SubjectIds).filter((id) => academicSeniorCoreSubjectIds(state.departments).includes(id)))
+      : uniqueIds(assignment.CoreSubjectIds);
+    const record = normalizeAcademicStudentMembership({
+      ...withoutMetadata(existing), SubjectIds: [...coreSubjectIds, ...tradeSubjectIds, ...optionalSubjectIds],
+      CoreSubjectIds: [], TradeSubjectIds: tradeSubjectIds, OptionalSubjectIds: optionalSubjectIds,
+      CurriculumStatus: '', Status: existing.Status
+    }, scope, existing);
+    record.SchoolStage = schoolStage;
+    applyAcademicStudentCurriculum(projected, record, { requireTradeSelection: true });
+    if (!membershipMateriallyChanged(existing, record)) {
+      skipped.push(existing.StudentRef);
+      continue;
+    }
+    assertNoPendingSubjectChange(existing);
+    evidence ||= await loadAcademicSubjectChangeEvidence(env, scope, {
+      SessionId: sessionId, TermId: termId,
+      StudentRefs: assignments.map((item) => findById(state.studentMemberships, item.MembershipId || item.RecordId)?.StudentRef).filter(Boolean)
+    });
+    const impact = academicSubjectChangeImpact(existing, record, evidence, scope);
+    if (impact.RequiresApproval) {
+      const requestedReason = clean(assignment.Reason || input.Reason);
+      if (requestedReason.length < 5 || requestedReason.length > 1000) throw failure(`Enter a specific reason (5–1000 characters) for ${existing.StudentRef}'s assessed subject change. No selections were changed.`, 400, 'ACADEMIC_SUBJECT_CHANGE_REASON_REQUIRED');
+      const request = {
+        RequestId: crypto.randomUUID(), Status: 'Pending',
+        Before: subjectSelection(existing), After: subjectSelection(record),
+        Reason: requestedReason, Impact: impact,
+        RequestedAt: nowIso(), RequestedBy: actorName(user), RequestedByUsername: actorUsername(user),
+        ClassId: existing.ClassId, ArmId: existing.ArmId
+      };
+      const pending = { ...withoutMetadata(existing), PendingSubjectChange: request };
+      stampAcademicRecord(pending, user, existing);
+      writes.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships,
+        documentId: membershipId, data: pending, updateTime: revisionToken });
+      const movement = academicMovementForState(projected, { ...input, StudentRef: existing.StudentRef,
+        Reason: requestedReason, MovementType: 'Subject Change' }, scope, existing, record);
+      writes.push(movementWrite(user, { ...movement, Status: 'Pending approval', SubjectChangeRequest: request }));
+      pendingCount += 1;
+      continue;
+    }
+    stampAcademicRecord(record, user, existing);
+    projected.studentMemberships = projected.studentMemberships.map((row) => recordId(row) === membershipId ? record : row);
+    writes.push({
+      collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships,
+      documentId: membershipId, data: withoutMetadata(record), updateTime: revisionToken
+    });
+    writes.push(movementWrite(user, academicMovementForState(projected, {
+      ...input, StudentRef: existing.StudentRef, Reason: reason, MovementType: 'Subject Change'
+    }, scope, existing, record)));
+  }
+  const updated = assignments.length - skipped.length;
+  if (updated) {
+    writes.push(auditWrite(user, 'BULK SUBJECT ASSIGNMENT', 'studentmembership', {
+      BranchId: scope.branchId, SchoolSection: scope.section, SessionId: sessionId, TermId: termId,
+      MembershipId: `arm-subjects-${Date.now()}`
+    }, `${updated - pendingCount} subject selection(s) applied; ${pendingCount} assessed subject change(s) requested, awaiting authorised approval; ${skipped.length} unchanged. Existing scores and results were preserved.`,
+    `${actorName(user)} saved subject choices for ${schoolClass.Name} / ${arm.Name}: ${updated - pendingCount} applied immediately and ${pendingCount} sent for approval. Pending students keep their current subjects until another authorised academic administrator approves. No scores were deleted or copied.`));
+    try {
+      await batchCommitDocuments(env, writes);
+    } catch (error) {
+      if ([409, 412].includes(Number(error?.status))) {
+        throw failure('A student membership changed while arm subjects were being saved. Reload and try again.', 409, 'ACADEMIC_WRITE_CONFLICT');
+      }
+      throw error;
+    }
+  }
+  const response = await bootstrapAcademicManagement(env, user, {
+    ...input, BranchId: scope.branchId, SchoolSection: scope.section, View: 'students'
+  });
+  response.message = updated
+    ? `${updated - pendingCount} student subject selection(s) applied; ${pendingCount} awaiting authorised approval${skipped.length ? `; ${skipped.length} unchanged` : ''}. Existing scores are preserved.`
+    : 'Every student already has the selected subjects.';
+  response.bulkResult = { Requested: assignments.length, Updated: updated - pendingCount, PendingApproval: pendingCount, Skipped: skipped.length };
+  return response;
+}
+
+export async function reviewAcademicSubjectChange(env, user = {}, input = {}) {
+  requireWritableSubscription(user);
+  const decision = oneOf(input.Decision, ['Approve', 'Reject', 'Cancel'], '');
+  if (!decision) throw failure('Choose Approve, Reject or Cancel.');
+  const permissions = requireCapability(user, decision === 'Cancel' ? 'canConfigureClassStudentSubjects' : 'canApproveSubjectChanges');
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  const state = await loadScopedAcademicState(env, scope, ACADEMIC_STUDENT_STATE_KEYS);
+  const existing = findById(state.studentMemberships, input.MembershipId);
+  const request = existing?.PendingSubjectChange;
+  if (!existing || !request || request.RequestId !== clean(input.RequestId)) throw failure('This subject-change request is no longer pending. Reload the register.', 409, 'ACADEMIC_SUBJECT_CHANGE_NOT_PENDING');
+  if (!clean(input.RevisionToken) || input.RevisionToken !== existing.__updateTime) throw failure('The student or their scores changed. Reload and review the latest request.', 409, 'ACADEMIC_WRITE_CONFLICT');
+  const isTransfer = request.Kind === 'Classroom transfer';
+  const changeLabel = isTransfer ? 'classroom transfer' : 'subject change';
+  if (decision === 'Cancel') {
+    if (actorUsername(user) !== request.RequestedByUsername || !academicCanConfigureClassStudentSubjects(user, state.teacherAllocations, existing, permissions)) {
+      throw failure('Only the requester with current classroom access may cancel this request.', 403);
+    }
+  } else if (actorUsername(user) === request.RequestedByUsername) {
+    throw failure('Another authorised academic administrator must review this request; you cannot approve or reject your own request.', 403, 'ACADEMIC_SUBJECT_CHANGE_SELF_APPROVAL');
+  }
+  const note = clean(input.Reason);
+  if (note.length < 5 || note.length > 1000) throw failure('Enter a review reason of 5–1000 characters.');
+  let record = { ...withoutMetadata(existing) };
+  let impact = request.Impact;
+  const resultGuards = [];
+  if (decision === 'Approve') {
+    assertReference(findById(state.sessions, existing.SessionId), 'The academic session is closed or inactive.');
+    assertReference(findById(state.terms, existing.TermId), 'The academic term is closed or inactive.');
+    if ((isTransfer ? existing.Status !== request.BeforeStatus : !statusActive(existing)) || existing.ClassId !== request.ClassId || existing.ArmId !== request.ArmId
+      || academicSubjectSelectionChanged(existing, request.Before)) throw failure('This membership has changed since the request. Reject it and submit a new request.', 409);
+    record = normalizeAcademicStudentMembership({ ...existing, ...request.After }, scope, existing);
+    if (isTransfer) {
+      const people = await loadPeople(env, user, scope, { staff: false });
+      validateAcademicRecord(state, 'studentmembership', record, { ...people, existing, allowIncompleteCurriculum: request.ResetSubjectSelections === true });
+      delete record.WithdrawalDate;
+      delete record.WithdrawalReason;
+      const compatibility = studentCompatibilityWrite(people, state, record);
+      if (compatibility) resultGuards.push(compatibility);
+    } else {
+      applyAcademicStudentCurriculum(state, record, { requireTradeSelection: true });
+    }
+    if (academicSubjectSelectionChanged(record, request.After)) throw failure('The classroom curriculum has changed. Reject this request and submit the revised choices.', 409);
+    const evidence = await loadAcademicSubjectChangeEvidence(env, scope, existing);
+    impact = academicSubjectChangeImpact(existing, record, evidence, scope);
+    if (impact.Results.some((result) => lower(result.Status) !== 'calculated draft')) throw failure('Reopen or withdraw the existing result through the controlled result workflow and return it to Calculated Draft before approving this subject change.', 409, 'ACADEMIC_RESULT_IMMUTABLE');
+    for (const result of evidence.termResults.filter((row) => impact.Results.some((item) => item.ResultId === row.ResultId))) {
+      if (!result.__updateTime) throw failure('Reload the existing results before approving this change.', 409, 'ACADEMIC_WRITE_CONFLICT');
+      resultGuards.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.termResults, documentId: result.ResultId,
+        updateTime: result.__updateTime, updateMask: ['SubjectChangeRecalculationRequired'], data: { SubjectChangeRecalculationRequired: true } });
+    }
+  }
+  delete record.PendingSubjectChange;
+  const resolved = { ...request, Status: decision === 'Approve' ? 'Approved' : decision === 'Reject' ? 'Rejected' : 'Cancelled',
+    ReviewReason: note, ReviewedAt: nowIso(), ReviewedBy: actorName(user), ReviewedByUsername: actorUsername(user), Impact: impact };
+  record.LastSubjectChange = resolved;
+  stampAcademicRecord(record, user, existing);
+  const movementInput = { ...input, EffectiveDate: isTransfer ? request.EffectiveDate : input.EffectiveDate,
+    Reason: request.Reason, MovementType: isTransfer ? request.MovementType : 'Subject Change', StudentRef: existing.StudentRef };
+  const movement = decision === 'Approve'
+    ? academicMovementForState(state, movementInput, scope, existing, record)
+    : normalizeAcademicStudentMovement(movementInput, scope, existing, { ...existing, ...request.After });
+  await commitAcademicBatch(env, [
+    ...resultGuards,
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships, documentId: recordId(existing),
+      data: withoutMetadata(record), updateTime: existing.__updateTime },
+    movementWrite(user, { ...movement, Status: resolved.Status, SubjectChangeRequest: resolved }),
+    auditWrite(user, `${changeLabel.toUpperCase()} ${resolved.Status.toUpperCase()}`, 'studentmembership', record,
+      `${existing.StudentRef}: ${resolved.Status.toLowerCase()} ${changeLabel} requested by ${request.RequestedBy}. Request: ${request.Reason}. Review: ${note}. Old scores preserved; no marks transferred. Recalculate draft results separately.`,
+      `${actorName(user)} ${resolved.Status.toLowerCase()} ${request.RequestedBy}'s ${changeLabel} request for ${existing.StudentRef}. ${decision === 'Approve' ? 'The requested placement and subject choices are now active; existing drafts require recalculation.' : 'The current placement and subject choices were not changed.'} Existing scores remain under their original classrooms and subjects; no marks were copied or deleted.`)
+  ], 'The student or request changed during review. Reload before trying again.');
+  const response = await bootstrapAcademicManagement(env, user, { ...input, BranchId: scope.branchId, SchoolSection: scope.section, View: 'students' });
+  response.message = `${existing.StudentRef}: ${changeLabel} ${resolved.Status.toLowerCase()}. ${decision === 'Approve' ? `Old scores remain under their original classrooms and subjects. ${isTransfer ? 'Complete destination subject choices under Student subjects. ' : ''}Assess the new subjects and recalculate draft results separately.` : 'Current placement, subjects and scores are unchanged.'}`;
+  return response;
+}
+
+export async function manageAcademicStudentMembership(env, user = {}, input = {}) {
+  requireWritableSubscription(user);
+  requireCapability(user, 'canManageAllocations');
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  const [state, people] = await Promise.all([
+    loadScopedAcademicState(env, scope, ACADEMIC_STUDENT_STATE_KEYS),
+    loadPeople(env, user, scope, { staff: false })
+  ]);
+  const existing = findById(state.studentMemberships, input.RecordId || input.MembershipId);
+  if (!existing) throw failure('The selected student membership was not found.', 404);
+  assertNoPendingSubjectChange(existing);
+  if (lower(existing.SchoolSection) !== scope.section) throw failure('This membership belongs to another school section.', 403);
+  const expected = clean(input.RevisionToken);
+  if (!expected || expected !== clean(existing.__updateTime)) {
+    throw failure('This student membership changed after it was loaded. Reload before continuing.', 409, 'ACADEMIC_WRITE_CONFLICT');
+  }
+  const operation = lower(input.Operation || input.MovementOperation || 'transfer').replace(/[^a-z]/g, '');
+  if (!['transfer', 'move', 'change', 'withdraw', 'withdrawal', 'reinstate', 'reinstatement'].includes(operation)) {
+    throw failure('Choose transfer, withdrawal or reinstatement for this student movement.');
+  }
+  const reason = clean(input.Reason || input.MovementReason);
+  if (!reason) throw failure('Enter the reason for this student movement.');
+  const resetSubjects = !operation.startsWith('withdraw')
+    && (input.ResetSubjectSelections === true || lower(input.ResetSubjectSelections) === 'true');
+  let record;
+  if (operation === 'withdraw' || operation === 'withdrawal') {
+    if (!statusActive(existing)) throw failure('Only an active membership can be withdrawn.', 409);
+    record = {
+      ...withoutMetadata(existing), Status: 'Withdrawn',
+      WithdrawalDate: dateValue(input.EffectiveDate || nowIso().slice(0, 10), 'withdrawal date'),
+      WithdrawalReason: reason
+    };
+  } else {
+    const reinstating = operation === 'reinstate' || operation === 'reinstatement';
+    const reassigningWithdrawn = !reinstating && lower(existing.Status) === 'withdrawn';
+    if (reinstating && lower(existing.Status) !== 'withdrawn') throw failure('Only a withdrawn membership can be reinstated.', 409);
+    if (!reinstating && !statusActive(existing) && !reassigningWithdrawn) throw failure('Only an active or withdrawn membership can be transferred or changed.', 409);
+    record = normalizeAcademicStudentMembership({
+      ...input, SessionId: existing.SessionId, TermId: existing.TermId,
+      StudentRef: existing.StudentRef, Status: 'Active'
+    }, scope, existing);
+    if (resetSubjects) {
+      if (existing.ClassId === record.ClassId && existing.ArmId === record.ArmId) throw failure('Choose a different classroom before resetting subject selections. Use Student subjects to change choices in the current classroom.');
+      Object.assign(record, subjectSelection({}), { DepartmentId: '' });
+    }
+    validateAcademicRecord(state, 'studentmembership', record, { ...people, existing, allowIncompleteCurriculum: resetSubjects });
+    if (reassigningWithdrawn && existing.ClassId === record.ClassId && existing.ArmId === record.ArmId) {
+      throw failure('Choose a different classroom, or use Reinstate to restore the student to the original classroom.');
+    }
+    if (!reinstating && !membershipMateriallyChanged(existing, record)) {
+      throw failure('Choose a different class, arm or subject allocation before recording a movement.');
+    }
+    if (reinstating || reassigningWithdrawn) {
+      delete record.WithdrawalDate;
+      delete record.WithdrawalReason;
+    }
+  }
+  const classroomChanged = record.ClassId !== existing.ClassId || record.ArmId !== existing.ArmId;
+  if (academicSubjectSelectionChanged(existing, record) || classroomChanged) {
+    const evidence = await loadAcademicSubjectChangeEvidence(env, scope, existing);
+    const impact = academicSubjectChangeImpact(existing, record, evidence, scope);
+    if (impact.RequiresApproval) {
+      if (!classroomChanged) throw failure('This movement changes assessed subjects. Request approval under Student subjects before changing this membership; no subjects or scores were changed.', 409, 'ACADEMIC_SUBJECT_CHANGE_APPROVAL_REQUIRED');
+      if (reason.length < 5 || reason.length > 1000) throw failure('Enter a transfer reason of 5–1000 characters.');
+      const movement = academicMovementForState(state, { ...input, Reason: reason, MovementType: movementType(existing, record, operation) }, scope, existing, record);
+      const request = { RequestId: crypto.randomUUID(), Kind: 'Classroom transfer', Status: 'Pending',
+        Before: subjectSelection(existing), BeforeStatus: existing.Status,
+        After: { ...subjectSelection(record), ClassId: record.ClassId, ArmId: record.ArmId, DepartmentId: record.DepartmentId, Status: 'Active' },
+        ClassId: existing.ClassId, ArmId: existing.ArmId, ResetSubjectSelections: resetSubjects,
+        EffectiveDate: movement.EffectiveDate, MovementType: movement.MovementType,
+        Reason: reason, Impact: impact, RequestedAt: nowIso(), RequestedBy: actorName(user), RequestedByUsername: actorUsername(user) };
+      const pending = { ...withoutMetadata(existing), PendingSubjectChange: request };
+      stampAcademicRecord(pending, user, existing);
+      await commitAcademicBatch(env, [
+        { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships, documentId: existing.MembershipId, data: pending, updateTime: expected },
+        movementWrite(user, { ...movement, Status: 'Pending approval', SubjectChangeRequest: request }),
+        auditWrite(user, 'CLASSROOM TRANSFER REQUESTED', 'studentmembership', pending, reason,
+          `${actorName(user)} requested a classroom transfer for ${existing.StudentRef}. Existing assessment history requires another authorised administrator's approval. Current placement, subjects and scores remain unchanged.`)
+      ], 'The student or their scores changed while requesting this transfer. Reload and try again.');
+      const response = await bootstrapAcademicManagement(env, user, { ...input, BranchId: scope.branchId, SchoolSection: scope.section, View: 'students' });
+      response.bulkResult = { PendingApproval: 1 };
+      response.message = `${existing.StudentRef}: transfer request saved, awaiting another authorised administrator's approval under Student subjects. Current classroom, subjects and all existing scores are unchanged.`;
+      return response;
+    }
+  }
+  stampAcademicRecord(record, user, existing);
+  const movement = academicMovementForState(state, {
+    ...input, StudentRef: existing.StudentRef,
+    Operation: operation, MovementType: movementType(existing, record, operation)
+  }, scope, existing, operation.startsWith('withdraw') ? null : record);
+  const projected = {
+    ...state,
+    studentMemberships: [...state.studentMemberships.filter((row) => recordId(row) !== recordId(existing)), record]
+  };
+  const writes = [
+    {
+      collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships,
+      documentId: existing.MembershipId, data: withoutMetadata(record), updateTime: expected
+    },
+    movementWrite(user, movement),
+    auditWrite(user, movement.MovementType, 'studentmembership', record, reason)
+  ];
+  const compatibility = studentCompatibilityWrite(people, projected, record);
+  if (compatibility) writes.push(compatibility);
+  try {
+    await batchCommitDocuments(env, writes);
+  } catch (error) {
+    if ([409, 412].includes(Number(error?.status))) {
+      throw failure('This student or membership changed while the movement was being saved. Reload and try again.', 409, 'ACADEMIC_WRITE_CONFLICT');
+    }
+    throw error;
+  }
+  const response = await bootstrapAcademicManagement(env, user, {
+    ...input, BranchId: scope.branchId, SchoolSection: scope.section, View: 'students'
+  });
+  response.message = `${movement.MovementType} recorded online for ${existing.StudentRef}.${resetSubjects ? ' Previous subject selections were disconnected; existing scores and history were preserved. Complete the destination Core, Trade and Optional choices under Student subjects.' : ''}`;
+  return response;
+}
+
+function activeDependants(state, type, record) {
+  const id = recordId(record);
+  if (type === 'session') return [...state.terms, ...state.offerings, ...state.teacherAllocations, ...state.studentMemberships].filter((row) => row.SessionId === id && statusActive(row));
+  if (type === 'term') return [...state.offerings, ...state.teacherAllocations, ...state.studentMemberships].filter((row) => row.TermId === id && statusActive(row));
+  if (type === 'class') return [...state.arms, ...state.offerings, ...state.teacherAllocations, ...state.studentMemberships].filter((row) => row.ClassId === id && statusActive(row));
+  if (type === 'arm') return [...state.offerings, ...state.teacherAllocations, ...state.studentMemberships].filter((row) => row.ArmId === id && statusActive(row));
+  if (type === 'subject') return [...state.departments, ...state.offerings, ...state.teacherAllocations, ...state.studentMemberships].filter((row) => (row.SubjectId === id || (row.SubjectIds || []).includes(id) || (row.CoreSubjectIds || []).includes(id)) && statusActive(row));
+  if (type === 'department') return [...state.arms, ...state.studentMemberships].filter((row) => row.DepartmentId === id && statusActive(row));
+  if (type === 'offering') return [...state.teacherAllocations, ...state.studentMemberships].filter((row) => row.SessionId === record.SessionId && row.TermId === record.TermId && row.ClassId === record.ClassId && (row.SubjectId === record.SubjectId || (row.SubjectIds || []).includes(record.SubjectId)) && statusActive(row));
+  return [];
+}
+
+export function academicPermanentDeleteDependants(state = {}, typeValue = '', record = {}) {
+  const type = normalizedRecordType(typeValue);
+  const id = recordId(record);
+  if (type === 'class') {
+    return [
+      ...(state.classes || []).filter((row) => recordId(row) !== id && row.NextClassId === id),
+      ...(state.arms || []).filter((row) => row.ClassId === id),
+      ...(state.offerings || []).filter((row) => row.ClassId === id),
+      ...(state.teacherAllocations || []).filter((row) => row.ClassId === id),
+      ...(state.studentMemberships || []).filter((row) => row.ClassId === id),
+      ...(state.studentMovements || []).filter((row) => row.FromClassId === id || row.ToClassId === id)
+    ];
+  }
+  if (type === 'armtemplate') {
+    return (state.arms || []).filter((row) => row.ArmTemplateId === id);
+  }
+  if (type === 'arm') {
+    return [
+      ...(state.offerings || []).filter((row) => row.ArmId === id),
+      ...(state.teacherAllocations || []).filter((row) => row.ArmId === id),
+      ...(state.studentMemberships || []).filter((row) => row.ArmId === id),
+      ...(state.studentMovements || []).filter((row) => row.FromArmId === id || row.ToArmId === id)
+    ];
+  }
+  if (type === 'subject') {
+    const usesSubject = (row) => row.SubjectId === id
+      || (row.SubjectIds || []).includes(id)
+      || (row.CoreSubjectIds || []).includes(id)
+      || (row.FromSubjectIds || []).includes(id)
+      || (row.ToSubjectIds || []).includes(id);
+    return [
+      ...(state.departments || []).filter(usesSubject),
+      ...(state.offerings || []).filter(usesSubject),
+      ...(state.teacherAllocations || []).filter(usesSubject),
+      ...(state.studentMemberships || []).filter(usesSubject),
+      ...(state.studentMovements || []).filter(usesSubject)
+    ];
+  }
+  if (type === 'department') {
+    return [
+      ...(state.arms || []).filter((row) => row.DepartmentId === id),
+      ...(state.studentMemberships || []).filter((row) => row.DepartmentId === id),
+      ...(state.studentMovements || []).filter((row) => row.FromDepartmentId === id || row.ToDepartmentId === id)
+    ];
+  }
+  if (type === 'offering') {
+    const matchesPeriod = (row) => row.SessionId === record.SessionId && row.TermId === record.TermId;
+    const matchesArm = (armId) => !record.ArmId || armId === record.ArmId;
+    return [
+      ...(state.teacherAllocations || []).filter((row) => matchesPeriod(row) && row.ClassId === record.ClassId
+        && row.SubjectId === record.SubjectId && matchesArm(row.ArmId)),
+      ...(state.studentMemberships || []).filter((row) => matchesPeriod(row) && row.ClassId === record.ClassId
+        && (row.SubjectIds || []).includes(record.SubjectId) && matchesArm(row.ArmId)),
+      ...(state.studentMovements || []).filter((row) => matchesPeriod(row) && (
+        (row.FromClassId === record.ClassId && (row.FromSubjectIds || []).includes(record.SubjectId) && matchesArm(row.FromArmId))
+        || (row.ToClassId === record.ClassId && (row.ToSubjectIds || []).includes(record.SubjectId) && matchesArm(row.ToArmId))
+      ))
+    ];
+  }
+  return [];
+}
+
+export async function archiveAcademicManagementRecord(env, user = {}, input = {}) {
+  requireWritableSubscription(user);
+  const type = normalizedRecordType(input.RecordType || input.recordType || input.Type);
+  const definition = RECORD_TYPES[type];
+  if (!definition) throw failure('Choose a valid academic record type.');
+  if (type === 'studentmembership') {
+    throw failure('Use the withdrawal workflow for student memberships so the change is preserved in movement history.', 409, 'ACADEMIC_MOVEMENT_REQUIRED');
+  }
+  requireCapability(user, ['teacherallocation', 'studentmembership'].includes(type) ? 'canManageAllocations' : 'canArchive');
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  const state = await loadScopedAcademicState(env, scope, ACADEMIC_RECORD_DEPENDENCY_STATE_KEYS[type]);
+  const stateKey = Object.keys(ACADEMIC_MANAGEMENT_COLLECTIONS).find((key) => ACADEMIC_MANAGEMENT_COLLECTIONS[key] === definition.collection);
+  const existing = findById(state[stateKey] || [], input.RecordId);
+  if (!existing) throw failure('The academic record was not found in the selected branch.', 404);
+  if (effectiveAcademicSection(existing, scope) !== scope.section) throw failure('This academic record belongs to another school section.', 403);
+  const dependants = activeDependants(state, type, existing);
+  if (dependants.length) throw failure(`Archive the ${dependants.length} active dependent record${dependants.length === 1 ? '' : 's'} first.`, 409, 'ACADEMIC_DEPENDANTS_ACTIVE');
+  const revisionToken = clean(input.RevisionToken);
+  if (!revisionToken || revisionToken !== clean(existing.__updateTime)) throw failure('This academic record changed after it was loaded. Reload before archiving.', 409, 'ACADEMIC_WRITE_CONFLICT');
+  const archived = {
+    ...withoutMetadata(existing), Status: 'Archived', ArchivedAt: nowIso(), ArchivedBy: actorName(user),
+    BranchId: scope.branchId, SchoolSection: scope.section,
+    UpdatedAt: nowIso(), UpdatedBy: actorName(user)
+  };
+  const writes = [
+    { collectionPath: definition.collection, documentId: recordId(existing), data: archived, updateTime: revisionToken },
+    auditWrite(user, 'ARCHIVE', type, archived, clean(existing.Name || existing.StudentRef || existing.TeacherUsername))
+  ];
+  if (['class', 'arm'].includes(type)) {
+    const compatibility = legacyClassWrite(state, archived, type, scope);
+    if (compatibility) writes.push(compatibility);
+  }
+  await batchCommitDocuments(env, writes);
+  return bootstrapAcademicManagement(env, user, {
+    ...input, BranchId: scope.branchId, SchoolSection: scope.section,
+    View: academicRecordResponseView(input, type)
+  });
+}
+
+export async function deleteAcademicManagementRecord(env, user = {}, input = {}) {
+  requireWritableSubscription(user);
+  const type = normalizedRecordType(input.RecordType || input.recordType || input.Type);
+  requireCapability(user, type === 'teacherallocation' ? 'canManageAllocations' : 'canDelete');
+  if (!['class', 'armtemplate', 'arm', 'subject', 'department', 'offering', 'teacherallocation'].includes(type)) {
+    throw failure('Only an unused structure record, subject offering or teacher allocation can be permanently deleted.');
+  }
+  const definition = RECORD_TYPES[type];
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  const state = await loadScopedAcademicState(env, scope, ACADEMIC_RECORD_DEPENDENCY_STATE_KEYS[type]);
+  const stateKey = Object.keys(ACADEMIC_MANAGEMENT_COLLECTIONS).find((key) => ACADEMIC_MANAGEMENT_COLLECTIONS[key] === definition.collection);
+  const existing = findById(state[stateKey] || [], input.RecordId);
+  if (!existing) throw failure('The academic record was not found in the selected branch.', 404);
+  if (effectiveAcademicSection(existing, scope) !== scope.section) throw failure('This academic record belongs to another school section.', 403);
+  const dependants = academicPermanentDeleteDependants(state, type, existing);
+  if (dependants.length) {
+    const label = type === 'armtemplate' ? 'reusable arm definition' : (type === 'offering' ? 'subject offering' : type);
+    throw failure(`This ${label} is referenced by ${dependants.length} academic record${dependants.length === 1 ? '' : 's'}. Remove those references or archive this record instead.`, 409, 'ACADEMIC_DELETE_REFERENCED');
+  }
+  const revisionToken = clean(input.RevisionToken);
+  if (!revisionToken || revisionToken !== clean(existing.__updateTime)) {
+    throw failure('This academic record changed after it was loaded. Reload before deleting.', 409, 'ACADEMIC_WRITE_CONFLICT');
+  }
+  const deletedLabel = type === 'offering' ? 'Subject offering'
+    : (type === 'teacherallocation' ? 'Subject-teacher allocation' : clean(existing.Name || existing.Code || 'Academic record'));
+  const writes = [
+    { collectionPath: definition.collection, documentId: recordId(existing), operation: 'delete', updateTime: revisionToken },
+    auditWrite(user, 'DELETE', type, existing, deletedLabel)
+  ];
+  if (type === 'class' && scope.legacyClassCompatibility) {
+    writes.push({
+      collectionPath: 'settings/academics/classes',
+      documentId: clean(existing.LegacyDocumentId) || legacyDocumentId(existing.Name),
+      operation: 'delete'
+    });
+  }
+  if (type === 'arm') {
+    const projected = { ...state, arms: state.arms.filter((row) => recordId(row) !== recordId(existing)) };
+    const schoolClass = findById(projected.classes, existing.ClassId);
+    const compatibility = schoolClass ? legacyClassWrite(projected, schoolClass, 'class', scope) : null;
+    if (compatibility) writes.push(compatibility);
+  }
+  await commitAcademicBatch(env, writes, 'This academic record changed while it was being deleted. Reload and try again.');
+  const response = await bootstrapAcademicManagement(env, user, {
+    ...input, BranchId: scope.branchId, SchoolSection: scope.section,
+    View: academicRecordResponseView(input, type)
+  });
+  response.message = `${deletedLabel} deleted permanently online.`;
+  return response;
+}
+
+function academicOperationalViewForCapability(capability = '') {
+  const key = lower(capability);
+  if (key.includes('timetable')) return 'timetable';
+  if (key.includes('attendance')) return 'attendance';
+  if (key.includes('score')) return 'scorebook';
+  if (key.includes('cumulative') || key.includes('promotion') || key.includes('transcript')) return 'outcomes';
+  if (key.includes('result')) return 'results';
+  if (key.includes('cbt')) return 'cbt';
+  return '';
+}
+
+async function academicOperationalContext(env, user, input, capability, options = {}) {
+  requireWritableSubscription(user);
+  const permissions = requireCapability(user, capability);
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  const operationalView = options.view || input.View || input.Workspace
+    || academicOperationalViewForCapability(capability) || 'classrooms';
+  if (!clean(input.View || input.Workspace)) input.View = normalizedAcademicView(operationalView);
+  const stateKeys = options.stateKeys || academicManagementViewStateKeys(operationalView);
+  const scopedState = await loadScopedAcademicState(env, scope, stateKeys);
+  const session = assertReference(findById(scopedState.sessions, input.SessionId), 'Choose an active academic session.');
+  const term = assertReference(findById(scopedState.terms, input.TermId), 'Choose an active academic term.');
+  if (term.SessionId !== session.SessionId) throw failure('The selected term does not belong to this academic session.');
+  return { permissions, scope, state: scopedState, session, term };
+}
+
+function academicOperationalResponse(env, user, input, scope, message, view = '') {
+  return bootstrapAcademicManagement(env, user, {
+    ...input, BranchId: scope.branchId, SchoolSection: scope.section,
+    View: view || input.View || input.Workspace || 'classrooms'
+  }).then((response) => ({ ...response, message }));
+}
+
+export async function saveAcademicTimetableSettings(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canManageTimetables');
+  const { scope, state, session, term } = context;
+  const timetableSettingId = academicId('timetable-settings', scope.branchId, scope.section, session.SessionId, term.TermId);
+  const existing = findById(state.timetableSettings, timetableSettingId);
+  const timestamp = nowIso();
+  const days = normalizeAcademicTimetableDays(input.Days);
+  const record = {
+    ...(existing || {}), RecordId: timetableSettingId, TimetableSettingId: timetableSettingId,
+    SessionId: session.SessionId, TermId: term.TermId,
+    Days: days,
+    Periods: normalizeAcademicTimetablePeriods(input.Periods, days),
+    BranchId: scope.branchId, SchoolSection: scope.section,
+    CreatedAt: clean(existing?.CreatedAt) || timestamp, CreatedBy: clean(existing?.CreatedBy) || actorName(user),
+    UpdatedAt: timestamp, UpdatedBy: actorName(user)
+  };
+  await commitAcademicBatch(env, [
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableSettings, documentId: timetableSettingId, data: withoutMetadata(record), ...writePrecondition(existing, input.RevisionToken) },
+    auditWrite(user, existing ? 'UPDATE' : 'CREATE', 'timetableSettings', record, `${record.Days.length} days; ${record.Periods.length} periods`)
+  ], 'The timetable configuration changed while it was being saved. Reload and try again.');
+  return academicOperationalResponse(env, user, input, scope, 'School days and periods saved online.');
+}
+
+export async function saveAcademicSchoolCalendar(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canManageTimetables', {
+    view: 'timetable', stateKeys: ['sessions', 'terms', 'schoolCalendars']
+  });
+  const { scope, state, session, term } = context;
+  const calendarId = academicId('school-calendar', scope.branchId, scope.section, session.SessionId, term.TermId);
+  const existing = findById(state.schoolCalendars, calendarId);
+  const normalized = normalizeSchoolCalendar(input, term);
+  const changed = !existing || JSON.stringify(existing.OperatingWeekdays || []) !== JSON.stringify(normalized.OperatingWeekdays)
+    || JSON.stringify(existing.Exceptions || []) !== JSON.stringify(normalized.Exceptions);
+  if (changed) {
+    // A published or approved result is a dated snapshot. Require its controlled
+    // withdrawal before changing the calendar that underpins attendance totals.
+    const resultRows = await queryCollection(env, ACADEMIC_MANAGEMENT_COLLECTIONS.termResults, {
+      filters: [{ field: 'BranchId', op: '==', value: scope.branchId }],
+      select: ['BranchId', 'SchoolSection', 'TermId', 'Status']
+    });
+    const protectedResult = scopedAcademicRows(resultRows, scope).find((row) => row.TermId === term.TermId
+      && !['calculated draft', 'withdrawn'].includes(lower(row.Status)));
+    if (protectedResult) {
+      throw failure('This term has reviewed, approved or published results. Reopen or withdraw them before changing its school calendar.',
+        409, 'ACADEMIC_CALENDAR_RESULTS_LOCKED');
+    }
+  }
+  const timestamp = nowIso();
+  const record = {
+    ...(existing || {}), RecordId: calendarId, SchoolCalendarId: calendarId,
+    SessionId: session.SessionId, TermId: term.TermId,
+    ...normalized, BranchId: scope.branchId, SchoolSection: scope.section,
+    CreatedAt: clean(existing?.CreatedAt) || timestamp, CreatedBy: clean(existing?.CreatedBy) || actorName(user),
+    UpdatedAt: timestamp, UpdatedBy: actorName(user)
+  };
+  await commitAcademicBatch(env, [
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.schoolCalendars, documentId: calendarId,
+      data: withoutMetadata(record), ...writePrecondition(existing, input.RevisionToken) },
+    auditWrite(user, existing ? 'UPDATE' : 'CREATE', 'schoolCalendar', record,
+      `${record.OperatingWeekdays.join(', ')} operating weekdays; ${record.Exceptions.length} dated exceptions`)
+  ], 'The school calendar changed while it was being saved. Reload and try again.');
+  const summary = schoolCalendarSummary(term, record);
+  return academicOperationalResponse(env, user, input, scope,
+    `School calendar saved: ${summary.PlannedOpenDays} planned open days for the term; ${summary.OpenDaysToDate} through today.`);
+}
+
+function academicTimetableConstraint(state = {}, candidate = {}) {
+  return (state.timetableConstraints || []).find((row) => statusActive(row)
+    && row.SessionId === candidate.SessionId && row.TermId === candidate.TermId
+    && lower(row.TeacherUsername) === lower(candidate.TeacherUsername));
+}
+
+function assertAcademicTeacherScheduleRules(state, candidate, entries = state.timetableEntries || []) {
+  const constraint = academicTimetableConstraint(state, candidate);
+  const issues = academicTeacherLoadIssues(candidate, entries.filter(statusActive), constraint);
+  if (!issues.length) return;
+  const unavailable = issues.find((row) => row.Type === 'Availability');
+  if (unavailable) {
+    throw failure(`This teacher is unavailable on ${unavailable.DayCode} during ${unavailable.PeriodCode}.`, 409, 'ACADEMIC_TEACHER_UNAVAILABLE');
+  }
+  const daily = issues.find((row) => row.Type === 'DailyLoad');
+  if (daily) {
+    throw failure(`This lesson would give the teacher ${daily.Actual} periods on ${daily.DayCode}; the configured daily maximum is ${daily.Limit}.`, 409, 'ACADEMIC_TEACHER_DAILY_LOAD');
+  }
+  const weekly = issues.find((row) => row.Type === 'WeeklyLoad');
+  throw failure(`This lesson would give the teacher ${weekly.Actual} periods this week; the configured weekly maximum is ${weekly.Limit}.`, 409, 'ACADEMIC_TEACHER_WEEKLY_LOAD');
+}
+
+export async function saveAcademicTimetableConstraint(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canManageTimetables');
+  const { scope, state, session, term } = context;
+  const settings = state.timetableSettings.find((row) => row.SessionId === session.SessionId && row.TermId === term.TermId);
+  if (!settings) throw failure('Configure the school days and periods before setting teacher availability.');
+  const teacherUsername = lower(input.TeacherUsername);
+  if (!teacherUsername) throw failure('Choose the teacher whose timetable limits you want to configure.');
+  const people = await loadPeople(env, user, scope);
+  const teacher = people.staff.find((row) => lower(row.Username || row.username || row.__id) === teacherUsername);
+  if (!teacher) throw failure('The selected teacher was not found in this branch and school section.');
+  const constraintId = academicId('timetable-constraint', scope.branchId, scope.section, session.SessionId, term.TermId, teacherUsername);
+  const existing = findById(state.timetableConstraints, constraintId);
+  const timestamp = nowIso();
+  const record = {
+    ...(existing || {}), RecordId: constraintId, ConstraintId: constraintId,
+    TeacherUsername: teacherUsername, SessionId: session.SessionId, TermId: term.TermId,
+    UnavailableSlots: normalizeAcademicTeacherUnavailableSlots(input.UnavailableSlots, settings),
+    MaxPeriodsPerDay: wholeNumber(input.MaxPeriodsPerDay, wholeNumber(existing?.MaxPeriodsPerDay, 0), 0, 100),
+    MaxPeriodsPerWeek: wholeNumber(input.MaxPeriodsPerWeek, wholeNumber(existing?.MaxPeriodsPerWeek, 0), 0, 1000),
+    Status: oneOf(input.Status, ACADEMIC_RECORD_STATUSES, existing?.Status || 'Active'),
+    BranchId: scope.branchId, SchoolSection: scope.section,
+    CreatedAt: clean(existing?.CreatedAt) || timestamp, CreatedBy: clean(existing?.CreatedBy) || actorName(user),
+    UpdatedAt: timestamp, UpdatedBy: actorName(user)
+  };
+  await commitAcademicBatch(env, [
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableConstraints, documentId: constraintId, data: withoutMetadata(record), ...writePrecondition(existing, input.RevisionToken) },
+    auditWrite(user, existing ? 'UPDATE' : 'CREATE', 'timetableConstraint', record, `${teacherUsername}: ${record.UnavailableSlots.length} unavailable slot(s)`)
+  ], 'These teacher timetable limits changed while they were being saved. Reload and try again.');
+  return academicOperationalResponse(env, user, input, scope, 'Teacher availability and workload limits saved online.');
+}
+
+export async function deleteAcademicTimetableConstraint(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canManageTimetables');
+  const { scope, state } = context;
+  const existing = findById(state.timetableConstraints, input.ConstraintId || input.RecordId);
+  if (!existing) throw failure('The teacher timetable limits were not found.', 404);
+  const revisionToken = clean(input.RevisionToken);
+  if (!revisionToken || revisionToken !== clean(existing.__updateTime)) {
+    throw failure('These teacher timetable limits changed after they were loaded. Reload and try again.', 409);
+  }
+  await commitAcademicBatch(env, [
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableConstraints, documentId: existing.ConstraintId, operation: 'delete', updateTime: revisionToken },
+    auditWrite(user, 'DELETE', 'timetableConstraint', existing, existing.TeacherUsername)
+  ], 'These teacher timetable limits changed while they were being deleted. Reload and try again.');
+  return academicOperationalResponse(env, user, input, scope, 'Teacher availability and workload limits deleted.');
+}
+
+export async function createAcademicTimetableVersion(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canManageTimetables');
+  const { scope, state, session, term } = context;
+  const settings = state.timetableSettings.find((row) => row.SessionId === session.SessionId && row.TermId === term.TermId);
+  if (!settings) throw failure('Configure the school days and periods before creating a timetable version.');
+  const name = clean(input.Name);
+  if (!name) throw failure('Enter a timetable version name, for example First draft.');
+  const duplicate = state.timetableVersions.find((row) => row.SessionId === session.SessionId && row.TermId === term.TermId && lower(row.Name) === lower(name));
+  if (duplicate) throw failure('A timetable version with this name already exists.');
+  const versionId = academicId('timetable-version', scope.branchId, scope.section, session.SessionId, term.TermId, name);
+  const timestamp = nowIso();
+  const record = {
+    RecordId: versionId, VersionId: versionId, Name: name, Status: 'Draft',
+    SessionId: session.SessionId, TermId: term.TermId, BranchId: scope.branchId, SchoolSection: scope.section,
+    Days: settings.Days, Periods: settings.Periods,
+    CreatedAt: timestamp, CreatedBy: actorName(user), UpdatedAt: timestamp, UpdatedBy: actorName(user)
+  };
+  await commitAcademicBatch(env, [
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableVersions, documentId: versionId, data: withoutMetadata(record), exists: false },
+    auditWrite(user, 'CREATE', 'timetableVersion', record, name)
+  ], 'This timetable version already exists. Reload and try again.');
+  return academicOperationalResponse(env, user, input, scope, `${name} created as a draft timetable.`);
+}
+
+function generationSourceVersion(context, id) {
+  const version = findById(context.state.timetableVersions, id);
+  if (!version || version.SessionId !== context.session.SessionId || version.TermId !== context.term.TermId
+      || !['draft', 'approved', 'published', 'withdrawn'].includes(lower(version.Status))) {
+    throw failure('Choose an available timetable version from this branch, section and term.', 409);
+  }
+  return version;
+}
+
+async function generationDigest(value) {
+  const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(value)));
+  return Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+export function academicGenerationSnapshot(state, version) {
+  const rows = (key) => (state[key] || []).filter((row) => (!row.SessionId || row.SessionId === version.SessionId)
+    && (!row.TermId || row.TermId === version.TermId)).map(withoutMetadata)
+    .sort((a, b) => recordId(a).localeCompare(recordId(b)));
+  return {
+    Version: withoutMetadata(version), Classes: rows('classes'), Arms: rows('arms'), Subjects: rows('subjects'),
+    Allocations: rows('teacherAllocations'), Constraints: rows('timetableConstraints'),
+    Entries: (state.timetableEntries || []).filter((row) => row.VersionId === version.VersionId).map(withoutMetadata)
+      .sort((a, b) => recordId(a).localeCompare(recordId(b)))
+  };
+}
+
+export async function saveAcademicTimetableGenerationRules(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canManageTimetables', { view: 'timetable' });
+  const version = generationSourceVersion(context, input.VersionId);
+  if (lower(version.Status) !== 'draft') throw failure('Generator requirements can be changed only on a Draft version.', 409);
+  const updated = { ...version, GenerationRules: normalizeAcademicGenerationRules(input, version), UpdatedAt: nowIso(), UpdatedBy: actorName(user) };
+  buildAcademicGenerationProblem(context.state, updated, { includeTasks: false });
+  await commitAcademicBatch(env, [
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableVersions, documentId: version.VersionId,
+      data: withoutMetadata(updated), ...writePrecondition(version, input.RevisionToken) },
+    auditWrite(user, 'CONFIGURE_GENERATOR', 'timetableVersion', updated, `${updated.GenerationRules.Requirements.length} classroom-subject requirements`)
+  ], 'The generator requirements changed. Reload before saving.');
+  return academicOperationalResponse(env, user, input, context.scope, 'Weekly periods, subject cutoffs and generator rules saved.', 'timetable');
+}
+
+export async function previewAcademicTimetableGeneration(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canManageTimetables', { view: 'timetable' });
+  const version = generationSourceVersion(context, input.VersionId);
+  const signature = await generationDigest(academicGenerationSnapshot(context.state, version));
+  if (input.Checkpoint && clean(input.SourceSignature) !== signature) {
+    throw failure('Allocations, limits, requirements or source lessons changed during generation. Start a fresh preview.', 409, 'ACADEMIC_GENERATOR_STALE');
+  }
+  const problem = buildAcademicGenerationProblem(context.state, version);
+  const generation = advanceAcademicTimetableGeneration(problem, input.Checkpoint || null);
+  return { ok: true, generation: { ...generation, SourceSignature: signature, SourceVersionId: version.VersionId, VersionName: version.Name } };
+}
+
+// Previews are not trusted. Every plan is normalized and checked again before
+// persistence. Intermediate batches cannot be edited, approved or published.
+export async function saveAcademicTimetableGeneration(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canManageTimetables', { view: 'timetable' });
+  const { state, scope } = context;
+  let target;
+  if (clean(input.TargetVersionId)) {
+    target = findById(state.timetableVersions, input.TargetVersionId);
+    if (!target || target.SessionId !== context.session.SessionId || target.TermId !== context.term.TermId
+        || !target.GenerationSourceVersionId) throw failure('The generated draft was not found in this academic period.', 404);
+    if (lower(target.Status) === 'draft' && !target.GenerationPlan) {
+      return { ...await academicOperationalResponse(env, user, input, scope, 'The generated draft is already saved.', 'timetable'), generationSave: { Complete: true, VersionId: target.VersionId } };
+    }
+    if (lower(target.Status) !== 'generating') throw failure('Only an unfinished generated draft can resume saving.', 409);
+  } else {
+    if (!/^[a-z0-9-]{16,64}$/i.test(clean(input.SaveRequestId))) throw failure('Start saving with a unique request identifier.');
+    const source = generationSourceVersion(context, input.VersionId);
+    const signature = await generationDigest(academicGenerationSnapshot(state, source));
+    if (signature !== clean(input.SourceSignature)) throw failure('The source timetable or its allocations changed. Generate a fresh preview before saving.', 409, 'ACADEMIC_GENERATOR_STALE');
+    const problem = buildAcademicGenerationProblem(state, source, { includeTasks: false });
+    const entries = validateAcademicGeneratedEntries(problem, input.Entries, true);
+    const name = clean(input.Name).slice(0, 120);
+    if (!name) throw failure('Enter a name for the generated draft.');
+    const versionId = academicId('generated-timetable', scope.branchId, scope.section, context.session.SessionId, context.term.TermId, input.SaveRequestId);
+    const previewDigest = await generationDigest(entries);
+    target = findById(state.timetableVersions, versionId);
+    if (target && (target.GenerationSourceSignature !== signature || target.GenerationPreviewDigest !== previewDigest || target.Name !== name)) throw failure('This save identifier belongs to another preview. Start a fresh save.', 409);
+    if (!target) {
+      if (state.timetableVersions.some((row) => row.SessionId === source.SessionId && row.TermId === source.TermId && lower(row.Name) === lower(name))) throw failure('A timetable with this name already exists. Choose a new draft name.');
+      const timestamp = nowIso();
+      const record = {
+        RecordId: versionId, VersionId: versionId, Name: name, Status: 'Generating',
+        SessionId: source.SessionId, TermId: source.TermId, BranchId: scope.branchId, SchoolSection: scope.section,
+        Days: source.Days, Periods: source.Periods, GenerationRules: normalizeAcademicGenerationRules(source.GenerationRules, source),
+        GenerationSourceVersionId: source.VersionId, GenerationSourceSignature: signature, GenerationPreviewDigest: previewDigest,
+        GenerationPlan: entries, GenerationWritten: 0, GenerationTotal: entries.length,
+        CreatedAt: timestamp, CreatedBy: actorName(user), UpdatedAt: timestamp, UpdatedBy: actorName(user)
+      };
+      if (new TextEncoder().encode(JSON.stringify(record)).length > 850000) throw failure('This generated draft is too large to save safely. Use a smaller timetable scope.');
+      await commitAcademicBatch(env, [{ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableVersions, documentId: versionId, data: record, exists: false }], 'Saving already started. Retry the same request to resume.');
+      target = await getDocument(env, ACADEMIC_MANAGEMENT_COLLECTIONS.timetableVersions, versionId);
+    }
+    if (lower(target.Status) === 'draft' && !target.GenerationPlan) {
+      return { ...await academicOperationalResponse(env, user, input, scope, 'The generated draft is already saved.', 'timetable'), generationSave: { Complete: true, VersionId: target.VersionId } };
+    }
+    if (lower(target.Status) !== 'generating') throw failure('This generated timetable is no longer awaiting completion.', 409);
+  }
+  const source = generationSourceVersion(context, target.GenerationSourceVersionId);
+  if (await generationDigest(academicGenerationSnapshot(state, source)) !== target.GenerationSourceSignature) throw failure('The source or scheduling rules changed while saving. Delete the unfinished generated draft and generate a fresh preview.', 409, 'ACADEMIC_GENERATOR_STALE');
+  const problem = buildAcademicGenerationProblem(state, source, { includeTasks: false });
+  const entries = validateAcademicGeneratedEntries(problem, target.GenerationPlan, true);
+  const offset = Number(target.GenerationWritten || 0), chunk = entries.slice(offset, offset + 60);
+  const timestamp = nowIso();
+  const writes = chunk.map((entry, index) => {
+    const entryId = academicId('generated-lesson', target.VersionId, offset + index);
+    return { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableEntries, documentId: entryId, exists: false,
+      data: { ...entry, RecordId: entryId, EntryId: entryId, VersionId: target.VersionId,
+        SessionId: target.SessionId, TermId: target.TermId, BranchId: scope.branchId, SchoolSection: scope.section,
+        Status: 'Active', CreatedAt: timestamp, CreatedBy: actorName(user), UpdatedAt: timestamp, UpdatedBy: actorName(user) } };
+  });
+  const complete = offset + chunk.length === entries.length;
+  const updated = { ...target, GenerationWritten: offset + chunk.length, UpdatedAt: timestamp, UpdatedBy: actorName(user) };
+  if (complete) { updated.Status = 'Draft'; delete updated.GenerationPlan; updated.GenerationCompletedAt = timestamp; }
+  writes.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableVersions, documentId: target.VersionId, data: withoutMetadata(updated), updateTime: target.__updateTime });
+  if (complete) writes.push(auditWrite(user, 'GENERATE_DRAFT', 'timetableVersion', updated, `${entries.length} validated lessons; published timetables unchanged`));
+  await commitAcademicBatch(env, writes, 'This save step changed concurrently. Resume saving the same generated draft.');
+  const progress = { Complete: complete, VersionId: target.VersionId, Written: updated.GenerationWritten, Total: entries.length };
+  return complete ? { ...await academicOperationalResponse(env, user, input, scope, `${target.Name} saved as a new Draft. Review before approval and publication.`, 'timetable'), generationSave: progress }
+    : { ok: true, generationSave: progress };
+}
+
+export async function updateAcademicTimetableVersion(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canManageTimetables');
+  const { scope, state, session, term } = context;
+  const version = findById(state.timetableVersions, input.VersionId || input.RecordId);
+  if (!version || version.SessionId !== session.SessionId || version.TermId !== term.TermId) {
+    throw failure('The timetable version was not found.', 404);
+  }
+  if (lower(version.Status) !== 'draft') {
+    throw failure('Only a Draft timetable version can be edited.', 409, 'ACADEMIC_TIMETABLE_LOCKED');
+  }
+  const name = clean(input.Name);
+  if (!name) throw failure('Enter a timetable version name.');
+  const duplicate = state.timetableVersions.find((row) => row.VersionId !== version.VersionId
+    && row.SessionId === session.SessionId && row.TermId === term.TermId && lower(row.Name) === lower(name));
+  if (duplicate) throw failure('A timetable version with this name already exists.');
+  const timestamp = nowIso();
+  const updated = {
+    ...version, Name: name, UpdatedAt: timestamp, UpdatedBy: actorName(user)
+  };
+  await commitAcademicBatch(env, [
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableVersions, documentId: version.VersionId,
+      data: withoutMetadata(updated), ...writePrecondition(version, input.RevisionToken) },
+    auditWrite(user, 'UPDATE', 'timetableVersion', updated, `${version.Name} -> ${name}`)
+  ], 'The timetable version changed while it was being edited. Reload and try again.');
+  return academicOperationalResponse(env, user, input, scope, `${name} draft updated.`);
+}
+
+export async function deleteAcademicTimetableVersion(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canManageTimetables');
+  const { scope, state, session, term } = context;
+  let version = findById(state.timetableVersions, input.VersionId || input.RecordId);
+  if (!version || version.SessionId !== session.SessionId || version.TermId !== term.TermId) {
+    throw failure('The timetable version was not found.', 404);
+  }
+  if (!['draft', 'generating', 'deleting'].includes(lower(version.Status))) {
+    throw failure('Only a Draft timetable version can be deleted.', 409, 'ACADEMIC_TIMETABLE_LOCKED');
+  }
+  const versionEntries = state.timetableEntries.filter((row) => row.VersionId === version.VersionId);
+  const entryIds = new Set(versionEntries.map((row) => row.EntryId));
+  if (state.timetableSubstitutions.some((row) => entryIds.has(row.TimetableEntryId))
+      || state.studentAttendance.some((row) => entryIds.has(row.TimetableEntryId))) {
+    throw failure('This timetable version has attendance or substitution history and cannot be deleted.', 409, 'ACADEMIC_TIMETABLE_IN_USE');
+  }
+
+  if (['draft', 'generating'].includes(lower(version.Status))) {
+    const revisionToken = clean(input.RevisionToken);
+    if (!revisionToken || revisionToken !== clean(version.__updateTime)) {
+      throw failure('This timetable version changed after it was loaded. Reload and try again.', 409, 'ACADEMIC_WRITE_CONFLICT');
+    }
+    const timestamp = nowIso();
+    const deleting = {
+      ...version, Status: 'Deleting', DeletionStartedAt: timestamp,
+      UpdatedAt: timestamp, UpdatedBy: actorName(user)
+    };
+    await commitAcademicBatch(env, [{
+      collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableVersions,
+      documentId: version.VersionId, data: withoutMetadata(deleting), updateTime: revisionToken
+    }], 'The timetable version changed while deletion was starting. Reload and try again.');
+    version = deleting;
+  }
+
+  // Marking the version as Deleting prevents new lesson writes. Query the
+  // authoritative collection after that marker so a concurrent final lesson
+  // save cannot be left behind.
+  let deletedCount = 0;
+  while (true) {
+    let remaining = await queryCollection(env, ACADEMIC_MANAGEMENT_COLLECTIONS.timetableEntries, {
+      filters: [{ field: 'VersionId', op: '==', value: version.VersionId }]
+    });
+    remaining = remaining.filter((row) => lower(row.BranchId || 'main') === lower(scope.branchId)
+      && lower(row.SchoolSection) === lower(scope.section));
+    if (!remaining.length) break;
+    for (let offset = 0; offset < remaining.length; offset += 450) {
+      const chunk = remaining.slice(offset, offset + 450);
+      await commitAcademicBatch(env, chunk.map((entry) => ({
+        collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableEntries,
+        documentId: entry.EntryId || recordId(entry), operation: 'delete',
+        ...(entry.__updateTime ? { updateTime: entry.__updateTime } : {})
+      })), 'A timetable lesson changed while the draft was being deleted. Run Delete again to safely resume.');
+      deletedCount += chunk.length;
+    }
+  }
+
+  const freshVersion = await getDocument(env, ACADEMIC_MANAGEMENT_COLLECTIONS.timetableVersions, version.VersionId);
+  if (!freshVersion) {
+    return academicOperationalResponse(env, user, input, scope, 'The draft timetable was already deleted.');
+  }
+  if (lower(freshVersion.Status) !== 'deleting') {
+    throw failure('This timetable version changed while it was being deleted. Reload and try again.', 409, 'ACADEMIC_WRITE_CONFLICT');
+  }
+  await commitAcademicBatch(env, [
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableVersions,
+      documentId: freshVersion.VersionId, operation: 'delete', updateTime: freshVersion.__updateTime },
+    auditWrite(user, 'DELETE', 'timetableVersion', freshVersion,
+      `${freshVersion.Name}; ${deletedCount} lesson(s) deleted`)
+  ], 'The timetable version changed while deletion was finishing. Run Delete again to safely resume.');
+  return academicOperationalResponse(env, user, input, scope, `${freshVersion.Name} draft and its lessons were deleted.`);
+}
+
+function assertAcademicTimetableVersionLessons(state, version, entries) {
+  if (version.GenerationRules) validateAcademicGeneratedEntries(buildAcademicGenerationProblem(state, version, { includeTasks: false }), entries, true);
+  entries.forEach((entry) => {
+    if (!academicSubjectTeacherAllocation(state, entry)) {
+      throw failure(`The ${entry.DayCode} ${entry.StartPeriodCode} lesson cannot be used because its subject-teacher allocation is no longer active.`, 409, 'ACADEMIC_TIMETABLE_ALLOCATION_INVALID');
+    }
+    const conflicts = academicTimetableConflicts(entry, entries);
+    if (conflicts.length) {
+      const types = [...new Set(conflicts.map((row) => row.Type))].join(', ').toLowerCase();
+      throw failure(`Resolve the ${types} conflict in ${version.Name} before continuing.`, 409, 'ACADEMIC_TIMETABLE_CONFLICT');
+    }
+    assertAcademicTeacherScheduleRules(state, entry, entries);
+  });
+}
+
+export async function copyAcademicTimetableVersion(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canManageTimetables');
+  const { scope, state, session, term } = context;
+  const source = findById(state.timetableVersions, input.SourceVersionId);
+  if (!source || source.SessionId !== session.SessionId || source.TermId !== term.TermId) {
+    throw failure('Choose a timetable version from the selected academic period to copy.');
+  }
+  if (!['draft', 'approved', 'published', 'withdrawn'].includes(lower(source.Status))) {
+    throw failure('Finish or remove the unfinished source timetable before copying it.');
+  }
+  const sourceEntries = state.timetableEntries.filter((row) => row.VersionId === source.VersionId && statusActive(row));
+  if (!sourceEntries.length) throw failure('Add at least one lesson to the source timetable before copying it.');
+  assertAcademicTimetableVersionLessons(state, source, sourceEntries);
+  const name = clean(input.Name);
+  if (!name) throw failure('Enter a name for the new draft timetable.');
+  const versionId = academicId('timetable-version', scope.branchId, scope.section, session.SessionId, term.TermId, name);
+  let target = findById(state.timetableVersions, versionId)
+    || state.timetableVersions.find((row) => row.SessionId === session.SessionId && row.TermId === term.TermId && lower(row.Name) === lower(name));
+  if (target && !(lower(target.Status) === 'copying' && target.CopySourceVersionId === source.VersionId)) {
+    throw failure('A timetable version with this name already exists.');
+  }
+  const timestamp = nowIso();
+  if (!target) {
+    target = {
+      RecordId: versionId, VersionId: versionId, Name: name, Status: 'Copying',
+      CopySourceVersionId: source.VersionId, SessionId: session.SessionId, TermId: term.TermId,
+      BranchId: scope.branchId, SchoolSection: scope.section, Days: source.Days, Periods: source.Periods,
+      ...(source.GenerationRules ? { GenerationRules: source.GenerationRules } : {}),
+      CreatedAt: timestamp, CreatedBy: actorName(user), UpdatedAt: timestamp, UpdatedBy: actorName(user)
+    };
+    await commitAcademicBatch(env, [{
+      collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableVersions,
+      documentId: versionId, data: withoutMetadata(target), exists: false
+    }], 'A timetable version with this name was created by someone else. Reload and try again.');
+  }
+  const existingCopySources = new Set(state.timetableEntries.filter((row) => row.VersionId === target.VersionId)
+    .map((row) => clean(row.CopySourceEntryId)).filter(Boolean));
+  const pendingWrites = sourceEntries.filter((entry) => !existingCopySources.has(entry.EntryId)).map((entry) => {
+    const entryId = academicId('timetable-entry-copy', target.VersionId, entry.EntryId);
+    const copied = {
+      ...entry, RecordId: entryId, EntryId: entryId, VersionId: target.VersionId,
+      CopySourceEntryId: entry.EntryId, CreatedAt: timestamp, CreatedBy: actorName(user),
+      UpdatedAt: timestamp, UpdatedBy: actorName(user), Status: 'Active'
+    };
+    delete copied.__id;
+    delete copied.__name;
+    delete copied.__createTime;
+    delete copied.__updateTime;
+    delete copied.__scopePath;
+    return { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableEntries, documentId: entryId, data: copied, exists: false };
+  });
+  for (let offset = 0; offset < pendingWrites.length; offset += 450) {
+    await commitAcademicBatch(env, pendingWrites.slice(offset, offset + 450), 'This timetable copy was interrupted by another update. Run the same copy again to resume it safely.');
+  }
+  const freshVersions = await listCollection(env, ACADEMIC_MANAGEMENT_COLLECTIONS.timetableVersions);
+  const freshTarget = findById(freshVersions, target.VersionId);
+  if (!freshTarget) throw failure('The copied timetable version could not be finalized. Run the same copy again to resume it.', 409);
+  const completedAt = nowIso();
+  const completed = {
+    ...freshTarget, Status: 'Draft', CopiedEntryCount: sourceEntries.length,
+    CopyCompletedAt: completedAt, UpdatedAt: completedAt, UpdatedBy: actorName(user)
+  };
+  await commitAcademicBatch(env, [
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableVersions, documentId: freshTarget.VersionId,
+      data: withoutMetadata(completed), updateTime: freshTarget.__updateTime },
+    auditWrite(user, 'COPY', 'timetableVersion', completed, `${source.Name} -> ${name}; ${sourceEntries.length} lesson(s)`)
+  ], 'The copied timetable changed while it was being finalized. Run the same copy again to resume it.');
+  return academicOperationalResponse(env, user, input, scope, `${sourceEntries.length} lesson${sourceEntries.length === 1 ? '' : 's'} copied into ${name} as a new draft.`);
+}
+
+export function academicTimetableTargetCopyPlan(state = {}, input = {}, context = {}) {
+  const source = findById(state.timetableVersions, input.SourceVersionId);
+  const target = findById(state.timetableVersions, input.TargetVersionId);
+  if (!source || !['draft', 'approved', 'published', 'withdrawn'].includes(lower(source.Status))) throw failure('Choose an available source timetable version.');
+  if (!target || target.SessionId !== context.session?.SessionId || target.TermId !== context.term?.TermId) {
+    throw failure('Choose a target timetable version from the selected academic period.');
+  }
+  if (lower(target.Status) !== 'draft') throw failure('Targeted lessons can be copied only into a Draft timetable version.', 409, 'ACADEMIC_TIMETABLE_LOCKED');
+  const sourceArm = assertReference(findById(state.arms, input.SourceArmId), 'Choose the source classroom arm.');
+  const targetArm = assertReference(findById(state.arms, input.TargetArmId), 'Choose the target classroom arm.');
+  const sourceClass = assertReference(findById(state.classes, input.SourceClassId || sourceArm.ClassId), 'Choose the source class.');
+  const targetClass = assertReference(findById(state.classes, input.TargetClassId || targetArm.ClassId), 'Choose the target class.');
+  if (sourceArm.ClassId !== sourceClass.ClassId || targetArm.ClassId !== targetClass.ClassId) {
+    throw failure('Each selected arm must belong to its selected class.');
+  }
+  const sourceEntries = state.timetableEntries.filter((row) => statusActive(row) && row.VersionId === source.VersionId
+    && row.ClassId === sourceClass.ClassId && row.ArmId === sourceArm.ArmId);
+  if (!sourceEntries.length) throw failure('The selected source classroom has no lessons in that timetable version.');
+  const existingTargetEntries = state.timetableEntries.filter((row) => statusActive(row) && row.VersionId === target.VersionId);
+  const planned = [];
+  const issues = [];
+  sourceEntries.forEach((sourceEntry) => {
+    const entryId = academicId('timetable-target-copy', target.VersionId, sourceEntry.EntryId, targetClass.ClassId, targetArm.ArmId);
+    try {
+      const candidate = {
+        ...normalizeAcademicTimetableEntry({
+          ...sourceEntry, ClassId: targetClass.ClassId, ArmId: targetArm.ArmId
+        }, target),
+        RecordId: entryId, EntryId: entryId, VersionId: target.VersionId,
+        SessionId: context.session.SessionId, TermId: context.term.TermId,
+        BranchId: context.scope.branchId, SchoolSection: context.scope.section,
+        CopySourceEntryId: sourceEntry.EntryId, CopySourceVersionId: source.VersionId,
+        CopySourceClassId: sourceClass.ClassId, CopySourceArmId: sourceArm.ArmId,
+        Status: 'Active'
+      };
+      if (!academicSubjectTeacherAllocation(state, candidate)) {
+        throw failure('The same subject-teacher allocation is not active in the target classroom and term.');
+      }
+      const combined = [...existingTargetEntries, ...planned.map((row) => row.Entry)];
+      const conflicts = academicTimetableConflicts(candidate, combined);
+      if (conflicts.length) {
+        const types = [...new Set(conflicts.map((row) => row.Type))].join(', ').toLowerCase();
+        throw failure(`The copied lesson has a ${types} conflict in the target timetable.`);
+      }
+      assertAcademicTeacherScheduleRules(state, candidate, combined);
+      if (target.GenerationRules) validateAcademicGeneratedEntries(buildAcademicGenerationProblem(state, target, { includeTasks: false }),
+        [...combined.filter((entry) => entry.EntryId !== candidate.EntryId), candidate]);
+      planned.push({ Entry: candidate, Existing: Boolean(findById(existingTargetEntries, entryId)) });
+    } catch (error) {
+      issues.push({
+        SourceEntryId: sourceEntry.EntryId,
+        DayCode: sourceEntry.DayCode,
+        StartPeriodCode: sourceEntry.StartPeriodCode,
+        SubjectId: sourceEntry.SubjectId,
+        Message: clean(error?.message || error || 'This lesson cannot be copied.')
+      });
+    }
+  });
+  return {
+    SourceVersionId: source.VersionId, SourceVersionName: source.Name,
+    TargetVersionId: target.VersionId, TargetVersionName: target.Name,
+    SourceClassId: sourceClass.ClassId, SourceArmId: sourceArm.ArmId,
+    TargetClassId: targetClass.ClassId, TargetArmId: targetArm.ArmId,
+    SourceCount: sourceEntries.length, ValidCount: planned.length,
+    ExistingCount: planned.filter((row) => row.Existing).length,
+    NewCount: planned.filter((row) => !row.Existing).length,
+    Issues: issues, PlannedEntries: planned
+  };
+}
+
+export async function previewAcademicTimetableCopy(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canManageTimetables');
+  const plan = academicTimetableTargetCopyPlan(context.state, input, context);
+  const response = await academicOperationalResponse(env, user, input, context.scope,
+    plan.Issues.length
+      ? `${plan.ValidCount} of ${plan.SourceCount} lessons passed validation; resolve ${plan.Issues.length} issue${plan.Issues.length === 1 ? '' : 's'} before copying.`
+      : `${plan.NewCount} lesson${plan.NewCount === 1 ? '' : 's'} are ready to copy; ${plan.ExistingCount} matching lesson${plan.ExistingCount === 1 ? '' : 's'} already exist.`);
+  response.copyPreview = { ...plan, PlannedEntries: undefined };
+  return response;
+}
+
+export async function copyAcademicTimetableSelection(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canManageTimetables');
+  const plan = academicTimetableTargetCopyPlan(context.state, input, context);
+  if (plan.Issues.length) {
+    throw failure(`Resolve the ${plan.Issues.length} targeted-copy validation issue${plan.Issues.length === 1 ? '' : 's'} before copying.`, 409, 'ACADEMIC_TIMETABLE_COPY_INVALID');
+  }
+  const timestamp = nowIso();
+  const writes = plan.PlannedEntries.filter((row) => !row.Existing).map(({ Entry }) => ({
+    collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableEntries,
+    documentId: Entry.EntryId,
+    data: withoutMetadata({ ...Entry, CreatedAt: timestamp, CreatedBy: actorName(user), UpdatedAt: timestamp, UpdatedBy: actorName(user) }),
+    exists: false
+  }));
+  if (writes.length > 498) throw failure('Copy at most 498 lessons into a draft at once.');
+  await commitAcademicBatch(env, [...writes,
+    academicTimetableMutationGuard(findById(context.state.timetableVersions, plan.TargetVersionId), user),
+    auditWrite(user, 'TARGETED_COPY', 'timetableEntry', {
+    RecordId: plan.TargetVersionId, VersionId: plan.TargetVersionId,
+    BranchId: context.scope.branchId, SchoolSection: context.scope.section,
+    SessionId: context.session.SessionId, TermId: context.term.TermId
+  }, `${plan.SourceVersionName}: ${plan.SourceClassId}/${plan.SourceArmId} -> ${plan.TargetVersionName}: ${plan.TargetClassId}/${plan.TargetArmId}; ${writes.length} lesson(s)`)],
+  'The target timetable changed while lessons were being copied. Preview the selection again.');
+  return academicOperationalResponse(env, user, input, context.scope,
+    writes.length
+      ? `${writes.length} validated lesson${writes.length === 1 ? '' : 's'} copied into ${plan.TargetVersionName}.`
+      : `Every selected lesson already exists in ${plan.TargetVersionName}; nothing was duplicated.`);
+}
+
+function academicSubjectTeacherAllocation(state, candidate) {
+  return state.teacherAllocations.find((row) => statusActive(row)
+    && row.SessionId === candidate.SessionId && row.TermId === candidate.TermId
+    && lower(row.AllocationRole) === 'subject teacher'
+    && lower(row.TeacherUsername) === lower(candidate.TeacherUsername)
+    && row.ClassId === candidate.ClassId && (!row.ArmId || row.ArmId === candidate.ArmId)
+    && row.SubjectId === candidate.SubjectId);
+}
+
+function academicTimetableMutationGuard(version, user) {
+  if (!version || lower(version.Status) !== 'draft') throw failure('Only a draft timetable can be changed.', 409, 'ACADEMIC_TIMETABLE_LOCKED');
+  return {
+    collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableVersions,
+    documentId: version.VersionId,
+    data: withoutMetadata({ ...version, UpdatedAt: nowIso(), UpdatedBy: actorName(user), LessonMutationId: globalThis.crypto.randomUUID() }),
+    ...writePrecondition(version, version.__updateTime)
+  };
+}
+
+export async function saveAcademicTimetableEntry(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canManageTimetables');
+  const { scope, state, session, term } = context;
+  const version = assertReference(findById(state.timetableVersions, input.VersionId), 'Choose an active timetable version.');
+  if (version.SessionId !== session.SessionId || version.TermId !== term.TermId) throw failure('The timetable version belongs to another academic period.');
+  if (lower(version.Status) !== 'draft') throw failure('Only a draft timetable can be changed.', 409, 'ACADEMIC_TIMETABLE_LOCKED');
+  const requestedId = clean(input.EntryId || input.RecordId);
+  const existing = requestedId ? findById(state.timetableEntries, requestedId) : null;
+  if (requestedId && !existing) throw failure('The timetable lesson was not found.', 404);
+  if (existing && existing.VersionId !== version.VersionId) throw failure('The timetable lesson belongs to another version.', 403);
+  const entryId = clean(existing?.EntryId) || academicId('timetable-entry', version.VersionId, globalThis.crypto.randomUUID());
+  const record = {
+    ...normalizeAcademicTimetableEntry(input, version, existing),
+    RecordId: entryId, EntryId: entryId, VersionId: version.VersionId,
+    SessionId: session.SessionId, TermId: term.TermId, BranchId: scope.branchId, SchoolSection: scope.section
+  };
+  const schoolClass = assertReference(findById(state.classes, record.ClassId), 'Choose an active class.');
+  record.GeneratorLocked = input.GeneratorLocked === undefined ? existing?.GeneratorLocked === true
+    : input.GeneratorLocked === true || lower(input.GeneratorLocked) === 'yes';
+  const arm = assertReference(findById(state.arms, record.ArmId), 'Choose an active classroom arm.');
+  if (arm.ClassId !== schoolClass.ClassId) throw failure('The selected arm does not belong to this class.');
+  assertReference(findById(state.subjects, record.SubjectId), 'Choose an active subject.');
+  if (!academicSubjectTeacherAllocation(state, record)) {
+    throw failure('Assign this teacher to the selected subject and classroom before scheduling the lesson.');
+  }
+  const conflicts = academicTimetableConflicts(record, state.timetableEntries.filter(statusActive));
+  if (conflicts.length) {
+    const types = [...new Set(conflicts.map((row) => row.Type))].join(', ');
+    throw failure(`Resolve the ${types.toLowerCase()} timetable conflict before saving.`, 409, 'ACADEMIC_TIMETABLE_CONFLICT');
+  }
+  assertAcademicTeacherScheduleRules(state, record);
+  if (version.GenerationRules) {
+    const projected = state.timetableEntries.filter((row) => statusActive(row) && row.VersionId === version.VersionId && row.EntryId !== record.EntryId);
+    validateAcademicGeneratedEntries(buildAcademicGenerationProblem({ ...state, timetableEntries: projected }, version, { includeTasks: false }), [...projected, record]);
+  }
+  const timestamp = nowIso();
+  record.Status = 'Active';
+  record.CreatedAt = clean(existing?.CreatedAt) || timestamp;
+  record.CreatedBy = clean(existing?.CreatedBy) || actorName(user);
+  record.UpdatedAt = timestamp;
+  record.UpdatedBy = actorName(user);
+  await commitAcademicBatch(env, [
+    academicTimetableMutationGuard(version, user),
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableEntries, documentId: entryId, data: withoutMetadata(record), ...writePrecondition(existing, input.RevisionToken) },
+    auditWrite(user, existing ? 'UPDATE' : 'CREATE', 'timetableEntry', record, `${record.DayCode} ${record.PeriodCodes.join(', ')}`)
+  ], 'This timetable lesson changed while it was being saved. Reload and try again.');
+  return academicOperationalResponse(env, user, input, scope, 'Timetable lesson saved without conflicts.');
+}
+
+export function academicTimetableBatchPlan(state = {}, input = {}, context = {}) {
+  const lessons = Array.isArray(input.Entries) ? input.Entries : [];
+  if (!lessons.length) throw failure('Add at least one lesson to the batch.');
+  if (lessons.length > 50) throw failure('Save at most 50 timetable lessons in one batch.');
+  const version = assertReference(findById(state.timetableVersions || [], input.VersionId), 'Choose an active timetable version.');
+  if (version.SessionId !== context.session?.SessionId || version.TermId !== context.term?.TermId) {
+    throw failure('The timetable version belongs to another academic period.');
+  }
+  if (lower(version.Status) !== 'draft') throw failure('Only a draft timetable can be changed.', 409, 'ACADEMIC_TIMETABLE_LOCKED');
+  const projectedEntries = (state.timetableEntries || []).filter(statusActive).slice();
+  return lessons.map((lesson, index) => {
+    try {
+      if (!lesson || typeof lesson !== 'object' || Array.isArray(lesson) || clean(lesson.EntryId || lesson.RecordId)) {
+        throw failure('Batch lessons must be new entries. Edit saved lessons individually.');
+      }
+      const entryId = academicId('timetable-entry', version.VersionId, globalThis.crypto.randomUUID());
+      const record = {
+        ...normalizeAcademicTimetableEntry(lesson, version),
+        GeneratorLocked: lesson.GeneratorLocked === true || lower(lesson.GeneratorLocked) === 'yes',
+        RecordId: entryId, EntryId: entryId, VersionId: version.VersionId,
+        SessionId: context.session.SessionId, TermId: context.term.TermId,
+        BranchId: context.scope.branchId, SchoolSection: context.scope.section,
+        Status: 'Active'
+      };
+      const schoolClass = assertReference(findById(state.classes || [], record.ClassId), 'Choose an active class.');
+      const arm = assertReference(findById(state.arms || [], record.ArmId), 'Choose an active classroom arm.');
+      if (arm.ClassId !== schoolClass.ClassId) throw failure('The selected arm does not belong to this class.');
+      assertReference(findById(state.subjects || [], record.SubjectId), 'Choose an active subject.');
+      if (!academicSubjectTeacherAllocation(state, record)) {
+        throw failure('Assign this teacher to the selected subject and classroom before scheduling the lesson.');
+      }
+      const conflicts = academicTimetableConflicts(record, projectedEntries);
+      if (conflicts.length) {
+        const types = [...new Set(conflicts.map((row) => row.Type))].join(', ').toLowerCase();
+        throw failure(`Resolve the ${types} timetable conflict before saving.`, 409, 'ACADEMIC_TIMETABLE_CONFLICT');
+      }
+      assertAcademicTeacherScheduleRules(state, record, projectedEntries);
+      if (version.GenerationRules) validateAcademicGeneratedEntries(buildAcademicGenerationProblem(state, version, { includeTasks: false }),
+        [...projectedEntries.filter((row) => row.VersionId === version.VersionId), record]);
+      projectedEntries.push(record);
+      return record;
+    } catch (error) {
+      throw failure(`Lesson ${index + 1}: ${clean(error?.message || error)}`, Number(error?.status) || 400, clean(error?.code));
+    }
+  });
+}
+
+export async function bulkSaveAcademicTimetableEntries(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canManageTimetables');
+  const records = academicTimetableBatchPlan(context.state, input, context);
+  const timestamp = nowIso();
+  const writes = records.flatMap((record) => {
+    const saved = { ...record, CreatedAt: timestamp, CreatedBy: actorName(user), UpdatedAt: timestamp, UpdatedBy: actorName(user) };
+    return [
+      { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableEntries, documentId: record.EntryId, data: withoutMetadata(saved), exists: false },
+      auditWrite(user, 'CREATE', 'timetableEntry', saved, `${record.DayCode} ${record.PeriodCodes.join(', ')}; batch of ${records.length}`)
+    ];
+  });
+  writes.push(academicTimetableMutationGuard(findById(context.state.timetableVersions, input.VersionId), user));
+  await commitAcademicBatch(env, writes, 'The timetable changed while this batch was being saved. Reload and review the lessons before trying again.');
+  return academicOperationalResponse(env, user, input, context.scope,
+    `${records.length} timetable lesson${records.length === 1 ? '' : 's'} saved without conflicts.`);
+}
+
+export async function deleteAcademicTimetableEntry(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canManageTimetables');
+  const { scope, state } = context;
+  const existing = findById(state.timetableEntries, input.EntryId || input.RecordId);
+  if (!existing) throw failure('The timetable lesson was not found.', 404);
+  const version = findById(state.timetableVersions, existing.VersionId);
+  if (!version || lower(version.Status) !== 'draft') throw failure('Only lessons in a draft timetable can be deleted.', 409);
+  const revisionToken = clean(input.RevisionToken);
+  if (!revisionToken || revisionToken !== clean(existing.__updateTime)) throw failure('This timetable lesson changed after it was loaded. Reload and try again.', 409);
+  await commitAcademicBatch(env, [
+    academicTimetableMutationGuard(version, user),
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableEntries, documentId: existing.EntryId, operation: 'delete', updateTime: revisionToken },
+    auditWrite(user, 'DELETE', 'timetableEntry', existing, `${existing.DayCode} ${existing.PeriodCodes?.join(', ') || ''}`)
+  ], 'This timetable lesson changed while it was being deleted. Reload and try again.');
+  return academicOperationalResponse(env, user, input, scope, 'Timetable lesson deleted.');
+}
+
+function academicIsoWeekdayCode(value) {
+  const date = new Date(`${clean(value)}T12:00:00Z`);
+  return Number.isNaN(date.getTime()) ? '' : ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'][date.getUTCDay()];
+}
+
+export async function saveAcademicTimetableSubstitution(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canManageTimetables');
+  const { scope, state, session, term } = context;
+  const lesson = assertReference(findById(state.timetableEntries, input.TimetableEntryId), 'Choose a published timetable lesson.');
+  const version = findById(state.timetableVersions, lesson.VersionId);
+  if (!version || lower(version.Status) !== 'published') throw failure('Teacher substitutions can be scheduled only for a published timetable.');
+  const substitutionDate = dateValue(input.SubstitutionDate, 'substitution date');
+  if (substitutionDate < term.StartDate || substitutionDate > term.EndDate) throw failure('The substitution date must fall within the selected term.');
+  const weekday = academicIsoWeekdayCode(substitutionDate);
+  if (/^(SUN|MON|TUE|WED|THU|FRI|SAT)$/.test(clean(lesson.DayCode).toUpperCase()) && weekday !== clean(lesson.DayCode).toUpperCase()) {
+    throw failure(`The selected lesson runs on ${lesson.DayCode}, but ${substitutionDate} is ${weekday}.`);
+  }
+  const substituteUsername = lower(input.SubstituteTeacherUsername);
+  if (!substituteUsername) throw failure('Choose the substitute teacher.');
+  if (substituteUsername === lower(lesson.TeacherUsername)) throw failure('Choose a different teacher for this substitution.');
+  const people = await loadPeople(env, user, scope);
+  const substitute = people.staff.find((row) => lower(row.Username || row.username || row.__id) === substituteUsername);
+  if (!substitute) throw failure('The substitute teacher was not found in this branch.');
+  const qualified = state.teacherAllocations.some((row) => statusActive(row)
+    && row.SessionId === session.SessionId && row.TermId === term.TermId
+    && lower(row.AllocationRole) === 'subject teacher' && row.SubjectId === lesson.SubjectId
+    && lower(row.TeacherUsername) === substituteUsername);
+  if (!qualified) throw failure('Assign this subject to the substitute teacher in the selected term before scheduling the substitution.');
+  const candidate = { ...lesson, TeacherUsername: substituteUsername };
+  const substitutionId = academicId('timetable-substitution', scope.branchId, scope.section, session.SessionId, term.TermId, substitutionDate, lesson.EntryId);
+  const requestedExisting = clean(input.SubstitutionId || input.RecordId)
+    ? findById(state.timetableSubstitutions, input.SubstitutionId || input.RecordId) : null;
+  if (clean(input.SubstitutionId || input.RecordId) && !requestedExisting) throw failure('The teacher substitution being edited was not found.', 404);
+  if (requestedExisting && lower(requestedExisting.Status) !== 'scheduled') throw failure('Only a scheduled teacher substitution can be edited.', 409);
+  const conflicts = academicTimetableConflicts(candidate, state.timetableEntries.filter((row) => statusActive(row) && row.VersionId === version.VersionId));
+  const teacherConflict = conflicts.find((row) => row.Type === 'Teacher');
+  if (teacherConflict) throw failure('The substitute teacher already has another lesson during this period.', 409, 'ACADEMIC_TIMETABLE_CONFLICT');
+  const occupied = new Set(lesson.PeriodCodes || []);
+  const substitutionConflict = state.timetableSubstitutions.some((row) => lower(row.Status) === 'scheduled'
+    && ![substitutionId, requestedExisting?.SubstitutionId].includes(row.SubstitutionId) && row.SubstitutionDate === substitutionDate
+    && lower(row.SubstituteTeacherUsername) === substituteUsername
+    && (row.PeriodCodes || []).some((periodCode) => occupied.has(periodCode)));
+  if (substitutionConflict) throw failure('The substitute teacher already has another substitution during this period.', 409, 'ACADEMIC_TIMETABLE_CONFLICT');
+  assertAcademicTeacherScheduleRules(state, candidate);
+  const reason = clean(input.Reason).slice(0, 500);
+  if (!reason) throw failure('Enter the approved reason for this teacher substitution.');
+  const existing = findById(state.timetableSubstitutions, substitutionId);
+  if (existing && requestedExisting && existing.SubstitutionId !== requestedExisting.SubstitutionId) {
+    throw failure('Another substitution is already scheduled for this lesson and date.', 409, 'ACADEMIC_WRITE_CONFLICT');
+  }
+  const previous = requestedExisting || existing;
+  const timestamp = nowIso();
+  const record = {
+    ...(previous || {}), RecordId: substitutionId, SubstitutionId: substitutionId,
+    SessionId: session.SessionId, TermId: term.TermId, VersionId: version.VersionId,
+    TimetableEntryId: lesson.EntryId, SubstitutionDate: substitutionDate,
+    OriginalTeacherUsername: lesson.TeacherUsername, SubstituteTeacherUsername: substituteUsername,
+    ClassId: lesson.ClassId, ArmId: lesson.ArmId, SubjectId: lesson.SubjectId,
+    DayCode: lesson.DayCode, PeriodCodes: lesson.PeriodCodes || [], Reason: reason, Status: 'Scheduled',
+    BranchId: scope.branchId, SchoolSection: scope.section,
+    CreatedAt: clean(previous?.CreatedAt) || timestamp, CreatedBy: clean(previous?.CreatedBy) || actorName(user),
+    UpdatedAt: timestamp, UpdatedBy: actorName(user)
+  };
+  const relocating = previous && previous.SubstitutionId !== substitutionId;
+  await commitAcademicBatch(env, [
+    ...(relocating ? [{ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableSubstitutions,
+      documentId: previous.SubstitutionId, operation: 'delete', updateTime: clean(input.RevisionToken) }] : []),
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableSubstitutions, documentId: substitutionId,
+      data: withoutMetadata(record), ...(relocating ? { exists: false } : writePrecondition(existing, input.RevisionToken)) },
+    auditWrite(user, previous ? 'UPDATE_SUBSTITUTION' : 'CREATE_SUBSTITUTION', 'timetableSubstitution', record, reason)
+  ], 'This teacher substitution changed while it was being saved. Reload and try again.');
+  return academicOperationalResponse(env, user, input, scope, 'Teacher substitution scheduled and conflict-checked online.');
+}
+
+export async function cancelAcademicTimetableSubstitution(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canManageTimetables');
+  const { scope, state } = context;
+  const existing = findById(state.timetableSubstitutions, input.SubstitutionId || input.RecordId);
+  if (!existing || lower(existing.Status) !== 'scheduled') throw failure('The scheduled teacher substitution was not found.', 404);
+  const reason = clean(input.Reason).slice(0, 500);
+  if (!reason) throw failure('Enter the reason for cancelling this substitution.');
+  const timestamp = nowIso();
+  const updated = {
+    ...existing, Status: 'Cancelled', CancellationReason: reason,
+    CancelledAt: timestamp, CancelledBy: actorName(user), UpdatedAt: timestamp, UpdatedBy: actorName(user)
+  };
+  await commitAcademicBatch(env, [
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableSubstitutions, documentId: existing.SubstitutionId,
+      data: withoutMetadata(updated), ...writePrecondition(existing, input.RevisionToken) },
+    auditWrite(user, 'CANCEL_SUBSTITUTION', 'timetableSubstitution', updated, reason)
+  ], 'This teacher substitution changed while it was being cancelled. Reload and try again.');
+  return academicOperationalResponse(env, user, input, scope, 'Teacher substitution cancelled.');
+}
+
+export async function changeAcademicTimetableVersionStatus(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canPublishTimetables');
+  const { scope, state, session, term } = context;
+  const version = findById(state.timetableVersions, input.VersionId || input.RecordId);
+  if (!version || version.SessionId !== session.SessionId || version.TermId !== term.TermId) throw failure('The timetable version was not found.', 404);
+  const requested = oneOf(input.Status, ACADEMIC_TIMETABLE_VERSION_STATUSES, '');
+  const transitions = { draft: ['Approved'], approved: ['Published', 'Draft'], published: ['Withdrawn'], withdrawn: [] };
+  if (!(transitions[lower(version.Status)] || []).includes(requested)) throw failure(`A ${version.Status} timetable cannot move to ${requested || 'that status'}.`, 409);
+  const entries = state.timetableEntries.filter((row) => row.VersionId === version.VersionId && statusActive(row));
+  if (['Approved', 'Published'].includes(requested) && !entries.length) throw failure('Add at least one lesson before approving or publishing this timetable.');
+  if (['Approved', 'Published'].includes(requested)) assertAcademicTimetableVersionLessons(state, version, entries);
+  const reason = clean(input.Reason).slice(0, 500);
+  if (requested === 'Withdrawn' && !reason) throw failure('Enter the reason for withdrawing this timetable.');
+  const timestamp = nowIso();
+  const updated = {
+    ...version, Status: requested, UpdatedAt: timestamp, UpdatedBy: actorName(user),
+    ...(requested === 'Approved' ? { ApprovedAt: timestamp, ApprovedBy: actorName(user) } : {}),
+    ...(requested === 'Published' ? { PublishedAt: timestamp, PublishedBy: actorName(user) } : {}),
+    ...(requested === 'Withdrawn' ? { WithdrawnAt: timestamp, WithdrawnBy: actorName(user), WithdrawalReason: reason } : {})
+  };
+  const writes = [{
+    collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableVersions, documentId: version.VersionId,
+    data: withoutMetadata(updated), ...writePrecondition(version, input.RevisionToken)
+  }];
+  if (requested === 'Published') {
+    state.timetableVersions.filter((row) => row.VersionId !== version.VersionId
+      && row.SessionId === session.SessionId && row.TermId === term.TermId && lower(row.Status) === 'published').forEach((row) => {
+      writes.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableVersions, documentId: row.VersionId,
+        data: withoutMetadata({ ...row, Status: 'Withdrawn', WithdrawnAt: timestamp, WithdrawnBy: actorName(user), WithdrawalReason: 'Superseded by a newly published timetable.', UpdatedAt: timestamp, UpdatedBy: actorName(user) }), updateTime: row.__updateTime });
+    });
+  }
+  writes.push(auditWrite(user, requested.toUpperCase(), 'timetableVersion', updated, reason || updated.Name));
+  await commitAcademicBatch(env, writes, 'The timetable version changed while its status was being updated. Reload and try again.');
+  return academicOperationalResponse(env, user, input, scope, `${version.Name} is now ${requested.toLowerCase()}.`);
+}
+
+function academicAttendanceAuthority(user, state, input, permissions) {
+  if (permissions.canManageTimetables) return true;
+  const username = actorUsername(user);
+  const mode = oneOf(input.Mode, ACADEMIC_ATTENDANCE_MODES, 'Daily');
+  if (mode === 'Period') {
+    const entry = findById(state.timetableEntries, input.TimetableEntryId);
+    const substitution = entry && state.timetableSubstitutions.some((row) => lower(row.Status) === 'scheduled'
+      && row.TimetableEntryId === entry.EntryId && row.SubstitutionDate === clean(input.AttendanceDate)
+      && lower(row.SubstituteTeacherUsername) === username);
+    return Boolean(entry && entry.ClassId === input.ClassId && entry.ArmId === input.ArmId
+      && (lower(entry.TeacherUsername) === username || substitution));
+  }
+  return state.teacherAllocations.some((row) => statusActive(row) && lower(row.TeacherUsername) === username
+    && row.SessionId === input.SessionId && row.TermId === input.TermId && row.ClassId === input.ClassId
+    && (!row.ArmId || row.ArmId === input.ArmId)
+    && (mode === 'Daily'
+      ? ['form teacher', 'assistant teacher'].includes(lower(row.AllocationRole))
+      : lower(row.AllocationRole) === 'subject teacher' && row.SubjectId === input.SubjectId));
+}
+
+function academicParentContacts(student = {}) {
+  const emails = uniqueIds([
+    ...(Array.isArray(student.ParentEmails) ? student.ParentEmails : []),
+    student.ParentEmail, student.VerificationEmail, student.Email,
+    student.FatherEmail, student.MotherEmail, student.GuardianEmail
+  ]).map(lower).filter((value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value));
+  const accountRefs = uniqueIds([
+    studentReference(student), student.AccountRef, student.AdmissionNo, student.ApplicationReference
+  ]).map(lower).filter(Boolean);
+  return { emails, accountRefs };
+}
+
+async function notifyAcademicAbsences(env, students = [], records = [], context = {}) {
+  const byStudent = new Map(students.map((row) => [lower(studentReference(row)), row]));
+  const uniqueRecords = new Map(records.filter((row) => lower(row.Status) === 'absent')
+    .map((row) => [row.AttendanceId, row]));
+  const results = await Promise.allSettled([...uniqueRecords.values()].map((record) => {
+    const student = byStudent.get(lower(record.StudentRef)) || {};
+    const contacts = academicParentContacts(student);
+    const studentName = clean(student.DisplayName || student.ApplicantName || student.StudentName || record.StudentRef);
+    const eventRevision = clean(record.MarkedAt || record.UpdatedAt || record.CreatedAt || record.AttendanceDate);
+    return createNotification(env, {
+      EventKey: `academic-absence:${record.AttendanceId}:${eventRevision}`,
+      Type: 'Student absence', Category: 'Attendance', Audience: 'Parent', Channels: ['InApp', 'Push'],
+      TargetEmails: contacts.emails, TargetAccountRefs: contacts.accountRefs,
+      Title: `${studentName} was marked absent`,
+      Message: `${studentName} was marked absent on ${record.AttendanceDate} in the ${record.Mode || 'Daily'} attendance register. Contact the school if this needs correction.`,
+      ActionUrl: 'parent-dashboard.html?section=academics', RecordType: 'studentAttendance', RecordId: record.AttendanceId,
+      BranchId: context.scope?.branchId || record.BranchId, SchoolSection: context.scope?.section || record.SchoolSection,
+      ActorType: 'Staff', ActorId: context.actorUsername || record.MarkedByUsername || 'Academic Management',
+      CreatedBy: context.actorName || record.MarkedBy || 'Academic Management'
+    });
+  }));
+  return results.filter((result) => result.status === 'fulfilled' && result.value?.created).length;
+}
+
+export async function saveAcademicStudentAttendance(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canMarkAttendance');
+  const { permissions, scope, state, session, term } = context;
+  const attendanceDate = clean(input.AttendanceDate);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(attendanceDate)) throw failure('Choose a valid attendance date.');
+  if (attendanceDate < term.StartDate || attendanceDate > term.EndDate) throw failure('The attendance date must fall within the selected term.');
+  const calendar = state.schoolCalendars.find((row) => row.SessionId === session.SessionId && row.TermId === term.TermId);
+  if (calendar && !schoolCalendarDayIsOpen(calendar, attendanceDate)) {
+    const reason = (calendar.Exceptions || []).find((row) => row.Date === attendanceDate)?.Reason;
+    throw failure(`${attendanceDate} is a closed school day${reason ? ` (${reason})` : ''}. Change the school calendar before marking attendance.`,
+      409, 'ACADEMIC_SCHOOL_CLOSED');
+  }
+  const schoolClass = assertReference(findById(state.classes, input.ClassId), 'Choose an active class.');
+  const arm = assertReference(findById(state.arms, input.ArmId), 'Choose an active classroom arm.');
+  if (arm.ClassId !== schoolClass.ClassId) throw failure('The selected arm does not belong to this class.');
+  const mode = oneOf(input.Mode, ACADEMIC_ATTENDANCE_MODES, 'Daily');
+  const authorityInput = { ...input, Mode: mode, SessionId: session.SessionId, TermId: term.TermId, ClassId: schoolClass.ClassId, ArmId: arm.ArmId };
+  if (!academicAttendanceAuthority(user, state, authorityInput, permissions)) {
+    throw failure('Only an allocated form, assistant or subject teacher may mark this register.', 403, 'ACADEMIC_ATTENDANCE_FORBIDDEN');
+  }
+  if (mode === 'Subject') assertReference(findById(state.subjects, input.SubjectId), 'Choose the subject for this attendance register.');
+  if (mode === 'Period') {
+    const lesson = findById(state.timetableEntries, input.TimetableEntryId);
+    const version = lesson ? findById(state.timetableVersions, lesson.VersionId) : null;
+    if (!lesson || !version || lower(version.Status) !== 'published') throw failure('Choose a lesson from the published timetable.');
+  }
+  const memberships = state.studentMemberships.filter((row) => statusActive(row)
+    && row.SessionId === session.SessionId && row.TermId === term.TermId && row.ClassId === schoolClass.ClassId && row.ArmId === arm.ArmId);
+  const attendanceRows = normalizeAcademicAttendanceEntries(input.Entries, memberships.map((row) => row.StudentRef));
+  const correctionReason = clean(input.CorrectionReason).slice(0, 500);
+  const registerDiscriminator = mode === 'Period' ? clean(input.TimetableEntryId) : mode === 'Subject' ? clean(input.SubjectId) : 'daily';
+  const registerId = academicId('attendance-register', scope.branchId, scope.section, session.SessionId, term.TermId, attendanceDate, schoolClass.ClassId, arm.ArmId, mode, registerDiscriminator);
+  const timestamp = nowIso();
+  const writes = [];
+  let created = 0;
+  let corrected = 0;
+  let requested = 0;
+  const absentRecords = [];
+  attendanceRows.forEach((row) => {
+    const attendanceId = academicId(registerId, row.StudentRef);
+    const existing = findById(state.studentAttendance, attendanceId);
+    if (existing && existing.Status === row.Status && Number(existing.MinutesLate || 0) === row.MinutesLate && clean(existing.Note) === row.Note) {
+      if (lower(existing.Status) === 'absent') absentRecords.push(existing);
+      return;
+    }
+    const record = {
+      ...(existing || {}), RecordId: attendanceId, AttendanceId: attendanceId, RegisterId: registerId,
+      SessionId: session.SessionId, TermId: term.TermId, AttendanceDate: attendanceDate,
+      ClassId: schoolClass.ClassId, ArmId: arm.ArmId, Mode: mode,
+      SubjectId: mode === 'Subject' ? clean(input.SubjectId) : '',
+      TimetableEntryId: mode === 'Period' ? clean(input.TimetableEntryId) : '',
+      StudentRef: row.StudentRef, Status: row.Status, MinutesLate: row.MinutesLate, Note: row.Note,
+      BranchId: scope.branchId, SchoolSection: scope.section,
+      CreatedAt: clean(existing?.CreatedAt) || timestamp, CreatedBy: clean(existing?.CreatedBy) || actorName(user),
+      MarkedAt: timestamp, MarkedBy: actorName(user), MarkedByUsername: actorUsername(user), MarkedByRole: clean(user.role || user.Role),
+      UpdatedAt: timestamp, UpdatedBy: actorName(user)
+    };
+    if (existing && !permissions.canManageTimetables) {
+      if (!correctionReason) throw failure(`Explain the correction requested for ${row.StudentRef}.`);
+      const correctionId = academicId('attendance-correction', attendanceId, globalThis.crypto.randomUUID());
+      const correction = {
+        RecordId: correctionId, CorrectionId: correctionId, AttendanceId: attendanceId,
+        AttendanceRevision: clean(existing.__updateTime), PreviousStatus: existing.Status, ProposedStatus: row.Status,
+        ProposedMinutesLate: row.MinutesLate, ProposedNote: row.Note, Reason: correctionReason, Status: 'Pending',
+        SessionId: session.SessionId, TermId: term.TermId, AttendanceDate: attendanceDate,
+        ClassId: schoolClass.ClassId, ArmId: arm.ArmId, StudentRef: row.StudentRef,
+        BranchId: scope.branchId, SchoolSection: scope.section,
+        RequestedAt: timestamp, RequestedBy: actorName(user), RequestedByUsername: actorUsername(user), RequestedByRole: clean(user.role || user.Role)
+      };
+      writes.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.attendanceCorrections, documentId: correctionId, data: withoutMetadata(correction), exists: false });
+      writes.push(auditWrite(user, 'REQUEST_CORRECTION', 'studentAttendance', correction, correctionReason));
+      requested += 1;
+      return;
+    }
+    if (existing && !correctionReason) throw failure(`Enter a correction reason before changing ${row.StudentRef}.`);
+    writes.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentAttendance, documentId: attendanceId, data: withoutMetadata({
+      ...record, ...(existing ? { CorrectedAt: timestamp, CorrectedBy: actorName(user), CorrectionReason: correctionReason } : {})
+    }), ...writePrecondition(existing, existing ? input.RevisionTokens?.[attendanceId] || existing.__updateTime : '') });
+    writes.push(auditWrite(user, existing ? 'CORRECT' : 'MARK', 'studentAttendance', record,
+      existing ? `${existing.Status} -> ${record.Status}: ${correctionReason}` : record.Status));
+    if (lower(record.Status) === 'absent') absentRecords.push(record);
+    if (existing) corrected += 1; else created += 1;
+  });
+  if (writes.length) await commitAcademicBatch(env, writes, 'The attendance register changed while it was being saved. Reload and try again.');
+  let absenceNotifications = 0;
+  if (absentRecords.length) {
+    const people = await loadPeople(env, user, scope, { staff: false }).catch(() => ({ students: [] }));
+    absenceNotifications = await notifyAcademicAbsences(env, people.students || [], absentRecords, {
+      scope, actorName: actorName(user), actorUsername: actorUsername(user)
+    }).catch(() => 0);
+  }
+  const summary = academicAttendanceSummary(attendanceRows);
+  const message = requested
+    ? `Attendance saved; ${requested} correction request${requested === 1 ? '' : 's'} sent for approval.`
+    : `Attendance saved: ${summary.Present} present, ${summary.Absent} absent, ${summary.Late} late${corrected ? `; ${corrected} corrected` : ''}${absenceNotifications ? `; ${absenceNotifications} new parent absence notification${absenceNotifications === 1 ? '' : 's'}` : ''}.`;
+  return academicOperationalResponse(env, user, input, scope, message);
+}
+
+export async function decideAcademicAttendanceCorrection(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canManageTimetables', {
+    stateKeys: ACADEMIC_ATTENDANCE_STATE_KEYS, view: 'attendance'
+  });
+  const { scope, state } = context;
+  const correction = findById(state.attendanceCorrections, input.CorrectionId || input.RecordId);
+  if (!correction || lower(correction.Status) !== 'pending') throw failure('The pending attendance correction was not found.', 404);
+  const decision = oneOf(input.Decision, ['Approved', 'Rejected'], '');
+  if (!decision) throw failure('Choose Approved or Rejected.');
+  const reason = clean(input.Reason).slice(0, 500);
+  if (!reason) throw failure('Enter the decision reason.');
+  const existing = findById(state.studentAttendance, correction.AttendanceId);
+  if (!existing) throw failure('The original attendance record was not found.', 409);
+  if (clean(existing.__updateTime) !== clean(correction.AttendanceRevision)) {
+    throw failure('The attendance record changed after this correction was requested. Reject it and review the latest record.', 409, 'ACADEMIC_WRITE_CONFLICT');
+  }
+  const timestamp = nowIso();
+  const decided = {
+    ...correction, Status: decision, DecisionReason: reason, DecidedAt: timestamp,
+    DecidedBy: actorName(user), DecidedByUsername: actorUsername(user), DecidedByRole: clean(user.role || user.Role)
+  };
+  const writes = [{
+    collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.attendanceCorrections, documentId: correction.CorrectionId,
+    data: withoutMetadata(decided), ...writePrecondition(correction, input.RevisionToken)
+  }];
+  if (decision === 'Approved') {
+    writes.push({
+      collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentAttendance, documentId: existing.AttendanceId,
+      data: withoutMetadata({ ...existing, Status: correction.ProposedStatus, MinutesLate: correction.ProposedMinutesLate,
+        Note: correction.ProposedNote, CorrectedAt: timestamp, CorrectedBy: actorName(user), CorrectionReason: correction.Reason,
+        UpdatedAt: timestamp, UpdatedBy: actorName(user) }), updateTime: existing.__updateTime
+    });
+  }
+  writes.push(auditWrite(user, decision === 'Approved' ? 'APPROVE_CORRECTION' : 'REJECT_CORRECTION', 'studentAttendance', decided, reason));
+  await commitAcademicBatch(env, writes, 'The attendance correction changed while it was being decided. Reload and try again.');
+  let absenceNotifications = 0;
+  if (decision === 'Approved' && lower(correction.ProposedStatus) === 'absent') {
+    const people = await loadPeople(env, user, scope).catch(() => ({ students: [] }));
+    absenceNotifications = await notifyAcademicAbsences(env, people.students || [], [{
+      ...existing, Status: 'Absent', MinutesLate: correction.ProposedMinutesLate, Note: correction.ProposedNote,
+      MarkedAt: timestamp, UpdatedAt: timestamp
+    }], { scope, actorName: actorName(user), actorUsername: actorUsername(user) }).catch(() => 0);
+  }
+  return academicOperationalResponse(env, user, input, scope,
+    `Attendance correction ${decision.toLowerCase()}${absenceNotifications ? '; the parent was notified of the approved absence' : ''}.`);
+}
+
+async function academicAssessmentFingerprint(scheme = {}) {
+  const material = JSON.stringify({ Components: scheme.Components || [], GradeBands: scheme.GradeBands || [] });
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(material));
+  return `assessment-${[...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('').slice(0, 32)}`;
+}
+
+async function academicResultPolicyFingerprint(policy = {}) {
+  const material = JSON.stringify(normalizeAcademicPolicy(policy));
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(material));
+  return `result-policy-${[...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('').slice(0, 32)}`;
+}
+
+async function academicResultReference(resultId) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(clean(resultId)));
+  return `TR-${[...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('').slice(0, 16).toUpperCase()}`;
+}
+
+async function academicAssessmentForPeriod(env, scope, session, term, { required = true, classId = '', subjectId = '' } = {}) {
+  const scopeChain = academicPolicyScopeChain({
+    BranchId: scope.branchId, SectionId: scope.section, ClassId: classId, SubjectId: subjectId
+  });
+  const view = await loadAcademicPolicyView(env, {
+    scope: scopeChain.at(-1),
+    scopeChain,
+    period: { Session: session.Name, Term: term.Name }
+  });
+  const sourceRevisionIds = (view.Sources || []).map((row) => clean(row.RevisionId)).filter(Boolean);
+  const scheme = academicAssessmentScheme(view.ActivePolicy);
+  if (sourceRevisionIds.length) {
+    scheme.RevisionId = await academicAssessmentFingerprint(scheme);
+    scheme.SourceRevisionIds = sourceRevisionIds;
+  } else {
+    scheme.Ready = false;
+    scheme.Issues = [...scheme.Issues, 'Activate the assessment and grading policy for this academic period.'];
+  }
+  if (required && !scheme.Ready) {
+    throw failure(scheme.Issues[0] || 'Configure and activate the assessment and grading policy first.', 409, 'ACADEMIC_ASSESSMENT_SCHEME_REQUIRED');
+  }
+  return scheme;
+}
+
+function academicScoreSheetId(scope, sessionId, termId, classId, armId, subjectId) {
+  return academicId('score-sheet', scope.branchId, scope.section, sessionId, termId, classId, armId, subjectId);
+}
+
+function academicStudentScoreId(sheetId, studentRef) {
+  return academicId('student-score', sheetId, studentRef);
+}
+
+function academicScoreRoster(state, candidate) {
+  return state.studentMemberships.filter((row) => statusActive(row)
+    && row.SessionId === candidate.SessionId && row.TermId === candidate.TermId
+    && row.ClassId === candidate.ClassId && row.ArmId === candidate.ArmId
+    && (row.SubjectIds || []).includes(candidate.SubjectId));
+}
+
+export function academicScoreTeacherAllocations(state, candidate, options = {}) {
+  const classWideSubjectAuthority = options.classWideSubjectAuthority === true;
+  return state.teacherAllocations.filter((row) => statusActive(row)
+    && row.SessionId === candidate.SessionId && row.TermId === candidate.TermId
+    && lower(row.AllocationRole) === 'subject teacher'
+    && row.ClassId === candidate.ClassId
+    && (classWideSubjectAuthority || !row.ArmId || row.ArmId === candidate.ArmId)
+    && row.SubjectId === candidate.SubjectId);
+}
+
+function assertAcademicScoreSheetAuthority(user, permissions, state, candidate, existing = null, options = {}) {
+  const allocations = academicScoreTeacherAllocations(state, candidate, options);
+  if (!allocations.length) {
+    const target = options.classWideSubjectAuthority ? 'class and subject' : 'classroom and subject';
+    throw failure(`Assign a subject teacher to this ${target} before opening its scorebook.`, 409, 'ACADEMIC_SCORE_TEACHER_REQUIRED');
+  }
+  const username = actorUsername(user);
+  const requestedTeacher = lower(existing?.TeacherUsername || candidate.TeacherUsername || (permissions.teacherView ? username : ''));
+  const allocation = allocations.find((row) => !requestedTeacher || lower(row.TeacherUsername) === requestedTeacher);
+  if (!allocation) throw failure('The selected teacher is not allocated to this subject and classroom.', 403, 'ACADEMIC_SCORE_ALLOCATION_FORBIDDEN');
+  if (permissions.teacherView && lower(allocation.TeacherUsername) !== username) {
+    throw failure('Teachers may enter scores only for their own allocated subjects and classrooms.', 403, 'ACADEMIC_SCORE_ALLOCATION_FORBIDDEN');
+  }
+  return allocation;
+}
+
+async function academicScoreSheetContext(env, user, input, capability = 'canEnterScores', stateKeys = ACADEMIC_SCOREBOOK_STATE_KEYS, options = {}) {
+  const context = await academicOperationalContext(env, user, input, capability, {
+    stateKeys
+  });
+  const { permissions, scope, state, session, term } = context;
+  const schoolClass = assertReference(findById(state.classes, input.ClassId), 'Choose an active class.');
+  const arm = assertReference(findById(state.arms, input.ArmId), 'Choose an active classroom arm.');
+  const subject = assertReference(findById(state.subjects, input.SubjectId), 'Choose an active subject.');
+  if (subject.AssessmentCategory === 'TimetableOnly') {
+    throw failure('This subject is timetable-only and does not accept scores.', 409, 'ACADEMIC_SUBJECT_NOT_ASSESSED');
+  }
+  if (arm.ClassId !== schoolClass.ClassId) throw failure('The selected arm does not belong to this class.');
+  if (schoolClass.SchoolSection !== scope.section || subject.SchoolSection !== scope.section) {
+    throw failure('The selected scorebook belongs to another school section.', 403, 'ACADEMIC_SECTION_FORBIDDEN');
+  }
+  const candidate = {
+    SessionId: session.SessionId, TermId: term.TermId, ClassId: schoolClass.ClassId,
+    ArmId: arm.ArmId, SubjectId: subject.SubjectId, TeacherUsername: lower(input.TeacherUsername)
+  };
+  const SheetId = academicScoreSheetId(scope, session.SessionId, term.TermId, schoolClass.ClassId, arm.ArmId, subject.SubjectId);
+  const existing = findById(state.scoreSheets, input.SheetId || SheetId);
+  if (input.SheetId && !existing) throw failure('The selected score sheet was not found.', 404);
+  if (existing && existing.SheetId !== SheetId) throw failure('The selected score sheet belongs to another classroom, subject or period.', 403);
+  const allocation = assertAcademicScoreSheetAuthority(user, permissions, state, candidate, existing, options);
+  const roster = academicScoreRoster(state, candidate);
+  if (!roster.length) throw failure('No students in this classroom are allocated to the selected subject.', 409, 'ACADEMIC_SCORE_ROSTER_EMPTY');
+  let scheme;
+  if (existing) {
+    scheme = academicAssessmentScheme({ Assessment: {
+      Components: existing.AssessmentComponents || [], GradeBands: existing.GradeBands || []
+    } }, { RevisionId: existing.AssessmentRevisionId });
+    scheme.SourceRevisionIds = existing.AssessmentSourceRevisionIds || [];
+    if (!scheme.Ready || !scheme.RevisionId) {
+      throw failure('This score sheet has an invalid historical assessment snapshot. An academic administrator must review it before scores can change.', 409, 'ACADEMIC_SCORE_SNAPSHOT_INVALID');
+    }
+  } else {
+    scheme = await academicAssessmentForPeriod(env, scope, session, term, {
+      classId: schoolClass.ClassId, subjectId: subject.SubjectId
+    });
+  }
+  return { ...context, schoolClass, arm, subject, SheetId, existing, allocation, roster, scheme };
+}
+
+function academicScoreSheetRecord(context, existing, user, timestamp, updates = {}) {
+  const { scope, session, term, schoolClass, arm, subject, SheetId, allocation, roster, scheme } = context;
+  return {
+    ...(existing || {}), RecordId: SheetId, SheetId,
+    SessionId: session.SessionId, TermId: term.TermId,
+    ClassId: schoolClass.ClassId, ArmId: arm.ArmId, SubjectId: subject.SubjectId,
+    TeacherUsername: lower(existing?.TeacherUsername || allocation.TeacherUsername),
+    AssessmentRevisionId: scheme.RevisionId,
+    AssessmentSourceRevisionIds: scheme.SourceRevisionIds || [],
+    AssessmentComponents: scheme.Components,
+    GradeBands: scheme.GradeBands,
+    RosterCount: roster.length,
+    Status: existing?.Status || 'Draft',
+    BranchId: scope.branchId, SchoolSection: scope.section,
+    CreatedAt: clean(existing?.CreatedAt) || timestamp,
+    CreatedBy: clean(existing?.CreatedBy) || actorName(user),
+    UpdatedAt: timestamp, UpdatedBy: actorName(user),
+    ...updates
+  };
+}
+
+function academicScoreRowsInput(value) {
+  let rows = value;
+  if (typeof rows === 'string') {
+    try { rows = JSON.parse(rows); } catch (_error) { rows = []; }
+  }
+  return Array.isArray(rows) ? rows : [];
+}
+
+export async function getAcademicScorebookContext(env, user = {}, input = {}) {
+  const context = await academicScoreSheetContext(env, user, input, 'canEnterScores');
+  let activeScheme = context.scheme;
+  if (context.existing && lower(context.existing.Status) === 'draft') {
+    activeScheme = await academicAssessmentForPeriod(env, context.scope, context.session, context.term, {
+      classId: context.schoolClass.ClassId,
+      subjectId: context.subject.SubjectId
+    });
+  }
+  const layoutUpdateAvailable = Boolean(
+    context.existing
+    && lower(context.existing.Status) === 'draft'
+    && clean(activeScheme.RevisionId)
+    && clean(activeScheme.RevisionId) !== clean(context.scheme.RevisionId)
+  );
+  return {
+    ok: true,
+    partialAcademicManagement: true,
+    message: 'Scorebook context loaded.',
+    assessmentScheme: context.scheme,
+    scorebookContext: {
+      SheetId: context.SheetId,
+      ClassId: context.schoolClass.ClassId,
+      ArmId: context.arm.ArmId,
+      SubjectId: context.subject.SubjectId,
+      TeacherUsername: context.allocation.TeacherUsername,
+      RosterCount: context.roster.length,
+      LayoutUpdateAvailable: layoutUpdateAvailable,
+      ActiveAssessmentRevisionId: layoutUpdateAvailable ? activeScheme.RevisionId : ''
+    },
+    ...(layoutUpdateAvailable ? { activeAssessmentScheme: activeScheme } : {})
+  };
+}
+
+function academicScoreSheetCounts(scores = []) {
+  return {
+    EnteredCount: scores.length,
+    CompleteCount: scores.filter((row) => row.CompletionStatus === 'Complete').length,
+    IncompleteCount: scores.filter((row) => row.CompletionStatus !== 'Complete').length
+  };
+}
+
+const ACADEMIC_RECORDED_SCORE_STATES = new Set(['Numeric', 'Absent', 'Exempt']);
+
+export function academicLockedScoreComponentIds(score = {}) {
+  if (Array.isArray(score.LockedComponentIds)) {
+    return [...new Set(score.LockedComponentIds.map(clean).filter(Boolean))];
+  }
+  return [...new Set((score.ComponentScores || [])
+    .filter((component) => ACADEMIC_RECORDED_SCORE_STATES.has(clean(component.State)))
+    .map((component) => clean(component.ComponentId)).filter(Boolean))];
+}
+
+function academicRecordedScoreComponentIds(componentScores = []) {
+  return [...new Set(componentScores
+    .filter((component) => ACADEMIC_RECORDED_SCORE_STATES.has(clean(component.State)))
+    .map((component) => clean(component.ComponentId)).filter(Boolean))];
+}
+
+function academicScoreCells(componentScores = []) {
+  return (componentScores || []).flatMap((component) => {
+    const componentId = clean(component.ComponentId);
+    const parts = Array.isArray(component.Parts) ? component.Parts : [];
+    if (!parts.length) return componentId ? [{ CellId: componentId, ...component }] : [];
+    return parts.map((part) => ({
+      CellId: `${componentId}:${clean(part.PartId)}`,
+      ComponentId: componentId,
+      PartId: clean(part.PartId),
+      ...part
+    })).filter((part) => part.ComponentId && part.PartId);
+  });
+}
+
+export function academicLockedScoreCellIds(score = {}) {
+  if (Array.isArray(score.LockedScoreCellIds)) {
+    return [...new Set(score.LockedScoreCellIds.map(clean).filter(Boolean))];
+  }
+  const legacyLocked = new Set(academicLockedScoreComponentIds(score));
+  return [...new Set(academicScoreCells(score.ComponentScores).filter((cell) => (
+    legacyLocked.has(cell.ComponentId) || ACADEMIC_RECORDED_SCORE_STATES.has(clean(cell.State))
+  )).map((cell) => cell.CellId))];
+}
+
+function academicRecordedScoreCellIds(componentScores = []) {
+  return [...new Set(academicScoreCells(componentScores)
+    .filter((cell) => ACADEMIC_RECORDED_SCORE_STATES.has(clean(cell.State)))
+    .map((cell) => cell.CellId))];
+}
+
+export function academicLockedScoreChanges(previous = null, nextScores = [], editingReactivated = false) {
+  if (!previous || editingReactivated) return [];
+  const locked = new Set(academicLockedScoreCellIds(previous));
+  const beforeByCell = new Map(academicScoreCells(previous.ComponentScores).map((cell) => [cell.CellId, cell]));
+  return academicScoreCells(nextScores).filter((cell) => {
+    if (!locked.has(cell.CellId)) return false;
+    const before = beforeByCell.get(cell.CellId);
+    return !before || clean(before.State) !== clean(cell.State)
+      || Number(before.RawScore ?? 0) !== Number(cell.RawScore ?? 0);
+  }).map((cell) => cell.CellId);
+}
+
+function academicChangedComponentScores(previousScores = [], nextScores = []) {
+  const beforeByCell = new Map(academicScoreCells(previousScores).map((cell) => [cell.CellId, cell]));
+  return nextScores.flatMap((score) => {
+    if (!Array.isArray(score.Parts) || !score.Parts.length) {
+      const before = beforeByCell.get(clean(score.ComponentId));
+      return !before || clean(before.State) !== clean(score.State) || Number(before.RawScore ?? 0) !== Number(score.RawScore ?? 0)
+        ? [score]
+        : [];
+    }
+    const changedParts = score.Parts.filter((part) => {
+      const before = beforeByCell.get(`${clean(score.ComponentId)}:${clean(part.PartId)}`);
+      return !before || clean(before.State) !== clean(part.State) || Number(before.RawScore ?? 0) !== Number(part.RawScore ?? 0);
+    });
+    return changedParts.length ? [{ ...score, Parts: changedParts }] : [];
+  });
+}
+
+export async function saveAcademicScoreDraft(env, user = {}, input = {}) {
+  const context = await academicScoreSheetContext(env, user, input, 'canEnterScores');
+  const { scope, state, SheetId, existing, roster, scheme } = context;
+  if (existing && lower(existing.Status) !== 'draft') throw failure('Only a Draft score sheet can be edited.', 409, 'ACADEMIC_SCORE_SHEET_LOCKED');
+  const suppliedRows = academicScoreRowsInput(input.Rows);
+  if (!suppliedRows.length) throw failure('Enter at least one student score before saving.');
+  if (suppliedRows.length > 200) throw failure('Save at most 200 student scores at a time.');
+  const rosterRefs = new Set(roster.map((row) => lower(row.StudentRef)));
+  const seen = new Set();
+  const timestamp = nowIso();
+  const updatedScores = suppliedRows.map((row) => {
+    const studentRef = clean(row.StudentRef);
+    const key = lower(studentRef);
+    if (!studentRef || !rosterRefs.has(key)) throw failure(`${studentRef || 'A selected student'} is not in this subject roster.`, 409, 'ACADEMIC_SCORE_STUDENT_INVALID');
+    if (seen.has(key)) throw failure(`${studentRef} appears more than once in this score save.`);
+    seen.add(key);
+    const ScoreId = academicStudentScoreId(SheetId, studentRef);
+    const previous = findById(state.studentScores, ScoreId);
+    const normalizedScores = normalizeAcademicComponentScores(row.ComponentScores, scheme, {
+      existing: previous?.ComponentScores || [], partial: true
+    });
+    const lockedChanges = academicLockedScoreChanges(previous, normalizedScores, existing?.ScoreEditingReactivated === true);
+    if (lockedChanges.length) {
+      throw failure('One or more saved score cells are locked. Ask an Admin or Management user to reactivate this subject and arm before editing them.', 409, 'ACADEMIC_SCORE_CELL_LOCKED');
+    }
+    const previousScores = normalizeAcademicComponentScores(previous?.ComponentScores || [], scheme);
+    const changedScores = academicChangedComponentScores(previousScores, normalizedScores);
+    const sourceIssues = academicScoreSourceIssues(scheme, changedScores, 'manual');
+    if (sourceIssues.length) throw failure(sourceIssues[0], 409, 'ACADEMIC_SCORE_SOURCE_FORBIDDEN');
+    const calculated = calculateAcademicStudentScore(scheme, normalizedScores);
+    return {
+      previous,
+      record: {
+        ...(previous || {}), RecordId: ScoreId, ScoreId, SheetId, StudentRef: studentRef,
+        SessionId: context.session.SessionId, TermId: context.term.TermId,
+        ClassId: context.schoolClass.ClassId, ArmId: context.arm.ArmId, SubjectId: context.subject.SubjectId,
+        AssessmentRevisionId: scheme.RevisionId,
+        ...calculated,
+        LockedComponentIds: academicRecordedScoreComponentIds(calculated.ComponentScores),
+        LockedScoreCellIds: academicRecordedScoreCellIds(calculated.ComponentScores),
+        ScoreCellsLockedAt: timestamp, ScoreCellsLockedBy: actorName(user),
+        ScoreCellsLockedByUsername: actorUsername(user),
+        SourceType: 'Manual', SourceId: '',
+        BranchId: scope.branchId, SchoolSection: scope.section,
+        CreatedAt: clean(previous?.CreatedAt) || timestamp,
+        CreatedBy: clean(previous?.CreatedBy) || actorName(user),
+        UpdatedAt: timestamp, UpdatedBy: actorName(user), UpdatedByUsername: actorUsername(user)
+      },
+      revisionToken: clean(row.RevisionToken)
+    };
+  });
+  const projectedScores = [
+    ...state.studentScores.filter((row) => row.SheetId === SheetId && !updatedScores.some((item) => item.record.ScoreId === row.ScoreId)),
+    ...updatedScores.map((item) => item.record)
+  ];
+  const sheet = academicScoreSheetRecord(context, existing, user, timestamp, {
+    ...academicScoreSheetCounts(projectedScores), LastSavedAt: timestamp, LastSavedBy: actorName(user),
+    ScoreEditingReactivated: false,
+    ScoreEditingRelockedAt: timestamp,
+    ScoreEditingRelockedBy: actorName(user),
+    ScoreEditingRelockedByUsername: actorUsername(user)
+  });
+  const writes = updatedScores.map(({ previous, record, revisionToken }) => ({
+    collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentScores,
+    documentId: record.ScoreId, data: withoutMetadata(record), ...writePrecondition(previous, revisionToken)
+  }));
+  writes.push(...academicScoreMembershipGuards(state, updatedScores.map((item) => item.record)));
+  writes.push({
+    collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSheets,
+    documentId: SheetId, data: withoutMetadata(sheet), ...writePrecondition(existing, input.SheetRevisionToken)
+  });
+  writes.push(auditWrite(user, 'SAVE_DRAFT', 'scoreSheet', sheet, `${updatedScores.length} student score${updatedScores.length === 1 ? '' : 's'}`));
+  await commitAcademicBatch(env, writes, 'The score sheet changed while it was being saved. Reload before entering scores again.');
+  return {
+    ok: true,
+    refreshAcademicManagement: true,
+    message: `${updatedScores.length} student score${updatedScores.length === 1 ? '' : 's'} saved. Recorded score cells are now locked.`
+  };
+}
+
+export async function reactivateAcademicScoreEditing(env, user = {}, input = {}) {
+  const context = await academicScoreSheetContext(env, user, input, 'canManageScoreCorrections');
+  const { existing } = context;
+  if (!existing) throw failure('Save at least one score before reactivating score editing.', 409, 'ACADEMIC_SCORE_SHEET_EMPTY');
+  const reason = clean(input.Reason).slice(0, 500);
+  if (reason.length < 5) throw failure('Enter a correction reason of at least 5 characters.');
+  if (existing.ScoreEditingReactivated === true && lower(existing.Status) === 'draft') {
+    return {
+      ok: true,
+      refreshAcademicManagement: true,
+      message: 'Score editing is already reactivated for this subject and arm.'
+    };
+  }
+  const timestamp = nowIso();
+  const record = academicScoreSheetRecord(context, existing, user, timestamp, {
+    Status: 'Draft',
+    ScoreEditingReactivated: true,
+    ScoreEditingReactivatedAt: timestamp,
+    ScoreEditingReactivatedBy: actorName(user),
+    ScoreEditingReactivatedByUsername: actorUsername(user),
+    ScoreEditingReactivationReason: reason
+  });
+  await commitAcademicBatch(env, [
+    {
+      collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSheets,
+      documentId: record.SheetId,
+      data: withoutMetadata(record),
+      ...writePrecondition(existing, input.RevisionToken || input.SheetRevisionToken)
+    },
+    auditWrite(user, 'REACTIVATE_SCORE_EDITING', 'scoreSheet', record, reason)
+  ], 'The score sheet changed while score editing was being reactivated. Reload and try again.');
+  return {
+    ok: true,
+    refreshAcademicManagement: true,
+    message: `Score editing reactivated for ${context.schoolClass.Name} / ${context.arm.Name} · ${context.subject.Name}. The cells will lock again after the next save.`
+  };
+}
+
+function assertAcademicScoreSheetComplete(state, sheet, roster) {
+  const scores = state.studentScores.filter((row) => row.SheetId === sheet.SheetId);
+  const complete = new Set(scores.filter((row) => row.CompletionStatus === 'Complete').map((row) => lower(row.StudentRef)));
+  const pending = roster.filter((row) => !complete.has(lower(row.StudentRef)));
+  if (pending.length) throw failure(`${pending.length} student score${pending.length === 1 ? ' is' : 's are'} incomplete. Complete every required component before submission.`, 409, 'ACADEMIC_SCORE_SHEET_INCOMPLETE');
+  return scores;
+}
+
+export async function changeAcademicScoreSheetStatus(env, user = {}, input = {}) {
+  const context = await academicScoreSheetContext(env, user, input, 'canEnterScores');
+  const { permissions, scope, state, existing, roster } = context;
+  if (!existing) throw failure('Save at least one draft score before changing the score-sheet status.', 409);
+  const target = oneOf(input.Status || input.TargetStatus, ACADEMIC_SCORE_SHEET_STATUSES, '');
+  if (!target) throw failure('Choose Draft, Submitted, Approved or Locked.');
+  const current = clean(existing.Status || 'Draft');
+  const reason = clean(input.Reason).slice(0, 500);
+  const normalTransition = (current === 'Draft' && target === 'Submitted')
+    || (current === 'Submitted' && target === 'Approved')
+    || (current === 'Approved' && target === 'Locked');
+  const reopening = target === 'Draft' && ['Submitted', 'Approved', 'Locked'].includes(current);
+  if (!normalTransition && !reopening) throw failure(`${current} score sheets cannot move directly to ${target}.`, 409, 'ACADEMIC_SCORE_STATUS_INVALID');
+  if (target === 'Submitted') assertAcademicScoreSheetComplete(state, existing, roster);
+  if (target === 'Approved' && !permissions.canReviewScores) throw failure('Only an academic reviewer may approve submitted scores.', 403);
+  if (target === 'Locked' && !permissions.canApproveScores) throw failure('Only an academic approver may lock approved scores.', 403);
+  if (reopening && !permissions.canManageScoreCorrections) throw failure('Only an Admin or Management user may reopen recorded scores.', 403);
+  if (reopening && !reason) throw failure('Enter the approved reason for reopening this score sheet.');
+  const timestamp = nowIso();
+  const eventName = target === 'Submitted' ? 'Submitted' : target === 'Approved' ? 'Approved' : target === 'Locked' ? 'Locked' : 'Reopened';
+  const record = academicScoreSheetRecord(context, existing, user, timestamp, {
+    Status: target,
+    [`${eventName}At`]: timestamp,
+    [`${eventName}By`]: actorName(user),
+    [`${eventName}ByUsername`]: actorUsername(user),
+    ...(reopening ? {
+      ReopenReason: reason,
+      ScoreEditingReactivated: true,
+      ScoreEditingReactivatedAt: timestamp,
+      ScoreEditingReactivatedBy: actorName(user),
+      ScoreEditingReactivatedByUsername: actorUsername(user),
+      ScoreEditingReactivationReason: reason
+    } : {})
+  });
+  await commitAcademicBatch(env, [
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSheets, documentId: record.SheetId,
+      data: withoutMetadata(record), ...writePrecondition(existing, input.RevisionToken || input.SheetRevisionToken) },
+    auditWrite(user, eventName.toUpperCase(), 'scoreSheet', record, reason || `${current} -> ${target}`)
+  ], 'The score sheet changed while its status was being updated. Reload and try again.');
+  return {
+    ok: true,
+    refreshAcademicManagement: true,
+    message: reopening ? `Score sheet reopened as Draft: ${reason}` : `Score sheet moved from ${current} to ${target}.`
+  };
+}
+
+async function academicTermResultContext(env, user, input, capability = 'canCalculateResults') {
+  const context = await academicOperationalContext(env, user, input, capability);
+  const { scope, state, session, term } = context;
+  const schoolClass = assertReference(findById(state.classes, input.ClassId), 'Choose an active class.');
+  const arm = assertReference(findById(state.arms, input.ArmId), 'Choose an active classroom arm.');
+  if (arm.ClassId !== schoolClass.ClassId) throw failure('The selected arm does not belong to this class.');
+  const scopeChain = academicPolicyScopeChain({
+    BranchId: scope.branchId, SectionId: scope.section, ClassId: schoolClass.ClassId
+  });
+  const policyView = await loadAcademicPolicyView(env, {
+    scope: scopeChain.at(-1), scopeChain, period: { Session: session.Name, Term: term.Name }
+  });
+  const policyRevisionIds = (policyView.Sources || []).map((row) => clean(row.RevisionId)).filter(Boolean);
+  if (!policyRevisionIds.length) {
+    throw failure('Activate the academic policy for this class and term before calculating results.', 409, 'ACADEMIC_RESULT_POLICY_REQUIRED');
+  }
+  const policy = normalizeAcademicPolicy(policyView.ActivePolicy || {});
+  const policyIssues = academicPolicyIssues(policy, { forActivation: true });
+  if (policyIssues.length) {
+    throw failure(`Complete the active academic policy before calculating results: ${policyIssues[0].message}`, 409, 'ACADEMIC_RESULT_POLICY_INCOMPLETE');
+  }
+  return {
+    ...context, schoolClass, arm, policy, policyRevisionIds,
+    policyFingerprint: await academicResultPolicyFingerprint(policy)
+  };
+}
+
+function academicTermResultId(scope, sessionId, termId, classId, armId, studentRef, resultType = 'End of Term') {
+  const prefix = lower(resultType) === 'mid-term' ? 'midterm-result' : 'term-result';
+  return academicId(prefix, scope.branchId, scope.section, sessionId, termId, classId, armId, studentRef);
+}
+
+export async function applyActiveAcademicScoreLayout(env, user = {}, input = {}) {
+  const context = await academicScoreSheetContext(env, user, input, 'canManageScoreCorrections');
+  const { scope, state, existing } = context;
+  if (!existing) throw failure('Create the Draft score sheet before applying an updated assessment layout.', 409, 'ACADEMIC_SCORE_SHEET_EMPTY');
+  if (lower(existing.Status) !== 'draft') {
+    throw failure('Only a Draft score sheet can adopt a newer assessment layout.', 409, 'ACADEMIC_SCORE_SHEET_LOCKED');
+  }
+  const activeScheme = await academicAssessmentForPeriod(env, scope, context.session, context.term, {
+    classId: context.schoolClass.ClassId,
+    subjectId: context.subject.SubjectId
+  });
+  if (clean(activeScheme.RevisionId) === clean(context.scheme.RevisionId)) {
+    return { ok: true, refreshAcademicManagement: true, message: 'This Draft already uses the active assessment layout.' };
+  }
+  const timestamp = nowIso();
+  const previousRevisionId = clean(context.scheme.RevisionId);
+  const sheetScores = state.studentScores.filter((row) => row.SheetId === existing.SheetId);
+  let migratedScores;
+  try {
+    migratedScores = sheetScores.map((previous) => {
+      const calculated = migrateAcademicScoreLayout(context.scheme, activeScheme, previous);
+      return {
+        previous,
+        record: {
+          ...previous,
+          AssessmentRevisionId: activeScheme.RevisionId,
+          ...calculated,
+          LockedComponentIds: academicRecordedScoreComponentIds(calculated.ComponentScores),
+          LockedScoreCellIds: academicRecordedScoreCellIds(calculated.ComponentScores),
+          AssessmentLayoutMigratedAt: timestamp,
+          AssessmentLayoutMigratedBy: actorName(user),
+          AssessmentLayoutMigratedByUsername: actorUsername(user),
+          PreviousAssessmentRevisionId: previousRevisionId,
+          UpdatedAt: timestamp,
+          UpdatedBy: actorName(user),
+          UpdatedByUsername: actorUsername(user)
+        }
+      };
+    });
+  } catch (error) {
+    throw failure(`The active assessment layout cannot be applied safely: ${clean(error?.message || error)}`, 409, 'ACADEMIC_SCORE_LAYOUT_MIGRATION_UNSAFE');
+  }
+  const activeContext = { ...context, scheme: activeScheme };
+  const sheet = academicScoreSheetRecord(activeContext, existing, user, timestamp, {
+    ...academicScoreSheetCounts(migratedScores.map((item) => item.record)),
+    AssessmentLayoutMigratedAt: timestamp,
+    AssessmentLayoutMigratedBy: actorName(user),
+    AssessmentLayoutMigratedByUsername: actorUsername(user),
+    PreviousAssessmentRevisionId: previousRevisionId
+  });
+  const writes = migratedScores.map(({ previous, record }) => ({
+    collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentScores,
+    documentId: record.ScoreId,
+    data: withoutMetadata(record),
+    ...writePrecondition(previous, previous.__updateTime)
+  }));
+  writes.push(...academicScoreMembershipGuards(state, migratedScores.map((item) => item.record)));
+  writes.push({
+    collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSheets,
+    documentId: sheet.SheetId,
+    data: withoutMetadata(sheet),
+    ...writePrecondition(existing, input.RevisionToken || input.SheetRevisionToken)
+  });
+  writes.push(auditWrite(
+    user,
+    'APPLY_ACTIVE_SCORE_LAYOUT',
+    'scoreSheet',
+    sheet,
+    `${previousRevisionId} -> ${activeScheme.RevisionId}; ${migratedScores.length} student score record${migratedScores.length === 1 ? '' : 's'}`
+  ));
+  await commitAcademicBatch(env, writes, 'The score sheet changed while the active assessment layout was being applied. Reload and try again.');
+  return {
+    ok: true,
+    refreshAcademicManagement: true,
+    message: `The active assessment layout was applied. Configured Objective (A) and Theory (B) fields are now separate for ${context.subject.Name}.`
+  };
+}
+
+function resultRevisionToken(input = {}, resultId = '') {
+  let supplied = input.RevisionTokens || {};
+  if (typeof supplied === 'string') {
+    try { supplied = JSON.parse(supplied); } catch (_error) { supplied = {}; }
+  }
+  return clean(supplied?.[resultId] || (clean(input.ResultId) === clean(resultId) ? input.RevisionToken : ''));
+}
+
+function academicResultEventWrite(user, result, eventType, details = '') {
+  const eventId = `RESULT-EVENT-${Date.now()}-${globalThis.crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+  return {
+    collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.resultEvents,
+    documentId: eventId,
+    exists: false,
+    data: {
+      RecordId: eventId, ResultEventId: eventId, ResultId: result.ResultId,
+      StudentRef: result.StudentRef, SessionId: result.SessionId, TermId: result.TermId,
+      ClassId: result.ClassId, ArmId: result.ArmId,
+      EventType: clean(eventType), Status: clean(result.Status),
+      Details: clean(details).slice(0, 1000),
+      BranchId: result.BranchId, SchoolSection: result.SchoolSection,
+      CreatedAt: nowIso(), CreatedBy: actorName(user), CreatedByUsername: actorUsername(user)
+    }
+  };
+}
+
+async function notifyAcademicResultLifecycle(env, user, scope, results, target) {
+  if (!['Published', 'Withdrawn'].includes(target)) return;
+  const people = await loadPeople(env, user, scope, { staff: false }).catch(() => ({ students: [] }));
+  const byStudent = new Map((people.students || []).map((row) => [lower(studentReference(row)), row]));
+  await Promise.allSettled(results.map((result) => {
+    const student = byStudent.get(lower(result.StudentRef)) || {};
+    const contacts = academicParentContacts(student);
+    const name = clean(student.DisplayName || student.ApplicantName || student.StudentName || result.StudentRef);
+    const published = target === 'Published';
+    return createNotification(env, {
+      EventKey: `academic-result:${result.ResultId}:${target}:${clean(result.UpdatedAt)}`,
+      Type: published ? 'Term result published' : 'Term result withdrawn',
+      Category: 'Academics', Audience: 'Parent', Channels: ['InApp', 'Push'],
+      TargetEmails: contacts.emails, TargetAccountRefs: contacts.accountRefs,
+      Title: published ? `${name}'s ${lower(result.ResultType) === 'mid-term' ? 'mid-term' : 'term'} result is published` : `${name}'s result is temporarily unavailable`,
+      Message: published
+        ? `The ${result.Term || 'current term'} result is published. Sign in to the parent dashboard; access remains subject to the school's active result policy.`
+        : `The ${result.Term || 'term'} result was withdrawn for controlled correction and is no longer available to parents. The school will republish it after review.`,
+      ActionUrl: 'parent-dashboard.html?section=results', RecordType: 'academicResult', RecordId: result.ResultId,
+      BranchId: scope.branchId, SchoolSection: scope.section,
+      ActorType: 'Staff', ActorId: actorUsername(user), CreatedBy: actorName(user)
+    });
+  }));
+}
+
+async function calculateAcademicResultsForType(env, user = {}, input = {}, resultType = 'End of Term') {
+  const context = await academicTermResultContext(env, user, input, 'canCalculateResults');
+  const { scope, state, session, term, schoolClass, arm, policy, policyRevisionIds, policyFingerprint } = context;
+  const midTerm = lower(resultType) === 'mid-term';
+  const memberships = state.studentMemberships.filter((row) => statusActive(row)
+    && row.SessionId === session.SessionId && row.TermId === term.TermId
+    && row.ClassId === schoolClass.ClassId && row.ArmId === arm.ArmId);
+  if (memberships.length > 200) throw failure('Calculate at most 200 student results in one classroom batch.');
+  const existingResults = state.termResults.filter((row) => row.SessionId === session.SessionId && row.TermId === term.TermId
+    && row.ClassId === schoolClass.ClassId && row.ArmId === arm.ArmId
+    && (midTerm ? lower(row.ResultType) === 'mid-term' : lower(row.ResultType || 'End of Term') !== 'mid-term'));
+  const immutable = existingResults.find((row) => lower(row.Status) !== 'calculated draft');
+  if (immutable) {
+    throw failure(`${immutable.StudentRef} already has a ${immutable.Status} result. Reopen or withdraw the affected result through the controlled workflow first.`, 409, 'ACADEMIC_RESULT_IMMUTABLE');
+  }
+  const ids = new Map();
+  const references = new Map();
+  for (const membership of memberships) {
+    const id = academicTermResultId(scope, session.SessionId, term.TermId, schoolClass.ClassId, arm.ArmId, membership.StudentRef, resultType);
+    ids.set(lower(membership.StudentRef), id);
+    references.set(lower(membership.StudentRef), clean(findById(existingResults, id)?.ResultReference) || await academicResultReference(id));
+  }
+  const calculation = (midTerm ? calculateAcademicMidTermResultDrafts : calculateAcademicTermResultDrafts)({
+    SessionId: session.SessionId, AcademicSession: session.Name,
+    TermId: term.TermId, Term: term.Name,
+    ClassId: schoolClass.ClassId, ClassName: schoolClass.Name,
+    SchoolStage: schoolClass.SchoolStage,
+    ArmId: arm.ArmId, ArmName: arm.Name,
+    Memberships: memberships,
+    ScoreSheets: state.scoreSheets,
+    StudentScores: state.studentScores,
+    Subjects: state.subjects,
+    Attendance: state.studentAttendance,
+    SchoolCalendar: state.schoolCalendars.find((row) => row.SessionId === session.SessionId && row.TermId === term.TermId) || null,
+    TermDates: { StartDate: term.StartDate, EndDate: term.EndDate },
+    AttendanceMode: 'Daily',
+    ExistingResults: existingResults,
+    Policy: policy,
+    PolicyRevisionIds: policyRevisionIds,
+    PolicyFingerprint: policyFingerprint,
+    ResultIdFor: (membership) => ids.get(lower(membership.StudentRef)),
+    ResultReferenceFor: (membership) => references.get(lower(membership.StudentRef))
+  });
+  if (!calculation.Ready) {
+    const summary = calculation.Issues.slice(0, 5).join(' ');
+    const remaining = calculation.Issues.length > 5 ? ` ${calculation.Issues.length - 5} more issue(s) require attention.` : '';
+    throw failure(`${summary}${remaining}`, 409, 'ACADEMIC_RESULT_CALCULATION_BLOCKED', {
+      issues: calculation.Issues,
+      issueCount: calculation.Issues.length
+    });
+  }
+  const timestamp = nowIso();
+  const writes = [];
+  calculation.Results.forEach((draft) => {
+    const existing = findById(existingResults, draft.ResultId);
+    const result = {
+      ...(existing || {}), ...draft,
+      SubjectSelectionSnapshot: subjectSelection(memberships.find((row) => lower(row.StudentRef) === lower(draft.StudentRef))),
+      SubjectChangeRecalculationRequired: false,
+      RecordId: draft.ResultId,
+      BranchId: scope.branchId, SchoolSection: scope.section,
+      CalculationRevision: Number(existing?.CalculationRevision || 0) + 1,
+      CalculatedAt: timestamp, CalculatedBy: actorName(user), CalculatedByUsername: actorUsername(user),
+      CreatedAt: clean(existing?.CreatedAt) || timestamp,
+      CreatedBy: clean(existing?.CreatedBy) || actorName(user),
+      UpdatedAt: timestamp, UpdatedBy: actorName(user)
+    };
+    writes.push({
+      collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.termResults,
+      documentId: result.ResultId,
+      data: withoutMetadata(result),
+      ...writePrecondition(existing, resultRevisionToken(input, result.ResultId))
+    });
+    writes.push(academicResultEventWrite(user, result, existing ? 'RECALCULATED' : 'CALCULATED',
+      `${result.ResultType}; ${result.SubjectCount} subject(s); ${result.Attendance.RegisterType} attendance; policy ${result.PolicyFingerprint}`));
+  });
+  writes.push(auditWrite(user, existingResults.length ? 'RECALCULATE' : 'CALCULATE', 'termResult', {
+    RecordId: `classroom-results-${schoolClass.ClassId}-${arm.ArmId}`,
+    SessionId: session.SessionId, TermId: term.TermId,
+    BranchId: scope.branchId, SchoolSection: scope.section
+  }, `${calculation.Results.length} ${resultType} Calculated Draft result(s); policy ${policyFingerprint}`));
+  await commitAcademicBatch(env, writes, 'One or more term results changed while the classroom was being calculated. Reload and try again.');
+  return academicOperationalResponse(env, user, input, scope,
+    `${calculation.Results.length} ${resultType.toLowerCase()} result${calculation.Results.length === 1 ? '' : 's'} calculated as Draft from recorded scores.`);
+}
+
+export async function calculateAcademicTermResults(env, user = {}, input = {}) {
+  return calculateAcademicResultsForType(env, user, input, 'End of Term');
+}
+
+export async function calculateAcademicMidTermResults(env, user = {}, input = {}) {
+  return calculateAcademicResultsForType(env, user, input, 'Mid-Term');
+}
+
+function academicTermResultIds(value) {
+  let ids = value;
+  if (typeof ids === 'string') {
+    try { ids = JSON.parse(ids); } catch (_error) { ids = ids.split(','); }
+  }
+  return uniqueIds(Array.isArray(ids) ? ids : []);
+}
+
+export async function previewAcademicTermResultWithdrawal(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canPublishResults');
+  const ids = academicTermResultIds(input.ResultIds || [input.ResultId]);
+  const results = ids.map((id) => findById(context.state.termResults, id)).filter(Boolean);
+  if (!results.length || results.length !== ids.length) throw failure('One or more selected term results were not found.', 404);
+  const eligible = results.filter((row) => ['published', 'locked'].includes(lower(row.Status)));
+  if (eligible.length !== results.length) throw failure('Only Published or Locked results can be withdrawn.', 409);
+  return {
+    ok: true,
+    message: `${eligible.length} published result${eligible.length === 1 ? '' : 's'} will become unavailable to parents immediately. The saved result snapshot and audit history will be retained.`,
+    resultWithdrawalPreview: {
+      ResultCount: eligible.length,
+      StudentRefs: eligible.map((row) => row.StudentRef),
+      ParentAccessRemoved: true,
+      SnapshotRetained: true,
+      RequiresReason: true,
+      RequiresReapprovalBeforeRepublishing: true
+    }
+  };
+}
+
+export async function changeAcademicTermResultStatus(env, user = {}, input = {}) {
+  const target = ACADEMIC_TERM_RESULT_STATUSES.find((value) => lower(value) === lower(input.Status || input.TargetStatus));
+  if (!target) throw failure('Choose a valid term-result status.');
+  const capability = ['Published', 'Locked', 'Withdrawn'].includes(target) ? 'canPublishResults' : 'canReviewResults';
+  const context = await academicOperationalContext(env, user, input, capability);
+  const { scope, state } = context;
+  const ids = academicTermResultIds(input.ResultIds || [input.ResultId]);
+  if (!ids.length || ids.length > 200) throw failure('Choose between 1 and 200 term results.');
+  const results = ids.map((id) => findById(state.termResults, id));
+  if (results.some((row) => !row)) throw failure('One or more selected term results were not found.', 404);
+  if (['Reviewed', 'Approved', 'Published', 'Locked'].includes(target)) {
+    const stale = results.find((result) => {
+      const membership = state.studentMemberships.find((row) => row.SessionId === result.SessionId && row.TermId === result.TermId
+        && lower(row.StudentRef) === lower(result.StudentRef));
+      return result.SubjectChangeRecalculationRequired || (membership && result.SubjectSelectionSnapshot
+        && (academicSubjectSelectionChanged(membership, result.SubjectSelectionSnapshot)
+          || membership.ClassId !== result.ClassId || membership.ArmId !== result.ArmId));
+    });
+    if (stale) throw failure(`${stale.StudentRef}'s subjects changed after this result was calculated. Recalculate the draft before reviewing or publishing it.`, 409, 'ACADEMIC_SUBJECT_RESULT_STALE');
+  }
+  if (target === 'Published') {
+    const invalid = results.find((result) => academicPolicyIssues(result.PolicySnapshot || {}, { forActivation: true }).length);
+    if (invalid) throw failure(`${invalid.StudentRef} has an incomplete policy snapshot and cannot be published. Recalculate it after activating the complete policy.`, 409, 'ACADEMIC_RESULT_POLICY_SNAPSHOT_INVALID');
+  }
+  const reason = clean(input.Reason).slice(0, 500);
+  const transitions = results.map((result) => academicTermResultTransition(result.Status, target));
+  if (transitions.some((transition) => !transition.Allowed)) {
+    throw failure(`The selected results cannot move directly to ${target}.`, 409, 'ACADEMIC_RESULT_STATUS_INVALID');
+  }
+  if (transitions.some((transition) => transition.RequiresReason) && !reason) {
+    throw failure('Enter the approved reason for this result withdrawal or reopening.');
+  }
+  if (target === 'Withdrawn' && input.ImpactAcknowledged !== true) {
+    throw failure('Preview and acknowledge the parent-access impact before withdrawing published results.', 409, 'ACADEMIC_RESULT_IMPACT_ACKNOWLEDGEMENT_REQUIRED');
+  }
+  const timestamp = nowIso();
+  const writes = [];
+  results.forEach((existing) => {
+    const event = target === 'Calculated Draft' ? 'Reopened' : target;
+    const result = {
+      ...existing,
+      Status: target,
+      PublicationStatus: target,
+      UpdatedAt: timestamp, UpdatedBy: actorName(user),
+      [`${event.replace(/\s+/g, '')}At`]: timestamp,
+      [`${event.replace(/\s+/g, '')}By`]: actorName(user),
+      [`${event.replace(/\s+/g, '')}ByUsername`]: actorUsername(user),
+      ...(reason ? { [`${event.replace(/\s+/g, '')}Reason`]: reason } : {}),
+      ...(target === 'Withdrawn' ? { WithdrawnFromStatus: existing.Status } : {})
+    };
+    writes.push({
+      collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.termResults,
+      documentId: result.ResultId,
+      data: withoutMetadata(result),
+      ...writePrecondition(existing, resultRevisionToken(input, result.ResultId))
+    });
+    writes.push(academicResultEventWrite(user, result, event.toUpperCase(), reason || `${existing.Status} -> ${target}`));
+  });
+  writes.push(auditWrite(user, target.toUpperCase(), 'termResult', {
+    RecordId: results[0].ResultId,
+    SessionId: results[0].SessionId, TermId: results[0].TermId,
+    BranchId: scope.branchId, SchoolSection: scope.section
+  }, `${results.length} result(s): ${reason || `${results[0].Status} -> ${target}`}`));
+  await commitAcademicBatch(env, writes, 'One or more selected term results changed while their status was being updated. Reload and try again.');
+  await notifyAcademicResultLifecycle(env, user, scope, results.map((existing) => ({
+    ...existing, Status: target, UpdatedAt: timestamp
+  })), target);
+  return academicOperationalResponse(env, user, input, scope,
+    `${results.length} term result${results.length === 1 ? '' : 's'} moved to ${target}.`);
+}
+
+export async function saveAcademicTermResultRemarks(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canEnterScores', {
+    stateKeys: ACADEMIC_RESULTS_STATE_KEYS, view: 'results'
+  });
+  const { permissions, scope, state } = context;
+  const existing = findById(state.termResults, input.ResultId);
+  if (!existing) throw failure('Choose a calculated term result.', 404);
+  if (lower(existing.Status) !== 'calculated draft') {
+    throw failure('Remarks can change only while the result is a Calculated Draft.', 409, 'ACADEMIC_RESULT_REMARKS_LOCKED');
+  }
+  if (permissions.teacherView) {
+    const assigned = state.teacherAllocations.some((row) => statusActive(row)
+      && row.SessionId === existing.SessionId && row.TermId === existing.TermId
+      && row.ClassId === existing.ClassId && row.ArmId === existing.ArmId
+      && ['form teacher', 'assistant teacher'].includes(lower(row.AllocationRole))
+      && lower(row.TeacherUsername) === actorUsername(user));
+    if (!assigned) throw failure('Only this classroom’s Form Teacher or Assistant may enter the teacher remark.', 403);
+  }
+  const timestamp = nowIso();
+  const result = {
+    ...existing,
+    TeacherRemark: clean(input.TeacherRemark).slice(0, 1000),
+    Recommendation: clean(input.Recommendation).slice(0, 1000),
+    ...(permissions.canPublishResults ? { PrincipalRemark: clean(input.PrincipalRemark).slice(0, 1000) } : {}),
+    UpdatedAt: timestamp, UpdatedBy: actorName(user)
+  };
+  await commitAcademicBatch(env, [
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.termResults, documentId: result.ResultId,
+      data: withoutMetadata(result), ...writePrecondition(existing, input.RevisionToken) },
+    academicResultEventWrite(user, result, 'REMARKS_UPDATED', 'Draft result comments updated.'),
+    auditWrite(user, 'UPDATE_REMARKS', 'termResult', result, 'Draft result comments updated.')
+  ], 'This result changed while its remarks were being saved. Reload and try again.');
+  return academicOperationalResponse(env, user, input, scope, `${result.StudentRef} result remarks saved.`);
+}
+
+function academicOutcomeEventWrite(user, collectionPath, prefix, record, eventType, details = '') {
+  const eventId = `${prefix}-EVENT-${Date.now()}-${globalThis.crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+  const identity = prefix === 'CUMULATIVE'
+    ? { CumulativeEventId: eventId, CumulativeResultId: record.CumulativeResultId }
+    : prefix === 'PROMOTION'
+      ? { PromotionEventId: eventId, PromotionDecisionId: record.PromotionDecisionId }
+      : { TranscriptEventId: eventId, TranscriptId: record.TranscriptId };
+  return {
+    collectionPath,
+    documentId: eventId,
+    exists: false,
+    data: {
+      RecordId: eventId,
+      ...identity,
+      StudentRef: record.StudentRef,
+      SessionId: clean(record.SessionId),
+      TermId: clean(record.FinalTermId || record.TermId),
+      ClassId: clean(record.ClassId),
+      ArmId: clean(record.ArmId),
+      EventType: clean(eventType),
+      Status: clean(record.Status),
+      Details: clean(details).slice(0, 1000),
+      BranchId: record.BranchId,
+      SchoolSection: record.SchoolSection,
+      CreatedAt: nowIso(),
+      CreatedBy: actorName(user),
+      CreatedByUsername: actorUsername(user)
+    }
+  };
+}
+
+async function academicOutcomeReference(recordIdValue, prefix) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(clean(recordIdValue)));
+  return `${prefix}-${[...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('').slice(0, 16).toUpperCase()}`;
+}
+
+function academicCumulativeResultId(scope, sessionId, classId, armId, studentRef) {
+  return academicId('cumulative-result', scope.branchId, scope.section, sessionId, classId, armId, studentRef);
+}
+
+export async function calculateAcademicCumulativeResults(env, user = {}, input = {}) {
+  const context = await academicTermResultContext(env, user, input, 'canCalculateCumulativeResults');
+  const { scope, state, session, term, schoolClass, arm, policy, policyRevisionIds, policyFingerprint } = context;
+  const cumulativeIssues = academicCumulativePolicyIssues(policy);
+  if (cumulativeIssues.length) {
+    throw failure(`Complete the cumulative-result policy before calculating: ${cumulativeIssues[0].message}`, 409, 'ACADEMIC_CUMULATIVE_POLICY_INCOMPLETE');
+  }
+  const memberships = state.studentMemberships.filter((row) => statusActive(row)
+    && row.SessionId === session.SessionId && row.TermId === term.TermId
+    && row.ClassId === schoolClass.ClassId && row.ArmId === arm.ArmId);
+  if (memberships.length > 200) throw failure('Calculate at most 200 cumulative results in one classroom batch.');
+  const existingResults = state.cumulativeResults.filter((row) => row.SessionId === session.SessionId
+    && row.ClassId === schoolClass.ClassId && row.ArmId === arm.ArmId);
+  const immutable = existingResults.find((row) => lower(row.Status) !== 'calculated draft');
+  if (immutable) {
+    throw failure(`${immutable.StudentRef} already has a ${immutable.Status} cumulative result. Reopen the affected result before recalculating.`, 409, 'ACADEMIC_CUMULATIVE_IMMUTABLE');
+  }
+  const ids = new Map();
+  const references = new Map();
+  for (const membership of memberships) {
+    const id = academicCumulativeResultId(scope, session.SessionId, schoolClass.ClassId, arm.ArmId, membership.StudentRef);
+    ids.set(lower(membership.StudentRef), id);
+    references.set(lower(membership.StudentRef), clean(findById(existingResults, id)?.CumulativeReference)
+      || await academicOutcomeReference(id, 'CR'));
+  }
+  const calculation = calculateAcademicCumulativeDrafts({
+    SessionId: session.SessionId,
+    AcademicSession: session.Name,
+    FinalTermId: term.TermId,
+    ClassId: schoolClass.ClassId,
+    ClassName: schoolClass.Name,
+    SchoolStage: schoolClass.SchoolStage,
+    ArmId: arm.ArmId,
+    ArmName: arm.Name,
+    Memberships: memberships,
+    TermResults: state.termResults,
+    ExistingResults: existingResults,
+    Policy: policy,
+    PolicyRevisionIds: policyRevisionIds,
+    PolicyFingerprint: policyFingerprint,
+    ResultIdFor: (membership) => ids.get(lower(membership.StudentRef)),
+    ResultReferenceFor: (membership) => references.get(lower(membership.StudentRef))
+  });
+  if (!calculation.Ready) {
+    const summary = calculation.Issues.slice(0, 5).join(' ');
+    const remaining = calculation.Issues.length > 5 ? ` ${calculation.Issues.length - 5} more issue(s) require attention.` : '';
+    throw failure(`${summary}${remaining}`, 409, 'ACADEMIC_CUMULATIVE_CALCULATION_BLOCKED', {
+      issues: calculation.Issues,
+      issueCount: calculation.Issues.length
+    });
+  }
+  const timestamp = nowIso();
+  const writes = [];
+  calculation.Results.forEach((draft) => {
+    const existing = findById(existingResults, draft.CumulativeResultId);
+    const result = {
+      ...(existing || {}),
+      ...draft,
+      RecordId: draft.CumulativeResultId,
+      BranchId: scope.branchId,
+      SchoolSection: scope.section,
+      CalculationRevision: Number(existing?.CalculationRevision || 0) + 1,
+      CalculatedAt: timestamp,
+      CalculatedBy: actorName(user),
+      CalculatedByUsername: actorUsername(user),
+      CreatedAt: clean(existing?.CreatedAt) || timestamp,
+      CreatedBy: clean(existing?.CreatedBy) || actorName(user),
+      UpdatedAt: timestamp,
+      UpdatedBy: actorName(user)
+    };
+    writes.push({
+      collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.cumulativeResults,
+      documentId: result.CumulativeResultId,
+      data: withoutMetadata(result),
+      ...writePrecondition(existing, resultRevisionToken(input, result.CumulativeResultId))
+    });
+    writes.push(academicOutcomeEventWrite(
+      user,
+      ACADEMIC_MANAGEMENT_COLLECTIONS.cumulativeEvents,
+      'CUMULATIVE',
+      result,
+      existing ? 'RECALCULATED' : 'CALCULATED',
+      `${result.SubjectCount} subject(s); ${result.ContributingResultIds.length} locked term result(s); policy ${policyFingerprint}`
+    ));
+  });
+  writes.push(auditWrite(user, existingResults.length ? 'RECALCULATE' : 'CALCULATE', 'cumulativeResult', {
+    RecordId: `cumulative-${schoolClass.ClassId}-${arm.ArmId}`,
+    SessionId: session.SessionId,
+    TermId: term.TermId,
+    BranchId: scope.branchId,
+    SchoolSection: scope.section
+  }, `${calculation.Results.length} Calculated Draft cumulative result(s); policy ${policyFingerprint}`));
+  await commitAcademicBatch(env, writes, 'One or more cumulative results changed while the classroom was being calculated. Reload and try again.');
+  return academicOperationalResponse(env, user, input, scope,
+    `${calculation.Results.length} cumulative result${calculation.Results.length === 1 ? '' : 's'} calculated as Draft from locked term results.`);
+}
+
+export async function changeAcademicCumulativeStatus(env, user = {}, input = {}) {
+  const target = ACADEMIC_CUMULATIVE_STATUSES.find((value) => lower(value) === lower(input.Status || input.TargetStatus));
+  if (!target) throw failure('Choose a valid cumulative-result status.');
+  const context = await academicOperationalContext(env, user, input, 'canCalculateCumulativeResults');
+  const ids = academicTermResultIds(input.CumulativeResultIds || [input.CumulativeResultId]);
+  if (!ids.length || ids.length > 200) throw failure('Choose between 1 and 200 cumulative results.');
+  const results = ids.map((id) => findById(context.state.cumulativeResults, id));
+  if (results.some((row) => !row)) throw failure('One or more selected cumulative results were not found.', 404);
+  const transitions = results.map((result) => academicCumulativeTransition(result.Status, target));
+  if (transitions.some((transition) => !transition.Allowed)) {
+    throw failure(`The selected cumulative results cannot move directly to ${target}.`, 409, 'ACADEMIC_CUMULATIVE_STATUS_INVALID');
+  }
+  const reason = clean(input.Reason).slice(0, 500);
+  if (transitions.some((transition) => transition.RequiresReason) && !reason) throw failure('Enter the approved reason for reopening these results.');
+  const timestamp = nowIso();
+  const writes = [];
+  results.forEach((existing) => {
+    const result = {
+      ...existing,
+      Status: target,
+      UpdatedAt: timestamp,
+      UpdatedBy: actorName(user),
+      [`${target.replace(/\s+/g, '')}At`]: timestamp,
+      [`${target.replace(/\s+/g, '')}By`]: actorName(user),
+      ...(reason ? { ReopenReason: reason } : {})
+    };
+    writes.push({
+      collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.cumulativeResults,
+      documentId: result.CumulativeResultId,
+      data: withoutMetadata(result),
+      ...writePrecondition(existing, resultRevisionToken(input, result.CumulativeResultId))
+    });
+    writes.push(academicOutcomeEventWrite(user, ACADEMIC_MANAGEMENT_COLLECTIONS.cumulativeEvents,
+      'CUMULATIVE', result, target.toUpperCase(), reason || `${existing.Status} -> ${target}`));
+  });
+  writes.push(auditWrite(user, target.toUpperCase(), 'cumulativeResult', {
+    RecordId: ids.join(',').slice(0, 250),
+    SessionId: context.session.SessionId,
+    TermId: context.term.TermId,
+    BranchId: context.scope.branchId,
+    SchoolSection: context.scope.section
+  }, reason || `${results.length} cumulative result(s) moved to ${target}.`));
+  await commitAcademicBatch(env, writes, 'One or more cumulative results changed while their status was being updated. Reload and try again.');
+  return academicOperationalResponse(env, user, input, context.scope,
+    `${results.length} cumulative result${results.length === 1 ? '' : 's'} moved to ${target}.`);
+}
+
+export async function saveAcademicCumulativeResultRemarks(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canCalculateCumulativeResults', {
+    stateKeys: ACADEMIC_OUTCOMES_STATE_KEYS, view: 'outcomes'
+  });
+  const { permissions, scope, state } = context;
+  const existing = findById(state.cumulativeResults, input.CumulativeResultId);
+  if (!existing) throw failure('Choose a calculated cumulative result.', 404);
+  if (lower(existing.Status) !== 'calculated draft') {
+    throw failure('Comments can change only while the cumulative result is a Calculated Draft.', 409, 'ACADEMIC_CUMULATIVE_REMARKS_LOCKED');
+  }
+  const timestamp = nowIso();
+  const result = {
+    ...existing,
+    TeacherRemark: clean(input.TeacherRemark).slice(0, 1000),
+    PrincipalRemark: clean(input.PrincipalRemark).slice(0, 1000),
+    Recommendation: clean(input.Recommendation).slice(0, 1000),
+    UpdatedAt: timestamp,
+    UpdatedBy: actorName(user)
+  };
+  await commitAcademicBatch(env, [
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.cumulativeResults, documentId: result.CumulativeResultId,
+      data: withoutMetadata(result), ...writePrecondition(existing, input.RevisionToken) },
+    academicOutcomeEventWrite(user, ACADEMIC_MANAGEMENT_COLLECTIONS.cumulativeEvents,
+      'CUMULATIVE', result, 'REMARKS_UPDATED', 'Draft cumulative-result comments updated.'),
+    auditWrite(user, 'UPDATE_REMARKS', 'cumulativeResult', result, 'Draft cumulative-result comments updated.')
+  ], 'This cumulative result changed while its comments were being saved. Reload and try again.');
+  return academicOperationalResponse(env, user, input, scope, `${result.StudentRef} cumulative-result comments saved.`);
+}
+
+function academicPromotionDecisionId(scope, sessionId, classId, armId, studentRef) {
+  return academicId('promotion-decision', scope.branchId, scope.section, sessionId, classId, armId, studentRef);
+}
+
+export async function calculateAcademicPromotionDecisions(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canManagePromotions');
+  const { scope, state, session } = context;
+  const schoolClass = assertReference(findById(state.classes, input.ClassId), 'Choose a class.');
+  const arm = assertReference(findById(state.arms, input.ArmId), 'Choose a classroom arm.');
+  if (arm.ClassId !== schoolClass.ClassId) throw failure('The selected arm does not belong to this class.');
+  const cumulative = state.cumulativeResults.filter((row) => lower(row.Status) === 'locked'
+    && row.SessionId === session.SessionId && row.ClassId === schoolClass.ClassId && row.ArmId === arm.ArmId);
+  if (!cumulative.length) throw failure('Lock the classroom cumulative results before calculating promotion decisions.', 409, 'ACADEMIC_CUMULATIVE_LOCK_REQUIRED');
+  const existingDecisions = state.promotionDecisions.filter((row) => row.SessionId === session.SessionId
+    && row.ClassId === schoolClass.ClassId && row.ArmId === arm.ArmId);
+  const immutable = existingDecisions.find((row) => lower(row.Status) !== 'draft');
+  if (immutable) throw failure(`${immutable.StudentRef} already has a ${immutable.Status} promotion decision. Reopen it before recalculating.`, 409, 'ACADEMIC_PROMOTION_IMMUTABLE');
+  const resitStarted = existingDecisions.find((row) => clean(row.ProbationResitStatus));
+  if (resitStarted) {
+    throw failure(`${resitStarted.StudentRef} already has a probation re-sit record. Its captured decision cannot be recalculated.`, 409, 'ACADEMIC_PROBATION_RESIT_RECALCULATION_BLOCKED');
+  }
+  const timestamp = nowIso();
+  const writes = [];
+  cumulative.forEach((result) => {
+    const id = academicPromotionDecisionId(scope, session.SessionId, schoolClass.ClassId, arm.ArmId, result.StudentRef);
+    const existing = findById(existingDecisions, id);
+    const recommendation = evaluateAcademicPromotionDecision(result, result.PolicySnapshot || {});
+    const probationResitPolicy = normalizeAcademicPolicy(result.PolicySnapshot || {}).Promotion.ProbationResit;
+    const decision = {
+      ...(existing || {}),
+      RecordId: id,
+      PromotionDecisionId: id,
+      CumulativeResultId: result.CumulativeResultId,
+      CumulativeReference: result.CumulativeReference,
+      StudentRef: result.StudentRef,
+      SessionId: session.SessionId,
+      AcademicSession: session.Name,
+      FinalTermId: result.FinalTermId,
+      ClassId: schoolClass.ClassId,
+      ClassName: schoolClass.Name,
+      SchoolStage: clean(result.SchoolStage || schoolClass.SchoolStage),
+      ArmId: arm.ArmId,
+      ArmName: arm.Name,
+      DepartmentId: result.DepartmentId,
+      OverallAverage: result.OverallAverage,
+      AttendancePercentage: result.Attendance?.AttendancePercentage || 0,
+      ...recommendation,
+      FinalOutcome: recommendation.RecommendedOutcome,
+      ProbationResitAllowed: probationResitPolicy.Enabled === true && recommendation.RecommendedOutcome === 'Probation',
+      ProbationResitPassPercentage: probationResitPolicy.PassPercentage,
+      OverrideReason: '',
+      Status: 'Draft',
+      PolicyRevisionIds: result.PolicyRevisionIds || [],
+      PolicyFingerprint: result.PolicyFingerprint,
+      PolicySnapshot: result.PolicySnapshot,
+      BranchId: scope.branchId,
+      SchoolSection: scope.section,
+      CalculatedAt: timestamp,
+      CalculatedBy: actorName(user),
+      CreatedAt: clean(existing?.CreatedAt) || timestamp,
+      CreatedBy: clean(existing?.CreatedBy) || actorName(user),
+      UpdatedAt: timestamp,
+      UpdatedBy: actorName(user)
+    };
+    writes.push({
+      collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.promotionDecisions,
+      documentId: id,
+      data: withoutMetadata(decision),
+      ...writePrecondition(existing, resultRevisionToken(input, id))
+    });
+    writes.push(academicOutcomeEventWrite(user, ACADEMIC_MANAGEMENT_COLLECTIONS.promotionEvents,
+      'PROMOTION', decision, existing ? 'RECALCULATED' : 'CALCULATED', `${recommendation.RecommendationType}: ${recommendation.RecommendedOutcome}`));
+  });
+  writes.push(auditWrite(user, existingDecisions.length ? 'RECALCULATE' : 'CALCULATE', 'promotionDecision', {
+    RecordId: `promotion-${schoolClass.ClassId}-${arm.ArmId}`,
+    SessionId: session.SessionId,
+    TermId: context.term.TermId,
+    BranchId: scope.branchId,
+    SchoolSection: scope.section
+  }, `${cumulative.length} Draft promotion recommendation(s) calculated from Locked cumulative results.`));
+  await commitAcademicBatch(env, writes, 'One or more promotion decisions changed while recommendations were being calculated. Reload and try again.');
+  return academicOperationalResponse(env, user, input, scope,
+    `${cumulative.length} promotion recommendation${cumulative.length === 1 ? '' : 's'} calculated as Draft.`);
+}
+
+export async function saveAcademicPromotionOutcome(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canManagePromotions');
+  const existing = findById(context.state.promotionDecisions, input.PromotionDecisionId);
+  if (!existing) throw failure('Choose a promotion decision.', 404);
+  if (lower(existing.Status) !== 'draft') throw failure('The final outcome can change only while the decision is Draft.', 409);
+  const outcome = ACADEMIC_PROMOTION_OUTCOMES.find((value) => lower(value) === lower(input.FinalOutcome));
+  if (!outcome) throw failure('Choose a valid promotion outcome.');
+  const reason = clean(input.OverrideReason || input.Reason).slice(0, 500);
+  if (outcome !== existing.RecommendedOutcome && !reason) throw failure('Enter the reason for overriding the calculated recommendation.');
+  const decision = {
+    ...existing,
+    FinalOutcome: outcome,
+    OverrideReason: outcome === existing.RecommendedOutcome ? '' : reason,
+    UpdatedAt: nowIso(),
+    UpdatedBy: actorName(user)
+  };
+  await commitAcademicBatch(env, [
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.promotionDecisions, documentId: decision.PromotionDecisionId,
+      data: withoutMetadata(decision), ...writePrecondition(existing, input.RevisionToken) },
+    academicOutcomeEventWrite(user, ACADEMIC_MANAGEMENT_COLLECTIONS.promotionEvents,
+      'PROMOTION', decision, 'OUTCOME_UPDATED', reason || `Final outcome set to ${outcome}.`),
+    auditWrite(user, 'UPDATE_OUTCOME', 'promotionDecision', decision,
+      reason || `${existing.RecommendedOutcome} -> ${outcome}`)
+  ], 'This promotion decision changed while its outcome was being saved. Reload and try again.');
+  return academicOperationalResponse(env, user, input, context.scope, `${decision.StudentRef} final outcome saved as ${outcome}.`);
+}
+
+export async function changeAcademicPromotionStatus(env, user = {}, input = {}) {
+  const target = ACADEMIC_PROMOTION_STATUSES.find((value) => lower(value) === lower(input.Status || input.TargetStatus));
+  if (!target) throw failure('Choose a valid promotion-decision status.');
+  const context = await academicOperationalContext(env, user, input, 'canManagePromotions');
+  const existing = findById(context.state.promotionDecisions, input.PromotionDecisionId);
+  if (!existing) throw failure('Choose a promotion decision.', 404);
+  const transition = academicPromotionTransition(existing.Status, target);
+  if (!transition.Allowed) throw failure(`This promotion decision cannot move directly to ${target}.`, 409);
+  const reason = clean(input.Reason).slice(0, 500);
+  if (transition.RequiresReason && !reason) throw failure('Enter the approved reason for reopening this promotion decision.');
+  if (target === 'Approved' && existing.FinalOutcome === 'Pending') {
+    throw failure('Choose a final promotion outcome before approving this decision.', 409, 'ACADEMIC_PROMOTION_OUTCOME_REQUIRED');
+  }
+  const timestamp = nowIso();
+  let destination = null;
+  const writes = [];
+  if (target === 'Committed' && ['Promoted', 'Probation', 'Repeated'].includes(existing.FinalOutcome)) {
+    const destinationSession = assertReference(findById(context.state.sessions, input.DestinationSessionId), 'Choose the destination academic session.');
+    const destinationTerm = assertReference(findById(context.state.terms, input.DestinationTermId), 'Choose the destination term.');
+    const destinationClass = assertReference(findById(context.state.classes, input.DestinationClassId), 'Choose the destination class.');
+    const destinationArm = assertReference(findById(context.state.arms, input.DestinationArmId), 'Choose the destination classroom arm.');
+    if (destinationTerm.SessionId !== destinationSession.SessionId || destinationArm.ClassId !== destinationClass.ClassId) {
+      throw failure('The selected promotion destination is inconsistent.');
+    }
+    destination = normalizeAcademicStudentMembership({
+      SessionId: destinationSession.SessionId,
+      TermId: destinationTerm.TermId,
+      StudentRef: existing.StudentRef,
+      ClassId: destinationClass.ClassId,
+      ArmId: destinationArm.ArmId,
+      DepartmentId: clean(destinationArm.DepartmentId),
+      SubjectIds: [], CoreSubjectIds: [], TradeSubjectIds: [], OptionalSubjectIds: [],
+      CurriculumStatus: 'Pending subject allocation', Status: 'Active'
+    }, context.scope);
+    const currentDestination = findById(context.state.studentMemberships, destination.MembershipId);
+    if (currentDestination && (currentDestination.ClassId !== destination.ClassId || currentDestination.ArmId !== destination.ArmId)) {
+      throw failure('This student already has a different membership in the destination period.', 409, 'ACADEMIC_PROMOTION_DESTINATION_CONFLICT');
+    }
+    if (!currentDestination) {
+      assertAcademicMembershipCapacity(context.state, destination);
+      destination.CreatedAt = timestamp;
+      destination.CreatedBy = actorName(user);
+      destination.UpdatedAt = timestamp;
+      destination.UpdatedBy = actorName(user);
+      writes.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships,
+        documentId: destination.MembershipId, data: withoutMetadata(destination), exists: false });
+      writes.push(movementWrite(user, academicMovementForState(context.state, {
+        SessionId: destination.SessionId,
+        TermId: destination.TermId,
+        StudentRef: destination.StudentRef,
+        MovementType: 'Allocation',
+        Reason: `${existing.FinalOutcome} from ${existing.AcademicSession}.`
+      }, context.scope, null, destination)));
+    }
+  }
+  const decision = {
+    ...existing,
+    Status: target,
+    ...(destination ? {
+      DestinationSessionId: destination.SessionId,
+      DestinationTermId: destination.TermId,
+      DestinationClassId: destination.ClassId,
+      DestinationArmId: destination.ArmId,
+      DestinationMembershipId: destination.MembershipId
+    } : {}),
+    ...(target === 'Committed' ? { CommittedAt: timestamp, CommittedBy: actorName(user) } : {}),
+    ...(reason ? { ReopenReason: reason } : {}),
+    UpdatedAt: timestamp,
+    UpdatedBy: actorName(user)
+  };
+  writes.unshift({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.promotionDecisions,
+    documentId: decision.PromotionDecisionId, data: withoutMetadata(decision), ...writePrecondition(existing, input.RevisionToken) });
+  writes.push(academicOutcomeEventWrite(user, ACADEMIC_MANAGEMENT_COLLECTIONS.promotionEvents,
+    'PROMOTION', decision, target.toUpperCase(), reason || `${existing.Status} -> ${target}`));
+  writes.push(auditWrite(user, target.toUpperCase(), 'promotionDecision', decision,
+    reason || `${existing.Status} -> ${target}${destination ? '; destination membership created' : ''}`));
+  await commitAcademicBatch(env, writes, 'This promotion decision changed while its status was being updated. Reload and try again.');
+  return academicOperationalResponse(env, user, input, context.scope,
+    `${decision.StudentRef} promotion decision moved to ${target}${destination ? ' and the next-session membership was created' : ''}.`);
+}
+
+function academicTranscriptId(scope, studentRef) {
+  return academicId('transcript', scope.branchId, scope.section, studentRef);
+}
+
+function transcriptPriorVersion(record = {}) {
+  return {
+    Version: record.Version,
+    Status: record.Status,
+    IssuedAt: record.IssuedAt,
+    IssuedBy: record.IssuedBy,
+    Sessions: record.Sessions || [],
+    Terms: record.Terms || [],
+    Outcomes: record.Outcomes || [],
+    ReplacedAt: nowIso()
+  };
+}
+
+export async function createAcademicTranscriptDraft(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canIssueTranscripts');
+  const studentRef = clean(input.StudentRef);
+  if (!studentRef) throw failure('Choose a student for this transcript.');
+  const cumulative = context.state.cumulativeResults.filter((row) => lower(row.StudentRef) === lower(studentRef));
+  const lockedCumulative = cumulative.filter((row) => lower(row.Status) === 'locked');
+  if (!lockedCumulative.length) throw failure('At least one locked cumulative session result is required before creating a transcript.', 409, 'ACADEMIC_TRANSCRIPT_CUMULATIVE_REQUIRED');
+  const transcriptId = academicTranscriptId(context.scope, studentRef);
+  const existing = findById(context.state.transcripts, transcriptId);
+  const reissuing = lower(existing?.Status) === 'issued';
+  const reason = clean(input.Reason || input.ReissueReason).slice(0, 500);
+  if (reissuing && !reason) throw failure('Enter the reason for creating a corrected transcript version.');
+  if (existing && !['draft', 'issued'].includes(lower(existing.Status))) {
+    throw failure(`This transcript is ${existing.Status}. Reopen it before rebuilding the draft.`, 409, 'ACADEMIC_TRANSCRIPT_IMMUTABLE');
+  }
+  const people = await loadPeople(env, user, context.scope);
+  const student = people.students.find((row) => lower(studentReference(row)) === lower(studentRef)) || {};
+  const transcriptNumber = clean(existing?.TranscriptNumber) || await academicOutcomeReference(transcriptId, 'TRN');
+  const previous = reissuing
+    ? [...(existing.PreviousIssuedVersions || []), transcriptPriorVersion(existing)].slice(-20)
+    : (existing?.PreviousIssuedVersions || []);
+  const timestamp = nowIso();
+  const draft = buildAcademicTranscriptDraft({
+    TranscriptId: transcriptId,
+    TranscriptNumber: transcriptNumber,
+    StudentRef: studentRef,
+    StudentName: clean(student.DisplayName || student.ApplicantName || student.StudentName || studentRef),
+    CumulativeResults: lockedCumulative,
+    TermResults: context.state.termResults.filter((row) => lower(row.StudentRef) === lower(studentRef)),
+    PromotionDecisions: context.state.promotionDecisions.filter((row) => lower(row.StudentRef) === lower(studentRef)),
+    Version: Number(existing?.Version || 0) + (reissuing ? 1 : (existing ? 0 : 1)),
+    PreviousIssuedVersions: previous
+  });
+  const record = {
+    ...(existing || {}),
+    ...draft,
+    RecordId: transcriptId,
+    BranchId: context.scope.branchId,
+    SchoolSection: context.scope.section,
+    ReissueReason: reissuing ? reason : '',
+    CreatedAt: clean(existing?.CreatedAt) || timestamp,
+    CreatedBy: clean(existing?.CreatedBy) || actorName(user),
+    UpdatedAt: timestamp,
+    UpdatedBy: actorName(user)
+  };
+  await commitAcademicBatch(env, [
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.transcripts, documentId: transcriptId,
+      data: withoutMetadata(record), ...writePrecondition(existing, input.RevisionToken) },
+    academicOutcomeEventWrite(user, ACADEMIC_MANAGEMENT_COLLECTIONS.transcriptEvents,
+      'TRANSCRIPT', record, reissuing ? 'REISSUE_DRAFTED' : (existing ? 'REBUILT' : 'CREATED'), reason || `${record.Sessions.length} locked session(s)`),
+    auditWrite(user, reissuing ? 'REISSUE_DRAFT' : (existing ? 'REBUILD_DRAFT' : 'CREATE_DRAFT'),
+      'transcript', record, reason || `${record.Sessions.length} locked session(s)`)
+  ], 'This transcript changed while its draft was being created. Reload and try again.');
+  return academicOperationalResponse(env, user, input, context.scope,
+    `${record.TranscriptNumber} version ${record.Version} saved as Draft from locked academic records.`);
+}
+
+export async function changeAcademicTranscriptStatus(env, user = {}, input = {}) {
+  const target = ACADEMIC_TRANSCRIPT_STATUSES.find((value) => lower(value) === lower(input.Status || input.TargetStatus));
+  if (!target) throw failure('Choose a valid transcript status.');
+  const context = await academicOperationalContext(env, user, input, 'canIssueTranscripts');
+  const existing = findById(context.state.transcripts, input.TranscriptId);
+  if (!existing) throw failure('Choose a transcript.', 404);
+  const transition = academicTranscriptTransition(existing.Status, target);
+  if (!transition.Allowed) throw failure(`This transcript cannot move directly to ${target}.`, 409);
+  const reason = clean(input.Reason).slice(0, 500);
+  if (transition.RequiresReason && !reason) throw failure('Enter the approved reason for reopening this transcript.');
+  const timestamp = nowIso();
+  const record = {
+    ...existing,
+    Status: target,
+    ...(target === 'Issued' ? { IssuedAt: timestamp, IssuedBy: actorName(user), IssuedByUsername: actorUsername(user) } : {}),
+    ...(reason ? { ReopenReason: reason } : {}),
+    UpdatedAt: timestamp,
+    UpdatedBy: actorName(user)
+  };
+  await commitAcademicBatch(env, [
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.transcripts, documentId: record.TranscriptId,
+      data: withoutMetadata(record), ...writePrecondition(existing, input.RevisionToken) },
+    academicOutcomeEventWrite(user, ACADEMIC_MANAGEMENT_COLLECTIONS.transcriptEvents,
+      'TRANSCRIPT', record, target.toUpperCase(), reason || `${existing.Status} -> ${target}`),
+    auditWrite(user, target.toUpperCase(), 'transcript', record, reason || `${existing.Status} -> ${target}`)
+  ], 'This transcript changed while its status was being updated. Reload and try again.');
+  return academicOperationalResponse(env, user, input, context.scope, `${record.TranscriptNumber} moved to ${target}.`);
+}
+
+export async function previewAcademicScoreImport(env, user = {}, input = {}) {
+  const context = await academicScoreSheetContext(env, user, input, 'canImportScores');
+  if (context.existing && lower(context.existing.Status) !== 'draft') throw failure('Spreadsheet imports are allowed only while the score sheet is Draft.', 409);
+  const preview = validateAcademicScoreImport(input.Rows, {
+    scheme: context.scheme,
+    roster: context.roster,
+    sourceMode: 'spreadsheet',
+    existingScores: context.state.studentScores.filter((row) => row.SheetId === context.SheetId)
+  });
+  return {
+    ok: true,
+    partialAcademicManagement: true,
+    message: `${preview.ValidRows} of ${preview.TotalRows} spreadsheet row${preview.TotalRows === 1 ? '' : 's'} passed validation.`,
+    assessmentScheme: context.scheme,
+    scoreImportPreview: preview
+  };
+}
+
+function normalizedImportKey(value) {
+  const key = clean(value).replace(/[^a-zA-Z0-9_-]/g, '-').replace(/-+/g, '-').slice(0, 100);
+  if (key.length < 8) throw failure('The score import needs a stable idempotency key of at least 8 characters.');
+  return key;
+}
+
+export async function importAcademicScores(env, user = {}, input = {}) {
+  const context = await academicScoreSheetContext(env, user, input, 'canImportScores');
+  const { scope, state, SheetId, existing, scheme } = context;
+  if (existing && lower(existing.Status) !== 'draft') throw failure('Spreadsheet imports are allowed only while the score sheet is Draft.', 409);
+  const mode = oneOf(input.CommitMode, ACADEMIC_SCORE_IMPORT_MODES, 'all-or-nothing');
+  const importKey = normalizedImportKey(input.ImportKey || input.IdempotencyKey);
+  const ImportId = academicId('score-import', SheetId, importKey);
+  const previousImport = findById(state.scoreImports, ImportId);
+  if (previousImport) {
+    return {
+      ok: true,
+      refreshAcademicManagement: true,
+      message: 'This spreadsheet import was already processed; no score was duplicated.',
+      scoreImport: publicRecord(previousImport)
+    };
+  }
+  const preview = validateAcademicScoreImport(input.Rows, {
+    scheme,
+    roster: context.roster,
+    sourceMode: 'spreadsheet',
+    existingScores: state.studentScores.filter((row) => row.SheetId === SheetId)
+  });
+  if (!preview.TotalRows) throw failure('The spreadsheet has no score rows.');
+  if (preview.TotalRows > 200) throw failure('Import at most 200 student scores at a time.');
+  if (mode === 'all-or-nothing' && preview.InvalidRows) {
+    const error = failure(`The import has ${preview.InvalidRows} invalid row${preview.InvalidRows === 1 ? '' : 's'}. Correct every row before committing an all-or-nothing import.`, 409, 'ACADEMIC_SCORE_IMPORT_INVALID');
+    error.preview = preview;
+    throw error;
+  }
+  const valid = preview.Rows.filter((row) => row.Valid);
+  if (!valid.length) throw failure('No valid score rows are available to import.', 409, 'ACADEMIC_SCORE_IMPORT_INVALID');
+  const timestamp = nowIso();
+  const PreviousScores = [];
+  const importedScores = valid.map((row) => {
+    const ScoreId = academicStudentScoreId(SheetId, row.StudentRef);
+    const previous = findById(state.studentScores, ScoreId);
+    const lockedChanges = academicLockedScoreChanges(previous, row.Calculated.ComponentScores, existing?.ScoreEditingReactivated === true);
+    if (lockedChanges.length) {
+      throw failure('The spreadsheet would replace saved score cells. Ask an Admin or Management user to reactivate this subject and arm before importing corrections.', 409, 'ACADEMIC_SCORE_CELL_LOCKED');
+    }
+    PreviousScores.push({ ScoreId, Existed: Boolean(previous), Data: previous ? withoutMetadata(previous) : null });
+    return {
+      previous,
+      record: {
+        ...(previous || {}), RecordId: ScoreId, ScoreId, SheetId, StudentRef: row.StudentRef,
+        SessionId: context.session.SessionId, TermId: context.term.TermId,
+        ClassId: context.schoolClass.ClassId, ArmId: context.arm.ArmId, SubjectId: context.subject.SubjectId,
+        AssessmentRevisionId: scheme.RevisionId,
+        ...row.Calculated,
+        LockedComponentIds: academicRecordedScoreComponentIds(row.Calculated.ComponentScores),
+        LockedScoreCellIds: academicRecordedScoreCellIds(row.Calculated.ComponentScores),
+        ScoreCellsLockedAt: timestamp, ScoreCellsLockedBy: actorName(user),
+        ScoreCellsLockedByUsername: actorUsername(user),
+        SourceType: 'SpreadsheetImport', SourceId: ImportId,
+        BranchId: scope.branchId, SchoolSection: scope.section,
+        CreatedAt: clean(previous?.CreatedAt) || timestamp,
+        CreatedBy: clean(previous?.CreatedBy) || actorName(user),
+        UpdatedAt: timestamp, UpdatedBy: actorName(user), UpdatedByUsername: actorUsername(user)
+      }
+    };
+  });
+  const projectedScores = [
+    ...state.studentScores.filter((row) => row.SheetId === SheetId && !importedScores.some((item) => item.record.ScoreId === row.ScoreId)),
+    ...importedScores.map((item) => item.record)
+  ];
+  const sheet = academicScoreSheetRecord(context, existing, user, timestamp, {
+    ...academicScoreSheetCounts(projectedScores), LastSavedAt: timestamp, LastSavedBy: actorName(user), LastImportId: ImportId,
+    ScoreEditingReactivated: false,
+    ScoreEditingRelockedAt: timestamp,
+    ScoreEditingRelockedBy: actorName(user),
+    ScoreEditingRelockedByUsername: actorUsername(user)
+  });
+  const importRecord = {
+    RecordId: ImportId, ImportId, ImportKey: importKey, SheetId, Status: 'Committed', CommitMode: mode,
+    SourceFileName: clean(input.SourceFileName).slice(0, 240),
+    SourceFormat: oneOf(input.SourceFormat, ['CSV', 'XLSX'], 'CSV'),
+    TotalRows: preview.TotalRows, ImportedRows: valid.length, RejectedRows: preview.InvalidRows,
+    Rejected: preview.Rows.filter((row) => !row.Valid).map((row) => ({ RowNumber: row.RowNumber, StudentRef: row.StudentRef, Issues: row.Issues })),
+    AffectedScoreIds: importedScores.map((row) => row.record.ScoreId), PreviousScores,
+    SessionId: context.session.SessionId, TermId: context.term.TermId,
+    ClassId: context.schoolClass.ClassId, ArmId: context.arm.ArmId, SubjectId: context.subject.SubjectId,
+    AssessmentRevisionId: scheme.RevisionId,
+    BranchId: scope.branchId, SchoolSection: scope.section,
+    CommittedAt: timestamp, CommittedBy: actorName(user), CommittedByUsername: actorUsername(user)
+  };
+  const writes = importedScores.map(({ previous, record }) => ({
+    collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentScores,
+    documentId: record.ScoreId, data: withoutMetadata(record), ...(previous ? { updateTime: previous.__updateTime } : { exists: false })
+  }));
+  writes.push(...academicScoreMembershipGuards(state, importedScores.map((item) => item.record)));
+  writes.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSheets, documentId: SheetId,
+    data: withoutMetadata(sheet), ...(existing ? { updateTime: existing.__updateTime } : { exists: false }) });
+  writes.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.scoreImports, documentId: ImportId,
+    data: withoutMetadata(importRecord), exists: false });
+  writes.push(auditWrite(user, 'IMPORT', 'scoreSheet', sheet, `${valid.length} imported; ${preview.InvalidRows} rejected; ${mode}`));
+  await commitAcademicBatch(env, writes, 'The score sheet changed while the spreadsheet was being imported. Preview the file again.');
+  return {
+    ok: true,
+    refreshAcademicManagement: true,
+    message: `${valid.length} spreadsheet score${valid.length === 1 ? '' : 's'} imported as Draft${preview.InvalidRows ? `; ${preview.InvalidRows} invalid row${preview.InvalidRows === 1 ? '' : 's'} skipped` : ''}.`,
+    scoreImport: publicRecord(importRecord)
+  };
+}
+
+export async function rollbackAcademicScoreImport(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canImportScores', {
+    stateKeys: ACADEMIC_SCOREBOOK_STATE_KEYS
+  });
+  const { permissions, scope, state } = context;
+  const importRecord = findById(state.scoreImports, input.ImportId || input.RecordId);
+  if (!importRecord || lower(importRecord.Status) !== 'committed') throw failure('The committed score import was not found.', 404);
+  const sheet = findById(state.scoreSheets, importRecord.SheetId);
+  if (!sheet || lower(sheet.Status) !== 'draft') throw failure('Only an unpublished Draft score import can be rolled back.', 409, 'ACADEMIC_SCORE_IMPORT_LOCKED');
+  assertAcademicScoreSheetAuthority(user, permissions, state, sheet, sheet);
+  const reason = clean(input.Reason).slice(0, 500);
+  if (!reason) throw failure('Enter the approved reason for rolling back this score import.');
+  const previousById = new Map((importRecord.PreviousScores || []).map((row) => [row.ScoreId, row]));
+  const currentScores = (importRecord.AffectedScoreIds || []).map((scoreId) => findById(state.studentScores, scoreId));
+  if (currentScores.some((row) => !row || row.SourceId !== importRecord.ImportId || row.UpdatedAt !== importRecord.CommittedAt)) {
+    throw failure('One or more imported scores changed after this import. Reopen and correct them manually instead of rolling back.', 409, 'ACADEMIC_SCORE_IMPORT_CHANGED');
+  }
+  const timestamp = nowIso();
+  const writes = currentScores.map((current) => {
+    const previous = previousById.get(current.ScoreId);
+    return previous?.Existed
+      ? { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentScores, documentId: current.ScoreId,
+          data: previous.Data, updateTime: current.__updateTime }
+      : { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentScores, documentId: current.ScoreId,
+          operation: 'delete', updateTime: current.__updateTime };
+  });
+  writes.push(...academicScoreMembershipGuards(state, currentScores));
+  const restoredScores = state.studentScores.filter((row) => row.SheetId === sheet.SheetId
+    && !(importRecord.AffectedScoreIds || []).includes(row.ScoreId));
+  (importRecord.PreviousScores || []).filter((row) => row.Existed).forEach((row) => restoredScores.push(row.Data));
+  const updatedSheet = {
+    ...sheet, ...academicScoreSheetCounts(restoredScores), LastImportId: '',
+    UpdatedAt: timestamp, UpdatedBy: actorName(user)
+  };
+  const rolledBack = {
+    ...importRecord, Status: 'RolledBack', RollbackReason: reason,
+    RolledBackAt: timestamp, RolledBackBy: actorName(user), RolledBackByUsername: actorUsername(user)
+  };
+  writes.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSheets, documentId: sheet.SheetId,
+    data: withoutMetadata(updatedSheet), updateTime: sheet.__updateTime });
+  writes.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.scoreImports, documentId: importRecord.ImportId,
+    data: withoutMetadata(rolledBack), ...writePrecondition(importRecord, input.RevisionToken) });
+  writes.push(auditWrite(user, 'ROLLBACK_IMPORT', 'scoreSheet', sheet, reason));
+  await commitAcademicBatch(env, writes, 'The score import changed while it was being rolled back. Reload and try again.');
+  return {
+    ok: true,
+    refreshAcademicManagement: true,
+    message: `${currentScores.length} imported student score${currentScores.length === 1 ? '' : 's'} rolled back.`
+  };
+}
+
+function canonicalAcademicCbtValue(value) {
+  if (Array.isArray(value)) return value.map(canonicalAcademicCbtValue);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.keys(value).sort().filter((key) => value[key] !== undefined)
+      .map((key) => [key, canonicalAcademicCbtValue(value[key])]));
+  }
+  return value;
+}
+
+function academicCbtScoreBatchMaterial(input = {}) {
+  const keys = [
+    'Version', 'BatchId', 'ExamId', 'SourceTestId', 'SourcePackageDigest',
+    'SessionId', 'TermId', 'ClassId', 'ArmId', 'SubjectId', 'TeacherUsername',
+    'AssessmentComponentId', 'MaximumScore', 'SourceType', 'MarkingRevision',
+    'ApprovalStatus', 'ApprovedBy', 'ApprovedAt', 'ProviderId', 'SourceFileName', 'Scores'
+  ];
+  return Object.fromEntries(keys.filter((key) => input[key] !== undefined).map((key) => [key, input[key]]));
+}
+
+export async function academicCbtScoreBatchDigest(input = {}) {
+  const material = JSON.stringify(canonicalAcademicCbtValue(academicCbtScoreBatchMaterial(input)));
+  const digest = await crypto.subtle.digest('SHA-256', identityEncoder.encode(material));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+export async function verifyAcademicCbtScoreSignature(input = {}) {
+  if (clean(input.SignatureAlgorithm) !== 'RSASSA-PKCS1-v1_5-SHA256') {
+    throw failure('The local CBT score batch uses an unsupported signature algorithm.', 409, 'ACADEMIC_CBT_SIGNATURE_INVALID');
+  }
+  let publicBytes;
+  let publicKey;
+  try {
+    publicBytes = identityPublicKeyBytes(input.SigningPublicKey);
+    publicKey = await crypto.subtle.importKey(
+      'spki', publicBytes, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify']
+    );
+  } catch (_error) {
+    throw failure('The local CBT score-signing public key is invalid.', 409, 'ACADEMIC_CBT_SIGNATURE_INVALID');
+  }
+  const keyDigest = await crypto.subtle.digest('SHA-256', publicBytes);
+  const calculatedKeyId = [...new Uint8Array(keyDigest)].map((byte) => byte.toString(16).padStart(2, '0')).join('').slice(0, 32);
+  if (lower(input.SigningKeyId) !== calculatedKeyId) {
+    throw failure('The local CBT signing-key identifier does not match its public key.', 409, 'ACADEMIC_CBT_SIGNATURE_INVALID');
+  }
+  const verified = await crypto.subtle.verify(
+    'RSASSA-PKCS1-v1_5', publicKey, identityBase64UrlBytes(input.Signature),
+    identityEncoder.encode(clean(input.BatchDigest).toLowerCase())
+  );
+  if (!verified) throw failure('The local CBT score batch signature could not be verified.', 409, 'ACADEMIC_CBT_SIGNATURE_INVALID');
+  return calculatedKeyId;
+}
+
+export async function syncAcademicCbtScores(env, user = {}, input = {}) {
+  if (input.SupportsPreparedScoreCommit !== true && !input.ScoreSyncPreparation) {
+    throw failure(
+      'This Dynamax client must be updated or restarted before it can push CBT scores safely.',
+      409,
+      'ACADEMIC_CBT_SYNC_CLIENT_UPDATE_REQUIRED'
+    );
+  }
+  if (input.ScoreSyncPreparation) {
+    requireWritableSubscription(user);
+    const permissions = requireCapability(user, 'canImportScores');
+    if (!permissions.canReviewScores) {
+      throw failure('Only an academic or examination reviewer may synchronize an approved CBT score batch.', 403, 'ACADEMIC_CBT_SYNC_REVIEWER_REQUIRED');
+    }
+    const assignedBranch = clean(user.branchId || user.BranchId);
+    if (assignedBranch && lower(assignedBranch) !== 'all'
+        && safeScopeId(assignedBranch) !== safeScopeId(input.BranchId)) {
+      throw failure('This staff account is restricted to another branch.', 403, 'ACADEMIC_BRANCH_FORBIDDEN');
+    }
+    assertUserSection(user, scopedSection(input));
+    const prepared = await verifyAcademicCbtSyncPreparation(env, user, input);
+    try {
+      await commitAcademicBatch(env, prepared.Writes,
+        'The score sheet changed while CBT scores were synchronizing. Reload and retry the same approved batch.');
+    } catch (error) {
+      const status = Number(error?.status || 500);
+      const commitOutcomeMayBeUncertain = status === 409
+        || [408, 425, 429, 500, 502, 503, 504].includes(status);
+      if (commitOutcomeMayBeUncertain) {
+        const previousBatch = await getDocument(
+          env, ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSyncBatches, prepared.SyncId
+        ).catch(() => null);
+        if (previousBatch && lower(previousBatch.BatchDigest) === lower(prepared.BatchDigest)) {
+          return {
+            ok: true,
+            refreshAcademicManagement: true,
+            message: 'This approved CBT batch was already synchronized; no score was duplicated.',
+            scoreSyncReceipt: publicRecord(previousBatch)
+          };
+        }
+      }
+      if ([408, 425, 429, 502, 503, 504].includes(status)) {
+        throw failure(
+          'The online scorebook is temporarily unavailable. Dynamax kept the approved batch safely queued and will not duplicate scores when it is retried.',
+          status === 429 ? 429 : 503,
+          'ACADEMIC_CBT_SYNC_TEMPORARY'
+        );
+      }
+      if (status >= 500) {
+        const upstreamCode = clean(error?.upstreamCode || error?.code || 'FIRESTORE_COMMIT_FAILED');
+        const detail = clean(error?.message || 'The database rejected the CBT score batch.').slice(0, 260);
+        console.error(JSON.stringify({
+          event: 'academic_cbt_score_commit_failed',
+          status,
+          upstreamCode,
+          syncId: prepared.SyncId,
+          writeCount: Array.isArray(prepared.Writes) ? prepared.Writes.length : 0
+        }));
+        throw failure(
+          `The online scorebook could not save this submitted-score batch. ${detail}`,
+          500,
+          'ACADEMIC_CBT_SYNC_COMMIT_FAILED'
+        );
+      }
+      throw error;
+    }
+    return {
+      ok: true,
+      refreshAcademicManagement: true,
+      message: prepared.Message,
+      scoreSyncReceipt: prepared.Receipt
+    };
+  }
+  const context = await academicScoreSheetContext(
+    env, user, input, 'canImportScores', ACADEMIC_SCOREBOOK_STATE_KEYS,
+    { classWideSubjectAuthority: true }
+  );
+  const { permissions, scope, state, SheetId, existing, scheme } = context;
+  if (!permissions.canReviewScores) {
+    throw failure('Only an academic or examination reviewer may synchronize an approved CBT score batch.', 403, 'ACADEMIC_CBT_SYNC_REVIEWER_REQUIRED');
+  }
+  if (existing && lower(existing.Status) !== 'draft') {
+    throw failure('CBT scores can synchronize only while the online score sheet is Draft.', 409, 'ACADEMIC_SCORE_SHEET_LOCKED');
+  }
+  if (lower(input.ApprovalStatus) !== 'approved') {
+    throw failure('Review and approve the submitted CBT results before synchronization.', 409, 'ACADEMIC_CBT_MARKING_NOT_APPROVED');
+  }
+  const sourceType = oneOf(input.SourceType, ['BuiltInCBT', 'ExternalCBT'], '');
+  if (!sourceType) throw failure('Choose BuiltInCBT or ExternalCBT as the score source.');
+  const sourceMode = sourceType === 'BuiltInCBT' ? 'built-in-cbt' : 'external-cbt';
+  const preview = validateAcademicCbtScoreBatch(input, {
+    scheme, roster: context.roster, sourceMode
+  });
+  if (!preview.Ready) {
+    const error = failure(preview.Issues[0] || 'The CBT score batch did not pass online validation.', 409, 'ACADEMIC_CBT_SCORE_BATCH_INVALID');
+    error.preview = preview;
+    throw error;
+  }
+  const expectedDigest = clean(input.BatchDigest).toLowerCase();
+  const calculatedDigest = await academicCbtScoreBatchDigest(input);
+  if (!/^[a-f0-9]{64}$/.test(expectedDigest) || expectedDigest !== calculatedDigest) {
+    throw failure('The CBT score batch digest does not match its score payload.', 409, 'ACADEMIC_CBT_SCORE_DIGEST_INVALID');
+  }
+  let signingKeyId = '';
+  if (sourceType === 'BuiltInCBT') {
+    signingKeyId = await verifyAcademicCbtScoreSignature(input);
+    const pinned = state.scoreSyncBatches.find((row) => row.SourceType === 'BuiltInCBT' && clean(row.SigningKeyId));
+    if (pinned && lower(pinned.SigningKeyId) !== lower(signingKeyId)) {
+      throw failure('This branch is already linked to another local CBT score-signing key. Use the controlled recovery process before replacing it.', 409, 'ACADEMIC_CBT_SIGNING_KEY_CHANGED');
+    }
+  }
+  const batchKey = normalizedImportKey(input.BatchId);
+  const SyncId = academicId('score-sync', SheetId, batchKey);
+  const previousBatch = findById(state.scoreSyncBatches, SyncId);
+  if (previousBatch) {
+    if (lower(previousBatch.BatchDigest) !== expectedDigest) {
+      throw failure('This CBT synchronization key was already used for a different score payload.', 409, 'ACADEMIC_CBT_SYNC_KEY_REUSED');
+    }
+    return {
+      ok: true,
+      refreshAcademicManagement: true,
+      message: 'This approved CBT batch was already synchronized; no score was duplicated.',
+      scoreSyncReceipt: publicRecord(previousBatch)
+    };
+  }
+  const timestamp = nowIso();
+  const component = preview.Component;
+  const updatedScores = preview.Rows.map((row) => {
+    const ScoreId = academicStudentScoreId(SheetId, row.StudentRef);
+    const previous = findById(state.studentScores, ScoreId);
+    const componentScores = normalizeAcademicComponentScores([
+      component.ScoreEntryMode === 'objective-theory' ? {
+        ComponentId: component.Id,
+        Parts: [{
+          PartId: 'objective', State: row.State, RawScore: row.RawScore,
+          Note: `${sourceType === 'BuiltInCBT' ? 'Built-in' : 'External'} CBT batch ${batchKey}`
+        }]
+      } : {
+        ComponentId: component.Id,
+        State: row.State,
+        RawScore: row.RawScore,
+        Note: `${sourceType === 'BuiltInCBT' ? 'Built-in' : 'External'} CBT batch ${batchKey}`
+      }
+    ], scheme, { existing: previous?.ComponentScores || [], partial: true });
+    const lockedChanges = academicLockedScoreChanges(previous, componentScores, existing?.ScoreEditingReactivated === true);
+    if (lockedChanges.length) {
+      throw failure('The destination score cell is already locked. Ask an Admin or Management user to reactivate this subject and arm before synchronizing a replacement score.', 409, 'ACADEMIC_SCORE_CELL_LOCKED');
+    }
+    const calculated = calculateAcademicStudentScore(scheme, componentScores);
+    return {
+      previous,
+      record: {
+        ...(previous || {}), RecordId: ScoreId, ScoreId, SheetId, StudentRef: row.StudentRef,
+        SessionId: context.session.SessionId, TermId: context.term.TermId,
+        ClassId: context.schoolClass.ClassId, ArmId: context.arm.ArmId, SubjectId: context.subject.SubjectId,
+        AssessmentRevisionId: scheme.RevisionId,
+        ...calculated,
+        LockedComponentIds: academicRecordedScoreComponentIds(calculated.ComponentScores),
+        LockedScoreCellIds: academicRecordedScoreCellIds(calculated.ComponentScores),
+        ScoreCellsLockedAt: timestamp, ScoreCellsLockedBy: actorName(user),
+        ScoreCellsLockedByUsername: actorUsername(user),
+        SourceType: sourceType, SourceId: SyncId, SourceBatchId: batchKey,
+        BranchId: scope.branchId, SchoolSection: scope.section,
+        CreatedAt: clean(previous?.CreatedAt) || timestamp,
+        CreatedBy: clean(previous?.CreatedBy) || actorName(user),
+        UpdatedAt: timestamp, UpdatedBy: actorName(user), UpdatedByUsername: actorUsername(user)
+      }
+    };
+  });
+  const projectedScores = [
+    ...state.studentScores.filter((row) => row.SheetId === SheetId
+      && !updatedScores.some((item) => item.record.ScoreId === row.ScoreId)),
+    ...updatedScores.map((item) => item.record)
+  ];
+  const sheet = academicScoreSheetRecord(context, existing, user, timestamp, {
+    ...academicScoreSheetCounts(projectedScores), LastSavedAt: timestamp,
+    LastSavedBy: actorName(user), LastScoreSyncId: SyncId,
+    ScoreEditingReactivated: false,
+    ScoreEditingRelockedAt: timestamp,
+    ScoreEditingRelockedBy: actorName(user),
+    ScoreEditingRelockedByUsername: actorUsername(user)
+  });
+  const syncRecord = {
+    RecordId: SyncId, SyncId, BatchId: batchKey, BatchDigest: expectedDigest,
+    SheetId, Status: 'Committed', SourceType: sourceType,
+    SourceTestId: clean(input.SourceTestId || input.ExamId),
+    ProviderId: clean(input.ProviderId).slice(0, 120),
+    SourceFileName: clean(input.SourceFileName).slice(0, 240),
+    SigningKeyId: signingKeyId,
+    AssessmentComponentId: component.Id,
+    MaximumScore: component.ScoreEntryMode === 'objective-theory' ? component.ObjectiveMaximumScore : component.MaximumScore,
+    NumericCount: preview.NumericCount, AbsentCount: preview.AbsentCount,
+    ImportedRows: updatedScores.length, RosterCount: preview.RosterCount,
+    AffectedScoreIds: updatedScores.map((row) => row.record.ScoreId),
+    SessionId: context.session.SessionId, TermId: context.term.TermId,
+    ClassId: context.schoolClass.ClassId, ArmId: context.arm.ArmId, SubjectId: context.subject.SubjectId,
+    BranchId: scope.branchId, SchoolSection: scope.section,
+    SynchronizedAt: timestamp, SynchronizedBy: actorName(user), SynchronizedByUsername: actorUsername(user)
+  };
+  const writes = updatedScores.map(({ previous, record }) => ({
+    collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentScores,
+    documentId: record.ScoreId, data: withoutMetadata(record),
+    ...(previous ? { updateTime: previous.__updateTime } : { exists: false })
+  }));
+  writes.push(...academicScoreMembershipGuards(state, updatedScores.map((item) => item.record)));
+  writes.push({
+    collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSheets,
+    documentId: SheetId, data: withoutMetadata(sheet),
+    ...(existing ? { updateTime: existing.__updateTime } : { exists: false })
+  });
+  writes.push({
+    collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSyncBatches,
+    documentId: SyncId, data: withoutMetadata(syncRecord), exists: false
+  });
+  writes.push(auditWrite(user, 'SYNC_CBT_SCORES', 'scoreSyncBatch', syncRecord,
+    `${sourceType}; ${updatedScores.length} students; ${preview.AbsentCount} absent`));
+  const message = `${updatedScores.length} approved CBT score${updatedScores.length === 1 ? '' : 's'} synchronized into the Draft scorebook.`;
+  const scoreSyncPreparation = await createAcademicCbtSyncPreparation(env, user, {
+    BranchId: scope.branchId,
+    SchoolSection: scope.section,
+    BatchDigest: expectedDigest,
+    SyncId,
+    Message: message,
+    Writes: writes,
+    Receipt: publicRecord(syncRecord)
+  });
+  return {
+    ok: true,
+    commitRequired: true,
+    message: 'The approved CBT batch passed online validation and is ready to commit.',
+    scoreSyncPreparation
+  };
+}
+
+export const ACADEMIC_CBT_OPTION_STYLES = Object.freeze({
+  ABC: Object.freeze(['A', 'B', 'C']),
+  ABCD: Object.freeze(['A', 'B', 'C', 'D']),
+  ABCDE: Object.freeze(['A', 'B', 'C', 'D', 'E']),
+  ABCDEF: Object.freeze(['A', 'B', 'C', 'D', 'E', 'F']),
+  TRUE_FALSE: Object.freeze(['True', 'False'])
+});
+
+function academicCbtOptionStyle(value) {
+  const normalized = clean(value).toUpperCase().replace(/[\s/-]+/g, '_');
+  if (ACADEMIC_CBT_OPTION_STYLES[normalized]) return normalized;
+  throw failure('Choose ABC, ABCD, ABCDE, ABCDEF or True/False answer style.', 400, 'ACADEMIC_CBT_OPTION_STYLE_INVALID');
+}
+
+function academicCbtAuthority(user, context, record) {
+  if (context.permissions.teacherView && lower(record.TeacherUsername) !== actorUsername(user)) {
+    throw failure('Teachers may manage only their own allocated CBT tests.', 403, 'ACADEMIC_CBT_OWNER_FORBIDDEN');
+  }
+  return record;
+}
+
+async function academicCbtClassContext(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canCreateCbt', {
+    stateKeys: ACADEMIC_CBT_STATE_KEYS
+  });
+  const { permissions, scope, state, session, term } = context;
+  const schoolClass = assertReference(findById(state.classes, input.ClassId), 'Choose an active class.');
+  const subject = assertReference(findById(state.subjects, input.SubjectId), 'Choose an active subject.');
+  if (subject.AssessmentCategory === 'TimetableOnly') {
+    throw failure('This subject is timetable-only and does not accept CBT marks.', 409, 'ACADEMIC_SUBJECT_NOT_ASSESSED');
+  }
+  if (schoolClass.SchoolSection !== scope.section || subject.SchoolSection !== scope.section) {
+    throw failure('The selected CBT class or subject belongs to another school section.', 403, 'ACADEMIC_SECTION_FORBIDDEN');
+  }
+  const allocations = (state.teacherAllocations || []).filter((row) => statusActive(row)
+    && row.SessionId === session.SessionId && row.TermId === term.TermId
+    && lower(row.AllocationRole) === 'subject teacher'
+    && row.ClassId === schoolClass.ClassId && row.SubjectId === subject.SubjectId);
+  if (!allocations.length) {
+    throw failure('Assign a subject teacher to this class and subject before creating its CBT test.', 409, 'ACADEMIC_CBT_TEACHER_REQUIRED');
+  }
+  const requestedTeacher = lower(input.TeacherUsername || (permissions.teacherView ? actorUsername(user) : ''));
+  const allocation = allocations.find((row) => !requestedTeacher || lower(row.TeacherUsername) === requestedTeacher);
+  if (!allocation || (permissions.teacherView && lower(allocation.TeacherUsername) !== actorUsername(user))) {
+    throw failure('The selected teacher is not allocated to this class and subject.', 403, 'ACADEMIC_CBT_ALLOCATION_FORBIDDEN');
+  }
+  const roster = (state.studentMemberships || []).filter((row) => statusActive(row)
+    && row.SessionId === session.SessionId && row.TermId === term.TermId
+    && row.ClassId === schoolClass.ClassId && (row.SubjectIds || []).includes(subject.SubjectId));
+  if (!roster.length) {
+    throw failure('No students in this class offer the selected subject.', 409, 'ACADEMIC_CBT_ROSTER_EMPTY');
+  }
+  const scheme = await academicAssessmentForPeriod(env, scope, session, term, {
+    classId: schoolClass.ClassId, subjectId: subject.SubjectId
+  });
+  return {
+    ...context, schoolClass, subject, allocation, roster, scheme,
+    arm: { ArmId: '', Name: 'All arms' }
+  };
+}
+
+async function academicCbtPackageDigest(record = {}) {
+  const paperFiles = academicCbtPaperFiles(record);
+  const theoryPaperFiles = academicCbtPaperFiles(record, 'theory');
+  const material = JSON.stringify({
+    CbtTestId: record.CbtTestId,
+    SessionId: record.SessionId,
+    TermId: record.TermId,
+    ClassId: record.ClassId,
+    ArmId: record.ArmId,
+    SubjectId: record.SubjectId,
+    TeacherUsername: record.TeacherUsername,
+    AssessmentComponentId: record.AssessmentComponentId,
+    MaximumScore: record.MaximumScore,
+    PaperMode: record.PaperMode || 'single',
+    ScoreEntryMode: record.ScoreEntryMode || 'single',
+    ObjectiveMaximumScore: record.ObjectiveMaximumScore,
+    TheoryMaximumScore: record.TheoryMaximumScore,
+    StartsAt: record.StartsAt,
+    EndsAt: record.EndsAt,
+    ObjectiveDurationMinutes: record.ObjectiveDurationMinutes || record.DurationMinutes,
+    TheoryDurationMinutes: record.TheoryDurationMinutes || 0,
+    NumberOfQuestions: record.NumberOfQuestions,
+    OptionStyle: record.OptionStyle,
+    Options: record.Options,
+    AnswerKey: record.AnswerKey,
+    StudentRefs: record.StudentRefs,
+    PaperDigest: record.PaperDigest,
+    PaperFiles: paperFiles.map((file) => ({
+      FileName: file.FileName,
+      MimeType: file.MimeType,
+      Digest: file.Digest,
+      ByteLength: file.ByteLength,
+      PageNumber: file.PageNumber
+    })),
+    TheoryPaperFiles: theoryPaperFiles.map((file) => ({
+      FileName: file.FileName,
+      MimeType: file.MimeType,
+      Digest: file.Digest,
+      ByteLength: file.ByteLength,
+      PageNumber: file.PageNumber
+    }))
+  });
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(material));
+  return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('');
+}
+
+function academicCbtPaperFiles(input = {}, paperType = 'objective') {
+  const theory = paperType === 'theory';
+  const supplied = Array.isArray(theory ? input.TheoryPaperFiles : input.PaperFiles)
+    ? (theory ? input.TheoryPaperFiles : input.PaperFiles) : [];
+  const legacyUrl = clean(theory ? input.TheoryPaperUrl : input.PaperUrl);
+  const legacy = legacyUrl ? [{
+    Url: legacyUrl,
+    FileName: theory ? input.TheoryPaperFileName : input.PaperFileName,
+    MimeType: theory ? input.TheoryPaperMimeType : input.PaperMimeType,
+    Digest: theory ? input.TheoryPaperDigest : input.PaperDigest,
+    ByteLength: theory ? input.TheoryPaperByteLength : input.PaperByteLength,
+    PageNumber: 1
+  }] : [];
+  return (supplied.length ? supplied : legacy).map((file, index) => ({
+    Url: clean(file?.Url || file?.PaperUrl),
+    FileName: clean(file?.FileName || file?.PaperFileName),
+    MimeType: lower(file?.MimeType || file?.PaperMimeType),
+    Digest: lower(file?.Digest || file?.PaperDigest),
+    ByteLength: Number(file?.ByteLength || file?.PaperByteLength || 0),
+    PageNumber: index + 1
+  }));
+}
+
+function validateAcademicCbtPaperFiles(files = [], label = 'question paper') {
+  if (!files.length || files.length > 12) {
+    throw failure(`Upload one PDF or between 1 and 12 PNG/JPG pages for the ${label}.`, 400, 'ACADEMIC_CBT_PAPER_REQUIRED');
+  }
+  files.forEach((file) => {
+    if (!file.Url || !file.FileName || !['application/pdf', 'image/jpeg', 'image/png'].includes(file.MimeType)) {
+      throw failure(`Upload a valid PDF, JPEG or PNG ${label}.`, 400, 'ACADEMIC_CBT_PAPER_REQUIRED');
+    }
+    if (!/^[a-f0-9]{64}$/.test(file.Digest)) {
+      throw failure('An uploaded question-paper page has an invalid digest.', 400, 'ACADEMIC_CBT_PAPER_DIGEST_INVALID');
+    }
+  });
+  if (files.some((file) => file.MimeType === 'application/pdf') && files.length !== 1) {
+    throw failure('Upload one PDF by itself, or upload several PNG/JPG pages.', 400, 'ACADEMIC_CBT_PAPER_MIXED_FORMAT');
+  }
+  if (files.reduce((sum, file) => sum + Math.max(0, file.ByteLength), 0) > 32 * 1024 * 1024) {
+    throw failure('The complete question paper exceeds the 32 MB multi-page limit.', 413, 'ACADEMIC_CBT_PAPER_TOO_LARGE');
+  }
+  return files;
+}
+
+export async function validateAcademicCbtTestInput(env, user = {}, input = {}) {
+  const context = await academicCbtClassContext(env, user, input);
+  const componentId = clean(input.AssessmentComponentId);
+  const component = (context.scheme.Components || []).find((row) => row.Id === componentId);
+  if (!component || !['any', 'built-in-cbt'].includes(lower(component.SourceMode))) {
+    throw failure('Choose an active Test Type that accepts Built-in CBT scores.', 409, 'ACADEMIC_CBT_COMPONENT_REQUIRED');
+  }
+  const splitPaper = component.ScoreEntryMode === 'objective-theory';
+  const questionCount = Number(input.NumberOfQuestions);
+  if (!Number.isInteger(questionCount) || questionCount < 1 || questionCount > 200) {
+    throw failure('Number of questions must be a whole number between 1 and 200.', 400, 'ACADEMIC_CBT_QUESTION_COUNT_INVALID');
+  }
+  const durationMinutes = Number(input.DurationMinutes);
+  if (!Number.isInteger(durationMinutes) || durationMinutes < 1 || durationMinutes > 480) {
+    throw failure(`${splitPaper ? 'Paper 1 duration' : 'Duration'} must be a whole number between 1 and 480 minutes.`, 400, 'ACADEMIC_CBT_DURATION_INVALID');
+  }
+  const theoryDurationMinutes = splitPaper ? Number(input.TheoryDurationMinutes) : 0;
+  if (splitPaper && (!Number.isInteger(theoryDurationMinutes) || theoryDurationMinutes < 1 || theoryDurationMinutes > 480)) {
+    throw failure('Paper 2 duration must be a whole number between 1 and 480 minutes.', 400, 'ACADEMIC_CBT_THEORY_DURATION_INVALID');
+  }
+  const optionStyle = academicCbtOptionStyle(input.OptionStyle);
+  const options = [...ACADEMIC_CBT_OPTION_STYLES[optionStyle]];
+  const answerKey = Array.isArray(input.AnswerKey) ? input.AnswerKey.map(clean) : [];
+  if (answerKey.length !== questionCount || answerKey.some((answer) => !options.includes(answer))) {
+    throw failure('Select one valid correct answer for every question.', 400, 'ACADEMIC_CBT_ANSWER_KEY_INCOMPLETE');
+  }
+  const startsAt = new Date(clean(input.StartsAt));
+  if (!Number.isFinite(startsAt.getTime())) throw failure('Choose a valid test date and start time.', 400, 'ACADEMIC_CBT_SCHEDULE_INVALID');
+  const endsAt = new Date(startsAt.getTime() + (durationMinutes + theoryDurationMinutes) * 60 * 1000);
+  if (endsAt.getTime() <= Date.now()) throw failure('The test schedule has already ended. Choose a current or future start time.', 400, 'ACADEMIC_CBT_SCHEDULE_ENDED');
+  const suppliedPaperFiles = academicCbtPaperFiles(input);
+  const suppliedTheoryPaperFiles = academicCbtPaperFiles(input, 'theory');
+  if (input.RequirePaper !== false) {
+    validateAcademicCbtPaperFiles(suppliedPaperFiles, splitPaper ? 'Paper 1 Objective paper' : 'question paper');
+    if (splitPaper) validateAcademicCbtPaperFiles(suppliedTheoryPaperFiles, 'Paper 2 Theory paper');
+    const uploadBytes = [...suppliedPaperFiles, ...suppliedTheoryPaperFiles]
+      .reduce((sum, file) => sum + Math.max(0, file.ByteLength), 0);
+    if (uploadBytes > 32 * 1024 * 1024) {
+      throw failure('Paper 1 and Paper 2 together exceed the 32 MB upload limit.', 413, 'ACADEMIC_CBT_PAPERS_TOO_LARGE');
+    }
+  }
+  const requestedId = clean(input.CbtTestId);
+  const existing = requestedId ? findById(context.state.cbtTests, requestedId) : null;
+  if (requestedId && !existing) throw failure('The selected CBT test was not found.', 404, 'ACADEMIC_CBT_TEST_NOT_FOUND');
+  if (existing) {
+    academicCbtAuthority(user, context, existing);
+    if (clean(existing.LocalDownloadedAt)) {
+      throw failure('This test has already been downloaded to a local CBT server. Create a corrected test instead of changing its package.', 409, 'ACADEMIC_CBT_ALREADY_DOWNLOADED');
+    }
+  }
+  const replacementCandidates = (context.state.cbtTests || []).filter((row) => (
+    recordId(row) !== recordId(existing || {})
+    && lower(row.Status) !== 'superseded'
+    && clean(row.ClassId) === clean(context.schoolClass.ClassId)
+    && clean(row.SubjectId) === clean(context.subject.SubjectId)
+    && (clean(row.AssessmentComponentId) === clean(component.Id)
+      || lower(row.AssessmentComponentName) === lower(component.Name))
+    && lower(row.SchoolSection || context.scope.section) === lower(context.scope.section)
+    && academicCbtPaperFiles(row).length > 0
+  ));
+  const timestamp = nowIso();
+  const cbtTestId = existing?.CbtTestId || academicId(
+    'cbt-test', context.scope.branchId, context.scope.section, context.session.SessionId,
+    context.term.TermId, clean(input.ClientRequestId) || crypto.randomUUID()
+  );
+  const studentRefs = [...new Map(context.roster.map((row) => clean(row.StudentRef)).filter(Boolean)
+    .map((reference) => [lower(reference), reference])).values()]
+    .sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }));
+  const maximumScore = Number(component.MaximumScore);
+  const paperFiles = suppliedPaperFiles.length ? suppliedPaperFiles : academicCbtPaperFiles(existing || {});
+  const theoryPaperFiles = splitPaper
+    ? (suppliedTheoryPaperFiles.length ? suppliedTheoryPaperFiles : academicCbtPaperFiles(existing || {}, 'theory'))
+    : [];
+  const firstPaper = paperFiles[0] || {};
+  const firstTheoryPaper = theoryPaperFiles[0] || {};
+  const record = {
+    ...(existing || {}),
+    RecordId: cbtTestId,
+    CbtTestId: cbtTestId,
+    Title: `${clean(component.Name)} · ${clean(context.subject.Name)} · ${clean(context.schoolClass.Name)}`,
+    SessionId: context.session.SessionId,
+    TermId: context.term.TermId,
+    ClassId: context.schoolClass.ClassId,
+    ArmId: '',
+    SubjectId: context.subject.SubjectId,
+    SubjectName: clean(context.subject.Name),
+    TeacherUsername: lower(context.allocation.TeacherUsername),
+    AssessmentComponentId: component.Id,
+    AssessmentComponentName: clean(component.Name),
+    MaximumScore: maximumScore,
+    PaperMode: splitPaper ? 'split' : 'single',
+    ScoreEntryMode: splitPaper ? 'objective-theory' : 'single',
+    ObjectiveMaximumScore: splitPaper ? Number(component.ObjectiveMaximumScore) : maximumScore,
+    TheoryMaximumScore: splitPaper ? Number(component.TheoryMaximumScore) : 0,
+    StartsAt: startsAt.toISOString(),
+    EndsAt: endsAt.toISOString(),
+    DurationMinutes: durationMinutes,
+    ObjectiveDurationMinutes: durationMinutes,
+    TheoryDurationMinutes: theoryDurationMinutes,
+    NumberOfQuestions: questionCount,
+    OptionStyle: optionStyle,
+    Options: options,
+    AnswerKey: answerKey,
+    StudentRefs: studentRefs,
+    RosterCount: studentRefs.length,
+    PaperFiles: paperFiles,
+    PaperUrl: firstPaper.Url || clean(existing?.PaperUrl),
+    PaperFileName: firstPaper.FileName || clean(existing?.PaperFileName),
+    PaperMimeType: firstPaper.MimeType || clean(existing?.PaperMimeType),
+    PaperDigest: firstPaper.Digest || clean(existing?.PaperDigest),
+    PaperByteLength: Number(firstPaper.ByteLength || existing?.PaperByteLength || 0),
+    TheoryPaperFiles: theoryPaperFiles,
+    TheoryPaperUrl: firstTheoryPaper.Url || '',
+    TheoryPaperFileName: firstTheoryPaper.FileName || '',
+    TheoryPaperMimeType: firstTheoryPaper.MimeType || '',
+    TheoryPaperDigest: firstTheoryPaper.Digest || '',
+    TheoryPaperByteLength: Number(firstTheoryPaper.ByteLength || 0),
+    Status: 'Scheduled',
+    PackageRevision: Number(existing?.PackageRevision || 0) + 1,
+    BranchId: context.scope.branchId,
+    SchoolSection: context.scope.section,
+    CreatedAt: clean(existing?.CreatedAt) || timestamp,
+    CreatedBy: clean(existing?.CreatedBy) || actorName(user),
+    UpdatedAt: timestamp,
+    UpdatedBy: actorName(user)
+  };
+  record.PackageDigest = await academicCbtPackageDigest(record);
+  return { context, component, existing, replacementCandidates, record };
+}
+
+async function finalizeAcademicCbtPaper(validation, input = {}) {
+  const splitPaper = validation.record.PaperMode === 'split';
+  const paperFiles = validateAcademicCbtPaperFiles(academicCbtPaperFiles(input), splitPaper ? 'Paper 1 Objective paper' : 'question paper');
+  const theoryPaperFiles = splitPaper
+    ? validateAcademicCbtPaperFiles(academicCbtPaperFiles(input, 'theory'), 'Paper 2 Theory paper') : [];
+  const uploadBytes = [...paperFiles, ...theoryPaperFiles]
+    .reduce((sum, file) => sum + Math.max(0, file.ByteLength), 0);
+  if (uploadBytes > 32 * 1024 * 1024) {
+    throw failure('Paper 1 and Paper 2 together exceed the 32 MB upload limit.', 413, 'ACADEMIC_CBT_PAPERS_TOO_LARGE');
+  }
+  const firstPaper = paperFiles[0];
+  const firstTheoryPaper = theoryPaperFiles[0] || {};
+  const record = {
+    ...validation.record,
+    PaperFiles: paperFiles,
+    PaperUrl: firstPaper.Url,
+    PaperFileName: firstPaper.FileName,
+    PaperMimeType: firstPaper.MimeType,
+    PaperDigest: firstPaper.Digest,
+    PaperByteLength: firstPaper.ByteLength,
+    TheoryPaperFiles: theoryPaperFiles,
+    TheoryPaperUrl: firstTheoryPaper.Url || '',
+    TheoryPaperFileName: firstTheoryPaper.FileName || '',
+    TheoryPaperMimeType: firstTheoryPaper.MimeType || '',
+    TheoryPaperDigest: firstTheoryPaper.Digest || '',
+    TheoryPaperByteLength: Number(firstTheoryPaper.ByteLength || 0)
+  };
+  record.PackageDigest = await academicCbtPackageDigest(record);
+  return { ...validation, record };
+}
+
+export async function saveAcademicCbtTest(env, user = {}, input = {}, options = {}) {
+  const validation = options.validation
+    ? await finalizeAcademicCbtPaper(options.validation, input)
+    : await validateAcademicCbtTestInput(env, user, { ...input, RequirePaper: true });
+  const { existing, replacementCandidates = [], record } = validation;
+  const writes = [{
+    collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.cbtTests,
+    documentId: record.CbtTestId,
+    data: withoutMetadata(record),
+    ...writePrecondition(existing, input.RevisionToken)
+  }];
+  replacementCandidates.forEach((previous) => {
+    writes.push({
+      collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.cbtTests,
+      documentId: previous.CbtTestId,
+      data: withoutMetadata({
+        ...previous,
+        Status: 'Superseded',
+        PaperFiles: [],
+        PaperUrl: '',
+        PaperFileName: '',
+        PaperMimeType: '',
+        PaperDigest: '',
+        PaperByteLength: 0,
+        TheoryPaperFiles: [],
+        TheoryPaperUrl: '',
+        TheoryPaperFileName: '',
+        TheoryPaperMimeType: '',
+        TheoryPaperDigest: '',
+        TheoryPaperByteLength: 0,
+        SupersededByCbtTestId: record.CbtTestId,
+        SupersededAt: record.UpdatedAt,
+        SupersededBy: record.UpdatedBy,
+        UpdatedAt: record.UpdatedAt,
+        UpdatedBy: record.UpdatedBy
+      }),
+      updateTime: clean(previous.__updateTime)
+    });
+  });
+  writes.push(auditWrite(user, existing ? 'UPDATE' : 'CREATE', 'cbtTests', record,
+    `${record.AssessmentComponentName}; ${record.NumberOfQuestions} questions; ${record.RosterCount} students; starts ${record.StartsAt}; replaced papers ${replacementCandidates.length}`));
+  let commit;
+  try {
+    commit = await commitAcademicBatch(env, writes, 'The CBT test changed while it was being saved. Reload and try again.');
+  } catch (error) {
+    if (Number(error?.status || 500) < 500 && !error?.outcomeUncertain) throw error;
+    // A lost commit response is not evidence that the transaction rolled back.
+    const persisted = await getDocument(env, ACADEMIC_MANAGEMENT_COLLECTIONS.cbtTests, record.CbtTestId).catch(() => null);
+    if (persisted && persisted.PackageDigest === record.PackageDigest && persisted.UpdatedAt === record.UpdatedAt
+        && persisted.PaperUrl === record.PaperUrl && persisted.TheoryPaperUrl === record.TheoryPaperUrl) {
+      commit = { writeResults: [{ updateTime: persisted.__updateTime }] };
+    } else {
+      throw Object.assign(new Error('The CBT save outcome could not be confirmed. The uploaded papers have been retained. Reload the test list before attempting another upload.'), {
+        status: 503, code: 'ACADEMIC_CBT_SAVE_UNCERTAIN', outcomeUncertain: true
+      });
+    }
+  }
+  const savedRecord = publicRecord({ ...record, __updateTime: clean(commit?.writeResults?.[0]?.updateTime) });
+  return {
+    ok: true,
+    partialAcademicManagement: true,
+    message: `${record.AssessmentComponentName} CBT test scheduled for ${record.RosterCount} student${record.RosterCount === 1 ? '' : 's'}${replacementCandidates.length ? '; the older stored paper was replaced' : ''}.`,
+    cbtTest: savedRecord,
+    supersededCbtTestIds: replacementCandidates.map((row) => row.CbtTestId)
+  };
+}
+
+export async function rescheduleAcademicCbtTest(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canCreateCbt', {
+    stateKeys: ['sessions', 'terms', 'cbtTests']
+  });
+  const record = findById(context.state.cbtTests, input.CbtTestId);
+  if (!record || lower(record.Status) === 'superseded') {
+    throw failure('The selected CBT test was not found.', 404, 'ACADEMIC_CBT_TEST_NOT_FOUND');
+  }
+  academicCbtAuthority(user, context, record);
+  const startsAt = new Date(clean(input.StartsAt));
+  if (!Number.isFinite(startsAt.getTime())) {
+    throw failure('Choose a valid new test date and start time.', 400, 'ACADEMIC_CBT_SCHEDULE_INVALID');
+  }
+  const durationMinutes = Number(record.ObjectiveDurationMinutes || record.DurationMinutes || 0);
+  const theoryDurationMinutes = record.PaperMode === 'split' ? Number(record.TheoryDurationMinutes || 0) : 0;
+  const endsAt = new Date(startsAt.getTime() + (durationMinutes + theoryDurationMinutes) * 60 * 1000);
+  if (!Number.isInteger(durationMinutes) || durationMinutes < 1
+    || (record.PaperMode === 'split' && (!Number.isInteger(theoryDurationMinutes) || theoryDurationMinutes < 1))
+    || endsAt.getTime() <= Date.now()) {
+    throw failure('The new test schedule must leave enough time for students to complete the test.', 400, 'ACADEMIC_CBT_SCHEDULE_ENDED');
+  }
+  const timestamp = nowIso();
+  const updated = {
+    ...record,
+    StartsAt: startsAt.toISOString(),
+    EndsAt: endsAt.toISOString(),
+    Status: 'Scheduled',
+    PackageRevision: Number(record.PackageRevision || 0) + 1,
+    ScheduleRevision: Number(record.ScheduleRevision || 0) + 1,
+    ScheduleUpdatedAt: timestamp,
+    ScheduleUpdatedBy: actorName(user),
+    UpdatedAt: timestamp,
+    UpdatedBy: actorName(user)
+  };
+  updated.PackageDigest = await academicCbtPackageDigest(updated);
+  const commit = await commitAcademicBatch(env, [
+    {
+      collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.cbtTests,
+      documentId: updated.CbtTestId,
+      data: withoutMetadata(updated),
+      ...writePrecondition(record, input.RevisionToken)
+    },
+    auditWrite(user, 'RESCHEDULE', 'cbtTests', updated,
+      `${clean(record.StartsAt)} -> ${updated.StartsAt}; completed local attempts preserved`)
+  ], 'The CBT schedule changed while it was being updated. Reload and try again.');
+  const savedRecord = publicRecord({ ...updated, __updateTime: clean(commit?.writeResults?.[0]?.updateTime) });
+  return {
+    ok: true,
+    partialAcademicManagement: true,
+    message: 'The CBT activation date and time were updated. Pull Online Tests on the desktop to apply the new schedule; submitted attempts will remain unchanged.',
+    CbtTest: savedRecord,
+    cbtTest: savedRecord
+  };
+}
+
+async function deleteAcademicCbtPapers(env, record = {}) {
+  const urls = [...new Set([
+    ...academicCbtPaperFiles(record), ...academicCbtPaperFiles(record, 'theory')
+  ].map((file) => file.Url).filter(Boolean))];
+  await Promise.all(urls.map((url) => deleteStoredDocument(env, url)));
+  return urls.length;
+}
+
+export async function saveAcademicProbationResit(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canManagePromotions');
+  const existing = findById(context.state.promotionDecisions, input.PromotionDecisionId);
+  if (!existing) throw failure('Choose a student promotion decision.', 404);
+  let resit;
+  try {
+    resit = buildAcademicProbationResit(existing, input);
+  } catch (error) {
+    throw failure(clean(error?.message || error), 409, 'ACADEMIC_PROBATION_RESIT_INVALID');
+  }
+  const timestamp = nowIso();
+  const priorResult = clean(existing.ProbationResitResult);
+  const decision = {
+    ...existing,
+    ...resit,
+    Status: 'Draft',
+    OverrideReason: resit.ProbationResitResult === 'Passed'
+      ? 'Promoted after passing the policy-authorized probation re-sit.'
+      : '',
+    ProbationResitUpdatedAt: timestamp,
+    ProbationResitUpdatedBy: actorName(user),
+    ProbationResitUpdatedByUsername: actorUsername(user),
+    ...(resit.ProbationResitStatus === 'Completed'
+      ? { ProbationResitRecordedAt: timestamp, ProbationResitRecordedBy: actorName(user) }
+      : { ProbationResitScheduledAt: timestamp, ProbationResitScheduledBy: actorName(user) }),
+    UpdatedAt: timestamp,
+    UpdatedBy: actorName(user)
+  };
+  const eventType = resit.ProbationResitStatus === 'Scheduled'
+    ? (clean(existing.ProbationResitStatus) ? 'PROBATION_RESIT_RESCHEDULED' : 'PROBATION_RESIT_SCHEDULED')
+    : `PROBATION_RESIT_${resit.ProbationResitResult.toUpperCase()}`;
+  const resultDetail = resit.ProbationResitStatus === 'Completed'
+    ? `${resit.ProbationResitScore}/${resit.ProbationResitMaximumScore} (${resit.ProbationResitPercentage}%); pass mark ${resit.ProbationResitPassPercentage}%; final outcome ${resit.FinalOutcome}.`
+    : `Scheduled for ${resit.ProbationResitDate}; final outcome remains Probation.`;
+  const details = `${resit.ProbationResitAssessment}${resit.ProbationResitSubjects ? `; ${resit.ProbationResitSubjects}` : ''}; ${resultDetail}`;
+  await commitAcademicBatch(env, [
+    {
+      collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.promotionDecisions,
+      documentId: decision.PromotionDecisionId,
+      data: withoutMetadata(decision),
+      ...writePrecondition(existing, input.RevisionToken)
+    },
+    academicOutcomeEventWrite(user, ACADEMIC_MANAGEMENT_COLLECTIONS.promotionEvents,
+      'PROMOTION', decision, eventType, details),
+    auditWrite(user, eventType, 'promotionDecision', decision,
+      `${details}${priorResult ? ` Previous result: ${priorResult}.` : ''}`)
+  ], 'This student promotion decision changed while the probation re-sit was being saved. Reload and try again.');
+  const message = resit.ProbationResitStatus === 'Scheduled'
+    ? `${decision.StudentRef} probation re-sit scheduled. The promotion decision remains Probation.`
+    : `${decision.StudentRef} probation re-sit recorded as ${resit.ProbationResitResult}. The final promotion outcome is now ${decision.FinalOutcome} and must follow the normal review and approval workflow.`;
+  return academicOperationalResponse(env, user, input, context.scope, message);
+}
+
+function withoutAcademicCbtCloudPapers(record = {}, details = {}) {
+  return {
+    ...record,
+    PaperFiles: [],
+    PaperUrl: '',
+    PaperFileName: '',
+    PaperMimeType: '',
+    PaperDigest: '',
+    PaperByteLength: 0,
+    TheoryPaperFiles: [],
+    TheoryPaperUrl: '',
+    TheoryPaperFileName: '',
+    TheoryPaperMimeType: '',
+    TheoryPaperDigest: '',
+    TheoryPaperByteLength: 0,
+    CloudPaperRemovedAt: clean(details.removedAt),
+    CloudPaperRemovedBy: clean(details.removedBy),
+    CloudPaperRemovalReason: clean(details.reason),
+    CloudPaperObjectCount: Number(details.objectCount || 0),
+    UpdatedAt: clean(details.removedAt),
+    UpdatedBy: clean(details.removedBy)
+  };
+}
+
+export async function deleteAcademicCbtTest(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canCreateCbt', {
+    stateKeys: ['sessions', 'terms', 'cbtTests']
+  });
+  const record = findById(context.state.cbtTests, input.CbtTestId);
+  if (!record) throw failure('The selected CBT test was not found.', 404, 'ACADEMIC_CBT_TEST_NOT_FOUND');
+  academicCbtAuthority(user, context, record);
+  if (clean(record.LocalDownloadedAt)) {
+    throw failure('This test has already reached a local CBT server and cannot be deleted online.', 409, 'ACADEMIC_CBT_ALREADY_DOWNLOADED');
+  }
+  const revisionToken = clean(input.RevisionToken);
+  if (!revisionToken) throw failure('Reload this CBT register before deleting the test.', 409);
+  const deletedObjectCount = await deleteAcademicCbtPapers(env, record);
+  await commitAcademicBatch(env, [
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.cbtTests, documentId: record.CbtTestId, operation: 'delete', updateTime: revisionToken },
+    auditWrite(user, 'DELETE', 'cbtTests', record, clean(input.Reason) || 'CBT test created in error.')
+  ], 'The CBT test changed while it was being deleted. Reload and try again.');
+  return {
+    ok: true,
+    partialAcademicManagement: true,
+    message: `The unused online CBT test and ${deletedObjectCount} stored paper file${deletedObjectCount === 1 ? '' : 's'} were permanently deleted.`,
+    deletedCbtTestId: record.CbtTestId
+  };
+}
+
+export async function removeAcademicCbtCloudPapers(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canCreateCbt', {
+    stateKeys: ['sessions', 'terms', 'cbtTests']
+  });
+  const record = findById(context.state.cbtTests, input.CbtTestId);
+  if (!record) throw failure('The selected CBT test was not found.', 404, 'ACADEMIC_CBT_TEST_NOT_FOUND');
+  academicCbtAuthority(user, context, record);
+  if (!clean(record.LocalDownloadedAt)) {
+    throw failure('This test has not reached the local CBT server. Delete the unused test instead.', 409, 'ACADEMIC_CBT_NOT_DOWNLOADED');
+  }
+  const revisionToken = clean(input.RevisionToken);
+  if (!revisionToken) throw failure('Reload this CBT register before removing the stored paper.', 409);
+  const urls = [...academicCbtPaperFiles(record), ...academicCbtPaperFiles(record, 'theory')]
+    .map((file) => clean(file.Url)).filter(Boolean);
+  if (!urls.length) {
+    return {
+      ok: true,
+      partialAcademicManagement: true,
+      message: 'The cloud copy of this CBT paper was already removed.',
+      cbtTest: publicRecord(record)
+    };
+  }
+  const removedAt = nowIso();
+  const removedBy = actorName(user);
+  const reason = clean(input.Reason) || 'Cloud paper removed after successful local synchronization.';
+  const deletedObjectCount = await deleteAcademicCbtPapers(env, record);
+  const updated = withoutAcademicCbtCloudPapers(record, {
+    removedAt, removedBy, reason, objectCount: deletedObjectCount
+  });
+  const commit = await commitAcademicBatch(env, [
+    {
+      collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.cbtTests,
+      documentId: record.CbtTestId,
+      data: withoutMetadata(updated),
+      updateTime: revisionToken
+    },
+    auditWrite(user, 'DELETE_CLOUD_PAPERS', 'cbtTests', updated,
+      `${deletedObjectCount} R2 paper file${deletedObjectCount === 1 ? '' : 's'} removed; ${reason}`)
+  ], 'The CBT test changed while its cloud paper was being removed. Reload and try again.');
+  return {
+    ok: true,
+    partialAcademicManagement: true,
+    message: `${deletedObjectCount} cloud paper file${deletedObjectCount === 1 ? '' : 's'} permanently removed from Cloudflare R2. The local test and its audit record were preserved.`,
+    cbtTest: publicRecord({ ...updated, __updateTime: clean(commit?.writeResults?.[0]?.updateTime) })
+  };
+}
+
+async function loadAcademicCbtPaperFile(env, metadata) {
+  const file = await getStoredDocument(env, metadata.Url);
+  const bytes = new Uint8Array(await file.object.arrayBuffer());
+  let binary = '';
+  for (let index = 0; index < bytes.length; index += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+  }
+  const fileBase64 = btoa(binary);
+  const stored = safeStoredDocument(file.fileName || metadata.FileName, fileBase64);
+  if (!stored.valid || !stored.inlineSafe || !['application/pdf', 'image/jpeg', 'image/png'].includes(stored.mimeType)) {
+    throw failure('The stored CBT paper failed its file validation.', 409, 'ACADEMIC_CBT_PAPER_INVALID');
+  }
+  if (await academicCbtPaperDigest(fileBase64) !== lower(metadata.Digest)) {
+    throw failure('The stored CBT paper no longer matches its scheduled package.', 409, 'ACADEMIC_CBT_PAPER_DIGEST_MISMATCH');
+  }
+  return { FileName: stored.fileName, MimeType: stored.mimeType, FileBase64: fileBase64, PageNumber: metadata.PageNumber };
+}
+
+async function loadAcademicCbtPapers(env, record, paperType = 'objective') {
+  const label = paperType === 'theory' ? 'Paper 2 Theory paper' : (record.PaperMode === 'split' ? 'Paper 1 Objective paper' : 'question paper');
+  const files = validateAcademicCbtPaperFiles(academicCbtPaperFiles(record, paperType), label);
+  return Promise.all(files.map((file) => loadAcademicCbtPaperFile(env, file)));
+}
+
+export async function downloadAcademicCbtTestPackage(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canCreateCbt', {
+    stateKeys: ['sessions', 'terms', 'cbtTests']
+  });
+  const record = findById(context.state.cbtTests, input.CbtTestId);
+  if (!record) throw failure('The selected CBT test was not found.', 404, 'ACADEMIC_CBT_TEST_NOT_FOUND');
+  academicCbtAuthority(user, context, record);
+  if (clean(record.CloudPaperRemovedAt)) {
+    throw failure(
+      'The cloud paper for this test was permanently removed after local synchronization. Restore the local CBT backup instead of downloading it again.',
+      410,
+      'ACADEMIC_CBT_CLOUD_PAPER_REMOVED'
+    );
+  }
+  const papers = await loadAcademicCbtPapers(env, record);
+  const theoryPapers = record.PaperMode === 'split' ? await loadAcademicCbtPapers(env, record, 'theory') : [];
+  return {
+    ok: true,
+    message: 'The scheduled CBT package is ready for local import.',
+    cbtPackage: {
+      ...publicRecord(record),
+      Paper: papers[0], Papers: papers,
+      TheoryPaper: theoryPapers[0] || null, TheoryPapers: theoryPapers
+    }
+  };
+}
+
+export async function acknowledgeAcademicCbtImport(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canCreateCbt', {
+    stateKeys: ['sessions', 'terms', 'cbtTests']
+  });
+  const record = findById(context.state.cbtTests, input.CbtTestId);
+  if (!record) throw failure('The selected CBT test was not found.', 404, 'ACADEMIC_CBT_TEST_NOT_FOUND');
+  academicCbtAuthority(user, context, record);
+  if (Number(input.PackageRevision) !== Number(record.PackageRevision)) {
+    throw failure('The online CBT package changed before the local import completed. Download it again.', 409, 'ACADEMIC_CBT_PACKAGE_CHANGED');
+  }
+  const updated = {
+    ...record,
+    LocalDownloadedAt: clean(record.LocalDownloadedAt) || nowIso(),
+    LocalDownloadedBy: clean(record.LocalDownloadedBy) || actorName(user),
+    LocalPackageDigest: clean(input.LocalPackageDigest),
+    LocalPackageRevision: Number(input.PackageRevision || record.PackageRevision || 0),
+    LocalScheduleSyncedAt: nowIso(),
+    UpdatedAt: nowIso(), UpdatedBy: actorName(user)
+  };
+  const commit = await commitAcademicBatch(env, [
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.cbtTests, documentId: record.CbtTestId, data: withoutMetadata(updated), ...writePrecondition(record, input.RevisionToken) },
+    auditWrite(user, 'DOWNLOAD', 'cbtTests', updated, 'Scheduled test imported into the desktop local CBT server.')
+  ], 'The CBT test changed before its local import could be acknowledged.');
+  return {
+    ok: true,
+    partialAcademicManagement: true,
+    message: 'The local CBT import was acknowledged online.',
+    cbtTest: publicRecord({ ...updated, __updateTime: clean(commit?.writeResults?.[0]?.updateTime) })
+  };
+}
+
+export async function prepareLocalCbtIdentityPackage(env, user = {}, input = {}) {
+  requireWritableSubscription(user);
+  const readiness = lower(input.ExamKind) === 'readiness';
+  let context;
+  if (readiness) {
+    const operational = await academicOperationalContext(env, user, input, 'canCreateCbt');
+    const { permissions, scope, state, session, term } = operational;
+    const schoolClass = assertReference(findById(state.classes, input.ClassId), 'Choose an active class.');
+    const arm = assertReference(findById(state.arms, input.ArmId), 'Choose an active classroom arm.');
+    const subject = assertReference(findById(state.subjects, input.SubjectId), 'Choose an active subject.');
+    if (subject.AssessmentCategory === 'TimetableOnly') {
+      throw failure('This subject is timetable-only and does not accept CBT marks.', 409, 'ACADEMIC_SUBJECT_NOT_ASSESSED');
+    }
+    if (arm.ClassId !== schoolClass.ClassId) throw failure('The selected arm does not belong to this class.');
+    if (schoolClass.SchoolSection !== scope.section || subject.SchoolSection !== scope.section) {
+      throw failure('The selected CBT roster belongs to another school section.', 403, 'ACADEMIC_SECTION_FORBIDDEN');
+    }
+    const candidate = {
+      SessionId: session.SessionId, TermId: term.TermId, ClassId: schoolClass.ClassId,
+      ArmId: arm.ArmId, SubjectId: subject.SubjectId, TeacherUsername: lower(input.TeacherUsername)
+    };
+    const allocation = assertAcademicScoreSheetAuthority(user, permissions, state, candidate);
+    const roster = academicScoreRoster(state, candidate);
+    if (!roster.length) throw failure('No students in this classroom are allocated to the selected subject.', 409, 'ACADEMIC_SCORE_ROSTER_EMPTY');
+    context = { ...operational, schoolClass, arm, subject, allocation, roster, scheme: { Components: [] } };
+  } else {
+    context = await academicCbtClassContext(env, user, input);
+  }
+  const { scope } = context;
+  const componentId = clean(input.AssessmentComponentId);
+  const component = readiness ? null : (context.scheme.Components || []).find((row) => row.Id === componentId);
+  if (!readiness && (!component || !['any', 'built-in-cbt'].includes(lower(component.SourceMode)))) {
+    throw failure('Choose an active test type that accepts built-in CBT scores.', 409, 'ACADEMIC_CBT_COMPONENT_REQUIRED');
+  }
+  const requested = Array.isArray(input.StudentRefs) ? input.StudentRefs.map(clean).filter(Boolean) : [];
+  const studentRefs = [...new Set(requested.map(lower))];
+  if (!studentRefs.length) throw failure('Add at least one student to the local CBT roster.');
+  if (studentRefs.length > 1000) throw failure('A local CBT identity package cannot exceed 1,000 students.', 413);
+  const permittedStudents = new Set((context.roster || []).map((row) => lower(row.StudentRef)));
+  const forbidden = studentRefs.filter((reference) => !permittedStudents.has(reference));
+  if (forbidden.length) {
+    throw failure('One or more requested students are not allocated to this teacher, classroom and subject.', 403, 'ACADEMIC_CBT_ROSTER_FORBIDDEN');
+  }
+  const wanted = new Set(studentRefs);
+  const credentialPath = studentLoginCredentialCollection({ BranchId: scope.branchId, SchoolSection: scope.section });
+  const templatePath = scopedCollectionPath('studentFaceTemplates', scope.branchId, scope.section);
+  const [allStudents, allCredentials, allTemplates] = await Promise.all([
+    listSchoolCollection(env, 'students', {
+      branchId: scope.branchId,
+      schoolSectionAccess: scope.section
+    }),
+    listCollection(env, credentialPath).catch(() => []),
+    listCollection(env, templatePath).catch(() => [])
+  ]);
+  const studentsByRef = new Map();
+  allStudents.forEach((student) => {
+    if (safeScopeId(student.BranchId || 'main') !== scope.branchId) return;
+    if (schoolSectionFor(student) !== scope.section) return;
+    const reference = studentReference(student);
+    if (!wanted.has(lower(reference)) || studentsByRef.has(lower(reference))) return;
+    studentsByRef.set(lower(reference), student);
+  });
+  const credentialsByRef = new Map(allCredentials.map((row) => [lower(row.StudentRef), row]));
+  const templatesByRef = new Map(allTemplates.map((row) => [lower(row.StudentRef), row]));
+
+  const identities = [];
+  const missing = [];
+  for (const normalizedReference of studentRefs) {
+    const student = studentsByRef.get(normalizedReference);
+    if (!student) {
+      missing.push({ StudentRef: requested.find((value) => lower(value) === normalizedReference) || normalizedReference, Reason: 'Student not found in this branch and school section.' });
+      continue;
+    }
+    const reference = studentReference(student);
+    const identity = {
+      StudentRef: reference,
+      DisplayName: clean(student.DisplayName || student.ApplicantName || student.StudentName) || reference,
+      Password: null,
+      Face: null
+    };
+    const credential = credentialsByRef.get(lower(reference));
+    if (credential && credential.Active !== false && clean(credential.PasswordHash)) {
+      identity.Password = {
+        Salt: clean(credential.Salt),
+        PasswordHash: clean(credential.PasswordHash),
+        PasswordIterations: Number(credential.PasswordIterations || 10000),
+        PasswordHashVersion: clean(credential.PasswordHashVersion)
+      };
+    }
+    const template = templatesByRef.get(lower(reference));
+    if (template && faceTemplateIsUsable(template) && clean(template.DescriptorCiphertext)) {
+      try {
+        identity.Face = {
+          Descriptor: await decryptFaceDescriptor(
+            template,
+            studentFaceTemplateEncryptionSecret(env, template),
+            studentFaceTemplateMeta(env, template)
+          ),
+          ModelId: clean(template.ModelId || STUDENT_FACE_MODEL_ID),
+          TemplateVersion: Number(template.TemplateVersion || 1),
+          TemplateExpiresAt: clean(template.TemplateExpiresAt)
+        };
+      } catch (_error) {
+        identity.Face = null;
+      }
+    }
+    if (!identity.Password && !identity.Face) {
+      missing.push({
+        StudentRef: reference,
+        DisplayName: identity.DisplayName,
+        Reason: 'Set a student password or enroll an active face template before using local CBT.'
+      });
+    }
+    identities.push(identity);
+  }
+
+  const aad = [
+    'dynamax-local-cbt-identity-v1',
+    clean(env.DYNAMAX_WORKSPACE_ID || env.FIREBASE_PROJECT_ID),
+    scope.branchId,
+    scope.section
+  ].join('|');
+  const envelope = await encryptLocalCbtIdentityPackage(input.PublicKeyPem, {
+    Version: 1,
+    WorkspaceId: clean(env.DYNAMAX_WORKSPACE_ID || env.FIREBASE_PROJECT_ID),
+    BranchId: scope.branchId,
+    SchoolSection: scope.section,
+    GeneratedAt: nowIso(),
+    FaceModelId: STUDENT_FACE_MODEL_ID,
+    Identities: identities
+  }, aad);
+  const readyCount = identities.filter((identity) => identity.Password || identity.Face).length;
+  return {
+    ok: true,
+    message: missing.length
+      ? `${readyCount} student login${readyCount === 1 ? '' : 's'} ready; ${missing.length} require a password or face enrollment.`
+      : `${identities.length} student login${identities.length === 1 ? '' : 's'} secured for offline CBT.`,
+    envelope,
+    summary: {
+      Requested: studentRefs.length,
+      Packaged: identities.length,
+      AssessmentComponentId: component?.Id || '',
+      AssessmentComponentName: component?.Name || '',
+      TeacherUsername: context.allocation.TeacherUsername,
+      PasswordReady: identities.filter((identity) => identity.Password).length,
+      FaceReady: identities.filter((identity) => identity.Face).length,
+      Missing: missing
+    }
+  };
+}
+
+export async function syncLocalCbtStudentPasswords(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canImportScores', {
+    stateKeys: ['sessions', 'terms', 'studentMemberships']
+  });
+  if (!context.permissions.canReviewScores) {
+    throw failure('Only an academic or examination reviewer may synchronize student password changes.', 403, 'ACADEMIC_CBT_PASSWORD_SYNC_REVIEWER_REQUIRED');
+  }
+  const updates = Array.isArray(input.PasswordUpdates) ? input.PasswordUpdates : [];
+  if (!updates.length) return { ok: true, message: 'No student password changes were waiting to synchronize.', synchronizedStudentRefs: [] };
+  if (updates.length > 400) throw failure('Synchronize at most 400 student password changes in one batch.', 413);
+  const allowed = new Set((context.state.studentMemberships || []).filter((row) => statusActive(row)
+    && row.SessionId === context.session.SessionId && row.TermId === context.term.TermId)
+    .map((row) => lower(row.StudentRef)));
+  const timestamp = nowIso();
+  const seen = new Set();
+  const normalized = updates.map((row) => {
+    const studentRef = clean(row.StudentRef);
+    const key = lower(studentRef);
+    const password = row.Password || {};
+    if (!studentRef || seen.has(key) || !allowed.has(key)) {
+      throw failure('A queued password change does not belong to a current student in this academic period.', 403, 'ACADEMIC_CBT_PASSWORD_STUDENT_FORBIDDEN');
+    }
+    seen.add(key);
+    if (lower(password.PasswordHashVersion) !== 'pbkdf2-sha256-v1'
+      || !/^[a-f0-9]{32}$/i.test(clean(password.Salt))
+      || !/^[a-f0-9]{64}$/i.test(clean(password.PasswordHash))
+      || Number(password.PasswordIterations) !== 10000) {
+      throw failure(`The queued password change for ${studentRef} has an invalid secure verifier.`, 400, 'ACADEMIC_CBT_PASSWORD_VERIFIER_INVALID');
+    }
+    return {
+      studentRef,
+      changedAt: clean(row.PasswordChangedAt) || timestamp,
+      password: {
+        Salt: lower(password.Salt), PasswordHash: lower(password.PasswordHash),
+        PasswordIterations: 10000, PasswordHashVersion: 'pbkdf2-sha256-v1'
+      }
+    };
+  });
+  const collectionPath = studentLoginCredentialCollection({
+    BranchId: context.scope.branchId, SchoolSection: context.scope.section
+  });
+  const documentIds = await Promise.all(normalized.map((row) => studentLoginCredentialId(row.studentRef)));
+  const writes = normalized.map((row, index) => ({
+    collectionPath,
+    documentId: documentIds[index],
+    data: {
+      StudentRef: row.studentRef,
+      BranchId: context.scope.branchId,
+      SchoolSection: context.scope.section,
+      ...row.password,
+      Active: true,
+      PasswordChangedAt: row.changedAt,
+      UpdatedAt: timestamp,
+      UpdatedBy: actorName(user),
+      CreatedAt: row.changedAt,
+      CreatedBy: actorName(user)
+    }
+  }));
+  writes.push(auditWrite(user, 'SYNC_LOCAL_CBT_PASSWORDS', 'studentCredentials', {
+    BranchId: context.scope.branchId, SchoolSection: context.scope.section,
+    SessionId: context.session.SessionId, TermId: context.term.TermId
+  }, `${normalized.length} student password verifier${normalized.length === 1 ? '' : 's'}`));
+  await commitAcademicBatch(env, writes, 'Student password changes could not be synchronized. Retry the same results push.');
+  return {
+    ok: true,
+    message: `${normalized.length} student password change${normalized.length === 1 ? '' : 's'} synchronized securely.`,
+    synchronizedStudentRefs: normalized.map((row) => row.studentRef)
+  };
+}
+
+export async function grantAcademicResultClearance(env, user = {}, input = {}) {
+  requireWritableSubscription(user);
+  requireCapability(user, 'canManageFinancialClearance');
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  const state = await loadScopedAcademicState(env, scope, [
+    'sessions', 'terms', 'classes', 'studentMemberships', 'resultClearances'
+  ]);
+  const scopedState = scopedAcademicState(state, scope);
+  const session = assertReference(findById(scopedState.sessions, input.SessionId), 'Choose a valid academic session.');
+  const term = assertReference(findById(scopedState.terms, input.TermId), 'Choose a valid academic term.');
+  if (term.SessionId !== session.SessionId) throw failure('The selected term does not belong to this academic session.');
+  const studentRef = clean(input.StudentRef);
+  const membership = scopedState.studentMemberships.find((row) => lower(row.StudentRef) === lower(studentRef)
+    && row.SessionId === session.SessionId && row.TermId === term.TermId);
+  if (!membership) throw failure('The selected student has no membership in this academic period.', 404, 'ACADEMIC_CLEARANCE_STUDENT_NOT_FOUND');
+  const policyView = await loadAcademicPolicyView(env, {
+    scope: academicPolicyScopeChain({ BranchId: scope.branchId, SectionId: scope.section, ClassId: membership.ClassId }).at(-1),
+    scopeChain: academicPolicyScopeChain({ BranchId: scope.branchId, SectionId: scope.section, ClassId: membership.ClassId }),
+    period: { SessionId: session.SessionId, TermId: term.TermId, Session: session.Name, Term: term.Name }
+  });
+  const financial = normalizeAcademicPolicy(policyView.ActivePolicy || {}).ResultAccess.FinancialClearance;
+  if (financial.Mode !== 'manual-clearance' && financial.AllowManualExemptions !== true) {
+    throw failure('The active financial policy does not permit manual result clearance for this class and period.', 409, 'ACADEMIC_CLEARANCE_POLICY_FORBIDDEN');
+  }
+  const reason = clean(input.Reason);
+  if (reason.length < 5) throw failure('Enter a clear finance reason of at least 5 characters.');
+  const requestedId = clean(input.ClearanceId || input.RecordId)
+    || academicId('clearance', scope.branchId, scope.section, session.SessionId, term.TermId, studentRef);
+  const existing = findById(scopedState.resultClearances, requestedId);
+  const record = normalizeAcademicResultClearance({
+    ...input, ClearanceId: requestedId, StudentRef: membership.StudentRef,
+    SessionId: session.SessionId, TermId: term.TermId,
+    AcademicSession: session.Name, Term: term.Name, Reason: reason, Status: 'Approved'
+  }, scope, existing);
+  if (record.ExpiryDate && record.ExpiryDate < nowIso().slice(0, 10)) {
+    throw failure('The clearance expiry date cannot be in the past.');
+  }
+  const timestamp = nowIso();
+  Object.assign(record, {
+    CreatedAt: clean(existing?.CreatedAt) || timestamp,
+    CreatedBy: clean(existing?.CreatedBy) || actorName(user),
+    ApprovedAt: timestamp,
+    ApprovedBy: actorName(user),
+    ApprovedByUsername: actorUsername(user),
+    UpdatedAt: timestamp,
+    UpdatedBy: actorName(user),
+    RevokedAt: '', RevokedBy: '', RevokedByUsername: '', RevocationReason: ''
+  });
+  await batchCommitDocuments(env, [
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.resultClearances, documentId: record.ClearanceId,
+      data: withoutMetadata(record), ...writePrecondition(existing, input.RevisionToken) },
+    auditWrite(user, existing ? 'REAPPROVE' : 'GRANT', 'result clearance', record,
+      `${record.StudentRef}; expires ${record.ExpiryDate || 'when revoked'}`)
+  ]);
+  const response = await bootstrapAcademicManagement(env, user, {
+    ...input, BranchId: scope.branchId, SchoolSection: scope.section,
+    SessionId: session.SessionId, TermId: term.TermId
+  });
+  return { ...response, message: `Result clearance approved for ${record.StudentRef}.` };
+}
+
+export async function revokeAcademicResultClearance(env, user = {}, input = {}) {
+  requireWritableSubscription(user);
+  requireCapability(user, 'canManageFinancialClearance');
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  const state = await loadScopedAcademicState(env, scope, ['resultClearances']);
+  const existing = scopedAcademicRows(state.resultClearances, scope).find((row) => recordId(row) === clean(input.ClearanceId));
+  if (!existing) throw failure('The selected result clearance was not found.', 404, 'ACADEMIC_CLEARANCE_NOT_FOUND');
+  if (lower(existing.Status) !== 'approved') throw failure('This result clearance is not currently active.', 409, 'ACADEMIC_CLEARANCE_NOT_ACTIVE');
+  const reason = clean(input.Reason);
+  if (reason.length < 5) throw failure('Enter a revocation reason of at least 5 characters.');
+  const timestamp = nowIso();
+  const record = {
+    ...existing, Status: 'Revoked', RevokedAt: timestamp,
+    RevokedBy: actorName(user), RevokedByUsername: actorUsername(user),
+    RevocationReason: reason.slice(0, 1000), UpdatedAt: timestamp, UpdatedBy: actorName(user)
+  };
+  await batchCommitDocuments(env, [
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.resultClearances, documentId: record.ClearanceId,
+      data: withoutMetadata(record), ...writePrecondition(existing, input.RevisionToken) },
+    auditWrite(user, 'REVOKE', 'result clearance', record, `${record.StudentRef}; ${reason}`)
+  ]);
+  const response = await bootstrapAcademicManagement(env, user, {
+    ...input, BranchId: scope.branchId, SchoolSection: scope.section,
+    SessionId: existing.SessionId, TermId: existing.TermId
+  });
+  return { ...response, message: `Result clearance revoked for ${record.StudentRef}.` };
+}
+
+export async function handleAcademicManagementAction(env, user = {}, input = {}) {
+  const action = lower(input.action || input.Action).replace(/[^a-z]/g, '');
+  if (['bootstrap', 'list', 'getacademicmanagement'].includes(action)) return bootstrapAcademicManagement(env, user, input);
+  if (['save', 'saverecord', 'saveacademicsession', 'saveacademicterm', 'saveacademicclass', 'saveacademicarmtemplate', 'saveacademicarm', 'saveacademicsubject', 'saveacademicdepartment', 'saveacademicoffering', 'saveacademicteacherallocation', 'saveacademicstudentmembership'].includes(action)) {
+    const inferredType = ({
+      saveacademicsession: 'session', saveacademicterm: 'term', saveacademicclass: 'class', saveacademicarm: 'arm',
+      saveacademicarmtemplate: 'armTemplate',
+      saveacademicsubject: 'subject', saveacademicdepartment: 'department', saveacademicoffering: 'offering', saveacademicteacherallocation: 'teacherAllocation',
+      saveacademicstudentmembership: 'studentMembership'
+    })[action];
+    return saveAcademicManagementRecord(env, user, { ...input, RecordType: input.RecordType || inferredType });
+  }
+  if (['bulkcreateacademicclasses', 'bulkcreateclasses'].includes(action)) return bulkCreateAcademicClasses(env, user, input);
+  if (['bulkcreateacademicarmtemplates', 'bulkcreatearmtemplates'].includes(action)) return bulkCreateAcademicArmTemplates(env, user, input);
+  if (['bulkapplyacademicarmtemplates', 'bulkapplyarmtemplates'].includes(action)) return bulkApplyAcademicArmTemplates(env, user, input);
+  if (['bulkassignacademicclassroomdepartments', 'bulkassignclassroomdepartments'].includes(action)) return bulkAssignAcademicClassroomDepartments(env, user, input);
+  if (['bulkcreateacademicsubjects', 'bulkcreatesubjects'].includes(action)) return bulkCreateAcademicSubjects(env, user, input);
+  if (['configureacademicseniorchoicesubjects', 'configureseniorchoicesubjects'].includes(action)) return configureAcademicSeniorChoiceSubjects(env, user, input);
+  if (['bulkapplyacademicsubjects', 'bulkapplysubjects'].includes(action)) return bulkApplyAcademicSubjects(env, user, input);
+  if (['bulkassignacademicclassteachers', 'bulkassignclassteachers'].includes(action)) return bulkAssignAcademicClassTeachers(env, user, input);
+  if (['bulkassignacademicsubjectteacher', 'bulkassignsubjectteacher'].includes(action)) return bulkAssignAcademicSubjectTeacher(env, user, input);
+  if (['updateacademicsubjectteacherallocation', 'updatesubjectteacherallocation'].includes(action)) return updateAcademicSubjectTeacherAllocation(env, user, input);
+  if (['bulkallocateacademicstudents', 'bulkallocatestudents'].includes(action)) return bulkAllocateAcademicStudents(env, user, input);
+  if (['bulkimportacademicstudentmemberships', 'importacademicstudentmemberships'].includes(action)) return bulkImportAcademicStudentMemberships(env, user, input);
+  if (['bulkassignacademicarmstudentsubjects', 'bulkassignarmstudentsubjects'].includes(action)) return bulkAssignAcademicArmStudentSubjects(env, user, input);
+  if (action === 'reviewacademicsubjectchange') return reviewAcademicSubjectChange(env, user, input);
+  if (['saveacademictimetablesettings', 'savetimetablesettings'].includes(action)) return saveAcademicTimetableSettings(env, user, input);
+  if (['saveacademicschoolcalendar', 'saveschoolcalendar'].includes(action)) return saveAcademicSchoolCalendar(env, user, input);
+  if (['saveacademictimetableconstraint', 'savetimetableconstraint'].includes(action)) return saveAcademicTimetableConstraint(env, user, input);
+  if (['deleteacademictimetableconstraint', 'deletetimetableconstraint'].includes(action)) return deleteAcademicTimetableConstraint(env, user, input);
+  if (['createacademictimetableversion', 'createtimetableversion'].includes(action)) return createAcademicTimetableVersion(env, user, input);
+  if (action === 'saveacademictimetablegenerationrules') return saveAcademicTimetableGenerationRules(env, user, input);
+  if (action === 'previewacademictimetablegeneration') return previewAcademicTimetableGeneration(env, user, input);
+  if (action === 'saveacademictimetablegeneration') return saveAcademicTimetableGeneration(env, user, input);
+  if (['updateacademictimetableversion', 'updatetimetableversion'].includes(action)) return updateAcademicTimetableVersion(env, user, input);
+  if (['deleteacademictimetableversion', 'deletetimetableversion'].includes(action)) return deleteAcademicTimetableVersion(env, user, input);
+  if (['copyacademictimetableversion', 'copytimetableversion'].includes(action)) return copyAcademicTimetableVersion(env, user, input);
+  if (['previewacademictimetablecopy', 'previewtimetablecopy'].includes(action)) return previewAcademicTimetableCopy(env, user, input);
+  if (['copyacademictimetableselection', 'copytimetableselection'].includes(action)) return copyAcademicTimetableSelection(env, user, input);
+  if (['saveacademictimetableentry', 'savetimetableentry'].includes(action)) return saveAcademicTimetableEntry(env, user, input);
+  if (action === 'bulksaveacademictimetableentries') return bulkSaveAcademicTimetableEntries(env, user, input);
+  if (['deleteacademictimetableentry', 'deletetimetableentry'].includes(action)) return deleteAcademicTimetableEntry(env, user, input);
+  if (['saveacademictimetablesubstitution', 'savetimetablesubstitution'].includes(action)) return saveAcademicTimetableSubstitution(env, user, input);
+  if (['cancelacademictimetablesubstitution', 'canceltimetablesubstitution'].includes(action)) return cancelAcademicTimetableSubstitution(env, user, input);
+  if (['changeacademictimetableversionstatus', 'changetimetableversionstatus'].includes(action)) return changeAcademicTimetableVersionStatus(env, user, input);
+  if (['saveacademicstudentattendance', 'saveacademicattendance'].includes(action)) return saveAcademicStudentAttendance(env, user, input);
+  if (['decideacademicattendancecorrection', 'decideattendancecorrection'].includes(action)) return decideAcademicAttendanceCorrection(env, user, input);
+  if (['saveacademicscoredraft', 'saveacademicstudentscores'].includes(action)) return saveAcademicScoreDraft(env, user, input);
+  if (['getacademicscorebookcontext', 'openscorebook'].includes(action)) return getAcademicScorebookContext(env, user, input);
+  if (['applyactiveacademicscorelayout', 'applyactivescorelayout'].includes(action)) return applyActiveAcademicScoreLayout(env, user, input);
+  if (['reactivateacademicscoreediting', 'reactivatescoreediting'].includes(action)) return reactivateAcademicScoreEditing(env, user, input);
+  if (['changeacademicscoresheetstatus', 'changescoresheetstatus'].includes(action)) return changeAcademicScoreSheetStatus(env, user, input);
+  if (['previewacademicscoreimport', 'previewscoresheetimport'].includes(action)) return previewAcademicScoreImport(env, user, input);
+  if (['importacademicscores', 'commitscoreimport'].includes(action)) return importAcademicScores(env, user, input);
+  if (['rollbackacademicscoreimport', 'rollbackscoreimport'].includes(action)) return rollbackAcademicScoreImport(env, user, input);
+  if (['syncacademiccbtscores', 'synccbtresults'].includes(action)) return syncAcademicCbtScores(env, user, input);
+  if (['synclocalcbtstudentpasswords', 'synccbtstudentpasswords'].includes(action)) return syncLocalCbtStudentPasswords(env, user, input);
+  if (['calculateacademictermresults', 'calculatetermresults'].includes(action)) return calculateAcademicTermResults(env, user, input);
+  if (['calculateacademicmidtermresults', 'calculatemidtermresults'].includes(action)) return calculateAcademicMidTermResults(env, user, input);
+  if (['previewacademictermresultwithdrawal', 'previewtermresultwithdrawal'].includes(action)) return previewAcademicTermResultWithdrawal(env, user, input);
+  if (['changeacademictermresultstatus', 'changetermresultstatus'].includes(action)) return changeAcademicTermResultStatus(env, user, input);
+  if (['saveacademictermresultremarks', 'savetermresultremarks'].includes(action)) return saveAcademicTermResultRemarks(env, user, input);
+  if (['calculateacademiccumulativeresults', 'calculatecumulativeresults'].includes(action)) return calculateAcademicCumulativeResults(env, user, input);
+  if (['changeacademiccumulativestatus', 'changecumulativeresultstatus'].includes(action)) return changeAcademicCumulativeStatus(env, user, input);
+  if (['saveacademiccumulativeresultremarks', 'savecumulativeresultremarks'].includes(action)) return saveAcademicCumulativeResultRemarks(env, user, input);
+  if (['calculateacademicpromotiondecisions', 'calculatepromotions'].includes(action)) return calculateAcademicPromotionDecisions(env, user, input);
+  if (['saveacademicpromotionoutcome', 'savepromotionoutcome'].includes(action)) return saveAcademicPromotionOutcome(env, user, input);
+  if (['saveacademicprobationresit', 'saveprobationresit'].includes(action)) return saveAcademicProbationResit(env, user, input);
+  if (['changeacademicpromotionstatus', 'changepromotionstatus'].includes(action)) return changeAcademicPromotionStatus(env, user, input);
+  if (['createacademictranscriptdraft', 'createtranscript'].includes(action)) return createAcademicTranscriptDraft(env, user, input);
+  if (['changeacademictranscriptstatus', 'changetranscriptstatus'].includes(action)) return changeAcademicTranscriptStatus(env, user, input);
+  if (['rescheduleacademiccbttest', 'reschedulecbttest'].includes(action)) return rescheduleAcademicCbtTest(env, user, input);
+  if (['deleteacademiccbttest', 'deletecbttest'].includes(action)) return deleteAcademicCbtTest(env, user, input);
+  if (['removeacademiccbtcloudpapers', 'removecbtcloudpapers'].includes(action)) return removeAcademicCbtCloudPapers(env, user, input);
+  if (['downloadacademiccbttestpackage', 'downloadcbttestpackage'].includes(action)) return downloadAcademicCbtTestPackage(env, user, input);
+  if (['acknowledgeacademiccbtimport', 'acknowledgecbtimport'].includes(action)) return acknowledgeAcademicCbtImport(env, user, input);
+  if (['preparelocalcbtidentitypackage', 'preparecbtidentitypackage'].includes(action)) return prepareLocalCbtIdentityPackage(env, user, input);
+  if (['grantacademicresultclearance', 'grantresultclearance'].includes(action)) return grantAcademicResultClearance(env, user, input);
+  if (['revokeacademicresultclearance', 'revokeresultclearance'].includes(action)) return revokeAcademicResultClearance(env, user, input);
+  if (['manageacademicstudentmembership', 'moveacademicstudentmembership', 'withdrawacademicstudentmembership', 'reinstateacademicstudentmembership'].includes(action)) {
+    const inferredOperation = ({
+      withdrawacademicstudentmembership: 'withdraw',
+      reinstateacademicstudentmembership: 'reinstate',
+      moveacademicstudentmembership: 'transfer'
+    })[action];
+    return manageAcademicStudentMembership(env, user, { ...input, Operation: input.Operation || inferredOperation });
+  }
+  if (['archive', 'archiverecord', 'archiveacademicrecord'].includes(action)) return archiveAcademicManagementRecord(env, user, input);
+  if (['delete', 'deleterecord', 'deleteacademicrecord'].includes(action)) return deleteAcademicManagementRecord(env, user, input);
+  throw failure('Choose a valid Academic Management action.');
+}

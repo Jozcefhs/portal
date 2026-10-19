@@ -1,0 +1,29 @@
+✔ authorised CBT correction is atomic, audited, relocked and protected against later uploads (34.7302ms)
+✔ a stale correction request cannot change either score or audit history (10.7516ms)
+✔ 200 corrected students retain complete audit evidence in one bounded atomic commit (212.1582ms)
+✔ ICT can prepare and commit its own signed upload without a separate reviewer (8.359ms)
+✔ independent servers merge different students into one scorebook without absence or centre assignments (13.2968ms)
+✔ a second attempt is rejected per student while the other student posts, with duplicate-safe receipts (35.4294ms)
+✔ concurrent centres reprepare against the latest sheet and never lose other results (12.7285ms)
+✔ same-student concurrent preparations conflict on retry rather than overwrite (11.6569ms)
+✔ genuine same-attempt marking corrections retain existing approval and cell-lock requirements (13.539ms)
+✔ server signature, reviewer permission, scope, roster and prepared membership checks still apply (10.3198ms)
+✔ an existing batch ID cannot be reused by a different signing server (8.4525ms)
+✔ a concurrent batch-ID collision from another signer is not mistaken for a successful retry (9.6729ms)
+✔ legacy provenance permits original-server compatibility but protects existing manual or other-server results (0.3836ms)
+✔ split-paper provenance protects only the objective cell and preserves other component sources (0.1153ms)
+✔ CA1, split CA2, CA3 and exam show weighted marks, with unchanged total and grade (2.4417ms)
+✔ exempt components and split parts use the same adjusted denominator as the saved total (0.3385ms)
+✔ absent is zero; missing, unknown legacy metadata and inconsistent snapshots never invent marks (0.575ms)
+✔ mid-term saved scaled weights and custom names are honoured without applying current policy weights (1.5192ms)
+✔ only server-authorised recorded CBT corrections bypass source-mode restrictions (1.5515ms)
+✔ split objective CBT corrections retain theory marks and external CBT corrections are audited too (0.2859ms)
+✔ parent screen and print rows include weighted marks and escape labels (6.7739ms)
+ℹ tests 21
+ℹ suites 0
+ℹ pass 21
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 593.3049
