@@ -914,6 +914,7 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
   'syncAcademicCbtScores', 'syncLocalCbtStudentPasswords',
   'rescheduleAcademicCbtTest', 'downloadAcademicCbtTestPackage', 'acknowledgeAcademicCbtImport',
   'previewAcademicCbtRoster', 'refreshAcademicCbtRoster',
+  'previewAcademicCbtLateEntry', 'createAcademicCbtLateEntry',
   'calculateAcademicTermResults', 'calculateAcademicMidTermResults', 'previewAcademicTermResultWithdrawal',
   'changeAcademicTermResultStatus', 'saveAcademicTermResultRemarks',
   'calculateAcademicCumulativeResults', 'changeAcademicCumulativeStatus', 'saveAcademicCumulativeResultRemarks',
@@ -983,6 +984,7 @@ const BRANCH_BOUND_DEVICE_ACTIONS = new Set([
   'importAcademicScores', 'rollbackAcademicScoreImport', 'syncAcademicCbtScores',
   'syncLocalCbtStudentPasswords', 'rescheduleAcademicCbtTest', 'downloadAcademicCbtTestPackage',
   'previewAcademicCbtRoster', 'refreshAcademicCbtRoster',
+  'previewAcademicCbtLateEntry', 'createAcademicCbtLateEntry',
   'acknowledgeAcademicCbtImport', 'prepareLocalCbtIdentityPackage',
   'calculateAcademicTermResults', 'calculateAcademicMidTermResults', 'previewAcademicTermResultWithdrawal',
   'changeAcademicTermResultStatus', 'saveAcademicTermResultRemarks',
@@ -11653,6 +11655,8 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     case 'rescheduleAcademicCbtTest':
     case 'previewAcademicCbtRoster':
     case 'refreshAcademicCbtRoster':
+    case 'previewAcademicCbtLateEntry':
+    case 'createAcademicCbtLateEntry':
     case 'downloadAcademicCbtTestPackage':
     case 'acknowledgeAcademicCbtImport':
     case 'prepareLocalCbtIdentityPackage':

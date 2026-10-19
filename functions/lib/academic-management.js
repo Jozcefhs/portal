@@ -1,5 +1,8 @@
 import { batchCommitDocuments, getDocument, getDocuments, listCollection, queryCollection } from './firestore.js';
 import { commitAcademicCbtRoster } from './academic-cbt-roster-commit.js';
+import { academicCbtLateEntryPlan, academicCbtLateEntryRecord, sameCbtAssessmentPeriod } from './academic-cbt-late-entry.js';
+import { commitAcademicCbtLateEntry } from './academic-cbt-late-entry-commit.js';
+import { copyAcademicCbtLateEntryPapers } from './academic-cbt-late-entry-papers.js';
 import { academicCbtScoreSources } from './academic-cbt-multiserver.js';
 import { academicResultWithWeightedComponents } from './academic-result-marks.js';
 import { buildAcademicClassScoreRegister } from './academic-class-score-register.js';
@@ -7049,12 +7052,14 @@ export async function validateAcademicCbtTestInput(env, user = {}, input = {}) {
   if (requestedId && !existing) throw failure('The selected CBT test was not found.', 404, 'ACADEMIC_CBT_TEST_NOT_FOUND');
   if (existing) {
     academicCbtAuthority(user, context, existing);
+    if (existing.LateEntryParentId) throw failure('A late-entry sitting keeps the original paper and reviewed students. Reschedule it instead of editing its package.', 409);
     if (clean(existing.LocalDownloadedAt || existing.LocalPackageIssuedAt)) {
       throw failure('This test has already been downloaded to a local CBT server. Create a corrected test instead of changing its package.', 409, 'ACADEMIC_CBT_ALREADY_DOWNLOADED');
     }
   }
   const replacementCandidates = (context.state.cbtTests || []).filter((row) => (
     recordId(row) !== recordId(existing || {})
+    && !row.LateEntryParentId
     && lower(row.Status) !== 'superseded'
     && clean(row.ClassId) === clean(context.schoolClass.ClassId)
     && clean(row.SubjectId) === clean(context.subject.SubjectId)
@@ -7232,7 +7237,7 @@ export async function saveAcademicCbtTest(env, user = {}, input = {}, options = 
 }
 
 export function academicCbtRosterRefreshPlan(record = {}, roster = [], timestamp = Date.now()) {
-  if (lower(record.Status) !== 'scheduled' || clean(record.LocalDownloadedAt || record.LocalPackageIssuedAt)
+  if (record.LateEntryParentId || lower(record.Status) !== 'scheduled' || clean(record.LocalDownloadedAt || record.LocalPackageIssuedAt)
     || !Number.isFinite(Date.parse(record.StartsAt)) || Date.parse(record.StartsAt) <= timestamp) {
     throw failure('Only scheduled tests that have not started or been downloaded can refresh their student list. Existing local tests and attempts are preserved.', 409, 'ACADEMIC_CBT_ROSTER_LOCKED');
   }
@@ -7290,6 +7295,69 @@ export async function refreshAcademicCbtRoster(env, user = {}, input = {}, post 
   return { ok:true, partialAcademicManagement:true,
     cbtTest:publicRecord({...updated,__updateTime:clean(result?.writeResults?.[0]?.updateTime)}),
     message:`Student list refreshed: ${plan.RosterCount} eligible students. Papers, schedule and attempts were not changed.` };
+}
+
+export async function createAcademicCbtLateEntry(env, user = {}, input = {}, post = false) {
+  const context = await academicOperationalContext(env,user,input,'canCreateCbt',{stateKeys:ACADEMIC_CBT_STATE_KEYS});
+  for (const key of ['studentMemberships','cbtTests']) {
+    context.state[key] = context.state[key].map(row=>({...row,SchoolSection:effectiveAcademicSection(row,context.scope)}));
+  }
+  const source = findById(context.state.cbtTests,input.CbtTestId);
+  if (!source || source.SessionId !== context.session.SessionId || source.TermId !== context.term.TermId) {
+    throw failure('The original test was not found in this academic period.',404,'ACADEMIC_CBT_TEST_NOT_FOUND');
+  }
+  academicCbtAuthority(user,context,source);
+  const token = clean(input.PreviewToken);
+  // The full digest fits the storage owner's 96-character path segment limit.
+  const id = /^[a-f0-9]{64}$/.test(token) ? academicId('cbt-late',token) : '';
+  const existing = id && findById(context.state.cbtTests,id);
+  if (post && existing?.LateEntryParentId === source.CbtTestId && existing.LateEntryPreviewToken === token) {
+    return {ok:true,partialAcademicManagement:true,cbtTest:publicRecord(existing),message:'This reviewed late-entry sitting already exists. No student or test was duplicated.'};
+  }
+  const {roster} = await academicCbtClassContext(env,user,{ClassId:source.ClassId,SubjectId:source.SubjectId,
+    TeacherUsername:source.TeacherUsername},context);
+  const scoreHistory = await queryCollection(env,ACADEMIC_MANAGEMENT_COLLECTIONS.studentScores,{
+    filters:[{field:'SubjectId',op:'==',value:source.SubjectId}],limit:10001
+  });
+  if (scoreHistory.length >= 10001) throw failure('This subject history needs a scoped archive review before scheduling late entry. No partial eligibility list was used.',409,'ACADEMIC_CBT_LATE_ENTRY_HISTORY_LIMIT');
+  context.state.studentScores = scoreHistory.map(row=>({...row,SchoolSection:effectiveAcademicSection(row,context.scope)}))
+    .filter(row=>sameCbtAssessmentPeriod(row,source));
+  const activeMemberships = context.state.studentMemberships.filter(row=>statusActive(row)
+    && row.SessionId === source.SessionId && row.TermId === source.TermId && row.SchoolSection === source.SchoolSection);
+  const plan = academicCbtLateEntryPlan(source,roster,context.state.cbtTests,context.state.studentScores,input,Date.now(),activeMemberships);
+  const evidence = [source.CbtTestId,source.__updateTime,plan,...['studentMemberships','cbtTests','studentScores'].map(key=>
+    (context.state[key] || []).map(row=>[recordId(row),row.__updateTime]).sort((a,b)=>String(a[0]).localeCompare(String(b[0]))))];
+  const digest = await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(evidence)));
+  const PreviewToken = [...new Uint8Array(digest)].map(v=>v.toString(16).padStart(2,'0')).join('');
+  const review = {...plan,PreviewToken,RevisionToken:source.__updateTime,OriginalTestId:source.CbtTestId,
+    OriginalTitle:source.Title,Rule:'Only new eligible students. Previous candidates and recorded scores are excluded. Offline starts are allowed; the first accepted online score is preserved.'};
+  if (!post) return {ok:true,lateEntryReview:review,message:'Late-entry candidates reviewed. Nothing has changed.'};
+  if (!id || token !== PreviewToken || clean(input.RevisionToken) !== clean(source.__updateTime)) {
+    throw failure('The review changed. Review the candidates and schedule again.',409,'ACADEMIC_CBT_LATE_ENTRY_CHANGED');
+  }
+  if (!plan.StudentRefs.length) throw failure('There are no selected eligible newcomers for this sitting.',409,'ACADEMIC_CBT_LATE_ENTRY_EMPTY');
+  const record = {...academicCbtLateEntryRecord(source,plan,id,actorName(user),nowIso()),LateEntryPreviewToken:token,
+    ...await copyAcademicCbtLateEntryPapers(env,source,id)};
+  record.PackageDigest = await academicCbtPackageDigest(record);
+  const audit = auditWrite(user,'CREATE_LATE_ENTRY','cbtTests',record,`${plan.StudentRefs.length} reviewed newcomers; original test ${source.CbtTestId}; existing attempts and scores preserved`);
+  audit.data.StudentRefs = plan.StudentRefs;
+  let commit;
+  try {
+    commit = await commitAcademicCbtLateEntry(env,[
+      {collectionPath:ACADEMIC_MANAGEMENT_COLLECTIONS.cbtTests,documentId:id,data:withoutMetadata(record),exists:false},audit
+    ],source,context.state,plan.StartsAt,{legacySection:effectiveAcademicSection({},context.scope)});
+  } catch(error) {
+    if (Number(error?.status || 500) < 500 && !error?.outcomeUncertain) throw error;
+    const persisted = await getDocument(env,ACADEMIC_MANAGEMENT_COLLECTIONS.cbtTests,id).catch(()=>null);
+    if (persisted?.LateEntryParentId === source.CbtTestId && persisted.LateEntryPreviewToken === token) {
+      commit = {writeResults:[{updateTime:persisted.__updateTime}]};
+    } else {
+      throw Object.assign(new Error('The late-entry save outcome could not be confirmed. Reload the test register before retrying; paper copies were retained and existing tests were not changed.'),
+        {status:503,code:'ACADEMIC_CBT_LATE_ENTRY_SAVE_UNCERTAIN',outcomeUncertain:true});
+    }
+  }
+  return {ok:true,partialAcademicManagement:true,cbtTest:publicRecord({...record,__updateTime:clean(commit?.writeResults?.[0]?.updateTime)}),
+    message:`Late-entry sitting scheduled for ${plan.StudentRefs.length} new student(s). Pull this date on every CBT server. The original sitting, answers and scores are unchanged.`};
 }
 
 export async function rescheduleAcademicCbtTest(env, user = {}, input = {}) {
@@ -8034,6 +8102,8 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
   if (['rescheduleacademiccbttest', 'reschedulecbttest'].includes(action)) return rescheduleAcademicCbtTest(env, user, input);
   if (action === 'previewacademiccbtroster') return refreshAcademicCbtRoster(env, user, input, false);
   if (action === 'refreshacademiccbtroster') return refreshAcademicCbtRoster(env, user, input, true);
+  if (action === 'previewacademiccbtlateentry') return createAcademicCbtLateEntry(env, user, input, false);
+  if (action === 'createacademiccbtlateentry') return createAcademicCbtLateEntry(env, user, input, true);
   if (['deleteacademiccbttest', 'deletecbttest'].includes(action)) return deleteAcademicCbtTest(env, user, input);
   if (['removeacademiccbtcloudpapers', 'removecbtcloudpapers'].includes(action)) return removeAcademicCbtCloudPapers(env, user, input);
   if (['downloadacademiccbttestpackage', 'downloadcbttestpackage'].includes(action)) return downloadAcademicCbtTestPackage(env, user, input);

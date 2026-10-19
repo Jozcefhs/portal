@@ -16237,15 +16237,15 @@ function academicCbtWorkspace(data, rows) {
   const editor = `<form class="academic-management-editor academic-management-editor-wide academic-cbt-editor" data-academic-cbt-editor>${stepOne}${stepTwo}</form>`;
   const register = table('Scheduled CBT Tests', rows.cbtTests, [
     { label: 'Date and time', value: (row) => DynamaxTime.formatDateTime(row.StartsAt) },
-    { label: 'Test Type', value: (row) => `${row.AssessmentComponentName} / ${row.MaximumScore}${row.PaperMode === 'split' ? ' · A/B' : ''}` },
+    { label: 'Test Type', value: (row) => `${row.AssessmentComponentName} / ${row.MaximumScore}${row.PaperMode === 'split' ? ' · A/B' : ''}${row.LateEntryParentId ? ' · Late entry' : ''}` },
     { label: 'Class', value: (row) => academicLabel(rows.classes, row.ClassId) },
     { label: 'Subject', value: (row) => academicLabel(rows.subjects, row.SubjectId, row.SubjectName) },
     { label: 'Questions', value: (row) => row.NumberOfQuestions },
     { label: 'Saved student list', value: (row) => row.RosterCount },
     { label: 'Status', render: (row) => { const status = academicCbtStatus(row); return `<span class="academic-cbt-status academic-cbt-status-${status.className}">${escapeHtml(status.label)}</span>`; } },
-    { label: 'Actions', render: (row) => `<div class="academic-management-row-actions">${!clean(row.LocalDownloadedAt || row.LocalPackageIssuedAt) && row.Status === 'Scheduled' && Date.parse(row.StartsAt) > Date.now() ? `<button type="button" data-academic-cbt-refresh-roster="${escapeHtml(row.CbtTestId)}">Refresh student list</button>` : ''}<button type="button" class="compact-icon-action compact-edit-action" data-academic-cbt-reschedule="${escapeHtml(row.CbtTestId)}" title="Reschedule date and time" aria-label="Reschedule date and time"><span aria-hidden="true">&#128197;</span></button>${clean(row.LocalDownloadedAt || row.LocalPackageIssuedAt)
+    { label: 'Actions', render: (row) => `<div class="academic-management-row-actions">${!row.LateEntryParentId && academicCbtHasCloudPapers(row) && row.Status === 'Scheduled' && (clean(row.LocalDownloadedAt || row.LocalPackageIssuedAt) || Date.parse(row.StartsAt) <= Date.now()) ? `<button type="button" data-academic-cbt-late-entry="${escapeHtml(row.CbtTestId)}">Add late-entry students</button>` : ''}${!row.LateEntryParentId && !clean(row.LocalDownloadedAt || row.LocalPackageIssuedAt) && row.Status === 'Scheduled' && Date.parse(row.StartsAt) > Date.now() ? `<button type="button" data-academic-cbt-refresh-roster="${escapeHtml(row.CbtTestId)}">Refresh student list</button>` : ''}<button type="button" class="compact-icon-action compact-edit-action" data-academic-cbt-reschedule="${escapeHtml(row.CbtTestId)}" title="Reschedule date and time" aria-label="Reschedule date and time"><span aria-hidden="true">&#128197;</span></button>${clean(row.LocalDownloadedAt || row.LocalPackageIssuedAt)
       ? (clean(row.LocalDownloadedAt) && academicCbtHasCloudPapers(row) ? `<button type="button" class="compact-icon-action academic-archive-action" data-academic-cbt-remove-cloud-paper="${escapeHtml(row.CbtTestId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="Remove paper files from Cloudflare R2" aria-label="Remove paper files from Cloudflare R2"><span aria-hidden="true">&#128465;</span></button>` : '')
-      : `<button type="button" class="compact-icon-action compact-edit-action" data-academic-cbt-edit="${escapeHtml(row.CbtTestId)}" title="Edit test package" aria-label="Edit test package"><span aria-hidden="true">&#9998;</span></button><button type="button" class="compact-icon-action academic-archive-action" data-academic-cbt-delete="${escapeHtml(row.CbtTestId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="Delete test" aria-label="Delete test"><span aria-hidden="true">&#128465;</span></button>`}</div>` }
+      : `${!row.LateEntryParentId ? `<button type="button" class="compact-icon-action compact-edit-action" data-academic-cbt-edit="${escapeHtml(row.CbtTestId)}" title="Edit test package" aria-label="Edit test package"><span aria-hidden="true">&#9998;</span></button>` : ''}<button type="button" class="compact-icon-action academic-archive-action" data-academic-cbt-delete="${escapeHtml(row.CbtTestId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="Delete test" aria-label="Delete test"><span aria-hidden="true">&#128465;</span></button>`}</div>` }
   ], { emptyMessage: 'No online CBT tests have been scheduled for this period.',
     searchable: true, searchLabel: 'tests', searchPlaceholder: 'Subject, class, test type or date',
     searchValue: (row) => [row.SubjectName, row.Title, academicCbtStatus(row).label].join(' ') });
@@ -16935,6 +16935,58 @@ function mergeAcademicCbtTest(result = {}) {
   };
 }
 
+function openAcademicCbtLateEntryDialog(record = {}) {
+  document.getElementById('academicCbtLateEntryDialog')?.remove();
+  const dialog = document.createElement('dialog');
+  dialog.id = 'academicCbtLateEntryDialog';
+  dialog.className = 'workflow-dialog';
+  dialog.innerHTML = `<div class="workflow-dialog-header"><div><small>Same paper · New students only</small><h2>Schedule late-entry students</h2></div><button type="button" data-late-close aria-label="Close">&times;</button></div>
+    <form class="workflow-form config-dialog-form" data-late-form><section class="config-group"><p>${escapeHtml(record.Title || record.AssessmentComponentName)}</p>
+    <p class="muted">The original sitting, answers and scores stay unchanged. Previous candidates and students with recorded marks cannot be added. Offline starts are allowed; the first accepted online score is kept if a student writes at two centres.</p>
+    <div class="config-grid"><label>Sitting date<input name="Date" type="date" required></label><label>Start time<input name="Time" type="time" value="09:00" required></label></div>
+    <p>Duration: ${escapeHtml(record.ObjectiveDurationMinutes || record.DurationMinutes)} minutes${record.PaperMode === 'split' ? ` + ${escapeHtml(record.TheoryDurationMinutes)} minutes for Paper 2` : ''}. Same paper and answer key.</p>
+    <button type="button" class="secondary" data-late-review>Review eligible newcomers</button>
+    <div data-late-candidates style="max-height:280px;overflow:auto;margin-top:12px"></div><p class="status" data-late-status aria-live="polite"></p></section>
+    <div class="config-dialog-actions"><button type="button" class="secondary" data-late-close>Cancel</button><button type="submit" disabled>Review and schedule selected students</button></div></form>`;
+  document.body.appendChild(dialog);
+  const form = dialog.querySelector('form'), holder = dialog.querySelector('[data-late-candidates]'), status = dialog.querySelector('[data-late-status]');
+  const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate()+1);
+  form.elements.Date.value = academicCbtLocalParts(tomorrow.toISOString()).date;
+  dialog.querySelectorAll('[data-late-close]').forEach(button=>button.onclick=()=>dialog.close());
+  const payload = () => {
+    if (!form.reportValidity()) throw new Error('Choose the sitting date and time.');
+    return {CbtTestId:record.CbtTestId,SchoolSection:record.SchoolSection || academicManagementFilters.section,
+      SessionId:record.SessionId,TermId:record.TermId,StartsAt:new Date(`${form.elements.Date.value}T${form.elements.Time.value}:00`).toISOString()};
+  };
+  dialog.querySelector('[data-late-review]').onclick = async event => runButtonAction(event.currentTarget,'Reviewing...',async()=>{
+    try {
+      const result = await academicManagementRequest('previewAcademicCbtLateEntry',payload());
+      const review = result.lateEntryReview;
+      holder.innerHTML = review.Eligible.map(ref=>`<label style="display:flex;align-items:center;gap:10px;padding:6px;margin:0"><input type="checkbox" data-late-student value="${escapeHtml(ref)}" checked style="width:20px;height:20px;min-height:20px;margin:0">${escapeHtml(ref)}</label>`).join('')
+        + (review.Excluded.length ? `<details><summary>Why other students are excluded (${review.Excluded.length})</summary><ul>${review.Excluded.map(row=>`<li>${escapeHtml(row.StudentRef)}: ${escapeHtml(row.Reason)}</li>`).join('')}</ul></details>` : '');
+      form.querySelector('[type="submit"]').disabled = !review.Eligible.length;
+      setStatus(status,`${review.Eligible.length} eligible newcomers; ${review.Excluded.length} existing or recorded candidates excluded. Select the students for this sitting.`,review.Eligible.length ? 'good' : '');
+    } catch(error) { holder.replaceChildren(); form.querySelector('[type="submit"]').disabled=true; setStatus(status,error.message || String(error),'bad'); }
+  });
+  form.onsubmit = async event => {
+    event.preventDefault();
+    await runButtonAction(form.querySelector('[type="submit"]'),'Validating...',async()=>{
+      try {
+        const request = {...payload(),StudentRefs:[...holder.querySelectorAll('[data-late-student]:checked')].map(input=>input.value)};
+        if (!request.StudentRefs.length) throw new Error('Select at least one eligible newcomer.');
+        const {lateEntryReview:review} = await academicManagementRequest('previewAcademicCbtLateEntry',request);
+        const confirmed = await window.DynamaxDialogs.confirm({title:'Approve late-entry sitting',
+          message:`${review.StudentRefs.length} new students · ${DynamaxTime.formatDateTime(review.StartsAt)}. Original answers and scores will not change. Pull this date on every CBT server after saving.`,
+          detailsLabel:'Reviewed students',items:review.StudentRefs,confirmText:'Schedule late-entry sitting'});
+        if (!confirmed) return;
+        const result = await academicManagementRequest('createAcademicCbtLateEntry',{...request,PreviewToken:review.PreviewToken,RevisionToken:review.RevisionToken});
+        mergeAcademicCbtTest(result); dialog.close(); renderAcademicManagement(academicManagementData || {},result.message);
+      } catch(error) { setStatus(status,error.message || String(error),'bad'); }
+    });
+  };
+  dialog.showModal();
+}
+
 function openAcademicCbtRescheduleDialog(record = {}) {
   let dialog = document.getElementById('academicCbtRescheduleDialog');
   if (!dialog) {
@@ -17436,6 +17488,10 @@ function bindAcademicManagement() {
       }
     });
   }
+  panelEl.querySelectorAll('[data-academic-cbt-late-entry]').forEach(button=>button.addEventListener('click',()=>{
+    const record = academicFind(academicManagementData?.cbtTests || [],button.dataset.academicCbtLateEntry);
+    if (record) openAcademicCbtLateEntryDialog(record);
+  }));
   panelEl.querySelectorAll('[data-academic-cbt-reschedule]').forEach((button) => button.addEventListener('click', () => {
     const record = academicFind(academicManagementData?.cbtTests || [], button.dataset.academicCbtReschedule);
     if (record) openAcademicCbtRescheduleDialog(record);
