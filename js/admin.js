@@ -16951,7 +16951,12 @@ function openAcademicCbtLateEntryDialog(record = {}) {
   document.body.appendChild(dialog);
   const form = dialog.querySelector('form'), holder = dialog.querySelector('[data-late-candidates]'), status = dialog.querySelector('[data-late-status]');
   const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate()+1);
-  form.elements.Date.value = academicCbtLocalParts(tomorrow.toISOString()).date;
+  const originalStart = new Date(record.StartsAt);
+  const suggestedStart = Number.isFinite(originalStart.getTime()) && originalStart.getTime() > Date.now()
+    ? originalStart : tomorrow;
+  const suggestedSchedule = academicCbtLocalParts(suggestedStart.toISOString());
+  form.elements.Date.value = suggestedSchedule.date;
+  form.elements.Time.value = suggestedSchedule.time;
   dialog.querySelectorAll('[data-late-close]').forEach(button=>button.onclick=()=>dialog.close());
   const payload = () => {
     if (!form.reportValidity()) throw new Error('Choose the sitting date and time.');
