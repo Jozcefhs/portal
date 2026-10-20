@@ -178,6 +178,7 @@ test('scheduler identity is set only after secret authorization and propagated w
   const process = async () => ({});
   const scheduler = isolated(schedulerSource, ['onRequestPost'], { secureTextEqual, readJsonBody: (request) => request.json(),
     requiredDeploymentIdentity: () => ({ workspaceId: 'test', edition: 'school' }),
+    processAcademicCbtPaperRetention: process,
     processDueSchoolFeeCredits: process, processFeeReminderSchedule: process, processLibraryDueReminders: process,
     processScheduledSchoolAnnouncements: process, processScheduledChurchAnnouncements: process,
     processSchoolAnnouncementPushQueue: process, processAttendancePresenceNotifications: process, retryFailedPushDeliveries: process });
@@ -218,6 +219,7 @@ test('scheduler financial postings and internal delivery failures remain non-rou
     const process = async () => ({});
     const module = isolated(schedulerSource, ['onRequestPost'], { secureTextEqual, readJsonBody: (request) => request.json(),
       requiredDeploymentIdentity: () => ({ workspaceId: 'test', edition: 'school' }),
+      processAcademicCbtPaperRetention: process,
       processDueSchoolFeeCredits: async () => creditResult, processFeeReminderSchedule: process, processLibraryDueReminders: process,
       processScheduledSchoolAnnouncements: async () => deliveryResult, processScheduledChurchAnnouncements: process,
       processSchoolAnnouncementPushQueue: process, processAttendancePresenceNotifications: process, retryFailedPushDeliveries: process });

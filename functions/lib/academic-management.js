@@ -1,5 +1,6 @@
 import { batchCommitDocuments, getDocument, getDocuments, listCollection, queryCollection } from './firestore.js';
 import { commitAcademicCbtRoster } from './academic-cbt-roster-commit.js';
+import { academicCbtRetentionActivationWrites, assertAcademicTermRetentionEdit } from './academic-cbt-paper-retention.js';
 import { academicCbtLateEntryPlan, academicCbtLateEntryRecord, sameCbtAssessmentPeriod, academicCbtAllStudentRefs } from './academic-cbt-late-entry.js';
 import { academicCbtRosterAdditionPlan } from './academic-cbt-roster-additions.js';
 import { commitAcademicCbtLateEntry } from './academic-cbt-late-entry-commit.js';
@@ -2171,6 +2172,14 @@ export async function saveAcademicManagementRecord(env, user = {}, input = {}) {
   if (existing && effectiveAcademicSection(existing, scope) !== scope.section) throw failure('This academic record belongs to another school section.', 403);
   const normalizedInput = type === 'studentmembership' && !existing ? { ...input, Status: 'Active' } : input;
   const record = definition.normalize(normalizedInput, scope, existing);
+  if (type === 'term') assertAcademicTermRetentionEdit(existing, record);
+  if (type === 'term' && existing?.CbtPaperCleanupStatus === 'Complete'
+      && record.Status === 'Active' && existing.Status !== 'Active') {
+    // A reopened term may receive new uploads. A later closure can clean those
+    // papers too; the previous job and its audit history remain unchanged.
+    record.CbtPaperCleanupStatus = '';
+    record.CbtPaperCleanupJobId = '';
+  }
   validateAcademicRecord(state, type, record, { ...people, existing });
   if (type === 'subject' && existing && clean(existing.AssessmentCategory || 'Graded') !== record.AssessmentCategory
     && record.AssessmentCategory === 'TimetableOnly'
@@ -2188,6 +2197,10 @@ export async function saveAcademicManagementRecord(env, user = {}, input = {}) {
   record.UpdatedBy = actorName(user);
   const precondition = writePrecondition(existing, input.RevisionToken);
   const writes = [{ collectionPath: definition.collection, documentId: recordId(record), data: withoutMetadata(record), ...precondition }];
+  if (type === 'term') {
+    writes.push(...await academicCbtRetentionActivationWrites(record, existing,
+      state.terms.map(row => ({ ...row, SchoolSection: effectiveAcademicSection(row, scope) })), actorName(user), timestamp));
+  }
   writes.push(auditWrite(user, existing ? 'UPDATE' : 'CREATE', type, record, clean(record.Name || record.StudentRef || record.TeacherUsername)));
   if (type === 'studentmembership' && !existing) {
     writes.push(movementWrite(user, academicMovementForState(state, input, scope, null, record)));
@@ -3791,6 +3804,7 @@ export async function archiveAcademicManagementRecord(env, user = {}, input = {}
     BranchId: scope.branchId, SchoolSection: scope.section,
     UpdatedAt: nowIso(), UpdatedBy: actorName(user)
   };
+  if (type === 'term') assertAcademicTermRetentionEdit(existing, archived);
   const writes = [
     { collectionPath: definition.collection, documentId: recordId(existing), data: archived, updateTime: revisionToken },
     auditWrite(user, 'ARCHIVE', type, archived, clean(existing.Name || existing.StudentRef || existing.TeacherUsername))
@@ -7007,6 +7021,25 @@ function validateAcademicCbtPaperFiles(files = [], label = 'question paper') {
   return files;
 }
 
+// One regular assessment per class and academic period, regardless of its date,
+// arm, uploader or browser request ID. Late-entry sittings keep separate IDs.
+export function academicCbtUploadMatches(row, target) {
+  return !row.LateEntryParentId && lower(row.Status) !== 'superseded'
+    && ['SessionId', 'TermId', 'ClassId', 'SubjectId'].every(key => clean(row[key]) === clean(target[key]))
+    && lower(row.BranchId || 'main') === lower(target.BranchId || 'main')
+    && lower(row.SchoolSection) === lower(target.SchoolSection)
+    && (clean(row.AssessmentComponentId) === clean(target.AssessmentComponentId)
+      || (clean(row.AssessmentComponentName) && lower(row.AssessmentComponentName) === lower(target.AssessmentComponentName)));
+}
+
+export async function academicCbtUploadId(target) {
+  const material = JSON.stringify([lower(target.BranchId), lower(target.SchoolSection),
+    ...['SessionId', 'TermId', 'ClassId', 'SubjectId'].map(key => clean(target[key])),
+    lower(target.AssessmentComponentName || target.AssessmentComponentId)]);
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(material));
+  return `cbt-test-${[...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, '0')).join('')}`;
+}
+
 export async function validateAcademicCbtTestInput(env, user = {}, input = {}) {
   const context = await academicCbtClassContext(env, user, input);
   const componentId = clean(input.AssessmentComponentId);
@@ -7049,31 +7082,31 @@ export async function validateAcademicCbtTestInput(env, user = {}, input = {}) {
     }
   }
   const requestedId = clean(input.CbtTestId);
-  const existing = requestedId ? findById(context.state.cbtTests, requestedId) : null;
-  if (requestedId && !existing) throw failure('The selected CBT test was not found.', 404, 'ACADEMIC_CBT_TEST_NOT_FOUND');
-  if (existing) {
-    academicCbtAuthority(user, context, existing);
-    if (existing.LateEntryParentId) throw failure('A late-entry sitting keeps the original paper and reviewed students. Reschedule it instead of editing its package.', 409);
-    if (clean(existing.LocalDownloadedAt || existing.LocalPackageIssuedAt)) {
-      throw failure('This test has already been downloaded to a local CBT server. Create a corrected test instead of changing its package.', 409, 'ACADEMIC_CBT_ALREADY_DOWNLOADED');
-    }
+  const target = { BranchId: context.scope.branchId, SchoolSection: context.scope.section,
+    SessionId: context.session.SessionId, TermId: context.term.TermId,
+    ClassId: context.schoolClass.ClassId, SubjectId: context.subject.SubjectId,
+    AssessmentComponentId: component.Id, AssessmentComponentName: component.Name };
+  const candidates = (context.state.cbtTests || []).filter(row => academicCbtUploadMatches(
+    { ...row, SchoolSection: effectiveAcademicSection(row, context.scope) }, target))
+    .sort((a, b) => clean(a.CreatedAt).localeCompare(clean(b.CreatedAt)) || recordId(a).localeCompare(recordId(b)));
+  const requested = requestedId ? findById(context.state.cbtTests, requestedId) : null;
+  if (requestedId && !requested) throw failure('The selected CBT test was not found.', 404, 'ACADEMIC_CBT_TEST_NOT_FOUND');
+  if (requested && !candidates.includes(requested)) {
+    throw failure('Choose the current regular test for this class, subject, assessment and academic period. Late-entry sittings cannot replace its paper.', 409, 'ACADEMIC_CBT_UPLOAD_SCOPE_CHANGED');
   }
-  const replacementCandidates = (context.state.cbtTests || []).filter((row) => (
-    recordId(row) !== recordId(existing || {})
-    && !row.LateEntryParentId
-    && lower(row.Status) !== 'superseded'
-    && clean(row.ClassId) === clean(context.schoolClass.ClassId)
-    && clean(row.SubjectId) === clean(context.subject.SubjectId)
-    && (clean(row.AssessmentComponentId) === clean(component.Id)
-      || lower(row.AssessmentComponentName) === lower(component.Name))
-    && lower(row.SchoolSection || context.scope.section) === lower(context.scope.section)
-    && academicCbtPaperFiles(row).length > 0
-  ));
+  for (const previous of candidates) {
+    academicCbtAuthority(user, context, previous);
+    if (clean(previous.LocalDownloadedAt || previous.LocalPackageIssuedAt)
+        || ['running', 'completed', 'synced'].includes(lower(previous.Status))
+        || (context.state.cbtTests || []).some(row => row.LateEntryParentId === previous.CbtTestId)) {
+      throw failure('This assessment has already been issued or has a late-entry sitting. Its paper cannot be replaced or uploaded as a duplicate. Existing answers and scores are preserved; use the schedule or student-list actions instead.', 409, 'ACADEMIC_CBT_ALREADY_DOWNLOADED');
+    }
+    if (!clean(previous.__updateTime)) throw failure('Reload the test register before replacing its paper.', 409, 'ACADEMIC_WRITE_CONFLICT');
+  }
+  const existing = requested || candidates[0] || null;
+  const replacementCandidates = candidates.filter(row => row !== existing);
   const timestamp = nowIso();
-  const cbtTestId = existing?.CbtTestId || academicId(
-    'cbt-test', context.scope.branchId, context.scope.section, context.session.SessionId,
-    context.term.TermId, clean(input.ClientRequestId) || crypto.randomUUID()
-  );
+  const cbtTestId = existing?.CbtTestId || await academicCbtUploadId(target);
   const studentRefs = [...new Map(context.roster.map((row) => clean(row.StudentRef)).filter(Boolean)
     .map((reference) => [lower(reference), reference])).values()]
     .sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }));
@@ -7126,6 +7159,12 @@ export async function validateAcademicCbtTestInput(env, user = {}, input = {}) {
     TheoryPaperMimeType: firstTheoryPaper.MimeType || '',
     TheoryPaperDigest: firstTheoryPaper.Digest || '',
     TheoryPaperByteLength: Number(firstTheoryPaper.ByteLength || 0),
+    CloudPaperRemovedAt: '',
+    CloudPaperRemovedBy: '',
+    CloudPaperRemovalReason: '',
+    CloudPaperRemovalStatus: '',
+    CloudPaperCleanupJobId: '',
+    CloudPaperObjectCount: 0,
     Status: 'Scheduled',
     PackageRevision: Number(existing?.PackageRevision || 0) + 1,
     BranchId: context.scope.branchId,
@@ -7136,7 +7175,8 @@ export async function validateAcademicCbtTestInput(env, user = {}, input = {}) {
     UpdatedBy: actorName(user)
   };
   record.PackageDigest = await academicCbtPackageDigest(record);
-  return { context, component, existing, replacementCandidates, record };
+  return { context, component, existing, replacementCandidates, record,
+    replacementRevisionToken: requestedId ? clean(input.RevisionToken) : clean(existing?.__updateTime) };
 }
 
 async function finalizeAcademicCbtPaper(validation, input = {}) {
@@ -7179,7 +7219,7 @@ export async function saveAcademicCbtTest(env, user = {}, input = {}, options = 
     collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.cbtTests,
     documentId: record.CbtTestId,
     data: withoutMetadata(record),
-    ...writePrecondition(existing, input.RevisionToken)
+    ...writePrecondition(existing, validation.replacementRevisionToken ?? input.RevisionToken)
   }];
   replacementCandidates.forEach((previous) => {
     writes.push({
@@ -7231,7 +7271,7 @@ export async function saveAcademicCbtTest(env, user = {}, input = {}, options = 
   return {
     ok: true,
     partialAcademicManagement: true,
-    message: `${record.AssessmentComponentName} CBT test scheduled for ${record.RosterCount} student${record.RosterCount === 1 ? '' : 's'}${replacementCandidates.length ? '; the older stored paper was replaced' : ''}.`,
+    message: `${record.AssessmentComponentName} CBT test scheduled for ${record.RosterCount} student${record.RosterCount === 1 ? '' : 's'}${existing || replacementCandidates.length ? '; the existing test paper was replaced, not duplicated' : ''}.`,
     cbtTest: savedRecord,
     supersededCbtTestIds: replacementCandidates.map((row) => row.CbtTestId)
   };

@@ -9,7 +9,8 @@ const stages = [
   ['processDueSchoolFeeCredits', 'school-fee-credits'], ['processFeeReminderSchedule', 'fee-reminders'],
   ['processLibraryDueReminders', 'library-reminders'], ['processScheduledSchoolAnnouncements', 'school-announcements'],
   ['processScheduledChurchAnnouncements', 'organisation-announcements'], ['processSchoolAnnouncementPushQueue', 'announcement-push-queue'],
-  ['processAttendancePresenceNotifications', 'attendance-presence'], ['retryFailedPushDeliveries', 'push-delivery-retries']
+  ['processAttendancePresenceNotifications', 'attendance-presence'], ['retryFailedPushDeliveries', 'push-delivery-retries'],
+  ['processAcademicCbtPaperRetention', 'cbt-paper-retention']
 ];
 function harness(failing, edition = 'school') {
   const calls = [], logs = [];

@@ -12,6 +12,7 @@ import { safeScopeId } from '../functions/lib/school-scope.js';
 import { calculateAcademicMidTermResultDrafts } from '../functions/lib/academic-term-results.js';
 import { evaluateAcademicResultAccess } from '../functions/lib/academic-result-access.js';
 import { academicResultWithWeightedComponents } from '../functions/lib/academic-result-marks.js';
+import * as cbtRetention from '../functions/lib/academic-cbt-paper-retention.js';
 
 const stripModules = source => source.replace(/^import[\s\S]*?;\r?\n/gm, '').replace(/^export /gm, '');
 const managementSource = await readFile(new URL('../functions/lib/academic-management.js', import.meta.url), 'utf8');
@@ -26,7 +27,7 @@ const conflict = () => Object.assign(new Error('Concurrent update'), { status: 4
 
 function managementHarness(records = {}) {
   const context = {
-    ...management, ...scorebook, ...timetable, ...attendanceIdentity, academicResultWithWeightedComponents, TextEncoder, TextDecoder, crypto: webcrypto,
+    ...management, ...scorebook, ...timetable, ...attendanceIdentity, ...cbtRetention, academicResultWithWeightedComponents, TextEncoder, TextDecoder, crypto: webcrypto,
     getSchoolStructure: async () => ({ ActiveBranchId: 'main', Branches: [{ Id: 'main' }], Sections: ['primary', 'secondary'] }),
     enforceActorBranch: (_actor, branch) => branch, safeScopeId,
     queryCollection: async (_env, collection) => structuredClone(records[collection] || []),
@@ -368,6 +369,31 @@ test('CBT-05 a committed paper save with a lost acknowledgement is reconciled by
       assert.equal(result.cbtTest.PaperUrl, 'https://example.test/paper.pdf');
     } else {
       await assert.rejects(save, { status: 503, code: 'ACADEMIC_CBT_SAVE_UNCERTAIN', outcomeUncertain: true });
+    }
+  }
+});
+
+test('term activation atomically queues closed-term paper cleanup; stale activation cannot queue it',async()=>{
+  for (const stale of [false,true]) {
+    const records={academicSessions:[row({RecordId:'s1',SessionId:'s1',StartDate:'2026-01-01',EndDate:'2026-12-31'})],
+      academicTerms:[row({RecordId:'old',TermId:'old',SessionId:'s1',Name:'First Term',Status:'Closed',
+        StartDate:'2026-01-01',EndDate:'2026-03-31',__updateTime:'old-v1'}),
+        row({RecordId:'new',TermId:'new',SessionId:'s1',Name:'Second Term',Status:'Planned',
+          StartDate:'2026-04-01',EndDate:'2026-07-31',__updateTime:'new-v1'})]};
+    const context=managementHarness(records);
+    context.bootstrapAcademicManagement=async()=>({ok:true});
+    const request={...input,RecordType:'term',RecordId:'new',SessionId:'s1',Name:'Second Term',Status:'Active',
+      StartDate:'2026-04-01',EndDate:'2026-07-31',RevisionToken:stale?'wrong':'new-v1'};
+    if(stale){
+      await assert.rejects(context.saveAcademicManagementRecord({},actor,request),{code:'ACADEMIC_WRITE_CONFLICT'});
+      assert.equal(records.academicTerms[0].CbtPaperCleanupStatus,undefined);
+      assert.equal(records.academicCbtPaperCleanupJobs,undefined);
+    }else{
+      await context.saveAcademicManagementRecord({},actor,request);
+      assert.equal(records.academicTerms.find(r=>r.TermId==='new').Status,'Active');
+      assert.equal(records.academicTerms.find(r=>r.TermId==='old').CbtPaperCleanupStatus,'Pending');
+      assert.equal(records.academicCbtPaperCleanupJobs.length,1);
+      assert.equal(records.academicCbtPaperCleanupJobs[0].ActivatedTermId,'new');
     }
   }
 });

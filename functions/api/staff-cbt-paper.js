@@ -162,7 +162,8 @@ async function handleRequest(context) {
       message: saved.message || 'CBT test scheduled online.',
       CbtTestId: preview.record.CbtTestId,
       RevisionToken: clean(created.RevisionToken),
-      CbtTest: created
+      CbtTest: created,
+      supersededCbtTestIds: saved.supersededCbtTestIds || []
     };
     await completeIdempotentRequest(env, idempotency, data, 200);
     return Response.json(data, { headers: { 'Cache-Control': 'no-store' } });

@@ -12,6 +12,7 @@ import { processScheduledChurchAnnouncements } from '../lib/church-announcements
 import { processAttendancePresenceNotifications } from '../lib/attendance-presence-notifications.js';
 import { processLibraryDueReminders } from '../lib/school-library.js';
 import { notificationSchedulerDiagnostic } from '../lib/notification-scheduler-diagnostics.js';
+import { processAcademicCbtPaperRetention } from '../lib/academic-cbt-paper-retention.js';
 
 const clean = (value) => String(value ?? '').trim();
 
@@ -111,21 +112,27 @@ async function run(context) {
     });
     stage = 'push-delivery-retries';
     const pushRetries = announcementsOnly ? { skipped: true } : await retryFailedPushDeliveries(context.env, { limit: 50 });
+    stage = 'cbt-paper-retention';
+    const cbtPaperCleanup = attendanceOnly || identity.edition !== 'school' ? { skipped: true }
+      : await processAcademicCbtPaperRetention(context.env);
     stage = 'result-summary';
     const creditRunFailed = schoolFeeCredits.ok === false;
+    const cleanupFailed = cbtPaperCleanup.ok === false;
     const deliveryFailed = [reminders, libraryReminders, announcements, announcementPush, attendancePresence]
       .some((result) => result.ok === false || Number(result.failed || 0) > 0)
       || Number(pushRetries.retried || 0) > Number(pushRetries.delivered || 0);
     const creditedInvoices = Number(schoolFeeCredits.creditedInvoices || 0);
     // Only successful routine delivery/check runs are hideable. Financial
     // postings and any reported internal failures remain in the default view.
-    context.data.securityAuditActivityClass = !creditRunFailed && !deliveryFailed && creditedInvoices === 0
+    context.data.securityAuditActivityClass = !creditRunFailed && !deliveryFailed && !cleanupFailed
+      && creditedInvoices === 0 && !cbtPaperCleanup.cleaned
       ? 'Routine system' : 'System activity';
-    context.data.securityAuditOutcome = creditRunFailed || deliveryFailed ? 'Failed' : 'Success';
+    context.data.securityAuditOutcome = creditRunFailed || deliveryFailed || cleanupFailed ? 'Failed' : 'Success';
     context.data.securityAuditDetails = `Scheduler run; credited invoices: ${creditedInvoices}; announcements sent: ${Number(announcements.sent || 0)}; delivery failures reported: ${deliveryFailed ? 'yes' : 'no'}.`;
     return Response.json({
-      ok: !creditRunFailed,
+      ok: !creditRunFailed && !cleanupFailed,
       ...(creditRunFailed ? { message: 'One or more due school-fee credits could not be applied; inspect schoolFeeCredits and retry.' } : {}),
+      ...(!creditRunFailed && cleanupFailed ? { message: 'Closed-term CBT paper cleanup needs a retry or review; its saved progress is retained.' } : {}),
       workspaceId: identity.workspaceId,
       edition: identity.edition,
       schoolFeeCredits,
@@ -134,8 +141,9 @@ async function run(context) {
       announcements,
       announcementPush,
       attendancePresence,
-      pushRetries
-    }, { status: creditRunFailed ? 500 : 200, headers: { 'Cache-Control': 'no-store' } });
+      pushRetries,
+      cbtPaperCleanup
+    }, { status: creditRunFailed || cleanupFailed ? 500 : 200, headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     const diagnostic = authorized ? notificationSchedulerDiagnostic(stage, error) : null;
     if (diagnostic) console.error(JSON.stringify({ event: 'notification-scheduler.failed', ...diagnostic }));

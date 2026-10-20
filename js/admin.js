@@ -13997,6 +13997,7 @@ function academicStructureWorkspace(data, rows) {
         <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
         <label>Session<select name="SessionId" required>${sessionOptions}</select></label>
         <label>Term name<input name="Name" placeholder="First Term" required></label>
+        <p class="muted">Activating the next term queues permanent removal of question-paper files from earlier closed terms in this branch and section. Scores, results, answer keys and audit history are retained. Open terms are never included.</p>
         <div class="academic-management-form-grid"><label>Starts<input name="StartDate" type="date" required></label><label>Ends<input name="EndDate" type="date" required></label></div>
         <label>Status<select name="Status"><option>Planned</option><option>Active</option><option>Closed</option></select></label>
         <button type="submit">Save term</button>
@@ -14042,6 +14043,9 @@ function academicStructureWorkspace(data, rows) {
       ${table('Terms', rows.terms, [
         { label: 'Term', value: (row) => row.Name }, { label: 'Starts', value: (row) => row.StartDate },
         { label: 'Ends', value: (row) => row.EndDate }, { label: 'Status', value: (row) => row.Status },
+        { label: 'CBT paper cleanup', value: (row) => row.CbtPaperCleanupStatus === 'Complete'
+          ? `Complete · ${Number(row.CbtPaperCleanupFiles || 0)} files removed`
+          : row.CbtPaperCleanupStatus === 'Pending' ? 'Pending · automatic retries' : 'Not requested' },
         { label: 'Actions', render: (row) => academicActionButtons('term', row, canManage, permissions.canArchive) }
       ])}
       ${table(`${academicManagementFilters.section} Classes`, rows.classes, [
@@ -16187,6 +16191,7 @@ function academicCbtWorkspace(data, rows) {
 
   const stepOne = `<div class="academic-cbt-details" data-academic-cbt-step="1"${academicCbtDraft.step === 1 ? '' : ' hidden'}>
     <div class="academic-management-editor-heading"><div><small>Step 1 of 2</small><h3>${editing ? 'Correct scheduled test' : 'Test details and schedule'}</h3><p class="muted">Choose the class and subject. Every student in that class who offers the subject is included across all arms.</p></div>${editing ? '<button type="button" data-academic-cbt-new>Clear</button>' : ''}</div>
+    <p class="muted">Uploading the same test type for this class and subject in the same term replaces its unused paper, not the test record. Papers already issued to a CBT server cannot be overwritten; existing answers and scores stay protected.</p>
     ${!contexts.length ? '<p class="status bad">No active subject-teacher allocation was found for this period. Check the selected session, term and school section.</p>' : ''}
     ${!components.length ? '<p class="status bad">No Test Type currently accepts Built-in CBT scores. Configure an assessment component in Account &amp; settings first.</p>' : ''}
     ${splitPaper ? '<div class="academic-cbt-split-note"><strong>Split A/B assessment</strong><span>Paper 1 Objective is marked automatically and locked in the scorebook. Paper 2 Theory is timed separately and marked manually by the teacher.</span></div>' : ''}
@@ -16928,9 +16933,10 @@ function mergeAcademicCbtTest(result = {}) {
   const saved = result.CbtTest || result.cbtTest;
   if (!saved?.CbtTestId) return;
   const current = academicManagementData?.cbtTests || [];
+  const replacedIds = new Set([saved.CbtTestId, ...(result.supersededCbtTestIds || [])]);
   academicManagementData = {
     ...(academicManagementData || {}),
-    cbtTests: [...current.filter((row) => row.CbtTestId !== saved.CbtTestId), saved]
+    cbtTests: [...current.filter((row) => !replacedIds.has(row.CbtTestId)), saved]
       .sort((left, right) => clean(right.StartsAt || right.CreatedAt).localeCompare(clean(left.StartsAt || left.CreatedAt)))
   };
 }
