@@ -1,7 +1,7 @@
 {
-  "version": "3.1.35",
+  "version": "3.1.37",
   "channel": "stable",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.35.exe",
-  "sha256": "92f95e083f8b575fc6411665bf70183a1f168a2cacea96ad5c5df109d1a867a9",
-  "notes": "Dynamax Desktop v3.1.35 adds weighted CA1, CA2, CA3 and examination marks alongside result totals and grades, using saved assessment snapshots. Authorised score editing now includes recorded CBT marks with before-and-after audits, automatic relocking and protection against later upload overwrites. Academic reviewers can open a whole-class score register across all arms, with student search, test filters and pagination. Existing scores, attempts and published results are preserved. Install on each desktop between examinations after backing up. No tablet APK update is required."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.37.exe",
+  "sha256": "fc4fc356cfbcbae62d5e98bd8439273284764309041546acc63d51d8b15e8766",
+  "notes": "Dynamax Desktop v3.1.37 includes late-entry CBT sittings, older-tablet browser compatibility repairs, clearer LAN joining addresses and candidate login refresh when re-pulling existing tests. Online Draft tests become available after student credentials are configured, provided their sitting has not ended. Pull the scheduled date and select the separate Late entry sitting on every CBT server. Existing papers, answers, timers and scores are preserved. Passwords remain protected; authorised handlers can issue a temporary password through Reset Student Password. Back up and update each server between examinations. The subscriber school logo is unchanged. No tablet APK update is required; reopen the test page after updating the server."
 }
