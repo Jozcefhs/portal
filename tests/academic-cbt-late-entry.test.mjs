@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import vm from 'node:vm';
-import {academicCbtLateEntryPlan as plan, academicCbtLateEntryRecord as record, sameCbtAssessmentPeriod} from '../functions/lib/academic-cbt-late-entry.js';
+import {academicCbtLateEntryPlan as plan, academicCbtLateEntryRecord as record, sameCbtAssessmentPeriod, academicCbtAllStudentRefs} from '../functions/lib/academic-cbt-late-entry.js';
+import {academicCbtRosterAdditionPlan} from '../functions/lib/academic-cbt-roster-additions.js';
 import {commitAcademicCbtLateEntry} from '../functions/lib/academic-cbt-late-entry-commit.js';
 import {copyAcademicCbtLateEntryPapers} from '../functions/lib/academic-cbt-late-entry-papers.js';
 import {objectToFirestoreFields} from '../functions/lib/firestore.js';
@@ -76,7 +77,14 @@ test('transaction protects roster, source/sibling packages and marks without rew
     const race=transactionFixture(state,change);
     await assert.rejects(commitAcademicCbtLateEntry({},writes,original,state,input.StartsAt,race.deps),{code:'ACADEMIC_CBT_LATE_ENTRY_CHANGED'});
     assert.equal(race.commits.length,0); assert.ok(race.calls.at(-1).url.endsWith(':rollback'));
+    const adding=transactionFixture(state,change);
+    await assert.rejects(commitAcademicCbtLateEntry({},writes,original,state,'2020-01-01',{...adding.deps,addOnlyRoster:true}),
+      {code:'ACADEMIC_CBT_LATE_ENTRY_CHANGED'});
+    assert.equal(adding.commits.length,0);
   }
+  const adding=transactionFixture(state);
+  await commitAcademicCbtLateEntry({},writes,original,state,'2020-01-01',{...adding.deps,addOnlyRoster:true});
+  assert.equal(adding.commits.length,1,'Additions preserve an existing schedule instead of demanding a new future sitting');
 });
 
 test('paper copies verify bytes and use independent, retry-stable storage keys',async()=>{
@@ -105,6 +113,7 @@ function apiFixture(stage='junior-secondary') {
   const ctx=vm.createContext({crypto,TextEncoder,Uint8Array,Date,clean,lower:v=>clean(v).toLowerCase(),
     ACADEMIC_CBT_STATE_KEYS:[],ACADEMIC_MANAGEMENT_COLLECTIONS:{studentScores:'scores',cbtTests:'tests'},
     academicCbtLateEntryPlan:plan,academicCbtLateEntryRecord:record,sameCbtAssessmentPeriod,
+    academicCbtRosterAdditionPlan,academicCbtAllStudentRefs,
     effectiveAcademicSection:r=>r.SchoolSection || 'secondary',
     academicOperationalContext:async(_env,user,payload)=>{
       const permissions=academicManagementCapabilities(user);
@@ -118,10 +127,16 @@ function apiFixture(stage='junior-secondary') {
     academicAssessmentForPeriod:async()=>({Ready:true}),recordId:r=>r.__id,
     academicId:(...parts)=>parts.join('-'),queryCollection:async()=>structuredClone(scores),
     publicRecord:r=>({...r,RevisionToken:r.__updateTime}),withoutMetadata:r=>r,
+    writePrecondition:(r,token)=>{assert.equal(token,r.__updateTime);return {updateTime:token};},
     copyAcademicCbtLateEntryPapers:async()=>({PaperUrl:'r2://child'}),academicCbtPackageDigest:async()=> 'child-digest',
     auditWrite:()=>({collectionPath:'audit',data:{}}),
     getDocument:async(_env,_collection,id)=>tests.find(r=>r.CbtTestId===id),
-    commitAcademicCbtLateEntry:async(_env,batch)=>{writes.push(batch);tests.push({...batch[0].data,__id:batch[0].documentId,__updateTime:'c1'});
+    commitAcademicCbtLateEntry:async(_env,batch)=>{writes.push(batch);
+      const row={...batch[0].data,__id:batch[0].documentId,__updateTime:`c${writes.length}`};
+      if(batch[0].updateTime) {
+        const index=tests.findIndex(r=>r.CbtTestId===batch[0].documentId);
+        assert.equal(tests[index].__updateTime,batch[0].updateTime); tests[index]=row;
+      } else tests.push(row);
       if(loseCommitResponse)throw Object.assign(new Error('Response lost'),{status:503});return {writeResults:[{updateTime:'c1'}]};}
   });
   for(const [start,end] of [['function academicCbtAuthority(','async function academicCbtPackageDigest('],
@@ -129,7 +144,10 @@ function apiFixture(stage='junior-secondary') {
     vm.runInContext(managementSource.slice(managementSource.indexOf(start),managementSource.indexOf(end)).replace(/^export /gm,''),ctx);
   }
   const actor={username:'teacher',role:'Teacher',edition:'school',allowedSections:['academics'],branchId:'main'};
-  return {members,tests,scores,writes,actor,loseResponse:()=>{loseCommitResponse=true;},call:(payload=input,post=false,user=actor)=>ctx.createAcademicCbtLateEntry({},user,payload,post)};
+  return {members,tests,scores,writes,actor,loseResponse:()=>{loseCommitResponse=true;},
+    call:(payload=input,post=false,user=actor)=>ctx.createAcademicCbtLateEntry({},user,payload,post),
+    add:(payload=input,post=false,user=actor)=>ctx.addAcademicCbtRosterStudents({},user,payload,post),
+    getAdditions:(payload=input,user=actor)=>ctx.getAcademicCbtRosterAdditions({},user,payload)};
 }
 test('review/create is authorised, idempotent and preserves source; stale membership selection rejected',async()=>{
   const f=apiFixture(), before=structuredClone(f.tests[0]);
@@ -177,4 +195,83 @@ test('each original has a distinct preview identity and large score histories ne
   assert.notEqual(first.PreviewToken,second.PreviewToken);
   f.scores.push(...Array.from({length:10001},()=>({...scope})));
   await assert.rejects(f.call({...input,CbtTestId:'different'}),{code:'ACADEMIC_CBT_LATE_ENTRY_HISTORY_LIMIT'});
+});
+
+test('downloaded roster additions preserve base package and are reviewed, repeat-safe and readable by both servers',async()=>{
+  const f=apiFixture(), before=structuredClone(f.tests[0]);
+  const review=(await f.add()).rosterReview;
+  assert.deepEqual(Array.from(review.Added),['new','senior']); assert.equal(f.writes.length,0);
+  const payload={...input,...review};
+  const result=await f.add(payload,true); await f.add(payload,true);
+  assert.equal(f.writes.length,1); assert.equal(f.tests.length,1);
+  assert.deepEqual(Array.from(result.cbtTest.StudentRefs),before.StudentRefs);
+  for(const key of ['PackageDigest','PackageRevision','StartsAt','DurationMinutes','AnswerKey','LocalDownloadedAt','PaperUrl']) {
+    assert.deepEqual(result.cbtTest[key],before[key]);
+  }
+  assert.equal(result.cbtTest.RosterCount,3); assert.equal(result.cbtTest.RosterRevision,1);
+  assert.equal(result.cbtTest.RosterDigest.length,64);
+  assert.equal(f.writes[0][0].updateTime,'r1');
+  for(let server=0;server<2;server++) {
+    const row=(await f.getAdditions()).rosterPackage;
+    assert.deepEqual(Array.from(row.StudentRefs),['new','old','senior']); assert.equal(row.RosterRevision,1);
+  }
+  assert.equal((await f.add()).rosterReview.Added.length,0);
+  assert.equal((await f.call()).lateEntryReview.StudentRefs.length,0,'Added students cannot also receive a late-entry retake');
+});
+
+test('an uncertain additions response can be retried without duplicate candidates or another audit',async()=>{
+  const f=apiFixture(); const review=(await f.add()).rosterReview; f.loseResponse();
+  await assert.rejects(f.add({...input,...review},true),/Response lost/);
+  const retry=await f.add({...input,...review},true);
+  assert.equal(retry.cbtTest.RosterCount,3); assert.equal(f.writes.length,1);
+  assert.equal(retry.cbtTest.RosterRevision,1);
+});
+
+test('additions use current junior/senior eligibility and exclude sibling candidates, marks and ambiguous memberships',async()=>{
+  const f=apiFixture('senior-secondary');
+  assert.deepEqual(Array.from((await f.add()).rosterReview.Added),['senior']);
+  f.tests.push({...original,CbtTestId:'late',__id:'late',StudentRefs:[],AdditionalStudentRefs:['senior']});
+  assert.equal((await f.add()).rosterReview.Added.length,0);
+  f.tests.pop(); f.scores.push({...scope,StudentRef:'senior',ComponentScores:[{ComponentId:'ca1',State:'Numeric'}]});
+  assert.equal((await f.add()).rosterReview.Added.length,0);
+  f.scores.pop(); f.members.push(member('senior',{MembershipId:'duplicate',__id:'duplicate',ClassId:'other'}));
+  assert.equal((await f.add()).rosterReview.Added.length,0);
+});
+
+test('late-entry children can receive add-only updates without inheriting the parent additions',async()=>{
+  const f=apiFixture();
+  f.tests[0].LateEntryParentId='parent';
+  const review=(await f.add()).rosterReview;
+  assert.equal(review.Added.length,2); await f.add({...input,...review},true);
+  assert.equal(f.tests[0].LateEntryParentId,'parent');
+  const child=record({...original,AdditionalStudentRefs:['existing'],RosterRevision:4,RosterDigest:'old'},{
+    StudentRefs:['new'],StartsAt:'2099-01-01',EndsAt:'2099-01-02'
+  },'child','ict','now');
+  assert.equal(child.AdditionalStudentRefs,undefined); assert.equal(child.RosterRevision,undefined);
+});
+
+test('stale reviews, wrong owner, period and read-only accounts cannot add students',async()=>{
+  const f=apiFixture();
+  const p=(await f.add()).rosterReview;
+  f.members[1].__updateTime='changed';
+  await assert.rejects(f.add({...input,...p},true),{code:'ACADEMIC_CBT_ROSTER_CHANGED'});
+  await assert.rejects(f.add(input,false,{...f.actor,username:'other'}),{code:'ACADEMIC_CBT_OWNER_FORBIDDEN'});
+  await assert.rejects(f.getAdditions(input,{...f.actor,username:'other'}),{code:'ACADEMIC_CBT_OWNER_FORBIDDEN'});
+  await assert.rejects(f.add(input,true,{...f.actor,subscriptionReadOnly:true}),{status:403});
+  f.tests[0].TermId='another';
+  await assert.rejects(f.add(),{code:'ACADEMIC_CBT_TEST_NOT_FOUND'});
+  await assert.rejects(f.getAdditions(),{code:'ACADEMIC_CBT_TEST_NOT_FOUND'});
+  assert.equal(f.writes.length,0);
+});
+
+test('additions fail closed for unissued/archived tests, oversized lists and incomplete history',async()=>{
+  const f=apiFixture();
+  f.tests[0].LocalDownloadedAt=''; f.tests[0].LocalPackageIssuedAt='';
+  await assert.rejects(f.add(),{code:'ACADEMIC_CBT_ROSTER_ADDITION_INVALID'});
+  f.tests[0].LocalDownloadedAt='issued'; f.tests[0].Status='Archived';
+  await assert.rejects(f.add(),{code:'ACADEMIC_CBT_ROSTER_ADDITION_INVALID'});
+  f.tests[0].Status='Scheduled'; f.scores.push(...Array.from({length:10001},()=>({...scope})));
+  await assert.rejects(f.add(),/complete eligibility/);
+  assert.throws(()=>academicCbtRosterAdditionPlan(original,Array.from({length:1000},(_,i)=>member(`new${i}`)),[],[]),{status:413});
+  assert.equal(f.writes.length,0);
 });

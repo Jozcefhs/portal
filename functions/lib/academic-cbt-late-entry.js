@@ -8,8 +8,37 @@ export function sameCbtAssessmentPeriod(row, source) {
     && lower(row.BranchId || 'main') === lower(source.BranchId || 'main') && row.SchoolSection === source.SchoolSection;
 }
 
-// Add a separate, linked sitting. Never broaden the roster of a paper already
-// issued to a server, or reissue eligibility to a previous candidate.
+// The issued package remains immutable; reviewed additions are a separate roster.
+export function academicCbtAllStudentRefs(record) {
+  return refs([...(record.StudentRefs || []), ...(record.AdditionalStudentRefs || [])]);
+}
+
+export function academicCbtNewcomers(source, roster, tests, scores, memberships = roster) {
+  const blocked = new Map();
+  for (const test of tests.filter(row => sameCbtAssessmentPeriod(row, source)
+      && ((row.AssessmentComponentId && row.AssessmentComponentId === source.AssessmentComponentId)
+        || (clean(row.AssessmentComponentName) && lower(row.AssessmentComponentName) === lower(source.AssessmentComponentName))))) {
+    for (const ref of academicCbtAllStudentRefs(test)) blocked.set(lower(ref), 'Already included in this assessment or an earlier sitting');
+  }
+  for (const ref of academicCbtAllStudentRefs(source)) blocked.set(lower(ref), 'Already in this test');
+  for (const score of scores.filter(row => sameCbtAssessmentPeriod(row, source))) {
+    const component = (score.ComponentScores || []).find(row => row.ComponentId === source.AssessmentComponentId);
+    const cells = component?.Parts?.length ? component.Parts : [component];
+    if (cells.some(cell => ['Numeric','Absent','Exempt'].includes(cell?.State))) {
+      blocked.set(lower(score.StudentRef), 'An assessment mark or attendance decision is already recorded');
+    }
+  }
+  const counts = new Map();
+  for (const row of memberships) counts.set(lower(row.StudentRef), (counts.get(lower(row.StudentRef)) || 0) + 1);
+  const Eligible = [], Excluded = [];
+  for (const ref of refs(roster.map(row => row.StudentRef))) {
+    const reason = counts.get(lower(ref)) > 1 ? 'Duplicate active class memberships need review' : blocked.get(lower(ref));
+    if (reason) Excluded.push({ StudentRef:ref, Reason:reason }); else Eligible.push(ref);
+  }
+  return {Eligible, Excluded};
+}
+
+// Add a separate, linked sitting without reissuing eligibility to previous candidates.
 export function academicCbtLateEntryPlan(source, roster, tests, scores, input = {}, now = Date.now(), memberships = roster) {
   if (!source || source.LateEntryParentId || lower(source.Status) === 'superseded') {
     throw fail('Choose the original, non-superseded test for late entry.');
@@ -27,29 +56,7 @@ export function academicCbtLateEntryPlan(source, roster, tests, scores, input = 
       || !Number.isInteger(theory) || theory < 0 || theory > 480 || (source.PaperMode === 'split' && !theory)) {
     throw fail('Choose a future sitting date and time. The original paper must have a valid duration.');
   }
-  const blocked = new Map();
-  for (const test of tests.filter(row => sameCbtAssessmentPeriod(row, source)
-      && ((row.AssessmentComponentId && row.AssessmentComponentId === source.AssessmentComponentId)
-        || (clean(row.AssessmentComponentName) && lower(row.AssessmentComponentName) === lower(source.AssessmentComponentName))))) {
-    // Include superseded and previously issued sittings: replacing a paper is
-    // not permission to retake its assessment at another centre.
-    for (const ref of test.StudentRefs || []) blocked.set(lower(ref), 'Already included in this assessment or an earlier sitting');
-  }
-  for (const ref of source.StudentRefs || []) blocked.set(lower(ref), 'Already in the original test');
-  for (const score of scores.filter(row => sameCbtAssessmentPeriod(row, source))) {
-    const component = (score.ComponentScores || []).find(row => row.ComponentId === source.AssessmentComponentId);
-    const cells = component?.Parts?.length ? component.Parts : [component];
-    if (cells.some(cell => ['Numeric','Absent','Exempt'].includes(cell?.State))) {
-      blocked.set(lower(score.StudentRef), 'An assessment mark or attendance decision is already recorded');
-    }
-  }
-  const counts = new Map();
-  for (const row of memberships) counts.set(lower(row.StudentRef), (counts.get(lower(row.StudentRef)) || 0) + 1);
-  const eligible = [], excluded = [];
-  for (const ref of refs(roster.map(row => row.StudentRef))) {
-    const reason = counts.get(lower(ref)) > 1 ? 'Duplicate active class memberships need review' : blocked.get(lower(ref));
-    if (reason) excluded.push({ StudentRef:ref, Reason:reason }); else eligible.push(ref);
-  }
+  const {Eligible:eligible, Excluded:excluded} = academicCbtNewcomers(source, roster, tests, scores, memberships);
   const selected = input.StudentRefs === undefined ? eligible : refs(Array.isArray(input.StudentRefs) ? input.StudentRefs : []);
   const eligibleSet = new Set(eligible.map(lower));
   if (selected.some(ref => !eligibleSet.has(lower(ref)))) throw fail('The selected students are no longer eligible. Review again.', 'ACADEMIC_CBT_LATE_ENTRY_CHANGED');
@@ -62,8 +69,8 @@ export function academicCbtLateEntryPlan(source, roster, tests, scores, input = 
 
 export function academicCbtLateEntryRecord(source, plan, id, actor, timestamp) {
   const copy = Object.fromEntries(Object.entries(source).filter(([key]) => !key.startsWith('__')
-    && !/^(Local|CloudPaperRemoved|Superseded|RosterRefreshed|ScheduleUpdated)/.test(key)
-    && !['RevisionToken','RecordId','CreatedAt','CreatedBy','UpdatedAt','UpdatedBy','PackageDigest','ScheduleRevision'].includes(key)));
+    && !/^(Local|CloudPaperRemoved|Superseded|Roster|ScheduleUpdated)/.test(key)
+    && !['AdditionalStudentRefs','RevisionToken','RecordId','CreatedAt','CreatedBy','UpdatedAt','UpdatedBy','PackageDigest','ScheduleRevision'].includes(key)));
   return { ...copy, RecordId:id, CbtTestId:id, LateEntryParentId:source.CbtTestId,
     LateEntrySourceDigest:source.PackageDigest, LateEntryProtocolVersion:1,
     Title:`${source.Title || source.AssessmentComponentName} · Late entry`,

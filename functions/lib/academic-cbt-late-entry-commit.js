@@ -1,7 +1,7 @@
 import {getFirestoreAccessToken, firestoreBaseUrl, buildStructuredQuery, firestoreDocumentToObject, batchCommitDocuments} from './firestore.js';
 
 const clean = value => String(value ?? '').trim();
-const fail = () => Object.assign(new Error('Students, scores or CBT sittings changed during review. Review again; no late-entry sitting was created.'), {status:409, code:'ACADEMIC_CBT_LATE_ENTRY_CHANGED'});
+const fail = () => Object.assign(new Error('Students, scores or CBT sittings changed during review. Review again; no sitting or student list was changed.'), {status:409, code:'ACADEMIC_CBT_LATE_ENTRY_CHANGED'});
 
 // Query locks cover new memberships, sibling sittings and concurrently posted
 // scores. No existing record is rewritten to acquire those locks.
@@ -36,7 +36,8 @@ export async function commitAcademicCbtLateEntry(env, writes, source, state, sta
       const documents = data.filter(row=>row.document).map(row=>firestoreDocumentToObject(row.document));
       if (documents.length >= 10001 || snapshot(documents) !== snapshot(state[key] || [])) throw fail();
     }
-    if (Date.parse(startsAt) <= Date.now()) throw fail();
+    // Add-only roster amendments do not alter the schedule or require a new sitting.
+    if (!dependencies.addOnlyRoster && Date.parse(startsAt) <= Date.now()) throw fail();
     return await commit(env,writes,{transaction});
   } catch (error) {
     if (transaction) await request(`${base}:rollback`,{method:'POST',headers,body:JSON.stringify({transaction})}).catch(()=>{});

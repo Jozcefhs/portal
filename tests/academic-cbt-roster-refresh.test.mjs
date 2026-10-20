@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import vm from 'node:vm';
 import {academicCbtRosterRefreshPlan, academicManagementCapabilities} from '../functions/lib/academic-management.js';
+import {academicCbtAllStudentRefs} from '../functions/lib/academic-cbt-late-entry.js';
 
 const source = await readFile(new URL('../functions/lib/academic-management.js',import.meta.url),'utf8');
 const clean = value=>String(value??'').trim(), lower = value=>clean(value).toLowerCase();
@@ -24,7 +25,7 @@ function fixture(stage='junior-secondary') {
   const state = { classes:[{...period,SchoolStage:stage}], subjects:[{...period,SubjectId:'maths'}],
     teacherAllocations:[{...period,SubjectId:'maths',AllocationRole:'Subject Teacher',TeacherUsername:'teacher'}],studentMemberships:members };
   const ctx = vm.createContext({clean,lower,crypto,TextEncoder,Date,Uint8Array,ACADEMIC_CBT_STATE_KEYS:[],
-    ACADEMIC_MANAGEMENT_COLLECTIONS:{cbtTests:'academicCbtTests'},academicCbtRosterRefreshPlan,
+    ACADEMIC_MANAGEMENT_COLLECTIONS:{cbtTests:'academicCbtTests'},academicCbtRosterRefreshPlan,academicCbtAllStudentRefs,
     failure:(message,status,code)=>Object.assign(new Error(message),{status,code}),
     academicOperationalContext:async (_env,user,input)=>{
       assert.equal(user.branchId,'main'); assert.equal(input.SchoolSection,'secondary');
@@ -142,6 +143,20 @@ test('two centres can download the same locked package with the complete eligibl
     const blocked=fixture(); blocked.race({LocalPackageIssuedAt:'issued',...changed});
     await assert.rejects(blocked.download(),{status:409});
   }
+});
+
+test('a fresh server downloads the complete add-only roster without replacing the issued base package',async()=>{
+  const f=fixture();
+  f.patch({LocalPackageIssuedAt:'issued',AdditionalStudentRefs:['new'],RosterRevision:2,RosterDigest:'roster-digest',RosterCount:3});
+  const before=f.record();
+  for(let server=0;server<2;server++){
+    const response=await f.download();
+    assert.deepEqual(Array.from(response.cbtPackage.StudentRefs),['new','old','retained']);
+    assert.equal(response.cbtPackage.RosterRevision,2);
+    assert.equal(response.cbtPackage.RosterDigest,'roster-digest');
+    assert.equal(response.cbtPackage.PackageDigest,before.PackageDigest);
+  }
+  assert.deepEqual(f.record(),before);
 });
 
 test('independent and simultaneous server import acknowledgements preserve the test and roster',async()=>{

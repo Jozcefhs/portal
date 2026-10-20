@@ -16141,7 +16141,7 @@ function academicCbtStatus(record = {}) {
   const ends = new Date(record.EndsAt).getTime();
   if (Number.isFinite(ends) && ends <= now) return { label: 'Ended', className: 'ended' };
   if (Number.isFinite(starts) && starts <= now) return { label: 'Active', className: 'active' };
-  if (clean(record.LocalPackageIssuedAt)) return { label: 'Download issued · student list locked', className: 'synced' };
+  if (clean(record.LocalPackageIssuedAt)) return { label: 'Download issued · add-only student updates', className: 'synced' };
   return { label: 'Scheduled', className: 'scheduled' };
 }
 
@@ -16243,13 +16243,13 @@ function academicCbtWorkspace(data, rows) {
     { label: 'Questions', value: (row) => row.NumberOfQuestions },
     { label: 'Saved student list', value: (row) => row.RosterCount },
     { label: 'Status', render: (row) => { const status = academicCbtStatus(row); return `<span class="academic-cbt-status academic-cbt-status-${status.className}">${escapeHtml(status.label)}</span>`; } },
-    { label: 'Actions', render: (row) => `<div class="academic-management-row-actions">${!row.LateEntryParentId && academicCbtHasCloudPapers(row) && row.Status === 'Scheduled' && (clean(row.LocalDownloadedAt || row.LocalPackageIssuedAt) || Date.parse(row.StartsAt) <= Date.now()) ? `<button type="button" data-academic-cbt-late-entry="${escapeHtml(row.CbtTestId)}">Add late-entry students</button>` : ''}${!row.LateEntryParentId && !clean(row.LocalDownloadedAt || row.LocalPackageIssuedAt) && row.Status === 'Scheduled' && Date.parse(row.StartsAt) > Date.now() ? `<button type="button" data-academic-cbt-refresh-roster="${escapeHtml(row.CbtTestId)}">Refresh student list</button>` : ''}<button type="button" class="compact-icon-action compact-edit-action" data-academic-cbt-reschedule="${escapeHtml(row.CbtTestId)}" title="Reschedule date and time" aria-label="Reschedule date and time"><span aria-hidden="true">&#128197;</span></button>${clean(row.LocalDownloadedAt || row.LocalPackageIssuedAt)
+    { label: 'Actions', render: (row) => `<div class="academic-management-row-actions">${row.Status === 'Scheduled' && clean(row.LocalDownloadedAt || row.LocalPackageIssuedAt) ? `<button type="button" data-academic-cbt-refresh-roster="${escapeHtml(row.CbtTestId)}" data-add-only="true">Add missing eligible students</button>` : ''}${!row.LateEntryParentId && academicCbtHasCloudPapers(row) && row.Status === 'Scheduled' && (clean(row.LocalDownloadedAt || row.LocalPackageIssuedAt) || Date.parse(row.StartsAt) <= Date.now()) ? `<button type="button" data-academic-cbt-late-entry="${escapeHtml(row.CbtTestId)}">Add late-entry students</button>` : ''}${!row.LateEntryParentId && !clean(row.LocalDownloadedAt || row.LocalPackageIssuedAt) && row.Status === 'Scheduled' && Date.parse(row.StartsAt) > Date.now() ? `<button type="button" data-academic-cbt-refresh-roster="${escapeHtml(row.CbtTestId)}">Refresh student list</button>` : ''}<button type="button" class="compact-icon-action compact-edit-action" data-academic-cbt-reschedule="${escapeHtml(row.CbtTestId)}" title="Reschedule date and time" aria-label="Reschedule date and time"><span aria-hidden="true">&#128197;</span></button>${clean(row.LocalDownloadedAt || row.LocalPackageIssuedAt)
       ? (clean(row.LocalDownloadedAt) && academicCbtHasCloudPapers(row) ? `<button type="button" class="compact-icon-action academic-archive-action" data-academic-cbt-remove-cloud-paper="${escapeHtml(row.CbtTestId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="Remove paper files from Cloudflare R2" aria-label="Remove paper files from Cloudflare R2"><span aria-hidden="true">&#128465;</span></button>` : '')
       : `${!row.LateEntryParentId ? `<button type="button" class="compact-icon-action compact-edit-action" data-academic-cbt-edit="${escapeHtml(row.CbtTestId)}" title="Edit test package" aria-label="Edit test package"><span aria-hidden="true">&#9998;</span></button>` : ''}<button type="button" class="compact-icon-action academic-archive-action" data-academic-cbt-delete="${escapeHtml(row.CbtTestId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="Delete test" aria-label="Delete test"><span aria-hidden="true">&#128465;</span></button>`}</div>` }
   ], { emptyMessage: 'No online CBT tests have been scheduled for this period.',
     searchable: true, searchLabel: 'tests', searchPlaceholder: 'Subject, class, test type or date',
     searchValue: (row) => [row.SubjectName, row.Title, academicCbtStatus(row).label].join(' ') });
-  return `${editor}<p class="muted">Scheduled tests keep the student list saved at upload. After transfers or subject changes, use Refresh student list to review additions and removals before download. Junior classes include all active students; senior classes use their selected subjects.</p>${register}`;
+  return `${editor}<p class="muted">Before download, Refresh student list reviews additions and removals. After download, Add missing eligible students adds newcomers only: it never removes candidates or changes answers or scores. Pull the test again on every updated CBT server to apply additions. Use Add late-entry students for a separate date. Junior classes include all active students; senior classes use their selected subjects.</p>${register}`;
 }
 
 function academicFinanceClearanceWorkspace(data, rows) {
@@ -17508,15 +17508,16 @@ function bindAcademicManagement() {
       try {
         const payload = { SchoolSection:record.SchoolSection || academicManagementFilters.section,
           SessionId:record.SessionId, TermId:record.TermId, CbtTestId:record.CbtTestId };
-        const preview = await academicManagementRequest('previewAcademicCbtRoster', payload);
+        const addOnly = button.dataset.addOnly === 'true';
+        const preview = await academicManagementRequest(addOnly ? 'previewAcademicCbtRosterAdditions' : 'previewAcademicCbtRoster', payload);
         const review = preview.rosterReview;
         const confirmed = await window.DynamaxDialogs.confirm({ title:'Review CBT student list',
           message:`${review.PreviousCount} saved students → ${review.RosterCount} eligible students. ${review.Rule} Papers, answers, schedule and attempts remain unchanged.`,
           detailsLabel:`${review.Added.length} additions / ${review.Removed.length} removals`,
           items:[...review.Added.map(ref=>`Add: ${ref}`), ...review.Removed.map(ref=>`Remove: ${ref}`)],
-          confirmText:'Confirm student list' });
+          confirmText:addOnly ? 'Add eligible students' : 'Confirm student list' });
         if (!confirmed) return;
-        const result = await academicManagementRequest('refreshAcademicCbtRoster', {
+        const result = await academicManagementRequest(addOnly ? 'addAcademicCbtRosterStudents' : 'refreshAcademicCbtRoster', {
           ...payload, PreviewToken:review.PreviewToken, RevisionToken:review.RevisionToken
         });
         mergeAcademicCbtTest(result);

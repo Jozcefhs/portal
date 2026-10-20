@@ -1,6 +1,7 @@
 import { batchCommitDocuments, getDocument, getDocuments, listCollection, queryCollection } from './firestore.js';
 import { commitAcademicCbtRoster } from './academic-cbt-roster-commit.js';
-import { academicCbtLateEntryPlan, academicCbtLateEntryRecord, sameCbtAssessmentPeriod } from './academic-cbt-late-entry.js';
+import { academicCbtLateEntryPlan, academicCbtLateEntryRecord, sameCbtAssessmentPeriod, academicCbtAllStudentRefs } from './academic-cbt-late-entry.js';
+import { academicCbtRosterAdditionPlan } from './academic-cbt-roster-additions.js';
 import { commitAcademicCbtLateEntry } from './academic-cbt-late-entry-commit.js';
 import { copyAcademicCbtLateEntryPapers } from './academic-cbt-late-entry-papers.js';
 import { academicCbtScoreSources } from './academic-cbt-multiserver.js';
@@ -7360,6 +7361,74 @@ export async function createAcademicCbtLateEntry(env, user = {}, input = {}, pos
     message:`Late-entry sitting scheduled for ${plan.StudentRefs.length} new student(s). Pull this date on every CBT server. The original sitting, answers and scores are unchanged.`};
 }
 
+export async function addAcademicCbtRosterStudents(env, user = {}, input = {}, post = false) {
+  const context = await academicOperationalContext(env,user,input,'canCreateCbt',{stateKeys:ACADEMIC_CBT_STATE_KEYS});
+  for (const key of ['studentMemberships','cbtTests']) {
+    context.state[key] = context.state[key].map(row=>({...row,SchoolSection:effectiveAcademicSection(row,context.scope)}));
+  }
+  const source = findById(context.state.cbtTests,input.CbtTestId);
+  if (!source || source.SessionId !== context.session.SessionId || source.TermId !== context.term.TermId) {
+    throw failure('The test was not found in this academic period.',404,'ACADEMIC_CBT_TEST_NOT_FOUND');
+  }
+  academicCbtAuthority(user,context,source);
+  if (post && clean(input.PreviewToken) && source.RosterAdditionPreviewToken === input.PreviewToken) {
+    return {ok:true,partialAcademicManagement:true,cbtTest:publicRecord(source),message:'These additions were already saved. No students were duplicated.'};
+  }
+  const {roster} = await academicCbtClassContext(env,user,{ClassId:source.ClassId,SubjectId:source.SubjectId,
+    TeacherUsername:source.TeacherUsername},context);
+  const scores = await queryCollection(env,ACADEMIC_MANAGEMENT_COLLECTIONS.studentScores,{
+    filters:[{field:'SubjectId',op:'==',value:source.SubjectId}],limit:10001
+  });
+  if (scores.length >= 10001) throw failure('The subject score history is too large for a complete eligibility review. No partial list was saved.',409);
+  context.state.studentScores = scores.map(row=>({...row,SchoolSection:effectiveAcademicSection(row,context.scope)}))
+    .filter(row=>sameCbtAssessmentPeriod(row,source));
+  const members = context.state.studentMemberships.filter(row=>statusActive(row)
+    && row.SessionId === source.SessionId && row.TermId === source.TermId && row.SchoolSection === source.SchoolSection);
+  const plan = academicCbtRosterAdditionPlan(source,roster,context.state.cbtTests,context.state.studentScores,members);
+  const evidence = [source.CbtTestId,source.__updateTime,plan,...['studentMemberships','cbtTests','studentScores'].map(key=>
+    (context.state[key] || []).map(row=>[recordId(row),row.__updateTime]).sort((a,b)=>String(a[0]).localeCompare(String(b[0]))))];
+  const hash = await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(evidence)));
+  const PreviewToken = [...new Uint8Array(hash)].map(v=>v.toString(16).padStart(2,'0')).join('');
+  const review = {...plan,PreviewToken,RevisionToken:source.__updateTime};
+  if (!post) return {ok:true,rosterReview:review,message:'Missing eligible students reviewed. No test was changed.'};
+  if (input.PreviewToken !== PreviewToken || input.RevisionToken !== source.__updateTime) {
+    throw failure('The eligibility review changed. Review again before adding students.',409,'ACADEMIC_CBT_ROSTER_CHANGED');
+  }
+  if (!plan.Added.length) return {ok:true,partialAcademicManagement:true,cbtTest:publicRecord(source),message:'No missing eligible students to add.'};
+  const timestamp = nowIso();
+  const updated = {...source, AdditionalStudentRefs:[...(source.AdditionalStudentRefs || []),...plan.Added],
+    RosterCount:plan.RosterCount, RosterRevision:Number(source.RosterRevision || 0)+1,
+    RosterAdditionPreviewToken:PreviewToken, RosterAddedAt:timestamp, RosterAddedBy:actorName(user),
+    UpdatedAt:timestamp, UpdatedBy:actorName(user)};
+  // Keep StudentRefs, PackageRevision and PackageDigest immutable. Old servers
+  // and signed uploads continue to refer to their original issued package.
+  const rosterHash = await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(academicCbtAllStudentRefs(updated))));
+  updated.RosterDigest = [...new Uint8Array(rosterHash)].map(v=>v.toString(16).padStart(2,'0')).join('');
+  const audit = auditWrite(user,'ADD_CBT_STUDENTS','cbtTests',updated,`${plan.Added.length} reviewed additions; original package and all attempts preserved`);
+  audit.data.StudentRefs = plan.Added;
+  const commit = await commitAcademicCbtLateEntry(env,[
+    {collectionPath:ACADEMIC_MANAGEMENT_COLLECTIONS.cbtTests,documentId:source.CbtTestId,data:withoutMetadata(updated),
+      ...writePrecondition(source,input.RevisionToken)},audit
+  ],source,context.state,source.StartsAt,{addOnlyRoster:true,legacySection:effectiveAcademicSection({},context.scope)});
+  return {ok:true,partialAcademicManagement:true,cbtTest:publicRecord({...updated,__updateTime:commit?.writeResults?.[0]?.updateTime}),
+    message:`${plan.Added.length} missing students added. Pull this test on every updated CBT server. Existing answers and scores are unchanged; its date and time have not changed.`};
+}
+
+export async function getAcademicCbtRosterAdditions(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env,user,input,'canCreateCbt',{stateKeys:['sessions','terms','cbtTests']});
+  const source = findById(context.state.cbtTests,input.CbtTestId);
+  if (!source || source.SessionId !== context.session.SessionId || source.TermId !== context.term.TermId || source.Status !== 'Scheduled') {
+    throw failure('The scheduled test was not found in this academic period.',404,'ACADEMIC_CBT_TEST_NOT_FOUND');
+  }
+  academicCbtAuthority(user,context,source);
+  return {ok:true,rosterPackage:{
+    CbtTestId:source.CbtTestId, SessionId:source.SessionId, TermId:source.TermId, ClassId:source.ClassId,
+    SubjectId:source.SubjectId, AssessmentComponentId:source.AssessmentComponentId,
+    LateEntryParentId:source.LateEntryParentId || '', RosterRevision:Number(source.RosterRevision || 0),
+    RosterDigest:source.RosterDigest || '', StudentRefs:academicCbtAllStudentRefs(source)
+  }};
+}
+
 export async function rescheduleAcademicCbtTest(env, user = {}, input = {}) {
   const context = await academicOperationalContext(env, user, input, 'canCreateCbt', {
     stateKeys: ['sessions', 'terms', 'cbtTests']
@@ -7657,6 +7726,7 @@ export async function downloadAcademicCbtTestPackage(env, user = {}, input = {})
     message: 'The scheduled CBT package is ready for local import.',
     cbtPackage: {
       ...publicRecord(releasedRecord),
+      StudentRefs: academicCbtAllStudentRefs(releasedRecord),
       Paper: papers[0], Papers: papers,
       TheoryPaper: theoryPapers[0] || null, TheoryPapers: theoryPapers
     }
@@ -8102,6 +8172,9 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
   if (['rescheduleacademiccbttest', 'reschedulecbttest'].includes(action)) return rescheduleAcademicCbtTest(env, user, input);
   if (action === 'previewacademiccbtroster') return refreshAcademicCbtRoster(env, user, input, false);
   if (action === 'refreshacademiccbtroster') return refreshAcademicCbtRoster(env, user, input, true);
+  if (action === 'previewacademiccbtrosteradditions') return addAcademicCbtRosterStudents(env,user,input,false);
+  if (action === 'addacademiccbtrosterstudents') return addAcademicCbtRosterStudents(env,user,input,true);
+  if (action === 'getacademiccbtrosteradditions') return getAcademicCbtRosterAdditions(env,user,input);
   if (action === 'previewacademiccbtlateentry') return createAcademicCbtLateEntry(env, user, input, false);
   if (action === 'createacademiccbtlateentry') return createAcademicCbtLateEntry(env, user, input, true);
   if (['deleteacademiccbttest', 'deletecbttest'].includes(action)) return deleteAcademicCbtTest(env, user, input);
