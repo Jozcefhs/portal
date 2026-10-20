@@ -1,7 +1,7 @@
 {
-  "version": "3.1.37",
+  "version": "3.1.38",
   "channel": "stable",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.37.exe",
-  "sha256": "fc4fc356cfbcbae62d5e98bd8439273284764309041546acc63d51d8b15e8766",
-  "notes": "Dynamax Desktop v3.1.37 includes late-entry CBT sittings, older-tablet browser compatibility repairs, clearer LAN joining addresses and candidate login refresh when re-pulling existing tests. Online Draft tests become available after student credentials are configured, provided their sitting has not ended. Pull the scheduled date and select the separate Late entry sitting on every CBT server. Existing papers, answers, timers and scores are preserved. Passwords remain protected; authorised handlers can issue a temporary password through Reset Student Password. Back up and update each server between examinations. The subscriber school logo is unchanged. No tablet APK update is required; reopen the test page after updating the server."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.38.exe",
+  "sha256": "63d70d7b5e474f7eae1a1d5418285cd1e93b1607123f479ff0f00b58fd743e9c",
+  "notes": "Dynamax Desktop v3.1.38 safely adds missing eligible students to downloaded CBT tests. Review and confirm Add missing eligible students in the web companion, then pull the test's scheduled date on every server and apply the student-list update. Repeated pulls do not duplicate candidates or replace existing papers, answers, timers or scores. Includes the earlier late-entry and candidate-login repairs. Back up and update both CBT servers between examinations. School branding is preserved. No tablet APK update is required; reopen the test page."
 }
