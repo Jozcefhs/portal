@@ -5,7 +5,7 @@ import { billingComponentDiagnostics, billingDiagnostics } from '../lib/student-
 import { loadBranchFinanceRows, loadBranchFinancePage } from '../lib/finance-branch-reads.js';
 import { financeMoney, financeDate, financeData, financeWrite, financeFailure, financeOperationId, journalFinancialSignature, assertFinanceRoleLimit } from '../lib/accounting-mutation-guards.js';
 import { getAccountingChartRows, invalidateAccountingChartRows, primeAccountingChartRows } from '../lib/accounting-reference-cache.js';
-import { continueRevenueSync, revenueSyncWrite } from '../lib/accounting-revenue-sync.js';
+import { continueRevenueSync, revenueSyncWrite, revenueSyncReader } from '../lib/accounting-revenue-sync.js';
 import { mergeSchoolBranchMetadata, saveBranchSchoolSection } from '../lib/branch-school-presentation.js';
 import { canonicalSchoolBranchId, deleteSchoolDocument, getSchoolDocumentById, getSchoolDocumentsById, getSchoolStructure, invalidateSchoolStructureCache, listSchoolCollection, normalizeSchoolStructure, querySchoolCollection, safeScopeId, schoolCollectionPaths, schoolSectionFor, upsertSchoolDocument } from '../lib/school-scope.js';
 import { canonicalConfiguredClass, classNamesMatch } from '../lib/class-names.js';
@@ -8383,22 +8383,43 @@ async function syncRevenueToAccounting(env, body) {
       return targets;
     },
     preparePage: async (target, rows) => {
-      if (target.stage !== 'invoices') return new Map();
-      const ids = [...new Set(rows.map(row => `SYS-INV-${safeDocumentId(row.InvoiceId || row.InvoiceNo || row.invoiceId || row.__id)}`))];
-      const found = new Map();
-      for (let start = 0; start < ids.length; start += 10) {
-        const group = ids.slice(start, start + 10);
-        const journals = await queryCollection(env, 'accountingJournals', { filters: [{ field: 'JournalNo', op: 'in', value: group }], limit: group.length + 1 });
-        if (journals.length > group.length) throw accountingSyncConflict('Duplicate invoice journals require finance review.');
-        for (const journal of journals) {
-          if (found.has(journal.JournalNo)) throw accountingSyncConflict('Duplicate invoice journals require finance review.');
-          found.set(journal.JournalNo, journal);
-        }
-      }
-      return found;
+      return prepareRevenueSyncPage(env, target, rows);
     },
     planRow: (target, row, currentScope, prepared) => planRevenueSyncRow(env, target, row, currentScope, prepared)
   });
+}
+
+export async function prepareRevenueSyncPage(env, target, rows, options = {}) {
+  const found = new Map();
+  found.reader = revenueSyncReader({ getDocument, queryCollection, listCollection, ...options });
+  if (!['invoices', 'invoiceCredits', 'ledger'].includes(target.stage)) return found;
+  const creditStage = target.stage === 'invoiceCredits';
+  const ids = [...new Set(rows.map(row => creditStage
+    ? (isSchoolFeeInvoice(row) ? clean(row.InvoiceId || row.__id) : '')
+    : target.stage === 'ledger'
+      ? buildWalletPurchaseAccountingJournal(row)?.JournalNo
+      : `SYS-INV-${safeDocumentId(row.InvoiceId || row.InvoiceNo || row.invoiceId || row.__id)}`).filter(Boolean))];
+  found.creditJournals = new Map();
+  for (let start = 0; start < ids.length; start += 10) {
+    const group = ids.slice(start, start + 10);
+    const journals = await found.reader.db.queryCollection(env, 'accountingJournals', {
+      filters: [{ field: creditStage ? 'SourceId' : 'JournalNo', op: 'in', value: group }],
+      limit: creditStage ? 201 : group.length + 1
+    });
+    if (creditStage) {
+      // A full group may hide dependencies. Fall back to the original bounded
+      // per-invoice check instead of treating a truncated group as complete.
+      if (journals.length >= 201) continue;
+      for (const id of group) found.creditJournals.set(id, journals.filter(row => sameText(row.SourceId, id)));
+    } else {
+      if (journals.length > group.length) throw accountingSyncConflict('Duplicate source journals require finance review.');
+      for (const journal of journals) {
+        if (found.has(journal.JournalNo)) throw accountingSyncConflict('Duplicate source journals require finance review.');
+        found.set(journal.JournalNo, journal);
+      }
+    }
+  }
+  return found;
 }
 
 function accountingSyncConflict(message) {
@@ -8412,8 +8433,9 @@ export async function accountingSyncRelated(env, collection, fields, values, que
   if (!wanted.length) return [];
   if (wanted.length > 30) throw accountingSyncConflict('Too many financial reference aliases; finance review is required.');
   const found = new Map();
-  for (const field of fields) {
-    const rows = await query(env, collection, { filters: [{ field, op: 'in', value: wanted }], limit: 201 });
+  const groups = await Promise.all(fields.map(field =>
+    query(env, collection, { filters: [{ field, op: 'in', value: wanted }], limit: 201 })));
+  for (const rows of groups) {
     if (rows.length >= 201) throw accountingSyncConflict(`Too many related ${collection} records for one source; finance review is required. No partial reconciliation was posted.`);
     for (const row of rows) found.set(row.__name || row.__id, row);
     if (found.size > 200) throw accountingSyncConflict(`Too many related ${collection} records for one source; finance review is required. No partial reconciliation was posted.`);
@@ -8422,11 +8444,32 @@ export async function accountingSyncRelated(env, collection, fields, values, que
 }
 
 export async function planRevenueSyncRow(env, target, raw, scope, prepared = new Map(), options = {}) {
-  const db = { getDocument, listCollection, queryCollection, ...options };
+  const db = { getDocument, listCollection, queryCollection, ...prepared?.reader?.db, ...options };
   const related = (collection, fields, values) => accountingSyncRelated(env, collection, fields, values, db.queryCollection);
   const stage = target.stage;
   if (stage === 'invoiceCredits' && scope.edition !== 'school') return { writes: [] };
+  // These source types cannot produce a posting in their respective stages.
+  // Do not perform remote point/dependency reads for every irrelevant row.
+  if (stage === 'invoiceCredits' && !isSchoolFeeInvoice(raw)) return { writes: [] };
+  if (stage === 'ledger' && !buildWalletPurchaseAccountingJournal(raw)) return { writes: [] };
+  const branch = lower(raw.BranchId || raw.branchId || target.branchId || 'main');
+  if (scope.branchId !== 'all' && scope.branchId !== branch) throw accountingSyncConflict('A source moved to another branch. Start a new synchronization pass.');
   const invoiceId = clean(raw.InvoiceId || raw.InvoiceNo || raw.invoiceId || raw.__id);
+  if (stage === 'invoiceCredits' && prepared.creditJournals?.has(invoiceId)) {
+    const gap = schoolInvoiceCreditJournalGap(raw, accountingRowsForBranch(prepared.creditJournals.get(invoiceId), branch));
+    if (gap.invalidPostedJournalIds?.length || gap.missing < -0.005 || (gap.missing > 0.005 && gap.baselineExists)) {
+      throw accountingSyncConflict(`Invoice ${invoiceId} has an unreconciled parent-credit application; finance review is required.`);
+    }
+    if (gap.missing <= 0.005) return { writes: [] };
+    // A missing posting still uses a fresh source and dependency read below.
+  }
+  if (stage === 'ledger') {
+    const journal = buildWalletPurchaseAccountingJournal(raw);
+    const prior = prepared.get(journal.JournalNo);
+    if (prior && sameText(prior.BranchId || prior.branchId || 'main', branch) &&
+        lower(prior.Status) === 'posted' && journalLineSignature(prior.Lines) === journalLineSignature(journal.Lines) &&
+        sameText(prior.Reference, journal.Reference) && sameText(prior.SourceId, journal.SourceId)) return { writes: [] };
+  }
   const invoicePrior = stage === 'invoices' ? prepared.get(`SYS-INV-${safeDocumentId(invoiceId)}`) : null;
   if (invoicePrior) {
     if (lower(invoicePrior.Status) !== 'posted' || !sameText(invoicePrior.SourceId, invoiceId) ||
@@ -8467,13 +8510,18 @@ export async function planRevenueSyncRow(env, target, raw, scope, prepared = new
     const payment = normalizePayment(row);
     const refs = [payment.Reference, payment.GatewayReference, payment.PaymentId, row.PaymentNo, row.__id].map(clean).filter(Boolean);
     const accounts = [...new Set(accountRefsFrom(payment).flatMap(value => [value, value.toUpperCase(), value.toLowerCase(), value.replace(/[^a-z0-9]+/gi, '_'), value.replace(/[^a-z0-9]+/gi, '-'), value.replace(/[^a-z0-9]+/gi, '/')]))];
-    sources.invoices = scoped(await related('invoices', ['AccountRef', 'AdmissionNo', 'ApplicationReference', 'ApplicationID', 'AdmissionNumber'], accounts));
-    // These are dependencies, not invoice sources to be posted in this stage.
-    sources.dependencyInvoices = sources.invoices; sources.invoices = [];
-    sources.journals = scoped(await related('accountingJournals', ['Reference', 'SourceId', 'JournalNo'], [...refs, ...refs.map(ref => `SYS-PAY-${safeDocumentId(ref)}`)]));
-    sources.dependencyLedgerRows = scoped(await related('ledger', ['Reference'], refs));
-    sources.legacyGatewayExpenses = scoped(await related('accountingExpenses', ['Reference'], refs));
-    const charge = await db.getDocument(env, 'paymentGatewayCharges', safeDocumentId(`PAYSTACK-FEE-${payment.Reference || refs[0]}`));
+    const [invoices, journals, ledger, expenses, charge] = await Promise.all([
+      related('invoices', ['AccountRef', 'AdmissionNo', 'ApplicationReference', 'ApplicationID', 'AdmissionNumber'], accounts),
+      related('accountingJournals', ['Reference', 'SourceId', 'JournalNo'], [...refs, ...refs.map(ref => `SYS-PAY-${safeDocumentId(ref)}`)]),
+      related('ledger', ['Reference'], refs),
+      related('accountingExpenses', ['Reference'], refs),
+      db.getDocument(env, 'paymentGatewayCharges', safeDocumentId(`PAYSTACK-FEE-${payment.Reference || refs[0]}`))
+    ]);
+    // Dependencies are checked in full; they are never invoice posting sources.
+    sources.dependencyInvoices = scoped(invoices);
+    sources.journals = scoped(journals);
+    sources.dependencyLedgerRows = scoped(ledger);
+    sources.legacyGatewayExpenses = scoped(expenses);
     sources.gatewayCharges = scopedCharge(charge);
   } else if (stage === 'ledger') {
     sources.ledgerRows = [row];

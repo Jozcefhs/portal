@@ -11,6 +11,35 @@ const publicState = run => ({
 });
 const withoutMetadata = row => Object.fromEntries(Object.entries(row || {}).filter(([key]) => !key.startsWith('__')));
 
+// One request only: share repeated dependency reads and bound database fan-out.
+// Never retain financial records across requests or tenants.
+export function revenueSyncReader(database, concurrency = 5) {
+  const cache = new Map(), waiting = [];
+  let active = 0, reads = 0;
+  const run = async work => {
+    if (active >= concurrency) await new Promise(resolve => waiting.push(resolve));
+    else active++;
+    try { return await work(); }
+    finally {
+      const next = waiting.shift();
+      if (next) next();
+      else active--;
+    }
+  };
+  const db = {};
+  for (const method of ['getDocument', 'queryCollection', 'listCollection']) {
+    db[method] = (env, ...args) => {
+      const key = JSON.stringify([method, ...args]);
+      if (!cache.has(key)) {
+        reads++;
+        cache.set(key, run(() => database[method](env, ...args)));
+      }
+      return cache.get(key);
+    };
+  }
+  return { db, get reads() { return reads; } };
+}
+
 // Financial changes and the cursor advance are committed together. A lost
 // response, retry or competing worker cannot post a row twice or skip a row.
 export async function continueRevenueSync(env, body, scope, hooks, overrides = {}) {
@@ -27,7 +56,7 @@ export async function continueRevenueSync(env, body, scope, hooks, overrides = {
       const targets = await hooks.prepare();
       const next = { RunId: crypto.randomUUID(), Actor: scope.actor, BranchId: scope.branchId, Edition: scope.edition,
         Status: 'Running', Targets: targets, Stage: 0, Cursor: '', Step: 0, Processed: 0, Changes: 0,
-        PageSize: 1, StartedAt: new Date().toISOString() };
+        PageSize: 50, StartedAt: new Date().toISOString() };
       if (run) {
         if (!run.__updateTime) throw fail('The synchronization checkpoint has no database version. Reload and retry.', 428);
         await db.batchCommitLiteralDocuments(env, [{ collectionPath: stateCollection, documentId: key,
@@ -44,7 +73,8 @@ export async function continueRevenueSync(env, body, scope, hooks, overrides = {
   if (!run.__updateTime) throw fail('The synchronization checkpoint has no database version. Reload and retry.', 428);
   const target = run.Targets[run.Stage];
   if (!target || !REVENUE_SYNC_STAGES.includes(target.stage) && target.stage !== 'donations') throw fail('The synchronization stage is invalid.');
-  const limit = Math.min(50, Math.max(1, run.PageSize || 1));
+  // Upgrade unfinished one-row runs too; their cursor and identity stay intact.
+  const limit = 50;
   const rows = await db.queryCollection(env, target.collection, {
     orderBy: [{ field: '__name__' }], limit,
     ...(run.Cursor ? { startAfterName: run.Cursor } : {})
@@ -59,13 +89,20 @@ export async function continueRevenueSync(env, body, scope, hooks, overrides = {
   const writes = new Map();
   let checked = 0;
   let changed = 0;
+  let expensive = 0;
+  const started = Date.now();
   let cursor = run.Cursor;
   for (const raw of rows) {
     // Query results are not trusted to grant write access. The scope is checked
     // again by the planner against the current source and related records.
     let plan = { writes: [] };
     if (scope.branchId === 'all' || clean(raw.BranchId || raw.branchId || target.branchId || 'main').toLowerCase() === scope.branchId) {
-      plan = await hooks.planRow(target, raw, scope, prepared);
+      try {
+        plan = await hooks.planRow(target, raw, scope, prepared);
+      } catch (error) {
+        error.message = `Revenue synchronization paused at ${target.stage} record ${raw.__id}: ${error.message}. Completed batches are saved; this checkpoint was not advanced.`;
+        throw error;
+      }
     }
     for (const write of plan.writes || []) {
       const writeKey = `${write.collectionPath}/${write.documentId}`;
@@ -74,17 +111,19 @@ export async function continueRevenueSync(env, body, scope, hooks, overrides = {
       writes.set(writeKey, { ...write, ...(write.data ? { data: withoutMetadata(write.data) } : {}) });
     }
     changed += plan.changes || 0;
+    if (plan.expensive) expensive++;
     checked++;
     cursor = raw.__name;
-    // At most one changing/expensive source per invocation; already-reconciled
-    // invoice pages can advance up to fifty rows using batched point queries.
-    if (plan.expensive || writes.size) break;
+    // Stop after a changing source: later rows must see that committed change.
+    // Read-only checks can share the request, bounded by work and wall time.
+    if (writes.size || expensive >= 2 || (prepared?.reader?.reads || 0) >= 24 ||
+        Date.now() - started >= 10_000) break;
   }
   const exhausted = checked === rows.length && rows.length < limit;
   const next = { ...withoutMetadata(run), Step: run.Step + 1, Processed: run.Processed + checked,
     Changes: run.Changes + changed, Cursor: cursor, UpdatedAt: new Date().toISOString(),
-    PageSize: target.stage === 'invoices' && !writes.size ? 50 : 1 };
-  if (exhausted) Object.assign(next, { Stage: run.Stage + 1, Cursor: '', PageSize: 1 });
+    PageSize: 50 };
+  if (exhausted) Object.assign(next, { Stage: run.Stage + 1, Cursor: '', PageSize: 50 });
   if (next.Stage === run.Targets.length) Object.assign(next, { Status: 'Complete', CompletedAt: next.UpdatedAt });
   writes.set(`${stateCollection}/${key}`, { collectionPath: stateCollection, documentId: key,
     data: next, updateTime: run.__updateTime });

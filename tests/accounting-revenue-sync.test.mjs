@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import * as mutationGuards from '../functions/lib/accounting-mutation-guards.js';
-import { continueRevenueSync, revenueSyncWrite } from '../functions/lib/accounting-revenue-sync.js';
-import { accountingSyncRelated, planRevenueSyncRow } from '../functions/api/backend.js';
+import { continueRevenueSync, revenueSyncWrite, revenueSyncReader } from '../functions/lib/accounting-revenue-sync.js';
+import { accountingSyncRelated, planRevenueSyncRow, prepareRevenueSyncPage } from '../functions/api/backend.js';
 
 const scope = { actor: 'accounts', edition: 'school', branchId: 'main' };
 const target = { stage: 'invoices', collection: 'invoices' };
@@ -75,7 +75,7 @@ test('failed or racing atomic commits leave both financial record and checkpoint
   const results = await Promise.allSettled([fixture.call({ RunId: start.runId, Step: 0 }), fixture.call({ RunId: start.runId, Step: 0 })]);
   assert.equal(fixture.commits.length, 1);
   assert.ok(results.some(row => row.status === 'fulfilled'));
-  assert.equal((await fixture.call({})).created, 1);
+  assert.equal((await fixture.call({ RunId: start.runId, Step: 0 })).created, 1);
 });
 
 test('old clients, invalid future checkpoints, run IDs and owners fail closed', async () => {
@@ -360,4 +360,102 @@ test('related slices deduplicate across fields but stop if their combined result
   assert.equal((await accountingSyncRelated({}, 'invoices', ['AccountRef', 'AdmissionNo'], ['S1'], async () => [shared])).length, 1);
   await assert.rejects(accountingSyncRelated({}, 'invoices', ['AccountRef', 'AdmissionNo'], ['S1'], async (_env, _collection, query) =>
     Array.from({ length: 101 }, (_, index) => source(`${query.filters[0].field}-${index}`))), /No partial reconciliation/);
+});
+
+test('request-local reader reuses dependencies and caps concurrent database work', async () => {
+  let active = 0, peak = 0, calls = 0;
+  const database = { getDocument: async (_env, collection, id) => {
+    calls++; active++; peak = Math.max(peak, active);
+    await new Promise(resolve => setTimeout(resolve, 2));
+    active--;
+    return { collection, id };
+  } };
+  const reader = revenueSyncReader(database);
+  const reads = Array.from({ length: 30 }, (_, i) => reader.db.getDocument({}, 'invoices', String(i % 15)));
+  const results = await Promise.all(reads);
+  assert.equal(calls, 15);
+  assert.equal(reader.reads, 15);
+  assert.equal(peak, 5);
+  assert.deepEqual(results[0], results[15]);
+  await revenueSyncReader(database).db.getDocument({}, 'invoices', '0');
+  assert.equal(calls, 16, 'another request never reuses stale financial data');
+});
+
+test('reader releases queued slots after errors and never masks a failed dependency', async () => {
+  const reader = revenueSyncReader({ getDocument: async (_env, _collection, id) => {
+    if (id === 'bad') throw new Error('Dependency read failed');
+    return id;
+  } }, 1);
+  const results = await Promise.allSettled(['bad', 'ok', 'later'].map(id => reader.db.getDocument({}, 'invoices', id)));
+  assert.equal(results[0].status, 'rejected');
+  assert.equal(results[1].value, 'ok');
+  assert.equal(results[2].value, 'later');
+});
+
+test('unfinished old one-record runs resume in batches without restarting or skipping', async () => {
+  const fixture = store(120);
+  const start = await fixture.call({});
+  const [key, run] = [...fixture.documents.entries()][0];
+  fixture.documents.set(key, { ...run, PageSize: 1, Cursor: source('000009').__name, Processed: 10 });
+  const next = await fixture.call({ RunId: start.runId, Step: 0 });
+  assert.equal(next.runId, start.runId);
+  assert.equal(next.processed, 60);
+  assert.equal(fixture.queries[0].options.startAfterName, source('000009').__name);
+});
+
+test('expensive read-only records share bounded batches; changing records commit before later plans', async () => {
+  const fixture = store(10, { prepare: async () => [{ stage: 'payments', collection: 'payments' }],
+    planRow: async () => ({ writes: [], expensive: true }) });
+  let state = await fixture.call({});
+  state = await fixture.call({ RunId: state.runId, Step: state.step });
+  assert.equal(state.processed, 2);
+  let planned = 0;
+  fixture.handlers.planRow = async (_target, row) => { planned++; return {
+    writes: [revenueSyncWrite('accountingJournals', row.__id, {})], changes: 1
+  }; };
+  state = await fixture.call({ RunId: state.runId, Step: state.step });
+  assert.equal(planned, 1);
+  assert.equal(state.processed, 3);
+});
+
+test('planner errors identify the exact stage and record without advancing saved progress', async () => {
+  const fixture = store(5, { planRow: async () => { throw Object.assign(new Error('Finance review required'), { status: 409 }); } });
+  const start = await fixture.call({});
+  await assert.rejects(fixture.call({ RunId: start.runId, Step: 0 }), error =>
+    error.status === 409 && /invoices record 000000/.test(error.message) && /checkpoint was not advanced/.test(error.message));
+  assert.equal(fixture.commits.length, 0);
+  assert.equal((await fixture.call({})).processed, 0);
+});
+
+test('fifty reconciled invoice credits need five bounded queries and no per-record lookups', async () => {
+  const rows = Array.from({ length: 50 }, (_, i) => source(`I${i}`, {
+    FeeCategory: 'School Fee', FeeCode: 'SCHOOL_FEES_TOTAL', Credit: 0
+  }));
+  const fixture = plannerData(rows.map(row => ['invoices', row]));
+  const target = { stage: 'invoiceCredits', collection: 'invoices' };
+  const prepared = await prepareRevenueSyncPage({}, target, rows, fixture.options);
+  for (const row of rows) assert.deepEqual(await planRevenueSyncRow({}, target, row, scope, prepared), { writes: [] });
+  assert.equal(fixture.reads.length, 5);
+  assert.ok(fixture.reads.every(read => read.query.filters[0].field === 'SourceId'));
+});
+
+test('credit prefetch detects conflicting baselines and falls back on a full dependency page', async () => {
+  const row = source('I1', { FeeCategory: 'School Fee', FeeCode: 'SCHOOL_FEES_TOTAL', Credit: 0 });
+  const journal = source('J1', { SourceId: 'I1', Source: 'Student Invoice Credit', Status: 'Posted', Lines: [
+    { AccountCode: '2310', Debit: 100 }, { AccountCode: '1100', Credit: 100 }
+  ] });
+  const target = { stage: 'invoiceCredits', collection: 'invoices' };
+  const fixture = plannerData([['invoices', row], ['accountingJournals', journal]]);
+  const prepared = await prepareRevenueSyncPage({}, target, [row], fixture.options);
+  await assert.rejects(planRevenueSyncRow({}, target, row, scope, prepared), /finance review/);
+  const full = await prepareRevenueSyncPage({}, target, [row], {
+    queryCollection: async () => Array.from({ length: 201 }, () => journal)
+  });
+  assert.equal(full.creditJournals.has('I1'), false, 'truncated dependencies cannot prove reconciliation');
+});
+
+test('irrelevant ledger and credit sources do not make point reads', async () => {
+  const options = { getDocument: async () => { throw new Error('Unnecessary lookup'); } };
+  assert.deepEqual(await planRevenueSyncRow({}, { stage: 'ledger' }, source('L', { EntryType: 'Payment', Credit: 100 }), scope, new Map(), options), { writes: [] });
+  assert.deepEqual(await planRevenueSyncRow({}, { stage: 'invoiceCredits' }, source('I', { FeeCategory: 'Club' }), scope, new Map(), options), { writes: [] });
 });
