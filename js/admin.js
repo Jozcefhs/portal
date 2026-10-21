@@ -15381,7 +15381,8 @@ function academicScorebookWorkspace(data, rows) {
     { label: 'Classroom', value: (row) => `${academicLabel(rows.classes, row.ClassId)} / ${academicLabel(rows.arms, row.ArmId)}` },
     { label: 'Subject', value: (row) => academicLabel(rows.subjects, row.SubjectId) },
     { label: 'Teacher', value: (row) => academicLabel(data.staff, row.TeacherUsername, row.TeacherUsername) },
-    { label: 'Entered', value: (row) => `${row.CompleteCount || 0} / ${row.RosterCount || 0}` },
+    { label: 'Entered', value: (row) => `${row.EnteredCount || 0} / ${row.RosterCount || 0}` },
+    { label: 'Complete', value: (row) => `${row.CompleteCount || 0} / ${row.RosterCount || 0}` },
     { label: 'Scheme revision', value: (row) => row.AssessmentRevisionId || 'Not captured' },
     { label: 'Status', value: (row) => row.Status },
     { label: 'Actions', render: (row) => academicScoreSheetActions(row, data.permissions || {}) }
@@ -16452,9 +16453,21 @@ async function academicManagementRequest(action, payload = {}, requestOptions = 
     return { ...refreshed, ...data, refreshAcademicManagement: false };
   }
   if (data.partialAcademicManagement === true && academicManagementData) {
-    return { ...academicManagementData, ...data };
+    return mergeAcademicScorebookSnapshot({ ...academicManagementData, ...data }, data.scorebookSnapshot);
   }
-  return data;
+  return mergeAcademicScorebookSnapshot(data, data.scorebookSnapshot);
+}
+
+function mergeAcademicScorebookSnapshot(data, snapshot) {
+  if (!snapshot || !clean(snapshot.SheetId) || !Array.isArray(snapshot.scores)) return data;
+  const sheetId = snapshot.SheetId;
+  return {
+    ...data,
+    scoreSheets: [...(data.scoreSheets || []).filter(row => row.SheetId !== sheetId),
+      ...(snapshot.sheet?.SheetId === sheetId ? [snapshot.sheet] : [])],
+    studentScores: [...(data.studentScores || []).filter(row => row.SheetId !== sheetId),
+      ...snapshot.scores.filter(row => row.SheetId === sheetId)]
+  };
 }
 
 async function showAcademicCalculationFailure(status, error, options = {}) {
@@ -16887,6 +16900,10 @@ async function loadAcademicScorebookContext() {
   try {
     setStatus(status, 'Loading the selected scorebook and assessment scheme...');
     const data = await academicManagementRequest('getAcademicScorebookContext', payload);
+    const current = academicScorebookContextPayload();
+    if (activeSection !== 'academics' || academicManagementView !== 'scorebook' || !current
+        || [current.SessionId, current.TermId, current.ClassId, current.ArmId, current.SubjectId,
+          clean(current.TeacherUsername).toLowerCase()].map(clean).join('|') !== key) return;
     academicScorebookDraft.contextKey = key;
     renderAcademicManagement(data, data.message || 'Scorebook context loaded.');
   } catch (error) { setStatus(status, error.message || String(error), 'bad'); }

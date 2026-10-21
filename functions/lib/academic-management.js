@@ -5039,15 +5039,24 @@ export function academicScoreTeacherAllocations(state, candidate, options = {}) 
     && row.SubjectId === candidate.SubjectId);
 }
 
-function assertAcademicScoreSheetAuthority(user, permissions, state, candidate, existing = null, options = {}) {
+export function assertAcademicScoreSheetAuthority(user, permissions, state, candidate, existing = null, options = {}) {
   const allocations = academicScoreTeacherAllocations(state, candidate, options);
   if (!allocations.length) {
     const target = options.classWideSubjectAuthority ? 'class and subject' : 'classroom and subject';
     throw failure(`Assign a subject teacher to this ${target} before opening its scorebook.`, 409, 'ACADEMIC_SCORE_TEACHER_REQUIRED');
   }
   const username = actorUsername(user);
-  const requestedTeacher = lower(existing?.TeacherUsername || candidate.TeacherUsername || (permissions.teacherView ? username : ''));
-  const allocation = allocations.find((row) => !requestedTeacher || lower(row.TeacherUsername) === requestedTeacher);
+  // The captured sheet teacher is provenance, not a permanent access grant.
+  // A replacement teacher must use their CURRENT allocation; a former teacher
+  // must not retain access through an old sheet or a supplied username.
+  const requestedTeacher = permissions.teacherView ? username : lower(candidate.TeacherUsername);
+  let allocation = allocations.find((row) => !requestedTeacher || lower(row.TeacherUsername) === requestedTeacher);
+  if (!allocation && existing && !permissions.teacherView
+      && requestedTeacher === lower(existing.TeacherUsername)) {
+    // Desktop workflow actions can still send the historical sheet teacher.
+    // Managers may act through a current allocation without rewriting history.
+    allocation = allocations[0];
+  }
   if (!allocation) throw failure('The selected teacher is not allocated to this subject and classroom.', 403, 'ACADEMIC_SCORE_ALLOCATION_FORBIDDEN');
   if (permissions.teacherView && lower(allocation.TeacherUsername) !== username) {
     throw failure('Teachers may enter scores only for their own allocated subjects and classrooms.', 403, 'ACADEMIC_SCORE_ALLOCATION_FORBIDDEN');
@@ -5158,8 +5167,11 @@ export async function getAcademicScorebookContext(env, user = {}, input = {}) {
     partialAcademicManagement: true,
     message: 'Scorebook context loaded.',
     assessmentScheme: context.scheme,
+    scorebookSnapshot: academicScorebookSnapshot(context),
     scorebookContext: {
       SheetId: context.SheetId,
+      SessionId: context.session.SessionId,
+      TermId: context.term.TermId,
       ClassId: context.schoolClass.ClassId,
       ArmId: context.arm.ArmId,
       SubjectId: context.subject.SubjectId,
@@ -5169,6 +5181,18 @@ export async function getAcademicScorebookContext(env, user = {}, input = {}) {
       ActiveAssessmentRevisionId: layoutUpdateAvailable ? activeScheme.RevisionId : ''
     },
     ...(layoutUpdateAvailable ? { activeAssessmentScheme: activeScheme } : {})
+  };
+}
+
+export function academicScorebookSnapshot(context) {
+  // Return only the authorised sheet, not the branch-wide state loaded to
+  // validate it. This refreshes stale clients after another CBT server uploads.
+  return {
+    SheetId: context.SheetId,
+    sheet: context.existing ? publicRecord(context.existing) : null,
+    scores: context.existing
+      ? context.state.studentScores.filter(row => row.SheetId === context.SheetId).map(publicRecord)
+      : []
   };
 }
 
