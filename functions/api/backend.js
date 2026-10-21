@@ -980,6 +980,8 @@ const BRANCH_BOUND_DEVICE_ACTIONS = new Set([
   'saveAcademicTimetableSubstitution', 'cancelAcademicTimetableSubstitution',
   'changeAcademicTimetableVersionStatus', 'saveAcademicStudentAttendance', 'decideAcademicAttendanceCorrection',
   'getAcademicScorebookContext', 'getAcademicClassScoreRegister', 'applyActiveAcademicScoreLayout', 'saveAcademicScoreDraft',
+  'getAcademicDiary', 'saveAcademicDiaryScheme', 'saveAcademicDiaryEntry', 'submitAcademicDiaryEntry',
+  'returnAcademicDiaryEntry', 'submitAcademicDiary', 'approveAcademicDiary', 'returnAcademicDiary',
   'reactivateAcademicScoreEditing', 'changeAcademicScoreSheetStatus', 'previewAcademicScoreImport',
   'importAcademicScores', 'rollbackAcademicScoreImport', 'syncAcademicCbtScores',
   'syncLocalCbtStudentPasswords', 'rescheduleAcademicCbtTest', 'downloadAcademicCbtTestPackage',
@@ -11691,6 +11693,14 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     case 'decideAcademicAttendanceCorrection':
     case 'getAcademicScorebookContext':
     case 'getAcademicClassScoreRegister':
+    case 'getAcademicDiary':
+    case 'saveAcademicDiaryScheme':
+    case 'saveAcademicDiaryEntry':
+    case 'submitAcademicDiaryEntry':
+    case 'returnAcademicDiaryEntry':
+    case 'submitAcademicDiary':
+    case 'approveAcademicDiary':
+    case 'returnAcademicDiary':
     case 'applyActiveAcademicScoreLayout':
     case 'saveAcademicScoreDraft':
     case 'reactivateAcademicScoreEditing':

@@ -15118,12 +15118,25 @@ function academicTermAttendanceRows(rows, armId, mode = 'Daily') {
   }));
 }
 
-function printAcademicAttendanceReport(data, rows, arm, mode, reportRows) {
+async function printAcademicAttendanceReport(data, rows, arm, mode, reportRows) {
   const printable = window.open('', '_blank', 'width=1100,height=760');
   if (!printable) return;
   printable.opener = null;
   const classroom = `${academicLabel(rows.classes, arm.ClassId)} / ${academicLabel(rows.arms, arm.ArmId)}`;
-  printable.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(classroom)} attendance</title><style>@page{size:A4 landscape;margin:10mm}body{margin:28px;color:#102a43;font:12px Arial,sans-serif}h1{margin:0 0 5px}p{color:#526d82}table{width:100%;border-collapse:collapse}th,td{padding:7px;border:1px solid #cbd7e5;text-align:left}th{background:#edf3f8;font-size:10px;text-transform:uppercase}button{margin-bottom:15px;padding:8px 14px;border:0;background:#1769e0;color:#fff}@media print{button{display:none}}</style></head><body><button onclick="window.print()">Print attendance summary</button><h1>${escapeHtml(classroom)}</h1><p>${escapeHtml(academicLabel(data.sessions, academicManagementFilters.sessionId))} · ${escapeHtml(academicLabel(data.terms, academicManagementFilters.termId))} · ${escapeHtml(mode)} registers</p><table><thead><tr><th scope="col" class="academic-serial">S/N</th><th class="academic-student-cell">Student</th><th>Present</th><th>Absent</th><th>Late</th><th>Excused</th><th>Left early</th><th>Registers</th><th>School open days</th><th>Attendance</th></tr></thead><tbody>${reportRows.map((row, index) => `<tr><td class="academic-serial">${index + 1}</td><td class="academic-student-cell">${escapeHtml(academicLabel(data.students, row.StudentRef, row.StudentRef))}</td><td>${row.Present}</td><td>${row.Absent}</td><td>${row.Late}</td><td>${row.Excused}</td><td>${row.LeftEarly}</td><td>${row.Total}</td><td>${row.SchoolDaysOpen ?? '—'}</td><td>${row.AttendancePercentage}%</td></tr>`).join('')}</tbody></table></body></html>`);
+  const sessionId = academicManagementFilters.sessionId, termId = academicManagementFilters.termId;
+  const options = {
+    schoolName: data.reportProfile?.SchoolName || currentUser?.organizationName || currentUser?.OrganisationName || 'School', classroom,
+    period: `${academicLabel(data.sessions, sessionId)} · ${academicLabel(data.terms, termId)}`, mode, summaries: reportRows,
+    records: rows.studentAttendance.filter(row => row.SessionId === sessionId && row.TermId === termId
+      && row.ClassId === arm.ClassId && row.ArmId === arm.ArmId && (mode === 'All' || row.Mode === mode)),
+    studentName: reference => academicLabel(data.students, reference, reference), subjectName: id => academicLabel(rows.subjects, id, id)
+  };
+  try {
+    const { attendancePrintHtml } = await import('./academic-attendance-print.js');
+    printable.document.write(attendancePrintHtml(options));
+  } catch (error) {
+    printable.document.write(`<p>Could not prepare attendance preview: ${escapeHtml(error.message)}</p>`);
+  }
   printable.document.close();
   printable.focus();
 }
@@ -16339,7 +16352,7 @@ function academicManagementHeader(data, rows, message = '') {
   const views = academicManagementViews(data);
   return `<div class="academic-management-heading">
     <div><p class="eyebrow">AM-002 to AM-011</p><h2>Academic Management</h2><p class="muted">Branch-isolated structure, ${learner.singular} timetables, attendance, assessment and controlled term-result publication.</p></div>
-    <div class="academic-homework-actions">${data.permissions?.canEnterScores ? '<button type="button" data-teacher-homework>Homework / parent message</button>' : ''}<button type="button" id="refreshAcademicManagement" class="secondary">Refresh</button></div>
+    <div class="academic-homework-actions">${data.permissions?.canEnterScores ? '<button type="button" data-academic-diary>Teaching diaries</button><button type="button" data-teacher-homework>Homework / parent message</button>' : ''}<button type="button" id="refreshAcademicManagement" class="secondary">Refresh</button></div>
   </div>
   <div class="academic-management-filterbar">
     <label>School section<select id="academicManagementSection">${sections.map((section) => `<option value="${escapeHtml(section)}"${section === academicManagementFilters.section ? ' selected' : ''}>${escapeHtml(section.charAt(0).toUpperCase() + section.slice(1))}</option>`).join('')}</select></label>
@@ -17199,6 +17212,15 @@ function bindAcademicTimetableGenerator(panel) {
 
 function bindAcademicManagement() {
   bindAcademicTimetableGenerator(panelEl);
+  panelEl.querySelector('[data-academic-diary]')?.addEventListener('click', async () => {
+    try {
+      if (!academicManagementFilters.sessionId || !academicManagementFilters.termId) throw new Error('Choose a session and term first.');
+      const { openAcademicDiary } = await import('./academic-diary.js');
+      await openAcademicDiary({ request: academicManagementRequest,
+        context: { SchoolSection: academicManagementFilters.section, SessionId: academicManagementFilters.sessionId, TermId: academicManagementFilters.termId },
+        schoolName: academicManagementData?.reportProfile?.SchoolName || currentUser?.organizationName || currentUser?.OrganisationName || 'School' });
+    } catch (error) { setStatus(document.getElementById('academicManagementStatus'), error.message, 'bad'); }
+  });
   panelEl.querySelector('[data-teacher-homework]')?.addEventListener('click', () => {
     window.DynamaxTeacherHomework.open({ staffFetch, branchId: selectedBranchId, schoolSection: academicManagementFilters.section,
       openTutorial: () => openTutorialForSection('teacherHomework') })

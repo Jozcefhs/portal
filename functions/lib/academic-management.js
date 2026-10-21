@@ -8,6 +8,7 @@ import { copyAcademicCbtLateEntryPapers } from './academic-cbt-late-entry-papers
 import { academicCbtScoreSources } from './academic-cbt-multiserver.js';
 import { academicResultWithWeightedComponents } from './academic-result-marks.js';
 import { buildAcademicClassScoreRegister } from './academic-class-score-register.js';
+import { handleDiary } from './academic-diary.js';
 import { academicAttendanceId, findExistingAttendance, attendanceCorrectionMatches } from './academic-attendance-identity.js';
 import { enforceActorBranch } from './branch-scope.js';
 import { normalizeClassKey } from './class-names.js';
@@ -28,6 +29,7 @@ import { loadOrganizationNameProfile } from './organization-name-format.js';
 import { formatPersonName } from './person-name-format.js';
 import {
   STUDENT_FACE_MODEL_ID,
+  studentFaceTemplateDocumentId,
   decryptFaceDescriptor,
   faceTemplateIsUsable,
   studentFaceTemplateEncryptionSecret,
@@ -7817,6 +7819,7 @@ export async function prepareLocalCbtIdentityPackage(env, user = {}, input = {})
   requireWritableSubscription(user);
   const readiness = lower(input.ExamKind) === 'readiness';
   let context;
+  let packagedTest = null;
   if (readiness) {
     const operational = await academicOperationalContext(env, user, input, 'canCreateCbt');
     const { permissions, scope, state, session, term } = operational;
@@ -7838,12 +7841,33 @@ export async function prepareLocalCbtIdentityPackage(env, user = {}, input = {})
     const roster = academicScoreRoster(state, candidate);
     if (!roster.length) throw failure('No students in this classroom are allocated to the selected subject.', 409, 'ACADEMIC_SCORE_ROSTER_EMPTY');
     context = { ...operational, schoolClass, arm, subject, allocation, roster, scheme: { Components: [] } };
+  } else if (clean(input.CbtTestId)) {
+    const operational = await academicOperationalContext(env, user, input, 'canCreateCbt', {
+      stateKeys: ['sessions', 'terms', 'cbtTests']
+    });
+    packagedTest = findById(operational.state.cbtTests, input.CbtTestId);
+    if (!packagedTest || packagedTest.Status !== 'Scheduled'
+        || packagedTest.SessionId !== operational.session.SessionId || packagedTest.TermId !== operational.term.TermId) {
+      throw failure('The scheduled test was not found in this academic period.', 404, 'ACADEMIC_CBT_TEST_NOT_FOUND');
+    }
+    academicCbtAuthority(user, operational, packagedTest);
+    for (const field of ['ClassId', 'SubjectId', 'AssessmentComponentId']) {
+      if (clean(input[field]) && clean(input[field]) !== clean(packagedTest[field])) {
+        throw failure('The requested logins belong to a different CBT test.', 403, 'ACADEMIC_CBT_ROSTER_FORBIDDEN');
+      }
+    }
+    // Every centre uses the same saved roster plus reviewed additions. A later
+    // class transfer must not break login refresh for the rest of this sitting.
+    context = { ...operational, roster: academicCbtAllStudentRefs(packagedTest).map(StudentRef => ({ StudentRef })),
+      allocation: { TeacherUsername: packagedTest.TeacherUsername } };
   } else {
     context = await academicCbtClassContext(env, user, input);
   }
   const { scope } = context;
   const componentId = clean(input.AssessmentComponentId);
-  const component = readiness ? null : (context.scheme.Components || []).find((row) => row.Id === componentId);
+  const component = readiness ? null : packagedTest
+    ? { Id: packagedTest.AssessmentComponentId, Name: packagedTest.AssessmentComponentName, SourceMode: 'built-in-cbt' }
+    : (context.scheme.Components || []).find((row) => row.Id === componentId);
   if (!readiness && (!component || !['any', 'built-in-cbt'].includes(lower(component.SourceMode)))) {
     throw failure('Choose an active test type that accepts built-in CBT scores.', 409, 'ACADEMIC_CBT_COMPONENT_REQUIRED');
   }
@@ -7859,13 +7883,19 @@ export async function prepareLocalCbtIdentityPackage(env, user = {}, input = {})
   const wanted = new Set(studentRefs);
   const credentialPath = studentLoginCredentialCollection({ BranchId: scope.branchId, SchoolSection: scope.section });
   const templatePath = scopedCollectionPath('studentFaceTemplates', scope.branchId, scope.section);
+  // Fetch the selected candidates, not the whole growing credential collection.
+  // Read failures must be reported, never disguised as students with no login.
+  const [credentialIds, templateIds] = await Promise.all([
+    Promise.all(studentRefs.map(studentLoginCredentialId)),
+    Promise.all(studentRefs.map(studentFaceTemplateDocumentId))
+  ]);
   const [allStudents, allCredentials, allTemplates] = await Promise.all([
     listSchoolCollection(env, 'students', {
       branchId: scope.branchId,
       schoolSectionAccess: scope.section
     }),
-    listCollection(env, credentialPath).catch(() => []),
-    listCollection(env, templatePath).catch(() => [])
+    getDocuments(env, credentialPath, credentialIds),
+    getDocuments(env, templatePath, templateIds)
   ]);
   const studentsByRef = new Map();
   allStudents.forEach((student) => {
@@ -7875,8 +7905,8 @@ export async function prepareLocalCbtIdentityPackage(env, user = {}, input = {})
     if (!wanted.has(lower(reference)) || studentsByRef.has(lower(reference))) return;
     studentsByRef.set(lower(reference), student);
   });
-  const credentialsByRef = new Map(allCredentials.map((row) => [lower(row.StudentRef), row]));
-  const templatesByRef = new Map(allTemplates.map((row) => [lower(row.StudentRef), row]));
+  const credentialsByRef = new Map(allCredentials.filter(Boolean).map((row) => [lower(row.StudentRef), row]));
+  const templatesByRef = new Map(allTemplates.filter(Boolean).map((row) => [lower(row.StudentRef), row]));
 
   const identities = [];
   const missing = [];
@@ -7895,6 +7925,7 @@ export async function prepareLocalCbtIdentityPackage(env, user = {}, input = {})
     };
     const credential = credentialsByRef.get(lower(reference));
     if (credential && credential.Active !== false && clean(credential.PasswordHash)) {
+      identity.PasswordChangedAt = clean(credential.PasswordChangedAt || credential.UpdatedAt);
       identity.Password = {
         Salt: clean(credential.Salt),
         PasswordHash: clean(credential.PasswordHash),
@@ -8139,6 +8170,20 @@ export async function revokeAcademicResultClearance(env, user = {}, input = {}) 
 
 export async function handleAcademicManagementAction(env, user = {}, input = {}) {
   const action = lower(input.action || input.Action).replace(/[^a-z]/g, '');
+  if (['getacademicdiary', 'saveacademicdiaryscheme', 'saveacademicdiaryentry', 'submitacademicdiaryentry',
+    'returnacademicdiaryentry', 'submitacademicdiary', 'approveacademicdiary', 'returnacademicdiary'].includes(action)) {
+    const keys = ['sessions', 'terms', 'classes', 'arms', 'subjects', 'offerings', 'teacherAllocations'];
+    let context;
+    if (action === 'getacademicdiary') {
+      const permissions = requireCapability(user, 'canEnterScores');
+      const scope = await academicScope(env, user, input, { requireSection: true });
+      const state = await loadScopedAcademicState(env, scope, keys);
+      const session = findById(state.sessions, input.SessionId), term = findById(state.terms, input.TermId);
+      if (!session || !term || term.SessionId !== session.SessionId) throw failure('Choose a session and its term.');
+      context = { permissions, scope, state, session, term };
+    } else context = await academicOperationalContext(env, user, input, 'canEnterScores', { stateKeys: keys });
+    return handleDiary(context, env, user, input, action);
+  }
   if (['bootstrap', 'list', 'getacademicmanagement'].includes(action)) return bootstrapAcademicManagement(env, user, input);
   if (['save', 'saverecord', 'saveacademicsession', 'saveacademicterm', 'saveacademicclass', 'saveacademicarmtemplate', 'saveacademicarm', 'saveacademicsubject', 'saveacademicdepartment', 'saveacademicoffering', 'saveacademicteacherallocation', 'saveacademicstudentmembership'].includes(action)) {
     const inferredType = ({

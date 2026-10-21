@@ -5,6 +5,7 @@ import { runInNewContext } from 'node:vm';
 import { extractFunction, fixture, renderWorkspace, source } from './helpers/academic-register-fixture.mjs';
 import { normalizeAcademicScoreImportRows } from '../functions/lib/academic-scorebook.js';
 import '../js/list-sorting.js';
+import { attendancePrintHtml } from '../js/academic-attendance-print.js';
 
 const clean = value => String(value ?? '').trim();
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -28,14 +29,12 @@ test('class, lesson and score registers number the displayed roster without chan
 
 test('printed attendance summary includes one sequential number per student', () => {
   const input = fixture();
-  let output = '';
-  const popup = { document: { write: html => { output = html; }, close() {} }, focus() {} };
-  runInNewContext(`${helpers}\n(${extractFunction('printAcademicAttendanceReport')})(data, rows, rows.arms[0], 'Daily', reports)`, {
-    ...input, clean, escapeHtml, window: { open: () => popup },
-    academicManagementFilters: { sessionId: 'session', termId: 'term' },
-    reports: [{ StudentRef: 'TEST/4', Present: 2, AttendancePercentage: 100 }, { StudentRef: 'TEST/3', Present: 1, AttendancePercentage: 50 }]
+  const output = attendancePrintHtml({
+    schoolName: 'School', classroom: 'Grade 7 / Excellence', period: 'Session · Term', mode: 'Daily', records: [],
+    studentName: ref => ref === 'TEST/4' ? 'Ada & Chidi' : 'Other student', subjectName: id => id,
+    summaries: [{ StudentRef: 'TEST/4', Present: 2, AttendancePercentage: 100 }, { StudentRef: 'TEST/3', Present: 1, AttendancePercentage: 50 }]
   });
-  assert.deepEqual(serials(output), [1, 2]);
+  assert.deepEqual([...output.matchAll(/<tr><td>(\d+)<\/td>/g)].map(match => Number(match[1])), [1, 2]);
   assert.match(output, /S\/N<\/th>/);
   assert.match(output, /Ada &amp; Chidi/);
 });

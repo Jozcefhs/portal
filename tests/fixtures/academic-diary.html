@@ -1,0 +1,14 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Teaching diary local fixture</title><link rel="stylesheet" href="../../css/style.css"></head>
+<body><main><h1>Teaching diary — synthetic records only</h1><button id="open">Open diary</button></main><script type="module">
+import { openAcademicDiary } from '../../js/academic-diary.js';
+const classroom = {ClassId:'c',ArmId:'a',Name:'Grade 7 / Excellence'};
+const subjects = [{SubjectId:'math',Name:'Mathematics'},{SubjectId:'eng',Name:'English Studies'}];
+const week = {Week:1,WeekEnding:'2026-10-23',Status:'Submitted',Version:1,RecordId:'sample-week',Entries:subjects.map(row=>({SubjectId:row.SubjectId,WorkCompleted:'Revision and practical exercises.\nLearners completed individual and group activities.',TeacherUsername:'sample.teacher',Status:'Submitted'})),Compiled:{By:'sample.class.teacher',At:'2026-10-23'}};
+const scheme = {RecordId:'sample-scheme',Version:1,Weeks:[{Week:1,Theme:'Numbers and numeration',Content:'Whole numbers, place value and number operations.'}]};
+const request = async (action,input) => {
+  if(action !== 'getAcademicDiary') throw new Error('Read-only fixture — no server or live records.');
+  return {ok:true,diary:{Classrooms:[classroom],Subjects:subjects,OwnSubjects:['math'],CanCompile:true,CanReview:true,SessionName:'2026/2027',TermName:'First term',Weekly:week,Scheme:scheme,
+    SessionSchemes: input.IncludeSessionSchemes ? ['First term','Second term','Third term'].map(TermName=>({...scheme,TermName})) : []}};
+};
+document.getElementById('open').onclick=()=>openAcademicDiary({request,context:{SessionId:'s',TermId:'t',SchoolSection:'secondary'},schoolName:'Sample School'});
+</script></body></html>
