@@ -1,7 +1,7 @@
 {
-  "version": "3.1.39",
+  "version": "3.1.40",
   "channel": "stable",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.39.exe",
-  "sha256": "2ab134b33e6d79d3fc1fb126da1c23eeff6acadabe0f926f294dd09de052630a",
-  "notes": "Dynamax Desktop v3.1.39 adds a saved school-network IP selector per CBT server. QR, joining and Android download links use the selected IP; unavailable addresses do not silently switch. Includes CBT subject search, completed-session recovery, cross-centre login-sync client repairs, responsiveness improvements and academic diary/attendance printing. Matching backend updates are required for diary and credential-sync operations. Surcharges are not enabled. Back up and update between examinations; stop the server, select its school-network IP, Save IP and restart. Existing answers and scores are preserved. No new tablet APK is required. Centre 2 port/firewall connectivity remains under investigation."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.40.exe",
+  "sha256": "a5b327b8576a4c3c65c3bc42f9ab89a5b6fcc67073edd0ddc365effbc2fa6c57",
+  "notes": "Dynamax Desktop v3.1.40 repairs subscriber-school logos on CBT pages and retains scoped branding for offline restarts. Adds an older-Chrome compatibility client while preserving password security, answer recovery and examination safeguards. Back up and update both servers between examinations. Load Online Settings once with internet access on each server to retrieve the school logo, then reopen the student page at the same address. No new tablet APK is required. Chrome 70 syntax is the build target, not a guarantee for every old browser or device. Keep available Chrome/WebView security updates installed. Existing tests, answers and scores are preserved."
 }
