@@ -12927,17 +12927,30 @@ function bindAcademicClassroomArmSelection(form, arms = [], templates = []) {
     input.value, academicExistingClassroomTemplateIds(input.value, arms, templates)
   ]));
   const summary = form.querySelector('[data-academic-classroom-selection-summary]');
+  const manual = new Set(academicCheckedValues(form, 'ArmTemplateIds'));
+  const excluded = new Set();
   const sync = () => {
     const selectedClasses = academicCheckedValues(form, 'ClassIds');
+    const savedSets = selectedClasses.map((classId) => new Set(associated.get(classId) || []));
+    const common = savedSets.length ? [...savedSets[0]].filter((id) => savedSets.every((saved) => saved.has(id))) : [];
+    const mixed = new Set(savedSets.flatMap((saved) => [...saved]).filter((id) => !common.includes(id)));
+    setAcademicCheckedValues(form, 'ArmTemplateIds', [...new Set([...common, ...manual])].filter((id) => !excluded.has(id)));
+    form.querySelectorAll('input[name="ArmTemplateIds"]').forEach((input) => {
+      input.indeterminate = !input.checked && !excluded.has(input.value) && mixed.has(input.value);
+      input.title = input.indeterminate ? 'Already created for some selected classes only. Check to create it for every selected class.' : '';
+    });
     const selectedArms = academicCheckedValues(form, 'ArmTemplateIds');
     const existing = selectedClasses.reduce((count, classId) => count
       + selectedArms.filter((id) => (associated.get(classId) || []).includes(id)).length, 0);
     const requested = selectedClasses.length * selectedArms.length;
-    if (summary) summary.textContent = requested
-      ? `${requested - existing} new classroom(s) selected; ${existing} already exist and will be kept. Unchecked arms will not be created. Existing classrooms are not deleted by this form.`
-      : 'Choose classes and then explicitly check the arms to create. Changing classes does not select arms automatically. Existing classrooms are not deleted by this form.';
+    if (summary) summary.textContent = `${requested - existing} new classroom(s) selected; ${existing} already exist and will be kept. Checked arms are already created for all selected classes or explicitly selected by you. A dash means created for some classes only; it will not create missing combinations unless you check it. Existing classrooms are not deleted by this form.`;
   };
   form.addEventListener('change', (event) => {
+    const input = event.target;
+    if (input?.name === 'ArmTemplateIds') {
+      if (input.checked) { manual.add(input.value); excluded.delete(input.value); }
+      else { manual.delete(input.value); excluded.add(input.value); }
+    }
     if (['ClassIds', 'ArmTemplateIds'].includes(event.target?.name)) sync();
   });
   sync();
@@ -13793,7 +13806,7 @@ function academicClassroomWorkspace(data, rows) {
     <input type="hidden" name="SchoolSection" value="${escapeHtml(section)}">
     <div class="academic-management-editor-heading"><div><small>Batch classroom setup</small><h3>Create classrooms</h3><p class="muted">Choose one or more reusable classes and arms. Every selected arm will be applied to every selected class.</p></div></div>
     ${academicCheckboxField({ name: 'ClassIds', label: 'Classes', options: classOptions, required: true, idPrefix: 'classroom-creation-classes', help: 'Select every class that should receive the chosen reusable arms.' })}
-    ${academicCheckboxField({ name: 'ArmTemplateIds', label: 'Arms to create', options: templateOptions, required: true, idPrefix: 'classroom-creation-arms', help: 'Available reusable arms are choices, not existing classrooms. Check only the arms you want to add to every selected class. Unchecking an arm does not delete an existing classroom.' })}
+    ${academicCheckboxField({ name: 'ArmTemplateIds', label: 'Existing and new arms', options: templateOptions, required: true, idPrefix: 'classroom-creation-arms', help: 'Selecting a class checks its already-created arms. For multiple classes, common arms are checked and arms created for only some classes show a dash. Check additional arms to create them for every selected class. Unchecking an arm does not delete an existing classroom.' })}
     <p class="muted" data-academic-classroom-selection-summary aria-live="polite"></p>
     <button type="submit">Create selected classrooms</button>
   </form>` : '<div class="academic-view-only-note"><strong>Classroom workspace</strong><span>Your role can open assigned classrooms but cannot create or reconfigure them.</span></div>';
@@ -14109,7 +14122,7 @@ function academicBulkSetupWorkspace(data, rows) {
       <div class="academic-management-editor-heading"><div><small>Atomic assignment</small><h3>Apply arms to classes</h3></div></div>
       <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
       ${academicCheckboxField({ name: 'ClassIds', label: 'Classes', options: classOptions, required: true, idPrefix: 'arm-application-classes', help: 'Every selected reusable arm will be applied to every selected class.' })}
-      ${academicCheckboxField({ name: 'ArmTemplateIds', label: 'Arms to create', options: templateOptions, required: true, idPrefix: 'arm-application-templates', help: 'Available reusable arms are choices, not existing classrooms. Check only the arms you want to add to every selected class. Unchecking an arm does not delete an existing classroom.' })}
+      ${academicCheckboxField({ name: 'ArmTemplateIds', label: 'Existing and new arms', options: templateOptions, required: true, idPrefix: 'arm-application-templates', help: 'Selecting a class checks its already-created arms. For multiple classes, common arms are checked and arms created for only some classes show a dash. Check additional arms to create them for every selected class. Unchecking an arm does not delete an existing classroom.' })}
       <p class="muted" data-academic-classroom-selection-summary aria-live="polite"></p>
       <button type="submit">Apply selected arms</button>
     </form>

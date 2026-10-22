@@ -242,7 +242,7 @@ test('editing a legacy arm template retains the selected school section when sav
   assert.equal(payload(form).SchoolSection, 'secondary');
 });
 
-test('bulk classroom creation never selects other classes arms or restores unchecked choices', () => {
+test('class selection checks real classrooms and mixed classes never create unintended arms', () => {
   const selectSource = adminSource.slice(
     adminSource.indexOf('function academicExistingClassroomTemplateIds'),
     adminSource.indexOf('function bindAcademicClassroomArmSelection')
@@ -284,7 +284,7 @@ test('bulk classroom creation never selects other classes arms or restores unche
   const form = {
     inputs,
     querySelector: () => summary,
-    querySelectorAll: (selector) => selector === 'input[name="ClassIds"]' ? inputs.filter((input) => input.name === 'ClassIds') : [],
+    querySelectorAll: (selector) => inputs.filter((input) => selector === `input[name="${input.name}"]`),
     addEventListener: (_name, listener) => { form.onChange = listener; }
   };
   const summary = { textContent: '' };
@@ -295,13 +295,17 @@ test('bulk classroom creation never selects other classes arms or restores unche
     form.onChange({ target: input });
   };
   change('ClassIds', 'grade-7', true);
-  assert.deepEqual(checked(form, 'ArmTemplateIds'), []);
+  assert.deepEqual(checked(form, 'ArmTemplateIds'), ['brilliance', 'classic']);
+  assert.equal(inputs.find(row => row.value === 'distinction').checked, false);
+  assert.match(summary.textContent, /0 new classroom\(s\) selected; 2 already exist/);
   change('ClassIds', 'grade-8', true);
   assert.deepEqual(checked(form, 'ArmTemplateIds'), []);
+  assert.equal(inputs.filter(row => row.indeterminate).length, 3);
+  assert.match(summary.textContent, /0 new classroom\(s\) selected/);
   change('ArmTemplateIds', 'brilliance', true);
   assert.match(summary.textContent, /1 new classroom\(s\) selected; 1 already exist/);
   change('ClassIds', 'grade-7', false);
-  assert.deepEqual(checked(form, 'ArmTemplateIds'), ['brilliance']);
+  assert.deepEqual(checked(form, 'ArmTemplateIds'), ['brilliance', 'distinction']);
   change('ArmTemplateIds', 'classic', true);
   change('ArmTemplateIds', 'brilliance', false);
   change('ClassIds', 'grade-8', false);
@@ -311,13 +315,20 @@ test('bulk classroom creation never selects other classes arms or restores unche
   change('ClassIds', 'grade-7', false);
   change('ClassIds', 'grade-7', true);
   assert.deepEqual(checked(form, 'ArmTemplateIds'), ['classic']);
-  // Rebinding after a render must not import saved classrooms into the choices.
-  bind(form, arms, templates);
-  assert.deepEqual(checked(form, 'ArmTemplateIds'), ['classic']);
   change('ArmTemplateIds', 'classic', false);
-  bind(form, arms, templates);
+  change('ClassIds', 'grade-8', true);
+  change('ClassIds', 'grade-8', false);
   assert.deepEqual(checked(form, 'ArmTemplateIds'), []);
   assert.match(summary.textContent, /Existing classrooms are not deleted/);
+  // Shared existing arms stay checked; class-specific arms remain display-only mixed choices.
+  inputs.forEach(input => { input.checked = false; });
+  arms.push({ ClassId: 'grade-8', ArmTemplateId: 'brilliance', IsClassroom: true, Status: 'Active' });
+  bind(form, arms, templates);
+  change('ClassIds', 'grade-7', true);
+  change('ClassIds', 'grade-8', true);
+  assert.deepEqual(checked(form, 'ArmTemplateIds'), ['brilliance']);
+  assert.equal(inputs.filter(row => row.indeterminate).length, 2);
+  assert.match(summary.textContent, /0 new classroom\(s\) selected; 2 already exist/);
 });
 
 test('selecting a class checks its saved subjects for the period without copying subjects from other classes', () => {
@@ -1443,7 +1454,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   );
   assert.match(classroomWorkspace, /data-academic-workflow="bulkApplyAcademicArmTemplates" data-academic-classroom-creator/);
   assert.match(classroomWorkspace, /name: 'ClassIds', label: 'Classes'/);
-  assert.match(classroomWorkspace, /name: 'ArmTemplateIds', label: 'Arms to create'/);
+  assert.match(classroomWorkspace, /name: 'ArmTemplateIds', label: 'Existing and new arms'/);
   assert.match(classroomWorkspace, /Every selected arm will be applied to every selected class/);
   assert.match(classroomWorkspace, /Unchecking an arm does not delete an existing classroom/);
   assert.match(classroomWorkspace, /data-academic-classroom-selection-summary/);

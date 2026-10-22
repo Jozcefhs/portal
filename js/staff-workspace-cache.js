@@ -29,6 +29,12 @@
     'detail', 'document', 'catalog', 'findings', 'reports', 'exportregister', 'recordexport',
     'searchcustomers', 'getbalance', 'tax-breakdown', 'previewhomework',
     'salesbootstrap', 'recentvendorsales', 'vendorcustomersearch', 'vendorwalletlookup', 'previewvendorsale']);
+  // Deadline hints load alongside scorebook context on every render. They must
+  // stay fresh without invalidating the concurrent read as if records changed.
+  // Payment verification is deliberately excluded: it can submit academic data.
+  const scopedLiveReads = {
+    '/api/staff-academics': ['getacademicsubmissionsettings', 'listacademicsubmissions']
+  };
   function stable(value) {
     if (Array.isArray(value)) return value.map(stable);
     if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stable(value[key])]));
@@ -48,7 +54,8 @@
     const hasSensitiveInput = /"[^"\n]*(?:password|secret|token|approvalproof)[^"\n]*"\s*:/i.test(init.body || '');
     const cacheable = ['GET', 'POST'].includes(method) && !hasSensitiveInput
       && (reads[url.pathname] || []).includes(action);
-    const mutation = !['GET', 'HEAD'].includes(method) && !cacheable && !liveReads.has(action);
+    const mutation = !['GET', 'HEAD'].includes(method) && !cacheable && !liveReads.has(action)
+      && !(scopedLiveReads[url.pathname] || []).includes(action);
     return { cacheable, mutation, key: JSON.stringify([url.pathname, url.search, method, stable(body)]) };
   }
   function create({ context, onInvalidate = () => {}, maxEntries = 512, maxBytes = 40 * 1024 * 1024 }) {

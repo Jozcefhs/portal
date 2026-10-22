@@ -46,6 +46,31 @@ test('concurrent loads share one network request and each caller can consume its
   assert.deepEqual(await responses[0].json(), await responses[1].json());
 });
 
+test('academic deadline reads do not cancel the classroom scorebook loading alongside them', async () => {
+  const { cache } = fixture();
+  const scoreGate = deferred(), settingsGate = deferred();
+  const scorebook = cache.fetch(url('/api/staff-academics'), post('getAcademicScorebookContext', { ArmId: 'grade8-distinction' }),
+    async () => { await scoreGate.promise; return json({ ok: true, assessmentScheme: { Ready: true } }); });
+  const settings = cache.fetch(url('/api/staff-academics'), post('getAcademicSubmissionSettings'),
+    async () => { await settingsGate.promise; return json({ ok: true, settings: { Enabled: false } }); });
+  settingsGate.resolve();
+  await settings;
+  scoreGate.resolve();
+  assert.equal((await (await scorebook).json()).assessmentScheme.Ready, true);
+});
+
+test('academic submission settings and register are live reads; saves and payment verification still invalidate', () => {
+  for (const action of ['getAcademicSubmissionSettings', 'listAcademicSubmissions']) {
+    const policy = requestPolicy(url('/api/staff-academics'), post(action));
+    assert.equal(policy.cacheable, false, action);
+    assert.equal(policy.mutation, false, action);
+    assert.equal(requestPolicy(url('/api/unrecognised'), post(action)).mutation, true);
+  }
+  for (const action of ['saveAcademicSubmissionSettings', 'payAcademicSubmission', 'verifyAcademicSubmission']) {
+    assert.equal(requestPolicy(url('/api/staff-academics'), post(action)).mutation, true, action);
+  }
+});
+
 test('homework context reuses scoped snapshots but audience preview stays live and sends invalidate reads', async () => {
   assert.equal(requestPolicy(url('/api/staff-homework'), post('getContext', { SchoolSection: 'primary' })).cacheable, true);
   const preview = requestPolicy(url('/api/staff-homework'), post('previewHomework'));
