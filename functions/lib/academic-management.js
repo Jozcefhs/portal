@@ -9,6 +9,7 @@ import { academicCbtScoreSources } from './academic-cbt-multiserver.js';
 import { academicResultWithWeightedComponents } from './academic-result-marks.js';
 import { buildAcademicClassScoreRegister } from './academic-class-score-register.js';
 import { handleDiary } from './academic-diary.js';
+import { commitAcademicSubmission, submissionSettings, submissionPaymentAction } from './academic-submissions.js';
 import { academicAttendanceId, findExistingAttendance, attendanceCorrectionMatches } from './academic-attendance-identity.js';
 import { enforceActorBranch } from './branch-scope.js';
 import { normalizeClassKey } from './class-names.js';
@@ -4908,7 +4909,9 @@ export async function saveAcademicStudentAttendance(env, user = {}, input = {}) 
     if (lower(record.Status) === 'absent') absentRecords.push(record);
     if (existing) corrected += 1; else created += 1;
   }
-  if (writes.length) await commitAcademicBatch(env, writes, 'The attendance register changed while it was being saved. Reload and try again.');
+  if (writes.length) await commitAcademicSubmission(env, context, user, {
+    ...input, SubjectId: mode === 'Subject' ? clean(input.SubjectId) : ''
+  }, 'attendance', writes);
   let absenceNotifications = 0;
   if (absentRecords.length) {
     const people = await loadPeople(env, user, scope, { staff: false }).catch(() => ({ students: [] }));
@@ -5018,8 +5021,35 @@ function academicScoreSheetId(scope, sessionId, termId, classId, armId, subjectI
   return academicId('score-sheet', scope.branchId, scope.section, sessionId, termId, classId, armId, subjectId);
 }
 
+function academicScoreChildId(prefix, sheetId, suffix) {
+  // SheetId is already a composite identity. safeScopeId truncates at 80
+  // characters and loses its subject/arm suffix, colliding across scorebooks.
+  const parts = [prefix, sheetId, suffix].map(value => clean(value).toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, ''));
+  const id = parts.join('__');
+  if (parts.some(part => !part) || id.length > 1400) {
+    throw failure('The score record identity is invalid.', 409, 'ACADEMIC_SCORE_IDENTITY_INVALID');
+  }
+  return id;
+}
+
 function academicStudentScoreId(sheetId, studentRef) {
-  return academicId('student-score', sheetId, studentRef);
+  return academicScoreChildId('student-score', sheetId, studentRef);
+}
+
+function academicExistingStudentScore(scores, sheetId, studentRef) {
+  // Keep legacy IDs in place ONLY for their actual sheet/student. Never merge
+  // another subject's marks, locks or attempt provenance through a colliding ID.
+  const matches = scores.filter(row => row.SheetId === sheetId
+    && lower(row.StudentRef) === lower(studentRef));
+  if (matches.length > 1) throw failure('Duplicate score records require review; no marks were changed.',
+    409, 'ACADEMIC_SCORE_IDENTITY_AMBIGUOUS');
+  const previous = matches[0] || null;
+  const ScoreId = previous?.ScoreId || academicStudentScoreId(sheetId, studentRef);
+  const occupied = findById(scores, ScoreId);
+  if (occupied && occupied !== previous) throw failure('A score record identity belongs to another scorebook; no marks were changed.',
+    409, 'ACADEMIC_SCORE_IDENTITY_CONFLICT');
+  return { ScoreId, previous };
 }
 
 function academicScoreRoster(state, candidate) {
@@ -5335,8 +5365,7 @@ export async function saveAcademicScoreDraft(env, user = {}, input = {}) {
     if (!studentRef || !rosterRefs.has(key)) throw failure(`${studentRef || 'A selected student'} is not in this subject roster.`, 409, 'ACADEMIC_SCORE_STUDENT_INVALID');
     if (seen.has(key)) throw failure(`${studentRef} appears more than once in this score save.`);
     seen.add(key);
-    const ScoreId = academicStudentScoreId(SheetId, studentRef);
-    const previous = findById(state.studentScores, ScoreId);
+    const { ScoreId, previous } = academicExistingStudentScore(state.studentScores, SheetId, studentRef);
     const normalizedScores = normalizeAcademicComponentScores(row.ComponentScores, scheme, {
       existing: previous?.ComponentScores || [], partial: true
     });
@@ -5492,11 +5521,13 @@ export async function changeAcademicScoreSheetStatus(env, user = {}, input = {})
       ScoreEditingReactivationReason: reason
     } : {})
   });
-  await commitAcademicBatch(env, [
+  const statusWrites = [
     { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSheets, documentId: record.SheetId,
       data: withoutMetadata(record), ...writePrecondition(existing, input.RevisionToken || input.SheetRevisionToken) },
     auditWrite(user, eventName.toUpperCase(), 'scoreSheet', record, reason || `${current} -> ${target}`)
-  ], 'The score sheet changed while its status was being updated. Reload and try again.');
+  ];
+  if (target === 'Submitted') await commitAcademicSubmission(env, context, user, input, 'scorebook', statusWrites);
+  else await commitAcademicBatch(env, statusWrites, 'The score sheet changed while its status was being updated. Reload and try again.');
   return {
     ok: true,
     refreshAcademicManagement: true,
@@ -6461,8 +6492,7 @@ export async function importAcademicScores(env, user = {}, input = {}) {
   const timestamp = nowIso();
   const PreviousScores = [];
   const importedScores = valid.map((row) => {
-    const ScoreId = academicStudentScoreId(SheetId, row.StudentRef);
-    const previous = findById(state.studentScores, ScoreId);
+    const { ScoreId, previous } = academicExistingStudentScore(state.studentScores, SheetId, row.StudentRef);
     const lockedChanges = academicLockedScoreChanges(previous, row.Calculated.ComponentScores, existing?.ScoreEditingReactivated === true);
     if (lockedChanges.length) {
       throw failure('The spreadsheet would replace saved score cells. Ask an Admin or Management user to reactivate this subject and arm before importing corrections.', 409, 'ACADEMIC_SCORE_CELL_LOCKED');
@@ -6634,6 +6664,65 @@ export async function verifyAcademicCbtScoreSignature(input = {}) {
   return calculatedKeyId;
 }
 
+async function verifiedAcademicCbtReceipt(env, input, expected) {
+  const unverified = () => failure(
+    'The uploaded marks could not be verified in the online scorebook. Local answers and scores are retained; retry this same batch.',
+    503, 'ACADEMIC_CBT_SYNC_UNVERIFIED');
+  const receipt = await getDocument(env, ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSyncBatches, expected.SyncId);
+  const ids = receipt?.AffectedScoreIds;
+  const count = receipt?.ImportedRows;
+  const rejected = Number(receipt?.RejectedCount || 0);
+  if (!receipt || receipt.BatchDigest !== expected.BatchDigest
+      || receipt.SigningKeyId !== expected.SigningKeyId || receipt.SheetId !== expected.SheetId
+      || receipt.BatchId !== normalizedImportKey(input.BatchId)
+      || receipt.SourceType !== input.SourceType
+      || !Number.isInteger(count) || count <= 0 || count > 200
+      || !Array.isArray(ids) || ids.length !== count || new Set(ids).size !== count
+      || !Number.isInteger(rejected) || rejected < 0
+      || count + rejected !== input.Scores?.length
+      || ['BranchId', 'SchoolSection', 'SessionId', 'TermId', 'ClassId', 'ArmId', 'SubjectId', 'AssessmentComponentId']
+        .some(key => clean(receipt[key]) !== clean(input[key]))) throw unverified();
+  const [sheet, scores] = await Promise.all([
+    getDocument(env, ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSheets, receipt.SheetId),
+    getDocuments(env, ACADEMIC_MANAGEMENT_COLLECTIONS.studentScores, ids)
+  ]);
+  if (!sheet || sheet.SheetId !== receipt.SheetId || scores.length !== count
+      || ['BranchId', 'SchoolSection', 'SessionId', 'TermId', 'ClassId', 'ArmId', 'SubjectId']
+        .some(key => clean(sheet[key]) !== clean(receipt[key]))) throw unverified();
+  const component = (sheet.AssessmentComponents || []).find(row => row.Id === receipt.AssessmentComponentId);
+  if (!component) throw unverified();
+  const partId = component.ScoreEntryMode === 'objective-theory' ? 'objective' : '';
+  const cellId = `${component.Id}${partId ? `:${partId}` : ''}`;
+  const supplied = new Map(input.Scores.map(row => [lower(row.StudentRef), row]));
+  const seen = new Set();
+  let preservedCorrections = 0;
+  for (const score of scores) {
+    const ref = lower(score?.StudentRef), row = supplied.get(ref);
+    if (!score || !row || seen.has(ref) || !ids.includes(score.ScoreId) || score.SheetId !== receipt.SheetId
+        || ['BranchId', 'SchoolSection', 'SessionId', 'TermId', 'ClassId', 'ArmId', 'SubjectId']
+          .some(key => clean(score[key]) !== clean(receipt[key]))) throw unverified();
+    seen.add(ref);
+    const savedComponent = (score.ComponentScores || []).find(value => value.ComponentId === component.Id);
+    const cell = partId ? savedComponent?.Parts?.find(value => value.PartId === partId) : savedComponent;
+    if (!cell || !ACADEMIC_RECORDED_SCORE_STATES.has(cell.State)) throw unverified();
+    const corrected = (score.ManualScoreCorrections || []).some(value => value.CellId === cellId);
+    if (corrected) { preservedCorrections++; continue; }
+    if (lower(cell.State) !== lower(row.State)
+        || (cell.State === 'Numeric' && (cell.RawScore == null || row.RawScore == null
+          || !Number.isFinite(Number(cell.RawScore)) || !Number.isFinite(Number(row.RawScore))
+          || Math.abs(Number(cell.RawScore) - Number(row.RawScore)) > 0.0001))) throw unverified();
+    if (receipt.SourceType === 'BuiltInCBT') {
+      const source = (score.CbtScoreSources || []).find(value => value.CellId === cellId);
+      if (source ? (lower(source.SigningKeyId) !== lower(receipt.SigningKeyId)
+        || clean(source.SourceTestId) !== clean(input.SourceTestId || input.ExamId)
+        || clean(source.AttemptId) !== clean(row.AttemptId))
+        : score.SourceId !== receipt.SyncId) throw unverified();
+    }
+  }
+  return { ...publicRecord(receipt), VerifiedOnline: true, VerifiedRows: count,
+    VerificationVersion: 2, VerifiedAt: nowIso(), PreservedCorrectionCount: preservedCorrections };
+}
+
 export async function syncAcademicCbtScores(env, user = {}, input = {}) {
   if (input.SupportsPreparedScoreCommit !== true && !input.ScoreSyncPreparation) {
     throw failure(
@@ -6655,6 +6744,12 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
     }
     assertUserSection(user, scopedSection(input));
     const prepared = await verifyAcademicCbtSyncPreparation(env, user, input);
+    if (prepared.Receipt?.ReceiptVersion !== 2) {
+      throw failure('Prepare this batch again using the repaired subject identities.', 409, 'ACADEMIC_CBT_SYNC_PREPARATION_EXPIRED');
+    }
+    if (await academicCbtScoreBatchDigest(input) !== prepared.BatchDigest) {
+      throw failure('The prepared batch no longer matches its scores.', 409, 'ACADEMIC_CBT_SCORE_DIGEST_INVALID');
+    }
     try {
       await commitAcademicBatch(env, prepared.Writes,
         'The score sheet changed while CBT scores were synchronizing. Reload and retry the same approved batch.');
@@ -6672,7 +6767,7 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
             ok: true,
             refreshAcademicManagement: true,
             message: 'This approved CBT batch was already synchronized; no score was duplicated.',
-            scoreSyncReceipt: publicRecord(previousBatch)
+            scoreSyncReceipt: await verifiedAcademicCbtReceipt(env, input, previousBatch)
           };
         }
       }
@@ -6705,7 +6800,7 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
       ok: true,
       refreshAcademicManagement: true,
       message: prepared.Message,
-      scoreSyncReceipt: prepared.Receipt
+      scoreSyncReceipt: await verifiedAcademicCbtReceipt(env, input, prepared.Receipt)
     };
   }
   const context = await academicScoreSheetContext(
@@ -6746,26 +6841,43 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
     // signer/attempt identity and conflicting attempts are blocked per score cell.
   }
   const batchKey = normalizedImportKey(input.BatchId);
-  const SyncId = academicId('score-sync', SheetId, batchKey);
-  const previousBatch = findById(state.scoreSyncBatches, SyncId);
+  let SyncId = academicScoreChildId('score-sync', SheetId, batchKey);
+  let previousBatch = findById(state.scoreSyncBatches, SyncId);
+  const legacyBatch = findById(state.scoreSyncBatches, academicId('score-sync', SheetId, batchKey));
+  if (!previousBatch && legacyBatch?.SheetId === SheetId) previousBatch = legacyBatch;
   if (previousBatch) {
-    if (lower(previousBatch.BatchDigest) !== expectedDigest
+    if (previousBatch.SheetId !== SheetId || lower(previousBatch.BatchDigest) !== expectedDigest
         || lower(previousBatch.SigningKeyId) !== lower(signingKeyId)) {
       throw failure('This CBT synchronization key was already used for a different score payload.', 409, 'ACADEMIC_CBT_SYNC_KEY_REUSED');
     }
-    return {
-      ok: true,
-      refreshAcademicManagement: true,
-      message: 'This approved CBT batch was already synchronized; no score was duplicated.',
-      scoreSyncReceipt: publicRecord(previousBatch)
-    };
+    if (previousBatch.ReceiptVersion === 2 || (!previousBatch.RejectedCount && previousBatch.ImportedRows > 0)) {
+      return {
+        ok: true,
+        refreshAcademicManagement: true,
+        message: 'This batch is verified in the online scorebook; no score was duplicated.',
+        scoreSyncReceipt: await verifiedAcademicCbtReceipt(env, input, previousBatch)
+      };
+    }
+    // Old zero/partial receipts may have rejected another subject because of
+    // truncated score IDs. Revalidate the original signed payload, preserving
+    // the old receipt and every legitimate first-accepted attempt/correction.
+    SyncId = `${SyncId}__scope-v2`;
+    const repairedBatch = findById(state.scoreSyncBatches, SyncId);
+    if (repairedBatch) {
+      if (repairedBatch.SheetId !== SheetId || lower(repairedBatch.BatchDigest) !== expectedDigest
+          || lower(repairedBatch.SigningKeyId) !== lower(signingKeyId)) {
+        throw failure('This recovery key belongs to a different batch.', 409, 'ACADEMIC_CBT_SYNC_KEY_REUSED');
+      }
+      return { ok: true, refreshAcademicManagement: true,
+        message: 'This recovered batch is verified online; no score was duplicated.',
+        scoreSyncReceipt: await verifiedAcademicCbtReceipt(env, input, repairedBatch) };
+    }
   }
   const timestamp = nowIso();
   const component = preview.Component;
   const rejectedScores = [];
   const updatedScores = preview.Rows.flatMap((row) => {
-    const ScoreId = academicStudentScoreId(SheetId, row.StudentRef);
-    const previous = findById(state.studentScores, ScoreId);
+    const { ScoreId, previous } = academicExistingStudentScore(state.studentScores, SheetId, row.StudentRef);
     let cbtSources = null;
     try {
       const correctedCellId = `${component.Id}${component.ScoreEntryMode === 'objective-theory' ? ':objective' : ''}`;
@@ -6830,6 +6942,12 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
       && !updatedScores.some((item) => item.record.ScoreId === row.ScoreId)),
     ...updatedScores.map((item) => item.record)
   ];
+  if (!updatedScores.length) {
+    const error = failure('No marks from this batch were saved: every submitted result conflicts with an earlier accepted score or authorised correction. Existing scores and local answers are unchanged.',
+      409, 'ACADEMIC_CBT_SYNC_NO_SCORES_SAVED');
+    error.preview = { ImportedRows: 0, RejectedCount: rejectedScores.length, RejectedScores: rejectedScores };
+    throw error;
+  }
   const sheet = academicScoreSheetRecord(context, existing, user, timestamp, {
     ...academicScoreSheetCounts(projectedScores), LastSavedAt: timestamp,
     LastSavedBy: actorName(user), LastScoreSyncId: SyncId,
@@ -6840,7 +6958,8 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
   });
   const syncRecord = {
     RecordId: SyncId, SyncId, BatchId: batchKey, BatchDigest: expectedDigest,
-    SheetId, Status: 'Committed', SourceType: sourceType,
+    SheetId, Status: rejectedScores.length ? 'Partially committed' : 'Committed', SourceType: sourceType,
+    ReceiptVersion: 2,
     SourceTestId: clean(input.SourceTestId || input.ExamId),
     ProviderId: clean(input.ProviderId).slice(0, 120),
     SourceFileName: clean(input.SourceFileName).slice(0, 240),
@@ -7279,7 +7398,7 @@ export async function saveAcademicCbtTest(env, user = {}, input = {}, options = 
     `${record.AssessmentComponentName}; ${record.NumberOfQuestions} questions; ${record.RosterCount} students; starts ${record.StartsAt}; replaced papers ${replacementCandidates.length}`));
   let commit;
   try {
-    commit = await commitAcademicBatch(env, writes, 'The CBT test changed while it was being saved. Reload and try again.');
+    commit = await commitAcademicSubmission(env, validation.context, user, input, 'cbt', writes);
   } catch (error) {
     if (Number(error?.status || 500) < 500 && !error?.outcomeUncertain) throw error;
     // A lost commit response is not evidence that the transaction rolled back.
@@ -8194,6 +8313,20 @@ export async function revokeAcademicResultClearance(env, user = {}, input = {}) 
 
 export async function handleAcademicManagementAction(env, user = {}, input = {}) {
   const action = lower(input.action || input.Action).replace(/[^a-z]/g, '');
+  if (['getacademicsubmissionsettings', 'saveacademicsubmissionsettings', 'listacademicsubmissions', 'payacademicsubmission', 'verifyacademicsubmission'].includes(action)) {
+    let context;
+    if (['saveacademicsubmissionsettings', 'payacademicsubmission'].includes(action)) context = await academicOperationalContext(env, user, input, 'canEnterScores', { stateKeys: ['sessions', 'terms'] });
+    else {
+      const permissions = requireCapability(user, 'canEnterScores');
+      const scope = await academicScope(env, user, input, { requireSection: true });
+      const state = await loadScopedAcademicState(env, scope, ['sessions', 'terms']);
+      const session = findById(state.sessions, input.SessionId), term = findById(state.terms, input.TermId);
+      if (!session || !term || term.SessionId !== session.SessionId) throw failure('Choose a session and its term.');
+      context = { permissions, scope, state, session, term };
+    }
+    if (action.endsWith('settings')) return submissionSettings(env, context, user, input, action === 'saveacademicsubmissionsettings');
+    return submissionPaymentAction(env, context, user, input, action);
+  }
   if (['getacademicdiary', 'saveacademicdiaryscheme', 'saveacademicdiaryentry', 'submitacademicdiaryentry',
     'returnacademicdiaryentry', 'submitacademicdiary', 'approveacademicdiary', 'returnacademicdiary'].includes(action)) {
     const keys = ['sessions', 'terms', 'classes', 'arms', 'subjects', 'offerings', 'teacherAllocations'];

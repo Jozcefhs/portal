@@ -1,6 +1,7 @@
 import { onRequestPost as verifyFormPayment } from './verify-form-payment.js';
 import { onRequestPost as verifyPayment } from './verify-payment.js';
 import { getDocument } from '../lib/firestore.js';
+import { verifySubmissionPayment } from '../lib/academic-submissions.js';
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -102,6 +103,10 @@ export async function onRequestPost(context) {
       });
     }
     const metadata = metadataFrom(event);
+    if (/^ACS-[a-f0-9]{64}$/.test(reference)) {
+      const result = await verifySubmissionPayment(env, reference);
+      return Response.json(result, { headers: { 'Cache-Control': 'no-store' } });
+    }
     let isAdmissionForm = isAdmissionFormType(metadata.paymentType || metadata.PaymentType);
     if (!clean(metadata.paymentType || metadata.PaymentType)) {
       const intent = await getDocument(env, 'paymentIntents', safeDocumentId(reference)).catch(() => null);

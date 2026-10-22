@@ -7,7 +7,7 @@ export function extractFunction(name) {
   if (start < 0) throw new Error(`Missing function ${name}`);
   return source.slice(start, source.indexOf('\nfunction ', start + 1));
 }
-const helpers = ['academicRecordId', 'academicIsActive', 'academicFind', 'academicLabel', 'academicSelectOptions', 'academicScoreStateOptions']
+const helpers = ['academicRecordId', 'academicIsActive', 'academicFind', 'academicLabel', 'academicSelectOptions', 'academicScoreStateOptions', 'academicCbtUploadStatus']
   .map(extractFunction).join('\n');
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g,
   c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));

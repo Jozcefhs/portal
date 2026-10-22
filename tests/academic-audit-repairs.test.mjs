@@ -13,6 +13,7 @@ import { calculateAcademicMidTermResultDrafts } from '../functions/lib/academic-
 import { evaluateAcademicResultAccess } from '../functions/lib/academic-result-access.js';
 import { academicResultWithWeightedComponents } from '../functions/lib/academic-result-marks.js';
 import * as cbtRetention from '../functions/lib/academic-cbt-paper-retention.js';
+import { commitAcademicSubmission } from '../functions/lib/academic-submissions.js';
 
 const stripModules = source => source.replace(/^import[\s\S]*?;\r?\n/gm, '').replace(/^export /gm, '');
 const managementSource = await readFile(new URL('../functions/lib/academic-management.js', import.meta.url), 'utf8');
@@ -48,6 +49,9 @@ function managementHarness(records = {}) {
       return { writeResults: changes.map(() => ({ updateTime: 'committed' })) };
     }
   };
+  context.commitAcademicSubmission = (env, scope, user, input, type, writes) => commitAcademicSubmission(env, scope, user, input, type, writes, {
+    getDocument: (...args) => context.getDocument(...args), batchCommitDocuments: (...args) => context.batchCommitDocuments(...args)
+  });
   vm.createContext(context);
   vm.runInContext(stripModules(managementSource), context);
   return context;
@@ -360,7 +364,7 @@ test('CBT-05 a committed paper save with a lost acknowledgement is reconciled by
       if (committed) await commit(...args);
       throw Object.assign(new Error('Lost response'), { status: 503 });
     };
-    const validation = { record: row({ CbtTestId: 'cbt-recovery', UpdatedAt: '2026-10-11T10:00:00Z', PaperMode: 'single', AssessmentComponentName: 'Test', RosterCount: 1 }) };
+    const validation = { context: { scope: { branchId: 'main', section: 'secondary' }, session: { SessionId: 's1' }, term: { TermId: 't1' } }, record: row({ CbtTestId: 'cbt-recovery', UpdatedAt: '2026-10-11T10:00:00Z', PaperMode: 'single', AssessmentComponentName: 'Test', RosterCount: 1 }) };
     const save = context.saveAcademicCbtTest({}, actor, { PaperFiles: [{ Url: 'https://example.test/paper.pdf', FileName: 'paper.pdf', MimeType: 'application/pdf', Digest: 'a'.repeat(64), ByteLength: 100, PageNumber: 1 }] }, { validation });
     if (committed) {
       const result = await save;

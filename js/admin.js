@@ -12926,34 +12926,19 @@ function bindAcademicClassroomArmSelection(form, arms = [], templates = []) {
   const associated = new Map(classInputs.map((input) => [
     input.value, academicExistingClassroomTemplateIds(input.value, arms, templates)
   ]));
-  const manual = new Set(academicCheckedValues(form, 'ArmTemplateIds'));
-  const excluded = new Set();
-  form._academicClassroomManualTemplateIds = manual;
-  let previousClasses = new Set(academicCheckedValues(form, 'ClassIds'));
+  const summary = form.querySelector('[data-academic-classroom-selection-summary]');
   const sync = () => {
     const selectedClasses = academicCheckedValues(form, 'ClassIds');
-    const automatic = selectedClasses.flatMap((classId) => associated.get(classId) || []);
-    setAcademicCheckedValues(form, 'ArmTemplateIds',
-      [...new Set([...automatic, ...manual])].filter((templateId) => !excluded.has(templateId)));
+    const selectedArms = academicCheckedValues(form, 'ArmTemplateIds');
+    const existing = selectedClasses.reduce((count, classId) => count
+      + selectedArms.filter((id) => (associated.get(classId) || []).includes(id)).length, 0);
+    const requested = selectedClasses.length * selectedArms.length;
+    if (summary) summary.textContent = requested
+      ? `${requested - existing} new classroom(s) selected; ${existing} already exist and will be kept. Unchecked arms will not be created. Existing classrooms are not deleted by this form.`
+      : 'Choose classes and then explicitly check the arms to create. Changing classes does not select arms automatically. Existing classrooms are not deleted by this form.';
   };
   form.addEventListener('change', (event) => {
-    const input = event.target;
-    if (input?.name === 'ClassIds') {
-      const selectedClasses = new Set(academicCheckedValues(form, 'ClassIds'));
-      selectedClasses.forEach((classId) => {
-        if (!previousClasses.has(classId)) (associated.get(classId) || []).forEach((templateId) => excluded.delete(templateId));
-      });
-      previousClasses = selectedClasses;
-      sync();
-    } else if (input?.name === 'ArmTemplateIds') {
-      if (input.checked) {
-        manual.add(input.value);
-        excluded.delete(input.value);
-      } else {
-        manual.delete(input.value);
-        excluded.add(input.value);
-      }
-    }
+    if (['ClassIds', 'ArmTemplateIds'].includes(event.target?.name)) sync();
   });
   sync();
 }
@@ -13808,7 +13793,8 @@ function academicClassroomWorkspace(data, rows) {
     <input type="hidden" name="SchoolSection" value="${escapeHtml(section)}">
     <div class="academic-management-editor-heading"><div><small>Batch classroom setup</small><h3>Create classrooms</h3><p class="muted">Choose one or more reusable classes and arms. Every selected arm will be applied to every selected class.</p></div></div>
     ${academicCheckboxField({ name: 'ClassIds', label: 'Classes', options: classOptions, required: true, idPrefix: 'classroom-creation-classes', help: 'Select every class that should receive the chosen reusable arms.' })}
-    ${academicCheckboxField({ name: 'ArmTemplateIds', label: 'Reusable arms', options: templateOptions, required: true, idPrefix: 'classroom-creation-arms', help: 'Checking a class selects its existing reusable arms. Every checked arm applies to every checked class; existing matching classrooms are skipped and none is overwritten.' })}
+    ${academicCheckboxField({ name: 'ArmTemplateIds', label: 'Arms to create', options: templateOptions, required: true, idPrefix: 'classroom-creation-arms', help: 'Available reusable arms are choices, not existing classrooms. Check only the arms you want to add to every selected class. Unchecking an arm does not delete an existing classroom.' })}
+    <p class="muted" data-academic-classroom-selection-summary aria-live="polite"></p>
     <button type="submit">Create selected classrooms</button>
   </form>` : '<div class="academic-view-only-note"><strong>Classroom workspace</strong><span>Your role can open assigned classrooms but cannot create or reconfigure them.</span></div>';
 
@@ -14123,7 +14109,8 @@ function academicBulkSetupWorkspace(data, rows) {
       <div class="academic-management-editor-heading"><div><small>Atomic assignment</small><h3>Apply arms to classes</h3></div></div>
       <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
       ${academicCheckboxField({ name: 'ClassIds', label: 'Classes', options: classOptions, required: true, idPrefix: 'arm-application-classes', help: 'Every selected reusable arm will be applied to every selected class.' })}
-      ${academicCheckboxField({ name: 'ArmTemplateIds', label: 'Reusable arms', options: templateOptions, required: true, idPrefix: 'arm-application-templates', help: 'Checking a class selects its existing reusable arms. Every checked arm applies to every checked class; existing matching class arms are skipped and none is overwritten.' })}
+      ${academicCheckboxField({ name: 'ArmTemplateIds', label: 'Arms to create', options: templateOptions, required: true, idPrefix: 'arm-application-templates', help: 'Available reusable arms are choices, not existing classrooms. Check only the arms you want to add to every selected class. Unchecking an arm does not delete an existing classroom.' })}
+      <p class="muted" data-academic-classroom-selection-summary aria-live="polite"></p>
       <button type="submit">Apply selected arms</button>
     </form>
     <form class="academic-management-editor" data-academic-workflow="bulkCreateAcademicSubjects">
@@ -15257,6 +15244,12 @@ function academicScoreSheetActions(row, permissions = {}) {
     : '<span class="muted">View only</span>';
 }
 
+function academicCbtUploadStatus(row = {}) {
+  if (!(Number(row.ImportedRows) > 0)) return 'No marks saved — retry / review upload';
+  if (Number(row.RejectedCount) > 0) return 'Partially saved — review rejected students';
+  return row.Status || 'Recorded';
+}
+
 function academicScorebookWorkspace(data, rows) {
   let scheme = data.assessmentScheme || { Ready: false, Components: [], GradeBands: [], Issues: ['No assessment scheme is loaded.'] };
   const sessionId = academicManagementFilters.sessionId;
@@ -15425,7 +15418,8 @@ function academicScorebookWorkspace(data, rows) {
     { label: 'Subject', value: (row) => academicLabel(rows.subjects, row.SubjectId) },
     { label: 'Component', value: (row) => (scheme.Components || []).find((component) => component.Id === row.AssessmentComponentId)?.Name || row.AssessmentComponentId },
     { label: 'Scores', value: (row) => `${row.ImportedRows || 0} (${row.AbsentCount || 0} absent)` },
-    { label: 'Status', value: (row) => row.Status },
+    { label: 'Rejected', value: (row) => row.RejectedCount || 0 },
+    { label: 'Status', value: academicCbtUploadStatus },
     { label: 'Synchronized', value: (row) => row.SynchronizedAt || '-' }
   ]);
   const schemePanel = `<section class="academic-management-editor academic-management-editor-wide academic-assessment-scheme" data-academic-assessment-scheme>
@@ -16430,12 +16424,18 @@ async function academicManagementRequest(action, payload = {}, requestOptions = 
     ...(requestOptions.signal ? { signal: requestOptions.signal } : {}),
     body: JSON.stringify({ action, BranchId: branchId, View: academicManagementView, ...payload })
   });
-  const data = await response.json().catch(() => ({
+  let data = await response.json().catch(() => ({
     ok: false,
     message: `Academic Management received a temporary non-JSON response (HTTP ${response.status}). Refresh this workspace to try again.`
   }));
   if (response.status === 401) { showLogin(data.message || 'Your staff session has expired.', 'bad'); throw new Error(data.message || 'Your session expired.'); }
-  if (!response.ok || !data.ok) {
+  if (data.code === 'ACADEMIC_SURCHARGE_REQUIRED' && data.submission) {
+    const { openSurchargeCheckout } = await import('./academic-submissions.js');
+    const paid = await openSurchargeCheckout({ request: academicManagementRequest, submission: data.submission });
+    if (/diary/i.test(action)) return academicManagementRequest('getAcademicDiary', payload);
+    data = { ...paid, refreshAcademicManagement: true };
+  }
+  if (!data.ok) {
     const error = new Error(data.message || 'Academic Management could not complete this request.');
     error.status = response.status;
     error.code = clean(data.code);
@@ -16871,10 +16871,22 @@ function academicScoreSheetRequestPayload(sheet, extra = {}) {
   };
 }
 
+function selectAcademicScorebookClassroom(armId) {
+  const arm = academicFind(academicManagementData?.arms || [], armId);
+  academicScorebookDraft = {
+    classId: clean(arm?.ClassId), armId: clean(arm?.ArmId), subjectId: '', teacherUsername: '',
+    importPreview: null, importRows: [], importFileName: '', importFormat: 'CSV'
+  };
+  // Rebuild dependent choices immediately; rendering queues the context fetch.
+  // The previous classroom's scheme is disabled until the new context arrives.
+  renderAcademicManagement(academicManagementData || {});
+}
+
 function academicScorebookContextPayload(data = academicManagementData || {}) {
   const rows = academicCurrentRows(data);
   const arm = academicFind(rows.arms, academicScorebookDraft.armId);
   const allocations = rows.teacherAllocations.filter((row) => academicIsActive(row) && row.AllocationRole === 'Subject Teacher'
+    && academicFind(rows.subjects, row.SubjectId)?.AssessmentCategory !== 'TimetableOnly'
     && row.ClassId === arm?.ClassId && (!row.ArmId || row.ArmId === arm?.ArmId));
   const allocation = allocations.find((row) => row.SubjectId === academicScorebookDraft.subjectId
     && (!academicScorebookDraft.teacherUsername || clean(row.TeacherUsername).toLowerCase() === clean(academicScorebookDraft.teacherUsername).toLowerCase())) || allocations[0];
@@ -16906,7 +16918,13 @@ async function loadAcademicScorebookContext() {
           clean(current.TeacherUsername).toLowerCase()].map(clean).join('|') !== key) return;
     academicScorebookDraft.contextKey = key;
     renderAcademicManagement(data, data.message || 'Scorebook context loaded.');
-  } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+  } catch (error) {
+    const current = academicScorebookContextPayload();
+    if (activeSection !== 'academics' || academicManagementView !== 'scorebook' || !current
+        || [current.SessionId, current.TermId, current.ClassId, current.ArmId, current.SubjectId,
+          clean(current.TeacherUsername).toLowerCase()].map(clean).join('|') !== key) return;
+    setStatus(status, error.message || String(error), 'bad');
+  }
 }
 
 function readAcademicCbtStepOne(form) {
@@ -16950,6 +16968,10 @@ async function uploadAcademicCbtPaper(payload, idempotencyKey) {
     body: JSON.stringify({ BranchId: branchId, View: 'cbt', ...payload })
   });
   const data = await response.json().catch(() => ({ ok: false, message: 'The CBT upload did not return JSON.' }));
+  if (data.code === 'ACADEMIC_SURCHARGE_REQUIRED' && data.submission) {
+    const { openSurchargeCheckout } = await import('./academic-submissions.js');
+    return openSurchargeCheckout({ request: academicManagementRequest, submission: data.submission });
+  }
   if (response.status === 401) showLogin(data.message || 'Your staff session has expired.', 'bad');
   if (!response.ok || !data.ok) {
     const error = new Error(data.message || 'The CBT test could not be scheduled.');
@@ -17227,8 +17249,45 @@ function bindAcademicTimetableGenerator(panel) {
   }));
 }
 
+async function updateAcademicDeadlineButtons() {
+  if (!academicManagementFilters.sessionId || !academicManagementFilters.termId) return;
+  const period = { SchoolSection: academicManagementFilters.section, SessionId: academicManagementFilters.sessionId, TermId: academicManagementFilters.termId };
+  const anchor = panelEl.querySelector('.academic-homework-actions');
+  try {
+    const [{ settings }, { deadlineButtonLabel }] = await Promise.all([
+      academicManagementRequest('getAcademicSubmissionSettings', period), import('./academic-submissions.js')
+    ]);
+    if (!anchor?.isConnected) return;
+    const label = (button, type, input) => {
+      if (!button) return;
+      button.dataset.deadlineNormal ||= button.textContent;
+      button.textContent = deadlineButtonLabel(settings, type, input, button.dataset.deadlineNormal);
+    };
+    panelEl.querySelectorAll('[data-academic-score-status="Submitted"]').forEach(button => {
+      const sheet = (academicManagementData?.scoreSheets || []).find(row => row.SheetId === button.dataset.academicId);
+      label(button, 'scorebook', sheet || {});
+    });
+    const cbt = academicCbtSelectedContext();
+    label(panelEl.querySelector('[data-academic-cbt-save]'), 'cbt', { ClassId: cbt?.classId, SubjectId: cbt?.subjectId, AssessmentComponentId: academicCbtDraft.componentId });
+    label(panelEl.querySelector('[data-academic-attendance-register] button[type="submit"]'), 'attendance', { ClassId: academicAttendanceDraft.classId, SubjectId: academicAttendanceDraft.subjectId });
+  } catch { /* The server still enforces deadlines if the advisory label cannot load. */ }
+}
+
 function bindAcademicManagement() {
   bindAcademicTimetableGenerator(panelEl);
+  const deadlineButton = document.createElement('button');
+  deadlineButton.type = 'button'; deadlineButton.textContent = 'Submission deadlines & surcharges';
+  panelEl.querySelector('.academic-homework-actions')?.append(deadlineButton);
+  deadlineButton.onclick = async () => {
+    try {
+      if (!academicManagementFilters.sessionId || !academicManagementFilters.termId) throw new Error('Choose a session and term first.');
+      const { openSubmissionSettings } = await import('./academic-submissions.js');
+      await openSubmissionSettings({ request: academicManagementRequest,
+        context: { SchoolSection: academicManagementFilters.section, SessionId: academicManagementFilters.sessionId, TermId: academicManagementFilters.termId },
+        classes: academicManagementData?.classes || [], subjects: academicManagementData?.subjects || [] });
+    } catch (error) { setStatus(document.getElementById('academicManagementStatus'), error.message, 'bad'); }
+  };
+  void updateAcademicDeadlineButtons();
   panelEl.querySelector('[data-academic-diary]')?.addEventListener('click', async () => {
     try {
       if (!academicManagementFilters.sessionId || !academicManagementFilters.termId) throw new Error('Choose a session and term first.');
@@ -18101,12 +18160,7 @@ function bindAcademicManagement() {
   }));
   const scorebookForm = panelEl.querySelector('[data-academic-scorebook]');
   scorebookForm?.querySelector('[data-academic-scorebook-classroom]')?.addEventListener('change', (event) => {
-    const arm = academicFind(academicManagementData?.arms || [], event.target.value);
-    academicScorebookDraft = {
-      classId: clean(arm?.ClassId), armId: clean(arm?.ArmId), subjectId: '', teacherUsername: '',
-      importPreview: null, importRows: [], importFileName: '', importFormat: 'CSV'
-    };
-    void loadAcademicScorebookContext();
+    selectAcademicScorebookClassroom(event.target.value);
   });
   scorebookForm?.querySelector('[data-academic-scorebook-allocation]')?.addEventListener('change', (event) => {
     const [subjectId, teacherUsername] = clean(event.target.value).split('::', 2);
@@ -18114,7 +18168,7 @@ function bindAcademicManagement() {
       ...academicScorebookDraft, subjectId, teacherUsername,
       importPreview: null, importRows: [], importFileName: '', importFormat: 'CSV'
     };
-    void loadAcademicScorebookContext();
+    renderAcademicManagement(academicManagementData || {});
   });
   scorebookForm?.querySelectorAll('[data-academic-score-student]').forEach((row) => updateAcademicScorebookRow(row));
   scorebookForm?.addEventListener('change', (event) => {
@@ -18839,8 +18893,8 @@ function bindAcademicManagement() {
     academicManagementTaskViews.bulkSetup = 'applyArms';
     renderAcademicManagement(academicManagementData || {});
     const form = panelEl.querySelector('[data-academic-workflow="bulkApplyAcademicArmTemplates"]');
-    form?._academicClassroomManualTemplateIds?.add(templateId);
     setAcademicCheckedValues(form, 'ArmTemplateIds', [templateId]);
+    form?.querySelector('input[name="ArmTemplateIds"]:checked')?.dispatchEvent(new Event('change', { bubbles: true }));
     form?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     form?.querySelector('input[name="ClassIds"]')?.focus();
   }));

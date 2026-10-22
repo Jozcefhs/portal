@@ -35,6 +35,7 @@ export async function onRequestPost(context) {
       ok: false,
       message: clean(error?.message) || 'Academic Management could not complete this request.',
       ...(error?.code ? { code: error.code } : {}),
+      ...(error?.submission ? { submission: error.submission } : {}),
       ...(issues.length ? {
         issues,
         issueCount: Math.max(issues.length, Number(error?.issueCount || 0))

@@ -866,6 +866,7 @@ export function requireBackendSecret(env, body) {
 }
 
 const VERIFIED_ACTOR_ACTIONS = new Set([
+  'getAcademicSubmissionSettings', 'saveAcademicSubmissionSettings', 'listAcademicSubmissions', 'payAcademicSubmission', 'verifyAcademicSubmission',
   'requisitionApprovalSettings',
   'manualPaymentCorrection',
   'getFeeCollectionSummary', 'getClubMembers',
@@ -980,6 +981,7 @@ const BRANCH_BOUND_DEVICE_ACTIONS = new Set([
   'saveAcademicTimetableSubstitution', 'cancelAcademicTimetableSubstitution',
   'changeAcademicTimetableVersionStatus', 'saveAcademicStudentAttendance', 'decideAcademicAttendanceCorrection',
   'getAcademicScorebookContext', 'getAcademicClassScoreRegister', 'applyActiveAcademicScoreLayout', 'saveAcademicScoreDraft',
+  'getAcademicSubmissionSettings', 'saveAcademicSubmissionSettings', 'listAcademicSubmissions', 'payAcademicSubmission', 'verifyAcademicSubmission',
   'getAcademicDiary', 'saveAcademicDiaryScheme', 'saveAcademicDiaryEntry', 'submitAcademicDiaryEntry',
   'returnAcademicDiaryEntry', 'submitAcademicDiary', 'approveAcademicDiary', 'returnAcademicDiary',
   'reactivateAcademicScoreEditing', 'changeAcademicScoreSheetStatus', 'previewAcademicScoreImport',
@@ -11693,6 +11695,11 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     case 'decideAcademicAttendanceCorrection':
     case 'getAcademicScorebookContext':
     case 'getAcademicClassScoreRegister':
+    case 'getAcademicSubmissionSettings':
+    case 'saveAcademicSubmissionSettings':
+    case 'listAcademicSubmissions':
+    case 'payAcademicSubmission':
+    case 'verifyAcademicSubmission':
     case 'getAcademicDiary':
     case 'saveAcademicDiaryScheme':
     case 'saveAcademicDiaryEntry':
@@ -12340,6 +12347,7 @@ export async function onRequestPost(context) {
       message: configurationMessage || cbtSyncFailure
         || (status >= 500 ? 'The backend could not complete this operation.' : String(err && err.message ? err.message : err)),
       ...(responseCode ? { code: responseCode } : {}),
+      ...(err?.submission ? { submission: err.submission } : {}),
       ...(responseCode === 'ACADEMIC_CBT_SYNC_TEMPORARY' ? { retryable: true } : {})
     }, { status, headers: { 'Cache-Control': 'no-store' } });
   }

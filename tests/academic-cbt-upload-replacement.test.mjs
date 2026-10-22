@@ -4,6 +4,7 @@ import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 import { webcrypto } from 'node:crypto';
 import { academicCbtUploadId, academicCbtUploadMatches } from '../functions/lib/academic-management.js';
+import { commitAcademicSubmission } from '../functions/lib/academic-submissions.js';
 
 const source = await readFile(new URL('../functions/lib/academic-management.js', import.meta.url), 'utf8');
 const admin = await readFile(new URL('../js/admin.js', import.meta.url), 'utf8');
@@ -50,6 +51,9 @@ function harness(rows = []) {
       }
       return {writeResults:[{updateTime:`revision-${commits.length+1}`}]};
     }
+  });
+  context.commitAcademicSubmission = (env, scope, user, input, type, writes) => commitAcademicSubmission(env, scope, user, input, type, writes, {
+    getDocument: async () => null, batchCommitDocuments: (...args) => context.commitAcademicBatch(...args)
   });
   vm.runInContext(source.slice(source.indexOf('function writePrecondition('),source.indexOf('function auditWrite(')),context);
   vm.runInContext(source.slice(source.indexOf('export function academicCbtUploadMatches('),

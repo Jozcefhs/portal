@@ -6,6 +6,7 @@ const subjects = [{SubjectId:'math',Name:'Mathematics'},{SubjectId:'eng',Name:'E
 const week = {Week:1,WeekEnding:'2026-10-23',Status:'Submitted',Version:1,RecordId:'sample-week',Entries:subjects.map(row=>({SubjectId:row.SubjectId,WorkCompleted:'Revision and practical exercises.\nLearners completed individual and group activities.',TeacherUsername:'sample.teacher',Status:'Submitted'})),Compiled:{By:'sample.class.teacher',At:'2026-10-23'}};
 const scheme = {RecordId:'sample-scheme',Version:1,Weeks:[{Week:1,Theme:'Numbers and numeration',Content:'Whole numbers, place value and number operations.'}]};
 const request = async (action,input) => {
+  if(action === 'getAcademicSubmissionSettings') return {ok:true,settings:{Enabled:false,Rules:[]}};
   if(action !== 'getAcademicDiary') throw new Error('Read-only fixture — no server or live records.');
   return {ok:true,diary:{Classrooms:[classroom],Subjects:subjects,OwnSubjects:['math'],CanCompile:true,CanReview:true,SessionName:'2026/2027',TermName:'First term',Weekly:week,Scheme:scheme,
     SessionSchemes: input.IncludeSessionSchemes ? ['First term','Second term','Third term'].map(TermName=>({...scheme,TermName})) : []}};

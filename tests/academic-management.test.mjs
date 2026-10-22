@@ -242,7 +242,7 @@ test('editing a legacy arm template retains the selected school section when sav
   assert.equal(payload(form).SchoolSection, 'secondary');
 });
 
-test('checking an existing class selects its classroom arms without losing manual choices', () => {
+test('bulk classroom creation never selects other classes arms or restores unchecked choices', () => {
   const selectSource = adminSource.slice(
     adminSource.indexOf('function academicExistingClassroomTemplateIds'),
     adminSource.indexOf('function bindAcademicClassroomArmSelection')
@@ -283,9 +283,11 @@ test('checking an existing class selects its classroom arms without losing manua
   ];
   const form = {
     inputs,
+    querySelector: () => summary,
     querySelectorAll: (selector) => selector === 'input[name="ClassIds"]' ? inputs.filter((input) => input.name === 'ClassIds') : [],
     addEventListener: (_name, listener) => { form.onChange = listener; }
   };
+  const summary = { textContent: '' };
   bind(form, arms, templates);
   const change = (name, value, isChecked) => {
     const input = inputs.find((row) => row.name === name && row.value === value);
@@ -293,19 +295,29 @@ test('checking an existing class selects its classroom arms without losing manua
     form.onChange({ target: input });
   };
   change('ClassIds', 'grade-7', true);
-  assert.deepEqual(checked(form, 'ArmTemplateIds'), ['brilliance', 'classic']);
+  assert.deepEqual(checked(form, 'ArmTemplateIds'), []);
   change('ClassIds', 'grade-8', true);
-  assert.deepEqual(checked(form, 'ArmTemplateIds'), ['brilliance', 'classic', 'distinction']);
+  assert.deepEqual(checked(form, 'ArmTemplateIds'), []);
+  change('ArmTemplateIds', 'brilliance', true);
+  assert.match(summary.textContent, /1 new classroom\(s\) selected; 1 already exist/);
   change('ClassIds', 'grade-7', false);
-  assert.deepEqual(checked(form, 'ArmTemplateIds'), ['distinction']);
+  assert.deepEqual(checked(form, 'ArmTemplateIds'), ['brilliance']);
   change('ArmTemplateIds', 'classic', true);
+  change('ArmTemplateIds', 'brilliance', false);
   change('ClassIds', 'grade-8', false);
   assert.deepEqual(checked(form, 'ArmTemplateIds'), ['classic']);
   change('ClassIds', 'grade-7', true);
   change('ArmTemplateIds', 'brilliance', false);
   change('ClassIds', 'grade-7', false);
   change('ClassIds', 'grade-7', true);
-  assert.deepEqual(checked(form, 'ArmTemplateIds'), ['brilliance', 'classic']);
+  assert.deepEqual(checked(form, 'ArmTemplateIds'), ['classic']);
+  // Rebinding after a render must not import saved classrooms into the choices.
+  bind(form, arms, templates);
+  assert.deepEqual(checked(form, 'ArmTemplateIds'), ['classic']);
+  change('ArmTemplateIds', 'classic', false);
+  bind(form, arms, templates);
+  assert.deepEqual(checked(form, 'ArmTemplateIds'), []);
+  assert.match(summary.textContent, /Existing classrooms are not deleted/);
 });
 
 test('selecting a class checks its saved subjects for the period without copying subjects from other classes', () => {
@@ -1431,9 +1443,10 @@ test('staff web workspace exposes responsive academic registers and online-only 
   );
   assert.match(classroomWorkspace, /data-academic-workflow="bulkApplyAcademicArmTemplates" data-academic-classroom-creator/);
   assert.match(classroomWorkspace, /name: 'ClassIds', label: 'Classes'/);
-  assert.match(classroomWorkspace, /name: 'ArmTemplateIds', label: 'Reusable arms'/);
+  assert.match(classroomWorkspace, /name: 'ArmTemplateIds', label: 'Arms to create'/);
   assert.match(classroomWorkspace, /Every selected arm will be applied to every selected class/);
-  assert.match(classroomWorkspace, /existing matching classrooms are skipped and none is overwritten/);
+  assert.match(classroomWorkspace, /Unchecking an arm does not delete an existing classroom/);
+  assert.match(classroomWorkspace, /data-academic-classroom-selection-summary/);
   assert.match(adminSource, /data-academic-class-arm-selection/);
   assert.match(adminSource, /bindAcademicClassroomArmSelection\(/);
   assert.equal([...adminSource.matchAll(/data-academic-workflow="bulkApplyAcademicArmTemplates" data-academic-class-arm-selection/g)].length, 1);

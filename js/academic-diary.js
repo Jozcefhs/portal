@@ -25,6 +25,8 @@ export function diaryPrintHtml(diary, context, schoolName, mode = 'weekly') {
 }
 
 export async function openAcademicDiary({ request, context, schoolName = '' }) {
+  const { deadlineButtonLabel } = await import('./academic-submissions.js');
+  const { settings: deadlineSettings } = await request('getAcademicSubmissionSettings', context);
   const dialog = document.createElement('dialog');
   dialog.className = 'academic-diary-dialog';
   dialog.style.cssText = 'width:min(1150px,95vw);max-height:92vh;overflow:auto;padding:20px';
@@ -76,6 +78,11 @@ export async function openAcademicDiary({ request, context, schoolName = '' }) {
         <button data-action="saveAcademicDiaryEntry">Save draft</button><button data-action="submitAcademicDiaryEntry">Submit subject work</button></fieldset>
         <h3>Scheme of work — ${escape(data.TermName)}</h3><p>Use the Academic Management term selector for each of the session’s three terms.</p>
         <fieldset ${owns ? '' : 'disabled'}><div data-weeks style="overflow-x:auto"></div><button data-add-week>Add week</button><button data-action="saveAcademicDiaryScheme">Save scheme</button></fieldset>` : ''}${actions}`;
+    const submissionTypes = { submitAcademicDiaryEntry: 'diary-entry', submitAcademicDiary: 'diary', saveAcademicDiaryScheme: 'scheme' };
+    body.querySelectorAll('[data-action]').forEach(button => {
+      const type = submissionTypes[button.dataset.action];
+      if (type) button.textContent = deadlineButtonLabel(deadlineSettings, type, loaded, button.textContent);
+    });
     const weeks = body.querySelector('[data-weeks]');
     const rowHtml = row => `<div data-scheme-row style="display:flex;gap:8px;align-items:start;margin:8px 0"><label>Week<input data-number type="number" min="1" max="53" value="${escape(row.Week)}" style="width:70px"></label><label style="flex:1">Theme<input data-theme maxlength="300" value="${escape(row.Theme)}"></label><label style="flex:2">Content<textarea data-content rows="3" maxlength="4000">${escape(row.Content)}</textarea></label><button data-remove>Remove</button></div>`;
     if (weeks) weeks.innerHTML = (data.Scheme.Weeks?.length ? data.Scheme.Weeks : Array.from({ length: 13 }, (_, index) => ({ Week: index + 1 }))).map(rowHtml).join('');

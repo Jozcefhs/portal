@@ -168,6 +168,13 @@ async function handleRequest(context) {
     await completeIdempotentRequest(env, idempotency, data, 200);
     return Response.json(data, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
+    if (error.code === 'ACADEMIC_SURCHARGE_REQUIRED') {
+      // The pending submission owns these R2 objects until payment/review.
+      // Replaying this upload must not delete or upload the papers again.
+      const data = { ok: false, code: error.code, message: error.message, submission: error.submission };
+      await completeIdempotentRequest(context.env, idempotency, data, 402);
+      return Response.json(data, { status: 402, headers: { 'Cache-Control': 'no-store' } });
+    }
     const uncertainSave = saveAttempted && (Boolean(error.outcomeUncertain) || Number(error.status || 500) >= 500);
     if (uncertainSave) error.outcomeUncertain = true;
     if (uploadedUrls.length && storage && !testSaved && !uncertainSave) {

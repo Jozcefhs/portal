@@ -1,4 +1,5 @@
 import { getDocument, batchCommitDocuments } from './firestore.js';
+import { commitAcademicSubmission } from './academic-submissions.js';
 
 const clean = value => String(value ?? '').trim();
 const lower = value => clean(value).toLowerCase();
@@ -89,6 +90,13 @@ async function commit(io, env, collection, id, previous, next, user, action, rea
 export async function handleDiary(context, env, user, input, action, io = { getDocument, batchCommitDocuments }) {
   const access = diaryAccess(context, user, input);
   const { scope, state, session, term } = context;
+  const submissionType = ({ saveacademicdiaryscheme: 'scheme', submitacademicdiaryentry: 'diary-entry', submitacademicdiary: 'diary' })[action];
+  // Custom IO remains injectable for local tests. Drafts and review decisions
+  // never incur a surcharge; only the validated final submission is gated.
+  if (submissionType) {
+    const originalIo = io;
+    io = { ...io, batchCommitDocuments: (targetEnv, writes) => commitAcademicSubmission(targetEnv, context, user, input, submissionType, writes, originalIo) };
+  }
   const choices = { Classrooms: access.classrooms.map(row => ({ ClassId: row.ClassId, ArmId: row.ArmId,
     Name: `${state.classes.find(item => item.ClassId === row.ClassId)?.Name || row.ClassId} / ${row.Name}` })),
     SessionName: session.Name, TermName: term.Name };

@@ -18,7 +18,7 @@ const scheme = scorebook.academicAssessmentScheme({Assessment:{
 
 // Exercise the real signature, validation, score merge, preparation, commit,
 // idempotency and CAS paths. Only scoped storage/context IO is in-memory.
-function fixture() {
+function fixture({ realSheetIds = false } = {}) {
   const db = new Map(), commits = [];
   let revision = 0;
   const put = (collection,id,data) => db.set(`${collection}/${id}`, {...structuredClone(data),__updateTime:`r${++revision}`});
@@ -29,6 +29,7 @@ function fixture() {
   const ctx = vm.createContext({...scorebook, academicCbtScoreSources, safeScopeId,
     crypto, TextEncoder,TextDecoder,btoa,atob,console,structuredClone,
     getDocument:async(_env,col,id)=>structuredClone(db.get(`${col}/${id}`) || null),
+    getDocuments:async(_env,col,ids)=>ids.map(id=>structuredClone(db.get(`${col}/${id}`) || null)),
     batchCommitDocuments:async(_env,writes)=>{
       for(const w of writes) {
         const previous=db.get(`${w.collectionPath}/${w.documentId}`);
@@ -50,9 +51,10 @@ function fixture() {
     ctx.assertUserSection(user,input.SchoolSection);
     assert.equal(input.BranchId,user.branchId);
     const state=Object.fromEntries(Object.entries(collections).map(([key,col])=>[key,rows(col)]));
-    return {permissions,scope:{branchId:'main',section:'secondary'},state,SheetId:'sheet',
-      existing:state.scoreSheets[0],scheme,
-      session:{SessionId:'session'},term:{TermId:'term'},schoolClass:{ClassId:'class'},arm:{ArmId:'arm'},subject:{SubjectId:'maths'},
+    const SheetId=realSheetIds ? ctx.academicScoreSheetId({branchId:'main',section:'secondary'},input.SessionId,input.TermId,input.ClassId,input.ArmId,input.SubjectId) : 'sheet';
+    return {permissions,scope:{branchId:'main',section:'secondary'},state,SheetId,
+      existing:state.scoreSheets.find(row=>row.SheetId===SheetId),scheme,
+      session:{SessionId:input.SessionId},term:{TermId:input.TermId},schoolClass:{ClassId:input.ClassId},arm:{ArmId:input.ArmId},subject:{SubjectId:input.SubjectId},
       allocation:{TeacherUsername:'teacher'},roster:state.studentMemberships};
   };
   const prepare=(payload,user=actor)=>ctx.syncAcademicCbtScores(env,user,{...payload,SupportsPreparedScoreCommit:true});
@@ -79,6 +81,114 @@ async function server() {
   }};
 }
 const [a,b]=await Promise.all([server(),server()]);
+
+test('long production-style sheet identifiers isolate the same student across subjects',async()=>{
+  const f=fixture({realSheetIds:true});
+  const period={SessionId:'session-main-secondary-2026-2027',TermId:'term-main-secondary-first-term',ClassId:'grade-9',ArmId:'grade-9-brilliance'};
+  for(const row of f.rows(collections.studentMemberships)) f.put(collections.studentMemberships,row.RecordId,{...row,...period});
+  const maths=await a.batch([['DCA/001',81,'maths-attempt']],{...period,SubjectId:'mathematics',SourceTestId:'maths-test'});
+  const chemistry=await a.batch([['DCA/001',67,'chemistry-attempt']],{...period,SubjectId:'chemistry',SourceTestId:'chemistry-test'});
+  await f.post(maths);
+  const original=JSON.stringify(f.rows(collections.studentScores)[0]);
+  const posted=await f.post(chemistry);
+  assert.equal(posted.scoreSyncReceipt.ImportedRows,1);
+  assert.equal(f.rows(collections.studentScores).length,2);
+  assert.equal(JSON.stringify(f.rows(collections.studentScores).find(row=>row.SubjectId==='mathematics')),original);
+  assert.equal(f.rows(collections.studentScores).find(row=>row.SubjectId==='chemistry').ComponentScores[0].RawScore,67);
+  assert.equal(posted.scoreSyncReceipt.VerifiedOnline,true);
+  assert.equal(posted.scoreSyncReceipt.VerifiedRows,1);
+});
+
+test('retrying a legacy zero-score receipt recovers the correct subject without touching Mathematics',async()=>{
+  const f=fixture({realSheetIds:true});
+  const period={SessionId:'session-main-secondary-2026-2027',TermId:'term-main-secondary-first-term',ClassId:'grade-9',ArmId:'grade-9-brilliance'};
+  for(const row of f.rows(collections.studentMemberships)) f.put(collections.studentMemberships,row.RecordId,{...row,...period});
+  const maths=await a.batch([['DCA/001',81,'maths-attempt']],{...period,SubjectId:'mathematics',SourceTestId:'maths-test'});
+  await f.post(maths);
+  const saved=f.rows(collections.studentScores)[0];
+  const legacyScoreId=f.ctx.academicId('student-score',saved.SheetId,saved.StudentRef);
+  f.db.delete(`${collections.studentScores}/${saved.ScoreId}`);
+  f.put(collections.studentScores,legacyScoreId,{...saved,RecordId:legacyScoreId,ScoreId:legacyScoreId});
+  const original=JSON.stringify(f.rows(collections.studentScores));
+  const chemistry=await b.batch([['DCA/001',67,'chemistry-attempt']],{...period,SubjectId:'chemistry',SourceTestId:'chemistry-test'});
+  const SheetId=f.ctx.academicScoreSheetId({branchId:'main',section:'secondary'},period.SessionId,period.TermId,period.ClassId,period.ArmId,'chemistry');
+  const SyncId=f.ctx.academicId('score-sync',SheetId,chemistry.BatchId);
+  const legacyReceipt={...scope,...period,RecordId:SyncId,SyncId,SheetId,SubjectId:'chemistry',
+    BatchDigest:chemistry.BatchDigest,SigningKeyId:b.id,ImportedRows:0,RejectedCount:1,
+    RejectedScores:[{StudentRef:'DCA/001'}],AffectedScoreIds:[],Status:'Committed'};
+  f.put(collections.scoreSyncBatches,SyncId,legacyReceipt);
+  const receiptBefore=JSON.stringify(f.db.get(`${collections.scoreSyncBatches}/${SyncId}`));
+  const result=await f.post(chemistry);
+  assert.equal(result.scoreSyncReceipt.ImportedRows,1);
+  assert.equal(result.scoreSyncReceipt.VerifiedOnline,true);
+  assert.equal(JSON.stringify(f.rows(collections.studentScores).filter(row=>row.SubjectId==='mathematics')),original);
+  assert.equal(JSON.stringify(f.db.get(`${collections.scoreSyncBatches}/${SyncId}`)),receiptBefore);
+  const before=JSON.stringify([...f.db]); await f.post(chemistry);
+  assert.equal(JSON.stringify([...f.db]),before);
+});
+
+test('a legacy score keeps its existing identity and first-accepted attempt on retry',async()=>{
+  const f=fixture({realSheetIds:true});
+  const payload=await a.batch([['DCA/001',81,'a1']]);
+  await f.post(payload);
+  const saved=f.rows(collections.studentScores)[0];
+  const oldId=f.ctx.academicId('student-score',saved.SheetId,saved.StudentRef);
+  f.db.delete(`${collections.studentScores}/${saved.ScoreId}`);
+  f.put(collections.studentScores,oldId,{...saved,RecordId:oldId,ScoreId:oldId});
+  const second=await a.batch([['DCA/001',81,'a1'],['DCA/002',92,'a2']]);
+  await f.post(second);
+  assert.equal(f.rows(collections.studentScores).filter(row=>row.StudentRef==='DCA/001').length,1);
+  assert.equal(f.rows(collections.studentScores).find(row=>row.StudentRef==='DCA/001').ScoreId,oldId);
+  assert.equal(f.rows(collections.studentScores).find(row=>row.StudentRef==='DCA/001').ComponentScores[0].RawScore,81);
+});
+
+test('complete score identities distinguish long class, arm, subject and term suffixes',()=>{
+  const f=fixture(), prefix='score-sheet__main__secondary__'+ 'session-'.repeat(9);
+  const sheets=['term-1__grade-8__brilliance__maths','term-1__grade-8__brilliance__chemistry',
+    'term-1__grade-8__classic__maths','term-2__grade-8__brilliance__maths'].map(tail=>prefix+tail);
+  assert.equal(new Set(sheets.map(id=>f.ctx.academicId('student-score',id,'DCA/001'))).size,1,'Regression reproduces old truncation');
+  assert.equal(new Set(sheets.map(id=>f.ctx.academicStudentScoreId(id,'DCA/001'))).size,4);
+  const legacy={ScoreId:f.ctx.academicId('student-score',sheets[0],'DCA/001'),SheetId:sheets[0],StudentRef:'DCA/001'};
+  assert.equal(f.ctx.academicExistingStudentScore([legacy],sheets[0],'dca/001').previous,legacy);
+  assert.equal(f.ctx.academicExistingStudentScore([legacy],sheets[1],'DCA/001').previous,null);
+  assert.throws(()=>f.ctx.academicExistingStudentScore([legacy,{...legacy,ScoreId:'another'}],sheets[0],'DCA/001'),
+    {code:'ACADEMIC_SCORE_IDENTITY_AMBIGUOUS'});
+});
+
+test('altered prepared scores cannot be committed or acknowledged',async()=>{
+  const f=fixture(),payload=await a.batch([['DCA/001',81,'a1']]);
+  const prepared=await f.prepare(payload);
+  await assert.rejects(f.commit({...payload,Scores:[{...payload.Scores[0],RawScore:99}]},prepared),
+    {code:'ACADEMIC_CBT_SCORE_DIGEST_INVALID'});
+  assert.equal(f.commits.length,0);
+});
+
+test('receipts cannot confirm success when saved scores cannot be read back; retry is idempotent',async()=>{
+  const f=fixture(),payload=await a.batch([['DCA/001',0,'a1']]);
+  const reader=f.ctx.getDocuments;
+  f.ctx.getDocuments=async()=>[null];
+  await assert.rejects(f.post(payload),{code:'ACADEMIC_CBT_SYNC_UNVERIFIED'});
+  assert.equal(f.commits.length,1);
+  f.ctx.getDocuments=reader;
+  const result=await f.post(payload);
+  assert.equal(result.scoreSyncReceipt.VerifiedRows,1);
+  assert.equal(f.rows(collections.studentScores)[0].ComponentScores[0].RawScore,0,'A genuine zero mark is valid');
+  assert.equal(f.commits.length,1);
+});
+
+test('an existing receipt alone never proves missing, wrong-subject or changed marks were saved',async()=>{
+  for(const fault of ['missing','subject','value','sheet']) {
+    const f=fixture(),payload=await a.batch([['DCA/001',81,'a1']]); await f.post(payload);
+    const saved=f.rows(collections.studentScores)[0];
+    if(fault==='missing') f.db.delete(`${collections.studentScores}/${saved.ScoreId}`);
+    if(fault==='subject') f.put(collections.studentScores,saved.ScoreId,{...saved,SubjectId:'other'});
+    if(fault==='value') f.put(collections.studentScores,saved.ScoreId,{...saved,ComponentScores:[{ComponentId:'exam',State:'Numeric',RawScore:99}]});
+    if(fault==='sheet') f.db.delete(`${collections.scoreSheets}/sheet`);
+    const before=JSON.stringify([...f.db]);
+    await assert.rejects(f.post(payload),{code:'ACADEMIC_CBT_SYNC_UNVERIFIED'});
+    assert.equal(JSON.stringify([...f.db]),before);
+  }
+});
 
 test('authorised CBT correction is atomic, audited, relocked and protected against later uploads', async () => {
   const f=fixture(), first=await a.batch([['DCA/001',81,'a1']]); await f.post(first);
@@ -191,8 +301,8 @@ test('same-student concurrent preparations conflict on retry rather than overwri
   await f.commit(first,pa);
   await assert.rejects(f.commit(second,pb),{code:'ACADEMIC_WRITE_CONFLICT'});
   const sheet=JSON.stringify(f.rows(collections.scoreSheets)), scores=JSON.stringify(f.rows(collections.studentScores));
-  const result=await f.post(second);
-  assert.equal(result.scoreSyncReceipt.ImportedRows,0); assert.equal(result.scoreSyncReceipt.RejectedCount,1);
+  await assert.rejects(f.post(second),error=>error.code==='ACADEMIC_CBT_SYNC_NO_SCORES_SAVED'
+    && error.preview.ImportedRows===0 && error.preview.RejectedCount===1);
   assert.equal(JSON.stringify(f.rows(collections.scoreSheets)),sheet);
   assert.equal(JSON.stringify(f.rows(collections.studentScores)),scores);
   assert.equal(f.rows(collections.studentScores)[0].CbtScoreSources[0].SigningKeyId,a.id);

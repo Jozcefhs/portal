@@ -19,7 +19,7 @@ In Academic Management, select the school section, session and term, then open *
 - Previews use saved records, not unsaved text. Unapproved diaries are marked **STAFF PREVIEW — NOT YET APPROVED**. Attendance uses posted records; pending corrections are not treated as approved changes.
 - Keep inspector exports secure: they contain student/staff information.
 
-No deadlines, late-submission fees or Paystack charges are enabled by this implementation. Those remain a separate pending workflow, including safe payment verification and automatic submission.
+Submission deadlines, per-record surcharges and verified Paystack automatic submission are now implemented separately and default to disabled. See [Academic submission deadlines](academic-submission-deadlines.md) for setup, supported records and release requirements.
 
 ## Verification
 
