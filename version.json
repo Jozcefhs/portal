@@ -1,7 +1,7 @@
 {
-  "version": "3.1.41",
+  "version": "3.1.42",
   "channel": "stable",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.41.exe",
-  "sha256": "d99b812fc7f0d2b4baa5900e3effe3734d3a243a95f9cafe7c79590a8861688f",
-  "notes": "Dynamax Desktop v3.1.41 verifies saved online CBT marks before reporting upload success, supports safe retries of affected batches, refreshes desktop scorebooks, and adds optional academic submission deadlines and Paystack surcharges. Web companion classroom and subject-teacher selection repairs are included in the web deployment. Back up and update both CBT servers between examinations; do not uninstall or clear saved test data. Retry affected score uploads and review partial or rejected records. Existing answers and saved scores are preserved. No new tablet APK is required. Surcharges remain disabled until configured; perform an isolated Paystack test-mode acceptance check before enabling real charges."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.42.exe",
+  "sha256": "11b23a6e39ad5539b5f60382a7b73b59088a8715508a8600aac48030d19f6545",
+  "notes": "Dynamax Desktop v3.1.42 repairs slow or blank sign-in rendering, restores the bundled logo and fully visible password-recovery controls without scrolling, and loads Academic Management records independently of optional surcharge labels. Academic refresh uses the selected session and term IDs and retains existing records on failures. Back up and close the app before updating, and update CBT servers only between examinations. Do not uninstall or clear saved data. This update does not modify existing answers, scores or financial records. No new tablet APK is required."
 }
