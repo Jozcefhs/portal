@@ -5,21 +5,21 @@ import { pathToFileURL } from 'node:url';
 import assert from 'node:assert/strict';
 const { chromium } = await import(pathToFileURL(process.env.SUBMISSION_PLAYWRIGHT_MODULE).href);
 const source = await fs.readFile('js/academic-submissions.js', 'utf8');
-const harness = `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font:15px Arial}button,input,select{padding:8px;margin:4px}th,td{text-align:left;padding:8px}</style></head><body>
+const harness = `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font:15px Arial}label{display:flex;flex-direction:column}input,select{width:100%;padding:8px;box-sizing:border-box}button{padding:10px;margin:0}th,td{text-align:left;padding:8px}</style></head><body>
 <button id="settings">Open settings</button><button id="payment">Open payment</button><script type="module">
 import {openSubmissionSettings,openSurchargeCheckout} from '/module.js';
 let saved={Enabled:false,Rules:[],RevisionToken:''}; window.calls=[]; window.complete=false;
 const scope={BranchId:'main',SchoolSection:'secondary',SessionId:'s',TermId:'t'};
 const submission={...scope,Reference:'ACS-'+ 'a'.repeat(64),Actor:'sample.teacher',Description:'Weekly subject work',RecordType:'diary-entry',AmountKobo:350000,Deadline:'2026-10-01T08:00:00Z',Status:'Awaiting payment'};
 async function request(action,input){window.calls.push({action,input});
- if(action==='getAcademicSubmissionSettings')return {ok:true,settings:saved,canManage:true,recordTypes:{cbt:'CBT test upload','diary-entry':'Weekly subject work'}};
+ if(action==='getAcademicSubmissionSettings')return {ok:true,settings:saved,canManage:true,classes:[{ClassId:'g7',Name:'Grade 7'}],subjects:[{SubjectId:'math',Name:'Mathematics'}],recordTypes:{cbt:'CBT test upload','diary-entry':'Weekly subject work'}};
  if(action==='saveAcademicSubmissionSettings'){saved={...input,RevisionToken:'saved'};window.saved=saved;return {ok:true,settings:saved};}
  if(action==='listAcademicSubmissions')return {ok:true,submissions:[submission]};
  if(action==='payAcademicSubmission')return {ok:true,submission,checkoutUrl:'https://checkout.paystack.com/test'};
  if(action==='verifyAcademicSubmission')return {ok:true,submission:{...submission,Status:'Submitted',Message:'Verified and submitted.'}};
  throw new Error(action);
 }
-document.querySelector('#settings').onclick=()=>openSubmissionSettings({request,context:scope,classes:[{ClassId:'g7',Name:'Grade 7'}],subjects:[{SubjectId:'math',Name:'Mathematics'}]});
+document.querySelector('#settings').onclick=()=>openSubmissionSettings({request,context:scope});
 document.querySelector('#payment').onclick=()=>openSurchargeCheckout({request,submission}).then(()=>window.complete=true).catch(error=>window.failure=error.message);
 </script></body></html>`;
 const browser = await chromium.launch({ channel: 'msedge', headless: true });
@@ -37,6 +37,16 @@ try {
     await page.goto('http://localhost:4198/');
     await page.locator('#settings').click();
     await page.getByRole('button', { name: 'Add deadline', exact: true }).click();
+    assert.equal(await page.evaluate(() => window.calls[0].input.IncludeChoices), true);
+    const layout = await page.evaluate(() => {
+      const checkbox = document.querySelector('[name=Enabled]').getBoundingClientRect();
+      const label = document.querySelector('.submission-master-switch span').getBoundingClientRect();
+      const add = document.querySelector('[data-add]').getBoundingClientRect();
+      const save = document.querySelector('[type=submit]').getBoundingClientRect();
+      return { checkboxWidth: checkbox.width, aligned: checkbox.right <= label.left && checkbox.top < label.bottom && checkbox.bottom > label.top,
+        gap: save.top >= add.bottom ? save.top - add.bottom : save.left - add.right };
+    });
+    assert.equal(layout.checkboxWidth, 18); assert.equal(layout.aligned, true); assert.ok(layout.gap >= 12);
     await page.locator('[data-class]').selectOption('g7');
     await page.locator('[data-subject]').selectOption('math');
     await page.locator('[data-deadline]').fill('2026-10-23T09:30');

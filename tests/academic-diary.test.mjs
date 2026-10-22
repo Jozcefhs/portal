@@ -50,6 +50,27 @@ test('class-and-arm access uses assigned teachers; reviewers see classrooms but 
   await assert.rejects(f.request('math.teacher'), /assigned to you/);
 });
 
+test('diary includes allocated subjects without legacy offerings and preserves teacher ownership', async () => {
+  const f = fixture();
+  f.state.offerings = [];
+  assert.deepEqual((await f.request('manager')).diary.Subjects.map(row => row.SubjectId), ['english', 'math']);
+  const saved = await f.request('math.teacher', 'saveAcademicDiaryEntry', { SubjectId: 'math', WorkCompleted: 'Algebra' });
+  assert.equal(saved.diary.Weekly.Entries[0].WorkCompleted, 'Algebra');
+  await assert.rejects(f.request('math.teacher', 'saveAcademicDiaryEntry', { SubjectId: 'english', Version: 1 }), /allocated subject teacher/);
+});
+
+test('diary excludes allocations from other classrooms, periods and inactive subjects', async () => {
+  const f = fixture();
+  f.state.offerings = [];
+  f.state.teacherAllocations[0].ArmId = 'other-arm';
+  f.state.teacherAllocations[1].TermId = 'other-term';
+  assert.deepEqual((await f.request('manager')).diary.Subjects, []);
+  f.state.teacherAllocations[0].ArmId = '';
+  assert.deepEqual((await f.request('manager')).diary.Subjects.map(row => row.SubjectId), ['math']);
+  f.state.subjects[0].Status = 'Archived';
+  assert.deepEqual((await f.request('manager')).diary.Subjects, []);
+});
+
 test('scheme validates weeks and freezes the planned topic in submitted weekly work', async () => {
   const f = fixture();
   await f.request('math.teacher', 'saveAcademicDiaryScheme', { SubjectId: 'math', Weeks: [{ Week: 1, Theme: 'Fractions', Content: 'Equivalent fractions' }] });

@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { normalizeSubmissionRules, applicableSubmissionRule, submissionSettings, commitAcademicSubmission,
   initializeSubmissionPayment, verifySubmissionPayment, submissionPaymentAction, SUBMISSION_COLLECTIONS as C } from '../functions/lib/academic-submissions.js';
 import { deadlineButtonLabel } from '../js/academic-submissions.js';
+import { buildStructuredQuery } from '../functions/lib/firestore.js';
 globalThis.crypto ||= webcrypto;
 const context = { scope: { branchId: 'main', section: 'secondary' }, session: { SessionId: '2026' }, term: { TermId: 'first' }, permissions: { canReviewScores: true } };
 const user = { username: 'teacher' };
@@ -17,7 +18,10 @@ function fixture() {
   const env = { PAYSTACK_SECRET_KEY: 'sk_test_fixture' };
   const io = {
     getDocument: async (_env, col, id) => structuredClone(docs.get(`${col}/${id}`) || null),
-    queryCollection: async (_env, col) => [...docs.entries()].filter(([key]) => key.startsWith(`${col}/`)).map(([, row]) => structuredClone(row)),
+    queryCollection: async (_env, col, options) => {
+      buildStructuredQuery(col, options);
+      return [...docs.entries()].filter(([key]) => key.startsWith(`${col}/`)).map(([, row]) => structuredClone(row));
+    },
     findStaffUserRecord: async () => account,
     staffAccessFor: async () => ({ allowedSections: ['academics'], subscriptionActive: true }),
     batchCommitDocuments: async (_env, writes) => {
@@ -51,6 +55,26 @@ test('deadline settings require management, preserve history, and reject stale s
   assert.equal(saved.settings.Rules[0].Deadline, '2026-10-01T08:00:00.000Z');
   await assert.rejects(f.enable(), /changed/);
   assert.equal([...f.docs.keys()].filter(key => key.startsWith(C.history)).length, 1);
+});
+
+test('settings return active scoped catalog choices independently of the open workspace', async () => {
+  const f = fixture();
+  const scoped = { ...context, state: {
+    classes: [{ ClassId: 'g7', Name: 'Grade 7' }],
+    subjects: [{ SubjectId: 'math', Name: 'Mathematics' }, { SubjectId: 'old', Name: 'Old', Status: 'Archived' }]
+  } };
+  const result = await submissionSettings(f.env, scoped, user, { IncludeChoices: true }, false, f.io);
+  assert.deepEqual(result.subjects, [{ SubjectId: 'math', Name: 'Mathematics' }]);
+  assert.deepEqual(result.classes, [{ ClassId: 'g7', Name: 'Grade 7' }]);
+  assert.equal((await submissionSettings(f.env, scoped, user, {}, false, f.io)).subjects, undefined);
+});
+
+test('payment register uses a supported database query for managers and teachers', async () => {
+  const f = fixture();
+  for (const canReviewScores of [true, false]) {
+    const result = await submissionPaymentAction(f.env, { ...context, permissions: { canReviewScores } }, user, {}, 'listacademicsubmissions', f.io);
+    assert.deepEqual(result.submissions, []);
+  }
 });
 test('amount, timezone, duplicate selectors and record types are validated', () => {
   for (const invalid of [{ AmountKobo: 0 }, { AmountKobo: 1.5 }, { AmountKobo: Infinity }, { Deadline: '2026-10-01T09:00' }, { RecordType: 'unknown' }, { Week: '54' }]) {

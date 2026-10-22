@@ -12929,6 +12929,7 @@ function bindAcademicClassroomArmSelection(form, arms = [], templates = []) {
   const summary = form.querySelector('[data-academic-classroom-selection-summary]');
   const manual = new Set(academicCheckedValues(form, 'ArmTemplateIds'));
   const excluded = new Set();
+  const removals = new Map();
   const sync = () => {
     const selectedClasses = academicCheckedValues(form, 'ClassIds');
     const savedSets = selectedClasses.map((classId) => new Set(associated.get(classId) || []));
@@ -12943,13 +12944,23 @@ function bindAcademicClassroomArmSelection(form, arms = [], templates = []) {
     const existing = selectedClasses.reduce((count, classId) => count
       + selectedArms.filter((id) => (associated.get(classId) || []).includes(id)).length, 0);
     const requested = selectedClasses.length * selectedArms.length;
-    if (summary) summary.textContent = `${requested - existing} new classroom(s) selected; ${existing} already exist and will be kept. Checked arms are already created for all selected classes or explicitly selected by you. A dash means created for some classes only; it will not create missing combinations unless you check it. Existing classrooms are not deleted by this form.`;
+    form._academicClassroomRemovals = [...removals.values()].filter(row => selectedClasses.includes(row.ClassId));
+    const removalCount = form._academicClassroomRemovals.length;
+    const field = form.querySelector('[data-academic-checkbox-name="ArmTemplateIds"]');
+    if (field?.dataset) field.dataset.academicCheckboxRequired = removalCount ? 'false' : 'true';
+    if (summary) summary.textContent = `${requested - existing} new classroom(s) selected; ${existing} already exist and will be kept; ${removalCount} classroom(s) requested for removal. A dash means created for some selected classes only. Explicitly unchecking an existing arm requests removal from the currently selected classes. Removal requires confirmation and is blocked for linked records; unused classrooms are archived, never permanently deleted.`;
   };
   form.addEventListener('change', (event) => {
     const input = event.target;
     if (input?.name === 'ArmTemplateIds') {
       if (input.checked) { manual.add(input.value); excluded.delete(input.value); }
       else { manual.delete(input.value); excluded.add(input.value); }
+      const selectedClasses = academicCheckedValues(form, 'ClassIds');
+      arms.filter(row => selectedClasses.includes(row.ClassId)
+        && academicExistingClassroomTemplateIds(row.ClassId, [row], templates).includes(input.value)).forEach(row => {
+        if (input.checked) removals.delete(row.ArmId);
+        else removals.set(row.ArmId, { ArmId: row.ArmId, ClassId: row.ClassId, Name: row.Name, RevisionToken: row.RevisionToken });
+      });
     }
     if (['ClassIds', 'ArmTemplateIds'].includes(event.target?.name)) sync();
   });
@@ -13806,9 +13817,9 @@ function academicClassroomWorkspace(data, rows) {
     <input type="hidden" name="SchoolSection" value="${escapeHtml(section)}">
     <div class="academic-management-editor-heading"><div><small>Batch classroom setup</small><h3>Create classrooms</h3><p class="muted">Choose one or more reusable classes and arms. Every selected arm will be applied to every selected class.</p></div></div>
     ${academicCheckboxField({ name: 'ClassIds', label: 'Classes', options: classOptions, required: true, idPrefix: 'classroom-creation-classes', help: 'Select every class that should receive the chosen reusable arms.' })}
-    ${academicCheckboxField({ name: 'ArmTemplateIds', label: 'Existing and new arms', options: templateOptions, required: true, idPrefix: 'classroom-creation-arms', help: 'Selecting a class checks its already-created arms. For multiple classes, common arms are checked and arms created for only some classes show a dash. Check additional arms to create them for every selected class. Unchecking an arm does not delete an existing classroom.' })}
+    ${academicCheckboxField({ name: 'ArmTemplateIds', label: 'Existing and new arms', options: templateOptions, required: true, idPrefix: 'classroom-creation-arms', help: 'Selecting a class checks its already-created arms. A dash means created for only some selected classes. Check to add; uncheck an existing arm to request removal. Only unused classrooms can be archived after confirmation. Linked student and academic records are protected.' })}
     <p class="muted" data-academic-classroom-selection-summary aria-live="polite"></p>
-    <button type="submit">Create selected classrooms</button>
+    <button type="submit">Save classroom selections</button>
   </form>` : '<div class="academic-view-only-note"><strong>Classroom workspace</strong><span>Your role can open assigned classrooms but cannot create or reconfigure them.</span></div>';
 
   const seniorClassrooms = classrooms.filter((row) => clean(academicFind(classes, row.ClassId)?.SchoolStage).toLowerCase() === 'senior-secondary');
@@ -14122,9 +14133,9 @@ function academicBulkSetupWorkspace(data, rows) {
       <div class="academic-management-editor-heading"><div><small>Atomic assignment</small><h3>Apply arms to classes</h3></div></div>
       <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
       ${academicCheckboxField({ name: 'ClassIds', label: 'Classes', options: classOptions, required: true, idPrefix: 'arm-application-classes', help: 'Every selected reusable arm will be applied to every selected class.' })}
-      ${academicCheckboxField({ name: 'ArmTemplateIds', label: 'Existing and new arms', options: templateOptions, required: true, idPrefix: 'arm-application-templates', help: 'Selecting a class checks its already-created arms. For multiple classes, common arms are checked and arms created for only some classes show a dash. Check additional arms to create them for every selected class. Unchecking an arm does not delete an existing classroom.' })}
+      ${academicCheckboxField({ name: 'ArmTemplateIds', label: 'Existing and new arms', options: templateOptions, required: true, idPrefix: 'arm-application-templates', help: 'Selecting a class checks its already-created arms. A dash means created for only some selected classes. Check to add; uncheck an existing arm to request removal. Only unused classrooms can be archived after confirmation. Linked student and academic records are protected.' })}
       <p class="muted" data-academic-classroom-selection-summary aria-live="polite"></p>
-      <button type="submit">Apply selected arms</button>
+      <button type="submit">Save classroom selections</button>
     </form>
     <form class="academic-management-editor" data-academic-workflow="bulkCreateAcademicSubjects">
       <div class="academic-management-editor-heading"><div><small>Up to 50 at once</small><h3>Build reusable subject catalogue</h3></div></div>
@@ -16744,6 +16755,9 @@ function academicWorkflowPayload(form) {
       throw new Error('A subject cannot be both Trade and Optional. Choose only one category for each subject.');
     }
   }
+  if (form.dataset.academicWorkflow === 'bulkApplyAcademicArmTemplates') {
+    payload.RemoveClassrooms = (form._academicClassroomRemovals || []).map(row => ({ ArmId: row.ArmId, RevisionToken: row.RevisionToken }));
+  }
   return payload;
 }
 
@@ -19113,7 +19127,17 @@ function bindAcademicManagement() {
     await runButtonAction(button, 'Saving...', async () => {
       const status = document.getElementById('academicManagementStatus');
       try {
-        const data = await academicManagementRequest(form.dataset.academicWorkflow, academicWorkflowPayload(form));
+        const payload = academicWorkflowPayload(form);
+        if (payload.RemoveClassrooms?.length) {
+          const labels = (form._academicClassroomRemovals || []).map(row => `${academicLabel(academicManagementData?.classes || [], row.ClassId)} / ${row.Name}`);
+          if (!await window.DynamaxDialogs.confirm({
+            title: 'Remove unchecked classrooms?',
+            message: `Archive these unused classrooms: ${labels.join('; ')}? A linked student or academic record will block the entire change. No answers or scores will be deleted.`,
+            tone: 'danger', confirmText: 'Confirm classroom changes'
+          })) return;
+          payload.ConfirmClassroomRemoval = true;
+        }
+        const data = await academicManagementRequest(form.dataset.academicWorkflow, payload);
         if (form.dataset.academicWorkflow === 'saveAcademicTimetableEntry') academicTimetableDraft.entryId = '';
         if (form.dataset.academicWorkflow === 'saveAcademicStudentAttendance') clearAcademicAttendanceLocalDraft(form);
         renderAcademicManagement(data, data.message || 'Academic workflow completed online.');

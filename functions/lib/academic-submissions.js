@@ -63,7 +63,14 @@ export async function submissionSettings(env, context, user, input, save = false
   const scope = scopeOf(context), id = await submissionHash(fields.map(key => scope[key]));
   const previous = await io.getDocument(env, SUBMISSION_COLLECTIONS.settings, id);
   const canManage = !!context.permissions.canReviewScores;
-  if (!save) return { ok: true, settings: { ...scope, Enabled: false, Rules: [], ...plain(previous), RevisionToken: previous?.__updateTime || '' }, canManage, recordTypes: SUBMISSION_TYPES };
+  if (!save) {
+    const choices = (key, id) => (context.state?.[key] || [])
+      .filter(row => !['archived', 'inactive', 'deleted', 'closed'].includes(clean(row.Status).toLowerCase()))
+      .map(row => ({ [id]: row[id], Name: row.Name || row[id] }))
+      .sort((a, b) => a.Name.localeCompare(b.Name));
+    return { ok: true, settings: { ...scope, Enabled: false, Rules: [], ...plain(previous), RevisionToken: previous?.__updateTime || '' }, canManage, recordTypes: SUBMISSION_TYPES,
+      ...(input.IncludeChoices === true ? { classes: choices('classes', 'ClassId'), subjects: choices('subjects', 'SubjectId') } : {}) };
+  }
   if (!canManage) throw fail('Only authorised Academic Management reviewers can configure submission deadlines.', 403);
   if (input.Enabled === true && !/^sk_(live|test)_/.test(clean(env.PAYSTACK_SECRET_KEY))) throw fail('Connect the school Paystack account before enabling surcharges.', 409);
   if (previous && (!input.RevisionToken || input.RevisionToken !== previous.__updateTime)) throw fail('These settings changed. Reload before saving.', 409);
@@ -230,7 +237,7 @@ export async function submissionPaymentAction(env, context, user, input, action,
     const cursor = clean(input.Cursor);
     if (cursor && !/^ACS-[a-f0-9]{64}$/.test(cursor)) throw fail('Invalid submission-register cursor.');
     const rows = await io.queryCollection(env, SUBMISSION_COLLECTIONS.pending, {
-      filters: [{ field: context.permissions.canReviewScores ? 'ScopeKey' : 'ActorScopeKey', op: 'EQUAL', value: context.permissions.canReviewScores ? key : `${key}:${actor(user)}` }],
+      filters: [{ field: context.permissions.canReviewScores ? 'ScopeKey' : 'ActorScopeKey', op: '==', value: context.permissions.canReviewScores ? key : `${key}:${actor(user)}` }],
       select: summaryFields, orderBy: [{ field: '__name__' }], limit: 100,
       ...(cursor ? { startAfterName: `projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/${SUBMISSION_COLLECTIONS.pending}/${cursor}` } : {}) });
     return { ok: true, submissions: rows.filter(row => fields.every(key => row[key] === scope[key])

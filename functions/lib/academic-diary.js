@@ -34,7 +34,12 @@ export function diaryAccess(context, user, input) {
   const applicable = rows => rows.filter(row => row.ClassId === input.ClassId && (!row.ArmId || row.ArmId === input.ArmId));
   const teachers = applicable(allocations);
   const offered = new Set(applicable(periodRows(state.offerings, input)).map(row => row.SubjectId));
-  const subjects = (state.subjects || []).filter(row => active(row) && offered.has(row.SubjectId));
+  // Senior classrooms use subject-teacher allocations without legacy offerings.
+  // Keep the same period/class/arm restrictions; never fall back to all subjects.
+  teachers.filter(row => lower(row.AllocationRole) === 'subject teacher' && row.SubjectId)
+    .forEach(row => offered.add(row.SubjectId));
+  const subjects = (state.subjects || []).filter(row => active(row) && offered.has(row.SubjectId))
+    .sort((a, b) => clean(a.Name).localeCompare(clean(b.Name)));
   const ownSubjects = teachers.filter(row => lower(row.AllocationRole) === 'subject teacher'
     && lower(row.TeacherUsername) === username(user)).map(row => row.SubjectId);
   return { classrooms, classroom, subjects, ownSubjects, reviewer,

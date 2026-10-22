@@ -319,7 +319,7 @@ test('class selection checks real classrooms and mixed classes never create unin
   change('ClassIds', 'grade-8', true);
   change('ClassIds', 'grade-8', false);
   assert.deepEqual(checked(form, 'ArmTemplateIds'), []);
-  assert.match(summary.textContent, /Existing classrooms are not deleted/);
+  assert.match(summary.textContent, /never permanently deleted/);
   // Shared existing arms stay checked; class-specific arms remain display-only mixed choices.
   inputs.forEach(input => { input.checked = false; });
   arms.push({ ClassId: 'grade-8', ArmTemplateId: 'brilliance', IsClassroom: true, Status: 'Active' });
@@ -1456,12 +1456,12 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(classroomWorkspace, /name: 'ClassIds', label: 'Classes'/);
   assert.match(classroomWorkspace, /name: 'ArmTemplateIds', label: 'Existing and new arms'/);
   assert.match(classroomWorkspace, /Every selected arm will be applied to every selected class/);
-  assert.match(classroomWorkspace, /Unchecking an arm does not delete an existing classroom/);
+  assert.match(classroomWorkspace, /Only unused classrooms can be archived after confirmation/);
   assert.match(classroomWorkspace, /data-academic-classroom-selection-summary/);
   assert.match(adminSource, /data-academic-class-arm-selection/);
   assert.match(adminSource, /bindAcademicClassroomArmSelection\(/);
   assert.equal([...adminSource.matchAll(/data-academic-workflow="bulkApplyAcademicArmTemplates" data-academic-class-arm-selection/g)].length, 1);
-  assert.match(classroomWorkspace, /Create selected classrooms/);
+  assert.match(classroomWorkspace, /Save classroom selections/);
   assert.doesNotMatch(classroomWorkspace, /data-academic-classroom-editor/);
   assert.doesNotMatch(classroomWorkspace, /<select name="(?:ClassId|ArmTemplateId)"/);
   assert.match(adminSource, /row\.IsClassroom === true/);

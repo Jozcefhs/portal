@@ -61,8 +61,14 @@ export function openSurchargeCheckout({ request, submission }) {
 
 export async function openSubmissionSettings({ request, context, classes = [], subjects = [] }) {
   const dialog = document.createElement('dialog');
+  dialog.className = 'academic-submission-settings';
   dialog.style.cssText = 'box-sizing:border-box;width:min(1150px,95vw);max-height:92vh;overflow:auto;padding:22px;border:1px solid #adc4db;border-radius:12px';
-  dialog.innerHTML = `<h2>Submission deadlines &amp; surcharges</h2><p>Settings apply only to the selected branch, school section, session and term. Amounts are per late submission, paid into the school Paystack account. Draft score entry and draft weekly work remain available.</p>
+  dialog.innerHTML = `<style>
+    .academic-submission-settings .submission-master-switch{display:flex;flex-direction:row;align-items:center;justify-content:flex-start;gap:10px;margin:0}
+    .academic-submission-settings input[type=checkbox]{width:18px;height:18px;min-width:18px;flex:none;margin:0}
+    .academic-submission-settings .submission-actions{display:flex;flex-wrap:wrap;gap:12px}
+    .academic-submission-settings .submission-actions button{margin:0}
+    </style><h2>Submission deadlines &amp; surcharges</h2><p>Settings apply only to the selected branch, school section, session and term. Amounts are per late submission, paid into the school Paystack account. Draft score entry and draft weekly work remain available.</p>
     <p>Times below are West Africa Time (UTC+01:00). A more specific class/subject/week/test rule overrides the general rule. Avoid equally specific overlapping rules.</p>
     <p role="status" data-status>Loading…</p><section data-settings></section><h3>Pending submissions and payment register</h3><p>Resume your checkout or check a payment without paying again. Paid records needing review are not reported as submitted.</p><section data-register></section><button data-close>Close</button>`;
   document.body.append(dialog); dialog.showModal();
@@ -84,9 +90,9 @@ export async function openSubmissionSettings({ request, context, classes = [], s
     <td><input data-amount type="number" min="1" max="1000000" step="0.01" value="${Number(rule.AmountKobo || 10000) / 100}" aria-label="Surcharge in naira" style="width:100px"></td>
     <td><input data-enabled type="checkbox" ${rule.Enabled !== false ? 'checked' : ''} aria-label="Rule enabled"></td><td><button type="button" data-remove>Remove</button></td></tr>`;
   const render = () => {
-    settingsEl.innerHTML = `<form><fieldset style="min-width:0" ${canManage ? '' : 'disabled'}><label><input name="Enabled" type="checkbox" ${current.Enabled ? 'checked' : ''}> Enable submission deadlines and surcharges</label>
+    settingsEl.innerHTML = `<form><fieldset style="min-width:0" ${canManage ? '' : 'disabled'}><label class="submission-master-switch"><input name="Enabled" type="checkbox" ${current.Enabled ? 'checked' : ''}><span>Enable submission deadlines and surcharges</span></label>
       <div style="overflow:auto;margin:15px 0"><table style="min-width:1050px"><thead><tr>${['Record','Class','Subject','Week','Test ID','Deadline (WAT)','Amount (NGN)','Enabled',''].map(t => `<th>${t}</th>`).join('')}</tr></thead><tbody>${current.Rules.map(row).join('')}</tbody></table></div>
-      <button type="button" data-add>Add deadline</button><button type="submit">Save settings</button></fieldset></form>`;
+      <div class="submission-actions"><button type="button" data-add>Add deadline</button><button type="submit">Save settings</button></div></fieldset></form>`;
     settingsEl.querySelector('[data-add]').onclick = () => settingsEl.querySelector('tbody').insertAdjacentHTML('beforeend', row({ RecordType: 'cbt', Enabled: true }));
     settingsEl.onclick = event => { if (event.target.matches('[data-remove]')) event.target.closest('tr').remove(); };
     settingsEl.querySelector('form').onsubmit = event => {
@@ -113,7 +119,8 @@ export async function openSubmissionSettings({ request, context, classes = [], s
     }); });
   };
   await run(async () => {
-    const result = await request('getAcademicSubmissionSettings', context);
+    const result = await request('getAcademicSubmissionSettings', { ...context, IncludeChoices: true });
+    classes = result.classes || classes; subjects = result.subjects || subjects;
     current = result.settings; types = result.recordTypes; canManage = result.canManage;
     render(); await loadRegister(); status.textContent = canManage ? 'Set a deadline and amount, then enable the feature when ready.' : 'Your submission deadlines and payment register.';
   });

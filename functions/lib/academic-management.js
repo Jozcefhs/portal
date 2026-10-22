@@ -10,6 +10,7 @@ import { academicResultWithWeightedComponents } from './academic-result-marks.js
 import { buildAcademicClassScoreRegister } from './academic-class-score-register.js';
 import { handleDiary } from './academic-diary.js';
 import { commitAcademicSubmission, submissionSettings, submissionPaymentAction } from './academic-submissions.js';
+import { checkClassroomRemovals } from './academic-classroom-removal.js';
 import { academicAttendanceId, findExistingAttendance, attendanceCorrectionMatches } from './academic-attendance-identity.js';
 import { enforceActorBranch } from './branch-scope.js';
 import { normalizeClassKey } from './class-names.js';
@@ -2564,7 +2565,9 @@ export async function bulkApplyAcademicArmTemplates(env, user = {}, input = {}) 
   const scope = await academicScope(env, user, input, { requireSection: true });
   const classIds = uniqueIds(input.ClassIds || input.ClassId);
   const templateIds = uniqueIds(input.ArmTemplateIds || input.ArmTemplateId);
-  if (!classIds.length || !templateIds.length) throw failure('Choose at least one class and one reusable arm.');
+  const removalRequested = Array.isArray(input.RemoveClassrooms) && input.RemoveClassrooms.length > 0;
+  if (removalRequested) requireCapability(user, 'canArchive');
+  if (!classIds.length || (!templateIds.length && !removalRequested)) throw failure('Choose a class and an arm to create or remove.');
   if (classIds.length * templateIds.length > 200) throw failure('Apply at most 200 class-arm combinations in one batch.');
   const state = await loadScopedAcademicState(env, scope, [
     'classes', 'armTemplates', 'arms', 'departments', 'studentMemberships'
@@ -2578,6 +2581,20 @@ export async function bulkApplyAcademicArmTemplates(env, user = {}, input = {}) 
   const writes = [];
   const createdRecords = [];
   const upgradedRecords = [];
+  const removedRecords = await checkClassroomRemovals({
+    input: { ...input, ClassIds: classIds }, state, scope,
+    query: (collection, options) => queryCollection(env, collection, options),
+    students: async () => (await loadPeople(env, user, scope, { staff: false })).students
+  });
+  for (const row of removedRecords) {
+    const template = templates.find(item => item.ArmTemplateId === row.ArmTemplateId
+      || (!row.ArmTemplateId && (lower(item.Code) === lower(row.Code) || lower(item.Name) === lower(row.Name))));
+    if (template) throw failure('The same classroom cannot be selected for creation and removal. Reload and review your selections.');
+    const archived = { ...withoutMetadata(row), Status: 'Archived', ArchivedAt: nowIso(), ArchivedBy: actorName(user) };
+    stampAcademicRecord(archived, user, row);
+    projected.arms = projected.arms.map(item => item.ArmId === row.ArmId ? archived : item);
+    writes.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.arms, documentId: row.ArmId, data: archived, updateTime: row.__updateTime });
+  }
   let skipped = 0;
   for (const schoolClass of classes) {
     for (const template of templates) {
@@ -2614,7 +2631,7 @@ export async function bulkApplyAcademicArmTemplates(env, user = {}, input = {}) 
       writes.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.arms, documentId: record.ArmId, data: withoutMetadata(record), exists: false });
     }
   }
-  const changedRecords = [...createdRecords, ...upgradedRecords];
+  const changedRecords = [...createdRecords, ...upgradedRecords, ...removedRecords];
   const affectedClassIds = new Set(changedRecords.map((row) => row.ClassId));
   classes.filter((row) => affectedClassIds.has(row.ClassId)).forEach((schoolClass) => {
     const compatibility = legacyClassWrite(projected, schoolClass, 'class', scope);
@@ -2622,7 +2639,7 @@ export async function bulkApplyAcademicArmTemplates(env, user = {}, input = {}) 
   });
   if (changedRecords.length) writes.push(auditWrite(user, 'BULK APPLY', 'arm', {
     BranchId: scope.branchId, SchoolSection: scope.section, ArmId: `bulk-${Date.now()}`
-  }, `${createdRecords.length} classroom(s) created; ${upgradedRecords.length} existing arm(s) upgraded to classrooms; ${skipped} already matched.`));
+  }, `${createdRecords.length} classroom(s) created; ${upgradedRecords.length} existing arm(s) upgraded to classrooms; ${removedRecords.length} unused classroom(s) archived; ${skipped} already matched.`));
   await commitAcademicBatch(env, writes, 'The class or arm catalogue changed while assignments were being saved. Reload and try again.');
   const response = await bootstrapAcademicManagement(env, user, {
     ...input, BranchId: scope.branchId, SchoolSection: scope.section, View: 'bulksetup'
@@ -2631,11 +2648,13 @@ export async function bulkApplyAcademicArmTemplates(env, user = {}, input = {}) 
     ? `${createdRecords.length} classroom${createdRecords.length === 1 ? '' : 's'} created online${upgradedRecords.length ? `; ${upgradedRecords.length} existing arm${upgradedRecords.length === 1 ? '' : 's'} upgraded to ${upgradedRecords.length === 1 ? 'a classroom' : 'classrooms'}` : ''}${skipped ? `; ${skipped} already matched and were skipped` : ''}.`
     : 'Every selected class already has the selected reusable-arm classrooms.';
   response.bulkResult = {
+    Removed: removedRecords.length,
     Requested: classIds.length * templateIds.length,
     Created: createdRecords.length,
     Upgraded: upgradedRecords.length,
     Skipped: skipped
   };
+  if (removedRecords.length) response.message = `${removedRecords.length} unused classroom(s) archived; ${createdRecords.length} created; ${skipped} existing classrooms kept. No student records, answers or scores were deleted.`;
   return response;
 }
 
@@ -8319,7 +8338,8 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
     else {
       const permissions = requireCapability(user, 'canEnterScores');
       const scope = await academicScope(env, user, input, { requireSection: true });
-      const state = await loadScopedAcademicState(env, scope, ['sessions', 'terms']);
+      const state = await loadScopedAcademicState(env, scope, ['sessions', 'terms',
+        ...(action === 'getacademicsubmissionsettings' && input.IncludeChoices === true ? ['classes', 'subjects'] : [])]);
       const session = findById(state.sessions, input.SessionId), term = findById(state.terms, input.TermId);
       if (!session || !term || term.SessionId !== session.SessionId) throw failure('Choose a session and its term.');
       context = { permissions, scope, state, session, term };

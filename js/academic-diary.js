@@ -122,10 +122,7 @@ export async function openAcademicDiary({ request, context, schoolName = '' }) {
       });
     };
   };
-  form.onsubmit = event => {
-    event.preventDefault();
-    if (dirty && !window.confirm('Discard unsaved edits and load the selected diary?')) return;
-    void run(async () => {
+  const loadSelectedDiary = async () => {
       const classroom = data.Classrooms[Number(form.elements.Classroom.value)];
       if (!classroom) throw new Error('Choose a classroom.');
       const next = { ...context, ClassId: classroom.ClassId, ArmId: classroom.ArmId,
@@ -133,12 +130,26 @@ export async function openAcademicDiary({ request, context, schoolName = '' }) {
       if (loaded && next.ClassId !== loaded.ClassId || loaded && next.ArmId !== loaded.ArmId) next.SubjectId = '';
       const result = await request('getAcademicDiary', next); data = result.diary; loaded = next; dirty = dirtyScheme = dirtyWeekly = false;
       form.elements.SubjectId.innerHTML = `<option value="">All subjects</option>${data.Subjects.map(row => `<option value="${escape(row.SubjectId)}" ${row.SubjectId === next.SubjectId ? 'selected' : ''}>${escape(row.Name)}</option>`).join('')}`;
-      render(); status.textContent = 'Saved diary loaded. Print previews use saved records only.';
-    });
+      render(); status.textContent = data.Subjects.length
+        ? 'Saved diary loaded. Print previews use saved records only.'
+        : 'No active subject offerings or subject-teacher allocations are configured for this classroom and term.';
   };
+  const changeSelection = () => {
+    if (dirty && !window.confirm('Discard unsaved edits and load the selected diary?')) {
+      form.elements.Classroom.value = String(data.Classrooms.findIndex(row => row.ClassId === loaded.ClassId && row.ArmId === loaded.ArmId));
+      form.elements.SubjectId.value = loaded.SubjectId;
+      form.elements.Week.value = loaded.Week;
+      return;
+    }
+    void run(loadSelectedDiary);
+  };
+  form.onsubmit = event => { event.preventDefault(); changeSelection(); };
+  form.elements.Classroom.onchange = changeSelection;
+  form.elements.SubjectId.onchange = changeSelection;
   await run(async () => {
     const result = await request('getAcademicDiary', context); data = result.diary;
     form.elements.Classroom.innerHTML = data.Classrooms.map((row, index) => `<option value="${index}">${escape(row.Name)}</option>`).join('');
     status.textContent = data.Classrooms.length ? 'Choose a classroom and week, then Load diary. Select a subject and load again to enter its work.' : 'No classroom assignments are available for this period.';
+    if (data.Classrooms.length) await loadSelectedDiary();
   });
 }
