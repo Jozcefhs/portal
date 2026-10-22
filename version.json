@@ -1,7 +1,7 @@
 {
-  "version": "3.1.40",
+  "version": "3.1.41",
   "channel": "stable",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.40.exe",
-  "sha256": "a5b327b8576a4c3c65c3bc42f9ab89a5b6fcc67073edd0ddc365effbc2fa6c57",
-  "notes": "Dynamax Desktop v3.1.40 repairs subscriber-school logos on CBT pages and retains scoped branding for offline restarts. Adds an older-Chrome compatibility client while preserving password security, answer recovery and examination safeguards. Back up and update both servers between examinations. Load Online Settings once with internet access on each server to retrieve the school logo, then reopen the student page at the same address. No new tablet APK is required. Chrome 70 syntax is the build target, not a guarantee for every old browser or device. Keep available Chrome/WebView security updates installed. Existing tests, answers and scores are preserved."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.41.exe",
+  "sha256": "d99b812fc7f0d2b4baa5900e3effe3734d3a243a95f9cafe7c79590a8861688f",
+  "notes": "Dynamax Desktop v3.1.41 verifies saved online CBT marks before reporting upload success, supports safe retries of affected batches, refreshes desktop scorebooks, and adds optional academic submission deadlines and Paystack surcharges. Web companion classroom and subject-teacher selection repairs are included in the web deployment. Back up and update both CBT servers between examinations; do not uninstall or clear saved test data. Retry affected score uploads and review partial or rejected records. Existing answers and saved scores are preserved. No new tablet APK is required. Surcharges remain disabled until configured; perform an isolated Paystack test-mode acceptance check before enabling real charges."
 }
