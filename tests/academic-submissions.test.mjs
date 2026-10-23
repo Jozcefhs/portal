@@ -86,10 +86,10 @@ test('amount, timezone, duplicate selectors and record types are validated', () 
   assert.throws(() => normalizeSubmissionRules([{ ...rule, AssessmentComponentId: 'ca1' }]), /Test component/);
   assert.throws(() => normalizeSubmissionRules([{ ...rule, RecordType: 'diary', SubjectId: 'math' }]), /all subjects/);
 });
-test('concurrent subject work is merged without overwriting the other teacher or charging again', async () => {
+for (const ArmId of ['a', '']) test(`concurrent subject work is merged without overwriting or charging again (${ArmId ? 'legacy arm' : 'class-wide'} diary)`, async () => {
   const f = fixture(); await f.enable([{ ...rule, RecordType: 'diary-entry' }]);
   const base = { BranchId: 'main', SchoolSection: 'secondary', SessionId: '2026', TermId: 'first',
-    ClassId: 'g7', ArmId: 'a', Week: 1, WeekEnding: '2026-10-23', Status: 'Draft', Version: 0, Entries: [] };
+    ClassId: 'g7', ArmId, Week: 1, WeekEnding: '2026-10-23', Status: 'Draft', Version: 0, Entries: [] };
   const next = { ...base, Version: 1, Entries: [{ SubjectId: 'math', Status: 'Submitted', WorkCompleted: 'Fractions' }] };
   let pending;
   try { await commitAcademicSubmission(f.env, context, user, { SubjectId: 'math', ClassId: 'g7', Week: 1 }, 'diary-entry', [

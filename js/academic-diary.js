@@ -1,27 +1,48 @@
 const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
-const table = (headings, rows) => `<table><thead><tr>${headings.map(value => `<th>${escape(value)}</th>`).join('')}</tr></thead><tbody>${rows.map(row => `<tr>${row.map(value => `<td>${escape(value)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+const weeklyWidths = [18, 24, 28, 15, 15], schemeWidths = [8, 32, 60];
+const table = (headings, rows, widths = []) => `<table>${widths.length ? `<colgroup>${widths.map(width => `<col style="width:${width}%">`).join('')}</colgroup>` : ''}<thead><tr>${headings.map(value => `<th scope="col">${escape(value)}</th>`).join('')}</tr></thead><tbody>${rows.map(row => `<tr>${row.map(value => `<td>${escape(value)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+
+function legacyRecordsHtml(diary) {
+  if (!diary.LegacyArmRecords?.length) return '<p>No earlier arm-based records were found for this week and selected subject/term.</p>';
+  return diary.LegacyArmRecords.map(record => {
+    const week = record.Weekly || {}, scheme = record.Scheme || {};
+    const subjectName = id => (week.SubjectSnapshot || []).find(row => row.SubjectId === id)?.Name
+      || diary.Subjects.find(row => row.SubjectId === id)?.Name || id;
+    return `<h3>${escape(record.Name)} — earlier arm record (read-only)</h3>
+      ${week.RecordId ? `<p>Week ${escape(week.Week)} · Week ending ${escape(week.WeekEnding)} · ${escape(week.Status)}</p>
+        ${table(['Subject', 'Planned work', 'Work completed', 'Notes', 'Teacher / status'], (week.Entries || []).map(entry => [subjectName(entry.SubjectId),
+          [entry.PlannedWork?.Theme, entry.PlannedWork?.Content].filter(Boolean).join('\n'), entry.WorkCompleted, entry.Notes,
+          [entry.TeacherUsername, entry.Status, entry.ReturnReason].filter(Boolean).join('\n')]), weeklyWidths)}
+        <p>Compiled by: ${escape(week.Compiled?.By)} · ${escape(week.Compiled?.At)}<br>Reviewed by: ${escape(week.Reviewed?.By)} · ${escape(week.Reviewed?.At)} · ${escape(week.Reviewed?.Comment)}</p>
+        <p>Record: ${escape(week.RecordId)} · Revision ${escape(week.Version)}</p>` : ''}
+      ${scheme.RecordId ? `<h4>Scheme of work — ${escape(subjectName(scheme.SubjectId))}</h4>
+        ${table(['Week', 'Theme / topic', 'Content'], (scheme.Weeks || []).map(row => [row.Week, row.Theme, row.Content]), schemeWidths)}
+        <p>Record: ${escape(scheme.RecordId)} · Revision ${escape(scheme.Version)}</p>` : ''}`;
+  }).join('');
+}
 
 export function diaryPrintHtml(diary, context, schoolName, mode = 'weekly') {
   const week = diary.Weekly || {};
-  const classroom = diary.Classrooms.find(row => row.ClassId === context.ClassId && row.ArmId === context.ArmId)?.Name || '';
+  const className = (diary.Classes || []).find(row => row.ClassId === context.ClassId)?.Name || '';
   const subject = diary.Subjects.find(row => row.SubjectId === context.SubjectId)?.Name || '';
   const scheme = mode === 'scheme';
-  const title = scheme ? `Scheme of work — ${subject}` : 'Weekly record of work';
-  const content = scheme
+  const legacy = mode === 'legacy';
+  const title = legacy ? 'Earlier arm-based diary records — read-only' : scheme ? `Scheme of work — ${subject}` : 'Weekly record of work';
+  const content = legacy ? legacyRecordsHtml(diary) : scheme
     ? (diary.SessionSchemes?.length ? diary.SessionSchemes : [{ ...diary.Scheme, TermName: diary.TermName }]).map(term =>
-      `<h2>${escape(term.TermName)}</h2>${table(['Week', 'Theme / topic', 'Content'], (term.Weeks || []).map(row => [row.Week, row.Theme, row.Content]))}`).join('')
+      `<h2>${escape(term.TermName)}</h2>${table(['Week', 'Theme / topic', 'Content'], (term.Weeks || []).map(row => [row.Week, row.Theme, row.Content]), schemeWidths)}`).join('')
     : `<p>Week ${escape(week.Week)} · Week ending ${escape(week.WeekEnding || 'Not recorded')} · Status: <strong>${escape(week.Status)}</strong></p>
       ${table(['Subject', 'Planned work', 'Work completed', 'Notes', 'Teacher / status'], (week.SubjectSnapshot || diary.Subjects).map(subject => {
         const entry = (week.Entries || []).find(row => row.SubjectId === subject.SubjectId) || {};
-        return [subject.Name, [entry.PlannedWork?.Theme, entry.PlannedWork?.Content].filter(Boolean).join('\n'), entry.WorkCompleted || 'Not submitted', entry.Notes || '', `${entry.TeacherUsername || ''}\n${entry.Status || 'Missing'}`];
-      }))}<p>Compiled by: ${escape(week.Compiled?.By || 'Not compiled')} · ${escape(week.Compiled?.At || '')}</p>
+        return [subject.Name, [entry.PlannedWork?.Theme, entry.PlannedWork?.Content].filter(Boolean).join('\n'), entry.WorkCompleted || 'Not submitted', entry.Notes || '', [entry.TeacherUsername, entry.Status || 'Missing'].filter(Boolean).join('\n')];
+      }), weeklyWidths)}<p>Compiled by: ${escape(week.Compiled?.By || 'Not compiled')} · ${escape(week.Compiled?.At || '')}</p>
       <p>Reviewed by: ${escape(week.Reviewed?.By || 'Not reviewed')} · ${escape(week.Reviewed?.At || '')}<br>${escape(week.Reviewed?.Comment || '')}</p>`;
-  return `<!doctype html><html><head><meta charset="utf-8"><title>${escape(title)}</title><style>
-    @page{size:A4 landscape;margin:12mm}body{font:12px Arial;color:#172d40;margin:24px}h1{font-size:22px}h2{font-size:16px}table{width:100%;border-collapse:collapse;table-layout:fixed}th,td{border:1px solid #aab9c6;padding:7px;vertical-align:top;white-space:pre-wrap;overflow-wrap:anywhere}thead{display:table-header-group}th{background:#edf3f7}tr{break-inside:avoid}button{padding:10px 18px}@media print{button{display:none}body{margin:0}}</style></head><body>
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escape(title)}</title><style>
+    @page{size:A4 landscape;margin:12mm}body{font:12px/1.35 Arial;color:#172d40;width:calc(100% - 32px);max-width:273mm;margin:24px auto}h1{font-size:22px}h2{font-size:16px}table{width:100%;border-collapse:collapse;table-layout:fixed}th,td{border:1px solid #aab9c6;padding:5px 6px;vertical-align:top;white-space:pre-wrap;overflow-wrap:anywhere}thead{display:table-header-group}th{background:#edf3f7;text-align:left}tr{break-inside:avoid}button{padding:10px 18px}@media print{button{display:none}body{width:100%;max-width:none;margin:0}}</style></head><body>
     <button onclick="window.print()">Print / Save as PDF</button><h1>${escape(schoolName || 'School')}</h1><h2>${escape(title)}</h2>
-    <p>${escape(diary.SessionName)} · ${escape(scheme ? 'Full session' : diary.TermName)} · ${escape(classroom)}</p>
-    ${!scheme && week.Status !== 'Approved' ? '<p><strong>STAFF PREVIEW — NOT YET APPROVED</strong></p>' : ''}${content}
-    <p>Record: ${escape((scheme ? diary.Scheme?.RecordId : week.RecordId) || 'Unsaved')} · Generated ${escape(new Date().toLocaleString())}</p></body></html>`;
+    <p>${escape(diary.SessionName)} · ${escape(scheme ? 'Full session' : diary.TermName)} · ${escape(className)}</p>
+    ${!legacy && !scheme && week.Status !== 'Approved' ? '<p><strong>STAFF PREVIEW — NOT YET APPROVED</strong></p>' : ''}${content}
+    <p>${legacy ? '' : `Record: ${escape((scheme ? diary.Scheme?.RecordId : week.RecordId) || 'Unsaved')} · `}Generated ${escape(new Date().toLocaleString())}</p></body></html>`;
 }
 
 export async function openAcademicDiary({ request, context, schoolName = '' }) {
@@ -39,8 +60,8 @@ export async function openAcademicDiary({ request, context, schoolName = '' }) {
     .academic-diary-dialog table{border-collapse:collapse;width:100%;min-width:480px}.academic-diary-dialog th,.academic-diary-dialog td{padding:10px;border:1px solid #d3deea;text-align:left;white-space:pre-wrap;overflow-wrap:anywhere}
     @media(max-width:650px){.academic-diary-dialog form[data-load]{grid-template-columns:1fr 1fr}.academic-diary-dialog [data-scheme-row]{flex-wrap:wrap}}
     </style><header><h2>Teaching diary</h2><button type="button" data-close>Close</button></header>
-    <p>Subject teacher → class teacher compilation → Academic Management approval.</p><p role="status" data-status>Loading classrooms…</p>
-    <form data-load><label>Class / arm<select name="Classroom" required></select></label>
+    <p>One diary for the whole class, with one shared entry per subject. Subject teacher → class teacher compilation → Academic Management approval.</p><p role="status" data-status>Loading classes…</p>
+    <form data-load><label>Class<select name="ClassId" required></select></label>
     <label>Subject<select name="SubjectId"><option value="">All subjects</option></select></label>
     <label>Week<input name="Week" type="number" min="1" max="53" value="1" required></label><button>Load diary</button></form><section data-body></section>`;
   document.body.append(dialog); dialog.showModal();
@@ -65,7 +86,7 @@ export async function openAcademicDiary({ request, context, schoolName = '' }) {
       ${data.CanCompile && ['Draft', 'Returned'].includes(week.Status) ? '<button data-action="submitAcademicDiary">Compile and submit diary</button>' : ''}
       ${data.CanReview && week.Status === 'Submitted' ? '<button data-action="approveAcademicDiary">Approve diary</button>' : ''}
       ${data.CanReview && ['Submitted', 'Approved'].includes(week.Status) ? '<button data-action="returnAcademicDiary">Return diary for correction</button>' : ''}`;
-    body.innerHTML = `<h3>${escape(data.Classrooms.find(row => row.ClassId === loaded.ClassId && row.ArmId === loaded.ArmId)?.Name)} · ${escape(data.SessionName)} · ${escape(data.TermName)} · ${escape(week.Status)}</h3>
+    body.innerHTML = `<h3>${escape(data.Classes.find(row => row.ClassId === loaded.ClassId)?.Name)} · ${escape(data.SessionName)} · ${escape(data.TermName)} · ${escape(week.Status)}</h3>
       <button data-print="weekly">Preview / print weekly diary</button>${loaded.SubjectId ? '<button data-print="scheme">Preview / print session scheme</button>' : ''}
       <p>${escape(week.Reviewed?.Comment || entry.ReturnReason || '')}</p><div style="overflow-x:auto">${table(['Subject', 'Work completed', 'Teacher', 'Status'], data.Subjects.map(subject => {
         const saved = week.Entries.find(row => row.SubjectId === subject.SubjectId) || {};
@@ -77,7 +98,11 @@ export async function openAcademicDiary({ request, context, schoolName = '' }) {
         <label>Notes / explanation<textarea data-notes maxlength="2000">${escape(entry.Notes)}</textarea></label>
         <button data-action="saveAcademicDiaryEntry">Save draft</button><button data-action="submitAcademicDiaryEntry">Submit subject work</button></fieldset>
         <h3>Scheme of work — ${escape(data.TermName)}</h3><p>Use the Academic Management term selector for each of the session’s three terms.</p>
-        <fieldset ${owns ? '' : 'disabled'}><div data-weeks style="overflow-x:auto"></div><button data-add-week>Add week</button><button data-action="saveAcademicDiaryScheme">Save scheme</button></fieldset>` : ''}${actions}`;
+        <fieldset ${owns ? '' : 'disabled'}><div data-weeks style="overflow-x:auto"></div><button data-add-week>Add week</button><button data-action="saveAcademicDiaryScheme">Save scheme</button></fieldset>` : ''}${actions}
+      <details data-legacy><summary>Earlier arm-based records (read-only)</summary>
+        <p>Older entries and approvals are preserved separately, not merged into this class diary. Choose a week and, for a scheme, a subject above.</p>
+        <button data-load-legacy>Load earlier records</button><button data-print="legacy">Preview / print earlier records</button>
+        <div data-legacy-records style="overflow-x:auto"></div></details>`;
     const submissionTypes = { submitAcademicDiaryEntry: 'diary-entry', submitAcademicDiary: 'diary', saveAcademicDiaryScheme: 'scheme' };
     body.querySelectorAll('[data-action]').forEach(button => {
       const type = submissionTypes[button.dataset.action];
@@ -95,13 +120,23 @@ export async function openAcademicDiary({ request, context, schoolName = '' }) {
       const button = event.target.closest('button'); if (!button || busy) return;
       if (button.hasAttribute('data-remove')) { button.closest('[data-scheme-row]').remove(); dirty = dirtyScheme = true; return; }
       if (button.hasAttribute('data-add-week')) { const next = weeks.children.length + 1; if (next <= 53) weeks.insertAdjacentHTML('beforeend', rowHtml({ Week: next })); dirty = dirtyScheme = true; return; }
+      if (button.hasAttribute('data-load-legacy')) {
+        void run(async () => {
+          const fresh = await request('getAcademicDiary', { ...loaded, IncludeLegacyArmRecords: true });
+          // Do not rerender the editor or replace its optimistic version while
+          // someone has unsaved changes in the new class diary.
+          body.querySelector('[data-legacy-records]').innerHTML = legacyRecordsHtml(fresh.diary);
+          status.textContent = 'Earlier arm records loaded read-only. Current class diary edits are unchanged.';
+        }); return;
+      }
       if (button.dataset.print) {
         const preview = window.open('', '_blank');
         if (!preview) { status.textContent = 'Allow pop-ups to open the print preview.'; return; }
         preview.opener = null;
         void run(async () => {
           try {
-            const fresh = await request('getAcademicDiary', { ...loaded, IncludeSessionSchemes: button.dataset.print === 'scheme' });
+            const fresh = await request('getAcademicDiary', { ...loaded, IncludeSessionSchemes: button.dataset.print === 'scheme',
+              IncludeLegacyArmRecords: button.dataset.print === 'legacy' });
             preview.document.open(); preview.document.write(diaryPrintHtml(fresh.diary, loaded, schoolName, button.dataset.print)); preview.document.close();
           } catch (error) { preview.close(); throw error; }
         }); return;
@@ -123,20 +158,20 @@ export async function openAcademicDiary({ request, context, schoolName = '' }) {
     };
   };
   const loadSelectedDiary = async () => {
-      const classroom = data.Classrooms[Number(form.elements.Classroom.value)];
-      if (!classroom) throw new Error('Choose a classroom.');
-      const next = { ...context, ClassId: classroom.ClassId, ArmId: classroom.ArmId,
+      const selectedClass = data.Classes.find(row => row.ClassId === form.elements.ClassId.value);
+      if (!selectedClass) throw new Error('Choose a class.');
+      const next = { ...context, ClassId: selectedClass.ClassId, ArmId: '',
         SubjectId: form.elements.SubjectId.value, Week: Number(form.elements.Week.value) };
-      if (loaded && next.ClassId !== loaded.ClassId || loaded && next.ArmId !== loaded.ArmId) next.SubjectId = '';
+      if (loaded && next.ClassId !== loaded.ClassId) next.SubjectId = '';
       const result = await request('getAcademicDiary', next); data = result.diary; loaded = next; dirty = dirtyScheme = dirtyWeekly = false;
       form.elements.SubjectId.innerHTML = `<option value="">All subjects</option>${data.Subjects.map(row => `<option value="${escape(row.SubjectId)}" ${row.SubjectId === next.SubjectId ? 'selected' : ''}>${escape(row.Name)}</option>`).join('')}`;
       render(); status.textContent = data.Subjects.length
         ? 'Saved diary loaded. Print previews use saved records only.'
-        : 'No active subject offerings or subject-teacher allocations are configured for this classroom and term.';
+        : 'No active subject offerings or subject-teacher allocations are configured for this class and term.';
   };
   const changeSelection = () => {
     if (dirty && !window.confirm('Discard unsaved edits and load the selected diary?')) {
-      form.elements.Classroom.value = String(data.Classrooms.findIndex(row => row.ClassId === loaded.ClassId && row.ArmId === loaded.ArmId));
+      form.elements.ClassId.value = loaded.ClassId;
       form.elements.SubjectId.value = loaded.SubjectId;
       form.elements.Week.value = loaded.Week;
       return;
@@ -144,12 +179,13 @@ export async function openAcademicDiary({ request, context, schoolName = '' }) {
     void run(loadSelectedDiary);
   };
   form.onsubmit = event => { event.preventDefault(); changeSelection(); };
-  form.elements.Classroom.onchange = changeSelection;
+  form.elements.ClassId.onchange = changeSelection;
   form.elements.SubjectId.onchange = changeSelection;
   await run(async () => {
     const result = await request('getAcademicDiary', context); data = result.diary;
-    form.elements.Classroom.innerHTML = data.Classrooms.map((row, index) => `<option value="${index}">${escape(row.Name)}</option>`).join('');
-    status.textContent = data.Classrooms.length ? 'Choose a classroom and week, then Load diary. Select a subject and load again to enter its work.' : 'No classroom assignments are available for this period.';
-    if (data.Classrooms.length) await loadSelectedDiary();
+    if (data.DiaryScope !== 'Class' || !Array.isArray(data.Classes)) throw new Error('The class-based diary backend is not available yet. Update the web/backend before using this diary.');
+    form.elements.ClassId.innerHTML = data.Classes.map(row => `<option value="${escape(row.ClassId)}">${escape(row.Name)}</option>`).join('');
+    status.textContent = data.Classes.length ? 'Choose a class and week, then Load diary. Select a subject to enter its shared work.' : 'No class assignments are available for this period.';
+    if (data.Classes.length) await loadSelectedDiary();
   });
 }
