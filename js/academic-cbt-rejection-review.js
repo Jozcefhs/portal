@@ -44,10 +44,12 @@ export function buildCbtRejectionReview(batch, data = {}, snapshot = null) {
       reason: clean(rejection.Reason || rejection.Message) || 'This receipt did not save a reason. Check the original server upload report.',
       code: clean(rejection.Code) || 'Not recorded', onlineScore,
       evidence: snapshot ? [corrected ? 'Authorised manual correction recorded' : '',
-        source?.AttemptId ? `Saved attempt: ${source.AttemptId}` : '',
-        source?.SourceTestId ? `Saved test: ${source.SourceTestId}` : '',
         source?.SubmittedAt ? `Submitted: ${source.SubmittedAt}` : '',
         sheet?.Status ? `Current scorebook: ${sheet.Status}` : ''].filter(Boolean).join('\n') || 'No attempt details available' : 'Load current online marks to compare.',
+      technicalDetails: snapshot ? [
+        source?.AttemptId ? `Saved attempt: ${source.AttemptId}` : '',
+        source?.SourceTestId ? `Saved test: ${source.SourceTestId}` : ''
+      ].filter(Boolean).join('\n') : '',
       nextStep: cbtRejectionNextStep(rejection)
     };
   });
@@ -64,7 +66,7 @@ function reviewTable(rows) {
   return `<table><thead><tr><th>Student / admission number</th><th>Reason recorded at upload</th><th>Current online score</th><th>How to review</th></tr></thead><tbody>${rows.map(row => `<tr>
     <td><strong>${escape(row.studentName)}</strong><br>${escape(row.studentRef)}</td>
     <td>${escape(row.reason)}<small>Code: ${escape(row.code)}</small></td>
-    <td><strong>${escape(row.onlineScore)}</strong><small>${escape(row.evidence)}</small></td>
+    <td><strong>${escape(row.onlineScore)}</strong><small>${escape(row.evidence)}</small>${row.technicalDetails ? `<details class="review-technical-details"><summary>Technical details</summary><small>${escape(row.technicalDetails)}</small></details>` : ''}</td>
     <td>${escape(row.nextStep)}</td></tr>`).join('') || '<tr><td colspan="4">No saved rejection details match this search.</td></tr>'}</tbody></table>`;
 }
 
@@ -74,7 +76,7 @@ function missingDetails(model) {
 
 export function cbtRejectionPrintHtml(model, rows = model.rows, checked = '') {
   return `<!doctype html><html><head><meta charset="utf-8"><title>CBT rejection review</title><style>
-    @page{size:A4 landscape;margin:10mm}body{font:12px/1.4 Arial;color:#17324d;margin:24px}table{width:100%;border-collapse:collapse;table-layout:fixed}th,td{border:1px solid #acbfce;padding:8px;vertical-align:top;text-align:left;overflow-wrap:anywhere;white-space:pre-wrap}th{background:#edf3f7}small{display:block;margin-top:6px}thead{display:table-header-group}tr{break-inside:avoid}@media print{button{display:none}body{margin:0}}</style></head><body>
+    @page{size:A4 landscape;margin:10mm}body{font:12px/1.4 Arial;color:#17324d;margin:24px}table{width:100%;border-collapse:collapse;table-layout:fixed}th,td{border:1px solid #acbfce;padding:8px;vertical-align:top;text-align:left;overflow-wrap:anywhere;white-space:pre-wrap}th{background:#edf3f7}small{display:block;margin-top:6px}thead{display:table-header-group}tr{break-inside:avoid}.review-technical-details{margin-top:8px}.review-technical-details summary{cursor:pointer;font-weight:600;white-space:normal}@media print{button,.review-technical-details:not([open]){display:none}body{margin:0}}</style></head><body>
     <button onclick="window.print()">Print / Save as PDF</button><h1>CBT rejection review</h1><h2>${escape(model.title)}</h2><p>${escape(model.period)}</p>
     <p>Batch: ${escape(model.batchId)} · Uploaded: ${escape(model.synchronizedAt)}<br>${model.imported} saved · ${model.count} rejected · ${rows.length} shown</p>
     <p>Read-only review. Already saved scores are unchanged. Current marks checked: ${escape(checked || 'Not checked')}.</p>${missingDetails(model)}${reviewTable(rows)}</body></html>`;
@@ -90,6 +92,7 @@ export function openCbtRejectionReview({ batch, data, loadSnapshot, openScoreboo
     .cbt-rejection-review::backdrop{background:#152b4599}.cbt-rejection-review header,.cbt-rejection-review .review-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.cbt-rejection-review header{justify-content:space-between}
     .cbt-rejection-review h2{margin:0}.cbt-rejection-review button{padding:9px 13px;cursor:pointer}.cbt-rejection-review label{display:block;margin:14px 0}.cbt-rejection-review input{box-sizing:border-box;display:block;width:100%;padding:10px;border:1px solid #aebfce;border-radius:6px}
     .cbt-rejection-review .review-table{overflow:auto;max-height:55vh}.cbt-rejection-review table{width:100%;min-width:850px;border-collapse:collapse;table-layout:fixed}.cbt-rejection-review th,.cbt-rejection-review td{border:1px solid #b9cbd9;padding:10px;text-align:left;vertical-align:top;white-space:pre-wrap;overflow-wrap:anywhere}.cbt-rejection-review th{background:#edf3f7;position:sticky;top:0}.cbt-rejection-review small{display:block;margin-top:6px}.cbt-rejection-review .review-warning{background:#fff3d9;padding:12px}.cbt-rejection-review [data-status],.cbt-rejection-review [data-summary]{white-space:pre-wrap}
+    .cbt-rejection-review .review-technical-details{margin-top:8px}.cbt-rejection-review .review-technical-details summary{cursor:pointer;font-weight:600;white-space:normal}
     </style><header><h2>Review rejected CBT students</h2><button type="button" data-close>Close</button></header>
     <p data-summary></p><p>Read-only review: this window does not approve or retry uploads, unlock scorebooks, or change saved marks.</p>
     <div class="review-actions"><button type="button" data-refresh>Refresh current online marks</button><button type="button" data-scorebook>Open this scorebook</button><button type="button" data-print>Preview / print</button></div>

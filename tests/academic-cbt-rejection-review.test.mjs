@@ -35,7 +35,8 @@ test('review preserves historical reasons, finds names and compares only the exa
   assert.equal(model.rows[0].studentName, 'Ada');
   assert.equal(model.rows[0].onlineScore, '0 / 100');
   assert.equal(model.rows[0].reason, f.batch.RejectedScores[0].Reason);
-  assert.match(model.rows[0].evidence, /first-attempt/);
+  assert.match(model.rows[0].technicalDetails, /first-attempt/);
+  assert.doesNotMatch(model.rows[0].evidence, /first-attempt|original-test/);
   assert.equal(model.rows[1].onlineScore, '85 / 100');
   assert.match(model.rows[1].evidence, /manual correction/);
   assert.equal(model.rows[2].onlineScore, 'Not found in this scorebook');
@@ -66,7 +67,7 @@ test('split components show objective marks only and preserve exceptional states
   ] };
   f.snapshot.scores[0].CbtScoreSources[0].CellId = 'ca1:objective';
   assert.equal(buildCbtRejectionReview(f.batch, f.data, f.snapshot).rows[0].onlineScore, '22 / 50');
-  assert.match(buildCbtRejectionReview(f.batch, f.data, f.snapshot).rows[0].evidence, /first-attempt/);
+  assert.match(buildCbtRejectionReview(f.batch, f.data, f.snapshot).rows[0].technicalDetails, /first-attempt/);
   f.snapshot.scores[0].ComponentScores[0].Parts[0].State = 'Absent';
   assert.equal(buildCbtRejectionReview(f.batch, f.data, f.snapshot).rows[0].onlineScore, 'Absent');
   f.snapshot.scores.push(structuredClone(f.snapshot.scores[0]));
@@ -83,6 +84,23 @@ test('review guidance never automatically retries or overwrites protected result
   assert.match(html, /&lt;img/); assert.match(html, /1 shown/);
   assert.match(cbtRejectionNextStep(f.batch.RejectedScores[0]), /do not repeat the test/);
   assert.match(cbtRejectionNextStep({}), /does not approve, retry or overwrite/);
+});
+
+test('internal attempt and test references stay in closed technical details, including print preview', () => {
+  const f = fixture(), before = structuredClone(f);
+  const model = buildCbtRejectionReview(f.batch, f.data, f.snapshot);
+  const html = cbtRejectionPrintHtml(model);
+  assert.match(html, /<details class="review-technical-details"><summary>Technical details<\/summary><small>Saved attempt: first-attempt\nSaved test: original-test<\/small><\/details>/);
+  assert.doesNotMatch(html, /<details[^>]*\bopen\b/);
+  assert.doesNotMatch(html.replace(/<details\b[^>]*>[\s\S]*?<\/details>/g, ''), /first-attempt|original-test/);
+  assert.match(model.rows[0].evidence, /Submitted:.*\nCurrent scorebook: Draft/);
+  assert.equal(model.rows[1].technicalDetails, '');
+  assert.equal(buildCbtRejectionReview(f.batch, f.data).rows[0].technicalDetails, '');
+  assert.deepEqual(f, before);
+  f.snapshot.scores[0].CbtScoreSources[0].AttemptId = '<img src=x onerror=alert(1)>';
+  const escaped = cbtRejectionPrintHtml(buildCbtRejectionReview(f.batch, f.data, f.snapshot));
+  assert.doesNotMatch(escaped, /<img/);
+  assert.match(escaped, /Saved attempt: &lt;img/);
 });
 
 test('history binds an authorised scoped read-only review and caches the new module', async () => {
