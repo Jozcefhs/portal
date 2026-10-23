@@ -85,6 +85,26 @@ test('repeat uploads replace the same legacy record, increment revision and do n
   }
 });
 
+test('re-upload with a different file, request and schedule replaces only the matching assessment',async()=>{
+  const other = previous({CbtTestId:'ca2-existing',RecordId:'ca2-existing',AssessmentComponentId:'ca2',AssessmentComponentName:'CA2'});
+  const h = harness([previous(),other]);
+  const changes = {ClientRequestId:'new-request',StartsAt:'2099-02-01T09:00:00Z',
+    PaperFiles:[{...paper,FileName:'corrected-French.pdf',Url:'replacement-paper'}]};
+  await h.save(await h.validate(changes),changes);
+  assert.equal(h.state.cbtTests.length,2);
+  assert.equal(h.state.cbtTests.find(row=>row.CbtTestId==='legacy-test').PaperFiles[0].Url,'replacement-paper');
+  assert.deepEqual(h.state.cbtTests.find(row=>row.CbtTestId==='ca2-existing'),other);
+  assert.ok(h.commits.flat().every(write=>['tests','audit'].includes(write.collectionPath)),
+    'paper replacement must not update or delete any answers, attempts, student scores or scorebooks');
+});
+
+test('a changed assessment ID with the same test name still replaces its existing paper',async()=>{
+  const h = harness([previous({AssessmentComponentId:'legacy-ca1-id'})]);
+  const result = await h.save(await h.validate());
+  assert.equal(result.cbtTest.CbtTestId,'legacy-test');
+  assert.equal(h.state.cbtTests.length,1);
+});
+
 test('simultaneous first uploads have the same ID and only one can commit',async()=>{
   const h=harness();
   const [a,b]=await Promise.all([h.validate({ClientRequestId:'a'}),h.validate({ClientRequestId:'b'})]);

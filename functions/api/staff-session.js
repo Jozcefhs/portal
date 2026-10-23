@@ -8,6 +8,8 @@ import {
   findStaffUserRecord,
   readStaffSession,
   staffSessionCookie,
+  staffSessionTiming,
+  STAFF_SESSION_IDLE_SECONDS,
   staffAccessFor,
   staffUserForAccess,
   staffUserForRequest,
@@ -188,7 +190,8 @@ export async function onRequestGet(context) {
     return response({
       ok: true,
       authenticated: Boolean(user),
-      user: scopedUser
+      user: scopedUser,
+      session: staffSessionTiming(sessionUser)
     });
   } catch (err) {
     const status = err.status || 500;
@@ -212,6 +215,29 @@ export async function onRequestPost(context) {
       );
     }
     requireFirestoreEnv(env);
+    if (action === 'activity') {
+      // Only explicit user interaction calls this endpoint. Ordinary reads,
+      // polling and session restoration must never extend an idle session.
+      const sessionUser = await readStaffSession(env, request);
+      if (!sessionUser) return response({ ok: false, message: 'Your staff session has expired. Please sign in again.' }, 401);
+      const age = body.activityAgeMs;
+      if (typeof age !== 'number' || !Number.isFinite(age) || age < 0 || age >= STAFF_SESSION_IDLE_SECONDS * 1000) {
+        return response({ ok: false, message: 'A recent user interaction is required to renew this session.' }, 400);
+      }
+      const existing = await findStaffUserRecord(env, sessionUser.username) || environmentAdminProfile(env, sessionUser);
+      if (!existing || !isActiveStaffRecord(existing) || externalAuditAccessExpired(existing)) {
+        return response({ ok: false, message: 'This staff account is no longer available. Please sign in again.' }, 401);
+      }
+      const now = Date.now();
+      const activityAt = Math.floor(Math.min(now, Math.max(now - age, sessionUser.sessionLastActivityAt)) / 1000);
+      const user = authoritativeSessionUser(existing, sessionUser);
+      const sessionId = sessionUser.sessionId || crypto.randomUUID();
+      const token = await createStaffSession(env, user, { activityAt, sessionId });
+      return response({ ok: true, authenticated: true, sessionToken: token,
+        session: { id: sessionId, expiresAt: (activityAt + STAFF_SESSION_IDLE_SECONDS) * 1000,
+          lastActivityAt: activityAt * 1000, serverNow: Date.now(), idleSeconds: STAFF_SESSION_IDLE_SECONDS }
+      }, 200, staffSessionCookie(token));
+    }
     if (action === 'updateprofile') {
       const sessionUser = await readStaffSession(env, request);
       if (!sessionUser) return response({ ok: false, message: 'Your staff session has expired.' }, 401);
@@ -281,6 +307,7 @@ export async function onRequestPost(context) {
         ok: true,
         authenticated: true,
         message: 'Profile updated.',
+        sessionToken: refreshedToken,
         user: staffUserForAccess(refreshedUser, access)
       }, 200, staffSessionCookie(refreshedToken));
     }
@@ -328,7 +355,7 @@ export async function onRequestPost(context) {
       const refreshedToken = await createStaffSession(env, refreshedUser);
       const access = await staffAccessFor(env, refreshedUser);
       return response(
-        { ok: true, authenticated: true, message: 'Password changed successfully.', user: staffUserForAccess(refreshedUser, access) },
+        { ok: true, authenticated: true, message: 'Password changed successfully.', sessionToken: refreshedToken, user: staffUserForAccess(refreshedUser, access) },
         200,
         staffSessionCookie(refreshedToken)
       );
@@ -436,6 +463,7 @@ export async function onRequestPost(context) {
         message: newPassword
           ? 'Login details and password updated successfully.'
           : 'Login details updated successfully.',
+        sessionToken: refreshedToken,
         user: staffUserForAccess(refreshedUser, access)
       }, 200, staffSessionCookie(refreshedToken));
     }

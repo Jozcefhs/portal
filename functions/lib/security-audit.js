@@ -374,6 +374,8 @@ export function shouldPersistSecurityAudit(prepared = {}, actor = null, status =
     || (path === '/api/staff-passkey' && action === 'AUTHENTICATION VERIFY')
     || (path === '/api/staff-mfa' && action === 'VERIFY LOGIN');
   if (completedLogin && status < 400) return false;
+  // Idle-session renewal is a liveness check, not a new sign-in or business action.
+  if (path === '/api/staff-session' && action === 'ACTIVITY') return Number(status) === 403;
   const explicitRead = /^(?:PRINT|EXPORT|DOWNLOAD)(?: |$)/.test(action);
   const routineRead = !explicitRead && (method === 'GET'
     || /^(?:LIST|GET|VIEW|READ|SEARCH|LOAD|FETCH|CHECK SESSION|SHELL|QUICK|PRESENCE QUICK|STATUS|ADMIN STATUS|STORAGE STATUS)(?: |$)/.test(action)

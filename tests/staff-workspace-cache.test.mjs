@@ -59,6 +59,21 @@ test('academic deadline reads do not cancel the classroom scorebook loading alon
   assert.equal((await (await scorebook).json()).assessmentScheme.Ready, true);
 });
 
+test('idle renewal does not cancel concurrent academic reads or reuse a cached token response', async () => {
+  const { cache } = fixture();
+  const gate = deferred();
+  const scores = cache.fetch(url('/api/staff-academics'), post('getAcademicScorebookContext'),
+    async () => { await gate.promise; return json({ marks: [75, 0, 92] }); });
+  let renewals = 0;
+  const refresh = () => cache.fetch(url('/api/staff-session'), post('activity', { activityAgeMs: 1000 }),
+    async () => { renewals++; return json({ sessionToken: `token-${renewals}` }); });
+  await refresh(); await refresh();
+  gate.resolve();
+  assert.equal(renewals, 2);
+  assert.deepEqual((await (await scores).json()).marks, [75, 0, 92]);
+  assert.equal(requestPolicy(url('/api/staff-session'), post('updateProfile')).mutation, true);
+});
+
 test('academic submission settings and register are live reads; saves and payment verification still invalidate', () => {
   for (const action of ['getAcademicSubmissionSettings', 'listAcademicSubmissions']) {
     const policy = requestPolicy(url('/api/staff-academics'), post(action));

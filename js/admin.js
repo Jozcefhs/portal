@@ -108,6 +108,31 @@ let financeDecisionApprovalProof = '';
 let protectedFilePreviewObjectUrl = '';
 let profilePhotoState = '';
 let staffBearerToken = '';
+let staffSessionTimingData = null;
+const staffIdleSession = window.DynamaxStaffIdleSession.create({
+  renew: async (activityAgeMs) => {
+    const controller = new AbortController();
+    const parent = staffSessionAbortController.signal;
+    const abort = () => controller.abort();
+    parent.addEventListener('abort', abort, { once: true });
+    const timer = window.setTimeout(abort, 30000);
+    try {
+      const { response, data } = await sessionRequest('POST', { action: 'activity', activityAgeMs }, { signal: controller.signal });
+      return { ...data, status: response.status, ok: response.ok && data.ok };
+    } finally {
+      window.clearTimeout(timer);
+      parent.removeEventListener('abort', abort);
+    }
+  },
+  onToken: (token) => { staffBearerToken = token; },
+  onExpire: (message) => { showLogin(message, 'bad'); }
+});
+['pointerdown', 'keydown', 'input', 'change', 'wheel', 'touchstart'].forEach((name) => {
+  document.addEventListener(name, (event) => staffIdleSession.activity(event), { capture: true, passive: true });
+});
+document.addEventListener('visibilitychange', () => staffIdleSession.check());
+window.addEventListener('pageshow', () => staffIdleSession.check());
+window.addEventListener('online', () => staffIdleSession.check());
 let subscriptionData = null;
 let subscriptionCycle = 'monthly';
 let subscriptionFlexModules = new Set();
@@ -151,7 +176,7 @@ function staffWorkspaceReadScope() {
     currentUser?.tabAccess, currentUser?.approvalEnabled, currentUser?.approvalMaxAmount,
     currentUser?.approvalAccounts, currentUser?.requisitionEditEnabled,
     currentUser?.auditDateFrom, currentUser?.auditDateTo, currentUser?.auditExpiresAt,
-    currentUser?.subscriptionActive, currentUser?.subscriptionReadOnly, staffBearerToken]);
+    currentUser?.subscriptionActive, currentUser?.subscriptionReadOnly]);
 }
 const staffWorkspaceReads = window.DynamaxWorkspaceCache.create({
   context: () => ({ scope: currentUser ? staffWorkspaceReadScope() : '',
@@ -1792,6 +1817,8 @@ function installSidebarSwipeGestures() {
 
 function clearStaffWorkspaceState() {
   invalidateStaffWorkspaceReads();
+  staffIdleSession.stop();
+  staffSessionTimingData = null;
   stopDesktopSetupRefresh();
   if (desktopSetupDialog.open) desktopSetupDialog.close();
   staffSessionAbortController.abort();
@@ -2340,6 +2367,7 @@ function showDashboard(user, options = {}) {
 }
 
 async function continueAfterAuthentication(user) {
+  staffIdleSession.start({ username: user.username, session: staffSessionTimingData, sessionToken: staffBearerToken });
   initializeStaffBranchContext(user);
   showDashboard(user);
   if (user.mustChangePassword) {
@@ -2350,12 +2378,13 @@ async function continueAfterAuthentication(user) {
   await loadDashboard({ mode: 'shell' });
 }
 
-async function sessionRequest(method = 'GET', body = null, { employment = false } = {}) {
+async function sessionRequest(method = 'GET', body = null, { employment = false, signal } = {}) {
   const normalizedMethod = clean(method || 'GET').toUpperCase();
   const endpoint = employment ? '/api/staff-session?employment=1' : '/api/staff-session';
   const retrySafe = normalizedMethod === 'GET' || clean(body?.action).toLowerCase() === 'login';
   const response = await staffFetch(endpoint, {
     method: normalizedMethod,
+    signal,
     credentials: 'same-origin',
     cache: 'no-store',
     dynamaxRetrySafe: retrySafe,
@@ -2367,12 +2396,22 @@ async function sessionRequest(method = 'GET', body = null, { employment = false 
     ok: false,
     message: 'Cloudflare temporarily returned a web page while checking staff access. Your account and saved records were not changed. Please try again.'
   }));
+  if (response.ok && data.authenticated && clean(body?.action).toLowerCase() !== 'activity') {
+    if (data.session) staffSessionTimingData = data.session;
+    if (data.sessionToken) {
+      staffBearerToken = clean(data.sessionToken);
+      staffSessionTimingData = window.DynamaxStaffIdleSession.tokenTiming(staffBearerToken);
+      if (currentUser && data.user) staffIdleSession.start({ username: data.user.username,
+        session: staffSessionTimingData, sessionToken: staffBearerToken });
+    }
+  }
   return { response, data };
 }
 
 async function confirmFreshStaffSession(fallbackUser, fallbackToken = '') {
   const memoryToken = clean(fallbackToken);
   if (memoryToken && fallbackUser) {
+    staffSessionTimingData = null;
     staffBearerToken = memoryToken;
     return fallbackUser;
   }

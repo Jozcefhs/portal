@@ -23,7 +23,8 @@ import { staffCredentialEpochCurrent } from './staff-credential-state.js';
 const encoder = new TextEncoder();
 const SESSION_COOKIE = '__Host-digc_staff_session';
 const LEGACY_SESSION_COOKIE = 'school_staff_session';
-const SESSION_SECONDS = 4 * 60 * 60;
+export const STAFF_SESSION_IDLE_SECONDS = 2 * 60 * 60;
+const SESSION_SECONDS = STAFF_SESSION_IDLE_SECONDS;
 const APPROVAL_PROOF_COOKIE = 'staff_approval_proof';
 const APPROVAL_PROOF_SECONDS = 3 * 60;
 const ATTENDANCE_PROOF_SECONDS = 2 * 60;
@@ -631,17 +632,25 @@ export async function verifyStaffApprovalPassword(env, username, password) {
     secureEqual(password, clean(env.ADMIN_WEB_PASSWORD));
 }
 
-export async function createStaffSession(env, user) {
+export async function createStaffSession(env, user, options = {}) {
   const sessionUser = publicUser(user);
   if (!await staffCredentialEpochCurrent(env, sessionUser.username, sessionUser.authEpoch)) {
     throw Object.assign(new Error('Your password changed. Please sign in again.'), { status: 401 });
   }
   delete sessionUser.profilePhotoUrl;
   delete sessionUser.recoveryEmail;
+  const now = Math.floor(Date.now() / 1000);
+  const activityAt = options.activityAt === undefined ? now : Number(options.activityAt);
+  if (!Number.isInteger(activityAt) || activityAt > now || activityAt <= now - SESSION_SECONDS) {
+    throw Object.assign(new Error('Your staff session has expired. Please sign in again.'), { status: 401 });
+  }
   const payload = {
     ...sessionUser,
     purpose: 'staff-session',
-    exp: Math.floor(Date.now() / 1000) + SESSION_SECONDS
+    sid: clean(options.sessionId) || crypto.randomUUID(),
+    iat: now,
+    activityAt,
+    exp: activityAt + SESSION_SECONDS
   };
   const encoded = base64Url(JSON.stringify(payload));
   return `${encoded}.${await signPayload(env, encoded)}`;
@@ -706,7 +715,14 @@ export async function readStaffSession(env, request) {
   if (bearer.present && purpose !== 'staff-session') return null;
   if (!bearer.present && purpose && purpose !== 'staff-session') return null;
   if (!await staffCredentialEpochCurrent(env, payload.username, payload.authEpoch)) return null;
-  return publicUser(payload);
+  return { ...publicUser(payload), sessionId: clean(payload.sid),
+    sessionExpiresAt: Number(payload.exp) * 1000,
+    sessionLastActivityAt: Number(payload.activityAt || Number(payload.exp) - SESSION_SECONDS) * 1000 };
+}
+
+export function staffSessionTiming(user) {
+  return { id: user.sessionId, expiresAt: user.sessionExpiresAt,
+    lastActivityAt: user.sessionLastActivityAt, serverNow: Date.now(), idleSeconds: SESSION_SECONDS };
 }
 
 export async function requireStaffSession(env, request) {
