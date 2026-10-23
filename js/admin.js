@@ -15460,7 +15460,7 @@ function academicScorebookWorkspace(data, rows) {
       <div class="class-register-subject-panel"><div class="class-register-actions"><button type="button" data-class-register-subject-action="all" disabled>Select all</button><button type="button" data-class-register-subject-action="none" disabled>Clear</button></div>
       <div class="class-register-subject-options" data-class-register-subject-options>Load class scores to choose subjects.</div></div>
     </details></div></div>
-    <div class="class-register-actions"><button type="submit">Load class scores</button><button type="button" class="secondary" data-class-register-print disabled>Preview / print</button></div>
+    <div class="class-register-actions"><button type="submit">Load class scores</button><button type="button" class="secondary" data-class-register-print disabled>Preview / print</button>${data.permissions?.canManageScoreCorrections ? '<button type="button" class="secondary" data-class-register-reactivate disabled>Reactivate score for editing — whole class</button>' : ''}</div>
     <p role="status" data-class-register-status>Select a class to load its students and scores.</p>
     <div class="admin-table-wrap" data-class-register-table style="max-width:100%;overflow:auto"></div>
     <div class="academic-management-form-actions"><button type="button" data-class-register-page="-1" disabled>Previous</button><span data-class-register-count></span><button type="button" data-class-register-page="1" disabled>Next</button></div>
@@ -15505,15 +15505,34 @@ function academicClassRegisterPrintHtml(register, filters, schoolName, period) {
     </style></head><body><button onclick="window.print()">Print / Save as PDF</button><p>All matching students are included. Wide selections continue in separate subject sections.</p>${sections.join('') || '<p>Select at least one subject to print.</p>'}</body></html>`;
 }
 
+function bindAcademicClassRegisterSubjectDismissal() {
+  // One delegated pair of listeners survives workspace re-renders without
+  // retaining detached forms or accumulating a new document listener per load.
+  if (document.documentElement.dataset.classRegisterSubjectDismissal) return;
+  document.documentElement.dataset.classRegisterSubjectDismissal = 'true';
+  const dismissOutside = event => {
+    document.querySelectorAll('[data-class-register-subjects][open]').forEach(menu => {
+      if (!menu.contains(event.target)) menu.open = false;
+    });
+  };
+  document.addEventListener('pointerdown', dismissOutside, true);
+  document.addEventListener('focusin', dismissOutside, true);
+}
+
 function bindAcademicClassScoreRegister(form) {
   if (!form) return;
-  let register = null, page = 0, subjectIds = null;
+  bindAcademicClassRegisterSubjectDismissal();
+  let register = null, page = 0, subjectIds = null, busy = false;
   const pageSize = 30;
   const status = form.querySelector('[data-class-register-status]');
   const subjectOptions = form.querySelector('[data-class-register-subject-options]');
   const printButton = form.querySelector('[data-class-register-print]');
+  const reactivateButton = form.querySelector('[data-class-register-reactivate]');
+  const subjectMenu = form.querySelector('[data-class-register-subjects]');
+  subjectMenu.open = false;
   const filters = () => ({ testId: form.elements.TestId.value, subjectIds, query: form.elements.Query.value });
   const resetSubjects = () => {
+    subjectMenu.open = false;
     subjectIds = null;
     subjectOptions.textContent = 'Load class scores to choose subjects.';
     form.querySelector('[data-class-register-subject-summary]').textContent = 'Load a class first';
@@ -15530,7 +15549,8 @@ function bindAcademicClassScoreRegister(form) {
     form.querySelector('[data-class-register-count]').textContent = register ? `${rows.length ? start + 1 : 0}–${Math.min(start + pageSize, rows.length)} of ${rows.length} students` : '';
     form.querySelector('[data-class-register-page="-1"]').disabled = page <= 0;
     form.querySelector('[data-class-register-page="1"]').disabled = !columns.length || start + pageSize >= rows.length;
-    printButton.disabled = !register || !columns.length || !rows.length;
+    printButton.disabled = busy || !register || !columns.length || !rows.length;
+    if (reactivateButton) reactivateButton.disabled = busy || !register;
     if (register) {
       const total = new Set(register.Columns.map(column => column.SubjectId)).size;
       form.querySelector('[data-class-register-subject-summary]').textContent = subjectIds.length === total
@@ -15540,6 +15560,8 @@ function bindAcademicClassScoreRegister(form) {
   form.addEventListener('submit', async event => {
     event.preventDefault();
     if (!form.reportValidity()) return;
+    if (busy) return;
+    busy = true;
     const button = form.querySelector('[type="submit"]'); button.disabled = true;
     form.elements.ClassId.disabled = true;
     register = null; page = 0; resetSubjects(); render(); status.textContent = 'Loading class scores…';
@@ -15556,10 +15578,41 @@ function bindAcademicClassScoreRegister(form) {
       form.querySelectorAll('[data-class-register-subject-action]').forEach(button => { button.disabled = false; });
       const tests = [...new Map(register.Columns.map(column => [column.TestId, column.TestName])).entries()];
       form.elements.TestId.innerHTML = '<option value="">All tests</option>' + tests.map(([id, name]) => `<option value="${escapeHtml(id)}">${escapeHtml(name)}</option>`).join('');
+      subjectMenu.open = false;
       status.textContent = `${register.ClassName}: ${register.StudentCount} students across all arms · ${register.SubjectCount} subjects. Raw marks / maximum. Scroll horizontally to see subjects; hover a mark for sheet status.`;
       render();
     } catch (error) { status.textContent = error.message || String(error); }
-    finally { button.disabled = false; form.elements.ClassId.disabled = false; }
+    finally { busy = false; button.disabled = false; form.elements.ClassId.disabled = false; render(); }
+  });
+  reactivateButton?.addEventListener('click', async () => {
+    if (busy || !register) return;
+    const target = register;
+    const reason = clean(await window.DynamaxDialogs.prompt({
+      title: `Reactivate scores — ${target.ClassName}`,
+      message: 'Reopen ALL existing subject scorebooks in EVERY arm of this class for the selected session and term, including Objective and Theory. Subject/test/search filters do not limit this action. Saved marks stay unchanged and lock after the next save of each scorebook. Published results still require withdrawal and reapproval.',
+      label: 'Correction reason (at least 5 characters)', required: true, tone: 'danger', confirmText: 'Reactivate whole class'
+    }));
+    if (!reason || !form.isConnected || target !== register || busy) return;
+    if (reason.length < 5) { status.textContent = 'Enter a correction reason of at least 5 characters.'; return; }
+    busy = true; render();
+    const loadButton = form.querySelector('[type="submit"]');
+    loadButton.disabled = true; form.elements.ClassId.disabled = true;
+    status.textContent = 'Reactivating score editing for the whole class…';
+    try {
+      const result = await academicManagementRequest('reactivateAcademicClassScoreEditing', {
+        SchoolSection: academicManagementFilters.section, SessionId: target.SessionId,
+        TermId: target.TermId, ClassId: target.ClassId, Reason: reason
+      });
+      if (!form.isConnected) return;
+      // Drop old status/tooltips and sheet revision tokens. Opening a scorebook
+      // fetches its fresh server context; do not invent unlocked local marks.
+      academicScorebookDraft.contextKey = '';
+      academicManagementData.scorebookContext = null;
+      register = null; page = 0; resetSubjects();
+      status.textContent = result.message + ' Reload class scores to refresh the register.';
+      renderAcademicManagement(academicManagementData, status.textContent);
+    } catch (error) { status.textContent = error.message || String(error); }
+    finally { busy = false; loadButton.disabled = false; form.elements.ClassId.disabled = false; render(); }
   });
   form.elements.ClassId.addEventListener('change', () => { register = null; page = 0; resetSubjects(); render(); status.textContent = 'Load the selected class to review its scores.'; });
   form.elements.Query.addEventListener('input', () => { page = 0; render(); });
@@ -15574,7 +15627,7 @@ function bindAcademicClassScoreRegister(form) {
     subjectOptions.querySelectorAll('input').forEach(input => { input.checked = button.dataset.classRegisterSubjectAction === 'all'; });
     updateSubjects();
   }));
-  form.querySelector('[data-class-register-subjects]').addEventListener('keydown', event => {
+  subjectMenu.addEventListener('keydown', event => {
     if (event.key === 'Escape') { event.currentTarget.open = false; event.currentTarget.querySelector('summary').focus(); }
   });
   printButton.addEventListener('click', () => {

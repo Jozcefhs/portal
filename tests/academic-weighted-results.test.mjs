@@ -9,7 +9,7 @@ import { publicAcademicResult } from '../functions/lib/academic-result-access.js
 
 const policy = { Assessment: { Components: [
   { Id: 'ca1', Name: 'CA1', MaximumScore: 100, WeightPercentage: 10, SourceMode: 'built-in-cbt', Required: true },
-  { Id: 'ca2', Name: 'CA2', MaximumScore: 100, WeightPercentage: 10, ScoreEntryMode: 'objective-theory',
+  { Id: 'ca2', Name: 'CA2', MaximumScore: 100, WeightPercentage: 10, SourceMode: 'built-in-cbt', ScoreEntryMode: 'objective-theory',
     ObjectiveMaximumScore: 50, TheoryMaximumScore: 50, ObjectiveSourceMode: 'built-in-cbt', TheorySourceMode: 'manual', Required: true },
   { Id: 'ca3', Name: 'CA3', MaximumScore: 10, WeightPercentage: 10, SourceMode: 'manual', Required: true },
   { Id: 'exam', Name: 'Exam', MaximumScore: 100, WeightPercentage: 70, SourceMode: 'external-cbt', Required: true }

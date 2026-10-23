@@ -52,13 +52,24 @@ function normalizedComponents(policy = {}) {
         ObjectiveMaximumScore,
         TheoryMaximumScore,
         ScoreParts: ScoreEntryMode === 'objective-theory' ? [
-          { Id: 'objective', Name: 'A · Objective', MaximumScore: ObjectiveMaximumScore, SourceMode: 'built-in-cbt', Required: row.Required !== false },
-          { Id: 'theory', Name: 'B · Theory', MaximumScore: TheoryMaximumScore, SourceMode: 'manual', Required: row.Required !== false }
+          { Id: 'objective', Name: 'A · Objective', MaximumScore: ObjectiveMaximumScore, SourceMode: lower(row.SourceMode || 'any') === 'any' ? 'any' : 'built-in-cbt', Required: row.Required !== false },
+          { Id: 'theory', Name: 'B · Theory', MaximumScore: TheoryMaximumScore, SourceMode: lower(row.SourceMode || 'any') === 'any' ? 'any' : 'manual', Required: row.Required !== false }
         ] : []
       };
     })
     .filter((row) => row.Id)
     .sort((a, b) => a.Order - b.Order || a.Name.localeCompare(b.Name));
+}
+
+// Source permission is live policy, not a migration of the historical marking
+// scheme. Match stable IDs only; never copy active maxima, weights or layout.
+export function academicEffectiveScoreSources(snapshot, active) {
+  if (!active?.Ready) return snapshot;
+  const unrestricted = new Set((active.Components || [])
+    .filter(row => lower(row.SourceMode || 'any') === 'any').map(row => lower(row.Id)));
+  return { ...snapshot, Components: snapshot.Components.map(component => unrestricted.has(lower(component.Id))
+    ? { ...component, SourceMode: 'any', ScoreParts: (component.ScoreParts || []).map(part => ({ ...part, SourceMode: 'any' })) }
+    : component) };
 }
 
 function normalizedGradeBands(policy = {}) {

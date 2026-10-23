@@ -92,14 +92,13 @@ test('opening a scorebook returns fresh selected marks and the historical scheme
   const body = source.match(/export async function getAcademicScorebookContext\([\s\S]*?\n}/)[0].replace('export ', '');
   const scheme = { Ready: true, RevisionId: 'historic' };
   const score = { SheetId: 'sheet', ScoreId: 'saved', ComponentScores: [{ ComponentId: 'ca1', RawScore: 85 }] };
-  const selected = { SheetId: 'sheet', existing: sheet, scheme,
+  const selected = { SheetId: 'sheet', existing: sheet, scheme, activeScheme: { Ready: true, RevisionId: 'new' },
     state: { studentScores: [score, { SheetId: 'another' }] },
     session: { SessionId: 'session' }, term: { TermId: 'term' }, schoolClass: { ClassId: 'grade8' },
     arm: { ArmId: 'brilliance' }, subject: { SubjectId: 'math' }, allocation, roster: [{}] };
   const before = structuredClone(selected);
   const runtime = vm.createContext({
     academicScoreSheetContext: async () => selected,
-    academicAssessmentForPeriod: async () => ({ Ready: true, RevisionId: 'new' }),
     academicScorebookSnapshot, clean: v => String(v ?? '').trim(), lower: v => String(v ?? '').toLowerCase()
   });
   vm.runInContext(body, runtime);

@@ -984,7 +984,7 @@ const BRANCH_BOUND_DEVICE_ACTIONS = new Set([
   'getAcademicSubmissionSettings', 'saveAcademicSubmissionSettings', 'listAcademicSubmissions', 'payAcademicSubmission', 'verifyAcademicSubmission',
   'getAcademicDiary', 'saveAcademicDiaryScheme', 'saveAcademicDiaryEntry', 'submitAcademicDiaryEntry',
   'returnAcademicDiaryEntry', 'submitAcademicDiary', 'approveAcademicDiary', 'returnAcademicDiary',
-  'reactivateAcademicScoreEditing', 'changeAcademicScoreSheetStatus', 'previewAcademicScoreImport',
+  'reactivateAcademicScoreEditing', 'reactivateAcademicClassScoreEditing', 'changeAcademicScoreSheetStatus', 'previewAcademicScoreImport',
   'importAcademicScores', 'rollbackAcademicScoreImport', 'syncAcademicCbtScores',
   'syncLocalCbtStudentPasswords', 'rescheduleAcademicCbtTest', 'downloadAcademicCbtTestPackage',
   'previewAcademicCbtRoster', 'refreshAcademicCbtRoster',
@@ -11711,6 +11711,7 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     case 'applyActiveAcademicScoreLayout':
     case 'saveAcademicScoreDraft':
     case 'reactivateAcademicScoreEditing':
+    case 'reactivateAcademicClassScoreEditing':
     case 'changeAcademicScoreSheetStatus':
     case 'previewAcademicScoreImport':
     case 'importAcademicScores':

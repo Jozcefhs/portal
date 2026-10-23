@@ -57,6 +57,7 @@ import {
   ACADEMIC_SCORE_IMPORT_MODES,
   ACADEMIC_SCORE_SHEET_STATUSES,
   academicAssessmentScheme,
+  academicEffectiveScoreSources,
   academicScoreSourceIssues,
   calculateAcademicStudentScore,
   migrateAcademicScoreLayout,
@@ -2349,10 +2350,10 @@ function sameSetupRecord(existing, record, keys) {
   });
 }
 
-async function commitAcademicBatch(env, writes, conflictMessage) {
+async function commitAcademicBatch(env, writes, conflictMessage, options = {}) {
   if (!writes.length) return { writeResults: [] };
   try {
-    return await batchCommitDocuments(env, writes);
+    return await batchCommitDocuments(env, writes, options);
   } catch (error) {
     if ([409, 412].includes(Number(error?.status))) {
       throw failure(conflictMessage, 409, 'ACADEMIC_WRITE_CONFLICT');
@@ -5153,11 +5154,17 @@ async function academicScoreSheetContext(env, user, input, capability = 'canEnte
       classId: schoolClass.ClassId, subjectId: subject.SubjectId
     });
   }
-  return { ...context, schoolClass, arm, subject, SheetId, existing, allocation, roster, scheme };
+  const snapshotScheme = scheme;
+  const activeScheme = existing ? await academicAssessmentForPeriod(env, scope, session, term, {
+    required: false, classId: schoolClass.ClassId, subjectId: subject.SubjectId
+  }) : scheme;
+  scheme = academicEffectiveScoreSources(snapshotScheme, activeScheme);
+  return { ...context, schoolClass, arm, subject, SheetId, existing, allocation, roster, scheme, snapshotScheme, activeScheme };
 }
 
 function academicScoreSheetRecord(context, existing, user, timestamp, updates = {}) {
-  const { scope, session, term, schoolClass, arm, subject, SheetId, allocation, roster, scheme } = context;
+  const { scope, session, term, schoolClass, arm, subject, SheetId, allocation, roster } = context;
+  const scheme = context.snapshotScheme || context.scheme;
   return {
     ...(existing || {}), RecordId: SheetId, SheetId,
     SessionId: session.SessionId, TermId: term.TermId,
@@ -5198,15 +5205,10 @@ export async function getAcademicClassScoreRegister(env, user = {}, input = {}) 
 
 export async function getAcademicScorebookContext(env, user = {}, input = {}) {
   const context = await academicScoreSheetContext(env, user, input, 'canEnterScores');
-  let activeScheme = context.scheme;
-  if (context.existing && lower(context.existing.Status) === 'draft') {
-    activeScheme = await academicAssessmentForPeriod(env, context.scope, context.session, context.term, {
-      classId: context.schoolClass.ClassId,
-      subjectId: context.subject.SubjectId
-    });
-  }
+  const activeScheme = context.activeScheme;
   const layoutUpdateAvailable = Boolean(
     context.existing
+    && activeScheme.Ready
     && lower(context.existing.Status) === 'draft'
     && clean(activeScheme.RevisionId)
     && clean(activeScheme.RevisionId) !== clean(context.scheme.RevisionId)
@@ -5329,8 +5331,8 @@ function academicChangedComponentScores(previousScores = [], nextScores = []) {
   });
 }
 
-// Only an existing recorded CBT cell may use the server-authorised unlock.
-// Empty CBT fields still require a signed/imported result, not manual entry.
+// Only a recorded CBT cell may use the server-authorised correction override.
+// Blank cells follow their effective source rule (including an active Any rule).
 export function academicManualScoreCorrection(scheme, previous, nextScores, sheet = {}) {
   const before = new Map(academicScoreCells(previous?.ComponentScores).map(cell => [cell.CellId, cell]));
   const previousScores = normalizeAcademicComponentScores(previous?.ComponentScores || [], scheme);
@@ -5342,9 +5344,18 @@ export function academicManualScoreCorrection(scheme, previous, nextScores, shee
       const cellId = `${componentScore.ComponentId}${part ? `:${cell.PartId}` : ''}`;
       const old = before.get(cellId);
       const source = lower(part ? definition?.ScoreParts?.find(row => row.Id === cell.PartId)?.SourceMode : definition?.SourceMode);
+      const historical = (sheet.AssessmentComponents || []).find(row => row.Id === componentScore.ComponentId);
+      const historicalSource = historical ? lower(part
+        ? historical?.ScoreParts?.find(row => row.Id === cell.PartId)?.SourceMode
+          || (historical?.SourceMode === 'any' ? 'any' : cell.PartId === 'objective' ? 'built-in-cbt' : 'manual')
+        : historical.SourceMode) : '';
       const hasCbtSource = (previous?.CbtScoreSources || []).some(row => row.CellId === cellId)
         || (previous?.ManualScoreCorrections || []).some(row => row.CellId === cellId);
-      const cbt = ['built-in-cbt', 'external-cbt'].includes(source) || hasCbtSource;
+      // Live Any permission must not erase legacy CBT provenance when the
+      // older score predates per-cell CbtScoreSources. Blank cells remain open.
+      const recordedCbt = ACADEMIC_RECORDED_SCORE_STATES.has(clean(old?.State))
+        && [historicalSource, lower(old?.SourceMode)].some(mode => ['built-in-cbt', 'external-cbt'].includes(mode));
+      const cbt = ['built-in-cbt', 'external-cbt'].includes(source) || hasCbtSource || recordedCbt;
       if (!cbt) return true;
       if (sheet.ScoreEditingReactivated !== true || clean(sheet.ScoreEditingReactivationReason).length < 5
           || (!ACADEMIC_RECORDED_SCORE_STATES.has(clean(old?.State))
@@ -5498,6 +5509,43 @@ export async function reactivateAcademicScoreEditing(env, user = {}, input = {})
   };
 }
 
+export async function reactivateAcademicClassScoreEditing(env, user = {}, input = {}) {
+  const { scope, state, session, term } = await academicOperationalContext(env, user, input, 'canManageScoreCorrections', {
+    stateKeys: ['sessions', 'terms', 'classes', 'scoreSheets']
+  });
+  const schoolClass = assertReference(findById(state.classes, input.ClassId), 'Choose an active class.');
+  if (schoolClass.SchoolSection !== scope.section) throw failure('Choose a class in this school section.', 403);
+  const reason = clean(input.Reason).slice(0, 500);
+  if (reason.length < 5) throw failure('Enter a correction reason of at least 5 characters.');
+  const sheets = state.scoreSheets.filter(sheet => sheet.ClassId === schoolClass.ClassId
+    && sheet.SessionId === session.SessionId && sheet.TermId === term.TermId
+    && sheet.BranchId === scope.branchId && sheet.SchoolSection === scope.section
+    && ACADEMIC_SCORE_SHEET_STATUSES.includes(sheet.Status));
+  if (!sheets.length) throw failure('This class has no saved scorebooks in the selected period.', 409, 'ACADEMIC_SCORE_SHEET_EMPTY');
+  const timestamp = nowIso();
+  const pending = sheets.filter(sheet => !(sheet.Status === 'Draft' && sheet.ScoreEditingReactivated === true));
+  const writes = pending.flatMap(existing => {
+    // Metadata only: keep the complete assessment snapshot and never read or
+    // rewrite student marks, CBT answers, provenance or published results.
+    const record = { ...existing, Status: 'Draft', ScoreEditingReactivated: true,
+      ScoreEditingReactivatedAt: timestamp, ScoreEditingReactivatedBy: actorName(user),
+      ScoreEditingReactivatedByUsername: actorUsername(user), ScoreEditingReactivationReason: reason,
+      UpdatedAt: timestamp, UpdatedBy: actorName(user) };
+    return [{ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSheets,
+      documentId: record.SheetId, data: withoutMetadata(record),
+      ...writePrecondition(existing, existing.__updateTime) },
+    auditWrite(user, 'REACTIVATE_CLASS_SCORE_EDITING', 'scoreSheet', record, reason)];
+  });
+  // One atomic commit, including every audit entry. A concurrent save rejects
+  // the whole operation instead of leaving some arms open and others locked.
+  await commitAcademicBatch(env, writes,
+    'A scorebook changed while the class was being reactivated. No scorebooks were reopened. Reload and try again.',
+    { allowLargeAtomicBatch: true });
+  return { ok: true, partialAcademicManagement: true, ReactivatedCount: pending.length,
+    AlreadyReactivatedCount: sheets.length - pending.length,
+    message: `${schoolClass.Name}: ${pending.length} scorebooks reopened across all arms and subjects; ${sheets.length - pending.length} already open. Saved marks and published results are unchanged. Each scorebook locks again after its next save.` };
+}
+
 function assertAcademicScoreSheetComplete(state, sheet, roster) {
   const scores = state.studentScores.filter((row) => row.SheetId === sheet.SheetId);
   const complete = new Set(scores.filter((row) => row.CompletionStatus === 'Complete').map((row) => lower(row.StudentRef)));
@@ -5606,7 +5654,7 @@ export async function applyActiveAcademicScoreLayout(env, user = {}, input = {})
   let migratedScores;
   try {
     migratedScores = sheetScores.map((previous) => {
-      const calculated = migrateAcademicScoreLayout(context.scheme, activeScheme, previous);
+      const calculated = migrateAcademicScoreLayout(context.snapshotScheme, activeScheme, previous);
       return {
         previous,
         record: {
@@ -5628,7 +5676,7 @@ export async function applyActiveAcademicScoreLayout(env, user = {}, input = {})
   } catch (error) {
     throw failure(`The active assessment layout cannot be applied safely: ${clean(error?.message || error)}`, 409, 'ACADEMIC_SCORE_LAYOUT_MIGRATION_UNSAFE');
   }
-  const activeContext = { ...context, scheme: activeScheme };
+  const activeContext = { ...context, scheme: activeScheme, snapshotScheme: activeScheme };
   const sheet = academicScoreSheetRecord(activeContext, existing, user, timestamp, {
     ...academicScoreSheetCounts(migratedScores.map((item) => item.record)),
     AssessmentLayoutMigratedAt: timestamp,
@@ -8411,6 +8459,7 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
   if (action === 'getacademicclassscoreregister') return getAcademicClassScoreRegister(env, user, input);
   if (['applyactiveacademicscorelayout', 'applyactivescorelayout'].includes(action)) return applyActiveAcademicScoreLayout(env, user, input);
   if (['reactivateacademicscoreediting', 'reactivatescoreediting'].includes(action)) return reactivateAcademicScoreEditing(env, user, input);
+  if (action === 'reactivateacademicclassscoreediting') return reactivateAcademicClassScoreEditing(env, user, input);
   if (['changeacademicscoresheetstatus', 'changescoresheetstatus'].includes(action)) return changeAcademicScoreSheetStatus(env, user, input);
   if (['previewacademicscoreimport', 'previewscoresheetimport'].includes(action)) return previewAcademicScoreImport(env, user, input);
   if (['importacademicscores', 'commitscoreimport'].includes(action)) return importAcademicScores(env, user, input);

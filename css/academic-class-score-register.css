@@ -13,6 +13,7 @@
 }
 .class-register-subject-field { min-width: 0; color: #40566d; font-size: 11px; font-weight: 800; }
 .class-register-subject-field details { position: relative; margin-top: 4px; }
+.class-register-subject-field details:not([open]) > .class-register-subject-panel { display: none; }
 .class-register-subject-field summary {
   min-height: 38px;
   padding: 9px 12px;
@@ -68,15 +69,52 @@
 [data-academic-class-score-register] .class-score-register-table th {
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: 3;
   background: #eaf2f8;
   color: #163f69;
 }
+[data-academic-class-score-register] .class-score-register-table thead { z-index: 3; }
 [data-academic-class-score-register] .class-score-register-table th:first-child,
 [data-academic-class-score-register] .class-score-register-table td:first-child { min-width: 55px; }
 [data-academic-class-score-register] .class-score-register-table th:nth-child(2),
-[data-academic-class-score-register] .class-score-register-table td:nth-child(2) { min-width: 230px; text-align: left; }
+[data-academic-class-score-register] .class-score-register-table td:nth-child(2) {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  width: 230px;
+  min-width: 230px;
+  max-width: 230px;
+  text-align: left;
+  background: #fff;
+  box-shadow: 2px 0 3px #163f691a;
+}
+[data-academic-class-score-register] .class-score-register-table th:nth-child(2) {
+  z-index: 4;
+  background: #eaf2f8;
+}
 [data-academic-class-score-register] .class-score-register-table td:nth-child(3),
 [data-academic-class-score-register] .class-score-register-table td:nth-child(4) { text-align: left; }
 [data-academic-class-score-register] .class-score-register-table tbody tr:nth-child(even) { background: #f3f7fa; }
+[data-academic-class-score-register] .class-score-register-table tbody tr:nth-child(even) td:nth-child(2) { background: #f3f7fa; }
+html[data-theme="dark"] [data-academic-class-score-register] .class-score-register-table td:nth-child(2) { background: #111e2e; }
+html[data-theme="dark"] [data-academic-class-score-register] .class-score-register-table tbody tr:nth-child(even) td:nth-child(2) { background: #172a3e; }
+html[data-theme="dark"] [data-academic-class-score-register] .class-score-register-table th:nth-child(2) { background: #152943; color: #edf4ff; }
 .class-register-note { display: block; color: #9c3b18; }
+@media (max-width: 600px) {
+  [data-academic-class-score-register] .class-score-register-table th:nth-child(2),
+  [data-academic-class-score-register] .class-score-register-table td:nth-child(2) {
+    width: 140px;
+    min-width: 140px;
+    max-width: 140px;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+}
+@media print {
+  [data-academic-class-score-register] .class-score-register-table thead,
+  [data-academic-class-score-register] .class-score-register-table th,
+  [data-academic-class-score-register] .class-score-register-table td:nth-child(2) {
+    position: static;
+    box-shadow: none;
+  }
+}
