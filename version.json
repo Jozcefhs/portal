@@ -1,7 +1,7 @@
 {
-  "version": "3.1.46",
+  "version": "3.1.47",
   "channel": "stable",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.46.exe",
-  "sha256": "036e3c3b5cec90393b3c05858e9c43bf13bef2088d9c4a04d8ada30ab2c693b7",
-  "notes": "Dynamax Desktop v3.1.46 checks current classroom assignments before CBT uploads and supports class-level saving for students awaiting an arm. Missing subject choices no longer block valid submitted class scores. Existing scores are preserved and duplicate attempts are rejected per student. The targeted Grade 9 French CA1 repair uploads equivalent marks out of 100 while preserving original marks out of 10 and answers. Back up and close Dynamax before updating both CBT servers between examinations. Retry the existing tests; do not recreate or delete them. After assigning an arm or reopening its scorebook, push again to place class-only marks safely. No new tablet APK is required."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.47.exe",
+  "sha256": "b49d0734a2bb7a0b1dfcf3b20d13f98697548424bd1de8cb33d3739af75f08bf",
+  "notes": "Dynamax Desktop v3.1.47 turns a test green when every submitted student's score is confirmed online, including preserved earlier scores. The upload report separates accepted, already recorded and unresolved results. Genuine failures remain pending. Original answers and marks are unchanged. Back up and close Dynamax before updating both CBT servers between examinations, then push affected existing tests once to verify their status. Do not recreate or re-pull tests. No new tablet APK is required."
 }
