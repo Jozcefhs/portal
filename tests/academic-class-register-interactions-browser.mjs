@@ -183,11 +183,56 @@ try {
   assert.match(await page.locator('[data-class-register-count]').textContent(), /1–30 of 65 students/);
   assert.equal(await page.evaluate(() => JSON.stringify(report)), originalReport);
   assert.equal(await page.evaluate(() => requests), requestCount);
+
+  // The new all-missing option must not behave like the existing any-missing option.
+  await page.selectOption('[name=ScoreFilter]', 'missing-all');
+  assert.match(await page.locator('[data-class-register-count]').textContent(), /0–0 of 0 students/);
+  assert.equal(await page.locator('[data-class-register-print]').isDisabled(), true);
+  await page.evaluate(() => {
+    report.Rows.forEach((row, index) => {
+      if (index % 2) Object.assign(row.Cells[2], { State: 'Not recorded', RawScore: null });
+    });
+  });
+  const allMissingSnapshot = await page.evaluate(() => JSON.stringify(report));
+  await page.selectOption('[name=ScoreFilter]', 'missing');
+  assert.match(await page.locator('[data-class-register-count]').textContent(), /1–30 of 33 students/);
+  await page.click('[data-class-register-page="1"]');
+  await page.selectOption('[name=ScoreFilter]', 'missing-all');
+  assert.match(await page.locator('[data-class-register-count]').textContent(), /1–30 of 32 students/);
+  assert.doesNotMatch(await scroller.locator('tbody').textContent(), /TEST\/000/); // Zero is a score.
+  await page.click('[data-class-register-page="1"]');
+  assert.match(await page.locator('[data-class-register-count]').textContent(), /31–32 of 32 students/);
+  const [noScoresPrint] = await Promise.all([page.waitForEvent('popup'), page.click('[data-class-register-print]')]);
+  await noScoresPrint.waitForLoadState('domcontentloaded');
+  assert.equal(await noScoresPrint.locator('tbody tr').count(), 32);
+  assert.match(await noScoresPrint.locator('body').textContent(), /No scores at all/);
+  assert.doesNotMatch(await noScoresPrint.locator('tbody').textContent(), /TEST\/000/);
+  await noScoresPrint.close();
+  await page.fill('[name=Query]', 'TEST/063');
+  assert.match(await page.locator('[data-class-register-count]').textContent(), /1–1 of 1 students/);
+  await page.fill('[name=Query]', '');
+  await page.selectOption('[name=TestId]', 'Exam');
+  assert.match(await page.locator('[data-class-register-count]').textContent(), /0–0 of 0 students/);
+  await page.selectOption('[name=TestId]', 'CA1');
+  await summary.click();
+  await page.click('[data-class-register-subject-action="none"]');
+  assert.equal(await page.locator('[data-class-register-print]').isDisabled(), true);
+  assert.match(await page.locator('[data-class-register-count]').textContent(), /0–0 of 0 students/);
+  await page.check('[data-class-register-subject][value=s0]');
+  assert.match(await page.locator('[data-class-register-count]').textContent(), /1–30 of 32 students/);
+  await page.click('[data-class-register-subject-action="all"]');
+  assert.match(await page.locator('[data-class-register-count]').textContent(), /0–0 of 0 students/);
+  await page.locator('[name=ScoreFilter]').focus();
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  assert.equal(await page.locator('[name=ScoreThreshold]').isVisible(), false);
+  assert.equal(await page.evaluate(() => JSON.stringify(report)), allMissingSnapshot);
+  assert.equal(await page.evaluate(() => requests), requestCount);
   await summary.click();
   await page.selectOption('[name=ClassId]', '');
   assert.equal(await isOpen(), false);
   assert.equal(await panel.isVisible(), false);
   assert.equal(await scroller.locator('tbody tr').count(), 0);
   assert.deepEqual(errors, []);
-  console.log('PASS: Subjects dismissal, pinned Student/header, separate missing/below score filters, strict thresholds including zero, subject/test/search intersections, pagination reset, filtered print, mobile layout, and no score writes or extra requests.');
+  console.log('PASS: Subjects dismissal, pinned Student/header, separate any-missing/all-missing/below filters, strict thresholds including zero, subject/test/search intersections, pagination reset, filtered print, mobile layout, and no score writes or extra requests.');
 } finally { await browser.close(); }

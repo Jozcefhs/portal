@@ -116,6 +116,42 @@ test('below-score filter uses strict raw numeric comparison, includes zero, and 
   assert.deepEqual(register, before);
 });
 
+test('no-scores-at-all requires every applicable selected mark to be missing and preserves saved data', () => {
+  const register = scoreFilterFixture();
+  const filters = { testId: 'CA1', subjectIds: ['math', 'english'], scoreFilter: 'missing-all' };
+  // Everyone has an English mark, including those missing Maths.
+  assert.equal(context.academicClassRegisterView(register, filters).rows.length, 0);
+  assert.equal(context.academicClassRegisterView(register, { ...filters, scoreFilter: 'missing' }).rows.length, 8);
+  register.Rows.forEach(row => Object.assign(row.Cells.find(cell => cell.ColumnId === 'english-ca1'), { State: 'Not recorded', RawScore: null }));
+  const before = structuredClone(register);
+  const refs = Array.from(context.academicClassRegisterView(register, filters).rows, row => row.StudentRef);
+  assert.deepEqual(refs, ['missing', 'unfinished', 'pending', 'exempt', 'not-enrolled', 'null-mark', 'blank-mark', 'invalid-mark', 'no-cell', 'no-state']);
+  assert.equal(context.academicClassRegisterView(register, { ...filters, query: ' unfinished ' }).rows.length, 1);
+  assert.equal(context.academicClassRegisterView(register, { ...filters, subjectIds: ['math'] }).rows.length, 8);
+  assert.equal(context.academicClassRegisterView(register, { ...filters, subjectIds: ['english'] }).rows.length, register.Rows.length);
+  assert.equal(context.academicClassRegisterView(register, { ...filters, subjectIds: [] }).rows.length, 0);
+  assert.equal(context.academicClassRegisterView(register, { ...filters, testId: 'unknown' }).rows.length, 0);
+  assert.equal(context.academicClassRegisterView(null, filters).rows.length, 0);
+  assert.equal(context.academicClassRegisterView(register, { ...filters, testId: 'CA2:theory' }).rows.length, register.Rows.length);
+  // Existing numeric marks elsewhere in the record do not count for a different selected test.
+  assert.equal(context.academicClassRegisterView(register, { ...filters, testId: '' }).rows.length, 10);
+  assert.deepEqual(register, before);
+});
+
+test('no-scores-at-all excludes wholly exempt/non-enrolled students and print uses the same filter', () => {
+  const register = scoreFilterFixture();
+  const filters = { testId: 'CA1', subjectIds: ['math', 'english'], scoreFilter: 'missing-all' };
+  register.Rows.forEach(row => Object.assign(row.Cells.find(cell => cell.ColumnId === 'english-ca1'), { State: 'Not recorded', RawScore: null }));
+  for (const ref of ['exempt', 'not-enrolled']) {
+    register.Rows.find(row => row.StudentRef === ref).Cells.forEach(cell => { cell.State = ref === 'exempt' ? 'Exempt' : 'Not enrolled'; });
+  }
+  const html = context.academicClassRegisterPrintHtml(register, filters, 'School', 'Term');
+  assert.match(html, /8 matching students/);
+  assert.match(html, /No scores at all—missing every applicable selected subject\/test/);
+  assert.match(html, /Learner missing/);
+  assert.doesNotMatch(html, /Learner zero|Learner absent|Learner exempt|Learner not-enrolled|Learner duplicate/);
+});
+
 test('filtered preview prints only matching students and describes the separate missing/below criteria', () => {
   const register = scoreFilterFixture();
   const filters = { testId: 'CA1', subjectIds: ['math'], scoreFilter: 'below', scoreThreshold: '50' };
