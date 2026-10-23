@@ -5,6 +5,8 @@
   gap: 10px;
 }
 [data-academic-class-score-register] .class-register-actions button { margin: 0; }
+[data-academic-class-score-register] [data-class-register-threshold][hidden] { display: none; }
+[data-academic-class-score-register] [data-class-register-filter-hint] { font-size: 12px; color: #40566d; }
 [data-academic-class-score-register] .academic-management-form-actions {
   display: flex;
   align-items: center;

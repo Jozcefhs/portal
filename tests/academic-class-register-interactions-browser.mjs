@@ -117,11 +117,77 @@ try {
   assert.equal(await popup.locator('tbody tr').count(), 195); // 65 repeated in three subject sections
   assert.equal(await popup.locator('tbody td').nth(1).evaluate(element => getComputedStyle(element).position), 'static');
   await popup.close();
+
+  // Score filters work on the loaded snapshot, including pagination and print, without writes or reloads.
+  await page.evaluate(() => {
+    report.Rows.forEach((row, index) => {
+      if (index % 2) Object.assign(row.Cells[0], { State: 'Not recorded', RawScore: null });
+    });
+    Object.assign(report.Rows[0].Cells[2], { State: 'Not recorded', RawScore: null });
+  });
+  const originalReport = await page.evaluate(() => JSON.stringify(report));
+  const requestCount = await page.evaluate(() => requests);
+  await page.selectOption('[name=TestId]', 'CA1');
+  await summary.click();
+  await page.click('[data-class-register-subject-action="none"]');
+  await page.check('[data-class-register-subject][value=s0]');
+  await page.locator('[name=ScoreFilter]').focus();
+  await page.selectOption('[name=ScoreFilter]', 'missing');
+  assert.equal(await isOpen(), false);
+  assert.equal(await page.locator('[name=ScoreThreshold]').isVisible(), false);
+  assert.match(await page.locator('[data-class-register-count]').textContent(), /1–30 of 32 students/);
+  await page.click('[data-class-register-page="1"]');
+  assert.match(await page.locator('[data-class-register-count]').textContent(), /31–32 of 32 students/);
+  await page.fill('[name=Query]', 'TEST/063');
+  assert.match(await page.locator('[data-class-register-count]').textContent(), /1–1 of 1 students/);
+  await page.fill('[name=Query]', '');
+  await page.selectOption('[name=TestId]', 'Exam');
+  assert.match(await page.locator('[data-class-register-count]').textContent(), /0–0 of 0 students/);
+  assert.equal(await page.locator('[data-class-register-print]').isDisabled(), true);
+  await page.selectOption('[name=TestId]', 'CA1');
+  const [missingPrint] = await Promise.all([page.waitForEvent('popup'), page.click('[data-class-register-print]')]);
+  await missingPrint.waitForLoadState('domcontentloaded');
+  assert.equal(await missingPrint.locator('tbody tr').count(), 32);
+  assert.match(await missingPrint.locator('body').textContent(), /Missing scores in at least one selected subject\/test/);
+  assert.doesNotMatch(await missingPrint.locator('tbody').textContent(), /TEST\/000/);
+  await missingPrint.close();
+  await page.selectOption('[name=ScoreFilter]', 'below');
+  assert.equal(await page.locator('[name=ScoreThreshold]').isVisible(), true);
+  assert.equal(await page.locator('[data-class-register-print]').isDisabled(), true);
+  await page.fill('[name=ScoreThreshold]', '32');
+  assert.match(await page.locator('[data-class-register-count]').textContent(), /1–16 of 16 students/);
+  assert.match(await scroller.locator('tbody').textContent(), /TEST\/000/);
+  assert.doesNotMatch(await scroller.locator('tbody').textContent(), /TEST\/032|TEST\/001/);
+  await summary.click();
+  await page.check('[data-class-register-subject][value=s1]');
+  await page.locator('[name=ScoreThreshold]').focus();
+  assert.match(await page.locator('[data-class-register-count]').textContent(), /1–30 of 32 students/);
+  await page.click('[data-class-register-page="1"]');
+  await page.fill('[name=ScoreThreshold]', '10.5');
+  assert.match(await page.locator('[data-class-register-count]').textContent(), /1–11 of 11 students/);
+  const [lowPrint] = await Promise.all([page.waitForEvent('popup'), page.click('[data-class-register-print]')]);
+  await lowPrint.waitForLoadState('domcontentloaded');
+  assert.equal(await lowPrint.locator('tbody tr').count(), 11);
+  assert.match(await lowPrint.locator('body').textContent(), /Raw score below 10.5/);
+  await lowPrint.close();
+  await page.fill('[name=ScoreThreshold]', '-1');
+  assert.equal(await page.locator('[data-class-register-print]').isDisabled(), true);
+  assert.match(await scroller.textContent(), /Enter a valid raw-score threshold/);
+  await page.fill('[name=ScoreThreshold]', '32');
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await page.screenshot({ path: 'tmp/class-score-filters-390.png', fullPage: true });
+  await page.setViewportSize({ width: 1280, height: 980 });
+  await page.screenshot({ path: 'tmp/class-score-filters-1280.png', fullPage: true });
+  await page.selectOption('[name=ScoreFilter]', 'all');
+  assert.equal(await page.locator('[name=ScoreThreshold]').isVisible(), false);
+  assert.match(await page.locator('[data-class-register-count]').textContent(), /1–30 of 65 students/);
+  assert.equal(await page.evaluate(() => JSON.stringify(report)), originalReport);
+  assert.equal(await page.evaluate(() => requests), requestCount);
   await summary.click();
   await page.selectOption('[name=ClassId]', '');
   assert.equal(await isOpen(), false);
   assert.equal(await panel.isVisible(), false);
   assert.equal(await scroller.locator('tbody tr').count(), 0);
   assert.deepEqual(errors, []);
-  console.log('PASS: closed-on-load Subjects, outside click/touch/tab/Escape dismissal, persistent multi-selection, pinned Student/header on desktop and mobile, and unchanged print preview.');
+  console.log('PASS: Subjects dismissal, pinned Student/header, separate missing/below score filters, strict thresholds including zero, subject/test/search intersections, pagination reset, filtered print, mobile layout, and no score writes or extra requests.');
 } finally { await browser.close(); }

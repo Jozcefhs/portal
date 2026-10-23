@@ -15459,7 +15459,10 @@ function academicScorebookWorkspace(data, rows) {
       <summary aria-labelledby="class-register-subject-label class-register-subject-summary"><span id="class-register-subject-summary" data-class-register-subject-summary>Load a class first</span></summary>
       <div class="class-register-subject-panel"><div class="class-register-actions"><button type="button" data-class-register-subject-action="all" disabled>Select all</button><button type="button" data-class-register-subject-action="none" disabled>Clear</button></div>
       <div class="class-register-subject-options" data-class-register-subject-options>Load class scores to choose subjects.</div></div>
-    </details></div></div>
+    </details></div>
+    <label>Score filter<select name="ScoreFilter" aria-describedby="class-register-filter-hint"><option value="all">All students</option><option value="missing">Missing scores</option><option value="below">Score below…</option></select></label>
+    <label data-class-register-threshold hidden>Raw score below<input name="ScoreThreshold" type="number" min="0" step="any" placeholder="For example, 50" aria-describedby="class-register-filter-hint" disabled></label></div>
+    <p id="class-register-filter-hint" data-class-register-filter-hint role="status">Showing all students. Score filters use only the selected test and subjects.</p>
     <div class="class-register-actions"><button type="submit">Load class scores</button><button type="button" class="secondary" data-class-register-print disabled>Preview / print</button>${data.permissions?.canManageScoreCorrections ? '<button type="button" class="secondary" data-class-register-reactivate disabled>Reactivate score for editing — whole class</button>' : ''}</div>
     <p role="status" data-class-register-status>Select a class to load its students and scores.</p>
     <div class="admin-table-wrap" data-class-register-table style="max-width:100%;overflow:auto"></div>
@@ -15468,12 +15471,26 @@ function academicScorebookWorkspace(data, rows) {
   return `${scorebook}${classRegister}${workflow}${importPanel}${imports}${externalCbtPanel}${scoreSyncHistory}${schemePanel}`;
 }
 
-function academicClassRegisterView(register, { testId = '', subjectIds = null, query = '' } = {}) {
+function academicClassRegisterView(register, { testId = '', subjectIds = null, query = '', scoreFilter = 'all', scoreThreshold = '' } = {}) {
   const selected = subjectIds === null ? null : new Set(subjectIds);
   const columns = (register?.Columns || []).filter(row => (!testId || row.TestId === testId)
     && (selected === null || selected.has(row.SubjectId)));
   const needle = clean(query).toLowerCase();
-  const rows = (register?.Rows || []).filter(row => `${row.StudentName} ${row.StudentRef}`.toLowerCase().includes(needle));
+  const threshold = clean(scoreThreshold) === '' ? NaN : Number(scoreThreshold);
+  const rows = (register?.Rows || []).filter(row => {
+    if (!`${row.StudentName} ${row.StudentRef}`.toLowerCase().includes(needle)) return false;
+    if (!['missing', 'below'].includes(scoreFilter)) return true;
+    const byColumn = new Map((row.Cells || []).map(cell => [cell.ColumnId, cell]));
+    return columns.some(column => {
+      const cell = byColumn.get(column.Id);
+      const hasMark = cell?.State === 'Numeric' && clean(cell.RawScore) !== '' && Number.isFinite(Number(cell.RawScore));
+      // Absence, exemption, non-enrolment and duplicate-review states are not missing marks.
+      if (scoreFilter === 'missing') return !cell || !clean(cell.State)
+        || ['Not recorded', 'Missing', 'Incomplete'].includes(cell.State)
+        || (cell.State === 'Numeric' && !hasMark);
+      return Number.isFinite(threshold) && threshold >= 0 && hasMark && Number(cell.RawScore) < threshold;
+    });
+  });
   return { columns, rows };
 }
 
@@ -15496,7 +15513,7 @@ function academicClassRegisterPrintHtml(register, filters, schoolName, period) {
     sections.push(`<section><h1>${escapeHtml(schoolName || 'School')}</h1><h2>${escapeHtml(register.ClassName)} — Class score register</h2>
       <p>${escapeHtml(period)} · All arms · ${rows.length} matching students</p>
       <p>Subjects: ${escapeHtml([...new Set(group.map(column => column.SubjectName))].join(', '))}<br>Tests: ${escapeHtml([...new Set(group.map(column => column.TestName))].join(', '))}</p>
-      <p>Raw marks / maximum · Includes Draft scores · Not a published result${filters.query ? `<br>Student filter: ${escapeHtml(filters.query)}` : ''}</p>
+      <p>Raw marks / maximum · Includes Draft scores · Not a published result${filters.query ? `<br>Student filter: ${escapeHtml(filters.query)}` : ''}${filters.scoreFilter === 'missing' ? '<br>Score filter: Missing scores in at least one selected subject/test.' : filters.scoreFilter === 'below' ? `<br>Score filter: Raw score below ${escapeHtml(filters.scoreThreshold)} in at least one selected subject/test (not a percentage).` : ''}</p>
       <p>Subject section ${sections.length + 1} of ${Math.ceil(columns.length / 5)}</p>${academicClassRegisterTable(group, rows)}</section>`);
   }
   return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(register.ClassName)} class score register</title><style>
@@ -15530,7 +15547,8 @@ function bindAcademicClassScoreRegister(form) {
   const reactivateButton = form.querySelector('[data-class-register-reactivate]');
   const subjectMenu = form.querySelector('[data-class-register-subjects]');
   subjectMenu.open = false;
-  const filters = () => ({ testId: form.elements.TestId.value, subjectIds, query: form.elements.Query.value });
+  const filters = () => ({ testId: form.elements.TestId.value, subjectIds, query: form.elements.Query.value,
+    scoreFilter: form.elements.ScoreFilter.value, scoreThreshold: form.elements.ScoreThreshold.value });
   const resetSubjects = () => {
     subjectMenu.open = false;
     subjectIds = null;
@@ -15540,11 +15558,22 @@ function bindAcademicClassScoreRegister(form) {
     form.elements.TestId.innerHTML = '<option value="">All tests</option>';
   };
   const render = () => {
+    const mode = form.elements.ScoreFilter.value;
+    form.querySelector('[data-class-register-threshold]').hidden = mode !== 'below';
+    form.elements.ScoreThreshold.disabled = mode !== 'below';
+    const validThreshold = form.elements.ScoreThreshold.value !== '' && form.elements.ScoreThreshold.validity.valid;
+    form.querySelector('[data-class-register-filter-hint]').textContent = mode === 'missing'
+      ? 'Missing a mark in at least one selected subject/test. Zero, Absent, Exempt, Not enrolled and duplicate-review records are not treated as missing.'
+      : mode === 'below' ? validThreshold
+        ? `Recorded raw score below ${form.elements.ScoreThreshold.value} in at least one selected subject/test—not a percentage. Zero counts; absent, exempt and missing marks are excluded.`
+        : 'Enter a valid raw-score threshold of 0 or more. Matches marks strictly below that number in any selected subject/test.'
+      : 'Showing all students. Score filters use only the selected test and subjects.';
     const { columns, rows } = academicClassRegisterView(register, filters());
     page = Math.max(0, Math.min(page, Math.max(0, Math.ceil(rows.length / pageSize) - 1)));
     const start = page * pageSize;
     form.querySelector('[data-class-register-table]').innerHTML = register ? columns.length
-      ? academicClassRegisterTable(columns, rows.slice(start, start + pageSize), start)
+      ? mode === 'below' && !validThreshold ? '<p>Enter a valid raw-score threshold to filter students.</p>'
+        : academicClassRegisterTable(columns, rows.slice(start, start + pageSize), start)
       : '<p>Select at least one subject with scores for this test.</p>' : '';
     form.querySelector('[data-class-register-count]').textContent = register ? `${rows.length ? start + 1 : 0}–${Math.min(start + pageSize, rows.length)} of ${rows.length} students` : '';
     form.querySelector('[data-class-register-page="-1"]').disabled = page <= 0;
@@ -15589,7 +15618,7 @@ function bindAcademicClassScoreRegister(form) {
     const target = register;
     const reason = clean(await window.DynamaxDialogs.prompt({
       title: `Reactivate scores — ${target.ClassName}`,
-      message: 'Reopen ALL existing subject scorebooks in EVERY arm of this class for the selected session and term, including Objective and Theory. Subject/test/search filters do not limit this action. Saved marks stay unchanged and lock after the next save of each scorebook. Published results still require withdrawal and reapproval.',
+      message: 'Reopen ALL existing subject scorebooks in EVERY arm of this class for the selected session and term, including Objective and Theory. Subject/test/search/score filters do not limit this action. Saved marks stay unchanged and lock after the next save of each scorebook. Published results still require withdrawal and reapproval.',
       label: 'Correction reason (at least 5 characters)', required: true, tone: 'danger', confirmText: 'Reactivate whole class'
     }));
     if (!reason || !form.isConnected || target !== register || busy) return;
@@ -15617,6 +15646,8 @@ function bindAcademicClassScoreRegister(form) {
   form.elements.ClassId.addEventListener('change', () => { register = null; page = 0; resetSubjects(); render(); status.textContent = 'Load the selected class to review its scores.'; });
   form.elements.Query.addEventListener('input', () => { page = 0; render(); });
   form.elements.TestId.addEventListener('change', () => { page = 0; render(); });
+  form.elements.ScoreFilter.addEventListener('change', () => { page = 0; render(); });
+  form.elements.ScoreThreshold.addEventListener('input', () => { page = 0; render(); });
   form.querySelectorAll('[data-class-register-page]').forEach(button => button.addEventListener('click', () => { page += Number(button.dataset.classRegisterPage); render(); }));
   const updateSubjects = () => {
     subjectIds = [...subjectOptions.querySelectorAll('input:checked')].map(input => input.value);
