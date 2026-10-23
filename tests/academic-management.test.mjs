@@ -97,7 +97,9 @@ test('every academic workspace stays focused below the Worker subrequest ceiling
   assert.doesNotMatch(librarySource, /loadAcademicState\(env,\s*scope\.branchId\s*\)/);
   assert.match(librarySource, /ACADEMIC_STATE_BUNDLE_REQUIRED/);
   assert.match(librarySource, /focusedStateKeys = academicManagementViewStateKeys/);
-  assert.match(librarySource, /queryCollection\(env, collection, \{\s*filters: \[\{ field: 'BranchId', op: '==', value: branchId \}\]/);
+  assert.match(librarySource, /\{ field: 'BranchId', op: '==', value: branchId \}/);
+  assert.match(librarySource, /queryCollectionPages\(env, collection, \{ \.\.\.options,/);
+  assert.match(librarySource, /groups\[index\]\.filter\(\(row\) => lower\(row.BranchId \|\| 'main'\) === lower\(branchId\)\)/);
   assert.doesNotMatch(librarySource, /collections\.map\(\(\[, collection\]\) => listCollection\(env, collection\)/);
   assert.match(adminSource, /data-academic-view-select/);
   assert.match(adminSource, /academicManagementView = select\.value;[\s\S]{0,400}void loadAcademicManagement\(\);/);

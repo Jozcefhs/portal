@@ -20,7 +20,7 @@ const scheme = scorebook.academicAssessmentScheme({Assessment:{
 // Exercise the real signature, validation, score merge, preparation, commit,
 // idempotency and CAS paths. Only scoped storage/context IO is in-memory.
 function fixture({ realSheetIds = false, assessment = scheme, environment = env, realContext = false } = {}) {
-  const db = new Map(), commits = [];
+  const db = new Map(), commits = [], delays = [];
   let revision = 0;
   const put = (collection,id,data) => db.set(`${collection}/${id}`, {...structuredClone(data),__updateTime:`r${++revision}`});
   const rows = collection => [...db].filter(([key])=>key.startsWith(`${collection}/`)).map(([,row])=>structuredClone(row));
@@ -29,6 +29,7 @@ function fixture({ realSheetIds = false, assessment = scheme, environment = env,
   });
   const ctx = vm.createContext({...scorebook, academicCbtScoreSources, safeScopeId,
     crypto, TextEncoder,TextDecoder,btoa,atob,console,structuredClone,
+    setTimeout:(callback,delay)=>{ delays.push(delay); return setTimeout(callback,0); },
     getDocument:async(_env,col,id)=>structuredClone(db.get(`${col}/${id}`) || null),
     getDocuments:async(_env,col,ids)=>ids.map(id=>structuredClone(db.get(`${col}/${id}`) || null)),
     batchCommitDocuments:async(_env,writes)=>{
@@ -64,7 +65,7 @@ function fixture({ realSheetIds = false, assessment = scheme, environment = env,
   } else ctx.academicScoreSheetContext = mockContext;
   const prepare=(payload,user=actor)=>ctx.syncAcademicCbtScores(environment,user,{...payload,SupportsPreparedScoreCommit:true});
   const commit=(payload,preparation,user=actor)=>prepare({...payload,ScoreSyncPreparation:preparation.scoreSyncPreparation},user);
-  return {ctx,db,commits,rows,put,prepare,commit,post:async payload=>{
+  return {ctx,db,commits,delays,rows,put,prepare,commit,post:async payload=>{
     const prepared=await prepare(payload); return prepared.commitRequired ? commit(payload,prepared) : prepared;
   }};
 }
@@ -159,8 +160,8 @@ test('two centres cannot save duplicate class-only and assigned-arm scores concu
   const original=await a.batch([['DCA/001',81,'a1']],{ArmId:''}), other=await b.batch([['DCA/001',99,'b1']]);
   const [pa,pb]=await Promise.all([f.prepare(original),f.prepare(other)]);
   await f.commit(original,pa);
-  await assert.rejects(f.commit(other,pb),{code:'ACADEMIC_WRITE_CONFLICT'});
-  const receipt=(await f.post(other)).scoreSyncReceipt;
+  const response=await f.commit(other,pb), receipt=response.scoreSyncReceipt;
+  assert.equal(response.automaticScoreRetries,1);
   assert.equal(receipt.ImportedRows,0); assert.equal(receipt.AlreadyRecordedCount,1);
   assert.equal(f.rows(collections.studentScores).length,1);
 });
@@ -500,11 +501,123 @@ test('concurrent centres reprepare against the latest sheet and never lose other
   const f=fixture(),first=await a.batch([['DCA/001',81,'a1']]),second=await b.batch([['DCA/002',92,'b1']]);
   const [pa,pb]=await Promise.all([f.prepare(first),f.prepare(second)]);
   await f.commit(first,pa);
-  await assert.rejects(f.commit(second,pb),{code:'ACADEMIC_WRITE_CONFLICT'});
-  await f.post(second);
+  assert.equal((await f.commit(second,pb)).automaticScoreRetries,1);
   assert.equal(f.rows(collections.studentScores).length,2);
   await f.commit(first,pa); // lost-success-response retry finds the committed receipt
   assert.equal(f.commits.length,2);
+});
+
+test('two simultaneous commits save separate subjects for the same student despite shared membership guards',async()=>{
+  const f=fixture({realSheetIds:true});
+  const first=await a.batch([['DCA/001',81,'maths']]);
+  const second=await b.batch([['DCA/001',92,'english']],{SubjectId:'english'});
+  const original=JSON.stringify([first,second]);
+  const [pa,pb]=await Promise.all([f.prepare(first),f.prepare(second)]);
+  const responses=await Promise.all([f.commit(first,pa),f.commit(second,pb)]);
+  assert.ok(responses.every(row=>row.scoreSyncReceipt.VerifiedOnline && row.scoreSyncReceipt.ImportedRows===1));
+  assert.equal(responses.reduce((n,row)=>n+(row.automaticScoreRetries||0),0),1);
+  assert.deepEqual(f.rows(collections.studentScores).map(row=>[row.SubjectId,row.ComponentScores[0].RawScore]).sort(),
+    [['english',92],['maths',81]]);
+  assert.equal(JSON.stringify([first,second]),original,'No original score/signature/preparation was mutated');
+  const saved=JSON.stringify([...f.db]);
+  await Promise.all([f.post(first),f.post(second)]);
+  assert.equal(JSON.stringify([...f.db]),saved);
+});
+
+test('simultaneous overlapping uploads preserve the first mark and save every other student',async()=>{
+  const f=fixture(), first=await a.batch([['DCA/001',81,'a1'],['DCA/002',82,'a2']]);
+  const second=await b.batch([['DCA/001',99,'b1'],['DCA/003',93,'b3']]);
+  const [pa,pb]=await Promise.all([f.prepare(first),f.prepare(second)]);
+  const responses=await Promise.all([f.commit(first,pa),f.commit(second,pb)]);
+  assert.equal(responses[1].scoreSyncReceipt.AlreadyRecordedCount,1);
+  assert.deepEqual(f.rows(collections.studentScores).map(row=>[row.StudentRef,row.ComponentScores[0].RawScore]).sort(),
+    [['DCA/001',81],['DCA/002',82],['DCA/003',93]]);
+  assert.equal(f.rows(collections.scoreSheets)[0].EnteredCount,3);
+  assert.equal(f.rows(collections.scoreSyncBatches).length,2);
+});
+
+test('automatic recovery rebuilds all guarded writes through successive collisions, then reads back saved marks',async()=>{
+  const f=fixture(), payload=await a.batch([['DCA/001',81,'a1']]);
+  const prepared=await f.prepare(payload), commit=f.ctx.batchCommitDocuments, revisions=[];
+  f.ctx.batchCommitDocuments=async(...args)=>{
+    revisions.push(args[1].find(row=>row.collectionPath===collections.studentMemberships).updateTime);
+    if(revisions.length<=2) {
+      const member=f.rows(collections.studentMemberships)[0];
+      f.put(collections.studentMemberships,member.RecordId,{...member,ScoreHistoryRevision:`other-${revisions.length}`});
+    }
+    return commit(...args);
+  };
+  const response=await f.commit(payload,prepared);
+  assert.equal(response.automaticScoreRetries,2);
+  assert.equal(response.scoreSyncReceipt.VerifiedRows,1);
+  assert.equal(new Set(revisions).size,3,'Each attempt must use fresh revisions');
+  assert.equal(f.commits.length,1);
+  assert.equal(f.delays.length,2);
+  assert.ok(f.delays[0]>=250 && f.delays[0]<=500);
+  assert.ok(f.delays[1]>=500 && f.delays[1]<=1000);
+});
+
+test('persistent contention is bounded and never reports success or partially saves a batch',async()=>{
+  const f=fixture(), payload=await a.batch([['DCA/001',81,'a1']]), prepared=await f.prepare(payload);
+  const commit=f.ctx.batchCommitDocuments;
+  let attempts=0;
+  f.ctx.batchCommitDocuments=async(...args)=>{
+    attempts++;
+    const member=f.rows(collections.studentMemberships)[0];
+    f.put(collections.studentMemberships,member.RecordId,{...member,ScoreHistoryRevision:`other-${attempts}`});
+    return commit(...args);
+  };
+  await assert.rejects(f.commit(payload,prepared),{code:'ACADEMIC_WRITE_CONFLICT'});
+  assert.equal(attempts,3); assert.equal(f.delays.length,2);
+  assert.equal(f.commits.length,0);
+  assert.equal(f.rows(collections.studentScores).length,0);
+  assert.equal(f.rows(collections.scoreSyncBatches).length,0);
+  f.ctx.batchCommitDocuments=commit;
+  assert.equal((await f.post(payload)).scoreSyncReceipt.VerifiedRows,1);
+});
+
+test('the request recovery time budget prevents repeated expensive re-preparations',async()=>{
+  const f=fixture(), payload=await a.batch([['DCA/001',81,'a1']]), prepared=await f.prepare(payload);
+  let clock=0, attempts=0;
+  f.ctx.Date=class extends Date { static now(){return clock;} };
+  f.ctx.batchCommitDocuments=async()=>{
+    attempts++; clock=13000;
+    throw Object.assign(new Error('Concurrent update'),{status:409});
+  };
+  await assert.rejects(f.commit(payload,prepared),{code:'ACADEMIC_WRITE_CONFLICT'});
+  assert.equal(attempts,1); assert.equal(f.delays.length,0);
+  assert.equal(f.commits.length,0);
+});
+
+test('recovery checks current permission and does not retry a missing preparation revision',async()=>{
+  const f=fixture(), payload=await a.batch([['DCA/001',81,'a1']]), prepared=await f.prepare(payload);
+  const commit=f.ctx.batchCommitDocuments;
+  let attempts=0;
+  f.ctx.batchCommitDocuments=async(...args)=>{
+    attempts++;
+    const member=f.rows(collections.studentMemberships)[0];
+    f.put(collections.studentMemberships,member.RecordId,{...member,ScoreHistoryRevision:'other'});
+    f.ctx.academicScoreSheetContext=async()=>{throw Object.assign(new Error('Permission revoked'),{code:'ACADEMIC_FORBIDDEN',status:403});};
+    return commit(...args);
+  };
+  await assert.rejects(f.commit(payload,prepared),{code:'ACADEMIC_FORBIDDEN'});
+  assert.equal(attempts,1); assert.equal(f.commits.length,0);
+  const missing=fixture();
+  delete missing.db.get(`${collections.studentMemberships}/DCA-001`).__updateTime;
+  await assert.rejects(missing.prepare(payload),{code:'ACADEMIC_WRITE_CONFLICT'});
+  assert.equal(missing.delays.length,0); assert.equal(missing.commits.length,0);
+});
+
+test('a lost success response is recovered from its receipt without re-preparing or duplicating marks',async()=>{
+  const f=fixture(), payload=await a.batch([['DCA/001',81,'a1']]), commit=f.ctx.batchCommitDocuments;
+  f.ctx.batchCommitDocuments=async(...args)=>{
+    await commit(...args);
+    throw Object.assign(new Error('Lost acknowledgement'),{status:503});
+  };
+  const response=await f.post(payload);
+  assert.equal(response.scoreSyncReceipt.VerifiedOnline,true);
+  assert.equal(f.commits.length,1); assert.equal(f.delays.length,0);
+  assert.equal(f.rows(collections.studentScores).length,1);
 });
 
 test('an out-of-roster student never blocks valid students in the same classroom, regardless of row order',async()=>{
@@ -694,19 +807,19 @@ test('repreparing after one student moves arms posts the others without bypassin
   const prepared=await f.prepare(payload);
   const member=f.rows(collections.studentMemberships).find(row=>row.StudentRef==='DCA/002');
   f.put(collections.studentMemberships,member.RecordId,{...member,ArmId:'other-arm'});
-  await assert.rejects(f.commit(payload,prepared),{code:'ACADEMIC_WRITE_CONFLICT'});
-  const receipt=(await f.post(payload)).scoreSyncReceipt;
+  const response=await f.commit(payload,prepared), receipt=response.scoreSyncReceipt;
+  assert.equal(response.automaticScoreRetries,1);
   assert.equal(receipt.ImportedRows,1); assert.equal(receipt.RejectedScores[0].StudentRef,'DCA/002');
   assert.equal(f.rows(collections.studentScores)[0].StudentRef,'DCA/001');
 });
 
-test('same-student concurrent preparations conflict on retry rather than overwrite',async()=>{
+test('same-student concurrent preparations recover automatically without overwriting',async()=>{
   const f=fixture(),first=await a.batch([['DCA/001',81,'a1']]),second=await b.batch([['DCA/001',81,'b1']]);
   const [pa,pb]=await Promise.all([f.prepare(first),f.prepare(second)]);
   await f.commit(first,pa);
-  await assert.rejects(f.commit(second,pb),{code:'ACADEMIC_WRITE_CONFLICT'});
   const sheet=JSON.stringify(f.rows(collections.scoreSheets)), scores=JSON.stringify(f.rows(collections.studentScores));
-  const receipt=(await f.post(second)).scoreSyncReceipt;
+  const response=await f.commit(second,pb), receipt=response.scoreSyncReceipt;
+  assert.equal(response.automaticScoreRetries,1);
   assert.equal(receipt.ImportedRows,0); assert.equal(receipt.AlreadyRecordedCount,1);
   assert.equal(JSON.stringify(f.rows(collections.scoreSheets)),sheet);
   assert.equal(JSON.stringify(f.rows(collections.studentScores)),scores);
@@ -736,8 +849,13 @@ test('server signature, reviewer permission, scope, roster and prepared membersh
   await assert.rejects(f.commit(payload,prepared,{...actor,schoolSectionAccess:'primary'}),{code:'ACADEMIC_SECTION_FORBIDDEN'});
   await assert.rejects(f.commit(payload,prepared,{...actor,branchId:'other'}),{code:'ACADEMIC_BRANCH_FORBIDDEN'});
   await assert.rejects(f.commit(payload,prepared,{...actor,subscriptionReadOnly:true}),{code:'SUBSCRIPTION_READ_ONLY'});
+  const originalContext=f.ctx.academicScoreSheetContext;
+  f.ctx.academicScoreSheetContext=async(...args)=>{
+    const context=await originalContext(...args);
+    return {...context,roster:context.roster.filter(row=>row.ArmId===args[2].ArmId)};
+  };
   f.put(collections.studentMemberships,'DCA-001',{...f.rows(collections.studentMemberships)[0],ArmId:'other'});
-  await assert.rejects(f.commit(payload,prepared),{code:'ACADEMIC_WRITE_CONFLICT'});
+  await assert.rejects(f.commit(payload,prepared),{code:'ACADEMIC_CBT_SYNC_NO_SCORES_SAVED'});
   assert.equal(f.rows(collections.studentScores).length,0);
 });
 
@@ -753,7 +871,7 @@ test('a concurrent batch-ID collision from another signer is not mistaken for a 
   const clone=await b.batch([['DCA/001',81,'a1']],{BatchId:first.BatchId});
   const [pa,pb]=await Promise.all([f.prepare(first),f.prepare(clone)]);
   await f.commit(first,pa);
-  await assert.rejects(f.commit(clone,pb),{code:'ACADEMIC_WRITE_CONFLICT'});
+  await assert.rejects(f.commit(clone,pb),{code:'ACADEMIC_CBT_SYNC_KEY_REUSED'});
   assert.equal(f.rows(collections.scoreSyncBatches)[0].SigningKeyId,a.id);
 });
 

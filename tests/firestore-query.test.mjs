@@ -4,6 +4,32 @@ import { buildStructuredQuery } from '../functions/lib/firestore.js';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 
+const firestoreSource = await readFile(new URL('../functions/lib/firestore.js', import.meta.url), 'utf8');
+function databaseContext(response) {
+  const context = vm.createContext({TextEncoder,TextDecoder,URLSearchParams,fetch:async()=>response});
+  vm.runInContext(firestoreSource.replace(/^export /gm,''),context);
+  context.getFirestoreAccessToken = async ()=>'test';
+  return context;
+}
+const testEnv = {FIREBASE_PROJECT_ID:'test',FIREBASE_CLIENT_EMAIL:'test',FIREBASE_PRIVATE_KEY:'test'};
+
+test('a successful HTTP response with truncated JSON fails instead of becoming an empty collection',async()=>{
+  const context = databaseContext({ok:true,status:200,json:async()=>{throw new SyntaxError('Truncated JSON');}});
+  await assert.rejects(context.queryCollection(testEnv,'scores'),{code:'FIRESTORE_RESPONSE_INVALID',status:502});
+});
+
+test('invalid query envelopes and inline stream errors cannot become empty or partial records',async()=>{
+  for (const body of [{}, {error:{message:'Read failed'}}, [{document:{name:'scores/one',fields:{}}},{error:{status:'RESOURCE_EXHAUSTED',message:'Limit'}}]]) {
+    const context = databaseContext({ok:true,status:200,json:async()=>body});
+    await assert.rejects(context.queryCollection(testEnv,'scores'),error=>error.status>=400 && error.code.startsWith('FIRESTORE_'));
+  }
+});
+
+test('a legitimate empty Firestore stream remains an empty collection',async()=>{
+  const context = databaseContext({ok:true,status:200,json:async()=>[{readTime:'2026-10-23T10:00:00Z'}]});
+  assert.equal((await context.queryCollection(testEnv,'scores')).length,0);
+});
+
 test('targeted root query uses Firestore runQuery with filters and a limit', () => {
   const result = buildStructuredQuery('payments', {
     filters: [{ field: 'Reference', op: '==', value: 'PAY-001' }],

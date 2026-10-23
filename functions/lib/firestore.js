@@ -175,7 +175,17 @@ export async function firestoreRequest(env, path, options = {}) {
       ...(options.headers || {})
     }
   });
-  const data = await response.json().catch(() => ({}));
+  let data;
+  try {
+    data = await response.json();
+  } catch {
+    // A truncated/oversized successful read is not an empty database. In
+    // particular, callers must not prepare new score writes from missing data.
+    const error = new Error('The database response could not be read completely. Retry the request; no empty result was substituted.');
+    error.status = response.ok ? 502 : response.status;
+    error.code = 'FIRESTORE_RESPONSE_INVALID';
+    throw error;
+  }
   if (!response.ok) {
     const message = data && data.error && data.error.message ? data.error.message : `Database request failed (${response.status})`;
     const error = new Error(message);
@@ -392,7 +402,15 @@ export async function queryCollection(env, collectionPath, options = {}) {
     method: 'POST',
     body: JSON.stringify({ structuredQuery, ...(options.readTime ? { readTime: options.readTime } : {}) })
   });
-  return (Array.isArray(rows) ? rows : [])
+  const upstreamError = Array.isArray(rows) ? rows.find(row => row?.error) : rows;
+  if (!Array.isArray(rows) || upstreamError?.error) {
+    const normalized = firestoreErrorStatus(upstreamError, 502);
+    const error = new Error(upstreamError?.error?.message || 'The database query response was incomplete. No partial records were returned.');
+    error.status = normalized.status;
+    error.code = normalized.code || 'FIRESTORE_QUERY_RESPONSE_INVALID';
+    throw error;
+  }
+  return rows
     .map((row) => row && row.document)
     .filter(Boolean)
     .map(firestoreDocumentToObject);

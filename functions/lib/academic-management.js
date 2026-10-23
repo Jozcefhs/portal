@@ -1,4 +1,4 @@
-import { batchCommitDocuments, getDocument, getDocuments, listCollection, queryCollection } from './firestore.js';
+import { batchCommitDocuments, getDocument, getDocuments, listCollection, queryCollection, queryCollectionPages } from './firestore.js';
 import { commitAcademicCbtRoster } from './academic-cbt-roster-commit.js';
 import { academicCbtRetentionActivationWrites, assertAcademicTermRetentionEdit } from './academic-cbt-paper-retention.js';
 import { academicCbtLateEntryPlan, academicCbtLateEntryRecord, sameCbtAssessmentPeriod, academicCbtAllStudentRefs } from './academic-cbt-late-entry.js';
@@ -1044,7 +1044,7 @@ function academicRecordResponseView(input = {}, type = '') {
   return supplied ? normalizedAcademicView(supplied) : (ACADEMIC_RECORD_DEFAULT_VIEW[type] || 'classrooms');
 }
 
-async function loadAcademicState(env, branchId, requestedKeys = null) {
+async function loadAcademicState(env, branchId, requestedKeys = null, scoreReadScope = {}) {
   if (!Array.isArray(requestedKeys) || !requestedKeys.length) {
     throw failure('Academic Management must request a focused workspace data bundle.', 500, 'ACADEMIC_STATE_BUNDLE_REQUIRED');
   }
@@ -1059,9 +1059,22 @@ async function loadAcademicState(env, branchId, requestedKeys = null) {
   const collections = allCollections.filter(([key]) => requested.has(key))
     .sort(([left], [right]) => Number(right === 'timetableVersions') * 2 + Number(right === 'studentMemberships')
       - Number(left === 'timetableVersions') * 2 - Number(left === 'studentMemberships'));
-  const loadCollection = ([, collection]) => queryCollection(env, collection, {
-    filters: [{ field: 'BranchId', op: '==', value: branchId }]
-  });
+  const loadCollection = async ([key, collection]) => {
+    const paged = ['studentScores', 'scoreSheets', 'scoreImports', 'scoreSyncBatches'].includes(key);
+    // Use one indexed equality, then enforce branch/section and the remaining
+    // scope in memory. Never restrict by arm: duplicate protection needs the
+    // same student's previous score even after an arm transfer.
+    const classId = paged ? clean(scoreReadScope.ClassId) : '';
+    const options = { filters: [classId
+      ? { field: 'ClassId', op: '==', value: classId }
+      : { field: 'BranchId', op: '==', value: branchId }] };
+    const rows = paged
+      ? await queryCollectionPages(env, collection, { ...options,
+        pageSize: 250, maxRows: 50000, readTime: nowIso() })
+      : await queryCollection(env, collection, options);
+    return !paged ? rows : rows.filter(row => ['ClassId', 'SubjectId', 'SessionId', 'TermId']
+      .every(field => !clean(scoreReadScope[field]) || clean(row[field]) === clean(scoreReadScope[field])));
+  };
   // Establish the shared Firestore access token before parallel focused reads. On a
   // cold Worker instance, starting every query together otherwise creates one OAuth
   // request per collection and can exceed the invocation subrequest allowance.
@@ -1847,8 +1860,8 @@ function scopedAcademicState(state, scope) {
   return Object.fromEntries(Object.entries(state).map(([key, rows]) => [key, scopedAcademicRows(rows, scope)]));
 }
 
-async function loadScopedAcademicState(env, scope, requestedKeys) {
-  return scopedAcademicState(await loadAcademicState(env, scope.branchId, requestedKeys), scope);
+async function loadScopedAcademicState(env, scope, requestedKeys, scoreReadScope = {}) {
+  return scopedAcademicState(await loadAcademicState(env, scope.branchId, requestedKeys, scoreReadScope), scope);
 }
 
 export function academicManagementSummary(state = {}) {
@@ -2031,7 +2044,7 @@ export function academicTeacherVisibleTimetable(state = {}, username = '', focus
   };
 }
 
-export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
+export async function bootstrapAcademicManagement(env, user = {}, input = {}, scoreReadScope = {}) {
   const permissions = requireCapability(user, 'enabled');
   const scope = await academicScope(env, user, input, { requireSection: false });
   const focusedView = permissions.financeView ? 'clearances' : normalizedAcademicView(input.View || input.Workspace);
@@ -2045,7 +2058,7 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
     : { staff: false, students: false };
   const includeReportProfile = ['results', 'outcomes'].includes(focusedView);
   const [rawState, people, reportProfile] = await Promise.all([
-    loadScopedAcademicState(env, scope, focusedStateKeys),
+    loadScopedAcademicState(env, scope, focusedStateKeys, scoreReadScope),
     loadPeople(env, user, scope, peopleOptions),
     includeReportProfile
       ? getDocument(env, 'settings', 'schoolProfile').catch(() => ({}))
@@ -3913,7 +3926,7 @@ async function academicOperationalContext(env, user, input, capability, options 
     || academicOperationalViewForCapability(capability) || 'classrooms';
   if (!clean(input.View || input.Workspace)) input.View = normalizedAcademicView(operationalView);
   const stateKeys = options.stateKeys || academicManagementViewStateKeys(operationalView);
-  const scopedState = await loadScopedAcademicState(env, scope, stateKeys);
+  const scopedState = await loadScopedAcademicState(env, scope, stateKeys, options.scoreReadScope);
   const session = assertReference(findById(scopedState.sessions, input.SessionId), 'Choose an active academic session.');
   const term = assertReference(findById(scopedState.terms, input.TermId), 'Choose an active academic term.');
   if (term.SessionId !== session.SessionId) throw failure('The selected term does not belong to this academic session.');
@@ -5117,7 +5130,9 @@ export function assertAcademicScoreSheetAuthority(user, permissions, state, cand
 
 async function academicScoreSheetContext(env, user, input, capability = 'canEnterScores', stateKeys = ACADEMIC_SCOREBOOK_STATE_KEYS, options = {}) {
   const context = await academicOperationalContext(env, user, input, capability, {
-    stateKeys
+    stateKeys,
+    scoreReadScope: { ClassId: input.ClassId, SubjectId: input.SubjectId,
+      SessionId: input.SessionId, TermId: input.TermId }
   });
   const { permissions, scope, state, session, term } = context;
   const schoolClass = assertReference(findById(state.classes, input.ClassId), 'Choose an active class.');
@@ -5208,7 +5223,9 @@ function academicScoreRowsInput(value) {
 
 export async function getAcademicClassScoreRegister(env, user = {}, input = {}) {
   requireCapability(user, 'canReviewScores');
-  const data = await bootstrapAcademicManagement(env, user, { ...input, View: 'scorebook', IncludePeople: true });
+  const data = await bootstrapAcademicManagement(env, user, { ...input, View: 'scorebook', IncludePeople: true }, {
+    ClassId: input.ClassId, SessionId: input.SessionId, TermId: input.TermId
+  });
   if (!(data.sessions || []).some(row => row.SessionId === input.SessionId)
       || !(data.terms || []).some(row => row.TermId === input.TermId && row.SessionId === input.SessionId)
       || !(data.classes || []).some(row => row.ClassId === input.ClassId)) {
@@ -6928,6 +6945,36 @@ export async function resolveAcademicCbtScorePlacement(env, user = {}, input = {
 }
 
 export async function syncAcademicCbtScores(env, user = {}, input = {}) {
+  // Two centres can invalidate each other's sheet or membership revisions even
+  // for different subjects. Retry only a verified commit's CAS collision, never
+  // validation/permission failures. Keep recovery within one bounded request;
+  // the desktop can continue with a new request if contention persists.
+  const recoveryDeadline = Date.now() + 12_000;
+  let current = input;
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const response = await syncAcademicCbtScoresAttempt(env, user, current);
+      return attempt ? { ...response, automaticScoreRetries: attempt } : response;
+    } catch (error) {
+      if (error?.code !== 'ACADEMIC_WRITE_CONFLICT' || error?.cbtCommitConflict !== true
+          || attempt >= 2 || Date.now() >= recoveryDeadline) throw error;
+      const jitter = crypto.getRandomValues(new Uint32Array(1))[0] / 0x100000000;
+      const delay = Math.round(250 * (2 ** attempt) * (1 + jitter));
+      if (Date.now() + delay >= recoveryDeadline) throw error;
+      await new Promise(resolve => setTimeout(resolve, delay));
+      if (Date.now() >= recoveryDeadline) throw error;
+      // Retain the original signed scores, but discard every prepared write and
+      // recheck live permissions, roster, marks, provenance and record revisions.
+      const fresh = { ...input, SupportsPreparedScoreCommit: true };
+      delete fresh.ScoreSyncPreparation;
+      const response = await syncAcademicCbtScoresAttempt(env, user, fresh);
+      if (!response.commitRequired) return { ...response, automaticScoreRetries: attempt + 1 };
+      current = { ...fresh, ScoreSyncPreparation: response.scoreSyncPreparation };
+    }
+  }
+}
+
+async function syncAcademicCbtScoresAttempt(env, user = {}, input = {}) {
   if (input.SupportsPreparedScoreCommit !== true && !input.ScoreSyncPreparation) {
     throw failure(
       'This Dynamax client must be updated or restarted before it can push CBT scores safely.',
@@ -6956,7 +7003,7 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
     }
     try {
       await commitAcademicBatch(env, prepared.Writes,
-        'The score sheet changed while CBT scores were synchronizing. Reload and retry the same approved batch.');
+        'Another upload changed the online scorebook. The approved batch remains safely queued; no existing marks were overwritten.');
     } catch (error) {
       const status = Number(error?.status || 500);
       const commitOutcomeMayBeUncertain = status === 409
@@ -6998,6 +7045,9 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
           'ACADEMIC_CBT_SYNC_COMMIT_FAILED'
         );
       }
+      // Set only after this preparation's authentication/digest verification and
+      // receipt lookup. A missing revision during preparation is not retryable.
+      if (error?.code === 'ACADEMIC_WRITE_CONFLICT') error.cbtCommitConflict = true;
       throw error;
     }
     return {

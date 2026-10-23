@@ -32,6 +32,7 @@ function managementHarness(records = {}) {
     getSchoolStructure: async () => ({ ActiveBranchId: 'main', Branches: [{ Id: 'main' }], Sections: ['primary', 'secondary'] }),
     enforceActorBranch: (_actor, branch) => branch, safeScopeId,
     queryCollection: async (_env, collection) => structuredClone(records[collection] || []),
+    queryCollectionPages: async (_env, collection) => structuredClone(records[collection] || []),
     listCollection: async (_env, collection) => structuredClone(records[collection] || []),
     listSchoolCollection: async () => [],
     getDocument: async (_env, collection, id) => structuredClone((records[collection] || []).find(record => (record.RecordId || record.CbtTestId) === id) || null),
