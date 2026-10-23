@@ -160,7 +160,8 @@ test('two centres cannot save duplicate class-only and assigned-arm scores concu
   const [pa,pb]=await Promise.all([f.prepare(original),f.prepare(other)]);
   await f.commit(original,pa);
   await assert.rejects(f.commit(other,pb),{code:'ACADEMIC_WRITE_CONFLICT'});
-  await assert.rejects(f.post(other),{code:'ACADEMIC_CBT_SYNC_NO_SCORES_SAVED'});
+  const receipt=(await f.post(other)).scoreSyncReceipt;
+  assert.equal(receipt.ImportedRows,0); assert.equal(receipt.AlreadyRecordedCount,1);
   assert.equal(f.rows(collections.studentScores).length,1);
 });
 
@@ -563,7 +564,103 @@ test('a locked replacement mark preserves that student but does not block anothe
   assert.equal(f.rows(collections.studentScores).find(row=>row.StudentRef==='DCA/002').ComponentScores[0].RawScore,90);
 });
 
-test('every-row rejection is not a success and writes no marks, receipt or score sheet',async()=>{
+test('12 saved and 3 verified existing scores cover all 15 students without replacing earlier marks',async()=>{
+  const f=fixture();
+  const refs=Array.from({length:15},(_,i)=>`DCA/${String(i+1).padStart(3,'0')}`);
+  for(const ref of refs) f.put(collections.studentMemberships,ref,{...scope,RecordId:ref,StudentRef:ref,Status:'Active'});
+  await f.post(await a.batch(refs.slice(0,3).map(ref=>[ref,80,`first-${ref}`])));
+  const originals=JSON.stringify(f.rows(collections.studentScores));
+  const payload=await b.batch(refs.map(ref=>[ref,90,`second-${ref}`]));
+  const receipt=(await f.post(payload)).scoreSyncReceipt;
+  assert.equal(receipt.ImportedRows,12); assert.equal(receipt.RejectedCount,3);
+  assert.equal(receipt.AlreadyRecordedCount,3); assert.equal(receipt.VerifiedOnline,true);
+  assert.deepEqual(Array.from(receipt.AlreadyRecordedScores,row=>row.StudentRef),refs.slice(0,3));
+  assert.equal(JSON.stringify(f.rows(collections.studentScores).filter(row=>refs.slice(0,3).includes(row.StudentRef))),originals);
+  const before=JSON.stringify([...f.db]);
+  assert.equal((await f.post(payload)).scoreSyncReceipt.AlreadyRecordedCount,3);
+  assert.equal(JSON.stringify([...f.db]),before);
+  // Upgrade an older partial receipt on retry by locating and reading back its
+  // saved marks. No score or historical receipt needs rewriting.
+  const stored=f.rows(collections.scoreSyncBatches).find(row=>row.SyncId===receipt.SyncId);
+  f.put(collections.scoreSyncBatches,stored.SyncId,{...stored,RejectedScores:stored.RejectedScores.map(({ExistingScoreId,...row})=>row)});
+  const old=JSON.stringify([...f.db]);
+  assert.equal((await f.post(payload)).scoreSyncReceipt.AlreadyRecordedCount,3);
+  assert.equal(JSON.stringify([...f.db]),old);
+});
+
+test('all students already recorded yields a read-back receipt without writing any score or target sheet',async()=>{
+  const f=placementFixture();
+  await f.post(await a.batch([['DCA/001',0,'a1'],['DCA/002',75,'a2']]));
+  const scores=JSON.stringify(f.rows(collections.studentScores)), sheets=JSON.stringify(f.rows(collections.scoreSheets));
+  const payload=await b.batch([['DCA/001',99,'b1'],['DCA/002',99,'b2']],{ArmId:''});
+  const receipt=(await f.post(payload)).scoreSyncReceipt;
+  assert.equal(receipt.ImportedRows,0); assert.equal(receipt.VerifiedRows,0);
+  assert.equal(receipt.AlreadyRecordedCount,2); assert.equal(receipt.VerifiedOnline,true);
+  assert.equal(JSON.stringify(f.rows(collections.studentScores)),scores);
+  assert.equal(JSON.stringify(f.rows(collections.scoreSheets)),sheets);
+  assert.ok(f.commits.at(-1).every(write=>[collections.scoreSyncBatches,collections.audit].includes(write.collectionPath)));
+  assert.equal((await f.post(payload)).scoreSyncReceipt.AlreadyRecordedCount,2);
+});
+
+test('existing-score acknowledgements require a live matching student, scope, sheet and recorded cell',async()=>{
+  for(const alter of [
+    score=>({...score,StudentRef:'DCA/999'}), score=>({...score,SubjectId:'other'}),
+    score=>({...score,TermId:'other'}), score=>({...score,BranchId:'other'}),
+    score=>({...score,ComponentScores:[{ComponentId:'another-test',State:'Numeric',RawScore:80}]}),
+    score=>({...score,ComponentScores:[{ComponentId:'exam',State:'Missing',RawScore:null}]}),
+    score=>({...score,ComponentScores:[{ComponentId:'exam',State:'Numeric',RawScore:101}]}),
+    score=>({...score,SheetId:'missing-sheet'})
+  ]) {
+    const f=fixture(); await f.post(await a.batch([['DCA/001',80,'a1']]));
+    const payload=await b.batch([['DCA/001',99,'b1'],['DCA/002',90,'b2']]);
+    assert.equal((await f.post(payload)).scoreSyncReceipt.AlreadyRecordedCount,1);
+    const saved=f.rows(collections.studentScores).find(row=>row.StudentRef==='DCA/001');
+    f.put(collections.studentScores,saved.ScoreId,alter(saved));
+    const receipt=(await f.post(payload)).scoreSyncReceipt;
+    assert.equal(receipt.ImportedRows,1); assert.equal(receipt.AlreadyRecordedCount,0);
+  }
+});
+
+test('a rejection message alone never confirms a saved score',async()=>{
+  const f=fixture(),payload=await a.batch([['DCA/001',80,'a1'],['DCA/999',75,'outside']]);
+  const receipt=(await f.post(payload)).scoreSyncReceipt;
+  const stored=f.rows(collections.scoreSyncBatches)[0];
+  f.put(collections.scoreSyncBatches,stored.SyncId,{...stored,RejectedScores:[{StudentRef:'DCA/999',
+    Code:'ACADEMIC_CBT_SYNC_ATTEMPT_CONFLICT',Reason:'An earlier accepted result is preserved.',ExistingScoreId:receipt.AffectedScoreIds[0]}]});
+  assert.equal((await f.post(payload)).scoreSyncReceipt.AlreadyRecordedCount,0);
+});
+
+test('theory-only and missing cells do not count as an existing Objective mark',()=>{
+  const f=fixture(), sheet={...scope,SheetId:'split-sheet',AssessmentComponents:[
+    {Id:'exam',ScoreEntryMode:'objective-theory',ObjectiveMaximumScore:50,TheoryMaximumScore:50}]};
+  const score={...scope,StudentRef:'DCA/001',ScoreId:'split-score',SheetId:sheet.SheetId,
+    ComponentScores:[{ComponentId:'exam',Parts:[{PartId:'theory',State:'Numeric',RawScore:40}]}]};
+  const rejection={StudentRef:'DCA/001',Code:'ACADEMIC_CBT_SYNC_ATTEMPT_CONFLICT'};
+  const input={...scope,AssessmentComponentId:'exam'};
+  assert.equal(f.ctx.academicCbtExistingScoreEvidence([score],[sheet],input,rejection),null);
+  score.ComponentScores[0].Parts.push({PartId:'objective',State:'Numeric',RawScore:0});
+  assert.equal(f.ctx.academicCbtExistingScoreEvidence([score],[sheet],input,rejection).ScoreId,'split-score');
+});
+
+test('an all-existing receipt cannot acknowledge deleted marks on a later retry',async()=>{
+  const f=fixture(); await f.post(await a.batch([['DCA/001',80,'a1']]));
+  const payload=await b.batch([['DCA/001',99,'b1']]);
+  assert.equal((await f.post(payload)).scoreSyncReceipt.AlreadyRecordedCount,1);
+  const saved=f.rows(collections.studentScores)[0];
+  f.db.delete(`${collections.studentScores}/${saved.ScoreId}`);
+  await assert.rejects(f.post(payload),{code:'ACADEMIC_CBT_SYNC_UNVERIFIED'});
+});
+
+test('a saved earlier score does not hide a genuine rejection when no new marks were imported',async()=>{
+  const f=fixture(); await f.post(await a.batch([['DCA/001',80,'a1']]));
+  const payload=await b.batch([['DCA/001',99,'b1'],['DCA/999',75,'outside']]);
+  const receipt=(await f.post(payload)).scoreSyncReceipt;
+  assert.equal(receipt.ImportedRows,0); assert.equal(receipt.AlreadyRecordedCount,1);
+  assert.equal(receipt.RejectedCount,2);
+  assert.equal(receipt.RejectedScores.find(row=>row.StudentRef==='DCA/999').ExistingScoreId,undefined);
+});
+
+test('every-row genuine rejection is not a success and writes no marks, receipt or score sheet',async()=>{
   const f=fixture(), before=JSON.stringify([...f.db]);
   await assert.rejects(f.post(await a.batch([['DCA/999',67,'outside'],['DCA/001',101,'bad-mark']])),error=>
     error.code==='ACADEMIC_CBT_SYNC_NO_SCORES_SAVED' && error.preview.ImportedRows===0
@@ -609,8 +706,8 @@ test('same-student concurrent preparations conflict on retry rather than overwri
   await f.commit(first,pa);
   await assert.rejects(f.commit(second,pb),{code:'ACADEMIC_WRITE_CONFLICT'});
   const sheet=JSON.stringify(f.rows(collections.scoreSheets)), scores=JSON.stringify(f.rows(collections.studentScores));
-  await assert.rejects(f.post(second),error=>error.code==='ACADEMIC_CBT_SYNC_NO_SCORES_SAVED'
-    && error.preview.ImportedRows===0 && error.preview.RejectedCount===1);
+  const receipt=(await f.post(second)).scoreSyncReceipt;
+  assert.equal(receipt.ImportedRows,0); assert.equal(receipt.AlreadyRecordedCount,1);
   assert.equal(JSON.stringify(f.rows(collections.scoreSheets)),sheet);
   assert.equal(JSON.stringify(f.rows(collections.studentScores)),scores);
   assert.equal(f.rows(collections.studentScores)[0].CbtScoreSources[0].SigningKeyId,a.id);
@@ -619,10 +716,10 @@ test('same-student concurrent preparations conflict on retry rather than overwri
 test('re-push cannot replace an existing score even after reactivating editing',async()=>{
   const f=fixture(); await f.post(await a.batch([['DCA/001',81,'a1']]));
   const correction=await a.batch([['DCA/001',82,'a1']],{MarkingRevision:2});
-  await assert.rejects(f.post(correction),error=>error.code==='ACADEMIC_CBT_SYNC_NO_SCORES_SAVED'
-    && error.preview.RejectedScores[0].Code==='ACADEMIC_CBT_SYNC_ATTEMPT_CONFLICT');
+  const receipt=(await f.post(correction)).scoreSyncReceipt;
+  assert.equal(receipt.ImportedRows,0); assert.equal(receipt.AlreadyRecordedCount,1);
   f.put(collections.scoreSheets,'sheet',{...f.rows(collections.scoreSheets)[0],ScoreEditingReactivated:true});
-  await assert.rejects(f.post(correction),{code:'ACADEMIC_CBT_SYNC_NO_SCORES_SAVED'});
+  assert.equal((await f.post(correction)).scoreSyncReceipt.AlreadyRecordedCount,1);
   assert.equal(f.rows(collections.studentScores)[0].ComponentScores[0].RawScore,81);
   assert.equal(f.rows(collections.scoreSheets)[0].ScoreEditingReactivated,true);
 });

@@ -6771,7 +6771,30 @@ function academicCbtConvertedMark(value, conversion) {
   return Math.round((Math.round(Number(value) * 10000) / 10000) * conversion.Factor * 10000) / 10000;
 }
 
-async function verifiedAcademicCbtReceipt(env, input, expected) {
+function academicCbtExistingScoreEvidence(scores, sheets, input, rejection) {
+  // An error label is not proof of a saved mark. Match the exact student,
+  // subject, period and assessment cell, across arms, against a real sheet.
+  if (!['ACADEMIC_CBT_SYNC_ATTEMPT_CONFLICT', 'ACADEMIC_SCORE_CELL_LOCKED'].includes(rejection.Code)) return null;
+  const matches = scores.filter(score => score && lower(score.StudentRef) === lower(rejection.StudentRef)
+    && ['BranchId', 'SchoolSection', 'SessionId', 'TermId', 'ClassId', 'SubjectId']
+      .every(key => clean(score[key]) === clean(input[key]))).flatMap(score => {
+    const sheet = sheets.find(value => value?.SheetId === score.SheetId);
+    if (!sheet || ['BranchId', 'SchoolSection', 'SessionId', 'TermId', 'ClassId', 'ArmId', 'SubjectId']
+      .some(key => clean(sheet[key]) !== clean(score[key]))) return [];
+    const component = (sheet.AssessmentComponents || []).find(value => value.Id === input.AssessmentComponentId);
+    const saved = (score.ComponentScores || []).find(value => value.ComponentId === input.AssessmentComponentId);
+    if (!component) return [];
+    const cell = component.ScoreEntryMode === 'objective-theory' ? saved?.Parts?.find(value => value.PartId === 'objective') : saved;
+    const maximum = Number(component.ScoreEntryMode === 'objective-theory' ? component.ObjectiveMaximumScore : component.MaximumScore);
+    if (!ACADEMIC_RECORDED_SCORE_STATES.has(cell?.State) || (cell.State === 'Numeric'
+      && (cell.RawScore == null || !Number.isFinite(Number(cell.RawScore)) || !Number.isFinite(maximum)
+        || maximum <= 0 || Number(cell.RawScore) < 0 || Number(cell.RawScore) > maximum))) return [];
+    return [{ StudentRef: rejection.StudentRef, ScoreId: score.ScoreId, SheetId: score.SheetId }];
+  });
+  return matches.length === 1 ? matches[0] : null;
+}
+
+async function verifiedAcademicCbtReceipt(env, input, expected, previousState = null) {
   const unverified = () => failure(
     'The uploaded marks could not be verified in the online scorebook. Local answers and scores are retained; retry this same batch.',
     503, 'ACADEMIC_CBT_SYNC_UNVERIFIED');
@@ -6786,7 +6809,7 @@ async function verifiedAcademicCbtReceipt(env, input, expected) {
       || receipt.SigningKeyId !== expected.SigningKeyId || receipt.SheetId !== expected.SheetId
       || receipt.BatchId !== normalizedImportKey(input.BatchId)
       || receipt.SourceType !== input.SourceType
-      || !Number.isInteger(count) || count <= 0 || count > 200
+      || !Number.isInteger(count) || count < 0 || count > 200
       || !Array.isArray(ids) || ids.length !== count || new Set(ids).size !== count
       || !Number.isInteger(rejected) || rejected < 0
       || !Array.isArray(rejectedRows) || rejectedRows.length !== rejected || rejectedRefs.size !== rejected
@@ -6798,18 +6821,18 @@ async function verifiedAcademicCbtReceipt(env, input, expected) {
     getDocument(env, ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSheets, receipt.SheetId),
     getDocuments(env, ACADEMIC_MANAGEMENT_COLLECTIONS.studentScores, ids)
   ]);
-  if (!sheet || sheet.SheetId !== receipt.SheetId || scores.length !== count
+  if (scores.length !== count || (count && (!sheet || sheet.SheetId !== receipt.SheetId
       || ['BranchId', 'SchoolSection', 'SessionId', 'TermId', 'ClassId', 'ArmId', 'SubjectId']
-        .some(key => clean(sheet[key]) !== clean(receipt[key]))) throw unverified();
-  const component = (sheet.AssessmentComponents || []).find(row => row.Id === receipt.AssessmentComponentId);
-  if (!component) throw unverified();
+        .some(key => clean(sheet[key]) !== clean(receipt[key]))))) throw unverified();
+  const component = (sheet?.AssessmentComponents || []).find(row => row.Id === receipt.AssessmentComponentId);
+  if (count && !component) throw unverified();
   const conversion = academicCbtUploadConversion(env, input, component);
-  if (conversion ? (!receipt.ScoreConversion
+  if (count && (conversion ? (!receipt.ScoreConversion
       || Object.keys(conversion).some(key => receipt.ScoreConversion[key] !== conversion[key])
       || Number(receipt.MaximumScore) !== conversion.TargetMaximumScore)
-    : receipt.ScoreConversion) throw unverified();
-  const partId = component.ScoreEntryMode === 'objective-theory' ? 'objective' : '';
-  const cellId = `${component.Id}${partId ? `:${partId}` : ''}`;
+    : receipt.ScoreConversion)) throw unverified();
+  const partId = component?.ScoreEntryMode === 'objective-theory' ? 'objective' : '';
+  const cellId = `${component?.Id}${partId ? `:${partId}` : ''}`;
   const supplied = new Map(input.Scores.map(row => [lower(row.StudentRef), row]));
   const placedSheetIds = [...new Set(scores.filter(score => !receipt.ArmId
     && score?.OriginalClassOnlySheetId === receipt.SheetId && clean(score.ArmId)).map(score => score.SheetId))];
@@ -6851,7 +6874,23 @@ async function verifiedAcademicCbtReceipt(env, input, expected) {
           || (cell.State === 'Absent' && source.OriginalRawScore !== null))) throw unverified();
     }
   }
+  // Older partial receipts have no saved-score pointer. On a safe retry use
+  // scoped state only to find that pointer, then read the mark and sheet back.
+  const evidence = rejectedRows.map(row => ({ row, id: clean(row.ExistingScoreId)
+    || (previousState && academicCbtExistingScoreEvidence(previousState.studentScores,
+      previousState.scoreSheets, input, row)?.ScoreId) })).filter(item => item.id);
+  const existingScores = evidence.length ? await getDocuments(env, ACADEMIC_MANAGEMENT_COLLECTIONS.studentScores,
+    [...new Set(evidence.map(item => item.id))]) : [];
+  const existingSheetIds = [...new Set(existingScores.filter(Boolean).map(score => score.SheetId))];
+  const existingSheets = existingSheetIds.length
+    ? await getDocuments(env, ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSheets, existingSheetIds) : [];
+  const alreadyRecorded = evidence.flatMap(({ row, id }) => {
+    const proof = academicCbtExistingScoreEvidence(existingScores.filter(score => score?.ScoreId === id), existingSheets, input, row);
+    return proof ? [proof] : [];
+  });
+  if (!count && !alreadyRecorded.length) throw unverified();
   return { ...publicRecord(receipt), VerifiedOnline: true, VerifiedRows: count,
+    AlreadyRecordedCount: alreadyRecorded.length, AlreadyRecordedScores: alreadyRecorded,
     VerificationVersion: 2, VerifiedAt: nowIso(), PreservedCorrectionCount: preservedCorrections };
 }
 
@@ -7033,7 +7072,7 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
         ok: true,
         refreshAcademicManagement: true,
         message: 'This batch is verified in the online scorebook; no score was duplicated.',
-        scoreSyncReceipt: await verifiedAcademicCbtReceipt(env, input, previousBatch)
+        scoreSyncReceipt: await verifiedAcademicCbtReceipt(env, input, previousBatch, state)
       };
     }
     // Old zero/partial receipts may have rejected another subject because of
@@ -7048,7 +7087,7 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
       }
       return { ok: true, refreshAcademicManagement: true,
         message: 'This recovered batch is verified online; no score was duplicated.',
-        scoreSyncReceipt: await verifiedAcademicCbtReceipt(env, input, repairedBatch) };
+        scoreSyncReceipt: await verifiedAcademicCbtReceipt(env, input, repairedBatch, state) };
     }
   }
   const timestamp = nowIso();
@@ -7162,7 +7201,11 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
       && !updatedScores.some((item) => item.record.ScoreId === row.ScoreId)),
     ...updatedScores.map((item) => item.record)
   ];
-  if (!updatedScores.length) {
+  for (const rejection of rejectedScores) {
+    const proof = academicCbtExistingScoreEvidence(state.studentScores, state.scoreSheets, input, rejection);
+    if (proof) rejection.ExistingScoreId = proof.ScoreId;
+  }
+  if (!updatedScores.length && !rejectedScores.some(row => row.ExistingScoreId)) {
     const error = failure('No marks from this batch were saved. Every student result needs review; existing scores and local answers are unchanged. '
       + rejectedScores.map(row => `${row.StudentRef}: ${row.Reason}`).join('\n'),
       409, 'ACADEMIC_CBT_SYNC_NO_SCORES_SAVED');
