@@ -9,7 +9,7 @@ const Subjects = ['Christian Religious Studies', 'Civic Education', 'Commerce', 
   'Economics', 'English Studies', 'Fashion Design and Garment Making', 'Financial Accounting', 'French',
   'Geography', 'Government', 'Literature in English', 'Livestock Farming', 'Mathematics'].map((Name, index) => ({ SubjectId: `s${index}`, Name }));
 const diary = {
-  Classes: [{ ClassId: 'grade10', Name: 'Grade 10' }], Subjects, SessionName: '2026/2027', TermName: 'First Term',
+  Classrooms: [{ ClassId: 'grade10', ArmId: 'brilliance', Name: 'Grade 10 / Brilliance' }], Subjects, SessionName: '2026/2027', TermName: 'First Term',
   Weekly: { RecordId: 'synthetic-week', Week: 1, WeekEnding: '2026-10-23', Status: 'Draft', Entries: [
     { SubjectId: 's0', PlannedWork: { Theme: 'The early community', Content: 'Beliefs and shared responsibilities.' },
       WorkCompleted: 'Discussed the lesson and completed individual and group activities. Learners explained their answers with examples.',
@@ -17,8 +17,8 @@ const diary = {
   ] },
   Scheme: { RecordId: 'synthetic-scheme', Weeks: [{ Week: 1, Theme: 'The early community', Content: 'Beliefs and shared responsibilities.' }] },
 };
-diary.LegacyArmRecords = [{ Name: 'Former arm', Weekly: diary.Weekly, Scheme: { ...diary.Scheme, SubjectId: 's0' } }];
-const selected = { ClassId: 'grade10', SubjectId: 's0' };
+diary.LegacyClassRecords = [{ Name: 'Grade 10', Weekly: diary.Weekly, Scheme: { ...diary.Scheme, SubjectId: 's0' } }];
+const selected = { ClassId: 'grade10', ArmId: 'brilliance', SubjectId: 's0' };
 const browser = await chromium.launch({ channel: 'msedge', headless: true });
 try {
   for (const client of ['web', 'desktop']) {
@@ -40,7 +40,9 @@ try {
       metrics.columns.forEach((width, index) => assert.ok(Math.abs(width / metrics.width * 100 - proportions[index]) < .2));
       assert.equal(metrics.header, 'table-header-group');
       assert.equal(metrics.clipped, false);
-      assert.ok((await page.locator('body').innerText()).includes('Grade 10'));
+      const printed = await page.locator('body').innerText();
+      assert.ok(printed.includes(mode === 'legacy' ? 'Grade 10' : 'Grade 10 / Brilliance'));
+      if (mode === 'legacy') assert.ok(!printed.includes('Grade 10 / Brilliance'));
       if (mode === 'weekly') {
         assert.equal(await page.locator('tbody tr').count(), Subjects.length);
         assert.equal((await page.locator('tbody tr').nth(1).locator('td').nth(4).innerText()), 'Missing');

@@ -1,14 +1,15 @@
 const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+const classroomKey = row => JSON.stringify([row.ClassId, row.ArmId]);
 const weeklyWidths = [18, 24, 28, 15, 15], schemeWidths = [8, 32, 60];
 const table = (headings, rows, widths = []) => `<table>${widths.length ? `<colgroup>${widths.map(width => `<col style="width:${width}%">`).join('')}</colgroup>` : ''}<thead><tr>${headings.map(value => `<th scope="col">${escape(value)}</th>`).join('')}</tr></thead><tbody>${rows.map(row => `<tr>${row.map(value => `<td>${escape(value)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
 
 function legacyRecordsHtml(diary) {
-  if (!diary.LegacyArmRecords?.length) return '<p>No earlier arm-based records were found for this week and selected subject/term.</p>';
-  return diary.LegacyArmRecords.map(record => {
+  if (!diary.LegacyClassRecords?.length) return '<p>No earlier class-wide records were found for this week and selected subject/term.</p>';
+  return diary.LegacyClassRecords.map(record => {
     const week = record.Weekly || {}, scheme = record.Scheme || {};
     const subjectName = id => (week.SubjectSnapshot || []).find(row => row.SubjectId === id)?.Name
       || diary.Subjects.find(row => row.SubjectId === id)?.Name || id;
-    return `<h3>${escape(record.Name)} — earlier arm record (read-only)</h3>
+    return `<h3>${escape(record.Name)} — earlier class-wide record (read-only)</h3>
       ${week.RecordId ? `<p>Week ${escape(week.Week)} · Week ending ${escape(week.WeekEnding)} · ${escape(week.Status)}</p>
         ${table(['Subject', 'Planned work', 'Work completed', 'Notes', 'Teacher / status'], (week.Entries || []).map(entry => [subjectName(entry.SubjectId),
           [entry.PlannedWork?.Theme, entry.PlannedWork?.Content].filter(Boolean).join('\n'), entry.WorkCompleted, entry.Notes,
@@ -23,11 +24,12 @@ function legacyRecordsHtml(diary) {
 
 export function diaryPrintHtml(diary, context, schoolName, mode = 'weekly') {
   const week = diary.Weekly || {};
-  const className = (diary.Classes || []).find(row => row.ClassId === context.ClassId)?.Name || '';
+  const className = mode === 'legacy' ? (diary.LegacyClassRecords?.[0]?.Name || '')
+    : (diary.Classrooms || []).find(row => classroomKey(row) === classroomKey(context))?.Name || '';
   const subject = diary.Subjects.find(row => row.SubjectId === context.SubjectId)?.Name || '';
   const scheme = mode === 'scheme';
   const legacy = mode === 'legacy';
-  const title = legacy ? 'Earlier arm-based diary records — read-only' : scheme ? `Scheme of work — ${subject}` : 'Weekly record of work';
+  const title = legacy ? 'Earlier class-wide diary records — read-only' : scheme ? `Scheme of work — ${subject}` : 'Weekly record of work';
   const content = legacy ? legacyRecordsHtml(diary) : scheme
     ? (diary.SessionSchemes?.length ? diary.SessionSchemes : [{ ...diary.Scheme, TermName: diary.TermName }]).map(term =>
       `<h2>${escape(term.TermName)}</h2>${table(['Week', 'Theme / topic', 'Content'], (term.Weeks || []).map(row => [row.Week, row.Theme, row.Content]), schemeWidths)}`).join('')
@@ -60,8 +62,8 @@ export async function openAcademicDiary({ request, context, schoolName = '' }) {
     .academic-diary-dialog table{border-collapse:collapse;width:100%;min-width:480px}.academic-diary-dialog th,.academic-diary-dialog td{padding:10px;border:1px solid #d3deea;text-align:left;white-space:pre-wrap;overflow-wrap:anywhere}
     @media(max-width:650px){.academic-diary-dialog form[data-load]{grid-template-columns:1fr 1fr}.academic-diary-dialog [data-scheme-row]{flex-wrap:wrap}}
     </style><header><h2>Teaching diary</h2><button type="button" data-close>Close</button></header>
-    <p>One diary for the whole class, with one shared entry per subject. Subject teacher → class teacher compilation → Academic Management approval.</p><p role="status" data-status>Loading classes…</p>
-    <form data-load><label>Class<select name="ClassId" required></select></label>
+    <p>A separate diary for each class and arm. Subject teacher → class teacher compilation → Academic Management approval.</p><p role="status" data-status>Loading classrooms…</p>
+    <form data-load><label>Class / arm<select name="Classroom" required></select></label>
     <label>Subject<select name="SubjectId"><option value="">All subjects</option></select></label>
     <label>Week<input name="Week" type="number" min="1" max="53" value="1" required></label><button>Load diary</button></form><section data-body></section>`;
   document.body.append(dialog); dialog.showModal();
@@ -86,7 +88,7 @@ export async function openAcademicDiary({ request, context, schoolName = '' }) {
       ${data.CanCompile && ['Draft', 'Returned'].includes(week.Status) ? '<button data-action="submitAcademicDiary">Compile and submit diary</button>' : ''}
       ${data.CanReview && week.Status === 'Submitted' ? '<button data-action="approveAcademicDiary">Approve diary</button>' : ''}
       ${data.CanReview && ['Submitted', 'Approved'].includes(week.Status) ? '<button data-action="returnAcademicDiary">Return diary for correction</button>' : ''}`;
-    body.innerHTML = `<h3>${escape(data.Classes.find(row => row.ClassId === loaded.ClassId)?.Name)} · ${escape(data.SessionName)} · ${escape(data.TermName)} · ${escape(week.Status)}</h3>
+    body.innerHTML = `<h3>${escape(data.Classrooms.find(row => classroomKey(row) === classroomKey(loaded))?.Name)} · ${escape(data.SessionName)} · ${escape(data.TermName)} · ${escape(week.Status)}</h3>
       <button data-print="weekly">Preview / print weekly diary</button>${loaded.SubjectId ? '<button data-print="scheme">Preview / print session scheme</button>' : ''}
       <p>${escape(week.Reviewed?.Comment || entry.ReturnReason || '')}</p><div style="overflow-x:auto">${table(['Subject', 'Work completed', 'Teacher', 'Status'], data.Subjects.map(subject => {
         const saved = week.Entries.find(row => row.SubjectId === subject.SubjectId) || {};
@@ -99,10 +101,10 @@ export async function openAcademicDiary({ request, context, schoolName = '' }) {
         <button data-action="saveAcademicDiaryEntry">Save draft</button><button data-action="submitAcademicDiaryEntry">Submit subject work</button></fieldset>
         <h3>Scheme of work — ${escape(data.TermName)}</h3><p>Use the Academic Management term selector for each of the session’s three terms.</p>
         <fieldset ${owns ? '' : 'disabled'}><div data-weeks style="overflow-x:auto"></div><button data-add-week>Add week</button><button data-action="saveAcademicDiaryScheme">Save scheme</button></fieldset>` : ''}${actions}
-      <details data-legacy><summary>Earlier arm-based records (read-only)</summary>
-        <p>Older entries and approvals are preserved separately, not merged into this class diary. Choose a week and, for a scheme, a subject above.</p>
+      ${data.CanViewLegacyClassRecords ? `<details data-legacy><summary>Earlier class-wide records (read-only)</summary>
+        <p>Records saved in the class-wide version are preserved separately, not copied into this arm. Choose a week and, for a scheme, a subject above.</p>
         <button data-load-legacy>Load earlier records</button><button data-print="legacy">Preview / print earlier records</button>
-        <div data-legacy-records style="overflow-x:auto"></div></details>`;
+        <div data-legacy-records style="overflow-x:auto"></div></details>` : ''}`;
     const submissionTypes = { submitAcademicDiaryEntry: 'diary-entry', submitAcademicDiary: 'diary', saveAcademicDiaryScheme: 'scheme' };
     body.querySelectorAll('[data-action]').forEach(button => {
       const type = submissionTypes[button.dataset.action];
@@ -122,11 +124,11 @@ export async function openAcademicDiary({ request, context, schoolName = '' }) {
       if (button.hasAttribute('data-add-week')) { const next = weeks.children.length + 1; if (next <= 53) weeks.insertAdjacentHTML('beforeend', rowHtml({ Week: next })); dirty = dirtyScheme = true; return; }
       if (button.hasAttribute('data-load-legacy')) {
         void run(async () => {
-          const fresh = await request('getAcademicDiary', { ...loaded, IncludeLegacyArmRecords: true });
+          const fresh = await request('getAcademicDiary', { ...loaded, IncludeLegacyClassRecords: true });
           // Do not rerender the editor or replace its optimistic version while
-          // someone has unsaved changes in the new class diary.
+          // someone has unsaved changes in the classroom diary.
           body.querySelector('[data-legacy-records]').innerHTML = legacyRecordsHtml(fresh.diary);
-          status.textContent = 'Earlier arm records loaded read-only. Current class diary edits are unchanged.';
+          status.textContent = 'Earlier class-wide records loaded read-only. Current arm diary edits are unchanged.';
         }); return;
       }
       if (button.dataset.print) {
@@ -136,7 +138,7 @@ export async function openAcademicDiary({ request, context, schoolName = '' }) {
         void run(async () => {
           try {
             const fresh = await request('getAcademicDiary', { ...loaded, IncludeSessionSchemes: button.dataset.print === 'scheme',
-              IncludeLegacyArmRecords: button.dataset.print === 'legacy' });
+              IncludeLegacyClassRecords: button.dataset.print === 'legacy' });
             preview.document.open(); preview.document.write(diaryPrintHtml(fresh.diary, loaded, schoolName, button.dataset.print)); preview.document.close();
           } catch (error) { preview.close(); throw error; }
         }); return;
@@ -158,20 +160,20 @@ export async function openAcademicDiary({ request, context, schoolName = '' }) {
     };
   };
   const loadSelectedDiary = async () => {
-      const selectedClass = data.Classes.find(row => row.ClassId === form.elements.ClassId.value);
-      if (!selectedClass) throw new Error('Choose a class.');
-      const next = { ...context, ClassId: selectedClass.ClassId, ArmId: '',
+      const classroom = data.Classrooms.find(row => classroomKey(row) === form.elements.Classroom.value);
+      if (!classroom) throw new Error('Choose a class and arm.');
+      const next = { ...context, ClassId: classroom.ClassId, ArmId: classroom.ArmId,
         SubjectId: form.elements.SubjectId.value, Week: Number(form.elements.Week.value) };
-      if (loaded && next.ClassId !== loaded.ClassId) next.SubjectId = '';
+      if (loaded && classroomKey(next) !== classroomKey(loaded)) next.SubjectId = '';
       const result = await request('getAcademicDiary', next); data = result.diary; loaded = next; dirty = dirtyScheme = dirtyWeekly = false;
       form.elements.SubjectId.innerHTML = `<option value="">All subjects</option>${data.Subjects.map(row => `<option value="${escape(row.SubjectId)}" ${row.SubjectId === next.SubjectId ? 'selected' : ''}>${escape(row.Name)}</option>`).join('')}`;
       render(); status.textContent = data.Subjects.length
         ? 'Saved diary loaded. Print previews use saved records only.'
-        : 'No active subject offerings or subject-teacher allocations are configured for this class and term.';
+        : 'No active subject offerings or subject-teacher allocations are configured for this class / arm and term.';
   };
   const changeSelection = () => {
     if (dirty && !window.confirm('Discard unsaved edits and load the selected diary?')) {
-      form.elements.ClassId.value = loaded.ClassId;
+      form.elements.Classroom.value = classroomKey(loaded);
       form.elements.SubjectId.value = loaded.SubjectId;
       form.elements.Week.value = loaded.Week;
       return;
@@ -179,13 +181,13 @@ export async function openAcademicDiary({ request, context, schoolName = '' }) {
     void run(loadSelectedDiary);
   };
   form.onsubmit = event => { event.preventDefault(); changeSelection(); };
-  form.elements.ClassId.onchange = changeSelection;
+  form.elements.Classroom.onchange = changeSelection;
   form.elements.SubjectId.onchange = changeSelection;
   await run(async () => {
     const result = await request('getAcademicDiary', context); data = result.diary;
-    if (data.DiaryScope !== 'Class' || !Array.isArray(data.Classes)) throw new Error('The class-based diary backend is not available yet. Update the web/backend before using this diary.');
-    form.elements.ClassId.innerHTML = data.Classes.map(row => `<option value="${escape(row.ClassId)}">${escape(row.Name)}</option>`).join('');
-    status.textContent = data.Classes.length ? 'Choose a class and week, then Load diary. Select a subject to enter its shared work.' : 'No class assignments are available for this period.';
-    if (data.Classes.length) await loadSelectedDiary();
+    if (data.DiaryScope !== 'Classroom' || !Array.isArray(data.Classrooms)) throw new Error('The class/arm-based diary backend is not available yet. Update the web/backend before using this diary.');
+    form.elements.Classroom.innerHTML = data.Classrooms.map(row => `<option value="${escape(classroomKey(row))}">${escape(row.Name)}</option>`).join('');
+    status.textContent = data.Classrooms.length ? 'Choose a class / arm and week, then Load diary. Select a subject to enter its work.' : 'No classroom assignments are available for this period.';
+    if (data.Classrooms.length) await loadSelectedDiary();
   });
 }

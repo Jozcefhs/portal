@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { handleDiary, diaryAccess, normalizeSchemeWeeks, diaryId, legacyDiaryId, DIARY_COLLECTIONS } from '../functions/lib/academic-diary.js';
+import { handleDiary, diaryAccess, normalizeSchemeWeeks, diaryId, legacyDiaryId, legacyClassDiaryId, DIARY_COLLECTIONS } from '../functions/lib/academic-diary.js';
 import { diaryPrintHtml } from '../js/academic-diary.js';
 import { submissionHash, SUBMISSION_COLLECTIONS } from '../functions/lib/academic-submissions.js';
 import { readFile } from 'node:fs/promises';
@@ -35,7 +35,7 @@ function fixture() {
   const context = reviewer => ({ scope, state, session: { SessionId: 'session', Name: '2026/2027' },
     term: { TermId: 'term', StartDate: '2026-09-01', EndDate: '2026-12-31', Name: 'First term' }, permissions: { canReviewScores: reviewer } });
   const request = (user, action = 'getacademicdiary', input = {}) => handleDiary(context(user === 'manager'), {}, { username: user },
-    { ...period, ArmId: '', Week: 1, WeekEnding: '2026-10-23', ...input }, action.toLowerCase(), io);
+    { ...period, Week: 1, WeekEnding: '2026-10-23', ...input }, action.toLowerCase(), io);
   return { state, context, request, period, docs, commits, reads, scope };
 }
 
@@ -138,7 +138,7 @@ test('week-ending date is valid, inside the term and consistent across subjects'
   await assert.rejects(f.request('english.teacher', 'saveAcademicDiaryEntry', { SubjectId: 'english', Version: 1, WeekEnding: '2026-10-24' }), /same date/);
 });
 
-test('class record IDs isolate branch, section, session, class, term, subject and week but never arm', async () => {
+test('record IDs isolate branch, section, session, class, arm, term, subject and week and resume original arm IDs', async () => {
   const f = fixture();
   const base = { ...f.period, Week: 1, SubjectId: 'math' };
   const keys = await Promise.all([
@@ -149,48 +149,55 @@ test('class record IDs isolate branch, section, session, class, term, subject an
     diaryId('scheme', f.scope, base), diaryId('scheme', f.scope, { ...base, SubjectId: 'english' }),
   ]);
   assert.equal(new Set(keys).size, keys.length);
-  assert.equal(keys[0], await diaryId('week', f.scope, { ...base, ArmId: 'arm2' }));
-  assert.equal(await diaryId('scheme', f.scope, base), await diaryId('scheme', f.scope, { ...base, ArmId: '' }));
-  assert.notEqual(keys[0], await legacyDiaryId('week', f.scope, base));
+  assert.notEqual(keys[0], await diaryId('week', f.scope, { ...base, ArmId: 'arm2' }));
+  assert.notEqual(await diaryId('scheme', f.scope, base), await diaryId('scheme', f.scope, { ...base, ArmId: 'arm2' }));
+  assert.equal(keys[0], await legacyDiaryId('week', f.scope, base));
+  assert.notEqual(keys[0], await legacyClassDiaryId('week', f.scope, base));
 });
 
-test('one class choice and union of subjects/teachers across valid arms, including class-wide allocations', async () => {
+test('classroom choices, subjects, entries, schemes and teacher permissions remain isolated by arm', async () => {
   const f = fixture();
   f.state.arms.push({ ClassId: 'class', ArmId: 'second', Name: 'Brilliance' });
   f.state.teacherAllocations[1].ArmId = 'second';
   f.state.offerings[1].ArmId = 'second';
   f.state.teacherAllocations.push({ ...f.period, ArmId: 'second', SubjectId: 'math', TeacherUsername: 'second.teacher', AllocationRole: 'Subject Teacher' });
-  const choices = (await f.request('second.teacher', 'getAcademicDiary', { ClassId: '' })).diary;
-  assert.deepEqual(choices.Classes, [{ ClassId: 'class', Name: 'Grade 9' }]);
-  assert.equal(choices.DiaryScope, 'Class');
-  assert.deepEqual(choices.Classrooms, [{ ClassId: 'class', Name: 'Grade 9', ArmId: '' }]);
-  const saved = await f.request('math.teacher', 'saveAcademicDiaryEntry', { SubjectId: 'math', WorkCompleted: 'Shared class work' });
-  const other = (await f.request('second.teacher')).diary;
+  const choices = (await f.request('second.teacher', 'getAcademicDiary', { ClassId: '', ArmId: '' })).diary;
+  assert.equal(choices.DiaryScope, 'Classroom');
+  assert.deepEqual(choices.Classrooms, [{ ClassId: 'class', Name: 'Grade 9 / Brilliance', ArmId: 'second' }]);
+  const all = (await f.request('manager', 'getAcademicDiary', { ClassId: '', ArmId: '' })).diary;
+  assert.equal(all.Classrooms.length, 2);
+  const saved = await f.request('math.teacher', 'saveAcademicDiaryEntry', { SubjectId: 'math', WorkCompleted: 'Excellence work' });
+  assert.deepEqual(saved.diary.Subjects.map(row => row.SubjectId), ['math']);
+  const other = (await f.request('second.teacher', 'getAcademicDiary', { ArmId: 'second' })).diary;
   assert.deepEqual(other.Subjects.map(row => row.SubjectId), ['english', 'math']);
   assert.deepEqual(other.OwnSubjects, ['math']);
-  assert.deepEqual(other.Weekly, saved.diary.Weekly);
-  await assert.rejects(f.request('second.teacher', 'saveAcademicDiaryEntry', { SubjectId: 'math', WorkCompleted: 'Stale replacement' }), /changed/);
-  const updated = await f.request('second.teacher', 'saveAcademicDiaryEntry', { SubjectId: 'math', WorkCompleted: 'Reviewed shared work', Version: 1 });
+  assert.deepEqual(other.Weekly.Entries, []);
+  await assert.rejects(f.request('second.teacher', 'saveAcademicDiaryEntry', { SubjectId: 'math', WorkCompleted: 'Wrong arm replacement' }), /assigned to you/);
+  const updated = await f.request('second.teacher', 'saveAcademicDiaryEntry', { ArmId: 'second', SubjectId: 'math', WorkCompleted: 'Brilliance work' });
   assert.equal(updated.diary.Weekly.Entries.length, 1);
-  assert.equal(f.commits[1][1].data.Previous.Entries[0].WorkCompleted, 'Shared class work');
-  assert.equal(updated.diary.Weekly.ArmId, '');
-  assert.equal(updated.diary.Weekly.DiaryScope, 'Class');
-  const scheme = await f.request('math.teacher', 'saveAcademicDiaryScheme', { SubjectId: 'math', Weeks: [{ Week: 1, Theme: 'Class topic', Content: 'All arms' }] });
-  assert.deepEqual((await f.request('second.teacher', 'getAcademicDiary', { SubjectId: 'math' })).diary.Scheme, scheme.diary.Scheme);
+  assert.deepEqual((await f.request('math.teacher')).diary.Weekly, saved.diary.Weekly);
+  assert.equal(updated.diary.Weekly.ArmId, 'second');
+  assert.equal(updated.diary.Weekly.DiaryScope, 'Classroom');
+  await f.request('math.teacher', 'saveAcademicDiaryScheme', { SubjectId: 'math', Weeks: [{ Week: 1, Theme: 'Arm topic', Content: 'Excellence only' }] });
+  assert.deepEqual((await f.request('second.teacher', 'getAcademicDiary', { ArmId: 'second', SubjectId: 'math' })).diary.Scheme, {});
+  await assert.rejects(f.request('class.teacher', 'submitAcademicDiary', { ArmId: 'second' }), /assigned to you/);
   f.state.teacherAllocations[2].ArmId = '';
-  assert.equal((await f.request('class.teacher')).diary.CanCompile, true);
+  assert.equal((await f.request('class.teacher')).diary.CanCompile, false);
+  // A class-wide subject allocation allows entry in each arm, not a shared record.
+  f.state.teacherAllocations[0].ArmId = '';
+  assert.deepEqual((await f.request('math.teacher', 'getAcademicDiary', { ArmId: 'second' })).diary.OwnSubjects, ['math']);
 });
 
-test('old arm clients cannot write a second diary or reserve an arm-based surcharge', async () => {
+test('stale class-wide clients cannot load, write or reserve charges without selecting an arm', async () => {
   const f = fixture();
-  for (const action of ['saveAcademicDiaryEntry', 'submitAcademicDiaryEntry', 'saveAcademicDiaryScheme', 'submitAcademicDiary', 'approveAcademicDiary', 'returnAcademicDiaryEntry']) {
-    await assert.rejects(f.request('manager', action, { ArmId: 'arm' }), /whole class/);
+  for (const action of ['getAcademicDiary', 'saveAcademicDiaryEntry', 'submitAcademicDiaryEntry', 'saveAcademicDiaryScheme', 'submitAcademicDiary', 'approveAcademicDiary', 'returnAcademicDiaryEntry']) {
+    await assert.rejects(f.request('manager', action, { ArmId: '' }), /class and arm/);
   }
   assert.equal(f.commits.length, 0);
   assert.equal(f.reads.length, 0);
 });
 
-test('late class-wide subject submission reserves the canonical diary once without changing saved work', async () => {
+test('late subject submission reserves the selected arm once without changing saved work', async () => {
   const f = fixture();
   await f.request('math.teacher', 'saveAcademicDiaryEntry', { SubjectId: 'math', WorkCompleted: 'Saved class draft' });
   const id = await submissionHash(['main', 'secondary', 'session', 'term']);
@@ -208,44 +215,66 @@ test('late class-wide subject submission reserves the canonical diary once witho
     });
   }
   const pending = f.docs.get(`${SUBMISSION_COLLECTIONS.pending}/${reference}`);
-  assert.equal(pending.Context.ArmId, '');
+  assert.equal(pending.Context.ArmId, 'arm');
   assert.equal(pending.Context.ClassId, 'class');
   assert.equal(pending.Writes[0].documentId, await diaryId('week', f.scope, { ...f.period, Week: 1 }));
-  assert.equal(pending.Writes[0].data.DiaryScope, 'Class');
+  assert.equal(pending.Writes[0].data.DiaryScope, 'Classroom');
   assert.equal(pending.Writes[0].data.Entries[0].WorkCompleted, 'Final shared work');
   for (const [key, record] of before) assert.deepEqual(f.docs.get(key), record);
   assert.equal([...f.docs.keys()].filter(key => key.startsWith(`${SUBMISSION_COLLECTIONS.pending}/`)).length, 1);
 });
 
-test('legacy arm work, schemes and approvals are read-only, printable, and not silently merged', async () => {
+test('original arm work and approvals resume unchanged; class-wide records remain read-only and separate', async () => {
   const f = fixture(), selected = { ...f.period, Week: 1, SubjectId: 'math' };
-  // Archived arms remain available for historical inspection.
-  f.state.arms.push({ ClassId: 'class', ArmId: 'retired', Name: 'Old arm', Status: 'Archived' });
-  for (const ArmId of ['arm', 'retired']) {
-    const id = await legacyDiaryId('week', f.scope, { ...selected, ArmId });
-    f.docs.set(`${DIARY_COLLECTIONS.week}/${id}`, { ...selected, ArmId, RecordId: id, Version: 4, Status: 'Approved', WeekEnding: '2026-10-23',
-      Entries: [{ SubjectId: 'math', WorkCompleted: `<old ${ArmId}>`, Status: 'Submitted', TeacherUsername: 'old.teacher' }],
-      Reviewed: { By: 'old.reviewer', Comment: 'Approved independently' }, __updateTime: 'legacy' });
-  }
-  const schemeId = await legacyDiaryId('scheme', f.scope, selected);
-  f.docs.set(`${DIARY_COLLECTIONS.scheme}/${schemeId}`, { ...selected, RecordId: schemeId, Version: 2, Weeks: [{ Week: 1, Theme: 'Old topic', Content: 'Old content' }], __updateTime: 'legacy-scheme' });
+  const id = await legacyDiaryId('week', f.scope, selected);
+  const oldWeek = { ...selected, RecordId: id, Version: 4, Status: 'Approved', WeekEnding: '2026-10-23',
+    Entries: [{ SubjectId: 'math', WorkCompleted: 'Original arm work', Status: 'Submitted', TeacherUsername: 'math.teacher' }],
+    Reviewed: { By: 'old.reviewer', Comment: 'Approved independently' }, __updateTime: 'original' };
+  f.docs.set(`${DIARY_COLLECTIONS.week}/${id}`, oldWeek);
+  const classId = await legacyClassDiaryId('week', f.scope, selected);
+  const classWeek = { ...oldWeek, RecordId: classId, ArmId: '', DiaryScope: 'Class',
+    Entries: [{ SubjectId: 'math', WorkCompleted: '<class-wide work>', Status: 'Submitted' }] };
+  f.docs.set(`${DIARY_COLLECTIONS.week}/${classId}`, classWeek);
+  const schemeId = await legacyClassDiaryId('scheme', f.scope, selected);
+  f.docs.set(`${DIARY_COLLECTIONS.scheme}/${schemeId}`, { ...selected, ArmId: '', RecordId: schemeId, Version: 2,
+    Weeks: [{ Week: 1, Theme: 'Class-wide topic', Content: 'Old content' }], __updateTime: 'legacy-scheme' });
   const before = structuredClone([...f.docs]);
   const normal = (await f.request('manager')).diary;
-  assert.equal(normal.Weekly.Version, 0);
-  assert.equal(normal.Weekly.Entries.length, 0);
-  assert.equal(normal.LegacyArmRecords, undefined);
-  const archive = (await f.request('manager', 'getAcademicDiary', { SubjectId: 'math', IncludeLegacyArmRecords: true })).diary;
-  assert.equal(archive.LegacyArmRecords.length, 2);
-  assert.equal(archive.LegacyArmRecords[0].Weekly.Status, 'Approved');
-  assert.equal(archive.LegacyArmRecords[0].Weekly.__updateTime, undefined);
+  assert.equal(normal.Weekly.Version, 4);
+  assert.equal(normal.Weekly.Status, 'Approved');
+  assert.equal(normal.Weekly.Entries[0].WorkCompleted, 'Original arm work');
+  assert.equal(normal.LegacyClassRecords, undefined);
+  const archive = (await f.request('manager', 'getAcademicDiary', { SubjectId: 'math', IncludeLegacyClassRecords: true })).diary;
+  assert.equal(archive.LegacyClassRecords.length, 1);
+  assert.equal(archive.LegacyClassRecords[0].Weekly.Status, 'Approved');
+  assert.equal(archive.LegacyClassRecords[0].Weekly.__updateTime, undefined);
   const html = diaryPrintHtml(archive, selected, 'School', 'legacy');
-  for (const value of ['Grade 9', 'read-only', 'Old arm', 'old.reviewer', 'Old topic', 'Approved independently', '&lt;old arm&gt;']) assert.ok(html.includes(value), value);
-  assert.ok(!html.includes('<old arm>'));
+  for (const value of ['Grade 9', 'read-only', 'old.reviewer', 'Class-wide topic', '&lt;class-wide work&gt;']) assert.ok(html.includes(value), value);
+  assert.ok(!html.includes('<class-wide work>'));
+  assert.ok(!html.includes('Grade 9 / Excellence'));
   assert.deepEqual([...f.docs], before);
-  await f.request('math.teacher', 'saveAcademicDiaryEntry', { SubjectId: 'math', WorkCompleted: 'New shared class entry' });
-  for (const [key, record] of before) assert.deepEqual(f.docs.get(key), record);
-  assert.notEqual(f.commits[0][0].documentId, before[0][1].RecordId);
-  await assert.rejects(f.request('outsider', 'getAcademicDiary', { IncludeLegacyArmRecords: true }), /assigned to you/);
+  await assert.rejects(f.request('math.teacher', 'getAcademicDiary', { IncludeLegacyClassRecords: true }), /Only Academic Management/);
+  await f.request('manager', 'returnAcademicDiary', { Version: 4, Reason: 'Correct arm work' });
+  const resubmitted = await f.request('math.teacher', 'submitAcademicDiaryEntry', { Version: 5, SubjectId: 'math', WorkCompleted: 'Corrected arm work' });
+  assert.equal(resubmitted.diary.Weekly.RecordId, id);
+  assert.equal(f.commits[0][1].data.Previous.Entries[0].WorkCompleted, 'Original arm work');
+  assert.deepEqual(f.docs.get(`${DIARY_COLLECTIONS.week}/${classId}`), classWeek);
+  assert.deepEqual(f.docs.get(`${DIARY_COLLECTIONS.scheme}/${schemeId}`), before[2][1]);
+});
+
+test('compilation and approval in one arm do not change the other arm', async () => {
+  const f = fixture();
+  f.state.arms.push({ ClassId: 'class', ArmId: 'second', Name: 'Brilliance' });
+  f.state.teacherAllocations.push(...f.state.teacherAllocations.map(row => ({ ...row, ArmId: 'second' })));
+  await f.request('math.teacher', 'saveAcademicDiaryEntry', { ArmId: 'second', SubjectId: 'math', WorkCompleted: 'Other arm draft' });
+  const otherBefore = (await f.request('manager', 'getAcademicDiary', { ArmId: 'second' })).diary.Weekly;
+  await f.request('math.teacher', 'submitAcademicDiaryEntry', { SubjectId: 'math', WorkCompleted: 'Math work' });
+  await f.request('english.teacher', 'submitAcademicDiaryEntry', { SubjectId: 'english', WorkCompleted: 'English work', Version: 1 });
+  await f.request('class.teacher', 'submitAcademicDiary', { Version: 2 });
+  await f.request('manager', 'approveAcademicDiary', { Version: 3 });
+  assert.deepEqual((await f.request('manager', 'getAcademicDiary', { ArmId: 'second' })).diary.Weekly, otherBefore);
+  const otherId = await diaryId('week', f.scope, { ...f.period, ArmId: 'second', Week: 1 });
+  assert.ok(f.commits.slice(1).every(writes => writes[0].documentId !== otherId));
 });
 
 test('print previews escape content and include every subject, approval and all session terms', async () => {

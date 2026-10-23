@@ -1,6 +1,10 @@
 # Teaching diaries and inspector printouts
 
-Local implementation; deployment has not been requested for this change.
+Delivery: web/backend deployment and desktop source push are approved. Desktop compilation is deferred; the published installer is unchanged.
+
+The class-wide diary change is corrected: weekly records and schemes are once again keyed by class **and arm**. Selecting a classroom shows only its subjects and permissions. The original arm-based record IDs, saved work, approval states, history and payment targets are reused without migration. A form teacher can compile only the assigned arm's diary.
+
+Records saved during the class-wide version remain untouched and are not copied into each arm. Academic Management can inspect and print them through **Earlier class-wide records (read-only)**. Existing pending payments still target the original reserved record, never a different arm. Old class-only clients must refresh/update and select an arm before loading or saving.
 
 In Academic Management, select the school section, session and term, then open **Teaching diaries**.
 
