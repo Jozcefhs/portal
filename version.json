@@ -1,7 +1,7 @@
 {
-  "version": "3.1.43",
+  "version": "3.1.44",
   "channel": "stable",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.43.exe",
-  "sha256": "c323ef78a7ab0569d982562d1cedeae31384e9906edb6d27b659043ef9dec371",
-  "notes": "Dynamax Desktop v3.1.43 adds closable student warning dialogs, identifies new and updated online CBT schedules, and colours tests only when their scores are verified saved online. Academic managers can reactivate score editing for a whole class; Any approved source applies to existing scorebooks and Objective/Theory fields without changing saved marks. The web class register pins student names and fixes the subject dropdown. Back up and close the app before updating both CBT servers between examinations. Do not uninstall or clear saved data. Existing answers, scores and financial records are preserved. No new tablet APK is required."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.44.exe",
+  "sha256": "8dd52d1cc3041a9db9b5bd2be2132972fde13fad438b43aac6fefe6b1a4d08b2",
+  "notes": "Dynamax Desktop v3.1.44 makes teaching diaries class-wide, with one shared entry per subject across all arms. Earlier arm-based entries and approvals remain separately viewable and printable without being overwritten or automatically merged. Diary print previews use compact paper-sized layouts and proportional columns. The student CBT password field now has a show/hide eye icon and returns to hidden on submission. Back up and close the app before updating both CBT servers between examinations. Do not uninstall or clear saved data. Existing answers, scores and financial records are preserved. No new tablet APK is required."
 }
