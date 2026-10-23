@@ -14604,6 +14604,12 @@ function bindAcademicMembershipSearch(form) {
   filter();
 }
 
+function academicCurrentMembershipRegisterRows(rows = []) {
+  // Explicitly retired duplicates stay in storage and audit history, not in the
+  // current classroom register. Other inactive/withdrawn records remain visible.
+  return rows.filter((row) => !(clean(row.Status).toLowerCase() === 'archived' && clean(row.SupersededByMembershipId)));
+}
+
 function academicStudentWorkspace(data, rows) {
   const canManage = data.permissions?.canManageAllocations === true;
   const learner = academicLearnerTerms();
@@ -14678,7 +14684,7 @@ function academicStudentWorkspace(data, rows) {
       <small class="muted">Maximum 100 rows per import. StudentRef, FirstName, Surname and ClassCode are required. MiddleName, ArmCode and the remaining columns are optional. StudentRef remains the unique identity. References already registered in another branch or school section are rejected; conflicting current-term memberships must use Transfer or change.</small>
     </form>
   </div>` : `<div class="academic-view-only-note"><strong>My class registers</strong><span>${learner.Plural} and movement history shown here come only from your teaching allocations.</span></div>`;
-  return `${forms}${academicArmSubjectRegister(data, rows, canManage || data.permissions?.canConfigureClassStudentSubjects === true)}${table(membershipRegister, rows.studentMemberships, [
+  return `${forms}${academicArmSubjectRegister(data, rows, canManage || data.permissions?.canConfigureClassStudentSubjects === true)}${table(membershipRegister, academicCurrentMembershipRegisterRows(rows.studentMemberships), [
     { label: learner.Singular, value: (row) => academicLabel(data.students, row.StudentRef, row.StudentRef) },
     { label: 'Class / Arm', value: (row) => `${academicLabel(rows.classes, row.ClassId)} / ${academicLabel(rows.arms, row.ArmId)}` },
     { label: 'Classroom department', value: (row) => {

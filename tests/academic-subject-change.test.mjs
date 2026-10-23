@@ -106,6 +106,74 @@ function transferHarness(options) {
   return h;
 }
 
+function addLegacyDuplicate(h, extra = {}) {
+  const row = { ...clone(membership), RecordId: 'legacy-duplicate', MembershipId: 'legacy-duplicate',
+    __updateTime: 'legacy-rev', SavedNotes: 'Keep this historical record', ...extra };
+  h.state.studentMemberships.push(row);
+  return row;
+}
+
+test('applied transfer archives same-student legacy duplicates atomically and preserves scores and history', async () => {
+  const h = transferHarness();
+  const legacy = addLegacyDuplicate(h);
+  const original = clone(legacy);
+  const unrelated = addLegacyDuplicate(h, { RecordId: 'other-period', MembershipId: 'other-period', TermId: 'other-term' });
+  h.state.studentMovements.push({ MovementId: 'historical-event', Status: 'Applied', Reason: 'Historical allocation' });
+  await h.transfer({}, h.context.academicWebActor(ict));
+  const archived = h.state.studentMemberships.find(row => row.MembershipId === legacy.MembershipId);
+  assert.equal(h.member().ArmId, 'destination');
+  assert.equal(archived.Status, 'Archived');
+  assert.equal(archived.SupersededByMembershipId, h.member().MembershipId);
+  for (const field of ['ClassId', 'ArmId', 'SubjectIds', 'TradeSubjectIds', 'SavedNotes']) assert.deepEqual(archived[field], original[field]);
+  assert.equal(unrelated.Status, 'Active');
+  assert.deepEqual(h.state.studentScores, [score]);
+  assert.equal(h.state.studentMovements[0].Reason, 'Historical allocation');
+  assert.ok(h.state.audit.some(row => row.Action === 'RETIRE DUPLICATE MEMBERSHIP'));
+  const write = h.writes.find(row => row.documentId === legacy.MembershipId);
+  assert.equal(write.updateTime, 'legacy-rev');
+  assert.deepEqual(write.updateMask.sort(), ['Status', 'SupersededAt', 'SupersededByMembershipId', 'SupersededReason', 'UpdatedAt', 'UpdatedBy'].sort());
+  assert.ok(h.writes.every(row => row.collectionPath !== 'academicStudentScores' && row.operation !== 'delete'));
+});
+
+test('pending/rejected/cancelled transfers do not retire duplicates; only approved transfers do', async () => {
+  for (const decision of ['Approve', 'Reject', 'Cancel']) {
+    const h = transferHarness();
+    addLegacyDuplicate(h);
+    await h.transfer();
+    assert.equal(h.state.studentMemberships[1].Status, 'Active');
+    await h.review(decision, decision === 'Cancel' ? admin : h.approver);
+    assert.equal(h.state.studentMemberships[1].Status, decision === 'Approve' ? 'Archived' : 'Active');
+    assert.deepEqual(h.state.studentScores, [score]);
+  }
+});
+
+test('concurrent edits to a duplicate abort the whole transfer and its archival', async () => {
+  for (const approval of [false, true]) {
+    const h = transferHarness();
+    addLegacyDuplicate(h);
+    if (approval) await h.transfer();
+    const writtenBefore = h.writes.length;
+    const commit = h.context.batchCommitDocuments;
+    h.context.batchCommitDocuments = async (...args) => {
+      h.state.studentMemberships[1].__updateTime = 'concurrent-revision';
+      return commit(...args);
+    };
+    await assert.rejects(approval ? h.review('Approve', h.approver) : h.transfer({}, h.context.academicWebActor(ict)), { code: 'ACADEMIC_WRITE_CONFLICT' });
+    assert.equal(h.member().ArmId, 'arm');
+    assert.equal(h.state.studentMemberships[1].Status, 'Active');
+    assert.equal(h.writes.length, writtenBefore);
+    assert.deepEqual(h.state.studentScores, [score]);
+  }
+});
+
+test('pending subject changes in a duplicate cannot be silently discarded by a transfer', async () => {
+  const h = transferHarness();
+  addLegacyDuplicate(h, { PendingSubjectChange: { RequestId: 'pending' } });
+  await assert.rejects(h.transfer({}, h.context.academicWebActor(ict)), { code: 'ACADEMIC_SUBJECT_CHANGE_PENDING' });
+  assert.equal(h.writes.length, 0);
+  assert.equal(h.state.studentMemberships[1].Status, 'Active');
+});
+
 test('destination reset disconnects old selections, applies compulsory cores and preserves history', async () => {
   const h = transferHarness({ scores: [] });
   const result = await h.transfer();

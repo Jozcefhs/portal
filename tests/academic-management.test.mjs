@@ -1083,7 +1083,8 @@ test('bulk student allocation maps every selected reference into membership and 
     librarySource.indexOf('export async function bulkAllocateAcademicStudents'),
     librarySource.indexOf('export async function bulkImportAcademicStudentMemberships')
   );
-  assert.equal([...bulkAllocationSource.matchAll(/StudentRef: studentRef/g)].length, 3);
+  assert.equal([...bulkAllocationSource.matchAll(/StudentRef: studentRef/g)].length, 4);
+  assert.match(bulkAllocationSource, /findAcademicStudentMembership\(projected\.studentMemberships/);
   assert.doesNotMatch(bulkAllocationSource, /\.\.\.input,\s*StudentRef(?:\s*[,}])/);
   assert.match(librarySource, /record\.DepartmentId = academicStudentDepartmentForClassroom\(record, arm\)/);
   assert.match(bulkAllocationSource, /allowIncompleteCurriculum: true/);

@@ -14,3 +14,8 @@ dist/
 .pages-deploy/
 *.log
 .tmp-vendor-worker-build/
+# Private student audit/repair evidence and reversible production backups.
+tmp/membership-duplicates-*
+tmp/membership-repair-*/
+tmp/student-transfer-readonly.mjs
+tmp/repair-confirmed-memberships.mjs

@@ -949,7 +949,63 @@ export function normalizeAcademicTeacherAllocation(input = {}, context = {}, exi
   };
 }
 
+// Membership document IDs can outlive an admission-number correction. Identity
+// is the student and academic period, never the old spelling of the document ID.
+export function sameAcademicMembershipIdentity(left = {}, right = {}) {
+  return ['BranchId', 'SchoolSection', 'SessionId', 'TermId', 'StudentRef']
+    .every((field) => clean(left[field]) && lower(left[field]) === lower(right[field]));
+}
+
+export function findAcademicStudentMembership(rows = [], identity = {}) {
+  const matches = rows.filter((row) => sameAcademicMembershipIdentity(row, identity));
+  const active = matches.filter(statusActive);
+  if (active.length > 1) {
+    throw failure('This student has duplicate current memberships. Use an authorised transfer to confirm one classroom before allocating or importing again.', 409, 'ACADEMIC_DUPLICATE_MEMBERSHIP');
+  }
+  if (active.length === 1) return active[0];
+  const retained = matches.filter((row) => !clean(row.SupersededByMembershipId));
+  if (retained.length > 1) throw failure('This student has multiple historical memberships in this period. Review the membership history before allocating again.', 409, 'ACADEMIC_DUPLICATE_MEMBERSHIP');
+  if (retained.length === 1) return retained[0];
+  if (matches.length) throw failure('This membership was superseded. Reload and use the retained membership; do not recreate the archived duplicate.', 409, 'ACADEMIC_MEMBERSHIP_SUPERSEDED');
+  return null;
+}
+
+export function planAcademicDuplicateMembershipRetirement(rows = [], retained = {}, options = {}) {
+  if (!statusActive(retained)) return [];
+  const duplicates = rows.filter((row) => statusActive(row)
+    && recordId(row) !== recordId(retained) && sameAcademicMembershipIdentity(row, retained));
+  if (!duplicates.length) return [];
+  assertNoPendingSubjectChange(retained);
+  if (!recordId(retained) || !clean(retained.__updateTime)
+    || duplicates.some((row) => !recordId(row) || !clean(row.__updateTime))) {
+    throw failure('Reload the current memberships before retiring duplicates.', 409, 'ACADEMIC_WRITE_CONFLICT');
+  }
+  duplicates.forEach(assertNoPendingSubjectChange);
+  const timestamp = clean(options.timestamp) || nowIso();
+  const reason = clean(options.reason);
+  if (!reason) throw failure('A reason is required to retire a duplicate membership.');
+  return duplicates.map((before) => ({ before, after: {
+    ...withoutMetadata(before), Status: 'Archived', SupersededByMembershipId: recordId(retained),
+    SupersededAt: timestamp, SupersededReason: reason,
+    UpdatedAt: timestamp, UpdatedBy: clean(options.actor) || 'Academic Management'
+  } }));
+}
+
+function duplicateMembershipRetirementWrites(state, retained, user, reason) {
+  const fields = ['Status', 'SupersededByMembershipId', 'SupersededAt', 'SupersededReason', 'UpdatedAt', 'UpdatedBy'];
+  return planAcademicDuplicateMembershipRetirement(state.studentMemberships, retained, { reason, actor: actorName(user) })
+    .flatMap(({ before, after }) => [
+      { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships, documentId: recordId(before),
+        data: Object.fromEntries(fields.map((field) => [field, after[field]])), updateMask: fields, updateTime: before.__updateTime },
+      auditWrite(user, 'RETIRE DUPLICATE MEMBERSHIP', 'studentmembership', after, reason,
+        `Duplicate membership ${recordId(before)} archived; current membership ${recordId(retained)} retained. All scores, results and movement history preserved.`)
+    ]);
+}
+
 export function normalizeAcademicStudentMembership(input = {}, context = {}, existing = null) {
+  if (clean(existing?.SupersededByMembershipId)) {
+    throw failure('This duplicate membership was archived. Reload and use the retained current membership.', 409, 'ACADEMIC_MEMBERSHIP_SUPERSEDED');
+  }
   const sessionId = clean(input.SessionId || existing?.SessionId);
   const termId = clean(input.TermId || existing?.TermId);
   const studentRef = clean(input.StudentRef || input.AdmissionNo || existing?.StudentRef);
@@ -1551,6 +1607,7 @@ export function assertAcademicMembershipCapacity(state = {}, record = {}, exclud
   if (!statusActive(record)) return { ClassCount: 0, ClassCapacity: 0, ArmCount: 0, ArmCapacity: 0 };
   const activeMemberships = (state.studentMemberships || []).filter((row) => statusActive(row)
     && recordId(row) !== clean(excludeMembershipId)
+    && !(excludeMembershipId && sameAcademicMembershipIdentity(row, record))
     && row.SessionId === record.SessionId && row.TermId === record.TermId);
   const schoolClass = assertReference(findById(state.classes || [], record.ClassId), 'The selected class is not active.');
   const classCapacity = wholeNumber(schoolClass.Capacity, 0, 0, 10000);
@@ -1709,6 +1766,11 @@ function validateAcademicRecord(state, type, record, people = {}) {
     }
   }
   if (type === 'studentmembership') {
+    if (statusActive(record) && people.allowDuplicateMembershipRetirement !== true
+      && state.studentMemberships.some((row) => statusActive(row) && recordId(row) !== recordId(people.existing || {})
+        && sameAcademicMembershipIdentity(row, record))) {
+      throw failure('This student already has a current membership in this period. Reload and use the existing membership or the transfer workflow.', 409, 'ACADEMIC_DUPLICATE_MEMBERSHIP');
+    }
     const student = people.students.find((row) => lower(studentReference(row)) === lower(record.StudentRef));
     if (!student) throw failure('The selected student was not found in this branch and school section.', 404);
     const schoolClass = findById(state.classes, record.ClassId);
@@ -3183,8 +3245,9 @@ export async function bulkAllocateAcademicStudents(env, user = {}, input = {}) {
   let created = 0;
   let completed = 0;
   for (const studentRef of studentRefs) {
-    const existingId = academicId('student', scope.branchId, scope.section, input.SessionId, input.TermId, studentRef);
-    const existing = findById(projected.studentMemberships, existingId);
+    const existing = findAcademicStudentMembership(projected.studentMemberships, {
+      BranchId: scope.branchId, SchoolSection: scope.section, SessionId: input.SessionId, TermId: input.TermId, StudentRef: studentRef
+    });
     const record = normalizeAcademicStudentMembership({
       ...input, StudentRef: studentRef, Status: 'Active',
       ...(existing ? {} : { SubjectIds: [], CoreSubjectIds: [], TradeSubjectIds: [], OptionalSubjectIds: [] })
@@ -3208,7 +3271,7 @@ export async function bulkAllocateAcademicStudents(env, user = {}, input = {}) {
         if (academicSubjectChangeImpact(existing, record, evidence, scope).RequiresApproval) throw failure('Use Student subjects to request approval before changing assessed subjects.', 409, 'ACADEMIC_SUBJECT_CHANGE_APPROVAL_REQUIRED');
       }
       stampAcademicRecord(record, user, existing);
-      projected.studentMemberships = projected.studentMemberships.map((row) => recordId(row) === existingId ? record : row);
+      projected.studentMemberships = projected.studentMemberships.map((row) => recordId(row) === recordId(existing) ? record : row);
       writes.push({
         collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships,
         documentId: recordId(existing), data: withoutMetadata(record),
@@ -3348,8 +3411,9 @@ export async function bulkImportAcademicStudentMemberships(env, user = {}, input
       const coreSubjectIds = resolveSubjectIds(row.CoreSubjectCodes, 'Core subject code');
       const tradeSubjectIds = resolveSubjectIds(row.TradeSubjectCodes, 'Trade subject code');
       const optionalSubjectIds = resolveSubjectIds(row.OptionalSubjectCodes, 'optional subject code');
-      const existingId = academicId('student', scope.branchId, scope.section, sessionId, termId, row.StudentRef);
-      const existing = findById(projected.studentMemberships, existingId);
+      const existing = findAcademicStudentMembership(projected.studentMemberships, {
+        BranchId: scope.branchId, SchoolSection: scope.section, SessionId: sessionId, TermId: termId, StudentRef: row.StudentRef
+      });
       const record = normalizeAcademicStudentMembership({
         SessionId: sessionId, TermId: termId, StudentRef: row.StudentRef,
         ClassId: schoolClass.ClassId, ArmId: arm?.ArmId || '', DepartmentId: departmentId,
@@ -3610,7 +3674,8 @@ export async function reviewAcademicSubjectChange(env, user = {}, input = {}) {
     record = normalizeAcademicStudentMembership({ ...existing, ...request.After }, scope, existing);
     if (isTransfer) {
       const people = await loadPeople(env, user, scope, { staff: false });
-      validateAcademicRecord(state, 'studentmembership', record, { ...people, existing, allowIncompleteCurriculum: request.ResetSubjectSelections === true });
+      validateAcademicRecord(state, 'studentmembership', record, { ...people, existing,
+        allowDuplicateMembershipRetirement: true, allowIncompleteCurriculum: request.ResetSubjectSelections === true });
       delete record.WithdrawalDate;
       delete record.WithdrawalReason;
       const compatibility = studentCompatibilityWrite(people, state, record);
@@ -3636,6 +3701,8 @@ export async function reviewAcademicSubjectChange(env, user = {}, input = {}) {
     : normalizeAcademicStudentMovement(movementInput, scope, existing, { ...existing, ...request.After });
   await commitAcademicBatch(env, [
     ...resultGuards,
+    ...(decision === 'Approve' && isTransfer ? duplicateMembershipRetirementWrites(state,
+      { ...record, __updateTime: existing.__updateTime }, user, `Approved transfer: ${request.Reason}`) : []),
     { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships, documentId: recordId(existing),
       data: withoutMetadata(record), updateTime: existing.__updateTime },
     movementWrite(user, { ...movement, Status: resolved.Status, SubjectChangeRequest: resolved }),
@@ -3693,7 +3760,8 @@ export async function manageAcademicStudentMembership(env, user = {}, input = {}
       if (existing.ClassId === record.ClassId && existing.ArmId === record.ArmId) throw failure('Choose a different classroom before resetting subject selections. Use Student subjects to change choices in the current classroom.');
       Object.assign(record, subjectSelection({}), { DepartmentId: '' });
     }
-    validateAcademicRecord(state, 'studentmembership', record, { ...people, existing, allowIncompleteCurriculum: resetSubjects });
+    validateAcademicRecord(state, 'studentmembership', record, { ...people, existing,
+      allowDuplicateMembershipRetirement: true, allowIncompleteCurriculum: resetSubjects });
     if (reassigningWithdrawn && existing.ClassId === record.ClassId && existing.ArmId === record.ArmId) {
       throw failure('Choose a different classroom, or use Reinstate to restore the student to the original classroom.');
     }
@@ -3752,6 +3820,7 @@ export async function manageAcademicStudentMembership(env, user = {}, input = {}
   };
   const writes = [
     ...resultGuards,
+    ...duplicateMembershipRetirementWrites(state, { ...record, __updateTime: expected }, user, reason),
     {
       collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships,
       documentId: existing.MembershipId, data: withoutMetadata(record), updateTime: expected
@@ -6416,9 +6485,18 @@ export async function changeAcademicPromotionStatus(env, user = {}, input = {}) 
       SubjectIds: [], CoreSubjectIds: [], TradeSubjectIds: [], OptionalSubjectIds: [],
       CurriculumStatus: 'Pending subject allocation', Status: 'Active'
     }, context.scope);
-    const currentDestination = findById(context.state.studentMemberships, destination.MembershipId);
-    if (currentDestination && (currentDestination.ClassId !== destination.ClassId || currentDestination.ArmId !== destination.ArmId)) {
+    const currentDestination = findAcademicStudentMembership(context.state.studentMemberships, destination);
+    if (currentDestination && (!statusActive(currentDestination)
+      || currentDestination.ClassId !== destination.ClassId || currentDestination.ArmId !== destination.ArmId)) {
       throw failure('This student already has a different membership in the destination period.', 409, 'ACADEMIC_PROMOTION_DESTINATION_CONFLICT');
+    }
+    if (currentDestination) {
+      destination = currentDestination;
+      // A concurrent transfer must not leave the promotion pointing at a stale
+      // destination. Guard the reused legacy membership without rewriting it.
+      writes.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships,
+        documentId: recordId(currentDestination), data: { Status: currentDestination.Status }, updateMask: ['Status'],
+        ...writePrecondition(currentDestination, currentDestination.__updateTime) });
     }
     if (!currentDestination) {
       assertAcademicMembershipCapacity(context.state, destination);

@@ -48,6 +48,20 @@ test('conflicting transferred-arm scores are flagged instead of silently choosin
   assert.equal(report.Rows[0].Cells.find(cell => cell.State === 'Review duplicate').RawScore, null);
 });
 
+test('retiring a stale membership keeps its recorded marks visible under the confirmed current arm', () => {
+  const data = fixture();
+  data.studentMemberships[0].Status = 'Archived';
+  data.studentMemberships[0].SupersededByMembershipId = 'current';
+  data.studentMemberships.push({ ...data.studentMemberships[0], MembershipId: 'current', Status: 'Active', ArmId: 'b', SupersededByMembershipId: '' });
+  const originalScores = structuredClone(data.studentScores);
+  const report = buildAcademicClassScoreRegister(data, period);
+  const row = report.Rows.find(row => row.StudentRef === 'DCA/001');
+  assert.equal(row.ArmName, 'Brilliance');
+  assert.equal(row.RosterConflict, false);
+  assert.equal(row.Cells.find(cell => cell.State === 'Numeric').RawScore, 80);
+  assert.deepEqual(data.studentScores, originalScores);
+});
+
 test('a class-only recorded mark takes precedence over an empty cell in an arm score sheet', () => {
   const data=fixture();
   data.scoreSheets.push({...data.scoreSheets[0],SheetId:'class-only',ArmId:'',ClassOnlyScorebook:true});
