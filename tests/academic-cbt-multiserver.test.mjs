@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import * as scorebook from '../functions/lib/academic-scorebook.js';
 import { safeScopeId } from '../functions/lib/school-scope.js';
 import { academicCbtScoreSources } from '../functions/lib/academic-cbt-multiserver.js';
+import { buildAcademicClassScoreRegister } from '../functions/lib/academic-class-score-register.js';
 import { ACADEMIC_MANAGEMENT_COLLECTIONS as collections, academicCbtScoreBatchDigest } from '../functions/lib/academic-management.js';
 
 const source = await readFile(new URL('../functions/lib/academic-management.js', import.meta.url), 'utf8');
@@ -18,7 +19,7 @@ const scheme = scorebook.academicAssessmentScheme({Assessment:{
 
 // Exercise the real signature, validation, score merge, preparation, commit,
 // idempotency and CAS paths. Only scoped storage/context IO is in-memory.
-function fixture({ realSheetIds = false } = {}) {
+function fixture({ realSheetIds = false, assessment = scheme, environment = env, realContext = false } = {}) {
   const db = new Map(), commits = [];
   let revision = 0;
   const put = (collection,id,data) => db.set(`${collection}/${id}`, {...structuredClone(data),__updateTime:`r${++revision}`});
@@ -45,7 +46,7 @@ function fixture({ realSheetIds = false } = {}) {
     }
   });
   vm.runInContext(source.replace(/^import[\s\S]*?;\r?\n/gm,'').replace(/^export /gm,''),ctx);
-  ctx.academicScoreSheetContext = async(_env,user,input,capability='canImportScores')=>{
+  const mockContext = async(_env,user,input,capability='canImportScores')=>{
     ctx.requireWritableSubscription(user);
     const permissions=ctx.requireCapability(user,capability);
     ctx.assertUserSection(user,input.SchoolSection);
@@ -53,11 +54,15 @@ function fixture({ realSheetIds = false } = {}) {
     const state=Object.fromEntries(Object.entries(collections).map(([key,col])=>[key,rows(col)]));
     const SheetId=realSheetIds ? ctx.academicScoreSheetId({branchId:'main',section:'secondary'},input.SessionId,input.TermId,input.ClassId,input.ArmId,input.SubjectId) : 'sheet';
     return {permissions,scope:{branchId:'main',section:'secondary'},state,SheetId,
-      existing:state.scoreSheets.find(row=>row.SheetId===SheetId),scheme,
+      existing:state.scoreSheets.find(row=>row.SheetId===SheetId),scheme:assessment,
       session:{SessionId:input.SessionId},term:{TermId:input.TermId},schoolClass:{ClassId:input.ClassId},arm:{ArmId:input.ArmId},subject:{SubjectId:input.SubjectId},
       allocation:{TeacherUsername:'teacher'},roster:state.studentMemberships};
   };
-  const prepare=(payload,user=actor)=>ctx.syncAcademicCbtScores(env,user,{...payload,SupportsPreparedScoreCommit:true});
+  if (realContext) {
+    ctx.academicOperationalContext = mockContext;
+    ctx.academicAssessmentForPeriod = async()=>assessment;
+  } else ctx.academicScoreSheetContext = mockContext;
+  const prepare=(payload,user=actor)=>ctx.syncAcademicCbtScores(environment,user,{...payload,SupportsPreparedScoreCommit:true});
   const commit=(payload,preparation,user=actor)=>prepare({...payload,ScoreSyncPreparation:preparation.scoreSyncPreparation},user);
   return {ctx,db,commits,rows,put,prepare,commit,post:async payload=>{
     const prepared=await prepare(payload); return prepared.commitRequired ? commit(payload,prepared) : prepared;
@@ -81,6 +86,212 @@ async function server() {
   }};
 }
 const [a,b]=await Promise.all([server(),server()]);
+
+function placementFixture() {
+  const f=fixture({realContext:true,realSheetIds:true});
+  f.put(collections.classes,'class',{RecordId:'class',ClassId:'class',Name:'Grade 9',Status:'Active',SchoolSection:'secondary'});
+  f.put(collections.subjects,'maths',{RecordId:'maths',SubjectId:'maths',Name:'Maths',Status:'Active',SchoolSection:'secondary'});
+  for (const id of ['arm','merit']) f.put(collections.arms,id,{RecordId:id,ArmId:id,ClassId:'class',Name:id,Status:'Active'});
+  f.put(collections.teacherAllocations,'teacher',{...scope,RecordId:'teacher',AllocationRole:'Subject teacher',TeacherUsername:'teacher',Status:'Active'});
+  return f;
+}
+
+test('current class placement resolves missing/stale arms and missing subject selections without altering membership',async()=>{
+  const f=placementFixture();
+  f.put(collections.studentMemberships,'DCA-001',{...scope,RecordId:'DCA-001',StudentRef:'DCA/001',ArmId:'merit',SubjectIds:[],Status:'Active'});
+  f.put(collections.studentMemberships,'DCA-002',{...scope,RecordId:'DCA-002',StudentRef:'DCA/002',ArmId:'',SubjectIds:[],Status:'Active'});
+  f.put(collections.studentMemberships,'DCA-003',{...scope,RecordId:'DCA-003',StudentRef:'DCA/003',ArmId:'removed-arm',SubjectIds:[],Status:'Active'});
+  const before=JSON.stringify([...f.db]);
+  const result=await f.ctx.resolveAcademicCbtScorePlacement(env,actor,{...scope,StudentRefs:['DCA/001','DCA/002','DCA/003','DCA/999']});
+  assert.deepEqual(JSON.parse(JSON.stringify(result.scoreUploadPlacements.slice(0,3))),[
+    {StudentRef:'DCA/001',Ready:true,ArmId:'merit',ClassOnly:false},
+    {StudentRef:'DCA/002',Ready:true,ArmId:'',ClassOnly:true},
+    {StudentRef:'DCA/003',Ready:true,ArmId:'',ClassOnly:true}]);
+  assert.equal(result.scoreUploadPlacements[3].Ready,false);
+  assert.equal(JSON.stringify([...f.db]),before);
+  await f.post(await a.batch([['DCA/001',81,'a1']],{ArmId:'merit'}));
+  await f.post(await a.batch([['DCA/002',62,'a2'],['DCA/003',73,'a3']],{ArmId:''}));
+  assert.equal(f.rows(collections.studentScores).length,3);
+  const data=Object.fromEntries(Object.entries(collections).map(([key,col])=>[key,f.rows(col)]));
+  const register=buildAcademicClassScoreRegister(data,scope);
+  assert.equal(register.Rows.find(row=>row.StudentRef==='DCA/002').Cells[0].RawScore,62);
+  assert.equal(register.Rows.find(row=>row.StudentRef==='DCA/001').Cells[0].RawScore,81);
+});
+
+test('class-only scores move to a later arm on retry with no duplicate, rescore, or broken earlier receipt',async()=>{
+  const f=placementFixture();
+  const original=await a.batch([['DCA/001',81,'a1']],{ArmId:''});
+  await f.post(original);
+  const saved=f.rows(collections.studentScores)[0],id=saved.ScoreId;
+  f.put(collections.studentMemberships,'DCA-001',{...f.rows(collections.studentMemberships)[0],ArmId:'merit'});
+  const placed=await a.batch([['DCA/001',81,'a1']],{ArmId:'merit'});
+  const receipt=(await f.post(placed)).scoreSyncReceipt;
+  assert.equal(receipt.VerifiedOnline,true);
+  assert.equal(f.rows(collections.studentScores).length,1);
+  const moved=f.rows(collections.studentScores)[0];
+  assert.equal(moved.ScoreId,id); assert.equal(moved.ArmId,'merit');
+  assert.equal(moved.ComponentScores[0].RawScore,81);
+  assert.equal(moved.OriginalClassOnlySheetId,saved.SheetId);
+  const before=JSON.stringify([...f.db]);
+  await f.post(original); await f.post(placed);
+  assert.equal(JSON.stringify([...f.db]),before);
+  assert.equal(f.rows(collections.scoreSheets).find(row=>!row.ArmId).EnteredCount,0);
+  await assert.rejects(f.post(await b.batch([['DCA/001',99,'second-centre']],{ArmId:''})),
+    {code:'ACADEMIC_CBT_SYNC_NO_SCORES_SAVED'});
+  assert.equal(JSON.stringify([...f.db]),before);
+});
+
+test('an existing result in any arm rejects only its student; new marks can be held when the target sheet is closed',async()=>{
+  const f=placementFixture();
+  await f.post(await a.batch([['DCA/001',81,'a1']]));
+  const sheet=f.rows(collections.scoreSheets)[0];
+  f.put(collections.scoreSheets,sheet.SheetId,{...sheet,Status:'Submitted'});
+  const placement=await f.ctx.resolveAcademicCbtScorePlacement(env,actor,{...scope,StudentRefs:['DCA/001','DCA/002']});
+  assert.ok(placement.scoreUploadPlacements.every(row=>row.Ready && row.ClassOnly));
+  const receipt=(await f.post(await b.batch([['DCA/001',99,'b1'],['DCA/002',63,'b2']],{ArmId:''}))).scoreSyncReceipt;
+  assert.equal(receipt.ImportedRows,1); assert.equal(receipt.RejectedCount,1);
+  assert.equal(f.rows(collections.studentScores).find(row=>row.StudentRef==='DCA/001').ComponentScores[0].RawScore,81);
+  assert.equal(f.rows(collections.scoreSheets).find(row=>row.SheetId===sheet.SheetId).Status,'Submitted');
+});
+
+test('two centres cannot save duplicate class-only and assigned-arm scores concurrently',async()=>{
+  const f=placementFixture();
+  const original=await a.batch([['DCA/001',81,'a1']],{ArmId:''}), other=await b.batch([['DCA/001',99,'b1']]);
+  const [pa,pb]=await Promise.all([f.prepare(original),f.prepare(other)]);
+  await f.commit(original,pa);
+  await assert.rejects(f.commit(other,pb),{code:'ACADEMIC_WRITE_CONFLICT'});
+  await assert.rejects(f.post(other),{code:'ACADEMIC_CBT_SYNC_NO_SCORES_SAVED'});
+  assert.equal(f.rows(collections.studentScores).length,1);
+});
+
+const frenchScope = { ...scope, SessionId:'session__main__secondary__2026-2027',
+  TermId:'session__main__secondary__2026-2027__term__secondary__first-term',
+  ClassId:'class__main__secondary__grade-9', SubjectId:'subject__main__secondary__fre',
+  AssessmentComponentId:'ca1', MaximumScore:10,
+  SourceTestId:'cbt-test-6df1ba297013ad79f1e8ea566d366fd6ca4986c725476fd09a4986d8562f2a30' };
+const frenchEnv = { ...env, FIREBASE_PROJECT_ID:'school-management-suite-27064' };
+const frenchScheme = scorebook.academicAssessmentScheme({Assessment:{
+  Components:[{Id:'ca1',Name:'CA1',MaximumScore:100,WeightPercentage:10,Required:true,SourceMode:'built-in-cbt'},
+    {Id:'exam',Name:'Exam',MaximumScore:100,WeightPercentage:90,Required:true,SourceMode:'built-in-cbt'}],
+  GradeBands:scheme.GradeBands
+}}, {RevisionId:'revision'});
+function frenchFixture(options = {}) {
+  const f = fixture({assessment:frenchScheme,environment:frenchEnv,...options});
+  for (const row of f.rows(collections.studentMemberships)) f.put(collections.studentMemberships,row.RecordId,{...row,...frenchScope});
+  return f;
+}
+
+test('authorised French upload scales /10 to /100 once and retains original signed marks and other components',async()=>{
+  const f=frenchFixture();
+  await f.post(await a.batch([['DCA/001',80,'exam-attempt']],{...frenchScope,AssessmentComponentId:'exam',MaximumScore:100,SourceTestId:'another-exam'}));
+  const beforeExam=structuredClone(f.rows(collections.studentScores)[0].ComponentScores.find(row=>row.ComponentId==='exam'));
+  const payload=await a.batch([['DCA/001',7.5,'f1'],['DCA/002',0,'f2'],['DCA/003',10,'f3']],frenchScope);
+  const original=JSON.stringify(payload);
+  const prepared=await f.prepare(payload);
+  assert.equal(f.commits.length,1,'Preparation does not save or report success');
+  const result=await f.commit(payload,prepared);
+  assert.equal(JSON.stringify(payload),original,'Original signed scores are immutable');
+  const receipt=result.scoreSyncReceipt;
+  assert.equal(receipt.VerifiedOnline,true);
+  assert.equal(receipt.VerifiedRows,3);
+  assert.equal(receipt.MaximumScore,100);
+  assert.equal(receipt.BatchDigest,payload.BatchDigest);
+  assert.deepEqual({...receipt.ScoreConversion},{RuleId:'dca-grade9-french-ca1-2026-term1-10-to-100-v1',SourceMaximumScore:10,TargetMaximumScore:100,Factor:10});
+  const saved=f.rows(collections.studentScores);
+  for (const [ref,raw,target] of [['DCA/001',7.5,75],['DCA/002',0,0],['DCA/003',10,100]]) {
+    const score=saved.find(row=>row.StudentRef===ref),cell=score.ComponentScores.find(row=>row.ComponentId==='ca1');
+    assert.equal(cell.RawScore,target);
+    const evidence=score.CbtScoreSources.find(row=>row.CellId==='ca1');
+    assert.equal(evidence.OriginalRawScore,raw);
+    assert.equal(evidence.OriginalBatchDigest,payload.BatchDigest);
+    assert.equal(evidence.ScoreConversion.SourceMaximumScore,10);
+  }
+  assert.deepEqual(saved[0].ComponentScores.find(row=>row.ComponentId==='exam'),beforeExam);
+  const before=JSON.stringify([...f.db]);
+  await f.post(payload);
+  await f.commit(payload,prepared); // Duplicate commit after a lost response.
+  assert.equal(JSON.stringify([...f.db]),before);
+  assert.equal(f.commits.length,2);
+});
+
+test('French conversion still rejects invalid /10 marks individually and handles absence',async()=>{
+  for (const invalid of [11,-1,'bad',null]) {
+    const f=frenchFixture();
+    const payload=await a.batch([],{...frenchScope,Scores:[
+      {StudentRef:'DCA/001',State:'Numeric',RawScore:7.25,AttemptId:'a1'},
+      {StudentRef:'DCA/002',State:'Numeric',RawScore:invalid,AttemptId:'a2'},
+      {StudentRef:'DCA/003',State:'Absent',RawScore:null,AttemptId:'a3'}]});
+    const {scoreSyncReceipt:receipt}=await f.post(payload);
+    assert.equal(receipt.ImportedRows,2); assert.equal(receipt.RejectedCount,1);
+    assert.equal(receipt.RejectedScores[0].StudentRef,'DCA/002');
+    assert.equal(f.rows(collections.studentScores)[0].ComponentScores.find(row=>row.ComponentId==='ca1').RawScore,72.5);
+    assert.equal(f.rows(collections.studentScores)[1].CbtScoreSources[0].OriginalRawScore,null);
+    await f.post(payload);
+    assert.equal(f.commits.length,1);
+  }
+});
+
+test('French conversion never applies to another school, period, paper, class, subject, component or source',async()=>{
+  for (const [key,value] of [['FIREBASE_PROJECT_ID','another-school'],['DYNAMAX_WORKSPACE_ID','another-workspace'],
+    ['SessionId','another-session'],['TermId','another-term'],['SourceTestId','another-test'],
+    ['ClassId','grade-8'],['SubjectId','maths'],['AssessmentComponentId','exam'],['SourceType','ExternalCBT']]) {
+    const environment={...frenchEnv},patch={...frenchScope};
+    if (key in environment) environment[key]=value; else patch[key]=value;
+    const f=frenchFixture({environment});
+    const before=JSON.stringify([...f.db]);
+    await assert.rejects(f.post(await a.batch([['DCA/001',7.5,'f1']],patch)),{code:'ACADEMIC_CBT_SCORE_BATCH_INVALID'},key);
+    assert.equal(JSON.stringify([...f.db]),before);
+  }
+  const f=frenchFixture();
+  const already100=await a.batch([['DCA/001',75,'f1']],{...frenchScope,MaximumScore:100});
+  const receipt=(await f.post(already100)).scoreSyncReceipt;
+  assert.equal(receipt.ScoreConversion,undefined);
+  assert.equal(f.rows(collections.studentScores)[0].ComponentScores[0].RawScore,75);
+  await f.post(already100); assert.equal(f.commits.length,1);
+  const single10={...frenchScheme,Components:frenchScheme.Components.map(c=>c.Id==='ca1'?{...c,MaximumScore:10}:c)};
+  const still10=frenchFixture({assessment:single10});
+  assert.equal((await still10.post(await a.batch([['DCA/001',7.5,'f1']],frenchScope))).scoreSyncReceipt.ScoreConversion,undefined);
+  assert.equal(still10.rows(collections.studentScores)[0].ComponentScores[0].RawScore,7.5);
+  assert.equal(f.ctx.academicCbtUploadConversion(frenchEnv,{...frenchScope,SourceType:'BuiltInCBT'},
+    {...frenchScheme.Components[0],ScoreEntryMode:'objective-theory'}),null);
+});
+
+test('French conversion requires an unchanged signed payload and verifies saved conversion evidence',async()=>{
+  for (const fault of ['signature','digest','prepared']) {
+    const f=frenchFixture(),p=await a.batch([['DCA/001',7.5,'f1']],frenchScope);
+    if (fault==='signature') await assert.rejects(f.post({...p,Signature:'invalid'}),{code:'ACADEMIC_CBT_SIGNATURE_INVALID'});
+    if (fault==='digest') await assert.rejects(f.post({...p,Scores:[{...p.Scores[0],RawScore:10}]}),{code:'ACADEMIC_CBT_SCORE_DIGEST_INVALID'});
+    if (fault==='prepared') { const prepared=await f.prepare(p); await assert.rejects(f.commit({...p,MaximumScore:100},prepared),{code:'ACADEMIC_CBT_SCORE_DIGEST_INVALID'}); }
+    assert.equal(f.commits.length,0);
+  }
+  for (const fault of ['saved-mark','original-mark','conversion','receipt']) {
+    const f=frenchFixture(),p=await a.batch([['DCA/001',7.5,'f1']],frenchScope); await f.post(p);
+    const score=f.rows(collections.studentScores)[0],receipt=f.rows(collections.scoreSyncBatches)[0];
+    if (fault==='saved-mark') score.ComponentScores[0].RawScore=7.5;
+    if (fault==='original-mark') score.CbtScoreSources[0].OriginalRawScore=8;
+    if (fault==='conversion') delete score.CbtScoreSources[0].ScoreConversion;
+    if (fault==='receipt') { delete receipt.ScoreConversion; f.put(collections.scoreSyncBatches,receipt.SyncId,receipt); }
+    f.put(collections.studentScores,score.ScoreId,score);
+    const before=JSON.stringify([...f.db]);
+    await assert.rejects(f.post(p),{code:'ACADEMIC_CBT_SYNC_UNVERIFIED'});
+    assert.equal(JSON.stringify([...f.db]),before);
+  }
+});
+
+test('French conversion preserves the first centre result and authorised manual corrections',async()=>{
+  const f=frenchFixture(),p=await a.batch([['DCA/001',7.5,'f1']],frenchScope); await f.post(p);
+  const saved=JSON.stringify(f.rows(collections.studentScores)[0]);
+  const second=await f.post(await b.batch([['DCA/001',10,'second-attempt'],['DCA/002',8,'f2']],frenchScope));
+  assert.equal(second.scoreSyncReceipt.ImportedRows,1); assert.equal(second.scoreSyncReceipt.RejectedCount,1);
+  assert.equal(JSON.stringify(f.rows(collections.studentScores).find(row=>row.StudentRef==='DCA/001')),saved);
+  const request={...frenchScope,SheetId:'sheet',Reason:'Authorised correction',RevisionToken:f.rows(collections.scoreSheets)[0].__updateTime};
+  await f.ctx.reactivateAcademicScoreEditing(frenchEnv,actor,request);
+  await f.ctx.saveAcademicScoreDraft(frenchEnv,actor,{...frenchScope,SheetId:'sheet',SheetRevisionToken:f.rows(collections.scoreSheets)[0].__updateTime,
+    Rows:[{StudentRef:'DCA/001',RevisionToken:f.rows(collections.studentScores)[0].__updateTime,ComponentScores:[{ComponentId:'ca1',RawScore:85}]}]});
+  const before=JSON.stringify([...f.db]); await f.post(p);
+  assert.equal(JSON.stringify([...f.db]),before);
+  assert.equal(f.rows(collections.studentScores)[0].ComponentScores[0].RawScore,85);
+});
 
 test('long production-style sheet identifiers isolate the same student across subjects',async()=>{
   const f=fixture({realSheetIds:true});
@@ -347,7 +558,7 @@ test('a locked replacement mark preserves that student but does not block anothe
   const original=JSON.stringify(f.rows(collections.studentScores)[0]);
   const receipt=(await f.post(await a.batch([['DCA/001',82,'a1'],['DCA/002',90,'a2']],{MarkingRevision:2}))).scoreSyncReceipt;
   assert.equal(receipt.ImportedRows,1); assert.equal(receipt.RejectedCount,1);
-  assert.equal(receipt.RejectedScores[0].Code,'ACADEMIC_SCORE_CELL_LOCKED');
+  assert.equal(receipt.RejectedScores[0].Code,'ACADEMIC_CBT_SYNC_ATTEMPT_CONFLICT');
   assert.equal(JSON.stringify(f.rows(collections.studentScores).find(row=>row.StudentRef==='DCA/001')),original);
   assert.equal(f.rows(collections.studentScores).find(row=>row.StudentRef==='DCA/002').ComponentScores[0].RawScore,90);
 });
@@ -405,15 +616,15 @@ test('same-student concurrent preparations conflict on retry rather than overwri
   assert.equal(f.rows(collections.studentScores)[0].CbtScoreSources[0].SigningKeyId,a.id);
 });
 
-test('genuine same-attempt marking corrections retain existing approval and cell-lock requirements',async()=>{
+test('re-push cannot replace an existing score even after reactivating editing',async()=>{
   const f=fixture(); await f.post(await a.batch([['DCA/001',81,'a1']]));
   const correction=await a.batch([['DCA/001',82,'a1']],{MarkingRevision:2});
   await assert.rejects(f.post(correction),error=>error.code==='ACADEMIC_CBT_SYNC_NO_SCORES_SAVED'
-    && error.preview.RejectedScores[0].Code==='ACADEMIC_SCORE_CELL_LOCKED');
+    && error.preview.RejectedScores[0].Code==='ACADEMIC_CBT_SYNC_ATTEMPT_CONFLICT');
   f.put(collections.scoreSheets,'sheet',{...f.rows(collections.scoreSheets)[0],ScoreEditingReactivated:true});
-  await f.post(correction);
-  assert.equal(f.rows(collections.studentScores)[0].ComponentScores[0].RawScore,82);
-  assert.equal(f.rows(collections.scoreSheets)[0].ScoreEditingReactivated,false);
+  await assert.rejects(f.post(correction),{code:'ACADEMIC_CBT_SYNC_NO_SCORES_SAVED'});
+  assert.equal(f.rows(collections.studentScores)[0].ComponentScores[0].RawScore,81);
+  assert.equal(f.rows(collections.scoreSheets)[0].ScoreEditingReactivated,true);
 });
 
 test('server signature, reviewer permission, scope, roster and prepared membership checks still apply',async()=>{

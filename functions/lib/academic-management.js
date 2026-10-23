@@ -1458,10 +1458,10 @@ function assertNoPendingSubjectChange(membership) {
 export function academicScoreMembershipGuards(state, scores) {
   const memberships = new Map();
   for (const score of scores) {
-    const membership = (state.studentMemberships || []).find((row) => lower(row.StudentRef) === lower(score.StudentRef)
+    const matches = (state.studentMemberships || []).filter((row) => lower(row.StudentRef) === lower(score.StudentRef)
       && row.SessionId === score.SessionId && row.TermId === score.TermId);
-    if (!membership || !clean(membership.__updateTime)) throw failure('Reload the classroom before saving scores; its membership revision is missing.', 409, 'ACADEMIC_WRITE_CONFLICT');
-    memberships.set(recordId(membership), membership);
+    if (!matches.length || matches.some(row => !clean(row.__updateTime))) throw failure('Reload the classroom before saving scores; its membership revision is missing.', 409, 'ACADEMIC_WRITE_CONFLICT');
+    for (const membership of matches) memberships.set(recordId(membership), membership);
   }
   return [...memberships.values()].map((membership) => ({
     collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships,
@@ -5038,6 +5038,7 @@ async function academicAssessmentForPeriod(env, scope, session, term, { required
 }
 
 function academicScoreSheetId(scope, sessionId, termId, classId, armId, subjectId) {
+  if (!clean(armId)) return academicId('class-score-sheet', scope.branchId, scope.section, sessionId, termId, classId, subjectId);
   return academicId('score-sheet', scope.branchId, scope.section, sessionId, termId, classId, armId, subjectId);
 }
 
@@ -5075,7 +5076,7 @@ function academicExistingStudentScore(scores, sheetId, studentRef) {
 function academicScoreRoster(state, candidate) {
   return state.studentMemberships.filter((row) => statusActive(row)
     && row.SessionId === candidate.SessionId && row.TermId === candidate.TermId
-    && row.ClassId === candidate.ClassId && row.ArmId === candidate.ArmId
+    && row.ClassId === candidate.ClassId && clean(row.ArmId) === clean(candidate.ArmId)
     && (row.SubjectIds || []).includes(candidate.SubjectId));
 }
 
@@ -5120,7 +5121,9 @@ async function academicScoreSheetContext(env, user, input, capability = 'canEnte
   });
   const { permissions, scope, state, session, term } = context;
   const schoolClass = assertReference(findById(state.classes, input.ClassId), 'Choose an active class.');
-  const arm = assertReference(findById(state.arms, input.ArmId), 'Choose an active classroom arm.');
+  const classOnly = options.allowUnassignedCbt === true && !clean(input.ArmId) && permissions.canReviewScores;
+  const arm = classOnly ? { ArmId: '', ClassId: schoolClass.ClassId, Name: 'Unassigned (class only)' }
+    : assertReference(findById(state.arms, input.ArmId), 'Choose an active classroom arm.');
   const subject = assertReference(findById(state.subjects, input.SubjectId), 'Choose an active subject.');
   if (subject.AssessmentCategory === 'TimetableOnly') {
     throw failure('This subject is timetable-only and does not accept scores.', 409, 'ACADEMIC_SUBJECT_NOT_ASSESSED');
@@ -5137,8 +5140,18 @@ async function academicScoreSheetContext(env, user, input, capability = 'canEnte
   const existing = findById(state.scoreSheets, input.SheetId || SheetId);
   if (input.SheetId && !existing) throw failure('The selected score sheet was not found.', 404);
   if (existing && existing.SheetId !== SheetId) throw failure('The selected score sheet belongs to another classroom, subject or period.', 403);
-  const allocation = assertAcademicScoreSheetAuthority(user, permissions, state, candidate, existing, options);
-  const roster = academicScoreRoster(state, candidate);
+  const cbtReviewer = options.allowUnassignedCbt === true && permissions.canReviewScores;
+  const allocations = cbtReviewer ? academicScoreTeacherAllocations(state, candidate, options) : [];
+  const allocation = cbtReviewer ? (allocations.find(row => lower(row.TeacherUsername) === candidate.TeacherUsername)
+    || allocations[0] || { TeacherUsername: existing?.TeacherUsername || candidate.TeacherUsername || actorUsername(user) })
+    : assertAcademicScoreSheetAuthority(user, permissions, state, candidate, existing, options);
+  // Submitted built-in CBT evidence is not lost because subject choices or
+  // downloaded arm lists changed after the sitting. Class membership is still
+  // verified in this branch/period, and existing marks are protected per cell.
+  const roster = options.allowUnassignedCbt === true ? state.studentMemberships.filter(row => statusActive(row)
+    && row.SessionId === candidate.SessionId && row.TermId === candidate.TermId
+    && row.ClassId === candidate.ClassId && (!candidate.ArmId || clean(row.ArmId) === candidate.ArmId))
+    : academicScoreRoster(state, candidate);
   if (!roster.length) throw failure('No students in this classroom are allocated to the selected subject.', 409, 'ACADEMIC_SCORE_ROSTER_EMPTY');
   let scheme;
   if (existing) {
@@ -5176,6 +5189,7 @@ function academicScoreSheetRecord(context, existing, user, timestamp, updates = 
     GradeBands: scheme.GradeBands,
     RosterCount: roster.length,
     Status: existing?.Status || 'Draft',
+    ...(!arm.ArmId ? { ClassOnlyScorebook: true } : {}),
     BranchId: scope.branchId, SchoolSection: scope.section,
     CreatedAt: clean(existing?.CreatedAt) || timestamp,
     CreatedBy: clean(existing?.CreatedBy) || actorName(user),
@@ -6731,6 +6745,32 @@ export async function verifyAcademicCbtScoreSignature(input = {}) {
   return calculatedKeyId;
 }
 
+// Explicitly authorised repair for one already-issued paper. Keep this rule
+// stable for receipt retries; never infer conversion from a title or mismatch.
+function academicCbtUploadConversion(env, input, component) {
+  if (env.FIREBASE_PROJECT_ID !== 'school-management-suite-27064'
+      || env.DYNAMAX_WORKSPACE_ID !== 'school'
+      || input.SourceType !== 'BuiltInCBT'
+      || input.BranchId !== 'main' || input.SchoolSection !== 'secondary'
+      || input.SessionId !== 'session__main__secondary__2026-2027'
+      || input.TermId !== 'session__main__secondary__2026-2027__term__secondary__first-term'
+      || input.ClassId !== 'class__main__secondary__grade-9'
+      || input.SubjectId !== 'subject__main__secondary__fre'
+      || input.AssessmentComponentId !== 'ca1'
+      || input.SourceTestId !== 'cbt-test-6df1ba297013ad79f1e8ea566d366fd6ca4986c725476fd09a4986d8562f2a30'
+      || Number(input.MaximumScore) !== 10 || component?.Id !== 'ca1'
+      || component.ScoreEntryMode === 'objective-theory'
+      || Number(component.MaximumScore) !== 100) return null;
+  return { RuleId: 'dca-grade9-french-ca1-2026-term1-10-to-100-v1',
+    SourceMaximumScore: 10, TargetMaximumScore: 100, Factor: 10 };
+}
+
+function academicCbtConvertedMark(value, conversion) {
+  if (!conversion) return Number(value);
+  // Match the validator's four-decimal source precision before converting.
+  return Math.round((Math.round(Number(value) * 10000) / 10000) * conversion.Factor * 10000) / 10000;
+}
+
 async function verifiedAcademicCbtReceipt(env, input, expected) {
   const unverified = () => failure(
     'The uploaded marks could not be verified in the online scorebook. Local answers and scores are retained; retry this same batch.',
@@ -6763,16 +6803,31 @@ async function verifiedAcademicCbtReceipt(env, input, expected) {
         .some(key => clean(sheet[key]) !== clean(receipt[key]))) throw unverified();
   const component = (sheet.AssessmentComponents || []).find(row => row.Id === receipt.AssessmentComponentId);
   if (!component) throw unverified();
+  const conversion = academicCbtUploadConversion(env, input, component);
+  if (conversion ? (!receipt.ScoreConversion
+      || Object.keys(conversion).some(key => receipt.ScoreConversion[key] !== conversion[key])
+      || Number(receipt.MaximumScore) !== conversion.TargetMaximumScore)
+    : receipt.ScoreConversion) throw unverified();
   const partId = component.ScoreEntryMode === 'objective-theory' ? 'objective' : '';
   const cellId = `${component.Id}${partId ? `:${partId}` : ''}`;
   const supplied = new Map(input.Scores.map(row => [lower(row.StudentRef), row]));
+  const placedSheetIds = [...new Set(scores.filter(score => !receipt.ArmId
+    && score?.OriginalClassOnlySheetId === receipt.SheetId && clean(score.ArmId)).map(score => score.SheetId))];
+  const placedSheets = placedSheetIds.length ? await getDocuments(env, ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSheets, placedSheetIds) : [];
   const seen = new Set();
   let preservedCorrections = 0;
   for (const score of scores) {
     const ref = lower(score?.StudentRef), row = supplied.get(ref);
-    if (!score || !row || seen.has(ref) || rejectedRefs.has(ref) || !ids.includes(score.ScoreId) || score.SheetId !== receipt.SheetId
+    const placedClassScore = !receipt.ArmId && score?.OriginalClassOnlySheetId === receipt.SheetId && clean(score.ArmId);
+    if (placedClassScore) {
+      const destination = placedSheets.find(value => value?.SheetId === score.SheetId);
+      if (!destination || ['BranchId', 'SchoolSection', 'SessionId', 'TermId', 'ClassId', 'ArmId', 'SubjectId']
+        .some(key => clean(destination[key]) !== clean(score[key]))) throw unverified();
+    }
+    if (!score || !row || seen.has(ref) || rejectedRefs.has(ref) || !ids.includes(score.ScoreId)
+        || (score.SheetId !== receipt.SheetId && !placedClassScore)
         || ['BranchId', 'SchoolSection', 'SessionId', 'TermId', 'ClassId', 'ArmId', 'SubjectId']
-          .some(key => clean(score[key]) !== clean(receipt[key]))) throw unverified();
+          .some(key => !(key === 'ArmId' && placedClassScore) && clean(score[key]) !== clean(receipt[key]))) throw unverified();
     seen.add(ref);
     const savedComponent = (score.ComponentScores || []).find(value => value.ComponentId === component.Id);
     const cell = partId ? savedComponent?.Parts?.find(value => value.PartId === partId) : savedComponent;
@@ -6782,17 +6837,55 @@ async function verifiedAcademicCbtReceipt(env, input, expected) {
     if (lower(cell.State) !== lower(row.State)
         || (cell.State === 'Numeric' && (cell.RawScore == null || row.RawScore == null
           || !Number.isFinite(Number(cell.RawScore)) || !Number.isFinite(Number(row.RawScore))
-          || Math.abs(Number(cell.RawScore) - Number(row.RawScore)) > 0.0001))) throw unverified();
+          || Math.abs(Number(cell.RawScore) - academicCbtConvertedMark(row.RawScore, conversion)) > 0.0001))) throw unverified();
     if (receipt.SourceType === 'BuiltInCBT') {
       const source = (score.CbtScoreSources || []).find(value => value.CellId === cellId);
       if (source ? (lower(source.SigningKeyId) !== lower(receipt.SigningKeyId)
         || clean(source.SourceTestId) !== clean(input.SourceTestId || input.ExamId)
         || clean(source.AttemptId) !== clean(row.AttemptId))
         : score.SourceId !== receipt.SyncId) throw unverified();
+      if (conversion && (!source?.ScoreConversion
+          || Object.keys(conversion).some(key => source.ScoreConversion[key] !== conversion[key])
+          || (cell.State === 'Numeric' && (source.OriginalRawScore == null
+            || Number(source.OriginalRawScore) !== Number(row.RawScore)))
+          || (cell.State === 'Absent' && source.OriginalRawScore !== null))) throw unverified();
     }
   }
   return { ...publicRecord(receipt), VerifiedOnline: true, VerifiedRows: count,
     VerificationVersion: 2, VerifiedAt: nowIso(), PreservedCorrectionCount: preservedCorrections };
+}
+
+export async function resolveAcademicCbtScorePlacement(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canImportScores', {
+    stateKeys: ['sessions', 'terms', 'classes', 'arms', 'subjects', 'studentMemberships', 'scoreSheets']
+  });
+  if (!context.permissions.canReviewScores) throw failure('An academic reviewer or ICT officer must upload these results.', 403);
+  const { state, session, term } = context;
+  const schoolClass = assertReference(findById(state.classes, input.ClassId), 'Choose an active class.');
+  assertReference(findById(state.subjects, input.SubjectId), 'Choose an active subject.');
+  const refs = uniqueIds(input.StudentRefs);
+  if (!refs.length || refs.length > 200) throw failure('Resolve between 1 and 200 students at a time.');
+  const placements = refs.map(StudentRef => {
+    const memberships = state.studentMemberships.filter(row => statusActive(row)
+      && lower(row.StudentRef) === lower(StudentRef) && row.ClassId === schoolClass.ClassId
+      && row.SessionId === session.SessionId && row.TermId === term.TermId);
+    const assigned = memberships.filter(row => clean(row.ArmId) && state.arms.some(arm =>
+      arm.ArmId === row.ArmId && arm.ClassId === schoolClass.ClassId && statusActive(arm)
+      && lower(arm.Name) !== 'unassigned'));
+    const candidates = assigned.length ? assigned : memberships.filter(row => !clean(row.ArmId)
+      || state.arms.some(arm => arm.ArmId === row.ArmId && arm.ClassId === schoolClass.ClassId && statusActive(arm)));
+    const arms = [...new Set(candidates.map(row => clean(row.ArmId)))];
+    if (!memberships.length) return { StudentRef, Ready: false,
+      Reason: 'No active membership in the test class and period; the score is retained locally.' };
+    let ArmId = arms.length === 1 ? arms[0] : '';
+    const target = state.scoreSheets.find(row => row.SessionId === session.SessionId && row.TermId === term.TermId
+      && row.ClassId === schoolClass.ClassId && row.ArmId === ArmId && row.SubjectId === input.SubjectId);
+    // A closed classroom sheet must not swallow new students' marks or be
+    // silently reopened. Retain them in the class-level Draft register instead.
+    if (target && lower(target.Status) !== 'draft') ArmId = '';
+    return { StudentRef, Ready: true, ArmId, ClassOnly: !ArmId };
+  });
+  return { ok: true, partialAcademicManagement: true, scoreUploadPlacements: placements };
 }
 
 export async function syncAcademicCbtScores(env, user = {}, input = {}) {
@@ -6877,7 +6970,7 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
   }
   const context = await academicScoreSheetContext(
     env, user, input, 'canImportScores', ACADEMIC_SCOREBOOK_STATE_KEYS,
-    { classWideSubjectAuthority: true }
+    { classWideSubjectAuthority: true, allowUnassignedCbt: input.SourceType === 'BuiltInCBT' }
   );
   const { permissions, scope, state, SheetId, existing, scheme } = context;
   if (!permissions.canReviewScores) {
@@ -6892,8 +6985,14 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
   const sourceType = oneOf(input.SourceType, ['BuiltInCBT', 'ExternalCBT'], '');
   if (!sourceType) throw failure('Choose BuiltInCBT or ExternalCBT as the score source.');
   const sourceMode = sourceType === 'BuiltInCBT' ? 'built-in-cbt' : 'external-cbt';
+  const targetComponent = scheme.Components.find(row => row.Id === input.AssessmentComponentId);
+  const conversion = academicCbtUploadConversion(env, input, targetComponent);
+  // Validate original /10 marks (including range and eligibility) first. Only
+  // valid rows are scaled for the destination; the signed input is never edited.
+  const validationScheme = conversion ? { ...scheme, Components: scheme.Components.map(row =>
+    row.Id === targetComponent.Id ? { ...row, MaximumScore: conversion.SourceMaximumScore } : row) } : scheme;
   const preview = validateAcademicCbtScoreBatch(input, {
-    scheme, roster: context.roster, sourceMode
+    scheme: validationScheme, roster: context.roster, sourceMode
   });
   if (!preview.BatchReady) {
     const error = failure(preview.BatchIssues[0] || 'The CBT score batch did not pass online validation.', 409, 'ACADEMIC_CBT_SCORE_BATCH_INVALID');
@@ -6911,6 +7010,13 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
     // The authorised review and verified signature approve this server's batch.
     // Do not pin the entire branch to its first server: each result retains its
     // signer/attempt identity and conflicting attempts are blocked per score cell.
+  }
+  if (conversion) {
+    preview.Component = targetComponent;
+    const originals = new Map(input.Scores.map(row => [lower(row.StudentRef), row]));
+    preview.Rows = preview.Rows.map(row => !row.Valid ? row : { ...row,
+      OriginalRawScore: row.State === 'Numeric' ? Number(originals.get(lower(row.StudentRef)).RawScore) : null,
+      RawScore: row.State === 'Numeric' ? academicCbtConvertedMark(row.RawScore, conversion) : null });
   }
   const batchKey = normalizedImportKey(input.BatchId);
   let SyncId = academicScoreChildId('score-sync', SheetId, batchKey);
@@ -6954,20 +7060,52 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
         Reason: row.Issues.join(' ') });
       return [];
     }
-    const { ScoreId, previous } = academicExistingStudentScore(state.studentScores, SheetId, row.StudentRef);
+    let ScoreId, previous;
     let cbtSources = null;
     try {
+      ({ ScoreId, previous } = academicExistingStudentScore(state.studentScores, SheetId, row.StudentRef));
       const correctedCellId = `${component.Id}${component.ScoreEntryMode === 'objective-theory' ? ':objective' : ''}`;
+      const others = state.studentScores.filter(score => score.SheetId !== SheetId
+        && lower(score.StudentRef) === lower(row.StudentRef) && score.ClassId === input.ClassId
+        && score.SessionId === input.SessionId && score.TermId === input.TermId && score.SubjectId === input.SubjectId);
+      const holding = others.filter(score => !clean(score.ArmId) && score.ClassOnlyPlacement === true);
+      if (!previous && clean(input.ArmId) && holding.length === 1) {
+        const originSheet = findById(state.scoreSheets, holding[0].SheetId);
+        const signature = components => JSON.stringify((components || []).map(c => [c.Id, c.MaximumScore, c.WeightPercentage,
+          c.ScoreEntryMode, c.ObjectiveMaximumScore, c.TheoryMaximumScore]));
+        if (originSheet && lower(originSheet.Status) === 'draft'
+            && signature(originSheet.AssessmentComponents) === signature(scheme.Components)
+            && JSON.stringify(originSheet.GradeBands) === JSON.stringify(scheme.GradeBands)) {
+          previous = holding[0]; ScoreId = previous.ScoreId;
+        }
+      }
+      const cellOf = score => {
+        const value = (score.ComponentScores || []).find(cell => cell.ComponentId === component.Id);
+        return component.ScoreEntryMode === 'objective-theory' ? value?.Parts?.find(cell => cell.PartId === 'objective') : value;
+      };
+      if (others.some(score => score !== previous && ACADEMIC_RECORDED_SCORE_STATES.has(cellOf(score)?.State))) {
+        throw failure('An existing score for this student, subject and test is preserved in another arm or the class register.', 409, 'ACADEMIC_CBT_SYNC_ATTEMPT_CONFLICT');
+      }
+      const savedCell = previous && cellOf(previous);
+      if (savedCell && ACADEMIC_RECORDED_SCORE_STATES.has(savedCell.State)
+          && (savedCell.State !== row.State || (row.State === 'Numeric' && Number(savedCell.RawScore) !== Number(row.RawScore)))) {
+        throw failure('An existing score for this student, subject and test is preserved. Use authorised score editing for a correction.', 409, 'ACADEMIC_CBT_SYNC_ATTEMPT_CONFLICT');
+      }
       if ((previous?.ManualScoreCorrections || []).some(cell => cell.CellId === correctedCellId)) {
         throw failure('An authorised manual correction is preserved; this upload cannot replace it.', 409, 'ACADEMIC_CBT_SYNC_ATTEMPT_CONFLICT');
       }
       if (sourceType === 'BuiltInCBT') cbtSources = academicCbtScoreSources(
         previous, component, row, input, signingKeyId, SyncId, state.scoreSyncBatches
       );
+      if (conversion) cbtSources = cbtSources.map(source => source.CellId !== component.Id ? source : {
+        ...source, OriginalRawScore: row.OriginalRawScore, ScoreConversion: conversion,
+        OriginalBatchDigest: expectedDigest
+      });
     } catch (error) {
       // A second centre must never replace the first accepted attempt. Reject
       // only this result; signature, scope, roster and CAS checks still apply.
-      if (!['ACADEMIC_CBT_SYNC_ATTEMPT_CONFLICT', 'ACADEMIC_CBT_SYNC_ATTEMPT_REQUIRED'].includes(error?.code)) throw error;
+      if (!['ACADEMIC_CBT_SYNC_ATTEMPT_CONFLICT', 'ACADEMIC_CBT_SYNC_ATTEMPT_REQUIRED',
+        'ACADEMIC_SCORE_IDENTITY_AMBIGUOUS', 'ACADEMIC_SCORE_IDENTITY_CONFLICT'].includes(error?.code)) throw error;
       rejectedScores.push({ StudentRef: row.StudentRef, Code: error.code,
         Reason: error.code === 'ACADEMIC_CBT_SYNC_ATTEMPT_REQUIRED' ? error.message : (previous?.ManualScoreCorrections || []).length
           ? 'An authorised score correction is preserved. This attempt was not posted.'
@@ -6999,6 +7137,9 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
       previous,
       record: {
         ...(previous || {}), RecordId: ScoreId, ScoreId, SheetId, StudentRef: row.StudentRef,
+        ClassOnlyPlacement: !clean(input.ArmId),
+        ...(previous && previous.SheetId !== SheetId ? { OriginalClassOnlySheetId: previous.SheetId,
+          ClassroomPlacedAt: timestamp, ClassroomPlacedBy: actorUsername(user) } : {}),
         SessionId: context.session.SessionId, TermId: context.term.TermId,
         ClassId: context.schoolClass.ClassId, ArmId: context.arm.ArmId, SubjectId: context.subject.SubjectId,
         AssessmentRevisionId: scheme.RevisionId,
@@ -7046,6 +7187,7 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
     SigningKeyId: signingKeyId,
     AssessmentComponentId: component.Id,
     MaximumScore: component.ScoreEntryMode === 'objective-theory' ? component.ObjectiveMaximumScore : component.MaximumScore,
+    ...(conversion ? { ScoreConversion: conversion } : {}),
     NumericCount: updatedScores.filter(({ record }) => preview.Rows.some(row => row.StudentRef === record.StudentRef && row.State === 'Numeric')).length,
     AbsentCount: updatedScores.filter(({ record }) => preview.Rows.some(row => row.StudentRef === record.StudentRef && row.State === 'Absent')).length,
     ImportedRows: updatedScores.length, RosterCount: preview.RosterCount,
@@ -7061,6 +7203,16 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
     documentId: record.ScoreId, data: withoutMetadata(record),
     ...(previous ? { updateTime: previous.__updateTime } : { exists: false })
   }));
+  const relocatedSheets = new Set(updatedScores.filter(item => item.previous && item.previous.SheetId !== SheetId)
+    .map(item => item.previous.SheetId));
+  for (const originId of relocatedSheets) {
+    const origin = findById(state.scoreSheets, originId);
+    const remaining = state.studentScores.filter(score => score.SheetId === originId
+      && !updatedScores.some(item => item.record.ScoreId === score.ScoreId));
+    writes.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSheets, documentId: originId,
+      data: { ...withoutMetadata(origin), ...academicScoreSheetCounts(remaining), UpdatedAt: timestamp },
+      updateTime: origin.__updateTime });
+  }
   writes.push(...academicScoreMembershipGuards(state, updatedScores.map((item) => item.record)));
   if (updatedScores.length) writes.push({
     collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSheets,
@@ -7074,6 +7226,7 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
   writes.push(auditWrite(user, 'SYNC_CBT_SCORES', 'scoreSyncBatch', syncRecord,
     `${sourceType}; ${updatedScores.length} students; ${syncRecord.AbsentCount} absent; ${rejectedScores.length} rejected`));
   const message = `${updatedScores.length} approved CBT score${updatedScores.length === 1 ? '' : 's'} synchronized into the Draft scorebook.`
+    + (conversion ? ' Grade 9 French CA1 marks converted from /10 to /100 during upload; original marks and answers are preserved.' : '')
     + (rejectedScores.length ? ` ${rejectedScores.length} student result(s) rejected separately; their saved marks and local answers are unchanged.` : '');
   const scoreSyncPreparation = await createAcademicCbtSyncPreparation(env, user, {
     BranchId: scope.branchId,
@@ -8477,6 +8630,7 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
   if (['previewacademicscoreimport', 'previewscoresheetimport'].includes(action)) return previewAcademicScoreImport(env, user, input);
   if (['importacademicscores', 'commitscoreimport'].includes(action)) return importAcademicScores(env, user, input);
   if (['rollbackacademicscoreimport', 'rollbackscoreimport'].includes(action)) return rollbackAcademicScoreImport(env, user, input);
+  if (action === 'resolveacademiccbtscoreplacement') return resolveAcademicCbtScorePlacement(env, user, input);
   if (['syncacademiccbtscores', 'synccbtresults'].includes(action)) return syncAcademicCbtScores(env, user, input);
   if (['synclocalcbtstudentpasswords', 'synccbtstudentpasswords'].includes(action)) return syncLocalCbtStudentPasswords(env, user, input);
   if (['calculateacademictermresults', 'calculatetermresults'].includes(action)) return calculateAcademicTermResults(env, user, input);

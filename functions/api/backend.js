@@ -912,7 +912,7 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
   'bulkAssignAcademicArmStudentSubjects', 'reviewAcademicSubjectChange',
   'moveAcademicStudentMembership', 'withdrawAcademicStudentMembership', 'reinstateAcademicStudentMembership',
   'archiveAcademicRecord', 'deleteAcademicRecord',
-  'syncAcademicCbtScores', 'syncLocalCbtStudentPasswords',
+  'syncAcademicCbtScores', 'syncLocalCbtStudentPasswords', 'resolveAcademicCbtScorePlacement',
   'rescheduleAcademicCbtTest', 'downloadAcademicCbtTestPackage', 'acknowledgeAcademicCbtImport',
   'previewAcademicCbtRoster', 'refreshAcademicCbtRoster',
   'previewAcademicCbtLateEntry', 'createAcademicCbtLateEntry',
@@ -985,7 +985,7 @@ const BRANCH_BOUND_DEVICE_ACTIONS = new Set([
   'getAcademicDiary', 'saveAcademicDiaryScheme', 'saveAcademicDiaryEntry', 'submitAcademicDiaryEntry',
   'returnAcademicDiaryEntry', 'submitAcademicDiary', 'approveAcademicDiary', 'returnAcademicDiary',
   'reactivateAcademicScoreEditing', 'reactivateAcademicClassScoreEditing', 'changeAcademicScoreSheetStatus', 'previewAcademicScoreImport',
-  'importAcademicScores', 'rollbackAcademicScoreImport', 'syncAcademicCbtScores',
+  'importAcademicScores', 'rollbackAcademicScoreImport', 'syncAcademicCbtScores', 'resolveAcademicCbtScorePlacement',
   'syncLocalCbtStudentPasswords', 'rescheduleAcademicCbtTest', 'downloadAcademicCbtTestPackage',
   'previewAcademicCbtRoster', 'refreshAcademicCbtRoster',
   'previewAcademicCbtLateEntry', 'createAcademicCbtLateEntry',
@@ -11717,6 +11717,7 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     case 'importAcademicScores':
     case 'rollbackAcademicScoreImport':
     case 'syncAcademicCbtScores':
+    case 'resolveAcademicCbtScorePlacement':
     case 'syncLocalCbtStudentPasswords':
     case 'rescheduleAcademicCbtTest':
     case 'previewAcademicCbtRoster':

@@ -48,6 +48,17 @@ test('conflicting transferred-arm scores are flagged instead of silently choosin
   assert.equal(report.Rows[0].Cells.find(cell => cell.State === 'Review duplicate').RawScore, null);
 });
 
+test('a class-only recorded mark takes precedence over an empty cell in an arm score sheet', () => {
+  const data=fixture();
+  data.scoreSheets.push({...data.scoreSheets[0],SheetId:'class-only',ArmId:'',ClassOnlyScorebook:true});
+  data.studentScores.push({...data.studentScores[0],SheetId:'class-only',ArmId:'',
+    ComponentScores:[{ComponentId:'ca1',State:'Missing',RawScore:null},
+      {ComponentId:'exam',State:'Numeric',RawScore:75,MaximumScore:100}]});
+  const row=buildAcademicClassScoreRegister(data,period).Rows[0];
+  assert.equal(row.Cells.filter(cell=>cell.State==='Numeric').length,2);
+  assert.equal(row.Cells.some(cell=>cell.State==='Review duplicate'),false);
+});
+
 test('split tests, exemptions and absence retain their meaning and do not become zero or total marks', () => {
   const data = fixture();
   data.scoreSheets[0].AssessmentComponents = [{ Id: 'ca2', Name: 'CA2', ScoreEntryMode: 'objective-theory', ScoreParts: [{ Id: 'objective', Name: 'A' }, { Id: 'theory', Name: 'B' }] }];

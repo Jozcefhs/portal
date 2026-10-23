@@ -60,7 +60,9 @@ export function buildAcademicClassScoreRegister(data = {}, input = {}) {
     return { StudentRef: member.StudentRef, StudentName: clean(people.get(ref) || member.StudentName || member.StudentRef), ArmName,
       RosterConflict: memberships.length > 1,
       Cells: Columns.map(column => {
-        const entries = values.get(JSON.stringify([ref, column.Id])) || [];
+        const allEntries = values.get(JSON.stringify([ref, column.Id])) || [];
+        const recorded = allEntries.filter(row => ['Numeric', 'Absent', 'Exempt'].includes(row.State));
+        const entries = recorded.length ? recorded : allEntries.slice(0, 1);
         if (entries.length > 1) return { ColumnId: column.Id, State: 'Review duplicate', RawScore: null, MaximumScore: null };
         if (entries.length) return { ColumnId: column.Id, ...entries[0] };
         const offered = memberships.some(row => (row.SubjectIds || []).includes(column.SubjectId));
