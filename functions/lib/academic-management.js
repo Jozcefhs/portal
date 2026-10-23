@@ -639,6 +639,13 @@ export function academicSubjectTeacherCandidates(rows = [], schoolSection = '') 
   });
 }
 
+// Only authenticated web routes may attach this marker. JSON request fields and
+// the desktop backend cannot opt into the web companion's ICT authority.
+const ACADEMIC_WEB_ACTOR = Symbol('academic-web-actor');
+export function academicWebActor(user = {}) {
+  return { ...user, [ACADEMIC_WEB_ACTOR]: true };
+}
+
 export function academicManagementCapabilities(user = {}) {
   const role = clean(user.role || user.Role);
   const allowed = new Set((user.allowedSections || user.TabAccess || []).map(clean).filter(Boolean));
@@ -647,6 +654,7 @@ export function academicManagementCapabilities(user = {}) {
   const enabled = school && (allowed.has('academics') || academicsDepartmentUser);
   return {
     enabled,
+    fullAcademicAccess: enabled && role === 'ICT' && user[ACADEMIC_WEB_ACTOR] === true,
     canManageStructure: enabled && STRUCTURE_MANAGERS.has(role),
     canManageAllocations: enabled && ALLOCATION_MANAGERS.has(role),
     canConfigureClassStudentSubjects: enabled && (ALLOCATION_MANAGERS.has(role) || role === 'Teacher' || academicsDepartmentUser),
@@ -3492,6 +3500,7 @@ export async function bulkAssignAcademicArmStudentSubjects(env, user = {}, input
       StudentRefs: assignments.map((item) => findById(state.studentMemberships, item.MembershipId || item.RecordId)?.StudentRef).filter(Boolean)
     });
     const impact = academicSubjectChangeImpact(existing, record, evidence, scope);
+    let directChange;
     if (impact.RequiresApproval) {
       const requestedReason = clean(assignment.Reason || input.Reason);
       if (requestedReason.length < 5 || requestedReason.length > 1000) throw failure(`Enter a specific reason (5–1000 characters) for ${existing.StudentRef}'s assessed subject change. No selections were changed.`, 400, 'ACADEMIC_SUBJECT_CHANGE_REASON_REQUIRED');
@@ -3502,15 +3511,21 @@ export async function bulkAssignAcademicArmStudentSubjects(env, user = {}, input
         RequestedAt: nowIso(), RequestedBy: actorName(user), RequestedByUsername: actorUsername(user),
         ClassId: existing.ClassId, ArmId: existing.ArmId
       };
-      const pending = { ...withoutMetadata(existing), PendingSubjectChange: request };
-      stampAcademicRecord(pending, user, existing);
-      writes.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships,
-        documentId: membershipId, data: pending, updateTime: revisionToken });
-      const movement = academicMovementForState(projected, { ...input, StudentRef: existing.StudentRef,
-        Reason: requestedReason, MovementType: 'Subject Change' }, scope, existing, record);
-      writes.push(movementWrite(user, { ...movement, Status: 'Pending approval', SubjectChangeRequest: request }));
-      pendingCount += 1;
-      continue;
+      if (permissions.fullAcademicAccess) {
+        writes.push(...academicSubjectChangeResultGuards(impact, evidence));
+        directChange = directAcademicChange(user, request);
+        record.LastSubjectChange = directChange;
+      } else {
+        const pending = { ...withoutMetadata(existing), PendingSubjectChange: request };
+        stampAcademicRecord(pending, user, existing);
+        writes.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships,
+          documentId: membershipId, data: pending, updateTime: revisionToken });
+        const movement = academicMovementForState(projected, { ...input, StudentRef: existing.StudentRef,
+          Reason: requestedReason, MovementType: 'Subject Change' }, scope, existing, record);
+        writes.push(movementWrite(user, { ...movement, Status: 'Pending approval', SubjectChangeRequest: request }));
+        pendingCount += 1;
+        continue;
+      }
     }
     stampAcademicRecord(record, user, existing);
     projected.studentMemberships = projected.studentMemberships.map((row) => recordId(row) === membershipId ? record : row);
@@ -3518,9 +3533,9 @@ export async function bulkAssignAcademicArmStudentSubjects(env, user = {}, input
       collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships,
       documentId: membershipId, data: withoutMetadata(record), updateTime: revisionToken
     });
-    writes.push(movementWrite(user, academicMovementForState(projected, {
-      ...input, StudentRef: existing.StudentRef, Reason: reason, MovementType: 'Subject Change'
-    }, scope, existing, record)));
+    writes.push(movementWrite(user, { ...academicMovementForState(projected, {
+      ...input, StudentRef: existing.StudentRef, Reason: directChange?.Reason || reason, MovementType: 'Subject Change'
+    }, scope, existing, record), ...(directChange ? { Status: 'Approved', SubjectChangeRequest: directChange } : {}) }));
   }
   const updated = assignments.length - skipped.length;
   if (updated) {
@@ -3548,6 +3563,20 @@ export async function bulkAssignAcademicArmStudentSubjects(env, user = {}, input
   return response;
 }
 
+function academicSubjectChangeResultGuards(impact, evidence) {
+  if (impact.Results.some((result) => lower(result.Status) !== 'calculated draft')) throw failure('Reopen or withdraw the existing result through the controlled result workflow and return it to Calculated Draft before applying this change.', 409, 'ACADEMIC_RESULT_IMMUTABLE');
+  return evidence.termResults.filter((row) => impact.Results.some((item) => item.ResultId === row.ResultId)).map((result) => {
+    if (!result.__updateTime) throw failure('Reload the existing results before applying this change.', 409, 'ACADEMIC_WRITE_CONFLICT');
+    return { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.termResults, documentId: result.ResultId,
+      updateTime: result.__updateTime, updateMask: ['SubjectChangeRecalculationRequired'], data: { SubjectChangeRecalculationRequired: true } };
+  });
+}
+
+function directAcademicChange(user, request) {
+  return { ...request, Status: 'Approved', ApprovalMode: 'Direct ICT web', ReviewReason: request.Reason,
+    ReviewedAt: nowIso(), ReviewedBy: actorName(user), ReviewedByUsername: actorUsername(user) };
+}
+
 export async function reviewAcademicSubjectChange(env, user = {}, input = {}) {
   requireWritableSubscription(user);
   const decision = oneOf(input.Decision, ['Approve', 'Reject', 'Cancel'], '');
@@ -3562,10 +3591,10 @@ export async function reviewAcademicSubjectChange(env, user = {}, input = {}) {
   const isTransfer = request.Kind === 'Classroom transfer';
   const changeLabel = isTransfer ? 'classroom transfer' : 'subject change';
   if (decision === 'Cancel') {
-    if (actorUsername(user) !== request.RequestedByUsername || !academicCanConfigureClassStudentSubjects(user, state.teacherAllocations, existing, permissions)) {
+    if (!permissions.fullAcademicAccess && (actorUsername(user) !== request.RequestedByUsername || !academicCanConfigureClassStudentSubjects(user, state.teacherAllocations, existing, permissions))) {
       throw failure('Only the requester with current classroom access may cancel this request.', 403);
     }
-  } else if (actorUsername(user) === request.RequestedByUsername) {
+  } else if (!permissions.fullAcademicAccess && actorUsername(user) === request.RequestedByUsername) {
     throw failure('Another authorised academic administrator must review this request; you cannot approve or reject your own request.', 403, 'ACADEMIC_SUBJECT_CHANGE_SELF_APPROVAL');
   }
   const note = clean(input.Reason);
@@ -3592,15 +3621,11 @@ export async function reviewAcademicSubjectChange(env, user = {}, input = {}) {
     if (academicSubjectSelectionChanged(record, request.After)) throw failure('The classroom curriculum has changed. Reject this request and submit the revised choices.', 409);
     const evidence = await loadAcademicSubjectChangeEvidence(env, scope, existing);
     impact = academicSubjectChangeImpact(existing, record, evidence, scope);
-    if (impact.Results.some((result) => lower(result.Status) !== 'calculated draft')) throw failure('Reopen or withdraw the existing result through the controlled result workflow and return it to Calculated Draft before approving this subject change.', 409, 'ACADEMIC_RESULT_IMMUTABLE');
-    for (const result of evidence.termResults.filter((row) => impact.Results.some((item) => item.ResultId === row.ResultId))) {
-      if (!result.__updateTime) throw failure('Reload the existing results before approving this change.', 409, 'ACADEMIC_WRITE_CONFLICT');
-      resultGuards.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.termResults, documentId: result.ResultId,
-        updateTime: result.__updateTime, updateMask: ['SubjectChangeRecalculationRequired'], data: { SubjectChangeRecalculationRequired: true } });
-    }
+    resultGuards.push(...academicSubjectChangeResultGuards(impact, evidence));
   }
   delete record.PendingSubjectChange;
   const resolved = { ...request, Status: decision === 'Approve' ? 'Approved' : decision === 'Reject' ? 'Rejected' : 'Cancelled',
+    ...(permissions.fullAcademicAccess ? { ApprovalMode: 'Direct ICT web' } : {}),
     ReviewReason: note, ReviewedAt: nowIso(), ReviewedBy: actorName(user), ReviewedByUsername: actorUsername(user), Impact: impact };
   record.LastSubjectChange = resolved;
   stampAcademicRecord(record, user, existing);
@@ -3625,7 +3650,7 @@ export async function reviewAcademicSubjectChange(env, user = {}, input = {}) {
 
 export async function manageAcademicStudentMembership(env, user = {}, input = {}) {
   requireWritableSubscription(user);
-  requireCapability(user, 'canManageAllocations');
+  const permissions = requireCapability(user, 'canManageAllocations');
   const scope = await academicScope(env, user, input, { requireSection: true });
   const [state, people] = await Promise.all([
     loadScopedAcademicState(env, scope, ACADEMIC_STUDENT_STATE_KEYS),
@@ -3680,12 +3705,14 @@ export async function manageAcademicStudentMembership(env, user = {}, input = {}
       delete record.WithdrawalReason;
     }
   }
+  const resultGuards = [];
+  let directChange;
   const classroomChanged = record.ClassId !== existing.ClassId || record.ArmId !== existing.ArmId;
   if (academicSubjectSelectionChanged(existing, record) || classroomChanged) {
     const evidence = await loadAcademicSubjectChangeEvidence(env, scope, existing);
     const impact = academicSubjectChangeImpact(existing, record, evidence, scope);
     if (impact.RequiresApproval) {
-      if (!classroomChanged) throw failure('This movement changes assessed subjects. Request approval under Student subjects before changing this membership; no subjects or scores were changed.', 409, 'ACADEMIC_SUBJECT_CHANGE_APPROVAL_REQUIRED');
+      if (!classroomChanged && !permissions.fullAcademicAccess) throw failure('This movement changes assessed subjects. Request approval under Student subjects before changing this membership; no subjects or scores were changed.', 409, 'ACADEMIC_SUBJECT_CHANGE_APPROVAL_REQUIRED');
       if (reason.length < 5 || reason.length > 1000) throw failure('Enter a transfer reason of 5–1000 characters.');
       const movement = academicMovementForState(state, { ...input, Reason: reason, MovementType: movementType(existing, record, operation) }, scope, existing, record);
       const request = { RequestId: crypto.randomUUID(), Kind: 'Classroom transfer', Status: 'Pending',
@@ -3694,18 +3721,24 @@ export async function manageAcademicStudentMembership(env, user = {}, input = {}
         ClassId: existing.ClassId, ArmId: existing.ArmId, ResetSubjectSelections: resetSubjects,
         EffectiveDate: movement.EffectiveDate, MovementType: movement.MovementType,
         Reason: reason, Impact: impact, RequestedAt: nowIso(), RequestedBy: actorName(user), RequestedByUsername: actorUsername(user) };
-      const pending = { ...withoutMetadata(existing), PendingSubjectChange: request };
-      stampAcademicRecord(pending, user, existing);
-      await commitAcademicBatch(env, [
-        { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships, documentId: existing.MembershipId, data: pending, updateTime: expected },
-        movementWrite(user, { ...movement, Status: 'Pending approval', SubjectChangeRequest: request }),
-        auditWrite(user, 'CLASSROOM TRANSFER REQUESTED', 'studentmembership', pending, reason,
-          `${actorName(user)} requested a classroom transfer for ${existing.StudentRef}. Existing assessment history requires another authorised administrator's approval. Current placement, subjects and scores remain unchanged.`)
-      ], 'The student or their scores changed while requesting this transfer. Reload and try again.');
-      const response = await bootstrapAcademicManagement(env, user, { ...input, BranchId: scope.branchId, SchoolSection: scope.section, View: 'students' });
-      response.bulkResult = { PendingApproval: 1 };
-      response.message = `${existing.StudentRef}: transfer request saved, awaiting another authorised administrator's approval under Student subjects. Current classroom, subjects and all existing scores are unchanged.`;
-      return response;
+      if (permissions.fullAcademicAccess) {
+        resultGuards.push(...academicSubjectChangeResultGuards(impact, evidence));
+        directChange = directAcademicChange(user, request);
+        record.LastSubjectChange = directChange;
+      } else {
+        const pending = { ...withoutMetadata(existing), PendingSubjectChange: request };
+        stampAcademicRecord(pending, user, existing);
+        await commitAcademicBatch(env, [
+          { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships, documentId: existing.MembershipId, data: pending, updateTime: expected },
+          movementWrite(user, { ...movement, Status: 'Pending approval', SubjectChangeRequest: request }),
+          auditWrite(user, 'CLASSROOM TRANSFER REQUESTED', 'studentmembership', pending, reason,
+            `${actorName(user)} requested a classroom transfer for ${existing.StudentRef}. Existing assessment history requires another authorised administrator's approval. Current placement, subjects and scores remain unchanged.`)
+        ], 'The student or their scores changed while requesting this transfer. Reload and try again.');
+        const response = await bootstrapAcademicManagement(env, user, { ...input, BranchId: scope.branchId, SchoolSection: scope.section, View: 'students' });
+        response.bulkResult = { PendingApproval: 1 };
+        response.message = `${existing.StudentRef}: transfer request saved, awaiting another authorised administrator's approval under Student subjects. Current classroom, subjects and all existing scores are unchanged.`;
+        return response;
+      }
     }
   }
   stampAcademicRecord(record, user, existing);
@@ -3718,11 +3751,12 @@ export async function manageAcademicStudentMembership(env, user = {}, input = {}
     studentMemberships: [...state.studentMemberships.filter((row) => recordId(row) !== recordId(existing)), record]
   };
   const writes = [
+    ...resultGuards,
     {
       collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships,
       documentId: existing.MembershipId, data: withoutMetadata(record), updateTime: expected
     },
-    movementWrite(user, movement),
+    movementWrite(user, { ...movement, ...(directChange ? { Status: 'Approved', SubjectChangeRequest: directChange } : {}) }),
     auditWrite(user, movement.MovementType, 'studentmembership', record, reason)
   ];
   const compatibility = studentCompatibilityWrite(people, projected, record);

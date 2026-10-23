@@ -56,10 +56,10 @@ export function diaryAccess(context, user, input) {
     .forEach(row => offered.add(row.SubjectId));
   const subjects = (state.subjects || []).filter(row => active(row) && offered.has(row.SubjectId))
     .sort((a, b) => clean(a.Name).localeCompare(clean(b.Name)));
-  const ownSubjects = [...new Set(teachers.filter(row => lower(row.AllocationRole) === 'subject teacher'
+  const ownSubjects = permissions.fullAcademicAccess === true ? subjects.map(row => row.SubjectId) : [...new Set(teachers.filter(row => lower(row.AllocationRole) === 'subject teacher'
     && lower(row.TeacherUsername) === username(user)).map(row => row.SubjectId))];
   return { classrooms, classroom, subjects, ownSubjects, reviewer,
-    compiler: teachers.some(row => row.ArmId === input.ArmId && lower(row.AllocationRole) === 'form teacher'
+    compiler: permissions.fullAcademicAccess === true || teachers.some(row => row.ArmId === input.ArmId && lower(row.AllocationRole) === 'form teacher'
       && lower(row.TeacherUsername) === username(user)) };
 }
 

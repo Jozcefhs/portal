@@ -4,6 +4,7 @@ import { handleDiary, diaryAccess, normalizeSchemeWeeks, diaryId, legacyDiaryId,
 import { diaryPrintHtml } from '../js/academic-diary.js';
 import { submissionHash, SUBMISSION_COLLECTIONS } from '../functions/lib/academic-submissions.js';
 import { readFile } from 'node:fs/promises';
+import { academicManagementCapabilities, academicWebActor } from '../functions/lib/academic-management.js';
 
 function fixture() {
   const scope = { branchId: 'main', section: 'secondary' };
@@ -34,7 +35,7 @@ function fixture() {
   };
   const context = reviewer => ({ scope, state, session: { SessionId: 'session', Name: '2026/2027' },
     term: { TermId: 'term', StartDate: '2026-09-01', EndDate: '2026-12-31', Name: 'First term' }, permissions: { canReviewScores: reviewer } });
-  const request = (user, action = 'getacademicdiary', input = {}) => handleDiary(context(user === 'manager'), {}, { username: user },
+  const request = (user, action = 'getacademicdiary', input = {}, permissions) => handleDiary({ ...context(user === 'manager'), ...(permissions ? { permissions } : {}) }, {}, { username: user },
     { ...period, Week: 1, WeekEnding: '2026-10-23', ...input }, action.toLowerCase(), io);
   return { state, context, request, period, docs, commits, reads, scope };
 }
@@ -49,6 +50,35 @@ test('class access uses assigned teachers; reviewers see classes but cannot impe
   await assert.rejects(f.request('math.teacher', 'saveAcademicDiaryEntry', { SubjectId: 'english' }), /allocated subject teacher/);
   f.state.teacherAllocations[0].Status = 'Inactive';
   await assert.rejects(f.request('math.teacher'), /assigned to you/);
+});
+
+test('only web ICT can perform the complete diary workflow without teacher assignments', async () => {
+  const f = fixture();
+  const ict = { username: 'ict', role: 'ICT', edition: 'school', allowedSections: ['academics'] };
+  const desktop = academicManagementCapabilities(ict);
+  const web = academicManagementCapabilities(academicWebActor(ict));
+  const request = (action, input = {}) => f.request('ict', action, input, web);
+  await assert.rejects(f.request('ict', 'saveAcademicDiaryEntry', { SubjectId: 'math', WorkCompleted: 'Fractions' }, desktop), /allocated subject teacher/);
+  const loaded = await request('getAcademicDiary');
+  assert.deepEqual(loaded.diary.OwnSubjects, ['english', 'math']);
+  assert.equal(loaded.diary.CanCompile, true);
+  assert.equal(loaded.diary.CanReview, true);
+  await request('saveAcademicDiaryScheme', { SubjectId: 'math', Weeks: [{ Week: 1, Theme: 'Fractions', Content: 'Equivalent fractions' }] });
+  await request('submitAcademicDiaryEntry', { SubjectId: 'math', WorkCompleted: 'Fractions' });
+  await request('submitAcademicDiaryEntry', { SubjectId: 'english', WorkCompleted: 'Grammar', Version: 1 });
+  await assert.rejects(f.request('ict', 'submitAcademicDiary', { Version: 2 }, desktop), /class teacher/);
+  await request('submitAcademicDiary', { Version: 2 });
+  const approved = await request('approveAcademicDiary', { Version: 3 });
+  assert.equal(approved.diary.Weekly.Status, 'Approved');
+  assert.equal(approved.diary.Weekly.Compiled.By, 'ict');
+  assert.equal(approved.diary.Weekly.Reviewed.By, 'ict');
+  assert.equal(approved.diary.Weekly.Entries[0].By, 'ict');
+  await assert.rejects(request('saveAcademicDiaryEntry', { SubjectId: 'math', WorkCompleted: 'Change', Version: 4 }), /locked/);
+  await request('returnAcademicDiary', { Version: 4, Reason: 'Correct the weekly work' });
+  await request('saveAcademicDiaryEntry', { SubjectId: 'math', WorkCompleted: 'Corrected fractions', Version: 5 });
+  await assert.rejects(request('saveAcademicDiaryEntry', { SubjectId: 'math', WorkCompleted: 'Stale', Version: 5 }), /changed/);
+  await assert.rejects(request('getAcademicDiary', { ArmId: 'another' }), /assigned to you/);
+  assert.equal(f.commits.at(-1)[1].data.Previous.Entries.find(row => row.SubjectId === 'math').WorkCompleted, 'Fractions');
 });
 
 test('diary includes allocated subjects without legacy offerings and preserves teacher ownership', async () => {

@@ -15,7 +15,7 @@ test('ICT is a distinct school role with the three requested modules, not a fina
   for (const key of ['accounts','staffUsers','dataBackup','vendorSettlements']) assert.ok(!modules.includes(key), key);
   const user = { role:'ICT',edition:'school',allowedSections:modules };
   for (const [key,value] of Object.entries(academicManagementCapabilities(user))) {
-    assert.equal(value, !['teacherView','financeView'].includes(key), key);
+    assert.equal(value, !['teacherView','financeView','fullAcademicAccess'].includes(key), key);
   }
   assert.equal(canManageAttendanceGroups(user),true);
   assert.equal(canManageStaffAttendance(user),true);

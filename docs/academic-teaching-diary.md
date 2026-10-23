@@ -14,6 +14,13 @@ In Academic Management, select the school section, session and term, then open *
 4. The assigned Form Teacher compiles and submits when all offered subjects are submitted. Assistant teachers do not automatically gain compiler authority.
 5. Academic reviewers approve, or return with a reason. Submitted entries lock; returning preserves previous versions in immutable history. Concurrent edits require reload instead of silently overwriting another teacher.
 
+Web companion exception: ICT users with Academic Management access may prepare
+schemes, enter and submit subject work, compile, approve and return diaries in
+their permitted school/branch/section without being allocated as the subject or
+class teacher. Actions record the ICT username, not an impersonated teacher.
+Saved versions, submitted/approved locks, completeness requirements and deadline
+settings still apply. Desktop permissions and other staff roles are unchanged.
+
 ## Inspector copies
 
 - **Preview / print weekly diary** includes every subject, planned/completed work, notes, compiler, reviewer and approval status.

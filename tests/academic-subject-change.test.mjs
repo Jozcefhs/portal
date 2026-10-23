@@ -12,6 +12,7 @@ const period = { SessionId: 'session', TermId: 'term', ClassId: 'class', ArmId: 
 const scope = { BranchId: 'main', SchoolSection: 'secondary', Status: 'Active' };
 const teacher = { edition: 'school', role: 'Teacher', username: 'teacher', allowedSections: ['academics'] };
 const admin = { ...teacher, role: 'Principal', username: 'principal' };
+const ict = { ...teacher, role: 'ICT', username: 'ict' };
 const membership = {
   ...period, ...scope, RecordId: 'member', MembershipId: 'member', StudentRef: 'S1',
   SubjectIds: ['english', 'catering', 'music'], CoreSubjectIds: ['english'], TradeSubjectIds: ['catering'], OptionalSubjectIds: ['music'],
@@ -97,7 +98,7 @@ function transferHarness(options) {
   h.state.arms.push({ ...scope, RecordId: 'destination', ArmId: 'destination', ClassId: 'class', Name: 'Genius', DepartmentId: 'arts' });
   h.state.departments.push({ ...scope, DepartmentId: 'arts', SchoolStage: 'senior-secondary', CoreSubjectIds: ['history'] });
   h.state.subjects.push({ ...scope, SubjectId: 'history', Name: 'History' });
-  h.transfer = (input = {}) => h.context.manageAcademicStudentMembership({}, admin, {
+  h.transfer = (input = {}, user = admin) => h.context.manageAcademicStudentMembership({}, user, {
     ...scope, RecordId: 'member', RevisionToken: h.member().__updateTime,
     ClassId: 'class', ArmId: 'destination', ResetSubjectSelections: true, Reason: 'Move to the Arts classroom', ...input
   });
@@ -129,6 +130,97 @@ test('assessed transfer waits for independent approval then moves without rewrit
   assert.deepEqual(h.member().SubjectIds, ['history']);
   assert.deepEqual(h.state.studentScores, [score]);
   assert.ok(h.writes.every(row => row.collectionPath !== 'academicStudentScores'));
+});
+
+test('web ICT transfers an assessed student directly with an audited decision and no score writes', async () => {
+  const h = transferHarness();
+  await h.transfer({}, h.context.academicWebActor(ict));
+  assert.equal(h.member().ArmId, 'destination');
+  assert.equal(h.member().PendingSubjectChange, undefined);
+  assert.equal(h.member().LastSubjectChange.ApprovalMode, 'Direct ICT web');
+  assert.equal(h.member().LastSubjectChange.ReviewedByUsername, 'ict');
+  assert.deepEqual(h.state.studentScores, [score]);
+  assert.equal(h.state.studentMovements.length, 1);
+  assert.equal(h.state.studentMovements[0].RecordedByRole, 'ICT');
+  assert.equal(h.state.studentMovements[0].SubjectChangeRequest.Status, 'Approved');
+  assert.ok(h.writes.every(row => row.collectionPath !== management.ACADEMIC_MANAGEMENT_COLLECTIONS.studentScores));
+  assert.ok(h.writes.every(row => !row.data.PendingSubjectChange));
+});
+
+test('desktop ICT and forged client flags still need independent approval', async () => {
+  const h = transferHarness();
+  await h.transfer({ fullAcademicAccess: true, WebCompanion: true }, { ...ict, fullAcademicAccess: true });
+  assert.equal(h.member().ArmId, 'arm');
+  assert.equal(h.member().PendingSubjectChange.Status, 'Pending');
+  await assert.rejects(h.review('Approve', ict), { code: 'ACADEMIC_SUBJECT_CHANGE_SELF_APPROVAL' });
+  await h.review('Approve', h.context.academicWebActor(ict));
+  assert.equal(h.member().ArmId, 'destination');
+  assert.equal(h.member().LastSubjectChange.ApprovalMode, 'Direct ICT web');
+  assert.deepEqual(h.state.studentScores, [score]);
+});
+
+test('web ICT applies assessed subject choices directly and can cancel existing requests', async () => {
+  const h = harness();
+  const response = await h.request({}, h.context.academicWebActor(ict));
+  assert.equal(response.bulkResult.PendingApproval, 0);
+  assert.equal(response.bulkResult.Updated, 1);
+  assert.deepEqual(h.member().TradeSubjectIds, ['printing']);
+  assert.equal(h.member().LastSubjectChange.ApprovalMode, 'Direct ICT web');
+  assert.deepEqual(h.state.studentScores, [score]);
+  const pending = harness();
+  await pending.request();
+  await pending.review('Cancel', pending.context.academicWebActor(ict));
+  assert.equal(pending.member().PendingSubjectChange, undefined);
+  assert.equal(pending.member().LastSubjectChange.Status, 'Cancelled');
+  assert.deepEqual(pending.member().SubjectIds, membership.SubjectIds);
+});
+
+test('direct ICT changes retain result locks and only flag draft results for recalculation', async () => {
+  for (const operation of ['transfer', 'request']) {
+    const result = { ...period, ...scope, ResultId: 'result', StudentRef: 'S1', Status: 'Published', Total: 72, __updateTime: 'result-rev' };
+    const h = transferHarness({ termResults: [result] });
+    const actor = h.context.academicWebActor(ict);
+    await assert.rejects(h[operation]({}, actor), { code: 'ACADEMIC_RESULT_IMMUTABLE' });
+    assert.equal(h.writes.length, 0);
+    h.state.termResults[0].Status = 'Calculated Draft';
+    await h[operation]({}, actor);
+    assert.equal(h.state.termResults[0].SubjectChangeRecalculationRequired, true);
+    assert.equal(h.state.termResults[0].Total, 72);
+    assert.deepEqual(h.state.studentScores, [score]);
+  }
+});
+
+test('direct ICT transfers still validate capacity, scope, revision, period and subscription', async () => {
+  const h = transferHarness();
+  const actor = h.context.academicWebActor(ict);
+  await assert.rejects(h.transfer({ RevisionToken: 'stale' }, actor), { code: 'ACADEMIC_WRITE_CONFLICT' });
+  await assert.rejects(h.transfer({ BranchId: 'another' }, actor), { status: 403 });
+  await assert.rejects(h.transfer({ Reason: 'no' }, actor), /5–1000/);
+  await assert.rejects(h.transfer({}, { ...actor, subscriptionReadOnly: true }), { status: 403 });
+  h.state.arms[1].Capacity = 1;
+  h.state.studentMemberships.push({ ...membership, MembershipId: 'second', RecordId: 'second', StudentRef: 'S2', ArmId: 'destination' });
+  await assert.rejects(h.transfer({}, actor), { code: 'ACADEMIC_ARM_CAPACITY_REACHED' });
+  h.state.studentMemberships.pop();
+  h.state.terms[0].Status = 'Closed';
+  await assert.rejects(h.transfer({}, actor));
+  assert.equal(h.writes.length, 0);
+  assert.deepEqual(h.state.studentScores, [score]);
+});
+
+test('concurrent membership or result changes abort the entire direct ICT transfer', async () => {
+  for (const changing of ['membership', 'result']) {
+    const h = transferHarness({ termResults: [{ ...period, ...scope, ResultId: 'result', StudentRef: 'S1', Status: 'Calculated Draft', __updateTime: 'result-rev' }] });
+    const commit = h.context.batchCommitDocuments;
+    h.context.batchCommitDocuments = async (env, writes) => {
+      (changing === 'membership' ? h.member() : h.state.termResults[0]).__updateTime = 'concurrent-edit';
+      return commit(env, writes);
+    };
+    await assert.rejects(h.transfer({}, h.context.academicWebActor(ict)), { code: 'ACADEMIC_WRITE_CONFLICT' });
+    assert.equal(h.writes.length, 0);
+    assert.equal(h.member().ArmId, 'arm');
+    assert.deepEqual(h.state.studentScores, [score]);
+    assert.equal(h.state.termResults[0].SubjectChangeRecalculationRequired, undefined);
+  }
 });
 
 test('mixed destination can await subject choices; reset in the current classroom is refused', async () => {
@@ -361,6 +453,10 @@ test('web review queue escapes stored text, respects reviewer roles and stays in
   context.currentUser = teacher;
   assert.match(render(), /value="Cancel"/);
   assert.doesNotMatch(render(), /value="Approve"/);
+  data.permissions.fullAcademicAccess = true;
+  assert.match(render(), /value="Approve"/);
+  assert.match(render(), /including their own requests/);
+  data.permissions.fullAcademicAccess = false;
   context.currentUser = { ...teacher, username: 'another' };
   data.permissions.canApproveSubjectChanges = false;
   assert.doesNotMatch(render(), /data-academic-workflow/);

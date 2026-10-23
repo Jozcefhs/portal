@@ -1,6 +1,6 @@
 import { requiredDeploymentIdentity } from '../lib/deployment-identity.js';
 import { requireFirestoreEnv } from '../lib/firestore.js';
-import { handleAcademicManagementAction } from '../lib/academic-management.js';
+import { academicWebActor, handleAcademicManagementAction } from '../lib/academic-management.js';
 import { finishRequestMetric, startRequestMetric } from '../lib/request-metrics.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
@@ -19,7 +19,7 @@ export async function onRequestPost(context) {
       throw error;
     }
     requireFirestoreEnv(env);
-    const user = await requireStaffSession(env, request);
+    const user = academicWebActor(await requireStaffSession(env, request));
     const body = await readJsonBody(request, { maxBytes: 768 * 1024 });
     action = clean(body.action || body.Action || 'bootstrap');
     const data = await handleAcademicManagementAction(env, user, body);
