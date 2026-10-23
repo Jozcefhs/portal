@@ -1,7 +1,7 @@
 {
-  "version": "3.1.42",
+  "version": "3.1.43",
   "channel": "stable",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.42.exe",
-  "sha256": "11b23a6e39ad5539b5f60382a7b73b59088a8715508a8600aac48030d19f6545",
-  "notes": "Dynamax Desktop v3.1.42 repairs slow or blank sign-in rendering, restores the bundled logo and fully visible password-recovery controls without scrolling, and loads Academic Management records independently of optional surcharge labels. Academic refresh uses the selected session and term IDs and retains existing records on failures. Back up and close the app before updating, and update CBT servers only between examinations. Do not uninstall or clear saved data. This update does not modify existing answers, scores or financial records. No new tablet APK is required."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.43.exe",
+  "sha256": "c323ef78a7ab0569d982562d1cedeae31384e9906edb6d27b659043ef9dec371",
+  "notes": "Dynamax Desktop v3.1.43 adds closable student warning dialogs, identifies new and updated online CBT schedules, and colours tests only when their scores are verified saved online. Academic managers can reactivate score editing for a whole class; Any approved source applies to existing scorebooks and Objective/Theory fields without changing saved marks. The web class register pins student names and fixes the subject dropdown. Back up and close the app before updating both CBT servers between examinations. Do not uninstall or clear saved data. Existing answers, scores and financial records are preserved. No new tablet APK is required."
 }
