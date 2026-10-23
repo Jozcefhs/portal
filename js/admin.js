@@ -15443,7 +15443,9 @@ function academicScorebookWorkspace(data, rows) {
     { label: 'Component', value: (row) => (scheme.Components || []).find((component) => component.Id === row.AssessmentComponentId)?.Name || row.AssessmentComponentId },
     { label: 'Scores', value: (row) => `${row.ImportedRows || 0} (${row.AbsentCount || 0} absent)` },
     { label: 'Rejected', value: (row) => row.RejectedCount || 0 },
-    { label: 'Status', value: academicCbtUploadStatus },
+    { label: 'Status', value: academicCbtUploadStatus, render: (row) => `<span>${escapeHtml(academicCbtUploadStatus(row))}</span>${Number(row.RejectedCount) > 0 || (Array.isArray(row.RejectedScores) && row.RejectedScores.length)
+      ? data.permissions?.canReviewScores ? `<div style="margin-top:6px"><button type="button" data-academic-cbt-rejections="${escapeHtml(row.SyncId || row.RecordId)}">Review rejected students</button></div>`
+        : '<div>Authorised reviewer required</div>' : ''}` },
     { label: 'Synchronized', value: (row) => row.SynchronizedAt || '-' }
   ]);
   const schemePanel = `<section class="academic-management-editor academic-management-editor-wide academic-assessment-scheme" data-academic-assessment-scheme>
@@ -17497,8 +17499,53 @@ async function updateAcademicDeadlineButtons() {
   } catch { /* The server still enforces deadlines if the advisory label cannot load. */ }
 }
 
+function bindAcademicCbtRejectionReviews(root) {
+  root.querySelectorAll('[data-academic-cbt-rejections]').forEach(button => button.addEventListener('click', async () => {
+    const data = academicManagementData || {};
+    const batch = academicCurrentRows(data).scoreSyncBatches.find(row => clean(row.SyncId || row.RecordId) === button.dataset.academicCbtRejections);
+    if (!data.permissions?.canReviewScores || !batch) return;
+    const branch = selectedBranchId, user = currentUser;
+    const section = academicManagementFilters.section, sessionId = academicManagementFilters.sessionId, termId = academicManagementFilters.termId;
+    const isCurrent = () => currentUser === user && selectedBranchId === branch && activeSection === 'academics'
+      && academicManagementView === 'scorebook' && academicManagementFilters.section === section
+      && academicManagementFilters.sessionId === sessionId && academicManagementFilters.termId === termId;
+    button.disabled = true;
+    try {
+      const { openCbtRejectionReview } = await import('./academic-cbt-rejection-review.js');
+      if (!isCurrent()) return;
+      openCbtRejectionReview({ batch, data, isCurrent, trigger: button,
+        loadSnapshot: async signal => {
+          if (!isCurrent()) throw new Error('The workspace changed. Reopen the review in the intended branch and period.');
+          const result = await academicManagementRequest('getAcademicScorebookContext', {
+            SchoolSection: section, SessionId: batch.SessionId, TermId: batch.TermId,
+            ClassId: batch.ClassId, ArmId: batch.ArmId, SubjectId: batch.SubjectId, SheetId: batch.SheetId
+          }, { signal });
+          return result.scorebookSnapshot;
+        },
+        openScorebook: () => {
+          if (!isCurrent()) return;
+          const rows = academicCurrentRows(academicManagementData);
+          const arm = rows.arms.find(row => row.ArmId === batch.ArmId && row.ClassId === batch.ClassId && academicIsActive(row));
+          const allocation = rows.teacherAllocations.find(row => row.ClassId === batch.ClassId && (!row.ArmId || row.ArmId === batch.ArmId)
+            && row.SubjectId === batch.SubjectId && row.AllocationRole === 'Subject Teacher' && academicIsActive(row));
+          if (!arm || !allocation) {
+            setStatus(document.getElementById('academicManagementStatus'), 'This scorebook has no current active classroom/subject-teacher allocation. Ask Academic Management to review its setup; no scores were changed.', 'bad');
+            return;
+          }
+          academicScorebookDraft = { classId: batch.ClassId, armId: batch.ArmId, subjectId: batch.SubjectId,
+            teacherUsername: clean(allocation.TeacherUsername).toLowerCase(), contextKey: '', importPreview: null, importRows: [], importFileName: '', importFormat: 'CSV' };
+          academicManagementTaskViews.scorebook = 'entry';
+          renderAcademicManagement(academicManagementData || {}, 'Review the saved mark first. Corrections still require the existing authorised editing and approval workflow.');
+        }
+      });
+    } catch (error) { if (isCurrent()) setStatus(document.getElementById('academicManagementStatus'), error.message || String(error), 'bad'); }
+    finally { if (button.isConnected) button.disabled = false; }
+  }));
+}
+
 function bindAcademicManagement() {
   bindAcademicTimetableGenerator(panelEl);
+  bindAcademicCbtRejectionReviews(panelEl);
   const deadlineButton = document.createElement('button');
   deadlineButton.type = 'button'; deadlineButton.textContent = 'Submission deadlines & surcharges';
   panelEl.querySelector('.academic-homework-actions')?.append(deadlineButton);
