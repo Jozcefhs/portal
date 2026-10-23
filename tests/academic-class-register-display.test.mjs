@@ -165,3 +165,44 @@ test('filtered preview prints only matching students and describes the separate 
   assert.match(missing, /Missing scores in at least one selected subject\/test/);
   assert.doesNotMatch(missing, /Learner zero|Learner absent|Learner exempt|Learner duplicate/);
 });
+
+test('all-scored filter requires numeric marks in every selected subject, includes zero and leaves scores untouched', () => {
+  const register = scoreFilterFixture(), before = structuredClone(register);
+  const filters = { testId: 'CA1', subjectIds: ['math', 'english'], scoreFilter: 'scored-all' };
+  assert.deepEqual(Array.from(context.academicClassRegisterView(register, filters).rows, row => row.StudentRef),
+    ['zero', 'low', 'boundary', 'high']);
+  assert.equal(context.academicClassRegisterView(register, { ...filters, subjectIds: ['english'] }).rows.length, register.Rows.length);
+  assert.equal(context.academicClassRegisterView(register, { ...filters, query: ' ZERO ' }).rows.length, 1);
+  assert.equal(context.academicClassRegisterView(register, { ...filters, query: 'missing' }).rows.length, 0);
+  assert.equal(context.academicClassRegisterView(register, { ...filters, subjectIds: null }).rows.length, 4);
+  for (const patch of [{ subjectIds: [] }, { subjectIds: ['unknown'] }, { subjectIds: ['math', 'unknown'] },
+    { testId: 'unknown' }, { testId: 'CA2:theory' }, { testId: '' }]) {
+    assert.equal(context.academicClassRegisterView(register, { ...filters, ...patch }).rows.length, 0);
+  }
+  assert.equal(context.academicClassRegisterView(null, filters).rows.length, 0);
+  assert.deepEqual(register, before);
+});
+
+test('all-scored filter checks the chosen split test and rejects selected subjects without that test', () => {
+  const register = scoreFilterFixture();
+  const filters = { testId: 'CA2:theory', subjectIds: ['math'], scoreFilter: 'scored-all' };
+  Object.assign(register.Rows[0].Cells.find(cell => cell.ColumnId === 'math-theory'), { State: 'Numeric', RawScore: 0 });
+  assert.deepEqual(Array.from(context.academicClassRegisterView(register, filters).rows, row => row.StudentRef), ['zero']);
+  assert.equal(context.academicClassRegisterView(register, { ...filters, subjectIds: ['math', 'english'] }).rows.length, 0);
+  assert.equal(context.academicClassRegisterView(register, { ...filters, subjectIds: null }).rows.length, 0);
+  assert.equal(context.academicClassRegisterView(register, { ...filters, testId: '', subjectIds: ['math', 'english'] }).rows.length, 1);
+});
+
+test('all-scored print includes every matching student, zero marks and the filter description', () => {
+  const register = registerFixture();
+  register.Rows[1].Cells.find(cell => cell.ColumnId === 'subject-1-CA1').State = 'Not recorded';
+  const filters = { testId: 'CA1', subjectIds: ['subject-1', 'subject-3'], scoreFilter: 'scored-all' };
+  const html = context.academicClassRegisterPrintHtml(register, filters, 'School', 'Term');
+  assert.match(html, /64 matching students/);
+  assert.equal((html.match(/TEST\//g) || []).length, 64);
+  assert.match(html, /Scores in all selected subjects/);
+  assert.match(html, /TEST\/000/);
+  assert.match(html, /TEST\/064/);
+  assert.match(html, /0 \/ 100/);
+  assert.doesNotMatch(html, /TEST\/001|Subject 2|Exam/);
+});

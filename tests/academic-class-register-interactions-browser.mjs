@@ -228,11 +228,51 @@ try {
   assert.equal(await page.locator('[name=ScoreThreshold]').isVisible(), false);
   assert.equal(await page.evaluate(() => JSON.stringify(report)), allMissingSnapshot);
   assert.equal(await page.evaluate(() => requests), requestCount);
+
+  // Complete-score selection is distinct from all-missing and uses every selected subject/test.
+  await page.selectOption('[name=ScoreFilter]', 'scored-all');
+  assert.match(await page.locator('[data-class-register-count]').textContent(), /1–30 of 32 students/);
+  assert.match(await page.locator('[data-class-register-filter-hint]').textContent(), /numeric marks in every selected subject\/test/);
+  assert.equal(await page.locator('[name=ScoreThreshold]').isVisible(), false);
+  assert.doesNotMatch(await scroller.locator('tbody').textContent(), /TEST\/000|TEST\/001/);
+  await page.click('[data-class-register-page="1"]');
+  assert.match(await page.locator('[data-class-register-count]').textContent(), /31–32 of 32 students/);
+  await page.fill('[name=Query]', 'TEST/064');
+  assert.match(await page.locator('[data-class-register-count]').textContent(), /1–1 of 1 students/);
+  await page.fill('[name=Query]', 'TEST/063');
+  assert.equal(await page.locator('[data-class-register-print]').isDisabled(), true);
+  await page.fill('[name=Query]', '');
+  await page.selectOption('[name=TestId]', 'Exam');
+  assert.match(await page.locator('[data-class-register-count]').textContent(), /1–30 of 65 students/);
+  await page.selectOption('[name=TestId]', 'CA1');
+  await summary.click();
+  await page.click('[data-class-register-subject-action="none"]');
+  assert.match(await page.locator('[data-class-register-count]').textContent(), /0–0 of 0 students/);
+  assert.equal(await page.locator('[data-class-register-print]').isDisabled(), true);
+  await page.check('[data-class-register-subject][value=s0]');
+  assert.match(await page.locator('[data-class-register-count]').textContent(), /1–30 of 33 students/);
+  assert.match(await scroller.locator('tbody').textContent(), /TEST\/000/); // Numeric zero is complete.
+  await page.check('[data-class-register-subject][value=s1]');
+  await page.locator('[name=ScoreFilter]').focus();
+  assert.match(await page.locator('[data-class-register-count]').textContent(), /1–30 of 32 students/);
+  const [allScoredPrint] = await Promise.all([page.waitForEvent('popup'), page.click('[data-class-register-print]')]);
+  await allScoredPrint.waitForLoadState('domcontentloaded');
+  assert.equal(await allScoredPrint.locator('tbody tr').count(), 32);
+  assert.match(await allScoredPrint.locator('body').textContent(), /Scores in all selected subjects/);
+  assert.match(await allScoredPrint.locator('tbody').textContent(), /TEST\/064/);
+  assert.doesNotMatch(await allScoredPrint.locator('tbody').textContent(), /TEST\/000|TEST\/001/);
+  await allScoredPrint.close();
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await page.screenshot({ path: 'tmp/class-all-scored-390.png', fullPage: true });
+  await page.setViewportSize({ width: 1280, height: 980 });
+  await page.screenshot({ path: 'tmp/class-all-scored-1280.png', fullPage: true });
+  assert.equal(await page.evaluate(() => JSON.stringify(report)), allMissingSnapshot);
+  assert.equal(await page.evaluate(() => requests), requestCount);
   await summary.click();
   await page.selectOption('[name=ClassId]', '');
   assert.equal(await isOpen(), false);
   assert.equal(await panel.isVisible(), false);
   assert.equal(await scroller.locator('tbody tr').count(), 0);
   assert.deepEqual(errors, []);
-  console.log('PASS: Subjects dismissal, pinned Student/header, separate any-missing/all-missing/below filters, strict thresholds including zero, subject/test/search intersections, pagination reset, filtered print, mobile layout, and no score writes or extra requests.');
+  console.log('PASS: Subjects dismissal, pinned Student/header, separate any-missing/all-missing/all-scored/below filters, strict thresholds including zero, subject/test/search intersections, pagination reset, filtered print, mobile layout, and no score writes or extra requests.');
 } finally { await browser.close(); }
