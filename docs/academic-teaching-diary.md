@@ -1,6 +1,6 @@
 # Teaching diaries and inspector printouts
 
-Delivery: the class/arm correction is deployed on the web. Desktop packaging is authorised for v3.1.45; the public update feed changes only after the installer is uploaded and verified.
+Delivery: the class/arm correction is deployed on the web and included in desktop v3.1.45. The installer is uploaded with a verified SHA-256 digest before the public update feed is advanced. Existing saved records are not migrated or merged.
 
 The class-wide diary change is corrected: weekly records and schemes are once again keyed by class **and arm**. Selecting a classroom shows only its subjects and permissions. The original arm-based record IDs, saved work, approval states, history and payment targets are reused without migration. A form teacher can compile only the assigned arm's diary.
 

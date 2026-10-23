@@ -1,7 +1,7 @@
 {
-  "version": "3.1.44",
+  "version": "3.1.45",
   "channel": "stable",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.44.exe",
-  "sha256": "8dd52d1cc3041a9db9b5bd2be2132972fde13fad438b43aac6fefe6b1a4d08b2",
-  "notes": "Dynamax Desktop v3.1.44 makes teaching diaries class-wide, with one shared entry per subject across all arms. Earlier arm-based entries and approvals remain separately viewable and printable without being overwritten or automatically merged. Diary print previews use compact paper-sized layouts and proportional columns. The student CBT password field now has a show/hide eye icon and returns to hidden on submission. Back up and close the app before updating both CBT servers between examinations. Do not uninstall or clear saved data. Existing answers, scores and financial records are preserved. No new tablet APK is required."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.45.exe",
+  "sha256": "200a158941998e8956edd2180c16a23cbfdedd251593c7df46059acca25fab58",
+  "notes": "Dynamax Desktop v3.1.45 restores separate teaching diaries and schemes for each class and arm, preserving earlier class-wide records as read-only history. The matching backend repair saves valid CBT scores even when other students are rejected, reports rejected students separately, and keeps retries duplicate-safe. Existing answers, scores, diary approvals and financial records are preserved. Back up and close Dynamax before updating both CBT servers between examinations. Do not uninstall, clear saved data or recreate tests. No new tablet APK is required."
 }
