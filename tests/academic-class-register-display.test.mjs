@@ -206,3 +206,64 @@ test('all-scored print includes every matching student, zero marks and the filte
   assert.match(html, /0 \/ 100/);
   assert.doesNotMatch(html, /TEST\/001|Subject 2|Exam/);
 });
+
+test('partial-score filter requires both a numeric score and a missing mark in different selected subjects', () => {
+  const register = scoreFilterFixture();
+  // A recorded zero in English still makes this a partially scored student.
+  register.Rows.find(row => row.StudentRef === 'missing').Cells.find(cell => cell.ColumnId === 'english-ca1').RawScore = 0;
+  const before = structuredClone(register);
+  const filters = { testId: 'CA1', subjectIds: ['math', 'english'], scoreFilter: 'partial' };
+  assert.deepEqual(Array.from(context.academicClassRegisterView(register, filters).rows, row => row.StudentRef),
+    ['missing', 'unfinished', 'pending', 'null-mark', 'blank-mark', 'invalid-mark', 'no-cell', 'no-state']);
+  assert.equal(context.academicClassRegisterView(register, { ...filters, query: ' UNFINISHED ' }).rows.length, 1);
+  assert.equal(context.academicClassRegisterView(register, { ...filters, query: 'zero' }).rows.length, 0);
+  assert.equal(context.academicClassRegisterView(register, { ...filters, subjectIds: null }).rows.length, 8);
+  for (const patch of [{ subjectIds: [] }, { subjectIds: ['math'] }, { subjectIds: ['english'] },
+    { subjectIds: ['math', 'unknown'] }, { testId: 'unknown' }, { testId: 'CA2:theory' },
+    { testId: '', subjectIds: ['math'] }]) {
+    assert.equal(context.academicClassRegisterView(register, { ...filters, ...patch }).rows.length, 0);
+  }
+  assert.equal(context.academicClassRegisterView(null, filters).rows.length, 0);
+  assert.deepEqual(register, before);
+  register.Rows.forEach(row => Object.assign(row.Cells.find(cell => cell.ColumnId === 'english-ca1'), { State: 'Missing', RawScore: null }));
+  assert.deepEqual(Array.from(context.academicClassRegisterView(register, filters).rows, row => row.StudentRef),
+    ['zero', 'low', 'boundary', 'high']); // All-missing rows and exceptional states are excluded.
+});
+
+test('at-least-one-score filter includes partial and complete numeric records but not missing or exceptional marks alone', () => {
+  const register = scoreFilterFixture(), before = structuredClone(register);
+  const filters = { testId: 'CA1', subjectIds: ['math', 'english'], scoreFilter: 'scored-any' };
+  assert.equal(context.academicClassRegisterView(register, filters).rows.length, register.Rows.length);
+  assert.deepEqual(Array.from(context.academicClassRegisterView(register, { ...filters, subjectIds: ['math'] }).rows, row => row.StudentRef),
+    ['zero', 'low', 'boundary', 'high']);
+  assert.equal(context.academicClassRegisterView(register, { ...filters, subjectIds: null }).rows.length, register.Rows.length);
+  assert.equal(context.academicClassRegisterView(register, { ...filters, query: ' ZERO ' }).rows.length, 1);
+  for (const patch of [{ subjectIds: [] }, { subjectIds: ['unknown'] }, { testId: 'unknown' }, { testId: 'CA2:theory' }]) {
+    assert.equal(context.academicClassRegisterView(register, { ...filters, ...patch }).rows.length, 0);
+  }
+  assert.equal(context.academicClassRegisterView(null, filters).rows.length, 0);
+  assert.deepEqual(register, before);
+});
+
+test('partial and at-least-one-score previews include all matches beyond one page and only selected tests/subjects', () => {
+  const register = registerFixture();
+  register.Rows.forEach((row, index) => {
+    if (index % 2 || index === 2) Object.assign(row.Cells.find(cell => cell.ColumnId === 'subject-1-CA1'), { State: 'Missing', RawScore: null });
+    if (index === 2) Object.assign(row.Cells.find(cell => cell.ColumnId === 'subject-3-CA1'), { State: 'Missing', RawScore: null });
+  });
+  const filters = { testId: 'CA1', subjectIds: ['subject-1', 'subject-3'], scoreFilter: 'partial' };
+  const partial = context.academicClassRegisterPrintHtml(register, filters, 'School', 'Term');
+  assert.match(partial, /32 matching students/);
+  assert.equal((partial.match(/TEST\//g) || []).length, 32);
+  assert.match(partial, /Some scores, some missing/);
+  assert.match(partial, /TEST\/063/);
+  assert.doesNotMatch(partial, /TEST\/000|TEST\/002|TEST\/064|Subject 2|Exam/);
+  const any = context.academicClassRegisterPrintHtml(register, { ...filters, scoreFilter: 'scored-any' }, 'School', 'Term');
+  assert.match(any, /64 matching students/);
+  assert.equal((any.match(/TEST\//g) || []).length, 64);
+  assert.match(any, /At least one score/);
+  assert.match(any, /TEST\/000/);
+  assert.match(any, /TEST\/064/);
+  assert.match(any, /0 \/ 100/);
+  assert.doesNotMatch(any, /TEST\/002|Subject 2|Exam/);
+});
