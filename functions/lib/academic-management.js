@@ -7051,6 +7051,7 @@ async function syncAcademicCbtScoresAttempt(env, user = {}, input = {}) {
           return {
             ok: true,
             refreshAcademicManagement: true,
+            scoreSyncReplayed: true,
             message: 'This approved CBT batch was already synchronized; no score was duplicated.',
             scoreSyncReceipt: await verifiedAcademicCbtReceipt(env, input, previousBatch)
           };
@@ -7087,6 +7088,7 @@ async function syncAcademicCbtScoresAttempt(env, user = {}, input = {}) {
     return {
       ok: true,
       refreshAcademicManagement: true,
+      scoreSyncReplayed: false,
       message: prepared.Message,
       scoreSyncReceipt: await verifiedAcademicCbtReceipt(env, input, prepared.Receipt)
     };
@@ -7155,6 +7157,9 @@ async function syncAcademicCbtScoresAttempt(env, user = {}, input = {}) {
       return {
         ok: true,
         refreshAcademicManagement: true,
+        // ImportedRows belongs to the historical receipt, not this request.
+        // Keep that evidence intact and distinguish a live-verified retry.
+        scoreSyncReplayed: true,
         message: 'This batch is verified in the online scorebook; no score was duplicated.',
         scoreSyncReceipt: await verifiedAcademicCbtReceipt(env, input, previousBatch, state)
       };
@@ -7169,7 +7174,7 @@ async function syncAcademicCbtScoresAttempt(env, user = {}, input = {}) {
           || lower(repairedBatch.SigningKeyId) !== lower(signingKeyId)) {
         throw failure('This recovery key belongs to a different batch.', 409, 'ACADEMIC_CBT_SYNC_KEY_REUSED');
       }
-      return { ok: true, refreshAcademicManagement: true,
+      return { ok: true, refreshAcademicManagement: true, scoreSyncReplayed: true,
         message: 'This recovered batch is verified online; no score was duplicated.',
         scoreSyncReceipt: await verifiedAcademicCbtReceipt(env, input, repairedBatch, state) };
     }

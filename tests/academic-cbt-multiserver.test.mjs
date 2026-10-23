@@ -389,6 +389,26 @@ test('receipts cannot confirm success when saved scores cannot be read back; ret
   assert.equal(f.commits.length,1);
 });
 
+test('re-pushing a green 12-score batch identifies a verified replay, not 12 new imports',async()=>{
+  const f=fixture(), refs=Array.from({length:12},(_,i)=>`DCA/${String(i+1).padStart(3,'0')}`);
+  for(const ref of refs) f.put(collections.studentMemberships,ref,{...scope,RecordId:ref,StudentRef:ref,Status:'Active'});
+  const payload=await a.batch(refs.map((ref,i)=>[ref,i,`attempt-${ref}`]));
+  const prepared=await f.prepare(payload);
+  assert.equal(prepared.scoreSyncReplayed,undefined,'Preparation is not a saved-score acknowledgement');
+  const first=await f.commit({...payload,scoreSyncReplayed:true},prepared);
+  assert.equal(first.scoreSyncReplayed,false,'The caller cannot declare a fresh commit to be a replay');
+  assert.equal(first.scoreSyncReceipt.ImportedRows,12);
+  const before=JSON.stringify([...f.db]);
+  for(const replay of [await f.post(payload),await f.commit(payload,prepared)]) {
+    assert.equal(replay.scoreSyncReplayed,true);
+    assert.equal(replay.scoreSyncReceipt.VerifiedOnline,true);
+    assert.equal(replay.scoreSyncReceipt.ImportedRows,12,'Keep the historical receipt intact');
+    assert.equal(replay.scoreSyncReceipt.VerifiedRows,12,'Read every saved mark back on retry');
+  }
+  assert.equal(f.commits.length,1);
+  assert.equal(JSON.stringify([...f.db]),before,'Retry must not rewrite marks, sheets or historical receipts');
+});
+
 test('an existing receipt alone never proves missing, wrong-subject or changed marks were saved',async()=>{
   for(const fault of ['missing','subject','value','sheet']) {
     const f=fixture(),payload=await a.batch([['DCA/001',81,'a1']]); await f.post(payload);
@@ -616,6 +636,7 @@ test('a lost success response is recovered from its receipt without re-preparing
   };
   const response=await f.post(payload);
   assert.equal(response.scoreSyncReceipt.VerifiedOnline,true);
+  assert.equal(response.scoreSyncReplayed,true);
   assert.equal(f.commits.length,1); assert.equal(f.delays.length,0);
   assert.equal(f.rows(collections.studentScores).length,1);
 });
@@ -690,7 +711,10 @@ test('12 saved and 3 verified existing scores cover all 15 students without repl
   assert.deepEqual(Array.from(receipt.AlreadyRecordedScores,row=>row.StudentRef),refs.slice(0,3));
   assert.equal(JSON.stringify(f.rows(collections.studentScores).filter(row=>refs.slice(0,3).includes(row.StudentRef))),originals);
   const before=JSON.stringify([...f.db]);
-  assert.equal((await f.post(payload)).scoreSyncReceipt.AlreadyRecordedCount,3);
+  const replay=await f.post(payload);
+  assert.equal(replay.scoreSyncReplayed,true);
+  assert.equal(replay.scoreSyncReceipt.AlreadyRecordedCount,3);
+  assert.equal(replay.scoreSyncReceipt.ImportedRows+replay.scoreSyncReceipt.AlreadyRecordedCount,15);
   assert.equal(JSON.stringify([...f.db]),before);
   // Upgrade an older partial receipt on retry by locating and reading back its
   // saved marks. No score or historical receipt needs rewriting.
