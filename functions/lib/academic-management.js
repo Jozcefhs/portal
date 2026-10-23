@@ -3715,11 +3715,13 @@ export async function reviewAcademicSubjectChange(env, user = {}, input = {}) {
   return response;
 }
 
-export async function manageAcademicStudentMembership(env, user = {}, input = {}) {
+export async function manageAcademicStudentMembership(env, user = {}, input = {}, options = {}) {
   requireWritableSubscription(user);
   const permissions = requireCapability(user, 'canManageAllocations');
-  const scope = await academicScope(env, user, input, { requireSection: true });
-  const [state, people] = await Promise.all([
+  // Internal callers may prepare a movement for a larger atomic profile save.
+  // These options are never read from client JSON.
+  const scope = options.context?.scope || await academicScope(env, user, input, { requireSection: true });
+  const [state, people] = options.context ? [options.context.state, options.context.people] : await Promise.all([
     loadScopedAcademicState(env, scope, ACADEMIC_STUDENT_STATE_KEYS),
     loadPeople(env, user, scope, { staff: false })
   ]);
@@ -3796,15 +3798,18 @@ export async function manageAcademicStudentMembership(env, user = {}, input = {}
       } else {
         const pending = { ...withoutMetadata(existing), PendingSubjectChange: request };
         stampAcademicRecord(pending, user, existing);
-        await commitAcademicBatch(env, [
+        const writes = [
           { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships, documentId: existing.MembershipId, data: pending, updateTime: expected },
           movementWrite(user, { ...movement, Status: 'Pending approval', SubjectChangeRequest: request }),
           auditWrite(user, 'CLASSROOM TRANSFER REQUESTED', 'studentmembership', pending, reason,
             `${actorName(user)} requested a classroom transfer for ${existing.StudentRef}. Existing assessment history requires another authorised administrator's approval. Current placement, subjects and scores remain unchanged.`)
-        ], 'The student or their scores changed while requesting this transfer. Reload and try again.');
+        ];
+        const message = `${existing.StudentRef}: transfer request saved, awaiting another authorised administrator's approval under Student subjects. Current classroom, subjects and all existing scores are unchanged.`;
+        if (options.prepareOnly === true) return { writes, record: pending, pendingApproval: true, message };
+        await commitAcademicBatch(env, writes, 'The student or their scores changed while requesting this transfer. Reload and try again.');
         const response = await bootstrapAcademicManagement(env, user, { ...input, BranchId: scope.branchId, SchoolSection: scope.section, View: 'students' });
         response.bulkResult = { PendingApproval: 1 };
-        response.message = `${existing.StudentRef}: transfer request saved, awaiting another authorised administrator's approval under Student subjects. Current classroom, subjects and all existing scores are unchanged.`;
+        response.message = message;
         return response;
       }
     }
@@ -3830,6 +3835,8 @@ export async function manageAcademicStudentMembership(env, user = {}, input = {}
   ];
   const compatibility = studentCompatibilityWrite(people, projected, record);
   if (compatibility) writes.push(compatibility);
+  const message = `${movement.MovementType} recorded online for ${existing.StudentRef}.${resetSubjects ? ' Previous subject selections were disconnected; existing scores and history were preserved. Complete the destination Core, Trade and Optional choices under Student subjects.' : ''}`;
+  if (options.prepareOnly === true) return { writes, record, pendingApproval: false, message };
   try {
     await batchCommitDocuments(env, writes);
   } catch (error) {
@@ -3841,8 +3848,89 @@ export async function manageAcademicStudentMembership(env, user = {}, input = {}
   const response = await bootstrapAcademicManagement(env, user, {
     ...input, BranchId: scope.branchId, SchoolSection: scope.section, View: 'students'
   });
-  response.message = `${movement.MovementType} recorded online for ${existing.StudentRef}.${resetSubjects ? ' Previous subject selections were disconnected; existing scores and history were preserved. Complete the destination Core, Trade and Optional choices under Student subjects.' : ''}`;
+  response.message = message;
   return response;
+}
+
+export function studentProfilePlacementChanged(before = {}, after = {}) {
+  return normalizeClassKey(before.ClassName || before.ClassAdmitted) !== normalizeClassKey(after.ClassName || after.ClassAdmitted)
+    || ['ClassArm', 'AcademicSession', 'Term'].some(key => lower(before[key]) !== lower(after[key]));
+}
+
+// The profile route supplies server-read records and an authenticated web actor.
+// No student scores, attendance, published results or old movement records are
+// rewritten. The existing membership ID is retained even after a class transfer.
+export async function saveStudentProfileAcademicPlacement(env, user, before, after, revisionToken) {
+  requireWritableSubscription(user);
+  requireCapability(user, 'canManageAllocations');
+  if (!before.__scopePath || !before.__id || !clean(revisionToken)
+    || clean(revisionToken) !== clean(before.__updateTime)) {
+    throw failure('This student profile changed or was loaded by an older page. Refresh the student register and reopen Edit Student Profile before saving.', 409, 'ACADEMIC_WRITE_CONFLICT');
+  }
+  const scope = await academicScope(env, user, {
+    BranchId: before.BranchId || 'main', SchoolSection: schoolSectionFor(before)
+  }, { requireSection: true });
+  const state = await loadScopedAcademicState(env, scope, ACADEMIC_STUDENT_STATE_KEYS);
+  const people = { students: [before], staff: [] };
+  const resolveNamed = (rows, name, label, matches = row => lower(row.Name) === lower(name)) => {
+    const found = (rows || []).filter(row => statusActive(row) && matches(row));
+    if (found.length !== 1) throw failure(`Choose one configured, active ${label}. The supplied ${label} is missing, unknown or ambiguous; nothing was saved.`, 409, 'ACADEMIC_PROFILE_PLACEMENT_INVALID');
+    return found[0];
+  };
+  const session = resolveNamed(state.sessions, after.AcademicSession, 'academic session');
+  const term = resolveNamed(state.terms.filter(row => row.SessionId === session.SessionId), after.Term, 'term');
+  if (lower(before.AcademicSession) !== lower(after.AcademicSession) || lower(before.Term) !== lower(after.Term)) {
+    throw failure('Use Academic Management allocation or promotion to change a student’s academic session or term. Edit Student Profile can transfer class or arm within the current saved period; nothing was saved.', 409, 'ACADEMIC_PROFILE_PERIOD_CHANGE');
+  }
+  const schoolClass = resolveNamed(state.classes, after.ClassName, 'class', row => normalizeClassKey(row.Name) === normalizeClassKey(after.ClassName));
+  const arm = resolveNamed(state.arms.filter(row => row.ClassId === schoolClass.ClassId), after.ClassArm, 'class arm');
+  const identity = { BranchId: scope.branchId, SchoolSection: scope.section, SessionId: session.SessionId, TermId: term.TermId, StudentRef: studentReference(before) };
+  const matches = state.studentMemberships.filter(row => sameAcademicMembershipIdentity(row, identity));
+  // A confirmed profile link can disambiguate legacy duplicate copies. Otherwise
+  // use semantic identity, never a newly generated ID that could create a copy.
+  const linked = matches.find(row => statusActive(row) && recordId(row) === clean(before.AcademicMembershipId));
+  const existing = linked || findAcademicStudentMembership(matches, identity);
+  const input = { ...identity, ClassId: schoolClass.ClassId, ArmId: arm.ArmId,
+    Reason: 'Class or arm changed in Edit Student Profile', Operation: 'transfer' };
+  let plan;
+  if (existing) {
+    if (!statusActive(existing)) throw failure('Use Academic Management to reinstate this inactive membership before changing its classroom.', 409, 'ACADEMIC_PROFILE_MEMBERSHIP_INACTIVE');
+    assertNoPendingSubjectChange(existing);
+    if (existing.ClassId === schoolClass.ClassId && existing.ArmId === arm.ArmId) {
+      if (!existing.__updateTime) throw failure('Reload this membership before saving.', 409, 'ACADEMIC_WRITE_CONFLICT');
+      plan = { record: existing, writes: [
+        ...duplicateMembershipRetirementWrites(state, existing, user, input.Reason),
+        { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships, documentId: recordId(existing),
+          updateTime: existing.__updateTime, data: { UpdatedAt: nowIso(), UpdatedBy: actorName(user) }, updateMask: ['UpdatedAt', 'UpdatedBy'] }
+      ], message: 'Student profile and academic membership are now in sync. Existing scores and records were preserved.' };
+    } else {
+      plan = await manageAcademicStudentMembership(env, user, { ...input, RecordId: recordId(existing), RevisionToken: existing.__updateTime,
+        ResetSubjectSelections: existing.ClassId !== schoolClass.ClassId || clean(existing.DepartmentId) !== clean(arm.DepartmentId)
+      }, { prepareOnly: true, context: { scope, state, people } });
+    }
+  } else {
+    // Initial allocation shares the profile CAS guard with every other placement
+    // writer, and reserves the canonical ID without overwriting a historical row.
+    const record = normalizeAcademicStudentMembership(input, scope);
+    validateAcademicRecord(state, 'studentmembership', record, { students: [after], staff: [], allowIncompleteCurriculum: true });
+    stampAcademicRecord(record, user);
+    plan = { record, writes: [
+      { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships, documentId: recordId(record), data: withoutMetadata(record), exists: false },
+      movementWrite(user, academicMovementForState(state, input, scope, null, record)),
+      auditWrite(user, 'ALLOCATION FROM STUDENT PROFILE', 'studentmembership', record, input.Reason)
+    ], message: 'Student profile and academic membership saved together. Existing scores and records were preserved.' };
+  }
+  // Keep unrelated profile edits, but take placement fields from the actual
+  // resulting membership (the old placement if approval is still required).
+  const profileWrite = studentCompatibilityWrite({ students: [after] }, state, plan.record);
+  if (!profileWrite) throw failure('The current student profile revision is missing. Reload before saving.', 409, 'ACADEMIC_WRITE_CONFLICT');
+  profileWrite.updateTime = before.__updateTime;
+  const writes = plan.writes.filter(write => write.collectionPath !== before.__scopePath || write.documentId !== before.__id);
+  writes.push(profileWrite);
+  const committed = await commitAcademicBatch(env, writes, 'This student, membership or assessment history changed while saving. Refresh and try again; no partial changes were saved.');
+  return { student: { ...profileWrite.data, __id: before.__id, __scopePath: before.__scopePath,
+    __updateTime: committed?.writeResults?.[writes.length - 1]?.updateTime || '' },
+    pendingApproval: plan.pendingApproval === true, message: plan.message };
 }
 
 function activeDependants(state, type, record) {

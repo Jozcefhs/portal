@@ -7,6 +7,7 @@ import { saveStudentLoginPassword } from '../lib/student-login-credentials.js';
 import { admissionYearIntakeFingerprint, admissionYearIntakePlan } from '../lib/student-intake-bulk.js';
 import { studentProfileDefaultsPlan, studentProfileDefaultsFingerprint } from '../lib/student-profile-defaults.js';
 import { studentWalletProfile } from '../lib/student-wallet-profile.js';
+import { academicWebActor, saveStudentProfileAcademicPlacement, studentProfilePlacementChanged } from '../lib/academic-management.js';
 
 function clean(value) { return String(value ?? '').trim(); }
 function lower(value) { return clean(value).toLowerCase(); }
@@ -217,8 +218,18 @@ export async function onRequestPost(context) {
     updated.UpdatedAt = new Date().toISOString();
     updated.UpdatedBy = user.displayName || user.username;
     const documentId = clean(existing.__id || existing.AdmissionNo || existing.AccountRef);
-    const saved = await upsertSchoolDocument(env, 'students', documentId, updated);
     const studentPassword = String(body.StudentLoginPassword || '');
+    if (studentPassword && studentPassword.length < 6) {
+      throw Object.assign(new Error('The student password must be at least 6 characters.'), { status: 400 });
+    }
+    if (clean(body.RevisionToken) && clean(body.RevisionToken) !== clean(existing.__updateTime)) {
+      throw Object.assign(new Error('This student changed after you opened the profile. Refresh the student register and reopen the profile before saving.'), { status: 409 });
+    }
+    const placement = lower(user.edition) === 'school' && studentProfilePlacementChanged(existing, updated)
+      ? await saveStudentProfileAcademicPlacement(env, academicWebActor(user), existing, updated, body.RevisionToken)
+      : null;
+    const saved = placement?.student || await upsertSchoolDocument(env, 'students', documentId, updated,
+      existing.__updateTime ? { updateTime: existing.__updateTime } : {});
     let loginStatus = null;
     if (studentPassword) {
       loginStatus = await saveStudentLoginPassword(
@@ -232,11 +243,14 @@ export async function onRequestPost(context) {
     delete student.WalletPinHash;
     return Response.json({
       ok: true,
-      message: studentPassword ? 'Student profile and personal login password updated.' : 'Student profile updated.',
+      message: placement ? `${placement.message}${studentPassword ? ' Personal login password updated.' : ''}`
+        : studentPassword ? 'Student profile and personal login password updated.' : 'Student profile updated.',
+      academicPlacementUpdated: Boolean(placement) && !placement.pendingApproval,
+      pendingApproval: placement?.pendingApproval === true,
       student,
       loginStatus
     });
   } catch (err) {
-    return Response.json({ ok: false, message: err.message || String(err) }, { status: err.status || 500 });
+    return Response.json({ ok: false, message: err.message || String(err), code: err.code || '' }, { status: err.status || 500 });
   }
 }

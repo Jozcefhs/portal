@@ -3672,6 +3672,7 @@ function renderStudentEditor(students) {
     <div class="workflow-dialog-header"><div><small>${learner.Singular} register</small><h2>Edit ${learner.Singular} Profile</h2></div><button type="button" data-close-student-dialog aria-label="Close">&times;</button></div>
     <form id="studentProfileForm" class="workflow-form config-dialog-form">
       <input type="hidden" name="AccountRef">
+      <input type="hidden" name="RevisionToken">
       <div class="student-login-guidance"><strong>Separate family and ${learner.singular} access</strong><span>Parents use Parent Email and Parent Login Code. ${learner.Plural} use their admission number and personal password of at least 6 characters for CBT. Leave the ${learner.singular} password blank to keep it unchanged.</span></div>
       <section class="config-group student-passport-editor"><header><strong>${learner.Singular} passport</strong><small>JPG or PNG. The photograph appears in ${learner.singular} searches and on published results.</small></header><div><div class="student-passport-preview" data-student-passport-preview aria-label="${learner.Singular} passport preview">PHOTO</div><input type="file" accept="image/jpeg,image/png" data-student-passport-file hidden><button type="button" class="secondary" data-student-passport-choose>Upload or replace passport</button></div></section>
       <div data-student-form-sections></div>
@@ -3772,8 +3773,9 @@ function openStudentEditor(student) {
   const form = document.getElementById('studentProfileForm');
   if (!dialog || !form || !student) return;
   form.elements.AccountRef.value = pick(student, ['AdmissionNo', 'AccountRef', '__id']);
+  form.elements.RevisionToken.value = clean(student.__updateTime || student.RevisionToken);
   form.querySelector('[data-student-form-sections]').innerHTML = studentProfileSections.map(([title, fields]) => `
-    <section class="config-group"><header><strong>${escapeHtml(title)}</strong></header><div class="config-grid">
+    <section class="config-group"><header><strong>${escapeHtml(title)}</strong></header>${title === 'Enrollment' && currentUser?.edition === 'school' ? '<p>Changing class or arm also updates the academic membership for this saved session and term. Use an existing classroom name. Scores and history are preserved; existing transfer approval rules apply. Use Academic Management for a new session or term.</p>' : ''}<div class="config-grid">
       ${fields.map((field) => {
         let value = pick(student, [field]);
         if (field === 'WalletCardStatus') value = pick(student, ['WalletCardStatus', 'walletCardStatus']) || 'Active';
@@ -4212,8 +4214,10 @@ function bindStudentEditor(students) {
       const data = await response.json();
       if (!response.ok || !data.ok) throw new Error(data.message || 'Could not update student profile.');
       setStatus(status, data.message, 'ok');
+      if (data.academicPlacementUpdated || data.pendingApproval) academicManagementData = null;
       await loadDashboard();
       document.getElementById('studentProfileDialog')?.close();
+      setStatus(dashboardStatus, data.message, 'ok');
     } catch (error) {
       setStatus(status, error.message || String(error), 'bad');
     } finally {
