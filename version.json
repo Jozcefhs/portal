@@ -1,7 +1,7 @@
 {
-  "version": "3.1.49",
+  "version": "3.1.50",
   "channel": "stable",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.49.exe",
-  "sha256": "e838fe59924d87e9fc842ca5274b7209f2cb190ed01d50846497ed3e70269810",
-  "notes": "Dynamax Desktop v3.1.49 automatically rebuilds stale CBT upload batches instead of blocking scores when signed test details change. Missing arms use the class-level register; unmarked scripts no longer block other completed scores. Existing online marks, original answers, local marks and earlier upload receipts are preserved. Reports show actual queued counts and clearer retry status; green still requires verified online scores. Back up and close Dynamax before updating both CBT servers between examinations. Push affected tests again; do not delete, recreate or re-pull them."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.50.exe",
+  "sha256": "dad9400258ff52ba93c5996c2c50f8dd0f490eee9fe2bd732eeb4ed77c039bf1",
+  "notes": "Dynamax Desktop v3.1.50 corrects CBT re-push reports: previously saved batches count as already recorded, not newly accepted. The backend rechecks the saved online marks before confirming them; green status, original receipts, answers and scores are preserved. Includes the v3.1.49 stale-batch and independent-score upload repairs. Back up and close Dynamax before updating both CBT servers between examinations. No test deletion, recreation or re-pull is needed."
 }
