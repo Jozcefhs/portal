@@ -295,6 +295,103 @@ test('concurrent centres reprepare against the latest sheet and never lose other
   assert.equal(f.commits.length,2);
 });
 
+test('an out-of-roster student never blocks valid students in the same classroom, regardless of row order',async()=>{
+  for (const index of [0, 1, 2]) {
+    const f=fixture(), rows=[['DCA/001',81,'a1'],['DCA/002',92,'a2']];
+    rows.splice(index,0,['DCA/999',67,'outside-roster']);
+    const payload=await a.batch(rows), prepared=await f.prepare(payload);
+    assert.equal(f.rows(collections.studentScores).length,0,'Preparation is not success');
+    const receipt=(await f.commit(payload,prepared)).scoreSyncReceipt;
+    assert.equal(receipt.ImportedRows,2); assert.equal(receipt.VerifiedRows,2);
+    assert.equal(receipt.VerifiedOnline,true); assert.equal(receipt.RejectedCount,1);
+    assert.equal(receipt.RejectedScores[0].StudentRef,'DCA/999');
+    assert.equal(receipt.RejectedScores[0].Code,'ACADEMIC_CBT_SCORE_STUDENT_NOT_IN_ROSTER');
+    assert.equal(receipt.AffectedScoreIds.length,2);
+    assert.deepEqual(f.rows(collections.studentScores).map(row=>row.StudentRef).sort(),['DCA/001','DCA/002']);
+    const snapshot=JSON.stringify([...f.db]);
+    await f.post(payload);
+    await f.commit(payload,prepared); // Lost acknowledgement retries the same signed preparation.
+    assert.equal(JSON.stringify([...f.db]),snapshot);
+    // A later different upload also retains the original accepted attempt.
+    await f.post(await b.batch([['DCA/001',15,'other-centre'],['DCA/003',75,'new-student']]));
+    assert.equal(f.rows(collections.studentScores).find(row=>row.StudentRef==='DCA/001').ComponentScores[0].RawScore,81);
+  }
+});
+
+test('invalid marks or a missing student attempt identity are row rejections, not classroom failures',async()=>{
+  for(const bad of [['DCA/002',101,'a2'],['DCA/002','not-a-mark','a2'],['DCA/002',80,'']]) {
+    const f=fixture(), payload=await a.batch([bad,['DCA/001',81,'a1']]);
+    const receipt=(await f.post(payload)).scoreSyncReceipt;
+    assert.equal(receipt.ImportedRows,1); assert.equal(receipt.RejectedCount,1);
+    assert.equal(receipt.RejectedScores[0].StudentRef,'DCA/002');
+    assert.equal(receipt.RejectedScores[0].Code,bad[2]?'ACADEMIC_CBT_SCORE_STUDENT_INVALID':'ACADEMIC_CBT_SYNC_ATTEMPT_REQUIRED');
+    assert.equal(f.rows(collections.studentScores)[0].StudentRef,'DCA/001');
+  }
+});
+
+test('partial receipts cannot acknowledge missing, unrelated or overlapping student rejections',async()=>{
+  for(const rejectedRows of [undefined,[],[{StudentRef:'DCA/998'}],[{StudentRef:'DCA/001'}],
+    [{StudentRef:'DCA/999'},{StudentRef:'DCA/999'}]]) {
+    const f=fixture(),payload=await a.batch([['DCA/001',81,'a1'],['DCA/999',67,'outside']]);
+    await f.post(payload);
+    const receipt=f.rows(collections.scoreSyncBatches)[0];
+    f.put(collections.scoreSyncBatches,receipt.SyncId,{...receipt,RejectedScores:rejectedRows});
+    const before=JSON.stringify([...f.db]);
+    await assert.rejects(f.post(payload),{code:'ACADEMIC_CBT_SYNC_UNVERIFIED'});
+    assert.equal(JSON.stringify([...f.db]),before);
+  }
+});
+
+test('a locked replacement mark preserves that student but does not block another student',async()=>{
+  const f=fixture(); await f.post(await a.batch([['DCA/001',81,'a1']]));
+  const original=JSON.stringify(f.rows(collections.studentScores)[0]);
+  const receipt=(await f.post(await a.batch([['DCA/001',82,'a1'],['DCA/002',90,'a2']],{MarkingRevision:2}))).scoreSyncReceipt;
+  assert.equal(receipt.ImportedRows,1); assert.equal(receipt.RejectedCount,1);
+  assert.equal(receipt.RejectedScores[0].Code,'ACADEMIC_SCORE_CELL_LOCKED');
+  assert.equal(JSON.stringify(f.rows(collections.studentScores).find(row=>row.StudentRef==='DCA/001')),original);
+  assert.equal(f.rows(collections.studentScores).find(row=>row.StudentRef==='DCA/002').ComponentScores[0].RawScore,90);
+});
+
+test('every-row rejection is not a success and writes no marks, receipt or score sheet',async()=>{
+  const f=fixture(), before=JSON.stringify([...f.db]);
+  await assert.rejects(f.post(await a.batch([['DCA/999',67,'outside'],['DCA/001',101,'bad-mark']])),error=>
+    error.code==='ACADEMIC_CBT_SYNC_NO_SCORES_SAVED' && error.preview.ImportedRows===0
+      && error.preview.RejectedCount===2 && error.message.includes('DCA/999') && error.message.includes('DCA/001'));
+  assert.equal(JSON.stringify([...f.db]),before);
+});
+
+test('malformed batch identities, wrong maxima and invalid signatures still fail the whole envelope',async()=>{
+  for(const payload of [
+    await a.batch([['',50,'missing-ref'],['DCA/001',81,'a1']]),
+    await a.batch([['DCA/001',50,'duplicate'],['dca/001',81,'a1'],['DCA/002',92,'a2']]),
+    await a.batch([['DCA/001',81,'a1'],['DCA/999',50,'outside']],{MaximumScore:50}),
+    await a.batch([['DCA/001',81,'a1']],{MaximumScore:'not-a-number'}),
+  ]) {
+    const f=fixture();
+    await assert.rejects(f.post(payload),{code:'ACADEMIC_CBT_SCORE_BATCH_INVALID'});
+    assert.equal(f.commits.length,0);
+  }
+  const f=fixture(), payload=await a.batch([['DCA/001',81,'a1'],['DCA/999',50,'outside']]);
+  await assert.rejects(f.post({...payload,Signature:payload.Signature.slice(4)}),{code:'ACADEMIC_CBT_SIGNATURE_INVALID'});
+  assert.equal(f.commits.length,0);
+});
+
+test('repreparing after one student moves arms posts the others without bypassing the membership guard',async()=>{
+  const f=fixture(), originalContext=f.ctx.academicScoreSheetContext;
+  f.ctx.academicScoreSheetContext=async(...args)=>{
+    const context=await originalContext(...args);
+    return {...context,roster:context.roster.filter(row=>row.ArmId===args[2].ArmId)};
+  };
+  const payload=await a.batch([['DCA/001',81,'a1'],['DCA/002',92,'a2']]);
+  const prepared=await f.prepare(payload);
+  const member=f.rows(collections.studentMemberships).find(row=>row.StudentRef==='DCA/002');
+  f.put(collections.studentMemberships,member.RecordId,{...member,ArmId:'other-arm'});
+  await assert.rejects(f.commit(payload,prepared),{code:'ACADEMIC_WRITE_CONFLICT'});
+  const receipt=(await f.post(payload)).scoreSyncReceipt;
+  assert.equal(receipt.ImportedRows,1); assert.equal(receipt.RejectedScores[0].StudentRef,'DCA/002');
+  assert.equal(f.rows(collections.studentScores)[0].StudentRef,'DCA/001');
+});
+
 test('same-student concurrent preparations conflict on retry rather than overwrite',async()=>{
   const f=fixture(),first=await a.batch([['DCA/001',81,'a1']]),second=await b.batch([['DCA/001',81,'b1']]);
   const [pa,pb]=await Promise.all([f.prepare(first),f.prepare(second)]);
@@ -311,7 +408,8 @@ test('same-student concurrent preparations conflict on retry rather than overwri
 test('genuine same-attempt marking corrections retain existing approval and cell-lock requirements',async()=>{
   const f=fixture(); await f.post(await a.batch([['DCA/001',81,'a1']]));
   const correction=await a.batch([['DCA/001',82,'a1']],{MarkingRevision:2});
-  await assert.rejects(f.post(correction),{code:'ACADEMIC_SCORE_CELL_LOCKED'});
+  await assert.rejects(f.post(correction),error=>error.code==='ACADEMIC_CBT_SYNC_NO_SCORES_SAVED'
+    && error.preview.RejectedScores[0].Code==='ACADEMIC_SCORE_CELL_LOCKED');
   f.put(collections.scoreSheets,'sheet',{...f.rows(collections.scoreSheets)[0],ScoreEditingReactivated:true});
   await f.post(correction);
   assert.equal(f.rows(collections.studentScores)[0].ComponentScores[0].RawScore,82);
@@ -324,7 +422,8 @@ test('server signature, reviewer permission, scope, roster and prepared membersh
   await assert.rejects(f.prepare({...payload,Signature:payload.Signature.slice(4)}),{code:'ACADEMIC_CBT_SIGNATURE_INVALID'});
   await assert.rejects(f.prepare({...payload,Scores:[{...payload.Scores[0],RawScore:99}]}),{code:'ACADEMIC_CBT_SCORE_DIGEST_INVALID'});
   await assert.rejects(f.prepare(payload,{...actor,allowedSections:[],role:'Vendor'}),{status:403});
-  await assert.rejects(f.post(await a.batch([['DCA/999',81,'x']])),{code:'ACADEMIC_CBT_SCORE_BATCH_INVALID'});
+  await assert.rejects(f.post(await a.batch([['DCA/999',81,'x']])),error=>error.code==='ACADEMIC_CBT_SYNC_NO_SCORES_SAVED'
+    && error.preview.RejectedScores[0].Code==='ACADEMIC_CBT_SCORE_STUDENT_NOT_IN_ROSTER');
   const prepared=await f.prepare(payload);
   await assert.rejects(f.commit(payload,prepared,{...actor,schoolSectionAccess:'primary'}),{code:'ACADEMIC_SECTION_FORBIDDEN'});
   await assert.rejects(f.commit(payload,prepared,{...actor,branchId:'other'}),{code:'ACADEMIC_BRANCH_FORBIDDEN'});

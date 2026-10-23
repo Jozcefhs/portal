@@ -6739,6 +6739,9 @@ async function verifiedAcademicCbtReceipt(env, input, expected) {
   const ids = receipt?.AffectedScoreIds;
   const count = receipt?.ImportedRows;
   const rejected = Number(receipt?.RejectedCount || 0);
+  const rejectedRows = receipt?.RejectedScores || [];
+  const suppliedRefs = new Set((input.Scores || []).map(row => lower(row.StudentRef)));
+  const rejectedRefs = new Set((Array.isArray(rejectedRows) ? rejectedRows : []).map(row => lower(row?.StudentRef)));
   if (!receipt || receipt.BatchDigest !== expected.BatchDigest
       || receipt.SigningKeyId !== expected.SigningKeyId || receipt.SheetId !== expected.SheetId
       || receipt.BatchId !== normalizedImportKey(input.BatchId)
@@ -6746,6 +6749,8 @@ async function verifiedAcademicCbtReceipt(env, input, expected) {
       || !Number.isInteger(count) || count <= 0 || count > 200
       || !Array.isArray(ids) || ids.length !== count || new Set(ids).size !== count
       || !Number.isInteger(rejected) || rejected < 0
+      || !Array.isArray(rejectedRows) || rejectedRows.length !== rejected || rejectedRefs.size !== rejected
+      || [...rejectedRefs].some(ref => !ref || !suppliedRefs.has(ref))
       || count + rejected !== input.Scores?.length
       || ['BranchId', 'SchoolSection', 'SessionId', 'TermId', 'ClassId', 'ArmId', 'SubjectId', 'AssessmentComponentId']
         .some(key => clean(receipt[key]) !== clean(input[key]))) throw unverified();
@@ -6765,7 +6770,7 @@ async function verifiedAcademicCbtReceipt(env, input, expected) {
   let preservedCorrections = 0;
   for (const score of scores) {
     const ref = lower(score?.StudentRef), row = supplied.get(ref);
-    if (!score || !row || seen.has(ref) || !ids.includes(score.ScoreId) || score.SheetId !== receipt.SheetId
+    if (!score || !row || seen.has(ref) || rejectedRefs.has(ref) || !ids.includes(score.ScoreId) || score.SheetId !== receipt.SheetId
         || ['BranchId', 'SchoolSection', 'SessionId', 'TermId', 'ClassId', 'ArmId', 'SubjectId']
           .some(key => clean(score[key]) !== clean(receipt[key]))) throw unverified();
     seen.add(ref);
@@ -6890,8 +6895,8 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
   const preview = validateAcademicCbtScoreBatch(input, {
     scheme, roster: context.roster, sourceMode
   });
-  if (!preview.Ready) {
-    const error = failure(preview.Issues[0] || 'The CBT score batch did not pass online validation.', 409, 'ACADEMIC_CBT_SCORE_BATCH_INVALID');
+  if (!preview.BatchReady) {
+    const error = failure(preview.BatchIssues[0] || 'The CBT score batch did not pass online validation.', 409, 'ACADEMIC_CBT_SCORE_BATCH_INVALID');
     error.preview = preview;
     throw error;
   }
@@ -6944,6 +6949,11 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
   const component = preview.Component;
   const rejectedScores = [];
   const updatedScores = preview.Rows.flatMap((row) => {
+    if (!row.Valid) {
+      rejectedScores.push({ StudentRef: row.StudentRef, Code: row.RejectionCode,
+        Reason: row.Issues.join(' ') });
+      return [];
+    }
     const { ScoreId, previous } = academicExistingStudentScore(state.studentScores, SheetId, row.StudentRef);
     let cbtSources = null;
     try {
@@ -6957,9 +6967,9 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
     } catch (error) {
       // A second centre must never replace the first accepted attempt. Reject
       // only this result; signature, scope, roster and CAS checks still apply.
-      if (error?.code !== 'ACADEMIC_CBT_SYNC_ATTEMPT_CONFLICT') throw error;
+      if (!['ACADEMIC_CBT_SYNC_ATTEMPT_CONFLICT', 'ACADEMIC_CBT_SYNC_ATTEMPT_REQUIRED'].includes(error?.code)) throw error;
       rejectedScores.push({ StudentRef: row.StudentRef, Code: error.code,
-        Reason: (previous?.ManualScoreCorrections || []).length
+        Reason: error.code === 'ACADEMIC_CBT_SYNC_ATTEMPT_REQUIRED' ? error.message : (previous?.ManualScoreCorrections || []).length
           ? 'An authorised score correction is preserved. This attempt was not posted.'
           : 'An earlier accepted result is preserved. This attempt was not posted.' });
       return [];
@@ -6980,7 +6990,9 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
     ], scheme, { existing: previous?.ComponentScores || [], partial: true });
     const lockedChanges = academicLockedScoreChanges(previous, componentScores, existing?.ScoreEditingReactivated === true);
     if (lockedChanges.length) {
-      throw failure('The destination score cell is already locked. Ask an Admin or Management user to reactivate this subject and arm before synchronizing a replacement score.', 409, 'ACADEMIC_SCORE_CELL_LOCKED');
+      rejectedScores.push({ StudentRef: row.StudentRef, Code: 'ACADEMIC_SCORE_CELL_LOCKED',
+        Reason: 'The destination score cell is already locked. Its saved mark is unchanged. Ask an Admin or Management user to reactivate this subject and arm before synchronizing a replacement score.' });
+      return [];
     }
     const calculated = calculateAcademicStudentScore(scheme, componentScores);
     return {
@@ -7010,7 +7022,8 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
     ...updatedScores.map((item) => item.record)
   ];
   if (!updatedScores.length) {
-    const error = failure('No marks from this batch were saved: every submitted result conflicts with an earlier accepted score or authorised correction. Existing scores and local answers are unchanged.',
+    const error = failure('No marks from this batch were saved. Every student result needs review; existing scores and local answers are unchanged. '
+      + rejectedScores.map(row => `${row.StudentRef}: ${row.Reason}`).join('\n'),
       409, 'ACADEMIC_CBT_SYNC_NO_SCORES_SAVED');
     error.preview = { ImportedRows: 0, RejectedCount: rejectedScores.length, RejectedScores: rejectedScores };
     throw error;
@@ -7059,9 +7072,9 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
     documentId: SyncId, data: withoutMetadata(syncRecord), exists: false
   });
   writes.push(auditWrite(user, 'SYNC_CBT_SCORES', 'scoreSyncBatch', syncRecord,
-    `${sourceType}; ${updatedScores.length} students; ${preview.AbsentCount} absent`));
+    `${sourceType}; ${updatedScores.length} students; ${syncRecord.AbsentCount} absent; ${rejectedScores.length} rejected`));
   const message = `${updatedScores.length} approved CBT score${updatedScores.length === 1 ? '' : 's'} synchronized into the Draft scorebook.`
-    + (rejectedScores.length ? ` ${rejectedScores.length} conflicting attempt(s) rejected; earlier accepted scores are unchanged.` : '');
+    + (rejectedScores.length ? ` ${rejectedScores.length} student result(s) rejected separately; their saved marks and local answers are unchanged.` : '');
   const scoreSyncPreparation = await createAcademicCbtSyncPreparation(env, user, {
     BranchId: scope.branchId,
     SchoolSection: scope.section,

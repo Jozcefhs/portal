@@ -427,7 +427,8 @@ export function validateAcademicCbtScoreBatch(value = {}, options = {}) {
   const cbtMaximum = component?.ScoreEntryMode === 'objective-theory'
     ? Number(component.ObjectiveMaximumScore)
     : Number(component?.MaximumScore);
-  if (component && Math.abs(Number(payload.MaximumScore) - cbtMaximum) > 0.0001) {
+  if (component && (!Number.isFinite(Number(payload.MaximumScore))
+      || Math.abs(Number(payload.MaximumScore) - cbtMaximum) > 0.0001)) {
     Issues.push(`${component.Name}${component.ScoreEntryMode === 'objective-theory' ? ' Objective (A)' : ''} is marked over ${cbtMaximum}; the CBT batch uses ${payload.MaximumScore}.`);
   }
   if (component && sourceMode) {
@@ -439,15 +440,26 @@ export function validateAcademicCbtScoreBatch(value = {}, options = {}) {
   }
   if (!supplied.length) Issues.push('The CBT score batch has no student scores.');
   if (supplied.length > 200) Issues.push('Synchronize at most 200 student scores in one CBT batch.');
+  // Shared setup/identity errors invalidate the envelope. Student-specific
+  // eligibility or mark errors must not block other, independently valid rows.
+  const BatchIssues = [...Issues];
   const Rows = supplied.map((row = {}, index) => {
+    row = row && typeof row === 'object' ? row : {};
     const RowIssues = [];
     const StudentRef = clean(row.StudentRef || row.AdmissionNo);
     const key = lower(StudentRef);
     const State = oneOf(row.State, ['Numeric', 'Absent'], '');
     let RawScore = null;
-    if (!StudentRef) RowIssues.push('StudentRef is required.');
-    else if (!roster.has(key)) RowIssues.push(`${StudentRef} is not in the selected subject roster.`);
-    else if (seen.has(key)) RowIssues.push(`${StudentRef} appears more than once in this CBT batch.`);
+    // Receipts identify results by StudentRef. Ambiguous/missing identities
+    // cannot safely be acknowledged to existing desktop clients.
+    if (!StudentRef) {
+      RowIssues.push('StudentRef is required.');
+      BatchIssues.push('Each CBT result needs a student reference.');
+    } else if (seen.has(key)) {
+      RowIssues.push(`${StudentRef} appears more than once in this CBT batch.`);
+      BatchIssues.push(`${StudentRef} appears more than once in this CBT batch.`);
+    }
+    if (StudentRef && !roster.has(key)) RowIssues.push(`${StudentRef} is not in the selected subject roster.`);
     seen.add(key);
     if (!State) RowIssues.push(`${StudentRef || `Row ${index + 1}`} must be Numeric or Absent.`);
     if (State === 'Numeric') {
@@ -460,12 +472,16 @@ export function validateAcademicCbtScoreBatch(value = {}, options = {}) {
     return {
       RowNumber: index + 1, StudentRef, State, RawScore,
       AttemptId: clean(row.AttemptId), AttemptStatus: clean(row.AttemptStatus),
+      RejectionCode: RowIssues.length ? (StudentRef && !roster.has(key)
+        ? 'ACADEMIC_CBT_SCORE_STUDENT_NOT_IN_ROSTER' : 'ACADEMIC_CBT_SCORE_STUDENT_INVALID') : '',
       SubmittedAt: clean(row.SubmittedAt), Valid: RowIssues.length === 0, Issues: RowIssues
     };
   });
   Rows.filter((row) => !row.Valid).forEach((row) => Issues.push(...row.Issues));
   return {
     Ready: Issues.length === 0,
+    BatchReady: BatchIssues.length === 0,
+    BatchIssues: [...new Set(BatchIssues)],
     Issues: [...new Set(Issues)],
     Rows,
     Component: component || null,

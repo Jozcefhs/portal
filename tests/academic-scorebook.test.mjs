@@ -354,6 +354,8 @@ test('Milestone 8 CBT batches accept finalized submissions without changing unto
     roster: [{ StudentRef: 'DCA/001' }, { StudentRef: 'DCA/002' }]
   });
   assert.equal(invalid.Ready, false);
+  assert.equal(invalid.BatchReady, true);
+  assert.equal(invalid.BatchIssues.length, 0);
   assert.ok(invalid.Issues.some((issue) => issue.includes('between 0 and 40')));
 });
 
@@ -375,6 +377,7 @@ test('split CBT batches validate against the Objective A maximum instead of the 
     Scores: [{ StudentRef: 'DCA/001', State: 'Numeric', RawScore: 18 }]
   }, { scheme, sourceMode: 'built-in-cbt', roster: [{ StudentRef: 'DCA/001' }] });
   assert.equal(wrongMaximum.Ready, false);
+  assert.equal(wrongMaximum.BatchReady, false);
   assert.ok(wrongMaximum.Issues.some((issue) => issue.includes('Objective (A) is marked over 20')));
 });
 
