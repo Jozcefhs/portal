@@ -15454,41 +15454,95 @@ function academicScorebookWorkspace(data, rows) {
   const classRegister = data.permissions?.canReviewScores ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-class-score-register>
     <div class="academic-management-editor-heading"><div><h3>Class score register — all arms</h3><p>Read-only raw marks / maximum, including Draft scores. This is not a published result. Choose a class, not a classroom.</p></div></div>
     <div class="academic-management-form-grid"><label>Class<select name="ClassId" required>${academicSelectOptions(rows.classes.filter(academicIsActive), '', row => row.Name, 'Choose class')}</select></label>
-    <label>Test<select name="TestId"><option value="">All tests</option></select></label><label>Find student<input name="Query" type="search" placeholder="Name or admission number"></label></div>
-    <button type="submit">Load class scores</button><p role="status" data-class-register-status>Select a class to load its students and scores.</p>
+    <label>Test<select name="TestId"><option value="">All tests</option></select></label><label>Find student<input name="Query" type="search" placeholder="Name or admission number"></label>
+    <div class="class-register-subject-field"><span id="class-register-subject-label">Subjects</span><details data-class-register-subjects>
+      <summary aria-labelledby="class-register-subject-label class-register-subject-summary"><span id="class-register-subject-summary" data-class-register-subject-summary>Load a class first</span></summary>
+      <div class="class-register-subject-panel"><div class="class-register-actions"><button type="button" data-class-register-subject-action="all" disabled>Select all</button><button type="button" data-class-register-subject-action="none" disabled>Clear</button></div>
+      <div class="class-register-subject-options" data-class-register-subject-options>Load class scores to choose subjects.</div></div>
+    </details></div></div>
+    <div class="class-register-actions"><button type="submit">Load class scores</button><button type="button" class="secondary" data-class-register-print disabled>Preview / print</button></div>
+    <p role="status" data-class-register-status>Select a class to load its students and scores.</p>
     <div class="admin-table-wrap" data-class-register-table style="max-width:100%;overflow:auto"></div>
     <div class="academic-management-form-actions"><button type="button" data-class-register-page="-1" disabled>Previous</button><span data-class-register-count></span><button type="button" data-class-register-page="1" disabled>Next</button></div>
   </form>` : '';
   return `${scorebook}${classRegister}${workflow}${importPanel}${imports}${externalCbtPanel}${scoreSyncHistory}${schemePanel}`;
 }
 
+function academicClassRegisterView(register, { testId = '', subjectIds = null, query = '' } = {}) {
+  const selected = subjectIds === null ? null : new Set(subjectIds);
+  const columns = (register?.Columns || []).filter(row => (!testId || row.TestId === testId)
+    && (selected === null || selected.has(row.SubjectId)));
+  const needle = clean(query).toLowerCase();
+  const rows = (register?.Rows || []).filter(row => `${row.StudentName} ${row.StudentRef}`.toLowerCase().includes(needle));
+  return { columns, rows };
+}
+
+function academicClassRegisterTable(columns, rows, start = 0) {
+  return `<table class="admin-table class-score-register-table"><thead><tr><th scope="col">S/N</th><th scope="col">Student</th><th scope="col">Admission number</th><th scope="col">Arm</th>${columns.map(column => `<th scope="col">${escapeHtml(column.SubjectName)}<br><small>${escapeHtml(column.TestName)}</small></th>`).join('')}</tr></thead><tbody>${rows.map((row, index) => {
+    const byColumn = new Map((row.Cells || []).map(cell => [cell.ColumnId, cell]));
+    return `<tr><td>${start + index + 1}</td><td>${escapeHtml(row.StudentName)}${row.RosterConflict ? '<small class="class-register-note">Review duplicate membership</small>' : ''}</td><td>${escapeHtml(row.StudentRef)}</td><td>${escapeHtml(row.ArmName)}</td>${columns.map(column => {
+      const cell = byColumn.get(column.Id);
+      return `<td title="${escapeHtml(cell?.SheetStatus || '')}">${cell?.State === 'Numeric' ? `${escapeHtml(cell.RawScore)} / ${escapeHtml(cell.MaximumScore)}` : escapeHtml(cell?.State || 'Not recorded')}</td>`;
+    }).join('')}</tr>`;
+  }).join('') || `<tr><td colspan="${columns.length + 4}">No matching students.</td></tr>`}</tbody></table>`;
+}
+
+function academicClassRegisterPrintHtml(register, filters, schoolName, period) {
+  const { columns, rows } = academicClassRegisterView(register, filters);
+  const sections = [];
+  // Keep wide registers legible: repeat student identity for each group of five score columns.
+  for (let offset = 0; offset < columns.length; offset += 5) {
+    const group = columns.slice(offset, offset + 5);
+    sections.push(`<section><h1>${escapeHtml(schoolName || 'School')}</h1><h2>${escapeHtml(register.ClassName)} — Class score register</h2>
+      <p>${escapeHtml(period)} · All arms · ${rows.length} matching students</p>
+      <p>Subjects: ${escapeHtml([...new Set(group.map(column => column.SubjectName))].join(', '))}<br>Tests: ${escapeHtml([...new Set(group.map(column => column.TestName))].join(', '))}</p>
+      <p>Raw marks / maximum · Includes Draft scores · Not a published result${filters.query ? `<br>Student filter: ${escapeHtml(filters.query)}` : ''}</p>
+      <p>Subject section ${sections.length + 1} of ${Math.ceil(columns.length / 5)}</p>${academicClassRegisterTable(group, rows)}</section>`);
+  }
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(register.ClassName)} class score register</title><style>
+    @page{size:A4 landscape;margin:10mm}*{box-sizing:border-box}body{font:11px/1.4 Arial,sans-serif;color:#17324d;margin:24px}h1{font-size:20px;margin:0}h2{font-size:17px}p{margin:6px 0}section{margin:20px 0 36px}section+section{break-before:page}
+    table{width:100%;border-collapse:collapse;table-layout:fixed}th,td{border:1px solid #8195a7;padding:6px;text-align:center;overflow-wrap:anywhere}th{background:#edf3f8}th:first-child{width:4%}th:nth-child(2){width:20%}th:nth-child(3){width:13%}th:nth-child(4){width:10%}td:nth-child(2),td:nth-child(3),td:nth-child(4){text-align:left}thead{display:table-header-group}tr{break-inside:avoid}small{display:block}button{padding:10px 18px;margin-bottom:12px}@media print{body{margin:0}button{display:none}section{margin:0}section+section{padding-top:0}}
+    </style></head><body><button onclick="window.print()">Print / Save as PDF</button><p>All matching students are included. Wide selections continue in separate subject sections.</p>${sections.join('') || '<p>Select at least one subject to print.</p>'}</body></html>`;
+}
+
 function bindAcademicClassScoreRegister(form) {
   if (!form) return;
-  let register = null, page = 0;
+  let register = null, page = 0, subjectIds = null;
+  const pageSize = 30;
   const status = form.querySelector('[data-class-register-status]');
+  const subjectOptions = form.querySelector('[data-class-register-subject-options]');
+  const printButton = form.querySelector('[data-class-register-print]');
+  const filters = () => ({ testId: form.elements.TestId.value, subjectIds, query: form.elements.Query.value });
+  const resetSubjects = () => {
+    subjectIds = null;
+    subjectOptions.textContent = 'Load class scores to choose subjects.';
+    form.querySelector('[data-class-register-subject-summary]').textContent = 'Load a class first';
+    form.querySelectorAll('[data-class-register-subject-action]').forEach(button => { button.disabled = true; });
+    form.elements.TestId.innerHTML = '<option value="">All tests</option>';
+  };
   const render = () => {
-    const columns = (register?.Columns || []).filter(row => !form.elements.TestId.value || row.TestId === form.elements.TestId.value);
-    const query = clean(form.elements.Query.value).toLowerCase();
-    const rows = (register?.Rows || []).filter(row => `${row.StudentName} ${row.StudentRef}`.toLowerCase().includes(query));
-    page = Math.min(page, Math.max(0, Math.ceil(rows.length / 25) - 1));
-    const start = page * 25;
-    form.querySelector('[data-class-register-table]').innerHTML = register ? `<table style="min-width:100%;width:max-content"><thead><tr><th>Student</th><th>Admission number</th><th>Arm</th>${columns.map(column => `<th>${escapeHtml(column.SubjectName)}<br>${escapeHtml(column.TestName)}</th>`).join('')}</tr></thead><tbody>${rows.slice(start, start + 25).map(row => {
-      const byColumn = new Map(row.Cells.map(cell => [cell.ColumnId, cell]));
-      return `<tr><td>${escapeHtml(row.StudentName)}${row.RosterConflict ? '<small>Review duplicate membership</small>' : ''}</td><td>${escapeHtml(row.StudentRef)}</td><td>${escapeHtml(row.ArmName)}</td>${columns.map(column => {
-        const cell = byColumn.get(column.Id);
-        return `<td title="${escapeHtml(cell?.SheetStatus || '')}">${cell?.State === 'Numeric' ? `${escapeHtml(cell.RawScore)} / ${escapeHtml(cell.MaximumScore)}` : escapeHtml(cell?.State || 'Not recorded')}</td>`;
-      }).join('')}</tr>`;
-    }).join('') || `<tr><td colspan="${columns.length + 3}">No matching students.</td></tr>`}</tbody></table>` : '';
-    form.querySelector('[data-class-register-count]').textContent = register ? `${rows.length ? start + 1 : 0}–${Math.min(start + 25, rows.length)} of ${rows.length} students` : '';
+    const { columns, rows } = academicClassRegisterView(register, filters());
+    page = Math.max(0, Math.min(page, Math.max(0, Math.ceil(rows.length / pageSize) - 1)));
+    const start = page * pageSize;
+    form.querySelector('[data-class-register-table]').innerHTML = register ? columns.length
+      ? academicClassRegisterTable(columns, rows.slice(start, start + pageSize), start)
+      : '<p>Select at least one subject with scores for this test.</p>' : '';
+    form.querySelector('[data-class-register-count]').textContent = register ? `${rows.length ? start + 1 : 0}–${Math.min(start + pageSize, rows.length)} of ${rows.length} students` : '';
     form.querySelector('[data-class-register-page="-1"]').disabled = page <= 0;
-    form.querySelector('[data-class-register-page="1"]').disabled = start + 25 >= rows.length;
+    form.querySelector('[data-class-register-page="1"]').disabled = !columns.length || start + pageSize >= rows.length;
+    printButton.disabled = !register || !columns.length || !rows.length;
+    if (register) {
+      const total = new Set(register.Columns.map(column => column.SubjectId)).size;
+      form.querySelector('[data-class-register-subject-summary]').textContent = subjectIds.length === total
+        ? `All subjects (${total})` : `${subjectIds.length} subjects selected`;
+    }
   };
   form.addEventListener('submit', async event => {
     event.preventDefault();
     if (!form.reportValidity()) return;
     const button = form.querySelector('[type="submit"]'); button.disabled = true;
     form.elements.ClassId.disabled = true;
-    register = null; page = 0; render(); status.textContent = 'Loading class scores…';
+    register = null; page = 0; resetSubjects(); render(); status.textContent = 'Loading class scores…';
     try {
       const result = await academicManagementRequest('getAcademicClassScoreRegister', {
         SchoolSection: academicManagementFilters.section, SessionId: academicManagementFilters.sessionId,
@@ -15496,6 +15550,10 @@ function bindAcademicClassScoreRegister(form) {
       });
       if (!form.isConnected) return;
       register = result.classScoreRegister;
+      const subjects = [...new Map(register.Columns.map(column => [column.SubjectId, column.SubjectName])).entries()];
+      subjectIds = subjects.map(([id]) => id);
+      subjectOptions.innerHTML = subjects.map(([id, name]) => `<label class="academic-checkbox-option"><input type="checkbox" data-class-register-subject value="${escapeHtml(id)}" checked><span>${escapeHtml(name)}</span></label>`).join('') || 'No subjects available.';
+      form.querySelectorAll('[data-class-register-subject-action]').forEach(button => { button.disabled = false; });
       const tests = [...new Map(register.Columns.map(column => [column.TestId, column.TestName])).entries()];
       form.elements.TestId.innerHTML = '<option value="">All tests</option>' + tests.map(([id, name]) => `<option value="${escapeHtml(id)}">${escapeHtml(name)}</option>`).join('');
       status.textContent = `${register.ClassName}: ${register.StudentCount} students across all arms · ${register.SubjectCount} subjects. Raw marks / maximum. Scroll horizontally to see subjects; hover a mark for sheet status.`;
@@ -15503,10 +15561,32 @@ function bindAcademicClassScoreRegister(form) {
     } catch (error) { status.textContent = error.message || String(error); }
     finally { button.disabled = false; form.elements.ClassId.disabled = false; }
   });
-  form.elements.ClassId.addEventListener('change', () => { register = null; page = 0; render(); status.textContent = 'Load the selected class to review its scores.'; });
+  form.elements.ClassId.addEventListener('change', () => { register = null; page = 0; resetSubjects(); render(); status.textContent = 'Load the selected class to review its scores.'; });
   form.elements.Query.addEventListener('input', () => { page = 0; render(); });
   form.elements.TestId.addEventListener('change', () => { page = 0; render(); });
   form.querySelectorAll('[data-class-register-page]').forEach(button => button.addEventListener('click', () => { page += Number(button.dataset.classRegisterPage); render(); }));
+  const updateSubjects = () => {
+    subjectIds = [...subjectOptions.querySelectorAll('input:checked')].map(input => input.value);
+    page = 0; render();
+  };
+  subjectOptions.addEventListener('change', updateSubjects);
+  form.querySelectorAll('[data-class-register-subject-action]').forEach(button => button.addEventListener('click', () => {
+    subjectOptions.querySelectorAll('input').forEach(input => { input.checked = button.dataset.classRegisterSubjectAction === 'all'; });
+    updateSubjects();
+  }));
+  form.querySelector('[data-class-register-subjects]').addEventListener('keydown', event => {
+    if (event.key === 'Escape') { event.currentTarget.open = false; event.currentTarget.querySelector('summary').focus(); }
+  });
+  printButton.addEventListener('click', () => {
+    if (!register || printButton.disabled) return;
+    const popup = window.open('', '_blank');
+    if (!popup) { status.textContent = 'Allow pop-ups to open the print preview.'; return; }
+    popup.opener = null;
+    const period = [academicLabel(academicManagementData?.sessions || [], register.SessionId),
+      academicLabel(academicManagementData?.terms || [], register.TermId)].filter(Boolean).join(' · ');
+    popup.document.write(academicClassRegisterPrintHtml(register, filters(), academicManagementData?.reportProfile?.SchoolName, period));
+    popup.document.close();
+  });
 }
 
 function academicWeightedResultMarkup(record) {

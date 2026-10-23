@@ -1,0 +1,82 @@
+[data-academic-class-score-register] .class-register-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+[data-academic-class-score-register] .class-register-actions button { margin: 0; }
+[data-academic-class-score-register] .academic-management-form-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.class-register-subject-field { min-width: 0; color: #40566d; font-size: 11px; font-weight: 800; }
+.class-register-subject-field details { position: relative; margin-top: 4px; }
+.class-register-subject-field summary {
+  min-height: 38px;
+  padding: 9px 12px;
+  border: 1px solid #cbd9e5;
+  border-radius: 7px;
+  background: #fff;
+  color: #163f69;
+  cursor: pointer;
+  font-size: 12px;
+}
+.class-register-subject-field summary:focus-visible { outline: 2px solid #08735f; outline-offset: 2px; }
+.class-register-subject-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  padding: 10px;
+  background: #fff;
+  border: 1px solid #cbd9e5;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px #163f6926;
+}
+.class-register-subject-options { max-height: 260px; overflow-y: auto; margin-top: 8px; }
+[data-academic-class-score-register] [data-class-register-table] {
+  max-height: 640px;
+  margin: 10px 0;
+  padding: 0;
+  border: 1px solid #bacbd9;
+  border-radius: 8px;
+  scrollbar-gutter: stable;
+}
+[data-academic-class-score-register] .class-score-register-table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+[data-academic-class-score-register] .class-score-register-table th,
+[data-academic-class-score-register] .class-score-register-table td {
+  padding: 10px 12px;
+  border: 0;
+  border-right: 1px solid #bacbd9;
+  border-bottom: 1px solid #bacbd9;
+  text-align: center;
+  vertical-align: middle;
+  min-width: 145px;
+  max-width: 240px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+}
+[data-academic-class-score-register] .class-score-register-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #eaf2f8;
+  color: #163f69;
+}
+[data-academic-class-score-register] .class-score-register-table th:first-child,
+[data-academic-class-score-register] .class-score-register-table td:first-child { min-width: 55px; }
+[data-academic-class-score-register] .class-score-register-table th:nth-child(2),
+[data-academic-class-score-register] .class-score-register-table td:nth-child(2) { min-width: 230px; text-align: left; }
+[data-academic-class-score-register] .class-score-register-table td:nth-child(3),
+[data-academic-class-score-register] .class-score-register-table td:nth-child(4) { text-align: left; }
+[data-academic-class-score-register] .class-score-register-table tbody tr:nth-child(even) { background: #f3f7fa; }
+.class-register-note { display: block; color: #9c3b18; }
