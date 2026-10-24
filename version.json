@@ -1,7 +1,7 @@
 {
-  "version": "3.1.50",
+  "version": "3.1.51",
   "channel": "stable",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.50.exe",
-  "sha256": "dad9400258ff52ba93c5996c2c50f8dd0f490eee9fe2bd732eeb4ed77c039bf1",
-  "notes": "Dynamax Desktop v3.1.50 corrects CBT re-push reports: previously saved batches count as already recorded, not newly accepted. The backend rechecks the saved online marks before confirming them; green status, original receipts, answers and scores are preserved. Includes the v3.1.49 stale-batch and independent-score upload repairs. Back up and close Dynamax before updating both CBT servers between examinations. No test deletion, recreation or re-pull is needed."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.51.exe",
+  "sha256": "f51efc97a8283978cd1f6ef255c09240afbbc8cd4ac739b2cb6b2807726260a5",
+  "notes": "Dynamax Desktop v3.1.51 synchronizes student status with active class membership. Temporary absence pauses membership; permanent exits remove students from active class lists; eligible reinstatement avoids duplicates. Scores, answers, attendance, payments and history are preserved. Includes all v3.1.50 CBT upload repairs. Back up and close Dynamax before updating each CBT server between examinations. No test deletion, recreation or re-pull is needed."
 }
