@@ -11,30 +11,74 @@ function fixture() {
   return {
     input: { ClassIds: arms.map(row => row.ClassId), ArmTemplateIds: [], ConfirmClassroomRemoval: true,
       RemoveClassrooms: arms.map(row => ({ ArmId: row.ArmId, RevisionToken: row.__updateTime })) },
-    state: { arms, classes: arms.map(row => ({ ClassId: row.ClassId, Name: `Grade ${row.ClassId.slice(1)}`, SchoolSection: 'secondary' })), armTemplates: [] },
+    state: { arms, classes: arms.map(row => ({ ClassId: row.ClassId, Name: `Grade ${row.ClassId.slice(1)}`, SchoolSection: 'secondary' })), armTemplates: [], studentMemberships: [],
+      sessions: [{ SessionId: 'session', Status: 'Active' }], terms: [{ TermId: 'term', Status: 'Active' }] },
     scope: { branchId: 'main', section: 'secondary' }, query: async () => [], students: async () => []
   };
 }
-test('five unused Virtue classrooms can be archived without mutating their records', async () => {
+test('five empty Virtue classrooms can be archived without mutating their records', async () => {
   const f = fixture(), before = structuredClone(f.state), calls = [];
   f.query = async (collection, options) => { calls.push({ collection, options }); return []; };
   assert.equal((await checkClassroomRemovals(f)).length, 5);
   assert.deepEqual(f.state, before);
-  assert.ok(calls.length > 15);
-  assert.ok(calls.every(call => call.options.limit === 1 && call.options.filters[0].value.length === 5));
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].collection, 'academicStudentMemberships');
+  assert.equal(calls[0].options.pageSize, 500);
+  assert.equal(calls[0].options.filters[0].value.length, 5);
 });
-test('removal blocks on any historical student, assessment, attendance, diary or movement reference', async () => {
+test('historical memberships, assessments, attendance, diaries and transfers no longer block empty classrooms', async () => {
   for (const collection of ['academicStudentMemberships', 'academicScoreSheets', 'academicStudentScores',
     'academicCbtTests', 'academicStudentAttendance', 'academicWeeklyDiaries', 'academicStudentMovements']) {
     const f = fixture();
-    f.query = async name => name === collection ? [{ Status: 'Archived' }] : [];
-    await assert.rejects(checkClassroomRemovals(f), { code: 'ACADEMIC_CLASSROOM_REMOVAL_BLOCKED' });
+    f.query = async name => name === collection ? [{ ArmId: 'g11-virtue', Status: 'Archived' }] : [];
+    assert.equal((await checkClassroomRemovals(f)).length, 5);
   }
 });
-test('legacy student profiles without memberships also block removal', async () => {
+test('active legacy student profiles without memberships still block removal', async () => {
   for (const student of [{ ClassName: 'Grade 8', ClassArm: 'Virtue' }, { AcademicArmId: 'g12-virtue' }]) {
     const f = fixture(); f.students = async () => [student];
     await assert.rejects(checkClassroomRemovals(f), /student profile/);
+  }
+});
+test('inactive and exited profiles and memberships do not occupy a classroom', async () => {
+  for (const Status of ['Inactive', 'On Leave', 'Suspended', 'Withdrawn', 'Expelled', 'Graduated', 'Transferred', 'Left School', 'Deceased']) {
+    const f = fixture();
+    f.query = async () => [{ Status, ArmId: 'g11-virtue' }];
+    f.students = async () => [{ Status, AcademicArmId: 'g11-virtue' }];
+    assert.equal((await checkClassroomRemovals(f)).length, 5);
+  }
+});
+test('a current or future student blocks removal even after a page of archived entries', async () => {
+  for (const Status of ['Active', 'Enrolled', '']) {
+    const f = fixture();
+    f.query = async () => [...Array.from({ length: 500 }, () => ({ Status: 'Archived', ArmId: 'g11-virtue' })), { Status, StudentRef: 'TEST/1', ArmId: 'g11-virtue' }];
+    await assert.rejects(checkClassroomRemovals(f), /Grade 11 \/ Virtue: students are still assigned/);
+  }
+});
+test('closed or completed historical rosters do not occupy a classroom; unknown and future periods remain protected', async () => {
+  for (const changes of [{ Status: 'Closed' }, { Status: 'Archived' }, { EndDate: '2020-01-01' }, { EndDate: '2999-01-01' }, {}]) {
+    const f = fixture(); f.today = '2026-10-24';
+    Object.assign(f.state.terms[0], changes);
+    f.query = async () => [{ Status: 'Active', ArmId: 'g11-virtue', SessionId: 'session', TermId: 'term' }];
+    if (changes.Status || changes.EndDate === '2020-01-01') assert.equal((await checkClassroomRemovals(f)).length, 5);
+    else await assert.rejects(checkClassroomRemovals(f), /students are still assigned/);
+  }
+});
+test('confirmed transfers take precedence over stale profile arm labels, without changing the profile', async () => {
+  const f = fixture(), profile = { AdmissionNo: 'TEST/1', ClassName: 'Grade 11', ClassArm: 'Virtue', Status: 'Active' };
+  f.students = async () => [profile];
+  f.state.studentMemberships = [{ StudentRef: 'TEST/1', ArmId: 'g11-merit', Status: 'Active' }];
+  assert.equal((await checkClassroomRemovals(f)).length, 5);
+  assert.equal(profile.ClassArm, 'Virtue');
+  f.state.studentMemberships[0].Status = 'Archived';
+  await assert.rejects(checkClassroomRemovals(f), /active student profile/);
+});
+test('other branches and school sections cannot create false occupancy', async () => {
+  for (const patch of [{ BranchId: 'other' }, { SchoolSection: 'primary' }]) {
+    const f = fixture();
+    f.query = async () => [{ ...patch, ArmId: 'g11-virtue', Status: 'Active' }];
+    f.students = async () => [{ ...patch, AcademicArmId: 'g11-virtue', Status: 'Active' }];
+    assert.equal((await checkClassroomRemovals(f)).length, 5);
   }
 });
 test('confirmation, scope, exact selection and revision are required', async () => {
@@ -60,9 +104,9 @@ function runtime(f) {
   const ctx = vm.createContext({ checkClassroomRemovals, requireWritableSubscription: () => {},
     requireCapability: (_user, name) => capabilities.push(name), academicScope: async () => f.scope,
     uniqueIds: value => value || [], loadScopedAcademicState: async () => f.state,
-    findById: (rows, id) => rows.find(row => row.ClassId === id), assertReference: row => row,
+    findById: (rows, id) => rows.find(row => row.ArmId === id || row.ClassId === id), assertReference: row => row,
     lower: value => String(value || '').toLowerCase(), clean: value => String(value || '').trim(),
-    queryCollection: (_env, collection, options) => f.query(collection, options),
+    queryCollectionPages: (_env, collection, options) => f.query(collection, options),
     loadPeople: async () => ({ students: await f.students() }),
     withoutMetadata: row => Object.fromEntries(Object.entries(row).filter(([key]) => !key.startsWith('__'))),
     nowIso: () => 'now', actorName: () => 'Manager', stampAcademicRecord: () => {},
@@ -85,11 +129,46 @@ test('removal-only bulk save atomically archives targets and updates the legacy 
   assert.ok(commits[0].every(write => write.operation !== 'delete'));
   assert.ok(f.state.arms.every(row => row.Status === 'Active'));
 });
-test('a linked classroom blocks the entire batch before any write', async () => {
+test('an occupied classroom blocks the entire batch before any write', async () => {
   const f = fixture(); f.query = async () => [{ ArmId: 'g9-virtue' }];
   const { ctx, commits } = runtime(f);
   await assert.rejects(ctx.bulkApplyAcademicArmTemplates({}, {}, f.input));
   assert.equal(commits.length, 0);
+});
+test('removing a formerly occupied classroom writes only the classroom, legacy choices and audit', async () => {
+  const f = fixture();
+  const protectedRecords = { studentScores: [{ Score: 72, ArmId: 'g11-virtue' }], studentMovements: [{ FromArmId: 'g11-virtue', ToArmId: 'g11-merit' }],
+    studentAttendance: [{ ArmId: 'g11-virtue', Status: 'Present' }], weeklyDiaries: [{ ArmId: 'g11-virtue', Status: 'Approved' }] };
+  Object.assign(f.state, structuredClone(protectedRecords));
+  const { ctx, commits } = runtime(f);
+  await ctx.bulkApplyAcademicArmTemplates({}, {}, f.input);
+  assert.ok(commits.flat().every(write => ['academicArms', 'legacy', 'audit'].includes(write.collectionPath)));
+  for (const [key, value] of Object.entries(protectedRecords)) assert.deepEqual(f.state[key], value);
+});
+test('a stale classroom revision aborts the atomic batch without modifying history', async () => {
+  const f = fixture(), { ctx, commits } = runtime(f);
+  ctx.commitAcademicBatch = async () => { throw Object.assign(new Error('Classroom changed'), { code: 'ACADEMIC_WRITE_CONFLICT' }); };
+  await assert.rejects(ctx.bulkApplyAcademicArmTemplates({}, {}, f.input), { code: 'ACADEMIC_WRITE_CONFLICT' });
+  assert.equal(commits.length, 0);
+  assert.ok(f.state.arms.every(row => row.Status === 'Active'));
+});
+
+test('single-record archive and legacy delete both preserve an empty classroom identity and its history', async () => {
+  for (const action of ['archiveAcademicManagementRecord', 'deleteAcademicManagementRecord']) {
+    const f = fixture(), { ctx, commits } = runtime(f);
+    Object.assign(ctx, { normalizedRecordType: value => value, RECORD_TYPES: { arm: { collection: 'academicArms' } },
+      ACADEMIC_RECORD_DEPENDENCY_STATE_KEYS: { arm: ['classes', 'arms', 'sessions', 'terms'] },
+      activeValue: value => value === true, recordId: row => row.ArmId || row.ClassId,
+      effectiveAcademicSection: row => row.SchoolSection, academicRecordResponseView: () => 'classrooms',
+      activeDependants: () => { throw new Error('Historical links must not be checked for classroom archiving'); } });
+    vm.runInContext(source.slice(source.indexOf('export async function archiveAcademicManagementRecord('),
+      source.indexOf('function academicOperationalViewForCapability(')).replaceAll('export async function', 'async function'), ctx);
+    const result = await ctx[action]({}, {}, { RecordType: 'arm', RecordId: 'g11-virtue', RevisionToken: 'rev1' });
+    assert.match(result.message, /Empty classroom archived/);
+    assert.equal(commits.length, 1);
+    assert.ok(commits[0].some(write => write.documentId === 'g11-virtue' && write.data.Status === 'Archived' && write.updateTime === 'rev1'));
+    assert.ok(commits[0].every(write => !write.operation && ['academicArms', 'legacy', 'audit'].includes(write.collectionPath)));
+  }
 });
 
 test('unchecking Virtue names only the selected classroom targets and rechecking cancels removal', async () => {

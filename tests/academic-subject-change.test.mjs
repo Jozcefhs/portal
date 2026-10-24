@@ -6,6 +6,7 @@ import { webcrypto } from 'node:crypto';
 import * as management from '../functions/lib/academic-management.js';
 import * as results from '../functions/lib/academic-term-results.js';
 import * as studentStatus from '../functions/lib/student-academic-status.js';
+import { checkClassroomRemovals } from '../functions/lib/academic-classroom-removal.js';
 
 const source = await readFile(new URL('../functions/lib/academic-management.js', import.meta.url), 'utf8');
 const clone = value => JSON.parse(JSON.stringify(value));
@@ -135,6 +136,39 @@ test('applied transfer archives same-student legacy duplicates atomically and pr
   assert.deepEqual(write.updateMask.sort(), ['Status', 'SupersededAt', 'SupersededByMembershipId', 'SupersededReason', 'UpdatedAt', 'UpdatedBy'].sort());
   assert.ok(h.writes.every(row => row.collectionPath !== 'academicStudentScores' && row.operation !== 'delete'));
 });
+
+for (const crossClass of [false, true]) {
+  test(`${crossClass ? 'class-to-class' : 'arm-to-arm'} transfer leaves one current membership and allows the empty source classroom to be removed`, async () => {
+    const h = transferHarness();
+    addLegacyDuplicate(h);
+    const originalScore = clone(h.state.studentScores);
+    const oldArm = h.state.arms[0];
+    Object.assign(oldArm, { IsClassroom: true, __updateTime: 'arm-v1' });
+    if (crossClass) {
+      h.state.classes.push({ ...h.state.classes[0], RecordId: 'class-11', ClassId: 'class-11', Name: 'Grade 11' });
+      h.state.arms[1].ClassId = 'class-11';
+    }
+    await h.transfer({ ClassId: crossClass ? 'class-11' : 'class' }, h.context.academicWebActor(ict));
+    const active = h.state.studentMemberships.filter(row => row.Status === 'Active');
+    assert.equal(active.length, 1);
+    assert.equal(active[0].MembershipId, 'member');
+    assert.equal(active[0].ArmId, 'destination');
+    assert.equal(active[0].ClassId, crossClass ? 'class-11' : 'class');
+    assert.deepEqual(h.state.studentScores, originalScore);
+    assert.equal(h.state.studentMovements.filter(row => row.FromArmId === 'arm').length, 1);
+    const targets = await checkClassroomRemovals({
+      input: { ClassIds: ['class'], ConfirmClassroomRemoval: true, RemoveClassrooms: [{ ArmId: 'arm', RevisionToken: 'arm-v1' }] },
+      state: h.state, scope: { branchId: 'main', section: 'secondary' },
+      query: async collection => { assert.equal(collection, 'academicStudentMemberships'); return h.state.studentMemberships.filter(row => row.ArmId === 'arm'); },
+      students: async () => [{ AdmissionNo: 'S1', ClassName: crossClass ? 'Grade 11' : 'Grade 10', ClassArm: 'Genius', Status: 'Active' }]
+    });
+    assert.deepEqual(targets, [oldArm]);
+    assert.deepEqual(h.state.studentScores, originalScore);
+    const writesBeforeRetry = h.writes.length;
+    await assert.rejects(h.transfer({ ClassId: active[0].ClassId }, h.context.academicWebActor(ict)), /different classroom|different class/);
+    assert.equal(h.writes.length, writesBeforeRetry);
+  });
+}
 
 test('pending/rejected/cancelled transfers do not retire duplicates; only approved transfers do', async () => {
   for (const decision of ['Approve', 'Reject', 'Cancel']) {

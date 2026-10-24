@@ -1091,7 +1091,7 @@ const ACADEMIC_RECORD_DEPENDENCY_STATE_KEYS = Object.freeze({
   term: Object.freeze(['terms', 'offerings', 'teacherAllocations', 'studentMemberships']),
   class: Object.freeze(['classes', 'arms', 'offerings', 'teacherAllocations', 'studentMemberships', 'studentMovements']),
   armtemplate: Object.freeze(['armTemplates', 'arms']),
-  arm: Object.freeze(['classes', 'arms', 'offerings', 'teacherAllocations', 'studentMemberships', 'studentMovements']),
+  arm: Object.freeze(['classes', 'arms', 'offerings', 'teacherAllocations', 'studentMemberships', 'studentMovements', 'sessions', 'terms']),
   subject: Object.freeze(['subjects', 'departments', 'offerings', 'teacherAllocations', 'studentMemberships', 'studentMovements']),
   department: Object.freeze(['departments', 'arms', 'studentMemberships', 'studentMovements']),
   offering: Object.freeze(['offerings', 'teacherAllocations', 'studentMemberships', 'studentMovements']),
@@ -2657,7 +2657,7 @@ export async function bulkApplyAcademicArmTemplates(env, user = {}, input = {}) 
   if (!classIds.length || (!templateIds.length && !removalRequested)) throw failure('Choose a class and an arm to create or remove.');
   if (classIds.length * templateIds.length > 200) throw failure('Apply at most 200 class-arm combinations in one batch.');
   const state = await loadScopedAcademicState(env, scope, [
-    'classes', 'armTemplates', 'arms', 'departments', 'studentMemberships'
+    'classes', 'armTemplates', 'arms', 'departments', 'studentMemberships', 'sessions', 'terms'
   ]);
   const projected = { ...state, arms: [...state.arms] };
   const classes = classIds.map((id) => assertReference(findById(state.classes, id), 'One selected class is not active.'));
@@ -2670,7 +2670,7 @@ export async function bulkApplyAcademicArmTemplates(env, user = {}, input = {}) 
   const upgradedRecords = [];
   const removedRecords = await checkClassroomRemovals({
     input: { ...input, ClassIds: classIds }, state, scope,
-    query: (collection, options) => queryCollection(env, collection, options),
+    query: (collection, options) => queryCollectionPages(env, collection, options),
     students: async () => (await loadPeople(env, user, scope, { staff: false })).students
   });
   for (const row of removedRecords) {
@@ -2726,7 +2726,7 @@ export async function bulkApplyAcademicArmTemplates(env, user = {}, input = {}) 
   });
   if (changedRecords.length) writes.push(auditWrite(user, 'BULK APPLY', 'arm', {
     BranchId: scope.branchId, SchoolSection: scope.section, ArmId: `bulk-${Date.now()}`
-  }, `${createdRecords.length} classroom(s) created; ${upgradedRecords.length} existing arm(s) upgraded to classrooms; ${removedRecords.length} unused classroom(s) archived; ${skipped} already matched.`));
+  }, `${createdRecords.length} classroom(s) created; ${upgradedRecords.length} existing arm(s) upgraded to classrooms; ${removedRecords.length} empty classroom(s) archived with history preserved; ${skipped} already matched.`));
   await commitAcademicBatch(env, writes, 'The class or arm catalogue changed while assignments were being saved. Reload and try again.');
   const response = await bootstrapAcademicManagement(env, user, {
     ...input, BranchId: scope.branchId, SchoolSection: scope.section, View: 'bulksetup'
@@ -2741,7 +2741,7 @@ export async function bulkApplyAcademicArmTemplates(env, user = {}, input = {}) 
     Upgraded: upgradedRecords.length,
     Skipped: skipped
   };
-  if (removedRecords.length) response.message = `${removedRecords.length} unused classroom(s) archived; ${createdRecords.length} created; ${skipped} existing classrooms kept. No student records, answers or scores were deleted.`;
+  if (removedRecords.length) response.message = `${removedRecords.length} empty classroom(s) archived; ${createdRecords.length} created; ${skipped} existing classrooms kept. Past transfers, attendance, diaries, answers and scores were preserved.`;
   return response;
 }
 
@@ -4028,8 +4028,16 @@ export async function archiveAcademicManagementRecord(env, user = {}, input = {}
   const existing = findById(state[stateKey] || [], input.RecordId);
   if (!existing) throw failure('The academic record was not found in the selected branch.', 404);
   if (effectiveAcademicSection(existing, scope) !== scope.section) throw failure('This academic record belongs to another school section.', 403);
-  const dependants = activeDependants(state, type, existing);
-  if (dependants.length) throw failure(`Archive the ${dependants.length} active dependent record${dependants.length === 1 ? '' : 's'} first.`, 409, 'ACADEMIC_DEPENDANTS_ACTIVE');
+  const classroom = type === 'arm' && activeValue(existing.IsClassroom, false);
+  if (classroom) {
+    await checkClassroomRemovals({ input: { ClassIds: [existing.ClassId], ConfirmClassroomRemoval: true,
+      RemoveClassrooms: [{ ArmId: existing.ArmId, RevisionToken: input.RevisionToken }] }, state, scope,
+      query: (collection, options) => queryCollectionPages(env, collection, options),
+      students: async () => (await loadPeople(env, user, scope, { staff: false })).students });
+  } else {
+    const dependants = activeDependants(state, type, existing);
+    if (dependants.length) throw failure(`Archive the ${dependants.length} active dependent record${dependants.length === 1 ? '' : 's'} first.`, 409, 'ACADEMIC_DEPENDANTS_ACTIVE');
+  }
   const revisionToken = clean(input.RevisionToken);
   if (!revisionToken || revisionToken !== clean(existing.__updateTime)) throw failure('This academic record changed after it was loaded. Reload before archiving.', 409, 'ACADEMIC_WRITE_CONFLICT');
   const archived = {
@@ -4046,11 +4054,13 @@ export async function archiveAcademicManagementRecord(env, user = {}, input = {}
     const compatibility = legacyClassWrite(state, archived, type, scope);
     if (compatibility) writes.push(compatibility);
   }
-  await batchCommitDocuments(env, writes);
-  return bootstrapAcademicManagement(env, user, {
+  await commitAcademicBatch(env, writes, 'The classroom or academic record changed while archiving. Refresh and try again; no partial changes were saved.');
+  const response = await bootstrapAcademicManagement(env, user, {
     ...input, BranchId: scope.branchId, SchoolSection: scope.section,
     View: academicRecordResponseView(input, type)
   });
+  if (classroom) response.message = 'Empty classroom archived. Past transfers, attendance, diaries, answers and scores were preserved.';
+  return response;
 }
 
 export async function deleteAcademicManagementRecord(env, user = {}, input = {}) {
@@ -4067,6 +4077,11 @@ export async function deleteAcademicManagementRecord(env, user = {}, input = {})
   const existing = findById(state[stateKey] || [], input.RecordId);
   if (!existing) throw failure('The academic record was not found in the selected branch.', 404);
   if (effectiveAcademicSection(existing, scope) !== scope.section) throw failure('This academic record belongs to another school section.', 403);
+  // A classroom is a historical identity. Even an older client's Delete action
+  // removes it from active choices by archiving, never by erasing its records.
+  if (type === 'arm' && activeValue(existing.IsClassroom, false)) {
+    return archiveAcademicManagementRecord(env, user, input);
+  }
   const dependants = academicPermanentDeleteDependants(state, type, existing);
   if (dependants.length) {
     const label = type === 'armtemplate' ? 'reusable arm definition' : (type === 'offering' ? 'subject offering' : type);

@@ -1459,7 +1459,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(classroomWorkspace, /name: 'ClassIds', label: 'Classes'/);
   assert.match(classroomWorkspace, /name: 'ArmTemplateIds', label: 'Existing and new arms'/);
   assert.match(classroomWorkspace, /Every selected arm will be applied to every selected class/);
-  assert.match(classroomWorkspace, /Only unused classrooms can be archived after confirmation/);
+  assert.match(classroomWorkspace, /Only empty classrooms can be archived after confirmation/);
   assert.match(classroomWorkspace, /data-academic-classroom-selection-summary/);
   assert.match(adminSource, /data-academic-class-arm-selection/);
   assert.match(adminSource, /bindAcademicClassroomArmSelection\(/);

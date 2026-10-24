@@ -12992,7 +12992,7 @@ function bindAcademicClassroomArmSelection(form, arms = [], templates = []) {
     const removalCount = form._academicClassroomRemovals.length;
     const field = form.querySelector('[data-academic-checkbox-name="ArmTemplateIds"]');
     if (field?.dataset) field.dataset.academicCheckboxRequired = removalCount ? 'false' : 'true';
-    if (summary) summary.textContent = `${requested - existing} new classroom(s) selected; ${existing} already exist and will be kept; ${removalCount} classroom(s) requested for removal. A dash means created for some selected classes only. Explicitly unchecking an existing arm requests removal from the currently selected classes. Removal requires confirmation and is blocked for linked records; unused classrooms are archived, never permanently deleted.`;
+    if (summary) summary.textContent = `${requested - existing} new classroom(s) selected; ${existing} already exist and will be kept; ${removalCount} classroom(s) requested for removal. A dash means created for some selected classes only. Unchecking an existing arm requests removal from the selected classes. Only empty classrooms can be archived after confirmation. Past transfers, scores and other history do not block removal and are preserved. Classrooms are archived, never permanently deleted.`;
   };
   form.addEventListener('change', (event) => {
     const input = event.target;
@@ -13598,6 +13598,7 @@ function academicCurrentRows(data = academicManagementData || {}) {
 
 function academicActionButtons(type, row, canEdit = false, canArchive = false, canDelete = false, extraButtons = '') {
   const id = academicRecordId(row);
+  if (type === 'arm' && [true, 'true', 'yes', '1'].includes(typeof row.IsClassroom === 'string' ? row.IsClassroom.toLowerCase() : row.IsClassroom)) canDelete = false;
   if (!canEdit && !canArchive && !canDelete && !extraButtons) return '<span class="muted">View only</span>';
   return `<div class="academic-management-row-actions">
     ${extraButtons}
@@ -13686,6 +13687,7 @@ function academicTaskDefinitions(view, root) {
       { key: 'import', label: `Import ${learner.plural}`, title: `Import existing ${learner.singular} memberships`, description: 'Download the CSV template, complete it, then import the finished file.', nodes: nodes(form('[data-academic-student-membership-import]')) },
       { key: 'subjects', label: 'Student subjects', title: 'Trade and Optional subjects', description: `Open your Senior classroom and complete subject choices for its ${learner.plural}.`, nodes: nodes(form('[data-academic-arm-subject-register]'), form('[data-academic-arm-subject-info]'), form('[data-academic-subject-change-requests]')) },
       { key: 'register', label: `${learner.Singular} register`, title: 'Class and subject memberships', description: `Review current allocations, curriculum status, and ${learner.singular} actions.`, nodes: nodes(register(membershipRegister)) },
+      { key: 'archived', label: 'Archived memberships', title: 'Archived memberships', description: 'Review archived class entries alongside the membership retained for each student. Read-only; no scores or records are changed.', nodes: nodes(form('[data-academic-archived-memberships]')) },
       { key: 'history', label: 'Movement history', title: `${learner.Singular} movement history`, description: 'Review the permanent audit trail for allocations, transfers and withdrawals.', nodes: nodes(register(movementRegister)) }
     ],
     timetable: [
@@ -13861,7 +13863,7 @@ function academicClassroomWorkspace(data, rows) {
     <input type="hidden" name="SchoolSection" value="${escapeHtml(section)}">
     <div class="academic-management-editor-heading"><div><small>Batch classroom setup</small><h3>Create classrooms</h3><p class="muted">Choose one or more reusable classes and arms. Every selected arm will be applied to every selected class.</p></div></div>
     ${academicCheckboxField({ name: 'ClassIds', label: 'Classes', options: classOptions, required: true, idPrefix: 'classroom-creation-classes', help: 'Select every class that should receive the chosen reusable arms.' })}
-    ${academicCheckboxField({ name: 'ArmTemplateIds', label: 'Existing and new arms', options: templateOptions, required: true, idPrefix: 'classroom-creation-arms', help: 'Selecting a class checks its already-created arms. A dash means created for only some selected classes. Check to add; uncheck an existing arm to request removal. Only unused classrooms can be archived after confirmation. Linked student and academic records are protected.' })}
+    ${academicCheckboxField({ name: 'ArmTemplateIds', label: 'Existing and new arms', options: templateOptions, required: true, idPrefix: 'classroom-creation-arms', help: 'Selecting a class checks its already-created arms. A dash means created for only some selected classes. Check to add; uncheck an existing arm to request removal. Only empty classrooms can be archived after confirmation. Past transfers, scores and other history are preserved and do not block removal.' })}
     <p class="muted" data-academic-classroom-selection-summary aria-live="polite"></p>
     <button type="submit">Save classroom selections</button>
   </form>` : '<div class="academic-view-only-note"><strong>Classroom workspace</strong><span>Your role can open assigned classrooms but cannot create or reconfigure them.</span></div>';
@@ -14177,7 +14179,7 @@ function academicBulkSetupWorkspace(data, rows) {
       <div class="academic-management-editor-heading"><div><small>Atomic assignment</small><h3>Apply arms to classes</h3></div></div>
       <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
       ${academicCheckboxField({ name: 'ClassIds', label: 'Classes', options: classOptions, required: true, idPrefix: 'arm-application-classes', help: 'Every selected reusable arm will be applied to every selected class.' })}
-      ${academicCheckboxField({ name: 'ArmTemplateIds', label: 'Existing and new arms', options: templateOptions, required: true, idPrefix: 'arm-application-templates', help: 'Selecting a class checks its already-created arms. A dash means created for only some selected classes. Check to add; uncheck an existing arm to request removal. Only unused classrooms can be archived after confirmation. Linked student and academic records are protected.' })}
+      ${academicCheckboxField({ name: 'ArmTemplateIds', label: 'Existing and new arms', options: templateOptions, required: true, idPrefix: 'arm-application-templates', help: 'Selecting a class checks its already-created arms. A dash means created for only some selected classes. Check to add; uncheck an existing arm to request removal. Only empty classrooms can be archived after confirmation. Past transfers, scores and other history are preserved and do not block removal.' })}
       <p class="muted" data-academic-classroom-selection-summary aria-live="polite"></p>
       <button type="submit">Save classroom selections</button>
     </form>
@@ -14648,6 +14650,72 @@ function bindAcademicMembershipSearch(form) {
   filter();
 }
 
+function academicArchivedMembershipRows(data, rows) {
+  // Use only the already-authorized, period-scoped data. Never infer a retained
+  // classroom from a profile, a matching name, or another academic period.
+  const memberships = rows.studentMemberships || [];
+  const byId = new Map();
+  memberships.forEach((row) => {
+    const id = academicRecordId(row);
+    if (id) byId.set(id, [...(byId.get(id) || []), row]);
+  });
+  const sameIdentity = (left, right) => ['BranchId', 'SchoolSection', 'SessionId', 'TermId', 'StudentRef'].every((field) => {
+    const value = (row) => ['SchoolSection', 'StudentRef'].includes(field) ? clean(row[field]).toLowerCase() : clean(row[field]);
+    return value(left) && value(left) === value(right);
+  });
+  const classroom = (row) => `${academicLabel(rows.classes, row.ClassId, 'Class not recorded')} / ${academicLabel(rows.arms, row.ArmId, 'Unassigned arm')}`;
+  return memberships.filter((row) => clean(row.Status).toLowerCase() === 'archived').map((archived) => {
+    let retained = null;
+    let targetId = clean(archived.SupersededByMembershipId);
+    const visited = new Set([academicRecordId(archived)]);
+    while (targetId && !visited.has(targetId)) {
+      visited.add(targetId);
+      const matches = byId.get(targetId) || [];
+      if (matches.length !== 1 || !sameIdentity(archived, matches[0])) break;
+      const candidate = matches[0];
+      if (clean(candidate.Status).toLowerCase() === 'archived' && clean(candidate.SupersededByMembershipId)) {
+        targetId = clean(candidate.SupersededByMembershipId);
+      } else {
+        retained = candidate;
+        break;
+      }
+    }
+    return {
+      StudentName: academicLabel(data.students, archived.StudentRef, 'Name unavailable'),
+      StudentRef: clean(archived.StudentRef),
+      ArchivedMembershipId: academicRecordId(archived),
+      ArchivedClassroom: classroom(archived),
+      RetainedMembershipId: retained ? academicRecordId(retained) : '',
+      RetainedClassroom: retained ? classroom(retained) : (clean(archived.SupersededByMembershipId) ? 'Retained membership could not be verified in this view' : 'No retained membership linked'),
+      RetainedStatus: retained ? clean(retained.Status) || 'Not recorded' : 'Not verified',
+      Period: `${academicLabel(rows.sessions, archived.SessionId, 'Session not recorded')} / ${academicLabel(rows.terms, archived.TermId, 'Term not recorded')}`,
+      ArchivedAt: clean(archived.SupersededAt || archived.ArchivedAt),
+      Reason: clean(archived.SupersededReason || archived.ArchiveReason) || 'Reason not recorded'
+    };
+  }).sort((left, right) => right.ArchivedAt.localeCompare(left.ArchivedAt) || left.StudentName.localeCompare(right.StudentName));
+}
+
+function academicArchivedMembershipWorkspace(data, rows) {
+  const learner = academicLearnerTerms();
+  const archived = academicArchivedMembershipRows(data, rows);
+  return `<section data-academic-archived-memberships>
+    <div class="academic-view-only-note"><strong>${archived.length} archived membership${archived.length === 1 ? '' : 's'}</strong><span>These are archived class entries, not deleted ${learner.plural}. The retained class / arm and status reflect the linked membership now, including any later transfer. Only records available in the selected branch, school section, session and term are shown. Scores and historical records remain unchanged.</span></div>
+    ${table('Archived memberships', archived, [
+      { label: learner.Singular, value: (row) => row.StudentName },
+      { label: 'Admission number', value: (row) => row.StudentRef },
+      { label: 'Archived class / arm', value: (row) => row.ArchivedClassroom },
+      { label: 'Retained class / arm (current)', value: (row) => row.RetainedClassroom },
+      { label: 'Retained status', value: (row) => row.RetainedStatus },
+      { label: 'Academic period', value: (row) => row.Period },
+      { label: 'Archived on (WAT)', value: (row) => row.ArchivedAt ? DynamaxTime.formatDateTime(row.ArchivedAt) : 'Not recorded' },
+      { label: 'Archive reason', value: (row) => row.Reason }
+    ], { numbered: true, searchable: true, className: 'academic-archived-memberships-table',
+      searchPlaceholder: 'Name, admission number, class, arm or reason', searchLabel: 'archived memberships',
+      emptyMessage: 'No archived memberships in the selected academic period.',
+      searchValue: (row) => `${row.ArchivedMembershipId} ${row.RetainedMembershipId}` })}
+  </section>`;
+}
+
 function academicCurrentMembershipRegisterRows(rows = []) {
   // Explicitly retired duplicates stay in storage and audit history, not in the
   // current classroom register. Profile-status exits/absences remain in movement
@@ -14730,7 +14798,7 @@ function academicStudentWorkspace(data, rows) {
       <small class="muted">Maximum 100 rows per import. StudentRef, FirstName, Surname and ClassCode are required. MiddleName, ArmCode and the remaining columns are optional. StudentRef remains the unique identity. References already registered in another branch or school section are rejected; conflicting current-term memberships must use Transfer or change.</small>
     </form>
   </div>` : `<div class="academic-view-only-note"><strong>My class registers</strong><span>${learner.Plural} and movement history shown here come only from your teaching allocations.</span></div>`;
-  return `${forms}${academicArmSubjectRegister(data, rows, canManage || data.permissions?.canConfigureClassStudentSubjects === true)}${table(membershipRegister, academicCurrentMembershipRegisterRows(rows.studentMemberships), [
+  return `${forms}${academicArmSubjectRegister(data, rows, canManage || data.permissions?.canConfigureClassStudentSubjects === true)}${academicArchivedMembershipWorkspace(data, rows)}${table(membershipRegister, academicCurrentMembershipRegisterRows(rows.studentMemberships), [
     { label: learner.Singular, value: (row) => academicLabel(data.students, row.StudentRef, row.StudentRef) },
     { label: 'Class / Arm', value: (row) => `${academicLabel(rows.classes, row.ClassId)} / ${academicLabel(rows.arms, row.ArmId)}` },
     { label: 'Classroom department', value: (row) => {
@@ -19428,7 +19496,7 @@ function bindAcademicManagement() {
           const labels = (form._academicClassroomRemovals || []).map(row => `${academicLabel(academicManagementData?.classes || [], row.ClassId)} / ${row.Name}`);
           if (!await window.DynamaxDialogs.confirm({
             title: 'Remove unchecked classrooms?',
-            message: `Archive these unused classrooms: ${labels.join('; ')}? A linked student or academic record will block the entire change. No answers or scores will be deleted.`,
+            message: `Archive these empty classrooms: ${labels.join('; ')}? Classrooms with current students will not be removed. Past transfers, attendance, diaries, answers and scores will be preserved.`,
             tone: 'danger', confirmText: 'Confirm classroom changes'
           })) return;
           payload.ConfirmClassroomRemoval = true;
@@ -19516,9 +19584,10 @@ function bindAcademicManagement() {
   panelEl.querySelectorAll('[data-academic-archive]').forEach((button) => button.addEventListener('click', async () => {
     const type = button.dataset.academicArchive;
     const record = academicFind(academicRecordRows(type), button.dataset.academicId);
+    const classroom = type === 'arm' && [true, 'true', 'yes', '1'].includes(typeof record?.IsClassroom === 'string' ? record.IsClassroom.toLowerCase() : record?.IsClassroom);
     if (!record || !await window.DynamaxDialogs.confirm({
-      title: 'Archive academic record',
-      message: 'Archive this record? Active dependent records must be archived first, and history will be retained.',
+      title: classroom ? 'Remove empty classroom' : 'Archive academic record',
+      message: classroom ? 'Archive this classroom if it has no current students? Past transfers, scores, attendance and other records will be preserved.' : 'Archive this record? Active dependent records must be archived first, and history will be retained.',
       tone: 'danger', confirmText: 'Archive record'
     })) return;
     await runButtonAction(button, 'Archiving...', async () => {
