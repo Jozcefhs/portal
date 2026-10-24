@@ -62,6 +62,8 @@ try {
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'No page-wide horizontal overflow on mobile');
   const scroller = archive.locator('.admin-table-wrap');
   assert.ok(await scroller.evaluate(el => el.scrollWidth > el.clientWidth), 'Wide table scrolls inside its container');
+  assert.ok(await archive.locator('thead').evaluate(el => el.getBoundingClientRect().height < 100), 'Mobile headers keep usable column widths instead of wrapping one letter per line');
+  assert.ok(await first.evaluate(el => el.getBoundingClientRect().height < 120), 'Mobile archive rows remain compact');
   await scroller.evaluate(el => { el.scrollLeft = el.scrollWidth; });
   assert.ok(await scroller.evaluate(el => el.scrollLeft > 0));
   await scroller.evaluate(el => { el.scrollLeft = 0; });
