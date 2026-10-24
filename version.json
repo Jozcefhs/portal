@@ -1,7 +1,7 @@
 {
-  "version": "3.1.52",
+  "version": "3.1.53",
   "channel": "stable",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.52.exe",
-  "sha256": "8f10e0a418e858bf21536f412c34fe384aaf2ccffe01c55bec0ce78c0c339154",
-  "notes": "Dynamax Desktop v3.1.52 adds Archived memberships under Academic Management > Students, separates archived duplicates from current registers, and safely archives empty classrooms despite past transfers. The web companion has the corresponding archived-membership register and shared empty-classroom checks. Scores, answers, attendance, payments and history are preserved. Includes prior student-status, transfer and CBT upload repairs. Back up and close Dynamax before updating each CBT server between examinations. No test deletion, recreation or re-pull is needed."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.53.exe",
+  "sha256": "fc1d3926734fd03903fa56433a3b180efdbdcefbe9aaea72023fd2380dd344c8",
+  "notes": "Dynamax v3.1.53 fixes small-screen and high-DPI controls, saved class subject selection, and permanent deletion of unused academic catalogue records. Existing scores, answers, payments and historical records are preserved."
 }
