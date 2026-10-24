@@ -321,7 +321,7 @@ test('class selection checks real classrooms and mixed classes never create unin
   change('ClassIds', 'grade-8', true);
   change('ClassIds', 'grade-8', false);
   assert.deepEqual(checked(form, 'ArmTemplateIds'), []);
-  assert.match(summary.textContent, /never permanently deleted/);
+  assert.match(summary.textContent, /permanently deleted; historical records are preserved/);
   // Shared existing arms stay checked; class-specific arms remain display-only mixed choices.
   inputs.forEach(input => { input.checked = false; });
   arms.push({ ClassId: 'grade-8', ArmTemplateId: 'brilliance', IsClassroom: true, Status: 'Active' });
@@ -659,7 +659,7 @@ test('Senior classroom departments can be changed without rewriting existing stu
   assert.doesNotMatch(batchSource, /collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS\.(studentMemberships|studentScores)/);
 });
 
-test('AM-003 permanent deletion detects current and historical academic references', () => {
+test('AM-003 permanent deletion detects current use without treating history as a restriction', () => {
   const state = {
     classes: [{ ClassId: 'jss-2', NextClassId: 'jss-3' }],
     arms: [{ ArmId: 'arm-a', ArmTemplateId: 'template-a', ClassId: 'jss-1', DepartmentId: 'science' }],
@@ -668,11 +668,11 @@ test('AM-003 permanent deletion detects current and historical academic referenc
     studentMovements: [{ MovementId: 'move-1', FromClassId: 'jss-1', ToClassId: 'jss-2', FromArmId: 'arm-a', FromDepartmentId: 'science', FromSubjectIds: ['physics'] }]
   };
 
-  assert.equal(academicPermanentDeleteDependants(state, 'class', { ClassId: 'jss-1' }).length, 2);
-  assert.equal(academicPermanentDeleteDependants(state, 'arm', { ArmId: 'arm-a' }).length, 1);
+  assert.equal(academicPermanentDeleteDependants(state, 'class', { ClassId: 'jss-1' }).length, 1);
+  assert.equal(academicPermanentDeleteDependants(state, 'arm', { ArmId: 'arm-a' }).length, 0);
   assert.equal(academicPermanentDeleteDependants(state, 'armTemplate', { ArmTemplateId: 'template-a' }).length, 1);
-  assert.equal(academicPermanentDeleteDependants(state, 'subject', { SubjectId: 'physics' }).length, 2);
-  assert.equal(academicPermanentDeleteDependants(state, 'department', { DepartmentId: 'science' }).length, 2);
+  assert.equal(academicPermanentDeleteDependants(state, 'subject', { SubjectId: 'physics' }).length, 0);
+  assert.equal(academicPermanentDeleteDependants(state, 'department', { DepartmentId: 'science' }).length, 1);
   assert.equal(academicPermanentDeleteDependants(state, 'class', { ClassId: 'unused' }).length, 0);
 
   const offering = { OfferingId: 'offering-1', SessionId: 'session-1', TermId: 'term-1', ClassId: 'jss-1', ArmId: '', SubjectId: 'physics' };
@@ -681,7 +681,7 @@ test('AM-003 permanent deletion detects current and historical academic referenc
     studentMemberships: [{ SessionId: 'session-1', TermId: 'term-1', ClassId: 'jss-1', ArmId: 'arm-a', SubjectIds: ['physics'] }],
     studentMovements: [{ SessionId: 'session-1', TermId: 'term-1', FromClassId: 'jss-1', FromArmId: 'arm-a', FromSubjectIds: ['physics'] }]
   };
-  assert.equal(academicPermanentDeleteDependants(offeringState, 'offering', offering).length, 3);
+  assert.equal(academicPermanentDeleteDependants(offeringState, 'offering', offering).length, 2);
   assert.equal(academicPermanentDeleteDependants(offeringState, 'offering', { ...offering, SubjectId: 'music' }).length, 0);
 });
 
@@ -1459,7 +1459,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(classroomWorkspace, /name: 'ClassIds', label: 'Classes'/);
   assert.match(classroomWorkspace, /name: 'ArmTemplateIds', label: 'Existing and new arms'/);
   assert.match(classroomWorkspace, /Every selected arm will be applied to every selected class/);
-  assert.match(classroomWorkspace, /Only empty classrooms can be archived after confirmation/);
+  assert.match(classroomWorkspace, /Only empty classrooms can be deleted after confirmation/);
   assert.match(classroomWorkspace, /data-academic-classroom-selection-summary/);
   assert.match(adminSource, /data-academic-class-arm-selection/);
   assert.match(adminSource, /bindAcademicClassroomArmSelection\(/);

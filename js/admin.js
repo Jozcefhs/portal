@@ -12992,7 +12992,7 @@ function bindAcademicClassroomArmSelection(form, arms = [], templates = []) {
     const removalCount = form._academicClassroomRemovals.length;
     const field = form.querySelector('[data-academic-checkbox-name="ArmTemplateIds"]');
     if (field?.dataset) field.dataset.academicCheckboxRequired = removalCount ? 'false' : 'true';
-    if (summary) summary.textContent = `${requested - existing} new classroom(s) selected; ${existing} already exist and will be kept; ${removalCount} classroom(s) requested for removal. A dash means created for some selected classes only. Unchecking an existing arm requests removal from the selected classes. Only empty classrooms can be archived after confirmation. Past transfers, scores and other history do not block removal and are preserved. Classrooms are archived, never permanently deleted.`;
+    if (summary) summary.textContent = `${requested - existing} new classroom(s) selected; ${existing} already exist and will be kept; ${removalCount} classroom(s) requested for removal. A dash means created for some selected classes only. Unchecking an existing arm requests removal from the selected classes. Only empty classrooms can be deleted after confirmation. Past transfers, scores and other history do not block removal and are preserved. Empty classrooms are permanently deleted; historical records are preserved.`;
   };
   form.addEventListener('change', (event) => {
     const input = event.target;
@@ -13598,7 +13598,6 @@ function academicCurrentRows(data = academicManagementData || {}) {
 
 function academicActionButtons(type, row, canEdit = false, canArchive = false, canDelete = false, extraButtons = '') {
   const id = academicRecordId(row);
-  if (type === 'arm' && [true, 'true', 'yes', '1'].includes(typeof row.IsClassroom === 'string' ? row.IsClassroom.toLowerCase() : row.IsClassroom)) canDelete = false;
   if (!canEdit && !canArchive && !canDelete && !extraButtons) return '<span class="muted">View only</span>';
   return `<div class="academic-management-row-actions">
     ${extraButtons}
@@ -13863,7 +13862,7 @@ function academicClassroomWorkspace(data, rows) {
     <input type="hidden" name="SchoolSection" value="${escapeHtml(section)}">
     <div class="academic-management-editor-heading"><div><small>Batch classroom setup</small><h3>Create classrooms</h3><p class="muted">Choose one or more reusable classes and arms. Every selected arm will be applied to every selected class.</p></div></div>
     ${academicCheckboxField({ name: 'ClassIds', label: 'Classes', options: classOptions, required: true, idPrefix: 'classroom-creation-classes', help: 'Select every class that should receive the chosen reusable arms.' })}
-    ${academicCheckboxField({ name: 'ArmTemplateIds', label: 'Existing and new arms', options: templateOptions, required: true, idPrefix: 'classroom-creation-arms', help: 'Selecting a class checks its already-created arms. A dash means created for only some selected classes. Check to add; uncheck an existing arm to request removal. Only empty classrooms can be archived after confirmation. Past transfers, scores and other history are preserved and do not block removal.' })}
+    ${academicCheckboxField({ name: 'ArmTemplateIds', label: 'Existing and new arms', options: templateOptions, required: true, idPrefix: 'classroom-creation-arms', help: 'Selecting a class checks its already-created arms. A dash means created for only some selected classes. Check to add; uncheck an existing arm to request removal. Only empty classrooms can be deleted after confirmation. Past transfers, scores and other history are preserved and do not block removal.' })}
     <p class="muted" data-academic-classroom-selection-summary aria-live="polite"></p>
     <button type="submit">Save classroom selections</button>
   </form>` : '<div class="academic-view-only-note"><strong>Classroom workspace</strong><span>Your role can open assigned classrooms but cannot create or reconfigure them.</span></div>';
@@ -14179,7 +14178,7 @@ function academicBulkSetupWorkspace(data, rows) {
       <div class="academic-management-editor-heading"><div><small>Atomic assignment</small><h3>Apply arms to classes</h3></div></div>
       <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
       ${academicCheckboxField({ name: 'ClassIds', label: 'Classes', options: classOptions, required: true, idPrefix: 'arm-application-classes', help: 'Every selected reusable arm will be applied to every selected class.' })}
-      ${academicCheckboxField({ name: 'ArmTemplateIds', label: 'Existing and new arms', options: templateOptions, required: true, idPrefix: 'arm-application-templates', help: 'Selecting a class checks its already-created arms. A dash means created for only some selected classes. Check to add; uncheck an existing arm to request removal. Only empty classrooms can be archived after confirmation. Past transfers, scores and other history are preserved and do not block removal.' })}
+      ${academicCheckboxField({ name: 'ArmTemplateIds', label: 'Existing and new arms', options: templateOptions, required: true, idPrefix: 'arm-application-templates', help: 'Selecting a class checks its already-created arms. A dash means created for only some selected classes. Check to add; uncheck an existing arm to request removal. Only empty classrooms can be deleted after confirmation. Past transfers, scores and other history are preserved and do not block removal.' })}
       <p class="muted" data-academic-classroom-selection-summary aria-live="polite"></p>
       <button type="submit">Save classroom selections</button>
     </form>
@@ -19497,7 +19496,7 @@ function bindAcademicManagement() {
           const labels = (form._academicClassroomRemovals || []).map(row => `${academicLabel(academicManagementData?.classes || [], row.ClassId)} / ${row.Name}`);
           if (!await window.DynamaxDialogs.confirm({
             title: 'Remove unchecked classrooms?',
-            message: `Archive these empty classrooms: ${labels.join('; ')}? Classrooms with current students will not be removed. Past transfers, attendance, diaries, answers and scores will be preserved.`,
+            message: `Permanently delete these empty classrooms: ${labels.join('; ')}? Classrooms with current students will not be removed. Past transfers, attendance, diaries, answers and scores will be preserved.`,
             tone: 'danger', confirmText: 'Confirm classroom changes'
           })) return;
           payload.ConfirmClassroomRemoval = true;
@@ -19609,7 +19608,7 @@ function bindAcademicManagement() {
     const record = academicFind(academicRecordRows(type), button.dataset.academicId);
     if (!record || !await window.DynamaxDialogs.confirm({
       title: 'Permanently delete academic record',
-      message: `Permanently delete ${record.Name || record.Code || 'this record'}? This cannot be undone. Any active or historical reference will block the deletion.`,
+      message: `Permanently delete ${record.Name || record.Code || 'this record'}? This cannot be undone. Current use must be cleared first. Past transfers, scores and all historical records will be preserved.`,
       tone: 'danger', confirmText: 'Delete permanently'
     })) return;
     await runButtonAction(button, 'Deleting...', async () => {

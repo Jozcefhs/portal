@@ -113,20 +113,24 @@ function runtime(f) {
     ACADEMIC_MANAGEMENT_COLLECTIONS: { arms: 'academicArms' },
     legacyClassWrite: (state, schoolClass) => ({ collectionPath: 'legacy', documentId: schoolClass.ClassId,
       data: { Arms: state.arms.filter(row => row.ClassId === schoolClass.ClassId && row.Status === 'Active').map(row => row.Name) } }),
-    auditWrite: () => ({ collectionPath: 'audit' }), commitAcademicBatch: async (_env, writes) => commits.push(writes),
+    auditWrite: () => ({ collectionPath: 'audit', data: {} }), commitAcademicBatch: async (_env, writes) => commits.push(writes),
     bootstrapAcademicManagement: async () => ({}), failure: message => new Error(message) });
+  Object.assign(ctx, { RECORD_TYPES: { arm: { collection: 'academicArms' } },
+    recordId: row => row.ArmId || row.ClassId });
+  vm.runInContext(source.slice(source.indexOf('function academicPermanentDeleteWrites('),
+    source.indexOf('export function academicPermanentDeleteDependants(')), ctx);
   vm.runInContext(body, ctx);
   return { ctx, commits, capabilities };
 }
-test('removal-only bulk save atomically archives targets and updates the legacy classroom list', async () => {
+test('removal-only bulk save atomically deletes unused targets and retains audit snapshots and updates the legacy classroom list', async () => {
   const f = fixture(), { ctx, commits, capabilities } = runtime(f);
   const result = await ctx.bulkApplyAcademicArmTemplates({}, {}, f.input);
   assert.equal(result.bulkResult.Removed, 5);
-  assert.ok(capabilities.includes('canArchive'));
+  assert.ok(capabilities.includes('canDelete'));
   assert.equal(commits.length, 1);
-  assert.equal(commits[0].filter(write => write.data?.Status === 'Archived').length, 5);
+  assert.equal(commits[0].filter(write => write.operation === 'delete').length, 5);
+  assert.equal(commits[0].filter(write => write.data?.DeletedRecord?.ArmId).length, 5);
   assert.ok(commits[0].filter(write => write.collectionPath === 'legacy').every(write => !write.data.Arms.length));
-  assert.ok(commits[0].every(write => write.operation !== 'delete'));
   assert.ok(f.state.arms.every(row => row.Status === 'Active'));
 });
 test('an occupied classroom blocks the entire batch before any write', async () => {
@@ -153,7 +157,7 @@ test('a stale classroom revision aborts the atomic batch without modifying histo
   assert.ok(f.state.arms.every(row => row.Status === 'Active'));
 });
 
-test('single-record archive and legacy delete both preserve an empty classroom identity and its history', async () => {
+test('archive preserves the catalogue identity; delete removes it and preserves its audit snapshot', async () => {
   for (const action of ['archiveAcademicManagementRecord', 'deleteAcademicManagementRecord']) {
     const f = fixture(), { ctx, commits } = runtime(f);
     Object.assign(ctx, { normalizedRecordType: value => value, RECORD_TYPES: { arm: { collection: 'academicArms' } },
@@ -164,10 +168,16 @@ test('single-record archive and legacy delete both preserve an empty classroom i
     vm.runInContext(source.slice(source.indexOf('export async function archiveAcademicManagementRecord('),
       source.indexOf('function academicOperationalViewForCapability(')).replaceAll('export async function', 'async function'), ctx);
     const result = await ctx[action]({}, {}, { RecordType: 'arm', RecordId: 'g11-virtue', RevisionToken: 'rev1' });
-    assert.match(result.message, /Empty classroom archived/);
+    assert.match(result.message, action === 'archiveAcademicManagementRecord' ? /Empty classroom archived/ : /deleted permanently online/);
     assert.equal(commits.length, 1);
-    assert.ok(commits[0].some(write => write.documentId === 'g11-virtue' && write.data.Status === 'Archived' && write.updateTime === 'rev1'));
-    assert.ok(commits[0].every(write => !write.operation && ['academicArms', 'legacy', 'audit'].includes(write.collectionPath)));
+    const removed = commits[0].find(write => write.documentId === 'g11-virtue');
+    assert.equal(removed.updateTime, 'rev1');
+    if (action === 'archiveAcademicManagementRecord') assert.equal(removed.data.Status, 'Archived');
+    else {
+      assert.equal(removed.operation, 'delete');
+      assert.equal(commits[0].find(write => write.data?.DeletedRecord)?.data.DeletedRecord.Name, 'Virtue');
+    }
+    assert.ok(commits[0].every(write => ['academicArms', 'legacy', 'audit'].includes(write.collectionPath)));
   }
 });
 

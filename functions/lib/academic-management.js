@@ -1111,15 +1111,14 @@ const ACADEMIC_RECORD_STATE_KEYS = Object.freeze({
 const ACADEMIC_RECORD_DEPENDENCY_STATE_KEYS = Object.freeze({
   session: Object.freeze(['sessions', 'terms', 'offerings', 'teacherAllocations', 'studentMemberships']),
   term: Object.freeze(['terms', 'offerings', 'teacherAllocations', 'studentMemberships']),
-  class: Object.freeze(['classes', 'arms', 'offerings', 'teacherAllocations', 'studentMemberships', 'studentMovements']),
+  class: Object.freeze(['classes', 'arms', 'offerings', 'teacherAllocations', 'studentMemberships', 'sessions', 'terms']),
   armtemplate: Object.freeze(['armTemplates', 'arms']),
-  arm: Object.freeze(['classes', 'arms', 'offerings', 'teacherAllocations', 'studentMemberships', 'studentMovements', 'sessions', 'terms']),
-  subject: Object.freeze(['subjects', 'departments', 'offerings', 'teacherAllocations', 'studentMemberships', 'studentMovements']),
-  department: Object.freeze(['departments', 'arms', 'studentMemberships', 'studentMovements']),
-  offering: Object.freeze(['offerings', 'teacherAllocations', 'studentMemberships', 'studentMovements']),
+  arm: Object.freeze(['classes', 'arms', 'offerings', 'teacherAllocations', 'studentMemberships', 'sessions', 'terms']),
+  subject: Object.freeze(['subjects', 'departments', 'offerings', 'teacherAllocations', 'studentMemberships', 'sessions', 'terms', 'cbtTests', 'timetableEntries']),
+  department: Object.freeze(['departments', 'arms', 'studentMemberships', 'sessions', 'terms']),
+  offering: Object.freeze(['offerings', 'teacherAllocations', 'studentMemberships', 'sessions', 'terms']),
   teacherallocation: Object.freeze(['teacherAllocations'])
 });
-
 const ACADEMIC_RECORD_DEFAULT_VIEW = Object.freeze({
   session: 'structure', term: 'structure', class: 'structure', armtemplate: 'bulksetup',
   arm: 'classrooms', subject: 'structure', department: 'departments', offering: 'offerings',
@@ -2698,7 +2697,7 @@ export async function bulkApplyAcademicArmTemplates(env, user = {}, input = {}) 
   const classIds = uniqueIds(input.ClassIds || input.ClassId);
   const templateIds = uniqueIds(input.ArmTemplateIds || input.ArmTemplateId);
   const removalRequested = Array.isArray(input.RemoveClassrooms) && input.RemoveClassrooms.length > 0;
-  if (removalRequested) requireCapability(user, 'canArchive');
+  if (removalRequested) requireCapability(user, 'canDelete');
   if (!classIds.length || (!templateIds.length && !removalRequested)) throw failure('Choose a class and an arm to create or remove.');
   if (classIds.length * templateIds.length > 200) throw failure('Apply at most 200 class-arm combinations in one batch.');
   const state = await loadScopedAcademicState(env, scope, [
@@ -2722,10 +2721,8 @@ export async function bulkApplyAcademicArmTemplates(env, user = {}, input = {}) 
     const template = templates.find(item => item.ArmTemplateId === row.ArmTemplateId
       || (!row.ArmTemplateId && (lower(item.Code) === lower(row.Code) || lower(item.Name) === lower(row.Name))));
     if (template) throw failure('The same classroom cannot be selected for creation and removal. Reload and review your selections.');
-    const archived = { ...withoutMetadata(row), Status: 'Archived', ArchivedAt: nowIso(), ArchivedBy: actorName(user) };
-    stampAcademicRecord(archived, user, row);
-    projected.arms = projected.arms.map(item => item.ArmId === row.ArmId ? archived : item);
-    writes.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.arms, documentId: row.ArmId, data: archived, updateTime: row.__updateTime });
+    projected.arms = projected.arms.filter(item => item.ArmId !== row.ArmId);
+    writes.push(...academicPermanentDeleteWrites(user, 'arm', row));
   }
   let skipped = 0;
   for (const schoolClass of classes) {
@@ -2771,7 +2768,7 @@ export async function bulkApplyAcademicArmTemplates(env, user = {}, input = {}) 
   });
   if (changedRecords.length) writes.push(auditWrite(user, 'BULK APPLY', 'arm', {
     BranchId: scope.branchId, SchoolSection: scope.section, ArmId: `bulk-${Date.now()}`
-  }, `${createdRecords.length} classroom(s) created; ${upgradedRecords.length} existing arm(s) upgraded to classrooms; ${removedRecords.length} empty classroom(s) archived with history preserved; ${skipped} already matched.`));
+  }, `${createdRecords.length} classroom(s) created; ${upgradedRecords.length} existing arm(s) upgraded to classrooms; ${removedRecords.length} empty classroom(s) permanently deleted with history preserved; ${skipped} already matched.`));
   await commitAcademicBatch(env, writes, 'The class or arm catalogue changed while assignments were being saved. Reload and try again.');
   const response = await bootstrapAcademicManagement(env, user, {
     ...input, BranchId: scope.branchId, SchoolSection: scope.section, View: 'bulksetup'
@@ -2786,7 +2783,7 @@ export async function bulkApplyAcademicArmTemplates(env, user = {}, input = {}) 
     Upgraded: upgradedRecords.length,
     Skipped: skipped
   };
-  if (removedRecords.length) response.message = `${removedRecords.length} empty classroom(s) archived; ${createdRecords.length} created; ${skipped} existing classrooms kept. Past transfers, attendance, diaries, answers and scores were preserved.`;
+  if (removedRecords.length) response.message = `${removedRecords.length} empty classroom(s) permanently deleted; ${createdRecords.length} created; ${skipped} existing classrooms kept. Past transfers, attendance, diaries, answers and scores were preserved.`;
   return response;
 }
 
@@ -4069,15 +4066,37 @@ function activeDependants(state, type, record) {
   return [];
 }
 
+export function academicRecordInCurrentUse(state, row, today = new Date(Date.now() + 3600000).toISOString().slice(0, 10)) {
+  if (!row || row.SupersededByMembershipId || !statusActive(row)
+    || ['deleted', 'transferred', 'superseded', 'completed', 'expelled', 'graduated', 'left school', 'deceased', 'suspended', 'on leave'].includes(lower(row.Status))) return false;
+  const ended = period => period && (['closed', 'archived'].includes(lower(period.Status))
+    || (/^\d{4}-\d{2}-\d{2}$/.test(clean(period.EndDate)) && period.EndDate < today));
+  return !ended((state.sessions || []).find(period => period.SessionId === row.SessionId))
+    && !ended((state.terms || []).find(period => period.TermId === row.TermId));
+}
+
+function academicPermanentDeleteWrites(user, type, record) {
+  const audit = auditWrite(user, 'DELETE', type, record, clean(record.Name || record.Code || recordId(record)));
+  // Delete the catalogue document, retaining its original identity and labels in
+  // an immutable audit entry. Never cascade into student or assessment history.
+  audit.data.DeletedRecord = withoutMetadata(record);
+  audit.data.DeletedRevision = clean(record.__updateTime);
+  return [
+    { collectionPath: RECORD_TYPES[type].collection, documentId: recordId(record), operation: 'delete', updateTime: record.__updateTime },
+    audit
+  ];
+}
+
 export function academicPermanentDeleteDependants(state = {}, typeValue = '', record = {}) {
   const type = normalizedRecordType(typeValue);
   const id = recordId(record);
+  // Historical references remain valid audit evidence, not current usage.
+  state = Object.fromEntries(Object.entries(state).map(([key, rows]) => [key,
+    key === 'studentMovements' ? [] : (rows || []).filter(row => academicRecordInCurrentUse(state, row))]));
   if (type === 'class') {
     return [
       ...(state.classes || []).filter((row) => recordId(row) !== id && row.NextClassId === id),
-      ...(state.arms || []).filter((row) => row.ClassId === id),
-      ...(state.offerings || []).filter((row) => row.ClassId === id),
-      ...(state.teacherAllocations || []).filter((row) => row.ClassId === id),
+      ...(state.arms || []).filter((row) => row.ClassId === id && !activeValue(row.IsClassroom, false)),
       ...(state.studentMemberships || []).filter((row) => row.ClassId === id),
       ...(state.studentMovements || []).filter((row) => row.FromClassId === id || row.ToClassId === id)
     ];
@@ -4100,6 +4119,8 @@ export function academicPermanentDeleteDependants(state = {}, typeValue = '', re
       || (row.FromSubjectIds || []).includes(id)
       || (row.ToSubjectIds || []).includes(id);
     return [
+      ...(state.cbtTests || []).filter(usesSubject),
+      ...(state.timetableEntries || []).filter(usesSubject),
       ...(state.departments || []).filter(usesSubject),
       ...(state.offerings || []).filter(usesSubject),
       ...(state.teacherAllocations || []).filter(usesSubject),
@@ -4195,15 +4216,31 @@ export async function deleteAcademicManagementRecord(env, user = {}, input = {})
   const existing = findById(state[stateKey] || [], input.RecordId);
   if (!existing) throw failure('The academic record was not found in the selected branch.', 404);
   if (effectiveAcademicSection(existing, scope) !== scope.section) throw failure('This academic record belongs to another school section.', 403);
-  // A classroom is a historical identity. Even an older client's Delete action
-  // removes it from active choices by archiving, never by erasing its records.
-  if (type === 'arm' && activeValue(existing.IsClassroom, false)) {
-    return archiveAcademicManagementRecord(env, user, input);
+  const classroom = type === 'arm' && activeValue(existing.IsClassroom, false);
+  const classroomTargets = classroom ? [existing] : type === 'class'
+    ? state.arms.filter(row => row.ClassId === recordId(existing) && activeValue(row.IsClassroom, false)) : [];
+  let students;
+  const loadStudents = async () => students ||= (await loadPeople(env, user, scope, { staff: false })).students;
+  for (let offset = 0; offset < classroomTargets.length; offset += 10) {
+    const targets = classroomTargets.slice(offset, offset + 10);
+    await checkClassroomRemovals({ input: { ClassIds: [...new Set(targets.map(row => row.ClassId))], ConfirmClassroomRemoval: true,
+      RemoveClassrooms: targets.map(row => ({ ArmId: row.ArmId, RevisionToken: row.__updateTime })) }, state, scope,
+      query: (collection, options) => queryCollectionPages(env, collection, options), students: loadStudents });
   }
-  const dependants = academicPermanentDeleteDependants(state, type, existing);
+  if (type === 'class') {
+    const currentMembers = (state.studentMemberships || []).filter(row => academicRecordInCurrentUse(state, row));
+    const assigned = new Set(currentMembers.map(row => lower(row.StudentRef)));
+    const profiles = await loadStudents();
+    if (profiles.some(row => academicRecordInCurrentUse(state, row)
+      && ![row.StudentRef, row.AdmissionNo, row.AccountRef].some(ref => ref && assigned.has(lower(ref)))
+      && (clean(row.AcademicClassId) === recordId(existing) || lower(row.ClassName || row.ClassAdmitted) === lower(existing.Name)))) {
+      throw failure('An active student profile still uses this class. Transfer or update that student first.', 409, 'ACADEMIC_DELETE_REFERENCED');
+    }
+  }
+  const dependants = classroom ? [] : academicPermanentDeleteDependants(state, type, existing);
   if (dependants.length) {
     const label = type === 'armtemplate' ? 'reusable arm definition' : (type === 'offering' ? 'subject offering' : type);
-    throw failure(`This ${label} is referenced by ${dependants.length} academic record${dependants.length === 1 ? '' : 's'}. Remove those references or archive this record instead.`, 409, 'ACADEMIC_DELETE_REFERENCED');
+    throw failure(`This ${label} is currently used by ${dependants.length} active record${dependants.length === 1 ? '' : 's'}. Clear its current assignments before deleting. Past transfers and closed-period records do not block deletion.`, 409, 'ACADEMIC_DELETE_REFERENCED');
   }
   const revisionToken = clean(input.RevisionToken);
   if (!revisionToken || revisionToken !== clean(existing.__updateTime)) {
@@ -4211,10 +4248,10 @@ export async function deleteAcademicManagementRecord(env, user = {}, input = {})
   }
   const deletedLabel = type === 'offering' ? 'Subject offering'
     : (type === 'teacherallocation' ? 'Subject-teacher allocation' : clean(existing.Name || existing.Code || 'Academic record'));
-  const writes = [
-    { collectionPath: definition.collection, documentId: recordId(existing), operation: 'delete', updateTime: revisionToken },
-    auditWrite(user, 'DELETE', type, existing, deletedLabel)
-  ];
+  const writes = academicPermanentDeleteWrites(user, type, existing);
+  if (type === 'class') {
+    for (const classroomRecord of classroomTargets) writes.push(...academicPermanentDeleteWrites(user, 'arm', classroomRecord));
+  }
   if (type === 'class' && scope.legacyClassCompatibility) {
     writes.push({
       collectionPath: 'settings/academics/classes',
@@ -4233,7 +4270,7 @@ export async function deleteAcademicManagementRecord(env, user = {}, input = {})
     ...input, BranchId: scope.branchId, SchoolSection: scope.section,
     View: academicRecordResponseView(input, type)
   });
-  response.message = `${deletedLabel} deleted permanently online.`;
+  response.message = `${deletedLabel} deleted permanently online. Scores, payments, transfers and all historical records were preserved.`;
   return response;
 }
 
