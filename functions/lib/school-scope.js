@@ -2,6 +2,7 @@ import { deleteDocument, getDocument, listCollection, queryCollection, upsertDoc
 import { normalizeClassKey } from './class-names.js';
 import { withStudentProfileDefaults } from './student-profile-defaults.js';
 import { withStudentDisplayName } from './student-display-name.js';
+import { saveStudentStatusWithMemberships, studentStatusChanged } from './student-academic-status.js';
 
 function clean(value) { return String(value ?? '').trim(); }
 
@@ -195,8 +196,25 @@ export async function upsertSchoolDocument(env, collection, documentId, data, op
   copy.BranchId = branchId;
   copy.SchoolSection = section;
   const path = existingPath || scopedCollectionPath(collection, branchId, section);
-  await upsertDocument(env, path, documentId, copy, options);
-  return { ...copy, __scopePath: path };
+  if (collection === 'students') {
+    const current = await getDocument(env, path, documentId);
+    if (current) {
+      if (options.exists === false) throw Object.assign(new Error('This student already exists. Refresh before saving.'), { status: 409 });
+      const expected = options.updateTime || copy.__updateTime || current.__updateTime;
+      if (!current.__updateTime || expected !== current.__updateTime) {
+        throw Object.assign(new Error('This student changed after the screen was loaded. Refresh and retry; nothing was saved.'), { status: 409 });
+      }
+      options = { ...options, updateTime: expected };
+      if (studentStatusChanged(current, copy)) {
+        return saveStudentStatusWithMemberships(env, current, copy, { collectionPath: path, documentId, updateTime: expected });
+      }
+    } else {
+      if (options.updateTime || copy.__updateTime) throw Object.assign(new Error('The original student profile no longer exists. Refresh before saving; no replacement was created.'), { status: 409 });
+      options = { ...options, exists: false };
+    }
+  }
+  const saved = await upsertDocument(env, path, documentId, copy, options);
+  return { ...copy, ...(collection === 'students' && saved?.updateTime ? { __updateTime: saved.updateTime } : {}), __scopePath: path };
 }
 
 export async function deleteSchoolDocument(env, collection, documentId, row = {}) {

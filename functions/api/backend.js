@@ -539,7 +539,7 @@ async function saveStudent(env, student, options = {}) {
     err.status = 400;
     throw err;
   }
-  const saved = await upsertSchoolDocument(env, 'students', safeDocumentId(id), student, options);
+  const saved = await upsertSchoolDocument(env, 'students', clean(student.__id) || safeDocumentId(id), student, options);
   return normalizeStudent(saved);
 }
 
@@ -559,6 +559,9 @@ async function updateStudentProfile(env, body) {
   const accountRef = clean(body.AccountRef || body.AdmissionNo || body.accountRef);
   const existing = await findStudentByAccountRef(env, accountRef, requestedStudentScope(body));
   if (!existing) throw applicationNotFound(accountRef);
+  if (clean(body.RevisionToken) && clean(body.RevisionToken) !== clean(existing.__updateTime)) {
+    throw Object.assign(new Error('This student changed after the profile was opened. Refresh and retry; nothing was saved.'), { status: 409 });
+  }
   const editableFields = [
     'DisplayName', 'ApplicantName', 'Surname', 'FirstName', 'MiddleName', 'Gender',
     'DateOfBirth', 'ClassName', 'ClassArm', 'StudentType', 'BillingCategory',
@@ -589,6 +592,7 @@ async function updateStudentProfile(env, body) {
   if (body.DisplayName !== undefined) updated.ApplicantName = clean(body.DisplayName);
   updated.UpdatedAt = nowIso();
   updated.UpdatedBy = clean(body.RecordedBy || body.UpdatedBy) || 'Student Register';
+  if (lower(updated.Status) !== lower(existing.Status)) updated.StatusUpdatedBy = updated.UpdatedBy;
   const student = await saveStudent(env, updated);
   const studentPassword = String(body.StudentLoginPassword || '');
   let loginStatus = null;
@@ -7690,7 +7694,7 @@ async function updateStudentBillingCategory(env, body) {
 async function updateStudentStatus(env, body) {
   const accountRef = clean(body.AccountRef || body.accountRef || body.AdmissionNo || body.admissionNo);
   const status = clean(body.Status || body.status);
-  const allowed = ['Active', 'On Leave', 'Suspended', 'Withdrawn', 'Expelled', 'Graduated'];
+  const allowed = ['Active', 'Enrolled', 'On Leave', 'Suspended', 'Inactive', 'Withdrawn', 'Expelled', 'Graduated', 'Transferred', 'Left School', 'Deceased'];
   if (!accountRef) {
     const err = new Error('Account/admission number is required.');
     err.status = 400;
@@ -7702,8 +7706,11 @@ async function updateStudentStatus(env, body) {
     err.status = 400;
     throw err;
   }
-  const student = await findStudentByAccountRef(env, accountRef);
+  const student = await findStudentByAccountRef(env, accountRef, requestedStudentScope(body));
   if (!student) throw applicationNotFound(accountRef);
+  if (clean(body.RevisionToken) && clean(body.RevisionToken) !== clean(student.__updateTime)) {
+    throw Object.assign(new Error('This student changed after Accounts was loaded. Refresh and retry; nothing was saved.'), { status: 409 });
+  }
   const saved = await saveStudent(env, {
     ...student,
     Status: normalizedStatus,
@@ -7714,7 +7721,7 @@ async function updateStudentStatus(env, body) {
     StatusUpdatedAt: nowIso(),
     UpdatedAt: nowIso()
   });
-  return { ok: true, message: 'Student status updated.', student: saved };
+  return { ok: true, message: `Student status saved; ${Number(saved.__academicStatusMembershipCount || 0)} active-period membership(s) updated. Scores, attendance, payments and history were preserved.${['Active', 'Enrolled'].includes(saved.Status) && saved.AcademicEnrollmentStatus !== 'Active' ? ' No previous placement was restored; use Academic Management to arrange the current allocation.' : ''}`, student: saved };
 }
 
 const DEFAULT_CHART_OF_ACCOUNTS = [

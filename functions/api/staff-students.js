@@ -217,6 +217,7 @@ export async function onRequestPost(context) {
     if (body.DisplayName !== undefined) updated.ApplicantName = clean(body.DisplayName);
     updated.UpdatedAt = new Date().toISOString();
     updated.UpdatedBy = user.displayName || user.username;
+    if (clean(updated.Status).toLowerCase() !== clean(existing.Status).toLowerCase()) updated.StatusUpdatedBy = updated.UpdatedBy;
     const documentId = clean(existing.__id || existing.AdmissionNo || existing.AccountRef);
     const studentPassword = String(body.StudentLoginPassword || '');
     if (studentPassword && studentPassword.length < 6) {
@@ -244,8 +245,10 @@ export async function onRequestPost(context) {
     return Response.json({
       ok: true,
       message: placement ? `${placement.message}${studentPassword ? ' Personal login password updated.' : ''}`
-        : studentPassword ? 'Student profile and personal login password updated.' : 'Student profile updated.',
-      academicPlacementUpdated: Boolean(placement) && !placement.pendingApproval,
+        : clean(existing.Status).toLowerCase() !== clean(saved.Status).toLowerCase()
+          ? `Student status saved; ${Number(saved.__academicStatusMembershipCount || 0)} active-period membership(s) updated. Scores, attendance, payments and history were preserved.${['active', 'enrolled'].includes(clean(saved.Status).toLowerCase()) && saved.AcademicEnrollmentStatus !== 'Active' ? ' No previous placement was restored; use Academic Management to arrange the current allocation.' : ''}`
+          : studentPassword ? 'Student profile and personal login password updated.' : 'Student profile updated.',
+      academicPlacementUpdated: (Boolean(placement) && !placement.pendingApproval) || clean(existing.Status).toLowerCase() !== clean(saved.Status).toLowerCase(),
       pendingApproval: placement?.pendingApproval === true,
       student,
       loginStatus

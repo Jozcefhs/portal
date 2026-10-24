@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { webcrypto } from 'node:crypto';
 import * as management from '../functions/lib/academic-management.js';
 import * as outcomes from '../functions/lib/academic-session-outcomes.js';
+import * as studentStatus from '../functions/lib/student-academic-status.js';
 
 const source = await readFile(new URL('../functions/lib/academic-management.js', import.meta.url), 'utf8');
 const scope = { BranchId: 'main', SchoolSection: 'secondary' };
@@ -64,7 +65,7 @@ function harness({ unassigned = false } = {}) {
   const store = Object.fromEntries(Object.entries(state).map(([key, rows]) => [management.ACADEMIC_MANAGEMENT_COLLECTIONS[key], rows]));
   store[profiles[0].__scopePath] = profiles;
   const id = row => row.RecordId || row.MembershipId || row.MovementId || row.AuditId || row.__id;
-  const context = vm.createContext({ ...management, ...outcomes, crypto: webcrypto, TextEncoder, TextDecoder, safeScopeId: String,
+  const context = vm.createContext({ ...management, ...outcomes, ...studentStatus, crypto: webcrypto, TextEncoder, TextDecoder, safeScopeId: String,
     listSchoolCollection: async () => clone(profiles), loadOrganizationNameProfile: async () => ({}),
     batchCommitDocuments: async (_env, batch) => {
       for (const write of batch) {
@@ -143,6 +144,9 @@ test('student register hides only explicitly superseded archives while retaining
   vm.runInContext(fn, context);
   const rows = [member(), member({ Status: 'Archived', SupersededByMembershipId: 'current' }), member({ Status: 'Withdrawn' }), member({ Status: 'Archived' })];
   assert.deepEqual(context.academicCurrentMembershipRegisterRows(rows), [rows[0], rows[2], rows[3]]);
+  const paused = member({ Status: 'Inactive', ProfileStatusManaged: true });
+  const exited = member({ Status: 'Withdrawn', ProfileStatusManaged: true });
+  assert.deepEqual(context.academicCurrentMembershipRegisterRows([rows[0], paused, exited]), [rows[0]]);
   assert.match(ui, /table\(membershipRegister, academicCurrentMembershipRegisterRows\(rows.studentMemberships\)/);
 });
 
@@ -170,5 +174,24 @@ test('promotion reuses a matching legacy membership and guards it against concur
       assert.equal(h.state.studentMemberships.length, 1);
       assert.deepEqual(h.state.studentMemberships[0].SubjectIds, ['math']);
     }
+  }
+});
+
+test('promotion cannot reactivate an exited student, including a concurrent status change', async () => {
+  for (const concurrent of [false, true]) {
+    const h = harness();
+    h.state.promotionDecisions.push({ ...identity, PromotionDecisionId: 'promotion', RecordId: 'promotion',
+      Status: 'Approved', FinalOutcome: 'Repeated', __updateTime: 'promotion-v1' });
+    if (concurrent) {
+      const commit = h.context.batchCommitDocuments;
+      h.context.batchCommitDocuments = (...args) => {
+        h.profiles[0].Status = 'Withdrawn'; h.profiles[0].__updateTime = 'status-saved';
+        return commit(...args);
+      };
+    } else h.profiles[0].Status = 'Withdrawn';
+    await assert.rejects(h.context.changeAcademicPromotionStatus({}, actor, { ...scope, PromotionDecisionId: 'promotion',
+      Status: 'Committed', RevisionToken: 'promotion-v1', DestinationSessionId: 'session', DestinationTermId: 'term',
+      DestinationClassId: 'class', DestinationArmId: 'arm' }), { code: concurrent ? 'ACADEMIC_WRITE_CONFLICT' : 'STUDENT_NOT_ACTIVE' });
+    assert.equal(h.writes.length, 0);
   }
 });

@@ -14,6 +14,7 @@ import { checkClassroomRemovals } from './academic-classroom-removal.js';
 import { academicAttendanceId, findExistingAttendance, attendanceCorrectionMatches } from './academic-attendance-identity.js';
 import { enforceActorBranch } from './branch-scope.js';
 import { normalizeClassKey } from './class-names.js';
+import { assertStudentCanHaveActiveMembership, studentStatusChanged } from './student-academic-status.js';
 import { staffRecordMatchesEdition } from './records-desk.js';
 import { createNotification } from './notifications.js';
 import { normalizeSchoolCalendar, schoolCalendarDayIsOpen, schoolCalendarSummary } from './academic-school-calendar.js';
@@ -1773,6 +1774,7 @@ function validateAcademicRecord(state, type, record, people = {}) {
     }
     const student = people.students.find((row) => lower(studentReference(row)) === lower(record.StudentRef));
     if (!student) throw failure('The selected student was not found in this branch and school section.', 404);
+    assertStudentCanHaveActiveMembership(student, record);
     const schoolClass = findById(state.classes, record.ClassId);
     if (!people.existing && !academicStudentMatchesClass(student, schoolClass)) {
       const currentClass = clean(student.ClassName || student.ClassAdmitted || student.ClassApplyingFor) || 'another class';
@@ -1859,6 +1861,7 @@ function legacyClassWrite(state, projectedRecord, type, scope = {}) {
 
 function studentCompatibilityWrite(people, state, record) {
   const student = people.students.find((row) => lower(studentReference(row)) === lower(record.StudentRef));
+  assertStudentCanHaveActiveMembership(student, record);
   const schoolClass = findById(state.classes, record.ClassId);
   const arm = findById(state.arms, record.ArmId);
   const session = findById(state.sessions, record.SessionId);
@@ -3863,6 +3866,9 @@ export function studentProfilePlacementChanged(before = {}, after = {}) {
 export async function saveStudentProfileAcademicPlacement(env, user, before, after, revisionToken) {
   requireWritableSubscription(user);
   requireCapability(user, 'canManageAllocations');
+  if (studentStatusChanged(before, after)) {
+    throw failure('Save the student status separately from a class/arm transfer. Existing placement and records have not changed.', 409, 'STUDENT_STATUS_AND_PLACEMENT_CHANGE');
+  }
   if (!before.__scopePath || !before.__id || !clean(revisionToken)
     || clean(revisionToken) !== clean(before.__updateTime)) {
     throw failure('This student profile changed or was loaded by an older page. Refresh the student register and reopen Edit Student Profile before saving.', 409, 'ACADEMIC_WRITE_CONFLICT');
@@ -6573,6 +6579,14 @@ export async function changeAcademicPromotionStatus(env, user = {}, input = {}) 
       SubjectIds: [], CoreSubjectIds: [], TradeSubjectIds: [], OptionalSubjectIds: [],
       CurriculumStatus: 'Pending subject allocation', Status: 'Active'
     }, context.scope);
+    const people = await loadPeople(env, user, context.scope, { staff: false });
+    const student = people.students.find(row => lower(studentReference(row)) === lower(destination.StudentRef));
+    if (!student?.__scopePath || !student.__id || !student.__updateTime) throw failure('The student profile revision is required before promotion. Refresh and retry.', 409, 'ACADEMIC_WRITE_CONFLICT');
+    assertStudentCanHaveActiveMembership(student, destination);
+    // Status transitions and promotion share the same profile CAS fence. Do not
+    // change the current profile's class/period when reserving a future placement.
+    writes.push({ collectionPath: student.__scopePath, documentId: student.__id, literalDocumentId: true,
+      data: { Status: student.Status || 'Active' }, updateMask: ['Status'], updateTime: student.__updateTime });
     const currentDestination = findAcademicStudentMembership(context.state.studentMemberships, destination);
     if (currentDestination && (!statusActive(currentDestination)
       || currentDestination.ClassId !== destination.ClassId || currentDestination.ArmId !== destination.ArmId)) {

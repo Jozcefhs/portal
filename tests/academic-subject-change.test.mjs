@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { webcrypto } from 'node:crypto';
 import * as management from '../functions/lib/academic-management.js';
 import * as results from '../functions/lib/academic-term-results.js';
+import * as studentStatus from '../functions/lib/student-academic-status.js';
 
 const source = await readFile(new URL('../functions/lib/academic-management.js', import.meta.url), 'utf8');
 const clone = value => JSON.parse(JSON.stringify(value));
@@ -38,7 +39,7 @@ function harness({ scores = [score], termResults = [] } = {}) {
   const queries = [];
   let revision = 1;
   const keyFor = collection => Object.keys(management.ACADEMIC_MANAGEMENT_COLLECTIONS).find(key => management.ACADEMIC_MANAGEMENT_COLLECTIONS[key] === collection);
-  const context = vm.createContext({ ...management, ...results, crypto: webcrypto, TextEncoder, TextDecoder, safeScopeId: String,
+  const context = vm.createContext({ ...management, ...results, ...studentStatus, crypto: webcrypto, TextEncoder, TextDecoder, safeScopeId: String,
     queryCollection: async (_env, collection, options) => {
       queries.push({ collection, options: clone(options) });
       return clone((state[keyFor(collection)] || []).filter(row => options.filters.every(filter =>

@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { webcrypto } from 'node:crypto';
 import * as management from '../functions/lib/academic-management.js';
 import * as results from '../functions/lib/academic-term-results.js';
+import * as studentStatus from '../functions/lib/student-academic-status.js';
 import { normalizeClassKey, canonicalConfiguredClass } from '../functions/lib/class-names.js';
 import { schoolSectionFor, safeScopeId } from '../functions/lib/school-scope.js';
 import { enforceActorBranch } from '../functions/lib/branch-scope.js';
@@ -43,7 +44,7 @@ function harness({ user = actor, assessed = true, members = [member] } = {}) {
   let revision = 1;
   const keyFor = path => path === profile.__scopePath ? 'profiles' : Object.keys(management.ACADEMIC_MANAGEMENT_COLLECTIONS).find(key => management.ACADEMIC_MANAGEMENT_COLLECTIONS[key] === path);
   const idOf = row => row.__id || row.RecordId || row.MembershipId || row.ResultId || row.MovementId;
-  const context = vm.createContext({ ...management, ...results, crypto: webcrypto, TextEncoder, TextDecoder,
+  const context = vm.createContext({ ...management, ...results, ...studentStatus, crypto: webcrypto, TextEncoder, TextDecoder,
     normalizeClassKey, canonicalConfiguredClass, schoolSectionFor, safeScopeId, enforceActorBranch,
     getSchoolStructure: async () => ({ ActiveBranchId: 'main', Branches: [{ Id: 'main' }, { Id: 'annex' }], Sections: ['secondary', 'primary'] }),
     queryCollection: async (_env, path, options) => clone((state[keyFor(path)] || []).filter(row => options.filters.every(filter =>
@@ -235,6 +236,14 @@ test('unrelated edits do not change placement, and academic-period changes canno
   const result = await h.save({ ClassArm: 'Brilliance', Term: 'Second Term' });
   assert.equal(result.status, 409);
   assert.equal(result.data.code, 'ACADEMIC_PROFILE_PERIOD_CHANGE');
+  assert.equal(h.commits.length, 0);
+});
+
+test('inactive profiles cannot be transferred back into active lists or change placement and status together', async () => {
+  const h = harness();
+  h.current().Status = 'Expelled';
+  assert.equal((await h.save({ ClassArm: 'Brilliance' })).data.code, 'STUDENT_NOT_ACTIVE');
+  assert.equal((await h.save({ Status: 'Active', ClassArm: 'Brilliance' })).data.code, 'STUDENT_STATUS_AND_PLACEMENT_CHANGE');
   assert.equal(h.commits.length, 0);
 });
 

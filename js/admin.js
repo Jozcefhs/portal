@@ -3649,7 +3649,7 @@ function studentFieldControl(field, value) {
     AcademicProgress: ['Promoted', 'Repeating'],
     Term: ['First Term', 'Second Term', 'Third Term'],
     ProfileCompletionStatus: ['', 'Needs completion', 'Complete'],
-    Status: ['Active', 'Enrolled', 'Withdrawn', 'Expelled', 'Graduated'],
+    Status: ['Active', 'Enrolled', 'On Leave', 'Suspended', 'Inactive', 'Withdrawn', 'Expelled', 'Graduated', 'Transferred', 'Left School', 'Deceased'],
     WalletCardStatus: ['', 'Active', 'Blocked', 'Lost', 'Replaced']
   };
   if (options[field]) {
@@ -3673,6 +3673,7 @@ function renderStudentEditor(students) {
     <form id="studentProfileForm" class="workflow-form config-dialog-form">
       <input type="hidden" name="AccountRef">
       <input type="hidden" name="RevisionToken">
+      <p class="student-status-guidance">Student status changes also update active class membership when saved. On Leave/Suspended pauses membership; permanent exits remove the student from active lists. Scores, attendance, payments and history are kept. Returning to Active restores an eligible saved placement. Save class/arm transfers separately from status changes.</p>
       <div class="student-login-guidance"><strong>Separate family and ${learner.singular} access</strong><span>Parents use Parent Email and Parent Login Code. ${learner.Plural} use their admission number and personal password of at least 6 characters for CBT. Leave the ${learner.singular} password blank to keep it unchanged.</span></div>
       <section class="config-group student-passport-editor"><header><strong>${learner.Singular} passport</strong><small>JPG or PNG. The photograph appears in ${learner.singular} searches and on published results.</small></header><div><div class="student-passport-preview" data-student-passport-preview aria-label="${learner.Singular} passport preview">PHOTO</div><input type="file" accept="image/jpeg,image/png" data-student-passport-file hidden><button type="button" class="secondary" data-student-passport-choose>Upload or replace passport</button></div></section>
       <div data-student-form-sections></div>
@@ -14649,8 +14650,10 @@ function bindAcademicMembershipSearch(form) {
 
 function academicCurrentMembershipRegisterRows(rows = []) {
   // Explicitly retired duplicates stay in storage and audit history, not in the
-  // current classroom register. Other inactive/withdrawn records remain visible.
-  return rows.filter((row) => !(clean(row.Status).toLowerCase() === 'archived' && clean(row.SupersededByMembershipId)));
+  // current classroom register. Profile-status exits/absences remain in movement
+  // history and the Students register, not the active classroom list.
+  return rows.filter((row) => !(clean(row.Status).toLowerCase() === 'archived' && clean(row.SupersededByMembershipId))
+    && !(row.ProfileStatusManaged === true && ['inactive', 'withdrawn'].includes(clean(row.Status).toLowerCase())));
 }
 
 function academicStudentWorkspace(data, rows) {
