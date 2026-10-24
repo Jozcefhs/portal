@@ -1,3 +1,4 @@
+import { listBranchCollection } from './branch-reads.js';
 import { batchCommitLiteralDocuments as batchUpsertDocuments, deleteDocument, listCollection, upsertDocument } from './firestore.js';
 
 const clean = (value) => String(value ?? '').trim().replace(/\s+/g, ' ');
@@ -24,8 +25,8 @@ export function categoryApplies(category, storeType) {
   return scopes(category.StoreScopes || category.AppliesTo, storeType).includes(scopeName(storeType));
 }
 
-export async function ensureStoreCategories(env) {
-  const [rawCategories, items] = await Promise.all([listCollection(env, 'storeCategories').catch(() => []), listCollection(env, 'storeItems')]);
+export async function ensureStoreCategories(env, options = {}) {
+  const [rawCategories, items] = await Promise.all([listCollection(env, 'storeCategories'), options.readOnly ? listBranchCollection(env, 'storeItems', options.branchId, options.storeType ? { filters: [{ field: 'StoreType', op: '==', value: options.storeType }] } : {}) : listCollection(env, 'storeItems')]);
   const byKey = new Map(); const categories = []; const writes = [];
   for (const row of rawCategories) {
     const name = clean(row.Name || row.Category || row.__id); if (!name) continue;
@@ -56,18 +57,19 @@ export async function ensureStoreCategories(env) {
         updateMask: ['CategoryId', 'Category', 'UpdatedAt'], exists: true });
     }
   }
-  if (!categories.length) {
+  if (!categories.length || (options.readOnly && !rawCategories.length)) {
     const defaults = [
       ['Shirts', 'Uniform Store'], ['Trousers/Skirts', 'Uniform Store'], ['Sportswear', 'Uniform Store'], ['Footwear', 'Uniform Store'],
       ['Textbooks', 'Bookstore'], ['Exercise Books', 'Bookstore'], ['Stationery', 'Bookstore'], ['Bags/Accessories', 'Bookstore']
     ];
     for (const [name, storeType] of defaults) {
+      if (byKey.has(categoryKey(name))) continue;
       const id = `CAT-${safeId(categoryKey(name)).toUpperCase()}`; const category = { CategoryId: id, Name: name, SearchKey: categoryKey(name), StoreScopes: [storeType], Active: 'YES', Aliases: [], CreatedAt: new Date().toISOString(), UpdatedAt: new Date().toISOString() };
       categories.push(category); writes.push({ collectionPath: 'storeCategories', documentId: id, data: category });
     }
   }
   const uniqueWrites = [...new Map(writes.map((write) => [`${write.collectionPath}/${write.documentId}`, write])).values()];
-  for (let index = 0; index < uniqueWrites.length; index += 450) await batchUpsertDocuments(env, uniqueWrites.slice(index, index + 450));
+  for (let index = 0; !options.readOnly && index < uniqueWrites.length; index += 450) await batchUpsertDocuments(env, uniqueWrites.slice(index, index + 450));
   return { categories, items };
 }
 
@@ -109,7 +111,7 @@ export async function deleteStoreCategory(env, body) {
 }
 
 export async function resolveStoreCategory(env, body, storeType) {
-  const { categories } = await ensureStoreCategories(env); const id = clean(body.CategoryId); const name = clean(body.Category);
+  const { categories } = await ensureStoreCategories(env, { readOnly: true, branchId: body.BranchId, storeType }); const id = clean(body.CategoryId); const name = clean(body.Category);
   let category = categories.find((row) => id && row.CategoryId === id) || categories.find((row) => categoryKey(row.Name) === categoryKey(name));
   if (!category && String(body.CreateCategoryIfMissing).toLowerCase() === 'true') category = await saveStoreCategory(env, { Name: name, StoreScopes: [storeType], Active: 'YES' }, clean(body.UpdatedBy));
   if (!category) { const error = new Error('Choose an existing category or confirm quick creation of the new category.'); error.status = 400; throw error; }

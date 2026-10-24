@@ -1,3 +1,4 @@
+import { listBranchCollection } from '../lib/branch-reads.js';
 import { batchCommitDocuments, listCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { listSchoolCollection, schoolSectionFor } from '../lib/school-scope.js';
@@ -107,7 +108,7 @@ async function departmentHistory(env, section, user, kind, cursor = null) {
 async function loadDepartment(env, section, user) {
   const config = CONFIG[section];
   const [inventory, movements, records, sales, purchases, procurementControlled] = await Promise.all([
-    listCollection(env, config.inventory),
+    listBranchCollection(env, config.inventory, user.branchId),
     departmentHistory(env, section, user, 'movements'),
     section === 'clinic' ? departmentHistory(env, section, user, 'records') : Promise.resolve({ rows: [] }),
     ['restaurant', 'tuckShop'].includes(section)
@@ -133,7 +134,7 @@ async function saveInventory(env, section, body, user) {
   const config = CONFIG[section];
   const itemName = clean(body.ItemName);
   if (!itemName) { const err = new Error('Item name is required.'); err.status = 400; throw err; }
-  const rows = visible(await listCollection(env, config.inventory), user);
+  const rows = visible(await listBranchCollection(env, config.inventory, user.branchId), user);
   const originalName = clean(body.OriginalItemName || itemName);
   const matching = rows.filter((row) => lower(row.ItemName || row.__id) === lower(originalName));
   const inventoryId = clean(body.InventoryId);
@@ -183,7 +184,7 @@ async function recordMovement(env, section, body, user) {
   if (!itemName) { const err = new Error('Choose an inventory item.'); err.status = 400; throw err; }
   if (!['IN', 'OUT'].includes(movementType)) { const err = new Error('Choose Stock In or Stock Out.'); err.status = 400; throw err; }
   if (quantity <= 0) { const err = new Error('Quantity must be greater than zero.'); err.status = 400; throw err; }
-  const matching = visible(await listCollection(env, config.inventory), user).filter((row) => body.InventoryId
+  const matching = visible(await listBranchCollection(env, config.inventory, user.branchId), user).filter((row) => body.InventoryId
     ? clean(row.__id) === clean(body.InventoryId) : lower(row.ItemName || row.__id) === lower(itemName));
   if (matching.length > 1) { const error = new Error('Select the exact vendor stock record.'); error.status = 409; throw error; }
   const item = matching[0];
@@ -335,7 +336,7 @@ async function prepareClinicReport(env, body, user) {
   if (!student) { const err = new Error('Student was not found in your branch and school section.'); err.status = 404; throw err; }
   const email = parentEmailFor(student);
   if (!email) { const err = new Error('No parent email is saved for this student.'); err.status = 400; throw err; }
-  const records = clinicHistory(visible(await listCollection(env, 'clinicRecords'), user), student);
+  const records = clinicHistory(visible(await listBranchCollection(env, 'clinicRecords', user.branchId), user), student);
   return {
     AccountRef: studentReference(student),
     StudentName: clean(student.DisplayName || student.StudentName || student.ApplicantName),

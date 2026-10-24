@@ -144,7 +144,8 @@ test('department list and continuation endpoints apply scope and return bounded 
   const calls = [];
   const context = { Response, requireFirestoreEnv: () => {}, requireStaffSession: async () => actor,
     readJsonBody: async request => request, schoolSectionFor: row => String(row.SchoolSection || 'Secondary').toLowerCase(),
-    listCollection: async (_env, collection) => {
+    listBranchCollection: async (_env, collection, branch) => {
+      assert.equal(branch, user.branchId);
       assert.match(collection, /Inventory$/);
       return [{ __id: 'item', BranchId: 'main', SchoolSection: 'Secondary' }];
     },

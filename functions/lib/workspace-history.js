@@ -1,11 +1,17 @@
-import { listCollectionPage } from './firestore.js';
+import { branchCollectionPage, branchReadPlan } from './branch-reads.js';
 
 const fail = message => { throw Object.assign(new Error(message), { status: 400 }); };
 
 // Fixed-cost history reads shared by operational modules. Authorization remains
 // the caller's existing predicate and is applied again on EVERY page.
 export async function loadWorkspaceHistoryPage(env, user, config, cursor = null, overrides = {}) {
-  const fetchPage = overrides.listCollectionPage || listCollectionPage;
+  // At most four pages share one proof within this request and snapshot. Do not
+  // retain it across requests, tenants or snapshots.
+  let readPlan;
+  const fetchPage = overrides.listCollectionPage || ((env, collection, options) => branchCollectionPage(
+    env, collection, user.branchId, { ...options, readTime: new URLSearchParams(options.query).get('readTime') }, {
+      branchReadPlan: (...args) => readPlan ||= branchReadPlan(...args)
+    }));
   const scope = JSON.stringify([env.FIREBASE_PROJECT_ID, user.username, user.role,
     user.branchId, user.schoolSectionAccess, user.edition, config.key, config.collection]);
   const now = Date.now();

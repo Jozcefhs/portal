@@ -39,7 +39,8 @@ function fixture() {
     };
     let source = await readFile(new URL(file, root), 'utf8');
     if (slice) source = source.slice(source.indexOf(slice[0]), source.indexOf(slice[1]));
-    vm.createContext(context);
+    context.listBranchCollection = context.listCollection;
+  vm.createContext(context);
     vm.runInContext(source.replace(/^import[\s\S]*?from '[^']+';\r?\n/gm, '').replace(/^export /gm, ''), context, { filename: file });
     return context;
   }

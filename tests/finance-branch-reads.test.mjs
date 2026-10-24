@@ -32,7 +32,7 @@ test('other branches query only their indexed records, including session-specifi
 
 test('main retains untagged legacy records, while all-branch reports remain available', async () => {
   const rows = [{ __id: 'old' }, { __id: 'main', BranchId: 'main' }, { __id: 'north', BranchId: 'north' }];
-  const db = { listCollection: async () => rows, queryCollectionPages: noScan };
+  const db = { listCollection: async () => rows, listBranchCollection: async () => rows, queryCollectionPages: noScan };
   assert.deepEqual((await loadBranchFinanceRows({}, 'payments', 'main', {}, db)).map(row => row.__id), ['old', 'main']);
   assert.equal((await loadBranchFinanceRows({}, 'payments', 'all', {}, db)).length, 3);
 });

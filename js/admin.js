@@ -3115,7 +3115,7 @@ function renderModuleSummary(active, liveData = null) {
       { icon: '\u{1F4DA}', label: 'Subjects', value: summary.Subjects ?? '—', note: `${summary.Departments ?? '—'} senior department(s)` },
       { icon: '\u{1F9D1}\u200D\u{1F3EB}', label: 'Teacher allocations', value: summary.TeacherAllocations ?? '—', note: 'Selected branch and scope' },
       { icon: '\u{1F393}', label: 'Student memberships', value: summary.StudentMemberships ?? '—', note: 'Class, arm and subjects' }
-    ];
+    ].filter(card => typeof card.value === 'number');
   } else if (active === 'accounts') {
     const data = departments.accounts || {};
     cards = [

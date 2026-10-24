@@ -98,7 +98,7 @@ test('Teacher candidates still pass through the existing edition and branch boun
   ];
   const { activeValue } = libraryHelpers(['activeValue']);
   const load = runInNewContext(`async ${declaration(library, 'loadPeople')}\nloadPeople`, {
-    lower, activeValue, staffRecordMatchesEdition, listCollection: async () => rows,
+    lower, activeValue, staffRecordMatchesEdition, listBranchCollection: async () => rows,
     listSchoolCollection: async () => { throw new Error('Students are not needed'); }
   });
   const people = await load({}, { edition: 'school' }, { branchId: 'main', section: 'primary' }, { students: false });

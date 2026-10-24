@@ -47,6 +47,7 @@ function scopedReads(profile, sources) {
   const byIdStart = scopeSource.indexOf('export async function getSchoolDocumentsById(');
   const byIdEnd = scopeSource.indexOf('export async function getSchoolDocumentById(', byIdStart);
   const source = `${scopeSource.slice(listStart, listEnd)}\n${scopeSource.slice(byIdStart, byIdEnd)}`.replaceAll('export async function', 'async function');
+  context.listBranchCollection = context.listCollection;
   const readers = runInNewContext(`${source}\n({ listSchoolCollection, getSchoolDocumentsById })`, context);
   return { ...readers, calls };
 }

@@ -42,7 +42,7 @@ function memory() {
     for (const write of writes) put(write.collectionPath, write.documentId, write.data);
   };
   const upsertDocument = (env, path, id, data, options = {}) => batchCommitDocuments(env, [{ collectionPath: path, documentId: id, data, ...options }]);
-  return { rows, commits, put, io: { getDocument, listCollection, queryCollection, batchCommitDocuments, upsertDocument } };
+  return { rows, commits, put, io: { getDocument, listCollection, listBranchCollection: listCollection, queryCollection, batchCommitDocuments, upsertDocument } };
 }
 
 async function fixture({ edition = 'school', role = 'Super Admin', branch = 'annex', section = 'Primary', plan = '', readOnly = false, disabled = false } = {}) {

@@ -55,6 +55,7 @@ async function load(file, db, extra = {}, slice) {
     normalizeOrganizationEdition: value=>value,
     fetch:()=>{throw new Error('Unexpected network access');}, ...extra
   };
+  context.listBranchCollection = context.listCollection;
   vm.createContext(context);
   let source=await readFile(new URL(file,root),'utf8');
   if (slice) source=source.slice(source.indexOf(slice[0]),source.indexOf(slice[1]));
@@ -157,7 +158,8 @@ test('R13: desktop hotel actions enforce effective edition, module and readonly 
     let calls=0;
     const access={edition,allowedSections:['hotel'],subscriptionActive:true,subscriptionReadOnly:false};
     const context={clean,staffAccessFor:async()=>access,handleHotelAction:async()=>{calls++;return {ok:true};},buildHotelSelfServiceQr:async()=>({})};
-    vm.createContext(context);
+    context.listBranchCollection = context.listCollection;
+  vm.createContext(context);
     vm.runInContext(`async function route(env,action,body,deploymentIdentity,publicOrigin){ switch(action){${cases}} }`,context);
     const body={UserUsername:'hotel-clerk',UserRole:'Hotel User',UserBranchId:'main'};
     const call=action=>context.route({},action,body,{edition},'https://example.invalid');

@@ -396,6 +396,29 @@ export function buildStructuredQuery(collectionPath, options = {}) {
   return { endpoint, structuredQuery };
 }
 
+// Aggregations return a scalar and snapshot, never document bodies. Reject an
+// incomplete response instead of turning a failed read into an empty count.
+export async function countCollection(env, collectionPath, options = {}) {
+  const { endpoint, structuredQuery } = buildStructuredQuery(collectionPath, options);
+  const rows = await firestoreRequest(env, endpoint.replace(':runQuery', ':runAggregationQuery'), {
+    method: 'POST', body: JSON.stringify({
+      structuredAggregationQuery: { structuredQuery, aggregations: [{ alias: 'total', count: {} }] },
+      ...(options.readTime ? { readTime: options.readTime } : {})
+    })
+  });
+  const results = Array.isArray(rows) ? rows.filter(row => row?.result) : [];
+  const upstream = Array.isArray(rows) ? rows.find(row => row?.error) : rows;
+  const value = results[0]?.result?.aggregateFields?.total?.integerValue;
+  const count = Number(value);
+  const readTime = results[0]?.readTime || options.readTime;
+  if (upstream?.error || results.length !== 1 || !/^\d+$/.test(String(value))
+    || !Number.isSafeInteger(count) || !readTime || !Number.isFinite(Date.parse(readTime))) {
+    const error = new Error(upstream?.error?.message || 'The database count response was incomplete. Retry loading the workspace.');
+    error.status = 502; error.code = 'FIRESTORE_COUNT_RESPONSE_INVALID'; throw error;
+  }
+  return { count, readTime };
+}
+
 export async function queryCollection(env, collectionPath, options = {}) {
   const { endpoint, structuredQuery } = buildStructuredQuery(collectionPath, options);
   const rows = await firestoreRequest(env, endpoint, {

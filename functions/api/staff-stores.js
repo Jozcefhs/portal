@@ -1,3 +1,4 @@
+import { listBranchCollection } from '../lib/branch-reads.js';
 import { batchCommitDocuments, listCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { listSchoolCollection, schoolSectionFor } from '../lib/school-scope.js';
@@ -116,7 +117,7 @@ export async function onRequestPost(context) {
       const itemName = clean(body.ItemName);
       if (!itemCode || !itemName) { const err = new Error('Item code and item name are required.'); err.status = 400; throw err; }
       const category = await resolveStoreCategory(env, body, storeType);
-      const scopedItems = visible(await listCollection(env, 'storeItems'), user)
+      const scopedItems = visible(await listBranchCollection(env, 'storeItems', user.branchId, { filters: [{ field: 'StoreType', op: '==', value: storeType }] }), user)
         .filter((row) => clean(row.StoreType) === storeType);
       const existing = itemId ? scopedItems.find((row) => clean(row.__id) === itemId) : null;
       if (itemId && !existing) { const err = new Error('Store item not found or is outside your permitted workspace.'); err.status = 404; throw err; }
@@ -188,7 +189,7 @@ export async function onRequestPost(context) {
       const orderNo = clean(body.OrderNo);
       const status = clean(body.Status);
       if (!orderNo || !['Paid - Awaiting Collection', 'Ready for Collection', 'Collected'].includes(status)) { const err = new Error('Choose a valid order and collection status.'); err.status = 400; throw err; }
-      const order = visible(await listCollection(env, 'storeOrders'), user).find((row) => clean(row.StoreType) === storeType && (clean(row.OrderNo) === orderNo || clean(row.__id) === orderNo));
+      const order = visible(await listBranchCollection(env, 'storeOrders', user.branchId, { filters: [{ field: 'StoreType', op: '==', value: storeType }] }), user).find((row) => clean(row.StoreType) === storeType && (clean(row.OrderNo) === orderNo || clean(row.__id) === orderNo));
       if (!order) { const err = new Error('Store order not found.'); err.status = 404; throw err; }
       let verifiedReference = '';
       if (status === 'Collected') {
@@ -214,8 +215,8 @@ export async function onRequestPost(context) {
       return Response.json({ ok: true, message: 'Order collection status updated.', order: payload });
     }
     const [{ categories, items }, orders, sales, procurementControlled] = await Promise.all([
-      ensureStoreCategories(env),
-      listCollection(env, 'storeOrders'),
+      ensureStoreCategories(env, { readOnly: true, branchId: user.branchId, storeType }),
+      listBranchCollection(env, 'storeOrders', user.branchId, { filters: [{ field: 'StoreType', op: '==', value: storeType }] }),
       section === 'organizationStore'
         ? listOrganizationCommerceSales(env, section, user)
         : Promise.resolve([]),

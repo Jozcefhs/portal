@@ -1,3 +1,4 @@
+import { listBranchCollection } from '../lib/branch-reads.js';
 import { effectiveInvoiceAfterReversal } from '../lib/invoice-charge-reversal.js';
 import { withStaffEmployment, employmentDirectoryRow } from '../lib/staff-employment.js';
 import {
@@ -244,7 +245,7 @@ async function rowsForType(env, user, type, branchId) {
       schoolSectionAccess: user.schoolSectionAccess
     })).filter((row) => visibleSchoolRecord(row, user, branchId));
   } else if (type === 'staff') {
-    rows = (await withStaffEmployment(env, (await listCollection(env, 'staffUsers'))
+    rows = (await withStaffEmployment(env, (await listBranchCollection(env, 'staffUsers', assignedBranch(user, branchId, true)))
       .filter((row) => visibleStaffDirectoryRecord(row, user, branchId))))
       .map(employmentDirectoryRow)
       .map((row) => {
@@ -447,9 +448,9 @@ async function studentDetail(env, user, row, capabilities) {
       console.warn(JSON.stringify({ event: 'records_desk_finance_unavailable', code: clean(failure.code || 'RECORD_FINANCE_READ_FAILED') }));
       return { payments: [], invoices: [], ledger: [], unavailable: true };
     }),
-    capabilities.canViewStudentClinic ? listCollection(env, 'clinicRecords') : Promise.resolve([]),
+    capabilities.canViewStudentClinic ? listBranchCollection(env, 'clinicRecords', selectedBranch) : Promise.resolve([]),
     ['bookstore', 'uniformStore', 'tuckShop'].some((section) => allowed.has(section))
-      ? listCollection(env, 'storeOrders')
+      ? listBranchCollection(env, 'storeOrders', selectedBranch)
       : Promise.resolve([]),
     capabilities.canViewStudentConduct
       ? listSchoolCollection(env, 'studentConductCases', {

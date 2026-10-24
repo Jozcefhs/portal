@@ -95,6 +95,13 @@ function fixture(t, branch = 'main', section = 'secondary') {
     if (readFailure?.({ name: name.slice(base.length + 1), method, options })) {
       return json(503, { error: { status: 'UNAVAILABLE', message: 'Injected database read failure' } });
     }
+    if (name.endsWith(':runAggregationQuery')) {
+      const body = JSON.parse(options.body);
+      const query = body.structuredAggregationQuery.structuredQuery;
+      const collection = `${name.slice(0, -':runAggregationQuery'.length).replace(/\/$/, '')}/${query.from[0].collectionId}`;
+      const count = [...documents.values()].filter(row => row.name.slice(0, row.name.lastIndexOf('/')) === collection && matches(row, query.where)).length;
+      return json(200, [{ result: { aggregateFields: { total: { integerValue: String(count) } } }, readTime: body.readTime || new Date().toISOString() }]);
+    }
     if (name.endsWith(':runQuery')) {
       const { structuredQuery: query } = JSON.parse(options.body);
       const collection = `${name.slice(0, -':runQuery'.length).replace(/\/$/, '')}/${query.from[0].collectionId}`;

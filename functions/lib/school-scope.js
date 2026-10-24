@@ -1,3 +1,4 @@
+import { listBranchCollection } from './branch-reads.js';
 import { deleteDocument, getDocument, listCollection, queryCollection, upsertDocument } from './firestore.js';
 import { normalizeClassKey } from './class-names.js';
 import { withStudentProfileDefaults } from './student-profile-defaults.js';
@@ -103,7 +104,8 @@ export async function listSchoolCollection(env, collection, requestedScope = nul
   const scope = accessScope(requestedScope || {});
   const uniquePaths = await schoolCollectionPaths(env, collection, scope);
   const [groups, nameProfile] = await Promise.all([
-    Promise.all(uniquePaths.map((path) => listCollection(env, path))),
+    Promise.all(uniquePaths.map((path) => path === collection && scope.branchId
+      ? listBranchCollection(env, path, scope.branchId) : listCollection(env, path))),
     collection === 'students' ? getDocument(env, 'settings', 'schoolProfile').catch(() => null) : null
   ]);
   const rows = groups.flatMap((rows, index) => rows

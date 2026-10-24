@@ -1,3 +1,4 @@
+import { listBranchCollection } from './branch-reads.js';
 import { batchCommitDocuments, getDocument, getDocuments, listCollection, queryCollection, queryCollectionPages } from './firestore.js';
 import { commitAcademicCbtRoster } from './academic-cbt-roster-commit.js';
 import { academicCbtRetentionActivationWrites, assertAcademicTermRetentionEdit } from './academic-cbt-paper-retention.js';
@@ -1942,7 +1943,7 @@ async function loadPeople(env, user, scope, options = {}) {
   const includeStaff = options.staff !== false;
   const includeStudents = options.students !== false;
   const [staff, students] = await Promise.all([
-    includeStaff ? listCollection(env, 'staffUsers') : Promise.resolve([]),
+    includeStaff ? listBranchCollection(env, 'staffUsers', scope.branchId) : Promise.resolve([]),
     includeStudents ? listSchoolCollection(env, 'students', {
       branchId: scope.branchId,
       schoolSectionAccess: scope.section || user.schoolSectionAccess || 'All'
@@ -1996,17 +1997,13 @@ export function academicManagementSummary(state = {}) {
 }
 
 async function loadAcademicManagementSummary(env, scope, focusedState, focusedStateKeys) {
-  const missingKeys = ACADEMIC_SUMMARY_STATE_KEYS.filter((key) => !focusedStateKeys.includes(key));
-  // Only status and section are needed for counts. Avoid transferring entire student
-  // membership and allocation documents into every focused academic workspace.
-  const additional = await Promise.all(missingKeys.map(async (key) => {
-    const rows = await queryCollection(env, ACADEMIC_MANAGEMENT_COLLECTIONS[key], {
-      filters: [{ field: 'BranchId', op: '==', value: scope.branchId }],
-      select: ['BranchId', 'SchoolSection', 'Status']
-    });
-    return [key, scopedAcademicRows(rows.filter((row) => lower(row.BranchId) === lower(scope.branchId)), scope)];
+  const counts = academicManagementSummary(focusedState);
+  // Do not fetch unrelated memberships/allocations just to decorate a workspace.
+  // An unloaded counter is different from a confirmed zero.
+  return Object.fromEntries(ACADEMIC_SUMMARY_STATE_KEYS.map(key => {
+    const label = key[0].toUpperCase() + key.slice(1);
+    return [label, focusedStateKeys.includes(key) ? counts[label] : '—'];
   }));
-  return academicManagementSummary({ ...focusedState, ...Object.fromEntries(additional) });
 }
 
 function displayStaff(rows = []) {
@@ -4723,7 +4720,7 @@ export async function copyAcademicTimetableVersion(env, user = {}, input = {}) {
   for (let offset = 0; offset < pendingWrites.length; offset += 450) {
     await commitAcademicBatch(env, pendingWrites.slice(offset, offset + 450), 'This timetable copy was interrupted by another update. Run the same copy again to resume it safely.');
   }
-  const freshVersions = await listCollection(env, ACADEMIC_MANAGEMENT_COLLECTIONS.timetableVersions);
+  const freshVersions = await queryCollection(env, ACADEMIC_MANAGEMENT_COLLECTIONS.timetableVersions, { filters: [{ field: 'BranchId', op: '==', value: scope.branchId }] });
   const freshTarget = findById(freshVersions, target.VersionId);
   if (!freshTarget) throw failure('The copied timetable version could not be finalized. Run the same copy again to resume it.', 409);
   const completedAt = nowIso();

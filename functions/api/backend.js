@@ -1,3 +1,4 @@
+import { listBranchCollection } from '../lib/branch-reads.js';
 import { batchCommitDocuments, batchCommitLiteralDocuments, batchUpsertDocuments, createDocumentIfAbsent, deleteDocument, findOneByField, getDocument, listCollection, listCollectionForReport, listCollectionPage, patchDocumentFields, queryCollection, queryCollectionPages, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { feeBranchId, feeRowsForBranch, feeMatchesBranch, feeSetupBranch, resolveFeeDocument, feeDocumentWrite } from '../lib/fee-branch-scope.js';
 import { normalizeRecoveryEmail } from '../lib/staff-password-recovery.js';
@@ -2698,7 +2699,7 @@ async function getStoreOverview(env, body) {
   if (!['Bookstore', 'Uniform Store'].includes(storeType)) throw Object.assign(new Error('Choose a valid store.'), { status: 400 });
   await desktopSchoolOperationsActor(env, body, storeType === 'Bookstore' ? 'bookstore' : 'uniformStore');
   const scope = desktopInventoryScope(body);
-  const [{ categories, items }, orders] = await Promise.all([ensureStoreCategories(env), listCollection(env, 'storeOrders')]);
+  const [{ categories, items }, orders] = await Promise.all([ensureStoreCategories(env, { readOnly: true, branchId: scope.BranchId, storeType }), listBranchCollection(env, 'storeOrders', scope.BranchId, { filters: [{ field: 'StoreType', op: '==', value: storeType }] })]);
   const matches = (row) => sameText(row.StoreType, storeType) && sameText(row.BranchId || 'main', scope.BranchId)
     && (!clean(row.OrganisationEdition) || sameText(row.OrganisationEdition, 'school'))
     && (sameText(scope.SchoolSection, 'All') || schoolSectionFor(row) === scope.SchoolSection.toLowerCase());
@@ -2721,7 +2722,7 @@ async function saveStoreItem(env, body) {
   await desktopSchoolOperationsActor(env, body, storeType === 'Bookstore' ? 'bookstore' : 'uniformStore', true);
   const scope = desktopInventoryScope(body);
   const category = await resolveStoreCategory(env, body, storeType);
-  const items = (await listCollection(env, 'storeItems')).filter(row => sameText(row.StoreType, storeType)
+  const items = (await listBranchCollection(env, 'storeItems', scope.BranchId)).filter(row => sameText(row.StoreType, storeType)
     && sameText(row.BranchId || 'main', scope.BranchId)
     && (!clean(row.OrganisationEdition) || sameText(row.OrganisationEdition, 'school'))
     && (sameText(scope.SchoolSection, 'All') || schoolSectionFor(row) === scope.SchoolSection.toLowerCase()));
@@ -7536,7 +7537,7 @@ async function saveClinicRecord(env, body) {
 async function getClinicRecords(env, body) {
   await desktopSchoolOperationsActor(env, body, 'clinic');
   const scope = schoolOperationsScope(body);
-  const rows = await listCollection(env, 'clinicRecords');
+  const rows = await listBranchCollection(env, 'clinicRecords', scope.BranchId);
   return { ok: true, message: 'Clinic records loaded from the database.', records: rows
     .filter(row => (!clean(row.OrganisationEdition) || lower(row.OrganisationEdition) === 'school')
       && schoolOperationsRowVisible(row, scope)).map(normalizeClinicRecord) };
@@ -7555,7 +7556,7 @@ function desktopInventoryScope(body = {}) {
 async function desktopInventoryRows(env, body, collection, write = false) {
   await desktopSchoolOperationsActor(env, body, collection === 'clinicInventory' ? 'clinic' : 'kitchen', write);
   const scope = desktopInventoryScope(body);
-  return (await listCollection(env, collection)).filter(row =>
+  return (await listBranchCollection(env, collection, scope.BranchId)).filter(row =>
     sameText(row.BranchId || 'main', scope.BranchId)
     && (!clean(row.OrganisationEdition) || sameText(row.OrganisationEdition, 'school'))
     && (sameText(scope.SchoolSection, 'All') || schoolSectionFor(row) === scope.SchoolSection.toLowerCase()));

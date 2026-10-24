@@ -1,17 +1,20 @@
+import { listBranchCollection } from './branch-reads.js';
 import { listCollection, listCollectionForReport, listCollectionPage, queryCollection, queryCollectionPages } from './firestore.js';
 import { accountingRowsForBranch } from './accounting-branch-scope.js';
 import { canonicalSchoolBranchId } from './school-scope.js';
 
-const dependencies = { listCollection, listCollectionForReport, listCollectionPage, queryCollection, queryCollectionPages };
+const dependencies = { listBranchCollection, listCollection, listCollectionForReport, listCollectionPage, queryCollection, queryCollectionPages };
 const branchKey = value => String(value || 'all').toLowerCase() === 'all' ? 'all' : canonicalSchoolBranchId(value);
 const scopedQuery = branch => ({ filters: ['BranchId', 'branchId'].map(field => ({ field, op: '==', value: branch })), filterJoin: 'OR' });
 
-// Main must still include legacy records without BranchId. Other branches can
-// use indexed reads and must never fall back to scanning the Main catalogue.
+// Main uses snapshot-verified branch coverage to retain legacy records without
+// BranchId. Other branches keep their indexed reads without scanning Main.
 export async function loadBranchFinanceRows(env, collection, branchId, options = {}, overrides = {}) {
   const db = { ...dependencies, ...overrides }, branch = branchKey(branchId);
   let rows;
-  if (branch === 'main' || branch === 'all') {
+  if (branch === 'main') {
+    rows = await db.listBranchCollection(env, collection, branch, options);
+  } else if (branch === 'all') {
     rows = options.filters
       ? await db.queryCollectionPages(env, collection, options)
       : options.report ? await db.listCollectionForReport(env, collection, options)

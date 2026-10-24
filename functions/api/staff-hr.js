@@ -1,3 +1,4 @@
+import { listBranchCollection } from '../lib/branch-reads.js';
 import { getDocument, listCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { beginStaffAccountChange, commitStaffAccountChanges, staffAccountCondition } from '../lib/staff-account-integrity.js';
@@ -122,12 +123,12 @@ async function listWorkspace(env, user) {
   const username = actorUsername(user);
   const [staffUsers, employees, leave, vacancies, reviews, training, lifecycleRecords] = await Promise.all([
     listCollection(env, 'staffUsers'),
-    listCollection(env, 'hrEmployees').catch(() => []),
-    listCollection(env, 'hrLeaveRequests').catch(() => []),
-    listCollection(env, 'hrVacancies').catch(() => []),
-    listCollection(env, 'hrPerformanceReviews').catch(() => []),
-    listCollection(env, 'hrTrainingRecords').catch(() => []),
-    listCollection(env, 'hrLifecycleRecords').catch(() => [])
+    listBranchCollection(env, 'hrEmployees', user.branchId),
+    listBranchCollection(env, 'hrLeaveRequests', user.branchId),
+    listBranchCollection(env, 'hrVacancies', user.branchId),
+    listBranchCollection(env, 'hrPerformanceReviews', user.branchId),
+    listBranchCollection(env, 'hrTrainingRecords', user.branchId),
+    listBranchCollection(env, 'hrLifecycleRecords', user.branchId)
   ]);
   const editionStaff = staffUsers.filter((row) => staffRecordMatchesEdition(row, user));
   const staffBranches = staffBranchMap(editionStaff);
@@ -214,7 +215,7 @@ async function listWorkspace(env, user) {
 
 async function knownStaff(env, user, username) {
   const id = lower(username);
-  const rows = await listCollection(env, 'staffUsers');
+  const rows = await listBranchCollection(env, 'staffUsers', user.branchId);
   const staff = rows.find((row) => lower(row.Username || row.__id) === id);
   requireVisibleStaff(staff, user);
   return safeHrStaffUser(staff);

@@ -13,6 +13,37 @@ function databaseContext(response) {
 }
 const testEnv = {FIREBASE_PROJECT_ID:'test',FIREBASE_CLIENT_EMAIL:'test',FIREBASE_PRIVATE_KEY:'test'};
 
+test('aggregation counts return zero accurately, carry a snapshot and reject incomplete responses', async () => {
+  const readTime = '2026-10-24T10:00:00.000Z';
+  for (const value of ['0', '22000']) {
+    const context = databaseContext({ ok: true, status: 200, json: async () => [{ result: { aggregateFields: { total: { integerValue: value } } }, readTime }] });
+    const result = await context.countCollection(testEnv, 'items');
+    assert.equal(result.count, Number(value)); assert.equal(result.readTime, readTime);
+  }
+  for (const body of [[], {}, [{ readTime }], [{ result: { aggregateFields: { total: { integerValue: '-1' } } }, readTime }],
+    [{ result: { aggregateFields: { total: { integerValue: '9007199254740992' } } }, readTime }],
+    [{ result: { aggregateFields: { total: { integerValue: '0' } } }, readTime }, { error: { message: 'Unavailable' } }]]) {
+    const context = databaseContext({ ok: true, status: 200, json: async () => body });
+    await assert.rejects(context.countCollection(testEnv, 'items'), { code: 'FIRESTORE_COUNT_RESPONSE_INVALID' });
+  }
+});
+
+test('count requests use the correct nested collection endpoint and fixed snapshot', async () => {
+  const context = databaseContext({});
+  const calls = [];
+  context.firestoreRequest = async (_env, endpoint, options) => {
+    calls.push({ endpoint, body: JSON.parse(options.body) });
+    return [{ result: { aggregateFields: { total: { integerValue: '2' } } }, readTime: '2026-10-24T10:00:00.000Z' }];
+  };
+  await context.countCollection(testEnv, 'schoolBranches/main/sections/secondary/students', {
+    readTime: '2026-10-24T10:00:00.000Z', filters: [{ field: 'BranchId', op: 'in', value: ['main', 'north'] }]
+  });
+  assert.equal(calls[0].endpoint, 'schoolBranches/main/sections/secondary:runAggregationQuery');
+  assert.equal(calls[0].body.readTime, '2026-10-24T10:00:00.000Z');
+  assert.equal(calls[0].body.structuredAggregationQuery.structuredQuery.from[0].collectionId, 'students');
+  assert.equal(calls[0].body.structuredAggregationQuery.aggregations[0].alias, 'total');
+});
+
 test('a successful HTTP response with truncated JSON fails instead of becoming an empty collection',async()=>{
   const context = databaseContext({ok:true,status:200,json:async()=>{throw new SyntaxError('Truncated JSON');}});
   await assert.rejects(context.queryCollection(testEnv,'scores'),{code:'FIRESTORE_RESPONSE_INVALID',status:502});
