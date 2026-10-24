@@ -67,7 +67,7 @@ function renderProducts() {
   storeProducts.innerHTML = visible.length ? visible.map((item) => {
     const reference = clean(item.ItemCode);
     const added = cart.has(reference);
-    return `<article class="public-store-product"><div><strong>${escapeHtml(item.ItemName)}</strong><span>${escapeHtml([item.Category, item.Size].filter(Boolean).join(' · '))}</span><small>${escapeHtml(money(item.Price))} · ${Number(item.Quantity || 0)} available</small></div><button type="button" class="${added ? 'is-added' : ''}" data-add-store-item="${escapeHtml(reference)}">${added ? 'Add another' : 'Add to cart'}</button></article>`;
+    return `<article class="public-store-product"><div><strong>${escapeHtml(item.ItemName)}</strong>${item.OwnershipType === 'Vendor' ? `<span class="store-owner">Vendor: ${escapeHtml(item.VendorName || 'Independent vendor')}</span>` : ''}<span>${escapeHtml([item.Category, item.Size].filter(Boolean).join(' · '))}</span><small>${escapeHtml(money(item.Price))} · ${Number(item.Quantity || 0)} available</small></div><button type="button" class="${added ? 'is-added' : ''}" data-add-store-item="${escapeHtml(reference)}">${added ? 'Add another' : 'Add to cart'}</button></article>`;
   }).join('') : '<p class="public-store-empty">No matching store items are available.</p>';
   storeProducts.querySelectorAll('[data-add-store-item]').forEach((button) => button.addEventListener('click', () => {
     const reference = button.dataset.addStoreItem;

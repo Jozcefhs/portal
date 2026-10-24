@@ -12,6 +12,7 @@ import { accountingChartChoicesForEdition } from './accounting-edition-scope.js'
 import { handleProductImport } from './vendor-product-import.js';
 import { assertProcurementInventoryEdit, loadProcurementInventoryControl } from './procurement-inventory-guard.js';
 import { PRODUCT_CHANGES, productPolicy, vendorProductContext, prepareVendorProductWrites, handleVendorProductAction } from './vendor-product-management.js';
+import { organisationSalesEnabled } from './vendor-store-policy.js';
 import { amount, allocateClaim, balanceView, cents, chargeFor, clean, dateOnly, effectiveRule, fail, lower,
   normalizeRule, periodKey, plain, ruleDescription, settlementScope, visible } from './vendor-settlement-rules.js';
 
@@ -152,6 +153,8 @@ export async function snapshotVendorCart(env, items, user, timestamp = new Date(
   for (const vendorId of vendorIds) {
     const vendor = await scoped(env, VENDOR_COLLECTIONS.vendors, vendorId, scope);
     if (vendor.Active === 'NO') fail(`${vendor.Name} is not active.`, 409);
+    if (role(user) !== 'Vendor User' && !organisationSalesEnabled(vendor))
+      fail(`${vendor.Name} products are available through the vendor's own point of sale only. Refresh the store.`, 409, 'VENDOR_ORGANISATION_SALES_DISABLED');
     if (scope.OrganisationEdition === 'school' && items.some(item => item.VendorId === vendorId
       && clean(item.SchoolSection) && lower(item.SchoolSection) !== lower(vendor.SchoolSection))) fail('Product ownership and vendor school section differ. Review the stock record.', 409);
     vendors.set(vendorId, vendor);
@@ -318,6 +321,7 @@ async function saveVendor(env, user, scope, body) {
     LoginUsername: lower(body.LoginUsername), BankName: clean(body.BankName), BankAccountName: clean(body.BankAccountName), BankAccountNumber: account,
     BankDetailsVersion: bankChanged || !original ? crypto.randomUUID() : original.BankDetailsVersion,
     Active: body.Active === 'NO' ? 'NO' : 'YES', PosEnabled: body.PosEnabled == null ? original?.PosEnabled ?? true : body.PosEnabled === true,
+    OrganisationSalesEnabled: body.OrganisationSalesEnabled == null ? organisationSalesEnabled(original) : body.OrganisationSalesEnabled === true,
     RuleHistory: history, CreatedAt: original?.CreatedAt || timestamp, UpdatedAt: timestamp, UpdatedBy: actor(user) };
   if (vendor.LoginUsername) {
     // New links may use a changed sign-in name; saved links retain the stable
@@ -342,8 +346,22 @@ async function saveVendor(env, user, scope, body) {
   }
   if (original && (original.ScopeKey !== vendor.ScopeKey || original.SchoolSection !== vendor.SchoolSection)) fail('Existing vendor accounts cannot be moved between branches or sections. Create a separate account.', 409);
   await commit(env, [write(VENDOR_COLLECTIONS.vendors, vendorId, vendor, original), audit(scope, user, original ? 'VENDOR UPDATED' : 'VENDOR CREATED', vendorId,
-    `${name}; active ${vendor.Active}; login link changed ${lower(original?.LoginUsername) !== vendor.LoginUsername}; bank details changed ${bankChanged}; rule ${ruleDescription(effectiveRule(vendor, await settingsFor(env, scope), timestamp))}`)]);
+    `${name}; active ${vendor.Active}; organisation sales ${vendor.OrganisationSalesEnabled}; login link changed ${lower(original?.LoginUsername) !== vendor.LoginUsername}; bank details changed ${bankChanged}; rule ${ruleDescription(effectiveRule(vendor, await settingsFor(env, scope), timestamp))}`)]);
   return { ok: true, message: 'Vendor saved. A linked login must have the restricted Vendor User role.', VendorId: vendorId };
+}
+async function setOrganisationSales(env, user, scope, body) {
+  requireRole(user, management);
+  if (typeof body.Enabled !== 'boolean') fail('Choose whether organisation sales are enabled.');
+  const vendor = await scoped(env, VENDOR_COLLECTIONS.vendors, body.VendorId, scope);
+  checkVersion(body, vendor);
+  const updated = { ...plain(vendor), OrganisationSalesEnabled: body.Enabled,
+    UpdatedAt: new Date().toISOString(), UpdatedBy: actor(user) };
+  await commit(env, [write(VENDOR_COLLECTIONS.vendors, vendor.VendorId, updated, vendor),
+    audit(scope, user, 'VENDOR ORGANISATION SALES CHANGED', vendor.VendorId,
+      `${vendor.Name}; organisation sales ${organisationSalesEnabled(vendor)} -> ${body.Enabled}; stock and previous sales unchanged`)]);
+  return { ok: true, message: body.Enabled
+    ? 'Organisation sales enabled. The organisation and vendor can both sell this vendor’s products.'
+    : 'Organisation sales disabled. Only the vendor’s own point of sale can start new sales of these products.' };
 }
 async function products(env, scope) {
   const allowed = scope.OrganisationEdition === 'school' ? ['tuckShop'] : ['organizationStore', 'restaurant'];
@@ -818,6 +836,7 @@ export async function handleVendorSettlementAction(env, user, body = {}, options
     case 'statement': return statement(env, user, scope, body);
     case 'saveSettings': return saveSettings(env, user, scope, body);
     case 'saveVendor': return saveVendor(env, user, scope, body);
+    case 'setOrganisationSales': return setOrganisationSales(env, user, scope, body);
     case 'saveProduct': return saveProduct(env, user, scope, body);
     case 'recordProductDelivery':
     case 'setProductAvailability':

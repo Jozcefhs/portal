@@ -1,4 +1,5 @@
 import { getAccountsOverview } from './backend.js';
+import { withVendorStorePolicy } from '../lib/vendor-store-policy.js';
 import { getDocument, listCollection, listCollectionForReport, requireFirestoreEnv } from '../lib/firestore.js';
 import { loadBranchFinanceRows } from '../lib/finance-branch-reads.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
@@ -314,12 +315,12 @@ export async function onRequestPost(context) {
     const visiblePayments = staffScope(payments);
     const visibleInvoices = staffScope(displayInvoices);
     const visibleLedger = staffScope(ledger);
-    const visibleStoreItems = staffScope(storeItems);
+    const visibleStoreItems = await withVendorStorePolicy(env, user, staffScope(storeItems));
     const visibleStoreOrders = staffScope(storeOrders);
     const visibleClinicInventory = staffScope(clinicInventory);
     const visibleKitchenInventory = staffScope(kitchenInventory);
-    const visibleRestaurantInventory = staffScope(restaurantInventory);
-    const visibleTuckShopInventory = staffScope(tuckShopInventory);
+    const visibleRestaurantInventory = await withVendorStorePolicy(env, user, staffScope(restaurantInventory));
+    const visibleTuckShopInventory = await withVendorStorePolicy(env, user, staffScope(tuckShopInventory));
     const visibleTuckShopMovements = staffScope(tuckShopMovements);
     const walletPurchases = visibleLedger.filter((row) => clean(row.EntryType).toLowerCase() === 'wallet purchase');
     const lowClinic = visibleClinicInventory.filter((row) => toNumber(row.ReorderLevel) > 0 && toNumber(row.Quantity) <= toNumber(row.ReorderLevel));

@@ -18,7 +18,8 @@ import {
   withPaystackBranchRouting
 } from './direct-bank-transfer.js';
 import { prepareVendorSale, snapshotVendorCart } from './vendor-settlements.js';
-import { restrictVendorInventory, assertVendorSaleReplay } from './vendor-sales-access.js';
+import { restrictVendorInventory, assertVendorSaleReplay, isVendorSeller } from './vendor-sales-access.js';
+import { withVendorStorePolicy } from './vendor-store-policy.js';
 import { inventoryQuantityNumber, procurementMovementBalance } from './procurement-inventory-guard.js';
 
 const clean = (value) => String(value ?? '').trim();
@@ -266,13 +267,18 @@ function requestedItems(body = {}) {
   return [...demand.values()];
 }
 
-async function scopedInventory(env, section, user) {
+async function scopedInventory(env, section, user, { storeCatalogue = false } = {}) {
   const config = configFor(section);
   const schoolSection = lower(user.schoolSectionAccess || user.SchoolSectionAccess || 'All');
   let rows = (await listBranchCollection(env, config.inventory, scopeFor(user).BranchId, section === 'organizationStore' ? { compatibleFilters: [{ field: 'StoreType', value: 'Organisation Store', knownValues: ['Bookstore', 'Uniform Store', 'Organisation Store'] }] } : {})).filter((row) => visibleInScope(row, user)
     && (scopeFor(user).OrganisationEdition !== 'school' || schoolSection === 'all'
       || lower(row.SchoolSection || 'Secondary') === schoolSection));
   rows = await restrictVendorInventory(env, user, section, rows);
+  // Checkout checks only the selected owners in snapshotVendorCart. Catalogue
+  // reads need labels/filtering; paid-sale completion keeps its original snapshot.
+  if (storeCatalogue && !isVendorSeller(user)) {
+    rows = (await withVendorStorePolicy(env, user, rows)).filter(row => row.OrganisationSalesEnabled !== false);
+  }
   if (section === 'organizationStore') {
     return rows.filter((row) => clean(row.StoreType) === 'Organisation Store');
   }
@@ -522,12 +528,14 @@ export async function listOrganizationCommerceSales(env, section, user) {
 }
 
 export async function listPublicOrganizationStoreItems(env, branchId = 'main', edition = 'faith') {
-  const rows = await scopedInventory(env, 'organizationStore', { branchId, edition });
+  const rows = await scopedInventory(env, 'organizationStore', { branchId, edition }, { storeCatalogue: true });
   return rows
     .filter((row) => row.VendorSaleRevoked !== true && clean(row.Active || 'YES').toUpperCase() !== 'NO')
     .map((row) => ({
       ItemCode: clean(row.ItemCode || row.__id),
       ItemName: clean(row.ItemName || row.__id),
+      VendorName: clean(row.VendorName),
+      OwnershipType: clean(row.VendorId) ? 'Vendor' : 'Organisation',
       Category: clean(row.Category),
       Size: clean(row.Size),
       Unit: clean(row.Unit || 'pcs'),

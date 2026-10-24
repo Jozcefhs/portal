@@ -4,12 +4,14 @@ import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 import { webcrypto } from 'node:crypto';
 import * as rules from '../functions/lib/vendor-settlement-rules.js';
+import { organisationSalesEnabled } from '../functions/lib/vendor-store-policy.js';
 import { buildWalletPurchaseAccountingJournal } from '../functions/api/backend.js';
 import { objectToFirestoreFields, firestoreDocumentToObject } from '../functions/lib/firestore.js';
 import { inventoryQuantityNumber, procurementMovementBalance } from '../functions/lib/procurement-inventory-guard.js';
 
 const withoutImports = source => source.replace(/^import[\s\S]*?from '[^']+';\r?\n/gm,'').replace(/export /g,'');
 const staffLookupSource = withoutImports(await readFile(new URL('../functions/lib/staff-auth.js',import.meta.url),'utf8'));
+const policySource = withoutImports(await readFile(new URL('../functions/lib/vendor-store-policy.js',import.meta.url),'utf8'));
 const accessSource = withoutImports(await readFile(new URL('../functions/lib/vendor-sales-access.js',import.meta.url),'utf8'));
 const historySource = withoutImports(await readFile(new URL('../functions/lib/vendor-sales-history.js',import.meta.url),'utf8'));
 const posSource = withoutImports(await readFile(new URL('../functions/lib/vendor-sales.js',import.meta.url),'utf8'))
@@ -156,7 +158,7 @@ function fixture(initial = [], options = {}) {
     commits.push(structuredClone(writes)); for (const w of writes) put(w.collectionPath,w.documentId,w.data);
   };
   const functions = vm.runInNewContext(`${source}\n({ handleVendorSettlementAction, prepareVendorSale, snapshotVendorCart })`, {
-    ...rules, ...productManagement, handleProductImport, handleCardRefundBatch, commitWithReadChecks:commit, crypto:webcrypto, Intl, Date, TextEncoder, console, assertRequisitionTransition, validateRequisitionPosting, accountingChartChoicesForEdition,
+    ...rules, organisationSalesEnabled, ...productManagement, handleProductImport, handleCardRefundBatch, commitWithReadChecks:commit, crypto:webcrypto, Intl, Date, TextEncoder, console, assertRequisitionTransition, validateRequisitionPosting, accountingChartChoicesForEdition,
     withApprovalRoute, requisitionPendingTransition, approvalFlowLabel, vendorRequestPrintReport, requisitionCapabilities, hasPrincipalApprovalGrant, assertFinanceRoleLimit,
     approvalSnapshot: async () => ({ Version: 1, Kind: 'vendor', Stages: [...(options.approvalStages || ['accounts', 'admin-review', 'director'])] }),
     staffAccessFor:async (_env, actor) => { accessReads.push(actor); return { featureFlags }; },
@@ -764,9 +766,10 @@ function commerceFixture(edition = 'school', section = 'tuckShop', options = {})
   const f = fixture([['commerceVendors','v1',vendor('v1',scoped)],['settings',`vendor-settlement-${edition}--main`,{...settings,...scoped}]],options);
   const collection = ({tuckShop:'tuckShopInventory',organizationStore:'storeItems',restaurant:'restaurantInventory'})[section];
   for (const stockId of ['stock1','stock2']) f.put(collection,stockId,{...scoped,ItemCode:stockId,StoreType:'Organisation Store',ItemName:'Water',VendorId:'v1',Price:50,Quantity:5,Active:'YES'});
-  const access = vm.runInNewContext(`${accessSource}\n({linkedSalesVendors,restrictVendorInventory,assertVendorSaleReplay,vendorCustomerScope})`,{
+  const access = vm.runInNewContext(`${accessSource}\n({linkedSalesVendors,restrictVendorInventory,assertVendorSaleReplay,vendorCustomerScope,isVendorSeller})`,{
     ...rules,queryCollectionPages:async (_env,c,opts) => f.list(c).filter(row => opts.filters.every(q => row[q.field] === q.value))});
-  const context = {...f.functions,...access,inventoryQuantityNumber,procurementMovementBalance,crypto:webcrypto,Date,console,URL,URLSearchParams,
+  const policy = vm.runInNewContext(`${policySource}\n({withVendorStorePolicy})`,{...rules,getDocuments:async(_env,c,ids)=>ids.map(id=>structuredClone(f.get(c,id)||null))});
+  const context = {...f.functions,...access,...policy,inventoryQuantityNumber,procurementMovementBalance,crypto:webcrypto,Date,console,URL,URLSearchParams,
     batchUpsertDocuments:f.commit,getDocument:async (_env,c,id) => structuredClone(f.get(c,id) || null),listCollection:async (_env,c) => f.list(c),
     upsertDocument:async (_env,c,id,row) => f.put(c,id,row),patchDocumentFields:async (_env,c,id,row) => f.put(c,id,{...f.get(c,id),...row}),
     createDocumentIfAbsent:async (_env,c,id,row) => { const previous = f.get(c,id); if (!previous) f.put(c,id,row); return {created:!previous,document:previous || f.get(c,id)}; },
@@ -775,7 +778,7 @@ function commerceFixture(edition = 'school', section = 'tuckShop', options = {})
     fetch:async (_url,options) => { const body = JSON.parse(options.body); return {ok:true,json:async () => ({status:true,data:{authorization_url:'https://payment.example.test',reference:body.reference}})}; }
   };
   context.listBranchCollection = context.listCollection;
-  const commerce = vm.runInNewContext(`${commerceSource}\n({COMMERCE_CONFIG,recordManualOrganizationCommerceSale,initializeOnlineOrganizationCommerceSale,finalizeOnlineOrganizationCommerceSale,previewOrganizationCommerceSale,preparePaidCommerceInventoryCompletion,prepareTuckShopWalletCart})`,context);
+  const commerce = vm.runInNewContext(`${commerceSource}\n({COMMERCE_CONFIG,recordManualOrganizationCommerceSale,initializeOnlineOrganizationCommerceSale,finalizeOnlineOrganizationCommerceSale,previewOrganizationCommerceSale,preparePaidCommerceInventoryCompletion,prepareTuckShopWalletCart,listPublicOrganizationStoreItems})`,context);
   const sha256Hex = async value => [...new Uint8Array(await webcrypto.subtle.digest('SHA-256',new TextEncoder().encode(value)))].map(v => v.toString(16).padStart(2,'0')).join('');
   const findStudent = async () => structuredClone(f.get('students','child') || null);
   const walletAccountPayload = async (_env,student) => ({...student,WalletBalance:Number(student.OpeningWallet || 0)-f.list('ledger').reduce((sum,r) => sum+Number(r.Debit || 0),0),WalletSpentToday:f.list('ledger').reduce((sum,r) => sum+Number(r.Debit || 0),0)});
@@ -1465,3 +1468,50 @@ for (const [edition,section] of [['school','tuckShop'],['faith','restaurant'],['
     assert.equal(f.get(f.collection,'new-stock').Quantity,8); assert.equal(f.list('vendorEarnings').length,1);
   });
 }
+for (const [edition, section] of [['faith','organizationStore'], ['faith','restaurant'], ['organization','organizationStore'], ['school','tuckShop']]) {
+  test(`${edition}/${section}: organisation-sales toggle preserves records, blocks stale carts, and keeps the vendor counter available`, async () => {
+    const f = commerceFixture(edition, section);
+    f.put('commerceVendors','v1',{...f.get('commerceVendors','v1'),LoginUsername:'seller',PosEnabled:true});
+    const seller={...f.actor,role:'Vendor User',username:'seller',allowedSections:['vendorSettlements',section]};
+    const change=Enabled=>f.run('setOrganisationSales',{VendorId:'v1',Enabled,RecordVersion:f.get('commerceVendors','v1').__updateTime},f.actor);
+    const before=JSON.stringify([...f.store].filter(([key])=>!key.startsWith('commerceVendors/')));
+    await change(false);
+    assert.equal(JSON.stringify([...f.store].filter(([key])=>!key.startsWith('commerceVendors/')&&!key.startsWith('accountingAudit/'))),before);
+    assert.equal(f.get('commerceVendors','v1').PosEnabled,true);
+    await assert.rejects(f.commerce.recordManualOrganizationCommerceSale({},section,f.body,f.actor));
+    assert.equal(f.get(f.collection,'stock1').Quantity,5);assert.equal(f.list('vendorEarnings').length,0);
+    if(section==='organizationStore')assert.equal((await f.commerce.listPublicOrganizationStoreItems({},'main',edition)).length,0);
+    const result=await f.commerce.recordManualOrganizationCommerceSale({},section,{...f.body,SaleRequestId:'vendor-sale'},seller);
+    assert.equal(result.ok,true);assert.equal(f.get(f.collection,'stock1').Quantity,3);
+    await change(true);
+    if(section==='organizationStore')assert.equal((await f.commerce.listPublicOrganizationStoreItems({},'main',edition))[0].VendorName,'Vendor v1');
+    await f.commerce.recordManualOrganizationCommerceSale({},section,f.body,f.actor);
+    assert.equal(f.get(f.collection,'stock1').Quantity,1);
+    const saved=JSON.stringify(f.list('organizationCommerceSales'));
+    await change(false);
+    assert.equal((await f.commerce.recordManualOrganizationCommerceSale({},section,f.body,f.actor)).replayed,true);
+    assert.equal(JSON.stringify(f.list('organizationCommerceSales')),saved);
+    assert.equal(f.get(f.collection,'stock1').Quantity,1);
+    const body={VendorId:'v1',Enabled:true,RecordVersion:f.get('commerceVendors','v1').__updateTime};
+    for(const actor of [seller,{...f.actor,branchId:'other'},{...f.actor,subscriptionReadOnly:true}])await assert.rejects(f.run('setOrganisationSales',body,actor));
+    await assert.rejects(f.run('setOrganisationSales',{...body,RecordVersion:'stale'},f.actor));
+    await assert.rejects(f.run('setOrganisationSales',{...body,Enabled:'false'},f.actor));
+    assert.equal(f.get('commerceVendors','v1').OrganisationSalesEnabled,false);
+  });
+}
+test('disabling organisation selling preserves already-issued online payments and stock-review completion',async()=>{
+  const f=commerceFixture('faith','organizationStore'),env={PAYSTACK_SECRET_KEY:'fixture-only'};
+  await f.commerce.initializeOnlineOrganizationCommerceSale(env,{url:'https://store.example.test'},f.section,{...f.body,CustomerEmail:'fixture@example.test'},f.actor);
+  await f.run('setOrganisationSales',{VendorId:'v1',Enabled:false,RecordVersion:f.get('commerceVendors','v1').__updateTime},f.actor);
+  f.put(f.collection,'stock1',{...f.get(f.collection,'stock1'),Quantity:0});
+  const payment={GrossAmount:100,GatewayFee:2,NetAmount:98,Reference:'ONLINE-1',PaidAt:timestamp};
+  const intent={SaleId:'sale1',SaleType:f.section};
+  assert.equal((await f.commerce.finalizeOnlineOrganizationCommerceSale(env,intent,payment)).sale.InventoryStatus,'Review Required');
+  f.put(f.collection,'stock1',{...f.get(f.collection,'stock1'),Quantity:5});
+  await f.run('completeInventoryReview',{VendorId:'v1',EntryId:'sale1--v1',RequestId:'issue-after-toggle',EvidenceReference:'Delivery slip',Notes:'Issued paid order',approvalPassword:'test-confirmation'},f.actor,{commerce:f.commerce});
+  assert.equal(f.get(f.collection,'stock1').Quantity,3);
+  assert.equal((await f.commerce.finalizeOnlineOrganizationCommerceSale(env,intent,payment)).replayed,true);
+  assert.equal(f.list('vendorEarnings').filter(row=>row.Type==='Sale').length,1);
+  assert.equal(f.list('vendorEarnings').filter(row=>row.Type==='Stock issue reviewed').length,1);
+  assert.equal(f.list('accountingJournals').length,1);
+});

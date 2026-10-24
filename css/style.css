@@ -3574,6 +3574,8 @@ img.nav-logo,
 }
 .commerce-product span,.commerce-product small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .commerce-product span{line-height:1.3}
+.commerce-product .commerce-owner{white-space:normal;overflow-wrap:anywhere;color:#076b60;font-weight:600;margin:4px 0}
+html[data-theme="dark"] .commerce-product .commerce-owner{color:#86e3ca}
 .commerce-product small{min-height:1.3em;line-height:1.3;font-variant-numeric:tabular-nums}
 .commerce-product-action{justify-content:space-between;margin-top:auto;padding-top:6px;border-top:1px solid #e4ebf1}
 .commerce-product-action select{width:50px}

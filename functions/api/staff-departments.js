@@ -1,4 +1,5 @@
 import { listBranchCollection } from '../lib/branch-reads.js';
+import { withVendorStorePolicy } from '../lib/vendor-store-policy.js';
 import { batchCommitDocuments, listCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { listSchoolCollection, schoolSectionFor } from '../lib/school-scope.js';
@@ -116,7 +117,8 @@ async function loadDepartment(env, section, user) {
     section === 'tuckShop' ? departmentHistory(env, section, user, 'purchases') : Promise.resolve({ rows: [] }),
     loadProcurementInventoryControl(env, user)
   ]);
-  const scopedInventory = visible(inventory, user);
+  const scopedInventory = ['restaurant', 'tuckShop'].includes(section)
+    ? await withVendorStorePolicy(env, user, visible(inventory, user)) : visible(inventory, user);
   return {
     ok: true,
     procurementControlled,

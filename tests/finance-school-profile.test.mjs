@@ -63,7 +63,7 @@ function financeHarness(options = {}) {
   const admin = vm.runInNewContext(
     `${adminSource.replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '')}\nonRequestPost`, {
       ...common, Response,
-      requireFirestoreEnv: () => {},
+      requireFirestoreEnv: () => {}, withVendorStorePolicy: async (_env, _user, rows) => rows,
       requireStaffSession: async () => user,
       readJsonBody: async () => ({ section: 'accounts', ...options.body }),
       schoolSectionFor: row => row.SchoolSection || 'secondary',

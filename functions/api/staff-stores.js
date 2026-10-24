@@ -1,4 +1,5 @@
 import { listBranchCollection } from '../lib/branch-reads.js';
+import { withVendorStorePolicy } from '../lib/vendor-store-policy.js';
 import { batchCommitDocuments, listCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { listSchoolCollection, schoolSectionFor } from '../lib/school-scope.js';
@@ -226,7 +227,7 @@ export async function onRequestPost(context) {
       ok: true,
       procurementControlled,
       categories: categories.filter((row) => categoryApplies(row, storeType)),
-      items: visible(items, user).filter((row) => clean(row.StoreType) === storeType),
+      items: await withVendorStorePolicy(env, user, visible(items, user).filter((row) => clean(row.StoreType) === storeType)),
       orders: visible(orders, user).filter((row) => clean(row.StoreType) === storeType),
       sales
     });

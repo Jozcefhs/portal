@@ -52,7 +52,7 @@ export async function handleVendorSalesAction(env, user, body) {
       && (section !== 'organizationStore' || row.StoreType === 'Organisation Store'));
     const own = await restrictVendorInventory(env,user,section,rows);
     const settings = await getDocument(env,'settings',`vendor-settlement-${scope.ScopeKey}`) || {};
-    return {ok:true, Section:section, products:own.map(row => ({InventoryId:row.__id, ItemCode:row.ItemCode,
+    return {ok:true, Section:section, OrganisationEdition:scope.OrganisationEdition, products:own.map(row => ({InventoryId:row.__id, ItemCode:row.ItemCode,
       ItemName:row.ItemName, Category:row.Category, Unit:row.Unit || 'pcs', Quantity:row.Quantity,
       Price:row.Price ?? row.SalePrice, VendorId:row.VendorId, Active:row.VendorSaleRevoked === true ? 'NO' : row.Active || 'YES'})),
       vendors:vendors.map(v => ({VendorId:v.VendorId,Name:v.Name})),

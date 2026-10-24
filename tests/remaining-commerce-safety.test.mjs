@@ -128,7 +128,7 @@ test('R12: both organisation editions approve transfer using exact immutable sto
   for(const edition of ['faith','organization']) {
     const db=database(); let transfer;
     const api=await load('functions/lib/organization-commerce.js',db,{
-      restrictVendorInventory:async(_e,_u,_s,rows)=>rows,snapshotVendorCart:async(_e,cart)=>cart,
+      isVendorSeller:()=>false,withVendorStorePolicy:async(_e,_u,rows)=>rows,restrictVendorInventory:async(_e,_u,_s,rows)=>rows,snapshotVendorCart:async(_e,cart)=>cart,
       createDirectTransferRequest:async(_e,input)=>{transfer=input;return {ok:true};},
       prepareVendorSale:async(_e,_sale,journal)=>({journal,writes:[],settlements:[]}),
       sendOrganizationCommerceReceiptEmail:async()=>({ok:true})

@@ -359,7 +359,7 @@ test('disabled sales and out-of-stock products retain stock and permission guard
 
 test('oversized stock cannot generate an unbounded quantity menu',async () => {
   const f=await fixture('restaurant',{products:[{InventoryId:'large',ItemName:'Bulk item',Quantity:1e9,Price:100}]});
-  assert.equal((f.root.innerHTML.match(/<option value="/g) || []).length,100);
+  assert.equal((f.root.innerHTML.match(/<option value="[0-9]+"/g) || []).length,100);
   const select=f.root.querySelector('[data-add-quantity]'); select.value='100'; select.onchange();
   f.root.querySelector('[data-add]').onclick(); f.root.querySelector('[data-add]').onclick();
   assert.match(f.root.innerHTML,/<option value="200" selected>200<\/option>/);

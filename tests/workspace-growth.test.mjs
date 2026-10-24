@@ -120,7 +120,7 @@ test('operational module bootstrap performs no redundant history scans in every 
   const source = await readFile(new URL('../functions/api/admin.js', import.meta.url), 'utf8');
   const sections = ['clinic', 'kitchen', 'restaurant', 'tuckShop', 'bookstore', 'uniformStore', 'organizationStore'];
   for (const edition of ['school', 'faith', 'organization']) {
-    const context = { Response, requireFirestoreEnv: () => {},
+    const context = { Response, requireFirestoreEnv: () => {}, withVendorStorePolicy: async (_env, _user, rows) => rows,
       requireStaffSession: async () => ({ ...user, edition, allowedSections: sections }),
       readJsonBody: async request => request,
       listCollection: () => { throw new Error('Unexpected full collection read'); },
@@ -142,7 +142,7 @@ test('department list and continuation endpoints apply scope and return bounded 
   const source = await readFile(new URL('../functions/api/staff-departments.js', import.meta.url), 'utf8');
   const actor = { ...user, allowedSections: ['clinic', 'kitchen', 'restaurant', 'tuckShop'] };
   const calls = [];
-  const context = { Response, requireFirestoreEnv: () => {}, requireStaffSession: async () => actor,
+  const context = { Response, requireFirestoreEnv: () => {}, withVendorStorePolicy: async (_env, _user, rows) => rows, requireStaffSession: async () => actor,
     readJsonBody: async request => request, schoolSectionFor: row => String(row.SchoolSection || 'Secondary').toLowerCase(),
     listBranchCollection: async (_env, collection, branch) => {
       assert.equal(branch, user.branchId);

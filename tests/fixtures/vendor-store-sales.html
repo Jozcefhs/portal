@@ -1,0 +1,21 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Vendor store sales — isolated fixture</title>
+<link rel="stylesheet" href="/css/style.css"><link rel="stylesheet" href="/css/vendor-settlements.css">
+<style>body{padding:12px}main{max-width:1100px;margin:auto}</style>
+<main><p>Local test fixture. No live data or payments.</p><div id="root"></div></main>
+<script src="/js/display-time.js"></script><script src="/js/vendor-settlements.js"></script><script>
+const edition=new URLSearchParams(location.search).get('edition')||'faith';
+const vendor={VendorId:'owner',Name:'Independent Books',Active:'YES',PosEnabled:true,RecordVersion:'1'};
+window.testCalls=[];window.failNext=false;
+window.testMount=()=>DynamaxVendors.mount(document.querySelector('#root'),async(action,body)=>{
+  if(action==='bootstrap')return {vendors:[vendor],balances:[],requests:[],products:[],suppliers:[],chart:[],settings:{Enabled:true},capabilities:{manage:true,operate:true,edition,section:'All',branchId:'main'}};
+  testCalls.push({action,...body});
+  await new Promise(resolve=>setTimeout(resolve,150));
+  if(failNext){failNext=false;throw new Error('Test save failed. Setting unchanged.');}
+  if(action==='setOrganisationSales')vendor.OrganisationSalesEnabled=body.Enabled;
+  else if(action==='saveVendor')Object.assign(vendor,body);
+  else throw new Error('Unexpected test action');
+  vendor.RecordVersion=String(Number(vendor.RecordVersion)+1);
+  return {ok:true,message:'Saved in fixture only.'};
+});testMount();
+</script></html>

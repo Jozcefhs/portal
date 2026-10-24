@@ -4680,7 +4680,8 @@ function bindAdmissionFormPurchaseQr() {
 }
 
 function renderOrganizationCommerceWorkspace(section, data = {}) {
-  const inventory = commerceInventory(section, data);
+  const inventory = commerceInventory(section, data).filter(item => item.OrganisationSalesEnabled !== false);
+  const organisationLabel = resolveDashboardEdition(currentUser || {}) === 'faith' ? 'Church' : 'Organisation';
   syncCommerceCart(section, inventory);
   const cart = commerceCart(section);
   const sales = data.sales || [];
@@ -4718,7 +4719,7 @@ function renderOrganizationCommerceWorkspace(section, data = {}) {
               const searchText = [item.ItemName, item.ItemCode, item.Barcode, item.SKU, reference,
                 item.Category, item.Size, item.Unit].map(clean).join(' ').toLowerCase();
               return `<article class="commerce-product" data-commerce-search-text="${escapeHtml(searchText)}">
-                <div><strong>${escapeHtml(item.ItemName || reference)}</strong><span>${escapeHtml([item.Category, item.Size || item.Unit].filter(Boolean).join(' · '))}</span><small>${money(commerceItemPrice(item))} &middot; ${commerceItemStock(item)} available</small></div>
+                <div><strong>${escapeHtml(item.ItemName || reference)}</strong><span class="commerce-owner">${escapeHtml(clean(item.VendorId) ? `Vendor: ${item.VendorName || 'Independent vendor'}` : `${organisationLabel} owned`)}</span><span>${escapeHtml([item.Category, item.Size || item.Unit].filter(Boolean).join(' · '))}</span><small>${money(commerceItemPrice(item))} &middot; ${commerceItemStock(item)} available</small></div>
                 <div class="commerce-product-action">
                   <select data-commerce-product-quantity="${index}" aria-label="Quantity for ${escapeHtml(item.ItemName || reference)}">${commerceQuantityOptions(commerceItemStock(item), 1)}</select>
                   <button type="button" class="compact-icon-action commerce-add-button ${inCart ? 'is-added' : ''}" data-commerce-add="${escapeHtml(reference)}" data-commerce-quantity-index="${index}" aria-label="${inCart ? 'Added to cart' : `Add ${escapeHtml(item.ItemName || reference)} to cart`}" title="${inCart ? 'Added to cart' : 'Add to cart'}">${inCart ? '&#10003;' : '&#128722;'}</button>
@@ -4745,7 +4746,7 @@ function renderOrganizationCommerceWorkspace(section, data = {}) {
               <label>Payment method <select name="PaymentMethod" id="commercePaymentMethod">
                 ${['Cash', 'Bank Transfer', 'POS / Card', 'Paystack Online'].map((method) => `<option ${draft.PaymentMethod === method ? 'selected' : ''}>${method}</option>`).join('')}
               </select></label>
-              ${inventory.some(item => clean(item.VendorId)) ? `<label>Money collected by <select name="CollectionMode"><option>School collected</option><option ${draft.CollectionMode === 'Vendor collected' ? 'selected' : ''}>Vendor collected</option></select><small>Direct collection requires a single vendor; it does not create a school cash receipt or vendor payout.</small></label>` : ''}
+              ${inventory.some(item => clean(item.VendorId)) ? `<label>Money collected by <select name="CollectionMode"><option value="School collected">${organisationLabel} collected</option><option ${draft.CollectionMode === 'Vendor collected' ? 'selected' : ''}>Vendor collected</option></select><small>Direct collection requires a single vendor; the money goes to the vendor without a separate payout.</small></label>` : ''}
               <label id="commercePaymentReferenceField" ${['Bank Transfer', 'POS / Card'].includes(draft.PaymentMethod) ? '' : 'hidden'}>Payment reference <input name="PaymentReference" value="${escapeHtml(draft.PaymentReference)}" placeholder="Bank or POS reference"></label>
             </div>
             <div class="commerce-checkout-total"><span>Grand total</span><strong>${money(cartTotal)}</strong></div>
