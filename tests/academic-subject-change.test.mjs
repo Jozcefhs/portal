@@ -59,6 +59,7 @@ function harness({ scores = [score], termResults = [] } = {}) {
         state[key] ||= [];
         const index = state[key].findIndex(row => (row.RecordId || row.MembershipId || row.ResultId) === change.documentId);
         const record = { ...(change.updateMask ? state[key][index] : {}), ...clone(change.data), __updateTime: `rev-${++revision}` };
+        for (const field of change.updateMask || []) if (!Object.hasOwn(change.data, field)) delete record[field];
         if (index < 0) state[key].push(record); else state[key][index] = record;
       }
     }
@@ -201,12 +202,111 @@ test('concurrent edits to a duplicate abort the whole transfer and its archival'
   }
 });
 
-test('pending subject changes in a duplicate cannot be silently discarded by a transfer', async () => {
+test('web ICT supersedes source and duplicate pending requests atomically, preserving their full history and scores', async () => {
   const h = transferHarness();
+  await h.request();
+  const sourceRequest = clone(h.member().PendingSubjectChange);
+  const duplicateRequest = { ...clone(sourceRequest), RequestId: 'duplicate-request', Reason: 'Original duplicate request' };
+  addLegacyDuplicate(h, { PendingSubjectChange: duplicateRequest });
+  const unrelated = addLegacyDuplicate(h, { RecordId: 'other-term', MembershipId: 'other-term', TermId: 'other-term', PendingSubjectChange: duplicateRequest });
+  const oldHistory = clone(h.state.studentMovements);
+  const firstNewWrite = h.writes.length;
+  const response = await h.transfer({}, h.context.academicWebActor(ict));
+  assert.match(response.message, /2 pending request\(s\) superseded.*Movement history/);
+  assert.equal(h.member().ArmId, 'destination');
+  assert.equal(h.member().PendingSubjectChange, undefined);
+  assert.equal(h.state.studentMemberships[1].Status, 'Archived');
+  assert.equal(h.state.studentMemberships[1].PendingSubjectChange, undefined);
+  assert.equal(h.state.studentMemberships[1].SavedNotes, 'Keep this historical record');
+  assert.deepEqual(h.state.studentMemberships[2], unrelated);
+  assert.deepEqual(h.state.studentScores, [score]);
+  assert.deepEqual(h.state.studentMovements.slice(0, oldHistory.length), oldHistory);
+  const resolutions = h.state.studentMovements.filter(row => row.Status === 'Superseded');
+  assert.equal(resolutions.length, 2);
+  assert.deepEqual(resolutions.map(row => row.OriginalSubjectChangeRequest), [sourceRequest, duplicateRequest]);
+  const transfer = h.state.studentMovements.find(row => row.Status === 'Approved');
+  for (const row of resolutions) {
+    assert.equal(row.SubjectChangeRequest.Status, 'Superseded');
+    assert.equal(row.SubjectChangeRequest.ReviewedByUsername, 'ict');
+    assert.equal(row.SubjectChangeRequest.SupersededByMembershipId, 'member');
+    assert.equal(row.SubjectChangeRequest.SupersededByMovementId, transfer.MovementId);
+    assert.match(row.Reason, /Superseded by ICT transfer/);
+    assert.ok(h.writes.some(write => write.documentId === row.MovementId && write.exists === false));
+  }
+  assert.deepEqual(h.member().LastSupersededSubjectChange, resolutions[0].SubjectChangeRequest);
+  assert.deepEqual(h.state.studentMemberships[1].LastSupersededSubjectChange, resolutions[1].SubjectChangeRequest);
+  assert.equal(h.member().LastSubjectChange.Status, 'Approved');
+  assert.equal(h.state.audit.filter(row => row.Action === 'SUBJECT CHANGE SUPERSEDED').length, 2);
+  assert.ok(h.writes.slice(firstNewWrite).every(write => !/Scores|attendance|payment/i.test(write.collectionPath) && write.operation !== 'delete'));
+  await assert.rejects(h.review('Approve', admin, { RequestId: sourceRequest.RequestId }), { code: 'ACADEMIC_SUBJECT_CHANGE_NOT_PENDING' });
+});
+
+test('web ICT may supersede an earlier transfer request without applying its old subject choices', async () => {
+  const h = transferHarness();
+  await h.transfer();
+  const original = clone(h.member().PendingSubjectChange);
+  const result = await h.transfer({}, h.context.academicWebActor(ict));
+  assert.match(result.message, /superseded/);
+  assert.equal(h.member().ArmId, 'destination');
+  assert.equal(h.member().PendingSubjectChange, undefined);
+  assert.deepEqual(h.state.studentMovements.find(row => row.Status === 'Superseded').OriginalSubjectChangeRequest, original);
+  assert.deepEqual(h.state.studentScores, [score]);
+});
+
+test('ordinary and desktop ICT transfers still cannot supersede pending requests, including forged flags', async () => {
+  for (const user of [admin, ict, { ...ict, fullAcademicAccess: true, WebCompanion: true }]) {
+    const h = transferHarness();
+    await h.request();
+    const before = clone(h.state);
+    await assert.rejects(h.transfer({ fullAcademicAccess: true, WebCompanion: true }, user), { code: 'ACADEMIC_SUBJECT_CHANGE_PENDING' });
+    assert.deepEqual(h.state, before);
+  }
+  const h = transferHarness({ scores: [] });
   addLegacyDuplicate(h, { PendingSubjectChange: { RequestId: 'pending' } });
-  await assert.rejects(h.transfer({}, h.context.academicWebActor(ict)), { code: 'ACADEMIC_SUBJECT_CHANGE_PENDING' });
+  await assert.rejects(h.transfer(), { code: 'ACADEMIC_SUBJECT_CHANGE_PENDING' });
   assert.equal(h.writes.length, 0);
-  assert.equal(h.state.studentMemberships[1].Status, 'Active');
+});
+
+test('pending requests survive invalid destinations, published-result locks, and non-transfer operations', async () => {
+  for (const invalid of ['destination', 'published', 'withdrawal', 'same-classroom', 'subjects-only']) {
+    const h = transferHarness();
+    await h.request();
+    if (invalid === 'published') h.state.termResults.push({ ...period, ...scope, ResultId: 'result', StudentRef: 'S1', Status: 'Published', Total: 80, __updateTime: 'result-rev' });
+    const before = clone(h.state);
+    const input = invalid === 'destination' ? { ArmId: 'unknown' }
+      : invalid === 'withdrawal' ? { Operation: 'withdraw' }
+      : invalid === 'same-classroom' ? { ArmId: 'arm' }
+      : invalid === 'subjects-only' ? { ArmId: 'arm', ResetSubjectSelections: false, TradeSubjectIds: ['printing'], SubjectIds: ['english', 'printing'] } : {};
+    await assert.rejects(h.transfer(input, h.context.academicWebActor(ict)));
+    assert.deepEqual(h.state, before, invalid);
+  }
+});
+
+test('concurrent source, duplicate or result updates keep every pending request intact and write no resolution', async () => {
+  for (const target of ['source', 'duplicate', 'result']) {
+    const h = transferHarness();
+    await h.request();
+    const pending = clone(h.member().PendingSubjectChange);
+    addLegacyDuplicate(h, { PendingSubjectChange: pending });
+    h.state.termResults.push({ ...period, ...scope, ResultId: 'result', StudentRef: 'S1', Status: 'Calculated Draft', Total: 80, __updateTime: 'result-rev' });
+    const history = clone(h.state.studentMovements), count = h.writes.length;
+    const commit = h.context.batchCommitDocuments;
+    h.context.batchCommitDocuments = (...args) => {
+      (target === 'result' ? h.state.termResults[0] : h.state.studentMemberships[target === 'source' ? 0 : 1]).__updateTime = 'concurrent-edit';
+      return commit(...args);
+    };
+    await assert.rejects(h.transfer({}, h.context.academicWebActor(ict)), { code: 'ACADEMIC_WRITE_CONFLICT' });
+    assert.equal(h.writes.length, count);
+    assert.equal(h.member().ArmId, 'arm');
+    for (const row of h.state.studentMemberships) {
+      assert.equal(row.Status, 'Active');
+      assert.deepEqual(row.PendingSubjectChange, pending);
+      assert.equal(row.LastSupersededSubjectChange, undefined);
+    }
+    assert.deepEqual(h.state.studentMovements, history);
+    assert.deepEqual(h.state.studentScores, [score]);
+    assert.equal(h.state.termResults[0].SubjectChangeRecalculationRequired, undefined);
+  }
 });
 
 test('destination reset disconnects old selections, applies compulsory cores and preserves history', async () => {

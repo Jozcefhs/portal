@@ -992,15 +992,31 @@ export function planAcademicDuplicateMembershipRetirement(rows = [], retained = 
   } }));
 }
 
-function duplicateMembershipRetirementWrites(state, retained, user, reason) {
+function duplicateMembershipRetirementWrites(state, retained, user, reason, supersededRequests = new Map()) {
   const fields = ['Status', 'SupersededByMembershipId', 'SupersededAt', 'SupersededReason', 'UpdatedAt', 'UpdatedBy'];
-  return planAcademicDuplicateMembershipRetirement(state.studentMemberships, retained, { reason, actor: actorName(user) })
-    .flatMap(({ before, after }) => [
-      { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships, documentId: recordId(before),
-        data: Object.fromEntries(fields.map((field) => [field, after[field]])), updateMask: fields, updateTime: before.__updateTime },
-      auditWrite(user, 'RETIRE DUPLICATE MEMBERSHIP', 'studentmembership', after, reason,
-        `Duplicate membership ${recordId(before)} archived; current membership ${recordId(retained)} retained. All scores, results and movement history preserved.`)
-    ]);
+  // Only the direct web ICT transfer supplies resolutions, together with their
+  // append-only history writes in the same commit. Other callers keep the guard.
+  if (supersededRequests.size && !academicManagementCapabilities(user).fullAcademicAccess) throw failure('Only web ICT can supersede pending requests during a transfer.', 403);
+  const rows = state.studentMemberships.map(row => {
+    if (!supersededRequests.has(recordId(row))) return row;
+    const copy = { ...row };
+    delete copy.PendingSubjectChange;
+    return copy;
+  });
+  return planAcademicDuplicateMembershipRetirement(rows, retained, { reason, actor: actorName(user) })
+    .flatMap(({ before, after }) => {
+      const resolved = supersededRequests.get(recordId(before));
+      const data = Object.fromEntries(fields.map((field) => [field, after[field]]));
+      if (resolved) data.LastSupersededSubjectChange = resolved;
+      return [
+        { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships, documentId: recordId(before), data,
+          // An omitted masked field is deleted by Firestore, atomically with archival.
+          updateMask: resolved ? [...fields, 'PendingSubjectChange', 'LastSupersededSubjectChange'] : fields,
+          updateTime: before.__updateTime },
+        auditWrite(user, 'RETIRE DUPLICATE MEMBERSHIP', 'studentmembership', after, reason,
+          `Duplicate membership ${recordId(before)} archived; current membership ${recordId(retained)} retained. All scores, results and movement history preserved.`)
+      ];
+    });
 }
 
 export function normalizeAcademicStudentMembership(input = {}, context = {}, existing = null) {
@@ -3671,6 +3687,33 @@ function directAcademicChange(user, request) {
     ReviewedAt: nowIso(), ReviewedBy: actorName(user), ReviewedByUsername: actorUsername(user) };
 }
 
+function supersededTransferRequests(state, existing, record, movement, scope, user, reason) {
+  const resolutions = new Map();
+  const writes = [];
+  const affected = state.studentMemberships.filter(row => row.PendingSubjectChange
+    && (recordId(row) === recordId(existing) || (statusActive(row) && sameAcademicMembershipIdentity(row, record))));
+  for (const membership of affected) {
+    const request = membership.PendingSubjectChange;
+    const resolved = { ...request, Status: 'Superseded', ApprovalMode: 'Direct ICT web',
+      ReviewReason: `Superseded by ICT transfer: ${reason}`, ReviewedAt: nowIso(),
+      ReviewedBy: actorName(user), ReviewedByUsername: actorUsername(user),
+      SourceMembershipId: recordId(membership), SupersededByMembershipId: recordId(record),
+      SupersededByMovementId: movement.MovementId };
+    resolutions.set(recordId(membership), resolved);
+    const requested = { ...membership, ...subjectSelection(request.After || {}),
+      ClassId: request.After?.ClassId || membership.ClassId, ArmId: request.After?.ArmId || membership.ArmId };
+    const history = normalizeAcademicStudentMovement({ MovementType: 'Subject Change',
+      EffectiveDate: movement.EffectiveDate, Reason: resolved.ReviewReason }, scope, membership, requested);
+    writes.push(
+      movementWrite(user, { ...history, Status: 'Superseded', SubjectChangeRequest: resolved,
+        OriginalSubjectChangeRequest: request }),
+      auditWrite(user, 'SUBJECT CHANGE SUPERSEDED', 'studentmembership', membership, resolved.ReviewReason,
+        `Pending request ${clean(request.RequestId)} superseded by transfer ${movement.MovementId}. The original request and all scores and records were preserved.`)
+    );
+  }
+  return { resolutions, writes };
+}
+
 export async function reviewAcademicSubjectChange(env, user = {}, input = {}) {
   requireWritableSubscription(user);
   const decision = oneOf(input.Decision, ['Approve', 'Reject', 'Cancel'], '');
@@ -3757,7 +3800,6 @@ export async function manageAcademicStudentMembership(env, user = {}, input = {}
   ]);
   const existing = findById(state.studentMemberships, input.RecordId || input.MembershipId);
   if (!existing) throw failure('The selected student membership was not found.', 404);
-  assertNoPendingSubjectChange(existing);
   if (lower(existing.SchoolSection) !== scope.section) throw failure('This membership belongs to another school section.', 403);
   const expected = clean(input.RevisionToken);
   if (!expected || expected !== clean(existing.__updateTime)) {
@@ -3767,6 +3809,8 @@ export async function manageAcademicStudentMembership(env, user = {}, input = {}
   if (!['transfer', 'move', 'change', 'withdraw', 'withdrawal', 'reinstate', 'reinstatement'].includes(operation)) {
     throw failure('Choose transfer, withdrawal or reinstatement for this student movement.');
   }
+  const directIctTransfer = permissions.fullAcademicAccess && ['transfer', 'move', 'change'].includes(operation);
+  if (!directIctTransfer) assertNoPendingSubjectChange(existing);
   const reason = clean(input.Reason || input.MovementReason);
   if (!reason) throw failure('Enter the reason for this student movement.');
   const resetSubjects = !operation.startsWith('withdraw')
@@ -3808,6 +3852,7 @@ export async function manageAcademicStudentMembership(env, user = {}, input = {}
   const resultGuards = [];
   let directChange;
   const classroomChanged = record.ClassId !== existing.ClassId || record.ArmId !== existing.ArmId;
+  if (!classroomChanged) assertNoPendingSubjectChange(existing);
   if (academicSubjectSelectionChanged(existing, record) || classroomChanged) {
     const evidence = await loadAcademicSubjectChangeEvidence(env, scope, existing);
     const impact = academicSubjectChangeImpact(existing, record, evidence, scope);
@@ -3849,13 +3894,21 @@ export async function manageAcademicStudentMembership(env, user = {}, input = {}
     ...input, StudentRef: existing.StudentRef,
     Operation: operation, MovementType: movementType(existing, record, operation)
   }, scope, existing, operation.startsWith('withdraw') ? null : record);
+  const superseded = directIctTransfer && classroomChanged
+    ? supersededTransferRequests(state, existing, record, movement, scope, user, reason)
+    : { resolutions: new Map(), writes: [] };
+  if (superseded.resolutions.has(recordId(existing))) {
+    delete record.PendingSubjectChange;
+    record.LastSupersededSubjectChange = superseded.resolutions.get(recordId(existing));
+  }
   const projected = {
     ...state,
     studentMemberships: [...state.studentMemberships.filter((row) => recordId(row) !== recordId(existing)), record]
   };
   const writes = [
     ...resultGuards,
-    ...duplicateMembershipRetirementWrites(state, { ...record, __updateTime: expected }, user, reason),
+    ...superseded.writes,
+    ...duplicateMembershipRetirementWrites(state, { ...record, __updateTime: expected }, user, reason, superseded.resolutions),
     {
       collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships,
       documentId: existing.MembershipId, data: withoutMetadata(record), updateTime: expected
@@ -3865,7 +3918,7 @@ export async function manageAcademicStudentMembership(env, user = {}, input = {}
   ];
   const compatibility = studentCompatibilityWrite(people, projected, record);
   if (compatibility) writes.push(compatibility);
-  const message = `${movement.MovementType} recorded online for ${existing.StudentRef}.${resetSubjects ? ' Previous subject selections were disconnected; existing scores and history were preserved. Complete the destination Core, Trade and Optional choices under Student subjects.' : ''}`;
+  const message = `${movement.MovementType} recorded online for ${existing.StudentRef}.${superseded.resolutions.size ? ` ${superseded.resolutions.size} pending request(s) superseded by ICT transfer; the original requests are preserved in Movement history.` : ''}${resetSubjects ? ' Previous subject selections were disconnected; existing scores and history were preserved. Complete the destination Core, Trade and Optional choices under Student subjects.' : ''}`;
   if (options.prepareOnly === true) return { writes, record, pendingApproval: false, message };
   try {
     await batchCommitDocuments(env, writes);
@@ -3928,8 +3981,8 @@ export async function saveStudentProfileAcademicPlacement(env, user, before, aft
   let plan;
   if (existing) {
     if (!statusActive(existing)) throw failure('Use Academic Management to reinstate this inactive membership before changing its classroom.', 409, 'ACADEMIC_PROFILE_MEMBERSHIP_INACTIVE');
-    assertNoPendingSubjectChange(existing);
     if (existing.ClassId === schoolClass.ClassId && existing.ArmId === arm.ArmId) {
+      assertNoPendingSubjectChange(existing);
       if (!existing.__updateTime) throw failure('Reload this membership before saving.', 409, 'ACADEMIC_WRITE_CONFLICT');
       plan = { record: existing, writes: [
         ...duplicateMembershipRetirementWrites(state, existing, user, input.Reason),

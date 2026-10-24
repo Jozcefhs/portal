@@ -68,6 +68,7 @@ function harness({ user = actor, assessed = true, members = [member] } = {}) {
         const updateTime = `saved-${++revision}`;
         const value = { ...(write.updateMask ? previous : {}), ...clone(write.data), __updateTime: updateTime,
           ...(key === 'profiles' ? { __id: write.documentId, __scopePath: write.collectionPath } : {}) };
+        for (const field of write.updateMask || []) if (!Object.hasOwn(write.data, field)) delete value[field];
         if (index < 0) state[key].push(value); else state[key][index] = value;
         writeResults.push({ updateTime });
       }
@@ -126,6 +127,63 @@ test('profile arm change atomically updates the legacy membership and history, p
   assert.equal(replay.status, 200);
   assert.equal(h.state.studentMemberships.length, 1);
   assert.equal(h.state.studentMovements.length, 2);
+});
+
+const pendingRequest = { RequestId: 'old-request', Status: 'Pending', Before: { SubjectIds: ['math'] },
+  After: { SubjectIds: ['english'] }, Reason: 'Original subject selection request',
+  RequestedByUsername: 'form-teacher', RequestedAt: '2026-09-30T12:00:00.000Z' };
+
+test('ICT profile transfer supersedes pending requests and duplicate copies in the same profile commit', async () => {
+  const source = { ...member, PendingSubjectChange: pendingRequest };
+  const duplicate = { ...source, RecordId: 'duplicate', MembershipId: 'duplicate', __updateTime: 'duplicate-1' };
+  const h = harness({ members: [source, duplicate] });
+  const original = clone(h.state);
+  const result = await h.save({ ClassArm: 'Brilliance', ParentPhone: 'new-phone' });
+  assert.equal(result.status, 200, result.data.message);
+  assert.equal(result.data.academicPlacementUpdated, true);
+  assert.equal(h.commits.length, 1);
+  assert.equal(h.directWrites.length, 0);
+  assert.equal(h.current().ClassArm, 'Brilliance');
+  assert.equal(h.current().ParentPhone, 'new-phone');
+  assert.equal(h.state.studentMemberships.filter(row => row.Status === 'Active').length, 1);
+  for (const row of h.state.studentMemberships) {
+    assert.equal(row.PendingSubjectChange, undefined);
+    assert.equal(row.LastSupersededSubjectChange.RequestId, pendingRequest.RequestId);
+  }
+  const history = h.state.studentMovements.filter(row => row.Status === 'Superseded');
+  assert.equal(history.length, 2);
+  for (const row of history) assert.deepEqual(row.OriginalSubjectChangeRequest, pendingRequest);
+  assert.deepEqual(h.state.studentMovements[0], original.studentMovements[0]);
+  assert.deepEqual(h.state.studentScores, original.studentScores);
+  assert.deepEqual(h.state.attendance, original.attendance);
+  for (const key of ['FeeBalance', 'WalletCardId', 'MedicalCondition']) assert.equal(h.current()[key], profile[key]);
+});
+
+test('a concurrent profile edit cannot clear pending requests or partially commit their history', async () => {
+  const h = harness({ members: [{ ...member, PendingSubjectChange: pendingRequest }] });
+  const commit = h.context.batchCommitDocuments;
+  h.context.batchCommitDocuments = (...args) => {
+    h.current().__updateTime = 'concurrent-profile-edit';
+    return commit(...args);
+  };
+  const result = await h.save({ ClassArm: 'Brilliance' });
+  assert.equal(result.status, 409);
+  assert.equal(h.commits.length, 0);
+  assert.equal(h.current().ClassArm, 'Merit');
+  assert.equal(h.state.studentMemberships[0].ArmId, 'merit');
+  assert.deepEqual(h.state.studentMemberships[0].PendingSubjectChange, pendingRequest);
+  assert.equal(h.state.studentMovements.length, 1);
+  assert.deepEqual(h.state.studentScores, [score]);
+});
+
+test('non-ICT profile transfer retains the pending-request approval guard', async () => {
+  const h = harness({ user: { ...actor, role: 'Principal' }, members: [{ ...member, PendingSubjectChange: pendingRequest }] });
+  const result = await h.save({ ClassArm: 'Brilliance' });
+  assert.equal(result.status, 409);
+  assert.equal(result.data.code, 'ACADEMIC_SUBJECT_CHANGE_PENDING');
+  assert.equal(h.commits.length, 0);
+  assert.deepEqual(h.state.studentMemberships[0].PendingSubjectChange, pendingRequest);
+  assert.equal(h.current().ClassArm, 'Merit');
 });
 
 test('class change keeps the membership ID and old scores under their original class', async () => {
@@ -204,14 +262,13 @@ test('stale forms and concurrent profile, membership, duplicate or result edits 
   }
 });
 
-test('invalid destinations, inactive periods, pending changes and unauthorised accounts leave everything unchanged', async () => {
+test('invalid destinations, inactive periods and unauthorised accounts leave everything unchanged', async () => {
   const scenarios = [
     h => { h.state.arms[1].Status = 'Archived'; },
     h => { h.state.arms[1].BranchId = 'annex'; },
     h => { h.state.classes[0].SchoolSection = 'primary'; },
     h => { h.state.terms[0].Status = 'Closed'; },
     h => { h.state.studentMemberships[0].Status = 'Withdrawn'; },
-    h => { h.state.studentMemberships[0].PendingSubjectChange = { RequestId: 'pending' }; },
     h => { h.state.arms.push({ ...h.state.arms[1], ArmId: 'ambiguous', RecordId: 'ambiguous' }); }
   ];
   for (const prepare of scenarios) {
