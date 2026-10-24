@@ -267,18 +267,141 @@ test('ordinary and desktop ICT transfers still cannot supersede pending requests
   assert.equal(h.writes.length, 0);
 });
 
-test('pending requests survive invalid destinations, published-result locks, and non-transfer operations', async () => {
-  for (const invalid of ['destination', 'published', 'withdrawal', 'same-classroom', 'subjects-only']) {
+test('pending requests survive invalid destinations, published-result locks, and no-op transfers', async () => {
+  for (const invalid of ['destination', 'published', 'same-classroom']) {
     const h = transferHarness();
     await h.request();
     if (invalid === 'published') h.state.termResults.push({ ...period, ...scope, ResultId: 'result', StudentRef: 'S1', Status: 'Published', Total: 80, __updateTime: 'result-rev' });
     const before = clone(h.state);
     const input = invalid === 'destination' ? { ArmId: 'unknown' }
-      : invalid === 'withdrawal' ? { Operation: 'withdraw' }
-      : invalid === 'same-classroom' ? { ArmId: 'arm' }
-      : invalid === 'subjects-only' ? { ArmId: 'arm', ResetSubjectSelections: false, TradeSubjectIds: ['printing'], SubjectIds: ['english', 'printing'] } : {};
+      : invalid === 'same-classroom' ? { ArmId: 'arm' } : {};
     await assert.rejects(h.transfer(input, h.context.academicWebActor(ict)));
     assert.deepEqual(h.state, before, invalid);
+  }
+});
+
+test('web ICT can replace pending subject choices directly while preserving original requests and marks', async () => {
+  for (const viaMovement of [false, true]) {
+    const h = transferHarness();
+    await h.request();
+    const pending = clone(h.member().PendingSubjectChange), history = clone(h.state.studentMovements);
+    const actor = h.context.academicWebActor(ict);
+    if (viaMovement) await h.transfer({ Operation: 'change', ArmId: 'arm', ResetSubjectSelections: false,
+      SubjectIds: ['english', 'printing'], CoreSubjectIds: ['english'], TradeSubjectIds: ['printing'], OptionalSubjectIds: [] }, actor);
+    else assert.equal((await h.request({}, actor)).bulkResult.PendingApproval, 0);
+    assert.equal(h.member().PendingSubjectChange, undefined);
+    assert.deepEqual(h.member().SubjectIds, ['english', 'printing']);
+    assert.equal(h.member().ArmId, 'arm');
+    assert.equal(h.member().LastSubjectChange.ApprovalMode, 'Direct ICT web');
+    assert.match(h.member().LastSupersededSubjectChange.ReviewReason, /ICT subject update/);
+    assert.deepEqual(h.state.studentMovements.find(row => row.Status === 'Superseded').OriginalSubjectChangeRequest, pending);
+    assert.deepEqual(h.state.studentMovements.slice(0, history.length), history);
+    assert.deepEqual(h.state.studentScores, [score]);
+  }
+});
+
+test('web ICT withdrawal and reinstatement supersede pending requests without rewriting scores', async () => {
+  for (const operation of ['withdraw', 'reinstate']) {
+    const h = transferHarness();
+    await h.request();
+    if (operation === 'reinstate') h.member().Status = 'Withdrawn';
+    const pending = clone(h.member().PendingSubjectChange);
+    await h.transfer({ Operation: operation, ArmId: 'arm', ResetSubjectSelections: false }, h.context.academicWebActor(ict));
+    assert.equal(h.member().Status, operation === 'withdraw' ? 'Withdrawn' : 'Active');
+    assert.equal(h.member().PendingSubjectChange, undefined);
+    assert.deepEqual(h.member().SubjectIds, membership.SubjectIds);
+    assert.deepEqual(h.state.studentMovements.find(row => row.Status === 'Superseded').OriginalSubjectChangeRequest, pending);
+    assert.deepEqual(h.state.studentScores, [score]);
+  }
+});
+
+test('web ICT can approve a pending transfer even when duplicate memberships have pending subject requests', async () => {
+  const h = transferHarness();
+  await h.transfer();
+  const sourceRequest = clone(h.member().PendingSubjectChange);
+  const duplicate = addLegacyDuplicate(h, { PendingSubjectChange: { ...sourceRequest, RequestId: 'other-request' } });
+  await h.review('Approve', h.context.academicWebActor(ict));
+  assert.equal(h.member().ArmId, 'destination');
+  assert.equal(h.member().LastSubjectChange.RequestId, sourceRequest.RequestId);
+  assert.equal(h.member().LastSubjectChange.Status, 'Approved');
+  assert.equal(h.state.studentMemberships[1].Status, 'Archived');
+  assert.equal(h.state.studentMemberships[1].PendingSubjectChange, undefined);
+  assert.deepEqual(h.state.studentMovements.find(row => row.Status === 'Superseded').OriginalSubjectChangeRequest, duplicate.PendingSubjectChange);
+  assert.deepEqual(h.state.studentScores, [score]);
+});
+
+test('web ICT completes initial arm allocation despite pending assessed subject changes, without losing the old request', async () => {
+  for (const failSave of [false, true]) {
+    const h = transferHarness();
+    await h.request();
+    h.member().ArmId = '';
+    h.member().DepartmentId = '';
+    const request = clone(h.member().PendingSubjectChange), history = clone(h.state.studentMovements), count = h.writes.length;
+    const commit = h.context.batchCommitDocuments;
+    if (failSave) h.context.batchCommitDocuments = (...args) => { h.member().__updateTime = 'changed'; return commit(...args); };
+    const action = h.context.bulkAllocateAcademicStudents({}, h.context.academicWebActor(ict), {
+      ...scope, ...period, ArmId: 'destination', StudentRefs: ['S1'],
+      SubjectIds: ['history', 'printing'], CoreSubjectIds: ['history'], TradeSubjectIds: ['printing'], OptionalSubjectIds: []
+    });
+    if (failSave) {
+      await assert.rejects(action, { code: 'ACADEMIC_WRITE_CONFLICT' });
+      assert.equal(h.member().ArmId, '');
+      assert.deepEqual(h.member().PendingSubjectChange, request);
+      assert.deepEqual(h.state.studentMovements, history);
+      assert.equal(h.writes.length, count);
+    } else {
+      await action;
+      assert.equal(h.member().ArmId, 'destination');
+      assert.equal(h.member().PendingSubjectChange, undefined);
+      assert.match(h.member().LastSupersededSubjectChange.ReviewReason, /ICT arm allocation/);
+      assert.deepEqual(h.state.studentMovements.find(row => row.Status === 'Superseded').OriginalSubjectChangeRequest, request);
+    }
+    assert.deepEqual(h.state.studentScores, [score]);
+  }
+});
+
+test('initial arm allocation keeps pending-request and assessed-subject guards for desktop ICT', async () => {
+  for (const pending of [true, false]) {
+    const h = transferHarness();
+    if (pending) await h.request();
+    h.member().ArmId = '';
+    const before = clone(h.state);
+    await assert.rejects(h.context.bulkAllocateAcademicStudents({}, ict, {
+      ...scope, ...period, ArmId: 'destination', StudentRefs: ['S1'],
+      SubjectIds: ['history', 'printing'], CoreSubjectIds: ['history'], TradeSubjectIds: ['printing'], OptionalSubjectIds: []
+    }), { code: pending ? 'ACADEMIC_SUBJECT_CHANGE_PENDING' : 'ACADEMIC_SUBJECT_CHANGE_APPROVAL_REQUIRED' });
+    assert.deepEqual(h.state, before);
+  }
+});
+
+test('pending requests still protect desktop ICT and ordinary users in subject, withdrawal and reinstatement actions', async () => {
+  for (const user of [admin, ict, { ...ict, fullAcademicAccess: true }]) {
+    for (const operation of ['subjects', 'withdraw', 'reinstate']) {
+      const h = transferHarness();
+      await h.request();
+      if (operation === 'reinstate') h.member().Status = 'Withdrawn';
+      const before = clone(h.state);
+      await assert.rejects(operation === 'subjects' ? h.request({}, user)
+        : h.transfer({ Operation: operation, ArmId: 'arm', ResetSubjectSelections: false }, user), { code: 'ACADEMIC_SUBJECT_CHANGE_PENDING' });
+      assert.deepEqual(h.state, before);
+    }
+  }
+});
+
+test('concurrent edits leave pending subject updates and withdrawals intact without partial history', async () => {
+  for (const operation of ['subjects', 'withdraw']) {
+    const h = transferHarness();
+    await h.request();
+    const pending = clone(h.member().PendingSubjectChange), oldHistory = clone(h.state.studentMovements), count = h.writes.length;
+    const commit = h.context.batchCommitDocuments;
+    h.context.batchCommitDocuments = (...args) => { h.member().__updateTime = 'newer'; return commit(...args); };
+    const user = h.context.academicWebActor(ict);
+    await assert.rejects(operation === 'subjects' ? h.request({}, user)
+      : h.transfer({ Operation: 'withdraw' }, user), { code: 'ACADEMIC_WRITE_CONFLICT' });
+    assert.equal(h.writes.length, count);
+    assert.deepEqual(h.member().PendingSubjectChange, pending);
+    assert.deepEqual(h.state.studentMovements, oldHistory);
+    assert.deepEqual(h.state.studentScores, [score]);
   }
 });
 
@@ -668,7 +791,7 @@ test('web review queue escapes stored text, respects reviewer roles and stays in
   assert.match(adminSource, /nodes: nodes\(form\('\[data-academic-arm-subject-register\]'\), form\('\[data-academic-arm-subject-info\]'\), form\('\[data-academic-subject-change-requests\]'\)\)/);
 });
 
-async function workflowUiHarness({ missingRole, action = 'bulkAssignAcademicArmStudentSubjects', response = {}, requestError } = {}) {
+async function workflowUiHarness({ missingRole, action = 'bulkAssignAcademicArmStudentSubjects', response = {}, requestError, fullAcademicAccess = false, pending = false } = {}) {
   const adminSource = await readFile(new URL('../js/admin.js', import.meta.url), 'utf8');
   const alerts = [], statuses = [], requests = [];
   let submit, focuses = 0, scrolls = 0;
@@ -688,7 +811,7 @@ async function workflowUiHarness({ missingRole, action = 'bulkAssignAcademicArmS
   const context = vm.createContext({
     document, window: { DynamaxDialogs: { alert: async options => { alerts.push(options); document.activeElement = {}; } } },
     panelEl: { querySelectorAll: () => [form] },
-    academicManagementData: { studentMemberships: [membership] },
+    academicManagementData: { permissions: { fullAcademicAccess }, studentMemberships: [{ ...membership, ...(pending ? { PendingSubjectChange: { RequestId: 'pending' } } : {}) }] },
     academicFind: rows => rows[0], academicStudentSubjectProfile: () => ({ unavailableSubjectIds: [] }),
     runButtonAction: async (_button, _text, task) => task(),
     setStatus: (_node, message, tone) => statuses.push({ message, tone }),
@@ -700,6 +823,46 @@ async function workflowUiHarness({ missingRole, action = 'bulkAssignAcademicArmS
   vm.runInContext(adminSource.slice(bindingStart, adminSource.indexOf('  const movementForm =', bindingStart)), context);
   return { context, form, alerts, statuses, requests, submit: () => submit({ preventDefault() {} }), focuses: () => focuses, scrolls: () => scrolls };
 }
+
+test('the web subject form includes pending rows for ICT and keeps them excluded for ordinary users', async () => {
+  const ictUi = await workflowUiHarness({ fullAcademicAccess: true, pending: true });
+  await ictUi.submit();
+  assert.equal(ictUi.requests.length, 1);
+  assert.equal(ictUi.requests[0].payload.Assignments.length, 1);
+  const other = await workflowUiHarness({ pending: true });
+  await other.submit();
+  assert.equal(other.requests.length, 0);
+});
+
+test('pending subject checkboxes remain editable for web ICT while compulsory cores stay locked', async () => {
+  const adminSource = await readFile(new URL('../js/admin.js', import.meta.url), 'utf8');
+  const start = adminSource.indexOf('function academicArmSubjectRegister(');
+  const renderSource = adminSource.slice(start, adminSource.indexOf('\nfunction ', start + 1));
+  for (const fullAcademicAccess of [false, true]) {
+    const h = transferHarness();
+    h.member().PendingSubjectChange = { RequestId: 'pending' };
+    const context = vm.createContext({
+      clean: value => String(value || '').trim(), escapeHtml: value => String(value || ''),
+      academicManagementFilters: { section: 'secondary', sessionId: 'session', termId: 'term' },
+      academicArmSubjectDraft: { classId: 'class', armId: 'arm' }, academicStudentAllocationDraft: {},
+      academicIsActive: row => row.Status === 'Active', academicIsSeniorClass: () => true,
+      academicFind: (rows, id) => rows.find(row => row.RecordId === id),
+      academicLabel: (_rows, id) => id, academicRecordId: row => row.RecordId,
+      academicSelectOptions: () => '', academicSubjectChangeRequests: () => '',
+      academicStudentSubjectProfile: () => ({ classroomAssigned: true, mixedClassroom: false,
+        coreSubjectIds: ['english'], selectedCoreSubjectIds: ['english'], tradeSubjectIds: ['catering', 'printing'],
+        selectedTradeSubjectIds: ['catering'], optionalSubjectIds: ['music'], selectedOptionalSubjectIds: ['music'],
+        unavailableSubjectIds: [], reclassifiedSubjectIds: [] })
+    });
+    vm.runInContext(renderSource, context);
+    const html = context.academicArmSubjectRegister({ ...h.state, students: [], permissions: { canManageAllocations: true, fullAcademicAccess } }, h.state, true);
+    const trade = html.match(/<input[^>]*data-academic-student-subject-role="Trade"[^>]*>/g);
+    assert.equal(trade.length, 2);
+    assert.equal(trade.some(tag => tag.includes(' disabled')), !fullAcademicAccess);
+    assert.match(html.match(/<input[^>]*data-academic-student-subject-role="Core"[^>]*>/)[0], / disabled/);
+    if (fullAcademicAccess) assert.match(html, /earlier pending request will be preserved/);
+  }
+});
 
 test('missing Core or Trade selections show a popup, retain the inline error and refocus the affected student without saving', async () => {
   for (const role of ['Core', 'Trade']) {

@@ -14578,7 +14578,7 @@ function academicArmSubjectRegister(data, rows, canManage) {
     const subjectChecks = (role, subjectIds, selectedIds = [], locked = false) => subjectIds.length
       ? subjectIds.map((subjectId) => {
         const id = `arm-subject-${index}-${role.toLowerCase()}-${clean(subjectId).replace(/[^a-z0-9_-]+/gi, '-')}`;
-        return `<label class="academic-checkbox-option${locked ? ' academic-subject-locked' : ''}" for="${escapeHtml(id)}"><input id="${escapeHtml(id)}" type="checkbox" value="${escapeHtml(subjectId)}" data-academic-student-subject-role="${escapeHtml(role)}"${locked || selectedIds.includes(subjectId) ? ' checked' : ''}${locked || membership.PendingSubjectChange ? ' disabled aria-readonly="true"' : ''}><span>${escapeHtml(academicLabel(rows.subjects, subjectId, subjectId))}</span></label>`;
+        return `<label class="academic-checkbox-option${locked ? ' academic-subject-locked' : ''}" for="${escapeHtml(id)}"><input id="${escapeHtml(id)}" type="checkbox" value="${escapeHtml(subjectId)}" data-academic-student-subject-role="${escapeHtml(role)}"${locked || selectedIds.includes(subjectId) ? ' checked' : ''}${locked || (membership.PendingSubjectChange && !data.permissions?.fullAcademicAccess) ? ' disabled aria-readonly="true"' : ''}><span>${escapeHtml(academicLabel(rows.subjects, subjectId, subjectId))}</span></label>`;
       }).join('')
       : `<span class="academic-checkbox-empty">No ${escapeHtml(role.toLowerCase())} subjects are configured for this arm.</span>`;
     return `<article class="academic-arm-student-subject-card" data-academic-arm-subject-student data-membership-id="${escapeHtml(academicRecordId(membership))}" data-revision-token="${escapeHtml(membership.RevisionToken || '')}" data-student-name="${escapeHtml(studentName)}">
@@ -14588,7 +14588,7 @@ function academicArmSubjectRegister(data, rows, canManage) {
         <fieldset><legend>Trade · choose at least one ${countBadge('Trade')}</legend><div class="academic-checkbox-options">${subjectChecks('Trade', profile.tradeSubjectIds, profile.selectedTradeSubjectIds)}</div></fieldset>
         <fieldset><legend>Optional ${countBadge('Optional')}</legend><div class="academic-checkbox-options">${subjectChecks('Optional', profile.optionalSubjectIds, profile.selectedOptionalSubjectIds)}</div></fieldset>
       </div>
-      ${membership.PendingSubjectChange ? '<p class="academic-arm-subject-warning">A subject change is awaiting approval. Current subjects remain active; review or cancel the request below.</p>' : ''}
+      ${membership.PendingSubjectChange ? `<p class="academic-arm-subject-warning">${data.permissions?.fullAcademicAccess ? 'ICT can save revised subject choices directly. The earlier pending request will be preserved in Movement history as superseded.' : 'A subject change is awaiting approval. Current subjects remain active; review or cancel the request below.'}</p>` : ''}
       ${profile.unavailableSubjectIds.length ? `<p class="academic-arm-subject-warning">Previously selected subjects are outside the current classroom curriculum: ${escapeHtml(profile.unavailableSubjectIds.map((id) => academicLabel(rows.subjects, id, id)).join(', '))}. Choose replacement subjects above and save. Saving replaces the old selection; existing scores stay in history and assessed changes require a reason and approval.</p>` : ''}
       ${profile.reclassifiedSubjectIds.length ? `<p class="academic-arm-subject-warning">These subjects now appear under their current curriculum category: ${escapeHtml(profile.reclassifiedSubjectIds.map((id) => academicLabel(rows.subjects, id, id)).join(', '))}. Review the choices and save; existing scores are preserved.</p>` : ''}
     </article>`;
@@ -17010,7 +17010,7 @@ function academicWorkflowPayload(form) {
   }
   if (form.dataset.academicWorkflow === 'bulkAssignAcademicArmStudentSubjects') {
     const assignments = [...form.querySelectorAll('[data-academic-arm-subject-student]')].filter((row) =>
-      !academicFind(academicManagementData?.studentMemberships || [], row.dataset.membershipId)?.PendingSubjectChange).map((row) => {
+      academicManagementData?.permissions?.fullAcademicAccess === true || !academicFind(academicManagementData?.studentMemberships || [], row.dataset.membershipId)?.PendingSubjectChange).map((row) => {
       const coreSubjectIds = [...row.querySelectorAll('[data-academic-student-subject-role="Core"]:checked')].map((input) => input.value);
       if (!coreSubjectIds.length) {
         row.querySelector('[data-academic-student-subject-role="Core"]')?.focus();

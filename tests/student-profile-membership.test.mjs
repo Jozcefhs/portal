@@ -186,6 +186,23 @@ test('non-ICT profile transfer retains the pending-request approval guard', asyn
   assert.equal(h.current().ClassArm, 'Merit');
 });
 
+test('ICT can align a stale profile to its current membership while keeping the retained pending request', async () => {
+  const retained = { ...member, ArmId: 'brilliance', PendingSubjectChange: pendingRequest };
+  const duplicate = { ...member, RecordId: 'duplicate', MembershipId: 'duplicate', __updateTime: 'duplicate-1',
+    PendingSubjectChange: { ...pendingRequest, RequestId: 'duplicate-request' } };
+  const h = harness({ members: [retained, duplicate] });
+  const result = await h.save({ ClassArm: 'Brilliance' });
+  assert.equal(result.status, 200, result.data.message);
+  assert.equal(h.current().ClassArm, 'Brilliance');
+  assert.deepEqual(h.state.studentMemberships[0].PendingSubjectChange, pendingRequest);
+  assert.equal(h.state.studentMemberships[1].Status, 'Archived');
+  assert.equal(h.state.studentMemberships[1].PendingSubjectChange, undefined);
+  assert.equal(h.state.studentMovements.filter(row => row.Status === 'Superseded').length, 1);
+  assert.deepEqual(h.state.studentMovements.find(row => row.Status === 'Superseded').OriginalSubjectChangeRequest, duplicate.PendingSubjectChange);
+  assert.equal(h.commits.length, 1);
+  assert.deepEqual(h.state.studentScores, [score]);
+});
+
 test('class change keeps the membership ID and old scores under their original class', async () => {
   const h = harness();
   const response = await h.save({ ClassName: 'Grade 8', ClassArm: 'Merit' });
