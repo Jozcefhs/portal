@@ -13,7 +13,7 @@ export async function branchReadPlan(env, collection, branchId, options = {}, ov
   const branch = clean(branchId);
   if (!branch || branch === 'all') return { mode: 'legacy', readTime: options.readTime };
   const total = await db.countCollection(env, collection, { readTime: options.readTime });
-  if (!total.count) return { mode: 'empty', readTime: total.readTime };
+  if (!total.count) return { mode: 'empty', readTime: total.readTime, total: 0 };
   const structure = await db.getSchoolStructure(env);
   const known = [...new Set(['main', branch, ...(structure.Branches || []).map(row => row.Id)])];
   for (const field of ['BranchId']) {
@@ -23,10 +23,10 @@ export async function branchReadPlan(env, collection, branchId, options = {}, ov
         filters: [{ field, op: 'in', value: known.slice(offset, offset + 30) }] });
       covered += result.count;
     }
-    if (covered === total.count) return { mode: 'indexed', readTime: total.readTime, field,
+    if (covered === total.count) return { mode: 'indexed', readTime: total.readTime, total: total.count, field,
       values: [branch] };
   }
-  return { mode: 'legacy', readTime: total.readTime };
+  return { mode: 'legacy', readTime: total.readTime, total: total.count };
 }
 
 function queryOptions(plan, options) {
@@ -41,6 +41,22 @@ export async function listBranchCollection(env, collection, branchId, options = 
   if (String(options.filterJoin || 'AND').toUpperCase() !== 'AND') throw new Error('Branch reads require conjunctive filters.');
   const plan = await branchReadPlan(env, collection, branchId, options, db);
   if (plan.mode === 'empty') return [];
+  // Some existing screens normalise legacy labels (case/whitespace). An exact
+  // module filter is safe only when the whole field uses canonical labels.
+  // Otherwise retain the branch query and let the existing predicate decide.
+  const filters = [...(options.filters || [])];
+  for (const filter of options.compatibleFilters || []) {
+    if (!Number.isSafeInteger(plan.total)) {
+      const total = await db.countCollection(env, collection, { readTime: plan.readTime });
+      plan.total = total.count; plan.readTime = total.readTime;
+    }
+    const knownValues = [...new Set(filter.knownValues)];
+    if (!knownValues.includes(filter.value) || knownValues.length > 30) throw new Error('Invalid compatible module filter.');
+    const covered = await db.countCollection(env, collection, { readTime: plan.readTime,
+      filters: [{ field: filter.field, op: 'in', value: knownValues }] });
+    if (covered.count === plan.total) filters.push({ field: filter.field, op: '==', value: filter.value });
+  }
+  options = { ...options, filters };
   if (plan.mode === 'indexed') return db.queryCollectionPages(env, collection,
     queryOptions(plan, { maxRows: 100000, ...options }));
   if (options.filters?.length) return db.queryCollectionPages(env, collection, { maxRows: 100000, ...options, readTime: plan.readTime });

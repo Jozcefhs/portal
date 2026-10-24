@@ -2699,7 +2699,7 @@ async function getStoreOverview(env, body) {
   if (!['Bookstore', 'Uniform Store'].includes(storeType)) throw Object.assign(new Error('Choose a valid store.'), { status: 400 });
   await desktopSchoolOperationsActor(env, body, storeType === 'Bookstore' ? 'bookstore' : 'uniformStore');
   const scope = desktopInventoryScope(body);
-  const [{ categories, items }, orders] = await Promise.all([ensureStoreCategories(env, { readOnly: true, branchId: scope.BranchId, storeType }), listBranchCollection(env, 'storeOrders', scope.BranchId, { filters: [{ field: 'StoreType', op: '==', value: storeType }] })]);
+  const [{ categories, items }, orders] = await Promise.all([ensureStoreCategories(env, { readOnly: true, branchId: scope.BranchId, storeType }), listBranchCollection(env, 'storeOrders', scope.BranchId, { compatibleFilters: [{ field: 'StoreType', value: storeType, knownValues: ['Bookstore', 'Uniform Store', 'Organisation Store'] }] })]);
   const matches = (row) => sameText(row.StoreType, storeType) && sameText(row.BranchId || 'main', scope.BranchId)
     && (!clean(row.OrganisationEdition) || sameText(row.OrganisationEdition, 'school'))
     && (sameText(scope.SchoolSection, 'All') || schoolSectionFor(row) === scope.SchoolSection.toLowerCase());

@@ -269,7 +269,7 @@ function requestedItems(body = {}) {
 async function scopedInventory(env, section, user) {
   const config = configFor(section);
   const schoolSection = lower(user.schoolSectionAccess || user.SchoolSectionAccess || 'All');
-  let rows = (await listBranchCollection(env, config.inventory, scopeFor(user).BranchId, section === 'organizationStore' ? { filters: [{ field: 'StoreType', op: '==', value: 'Organisation Store' }] } : {})).filter((row) => visibleInScope(row, user)
+  let rows = (await listBranchCollection(env, config.inventory, scopeFor(user).BranchId, section === 'organizationStore' ? { compatibleFilters: [{ field: 'StoreType', value: 'Organisation Store', knownValues: ['Bookstore', 'Uniform Store', 'Organisation Store'] }] } : {})).filter((row) => visibleInScope(row, user)
     && (scopeFor(user).OrganisationEdition !== 'school' || schoolSection === 'all'
       || lower(row.SchoolSection || 'Secondary') === schoolSection));
   rows = await restrictVendorInventory(env, user, section, rows);

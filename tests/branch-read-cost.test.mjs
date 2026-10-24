@@ -77,6 +77,22 @@ test('module filters apply inside Firestore, including the legacy compatibility 
   }
 });
 
+test('store module queries narrow canonical labels but preserve legacy casing and whitespace', async () => {
+  const options = { compatibleFilters: [{ field: 'StoreType', value: 'Bookstore', knownValues: ['Bookstore', 'Uniform Store', 'Organisation Store'] }] };
+  for (const type of ['Bookstore', 'Bookstore ', 'bookstore', ' BOOKSTORE ']) {
+    const f = fixture([{ BranchId: 'main', StoreType: type }, { BranchId: 'main', StoreType: 'Uniform Store' }, { BranchId: 'north', StoreType: 'Bookstore' }]);
+    const original = structuredClone(f.rows);
+    const result = await listBranchCollection({}, 'items', 'main', options, f.db);
+    const visible = result.filter(row => row.StoreType.trim().toLowerCase() === 'bookstore');
+    assert.equal(visible.length, 1, `legacy label ${JSON.stringify(type)} remains visible`);
+    assert.equal(visible[0].StoreType, type);
+    const query = f.calls.find(call => call.kind === 'query');
+    assert.equal(query.options.filters.some(filter => filter.field === 'StoreType'), type === 'Bookstore');
+    assert.ok(result.every(row => row.BranchId === 'main'));
+    assert.deepEqual(f.rows, original);
+  }
+});
+
 test('legacy history continues through opaque cursors without hiding untagged records', async () => {
   const f = fixture([{}, {}, {}]);
   f.db.listCollectionPage = async (_env, collection, options) => {

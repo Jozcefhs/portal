@@ -26,7 +26,7 @@ export function categoryApplies(category, storeType) {
 }
 
 export async function ensureStoreCategories(env, options = {}) {
-  const [rawCategories, items] = await Promise.all([listCollection(env, 'storeCategories'), options.readOnly ? listBranchCollection(env, 'storeItems', options.branchId, options.storeType ? { filters: [{ field: 'StoreType', op: '==', value: options.storeType }] } : {}) : listCollection(env, 'storeItems')]);
+  const [rawCategories, items] = await Promise.all([listCollection(env, 'storeCategories'), options.readOnly ? listBranchCollection(env, 'storeItems', options.branchId, options.storeType ? { compatibleFilters: [{ field: 'StoreType', value: options.storeType, knownValues: ['Bookstore', 'Uniform Store', 'Organisation Store'] }] } : {}) : listCollection(env, 'storeItems')]);
   const byKey = new Map(); const categories = []; const writes = [];
   for (const row of rawCategories) {
     const name = clean(row.Name || row.Category || row.__id); if (!name) continue;
