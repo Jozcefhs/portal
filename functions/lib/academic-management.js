@@ -1109,6 +1109,29 @@ function academicRecordResponseView(input = {}, type = '') {
   return supplied ? normalizedAcademicView(supplied) : (ACADEMIC_RECORD_DEFAULT_VIEW[type] || 'classrooms');
 }
 
+// Query the same scope that is checked after the read. Never filter by arm:
+// previous-arm marks are still needed to prevent duplicate score uploads.
+export function academicScoreReadFilters(branchId, scope = {}) {
+  const fields = ['ClassId', 'SubjectId', 'SessionId', 'TermId'];
+  const filters = fields.filter(field => clean(scope[field]))
+    .map(field => ({ field, op: '==', value: clean(scope[field]) }));
+  // Class-scoped legacy scores can have no BranchId. The existing in-memory
+  // branch check continues to interpret those as main-branch records.
+  if (!clean(scope.ClassId)) filters.unshift({ field: 'BranchId', op: '==', value: branchId });
+  return filters;
+}
+
+export function academicBootstrapReadKeys(keys, view, input = {}, options = {}) {
+  const omitted = new Set();
+  if (view === 'scorebook' && input.ScoreRowsMode === 'on-demand') omitted.add('studentScores');
+  if (options.classRegister === true) {
+    omitted.delete('studentScores');
+    omitted.add('scoreImports');
+    omitted.add('scoreSyncBatches');
+  }
+  return keys.filter(key => !omitted.has(key));
+}
+
 async function loadAcademicState(env, branchId, requestedKeys = null, scoreReadScope = {}) {
   if (!Array.isArray(requestedKeys) || !requestedKeys.length) {
     throw failure('Academic Management must request a focused workspace data bundle.', 500, 'ACADEMIC_STATE_BUNDLE_REQUIRED');
@@ -1126,13 +1149,14 @@ async function loadAcademicState(env, branchId, requestedKeys = null, scoreReadS
       - Number(left === 'timetableVersions') * 2 - Number(left === 'studentMemberships'));
   const loadCollection = async ([key, collection]) => {
     const paged = ['studentScores', 'scoreSheets', 'scoreImports', 'scoreSyncBatches'].includes(key);
-    // Use one indexed equality, then enforce branch/section and the remaining
-    // scope in memory. Never restrict by arm: duplicate protection needs the
-    // same student's previous score even after an arm transfer.
-    const classId = paged ? clean(scoreReadScope.ClassId) : '';
-    const options = { filters: [classId
-      ? { field: 'ClassId', op: '==', value: classId }
-      : { field: 'BranchId', op: '==', value: branchId }] };
+    // Equality filters use Firestore's existing merged indexes. Restrict marks
+    // before fetching them, retaining every arm for duplicate-score protection.
+    const classroomRoster = ['studentMemberships', 'teacherAllocations'].includes(key)
+      && clean(scoreReadScope.ClassId);
+    const readScope = classroomRoster ? { ClassId: scoreReadScope.ClassId,
+      SessionId: scoreReadScope.SessionId, TermId: scoreReadScope.TermId } : scoreReadScope;
+    const options = { filters: paged || classroomRoster ? academicScoreReadFilters(branchId, readScope)
+      : [{ field: 'BranchId', op: '==', value: branchId }] };
     const rows = paged
       ? await queryCollectionPages(env, collection, { ...options,
         pageSize: 250, maxRows: 50000, readTime: nowIso() })
@@ -2117,17 +2141,19 @@ export function academicTeacherVisibleTimetable(state = {}, username = '', focus
   };
 }
 
-export async function bootstrapAcademicManagement(env, user = {}, input = {}, scoreReadScope = {}) {
+export async function bootstrapAcademicManagement(env, user = {}, input = {}, scoreReadScope = {}, loadOptions = {}) {
   const permissions = requireCapability(user, 'enabled');
   const scope = await academicScope(env, user, input, { requireSection: false });
   const focusedView = permissions.financeView ? 'clearances' : normalizedAcademicView(input.View || input.Workspace);
   if (focusedView === 'analysis' && !permissions.canViewResultsAnalysis) {
     throw failure('Only school management may open the end-of-session results analysis.', 403, 'ACADEMIC_ANALYSIS_FORBIDDEN');
   }
-  const focusedStateKeys = academicManagementViewStateKeys(focusedView, permissions);
+  const focusedStateKeys = academicBootstrapReadKeys(
+    academicManagementViewStateKeys(focusedView, permissions), focusedView, input, loadOptions);
   const includePeople = input.IncludePeople !== false && lower(input.IncludePeople) !== 'false';
   const peopleOptions = includePeople
-    ? (ACADEMIC_VIEW_PEOPLE[focusedView] || ACADEMIC_VIEW_PEOPLE.classrooms)
+    ? (loadOptions.classRegister ? { staff: false, students: true }
+      : ACADEMIC_VIEW_PEOPLE[focusedView] || ACADEMIC_VIEW_PEOPLE.classrooms)
     : { staff: false, students: false };
   const includeReportProfile = ['results', 'outcomes'].includes(focusedView);
   const [rawState, people, reportProfile] = await Promise.all([
@@ -2137,7 +2163,8 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}, sc
       ? getDocument(env, 'settings', 'schoolProfile').catch(() => ({}))
       : Promise.resolve(null)
   ]);
-  const summary = await loadAcademicManagementSummary(env, scope, rawState, focusedStateKeys);
+  const summary = loadOptions.classRegister ? academicManagementSummary(rawState)
+    : await loadAcademicManagementSummary(env, scope, rawState, focusedStateKeys);
   let state = rawState;
   let students = people.students;
   if (permissions.financeView) {
@@ -5435,9 +5462,11 @@ function academicScoreRowsInput(value) {
 
 export async function getAcademicClassScoreRegister(env, user = {}, input = {}) {
   requireCapability(user, 'canReviewScores');
-  const data = await bootstrapAcademicManagement(env, user, { ...input, View: 'scorebook', IncludePeople: true }, {
+  const data = await bootstrapAcademicManagement(env, user, {
+    ...input, View: 'scorebook', IncludePeople: true, IncludeAssessmentPolicy: false
+  }, {
     ClassId: input.ClassId, SessionId: input.SessionId, TermId: input.TermId
-  });
+  }, { classRegister: true });
   if (!(data.sessions || []).some(row => row.SessionId === input.SessionId)
       || !(data.terms || []).some(row => row.TermId === input.TermId && row.SessionId === input.SessionId)
       || !(data.classes || []).some(row => row.ClassId === input.ClassId)) {
@@ -5447,7 +5476,8 @@ export async function getAcademicClassScoreRegister(env, user = {}, input = {}) 
 }
 
 export async function getAcademicScorebookContext(env, user = {}, input = {}) {
-  const context = await academicScoreSheetContext(env, user, input, 'canEnterScores');
+  const context = await academicScoreSheetContext(env, user, input, 'canEnterScores',
+    ACADEMIC_SCOREBOOK_STATE_KEYS.filter(key => !['scoreImports', 'scoreSyncBatches'].includes(key)));
   const activeScheme = context.activeScheme;
   const layoutUpdateAvailable = Boolean(
     context.existing

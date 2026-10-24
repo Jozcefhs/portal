@@ -160,7 +160,7 @@ test('teachers may author online packages that are pulled onto the local desktop
   assert.match(admin, /Running timers, papers, answer keys and submitted attempts remain unchanged/);
   assert.match(admin, /New schedule to pull/);
   assert.match(backend, /cbt: ACADEMIC_CBT_STATE_KEYS/);
-  assert.match(backend, /const focusedStateKeys = academicManagementViewStateKeys/);
+  assert.match(backend, /academicManagementViewStateKeys\(focusedView, permissions\)/);
   assert.match(backend, /downloadAcademicCbtTestPackage/);
   assert.match(backend, /prepareLocalCbtIdentityPackage/);
   assert.match(backend, /syncLocalCbtStudentPasswords/);

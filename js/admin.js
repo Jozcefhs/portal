@@ -16765,7 +16765,8 @@ async function academicManagementRequest(action, payload = {}, requestOptions = 
     method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
     dynamaxRetrySafe: retrySafe,
     ...(requestOptions.signal ? { signal: requestOptions.signal } : {}),
-    body: JSON.stringify({ action, BranchId: branchId, View: academicManagementView, ...payload })
+    body: JSON.stringify({ action, BranchId: branchId, View: academicManagementView,
+      ScoreRowsMode: 'on-demand', ...payload })
   });
   let data = await response.json().catch(() => ({
     ok: false,

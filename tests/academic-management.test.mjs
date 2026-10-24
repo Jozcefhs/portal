@@ -96,7 +96,7 @@ test('every academic workspace stays focused below the Worker subrequest ceiling
   assert.match(saveSource, /View: 'teachers'/);
   assert.doesNotMatch(librarySource, /loadAcademicState\(env,\s*scope\.branchId\s*\)/);
   assert.match(librarySource, /ACADEMIC_STATE_BUNDLE_REQUIRED/);
-  assert.match(librarySource, /focusedStateKeys = academicManagementViewStateKeys/);
+  assert.match(librarySource, /academicManagementViewStateKeys\(focusedView, permissions\)/);
   assert.match(librarySource, /\{ field: 'BranchId', op: '==', value: branchId \}/);
   assert.match(librarySource, /queryCollectionPages\(env, collection, \{ \.\.\.options,/);
   assert.match(librarySource, /groups\[index\]\.filter\(\(row\) => lower\(row.BranchId \|\| 'main'\) === lower\(branchId\)\)/);
@@ -127,7 +127,7 @@ test('Academic Management cards count active records in the selected section wit
     Classes: 1, Arms: 1, ArmTemplates: 1, Subjects: 1,
     Departments: 1, TeacherAllocations: 1, StudentMemberships: 1
   });
-  assert.match(librarySource, /summary = await loadAcademicManagementSummary\(env, scope, rawState, focusedStateKeys\)/);
+  assert.match(librarySource, /await loadAcademicManagementSummary\(env, scope, rawState, focusedStateKeys\)/);
   assert.match(librarySource, /permissions,\s*summary,\s*scope:/);
   assert.match(adminSource, /summary\.Classes \?\? '—'/);
 });

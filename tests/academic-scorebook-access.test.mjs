@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
-import { assertAcademicScoreSheetAuthority, academicScorebookSnapshot } from '../functions/lib/academic-management.js';
+import { assertAcademicScoreSheetAuthority, academicScorebookSnapshot, ACADEMIC_SCOREBOOK_STATE_KEYS } from '../functions/lib/academic-management.js';
 
 const context = { SessionId: 'session', TermId: 'term', ClassId: 'grade8', ArmId: 'brilliance', SubjectId: 'math' };
 const sheet = { ...context, SheetId: 'sheet', TeacherUsername: 'old.teacher', Status: 'Draft' };
@@ -98,7 +98,13 @@ test('opening a scorebook returns fresh selected marks and the historical scheme
     arm: { ArmId: 'brilliance' }, subject: { SubjectId: 'math' }, allocation, roster: [{}] };
   const before = structuredClone(selected);
   const runtime = vm.createContext({
-    academicScoreSheetContext: async () => selected,
+    ACADEMIC_SCOREBOOK_STATE_KEYS,
+    academicScoreSheetContext: async (_env, _user, _input, _capability, keys) => {
+      assert.ok(keys.includes('studentScores'));
+      assert.ok(!keys.includes('scoreSyncBatches'));
+      assert.ok(!keys.includes('scoreImports'));
+      return selected;
+    },
     academicScorebookSnapshot, clean: v => String(v ?? '').trim(), lower: v => String(v ?? '').toLowerCase()
   });
   vm.runInContext(body, runtime);
