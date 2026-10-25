@@ -28,11 +28,11 @@ try {
   }
   const functions = ['academicRecordId', 'academicFind', 'academicLabel', 'academicClassRegisterView',
     'academicClassRegisterTable', 'academicClassRegisterPrintHtml', 'bindAcademicClassRegisterSubjectDismissal',
-    'bindAcademicClassScoreRegister'].map(extractFunction).join('\n');
+    'createAcademicClassRegisterCache', 'bindAcademicClassScoreRegister'].map(extractFunction).join('\n');
   await page.addScriptTag({ content: `const clean=v=>String(v??'').trim();
     const escapeHtml=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    const report=${JSON.stringify(report)}; let holdLoad=false, finishLoad, requests=0;
-    const academicManagementRequest=async()=>{requests++;if(holdLoad) await new Promise(resolve=>{finishLoad=resolve;});return {classScoreRegister:report};};
+    const report=${JSON.stringify(report)}; let holdLoad=false, failLoad=false, finishLoad, requests=0;
+    const academicManagementRequest=async(action, input)=>{requests++;if(holdLoad) await new Promise(resolve=>{finishLoad=resolve;});if(failLoad)throw new Error('Offline');return {classScoreRegister:input.ClassId==='other' ? {...report,ClassId:'other',ClassName:'Grade 9'} : report};};
     const academicManagementFilters={section:'secondary',sessionId:'session',termId:'term'};
     const academicManagementData={reportProfile:{SchoolName:'Test Academy'}, sessions:[{SessionId:'session',Name:'2026/2027'}],terms:[{TermId:'term',Name:'First Term'}]};
     ${functions}; bindAcademicClassScoreRegister(document.querySelector('form'));` });
@@ -335,6 +335,37 @@ try {
   assert.equal(await isOpen(), false);
   assert.equal(await panel.isVisible(), false);
   assert.equal(await scroller.locator('tbody tr').count(), 0);
+  // Returning to a loaded grade restores filters and page without another request.
+  await page.selectOption('[name=ClassId]', 'class');
+  assert.equal(await page.evaluate(() => requests), requestCount);
+  assert.equal(await page.locator('[name=ScoreFilter]').inputValue(), 'partial');
+  assert.equal(await page.locator('[name=TestId]').inputValue(), 'CA1');
+  await page.selectOption('[name=ScoreFilter]', 'all');
+  await page.click('[data-class-register-page="1"]');
+  const savedTable = await scroller.textContent();
+  await page.evaluate(() => document.querySelector('[name=ClassId]').add(new Option('Grade 9', 'other')));
+  await page.selectOption('[name=ClassId]', 'other');
+  assert.equal(await scroller.locator('tbody tr').count(), 0);
+  await page.click('button[type=submit]');
+  await page.waitForFunction(() => !document.querySelector('button[type=submit]').disabled);
+  assert.equal(await page.evaluate(() => requests), requestCount + 1);
+  await page.selectOption('[name=ClassId]', 'class');
+  assert.equal(await page.evaluate(() => requests), requestCount + 1);
+  assert.equal(await scroller.textContent(), savedTable);
+  assert.match(await page.locator('[data-class-register-count]').textContent(), /31–60/);
+  assert.match(await page.locator('[data-class-register-status]').textContent(), /Restored without another request/);
+  assert.equal(await isOpen(), false);
+  assert.equal(await page.locator('button[type=submit]').textContent(), 'Refresh class scores');
+  await page.evaluate(() => { failLoad = true; });
+  await page.click('button[type=submit]');
+  await page.waitForFunction(() => !document.querySelector('button[type=submit]').disabled);
+  assert.equal(await scroller.textContent(), savedTable);
+  assert.match(await page.locator('[data-class-register-status]').textContent(), /refresh did not complete/);
+  await page.evaluate(() => { failLoad = false; });
+  await page.click('button[type=submit]');
+  await page.waitForFunction(() => !document.querySelector('button[type=submit]').disabled);
+  assert.equal(await page.evaluate(() => requests), requestCount + 3);
+  assert.match(await page.locator('[data-class-register-count]').textContent(), /1–30/);
   assert.deepEqual(errors, []);
-  console.log('PASS: Subjects dismissal, pinned Student/header, separate any-missing/all-missing/partial/any-scored/all-scored/below filters, strict thresholds including zero, subject/test/search intersections, pagination reset, filtered print, mobile layout, and no score writes or extra requests.');
+  console.log('PASS: Grade switching restores filters/page without requests; explicit refresh fetches again; failed refresh preserves the view; subject dismissal, pinned columns, score filters, pagination, print and mobile layout pass without score writes.');
 } finally { await browser.close(); }

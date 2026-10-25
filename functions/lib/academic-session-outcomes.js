@@ -1,5 +1,6 @@
 import { academicCumulativePolicyIssues, normalizeAcademicPolicy } from './academic-policy.js';
 import { academicAutomaticResultComments } from './academic-term-results.js';
+import { academicSubjectName } from './academic-result-subject-labels.js';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
@@ -189,13 +190,13 @@ export function calculateAcademicCumulativeDrafts(input = {}) {
     if (!subjectIds.length) issues.push(`${studentRef} has no subjects in the locked term results.`);
     const Subjects = subjectIds.map((subjectId) => {
       const termRows = [];
-      let subjectName = subjectId;
+      let subjectName = academicSubjectName({ SubjectId: subjectId }, input.Subjects || []) || 'Subject';
       let subjectCode = '';
       configuredTerms.forEach((term) => {
         const pair = byTerm.find((row) => row.term.Id === term.Id);
         const termResult = pair?.result;
         const subject = (termResult?.Subjects || []).find((row) => lower(row.SubjectId) === lower(subjectId));
-        if (subject?.SubjectName) subjectName = subject.SubjectName;
+        if (subject) subjectName = academicSubjectName(subject, input.Subjects || []) || subjectName;
         if (subject?.SubjectCode || subject?.Code) subjectCode = clean(subject.SubjectCode || subject.Code);
         if (!termResult) {
           if (policy.Cumulative.MissingTermMode === 'zero') termRows.push({ term, Total: 0, Missing: true, MissingKind: 'Term' });

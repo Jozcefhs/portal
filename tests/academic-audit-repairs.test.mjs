@@ -12,6 +12,7 @@ import { safeScopeId } from '../functions/lib/school-scope.js';
 import { calculateAcademicMidTermResultDrafts } from '../functions/lib/academic-term-results.js';
 import { evaluateAcademicResultAccess } from '../functions/lib/academic-result-access.js';
 import { academicResultWithWeightedComponents } from '../functions/lib/academic-result-marks.js';
+import { academicResultWithSubjectLabels } from '../functions/lib/academic-result-subject-labels.js';
 import * as cbtRetention from '../functions/lib/academic-cbt-paper-retention.js';
 import { commitAcademicSubmission } from '../functions/lib/academic-submissions.js';
 
@@ -28,7 +29,7 @@ const conflict = () => Object.assign(new Error('Concurrent update'), { status: 4
 
 function managementHarness(records = {}) {
   const context = {
-    ...management, ...scorebook, ...timetable, ...attendanceIdentity, ...cbtRetention, academicResultWithWeightedComponents, TextEncoder, TextDecoder, crypto: webcrypto,
+    ...management, ...scorebook, ...timetable, ...attendanceIdentity, ...cbtRetention, academicResultWithWeightedComponents, academicResultWithSubjectLabels, TextEncoder, TextDecoder, crypto: webcrypto,
     getSchoolStructure: async () => ({ ActiveBranchId: 'main', Branches: [{ Id: 'main' }], Sections: ['primary', 'secondary'] }),
     enforceActorBranch: (_actor, branch) => branch, safeScopeId,
     queryCollection: async (_env, collection) => structuredClone(records[collection] || []),
@@ -94,6 +95,20 @@ test('AM-02 teachers cannot read another subject or period; form teachers retain
   assert.equal(management.academicTeacherCanReadScoreSheet(sheet, [{ ...allocation, Status: 'Inactive' }]), false);
   assert.equal(management.academicTeacherCanReadScoreSheet(sheet, [], [{ ...sheet, TermId: 'other' }]), false);
   assert.equal(management.academicTeacherCanReadScoreSheet(sheet, [], [sheet]), true);
+});
+
+test('result workspace resolves legacy subject comments using its existing catalogue without writes', async () => {
+  const id = 'subject__main__secondary__civ';
+  const records = { academicSubjects: [row({ SubjectId: id, Name: 'Civic Education' })],
+    academicResults: [row({ ...classroom, ResultId: 'result', StudentRef: 'S1',
+      TeacherRemark: `Greater attention to ${id} will help.`, PrincipalRemark: `Practice ${id}.`,
+      Subjects: [{ SubjectId: id, SubjectName: id, Total: 42 }] })] };
+  const before = structuredClone(records);
+  const response = await managementHarness(records).bootstrapAcademicManagement({}, actor, { ...input, View: 'results' });
+  assert.equal(response.termResults[0].TeacherRemark, 'Greater attention to Civic Education will help.');
+  assert.equal(response.termResults[0].PrincipalRemark, 'Practice Civic Education.');
+  assert.equal(response.termResults[0].Subjects[0].Total, 42);
+  assert.deepEqual(records, before);
 });
 
 function completePolicy() {

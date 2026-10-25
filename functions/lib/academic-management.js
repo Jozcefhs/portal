@@ -8,6 +8,7 @@ import { commitAcademicCbtLateEntry } from './academic-cbt-late-entry-commit.js'
 import { copyAcademicCbtLateEntryPapers } from './academic-cbt-late-entry-papers.js';
 import { academicCbtScoreSources } from './academic-cbt-multiserver.js';
 import { academicResultWithWeightedComponents } from './academic-result-marks.js';
+import { academicResultWithSubjectLabels } from './academic-result-subject-labels.js';
 import { buildAcademicClassScoreRegister } from './academic-class-score-register.js';
 import { handleDiary } from './academic-diary.js';
 import { commitAcademicSubmission, submissionSettings, submissionPaymentAction } from './academic-submissions.js';
@@ -2085,12 +2086,12 @@ function sortAcademicState(state) {
     scoreImports: [...state.scoreImports].sort((a, b) => clean(b.CommittedAt || b.CreatedAt).localeCompare(clean(a.CommittedAt || a.CreatedAt))),
     scoreSyncBatches: [...state.scoreSyncBatches].sort((a, b) => clean(b.SynchronizedAt || b.CreatedAt).localeCompare(clean(a.SynchronizedAt || a.CreatedAt))),
     cbtTests: [...state.cbtTests].sort((a, b) => clean(b.StartsAt || b.CreatedAt).localeCompare(clean(a.StartsAt || a.CreatedAt))),
-    termResults: [...state.termResults].map(academicResultWithWeightedComponents).sort((a, b) => clean(a.ClassId).localeCompare(clean(b.ClassId))
+    termResults: [...state.termResults].map(row => academicResultWithSubjectLabels(academicResultWithWeightedComponents(row), state.subjects)).sort((a, b) => clean(a.ClassId).localeCompare(clean(b.ClassId))
       || clean(a.ArmId).localeCompare(clean(b.ArmId)) || clean(a.StudentRef).localeCompare(clean(b.StudentRef))),
     resultClearances: [...state.resultClearances].sort((a, b) => clean(a.StudentRef).localeCompare(clean(b.StudentRef))
       || clean(b.ApprovedAt || b.UpdatedAt).localeCompare(clean(a.ApprovedAt || a.UpdatedAt))),
     resultEvents: [...state.resultEvents].sort((a, b) => clean(b.CreatedAt).localeCompare(clean(a.CreatedAt))),
-    cumulativeResults: [...state.cumulativeResults].sort((a, b) => clean(a.ClassId).localeCompare(clean(b.ClassId))
+    cumulativeResults: [...state.cumulativeResults].map(row => academicResultWithSubjectLabels(row, state.subjects)).sort((a, b) => clean(a.ClassId).localeCompare(clean(b.ClassId))
       || clean(a.ArmId).localeCompare(clean(b.ArmId)) || clean(a.StudentRef).localeCompare(clean(b.StudentRef))),
     cumulativeEvents: [...state.cumulativeEvents].sort((a, b) => clean(b.CreatedAt).localeCompare(clean(a.CreatedAt))),
     promotionDecisions: [...state.promotionDecisions].sort((a, b) => clean(a.ClassId).localeCompare(clean(b.ClassId))
@@ -6469,6 +6470,7 @@ export async function calculateAcademicCumulativeResults(env, user = {}, input =
     ArmName: arm.Name,
     Memberships: memberships,
     TermResults: state.termResults,
+    Subjects: state.subjects,
     ExistingResults: existingResults,
     Policy: policy,
     PolicyRevisionIds: policyRevisionIds,

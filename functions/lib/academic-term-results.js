@@ -1,6 +1,7 @@
 import { normalizeAcademicPolicy } from './academic-policy.js';
 import { academicAssessmentScheme, calculateAcademicStudentScore } from './academic-scorebook.js';
 import { schoolCalendarDayIsOpen, schoolCalendarSummary } from './academic-school-calendar.js';
+import { academicSubjectName } from './academic-result-subject-labels.js';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
@@ -100,7 +101,7 @@ export function academicAutomaticResultComments(result = {}, policyInput = {}) {
   const policy = normalizeAcademicPolicy(policyInput);
   const subjects = [...(result.Subjects || [])].filter((row) => Number.isFinite(Number(row.Total ?? row.WeightedTotal)));
   const weakest = subjects.sort((left, right) => Number(left.Total ?? left.WeightedTotal) - Number(right.Total ?? right.WeightedTotal))[0];
-  const weakestName = clean(weakest?.SubjectName || weakest?.SubjectId);
+  const weakestName = academicSubjectName(weakest);
   const weakestScore = Number(weakest?.Total ?? weakest?.WeightedTotal ?? 0);
   const failed = subjects.filter((row) => ['probation', 'fail'].includes(lower(row.Classification)));
   const benchmark = promotionBenchmark(policy, result.SchoolStage);
@@ -137,7 +138,7 @@ export function academicAutomaticResultComments(result = {}, policyInput = {}) {
 function subjectSnapshot(score, sheet, subject) {
   return {
     SubjectId: clean(score.SubjectId || sheet.SubjectId),
-    SubjectName: clean(subject?.Name || subject?.SubjectName || score.SubjectName || score.SubjectId || sheet.SubjectId),
+    SubjectName: academicSubjectName({ ...score, SubjectId: score.SubjectId || sheet.SubjectId }, subject ? [subject] : []) || 'Subject',
     SheetId: clean(sheet.SheetId),
     ScoreId: clean(score.ScoreId),
     ScoreSheetStatus: clean(sheet.Status),
@@ -181,7 +182,8 @@ export function calculateAcademicTermResultDrafts(input = {}) {
   const acceptedSheetStatuses = new Set((input.AcceptedScoreSheetStatuses || [...ACTIVE_SCORE_SHEET_STATUSES]).map(lower));
   const scoreSheets = (input.ScoreSheets || []).filter((row) => contextMatches(row, options));
   const studentScores = input.StudentScores || [];
-  const subjects = new Map((input.Subjects || []).map((row) => [lower(rowId(row, ['SubjectId', 'RecordId', '__id'])), row]));
+  const subjects = new Map((input.Subjects || []).flatMap(row => ['SubjectId', 'RecordId', '__id', 'Id']
+    .filter(field => clean(row[field])).map(field => [lower(row[field]), row])));
   const existingResults = new Map((input.ExistingResults || []).map((row) => [lower(row.StudentRef), row]));
   const policy = normalizeAcademicPolicy(input.Policy || {});
   const attendanceMode = ['Daily', 'Period', 'Subject'].find((mode) => lower(mode) === lower(input.AttendanceMode)) || 'Daily';

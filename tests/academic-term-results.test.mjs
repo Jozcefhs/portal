@@ -66,6 +66,15 @@ function calculation(overrides = {}) {
   });
 }
 
+test('result calculation resolves catalogue Id aliases without changing saved scores', () => {
+  const before = structuredClone(studentScores);
+  const output = calculation({ Subjects: [{ Id: 'math', Name: 'Mathematics' }, { Id: 'eng', Name: 'English Language' }] });
+  assert.equal(output.Ready, true);
+  assert.equal(output.Results[0].Subjects.find(row => row.SubjectId === 'eng').SubjectName, 'English Language');
+  assert.match(output.Results[0].TeacherRemark, /English Language/);
+  assert.deepEqual(studentScores, before);
+});
+
 test('Milestone 9 calculates reproducible term-result drafts only from Approved or Locked score sheets', () => {
   const output = calculation();
   assert.equal(output.Ready, true);

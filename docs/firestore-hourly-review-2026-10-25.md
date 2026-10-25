@@ -89,6 +89,33 @@ deletion, score adjustment, payment update or history rewrite is part of this re
 - All 3,996 Node regression tests passed. The Cloudflare Pages Functions Worker
   compiled successfully. Deployment completion is verified after pushing this change.
 
+## Follow-up: class registers and subject names
+
+The web class score register now retains up to eight recently loaded grades in
+memory for ten minutes from each original load. Switching back restores the
+grade's subject/test/search filters and page without another request. The button
+becomes **Refresh class scores**, and the loaded time remains visible. Refresh
+explicitly fetches newer marks; failed refreshes retain the previous view.
+Changing workspace or account rebuilds the form and discards its private cache.
+No student data is stored in local storage. Score-editing reactivation clears the
+cache. This avoids repeat reads during navigation without changing any marks.
+
+Generated result comments and legacy result views now resolve internal subject
+IDs from the catalogue already loaded in that workspace. This adds no per-student
+database lookup. Existing saved scores, revision tokens, workflow states and
+custom comment prose are preserved; reading a corrected label does not write it
+back to the database.
+
+Local browser checks cover grade switching, restored filters/page, explicit and
+failed refreshes, printing and small-screen layouts. Regression tests cover cache
+expiry/isolation, legacy comments, new term/cumulative generation, preserved marks
+and concurrent CBT uploads. The concurrent-upload test now checks the actual
+first committed mark, rather than assuming promise invocation order determines
+which centre commits first.
+
+All **4,005** regression tests pass after these follow-ups, as does the local
+browser interaction suite and the Pages Functions build.
+
 ## Measurement method and limits
 
 The source is `firestore.googleapis.com/document/read_count`, summed over read

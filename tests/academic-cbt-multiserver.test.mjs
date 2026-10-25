@@ -549,9 +549,12 @@ test('simultaneous overlapping uploads preserve the first mark and save every ot
   const second=await b.batch([['DCA/001',99,'b1'],['DCA/003',93,'b3']]);
   const [pa,pb]=await Promise.all([f.prepare(first),f.prepare(second)]);
   const responses=await Promise.all([f.commit(first,pa),f.commit(second,pb)]);
-  assert.equal(responses[1].scoreSyncReceipt.AlreadyRecordedCount,1);
+  // Promise argument order does not determine which centre commits first.
+  const firstSaved=f.commits[0].find(row=>row.collectionPath===collections.studentScores && row.data.StudentRef==='DCA/001');
+  assert.deepEqual(responses.map(row=>row.scoreSyncReceipt.AlreadyRecordedCount).sort(),[0,1]);
+  assert.deepEqual(responses.map(row=>row.scoreSyncReceipt.ImportedRows).sort(),[1,2]);
   assert.deepEqual(f.rows(collections.studentScores).map(row=>[row.StudentRef,row.ComponentScores[0].RawScore]).sort(),
-    [['DCA/001',81],['DCA/002',82],['DCA/003',93]]);
+    [['DCA/001',firstSaved.data.ComponentScores[0].RawScore],['DCA/002',82],['DCA/003',93]]);
   assert.equal(f.rows(collections.scoreSheets)[0].EnteredCount,3);
   assert.equal(f.rows(collections.scoreSyncBatches).length,2);
 });

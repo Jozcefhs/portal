@@ -122,6 +122,20 @@ function calculate(overrides = {}) {
   });
 }
 
+test('cumulative comments resolve legacy subject IDs through the loaded catalogue without changing term marks', () => {
+  const id = 'subject__main__secondary__civ';
+  const TermResults = ['First Term', 'Second Term', 'Third Term'].map(Term => ({
+    ...termResult('DCA/001', Term, 60, 70), Subjects: [{ SubjectId: id, SubjectName: id, Total: 42 }]
+  }));
+  const before = structuredClone(TermResults);
+  const output = calculate({ Memberships: [{ StudentRef: 'DCA/001', SubjectIds: [id], Status: 'Active' }],
+    TermResults, Subjects: [{ SubjectId: id, Name: 'Civic Education' }] });
+  assert.equal(output.Ready, true);
+  assert.equal(output.Results[0].Subjects[0].AnnualTotal, 42);
+  assert.match(output.Results[0].TeacherRemark, /Civic Education/);
+  assert.deepEqual(TermResults, before);
+});
+
 test('Milestone 10 calculates weighted immutable cumulative drafts from Locked term results', () => {
   const output = calculate();
   assert.equal(output.Ready, true);

@@ -15683,10 +15683,34 @@ function bindAcademicClassRegisterSubjectDismissal() {
   document.addEventListener('focusin', dismissOutside, true);
 }
 
+function createAcademicClassRegisterCache({ now = () => Date.now(), maxAge = 10 * 60 * 1000, limit = 8 } = {}) {
+  const entries = new Map();
+  return {
+    set(id, value) {
+      if (!id) return;
+      entries.delete(id);
+      entries.set(id, value);
+      while (entries.size > limit) entries.delete(entries.keys().next().value);
+    },
+    get(id) {
+      const value = entries.get(id);
+      if (!value || now() - value.loadedAt >= maxAge) { entries.delete(id); return null; }
+      entries.delete(id); entries.set(id, value);
+      return value;
+    },
+    clear() { entries.clear(); }
+  };
+}
+
 function bindAcademicClassScoreRegister(form) {
   if (!form) return;
   bindAcademicClassRegisterSubjectDismissal();
   let register = null, page = 0, subjectIds = null, busy = false;
+  // This read-only cache belongs to this form only: changing workspace, branch,
+  // session, module or account rebuilds the form and discards its loaded records.
+  const cache = createAcademicClassRegisterCache();
+  let loadedClassId = '', loadedAt = 0;
+  const loadButton = form.querySelector('[type="submit"]');
   const pageSize = 30;
   const status = form.querySelector('[data-class-register-status]');
   const subjectOptions = form.querySelector('[data-class-register-subject-options]');
@@ -15696,6 +15720,27 @@ function bindAcademicClassScoreRegister(form) {
   subjectMenu.open = false;
   const filters = () => ({ testId: form.elements.TestId.value, subjectIds, query: form.elements.Query.value,
     scoreFilter: form.elements.ScoreFilter.value, scoreThreshold: form.elements.ScoreThreshold.value });
+  const remember = () => {
+    if (register) cache.set(loadedClassId, { register, page, filters: filters(), loadedAt });
+  };
+  const showRegister = (snapshot, cached = false) => {
+    register = snapshot.register; loadedAt = snapshot.loadedAt; page = snapshot.page || 0;
+    const subjects = [...new Map(register.Columns.map(column => [column.SubjectId, column.SubjectName])).entries()];
+    const saved = snapshot.filters;
+    subjectIds = saved?.subjectIds || subjects.map(([id]) => id);
+    subjectOptions.innerHTML = subjects.map(([id, name]) => `<label class="academic-checkbox-option"><input type="checkbox" data-class-register-subject value="${escapeHtml(id)}"${subjectIds.includes(id) ? ' checked' : ''}><span>${escapeHtml(name)}</span></label>`).join('') || 'No subjects available.';
+    form.querySelectorAll('[data-class-register-subject-action]').forEach(button => { button.disabled = false; });
+    const tests = [...new Map(register.Columns.map(column => [column.TestId, column.TestName])).entries()];
+    form.elements.TestId.innerHTML = '<option value="">All tests</option>' + tests.map(([id, name]) => `<option value="${escapeHtml(id)}">${escapeHtml(name)}</option>`).join('');
+    form.elements.TestId.value = saved?.testId || '';
+    if (saved) {
+      form.elements.Query.value = saved.query;
+      form.elements.ScoreFilter.value = saved.scoreFilter;
+      form.elements.ScoreThreshold.value = saved.scoreThreshold;
+    }
+    subjectMenu.open = false;
+    status.textContent = `${register.ClassName}: ${register.StudentCount} students across all arms · ${register.SubjectCount} subjects. Raw marks / maximum. Loaded at ${new Date(loadedAt).toLocaleTimeString()}.${cached ? ' Restored without another request.' : ''} Refresh class scores for newer marks.`;
+  };
   const resetSubjects = () => {
     subjectMenu.open = false;
     subjectIds = null;
@@ -15705,6 +15750,7 @@ function bindAcademicClassScoreRegister(form) {
     form.elements.TestId.innerHTML = '<option value="">All tests</option>';
   };
   const render = () => {
+    loadButton.textContent = register ? 'Refresh class scores' : 'Load class scores';
     const mode = form.elements.ScoreFilter.value;
     form.querySelector('[data-class-register-threshold]').hidden = mode !== 'below';
     form.elements.ScoreThreshold.disabled = mode !== 'below';
@@ -15748,24 +15794,19 @@ function bindAcademicClassScoreRegister(form) {
     busy = true;
     const button = form.querySelector('[type="submit"]'); button.disabled = true;
     form.elements.ClassId.disabled = true;
-    register = null; page = 0; resetSubjects(); render(); status.textContent = 'Loading class scores…';
+    const requestedClassId = form.elements.ClassId.value;
+    subjectMenu.open = false; render(); status.textContent = 'Loading class scores…';
     try {
       const result = await academicManagementRequest('getAcademicClassScoreRegister', {
         SchoolSection: academicManagementFilters.section, SessionId: academicManagementFilters.sessionId,
-        TermId: academicManagementFilters.termId, ClassId: form.elements.ClassId.value
+        TermId: academicManagementFilters.termId, ClassId: requestedClassId
       });
-      if (!form.isConnected) return;
-      register = result.classScoreRegister;
-      const subjects = [...new Map(register.Columns.map(column => [column.SubjectId, column.SubjectName])).entries()];
-      subjectIds = subjects.map(([id]) => id);
-      subjectOptions.innerHTML = subjects.map(([id, name]) => `<label class="academic-checkbox-option"><input type="checkbox" data-class-register-subject value="${escapeHtml(id)}" checked><span>${escapeHtml(name)}</span></label>`).join('') || 'No subjects available.';
-      form.querySelectorAll('[data-class-register-subject-action]').forEach(button => { button.disabled = false; });
-      const tests = [...new Map(register.Columns.map(column => [column.TestId, column.TestName])).entries()];
-      form.elements.TestId.innerHTML = '<option value="">All tests</option>' + tests.map(([id, name]) => `<option value="${escapeHtml(id)}">${escapeHtml(name)}</option>`).join('');
-      subjectMenu.open = false;
-      status.textContent = `${register.ClassName}: ${register.StudentCount} students across all arms · ${register.SubjectCount} subjects. Raw marks / maximum. Scroll horizontally to see subjects; hover a mark for sheet status.`;
+      if (!form.isConnected || form.elements.ClassId.value !== requestedClassId) return;
+      loadedClassId = requestedClassId;
+      showRegister({ register: result.classScoreRegister, loadedAt: Date.now() });
+      remember();
       render();
-    } catch (error) { status.textContent = error.message || String(error); }
+    } catch (error) { status.textContent = `${error.message || String(error)}${register ? ' Previously loaded scores remain displayed; refresh did not complete.' : ''}`; }
     finally { busy = false; button.disabled = false; form.elements.ClassId.disabled = false; render(); }
   });
   reactivateButton?.addEventListener('click', async () => {
@@ -15792,13 +15833,24 @@ function bindAcademicClassScoreRegister(form) {
       // fetches its fresh server context; do not invent unlocked local marks.
       academicScorebookDraft.contextKey = '';
       academicManagementData.scorebookContext = null;
+      cache.clear();
       register = null; page = 0; resetSubjects();
       status.textContent = result.message + ' Reload class scores to refresh the register.';
       renderAcademicManagement(academicManagementData, status.textContent);
     } catch (error) { status.textContent = error.message || String(error); }
     finally { busy = false; loadButton.disabled = false; form.elements.ClassId.disabled = false; render(); }
   });
-  form.elements.ClassId.addEventListener('change', () => { register = null; page = 0; resetSubjects(); render(); status.textContent = 'Load the selected class to review its scores.'; });
+  form.elements.ClassId.addEventListener('change', () => {
+    remember();
+    loadedClassId = form.elements.ClassId.value;
+    const saved = cache.get(loadedClassId);
+    if (saved) showRegister(saved, true);
+    else {
+      register = null; page = 0; resetSubjects();
+      status.textContent = 'Load the selected class to review its scores. Recent classes are retained for 10 minutes in this workspace.';
+    }
+    render();
+  });
   form.elements.Query.addEventListener('input', () => { page = 0; render(); });
   form.elements.TestId.addEventListener('change', () => { page = 0; render(); });
   form.elements.ScoreFilter.addEventListener('change', () => { page = 0; render(); });
