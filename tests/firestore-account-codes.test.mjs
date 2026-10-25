@@ -42,3 +42,11 @@ test('money and vendor minor units stay numeric rather than inheriting identifie
   const old = firestoreDocumentToObject({fields:{PaidCents:{stringValue:'4000'}, FixedCents:{stringValue:'2500'}}});
   assert.equal(old.PaidCents,4000); assert.equal(old.FixedCents,2500);
 });
+
+test('identifier lists round-trip without rounding references and retain nested monetary types', () => {
+  const input = { References: ['261022020100617512345678', '12345'], SubjectIds: ['123', '00123'],
+    Amount: [100, 12.5], Entries: [{ Reference: '261022020100617512345678', PaidCents: 1250 }] };
+  const before = structuredClone(input);
+  assert.deepEqual(roundTrip(input), input);
+  assert.deepEqual(input, before);
+});

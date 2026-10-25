@@ -13,6 +13,35 @@ function databaseContext(response) {
 }
 const testEnv = {FIREBASE_PROJECT_ID:'test',FIREBASE_CLIENT_EMAIL:'test',FIREBASE_PRIVATE_KEY:'test'};
 
+test('IN reference queries preserve long and numeric-looking identifiers exactly like scalar queries', () => {
+  const references = ['261022020100617512345678', '12345', '0012345', 'DCA/24/1822', 'SYS-PAY-12345'];
+  for (const field of ['Reference', 'GatewayReference', 'SourceId', 'JournalNo', 'AdmissionNo', 'Code']) {
+    const scalar = references.map(value => buildStructuredQuery('records', { filters: [{ field, op: '==', value }] }).structuredQuery.where.fieldFilter.value);
+    const array = buildStructuredQuery('records', { filters: [{ field, op: 'in', value: references }] }).structuredQuery.where.fieldFilter.value.arrayValue.values;
+    assert.deepEqual(array, scalar, field);
+    assert.deepEqual(array, references.map(stringValue => ({ stringValue })));
+  }
+});
+
+test('array-contains-any identifiers remain strings while monetary filter values remain numeric', () => {
+  const ids = buildStructuredQuery('memberships', { filters: [{ field: 'SubjectIds', op: 'array-contains-any', value: ['123', '456'] }] });
+  assert.deepEqual(ids.structuredQuery.where.fieldFilter.value.arrayValue.values, [{ stringValue: '123' }, { stringValue: '456' }]);
+  const amounts = buildStructuredQuery('payments', { filters: [{ field: 'Amount', op: 'in', value: ['125', 12.5, 0] }] });
+  assert.deepEqual(amounts.structuredQuery.where.fieldFilter.value.arrayValue.values, [{ integerValue: '125' }, { doubleValue: 12.5 }, { integerValue: '0' }]);
+});
+
+test('HTTP error streams retain the actual database reason and normalized retry status', async () => {
+  for (const [status, upstream, message, expectedStatus] of [
+    [400, 'INVALID_ARGUMENT', 'Invalid integer in reference filter', 400],
+    [400, 'RESOURCE_EXHAUSTED', 'Quota exceeded', 429],
+    [400, 'ABORTED', 'Concurrent update', 409]
+  ]) {
+    const context = databaseContext({ ok: false, status, json: async () => [{ error: { status: upstream, message } }] });
+    await assert.rejects(context.queryCollection(testEnv, 'payments'), error =>
+      error.message === message && error.status === expectedStatus && error.upstreamCode === upstream);
+  }
+});
+
 test('aggregation counts return zero accurately, carry a snapshot and reject incomplete responses', async () => {
   const readTime = '2026-10-24T10:00:00.000Z';
   for (const value of ['0', '22000']) {

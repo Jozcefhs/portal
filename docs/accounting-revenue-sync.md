@@ -46,6 +46,31 @@ Report date filters still do not restrict synchronization.
 
 ## Client compatibility and rollout
 
+### Numeric-reference lookup repair — 25 October 2026
+
+A payment with a long numeric bank reference repeatedly stopped in the payments
+stage with HTTP 400. Scalar reference fields were stored as text, but the shared
+Firestore encoder discarded the field name when encoding an array for an `IN`
+query. It converted reference strings into numbers, rounding long values and
+producing an invalid INT64. Short numeric references could also miss an existing
+text reference, so bypassing the failed payment would not have been a safe fix.
+
+Array elements now retain their field's scalar encoding rules. References and
+other configured identifiers remain exact text; monetary arrays remain numeric.
+Firestore HTTP error streams also retain the upstream reason instead of reporting
+only a generic 400. No source data, journal, or checkpoint migration is required.
+
+Planning-only checks of the ten dependency queries for the reported payment
+returned HTTP 200 after the repair; five had returned HTTP 400 before it. No
+financial record was written during this verification. All 4,011 regression
+tests and the Pages Functions build passed, including exact-reference replay,
+checkpoint resumption, branch scope and balanced-posting checks.
+
+The repair is shared server code for every edition. Existing resumable desktop
+clients receive it without a new installer: click **Synchronize Revenue** again
+to resume the existing run. A completed deployment does not itself execute the
+financial synchronization or declare the unfinished run complete.
+
 The updated desktop starts/resumes using `SyncVersion: 1`, then sends the
 returned `RunId` and `Step` until `complete: true`. It displays progress,
 prevents duplicate clicks, stops on a workspace change and refreshes reports

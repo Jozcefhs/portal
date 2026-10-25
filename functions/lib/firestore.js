@@ -17,7 +17,8 @@ function firestoreEnvironmentKey(env) {
 }
 
 function firestoreErrorStatus(data, responseStatus) {
-  const upstreamCode = clean(data?.error?.status).toUpperCase();
+  const detail = Array.isArray(data) ? data.find(row => row?.error) : data;
+  const upstreamCode = clean(detail?.error?.status).toUpperCase();
   if (upstreamCode === 'RESOURCE_EXHAUSTED') {
     return {
       status: 429,
@@ -187,7 +188,8 @@ export async function firestoreRequest(env, path, options = {}) {
     throw error;
   }
   if (!response.ok) {
-    const message = data && data.error && data.error.message ? data.error.message : `Database request failed (${response.status})`;
+    const detail = Array.isArray(data) ? data.find(row => row?.error) : data;
+    const message = detail?.error?.message || `Database request failed (${response.status})`;
     const error = new Error(message);
     const normalized = firestoreErrorStatus(data, response.status);
     error.status = normalized.status;
@@ -252,7 +254,10 @@ export function toFirestoreValue(value, key = '') {
     return { timestampValue: cleaned.toISOString() };
   }
   if (Array.isArray(cleaned)) {
-    return { arrayValue: { values: cleaned.map((item) => toFirestoreValue(item)) } };
+    // IN/array queries must use the same field type as scalar reads and writes.
+    // Dropping the key turns numeric-looking references into rounded numbers
+    // (or an invalid INT64), and can miss an existing financial posting.
+    return { arrayValue: { values: cleaned.map((item) => toFirestoreValue(item, key)) } };
   }
   if (typeof cleaned === 'object') {
     return { mapValue: { fields: objectToFirestoreFields(cleaned) } };

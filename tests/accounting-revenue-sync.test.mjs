@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import * as mutationGuards from '../functions/lib/accounting-mutation-guards.js';
 import { continueRevenueSync, revenueSyncWrite, revenueSyncReader } from '../functions/lib/accounting-revenue-sync.js';
 import { accountingSyncRelated, planRevenueSyncRow, prepareRevenueSyncPage } from '../functions/api/backend.js';
+import { buildStructuredQuery } from '../functions/lib/firestore.js';
 
 const scope = { actor: 'accounts', edition: 'school', branchId: 'main' };
 const target = { stage: 'invoices', collection: 'invoices' };
@@ -120,7 +121,11 @@ function plannerData(initial) {
     listCollection: async (_env, collection) => [...rows.entries()].filter(([key]) => key.startsWith(`${collection}/`)).map(([, row]) => structuredClone(row)),
     queryCollection: async (_env, collection, query) => {
       reads.push({ collection, query });
-      return [...rows.entries()].filter(([key, row]) => key.startsWith(`${collection}/`) && query.filters.every(filter => filter.value.includes(row[filter.field])))
+      const filters = query.filters.map(filter => {
+        const encoded = buildStructuredQuery(collection, { filters: [filter] }).structuredQuery.where.fieldFilter.value;
+        return { field: filter.field, values: encoded.arrayValue.values.map(value => value.stringValue ?? Number(value.integerValue ?? value.doubleValue)) };
+      });
+      return [...rows.entries()].filter(([key, row]) => key.startsWith(`${collection}/`) && filters.every(filter => filter.values.includes(row[filter.field])))
         .map(([, row]) => structuredClone(row)).slice(0, query.limit);
     },
     prepareJournal: async (_env, journal) => {
@@ -130,6 +135,51 @@ function plannerData(initial) {
   };
   return { rows, reads, options };
 }
+
+test('long numeric bank references reconcile exactly and recognize existing posted revenue on retry', async () => {
+  for (const edition of ['school', 'faith', 'organization']) {
+    const reference = '261022020100617512345678';
+    const payment = source('P1', { PaymentId: 'P1', Reference: reference, GatewayReference: reference,
+      AccountRef: 'TEST/001', FeeCode: 'OTHER', FeeCategory: 'Other', Amount: 100,
+      Method: 'Bank Transfer', Status: 'Paid', PaidAt: '2026-10-22T10:00:00Z' });
+    const fixture = plannerData([['payments', payment]]);
+    const before = structuredClone(payment);
+    const target = { stage: 'payments', collection: 'payments' };
+    const first = await planRevenueSyncRow({}, target, payment, { ...scope, edition }, new Map(), fixture.options);
+    const journal = first.writes.find(write => write.collectionPath === 'accountingJournals');
+    assert.ok(journal, 'The unposted receipt has a planned revenue journal');
+    assert.equal(journal.data.Reference, reference);
+    assert.equal(journal.exists, false);
+    assert.equal(journal.data.TotalDebit ?? journal.data.Lines.reduce((sum, line) => sum + line.Debit, 0), 100);
+    fixture.rows.set(`accountingJournals/${journal.documentId}`, source(journal.documentId, { ...journal.data, Status: 'Posted' }));
+    const saved = JSON.stringify([...fixture.rows]);
+    const retry = await planRevenueSyncRow({}, target, payment, { ...scope, edition }, new Map(), fixture.options);
+    assert.deepEqual(retry.writes, [], 'The existing exact-reference posting is not duplicated or overwritten');
+    assert.equal(JSON.stringify([...fixture.rows]), saved);
+    assert.deepEqual(payment, before);
+  }
+});
+
+test('a failed reference lookup resumes the same checkpoint and commits a posting only once', async () => {
+  let failure = true;
+  const fixture = store(1, { planRow: async (_target, row) => {
+    if (failure) throw Object.assign(new Error('Invalid integer in reference filter'), { status: 400 });
+    return { changes: 1, writes: [revenueSyncWrite('accountingJournals', `J-${row.__id}`, { Reference: '261022020100617512345678' })] };
+  } });
+  const initial = await fixture.call({});
+  const request = { RunId: initial.runId, Step: initial.step };
+  await assert.rejects(fixture.call(request), /checkpoint was not advanced/);
+  const resumed = await fixture.call({});
+  assert.equal(resumed.runId, initial.runId);
+  assert.equal(resumed.step, initial.step);
+  assert.equal(fixture.commits.length, 0);
+  failure = false;
+  const complete = await fixture.call(request);
+  assert.equal(complete.complete, true);
+  assert.equal(complete.created, 1);
+  assert.deepEqual(await fixture.call(request), complete);
+  assert.equal(fixture.commits.length, 1);
+});
 
 test('missing invoice journals are planned with balanced lines and an atomic source-version fence', async () => {
   for (const edition of ['school', 'church', 'organization', 'hotel']) {
