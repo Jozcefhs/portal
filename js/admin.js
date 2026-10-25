@@ -15582,8 +15582,8 @@ function academicScorebookWorkspace(data, rows) {
       <div class="class-register-subject-panel"><div class="class-register-actions"><button type="button" data-class-register-subject-action="all" disabled>Select all</button><button type="button" data-class-register-subject-action="none" disabled>Clear</button></div>
       <div class="class-register-subject-options" data-class-register-subject-options>Load class scores to choose subjects.</div></div>
     </details></div>
-    <label>Score filter<select name="ScoreFilter" aria-describedby="class-register-filter-hint"><option value="all">All students</option><option value="missing">Missing scores (any subject)</option><option value="missing-all">No scores at all</option><option value="partial">Some scores, some missing</option><option value="scored-any">At least one score</option><option value="scored-all">Scores in all selected subjects</option><option value="below">Score below…</option></select></label>
-    <label data-class-register-threshold hidden>Raw score below<input name="ScoreThreshold" type="number" min="0" step="any" placeholder="For example, 50" aria-describedby="class-register-filter-hint" disabled></label></div>
+    <label>Score filter<select name="ScoreFilter" aria-describedby="class-register-filter-hint"><option value="all">All students</option><option value="missing">Missing scores (any subject)</option><option value="missing-all">No scores at all</option><option value="partial">Some scores, some missing</option><option value="scored-any">At least one score</option><option value="scored-all">Scores in all selected subjects</option><option value="below">Score below…</option><option value="above">Score above…</option></select></label>
+    <label data-class-register-threshold hidden><span data-class-register-threshold-label>Raw score below</span><input name="ScoreThreshold" type="number" min="0" step="any" placeholder="For example, 50" aria-describedby="class-register-filter-hint" disabled></label></div>
     <p id="class-register-filter-hint" data-class-register-filter-hint role="status">Showing all students. Score filters use only the selected test and subjects.</p>
     <div class="class-register-actions"><button type="submit">Load class scores</button><button type="button" class="secondary" data-class-register-print disabled>Preview / print</button>${data.permissions?.canManageScoreCorrections ? '<button type="button" class="secondary" data-class-register-reactivate disabled>Reactivate score for editing — whole class</button>' : ''}</div>
     <p role="status" data-class-register-status>Select a class to load its students and scores.</p>
@@ -15608,7 +15608,7 @@ function academicClassRegisterView(register, { testId = '', subjectIds = null, q
   const allSubjectsRepresented = [...requiredSubjects].every(id => representedSubjects.has(id));
   const rows = (register?.Rows || []).filter(row => {
     if (!`${row.StudentName} ${row.StudentRef}`.toLowerCase().includes(needle)) return false;
-    if (!['missing', 'missing-all', 'partial', 'scored-any', 'scored-all', 'below'].includes(scoreFilter)) return true;
+    if (!['missing', 'missing-all', 'partial', 'scored-any', 'scored-all', 'below', 'above'].includes(scoreFilter)) return true;
     const byColumn = new Map((row.Cells || []).map(cell => [cell.ColumnId, cell]));
     if (scoreFilter === 'scored-any') return columns.some(column => hasMark(byColumn.get(column.Id)));
     if (scoreFilter === 'partial') {
@@ -15635,7 +15635,8 @@ function academicClassRegisterView(register, { testId = '', subjectIds = null, q
       const cell = byColumn.get(column.Id);
       // Absence, exemption, non-enrolment and duplicate-review states are not missing marks.
       if (scoreFilter === 'missing') return isMissing(cell);
-      return Number.isFinite(threshold) && threshold >= 0 && hasMark(cell) && Number(cell.RawScore) < threshold;
+      return Number.isFinite(threshold) && threshold >= 0 && hasMark(cell)
+        && (scoreFilter === 'above' ? Number(cell.RawScore) > threshold : Number(cell.RawScore) < threshold);
     });
   });
   return { columns, rows };
@@ -15660,7 +15661,7 @@ function academicClassRegisterPrintHtml(register, filters, schoolName, period) {
     sections.push(`<section><h1>${escapeHtml(schoolName || 'School')}</h1><h2>${escapeHtml(register.ClassName)} — Class score register</h2>
       <p>${escapeHtml(period)} · All arms · ${rows.length} matching students</p>
       <p>Subjects: ${escapeHtml([...new Set(group.map(column => column.SubjectName))].join(', '))}<br>Tests: ${escapeHtml([...new Set(group.map(column => column.TestName))].join(', '))}</p>
-      <p>Raw marks / maximum · Includes Draft scores · Not a published result${filters.query ? `<br>Student filter: ${escapeHtml(filters.query)}` : ''}${filters.scoreFilter === 'missing' ? '<br>Score filter: Missing scores in at least one selected subject/test.' : filters.scoreFilter === 'missing-all' ? '<br>Score filter: No scores at all—missing every applicable selected subject/test. Zero, Absent and duplicate-review records exclude a student; Exempt and Not enrolled subjects are ignored.' : filters.scoreFilter === 'partial' ? '<br>Score filter: Some scores, some missing—a numeric mark in one selected subject and a missing mark in another, for the selected test(s). Zero counts; Absent, Exempt, Not enrolled and duplicate-review entries do not count as numeric or missing marks.' : filters.scoreFilter === 'scored-any' ? '<br>Score filter: At least one score—a recorded numeric mark in any selected subject/test, including zero.' : filters.scoreFilter === 'scored-all' ? '<br>Score filter: Scores in all selected subjects—recorded numeric marks in every selected subject/test. Zero counts; missing, Absent, Exempt, Not enrolled and duplicate-review entries are excluded.' : filters.scoreFilter === 'below' ? `<br>Score filter: Raw score below ${escapeHtml(filters.scoreThreshold)} in at least one selected subject/test (not a percentage).` : ''}</p>
+      <p>Raw marks / maximum · Includes Draft scores · Not a published result${filters.query ? `<br>Student filter: ${escapeHtml(filters.query)}` : ''}${filters.scoreFilter === 'missing' ? '<br>Score filter: Missing scores in at least one selected subject/test.' : filters.scoreFilter === 'missing-all' ? '<br>Score filter: No scores at all—missing every applicable selected subject/test. Zero, Absent and duplicate-review records exclude a student; Exempt and Not enrolled subjects are ignored.' : filters.scoreFilter === 'partial' ? '<br>Score filter: Some scores, some missing—a numeric mark in one selected subject and a missing mark in another, for the selected test(s). Zero counts; Absent, Exempt, Not enrolled and duplicate-review entries do not count as numeric or missing marks.' : filters.scoreFilter === 'scored-any' ? '<br>Score filter: At least one score—a recorded numeric mark in any selected subject/test, including zero.' : filters.scoreFilter === 'scored-all' ? '<br>Score filter: Scores in all selected subjects—recorded numeric marks in every selected subject/test. Zero counts; missing, Absent, Exempt, Not enrolled and duplicate-review entries are excluded.' : ['below', 'above'].includes(filters.scoreFilter) ? `<br>Score filter: Raw score ${filters.scoreFilter} ${escapeHtml(filters.scoreThreshold)} in at least one selected subject/test (not a percentage).` : ''}</p>
       <p>Subject section ${sections.length + 1} of ${Math.ceil(columns.length / 5)}</p>${academicClassRegisterTable(group, rows)}</section>`);
   }
   return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(register.ClassName)} class score register</title><style>
@@ -15752,8 +15753,10 @@ function bindAcademicClassScoreRegister(form) {
   const render = () => {
     loadButton.textContent = register ? 'Refresh class scores' : 'Load class scores';
     const mode = form.elements.ScoreFilter.value;
-    form.querySelector('[data-class-register-threshold]').hidden = mode !== 'below';
-    form.elements.ScoreThreshold.disabled = mode !== 'below';
+    const comparison = mode === 'below' || mode === 'above';
+    form.querySelector('[data-class-register-threshold]').hidden = !comparison;
+    form.querySelector('[data-class-register-threshold-label]').textContent = mode === 'above' ? 'Raw score above' : 'Raw score below';
+    form.elements.ScoreThreshold.disabled = !comparison;
     const validThreshold = form.elements.ScoreThreshold.value !== '' && form.elements.ScoreThreshold.validity.valid;
     form.querySelector('[data-class-register-filter-hint]').textContent = mode === 'missing'
       ? 'Missing a mark in at least one selected subject/test. Zero, Absent, Exempt, Not enrolled and duplicate-review records are not treated as missing.'
@@ -15765,15 +15768,15 @@ function bindAcademicClassScoreRegister(form) {
         ? 'At least one recorded numeric mark in the selected subjects/test(s), including zero. Students with no numeric marks are excluded.'
       : mode === 'scored-all'
         ? 'Recorded numeric marks in every selected subject/test. Zero counts; missing, Absent, Exempt, Not enrolled and duplicate-review entries are excluded.'
-      : mode === 'below' ? validThreshold
-        ? `Recorded raw score below ${form.elements.ScoreThreshold.value} in at least one selected subject/test—not a percentage. Zero counts; absent, exempt and missing marks are excluded.`
-        : 'Enter a valid raw-score threshold of 0 or more. Matches marks strictly below that number in any selected subject/test.'
+      : comparison ? validThreshold
+        ? `Recorded raw score strictly ${mode} ${form.elements.ScoreThreshold.value} in at least one selected subject/test. Uses raw marks; absent, exempt and missing marks are excluded.`
+        : `Enter a valid raw-score threshold of 0 or more. Matches marks strictly ${mode} that number in any selected subject/test.`
       : 'Showing all students. Score filters use only the selected test and subjects.';
     const { columns, rows } = academicClassRegisterView(register, filters());
     page = Math.max(0, Math.min(page, Math.max(0, Math.ceil(rows.length / pageSize) - 1)));
     const start = page * pageSize;
     form.querySelector('[data-class-register-table]').innerHTML = register ? columns.length
-      ? mode === 'below' && !validThreshold ? '<p>Enter a valid raw-score threshold to filter students.</p>'
+      ? comparison && !validThreshold ? '<p>Enter a valid raw-score threshold to filter students.</p>'
         : academicClassRegisterTable(columns, rows.slice(start, start + pageSize), start)
       : '<p>Select at least one subject with scores for this test.</p>' : '';
     form.querySelector('[data-class-register-count]').textContent = register ? `${rows.length ? start + 1 : 0}–${Math.min(start + pageSize, rows.length)} of ${rows.length} students` : '';

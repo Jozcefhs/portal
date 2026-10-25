@@ -116,6 +116,26 @@ test('below-score filter uses strict raw numeric comparison, includes zero, and 
   assert.deepEqual(register, before);
 });
 
+test('above-score filter is strict, respects subjects/tests/search and never changes saved marks', () => {
+  const register = scoreFilterFixture(), before = structuredClone(register);
+  const filters = { testId: 'CA1', subjectIds: ['math'], scoreFilter: 'above', scoreThreshold: '50' };
+  const refs = patch => Array.from(context.academicClassRegisterView(register, { ...filters, ...patch }).rows, row => row.StudentRef);
+  assert.deepEqual(refs({}), ['high']);
+  assert.deepEqual(refs({ scoreThreshold: '49.49' }), ['low', 'boundary', 'high']);
+  assert.deepEqual(refs({ scoreThreshold: '0' }), ['low', 'boundary', 'high']);
+  for (const scoreThreshold of ['', ' ', null, undefined, '-1', 'invalid', 'Infinity']) assert.deepEqual(refs({ scoreThreshold }), []);
+  assert.deepEqual(refs({ subjectIds: [] }), []);
+  assert.deepEqual(refs({ testId: 'CA2:theory' }), []);
+  assert.deepEqual(refs({ query: 'HIGH' }), ['high']);
+  assert.deepEqual(refs({ query: 'LOW' }), []);
+  assert.equal(refs({ subjectIds: ['math', 'english'] }).length, register.Rows.length);
+  const print = context.academicClassRegisterPrintHtml(register, filters, 'School', 'Term');
+  assert.match(print, /Raw score above 50/);
+  assert.match(print, /Learner high/);
+  assert.doesNotMatch(print, /Learner (boundary|missing|zero|low|absent)/);
+  assert.deepEqual(register, before);
+});
+
 test('no-scores-at-all requires every applicable selected mark to be missing and preserves saved data', () => {
   const register = scoreFilterFixture();
   const filters = { testId: 'CA1', subjectIds: ['math', 'english'], scoreFilter: 'missing-all' };
