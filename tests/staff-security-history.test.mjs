@@ -1,3 +1,4 @@
+import * as branchAccess from '../functions/lib/staff-branch-access.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -114,7 +115,7 @@ test('repeated cursors and failed later reads do not masquerade as complete or p
 const staffSource = await readFile(new URL('../functions/api/staff-users.js', import.meta.url), 'utf8');
 function routeHarness({ user = actor, auditFails = false, staffFails = false, signedIn = true } = {}) {
   const calls = [];
-  const context = vm.createContext({ Response, WEB_SECTION_KEYS: [], actorBranchScope, branchRecordVisible,
+  const context = vm.createContext({ ...branchAccess, Response, WEB_SECTION_KEYS: [], actorBranchScope, branchRecordVisible,
     requireFirestoreEnv: () => {}, requireStaffSession: async () => {
       if (!signedIn) throw Object.assign(new Error('Sign in required'), { status: 401 });
       return user;

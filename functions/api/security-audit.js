@@ -1,3 +1,4 @@
+import { securityAuditDisplayLabels } from '../lib/security-audit-labels.js';
 import { requireFirestoreEnv } from '../lib/firestore.js';
 import { branchRecordVisible } from '../lib/branch-scope.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
@@ -35,7 +36,7 @@ function includesValue(rowValue, wanted) {
 function matchesUser(row, wanted) {
   if (!clean(wanted)) return true;
   const value = lower(wanted);
-  return [row.ActorUsername, row.Actor, row.Subject].some((entry) => lower(entry) === value);
+  return [row.ActorUsername, row.Actor, row.Subject, row.SubjectDisplay].some((entry) => lower(entry) === value);
 }
 
 function filterRows(rows, body) {
@@ -49,6 +50,7 @@ function filterRows(rows, body) {
     && (!search || [
       row.Action, row.Module, row.Actor, row.ActorUsername, row.Subject,
       row.EntityType, row.EntityId, row.BranchId, row.Summary, row.Details, row.Route,
+      row.SubjectDisplay, row.EntityDisplay, row.BranchDisplay, row.DetailsDisplay,
       row.RequestId
     ].some((value) => lower(value).includes(search))));
 }
@@ -69,16 +71,27 @@ export async function onRequestPost(context) {
       error.status = 400;
       throw error;
     }
+    return Response.json(await securityAuditList(env, user, body), { headers: { 'Cache-Control': 'no-store' } });
+  } catch (error) {
+    return Response.json({ ok: false, message: error.message || String(error) }, {
+      status: error.status || 500,
+      headers: { 'Cache-Control': 'no-store' }
+    });
+  }
+}
+
+export async function securityAuditList(env, user, body) {
+  ensureAuditAccess(user);
     const { fromDate, toDate } = securityAuditDateRange(body);
     const paged = body.paged === true;
     const aggregate = await loadAggregatedSecurityAudit(env, { fromDate, toDate, perSourceLimit: 300,
       paged, batchCursor: body.batchCursor });
-    const visible = aggregate.rows.filter((row) => branchRecordVisible(row, user));
+    const visible = await securityAuditDisplayLabels(env, aggregate.rows.filter((row) => branchRecordVisible(row, user)));
     const facets = {
       actions: uniqueOptions(visible, (row) => row.Action),
       users: uniqueOptions(visible.flatMap((row) => [
         { value: row.ActorUsername || row.Actor },
-        { value: row.Subject }
+        { value: row.SubjectDisplay || row.Subject }
       ]), (row) => row.value),
       modules: uniqueOptions(visible, (row) => row.Module),
       outcomes: uniqueOptions(visible, (row) => row.Outcome),
@@ -87,7 +100,7 @@ export async function onRequestPost(context) {
     };
     const filtered = filterRows(visible, body);
     const limit = Math.min(1500, Math.max(50, Number(body.limit || 1000) || 1000));
-    return Response.json({
+    return {
       ok: true,
       fromDate,
       toDate,
@@ -98,11 +111,5 @@ export async function onRequestPost(context) {
         readTime: aggregate.readTime, scanned: aggregate.scanned } : {}),
       warnings: aggregate.warnings,
       facets
-    }, { headers: { 'Cache-Control': 'no-store' } });
-  } catch (error) {
-    return Response.json({ ok: false, message: error.message || String(error) }, {
-      status: error.status || 500,
-      headers: { 'Cache-Control': 'no-store' }
-    });
-  }
+    };
 }

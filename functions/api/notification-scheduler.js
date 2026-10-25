@@ -113,7 +113,7 @@ async function run(context) {
     stage = 'push-delivery-retries';
     const pushRetries = announcementsOnly ? { skipped: true } : await retryFailedPushDeliveries(context.env, { limit: 50 });
     stage = 'cbt-paper-retention';
-    const cbtPaperCleanup = attendanceOnly || identity.edition !== 'school' ? { skipped: true }
+    const cbtPaperCleanup = announcementsOnly || attendanceOnly || identity.edition !== 'school' ? { skipped: true }
       : await processAcademicCbtPaperRetention(context.env);
     stage = 'result-summary';
     const creditRunFailed = schoolFeeCredits.ok === false;
@@ -128,11 +128,18 @@ async function run(context) {
       && creditedInvoices === 0 && !cbtPaperCleanup.cleaned
       ? 'Routine system' : 'System activity';
     context.data.securityAuditOutcome = creditRunFailed || deliveryFailed || cleanupFailed ? 'Failed' : 'Success';
+    const activityKeys = ['processed','created','updated','sent','delivered','retried','cleaned','completed','creditedInvoices'];
+    const didWork = [schoolFeeCredits,reminders,libraryReminders,announcements,announcementPush,attendancePresence,pushRetries,cbtPaperCleanup]
+      .some(result => activityKeys.some(key => Number(result[key] || 0) > 0));
+    // A successful empty poll is diagnostics, not another business action.
+    // Never suppress attempted delivery, financial changes or a failed stage.
+    context.data.securityAuditHandled = !creditRunFailed && !deliveryFailed && !cleanupFailed && !didWork;
     context.data.securityAuditDetails = `Scheduler run; credited invoices: ${creditedInvoices}; announcements sent: ${Number(announcements.sent || 0)}; delivery failures reported: ${deliveryFailed ? 'yes' : 'no'}.`;
     return Response.json({
-      ok: !creditRunFailed && !cleanupFailed,
+      ok: !creditRunFailed && !cleanupFailed && !deliveryFailed,
       ...(creditRunFailed ? { message: 'One or more due school-fee credits could not be applied; inspect schoolFeeCredits and retry.' } : {}),
       ...(!creditRunFailed && cleanupFailed ? { message: 'Closed-term CBT paper cleanup needs a retry or review; its saved progress is retained.' } : {}),
+      ...(!creditRunFailed && !cleanupFailed && deliveryFailed ? { message: 'One or more notification deliveries failed. Inspect the stage results; completed deliveries are retained.' } : {}),
       workspaceId: identity.workspaceId,
       edition: identity.edition,
       schoolFeeCredits,
@@ -143,10 +150,14 @@ async function run(context) {
       attendancePresence,
       pushRetries,
       cbtPaperCleanup
-    }, { status: creditRunFailed || cleanupFailed ? 500 : 200, headers: { 'Cache-Control': 'no-store' } });
+    }, { status: creditRunFailed || cleanupFailed || deliveryFailed ? 500 : 200, headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     const diagnostic = authorized ? notificationSchedulerDiagnostic(stage, error) : null;
-    if (diagnostic) console.error(JSON.stringify({ event: 'notification-scheduler.failed', ...diagnostic }));
+    if (diagnostic) {
+      console.error(JSON.stringify({ event: 'notification-scheduler.failed', ...diagnostic }));
+      context.data.securityAuditOutcome = 'Failed';
+      context.data.securityAuditDetails = `Scheduler stage: ${diagnostic.stage}; ${diagnostic.issue}. ${diagnostic.reason}`;
+    }
     return Response.json({ ok: false,
       message: diagnostic ? `Notification scheduler failed at ${stage}: ${diagnostic.reason}` : error?.message || String(error),
       ...(diagnostic ? { diagnostic } : {})

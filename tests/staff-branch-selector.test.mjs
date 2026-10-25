@@ -115,6 +115,6 @@ test('the web companion sends and renders the server-enforced session branch', (
   assert.match(adminJs, /availableBranches = data\.branches\.map\(\(branch\) => \(\{/);
   assert.match(adminJs, /staffModulePreferencesData = data\.modulePreferences \|\| null;[\s\S]*Array\.isArray\(data\.branches\)/);
   assert.match(adminJs, /All branches \(organisation-wide\)/);
-  assert.match(adminJs, /Choose any configured branch without changing your working branch/);
+  assert.match(adminJs, /name="StaffBranchOption"/);
   assert.match(adminJs, /canAssignStaffBranches = data\.canAssignStaffBranches === true/);
 });

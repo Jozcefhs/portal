@@ -18,7 +18,7 @@ const [workflowSource, backendSource, adminSource] = await Promise.all([
 
 test('requisition offices have one non-overlapping responsibility each', () => {
   assert.deepEqual(requisitionCapabilities({ role: 'Accounts Officer' }), {
-    canConfirmRequisitions: true,
+    canApproveFinalStage: false, canConfirmRequisitions: true,
     canReviewRequisitions: false,
     canApproveRequisitions: false,
     canPostRequisitions: true

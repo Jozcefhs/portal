@@ -13,7 +13,7 @@ export async function openRequisitionApprovalSettings(request) {
     const data = await request({ action: 'get' });
     if (!dialog.isConnected) return;
     dialog.innerHTML = `<h2>Requisition approval settings</h2><p>Organisation-wide · all branches · ${esc(data.edition)} edition.</p>
-      <p>Checked stages run in order. Unchecked stages are bypassed. Keep at least one approval stage for each type. Accounts always records payment separately.</p>
+      <p>Checked stages run in order. Unchecked stages are bypassed. Keep at least one approval stage for each type. Authorised finance officers can complete the last checked stage within their account and amount limits. Accounts always records payment separately.</p>
       <form>${[['staff','Staff / department requisitions'],['vendor','Vendor payment requests']].map(([kind,label]) => `<fieldset style="margin:16px 0;padding:16px"><legend>${label}</legend>
         ${data.stages.map(s => `<label style="display:flex;align-items:center;justify-content:flex-start;gap:10px;margin:10px 0;font-weight:500"><input style="width:18px;height:18px;min-width:18px;flex:0 0 18px;margin:0" type="checkbox" name="${kind}" value="${esc(s.id)}" ${data.policies[kind].includes(s.id) ? 'checked' : ''}><span>${esc(s.label)}</span></label>`).join('')}
         <p data-path="${kind}" style="font-size:13px;color:#36516b"></p></fieldset>`).join('')}

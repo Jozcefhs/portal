@@ -1930,12 +1930,13 @@ function clearStaffWorkspaceState() {
 }
 
 function initializeStaffBranchContext(user = {}) {
-  const assignedBranchId = clean(user.assignedBranchId || user.branchId);
+  const assigned = user.branchAccess === 'all' ? null
+    : Array.isArray(user.assignedBranchIds) ? user.assignedBranchIds
+    : clean(user.assignedBranchId || user.branchId) ? [clean(user.assignedBranchId || user.branchId)] : null;
   const storedBranchId = readStoredStaffBranch(user);
-  selectedBranchId = assignedBranchId || clean(user.activeBranchId) || storedBranchId || 'all';
-  availableBranches = assignedBranchId
-    ? [{ id: assignedBranchId, name: clean(user.branchName) || assignedBranchId }]
-    : [];
+  const preferred = clean(user.activeBranchId) || storedBranchId;
+  selectedBranchId = assigned ? (assigned.includes(preferred) ? preferred : assigned[0] || '') : preferred || 'all';
+  availableBranches = assigned ? assigned.map(id => ({id, name: id === user.branchId ? clean(user.branchName) || id : id})) : [];
 }
 
 function staffBranchStorageKey(user = currentUser || {}) {
@@ -20803,8 +20804,8 @@ function financeRecordRow(record, type, capabilities) {
       'management authorized': { stage: 'director', nextStatus: 'Approved', role: 'Director or Super Admin', verb: 'approve' },
       approved: { stage: 'posting', nextStatus: 'Posted', role: 'Accounts Officer', verb: 'post and pay' }
     })[workflowStatus] : null);
-    const permitted = pending && ({ accounts: capabilities.canConfirmRequisitions, 'admin-review': capabilities.canReviewRequisitions,
-      director: capabilities.canApproveRequisitions, posting: capabilities.canPostRequisitions })[pending.stage];
+    const permitted = pending && ((pending.nextStatus === 'Approved' && capabilities.canApproveFinalStage) || ({ accounts: capabilities.canConfirmRequisitions, 'admin-review': capabilities.canReviewRequisitions,
+      director: capabilities.canApproveRequisitions, posting: capabilities.canPostRequisitions })[pending.stage]);
     if (permitted) {
       nextDecision = pending.nextStatus;
       nextLabel = `${pending.verb} as ${pending.role}`;
@@ -22051,10 +22052,11 @@ function securityAuditFilteredRows() {
   return (securityAuditData.rows || []).filter((row) => {
     if (!filters.includeRoutineSystem && securityAuditRoutineSystemSuccess(row)) return false;
     const user = lower(filters.user);
-    const userMatch = !user || [row.ActorUsername, row.Actor, row.Subject].some((value) => lower(value) === user);
+    const userMatch = !user || [row.ActorUsername, row.Actor, row.Subject, row.SubjectDisplay].some((value) => lower(value) === user);
     const searchMatch = !search || [
       row.Action, row.Module, row.Actor, row.ActorUsername, row.Subject, row.ActorRole,
-      row.EntityType, row.EntityId, row.BranchId, row.SourcePlatform, row.Summary, row.Details, row.Route
+      row.EntityType, row.EntityId, row.BranchId, row.SourcePlatform, row.Summary, row.Details, row.Route,
+      row.SubjectDisplay, row.EntityDisplay, row.BranchDisplay, row.DetailsDisplay
     ].some((value) => lower(value).includes(search));
     return (!filters.action || clean(row.Action) === clean(filters.action))
       && userMatch
@@ -22086,8 +22088,8 @@ function securityAuditDateTime(value) {
 }
 
 function securityAuditDetail(row) {
-  const entity = [clean(row.EntityType), clean(row.EntityId)].filter(Boolean).join(' / ');
-  const details = [entity, clean(row.Details), clean(row.Route)].filter(Boolean);
+  const entity = [clean(row.EntityType), clean(row.EntityDisplay || row.EntityId)].filter(Boolean).join(' / ');
+  const details = [entity, clean(row.DetailsDisplay ?? row.Details), clean(row.Route)].filter(Boolean);
   return details.length ? details.join(' | ') : '—';
 }
 
@@ -22095,12 +22097,12 @@ function securityAuditRowsHtml(rows) {
   return rows.length ? rows.map((row) => `
     <tr>
       <td>${escapeHtml(securityAuditDateTime(row.Timestamp))}</td>
-      <td class="security-audit-description"><strong>${escapeHtml(row.Action || 'Action not recorded')}</strong>${row.Summary ? `<p>${escapeHtml(row.Summary)}</p>` : ''}</td>
+      <td class="security-audit-description"><strong>${escapeHtml(row.Action || 'Action not recorded')}</strong>${row.Summary ? `<p>${escapeHtml(row.SummaryDisplay || row.Summary)}</p>` : ''}</td>
       <td>${escapeHtml(row.Module || 'Platform operations')}</td>
       <td><strong>${escapeHtml(row.Actor || row.ActorUsername || 'System')}</strong>${row.ActorUsername && row.ActorUsername !== row.Actor ? `<small>${escapeHtml(row.ActorUsername)}</small>` : ''}${row.ActorRole ? `<small>${escapeHtml(row.ActorRole)}</small>` : ''}</td>
-      <td>${escapeHtml(row.Subject || '—')}</td>
+      <td>${escapeHtml(row.SubjectDisplay || row.Subject || '—')}</td>
       <td><span class="security-audit-outcome is-${escapeHtml(lower(row.Outcome || 'success'))}">${escapeHtml(row.Outcome || 'Success')}</span></td>
-      <td>${escapeHtml(row.BranchId || 'main')}</td>
+      <td>${escapeHtml(row.BranchDisplay || row.BranchId || 'Main Branch')}</td>
       <td>${escapeHtml(row.SourcePlatform || 'Web')}</td>
       <td title="${escapeHtml(securityAuditDetail(row))}">${escapeHtml(securityAuditDetail(row))}</td>
     </tr>`).join('') : '<tr><td colspan="9">No audit actions match the selected filters.</td></tr>';
@@ -22156,7 +22158,7 @@ function renderSecurityAudit() {
         <label>Module<select name="module"><option value="">All modules</option>${(facets.modules || []).map((value) => securityAuditOption(value, filters.module)).join('')}</select></label>
         <label>Outcome<select name="outcome"><option value="">All outcomes</option>${(facets.outcomes || []).map((value) => securityAuditOption(value, filters.outcome)).join('')}</select></label>
         <label>Source<select name="source"><option value="">All sources</option>${(facets.sources || []).map((value) => securityAuditOption(value, filters.source)).join('')}</select></label>
-        <label>Branch<select name="branchId"><option value="">All permitted branches</option>${(facets.branches || []).map((value) => securityAuditOption(value, filters.branchId)).join('')}</select></label>
+        <label>Branch<select name="branchId"><option value="">All permitted branches</option>${(facets.branches || []).map((value) => `<option value="${escapeHtml(value)}"${value === filters.branchId ? ' selected' : ''}>${escapeHtml((securityAuditData.rows || []).find(row => row.BranchId === value)?.BranchDisplay || value)}</option>`).join('')}</select></label>
         <label class="security-audit-search">Search<input type="search" name="search" value="${escapeHtml(filters.search)}" placeholder="Action, person, reference or details"></label>
         <div class="security-audit-filter-actions"><button type="submit"${securityAuditData.loading ? ' disabled' : ''}>Load audit log</button><button type="button" id="stopSecurityAudit"${securityAuditData.loading ? '' : ' hidden'}>Stop loading</button><button type="button" id="resetSecurityAuditFilters" class="secondary">Clear filters</button></div>
       </form>
@@ -22543,7 +22545,9 @@ function renderStaffUsers() {
   const staffBranchChoices = availableBranches.length
     ? availableBranches
     : [{ id: clean(currentUser?.assignedBranchId || currentUser?.branchId || 'main'), name: clean(currentUser?.branchName || 'Main Branch') }];
-  const staffBranchOptions = `${canAssignAnyStaffBranch ? '<option value="all">All branches (organisation-wide)</option>' : ''}${staffBranchChoices.map((branch) => `<option value="${escapeHtml(branch.id)}">${escapeHtml(branch.name || branch.id)}</option>`).join('')}`;
+  const staffBranchOptions = `${canAssignAnyStaffBranch ? '<label class="checkbox"><input type="checkbox" name="StaffAllBranches">All branches (organisation-wide)</label>' : ''}${staffBranchChoices.map((branch) => `<label class="checkbox"><input type="checkbox" name="StaffBranchOption" value="${escapeHtml(branch.id)}">${escapeHtml(branch.name || branch.id)}</label>`).join('')}`;
+  const staffBranchLabel = user => user.BranchAccess === 'all' || (!user.BranchId && !user.BranchIds?.length)
+    ? 'All branches' : (user.BranchIds || [user.BranchId]).map(id => staffBranchChoices.find(branch => branch.id === id)?.name || id).join(', ');
   panelEl.innerHTML = `
     <div class="workflow-intro">
       <div><p class="eyebrow">Identity & access</p><h2>Staff & Permissions</h2><p class="muted">Shared database accounts for desktop and web access</p>${staffNamesNeedingReview ? `<p class="muted">${staffNamesNeedingReview} legacy staff name${staffNamesNeedingReview === 1 ? '' : 's'} cannot be safely split automatically. Open each account and enter its identity fields manually; the name-format setting only rearranges display order.</p>` : ''}</div>
@@ -22574,7 +22578,7 @@ function renderStaffUsers() {
         return `
         <article class="staff-user-row" data-staff-user-row data-list-index="${entry.index}" data-list-name="${escapeHtml(entry.name)}" data-list-created="${entry.created}" data-list-modified="${entry.modified}" data-list-search="${escapeHtml(entry.search)}" data-list-role="${escapeHtml(entry.role)}" data-list-status="${entry.status}">
           <div class="staff-user-avatar">${escapeHtml((user.DisplayName || user.Username || 'U').split(/\s+/).slice(0,2).map((part) => part[0]).join('').toUpperCase())}</div>
-          <div class="staff-user-copy"><strong>${escapeHtml(user.DisplayName || user.LoginUsername || user.Username)}</strong><span>@${escapeHtml(user.LoginUsername || user.Username)} • ${escapeHtml(user.Role)}</span><small>${escapeHtml(user.Department || (user.Role === 'External Auditor' ? 'Financial audit' : 'No department'))} • ${escapeHtml(user.BranchId || 'All branches')}${schoolEdition && user.Role !== 'External Auditor' ? ` / ${escapeHtml(user.SchoolSectionAccess || 'All sections')}` : ''}${user.Role === 'External Auditor' ? ` • Audit ${escapeHtml(user.AuditDateFrom)}–${escapeHtml(user.AuditDateTo)} • Expires ${escapeHtml(user.AuditExpiresAt)}` : ''}${yes(user.PasswordSetupRequired) ? ' • Password setup required' : yes(user.MustChangePassword) ? ' • Password change required' : ''}</small><small class="staff-mfa-account-state">${escapeHtml(staffMfaAccountLabel(user.Username))}</small></div>
+          <div class="staff-user-copy"><strong>${escapeHtml(user.DisplayName || user.LoginUsername || user.Username)}</strong><span>@${escapeHtml(user.LoginUsername || user.Username)} • ${escapeHtml(user.Role)}</span><small>${escapeHtml(user.Department || (user.Role === 'External Auditor' ? 'Financial audit' : 'No department'))} • ${escapeHtml(staffBranchLabel(user))}${schoolEdition && user.Role !== 'External Auditor' ? ` / ${escapeHtml(user.SchoolSectionAccess || 'All sections')}` : ''}${user.Role === 'External Auditor' ? ` • Audit ${escapeHtml(user.AuditDateFrom)}–${escapeHtml(user.AuditDateTo)} • Expires ${escapeHtml(user.AuditExpiresAt)}` : ''}${yes(user.PasswordSetupRequired) ? ' • Password setup required' : yes(user.MustChangePassword) ? ' • Password change required' : ''}</small><small class="staff-mfa-account-state">${escapeHtml(staffMfaAccountLabel(user.Username))}</small></div>
           <span class="workflow-status ${yes(user.Active) ? 'status-approved' : 'status-rejected'}">${yes(user.Active) ? 'Active' : 'Disabled'}</span>
           <div class="staff-user-actions"><button type="button" class="compact-icon-action compact-edit-action" data-edit-user="${escapeHtml(user.Username)}" aria-label="Edit ${escapeHtml(user.DisplayName || user.Username)}" title="Edit staff account"><span aria-hidden="true">&#9998;</span></button><button type="button" class="compact-icon-action compact-delete-action" data-delete-user="${escapeHtml(user.Username)}" aria-label="Delete ${escapeHtml(user.DisplayName || user.Username)}" title="Delete staff account"><span aria-hidden="true">&#128465;&#65038;</span></button></div>
         </article>
@@ -22650,7 +22654,7 @@ function renderStaffUsers() {
           <label>Display name<input name="DisplayName" readonly><small>Generated using ${escapeHtml(staffNameFormat)}.</small></label>
           <label>Role <select name="Role" required>${availableRoles.map((role) => `<option${role === defaultStaffRole ? ' selected' : ''}>${escapeHtml(role)}</option>`).join('')}</select></label>
           <label>Department<input name="Department" placeholder="Required for Department User"></label>
-          <label>Assigned branch<select name="BranchId"${canAssignAnyStaffBranch ? '' : ' disabled'}>${staffBranchOptions}</select><small>${canAssignAnyStaffBranch ? 'Choose any configured branch without changing your working branch.' : 'Your account may create staff only in its assigned branch.'}</small></label>
+          <fieldset class="staff-branch-checklist"><legend>Assigned branches</legend><div style="max-height:160px;overflow:auto;display:grid;gap:8px;padding:8px">${staffBranchOptions}</div><small>Check every branch this user may access. They work in one selected branch at a time.</small></fieldset>
           ${schoolEdition ? '<label>School section<select name="SchoolSectionAccess"><option>All</option><option>Primary</option><option>Secondary</option></select></label>' : ''}
         </div></section>
         <section class="config-group" data-audit-grant-group hidden><header><strong>External financial audit access</strong><small>This named, web-only account is read-only. Two-factor sign-in is mandatory regardless of the organisation-wide policy.</small></header><div class="config-grid">
@@ -22790,6 +22794,14 @@ function syncRequisitionEditPermission(form, roleChanged = false) {
       : 'Available to finance workflow officers or staff authorised to approve finance documents.';
 }
 
+function setStaffBranchChecks(form, user) {
+  const all = user.BranchAccess === 'all' || (user.BranchAccess !== 'selected' && !user.BranchId && !Array.isArray(user.BranchIds));
+  const ids = new Set(user.BranchIds || [user.BranchId]);
+  const allInput = form.querySelector('[name="StaffAllBranches"]');
+  if (allInput) allInput.checked = all;
+  form.querySelectorAll('[name="StaffBranchOption"]').forEach(input => { input.checked = !all && ids.has(input.value); });
+}
+
 function openStaffUserDialog(username = '') {
   const dialog = document.getElementById('staffUserDialog');
   const form = document.getElementById('staffUserForm');
@@ -22814,7 +22826,7 @@ function openStaffUserDialog(username = '') {
     form.elements.AuditDateTo.value = user.AuditDateTo || '';
     form.elements.AuditExpiresAt.value = user.AuditExpiresAt || '';
     form.elements.Department.value = user.Department || '';
-    form.elements.BranchId.value = user.BranchId || 'all';
+    setStaffBranchChecks(form, user);
     if (form.elements.SchoolSectionAccess) {
       form.elements.SchoolSectionAccess.value = user.SchoolSectionAccess || 'All';
     }
@@ -22834,7 +22846,7 @@ function openStaffUserDialog(username = '') {
     const preferredBranch = clean(selectedBranchId) && selectedBranchId !== 'all'
       ? selectedBranchId
       : clean(availableBranches[0]?.id || currentUser?.assignedBranchId || currentUser?.branchId || 'main');
-    form.elements.BranchId.value = preferredBranch;
+    setStaffBranchChecks(form, {BranchAccess:'selected', BranchIds:[preferredBranch]});
     form.elements.Active.checked = true;
     form.elements.MustChangePassword.checked = true;
     form.elements.ApprovalEnabled.checked = false;
@@ -22848,6 +22860,13 @@ function openStaffUserDialog(username = '') {
 }
 
 function bindStaffUserEvents() {
+  document.getElementById('staffUserForm')?.addEventListener('change', event => {
+    const input = event.target, form = event.currentTarget;
+    if (input.name === 'StaffAllBranches' && input.checked) form.querySelectorAll('[name="StaffBranchOption"]').forEach(item => { item.checked = false; });
+    if (input.name === 'StaffBranchOption' && input.checked) {
+      const all = form.querySelector('[name="StaffAllBranches"]'); if (all) all.checked = false;
+    }
+  });
   const staffRegister = panelEl.querySelector('[data-staff-account-register]');
   bindStaffUserListControls(staffRegister);
   ['FirstName', 'MiddleName', 'Surname'].forEach((field) => {
@@ -23019,6 +23038,13 @@ function bindStaffUserEvents() {
     const status = form.querySelector('[data-user-form-status]');
     const plansLink = form.querySelector('[data-subscription-plans-link]');
     const payload = Object.fromEntries(new FormData(form).entries());
+    payload.BranchAccess = form.querySelector('[name="StaffAllBranches"]')?.checked ? 'all' : 'selected';
+    payload.BranchIds = Array.from(form.querySelectorAll('[name="StaffBranchOption"]:checked'), input => input.value);
+    payload.BranchId = payload.BranchIds[0] || '';
+    delete payload.StaffAllBranches; delete payload.StaffBranchOption;
+    if (payload.BranchAccess !== 'all' && !payload.BranchIds.length) {
+      setStatus(status, 'Choose at least one assigned branch.', 'bad'); return;
+    }
     payload.Active = form.elements.Active.checked;
     payload.OriginalUsername = form.dataset.originalUsername || '';
     payload.MustChangePassword = form.elements.MustChangePassword.checked;

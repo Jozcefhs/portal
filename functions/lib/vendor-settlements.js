@@ -273,7 +273,7 @@ async function bootstrap(env, user, scope) {
       approvalOnly: user.vendorSettlementApprovalOnly === true,
       products: canOperate(user) || role(user) === 'Vendor User' && vendors.some(v => !['no','false','0','inactive','disabled'].includes(lower(v.Active ?? 'YES'))), reviewProducts: management.has(role(user)),
       configureApprovals: role(user) === 'Super Admin',
-      confirm: role(user) === 'Accounts Officer', review: role(user) === 'Admin', approve: requisitionCapabilities(user).canApproveRequisitions, pay: role(user) === 'Accounts Officer',
+      approveFinalStage: hasPrincipalApprovalGrant(user), confirm: role(user) === 'Accounts Officer', review: role(user) === 'Admin', approve: requisitionCapabilities(user).canApproveRequisitions, pay: role(user) === 'Accounts Officer',
       saleSections: (scope.OrganisationEdition === 'school' ? ['tuckShop'] : ['organizationStore','restaurant']).filter(section => (user.allowedSections || []).includes(section)),
       edition: scope.OrganisationEdition, section: scope.SchoolSection, branchId: scope.BranchId } };
 }
@@ -498,7 +498,7 @@ async function decision(env, user, scope, body, options) {
   } else {
     transition = assertRequisitionTransition(request, user, next);
     if (hasPrincipalApprovalGrant(user)) {
-      assertFinanceRoleLimit(await listCollection(env, 'accountingApprovalLimits'), 'Principal', 'Vendor Payment Request', amount(request.AmountCents));
+      assertFinanceRoleLimit(await listCollection(env, 'accountingApprovalLimits'), role(user), 'Vendor Payment Request', amount(request.AmountCents));
     }
     method = await authorize(env, user, body, options);
   }

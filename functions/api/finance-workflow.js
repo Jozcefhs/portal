@@ -720,7 +720,7 @@ async function advanceRequisition(env, user, body, request) {
   const requestedStatus = requestedRequisitionStatus(body.decision || body.status);
   const transition = assertRequisitionTransition(existing, user, requestedStatus);
   if (hasPrincipalApprovalGrant(user)) {
-    assertFinanceRoleLimit(await listCollection(env, 'accountingApprovalLimits'), 'Principal', 'Expense', amount(existing.Amount));
+    assertFinanceRoleLimit(await listCollection(env, 'accountingApprovalLimits'), clean(user.assignedRole || user.role), 'Expense', amount(existing.Amount));
   }
   if (transition.event === 'Posted') {
     if (!clean(body.recordVersion) || clean(body.recordVersion) !== clean(existing.__updateTime)) {

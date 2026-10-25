@@ -1,3 +1,4 @@
+import * as staffBranchAccess from '../functions/lib/staff-branch-access.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -45,7 +46,7 @@ function harness(users = []) {
   const core = vm.createContext(common);
   vm.runInContext(unmodule(integrity), core);
   const context = vm.createContext({
-    ...common,
+    ...common, ...staffBranchAccess,
     ...Object.fromEntries(['assertStaffAccountFinalState', 'beginStaffAccountChange', 'commitStaffAccountChanges',
       'resolveStaffAccountTarget', 'staffAccountCondition', 'staffAccountWrite'].map((name) => [name, core[name]])),
     WEB_SECTION_KEYS: [], EXTERNAL_AUDITOR_ROLE: 'External Auditor', resolveStaffAssignmentBranch,

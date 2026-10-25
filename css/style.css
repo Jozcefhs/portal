@@ -4192,3 +4192,13 @@ html[data-theme="dark"] .external-audit-finding{background:#0d1a29}
   .academic-scorebook-table :is(th,td).academic-student-cell{position:static;left:auto;z-index:auto}
   .academic-scorebook-table :is(th,td).academic-student-cell{min-width:170px;max-width:220px;white-space:normal}
 }
+
+/* Keep branch permissions legible in compact staff-account dialogs. */
+.staff-branch-checklist { min-width: 0; }
+.staff-branch-checklist label.checkbox {
+  display: flex; align-items: center; justify-content: flex-start;
+  gap: 10px; margin: 0; font-weight: 500; text-align: left;
+}
+.staff-branch-checklist input[type="checkbox"] {
+  width: 18px; height: 18px; min-width: 18px; flex: 0 0 18px; margin: 0;
+}

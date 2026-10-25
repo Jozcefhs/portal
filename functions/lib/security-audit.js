@@ -360,9 +360,9 @@ export function shouldPersistSecurityAudit(prepared = {}, actor = null, status =
   // Recovery success is atomically audited by the reset transaction. Requests
   // deliberately have a generic result and must not imply an email was sent.
   if (path === '/api/staff-password-recovery') return false;
-  // Retain workspace-load records and their failures. The routine-activity
-  // checkbox controls their visibility; changing the wording must not lose them.
-  if (isAcademicWorkspaceLoad(prepared.action, path)) return true;
+  // Successful workspace refreshes are reads, not academic changes. Historical
+  // entries remain visible; failed, denied and unconfirmed loads stay auditable.
+  if (isAcademicWorkspaceLoad(prepared.action, path)) return Number(status) !== 200;
   // Retain photo reads and failures; successful display requests are routine.
   if (isPassportPhotoRead(path, method)) return true;
   // Scheduler GETs perform work, unlike ordinary page reads. Preserve both
@@ -433,7 +433,7 @@ export async function persistRequestSecurityAudit({ env, request, prepared, resp
   if (auditNoChange === true && status >= 200 && status < 300
     && ['/api/staff-notifications', '/api/parent-dashboard'].includes(lower(prepared.pathname))
     && ['ARCHIVE NOTIFICATION', 'RESTORE NOTIFICATION'].includes(titleWords(effectivePrepared.action))) return null;
-  if (!shouldPersistSecurityAudit(effectivePrepared, null, status)) return null;
+  if (!shouldPersistSecurityAudit(effectivePrepared, null, status) && !['failed','denied'].includes(lower(authoritativeOutcome))) return null;
   const actor = authoritativeActor || await readStaffSession(env, request).catch(() => null);
   const outcome = status >= 400 ? securityAuditOutcome(status) : authoritativeOutcome || securityAuditOutcome(status);
   const headerBranch = clean(prepared.requestedBranchId);
@@ -543,6 +543,7 @@ export function normalizedLegacyAudit(row, source) {
 
 export function securityAuditRowVisible(row) {
   if (row.SourceCollection !== SECURITY_AUDIT_COLLECTION) return true;
+  if (isAcademicWorkspaceLoad(row.OriginalAction || row.Action, row.Route) || row.ActivityClass === "Routine workspace load") return true;
   return shouldPersistSecurityAudit({ method: row.Method, pathname: row.Route, action: row.Action }, null,
     row.HttpStatus || (lower(row.Outcome) === 'denied' ? 403 : lower(row.Outcome) === 'failed' ? 500 : 200));
 }

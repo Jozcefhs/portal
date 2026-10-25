@@ -1,5 +1,6 @@
 import { getDocument, listCollection } from './firestore.js';
 import { parseDesktopDeviceCredential, verifyDesktopDeviceCredential } from './desktop-pairing.js';
+import { assignedStaffBranches, selectAssignedStaffBranch } from './staff-branch-access.js';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
@@ -155,7 +156,8 @@ export function resolveAuthoritativeDesktopActor(body = {}, users = [], env = {}
       approvalAccounts: (Array.isArray(user.ApprovalAccounts) ? user.ApprovalAccounts : clean(user.ApprovalAccounts).split(',')).map(clean).filter(Boolean),
       requisitionEditEnabled: ['yes', 'true', '1', 'on'].includes(lower(user.RequisitionEditEnabled ?? false)),
       department: clean(user.Department || user.department),
-      branchId: clean(user.BranchId || user.branchId),
+      branchId: selectAssignedStaffBranch(user, body.DeviceBranchId || body.BranchId || body.branchId || body.UserBranchId) ?? '',
+      assignedBranchIds: assignedStaffBranches(user),
       schoolSectionAccess: clean(user.SchoolSectionAccess || user.schoolSectionAccess) || 'All',
       tabAccess: Array.isArray(user.TabAccess || user.tabAccess)
         ? (user.TabAccess || user.tabAccess).map(clean).filter(Boolean)
@@ -173,6 +175,7 @@ export function resolveAuthoritativeDesktopActor(body = {}, users = [], env = {}
       branchId: '',
       schoolSectionAccess: 'All',
       tabAccess: [],
+      assignedBranchIds: null,
       source: 'environment-admin'
     };
   }
@@ -216,6 +219,7 @@ export function applyAuthoritativeActor(body, actor) {
     UserApprovalAccounts: Array.isArray(actor.approvalAccounts) ? actor.approvalAccounts : [],
     UserDepartment: actor.department,
     UserBranchId: actor.branchId,
+    UserAssignedBranchIds: actor.assignedBranchIds,
     UserSchoolSectionAccess: actor.schoolSectionAccess,
     UserTabAccess: actor.tabAccess,
     RecordedBy: actor.displayName

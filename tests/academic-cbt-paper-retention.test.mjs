@@ -1,3 +1,4 @@
+import { buildStructuredQuery } from '../functions/lib/firestore.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -32,6 +33,7 @@ async function harness(rows=[]) {
   const db={
     getDocument:async(_env,collection,id)=>structuredClone(store.get(`${collection}/${id}`)||null),
     queryCollection:async(_env,collection,query)=>{
+      buildStructuredQuery(collection, query); // Validate the real Firestore query contract.
       queries.push({collection,query});
       return [...store.entries()].filter(([key])=>key.startsWith(`${collection}/`)).map(([,r])=>structuredClone(r))
         .filter(r=>(query.filters||[]).every(f=>r[f.field]===f.value))

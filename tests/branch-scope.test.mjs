@@ -47,7 +47,7 @@ test('branch isolation is wired into staff permissions, income analytics and HR'
     readFile(new URL('../functions/api/income-analytics.js', import.meta.url), 'utf8'),
     readFile(new URL('../functions/api/staff-hr.js', import.meta.url), 'utf8')
   ]);
-  assert.match(staffUsers, /staffRecordMatchesEdition\(row, actor\) && branchRecordVisible\(row, actor\)/);
+  assert.match(staffUsers, /staffRecordMatchesEdition\(row, actor\) && staffAccountVisibleInBranch\(row, actor\)/);
   assert.match(staffUsers, /listSecurityAudit\(env, actor\)/);
   assert.match(incomeAnalytics, /resolveRequestedBranch\(user, body\.branchId/);
   assert.match(incomeAnalytics, /assignedBranch\s*\?\s*\[assignedBranch\]/);

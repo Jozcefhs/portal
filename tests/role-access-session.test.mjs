@@ -1,3 +1,4 @@
+import * as branchAccess from '../functions/lib/staff-branch-access.js';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
@@ -46,7 +47,7 @@ function fixture(edition = 'school') {
       database.upsertDocument(env, collection, id, data, { updateTime: current.__updateTime })
   };
   const flags = organization.featureFlagsForEdition(edition);
-  const common = {
+  const common = { ...branchAccess,
     TextEncoder, TextDecoder, Request, Response, Headers, URL, crypto, btoa, atob, console,
     ...roles, ...organization, ...branches, ...database,
     EXTERNAL_AUDITOR_ROLE: 'External Auditor',

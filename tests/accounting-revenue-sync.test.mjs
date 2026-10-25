@@ -509,3 +509,24 @@ test('irrelevant ledger and credit sources do not make point reads', async () =>
   assert.deepEqual(await planRevenueSyncRow({}, { stage: 'ledger' }, source('L', { EntryType: 'Payment', Credit: 100 }), scope, new Map(), options), { writes: [] });
   assert.deepEqual(await planRevenueSyncRow({}, { stage: 'invoiceCredits' }, source('I', { FeeCategory: 'Club' }), scope, new Map(), options), { writes: [] });
 });
+
+
+test('one logical revenue run records start and completion atomically, never each batch or replay', async () => {
+  const fixture=store(121,{auditWrite:(run,phase)=>({collectionPath:'accountingAudit',documentId:`${run.RunId}-${phase}`,
+    exists:false,data:{Phase:phase,Processed:run.Processed}})});
+  let state=await fixture.call({});
+  const start=state;
+  assert.equal([...fixture.documents.keys()].filter(key=>key.startsWith('accountingAudit/')).length,1);
+  assert.equal((await fixture.call({})).runId,start.runId);
+  while(!state.complete) {
+    const payload={RunId:state.runId,Step:state.step};
+    state=await fixture.call(payload);
+    const commits=fixture.commits.length;
+    assert.deepEqual(await fixture.call(payload),state);
+    assert.equal(fixture.commits.length,commits);
+  }
+  const audit=[...fixture.documents].filter(([key])=>key.startsWith('accountingAudit/')).map(([,row])=>row);
+  assert.deepEqual(audit.map(row=>row.Phase),['Started','Completed']);
+  assert.equal(audit[1].Processed,121);
+  assert.ok(fixture.commits.at(-1).some(row=>row.collectionPath==='accountingRevenueSyncRuns' && row.data.Status==='Complete'));
+});

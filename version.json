@@ -1,8 +1,8 @@
 {
-  "version": "3.1.56",
+  "version": "3.1.57",
   "channel": "stable",
   "release_status": "published",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.56.exe",
-  "sha256": "30323e5894440a2659dfe1dfd535fc08398e5da040b75551d5e378911819afe7",
-  "notes": "Dynamax v3.1.56 adds Word/PDF entrance question papers with bulk answer keys, private remote and offline paper access, retained desktop class score registers and readable test names. Existing scores, answers and records are preserved."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.57.exe",
+  "sha256": "c11b14b28c3b6257abab0d46510b3a6ceb5dd1711a00e1a315df487d2a9e2715",
+  "notes": "Dynamax v3.1.57 adds assigned-branch checkboxes, branch entrance subjects and date-first history on desktop, readable audit names, notification scheduler repairs and authorised-officer final approval. Revenue synchronization now records one start and completion rather than every batch. Existing records are preserved."
 }

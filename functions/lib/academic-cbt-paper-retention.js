@@ -81,7 +81,7 @@ async function advance(env,original,db) {
   const term = await db.getDocument(env,TERMS,job.TermRecordId);
   assertClosedTerm(term,job);
   if (!job.PendingTestId) {
-    const rows = await db.queryCollection(env,TESTS,{filters:[{field:'TermId',op:'EQUAL',value:job.TermId}],
+    const rows = await db.queryCollection(env,TESTS,{filters:[{field:'TermId',op:'==',value:job.TermId}],
       orderBy:[{field:'__name__'}],limit:1,...(job.Cursor?{startAfterName:job.Cursor}:{})});
     if (!rows.length) {
       const timestamp = new Date().toISOString();
@@ -135,7 +135,7 @@ async function advance(env,original,db) {
 // Called by the existing authenticated scheduler, never by public page reads.
 export async function processAcademicCbtPaperRetention(env,options={}) {
   const db = {getDocument,queryCollection,batchCommitDocuments,deleteStoredDocument,assertUrls:assertAcademicCbtRetentionUrls,...options.db};
-  const jobs = await db.queryCollection(env,CBT_PAPER_CLEANUP_JOBS,{filters:[{field:'Status',op:'EQUAL',value:'Pending'}],limit:5});
+  const jobs = await db.queryCollection(env,CBT_PAPER_CLEANUP_JOBS,{filters:[{field:'Status',op:'==',value:'Pending'}],limit:5});
   const result = {ok:true,processed:0,cleaned:0,completed:0,failed:0};
   const started = Date.now();
   for (const job of jobs) {

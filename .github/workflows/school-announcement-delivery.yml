@@ -58,12 +58,17 @@ jobs:
             --arg edition "$EXPECTED_EDITION" \
             '{announcementsOnly:true,pushJobLimit:1,expectedWorkspaceId:$workspace,expectedEdition:$edition}')"
           for attempt in $(seq 1 15); do
-            response="$(curl --fail-with-body --silent --show-error \
+            if response="$(curl --fail-with-body --silent --show-error \
               --retry 2 --retry-all-errors \
               -X POST "$ENDPOINT" \
               -H "Authorization: Bearer $SCHEDULER_SECRET" \
               -H "Content-Type: application/json" \
-              --data "$payload")"
+              --data "$payload")"; then
+              :
+            else
+              printf '%s\n' "$response" | jq '{ok, message, diagnostic}' || true
+              exit 1
+            fi
             printf '%s\n' "$response"
             printf '%s' "$response" | jq -e \
               --arg workspace "${EXPECTED_WORKSPACE_ID,,}" \

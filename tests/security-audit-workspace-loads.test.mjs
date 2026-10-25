@@ -10,14 +10,14 @@ const load = { AuditId: 'LOAD-1', Actor: 'Test Officer', ActorRole: 'Teacher', R
   ActionContext: 'School section: secondary', Summary: 'Test Officer requested to bootstrap in Academic management.' };
 const normalize = row => normalizedLegacyAudit(row, source);
 
-test('workspace loads use understandable names while all attempts remain auditable', async () => {
+test('successful workspace refreshes do not write audit noise; failures and unconfirmed attempts remain auditable', async () => {
   const prepared = await prepareSecurityAudit(new Request('https://example.test/api/staff-academics', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'bootstrap', SchoolSection: 'secondary' })
   }), '/api/staff-academics');
   assert.equal(prepared.action, 'Load Academic Management workspace');
   for (const status of [200, 202, 206, 401, 403, 500]) {
-    assert.equal(shouldPersistSecurityAudit(prepared, null, status), true);
-    assert.equal(shouldPersistSecurityAudit({ ...prepared, action: 'Bootstrap' }, null, status), true);
+    assert.equal(shouldPersistSecurityAudit(prepared, null, status), status !== 200);
+    assert.equal(shouldPersistSecurityAudit({ ...prepared, action: 'Bootstrap' }, null, status), status !== 200);
   }
 });
 

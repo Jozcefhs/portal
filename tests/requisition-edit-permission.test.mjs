@@ -1,3 +1,4 @@
+import * as branchAccess from '../functions/lib/staff-branch-access.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -94,7 +95,7 @@ test('ungranted/revoked access, foreign branch, stale record and final approval 
 
 test('officer checkbox honours eligibility, revocation and administrator role changes', async () => {
   const admin = await readFile(new URL('../js/admin.js', import.meta.url), 'utf8');
-  const source = admin.slice(admin.indexOf('function syncRequisitionEditPermission('), admin.indexOf('\nfunction openStaffUserDialog('));
+  const source = admin.slice(admin.indexOf('function syncRequisitionEditPermission('), admin.indexOf('\nfunction setStaffBranchChecks('));
   const sync = vm.runInNewContext(`(${source})`, { clean });
   const input = { checked: false, disabled: false };
   const help = { textContent: '' };
@@ -207,7 +208,7 @@ test('large staff imports keep every permission grant and officer update in the 
     requiredStaffImportIdentity: row => row, staffImportIdentity: row => ({ ...row, DisplayName: `${row.FirstName} ${row.Surname}` }),
     safeId: value => value, ensureRoleAvailable() {}, assertSubscriptionSeatAvailable() {},
     EXTERNAL_AUDITOR_ROLE: 'External Auditor',
-    resolveStaffAssignmentBranch: () => 'main', assignmentActor: (_env, actor) => actor,
+    resolveStaffBranchAssignment: () => ({BranchAccess:'selected',BranchIds:['main'],BranchId:'main'}), assignmentActor: (_env, actor) => actor,
     schoolSectionAccessForRole: () => 'All', activeValue: value => value === true,
     requisitionEditGrant, requisitionEditPermissionAuditWrite, scopedApprovalAccounts: () => [],
     explicitOptIn: value => value === true, scopedTabAccess: () => [], nowIso: () => '2026-09-27',

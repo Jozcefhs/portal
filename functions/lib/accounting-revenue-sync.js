@@ -57,11 +57,14 @@ export async function continueRevenueSync(env, body, scope, hooks, overrides = {
       const next = { RunId: crypto.randomUUID(), Actor: scope.actor, BranchId: scope.branchId, Edition: scope.edition,
         Status: 'Running', Targets: targets, Stage: 0, Cursor: '', Step: 0, Processed: 0, Changes: 0,
         PageSize: 50, StartedAt: new Date().toISOString() };
+      const startAudit = hooks.auditWrite?.(next, 'Started');
       if (run) {
         if (!run.__updateTime) throw fail('The synchronization checkpoint has no database version. Reload and retry.', 428);
         await db.batchCommitLiteralDocuments(env, [{ collectionPath: stateCollection, documentId: key,
-          data: next, updateTime: run.__updateTime }]);
+          data: next, updateTime: run.__updateTime }, ...(startAudit ? [startAudit] : [])]);
       }
+      else if (startAudit) await db.batchCommitLiteralDocuments(env, [
+        {collectionPath:stateCollection,documentId:key,data:next,exists:false},startAudit]);
       else await db.createDocumentIfAbsent(env, stateCollection, key, next);
       run = await db.getDocument(env, stateCollection, key);
     }
@@ -125,6 +128,10 @@ export async function continueRevenueSync(env, body, scope, hooks, overrides = {
     PageSize: 50 };
   if (exhausted) Object.assign(next, { Stage: run.Stage + 1, Cursor: '', PageSize: 50 });
   if (next.Stage === run.Targets.length) Object.assign(next, { Status: 'Complete', CompletedAt: next.UpdatedAt });
+  if (next.Status === 'Complete') {
+    const completedAudit = hooks.auditWrite?.(next, 'Completed');
+    if (completedAudit) writes.set(`${completedAudit.collectionPath}/${completedAudit.documentId}`, completedAudit);
+  }
   writes.set(`${stateCollection}/${key}`, { collectionPath: stateCollection, documentId: key,
     data: next, updateTime: run.__updateTime });
   await db.batchCommitLiteralDocuments(env, [...writes.values()]);

@@ -15,6 +15,7 @@ import {
 import { getSchoolStructure } from './school-scope.js';
 import { requisitionEditGrant } from './requisition-edit-permission.js';
 import { applyStaffBranchContext } from './staff-branch-context.js';
+import { assignedStaffBranches } from './staff-branch-access.js';
 import { refreshOrganizationPlanPolicy } from './plan-policy-sync.js';
 import { loadStaffProfileImage } from './staff-profile-image.js';
 import { EXTERNAL_AUDITOR_ROLE, externalAuditAccessExpired } from './external-audit.js';
@@ -257,6 +258,8 @@ function publicUser(user) {
     assignedRole,
     department: inferDepartment(user),
     branchId: clean(user.BranchId || user.branchId),
+    assignedBranchIds: assignedStaffBranches(user) || [],
+    branchAccess: assignedStaffBranches(user) === null ? 'all' : 'selected',
     auditDateFrom: clean(user.AuditDateFrom || user.auditDateFrom),
     auditDateTo: clean(user.AuditDateTo || user.auditDateTo),
     auditExpiresAt: clean(user.AuditExpiresAt || user.auditExpiresAt),
@@ -364,11 +367,11 @@ export function sectionAccessFor(user = {}, organization = {}, roleAccess = null
   });
   // The personal grant opens a review-only vendor workspace when Role Access
   // has not separately granted vendor operations. Feature/subscription gates remain.
-  const principalApproval = clean(user.assignedRole || user.AssignedRole || user.role || user.Role) === 'Principal'
+  const principalApproval = !['External Auditor', 'Vendor User'].includes(clean(user.assignedRole || user.AssignedRole || user.role || user.Role))
     && user.approvalEnabled === true;
-  const vendorSettlementApprovalOnly = edition === 'school' && principalApproval
+  const vendorSettlementApprovalOnly = principalApproval
     && !allowedSections.includes('vendorSettlements');
-  if (edition === 'school' && principalApproval) {
+  if (principalApproval) {
     for (const [sections, flags] of [[allowedSections, featureFlags], [availableSections, editionFeatureFlags], [planSections, planFeatureFlags]]) {
       for (const section of filterSectionsForFeatures(['financeRequests', 'vendorSettlements'], flags)) {
         if (!sections.includes(section)) sections.push(section);
@@ -485,7 +488,7 @@ export function staffUserForAccess(user = {}, access = {}) {
 
 export async function staffUserForRequest(env, user, request) {
   const requestedBranch = request.headers.get('X-Dynamax-Branch') || '';
-  const needsConfiguredBranchValidation = !clean(user.branchId)
+  const needsConfiguredBranchValidation = (assignedStaffBranches(user)?.length > 1) || !clean(user.branchId)
     && clean(requestedBranch) && lower(requestedBranch) !== 'all';
   const structure = needsConfiguredBranchValidation ? await getSchoolStructure(env) : {};
   // Resolve and validate branch scope before looking up its role policy. Do not

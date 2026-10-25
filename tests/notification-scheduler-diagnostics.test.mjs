@@ -12,19 +12,20 @@ const stages = [
   ['processAttendancePresenceNotifications', 'attendance-presence'], ['retryFailedPushDeliveries', 'push-delivery-retries'],
   ['processAcademicCbtPaperRetention', 'cbt-paper-retention']
 ];
-function harness(failing, edition = 'school') {
+function harness(failing, edition = 'school', body = {}, resultOverrides = {}) {
   const calls = [], logs = [];
   const error = Object.assign(new Error('Database request failed (400)'), {status:400,
     data:[{error:{status:'FAILED_PRECONDITION',message:'The query requires an index. secret@example.com sk_live_private'}}]});
   const mocks = Object.fromEntries(stages.map(([name]) => [name, async () => {
-    calls.push(name); if (failing === name) throw error; return {};
+    calls.push(name); if (failing === name) throw error; return resultOverrides[name] || {};
   }]));
   const {onRequestPost} = vm.runInNewContext(`${source.replace(/^import[\s\S]*?;\r?\n/gm,'').replace(/\bexport\s+/g,'')}\n({onRequestPost})`, {
     ...mocks, Response, notificationSchedulerDiagnostic, console:{error:value=>logs.push(value)},
-    secureTextEqual:(a,b)=>a===b, readJsonBody:async()=>({}),
+    secureTextEqual:(a,b)=>a===b, readJsonBody:async()=>body,
     requiredDeploymentIdentity:()=>({edition,workspaceId:'synthetic'})
   });
-  return {calls,logs,run:(authorized=true)=>onRequestPost({env:{NOTIFICATION_SCHEDULER_SECRET:'test-secret'},
+  const data = {};
+  return {calls,logs,data,run:(authorized=true)=>onRequestPost({data,env:{NOTIFICATION_SCHEDULER_SECRET:'test-secret'},
     request:new Request('https://example.invalid/api/notification-scheduler',{method:'POST',headers:{Authorization:authorized?'Bearer test-secret':'Bearer wrong'}})})};
 }
 
@@ -76,4 +77,43 @@ test('successful scheduled processing retains its existing results and emits no 
   assert.equal(body.ok,true);
   assert.equal(body.diagnostic,undefined);
   assert.equal(h.logs.length,0);
+});
+
+
+test('announcement-only runs never execute paper deletion or unrelated financial processing', async () => {
+  const h = harness('processAcademicCbtPaperRetention', 'school', {announcementsOnly:true});
+  const response = await h.run();
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).cbtPaperCleanup.skipped, true);
+  assert.deepEqual(h.calls, ['processScheduledSchoolAnnouncements', 'processSchoolAnnouncementPushQueue']);
+});
+
+
+test('empty scheduler polls do not write audit noise, but deliveries, work and failures remain', async()=>{
+ const empty=harness();await empty.run();assert.equal(empty.data.securityAuditHandled,true);
+ for(const [name,result] of [['processFeeReminderSchedule',{created:1}],['processSchoolAnnouncementPushQueue',{delivered:2}],
+   ['processDueSchoolFeeCredits',{creditedInvoices:1}],['processAcademicCbtPaperRetention',{completed:1}],
+   ['processScheduledSchoolAnnouncements',{failed:1}]]){
+   const h=harness(null,'school',{}, {[name]:result});await h.run();assert.notEqual(h.data.securityAuditHandled,true,name);
+ }
+ const failed=harness('processFeeReminderSchedule');await failed.run();assert.notEqual(failed.data.securityAuditHandled,true);
+});
+
+test('reported delivery failures cannot be returned as successful scheduler runs', async()=>{
+  for (const [name, result] of [
+    ['processScheduledSchoolAnnouncements', {sent:2,failed:1}],
+    ['processSchoolAnnouncementPushQueue', {delivered:2,failed:1}],
+    ['processAttendancePresenceNotifications', {ok:false}],
+    ['retryFailedPushDeliveries', {retried:3,delivered:2}]
+  ]) {
+    const h=harness(null,'school',{}, {[name]:result});
+    const response=await h.run();
+    const body=await response.json();
+    assert.equal(response.status,500,name);
+    assert.equal(body.ok,false,name);
+    assert.match(body.message,/notification deliveries failed/);
+    assert.equal(h.data.securityAuditOutcome,'Failed');
+    assert.notEqual(h.data.securityAuditHandled,true);
+    assert.equal(h.calls.filter(value=>value===name).length,1);
+  }
 });

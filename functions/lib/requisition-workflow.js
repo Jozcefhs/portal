@@ -88,6 +88,7 @@ export function requisitionCapabilities(user = {}) {
     canConfirmRequisitions: role === 'Accounts Officer',
     canReviewRequisitions: role === 'Admin',
     canApproveRequisitions: ['Director', 'Super Admin'].includes(role) || hasPrincipalApprovalGrant(user),
+    canApproveFinalStage: hasPrincipalApprovalGrant(user),
     canPostRequisitions: role === 'Accounts Officer'
   };
 }
@@ -95,7 +96,7 @@ export function requisitionCapabilities(user = {}) {
 // This is an approval grant, not accounting or payment-posting authority.
 // Callers supply the server-resolved staff identity, never request-body grants.
 export function hasPrincipalApprovalGrant(user = {}) {
-  return clean(user.assignedRole || user.AssignedRole || user.role || user.Role) === 'Principal'
+  return !['External Auditor', 'Vendor User'].includes(clean(user.assignedRole || user.AssignedRole || user.role || user.Role))
     && user.approvalEnabled === true;
 }
 
@@ -133,7 +134,7 @@ export function requisitionPendingTransition(record = {}) {
 export const APPROVAL_STAGES = Object.freeze([
   { id: 'accounts', label: 'Accounts confirmation' },
   { id: 'admin-review', label: 'Admin review' },
-  { id: 'director', label: 'Final approval (Director / Super Admin / authorised Principal)' }
+  { id: 'director', label: 'Final approval (Director / Super Admin / authorised officer)' }
 ]);
 
 export function validateApprovalStages(stages) {
@@ -151,8 +152,8 @@ export function approvalFlowLabel(record = {}) {
 
 export function withApprovalRoute(record) {
   const pending = requisitionPendingTransition(record);
-  return { ...record, PendingApproval: pending?.stage === 'director'
-    ? { ...pending, role: 'Director, Super Admin or authorised Principal' } : pending, ApprovalFlowLabel: approvalFlowLabel(record) };
+  return { ...record, PendingApproval: pending?.nextStatus === 'Approved'
+    ? { ...pending, role: `${pending.role} or authorised officer` } : pending, ApprovalFlowLabel: approvalFlowLabel(record) };
 }
 
 export function assertRequisitionTransition(record = {}, userRole = '', requestedStatus = '') {
@@ -171,7 +172,7 @@ export function assertRequisitionTransition(record = {}, userRole = '', requeste
     err.code = 'REQUISITION_STAGE_COMPLETE';
     throw err;
   }
-  const delegated = transition.stage === 'director' && hasPrincipalApprovalGrant(user);
+  const delegated = transition.nextStatus === REQUISITION_STATUS.APPROVED && hasPrincipalApprovalGrant(user); // Any enabled final stage; never payment posting.
   if (!(transition.roles || [transition.role]).includes(role) && !delegated) {
     const err = new Error(`Only ${transition.role} can ${transition.verb} a requisition at the ${currentStatus} stage.`);
     err.status = 403;

@@ -382,7 +382,7 @@ test('scheduler invokes the correct announcement family and queue in all three e
     assert.equal(calls.filter(({ name }) => name.startsWith('processScheduled')).length, 1, edition);
     const queue = calls.find(({ name }) => name === 'processSchoolAnnouncementPushQueue');
     assert.equal(queue.options.edition, edition === 'school' ? 'school' : 'church');
-    assert.equal(calls.some(({name}) => name === 'processAcademicCbtPaperRetention'), edition === 'school');
+    assert.equal(calls.some(({name}) => name === 'processAcademicCbtPaperRetention'), false);
     if (edition !== 'school') assert.equal(calls.find(({ name }) => name === routine).options.edition, edition);
   }
 });

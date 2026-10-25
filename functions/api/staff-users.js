@@ -6,6 +6,7 @@ import { staffRecordMatchesEdition } from '../lib/records-desk.js';
 import { actorBranchScope, branchRecordVisible } from '../lib/branch-scope.js';
 import { getSchoolStructure } from '../lib/school-scope.js';
 import { configuredStaffBranches, resolveStaffAssignmentBranch, staffAssignmentActor } from '../lib/staff-branch-context.js';
+import { assignedStaffBranches, staffBranchAccessFields, staffAccountVisibleInBranch, assertStaffScopeManageable, resolveStaffBranchAssignment } from '../lib/staff-branch-access.js';
 import {
   accountingChartChoicesForEdition,
   accountingCodeAllowedForEdition
@@ -160,7 +161,7 @@ function publicUser(row, edition = 'school', featureFlags = null, profile = {}) 
     Surname: clean(row.Surname || row.surname || row.LastName || row.lastName),
     Role: clean(row.Role || row.role) || 'Front Desk',
     Department: clean(row.Department || row.department),
-    BranchId: clean(row.BranchId || row.branchId),
+    ...staffBranchAccessFields(row),
     AuditDateFrom: clean(row.AuditDateFrom || row.auditDateFrom),
     AuditDateTo: clean(row.AuditDateTo || row.auditDateTo),
     AuditExpiresAt: clean(row.AuditExpiresAt || row.auditExpiresAt),
@@ -232,7 +233,7 @@ function activeSuperAdmins(rows, excluding = '') {
 
 function listUsers(rows, actor, profile = {}) {
   return rows
-    .filter((row) => staffRecordMatchesEdition(row, actor) && branchRecordVisible(row, actor))
+    .filter((row) => staffRecordMatchesEdition(row, actor) && staffAccountVisibleInBranch(row, actor))
     .map((row) => publicUser(row, actor.edition, actor.featureFlags, profile))
     .sort((a, b) => a.LoginUsername.localeCompare(b.LoginUsername));
 }
@@ -256,7 +257,7 @@ async function saveUser(env, actor, body) {
   if (existing && !staffRecordMatchesEdition(existing, actor)) {
     const err = new Error('This staff account belongs to another organisation workspace.'); err.status = 403; throw err;
   }
-  if (existing && !branchRecordVisible(existing, actor)) {
+  if (existing && !staffAccountVisibleInBranch(existing, actor)) {
     const err = new Error('This staff account belongs to another branch.'); err.status = 403; throw err;
   }
   const role = clean(body.Role || body.role) || 'Front Desk';
@@ -282,12 +283,8 @@ async function saveUser(env, actor, body) {
     getSchoolStructure(env),
     loadOrganizationNameProfile(env)
   ]);
-  const branchId = resolveStaffAssignmentBranch(
-    assignmentActor(env, actor),
-    body.BranchId || body.branchId,
-    existing?.BranchId || existing?.branchId,
-    structure
-  );
+  const branchAssignment = resolveStaffBranchAssignment(assignmentActor(env, actor), body, existing, structure);
+  const branchId = branchAssignment.BranchId;
   const splitNameSubmitted = ['FirstName', 'firstName', 'MiddleName', 'middleName', 'Surname', 'surname', 'LastName', 'lastName']
     .some((key) => Object.prototype.hasOwnProperty.call(body, key));
   const identity = splitNameSubmitted
@@ -318,7 +315,7 @@ async function saveUser(env, actor, body) {
     Role: role,
     Department: externalAuditor ? '' : department,
     OrganisationEdition: clean(actor.edition) || 'school',
-    BranchId: branchId,
+    ...branchAssignment,
     ...auditGrant,
     SchoolSectionAccess: schoolSectionAccessForRole(
       role, body.SchoolSectionAccess || body.schoolSectionAccess, edition
@@ -353,7 +350,7 @@ async function saveUser(env, actor, body) {
 
 async function migrateStaffNames(env, actor) {
   const rows = await listCollection(env, 'staffUsers');
-  const visibleRows = rows.filter((row) => staffRecordMatchesEdition(row, actor) && branchRecordVisible(row, actor));
+  const visibleRows = rows.filter((row) => staffRecordMatchesEdition(row, actor) && staffAccountVisibleInBranch(row, actor));
   const review = visibleRows
     .filter((row) => staffSplitNameState(row) !== 'complete')
     .map((row) => ({
@@ -390,7 +387,7 @@ async function importUsers(env, actor, body) {
       seen.add(lower(username));
       const { existing, id } = resolveStaffAccountTarget(identityRows, username, '', { importing: true });
       if (existing && !staffRecordMatchesEdition(existing, actor)) throw new Error('This staff account belongs to another organisation workspace.');
-      if (existing && !branchRecordVisible(existing, actor)) throw new Error('This staff account belongs to another branch.');
+      if (existing && !staffAccountVisibleInBranch(existing, actor)) throw new Error('This staff account belongs to another branch.');
       const password = String(row.Password || row.password || '');
       const identity = staffImportIdentity({
         ...row,
@@ -410,12 +407,8 @@ async function importUsers(env, actor, body) {
       )) : -1;
       if (plannedIndex >= 0) plannedRows[plannedIndex] = { ...plannedRows[plannedIndex], Active: requestedActive };
       else plannedRows.push({ Username: username, LoginUsername: username, Active: requestedActive });
-      const branchId = resolveStaffAssignmentBranch(
-        assignmentActor(env, actor),
-        row.BranchId || row.branchId,
-        existing?.BranchId || existing?.branchId,
-        structure
-      );
+      const branchAssignment = resolveStaffBranchAssignment(assignmentActor(env, actor), row, existing, structure);
+      const branchId = branchAssignment.BranchId;
       const payload = {
         ...(existing || {}), Username: username,
         UsernameKey: lower(username),
@@ -427,7 +420,7 @@ async function importUsers(env, actor, body) {
         Surname: identity.Surname,
         Role: role, Department: department,
         OrganisationEdition: clean(actor.edition) || 'school',
-        BranchId: branchId,
+        ...branchAssignment,
         SchoolSectionAccess: schoolSectionAccessForRole(
           role,
           row.SchoolSectionAccess || row.schoolSectionAccess || existing?.SchoolSectionAccess || existing?.schoolSectionAccess,
@@ -506,7 +499,8 @@ async function deleteUser(env, actor, body) {
   const existing = rows.find((row) => lower(row.Username || row.__id) === lower(username));
   if (!existing) { const err = new Error('Staff account was not found.'); err.status = 404; throw err; }
   if (!staffRecordMatchesEdition(existing, actor)) { const err = new Error('This staff account belongs to another organisation workspace.'); err.status = 403; throw err; }
-  if (!branchRecordVisible(existing, actor)) { const err = new Error('This staff account belongs to another branch.'); err.status = 403; throw err; }
+  assertStaffScopeManageable(assignmentActor(env, actor), existing);
+  if (!staffAccountVisibleInBranch(existing, actor)) { const err = new Error('This staff account belongs to another branch.'); err.status = 403; throw err; }
   if (lower(username) === lower(actor.username)) { const err = new Error('You cannot delete the account currently signed in.'); err.status = 409; throw err; }
   if (clean(existing.Role) === 'Super Admin' && activeValue(existing.Active === undefined ? true : existing.Active) && activeSuperAdmins(rows, username).length === 0) {
     const err = new Error('At least one active Super Admin must remain.'); err.status = 409; throw err;
@@ -705,7 +699,7 @@ export async function onRequestPost(context) {
         getSchoolStructure(env),
         loadOrganizationNameProfile(env)
       ]);
-      const visibleRows = staffRows.filter((row) => staffRecordMatchesEdition(row, actor) && branchRecordVisible(row, actor));
+      const visibleRows = staffRows.filter((row) => staffRecordMatchesEdition(row, actor) && staffAccountVisibleInBranch(row, actor));
       const subscriptionRows = staffAccountsForSubscription(staffRows, actor.edition, actor.username);
       const users = listUsers(staffRows, actor, profile || {});
       const visibleActive = activeStaffAccountCount(visibleRows);
@@ -720,8 +714,8 @@ export async function onRequestPost(context) {
         roleAccess,
         nameFormat: clean(profile?.NameFormat || profile?.nameFormat) || 'Surname, first name, middle name',
         nameMigration: staffNameMigrationSummary(visibleRows),
-        branches: configuredStaffBranches(structure),
-        canAssignStaffBranches: assignmentActor(env, actor).canSwitchBranches === true,
+        branches: configuredStaffBranches(structure).filter(branch => { const ids = assignedStaffBranches(assignmentActor(env, actor)); return ids === null || ids.includes(lower(branch.id)); }),
+        canAssignStaffBranches: assignedStaffBranches(assignmentActor(env, actor)) === null,
         modulePreferences: modulePreferencesView(moduleSettings.organization),
         seatUsage: {
           active: organisationActive,

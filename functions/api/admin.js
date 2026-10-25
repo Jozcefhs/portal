@@ -174,7 +174,7 @@ export async function onRequestPost(context) {
       const tutorials = await loadPublishedTutorials(env, user.edition, tutorialProfile || {});
       const configuredBranches = configuredStaffBranches(structure);
       const branches = user.canSwitchBranches
-        ? configuredBranches
+        ? configuredBranches.filter(branch => user.branchAccess !== 'selected' || user.assignedBranchIds?.includes(branch.id.toLowerCase()))
         : configuredBranches.filter((branch) => branch.id.toLowerCase() === clean(user.assignedBranchId).toLowerCase());
       return Response.json({
         ok: true,

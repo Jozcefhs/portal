@@ -312,7 +312,7 @@
     }
     function requestCard(r) {
       const c = data.capabilities, stage = r.PendingApproval;
-      const next = stage && ({ accounts: c.confirm, 'admin-review': c.review, director: c.approve })[stage.stage] && stage.nextStatus;
+      const next = stage && ((stage.nextStatus === 'Approved' && c.approveFinalStage) || ({ accounts: c.confirm, 'admin-review': c.review, director: c.approve })[stage.stage]) && stage.nextStatus;
       return `<article class="vendor-card"><h3>${esc(r.VendorName)}</h3><span class="vendor-badge">${esc(r.Status)} · ${esc(r.PaymentStatus)}</span><small>${esc(r.SettlementId)} · revision ${r.Revision}</small>
         <p>${money(r.Amount)} requested · ${money(r.Paid)} paid<br>${esc(r.From)} — ${esc(r.To)}</p><div class="vendor-actions">
         <button data-request="${esc(r.SettlementId)}" data-action="print">Full list preview / print</button>

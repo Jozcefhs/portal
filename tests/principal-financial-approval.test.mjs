@@ -43,14 +43,14 @@ test('principal grant permits only final-stage decisions within every account an
   assert.equal(workflow.assertRequisitionTransition(request,principal,'Approved').stage,'director');
   for(const user of [{...principal,approvalEnabled:false},{...principal,approvalEnabled:'YES'},
     {...principal,approvalMaxAmount:399},{...principal,approvalMaxAmount:NaN},{...principal,approvalAccounts:[]},
-    {...principal,approvalAccounts:['2000']},{...principal,role:'Teacher'}]) {
+    {...principal,approvalAccounts:['2000']},{...principal,role:'Teacher',approvalEnabled:false}]) {
     assert.throws(()=>workflow.assertRequisitionTransition(request,user,'Approved'),e=>e.status===403);
   }
   for(const Status of ['Submitted','Accounts Confirmed','Approved']) {
     assert.throws(()=>workflow.assertRequisitionTransition({...request,Status,ApprovalFlow:{Stages:['accounts','admin-review','director']}},principal,Status==='Approved'?'Posted':'Approved'),e=>e.status===403);
   }
   assert.equal(workflow.assertRequisitionTransition({...request,Status:'Submitted',ApprovalFlow:{Stages:['director']}},principal,'Approved').event,'Approved');
-  assert.throws(()=>workflow.assertRequisitionTransition({...request,Status:'Submitted',ApprovalFlow:{Stages:['accounts']}},principal,'Approved'),e=>e.status===403);
+  assert.equal(workflow.assertRequisitionTransition({...request,Status:'Submitted',ApprovalFlow:{Stages:['accounts']}},principal,'Approved').event,'Approved');
   const vendor={SettlementId:'V1',Status:'Admin Reviewed',AmountCents:40000,PayableAccount:'2000',Allocations:[{PayableAccount:'2100'}]};
   assert.throws(()=>workflow.assertRequisitionTransition(vendor,principal,'Approved'),/account code/);
   assert.equal(workflow.assertRequisitionTransition({...vendor,Allocations:[]},principal,'Approved').event,'Approved');
@@ -98,4 +98,18 @@ test('desktop actor replaces forged approval grants, amounts and accounts with c
   const normalized=applyAuthoritativeActor(body,resolveAuthoritativeDesktopActor(body,[record]));
   assert.equal(normalized.UserApprovalMaxAmount,500); assert.deepEqual(normalized.UserApprovalAccounts,['6090','2000']);
   assert.equal(applyAuthoritativeActor(body,resolveAuthoritativeDesktopActor(body,[{...record,ApprovalEnabled:'NO'}])).UserApprovalEnabled,false);
+});
+
+
+test('every explicitly authorised officer may complete the last enabled stage, with scope limits retained', () => {
+  for (const role of ['Teacher','Admin','Accounts Officer','HR Officer','Pastor','Department User']) {
+    const officer={...principal,role};
+    for (const [Stages,Status] of [[['director'],'Submitted'],[['accounts'],'Submitted'],[['accounts','admin-review'],'Accounts Confirmed']]) {
+      const record={...request,Status,ApprovalFlow:{Stages}};
+      assert.equal(workflow.assertRequisitionTransition(record,officer,'Approved').nextStatus,'Approved');
+      assert.throws(()=>workflow.assertRequisitionTransition(record,{...officer,approvalMaxAmount:1},'Approved'),e=>e.status===403);
+    }
+    if (role !== 'Accounts Officer') assert.throws(()=>workflow.assertRequisitionTransition({...request,Status:'Approved',ApprovalFlow:{Stages:['director']}},officer,'Posted'),e=>e.status===403);
+  }
+  for (const role of ['External Auditor','Vendor User']) assert.throws(()=>workflow.assertRequisitionTransition(request,{...principal,role},'Approved'),e=>e.status===403);
 });

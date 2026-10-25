@@ -1,3 +1,5 @@
+import { assignedStaffBranches, selectAssignedStaffBranch } from './staff-branch-access.js';
+
 function clean(value) {
   return String(value ?? '').trim();
 }
@@ -25,26 +27,35 @@ export function staffAssignmentActor(user = {}, environmentAdminUsername = '') {
   return {
     ...user,
     assignedBranchId: '',
+    assignedBranchIds: [],
+    branchAccess: 'all',
     canSwitchBranches: true
   };
 }
 
 export function applyStaffBranchContext(user = {}, requestedBranch = '', structure = {}) {
   const branches = configuredStaffBranches(structure);
-  const assignedBranchId = clean(user.assignedBranchId || user.BranchId || user.branchId);
-  if (assignedBranchId) {
+  const assignedIds = assignedStaffBranches(user);
+  const assignedBranchId = assignedIds?.[0] || '';
+  if (assignedIds !== null) {
     const requested = lower(requestedBranch);
-    if (requested && requested !== 'all' && requested !== lower(assignedBranchId)) {
-      const error = new Error('This staff account is assigned to one branch and cannot switch to another branch.');
+    if (requested && requested !== 'all' && !assignedIds.includes(requested)) {
+      const error = new Error(assignedIds.length === 1 ? 'This staff account is assigned to one branch and cannot switch to another branch.' : 'This staff account cannot switch outside its assigned branches.');
       error.status = 403;
       throw error;
+    }
+    const selected = selectAssignedStaffBranch(user, requested);
+    if (structure.Branches?.length && !branches.some(branch => lower(branch.id) === selected)) {
+      throw Object.assign(new Error('The assigned branch is no longer configured. Contact an administrator.'), {status:403});
     }
     return {
       ...user,
       assignedBranchId,
-      activeBranchId: assignedBranchId,
-      canSwitchBranches: false,
-      branchId: assignedBranchId
+      assignedBranchIds: assignedIds,
+      branchAccess: 'selected',
+      activeBranchId: selected,
+      canSwitchBranches: assignedIds.length > 1,
+      branchId: selected
     };
   }
 
@@ -53,6 +64,8 @@ export function applyStaffBranchContext(user = {}, requestedBranch = '', structu
     return {
       ...user,
       assignedBranchId: '',
+      assignedBranchIds: [],
+      branchAccess: 'all',
       activeBranchId: 'all',
       canSwitchBranches: true,
       branchId: ''
@@ -68,6 +81,8 @@ export function applyStaffBranchContext(user = {}, requestedBranch = '', structu
   return {
     ...user,
     assignedBranchId: '',
+    assignedBranchIds: [],
+    branchAccess: 'all',
     activeBranchId: selected.id,
     canSwitchBranches: true,
     branchId: selected.id

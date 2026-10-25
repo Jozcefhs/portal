@@ -1,3 +1,6 @@
+import { securityAuditList } from './security-audit.js';
+import { loadDatedHistory } from '../lib/history-date-range.js';
+import { assignedStaffBranches, assertStaffScopeManageable, resolveStaffBranchAssignment } from '../lib/staff-branch-access.js';
 import { listBranchCollection } from '../lib/branch-reads.js';
 import { batchCommitDocuments, batchCommitLiteralDocuments, batchUpsertDocuments, createDocumentIfAbsent, deleteDocument, findOneByField, getDocument, listCollection, listCollectionForReport, listCollectionPage, patchDocumentFields, queryCollection, queryCollectionPages, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { feeBranchId, feeRowsForBranch, feeMatchesBranch, feeSetupBranch, resolveFeeDocument, feeDocumentWrite } from '../lib/fee-branch-scope.js';
@@ -876,6 +879,7 @@ export function requireBackendSecret(env, body) {
 }
 
 const VERIFIED_ACTOR_ACTIONS = new Set([
+  'getSecurityAudit',
   'entranceCbt',
   'getAcademicSubmissionSettings', 'saveAcademicSubmissionSettings', 'listAcademicSubmissions', 'payAcademicSubmission', 'verifyAcademicSubmission',
   'requisitionApprovalSettings',
@@ -1044,7 +1048,7 @@ const BRANCH_BOUND_DEVICE_ACTIONS = new Set([
   'savePayrollProfile', 'createPayrollProfilesFromStaff', 'importPayrollProfiles',
   'generatePayrollRun', 'requestPayrollTaxOverride', 'approvePayrollTaxOverride',
   'savePayrollRunStatus', 'payPayrollItem',
-  'getStaffUsers', 'saveStaffUser', 'deleteStaffUser',
+  'getStaffUsers', 'saveStaffUser', 'deleteStaffUser', 'getSecurityAudit',
   'saveBrevoSettings', 'saveSchoolProfile', 'getSchoolProfile', 'resetBranchProfileOverrides'
 ]);
 
@@ -2706,7 +2710,7 @@ async function getStoreOverview(env, body) {
   if (!['Bookstore', 'Uniform Store'].includes(storeType)) throw Object.assign(new Error('Choose a valid store.'), { status: 400 });
   await desktopSchoolOperationsActor(env, body, storeType === 'Bookstore' ? 'bookstore' : 'uniformStore');
   const scope = desktopInventoryScope(body);
-  const [{ categories, items }, orders] = await Promise.all([ensureStoreCategories(env, { readOnly: true, branchId: scope.BranchId, storeType }), listBranchCollection(env, 'storeOrders', scope.BranchId, { compatibleFilters: [{ field: 'StoreType', value: storeType, knownValues: ['Bookstore', 'Uniform Store', 'Organisation Store'] }] })]);
+  const [{ categories, items }, orders] = await Promise.all([ensureStoreCategories(env, { readOnly: true, branchId: scope.BranchId, storeType }), loadDatedHistory(env, 'storeOrders', body, 'CreatedAt', scope.BranchId)]);
   const matches = (row) => sameText(row.StoreType, storeType) && sameText(row.BranchId || 'main', scope.BranchId)
     && (!clean(row.OrganisationEdition) || sameText(row.OrganisationEdition, 'school'))
     && (sameText(scope.SchoolSection, 'All') || schoolSectionFor(row) === scope.SchoolSection.toLowerCase());
@@ -4687,8 +4691,8 @@ function normalizeFormSale(row) {
   };
 }
 
-async function getFormSales(env) {
-  const sales = (await listCollection(env, 'formSales'))
+async function getFormSales(env, body = {}) {
+  const sales = (await loadDatedHistory(env, 'formSales', body, 'PaymentDate', clean(body.UserBranchId || body.BranchId)))
     .map(normalizeFormSale)
     .sort((a, b) => clean(b.Time || b.PaymentDate).localeCompare(clean(a.Time || a.PaymentDate)));
   return {
@@ -8375,6 +8379,15 @@ async function syncRevenueToAccounting(env, body) {
   const scope = { edition: accountingEditionForRequest(env, body), branchId: accountingRequestBranch(body),
     actor: lower(body.UserUsername) };
   return continueRevenueSync(env, body, scope, {
+    auditWrite: (run, phase) => {
+      const write = accountingAuditWrite(`${phase} revenue synchronization`, 'Revenue synchronization', run.RunId, body,
+        phase === 'Completed' ? `${run.Processed} source records checked; ${run.Changes} changes saved. Existing payments and revenue entries are preserved.`
+          : 'Started or resumed a batch-based synchronization. Completion will be recorded separately.',
+        run.CompletedAt || run.StartedAt);
+      const id = `REVENUE-SYNC-${run.RunId}-${phase}`;
+      return {...write, documentId:id, exists:false, data:{...write.data, AuditId:id,
+        Subject:'Revenue synchronization', Outcome:phase === 'Completed' ? 'Success' : 'In progress', SourcePlatform:'Desktop'}};
+    },
     prepare: async () => {
       await seedAccountingChart(env);
       const targets = [
@@ -11227,8 +11240,8 @@ export function desktopStaffUserMatchesDeviceScope(row = {}, deviceBranchId = ''
   const suppliedBranchId = clean(deviceBranchId);
   if (!suppliedBranchId) return true;
   const approvedBranchId = canonicalSchoolBranchId(suppliedBranchId);
-  const assignedBranchId = assignedStaffBranchId(row);
-  if (assignedBranchId) return assignedBranchId === approvedBranchId;
+  const assigned = assignedStaffBranches(row);
+  if (assigned !== null) return assigned.includes(approvedBranchId);
   // An organisation-wide Super Admin must be able to complete first login on
   // a newly paired branch computer. The device credential still forces every
   // subsequent backend request into the approved branch scope.
@@ -11257,6 +11270,13 @@ async function getStaffUsersForDesktop(env, body) {
   };
 }
 
+function desktopStaffAssignmentActor(body) {
+  const ids = body.DeviceBranchId ? [canonicalSchoolBranchId(body.DeviceBranchId)] : body.UserAssignedBranchIds;
+  // Verified actor fields replace all client-supplied branch permissions.
+  return {branchAccess: ids === null ? 'all' : 'selected', assignedBranchIds: Array.isArray(ids) ? ids : [],
+    branchId: body.UserBranchId || body.BranchId};
+}
+
 async function saveStaffUserFromDesktop(env, body) {
   requireStaffUserAdmin(body);
   const incoming = body.User && typeof body.User === 'object' ? body.User : body;
@@ -11266,12 +11286,7 @@ async function saveStaffUserFromDesktop(env, body) {
   const users = state.rows;
   const { existing } = resolveStaffAccountTarget(users, username, body.OriginalUsername || incoming.OriginalUsername);
   const deviceBranchId = clean(body.DeviceBranchId);
-  if (deviceBranchId && existing && assignedStaffBranchId(existing) !== canonicalSchoolBranchId(deviceBranchId)) {
-    const err = new Error('This computer cannot update a staff account assigned to another branch.');
-    err.status = 403;
-    err.code = 'DESKTOP_DEVICE_BRANCH_MISMATCH';
-    throw err;
-  }
+  const branchAssignment = resolveStaffBranchAssignment(desktopStaffAssignmentActor(body), incoming, existing, await getSchoolStructure(env));
   const loginUsername = clean(
     incoming.LoginUsername || incoming.loginUsername || existing?.LoginUsername || username
   );
@@ -11323,7 +11338,7 @@ async function saveStaffUserFromDesktop(env, body) {
         || body.OrganisationEdition || body.organisationEdition
         || existing?.OrganisationEdition || existing?.OrganizationEdition
     ) || 'school',
-    BranchId: deviceBranchId || clean(incoming.BranchId || incoming.branchId || existing?.BranchId),
+    ...branchAssignment,
     Active: active,
     Salt: clean(incoming.Salt),
     PasswordHash: clean(incoming.PasswordHash),
@@ -11360,12 +11375,7 @@ async function deleteStaffUserFromDesktop(env, body) {
   const existing = users.find((row) => sameText(row.Username || row.__id, username));
   if (!existing) { const err = new Error('Staff account was not found.'); err.status = 404; throw err; }
   const deviceBranchId = clean(body.DeviceBranchId);
-  if (deviceBranchId && assignedStaffBranchId(existing) !== canonicalSchoolBranchId(deviceBranchId)) {
-    const err = new Error('This computer cannot delete a staff account assigned to another branch.');
-    err.status = 403;
-    err.code = 'DESKTOP_DEVICE_BRANCH_MISMATCH';
-    throw err;
-  }
+  assertStaffScopeManageable(desktopStaffAssignmentActor(body), existing);
   if (sameText(username, body.UserUsername || body.RecordedBy)) { const err = new Error('You cannot delete the account currently signed in.'); err.status = 409; throw err; }
   if (clean(existing.Role) === 'Super Admin' && staffUserIsActive(existing) && activeStaffSuperAdmins(users, username).length === 0) {
     const err = new Error('At least one active Super Admin must remain.'); err.status = 409; throw err;
@@ -12145,6 +12155,14 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
       return savePayrollRunStatus(env, body);
     case 'payPayrollItem':
       return payPayrollItem(env, body);
+    case 'getSecurityAudit': {
+      const auditUser = {username: clean(body.UserUsername), role: clean(body.UserRole),
+        assignedRole: clean(body.UserAssignedRole || body.UserRole), tabAccess: body.UserTabAccess,
+        department: clean(body.UserDepartment), branchId: clean(body.UserBranchId),
+        edition: deploymentIdentity?.edition};
+      const access = await staffAccessFor(env, auditUser);
+      return securityAuditList(env, {...auditUser, ...access, branchId: auditUser.branchId}, {...body, paged:true});
+    }
     case 'getStaffUsers':
       return getStaffUsersForDesktop(env, body);
     case 'saveStaffUser':
@@ -12280,7 +12298,7 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     case 'recordSale':
       return recordSale(env, body);
     case 'getFormSales':
-      return getFormSales(env);
+      return getFormSales(env, body);
     default: {
       const err = new Error(`Database action is not implemented yet: ${action}`);
       err.status = 400;
@@ -12325,6 +12343,9 @@ export async function onRequestPost(context) {
     // approved computer branch for downstream reads and writes.
     body = applyDesktopDeviceBranchScope(body, desktopAuthentication);
     const data = await routeAction(env, action, body, deploymentIdentity, new URL(request.url).origin);
+    // Start/completion audits are committed atomically with synchronization checkpoints.
+    // A continuation or replay must not create another apparent business action.
+    if (context.data && action === 'syncAccountingRevenue' && data.ok) context.data.securityAuditHandled = true;
     if (context.data && action === 'recordManualPayment' && data.code === 'WALLET_DUPLICATE_REVIEW_REQUIRED') {
       context.data.securityAuditAction = 'Review possible duplicate manual wallet top-up';
       context.data.securityAuditSummary = `Manual wallet top-up for student ${data.duplicateReview.Student.AccountRef} was stopped for review because ${data.duplicateReview.MatchCount} same-amount credit(s) were found. No new payment or wallet credit was recorded.`;

@@ -1,3 +1,4 @@
+import * as branchAccess from '../functions/lib/staff-branch-access.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -42,7 +43,7 @@ async function fixture(edition = 'school', overrides = {}) {
       }
     }
   };
-  const common = { crypto, Date, TextEncoder, TextDecoder, Uint8Array, btoa, atob, console, ...database };
+  const common = { ...branchAccess, crypto, Date, TextEncoder, TextDecoder, Uint8Array, btoa, atob, console, ...database };
   const epoch = vm.createContext(common);
   vm.runInContext(unmodule(epochSource), epoch);
   const context = vm.createContext({ ...common, credentialStateId: epoch.credentialStateId,
