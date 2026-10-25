@@ -4,6 +4,7 @@
 import { getPayableFees, matchingFullScholarshipFeeItems } from './backend.js';
 import { reviewParentFeeCredit, queryParentFinancialRows } from '../lib/parent-fee-credit-review.js';
 import { isFullScholarship } from '../lib/full-scholarship.js';
+import { entranceSubjectRows } from '../lib/entrance-subjects.js';
 import { withStudentProfileDefaults } from '../lib/student-profile-defaults.js';
 import { studentWalletProfile } from '../lib/student-wallet-profile.js';
 import { effectiveInvoiceAfterReversal } from '../lib/invoice-charge-reversal.js';
@@ -954,6 +955,8 @@ function normalizeApplicationChild(row, profile = {}) {
   const passportPhoto = parentPassportPhotoSource(row, applicationRef);
   return {
     ...row,
+    EntranceSubjectScores: resultIsVisible(row, profile) ? entranceSubjectRows(row, profile) : [],
+    EntranceSubjectDefinitions: [],
     AccountRef: applicationRef,
     AdmissionNo: pick(row, ['AdmissionNo', 'admissionNo']),
     ApplicationReference: applicationRef,
@@ -1493,6 +1496,7 @@ function resultIsVisible(application, profile = {}) {
 function buildEntranceResult(application, profile = {}) {
   if (!application || !resultIsVisible(application, profile)) return null;
   return {
+    EntranceSubjectScores: entranceSubjectRows(application, profile),
     ApplicationReference: pick(application, ['ApplicationReference', 'applicationReference', 'ApplicationID', 'applicationId', '__id']),
     ApplicantName: pick(application, ['ApplicantName', 'applicantName', 'DisplayName', 'displayName', 'Name', 'name']),
     EnglishScore: pick(application, ['EnglishScore', 'englishScore', 'English', 'english']),
@@ -1610,11 +1614,11 @@ async function getParentAdmissionDocument(env, body) {
   const storedFile = await loadStoredAdmissionDocument(env, storedUrl);
   const documentId = application.__id || safeDocumentId(pick(application, ['ApplicationReference', 'ApplicationID']));
   const updatedApplication = { ...application, [flag]: 'YES', [`${flag}At`]: now, [`${flag}OpenedByParent`]: 'YES', UpdatedAt: now };
-  await upsertSchoolDocument(env, 'applications', documentId, updatedApplication);
+  if (!application.AdmissionDetailsRemovedAt) await upsertSchoolDocument(env, 'applications', documentId, updatedApplication);
   const applicantName = pick(application, ['ApplicantName', 'DisplayName']);
   return {
     ok: true,
-    message: `${title} downloaded and marked as sent.`,
+    message: application.AdmissionDetailsRemovedAt ? `${title} downloaded from retained admission history.` : `${title} downloaded and marked as sent.`,
     pdfBytes: new Uint8Array(await storedFile.object.arrayBuffer()),
     fileName: clean(application[fileField] || storedFile.fileName) || `${safeDocumentId(applicantName || accountRef)}-${safeDocumentId(title)}.pdf`,
     flag

@@ -649,6 +649,9 @@ export async function onRequestPost(context) {
       }, { status: 404 });
     }
     const targetCollection = uploadTargetCollection(firestoreApp);
+    if (targetCollection === 'applications' && firestoreApp.AdmissionDetailsRemovedAt) {
+      throw uploadError('This application is retained as admission history. Contact the school before uploading replacement documents.', 409, 'ADMISSION_HISTORY_READ_ONLY');
+    }
     const applicationReference = clean(pick(firestoreApp, [
       'ApplicationReference', 'applicationReference',
       'ApplicationID', 'applicationId',

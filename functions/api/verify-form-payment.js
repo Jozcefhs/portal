@@ -259,6 +259,8 @@ export async function onRequestPost(context) {
       Email: (tx.customer && tx.customer.email) || meta.email || '',
       Phone: meta.phone || intent?.Phone || '',
       ClassApplyingFor: meta.classApplyingFor || intent?.ClassApplyingFor || '',
+      AcademicSession: intent?.AcademicSession || '',
+      Term: intent?.Term || '',
       BranchId: branchId,
       AmountPaid: amountPaid,
       FormAmount: Number.isFinite(formAmount) && formAmount > 0 ? formAmount : grossAmount,

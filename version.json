@@ -1,7 +1,8 @@
 {
-  "version": "3.1.54",
+  "version": "3.1.55",
   "channel": "stable",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.54.exe",
-  "sha256": "5fe27404d05535b8f5862faa06017813f2e31b72b165dde8da64d155448c607f",
-  "notes": "Dynamax v3.1.54 restores visible, clickable desktop toolbar buttons, compacts Academic Management, and adds vendor store-sales controls and ownership labels for faith and organisation subscriptions. Existing scores, answers, stock, payments and records are preserved."
+  "release_status": "published",
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.55.exe",
+  "sha256": "d0bfc954d9ad0220b97736e01a97d149a3e678b00e5856fb67215ea5bf471a53",
+  "notes": "Dynamax v3.1.55 repairs Session Movement and clipped actions, displays readable class names, adds configurable entrance and remote examinations, and introduces verified admission-cycle retention. Existing scores, answers, payments and history are preserved."
 }

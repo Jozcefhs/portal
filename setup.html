@@ -256,6 +256,11 @@
                 <option value="YES">Show when applicant result is enabled</option>
               </select>
             </div>
+            <div class="settings-field">
+              <label for="entranceExamSubjects">Entrance-exam subjects</label>
+              <textarea id="entranceExamSubjects" name="EntranceExamSubjects" rows="6" maxlength="10000" aria-describedby="entranceSubjectsHelp"></textarea>
+              <p id="entranceSubjectsHelp" class="settings-help">One subject per line: Subject name | maximum mark. Add, remove or rename subjects for this school. These organisation-wide settings apply to new results; saved results retain their original subjects and marks.</p>
+            </div>
           </div>
         </section>
 
@@ -576,6 +581,6 @@
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
   <script src="js/app-dialogs.js?v=20261016-grouped-form-validation"></script>
   <script src="js/paystack-connection-status.js?v=20261013-paystack-activation"></script>
-  <script src="js/setup.js?v=20261003-no-school-code-default-20261013-paystack-activation"></script>
+  <script src="js/setup.js?v=20261003-no-school-code-default-20261013-paystack-activation-20261023-configurable-entrance-subjects"></script>
 </body>
 </html>

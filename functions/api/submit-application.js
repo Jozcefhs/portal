@@ -22,6 +22,7 @@ import {
   verifyTurnstile
 } from '../lib/request-security.js';
 import { evaluateAdmissionAge } from '../lib/admission-age.js';
+import { admissionSubmissionFence } from '../lib/admission-cycle.js';
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -70,13 +71,9 @@ function formattedApplicantName(application, profile = {}) {
 }
 
 async function getSchoolProfile(env, branchId = '') {
-  try {
-    requireFirestoreEnv(env);
-    const defaults = await getDocument(env, 'settings', 'schoolProfile') || {};
-    return effectiveBranchProfile(env, defaults, branchId);
-  } catch (_err) {
-    return {};
-  }
+  requireFirestoreEnv(env);
+  const defaults = await getDocument(env, 'settings', 'schoolProfile') || {};
+  return effectiveBranchProfile(env, defaults, branchId);
 }
 
 function duplicateKey(application) {
@@ -249,8 +246,13 @@ async function submitToFirestore(env, email, code, receiptNo, application) {
       SubmittedAt: now,
       UpdatedAt: now
     };
+    // Stamp new intake records explicitly; do not infer old records' terms.
+    app.AcademicSession = clean(sale.AcademicSession || application.AcademicSession || profile.CurrentAcademicSession);
+    app.Term = clean(sale.Term || profile.CurrentTerm) || 'First Term';
     app.SchoolSection = schoolSectionFor(app);
+    const cycleFence = await admissionSubmissionFence(env, app);
     await batchUpsertDocuments(env, [
+      cycleFence,
       {
         collectionPath: scopedCollectionPath('applications', app.BranchId, app.SchoolSection),
         documentId: safeDocumentId(reference),

@@ -7112,7 +7112,7 @@ function academicCbtScoreBatchMaterial(input = {}) {
   const keys = [
     'Version', 'BatchId', 'ExamId', 'SourceTestId', 'SourcePackageDigest',
     'SessionId', 'TermId', 'ClassId', 'ArmId', 'SubjectId', 'TeacherUsername',
-    'AssessmentComponentId', 'MaximumScore', 'SourceType', 'MarkingRevision',
+    'AssessmentComponentId', 'AssessmentPartId', 'MaximumScore', 'SourceType', 'MarkingRevision',
     'ApprovalStatus', 'ApprovedBy', 'ApprovedAt', 'ProviderId', 'SourceFileName', 'Scores'
   ];
   return Object.fromEntries(keys.filter((key) => input[key] !== undefined).map((key) => [key, input[key]]));
@@ -7190,8 +7190,9 @@ function academicCbtExistingScoreEvidence(scores, sheets, input, rejection) {
     const component = (sheet.AssessmentComponents || []).find(value => value.Id === input.AssessmentComponentId);
     const saved = (score.ComponentScores || []).find(value => value.ComponentId === input.AssessmentComponentId);
     if (!component) return [];
-    const cell = component.ScoreEntryMode === 'objective-theory' ? saved?.Parts?.find(value => value.PartId === 'objective') : saved;
-    const maximum = Number(component.ScoreEntryMode === 'objective-theory' ? component.ObjectiveMaximumScore : component.MaximumScore);
+    const part = clean(input.AssessmentPartId) || 'objective';
+    const cell = component.ScoreEntryMode === 'objective-theory' ? saved?.Parts?.find(value => value.PartId === part) : saved;
+    const maximum = Number(component.ScoreEntryMode === 'objective-theory' ? (part === 'theory' ? component.TheoryMaximumScore : component.ObjectiveMaximumScore) : component.MaximumScore);
     if (!ACADEMIC_RECORDED_SCORE_STATES.has(cell?.State) || (cell.State === 'Numeric'
       && (cell.RawScore == null || !Number.isFinite(Number(cell.RawScore)) || !Number.isFinite(maximum)
         || maximum <= 0 || Number(cell.RawScore) < 0 || Number(cell.RawScore) > maximum))) return [];
@@ -7215,6 +7216,7 @@ async function verifiedAcademicCbtReceipt(env, input, expected, previousState = 
       || receipt.SigningKeyId !== expected.SigningKeyId || receipt.SheetId !== expected.SheetId
       || receipt.BatchId !== normalizedImportKey(input.BatchId)
       || receipt.SourceType !== input.SourceType
+      || (clean(receipt.AssessmentPartId) || 'objective') !== (clean(input.AssessmentPartId) || 'objective')
       || !Number.isInteger(count) || count < 0 || count > 200
       || !Array.isArray(ids) || ids.length !== count || new Set(ids).size !== count
       || !Number.isInteger(rejected) || rejected < 0
@@ -7237,7 +7239,7 @@ async function verifiedAcademicCbtReceipt(env, input, expected, previousState = 
       || Object.keys(conversion).some(key => receipt.ScoreConversion[key] !== conversion[key])
       || Number(receipt.MaximumScore) !== conversion.TargetMaximumScore)
     : receipt.ScoreConversion)) throw unverified();
-  const partId = component?.ScoreEntryMode === 'objective-theory' ? 'objective' : '';
+  const partId = component?.ScoreEntryMode === 'objective-theory' ? (clean(input.AssessmentPartId) || 'objective') : '';
   const cellId = `${component?.Id}${partId ? `:${partId}` : ''}`;
   const supplied = new Map(input.Scores.map(row => [lower(row.StudentRef), row]));
   const placedSheetIds = [...new Set(scores.filter(score => !receipt.ArmId
@@ -7547,7 +7549,7 @@ async function syncAcademicCbtScoresAttempt(env, user = {}, input = {}) {
     let cbtSources = null;
     try {
       ({ ScoreId, previous } = academicExistingStudentScore(state.studentScores, SheetId, row.StudentRef));
-      const correctedCellId = `${component.Id}${component.ScoreEntryMode === 'objective-theory' ? ':objective' : ''}`;
+      const correctedCellId = `${component.Id}${component.ScoreEntryMode === 'objective-theory' ? `:${clean(input.AssessmentPartId) || 'objective'}` : ''}`;
       const others = state.studentScores.filter(score => score.SheetId !== SheetId
         && lower(score.StudentRef) === lower(row.StudentRef) && score.ClassId === input.ClassId
         && score.SessionId === input.SessionId && score.TermId === input.TermId && score.SubjectId === input.SubjectId);
@@ -7564,7 +7566,7 @@ async function syncAcademicCbtScoresAttempt(env, user = {}, input = {}) {
       }
       const cellOf = score => {
         const value = (score.ComponentScores || []).find(cell => cell.ComponentId === component.Id);
-        return component.ScoreEntryMode === 'objective-theory' ? value?.Parts?.find(cell => cell.PartId === 'objective') : value;
+        return component.ScoreEntryMode === 'objective-theory' ? value?.Parts?.find(cell => cell.PartId === (clean(input.AssessmentPartId) || 'objective')) : value;
       };
       if (others.some(score => score !== previous && ACADEMIC_RECORDED_SCORE_STATES.has(cellOf(score)?.State))) {
         throw failure('An existing score for this student, subject and test is preserved in another arm or the class register.', 409, 'ACADEMIC_CBT_SYNC_ATTEMPT_CONFLICT');
@@ -7599,7 +7601,7 @@ async function syncAcademicCbtScoresAttempt(env, user = {}, input = {}) {
       component.ScoreEntryMode === 'objective-theory' ? {
         ComponentId: component.Id,
         Parts: [{
-          PartId: 'objective', State: row.State, RawScore: row.RawScore,
+          PartId: clean(input.AssessmentPartId) || 'objective', State: row.State, RawScore: row.RawScore,
           Note: `${sourceType === 'BuiltInCBT' ? 'Built-in' : 'External'} CBT batch ${batchKey}`
         }]
       } : {
@@ -7673,7 +7675,8 @@ async function syncAcademicCbtScoresAttempt(env, user = {}, input = {}) {
     SourceFileName: clean(input.SourceFileName).slice(0, 240),
     SigningKeyId: signingKeyId,
     AssessmentComponentId: component.Id,
-    MaximumScore: component.ScoreEntryMode === 'objective-theory' ? component.ObjectiveMaximumScore : component.MaximumScore,
+    ...(clean(input.AssessmentPartId) ? { AssessmentPartId: clean(input.AssessmentPartId) } : {}),
+    MaximumScore: component.ScoreEntryMode === 'objective-theory' ? (input.AssessmentPartId === 'theory' ? component.TheoryMaximumScore : component.ObjectiveMaximumScore) : component.MaximumScore,
     ...(conversion ? { ScoreConversion: conversion } : {}),
     NumericCount: updatedScores.filter(({ record }) => preview.Rows.some(row => row.StudentRef === record.StudentRef && row.State === 'Numeric')).length,
     AbsentCount: updatedScores.filter(({ record }) => preview.Rows.some(row => row.StudentRef === record.StudentRef && row.State === 'Absent')).length,
@@ -7903,6 +7906,24 @@ export async function academicCbtUploadId(target) {
     lower(target.AssessmentComponentName || target.AssessmentComponentId)]);
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(material));
   return `cbt-test-${[...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, '0')).join('')}`;
+}
+
+// The remote service uses the same academic allocation, roster and assessment
+// authority as local CBT. This helper is never exposed to candidates.
+export async function portalCbtAcademicContext(env, user, input) {
+  const context = await academicCbtClassContext(env, user, input);
+  const component = context.scheme.Components.find(row => row.Id === input.AssessmentComponentId);
+  if (input.AssessmentComponentId && (!component || !['any', 'built-in-cbt'].includes(lower(component.SourceMode)))) {
+    throw failure('Choose a test type that accepts Built-in CBT scores.', 409);
+  }
+  if (component) {
+    const cells = component.ScoreEntryMode === 'objective-theory'
+      ? [{ ComponentId: component.Id, Parts: [{ PartId: clean(input.AssessmentPartId) || 'objective', State: 'Numeric', RawScore: 0 }] }]
+      : [{ ComponentId: component.Id, State: 'Numeric', RawScore: 0 }];
+    const issues = academicScoreSourceIssues(context.scheme, cells, 'built-in-cbt');
+    if (issues.length) throw failure(issues[0], 409);
+  }
+  return { context, component };
 }
 
 export async function validateAcademicCbtTestInput(env, user = {}, input = {}) {
@@ -9033,6 +9054,11 @@ export async function revokeAcademicResultClearance(env, user = {}, input = {}) 
 
 export async function handleAcademicManagementAction(env, user = {}, input = {}) {
   const action = lower(input.action || input.Action).replace(/[^a-z]/g, '');
+  if (action === 'entrancecbt') {
+    if (!['state', 'offlinePackage', 'offlineResults', 'post'].includes(input.Operation)) throw failure('Choose a valid entrance CBT operation.');
+    const { createPortalCbtService } = await import('./portal-cbt.js');
+    return createPortalCbtService(env, user)[input.Operation]({ ...input, Audience: 'applicant' });
+  }
   if (['getacademicsubmissionsettings', 'saveacademicsubmissionsettings', 'listacademicsubmissions', 'payacademicsubmission', 'verifyacademicsubmission'].includes(action)) {
     let context;
     if (['saveacademicsubmissionsettings', 'payacademicsubmission'].includes(action)) context = await academicOperationalContext(env, user, input, 'canEnterScores', { stateKeys: ['sessions', 'terms'] });

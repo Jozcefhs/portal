@@ -1,0 +1,22 @@
+.admission-cycle-dialog { width: min(960px, calc(100vw - 28px)); max-height: 90vh; padding: 0; box-sizing: border-box; overflow: hidden; border: 1px solid #b8cad8; border-radius: 14px; color: #123047; background: #fff; }
+.admission-cycle-dialog[open] { display: flex; flex-direction: column; }
+.admission-cycle-dialog::backdrop { background: #0b263c99; }
+.admission-cycle-dialog header { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 22px; border-bottom: 1px solid #d8e3eb; }
+.admission-cycle-dialog h2 { margin: 0; font-size: 22px; }
+.admission-cycle-body { padding: 20px; min-height: 0; overflow-y: auto; }
+.admission-cycle-dialog fieldset { border: 1px solid #c6d7e4; border-radius: 8px; padding: 16px; margin: 0 0 18px; }
+.admission-cycle-dialog label { display: block; margin: 10px 0; font-weight: 600; }
+.admission-cycle-dialog input, .admission-cycle-dialog select { width: 100%; box-sizing: border-box; padding: 10px; margin: 6px 0; border: 1px solid #aabfce; border-radius: 6px; background: white; color: #123047; }
+.admission-cycle-dialog button { padding: 10px 16px; margin: 5px 8px 5px 0; border-radius: 7px; border: 0; background: #1761d8; color: white; cursor: pointer; }
+.admission-cycle-dialog button:disabled { opacity: .5; cursor: wait; }
+.admission-cycle-dialog button:focus-visible, .admission-cycle-dialog input:focus-visible, .admission-cycle-dialog select:focus-visible { outline: 3px solid #008a78; outline-offset: 2px; }
+.admission-cycle-dialog [data-status] { padding: 12px; background: #eef8f6; border-left: 4px solid #008a78; }
+.admission-cycle-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.admission-cycle-table { max-height: 320px; overflow: auto; margin: 16px 0; }
+.admission-cycle-dialog table { width: 100%; border-collapse: collapse; }
+.admission-cycle-dialog th, .admission-cycle-dialog td { border: 1px solid #c7d7e3; padding: 10px; text-align: left; }
+.admission-cycle-dialog th { background: #eef4f9; position: sticky; top: 0; }
+.admission-cycle-dialog small, .admission-cycle-dialog li { overflow-wrap: anywhere; }
+.admission-cycle-dialog details { margin: 16px 0; }
+.admission-cycle-dialog summary { cursor: pointer; font-weight: 600; }
+@media (max-width: 600px) { .admission-cycle-grid { grid-template-columns: 1fr; gap: 0; } .admission-cycle-body { padding: 12px; } .admission-cycle-dialog th, .admission-cycle-dialog td { padding: 7px; } }

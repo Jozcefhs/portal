@@ -1990,9 +1990,7 @@ function renderEntranceResults(child) {
         <strong>${status}${percentage ? ' | ' + percentage : ''}</strong>
         <span>${date || ''}</span>
         <div class="result-scores">
-          <span>English: <strong>${record.EnglishScore || '-'}</strong></span>
-          <span>Mathematics: <strong>${record.MathematicsScore || '-'}</strong></span>
-          <span>Interview / General: <strong>${record.InterviewScore || '-'}</strong></span>
+          ${(record.EntranceSubjectScores || []).map((subject) => `<span>${escapeHtml(subject.name)}: <strong>${escapeHtml(subject.score === '' || subject.score == null ? '-' : subject.score)} / ${escapeHtml(subject.maxScore)}</strong></span>`).join('')}
           <span>Total: <strong>${record.TotalScore || '-'}</strong></span>
         </div>
         ${probationSummary ? `<div class="result-scores"><span><b>${escapeHtml(probationSummary)}</b></span>${record.ProbationResitScore ? `<span>Re-sit score: <strong>${escapeHtml(record.ProbationResitScore)}</strong></span>` : ''}</div>` : ''}

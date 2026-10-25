@@ -16745,7 +16745,7 @@ function academicManagementHeader(data, rows, message = '') {
   const views = academicManagementViews(data);
   return `<div class="academic-management-heading">
     <div><p class="eyebrow">AM-002 to AM-011</p><h2>Academic Management</h2><p class="muted">Branch-isolated structure, ${learner.singular} timetables, attendance, assessment and controlled term-result publication.</p></div>
-    <div class="academic-homework-actions">${data.permissions?.canEnterScores ? '<button type="button" data-academic-diary>Teaching diaries</button><button type="button" data-teacher-homework>Homework / parent message</button>' : ''}<button type="button" id="refreshAcademicManagement" class="secondary">Refresh</button></div>
+    <div class="academic-homework-actions">${data.permissions?.canReviewScores ? `<a class="btn secondary" href="/exams-admin.html?audience=student&branch=${encodeURIComponent(selectedBranchId || 'main')}&section=${encodeURIComponent(academicManagementFilters.section || 'secondary')}">Entrance / remote exams</a>` : ''}${data.permissions?.canEnterScores ? '<button type="button" data-academic-diary>Teaching diaries</button><button type="button" data-teacher-homework>Homework / parent message</button>' : ''}<button type="button" id="refreshAcademicManagement" class="secondary">Refresh</button></div>
   </div>
   <div class="academic-management-filterbar">
     <label>School section<select id="academicManagementSection">${sections.map((section) => `<option value="${escapeHtml(section)}"${section === academicManagementFilters.section ? ' selected' : ''}>${escapeHtml(section.charAt(0).toUpperCase() + section.slice(1))}</option>`).join('')}</select></label>
@@ -20134,6 +20134,20 @@ function renderSection(active) {
       { label: 'Uploaded Documents', render: renderAdmissionDocuments }
     ]);
     bindDocumentDeleteEvents();
+    if (['Super Admin', 'Admissions Officer', 'Principal', 'Head Teacher', 'Management', 'ICT', 'Examination Officer'].includes(currentUser?.role)) {
+      const examLink = document.createElement('a');
+      examLink.className = 'btn secondary'; examLink.textContent = 'Entrance examinations';
+      examLink.href = `/exams-admin.html?audience=applicant&branch=${encodeURIComponent(selectedBranchId || 'main')}&section=${encodeURIComponent(clean(currentUser?.schoolSectionAccess).toLowerCase() === 'primary' ? 'primary' : 'secondary')}`;
+      panelEl.prepend(examLink);
+    }
+    if (currentUser?.role === 'Super Admin' && !currentUser.assignedBranchId &&
+        ['', 'all'].includes(clean(currentUser.schoolSectionAccess).toLowerCase())) {
+      const cycleButton = document.createElement('button');
+      cycleButton.type = 'button';
+      cycleButton.textContent = 'Close admission cycle / retention & history';
+      cycleButton.addEventListener('click', () => window.DynamaxAdmissionCycles?.open({ fetch: staffFetch, onChanged: () => refreshDashboard() }));
+      panelEl.prepend(cycleButton);
+    }
   } else if (active === 'formPurchases') {
     panelEl.innerHTML = admissionFormPurchasesWorkspace(departments.formPurchases || []);
     bindAdmissionFormPurchaseQr();

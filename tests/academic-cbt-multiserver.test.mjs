@@ -923,3 +923,29 @@ test('split-paper provenance protects only the objective cell and preserves othe
   assert.equal(result[1].CellId,'exam:objective');
   assert.equal(previous.ComponentScores[0].Parts[0].RawScore,20);
 });
+
+test('remote Objective and Theory batches save independently and retries preserve both original marks',async()=>{
+  const assessment=scorebook.academicAssessmentScheme({Assessment:{
+    Components:[{Id:'exam',Name:'Exam',MaximumScore:100,WeightPercentage:100,Required:true,SourceMode:'any',
+      ScoreEntryMode:'objective-theory',ObjectiveMaximumScore:40,TheoryMaximumScore:60}],GradeBands:scheme.GradeBands
+  }},{RevisionId:'split-revision'});
+  const f=fixture({assessment});
+  const objective=await a.batch([['DCA/001',30,'objective-attempt']],{MaximumScore:40,AssessmentPartId:'objective'});
+  const theory=await b.batch([['DCA/001',50,'theory-attempt']],{MaximumScore:60,AssessmentPartId:'theory'});
+  const [po,pt]=await Promise.all([f.prepare(objective),f.prepare(theory)]);
+  const first=await f.commit(objective,po),second=await f.commit(theory,pt);
+  assert.equal(first.scoreSyncReceipt.VerifiedOnline,true);
+  assert.equal(second.scoreSyncReceipt.VerifiedOnline,true);
+  const score=f.rows(collections.studentScores)[0];
+  assert.equal(score.ComponentScores[0].Parts.find(row=>row.PartId==='objective').RawScore,30);
+  assert.equal(score.ComponentScores[0].Parts.find(row=>row.PartId==='theory').RawScore,50);
+  const before=JSON.stringify(f.rows(collections.studentScores));
+  const replay=await f.post(theory);
+  assert.equal(replay.scoreSyncReplayed,true);
+  assert.equal(JSON.stringify(f.rows(collections.studentScores)),before);
+  const duplicate=await a.batch([['DCA/001',59,'different-attempt']],{MaximumScore:60,AssessmentPartId:'theory'});
+  const result=await f.post(duplicate);
+  assert.equal(result.scoreSyncReceipt.AlreadyRecordedCount,1);
+  assert.equal(JSON.stringify(f.rows(collections.studentScores)),before);
+  await assert.rejects(f.post({...theory,AssessmentPartId:'objective',MaximumScore:40}),/digest|signature/i);
+});

@@ -2,6 +2,7 @@ import { listBranchCollection } from '../lib/branch-reads.js';
 import { batchCommitDocuments, batchCommitLiteralDocuments, batchUpsertDocuments, createDocumentIfAbsent, deleteDocument, findOneByField, getDocument, listCollection, listCollectionForReport, listCollectionPage, patchDocumentFields, queryCollection, queryCollectionPages, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { feeBranchId, feeRowsForBranch, feeMatchesBranch, feeSetupBranch, resolveFeeDocument, feeDocumentWrite } from '../lib/fee-branch-scope.js';
 import { normalizeRecoveryEmail } from '../lib/staff-password-recovery.js';
+import { activeAdmissionRows } from '../lib/admission-cycle.js';
 import { billingComponentDiagnostics, billingDiagnostics } from '../lib/student-billing-diagnostics.js';
 import { loadBranchFinanceRows, loadBranchFinancePage } from '../lib/finance-branch-reads.js';
 import { financeMoney, financeDate, financeData, financeWrite, financeFailure, financeOperationId, journalFinancialSignature, assertFinanceRoleLimit } from '../lib/accounting-mutation-guards.js';
@@ -44,6 +45,7 @@ import { loadFinanceSchoolProfile } from '../lib/finance-school-profile.js';
 import { invalidateStaffAccessCache, staffAccessFor } from '../lib/staff-auth.js';
 import { beginStaffAccountChange, commitStaffAccountChanges, resolveStaffAccountTarget, staffAccountCondition, staffAccountWrite } from '../lib/staff-account-integrity.js';
 import { mergedProfileText } from '../lib/profile-settings-update.js';
+import { normalizeEntranceSubjects, entranceSubjectRows, entranceScoreUpdates, assertEntranceScoresUnchanged } from '../lib/entrance-subjects.js';
 import { selectStudentBillingProfile, selectStudentBillingProfiles, studentProfileValue } from '../lib/student-billing-profile.js';
 import { effectiveInvoiceAfterReversal } from '../lib/invoice-charge-reversal.js';
 import { financialPreviewFingerprint } from '../lib/financial-preview-fingerprint.js';
@@ -96,6 +98,7 @@ import { getTuckShopCatalog, recordTuckShopStaffSale, searchTuckShopCustomers } 
 import { handleStudentConductAction } from '../lib/student-conduct.js';
 import { handleSchoolLibraryAction } from '../lib/school-library.js';
 import { handleAcademicManagementAction } from '../lib/academic-management.js';
+import { moveStudentSession } from '../lib/student-session-movement.js';
 import { saveStudentLoginPassword } from '../lib/student-login-credentials.js';
 import { defaultModulesForRole } from '../lib/role-module-access.js';
 import { getWebBranding, saveWebBranding } from '../lib/web-branding.js';
@@ -618,6 +621,7 @@ function normalizeApplication(row, profile = {}) {
   const applicantName = formatPersonName(row, profile, pick(row, ['applicantName', 'ApplicantName', 'displayName', 'DisplayName']));
   return {
     ...row,
+    EntranceSubjectDefinitions: entranceSubjectRows(row, profile),
     ApplicationReference: pick(row, ['applicationReference', 'ApplicationReference', '__id']),
     ApplicationID: pick(row, ['applicationReference', 'ApplicationReference', '__id']),
     ApplicantName: applicantName,
@@ -871,6 +875,7 @@ export function requireBackendSecret(env, body) {
 }
 
 const VERIFIED_ACTOR_ACTIONS = new Set([
+  'entranceCbt',
   'getAcademicSubmissionSettings', 'saveAcademicSubmissionSettings', 'listAcademicSubmissions', 'payAcademicSubmission', 'verifyAcademicSubmission',
   'requisitionApprovalSettings',
   'manualPaymentCorrection',
@@ -958,6 +963,7 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
 // applyDesktopDeviceBranchScope.  Organisation-wide and legacy credentials
 // retain the existing action surface for backwards compatibility.
 const BRANCH_BOUND_DEVICE_ACTIONS = new Set([
+  'entranceCbt',
   'requisitionApprovalSettings',
   'manualPaymentCorrection',
   'saveFeeItem', 'saveFeeItems', 'deleteFeeItem', 'seedDefaultFeeItems',
@@ -3036,6 +3042,7 @@ async function saveSchoolProfile(env, body, deploymentIdentity) {
     CurrentTerm: mergedProfileText(existingProfile, body, 'CurrentTerm', 'currentTerm', 'First Term'),
     DeclarationStatement: mergedProfileText(existingProfile, body, 'DeclarationStatement', 'declarationStatement', 'I declare that the information supplied in this application is complete and correct.'),
     ResultDisplayMode: mergedProfileText(existingProfile, body, 'ResultDisplayMode', 'resultDisplayMode', 'subjects'),
+    EntranceExamSubjects: normalizeEntranceSubjects(body.EntranceExamSubjects ?? existingProfile.EntranceExamSubjects),
     ShowResultsOnline: yesNo(mergedProfileText(existingProfile, body, 'ShowResultsOnline', 'showResultsOnline', 'NO')) || 'NO',
     OfferDocumentBodyTemplate: mergedProfileText(existingProfile, body, 'OfferDocumentBodyTemplate', 'offerDocumentBodyTemplate'),
     AdmissionDocumentBodyTemplate: mergedProfileText(existingProfile, body, 'AdmissionDocumentBodyTemplate', 'admissionDocumentBodyTemplate'),
@@ -3227,6 +3234,7 @@ async function getSchoolProfile(env, options = {}) {
       ShowResultsOnline: 'NO'
     }),
       OrganisationEdition: organization.Edition,
+      EntranceExamSubjects: normalizeEntranceSubjects(profile?.EntranceExamSubjects),
       OrganisationName: organization.Name,
       OrganisationCode: organization.Code,
       NameFormat: organization.NameFormat,
@@ -3873,7 +3881,7 @@ async function updateApplicantNotes(env, body) {
   return { ok: true, message: 'Applicant notes updated.', application: saved };
 }
 
-export function buildEntranceResultUpdates(existing = {}, body = {}, timestamp = nowIso()) {
+export function buildEntranceResultUpdates(existing = {}, body = {}, timestamp = nowIso(), profile = {}) {
   const requestedStatus = clean(body.ResultStatus || body.resultStatus || 'Pending').toLowerCase();
   const statusLabels = {
     pending: 'Pending',
@@ -3892,11 +3900,9 @@ export function buildEntranceResultUpdates(existing = {}, body = {}, timestamp =
     throw error;
   }
   const updates = {
-    EnglishScore: body.EnglishScore ?? '',
-    MathematicsScore: body.MathematicsScore ?? '',
-    InterviewScore: body.InterviewScore ?? '',
-    TotalScore: body.TotalScore ?? '',
-    ResultPercentage: body.ResultPercentage ?? '',
+    TotalScore: body.TotalScore ?? existing.TotalScore ?? '',
+    ResultPercentage: body.ResultPercentage ?? existing.ResultPercentage ?? '',
+    ...entranceScoreUpdates(existing, body, profile),
     ResultStatus: resultStatus,
     ResultNotes: body.ResultNotes ?? '',
     ResultNextStep: body.ResultNextStep ?? body.NextStep ?? '',
@@ -3933,7 +3939,8 @@ export function buildEntranceResultUpdates(existing = {}, body = {}, timestamp =
   const resultChanged = [
     'EnglishScore', 'MathematicsScore', 'InterviewScore', 'TotalScore',
     'ResultPercentage', 'ResultStatus', 'ResultNotes', 'ResultNextStep'
-  ].some((field) => clean(existing[field]) !== clean(updates[field]));
+  ].some((field) => Object.hasOwn(updates, field) && clean(existing[field]) !== clean(updates[field]))
+    || (Object.hasOwn(updates, 'EntranceSubjectScores') && JSON.stringify(existing.EntranceSubjectScores) !== JSON.stringify(updates.EntranceSubjectScores));
   if (resultChanged) {
     updates.ResultSent = 'NO';
     updates.ResultSentAt = '';
@@ -4014,7 +4021,8 @@ async function updateEntranceResult(env, body) {
   const existing = id ? await findApplication(env, id) : null;
   if (!existing) throw applicationNotFound(id);
   const staleResultUrl = clean(existing.EntranceResultPdfUrl);
-  const updates = buildEntranceResultUpdates(existing, body);
+  const profile = await getDocument(env, 'settings', 'schoolProfile');
+  const updates = buildEntranceResultUpdates(existing, body, nowIso(), profile || {});
   const saved = await saveApplication(env, { ...existing, ...updates });
   if (staleResultUrl && Object.hasOwn(updates, 'EntranceResultPdfUrl') && !updates.EntranceResultPdfUrl) {
     await deleteStoredDocument(env, staleResultUrl).catch(() => null);
@@ -4045,6 +4053,7 @@ async function updateApplicantIntelligence(env, body) {
   const id = applicationIdFrom(body);
   const existing = id ? await findApplication(env, id) : null;
   if (!existing) throw applicationNotFound(id);
+  assertEntranceScoresUnchanged(existing, body);
   const ignored = new Set([
     'Secret', 'secret', 'Action', 'action', 'ApplicationID', 'ApplicationReference',
     'UserUsername', 'userUsername', 'UserRole', 'UserDepartment', 'UserBranchId',
@@ -4062,6 +4071,7 @@ async function updateApplicationDetails(env, body) {
   const id = applicationIdFrom(body);
   const existing = id ? await findApplication(env, id) : null;
   if (!existing) throw applicationNotFound(id);
+  assertEntranceScoresUnchanged(existing, body);
   const ignored = new Set([
     'Secret', 'secret', 'Action', 'action', 'id', '__id',
     'UserUsername', 'userUsername', 'UserRole', 'UserDepartment', 'UserBranchId',
@@ -4083,6 +4093,9 @@ async function deleteApplication(env, body) {
   const id = applicationIdFrom(body);
   const existing = id ? await findApplication(env, id) : null;
   if (!existing) throw applicationNotFound(id);
+  if (existing.AdmissionDetailsRemovedAt || !(await activeAdmissionRows(env, [existing])).length) {
+    throw Object.assign(new Error('Closed-cycle admission history cannot be deleted. Use the verified admission-cycle cleanup.'), { status: 409 });
+  }
   const docId = safeDocumentId(pick(existing, ['ApplicationReference', 'ApplicationID', '__id']) || id);
   await deleteSchoolDocument(env, 'applications', docId, existing);
   return { ok: true, message: 'Application deleted.', applicationReference: id };
@@ -4221,56 +4234,42 @@ async function reissueParentOnboarding(env, body) {
 }
 
 async function promoteStudents(env, body) {
+  const actor = await desktopSchoolOperationsActor(env, body, 'admissions', true);
+  const scope = schoolOperationsScope(body);
+  if (!scope.branchId) throw Object.assign(new Error('Select one working branch before moving students.'), { status: 400 });
   const targets = Array.isArray(body.Students) ? body.Students : [];
-  const newClass = canonicalConfiguredClass(clean(body.NewClass || body.newClass), await configuredClassNames(env));
+  const newClass = clean(body.NewClass || body.newClass);
   const session = clean(body.AcademicSession || body.Session);
   const term = clean(body.Term);
-  const promotedBy = clean(body.PromotedBy || body.promotedBy) || 'Admissions Office';
   if (!targets.length) throw new Error('No students were selected for promotion.');
+  if (targets.length > 20) throw new Error('Move at most 20 students per request.');
   if (!newClass) throw new Error('New class is required.');
   if (!session) throw new Error('Academic session is required.');
+  if (!term) throw new Error('Destination term is required.');
   let promoted = 0;
   let skipped = 0;
+  let alreadyMoved = 0;
   const failures = [];
-  const existingStudents = await listSchoolCollection(env, 'students');
+  const students = [], cache = new Map();
   for (let index = 0; index < targets.length; index += 1) {
     const target = targets[index] || {};
     const admissionNo = pick(target, ['AdmissionNo', 'AdmissionNumber']);
-    const applicationReference = pick(target, ['ApplicationReference']);
-    const student = existingStudents.find((row) =>
-      (admissionNo && (sameText(row.AdmissionNo || row.admissionNo || row.__id, admissionNo))) ||
-      (applicationReference && sameText(row.ApplicationReference || row.applicationReference, applicationReference))
-    );
-    if (!student) {
+    try {
+      const student = admissionNo ? await findStudentByAccountRef(env, admissionNo, scope) : null;
+      if (!student || !schoolOperationsRowVisible(student, scope)) throw new Error('Student not found in the selected branch and school section.');
+      const result = await moveStudentSession(env, actor, student, { NewClass: newClass, AcademicSession: session, Term: term,
+        NewClassArm: clean(body.NewClassArm), AcademicProgress: clean(body.AcademicProgress || body.ProgressCategory) || 'Promoted',
+        RevisionToken: clean(target.RevisionToken) }, cache);
+      if (result.status === 'alreadyMoved') alreadyMoved += 1;
+      else promoted += 1;
+      students.push(normalizeStudent(result.student));
+    } catch (error) {
       skipped += 1;
-      failures.push(`Selected row ${index + 1}: student not found.`);
-      continue;
+      failures.push(`${admissionNo || `Selected row ${index + 1}`}: ${error.message}`);
     }
-    const currentStatus = normalizeMatchText(pick(student, ['Status'], 'Active'));
-    if (['withdrawn', 'expelled', 'graduated'].includes(currentStatus)) {
-      skipped += 1;
-      failures.push(`Selected row ${index + 1}: ${pick(student, ['DisplayName', 'ApplicantName', 'AdmissionNo']) || 'student'} is ${pick(student, ['Status'])} and was not moved.`);
-      continue;
-    }
-    const oldClass = pick(student, ['ClassAdmitted', 'ClassName']);
-    const line = `${nowIso()} | ${oldClass || 'Unspecified'} -> ${newClass} | ${session}${term ? ` | ${term}` : ''} | ${promotedBy}`;
-    await saveStudent(env, {
-      ...student,
-      PreviousClass: oldClass,
-      ClassAdmitted: newClass,
-      ClassName: newClass,
-      AcademicSession: session,
-      Term: term || student.Term || '',
-      EnrollmentCategory: 'Returning',
-      AcademicProgress: clean(body.AcademicProgress || body.ProgressCategory) || 'Promoted',
-      PromotedAt: nowIso(),
-      PromotedBy: promotedBy,
-      PromotionHistory: student.PromotionHistory ? `${student.PromotionHistory}\n${line}` : line,
-      UpdatedAt: nowIso()
-    });
-    promoted += 1;
   }
-  return { ok: true, message: 'Student promotion completed.', promoted, skipped, failures, students: (await listSchoolCollection(env, 'students')).map(normalizeStudent) };
+  return { ok: true, message: skipped ? 'Session movement finished with items requiring attention.' : 'Session movement completed.',
+    promoted, alreadyMoved, skipped, failures, students };
 }
 
 async function desktopSchoolOperationsActor(env, body, section, write = false) {
@@ -4338,6 +4337,7 @@ async function enrollStudent(env, body) {
   const id = applicationIdFrom(body);
   const existing = id ? await findApplication(env, id, scope) : null;
   if (!existing) throw applicationNotFound(id);
+  if (existing.AdmissionDetailsRemovedAt) throw Object.assign(new Error('Restore the archived application from its verified backup before enrollment.'), { status: 409 });
   if (!schoolOperationsRowVisible(existing, scope)) throw Object.assign(new Error('The applicant is outside your permitted workspace.'), { status: 403 });
   if (yesNo(pick(existing, ['Enrolled'])) === 'YES' || pick(existing, ['Status']) === 'Enrolled') throw new Error('Student is already enrolled.');
   if (pick(existing, ['ResultStatus']) !== 'Admitted') throw new Error('Entrance result is not marked Admitted.');
@@ -4619,6 +4619,8 @@ export async function recordSale(env, body) {
       clean(body.ClassApplyingFor),
       await configuredClassNames(env, { BranchId: body.BranchId || body.branchId })
     ),
+    AcademicSession: clean(body.AcademicSession),
+    Term: clean(body.Term),
     AmountPaid: formatNairaAmount(amounts.RecognizedAmount),
     FormAmount: amounts.FormAmount,
     GrossAmount: amounts.GrossAmount,
@@ -11592,12 +11594,12 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
       {
         const [rows, profile] = await Promise.all([
           listSchoolCollection(env, 'applications', requestedStudentScope(body)),
-          getDocument(env, 'settings', 'schoolProfile').catch(() => null)
+          getDocument(env, 'settings', 'schoolProfile')
         ]);
         return {
           ok: true,
           message: 'Applications loaded from the database.',
-          applications: rows.map((row) => normalizeApplication(row, profile || {}))
+          applications: (await activeAdmissionRows(env, rows)).map((row) => normalizeApplication(row, profile || {}))
         };
       }
     case 'getStudents':
@@ -11656,6 +11658,7 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
         })[action]
       });
     }
+    case 'entranceCbt':
     case 'getAcademicManagement':
     case 'saveAcademicSession':
     case 'saveAcademicTerm':

@@ -417,6 +417,7 @@ export function validateAcademicCbtScoreBatch(value = {}, options = {}) {
   const sourceMode = requestedSource === 'builtincbt' ? 'built-in-cbt' : requestedSource === 'externalcbt' ? 'external-cbt' : '';
   const componentIdValue = clean(payload.AssessmentComponentId);
   const component = scheme.Components.find((row) => lower(row.Id) === lower(componentIdValue));
+  const partId = clean(payload.AssessmentPartId) || 'objective';
   const roster = new Map((options.roster || []).map((row) => [lower(row.StudentRef || row.AdmissionNo), row]));
   const supplied = Array.isArray(payload.Scores) ? payload.Scores : [];
   const Issues = [];
@@ -424,17 +425,18 @@ export function validateAcademicCbtScoreBatch(value = {}, options = {}) {
   if (!scheme.Ready) Issues.push(scheme.Issues[0] || 'Configure an active assessment scheme first.');
   if (!sourceMode) Issues.push('Choose BuiltInCBT or ExternalCBT as the score source.');
   if (!component) Issues.push('The CBT batch assessment component is not configured for this scorebook.');
+  if (!['objective', 'theory'].includes(partId) || (component?.ScoreEntryMode !== 'objective-theory' && clean(payload.AssessmentPartId))) Issues.push('Choose a valid assessment part for this scorebook.');
   const cbtMaximum = component?.ScoreEntryMode === 'objective-theory'
-    ? Number(component.ObjectiveMaximumScore)
+    ? Number(partId === 'theory' ? component.TheoryMaximumScore : component.ObjectiveMaximumScore)
     : Number(component?.MaximumScore);
   if (component && (!Number.isFinite(Number(payload.MaximumScore))
       || Math.abs(Number(payload.MaximumScore) - cbtMaximum) > 0.0001)) {
-    Issues.push(`${component.Name}${component.ScoreEntryMode === 'objective-theory' ? ' Objective (A)' : ''} is marked over ${cbtMaximum}; the CBT batch uses ${payload.MaximumScore}.`);
+    Issues.push(`${component.Name}${component.ScoreEntryMode === 'objective-theory' ? (partId === 'theory' ? ' Theory (B)' : ' Objective (A)') : ''} is marked over ${cbtMaximum}; the CBT batch uses ${payload.MaximumScore}.`);
   }
   if (component && sourceMode) {
     const sourceIssues = academicScoreSourceIssues(scheme, [component.ScoreEntryMode === 'objective-theory' ? {
       ComponentId: component.Id,
-      Parts: [{ PartId: 'objective', State: 'Numeric', RawScore: 0 }]
+      Parts: [{ PartId: partId, State: 'Numeric', RawScore: 0 }]
     } : { ComponentId: component.Id, State: 'Numeric', RawScore: 0 }], sourceMode);
     Issues.push(...sourceIssues);
   }

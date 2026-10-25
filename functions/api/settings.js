@@ -10,6 +10,7 @@ import {
 } from '../lib/deployment-identity.js';
 import { finishRequestMetric, startRequestMetric } from '../lib/request-metrics.js';
 import { readJsonBody } from '../lib/request-security.js';
+import { normalizeEntranceSubjects } from '../lib/entrance-subjects.js';
 import { getWebBranding, saveWebBranding } from '../lib/web-branding.js';
 import { getSchoolStructure } from '../lib/school-scope.js';
 import { saveBranchSchoolSection } from '../lib/branch-school-presentation.js';
@@ -144,6 +145,7 @@ function defaultProfile(env) {
     WebLogoUrl: '/images/Logo.png',
     WebLogoConfigured: false,
     ResultDisplayMode: clean(env.RESULT_DISPLAY_MODE) || 'subjects',
+    EntranceExamSubjects: null,
     ShowResultsOnline: clean(env.SHOW_RESULTS_ONLINE) || 'NO',
     CurrentAcademicSession: clean(env.CURRENT_ACADEMIC_SESSION) || '',
     CurrentTerm: clean(env.CURRENT_TERM) || 'First Term',
@@ -309,6 +311,7 @@ async function loadProfile(env, options = {}) {
   delete profile.googleDocumentsUrl;
   profile.DocumentStorageProvider = 'Cloudflare R2';
   profile.DocumentStorageConfigured = documentStorageConfigured(env);
+  profile.EntranceExamSubjects = normalizeEntranceSubjects(profile.EntranceExamSubjects);
   delete profile.__name;
   delete profile.__id;
   delete profile.__createTime;
@@ -540,6 +543,7 @@ export async function onRequestPost(context) {
       TutorialLinks: normalizeTutorialLinks(existing.TutorialLinks ?? {}),
       TutorialChannelUrl: normalizeYouTubeTutorialUrl(existing.TutorialChannelUrl ?? ''),
       ResultDisplayMode: ['subjects', 'percentage'].includes(clean(incoming.ResultDisplayMode)) ? clean(incoming.ResultDisplayMode) : 'subjects',
+      EntranceExamSubjects: normalizeEntranceSubjects(incoming.EntranceExamSubjects ?? existing.EntranceExamSubjects),
       ShowResultsOnline: ['YES', 'NO'].includes(clean(incoming.ShowResultsOnline).toUpperCase()) ? clean(incoming.ShowResultsOnline).toUpperCase() : 'NO',
       CurrentAcademicSession: clean(incoming.CurrentAcademicSession),
       CurrentTerm: clean(incoming.CurrentTerm) || 'First Term',

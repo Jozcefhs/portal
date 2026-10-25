@@ -215,8 +215,18 @@ export async function upsertSchoolDocument(env, collection, documentId, data, op
       options = { ...options, exists: false };
     }
   }
+  if (collection === 'applications') {
+    const current = await getDocument(env, path, documentId);
+    if (current?.AdmissionDetailsRemovedAt) {
+      throw Object.assign(new Error('This application is retained as admission history after verified cleanup. Restore from its backup before editing personal details.'), { status: 409 });
+    }
+    if (current && !current.__updateTime) throw Object.assign(new Error('The applicant revision could not be verified. Refresh and retry.'), { status: 409 });
+    options = { ...options, ...(current
+      ? { updateTime: options.updateTime || copy.__updateTime || current.__updateTime }
+      : { exists: false }) };
+  }
   const saved = await upsertDocument(env, path, documentId, copy, options);
-  return { ...copy, ...(collection === 'students' && saved?.updateTime ? { __updateTime: saved.updateTime } : {}), __scopePath: path };
+  return { ...copy, ...(['applications', 'students'].includes(collection) && saved?.updateTime ? { __updateTime: saved.updateTime } : {}), __scopePath: path };
 }
 
 export async function deleteSchoolDocument(env, collection, documentId, row = {}) {

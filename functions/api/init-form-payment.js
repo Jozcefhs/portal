@@ -2,7 +2,9 @@
 // Starts Paystack checkout for admission form purchase.
 
 import { getAdmissionClasses, getSchoolCode } from './backend.js';
-import { createDocumentIfAbsent, requireFirestoreEnv } from '../lib/firestore.js';
+import { createDocumentIfAbsent, getDocument, requireFirestoreEnv } from '../lib/firestore.js';
+import { effectiveBranchProfile } from '../lib/branch-profile-settings.js';
+import { admissionSubmissionFence } from '../lib/admission-cycle.js';
 import { normalizeClassKey } from '../lib/class-names.js';
 import {
   branchPaymentConfiguration,
@@ -74,6 +76,11 @@ export async function onRequestPost(context) {
     if (!classSetup.open) {
       return Response.json({ ok: false, message: `Admission is not currently open for ${classApplyingFor}.` }, { status: 400 });
     }
+    const profile = await effectiveBranchProfile(env, await getDocument(env, 'settings', 'schoolProfile') || {}, branchId);
+    const intake = { AcademicSession: profile.CurrentAcademicSession, Term: profile.CurrentTerm || 'First Term' };
+    // Do not start a new checkout for an already closed cycle. A previously
+    // initiated payment may still settle later; verification must retain it.
+    await admissionSubmissionFence(env, intake);
     const amount = toAmount(classSetup.amount);
     if (amount <= 0) {
       return Response.json({ ok: false, message: 'Admission form amount is not configured. Set it from Settings > Admission Classes in the desktop app.' }, { status: 500 });
@@ -121,6 +128,7 @@ export async function onRequestPost(context) {
       ParentEmail: email,
       Phone: phone,
       ClassApplyingFor: classApplyingFor,
+      ...intake,
       BranchId: branchId,
       Amount: amount,
       Currency: 'NGN',
@@ -147,6 +155,7 @@ export async function onRequestPost(context) {
           Email: email,
           Phone: phone,
           ClassApplyingFor: classApplyingFor,
+          ...intake,
           BranchId: branchId,
           FormAmount: amount,
           FormLink: `${new URL(request.url).origin}/verify.html?branch=${encodeURIComponent(branchId)}`

@@ -5,7 +5,7 @@ const clean = value => String(value ?? '').trim();
 const lower = value => clean(value).toLowerCase();
 
 export function academicCbtScoreSources(previous, component, row, input, signingKeyId, syncId, syncBatches = []) {
-  const partId = component.ScoreEntryMode === 'objective-theory' ? 'objective' : '';
+  const partId = component.ScoreEntryMode === 'objective-theory' ? (clean(input.AssessmentPartId) || 'objective') : '';
   const cellId = `${component.Id}${partId ? `:${partId}` : ''}`;
   const sources = Array.isArray(previous?.CbtScoreSources) ? previous.CbtScoreSources : [];
   const prior = sources.find(source => source.CellId === cellId);
@@ -38,6 +38,7 @@ export function academicCbtScoreSources(previous, component, row, input, signing
       // each cell. Preserve same-server compatibility; never guess across servers.
       const history = syncBatches.filter(batch => batch.SourceType === 'BuiltInCBT'
         && batch.SheetId === previous.SheetId && batch.AssessmentComponentId === component.Id
+        && (!partId || (clean(batch.AssessmentPartId) || 'objective') === partId)
         && (batch.AffectedScoreIds || []).includes(previous.ScoreId));
       if (!history.length || history.some(batch => lower(batch.SigningKeyId) !== lower(signingKeyId)
           || clean(batch.SourceTestId) !== testId)) {

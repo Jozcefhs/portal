@@ -215,6 +215,7 @@ async function handleRequest(context, body = null) {
     const metadata = documentEntry(application, key);
     const action = lower((body && body.action) || requestUrl.searchParams.get('action'));
     if (action === 'delete') {
+      if (application.AdmissionDetailsRemovedAt) return Response.json({ ok: false, message: 'This document belongs to retained admission history and cannot be deleted here.' }, { status: 409 });
       const role = clean((user && user.role) || (body && (body.UserRole || body.userRole)));
       if (!['Super Admin', 'Admissions Officer'].includes(role)) {
         return Response.json({ ok: false, message: 'Only Super Admin or Admissions Officer can delete admission documents.' }, { status: 403 });

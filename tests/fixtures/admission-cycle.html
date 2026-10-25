@@ -1,0 +1,19 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Admission cycle — local test only</title><link rel="stylesheet" href="/css/admission-cycles.css"><style>body{font-family:Arial,sans-serif;padding:24px;background:#eef4f9}button{padding:12px}</style></head><body>
+<h1>Local admission-cycle test</h1><p>Synthetic records only. This page never contacts a live API.</p><button id="open">Open admission cycle</button><p id="outcome"></p>
+<script src="/js/admission-cycles.js"></script><script>
+let policy={days:null,revision:'1'}, cycle=null, cleaned=false, downloads=[];
+let records=[{reference:'DEMO/26/001',name:'Demo Applicant <safe>',branch:'main',protectedReason:'',fields:['ResidentialAddress','NIN','MedicalCondition']},{reference:'DEMO/26/002',name:'Enrolled Applicant',branch:'annex',protectedReason:'Linked to a student record',fields:[]}];
+async function mockFetch(url,options){
+ const b=JSON.parse(options.body), scope={AcademicSession:b.AcademicSession||b.session,Term:b.Term||b.term};
+ let result={ok:true};
+ if(b.action==='state')result={...result,policy,cycles:cycle?[cycle]:[]};
+ if(b.action==='policy'){policy={days:b.days,revision:String(Number(policy.revision)+1)};result.policy=policy;}
+ if(b.action==='preview')result={...result,scope,cycle,policy,fingerprint:'local-preview',total:2,unassigned:1,protected:cleaned?2:1,eligible:cleaned?0:1,batch:cleaned?[]:[records[0]],records,due:!!cycle&&policy.days===0};
+ if(b.action==='close')cycle={...scope,Status:'Closed',ClosedAt:new Date().toISOString(),RetentionDays:policy.days===null?'never':policy.days,EligibleAfter:policy.days===null?'':new Date().toISOString()};
+ if(b.action==='cleanup'){cleaned=true;records[0].protectedReason='Already cleaned; admission history retained';downloads=[{id:'00000000-0000-0000-0000-000000000001',count:1,verifiedAt:new Date().toISOString(),sha256:'a'.repeat(64)}];result={...result,cleaned:1,remaining:0};}
+ if(b.action==='backups')result.backups=downloads;
+ if(b.action==='download')result={format:'synthetic-test-backup',documents:[]};
+ return new Response(JSON.stringify(result),{headers:{'Content-Type':'application/json'}});
+}
+document.getElementById('open').onclick=()=>DynamaxAdmissionCycles.open({fetch:mockFetch,onChanged:()=>{document.getElementById('outcome').textContent='Refresh requested after closing the dialog.'}});
+</script></body></html>

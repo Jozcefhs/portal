@@ -1,8 +1,9 @@
-const CACHE = 'dynamax-v471-score-above-filter';
+const CACHE = 'dynamax-v472-complete-school-workflows';
 const SHELL = ['/', '/index.html', '/school.html', '/admin.html', '/setup.html', '/activate-account.html', '/onboarding-status.html', '/parent-dashboard.html', '/payments.html', '/buy-form.html', '/register-organization.html', '/subscription-payment.html', '/plan-management.html', '/give.html', '/store.html', '/hotel-booking.html', '/verify-result.html', '/verify-transcript.html', '/css/style.css', '/css/school-landing.css', '/css/guest-fee-payment.css', '/css/notifications.css', '/css/payment-methods.css', '/css/store.css', '/css/store-compact.css', '/css/hotel-booking.css', '/js/preferences.js', '/js/action-feedback.js', '/js/app-dialogs.js', '/js/activate-account.js', '/js/onboarding-status.js', '/js/financial-values.js', '/js/launcher.js', '/js/site-config.js', '/js/list-sorting.js', '/js/academic-results-analysis.js', '/js/admin.js', '/js/student-face-lookup.js', '/js/setup.js', '/js/paystack-connection-status.js', '/js/tutorial-module-catalogue.js', '/js/payment-methods.js', '/js/buy-form.js', '/js/give.js', '/js/payments.js', '/js/store.js', '/js/hotel-booking.js', '/js/notifications.js', '/js/web-push.js', '/js/parent-dashboard.js', '/js/verify-result.js', '/js/verify-transcript.js', '/js/register-organization.js', '/js/subscription-payment.js', '/js/plan-management.js', '/images/Logo.png'];
 
 SHELL.push('/js/spoken-notifications.js', '/js/display-time.js');
 SHELL.push('/js/staff-action-feedback.js');
+SHELL.push('/js/admission-cycles.js', '/css/admission-cycles.css');
 SHELL.push('/css/academic-archived-memberships.css');
 SHELL.push('/css/app-dialogs.css');
 SHELL.push('/js/clinic-referrals.js');
@@ -52,6 +53,7 @@ self.addEventListener('fetch', (event) => {
     || url.origin !== self.location.origin
     || url.pathname === '/api'
     || url.pathname.startsWith('/api/')
+    || /^\/exams?(?:-admin)?(?:\.html)?\/?$/.test(url.pathname)
     || /^\/staff-password-recovery(?:\.html)?\/?$/.test(url.pathname)
   ) return;
 

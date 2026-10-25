@@ -1,5 +1,6 @@
 import { getAccountsOverview } from './backend.js';
 import { withVendorStorePolicy } from '../lib/vendor-store-policy.js';
+import { activeAdmissionRows } from '../lib/admission-cycle.js';
 import { getDocument, listCollection, listCollectionForReport, requireFirestoreEnv } from '../lib/firestore.js';
 import { loadBranchFinanceRows } from '../lib/finance-branch-reads.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
@@ -303,7 +304,7 @@ export async function onRequestPost(context) {
       }
     }
     const displayInvoices = reconcileInvoiceDisplay(invoices, accountOverview && accountOverview.ok ? accountOverview.accounts : []);
-    const visibleApplications = staffScope(applications)
+    const visibleApplications = (applications.length ? await activeAdmissionRows(env, staffScope(applications)) : [])
       .map((row) => applicationWithConfiguredName(row, schoolProfile || {}));
     const visibleStudents = staffScope(students)
       .map((row) => studentWithConfiguredName(row, schoolProfile || {}));

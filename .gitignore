@@ -19,3 +19,6 @@ tmp/membership-duplicates-*
 tmp/membership-repair-*/
 tmp/student-transfer-readonly.mjs
 tmp/repair-confirmed-memberships.mjs
+# Synthetic examination browser evidence and local Worker build output.
+tmp/portal-cbt-ui/
+tmp/portal-cbt-worker-build/
