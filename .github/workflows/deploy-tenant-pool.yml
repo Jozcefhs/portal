@@ -125,7 +125,7 @@ jobs:
             should_deploy=true
           elif [[ "${EVENT_NAME}" == "push" ]]; then
             if [[ "${BEFORE_SHA}" =~ ^[0-9a-f]{40}$ && "${BEFORE_SHA}" != "0000000000000000000000000000000000000000" ]]; then
-              if ! git diff --quiet "${BEFORE_SHA}" "${GITHUB_SHA}" -- "${FIREBASE_CONFIG}" "${index_file}"; then
+              if ! git diff --quiet "${BEFORE_SHA}" "${GITHUB_SHA}" -- "${FIREBASE_CONFIG}" "${index_file}" scripts/tenant-index-identity.mjs; then
                 should_deploy=true
               else
                 echo "Firestore index definitions are unchanged; continuing directly to the application deployment."
@@ -138,13 +138,21 @@ jobs:
           fi
           echo "should_deploy=${should_deploy}" >> "${GITHUB_OUTPUT}"
 
+      - name: Select existing tenant index deployment identity
+        id: index_identity
+        if: ${{ steps.firestore_indexes.outputs.should_deploy == 'true' }}
+        env:
+          DEFAULT_INDEX_PROJECT_ID: ${{ vars.DYNAMAX_PROVISION_PROJECT_ID }}
+          DEFAULT_INDEX_SERVICE_ACCOUNT: ${{ vars.DYNAMAX_PROVISION_SERVICE_ACCOUNT }}
+        run: node scripts/tenant-index-identity.mjs
+
       - name: Authenticate to Google Cloud
         if: ${{ steps.firestore_indexes.outputs.should_deploy == 'true' }}
         uses: google-github-actions/auth@v3
         with:
-          project_id: ${{ vars.DYNAMAX_PROVISION_PROJECT_ID }}
+          project_id: ${{ steps.index_identity.outputs.project_id }}
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
-          service_account: ${{ vars.DYNAMAX_PROVISION_SERVICE_ACCOUNT }}
+          service_account: ${{ steps.index_identity.outputs.service_account }}
 
       - name: Apply required Firestore indexes
         if: ${{ steps.firestore_indexes.outputs.should_deploy == 'true' }}
