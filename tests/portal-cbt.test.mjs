@@ -19,6 +19,8 @@ function fixture(overrides = {}) {
   let revision = 0, now = Date.parse('2026-10-24T09:00:00Z');
   const db = new Map(), events = [];
   const env = { ORGANISATION_EDITION: 'school', DYNAMAX_WORKSPACE_ID: 'school-a', STAFF_SESSION_SECRET: 'fixture-secret-never-for-production' };
+  const objects = new Map();
+  env.DYNAMAX_DOCUMENTS = { put: async (key, bytes) => { objects.set(key, bytes.slice()); return { etag: 'test' }; }, get: async key => objects.has(key) ? { arrayBuffer: async () => objects.get(key).buffer } : null };
   const put = (path, id, data) => {
     const row = firestoreDocumentToObject({ fields: objectToFirestoreFields(data), name: `${path}/${id}`, updateTime: `r${++revision}` });
     db.set(`${path}/${id}`, row); return row;
@@ -65,9 +67,52 @@ function fixture(overrides = {}) {
     login.savedVersion = result.attempt.SaveVersion;
     return result;
   }
-  return { service, publicService, env, db, events, put, get, create, ready, login, action, dependencies,
+  return { service, publicService, env, db, objects, events, put, get, create, ready, login, action, dependencies,
     conflict: () => { conflictNext = true; }, advance: milliseconds => { now += milliseconds; }, now: () => now };
 }
+
+const tinyPng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aLCkAAAAASUVORK5CYII=';
+const paperInput = () => ({ ContentMode: 'document', MaximumScore: 100, NumberOfQuestions: 2, OptionCount: 4, AnswerKey: 'B, D',
+  Paper: { PreviewConfirmed: true, Source: { FileName: 'mathematics.pdf', FileBase64: btoa('%PDF-1.7 synthetic') }, Pages: [{ FileName: 'page-1.png', FileBase64: tinyPng }] } });
+
+test('document papers stay private until an active sitting and offline receives the same verified pages', async () => {
+  const f = fixture(), created = await f.create(paperInput());
+  await f.service.enroll({ ...created, References: ['APP/001'], Delivery: 'online' });
+  await f.service.enroll({ ...created, References: ['APP/002'], Delivery: 'offline' });
+  await f.service.schedule(created);
+  const cards = (await f.service.cards(created)).cards;
+  const ready = { ...created, card: cards.find(row => row.Delivery === 'online') }, login = await f.login(ready);
+  const request = { CandidateId: login.CandidateId, ClientId: client, PageIndex: 0 };
+  await assert.rejects(f.publicService.paperPage(request, login.session), /Start the examination/);
+  await f.action(login, 'start');
+  assert.equal((await f.publicService.paperPage(request, login.session)).page.FileBase64, tinyPng);
+  await assert.rejects(f.publicService.paperPage(request, 'wrong-cookie'));
+  await assert.rejects(f.publicService.paperPage({ ...request, PageIndex: 99 }, login.session));
+  const state = await f.service.state(scope), details = await f.service.details(created);
+  assert.ok(!JSON.stringify([state, details]).includes('private-portal-cbt'));
+  const packet = (await f.service.offlinePackage({ ...created, ServerId: 'a'.repeat(64) })).package;
+  assert.equal(packet.ContentMode, 'document'); assert.equal(packet.PaperPages[0].FileBase64, tinyPng);
+  await f.action(login, 'submit', { SaveVersion: 1, Answers: { Q1: 'B', Q2: 'D' } });
+  await assert.rejects(f.publicService.paperPage(request, login.session), /Start the examination/);
+  assert.equal((await f.service.review({ ...created, CandidateId: login.CandidateId })).candidate.RawScore, 100);
+  const before = f.objects.size;
+  await assert.rejects(f.create(paperInput()), /already has a register/); assert.equal(f.objects.size, before);
+});
+
+test('document validation rejects missing previews, answer keys, wrong types and damaged pages without a saved test', async () => {
+  for (const change of [p => p.Paper.PreviewConfirmed = false, p => p.AnswerKey = 'B', p => p.Paper.Source.FileName = 'bad.exe',
+    p => p.Paper.Pages = [], p => p.Paper.Pages[0].FileBase64 = btoa('not png'), p => p.MaximumScore = 50]) {
+    const f = fixture(), input = paperInput(); change(input);
+    await assert.rejects(f.create(input)); assert.equal((await f.service.state(scope)).tests.length, 0);
+  }
+  const f = fixture(), input = paperInput(); input.Paper.Source = { FileName: 'paper.docx', FileBase64: btoa('PK\x03\x04fixture') };
+  const created = await f.create(input);
+  const details = await f.service.details(created);
+  assert.equal(details.test.Paper.FileName, 'paper.docx');
+  const pageKey = [...f.objects.keys()].find(key => key.includes('/page-'));
+  f.objects.set(pageKey, new TextEncoder().encode('damaged'));
+  await assert.rejects(f.service.paperPage({ ...created, PageIndex: 0 }), /integrity/);
+});
 
 test('school-specific subjects and role, branch and section isolation are enforced', async () => {
   const f = fixture(); const state = await f.service.state(scope);

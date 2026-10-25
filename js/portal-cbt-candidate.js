@@ -40,7 +40,7 @@
       const response = await fetch('/api/portal-cbt', { method: 'POST', credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
         headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, CandidateId: candidateId, ClientId: client, ...extra }) });
       const data = await response.json(); if (!response.ok || data.ok === false) throw new Error(data.message || 'The server did not confirm this request.');
-      lastContact = Date.now();
+      if (action !== 'paperPage') lastContact = Date.now(); // Paper reads do not renew the active-browser lease.
       return data;
     } finally { clearTimeout(timeout); }
   }
@@ -74,6 +74,8 @@
     if (['Submitted', 'Approved'].includes(next.Status)) return done(next);
     if (next.Status !== 'In progress') { $('examLobby').hidden = false; return; }
     $('examLobby').hidden = true; $('examWork').hidden = false;
+    const paperHolder = $('candidatePaper'); paperHolder.hidden = !next.HasPaper;
+    if (next.HasPaper) loadPaper(next.PaperPageCount);
     answers = { ...next.Answers }; version = acknowledged = next.SaveVersion || 0;
     try {
       const saved = JSON.parse(sessionStorage.getItem(pendingKey()) || 'null');
@@ -106,6 +108,33 @@
     });
     if (submissionPending) freezeAnswers();
     clearInterval(timer); timer = setInterval(updateTimer, 1000); updateTimer(); flush();
+  }
+  async function loadPaper(count) {
+    const holder = $('candidatePaper'); holder.replaceChildren();
+    const message = document.createElement('p'); message.textContent = 'Loading question paper…'; holder.append(message);
+    const controls = document.createElement('div'), viewport = document.createElement('div'), pages = document.createElement('div');
+    controls.className = 'exam-actions'; viewport.className = 'exam-paper-viewport'; pages.className = 'exam-paper-pages';
+    viewport.tabIndex = 0; viewport.setAttribute('aria-label', 'Question paper — scroll to read each page');
+    viewport.append(pages); holder.append(controls, viewport);
+    let zoom = 100;
+    const zoomLabel = document.createElement('span'); zoomLabel.setAttribute('aria-live', 'polite');
+    const resize = value => { zoom = Math.max(100, Math.min(300, value)); pages.style.width = `${zoom}%`; zoomLabel.textContent = `${zoom}%`; };
+    for (const [label, change] of [['Zoom out', () => resize(zoom - 50)], ['Zoom in', () => resize(zoom + 50)], ['Fit width', () => resize(100)]]) {
+      const button = document.createElement('button'); button.type = 'button'; button.textContent = label; button.onclick = change; controls.append(button);
+    }
+    controls.append(zoomLabel); resize(100);
+    try {
+      for (let index = 0; index < count; index++) {
+        const data = await request('paperPage', { PageIndex: index });
+        if (attempt.Status !== 'In progress') return;
+        const image = document.createElement('img'); image.src = `data:${data.page.MimeType};base64,${data.page.FileBase64}`;
+        image.alt = `Question paper page ${index + 1}`; pages.append(image);
+      }
+      message.textContent = 'Read all paper pages below, then choose your answers in the numbered answer sheet. Use Zoom in for larger text.';
+    } catch (error) {
+      message.textContent = `The complete paper has not loaded: ${error.message}`;
+      const retry = document.createElement('button'); retry.type = 'button'; retry.textContent = 'Retry loading paper'; retry.onclick = () => loadPaper(count); message.append(retry);
+    }
   }
   async function flush() {
     if (busy || !attempt || attempt.Status !== 'In progress') return;

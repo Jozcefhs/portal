@@ -6,10 +6,11 @@
   $('section').value = params.get('section') === 'primary' ? 'primary' : 'secondary';
   $('audience').value = params.get('audience') === 'student' ? 'student' : 'applicant';
   let state = {}, options = {}, selected = null, editing = '', revision = '', busy = false;
+  let uploadedPaper = null, savedPaper = null;
   const status = (message, bad = false) => { $('managerStatus').textContent = message; $('managerStatus').className = bad ? 'bad' : 'good'; };
   let sessionActive = false;
   async function request(url, body) {
-    const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 30000);
+    const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), body?.Paper ? 120000 : 30000);
     try {
       const response = await fetch(url, { method: body ? 'POST' : 'GET', credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
         ...(body ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}) });
@@ -93,6 +94,14 @@
       await refreshAssessment();
     }
     $('questionEditors').replaceChildren();
+    uploadedPaper = null; savedPaper = existing?.Paper || null;
+    $('contentMode').value = existing?.ContentMode || 'native';
+    $('paperFile').value = ''; $('paperConfirmed').checked = false; $('paperPreview').replaceChildren();
+    $('paperStatus').textContent = savedPaper ? `Saved paper: ${savedPaper.FileName} · ${savedPaper.PageCount} pages` : '';
+    $('documentCount').value = existing?.Questions?.length || 20;
+    $('documentOptions').value = existing?.Questions?.[0]?.Options?.length || 4;
+    $('documentKeys').value = savedPaper ? existing.Questions.map(q => q.AnswerKey).join(' ') : '';
+    modeChanged();
     $('testTitle').value = existing?.Title || ''; $('duration').value = existing?.DurationMinutes || 30; $('testInstructions').value = existing?.Instructions || '';
     if (existing) {
       if (!applicant && existing.Academic) {
@@ -107,7 +116,21 @@
       $('startsAt').value = new Date(Date.parse(existing.StartsAt) + 3600000).toISOString().slice(0, 16); $('endsAt').value = new Date(Date.parse(existing.EndsAt) + 3600000).toISOString().slice(0, 16);
       (existing.Questions || []).forEach(question);
     } else question();
+    modeChanged();
     $('testEditor').hidden = false; $('testEditor').scrollIntoView({ behavior: 'smooth' }); total();
+    if (savedPaper) await showSavedPaper(existing.TestId, savedPaper.PageCount, $('paperPreview'));
+  }
+  function modeChanged() {
+    const documentMode = $('contentMode').value === 'document';
+    $('documentEditor').hidden = !documentMode; $('questionEditors').hidden = documentMode; $('addQuestion').hidden = documentMode;
+    $('questionEditors').querySelectorAll('[data-prompt], [data-marks]').forEach(el => { el.required = !documentMode; }); total();
+  }
+  async function showSavedPaper(id, count, holder) {
+    holder.replaceChildren();
+    for (let index = 0; index < count; index++) {
+      const data = await api('paperPage', { TestId: id, PageIndex: index });
+      const image = document.createElement('img'); image.src = `data:${data.page.MimeType};base64,${data.page.FileBase64}`; image.alt = `Question paper page ${index + 1}`; holder.append(image);
+    }
   }
   function question(row = {}) {
     const card = document.createElement('div'); card.className = 'question-editor';
@@ -122,7 +145,8 @@
     const cards = [...$('questionEditors').children], sum = cards.reduce((value, row) => value + Number(row.querySelector('[data-marks]').value || 0), 0);
     const subject = (state.subjects || []).find(row => row.id === $('entranceSubject').value), component = (options.componentChoices || []).find(row => row.key === $('academicComponent').value);
     const target = $('audience').value === 'applicant' ? subject?.maxScore : component?.maximum;
-    $('questionTotal').textContent = `${cards.length} questions · Total ${Number(sum.toFixed(4))} / ${target ?? 'choose subject'} marks`;
+    const documentMode = $('contentMode').value === 'document';
+    $('questionTotal').textContent = documentMode ? `${$('documentCount').value} questions · ${target ?? 'Choose subject'} marks, shared equally` : `${cards.length} questions · Total ${Number(sum.toFixed(4))} / ${target ?? 'choose subject'} marks`;
   }
   async function saveDraft() {
     const allocation = $('academicAllocation')._rows?.[Number($('academicAllocation').value)] || {};
@@ -135,6 +159,15 @@
       Questions: [...$('questionEditors').children].map((row, index) => ({ QuestionId: `Q${index + 1}`, QuestionType: row.querySelector('[data-type]').value,
         Prompt: row.querySelector('[data-prompt]').value, MaximumScore: Number(row.querySelector('[data-marks]').value),
         Options: row.querySelector('[data-options]').value.split('\n').map(value => value.trim()).filter(Boolean), AnswerKey: row.querySelector('[data-key]').value })) };
+    body.ContentMode = $('contentMode').value;
+    if (body.ContentMode === 'document') {
+      if (!uploadedPaper && !savedPaper) throw new Error('Upload the Word or PDF paper first.');
+      if (!$('paperConfirmed').checked) throw new Error('Check every preview page and confirm the paper is readable.');
+      body.MaximumScore = $('audience').value === 'applicant' ? state.subjects.find(row => row.id === body.SubjectId)?.maxScore : component?.maximum;
+      body.NumberOfQuestions = Number($('documentCount').value); body.OptionCount = Number($('documentOptions').value); body.AnswerKey = $('documentKeys').value;
+      delete body.Questions;
+      if (uploadedPaper) body.Paper = { ...uploadedPaper, PreviewConfirmed: true };
+    }
     const saved = await api('create', body); $('testEditor').hidden = true; await load(); await details(saved.TestId); status(saved.message);
   }
   async function details(id) {
@@ -147,6 +180,12 @@
       ${data.test.Status === 'Draft' ? `<p>Register candidates, then open the examination. Opening freezes its questions, candidates and delivery assignments.</p><div class="exam-actions"><button type="button" data-edit>Edit draft</button><button type="button" data-select-all>Select all unregistered</button><select aria-label="Delivery mode" data-delivery>${data.test.Audience === 'applicant' ? '<option value="offline">School network (offline)</option>' : ''}<option value="online">Remote over internet</option></select><button type="button" data-enroll>Register selected candidates</button><button type="button" data-schedule>Open examination</button></div><div class="exam-options">${available.map(row => `<label class="row-check"><input type="checkbox" value="${escape(row.Reference)}" data-candidate-check>${escape(row.DisplayName)} · ${escape(row.Reference)}</label>`).join('') || '<p>No unregistered candidates in this class and period.</p>'}</div>` : '<p>Offline applicants: open Local CBT Server → Entrance exams, then pull this examination before disconnecting the internet. Each offline exam is reserved to one CBT server.</p>'}
       <div class="exam-actions"><button type="button" data-cards>Preview / print access cards</button><button type="button" data-refresh>Refresh results</button><button type="button" data-post-all>Post approved results</button></div>
       <div class="exam-table"><table><thead><tr><th>Candidate</th><th>Reference</th><th>Delivery</th><th>Attempt</th><th>Score</th><th>Online result</th><th></th></tr></thead><tbody>${data.candidates.map(row => `<tr><td>${escape(row.DisplayName)}</td><td>${escape(row.Reference)}</td><td>${escape(row.Delivery)}</td><td>${escape(row.Status)}</td><td>${row.Status === 'Ready' || row.Status === 'In progress' ? '—' : row.NeedsMarking ? 'Needs marking' : escape(row.RawScore)}</td><td>${escape(row.PostMessage || 'Not posted')}</td><td>${['Submitted', 'Approved', 'In progress'].includes(row.Status) ? `<button type="button" data-review="${row.CandidateId}">Review</button>` : ''}${row.Status === 'Approved' ? `<button type="button" data-post="${row.CandidateId}">Post result</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="7">No candidates registered.</td></tr>'}</tbody></table></div>`;
+    if (data.test.Paper) {
+      const button = document.createElement('button'); button.textContent = 'Preview question paper'; button.type = 'button';
+      const preview = document.createElement('div'); preview.className = 'exam-paper-preview'; preview.hidden = true;
+      button.onclick = () => run(async () => { preview.hidden = !preview.hidden; if (!preview.hidden && !preview.children.length) await showSavedPaper(id, data.test.Paper.PageCount, preview); });
+      $('testDetails').append(button, preview);
+    }
     const find = selector => $('testDetails').querySelector(selector);
     if (find('[data-edit]')) find('[data-edit]').onclick = () => run(() => editor(data.test));
     if (find('[data-select-all]')) find('[data-select-all]').onclick = () => { $('testDetails').querySelectorAll('[data-candidate-check]').forEach(check => { check.checked = true; }); };
@@ -182,6 +221,18 @@
     }); $('resultReview').scrollIntoView({ behavior: 'smooth' });
   }
   $('loadTests').onclick = () => run(load); $('newTest').onclick = () => run(() => editor()); $('addQuestion').onclick = () => question();
+  $('contentMode').onchange = modeChanged; $('documentCount').oninput = total;
+  $('paperFile').onchange = () => run(async () => {
+    uploadedPaper = null; savedPaper = null; $('paperConfirmed').checked = false; $('paperPreview').replaceChildren();
+    $('paperStatus').textContent = 'Preparing question-paper preview…';
+    try {
+      uploadedPaper = await window.DynamaxExamDocumentUpload.convert($('paperFile').files[0], message => { $('paperStatus').textContent = message; });
+      for (const [index, page] of uploadedPaper.Pages.entries()) {
+        const image = document.createElement('img'); image.src = `data:image/png;base64,${page.FileBase64}`; image.alt = `Question paper page ${index + 1}`; $('paperPreview').append(image);
+      }
+      $('paperStatus').textContent = `${uploadedPaper.Source.FileName}: ${uploadedPaper.Pages.length} pages ready. Check every page below.`;
+    } catch (error) { $('paperStatus').textContent = error.message; throw error; }
+  });
   $('cancelEditor').onclick = () => { $('testEditor').hidden = true; }; $('testEditor').onsubmit = event => { event.preventDefault(); run(saveDraft); };
   $('academicSession').onchange = () => { academicTerms(); run(refreshAssessment); };
   $('academicTerm').onchange = $('academicClass').onchange = () => { academicChoices(); run(refreshAssessment); };

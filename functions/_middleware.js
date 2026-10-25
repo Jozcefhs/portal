@@ -1,6 +1,7 @@
 import { loadDeploymentIdentity, requiredDeploymentIdentity } from './lib/deployment-identity.js';
 import { hasPlatformFirestoreConfiguration } from './lib/platform-firestore.js';
 import { persistRequestSecurityAudit, prepareSecurityAudit } from './lib/security-audit.js';
+import { secureExamAdminPage } from './lib/exam-admin-page.js';
 
 const LOW_READ_IDENTITY_PATHS = new Set([
   '/api/staff-password-recovery',
@@ -324,6 +325,7 @@ export async function onRequestWithIdentityLoader(context, identityLoader) {
 
 export async function onRequest(context) {
   const pathname = new URL(context.request.url).pathname;
+  if (['/exams-admin', '/exams-admin.html'].includes(pathname)) return secureExamAdminPage(await context.next());
   const identityLoader = LOW_READ_IDENTITY_PATHS.has(pathname)
     ? async (env) => requiredDeploymentIdentity(env)
     : loadDeploymentIdentity;

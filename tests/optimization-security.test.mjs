@@ -39,13 +39,15 @@ const [
   readFile(new URL('functions/api/backend.js', portalRoot), 'utf8')
 ]);
 
-test('Pages Functions routing invokes the homepage and API paths while bypassing other static assets', () => {
+test('Pages Functions routing includes the protected exam editor and bypasses other static assets', () => {
   const routes = JSON.parse(routesSource);
   assert.equal(routes.version, 1);
-  assert.deepEqual(routes.include, ['/', '/api', '/api/*']);
+  assert.deepEqual(routes.include, ['/', '/exams-admin', '/exams-admin.html', '/api', '/api/*']);
   assert.deepEqual(routes.exclude, []);
 
-  const invokesFunction = (pathname) => pathname === '/' || pathname === '/api' || pathname.startsWith('/api/');
+  const invokesFunction = (pathname) => routes.include.includes(pathname) || pathname.startsWith('/api/');
+  assert.equal(invokesFunction('/exams-admin.html'), true);
+  assert.equal(invokesFunction('/exam.html'), false);
   assert.equal(invokesFunction('/api/settings'), true);
   assert.equal(invokesFunction('/api/paystack-webhook'), true);
   assert.equal(invokesFunction('/'), true);

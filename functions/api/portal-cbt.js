@@ -22,6 +22,7 @@ export async function onRequestPost({ request, env }) {
       const { session, ...result } = await service.login(body, sessionCookie(request));
       return Response.json(result, { headers: { ...headers, 'Set-Cookie': `${cookieName}=${session}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=86400` } });
     }
+    if (body.action === 'paperPage') return Response.json(await service.paperPage(body, sessionCookie(request)), { headers });
     if (!['session', 'start', 'save', 'submit'].includes(body.action)) throw Object.assign(new Error('Choose a valid examination action.'), { status: 400 });
     return Response.json(await service.candidateAction(body, sessionCookie(request)), { headers });
   } catch (error) {

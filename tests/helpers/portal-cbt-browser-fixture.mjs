@@ -36,6 +36,8 @@ export function browserFixture() {
     classes: [{ ClassId: 'grade7', Name: 'Grade 7' }], subjects: [{ SubjectId: 'logic', Name: 'Logic' }], teacherAllocations: [allocation], selection: { SessionId: 'session', TermId: 'term' } }) };
   const actor = { username: 'reviewer', role: 'ICT', edition: 'school', allowedSections: ['academics', 'applications'], schoolSectionAccess: 'All' };
   const env = { ORGANISATION_EDITION: 'school', DYNAMAX_WORKSPACE_ID: 'fixture', STAFF_SESSION_SECRET: 'synthetic-exam-fixture-secret' };
+  const objects = new Map();
+  env.DYNAMAX_DOCUMENTS = { put: async (key, bytes) => { objects.set(key, bytes.slice()); return { etag: 'test' }; }, get: async key => objects.has(key) ? { arrayBuffer: async () => objects.get(key).buffer } : null };
   put('settings', 'schoolProfile', { SchoolName: 'Example School', EntranceExamSubjects: [{ id: 'logic', name: 'Logic', maxScore: 100 }] });
   for (let i = 1; i <= 2; i++) put(source, `app-${i}`, { ApplicationReference: `APP/00${i}`, ApplicantName: `Candidate ${i}`, AcademicSession: '2026/2027', Term: 'First Term', ClassApplyingFor: 'Grade 7' });
   put('students', 'student1', { AdmissionNo: 'ST/001', StudentName: 'Example Student' });

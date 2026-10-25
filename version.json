@@ -1,8 +1,8 @@
 {
-  "version": "3.1.55",
+  "version": "3.1.56",
   "channel": "stable",
   "release_status": "published",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.55.exe",
-  "sha256": "d0bfc954d9ad0220b97736e01a97d149a3e678b00e5856fb67215ea5bf471a53",
-  "notes": "Dynamax v3.1.55 repairs Session Movement and clipped actions, displays readable class names, adds configurable entrance and remote examinations, and introduces verified admission-cycle retention. Existing scores, answers, payments and history are preserved."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.56.exe",
+  "sha256": "30323e5894440a2659dfe1dfd535fc08398e5da040b75551d5e378911819afe7",
+  "notes": "Dynamax v3.1.56 adds Word/PDF entrance question papers with bulk answer keys, private remote and offline paper access, retained desktop class score registers and readable test names. Existing scores, answers and records are preserved."
 }

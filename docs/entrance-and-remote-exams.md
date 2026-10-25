@@ -14,6 +14,18 @@ Choose **Admission applicants** or **Enrolled students — remote tests**. Each 
 4. Click **Open examination**. This freezes the paper, register and delivery assignments. Existing attempts cannot be replaced by saving another paper with the same subject/test identity. Finish registration and check the paper before opening.
 5. Use **Preview / print access cards**. Give each candidate only their own card. It contains the examination link or LAN instructions, reference/login and generated examination password. These are separate from ordinary student portal passwords.
 
+## Upload a Word or PDF question paper
+
+In the examination editor, choose **Upload Word / PDF paper** under question format. Upload a **.docx** or **.pdf** file (up to 8 MB and 12 pages). Save older `.doc` files as `.docx` or PDF first.
+
+Check every rendered preview page, including diagrams, equations and page breaks, and tick the preview confirmation. If Word formatting differs, export the original to PDF and upload that version. Upload the question paper only; do not include its answer key in the document candidates will see.
+
+Enter the question count (1–200), the number of answer options (2–6), and paste the correct-answer letters in order, for example `B D A C`. You do not need to type each question or option again. This mode creates a numbered multiple-choice answer sheet and divides the configured maximum equally between questions. Use individual-question entry for written responses or different marks per question.
+
+Save the draft, register candidates, check the paper, then open the examination and print the access cards. Remote candidates see the paper beside their numbered answer sheet; **Zoom in**, **Zoom out** and **Fit width** help on small screens. The paper becomes available only after an authorized candidate starts the examination.
+
+The updated desktop server downloads the same paper pages when pulling an entrance examination. School-network candidates can read and answer it without internet during the sitting. Uploaded source files and page images are stored privately; a public file URL is not issued.
+
 ## Remote sitting
 
 Candidates open the HTTPS link on their card on a computer, phone or tablet, sign in, then click **Start test** and confirm. Remote access is restricted to registered candidates. A school-network assignment cannot sign in remotely.

@@ -25,13 +25,13 @@ test('Dynamax Pages fail closed unless an API proxy is explicitly configured', (
   assert.doesNotMatch(middleware, /PRIVATE_KEY|SHARED_SECRET|SESSION_SECRET/);
 });
 
-test('only API paths and the host-aware homepage invoke Pages Functions', () => {
+test('API, homepage and nonce-protected exam editor invoke Pages Functions', () => {
   assert.deepEqual(routes, {
     version: 1,
-    include: ['/', '/api', '/api/*'],
+    include: ['/', '/exams-admin', '/exams-admin.html', '/api', '/api/*'],
     exclude: []
   });
-  assert.equal(routes.include.some((route) => route.includes('.html')), false);
+  assert.deepEqual(routes.include.filter((route) => route.includes('.html')), ['/exams-admin.html']);
   assert.equal(routes.include.some((route) => /\/(?:css|js|images|icons|fonts)\//.test(route)), false);
 });
 

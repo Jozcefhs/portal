@@ -2,6 +2,8 @@
   "version": 1,
   "include": [
     "/",
+    "/exams-admin",
+    "/exams-admin.html",
     "/api",
     "/api/*"
   ],

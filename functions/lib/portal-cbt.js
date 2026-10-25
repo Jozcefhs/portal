@@ -6,6 +6,7 @@ import { academicManagementCapabilities, portalCbtAcademicContext, bootstrapAcad
 import { normalizeEntranceSubjects, entranceSubjectRows, entranceScoreUpdates } from './entrance-subjects.js';
 import { hashStudentPassword, verifyStudentPasswordHash } from './student-login-credentials.js';
 import { secureSecretEqual } from './request-security.js';
+import { documentQuestions, saveExamPaper, readExamPage } from './portal-cbt-papers.js';
 import { clean, lower, fail, fields, condition, conflict, normalizeQuestions, normalizeSchedule, normalizeAnswers, markAnswers, publicTest, publicAttempt, startAttempt, completeAttempt } from './portal-cbt-model.js';
 
 export const CBT = Object.freeze({ tests: 'portalCbtTests', candidates: 'portalCbtCandidates', audit: 'portalCbtAudit' });
@@ -135,7 +136,8 @@ export function createPortalCbtService(env, user = null, dependencies = {}) {
     if (!['applicant', 'student'].includes(audience)) throw fail('Choose applicants or enrolled students.');
     const scope = portalCbtScope(env, user, input);
     const profile = await get(env, 'settings', 'schoolProfile');
-    const questions = normalizeQuestions(input.Questions);
+    const documentMode = input.ContentMode === 'document';
+    const questions = normalizeQuestions(documentMode ? documentQuestions(input) : input.Questions);
     const maximum = Number(questions.reduce((sum, q) => sum + q.MaximumScore, 0).toFixed(4));
     const schedule = normalizeSchedule(input);
     if (Date.parse(schedule.EndsAt) <= clock()) throw fail('Choose a future examination window.');
@@ -165,7 +167,10 @@ export function createPortalCbtService(env, user = null, dependencies = {}) {
     if (previous && input.Revision !== previous.__updateTime) throw fail('Reload the existing draft before replacing its questions.', 409);
     const title = clean(input.Title) || `${className} · ${subject.name} · ${audience === 'applicant' ? 'Entrance exam' : academicFields.AssessmentComponentName}`;
     if (title.length > 180 || clean(input.Instructions).length > 8000) throw fail('The title or instructions are too long.');
+    const paper = documentMode ? (input.Paper ? await saveExamPaper(env, id, input.Paper) : previous?.Paper) : null;
+    if (documentMode && !paper) throw fail('Upload and preview the question paper first.');
     const test = { TestId: id, Scope: scope, Audience: audience, SubjectId: subject.id, SubjectName: subject.name, MaximumScore: maximum,
+      ContentMode: documentMode ? 'document' : 'native', Paper: paper,
       Academic: academicFields, AcademicSession: session, Term: term, ClassName: className, Title: title,
       SchoolName: clean(profile?.SchoolName || profile?.Name), Instructions: clean(input.Instructions), Questions: questions,
       ...schedule, Status: 'Draft', CandidateCount: 0, CreatedBy: actorName(user), CreatedAt: iso(clock()), UpdatedAt: iso(clock()) };
@@ -175,7 +180,7 @@ export function createPortalCbtService(env, user = null, dependencies = {}) {
   async function details(input) {
     const test = await staffTest(input.TestId);
     const candidates = await rows(CBT.candidates, 'TestId', test.TestId);
-    return { ok: true, test: { ...publicTest(test), Academic: test.Academic, Revision: test.__updateTime, Questions: test.Questions },
+    return { ok: true, test: { ...publicTest(test), ContentMode: test.ContentMode || 'native', Paper: test.Paper ? { FileName: test.Paper.FileName, PageCount: test.Paper.Pages.length } : null, Academic: test.Academic, Revision: test.__updateTime, Questions: test.Questions },
       candidates: candidates.map(candidateView), available: (test.Status === 'Draft' ? await sources(test) : []).map(row => sourceIdentity(test, row)).map(({ SourcePath, ...row }) => row) };
   }
   async function enroll(input) {
@@ -282,6 +287,16 @@ export function createPortalCbtService(env, user = null, dependencies = {}) {
     if (!['Submitted', 'Approved'].includes(row.Status)) throw fail('This candidate has not submitted the test.', 409);
     return { ok: true, test: publicTest(test), candidate: { ...candidateView(row), Revision: row.__updateTime }, Questions: test.Questions, Answers: row.Answers || {}, QuestionMarks: row.QuestionMarks || {} };
   }
+  async function paperPage(input, session) {
+    let test;
+    if (user) test = await staffTest(input.TestId);
+    else {
+      const authenticatedExam = await authenticated(input, session);
+      test = authenticatedExam.test;
+      if (authenticatedExam.row.Status !== 'In progress' || clock() >= Date.parse(authenticatedExam.row.ExpiresAt)) throw fail('Start the examination to view its question paper.', 403);
+    }
+    return { ok: true, page: await readExamPage(env, test.Paper, Number(input.PageIndex)) };
+  }
   async function approve(input) {
     const test = await staffTest(input.TestId);
     const row = await get(env, CBT.candidates, clean(input.CandidateId));
@@ -374,6 +389,7 @@ export function createPortalCbtService(env, user = null, dependencies = {}) {
       return { ok: true, package: { Version: 1, TestId: test.TestId, Scope: test.Scope, Title: test.Title, SubjectId: test.SubjectId, SubjectName: test.SubjectName,
         AcademicSession: test.AcademicSession, Term: test.Term, ClassName: test.ClassName, MaximumScore: test.MaximumScore,
         StartsAt: test.StartsAt, EndsAt: test.EndsAt, DurationMinutes: test.DurationMinutes, Instructions: test.Instructions, Questions: test.Questions,
+        ContentMode: test.ContentMode || 'native', PaperPages: test.Paper ? await Promise.all(test.Paper.Pages.map((_, i) => readExamPage(env, test.Paper, i))) : [],
         Candidates: candidates.map(row => ({ CandidateId: row.CandidateId, StudentRef: row.LoginId, Reference: row.Reference, DisplayName: row.DisplayName,
           Identity: { StudentRef: row.LoginId, Password: row.Password } })) } };
     });
@@ -401,5 +417,5 @@ export function createPortalCbtService(env, user = null, dependencies = {}) {
     }
     return { ok: true, results: report };
   }
-  return { state, options, assessment, create, details, enroll, schedule, cards, login, candidateAction, review, approve, post, offlinePackage, offlineResults };
+  return { state, options, assessment, create, details, enroll, schedule, cards, login, candidateAction, paperPage, review, approve, post, offlinePackage, offlineResults };
 }

@@ -9,7 +9,7 @@ const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const fixture = browserFixture(), root = resolve(import.meta.dirname, '..'), output = resolve(root, 'tmp/portal-cbt-ui');
 await mkdir(output, { recursive: true });
-const files = new Set(['/exam.html', '/exams-admin.html', '/js/portal-cbt-candidate.js', '/js/portal-cbt-manager.js', '/css/portal-cbt.css', '/js/app-dialogs.js', '/css/app-dialogs.css', '/js/staff-idle-session.js']);
+const files = new Set(['/exam.html', '/exams-admin.html', '/js/portal-cbt-candidate.js', '/js/portal-cbt-manager.js', '/js/exam-document-upload.js', '/css/portal-cbt.css', '/js/app-dialogs.js', '/css/app-dialogs.css', '/js/staff-idle-session.js']);
 const server = createServer(async (req, res) => {
   try {
     const path = new URL(req.url, 'http://localhost').pathname;
@@ -24,7 +24,7 @@ const server = createServer(async (req, res) => {
       if (path.endsWith('-manage')) data = await fixture.staff[input.action](input);
       else if (input.action === 'login') {
         data = await fixture.candidate.login(input, cookie); res.setHeader('Set-Cookie', `fixture=${data.session}; HttpOnly; SameSite=Strict; Path=/`); delete data.session;
-      } else data = await fixture.candidate.candidateAction(input, cookie);
+      } else data = input.action === 'paperPage' ? await fixture.candidate.paperPage(input, cookie) : await fixture.candidate.candidateAction(input, cookie);
       res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(data)); return;
     }
     if (!files.has(path)) { res.writeHead(404); res.end(); return; }

@@ -81,7 +81,7 @@ export function publicAttempt(test, candidate, now) {
     SaveVersion: candidate.SaveVersion || 0, SubmittedAt: candidate.SubmittedAt || '', TimedOut: candidate.TimedOut === true,
     Answers: active ? candidate.Answers || {} : {},
     Questions: active ? test.Questions.map(({ AnswerKey, ...question }) => question) : [],
-    HasPaper: active && Boolean(test.Paper), HasTheoryPaper: active && Boolean(test.TheoryPaper) };
+    HasPaper: active && Boolean(test.Paper), PaperPageCount: active ? (test.Paper?.Pages?.length || 0) : 0, HasTheoryPaper: active && Boolean(test.TheoryPaper) };
 }
 
 export function startAttempt(test, candidate, now) {
