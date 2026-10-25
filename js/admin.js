@@ -7779,18 +7779,22 @@ async function loadChurchFunds() {
       body: JSON.stringify({ action: 'list', BranchId: currentUser?.branchId || 'main' })
     });
     const data = await response.json();
-    if (!response.ok || !data.ok) throw new Error(data.message || 'Could not load church funds.');
+    if (!response.ok || !data.ok) throw new Error(data.message || 'Could not load funds and income categories.');
     if (activeSection !== 'funds') return;
     renderModuleSummary('funds', data);
     const capabilities = data.capabilities || {};
+    const genericOrganisation = resolveDashboardEdition(currentUser || {}) === 'organization';
+    const typeLabel = genericOrganisation ? 'Income category' : 'Giving type';
+    const typePlural = genericOrganisation ? 'Income categories' : 'Giving types';
+    const typeTableTitle = genericOrganisation ? 'Income Categories & Income Accounts' : 'Giving Types & Income Accounts';
     const revenueAccounts = (data.chart || []).filter((row) => clean(row.Type).toLowerCase() === 'revenue');
     const givingTypeForm = capabilities.canManageGivingTypes ? `
       <section class="config-group" id="fundGivingTypeWorkspace">
-        <header><strong>Giving types and individual income accounts</strong><small>Each giving source must point to a different Revenue account.</small></header>
+        <header><strong>${typePlural} and individual income accounts</strong><small>Each income source must point to a different Revenue account.</small></header>
         <form id="churchGivingTypeForm" class="workflow-form config-form">
           <input type="hidden" name="GivingTypeId">
           <div class="config-grid">
-            <label>Giving type <input name="Name" placeholder="e.g. Prophet Offering" required></label>
+            <label>${typeLabel} <input name="Name" placeholder="${genericOrganisation ? 'e.g. Programme Contribution' : 'e.g. Prophet Offering'}" required></label>
             <label>Revenue account
               <select name="RevenueAccountCode" required>
                 ${revenueAccounts.map((account) => `<option value="${escapeHtml(account.Code)}">${escapeHtml(account.Code)} - ${escapeHtml(account.Name)}</option>`).join('')}
@@ -7807,21 +7811,21 @@ async function loadChurchFunds() {
           <div class="config-dialog-actions">
             <p class="status" id="churchGivingTypeStatus"></p>
             <button type="reset" class="secondary">Clear</button>
-            <button type="submit">Save giving type</button>
+            <button type="submit">Save ${typeLabel.toLowerCase()}</button>
           </div>
         </form>
       </section>` : '';
     panelEl.innerHTML = `
-      <div class="workflow-intro"><div><p class="eyebrow">Church finance setup</p><h2>Funds, Giving Types & Accounting Mappings</h2><p class="muted">Branch ${escapeHtml(data.branchId || 'main')} · ${data.funds.length} funds · ${(data.givingTypes || []).length} giving types · ${data.mappings.length} fund mappings</p></div><button type="button" id="refreshChurchFunds">Refresh</button></div>
-      <p class="muted">Funds describe what money is reserved for. Giving types describe its source and post to their own Revenue accounts.</p>
+      <div class="workflow-intro"><div><p class="eyebrow">${genericOrganisation ? 'Organisation finance setup' : 'Church finance setup'}</p><h2>${genericOrganisation ? 'Budgets, Income Categories & Account Mappings' : 'Funds, Giving Types & Accounting Mappings'}</h2><p class="muted">Branch ${escapeHtml(data.branchId || 'main')} · ${data.funds.length} funds · ${(data.givingTypes || []).length} ${typePlural.toLowerCase()} · ${data.mappings.length} fund mappings</p></div><button type="button" id="refreshChurchFunds">Refresh</button></div>
+      <p class="muted">Funds describe what money is reserved for. ${typePlural} describe its source and post to their own Revenue accounts.</p>
       ${givingTypeForm}
-      ${table('Giving Types & Income Accounts', data.givingTypes || [], [
-        { label: 'Giving type', value: (row) => pick(row, ['Name']) },
+      ${table(typeTableTitle, data.givingTypes || [], [
+        { label: typeLabel, value: (row) => pick(row, ['Name']) },
         { label: 'Account', value: (row) => [pick(row, ['RevenueAccountCode']), pick(row, ['RevenueAccountName'])].filter(Boolean).join(' - ') },
         { label: 'Online', value: (row) => pick(row, ['AllowOnline']) },
         { label: 'Status', value: (row) => pick(row, ['Active']) },
         { label: 'Edit', render: (row) => capabilities.canManageGivingTypes
-          ? `<button type="button" class="compact-icon-action compact-edit-action" data-edit-giving-type="${escapeHtml(pick(row, ['GivingTypeId', '__id']))}" aria-label="Edit ${escapeHtml(pick(row, ['Name']))}" title="Edit giving type"><span aria-hidden="true">&#9998;</span></button>`
+          ? `<button type="button" class="compact-icon-action compact-edit-action" data-edit-giving-type="${escapeHtml(pick(row, ['GivingTypeId', '__id']))}" aria-label="Edit ${escapeHtml(pick(row, ['Name']))}" title="Edit ${typeLabel.toLowerCase()}"><span aria-hidden="true">&#9998;</span></button>`
           : '' }
       ])}
       ${table('Funds', data.funds || [], [
@@ -7850,7 +7854,7 @@ async function loadChurchFunds() {
       ])}`;
     mountWorkspaceTabs('funds', [
       { key: 'funds', label: 'Funds', icon: '\u{1F4B0}', count: data.funds.length, nodes: workspaceTableNodes('Funds') },
-      { key: 'giving-types', label: 'Giving types', icon: '\u2192', count: (data.givingTypes || []).length, nodes: [panelEl.querySelector(':scope > p.muted'), document.getElementById('fundGivingTypeWorkspace'), workspaceTableNodes('Giving Types & Income Accounts')] },
+      { key: 'giving-types', label: typePlural, icon: '\u2192', count: (data.givingTypes || []).length, nodes: [panelEl.querySelector(':scope > p.muted'), document.getElementById('fundGivingTypeWorkspace'), workspaceTableNodes(typeTableTitle)] },
       { key: 'mappings', label: 'Accounting mappings', icon: '\u21C4', count: data.mappings.length, nodes: workspaceTableNodes('Accounting Mappings') },
       { key: 'audit', label: 'Audit', icon: '\u2713', count: (data.audit || []).length, nodes: workspaceTableNodes('Recent Fund Audit') }
     ]);
@@ -7860,7 +7864,7 @@ async function loadChurchFunds() {
       const button = givingTypeFormElement.querySelector('button[type="submit"]');
       const status = document.getElementById('churchGivingTypeStatus');
       const payload = Object.fromEntries(new FormData(givingTypeFormElement).entries());
-      setButtonLoading(button, true, 'Saving...', 'Save giving type');
+      setButtonLoading(button, true, 'Saving...', `Save ${typeLabel.toLowerCase()}`);
       try {
         const saved = await staffFetch('/api/staff-funds', {
           method: 'POST',
@@ -7880,7 +7884,7 @@ async function loadChurchFunds() {
       } catch (error) {
         setStatus(status, error.message || String(error), 'bad');
       } finally {
-        setButtonLoading(button, false, 'Saving...', 'Save giving type');
+        setButtonLoading(button, false, 'Saving...', `Save ${typeLabel.toLowerCase()}`);
       }
     });
     panelEl.querySelectorAll('[data-edit-giving-type]').forEach((button) => button.addEventListener('click', () => {
@@ -10520,6 +10524,7 @@ function renderIncomeDistribution(title, rows = []) {
 }
 
 function mountFeeCollectionSummary(host) {
+  if (resolveDashboardEdition(currentUser || {}) !== 'school') return null;
   const node = document.createElement('section');
   host.append(node);
   window.DynamaxFeeCollectionSummary?.mount(node, { fetch: staffFetch,
@@ -10617,7 +10622,7 @@ function renderIncomeAnalytics(data) {
     { key: 'overview', label: 'Overview & filters', icon: '\u25A6', nodes: [incomeReport?.querySelector(':scope > .income-filter-card'), incomeReport?.querySelector(':scope > .income-report-period'), [...(incomeReport?.querySelectorAll(':scope > p.status') || [])]] },
     { key: 'trends', label: 'Trends & sources', icon: '\u{1F4CA}', nodes: [incomeReport?.querySelector(':scope > .income-chart-card'), incomeReport?.querySelector(':scope > .income-distribution-grid')] },
     { key: 'transactions', label: 'Transactions', icon: '\u{1F5C2}', count: (data.transactions || []).length, nodes: incomeReport?.querySelector(':scope > .income-transactions') },
-    { key: 'feeSummary', label: 'Fee summary', icon: '\u{1F9FE}', nodes: feeSummary }
+    ...(feeSummary ? [{ key: 'feeSummary', label: 'Fee summary', icon: '\u{1F9FE}', nodes: feeSummary }] : [])
   ], { host: incomeReport, after: incomeReport?.querySelector(':scope > .workflow-intro') });
   bindIncomeAnalyticsEvents();
 }
@@ -20248,7 +20253,7 @@ function renderSection(active) {
       { key: 'invoices', label: 'Invoices', icon: '\u{1F9FE}', count: invoices.length, nodes: workspaceTableNodes('Invoices') },
       { key: 'wallet', label: 'Wallet setup', icon: '\u{1F4B3}', nodes: document.getElementById('accountWalletSetupWorkspace') },
       { key: 'transfers', label: 'Transfer verification', icon: '\u{1F50E}', nodes: document.getElementById('schoolDirectTransferVerification') },
-      { key: 'feeSummary', label: 'Fee summary', icon: '\u{1F9FE}', nodes: feeSummary },
+      ...(feeSummary ? [{ key: 'feeSummary', label: 'Fee summary', icon: '\u{1F9FE}', nodes: feeSummary }] : []),
       ...clubMembers
     ]);
     if (window.DynamaxBoardingOfferings?.canAccess(currentUser)) {

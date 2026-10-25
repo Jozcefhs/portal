@@ -1,4 +1,5 @@
 import { normalizeOrganizationEdition } from './organization-config.js';
+import { incomeAccountForEdition } from './organization-income-labels.js';
 
 export const SCHOOL_ONLY_REVENUE_ACCOUNT_CODES = Object.freeze([
   '4000', // Tuition and School Fee Revenue
@@ -41,7 +42,8 @@ export function accountingCodeAllowedForEdition(code, edition) {
 
 export function accountingChartForEdition(chart = [], edition = 'school') {
   const excluded = excludedAccountingCodesForEdition(edition);
-  return (chart || []).filter((row) => !excluded.has(clean(row?.Code || row?.code || row?.__id)));
+  return (chart || []).filter((row) => !excluded.has(clean(row?.Code || row?.code || row?.__id)))
+    .map(row => incomeAccountForEdition(row, normalizeOrganizationEdition(edition)));
 }
 
 const CHURCH_ACCOUNT_GROUPS = new Set(['church revenue', 'giving income']);

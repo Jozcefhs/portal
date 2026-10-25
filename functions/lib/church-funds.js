@@ -6,6 +6,7 @@ import {
   safeChurchDocumentId
 } from './church-foundation.js';
 import { resolveOrganizationConfig } from './organization-config.js';
+import { incomeAccountForEdition, incomeCategoryForEdition, legacyIncomeCategoryName } from './organization-income-labels.js';
 import {
   accountingChartForEdition,
   accountingCodeAllowedForEdition
@@ -46,10 +47,6 @@ export const DEFAULT_GIVING_TYPES = Object.freeze([
   Object.freeze({ GivingTypeId: 'BUILDING-FUND', Name: 'Building Fund', RevenueAccountCode: '4210', AllowOnline: 'YES' }),
   Object.freeze({ GivingTypeId: 'OTHER-GIVING', Name: 'Other Giving', RevenueAccountCode: '4220', AllowOnline: 'YES' })
 ]);
-
-const DEFAULT_GIVING_ACCOUNT_NAMES = new Map(
-  DEFAULT_GIVING_TYPES.map((row) => [row.RevenueAccountCode, `${row.Name} Income`])
-);
 
 function yesNo(value, fallback = 'YES') {
   const normalized = lower(value);
@@ -193,7 +190,7 @@ export function resolveGivingType(givingTypes = [], value = '') {
   if (!target) return null;
   return (givingTypes || []).find((row) =>
     lower(row.GivingTypeId || row.__id) === target || lower(row.Name) === target
-  ) || null;
+  ) || (givingTypes || []).find(row => lower(legacyIncomeCategoryName(row)) === target) || null;
 }
 
 export function organisationGivingAccountSeedAllowed(input = {}) {
@@ -202,6 +199,7 @@ export function organisationGivingAccountSeedAllowed(input = {}) {
 
 export async function ensureGivingTypes(env, branchId = 'main', options = {}) {
   const allowGlobalChartSeed = options.allowGlobalChartSeed !== false;
+  const edition = options.edition || resolveOrganizationConfig({env}).Edition;
   const path = churchCollectionPath(CHURCH_COLLECTIONS.givingTypes, branchId);
   const [existingTypes, chart] = await Promise.all([
     listCollection(env, path).catch(() => []),
@@ -209,14 +207,16 @@ export async function ensureGivingTypes(env, branchId = 'main', options = {}) {
   ]);
   const chartCodes = new Set(chart.map((row) => clean(row.Code || row.__id)));
   const typesById = new Map(existingTypes.map((row) => [lower(row.GivingTypeId || row.__id), row]));
-  for (const standard of DEFAULT_GIVING_TYPES) {
+  for (const original of DEFAULT_GIVING_TYPES) {
+    const standard = incomeCategoryForEdition(original, edition);
+    const accountName = `${standard.Name} Income`;
+    const accountGroup = edition === 'organization' ? 'Contribution Income' : 'Giving Income';
     if (!chartCodes.has(standard.RevenueAccountCode) && allowGlobalChartSeed) {
-      const accountName = DEFAULT_GIVING_ACCOUNT_NAMES.get(standard.RevenueAccountCode);
       await upsertDocument(env, 'chartOfAccounts', standard.RevenueAccountCode, {
         Code: standard.RevenueAccountCode,
         Name: accountName,
         Type: 'Revenue',
-        Group: 'Giving Income',
+        Group: accountGroup,
         NormalBalance: 'Credit',
         Active: 'YES',
         System: 'YES',
@@ -227,7 +227,7 @@ export async function ensureGivingTypes(env, branchId = 'main', options = {}) {
         Code: standard.RevenueAccountCode,
         Name: accountName,
         Type: 'Revenue',
-        Group: 'Giving Income',
+        Group: accountGroup,
         NormalBalance: 'Credit',
         Active: 'YES'
       });
@@ -238,7 +238,7 @@ export async function ensureGivingTypes(env, branchId = 'main', options = {}) {
         ...standard,
         BranchId: resolveMembershipBranch({}, branchId),
         Active: 'YES',
-        RevenueAccountName: DEFAULT_GIVING_ACCOUNT_NAMES.get(standard.RevenueAccountCode),
+        RevenueAccountName: accountName,
         CreatedAt: nowIso(),
         CreatedBy: 'System',
         UpdatedAt: nowIso(),
@@ -249,9 +249,12 @@ export async function ensureGivingTypes(env, branchId = 'main', options = {}) {
       typesById.set(lower(standard.GivingTypeId), payload);
     }
   }
+  const displayChart = chart.map(row => incomeAccountForEdition(row, edition));
   return {
-    givingTypes: existingTypes.sort((a, b) => clean(a.Name).localeCompare(clean(b.Name))),
-    chart
+    givingTypes: existingTypes.map(row => ({...incomeCategoryForEdition(row, edition),
+      RevenueAccountName: clean(displayChart.find(account => clean(account.Code || account.__id) === clean(row.RevenueAccountCode))?.Name)
+        || row.RevenueAccountName})).sort((a, b) => clean(a.Name).localeCompare(clean(b.Name))),
+    chart: displayChart
   };
 }
 
@@ -317,7 +320,7 @@ export async function listChurchFunds(env, user, body = {}) {
     listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.funds, branchId)).catch(() => []),
     listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.fundMappings, branchId)).catch(() => []),
     ensureGivingTypes(env, branchId, {
-      allowGlobalChartSeed: organisationGivingAccountSeedAllowed(body)
+      allowGlobalChartSeed: organisationGivingAccountSeedAllowed(body), edition: organization.Edition
     }),
     capabilities.canViewAudit
       ? loadDatedHistory(env, churchCollectionPath(CHURCH_COLLECTIONS.fundAudit, branchId), body, 'Timestamp')
@@ -354,7 +357,7 @@ export async function saveGivingType(env, user, body = {}) {
   requireCapability(user, 'canManageGivingTypes');
   const branchId = resolveMembershipBranch(user, body.BranchId || body.branchId);
   const { givingTypes, chart } = await ensureGivingTypes(env, branchId, {
-    allowGlobalChartSeed: organisationGivingAccountSeedAllowed(body)
+    allowGlobalChartSeed: organisationGivingAccountSeedAllowed(body), edition: organization.Edition
   });
   const givingType = normalizeGivingType(
     body.givingType || body.GivingType || body,
