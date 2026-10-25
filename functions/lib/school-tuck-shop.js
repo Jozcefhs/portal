@@ -1,4 +1,4 @@
-import { listCollection } from './firestore.js';
+import { listBranchCollection } from './branch-reads.js';
 import { listSchoolCollection, schoolSectionFor } from './school-scope.js';
 import { borrowerFrom, searchLibraryBorrowers } from './school-library.js';
 import { recordManualOrganizationCommerceSale } from './organization-commerce.js';
@@ -18,7 +18,7 @@ function branchId(user = {}) {
 
 async function scopedStaff(env, user = {}) {
   const branch = branchId(user);
-  return (await listCollection(env, 'staffUsers')).filter((row) => {
+  return (await listBranchCollection(env, 'staffUsers', branch)).filter((row) => {
     const edition = lower(row.OrganisationEdition || row.OrganizationEdition || row.Edition);
     return (!clean(row.BranchId) || lower(row.BranchId) === branch)
       && (!edition || edition === 'school');
@@ -28,7 +28,7 @@ async function scopedStaff(env, user = {}) {
 async function scopedStudents(env, user = {}) {
   const branch = branchId(user);
   const section = lower(user.schoolSectionAccess || user.SchoolSectionAccess);
-  return (await listSchoolCollection(env, 'students', { branchId: branch }))
+  return (await listSchoolCollection(env, 'students', { branchId: branch, schoolSectionAccess: section }))
     .filter((row) => lower(row.BranchId || 'main') === branch
       && (!['primary', 'secondary'].includes(section) || schoolSectionFor(row) === section));
 }
@@ -62,7 +62,7 @@ export async function canonicalTuckShopStudentReference(env, user, reference) {
 
 export async function getTuckShopCatalog(env, user = {}) {
   const branch = branchId(user);
-  const inventory = (await listCollection(env, 'tuckShopInventory'))
+  const inventory = (await listBranchCollection(env, 'tuckShopInventory', branch))
     .filter((row) => lower(row.BranchId || 'main') === branch
       && (!clean(row.OrganisationEdition || row.OrganizationEdition)
         || lower(row.OrganisationEdition || row.OrganizationEdition) === 'school'))

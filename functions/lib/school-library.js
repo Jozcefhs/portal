@@ -1,4 +1,5 @@
-import { batchCommitDocuments, getDocument, listCollection, queryCollection } from './firestore.js';
+import { batchCommitDocuments, getDocument, queryCollection } from './firestore.js';
+import { listBranchCollection } from './branch-reads.js';
 import { enforceActorBranch } from './branch-scope.js';
 import { getSchoolStructure, listSchoolCollection, safeScopeId, schoolSectionFor } from './school-scope.js';
 import { createNotification } from './notifications.js';
@@ -215,10 +216,10 @@ export function borrowerFrom(reference, type, students, staff) {
   throw failure('Choose Student or Staff as the borrower type.');
 }
 
-async function readerDirectory(env, branchId) {
+async function readerDirectory(env, branchId, type) {
   const [students, allStaff] = await Promise.all([
-    listSchoolCollection(env, 'students', { branchId }),
-    listCollection(env, 'staffUsers')
+    type === 'Student' ? listSchoolCollection(env, 'students', { branchId }) : Promise.resolve([]),
+    type !== 'Student' ? listBranchCollection(env, 'staffUsers', branchId) : Promise.resolve([])
   ]);
   return {
     students,
@@ -382,7 +383,7 @@ async function checkout(env, user, body, branchId) {
   if (!copy || safeScopeId(copy.BranchId) !== branchId) throw failure('The book copy was not found in this branch.', 404);
   if (copy.Status !== 'Available') throw failure('This copy is not available for lending.', 409);
   const type = clean(body.BorrowerType);
-  const directory = await readerDirectory(env, branchId);
+  const directory = await readerDirectory(env, branchId, type);
   const borrower = borrowerFrom(body.BorrowerRef, type, directory.students, directory.staff);
   const policy = normalizeLibraryPolicy(await policyFor(env, branchId));
   const borrowerId = borrowerKey(branchId, type, borrower.BorrowerRef);
@@ -556,7 +557,7 @@ async function reserve(env, user, body, branchId) {
   const title = await getDocument(env, COLLECTIONS.titles, clean(body.TitleId));
   if (!title || safeScopeId(title.BranchId) !== branchId) throw failure('Choose a title from this branch.', 404);
   const type = clean(body.BorrowerType);
-  const directory = await readerDirectory(env, branchId);
+  const directory = await readerDirectory(env, branchId, type);
   const borrower = borrowerFrom(body.BorrowerRef, type, directory.students, directory.staff);
   const reservationId = `${branchId}--${encodeURIComponent(title.TitleId)}--${borrowerKey(branchId, type, borrower.BorrowerRef)}`;
   const prior = await indexedLibraryRecord(env, 'reservations', 'ReservationId', reservationId, branchId);
@@ -605,7 +606,7 @@ export async function handleSchoolLibraryAction(env, user, body = {}) {
   if (action === 'searchborrowers') {
     requireAccess(user);
     const branchId = await branchFor(env, user, body);
-    const directory = await readerDirectory(env, branchId);
+    const directory = await readerDirectory(env, branchId, clean(body.BorrowerType));
     return { ok: true, borrowers: searchLibraryBorrowers(body.Query, clean(body.BorrowerType),
       directory.students, directory.staff) };
   }

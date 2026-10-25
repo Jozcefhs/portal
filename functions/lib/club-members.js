@@ -72,7 +72,7 @@ export async function getClubMembersPage(env, user, body = {}, io = { list: list
   const age = Date.now() - Date.parse(readTime);
   if (pageToken.length > 8192 || (!body.readTime && pageToken) || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(readTime)
     || !Number.isFinite(age) || age < -5000 || age > 50 * 60 * 1000) fail('The register snapshot expired or is missing. Load it again.');
-  const page = await loadBranchFinancePage(env, 'payments', scope.branchId, { pageToken, readTime, pageSize: 250 },
+  const page = await (io.page || loadBranchFinancePage)(env, 'payments', scope.branchId, { pageToken, readTime, pageSize: 250 },
     { listCollectionPage: io.list, queryCollection: io.query });
   // Historical receipts sometimes lack a category. Resolve those codes against
   // the catalogue at the same snapshot, without retrieving student profiles.

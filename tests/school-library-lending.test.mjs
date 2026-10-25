@@ -30,7 +30,7 @@ function fixture(rows = []) {
       .filter(([key, row]) => key.startsWith(`${collection}/`) && (options.filters || []).every(f => row[f.field] === f.value)).map(([, row]) => row),
     listSchoolCollection: async () => [{ AdmissionNo: 'TEST/001', DisplayName: 'Test reader', Status: 'Active' },
       { AdmissionNo: 'TEST/002', DisplayName: 'Other reader', Status: 'Active' }],
-    listCollection: async () => [], createNotification: async () => ({}),
+    listBranchCollection: async () => [], createNotification: async () => ({}),
     batchCommitDocuments: async (_env, writes) => {
       // Simulate Firestore's resource-name IDs, including escaped admission refs.
       for (const w of writes) {

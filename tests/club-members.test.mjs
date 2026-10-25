@@ -1,8 +1,21 @@
+import { loadBranchFinancePage } from '../functions/lib/finance-branch-reads.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-import { clubMemberReceipts, getClubMembersPage } from '../functions/lib/club-members.js';
+import { clubMemberReceipts, getClubMembersPage as realgetClubMembersPage } from '../functions/lib/club-members.js';
+
+// These report tests supply an opaque legacy page transport. Branch planning
+// and indexed pagination are exercised against the real reader separately.
+function getClubMembersPage(env, user, body, io) {
+  return realgetClubMembersPage(env, user, body, io && { ...io,
+    page: (runtime, collection, branch, options) => branch !== 'main'
+      ? loadBranchFinancePage(runtime, collection, branch, options, { listCollectionPage: io.list, queryCollection: io.query })
+      : io.list(runtime, collection, {
+      ...options, query: `readTime=${encodeURIComponent(options.readTime)}`
+    })
+  });
+}
 
 const user = { username: 'finance', assignedRole: 'Accounts Officer', allowedSections: ['accounts'], branchId: 'main', schoolSectionAccess: 'All', edition: 'school' };
 const scope = { branchId: 'main', schoolSection: 'all', edition: 'school', academicSession: '', term: '' };

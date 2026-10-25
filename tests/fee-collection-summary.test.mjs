@@ -1,8 +1,21 @@
+import { loadBranchFinancePage } from '../functions/lib/finance-branch-reads.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-import { feeCollectionDate, feeCollectionScope, summarizeFeeCollectionRows, getFeeCollectionSummaryPage } from '../functions/lib/fee-collection-summary.js';
+import { feeCollectionDate, feeCollectionScope, summarizeFeeCollectionRows, getFeeCollectionSummaryPage as realgetFeeCollectionSummaryPage } from '../functions/lib/fee-collection-summary.js';
+
+// These report tests supply an opaque legacy page transport. Branch planning
+// and indexed pagination are exercised against the real reader separately.
+function getFeeCollectionSummaryPage(env, user, body, io) {
+  return realgetFeeCollectionSummaryPage(env, user, body, io && { ...io,
+    page: (runtime, collection, branch, options) => branch !== 'main'
+      ? loadBranchFinancePage(runtime, collection, branch, options, { listCollectionPage: io.list, queryCollection: io.query })
+      : io.list(runtime, collection, {
+      ...options, query: `readTime=${encodeURIComponent(options.readTime)}`
+    })
+  });
+}
 
 const user = { username: 'finance', assignedRole: 'Accounts Officer', allowedSections: ['accounts'], branchId: 'main', schoolSectionAccess: 'All', edition: 'school' };
 const period = { dateFrom: '2026-10-01', dateTo: '2026-10-31' };

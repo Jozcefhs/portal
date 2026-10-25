@@ -1,7 +1,8 @@
-import { getDocument, listCollection } from './firestore.js';
+import { getDocument } from './firestore.js';
+import { readVendorInventory } from './vendor-read-scope.js';
 import { COMMERCE_CONFIG, previewOrganizationCommerceSale, recordManualOrganizationCommerceSale } from './organization-commerce.js';
 import { clean, lower, fail, settlementScope } from './vendor-settlement-rules.js';
-import { linkedSalesVendors, restrictVendorInventory, vendorCustomerScope } from './vendor-sales-access.js';
+import { linkedSalesVendors, restrictVendorInventoryRows, vendorCustomerScope } from './vendor-sales-access.js';
 import { searchTuckShopCustomers, canonicalTuckShopStudentReference } from './school-tuck-shop.js';
 import { recentVendorSales, recentVendorHistoricalOpenings } from './vendor-sales-history.js';
 
@@ -47,10 +48,10 @@ export async function handleVendorSalesAction(env, user, body) {
     return {ok:true,sales,historicalOpenings};
   }
   if (body.action === 'salesBootstrap') {
-    const rows = (await listCollection(env,COMMERCE_CONFIG[section].inventory)).filter(row => lower(row.BranchId || 'main') === scope.BranchId
+    const rows = (await readVendorInventory(env,COMMERCE_CONFIG[section].inventory,scope.BranchId,vendors.map(v => v.VendorId))).filter(row => lower(row.BranchId || 'main') === scope.BranchId
       && (!row.OrganisationEdition || row.OrganisationEdition === scope.OrganisationEdition)
       && (section !== 'organizationStore' || row.StoreType === 'Organisation Store'));
-    const own = await restrictVendorInventory(env,user,section,rows);
+    const own = restrictVendorInventoryRows(user,vendors,rows);
     const settings = await getDocument(env,'settings',`vendor-settlement-${scope.ScopeKey}`) || {};
     return {ok:true, Section:section, OrganisationEdition:scope.OrganisationEdition, products:own.map(row => ({InventoryId:row.__id, ItemCode:row.ItemCode,
       ItemName:row.ItemName, Category:row.Category, Unit:row.Unit || 'pcs', Quantity:row.Quantity,

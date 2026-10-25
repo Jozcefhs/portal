@@ -118,7 +118,7 @@ export async function getFeeCollectionSummaryPage(env, user, body = {}, io = { l
   const age = Date.now() - Date.parse(readTime);
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(readTime) || !Number.isFinite(age) || age < -5000 || age > 50 * 60 * 1000
     || (!body.readTime && (pageToken || collection !== collections[0]))) fail('The report snapshot expired or is missing. Generate it again.');
-  const page = await loadBranchFinancePage(env, collection, scope.branchId, {
+  const page = await (io.page || loadBranchFinancePage)(env, collection, scope.branchId, {
     pageSize: collection === 'manualPaymentCorrections' ? 20 : 500, pageToken, readTime
   }, { listCollectionPage: io.list, queryCollection: io.query });
   let documents = page.documents;

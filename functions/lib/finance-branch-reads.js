@@ -1,9 +1,9 @@
-import { listBranchCollection } from './branch-reads.js';
+import { listBranchCollection, branchCollectionPage } from './branch-reads.js';
 import { listCollection, listCollectionForReport, listCollectionPage, queryCollection, queryCollectionPages } from './firestore.js';
 import { accountingRowsForBranch } from './accounting-branch-scope.js';
 import { canonicalSchoolBranchId } from './school-scope.js';
 
-const dependencies = { listBranchCollection, listCollection, listCollectionForReport, listCollectionPage, queryCollection, queryCollectionPages };
+const dependencies = { listBranchCollection, branchCollectionPage, listCollection, listCollectionForReport, listCollectionPage, queryCollection, queryCollectionPages };
 const branchKey = value => String(value || 'all').toLowerCase() === 'all' ? 'all' : canonicalSchoolBranchId(value);
 const scopedQuery = branch => ({ filters: ['BranchId', 'branchId'].map(field => ({ field, op: '==', value: branch })), filterJoin: 'OR' });
 
@@ -36,6 +36,15 @@ export async function loadBranchFinanceRows(env, collection, branchId, options =
 export async function loadBranchFinancePage(env, collection, branchId, options = {}, overrides = {}) {
   const db = { ...dependencies, ...overrides }, branch = branchKey(branchId);
   const { readTime = '', pageToken = '', pageSize = 500 } = options;
+  if (branch === 'main') {
+    // Finish any opaque Firestore cursor issued before this repair using its
+    // original snapshot. New pages use coverage-checked, branch-bound cursors.
+    let oldCursor = false;
+    if (pageToken) {
+      try { JSON.parse(pageToken); } catch { oldCursor = true; }
+    }
+    if (!oldCursor) return db.branchCollectionPage(env, collection, branch, { ...options, readTime, pageToken, pageSize });
+  }
   if (branch === 'main' || branch === 'all') {
     return db.listCollectionPage(env, collection, { pageSize, pageToken, query: `readTime=${encodeURIComponent(readTime)}` });
   }

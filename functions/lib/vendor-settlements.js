@@ -13,6 +13,8 @@ import { handleProductImport } from './vendor-product-import.js';
 import { assertProcurementInventoryEdit, loadProcurementInventoryControl } from './procurement-inventory-guard.js';
 import { PRODUCT_CHANGES, productPolicy, vendorProductContext, prepareVendorProductWrites, handleVendorProductAction } from './vendor-product-management.js';
 import { organisationSalesEnabled } from './vendor-store-policy.js';
+import { listBranchCollection } from './branch-reads.js';
+import { readVendorRows, readVendorInventory } from './vendor-read-scope.js';
 import { amount, allocateClaim, balanceView, cents, chargeFor, clean, dateOnly, effectiveRule, fail, lower,
   normalizeRule, periodKey, plain, ruleDescription, settlementScope, visible } from './vendor-settlement-rules.js';
 
@@ -254,13 +256,14 @@ async function bootstrap(env, user, scope) {
   let vendors = await rows(env, VENDOR_COLLECTIONS.vendors, scope);
   if (role(user) === 'Vendor User') vendors = vendors.filter(vendor => lower(vendor.LoginUsername) === lower(user.username));
   const ids = new Set(vendors.map(vendor => vendor.VendorId));
+  const vendorIds = role(user) === 'Vendor User' ? [...ids] : null;
   const [balances, requests, settings, chart, suppliers] = await Promise.all([
-    rows(env, VENDOR_COLLECTIONS.balances, scope), rows(env, VENDOR_COLLECTIONS.requests, scope), settingsFor(env, scope),
+    readVendorRows(env, VENDOR_COLLECTIONS.balances, scope, vendorIds), readVendorRows(env, VENDOR_COLLECTIONS.requests, scope, vendorIds), settingsFor(env, scope),
     management.has(role(user)) ? getAccountingChartRows(env) : Promise.resolve([]),
-    management.has(role(user)) ? listCollection(env, 'accountingVendors') : Promise.resolve([]) ]);
-  return { ok: true, vendors: vendors.map(publicVendor), balances: balances.filter(row => ids.has(row.VendorId)).map(row => ({ VendorId: row.VendorId,
+    management.has(role(user)) ? listBranchCollection(env, 'accountingVendors', scope.BranchId) : Promise.resolve([]) ]);
+  return { ok: true, vendors: vendors.map(publicVendor), balances: balances.filter(row => visible(row, scope) && ids.has(row.VendorId)).map(row => ({ VendorId: row.VendorId,
     ...balanceView(row), DirectSales: amount(row.DirectSalesCents), DirectChargeDue: amount(row.DirectChargeCents - row.DirectChargePaidCents) })),
-    requests: requests.filter(row => ids.has(row.VendorId)).map(row => ({ ...publicRequest(row),
+    requests: requests.filter(row => visible(row, scope) && ids.has(row.VendorId)).map(row => ({ ...publicRequest(row),
       ...(role(user) === 'Accounts Officer' ? { BankAccountNumber: row.BankAccountNumber } : {}) })),
     suppliers: suppliers.filter(row => lower(row.BranchId || 'main') === scope.BranchId).map(row => ({ SupplierId: row.__id, Name: row.Name || row.VendorName })),
     settings: { ...plain(settings), RecordVersion: settings.__updateTime || '' },
@@ -363,11 +366,11 @@ async function setOrganisationSales(env, user, scope, body) {
     ? 'Organisation sales enabled. The organisation and vendor can both sell this vendor’s products.'
     : 'Organisation sales disabled. Only the vendor’s own point of sale can start new sales of these products.' };
 }
-async function products(env, scope) {
+async function products(env, scope, vendorIds = null) {
   const allowed = scope.OrganisationEdition === 'school' ? ['tuckShop'] : ['organizationStore', 'restaurant'];
   const result = [];
   for (const section of allowed) {
-    const inventory = await listCollection(env, inventoryCollections[section]);
+    const inventory = await readVendorInventory(env, inventoryCollections[section], scope.BranchId, vendorIds);
     result.push(...inventory.filter(row => lower(row.BranchId || 'main') === scope.BranchId
       && (!row.OrganisationEdition || row.OrganisationEdition === scope.OrganisationEdition)
       && (scope.OrganisationEdition !== 'school' || lower(scope.SchoolSection) === 'all' || lower(row.SchoolSection || 'Secondary') === lower(scope.SchoolSection)))
@@ -826,8 +829,9 @@ export async function handleVendorSettlementAction(env, user, body = {}, options
       const data = await bootstrap(env, user, scope);
       if (user.vendorSettlementApprovalOnly) return { ...data, productPolicy:productPolicy(data.settings), productChanges:[], products:[], productCount:0 };
       const allowed = new Set(data.vendors.map(vendor => vendor.VendorId));
-      const changes = await rows(env,PRODUCT_CHANGES,scope);
-      const stock = (await products(env,scope)).filter(item => role(user) !== 'Vendor User' || data.vendors.some(v => v.VendorId === item.VendorId
+      const vendorIds = role(user) === 'Vendor User' ? [...allowed] : null;
+      const changes = (await readVendorRows(env,PRODUCT_CHANGES,scope,vendorIds)).filter(item => visible(item,scope));
+      const stock = (await products(env,scope,vendorIds)).filter(item => role(user) !== 'Vendor User' || data.vendors.some(v => v.VendorId === item.VendorId
         && (scope.OrganisationEdition !== 'school' || lower(v.SchoolSection) === lower(item.SchoolSection || 'Secondary'))));
       return { ...data, productPolicy:productPolicy(data.settings),
         productChanges:changes.filter(item => role(user) !== 'Vendor User' || allowed.has(item.VendorId)).map(item => ({...plain(item),RecordVersion:item.__updateTime})),

@@ -29,6 +29,10 @@ export async function linkedSalesVendors(env, user, section) {
 export async function restrictVendorInventory(env, user, section, rows) {
   if (!isVendorSeller(user)) return rows;
   const vendors = await linkedSalesVendors(env, user, section);
+  return restrictVendorInventoryRows(user, vendors, rows);
+}
+
+export function restrictVendorInventoryRows(user, vendors, rows) {
   return rows.filter(row => vendors.some(v => v.VendorId === row.VendorId
     && (settlementScope(user).OrganisationEdition !== 'school'
       || lower(v.SchoolSection) === lower(row.SchoolSection || 'Secondary'))));

@@ -4,6 +4,7 @@ import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 import { webcrypto } from 'node:crypto';
 import * as rules from '../functions/lib/vendor-settlement-rules.js';
+import { readVendorRows, readVendorInventory } from '../functions/lib/vendor-read-scope.js';
 import { organisationSalesEnabled } from '../functions/lib/vendor-store-policy.js';
 import { buildWalletPurchaseAccountingJournal } from '../functions/api/backend.js';
 import { objectToFirestoreFields, firestoreDocumentToObject } from '../functions/lib/firestore.js';
@@ -157,8 +158,16 @@ function fixture(initial = [], options = {}) {
     }
     commits.push(structuredClone(writes)); for (const w of writes) put(w.collectionPath,w.documentId,w.data);
   };
+  const readDeps = {
+    queryCollectionPages: async (_env,c,opts) => list(c).filter(row => opts.filters.every(f => f.op === 'in' ? f.value.includes(row[f.field]) : row[f.field] === f.value)),
+    listBranchCollection: async (_env,c,branch,opts = {}) => list(c).filter(row => (!row.BranchId || row.BranchId === branch)
+      && (opts.filters || []).every(f => f.op === 'in' ? f.value.includes(row[f.field]) : row[f.field] === f.value))
+  };
   const functions = vm.runInNewContext(`${source}\n({ handleVendorSettlementAction, prepareVendorSale, snapshotVendorCart })`, {
-    ...rules, organisationSalesEnabled, ...productManagement, handleProductImport, handleCardRefundBatch, commitWithReadChecks:commit, crypto:webcrypto, Intl, Date, TextEncoder, console, assertRequisitionTransition, validateRequisitionPosting, accountingChartChoicesForEdition,
+    ...rules, ...readDeps,
+    readVendorRows: (env,c,scope,ids) => readVendorRows(env,c,scope,ids,readDeps),
+    readVendorInventory: (env,c,branch,ids) => readVendorInventory(env,c,branch,ids,readDeps),
+    organisationSalesEnabled, ...productManagement, handleProductImport, handleCardRefundBatch, commitWithReadChecks:commit, crypto:webcrypto, Intl, Date, TextEncoder, console, assertRequisitionTransition, validateRequisitionPosting, accountingChartChoicesForEdition,
     withApprovalRoute, requisitionPendingTransition, approvalFlowLabel, vendorRequestPrintReport, requisitionCapabilities, hasPrincipalApprovalGrant, assertFinanceRoleLimit,
     approvalSnapshot: async () => ({ Version: 1, Kind: 'vendor', Stages: [...(options.approvalStages || ['accounts', 'admin-review', 'director'])] }),
     staffAccessFor:async (_env, actor) => { accessReads.push(actor); return { featureFlags }; },
@@ -766,7 +775,7 @@ function commerceFixture(edition = 'school', section = 'tuckShop', options = {})
   const f = fixture([['commerceVendors','v1',vendor('v1',scoped)],['settings',`vendor-settlement-${edition}--main`,{...settings,...scoped}]],options);
   const collection = ({tuckShop:'tuckShopInventory',organizationStore:'storeItems',restaurant:'restaurantInventory'})[section];
   for (const stockId of ['stock1','stock2']) f.put(collection,stockId,{...scoped,ItemCode:stockId,StoreType:'Organisation Store',ItemName:'Water',VendorId:'v1',Price:50,Quantity:5,Active:'YES'});
-  const access = vm.runInNewContext(`${accessSource}\n({linkedSalesVendors,restrictVendorInventory,assertVendorSaleReplay,vendorCustomerScope,isVendorSeller})`,{
+  const access = vm.runInNewContext(`${accessSource}\n({linkedSalesVendors,restrictVendorInventory,restrictVendorInventoryRows,assertVendorSaleReplay,vendorCustomerScope,isVendorSeller})`,{
     ...rules,queryCollectionPages:async (_env,c,opts) => f.list(c).filter(row => opts.filters.every(q => row[q.field] === q.value))});
   const policy = vm.runInNewContext(`${policySource}\n({withVendorStorePolicy})`,{...rules,getDocuments:async(_env,c,ids)=>ids.map(id=>structuredClone(f.get(c,id)||null))});
   const context = {...f.functions,...access,...policy,inventoryQuantityNumber,procurementMovementBalance,crypto:webcrypto,Date,console,URL,URLSearchParams,
@@ -777,7 +786,9 @@ function commerceFixture(edition = 'school', section = 'tuckShop', options = {})
     sendOrganizationCommercePaymentLinkEmail:async () => ({ok:true}),sendOrganizationCommerceReceiptEmail:async () => ({ok:true}),
     fetch:async (_url,options) => { const body = JSON.parse(options.body); return {ok:true,json:async () => ({status:true,data:{authorization_url:'https://payment.example.test',reference:body.reference}})}; }
   };
-  context.listBranchCollection = context.listCollection;
+  context.listBranchCollection = (_env,c,branch,opts = {}) => Promise.resolve(f.list(c).filter(row => (!row.BranchId || row.BranchId === branch)
+    && (opts.filters || []).every(q => q.op === 'in' ? q.value.includes(row[q.field]) : row[q.field] === q.value)));
+  context.readVendorInventory = (env,c,branch,ids) => readVendorInventory(env,c,branch,ids,context);
   const commerce = vm.runInNewContext(`${commerceSource}\n({COMMERCE_CONFIG,recordManualOrganizationCommerceSale,initializeOnlineOrganizationCommerceSale,finalizeOnlineOrganizationCommerceSale,previewOrganizationCommerceSale,preparePaidCommerceInventoryCompletion,prepareTuckShopWalletCart,listPublicOrganizationStoreItems})`,context);
   const sha256Hex = async value => [...new Uint8Array(await webcrypto.subtle.digest('SHA-256',new TextEncoder().encode(value)))].map(v => v.toString(16).padStart(2,'0')).join('');
   const findStudent = async () => structuredClone(f.get('students','child') || null);

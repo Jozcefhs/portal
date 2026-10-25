@@ -7,7 +7,8 @@ const clean = value => String(value ?? '').trim().toLowerCase();
 // Legacy documents can lack a branch field (Firestore equality cannot find
 // missing fields). Prove index coverage at the SAME snapshot before narrowing
 // the read. This costs scalar index counts, not a scan of document bodies. Never
-// cache that proof: older clients can still write an untagged record later.
+// reuse that proof for a newer snapshot: older clients can still write an
+// untagged record later. Pagination may reuse metadata at one immutable snapshot.
 export async function branchReadPlan(env, collection, branchId, options = {}, overrides = {}) {
   const db = { ...defaults, ...overrides };
   const branch = clean(branchId);
@@ -28,6 +29,30 @@ export async function branchReadPlan(env, collection, branchId, options = {}, ov
   }
   return { mode: 'legacy', readTime: total.readTime, total: total.count };
 }
+
+// Cache only completed, immutable-snapshot query plans, never document bodies,
+// permissions, promises or current reads. Subsequent pages need not recount the
+// whole index. Every new report timestamp and credential/project gets a new proof.
+export function createSnapshotBranchPlanner({ maxEntries = 128, maxAgeMs = 50 * 60 * 1000, now = Date.now } = {}) {
+  const cache = new Map();
+  return async (env, collection, branch, options, db) => {
+    const project = String(env.FIREBASE_PROJECT_ID || '').trim();
+    const email = String(env.FIREBASE_CLIENT_EMAIL || '').trim();
+    if (!project || !email || !options.readTime || !Number.isFinite(Date.parse(options.readTime))) {
+      return branchReadPlan(env, collection, branch, options, db);
+    }
+    const key = JSON.stringify([project, email, collection, branch, options.readTime]);
+    for (const [entry, value] of cache) if (value.expires <= now()) cache.delete(entry);
+    const saved = cache.get(key);
+    if (saved) return structuredClone(saved.plan);
+    const plan = await branchReadPlan(env, collection, branch, options, db);
+    if (cache.size >= maxEntries) cache.delete(cache.keys().next().value);
+    cache.set(key, { plan: structuredClone(plan), expires: now() + maxAgeMs });
+    return plan;
+  };
+}
+
+const snapshotBranchReadPlan = createSnapshotBranchPlanner();
 
 function queryOptions(plan, options) {
   return { ...options, readTime: plan.readTime, filterJoin: 'AND',
@@ -76,7 +101,7 @@ export async function branchCollectionPage(env, collection, branchId, options = 
       throw Object.assign(new Error('This page belongs to another branch or snapshot. Refresh the workspace.'), { status: 400 });
     }
   }
-  const plan = await (overrides.branchReadPlan || branchReadPlan)(env, collection, branch, { ...options, readTime }, db);
+  const plan = await (overrides.branchReadPlan || snapshotBranchReadPlan)(env, collection, branch, { ...options, readTime }, db);
   if (plan.mode === 'empty') return { documents: [], nextPageToken: '' };
   if (cursor && cursor.mode !== plan.mode) throw new Error('The branch read plan changed. Refresh the workspace.');
   let documents, next;
