@@ -27,7 +27,7 @@ export function incomeCategoryForEdition(row = {}, edition) {
 }
 
 export function incomeAccountForEdition(row = {}, edition) {
-  if (edition !== 'organization') return row;
+  if (edition !== 'organization' || row.NameCustomized === true) return row;
   const defaults = ORGANIZATION_INCOME_DEFAULTS.find(([, code, oldName]) =>
     same(row.Code || row.__id, code) && same(row.Name, `${oldName} Income`));
   return defaults ? {...row, Name: `${defaults[3]} Income`,

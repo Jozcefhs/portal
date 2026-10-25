@@ -58,6 +58,7 @@ export function accountingChartChoicesForEdition(chart = [], edition = 'school')
     // Other giving codes overlap hotel/refund codes, so use their explicit group
     // rather than excluding a numeric range. Preserve customised 4040 names.
     if (clean(row?.Code || row?.code || row?.__id) === '4040'
+      && row.NameCustomized !== true
       && clean(row?.Name).toLowerCase() === 'books and uniform revenue') {
       return { ...row, Name: 'Books, Uniforms and Tuck Shop Revenue' };
     }

@@ -7771,6 +7771,50 @@ async function loadChurchServices() {
   }
 }
 
+function canEditRevenueAccountNames() {
+  const user = currentUser || {};
+  return ['Super Admin', 'Director', 'Accounts Officer', 'Treasurer'].includes(user.assignedRole || user.role)
+    && user.branchAccess === 'all'
+    && ['funds', 'incomeAnalytics', 'accounting'].some(section => (user.allowedSections || []).includes(section))
+    && user.subscriptionActive !== false && user.subscriptionReadOnly !== true;
+}
+
+async function editRevenueAccountNames(selectedCode = '') {
+  const sessionController = staffSessionAbortController;
+  const username = currentUser?.username;
+  const branch = currentUser?.branchId;
+  const assertContext = () => {
+    if (sessionController !== staffSessionAbortController || username !== currentUser?.username || branch !== currentUser?.branchId) {
+      throw new Error('Workspace or user changed. Close and reopen the account name editor.');
+    }
+  };
+  try {
+    const { openRevenueAccountNames } = await import('./revenue-account-names.js?v=20261025');
+    assertContext();
+    await openRevenueAccountNames(async payload => {
+      assertContext();
+      const response = await staffFetch('/api/revenue-account-names', { method: 'POST', credentials: 'same-origin', cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const data = await response.json();
+      assertContext();
+      if (!response.ok || !data.ok) throw new Error(data.message || 'Account name update failed.');
+      return data;
+    }, { selectedCode, onSaved: account => {
+      assertContext();
+      // Refresh labels in place, preserving unsaved forms and loaded report data.
+      panelEl.querySelectorAll('select[name="RevenueAccountCode"] option, select[name="accountCode"] option').forEach(option => {
+        if (option.value === account.code) option.textContent = `${account.code} - ${account.name}`;
+      });
+      panelEl.querySelectorAll('[data-revenue-account-code]').forEach(node => {
+        if (node.dataset.revenueAccountCode === account.code) node.textContent = `${account.code} - ${account.name}`;
+      });
+      for (const report of [incomeAnalyticsData, incomeAnalyticsSnapshot?.report]) {
+        report?.options?.accounts?.forEach(row => { if (row.code === account.code) row.name = account.name; });
+      }
+    } });
+  } catch (error) { void window.DynamaxDialogs.alert({ title: 'Account names', message: error.message, tone: 'danger' }); }
+}
+
 async function loadChurchFunds() {
   try {
     const response = await staffFetch('/api/staff-funds', {
@@ -7799,6 +7843,7 @@ async function loadChurchFunds() {
               <select name="RevenueAccountCode" required>
                 ${revenueAccounts.map((account) => `<option value="${escapeHtml(account.Code)}">${escapeHtml(account.Code)} - ${escapeHtml(account.Name)}</option>`).join('')}
               </select>
+              ${canEditRevenueAccountNames() ? '<button type="button" id="editFundRevenueAccountName" class="secondary" style="margin-top:8px">Edit account name</button>' : ''}
             </label>
             <label>Available online
               <select name="AllowOnline"><option value="YES">Yes</option><option value="NO">No</option></select>
@@ -7821,7 +7866,7 @@ async function loadChurchFunds() {
       ${givingTypeForm}
       ${table(typeTableTitle, data.givingTypes || [], [
         { label: typeLabel, value: (row) => pick(row, ['Name']) },
-        { label: 'Account', value: (row) => [pick(row, ['RevenueAccountCode']), pick(row, ['RevenueAccountName'])].filter(Boolean).join(' - ') },
+        { label: 'Account', render: (row) => `<span data-revenue-account-code="${escapeHtml(row.RevenueAccountCode)}">${escapeHtml([row.RevenueAccountCode, row.RevenueAccountName].filter(Boolean).join(' - '))}</span>` },
         { label: 'Online', value: (row) => pick(row, ['AllowOnline']) },
         { label: 'Status', value: (row) => pick(row, ['Active']) },
         { label: 'Edit', render: (row) => capabilities.canManageGivingTypes
@@ -7840,7 +7885,7 @@ async function loadChurchFunds() {
       ${table('Accounting Mappings', data.mappings || [], [
         { label: 'Fund', value: (row) => pick(row, ['FundName', 'FundId']) },
         { label: 'Debit account', value: (row) => [pick(row, ['DebitAccountCode']), pick(row, ['DebitAccountName'])].filter(Boolean).join(' - ') },
-        { label: 'Income account', value: (row) => [pick(row, ['IncomeAccountCode']), pick(row, ['IncomeAccountName'])].filter(Boolean).join(' - ') },
+        { label: 'Income account', render: (row) => `<span data-revenue-account-code="${escapeHtml(row.IncomeAccountCode)}">${escapeHtml([row.IncomeAccountCode, row.IncomeAccountName].filter(Boolean).join(' - '))}</span>` },
         { label: 'Effective from', value: (row) => pick(row, ['EffectiveFrom']) },
         { label: 'Effective to', value: (row) => pick(row, ['EffectiveTo']) },
         { label: 'Status', value: (row) => pick(row, ['Active']) }
@@ -7859,6 +7904,9 @@ async function loadChurchFunds() {
       { key: 'audit', label: 'Audit', icon: '\u2713', count: (data.audit || []).length, nodes: workspaceTableNodes('Recent Fund Audit') }
     ]);
     const givingTypeFormElement = document.getElementById('churchGivingTypeForm');
+    document.getElementById('editFundRevenueAccountName')?.addEventListener('click', event => {
+      runButtonAction(event.currentTarget, 'Opening…', () => editRevenueAccountNames(givingTypeFormElement?.elements.RevenueAccountCode.value));
+    });
     givingTypeFormElement?.addEventListener('submit', async (event) => {
       event.preventDefault();
       const button = givingTypeFormElement.querySelector('button[type="submit"]');
@@ -10575,7 +10623,7 @@ function renderIncomeAnalytics(data) {
     <div class="income-analytics" id="incomeAnalyticsReport">
       <div class="workflow-intro income-report-heading">
         <div><p class="eyebrow">Finance & accounting</p><h2>Income Analytics</h2><p class="muted">Posted revenue from the shared accounting ledger, without duplicate operational totals.</p></div>
-        <div class="income-report-actions"><button type="button" class="secondary" id="refreshIncomeAnalytics">Refresh</button><button type="button" class="secondary" id="incomeExportCsv">&#8681; CSV</button><button type="button" id="incomePrintReport">&#9113; Print / PDF</button></div>
+        <div class="income-report-actions">${canEditRevenueAccountNames() ? '<button type="button" class="secondary" id="editIncomeAccountNames">Edit revenue account names</button>' : ''}<button type="button" class="secondary" id="refreshIncomeAnalytics">Refresh</button><button type="button" class="secondary" id="incomeExportCsv">&#8681; CSV</button><button type="button" id="incomePrintReport">&#9113; Print / PDF</button></div>
       </div>
       <p class="muted">Loaded data is retained while you navigate. Use Refresh for newer transactions.</p>
       <section class="income-filter-card" aria-label="Income report filters">
@@ -11014,6 +11062,9 @@ function exportIncomeAnalyticsCsv() {
 }
 
 function bindIncomeAnalyticsEvents() {
+  document.getElementById('editIncomeAccountNames')?.addEventListener('click', event => {
+    runButtonAction(event.currentTarget, 'Opening…', () => editRevenueAccountNames(document.querySelector('#incomeAnalyticsFilter [name="accountCode"]')?.value));
+  });
   document.getElementById('refreshIncomeAnalytics')?.addEventListener('click', (event) => {
     runButtonAction(event.currentTarget, 'Refreshing...', () => loadIncomeAnalytics());
   });
