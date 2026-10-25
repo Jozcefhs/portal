@@ -18,7 +18,7 @@ test('opening a date-mode history does not read documents; malformed dates never
 test('each edition uses date bounds in the database query and keeps the branch restriction', async () => {
   for (const edition of ['school', 'faith', 'organisation']) {
     let calls = 0;
-    const records = [{ PaymentNo: 'kept', Date: '2026-10-25', Amount: 400 }];
+    const records = [{ PaymentNo: 'kept', BranchId: 'east', Date: '2026-10-25', Amount: 400 }];
     const before = structuredClone(records);
     const rows = await loadDatedHistory({ ORGANISATION_EDITION: edition }, 'payments',
       { HistoryDateRange: { fromDate: '2026-10-23', toDate: '2026-10-25' } }, 'Date', 'east', {
@@ -43,6 +43,15 @@ test('legacy/internal read contracts remain unchanged and query failures are nev
   assert.equal(reads, 1);
   await assert.rejects(loadDatedHistory({}, 'history', { HistoryDateRange: { fromDate: '2026-10-23', toDate: '2026-10-25' } }, 'Timestamp', undefined,
     { queryCollectionPages: async () => { throw new Error('Index unavailable'); } }), /Index unavailable/);
+});
+
+test('legacy branch query fallback never exposes another branch in dated history', async () => {
+  const rows = [{BranchId:'east',id:'east'}, {branchId:'west',id:'west'}, {id:'legacy-main'}];
+  const db = {listBranchCollection:async()=>rows};
+  const body = {HistoryDateRange:{fromDate:'2026-10-23',toDate:'2026-10-25'}};
+  assert.deepEqual(await loadDatedHistory({},'history',body,'Date','east',db),[rows[0]]);
+  assert.deepEqual(await loadDatedHistory({},'history',body,'Date','main',db),[rows[2]]);
+  assert.deepEqual(await loadDatedHistory({},'history',body,'Date','all',db),rows);
 });
 
 test('date bounds accept leap days and include the last day without changing financial records', () => {

@@ -1,0 +1,52 @@
+name: Repair tenant index deployment access
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: Apply only missing Service Usage Consumer bindings for the existing tenant provisioner
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DEPLOYMENT_ACCOUNT: ${{ vars.DYNAMAX_PROVISION_SERVICE_ACCOUNT }}
+      APPLY: ${{ inputs.apply }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ vars.DYNAMAX_PROVISION_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.DYNAMAX_PROVISION_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v3
+      - name: Inspect or repair the six failed legacy pool deployments
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$DEPLOYMENT_ACCOUNT" == 'github-tenant-provisioner@dynamax-organisation-bootstrap.iam.gserviceaccount.com' ]]
+          for suffix in 002 003 004 006 007 009; do
+            project="dynamax-tenant-${suffix}"
+            if ! gcloud projects get-iam-policy "$project" --format=json > "$RUNNER_TEMP/${project}-policy.json"; then
+              echo "::error::Cannot inspect existing deployment access for ${project}; no permissions changed."
+              exit 1
+            fi
+            member="serviceAccount:${DEPLOYMENT_ACCOUNT}"
+            jq -e --arg member "$member" 'any(.bindings[]; any(.members[]; . == $member))' "$RUNNER_TEMP/${project}-policy.json" >/dev/null
+            if jq -e --arg member "$member" 'any(.bindings[]; .role == "roles/serviceusage.serviceUsageConsumer" and (.condition == null) and any(.members[]; . == $member))' "$RUNNER_TEMP/${project}-policy.json" >/dev/null; then
+              echo "${project}: deployment service usage is already configured."
+            elif [[ "$APPLY" == 'true' ]]; then
+              gcloud projects add-iam-policy-binding "$project" --member="$member" --role=roles/serviceusage.serviceUsageConsumer --condition=None --quiet --format='value(etag)' >/dev/null
+              echo "${project}: added only Service Usage Consumer for the existing provisioner."
+            else
+              echo "${project}: Service Usage Consumer is missing for the existing provisioner. Preview only."
+            fi
+          done

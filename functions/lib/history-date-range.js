@@ -1,5 +1,6 @@
 import { listCollection, queryCollectionPages } from './firestore.js';
 import { listBranchCollection } from './branch-reads.js';
+import { branchRecordVisible } from './branch-scope.js';
 
 export function historyDateRange(input = {}) {
   const fromDate = String(input.fromDate || '').trim();
@@ -29,6 +30,9 @@ export async function loadDatedHistory(env, collection, body = {}, field = 'Crea
   const range = body.HistoryDateRange || {};
   if (!range.fromDate && !range.toDate) return [];
   const options = historyQueryOptions(range, field);
-  return branchId === undefined ? db.queryCollectionPages(env, collection, options)
-    : db.listBranchCollection(env, collection, branchId, options);
+  if (branchId === undefined) return db.queryCollectionPages(env, collection, options);
+  // Legacy coverage may require the branch reader to query several branches.
+  // Retain the selected-branch boundary even in that fallback.
+  const rows = await db.listBranchCollection(env, collection, branchId, options);
+  return rows.filter(row => branchRecordVisible(row, { branchId }));
 }
