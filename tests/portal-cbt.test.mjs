@@ -296,3 +296,19 @@ test('public API denies cross-site requests before reading credentials or access
   const response = await publicApi({ env: {}, request: new Request('https://school.test/api/portal-cbt', { method: 'POST', headers: { Origin: 'https://other.test', 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'login' }) }) });
   assert.equal(response.status, 403); assert.match(response.headers.get('Cache-Control'), /no-store/);
 });
+
+
+test('entrance exam subject choices and validation use the exam branch instead of the organisation list', async () => {
+  const f = fixture();
+  f.put('branchProfileOverrides', 'primary', { OverrideFields: ['EntranceExamSubjects'], Values: {
+    EntranceExamSubjects: [{ id: 'numeracy', name: 'Numeracy', maxScore: 100 }]
+  } });
+  const primary = await f.service.state({ ...scope, BranchId: 'primary' });
+  const secondary = await f.service.state(scope);
+  assert.deepEqual(primary.subjects.map(row => row.name), ['Numeracy']);
+  assert.deepEqual(secondary.subjects.map(row => row.name), ['Logic']);
+  const oldRecord = structuredClone(f.db.get(`${source}/app-1`));
+  await assert.rejects(f.create({ BranchId: 'primary', SubjectId: 'logic' }), /configured entrance-subject/);
+  await f.create({ BranchId: 'primary', SubjectId: 'numeracy' });
+  assert.deepEqual(f.db.get(`${source}/app-1`), oldRecord);
+});

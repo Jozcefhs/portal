@@ -1,3 +1,4 @@
+import { loadDatedHistory } from './history-date-range.js';
 import { getDocument, listCollection, upsertDocument } from './firestore.js';
 import {
   CHURCH_COLLECTIONS,
@@ -319,7 +320,7 @@ export async function listChurchFunds(env, user, body = {}) {
       allowGlobalChartSeed: organisationGivingAccountSeedAllowed(body)
     }),
     capabilities.canViewAudit
-      ? listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.fundAudit, branchId)).catch(() => [])
+      ? loadDatedHistory(env, churchCollectionPath(CHURCH_COLLECTIONS.fundAudit, branchId), body, 'Timestamp')
       : Promise.resolve([])
   ]);
   const chart = accountingChartForEdition(givingSetup.chart, organization.Edition);

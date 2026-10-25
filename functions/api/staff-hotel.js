@@ -1,3 +1,4 @@
+import { historyDateRange } from '../lib/history-date-range.js';
 import { requireFirestoreEnv } from '../lib/firestore.js';
 import { buildHotelSelfServiceQr, handleHotelAction } from '../lib/hotel-services.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
@@ -37,7 +38,7 @@ export async function onRequestGet(context) {
       error.status = 403;
       throw error;
     }
-    const result = await handleHotelAction(env, user, { action: 'list' });
+    const result = await handleHotelAction(env, user, { action: 'list', HistoryDateRange: Object.fromEntries(new URL(request.url).searchParams) });
     return response(await withSelfServiceQr(env, user, result, request));
   } catch (error) {
     return response({ ok: false, message: error.message || String(error) }, error.status || 500);
@@ -60,6 +61,8 @@ export async function onRequestPost(context) {
       throw error;
     }
     const body = await readJsonBody(request, { maxBytes: 12 * 1024 * 1024 });
+    body.HistoryDateRange ||= {};
+    if (body.HistoryDateRange.fromDate || body.HistoryDateRange.toDate) historyDateRange(body.HistoryDateRange);
     const result = await handleHotelAction(env, user, body);
     return response(await withSelfServiceQr(env, user, result, request));
   } catch (error) {

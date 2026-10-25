@@ -1,3 +1,4 @@
+import { loadDatedHistory } from './history-date-range.js';
 import { batchUpsertDocuments, deleteDocument, getDocument, listCollection, upsertDocument } from './firestore.js';
 import { CHURCH_COLLECTIONS, churchCollectionPath, safeChurchDocumentId } from './church-foundation.js';
 import {
@@ -734,7 +735,9 @@ export async function listOrganizationDepartments(env, user, body = {}) {
     'departmentAttendance', 'departmentOfferings', 'specialPrograms', 'programRegistrations',
     'foreignVisitors', 'departmentAudit'];
   const [rows, staffUsers] = await Promise.all([
-    Promise.all(names.map((name) => listCollection(env, path(name, branchId)).catch(() => []))),
+    Promise.all(names.map((name) => ['members', 'departments', 'departmentPositions', 'departmentMembers'].includes(name)
+      ? listCollection(env, path(name, branchId))
+      : loadDatedHistory(env, path(name, branchId), body, ({ departmentAudit: 'Timestamp', departmentMeetings: 'Date', departmentAttendance: 'CheckedInAt', departmentOfferings: 'Date', foreignVisitors: 'VisitDate' })[name] || 'CreatedAt'))),
     listCollection(env, 'staffUsers').catch(() => [])
   ]);
   const data = Object.fromEntries(names.map((name, index) => [name, rows[index]]));
@@ -777,5 +780,5 @@ export async function handleOrganizationDepartmentAction(env, user, body = {}) {
   else if (action === 'registerparticipant') result = await registerParticipant(env, user, body, branchId);
   else if (action === 'saveforeignvisitor') result = await saveForeignVisitor(env, user, body, branchId);
   else throw inputError('Choose a valid department action.');
-  return { ...(await listOrganizationDepartments(env, user, { BranchId: branchId })), ...result };
+  return { ...(await listOrganizationDepartments(env, user, { ...body, BranchId: branchId })), ...result };
 }

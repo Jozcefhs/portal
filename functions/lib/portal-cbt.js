@@ -1,6 +1,7 @@
 import { getDocument, queryCollectionPages, batchCommitDocuments } from './firestore.js';
 import { listSchoolCollection } from './school-scope.js';
 import { enforceActorBranch } from './branch-scope.js';
+import { applyBranchProfileOverrides, BRANCH_PROFILE_OVERRIDE_COLLECTION } from './branch-profile-settings.js';
 import { requiredDeploymentIdentity } from './deployment-identity.js';
 import { academicManagementCapabilities, portalCbtAcademicContext, bootstrapAcademicManagement, resolveAcademicCbtScorePlacement, syncAcademicCbtScores, academicCbtScoreBatchDigest } from './academic-management.js';
 import { normalizeEntranceSubjects, entranceSubjectRows, entranceScoreUpdates } from './entrance-subjects.js';
@@ -55,6 +56,10 @@ export function portalCbtScope(env, user, input) {
 export function createPortalCbtService(env, user = null, dependencies = {}) {
   const rawGet = dependencies.get || getDocument;
   const get = async (...args) => decodeExamRecord(await rawGet(...args));
+  const entranceProfile = async branchId => {
+    const [base, branch] = await Promise.all([get(env, 'settings', 'schoolProfile'), get(env, BRANCH_PROFILE_OVERRIDE_COLLECTION, branchId)]);
+    return applyBranchProfileOverrides(base || {}, branch, branchId);
+  };
   const query = dependencies.query || queryCollectionPages;
   const commit = dependencies.commit || batchCommitDocuments;
   const schoolRows = dependencies.schoolRows || listSchoolCollection;
@@ -110,7 +115,7 @@ export function createPortalCbtService(env, user = null, dependencies = {}) {
   }
   async function state(input) {
     const scope = portalCbtScope(env, user, input);
-    const [tests, profile] = await Promise.all([rows(CBT.tests, 'Scope.BranchId', scope.BranchId), get(env, 'settings', 'schoolProfile')]);
+    const [tests, profile] = await Promise.all([rows(CBT.tests, 'Scope.BranchId', scope.BranchId), entranceProfile(scope.BranchId)]);
     return { ok: true, subjects: normalizeEntranceSubjects(profile?.EntranceExamSubjects), tests: tests.filter(test => test.Scope?.SchoolSection === scope.SchoolSection && test.Scope?.WorkspaceId === scope.WorkspaceId && test.Audience === input.Audience)
       .map(test => ({ ...publicTest(test), ...test.Scope, Revision: test.__updateTime, CandidateCount: test.CandidateCount || 0 })) };
   }
@@ -135,7 +140,7 @@ export function createPortalCbtService(env, user = null, dependencies = {}) {
     const audience = input.Audience;
     if (!['applicant', 'student'].includes(audience)) throw fail('Choose applicants or enrolled students.');
     const scope = portalCbtScope(env, user, input);
-    const profile = await get(env, 'settings', 'schoolProfile');
+    const profile = await entranceProfile(scope.BranchId);
     const documentMode = input.ContentMode === 'document';
     const questions = normalizeQuestions(documentMode ? documentQuestions(input) : input.Questions);
     const maximum = Number(questions.reduce((sum, q) => sum + q.MaximumScore, 0).toFixed(4));
@@ -317,7 +322,7 @@ export function createPortalCbtService(env, user = null, dependencies = {}) {
       const current = await get(env, CBT.candidates, row.CandidateId);
       const application = await get(env, current.SourcePath, current.SourceId);
       if (!application || lower(application.ApplicationReference || application.ApplicationID || application.__id) !== lower(current.Reference)) throw fail('The original application cannot be verified. The exam result is retained.', 409);
-      const profile = await get(env, 'settings', 'schoolProfile');
+      const profile = await entranceProfile(test.Scope.BranchId);
       const subjects = entranceSubjectRows(application, profile || {});
       const subject = subjects.find(item => item.id === test.SubjectId);
       if (!subject || Math.abs(subject.maxScore - test.MaximumScore) > 0.0001) throw fail('The application subject maximum changed. The original result is retained for review.', 409);

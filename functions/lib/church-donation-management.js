@@ -1,3 +1,4 @@
+import { loadDatedHistory } from './history-date-range.js';
 import {
   batchCommitDocuments,
   getDocument,
@@ -300,7 +301,7 @@ export async function donationWorkspaceSupplement(env, user, body = {}, donation
   const [donors, settings, settlements] = await Promise.all([
     canManage ? listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.donors, branchId)).catch(() => []) : Promise.resolve([]),
     getDonationCurrencySettings(env, branchId),
-    listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.currencySettlements, branchId)).catch(() => [])
+    loadDatedHistory(env, churchCollectionPath(CHURCH_COLLECTIONS.currencySettlements, branchId), body, 'CreatedAt')
   ]);
   return {
     donors: donors.sort((a, b) => clean(a.DisplayName).localeCompare(clean(b.DisplayName))),

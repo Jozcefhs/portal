@@ -14,6 +14,14 @@ export function defaultEntranceSubjects() {
   return LEGACY.map(definition);
 }
 
+export function retainedOrganisationEntranceSubjects(existing, submitted) {
+  const retained = normalizeEntranceSubjects(existing);
+  if (submitted != null && JSON.stringify(normalizeEntranceSubjects(submitted)) !== JSON.stringify(retained)) {
+    throw invalid('Select a branch in Settings to change its entrance examination subjects.');
+  }
+  return retained;
+}
+
 export function normalizeEntranceSubjects(value) {
   if (value === undefined || value === null) return defaultEntranceSubjects();
   let rows = value;

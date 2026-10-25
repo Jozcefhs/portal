@@ -52,6 +52,7 @@ const database = {
     }
   }
 };
+database.queryCollectionPages = database.queryCollection;
 globalThis.__faithOrganizationRegressionDb = database;
 globalThis.__faithOrganizationRegressionNotifications = {
   createNotification: async (_env, payload) => {
@@ -75,6 +76,7 @@ async function loadWorkflow(filename) {
   substitutions.set(`./${filename}`, moduleUrl);
   return import(moduleUrl);
 }
+await loadWorkflow('history-date-range.js');
 const membership = await loadWorkflow('church-membership.js');
 const services = await loadWorkflow('church-services.js');
 const departments = await loadWorkflow('organization-departments.js');

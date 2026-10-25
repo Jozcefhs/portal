@@ -14,14 +14,14 @@ function ensureAuditAccess(user) {
   throw error;
 }
 
-function defaultDate(daysAgo = 30) {
-  const date = new Date();
-  date.setUTCDate(date.getUTCDate() - daysAgo);
-  return date.toISOString().slice(0, 10);
-}
-
-function validDate(value, fallback) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(clean(value)) ? clean(value) : fallback;
+export function securityAuditDateRange(body = {}) {
+  const fromDate = clean(body.fromDate), toDate = clean(body.toDate);
+  const valid = value => /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(value + 'T00:00:00Z'))
+    && new Date(value + 'T00:00:00Z').toISOString().slice(0, 10) === value;
+  if (!valid(fromDate) || !valid(toDate) || fromDate > toDate) {
+    throw Object.assign(new Error('Choose a valid audit date range before loading records.'), { status: 400 });
+  }
+  return { fromDate, toDate };
 }
 
 function uniqueOptions(rows, getter) {
@@ -69,14 +69,7 @@ export async function onRequestPost(context) {
       error.status = 400;
       throw error;
     }
-    const today = new Date().toISOString().slice(0, 10);
-    const fromDate = validDate(body.fromDate, defaultDate(30));
-    const toDate = validDate(body.toDate, today);
-    if (fromDate > toDate) {
-      const error = new Error('The audit start date cannot be after the end date.');
-      error.status = 400;
-      throw error;
-    }
+    const { fromDate, toDate } = securityAuditDateRange(body);
     const paged = body.paged === true;
     const aggregate = await loadAggregatedSecurityAudit(env, { fromDate, toDate, perSourceLimit: 300,
       paged, batchCursor: body.batchCursor });

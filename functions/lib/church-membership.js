@@ -1,3 +1,4 @@
+import { loadDatedHistory } from './history-date-range.js';
 import { batchUpsertDocuments, getDocument, listCollection, upsertDocument } from './firestore.js';
 import {
   CHURCH_COLLECTIONS,
@@ -239,7 +240,7 @@ export async function listChurchMembership(env, user, body = {}) {
     listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.members, branchId)).catch(() => []),
     listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.households, branchId)).catch(() => []),
     capabilities.canViewAudit
-      ? listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.membershipAudit, branchId)).catch(() => [])
+      ? loadDatedHistory(env, churchCollectionPath(CHURCH_COLLECTIONS.membershipAudit, branchId), body, 'Timestamp')
       : Promise.resolve([])
   ]);
   return {

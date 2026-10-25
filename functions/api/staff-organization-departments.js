@@ -1,3 +1,4 @@
+import { historyDateRange } from '../lib/history-date-range.js';
 import { requireFirestoreEnv } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { handleOrganizationDepartmentAction } from '../lib/organization-departments.js';
@@ -12,6 +13,8 @@ export async function onRequestPost({ request, env }) {
     const deploymentIdentity = await loadDeploymentIdentity(env);
     assertOrganizationDepartmentWorkspaceAccess(deploymentIdentity, user);
     const body = await readJsonBody(request, { maxBytes: 512 * 1024 });
+    body.HistoryDateRange ||= {};
+    if (body.HistoryDateRange.fromDate || body.HistoryDateRange.toDate) historyDateRange(body.HistoryDateRange);
     return Response.json(await handleOrganizationDepartmentAction(env, user, body), {
       headers: { 'Cache-Control': 'no-store' }
     });

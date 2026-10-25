@@ -1,3 +1,4 @@
+import { loadDatedHistory } from '../lib/history-date-range.js';
 import { getAccountsOverview } from './backend.js';
 import { withVendorStorePolicy } from '../lib/vendor-store-policy.js';
 import { activeAdmissionRows } from '../lib/admission-cycle.js';
@@ -254,7 +255,7 @@ export async function onRequestPost(context) {
         branchId: user.branchId,
         schoolSectionAccess: user.schoolSectionAccess
       }) : Promise.resolve([]),
-      shouldLoad('formPurchases') ? loadBranchFinanceRows(env, 'formSales', user.branchId) : Promise.resolve([]),
+      shouldLoad('formPurchases') ? loadDatedHistory(env, 'formSales', requestedSection === 'formPurchases' ? { ...body, HistoryDateRange: body.HistoryDateRange || {} } : body, 'PaymentDate', user.branchId) : Promise.resolve([]),
       shouldLoad('accounts') ? loadBranchFinanceRows(env, 'accountSummaries', user.branchId) : Promise.resolve([]),
       shouldLoad('accounts') ? currentSessionFinanceRows(env, 'payments', financeSession, user.branchId) : Promise.resolve([]),
       shouldLoad('accounts') ? currentSessionFinanceRows(env, 'invoices', financeSession, user.branchId) : Promise.resolve([]),

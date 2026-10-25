@@ -261,7 +261,19 @@
         { "fieldPath": "RecipientKey", "order": "ASCENDING" },
         { "fieldPath": "NotificationId", "order": "ASCENDING" }
       ]
-    }
+    },
+    {"collectionGroup": "accountingExpenses", "queryScope": "COLLECTION", "fields": [{"fieldPath": "BranchId", "order": "ASCENDING"}, {"fieldPath": "Date", "order": "ASCENDING"}]},
+    {"collectionGroup": "accountingSupplierBills", "queryScope": "COLLECTION", "fields": [{"fieldPath": "BranchId", "order": "ASCENDING"}, {"fieldPath": "Date", "order": "ASCENDING"}]},
+    {"collectionGroup": "accountingImprests", "queryScope": "COLLECTION", "fields": [{"fieldPath": "BranchId", "order": "ASCENDING"}, {"fieldPath": "Date", "order": "ASCENDING"}]},
+    {"collectionGroup": "storeOrders", "queryScope": "COLLECTION", "fields": [{"fieldPath": "BranchId", "order": "ASCENDING"}, {"fieldPath": "CreatedAt", "order": "ASCENDING"}]},
+    {"collectionGroup": "hrLeaveRequests", "queryScope": "COLLECTION", "fields": [{"fieldPath": "BranchId", "order": "ASCENDING"}, {"fieldPath": "CreatedAt", "order": "ASCENDING"}]},
+    {"collectionGroup": "hrPerformanceReviews", "queryScope": "COLLECTION", "fields": [{"fieldPath": "BranchId", "order": "ASCENDING"}, {"fieldPath": "CreatedAt", "order": "ASCENDING"}]},
+    {"collectionGroup": "hrTrainingRecords", "queryScope": "COLLECTION", "fields": [{"fieldPath": "BranchId", "order": "ASCENDING"}, {"fieldPath": "CreatedAt", "order": "ASCENDING"}]},
+    {"collectionGroup": "hrLifecycleRecords", "queryScope": "COLLECTION", "fields": [{"fieldPath": "BranchId", "order": "ASCENDING"}, {"fieldPath": "CreatedAt", "order": "ASCENDING"}]},
+    {"collectionGroup": "payrollItems", "queryScope": "COLLECTION", "fields": [{"fieldPath": "Username", "order": "ASCENDING"}, {"fieldPath": "Month", "order": "ASCENDING"}]},
+    {"collectionGroup": "hotelReservations", "queryScope": "COLLECTION", "fields": [{"fieldPath": "BranchId", "order": "ASCENDING"}, {"fieldPath": "CreatedAt", "order": "ASCENDING"}]},
+    {"collectionGroup": "hotelHousekeeping", "queryScope": "COLLECTION", "fields": [{"fieldPath": "BranchId", "order": "ASCENDING"}, {"fieldPath": "CreatedAt", "order": "ASCENDING"}]},
+    {"collectionGroup": "hotelAudit", "queryScope": "COLLECTION", "fields": [{"fieldPath": "BranchId", "order": "ASCENDING"}, {"fieldPath": "Timestamp", "order": "ASCENDING"}]}
   ],
   "fieldOverrides": []
 }

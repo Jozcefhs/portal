@@ -1,7 +1,8 @@
+import { loadDatedHistory } from './history-date-range.js';
 import {
   batchCommitDocuments,
   getDocument,
-  queryCollection,
+  queryCollection, queryCollectionPages,
   upsertDocument
 } from './firestore.js';
 import { normalizeOrganizationEdition, resolveOrganizationConfig } from './organization-config.js';
@@ -280,13 +281,24 @@ export async function listHotelServices(env, user, body = {}) {
   const edition = await requireHotelEdition(env, user);
   const capabilities = requireCapability(user, 'canView');
   const branchId = branchIdFor(user, body);
+  const selected = Object.hasOwn(body, 'HistoryDateRange')
+    ? await loadDatedHistory(env, HOTEL_COLLECTIONS.reservations, body, 'CreatedAt', branchId) : null;
+  const linkedFinancialRows = async collection => {
+    if (!selected) return branchRows(env, collection, branchId);
+    const ids = [...new Set(selected.map(row => clean(row.ReservationId || row.__id)).filter(Boolean))];
+    const rows = [];
+    for (let offset = 0; offset < ids.length; offset += 30) {
+      rows.push(...await queryCollectionPages(env, collection, { filters: [{ field: 'ReservationId', op: 'in', value: ids.slice(offset, offset + 30) }], maxRows: 10000 }));
+    }
+    return rows.filter(row => clean(row.BranchId || 'main') === branchId);
+  };
   const [rooms, reservations, charges, payments, housekeeping, audit] = await Promise.all([
     branchRows(env, HOTEL_COLLECTIONS.rooms, branchId),
-    branchRows(env, HOTEL_COLLECTIONS.reservations, branchId),
-    branchRows(env, HOTEL_COLLECTIONS.charges, branchId),
-    branchRows(env, HOTEL_COLLECTIONS.payments, branchId),
-    branchRows(env, HOTEL_COLLECTIONS.housekeeping, branchId),
-    capabilities.canViewAudit ? branchRows(env, HOTEL_COLLECTIONS.audit, branchId) : Promise.resolve([])
+    selected || branchRows(env, HOTEL_COLLECTIONS.reservations, branchId),
+    linkedFinancialRows(HOTEL_COLLECTIONS.charges),
+    linkedFinancialRows(HOTEL_COLLECTIONS.payments),
+    Object.hasOwn(body, 'HistoryDateRange') ? loadDatedHistory(env, HOTEL_COLLECTIONS.housekeeping, body, 'CreatedAt', branchId) : branchRows(env, HOTEL_COLLECTIONS.housekeeping, branchId),
+    capabilities.canViewAudit ? (Object.hasOwn(body, 'HistoryDateRange') ? loadDatedHistory(env, HOTEL_COLLECTIONS.audit, body, 'Timestamp', branchId) : branchRows(env, HOTEL_COLLECTIONS.audit, branchId)) : Promise.resolve([])
   ]);
   const decoratedReservations = reservations.map((row) => hotelReservationTotals(row, charges, payments));
   const operationalRooms = rooms.map(hotelRoomWithOperationalStatus);

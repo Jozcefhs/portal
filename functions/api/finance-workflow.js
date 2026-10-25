@@ -1,3 +1,4 @@
+import { loadDatedHistory } from '../lib/history-date-range.js';
 import { batchUpsertDocuments, deleteDocument, findOneByField, getDocument, listCollection, queryCollection, queryCollectionPages, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { getAccountingChartRows } from '../lib/accounting-reference-cache.js';
 import { assertFinanceRoleLimit } from '../lib/accounting-mutation-guards.js';
@@ -396,27 +397,27 @@ async function writeAudit(env, user, action, recordType, recordId, details = '')
   await upsertDocument(env, write.collectionPath, write.documentId, write.data);
 }
 
-async function listWorkflow(env, user) {
+async function listWorkflow(env, user, body = {}) {
   const access = capabilities(user);
   const [requests, bills, imprests, approvalProfile] = await Promise.all([
-    listCollection(env, 'accountingExpenses'),
-    listCollection(env, 'accountingSupplierBills'),
-    listCollection(env, 'accountingImprests').catch(() => []),
+    loadDatedHistory(env, 'accountingExpenses', body, 'Date', user.branchId),
+    loadDatedHistory(env, 'accountingSupplierBills', body, 'Date', user.branchId),
+    loadDatedHistory(env, 'accountingImprests', body, 'Date', user.branchId),
     loadStaffApprovalProfile(env, user.username)
   ]);
   const approvalProfileSummary = publicStaffApprovalProfile(approvalProfile || {});
   delete approvalProfileSummary.SignatureDataUrl;
   delete approvalProfileSummary.StampDataUrl;
   const sortRecent = (rows) => [...rows].sort((a, b) => clean(b.UpdatedAt || b.CreatedAt || b.Date).localeCompare(clean(a.UpdatedAt || a.CreatedAt || a.Date)));
-  const scopedImprests = publicRows(sortRecent(scopedRows(imprests, user, access))).slice(0, 250);
+  const scopedImprests = publicRows(sortRecent(scopedRows(imprests, user, access)));
   return {
     ok: true,
     message: 'Department finance workflow loaded.',
     department: userDepartment(user),
     capabilities: access,
     approvalProfile: approvalProfileSummary,
-    requisitions: publicRows(sortRecent(scopedRows(requests, user, access))).slice(0, 150).map(withApprovalRoute),
-    bills: publicRows(sortRecent(scopedRows(bills, user, access))).slice(0, 150),
+    requisitions: publicRows(sortRecent(scopedRows(requests, user, access))).map(withApprovalRoute),
+    bills: publicRows(sortRecent(scopedRows(bills, user, access))),
     imprests: scopedImprests,
     imprestSummary: imprestReportSummary(scopedImprests)
   };
@@ -1538,7 +1539,7 @@ export async function onRequestPost(context) {
       }
     }
     let data;
-    if (action === 'list') data = await listWorkflow(env, user);
+    if (action === 'list') data = await listWorkflow(env, user, { ...body, HistoryDateRange: body.HistoryDateRange || {} });
     else if (action === 'submitrequisition') data = await submitRequisition(env, user, body);
     else if (action === 'submitmaterialrequisition') data = await submitMaterialRequisition(env, user, body);
     else if (action === 'resubmitrequisition') data = await resubmitRequisition(env, user, body);

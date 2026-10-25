@@ -1,3 +1,4 @@
+import { historyDateRange, loadDatedHistory } from '../lib/history-date-range.js';
 import { listBranchCollection } from '../lib/branch-reads.js';
 import { withVendorStorePolicy } from '../lib/vendor-store-policy.js';
 import { batchCommitDocuments, listCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
@@ -19,7 +20,6 @@ import {
 } from '../lib/organization-commerce.js';
 import QRCode from 'qrcode';
 import { assertProcurementInventoryEdit, loadProcurementInventoryControl } from '../lib/procurement-inventory-guard.js';
-import { loadWorkspaceHistoryPage } from '../lib/workspace-history.js';
 import { listOrganizationCommerceSalesPage } from '../lib/organization-commerce.js';
 
 function clean(value) { return String(value ?? '').trim(); }
@@ -68,12 +68,12 @@ export async function onRequestPost(context) {
     }
     const storeType = storeForSection(section);
     const action = lower(body.action || 'list');
+    body.HistoryDateRange ||= {};
+    if (body.HistoryDateRange.fromDate || body.HistoryDateRange.toDate) historyDateRange(body.HistoryDateRange);
     if (action === 'list' && body.historyKind) {
       let page;
       if (body.historyKind === 'sales' && section === 'organizationStore') page = await listOrganizationCommerceSalesPage(env, section, user, body.cursor ?? null);
-      else if (body.historyKind === 'orders') page = await loadWorkspaceHistoryPage(env, user, {
-        key: `${section}:orders`, collection: 'storeOrders', visible: row => clean(row.StoreType) === storeType && visible([row], user).length === 1
-      }, body.cursor ?? null);
+      else if (body.historyKind === 'orders') page = { rows: visible(await loadDatedHistory(env, 'storeOrders', body, 'CreatedAt', user.branchId), user).filter(row => clean(row.StoreType) === storeType), nextCursor: null };
       else throw Object.assign(new Error('Choose a valid store history.'), { status: 400 });
       return Response.json({ ok: true, ...page }, { headers: { 'Cache-Control': 'no-store' } });
     }
@@ -217,7 +217,7 @@ export async function onRequestPost(context) {
     }
     const [{ categories, items }, orders, sales, procurementControlled] = await Promise.all([
       ensureStoreCategories(env, { readOnly: true, branchId: user.branchId, storeType }),
-      listBranchCollection(env, 'storeOrders', user.branchId, { compatibleFilters: [{ field: 'StoreType', value: storeType, knownValues: ['Bookstore', 'Uniform Store', 'Organisation Store'] }] }),
+      loadDatedHistory(env, 'storeOrders', body, 'CreatedAt', user.branchId),
       section === 'organizationStore'
         ? listOrganizationCommerceSales(env, section, user)
         : Promise.resolve([]),

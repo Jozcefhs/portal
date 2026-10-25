@@ -91,13 +91,13 @@ test('changed subject scores invalidate a previously generated result PDF even i
   assert.equal(updates.ResultSent, 'NO');
 });
 
-test('web settings persist the configuration and branch overrides cannot change it', () => {
+test('web settings persist entrance subjects only for the selected branch', () => {
   const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
   assert.match(read('../functions/api/settings.js'), /EntranceExamSubjects: null/);
   assert.match(read('../functions/api/settings.js'), /profile.EntranceExamSubjects = normalizeEntranceSubjects\(profile.EntranceExamSubjects\)/);
-  assert.match(read('../functions/api/settings.js'), /EntranceExamSubjects: normalizeEntranceSubjects\(incoming.EntranceExamSubjects \?\? existing.EntranceExamSubjects\)/);
-  assert.ok(!read('../functions/lib/branch-profile-settings.js').includes("'EntranceExamSubjects'"));
-  assert.match(read('../js/setup.js'), /getElementById\('entranceExamSubjects'\).disabled = branchMode \|\| scopeLocked/);
+  assert.match(read('../functions/api/settings.js'), /EntranceExamSubjects: retainedOrganisationEntranceSubjects\(existing.EntranceExamSubjects, incoming.EntranceExamSubjects\)/);
+  assert.ok(read('../functions/lib/branch-profile-settings.js').includes("'EntranceExamSubjects'"));
+  assert.match(read('../js/setup.js'), /getElementById\('entranceExamSubjects'\).disabled = !branchMode/);
 });
 
 test('other applicant editors cannot change saved subject marks behind the result editor', () => {

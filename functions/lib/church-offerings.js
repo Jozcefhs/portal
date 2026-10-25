@@ -1,3 +1,4 @@
+import { loadDatedHistory } from './history-date-range.js';
 import { deleteDocument, getDocument, listCollection, upsertDocument } from './firestore.js';
 import {
   buildOfferingJournalDraft,
@@ -310,7 +311,7 @@ async function offeringReferenceData(env, branchId, input = {}) {
   const [funds, mappings, occurrences, givingSetup] = await Promise.all([
     listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.funds, branchId)).catch(() => []),
     listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.fundMappings, branchId)).catch(() => []),
-    listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.serviceOccurrences, branchId)).catch(() => []),
+    loadDatedHistory(env, churchCollectionPath(CHURCH_COLLECTIONS.serviceOccurrences, branchId), input, 'Date'),
     ensureGivingTypes(env, branchId, {
       allowGlobalChartSeed: organisationGivingAccountSeedAllowed(input)
     })
@@ -549,10 +550,10 @@ export async function listChurchOfferings(env, user, body = {}) {
   const capabilities = requireCapability(user, 'canView');
   const branchId = resolveMembershipBranch(user, body.BranchId || body.branchId);
   const [offerings, references, audit, routes] = await Promise.all([
-    listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.offerings, branchId)).catch(() => []),
+    loadDatedHistory(env, churchCollectionPath(CHURCH_COLLECTIONS.offerings, branchId), body, 'Date'),
     offeringReferenceData(env, branchId, body),
     capabilities.canViewAudit
-      ? listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.offeringAudit, branchId)).catch(() => [])
+      ? loadDatedHistory(env, churchCollectionPath(CHURCH_COLLECTIONS.offeringAudit, branchId), body, 'Timestamp')
     : Promise.resolve([]),
     listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.offeringApprovalRoutes, branchId)).catch(() => [])
   ]);

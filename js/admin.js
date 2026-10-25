@@ -45,6 +45,11 @@ const dashboardClockEl = document.getElementById('staffDashboardClock');
 const dashboardChartsEl = document.getElementById('dashboardCharts');
 const tabsEl = document.getElementById('adminTabs');
 const panelEl = document.getElementById('adminPanel');
+const historyDateWorkspace = window.DynamaxHistoryDates.createHistoryDateWorkspace({
+  panel: panelEl, scope: () => JSON.stringify([currentUser?.username, selectedBranchId]),
+  title: module => staffTabLabel(module, module),
+  load: module => { staffWorkspaceReads.clear(); invalidatedDashboardSections.add(module); renderSection(module); }
+});
 const welcomeEl = document.querySelector('.staff-welcome');
 const staffMainContent = document.querySelector('.staff-main-content');
 const profileTrigger = document.getElementById('staffProfileTrigger');
@@ -890,6 +895,7 @@ async function staffFetch(input, init = {}) {
     if (staffBearerToken) headers.set('Authorization', `Bearer ${staffBearerToken}`);
     options.headers = headers;
   }
+  options.body = window.DynamaxHistoryDates.datedHistoryBody(requestUrl.pathname, options.body, historyDateWorkspace.range(activeSection));
   const network = async () => {
     const attempts = retrySafe ? Math.min(3, Math.max(2, requestedAttempts || 2)) : 1;
     let lastError = null;
@@ -1863,6 +1869,7 @@ function clearStaffWorkspaceState() {
   profilePhotoState = '';
   externalAuditState = { tab: 'payments', dateFrom: '', dateTo: '', cursor: null, history: [], page: 1, journals: [], findings: [], nextCursor: null, scope: null, pageSize: 0, findingCursor: null, findingNextCursor: null, findingHistory: [], findingPage: 1, findingPageSize: 0 };
   incomeAnalyticsData = null;
+  historyDateWorkspace.clear();
   incomeAnalyticsFilter = { period: 'monthly' };
   organizationDepartmentWorkspaceTab = 'overview';
   dashboardAttendanceRequest += 1;
@@ -2030,6 +2037,7 @@ function clearBranchScopedWorkspaceData() {
   staffAttendanceReportFilters = null;
   approvalProfile = null;
   incomeAnalyticsData = null;
+  historyDateWorkspace.clear();
   incomeAnalyticsFilter = { period: 'monthly' };
   executiveOfficeData = null;
   executiveDirectoryResults = [];
@@ -2436,6 +2444,7 @@ function mergeDashboardResponse(current, incoming) {
 
 async function loadDashboard(options = {}) {
   const section = clean(options.section || (legacyDashboardSections.has(activeSection) ? activeSection : ''));
+  if (section === 'formPurchases' && !window.DynamaxHistoryDates.validHistoryDates(historyDateWorkspace.range(section))) { historyDateWorkspace.show(section); return; }
   const mode = clean(options.mode || (section ? 'section' : 'shell')).toLowerCase();
   const merge = options.merge === true || mode === 'section';
   const refreshOverview = options.refreshOverview === true && activeSection === 'overview';
@@ -10665,6 +10674,11 @@ function combineIncomeAnalyticsPages(pages) {
 }
 
 async function loadIncomeAnalytics(filter = incomeAnalyticsFilter) {
+  if (!clean(filter?.anchorDate) && (!clean(filter?.dateFrom) || !clean(filter?.dateTo))) {
+    renderIncomeAnalytics({});
+    panelEl.insertAdjacentHTML('afterbegin', '<p class="muted">Choose dates or a period button before loading income. No history has been requested.</p>');
+    return;
+  }
   const filterKey = JSON.stringify(filter || {});
   const version = staffWorkspaceReads.version();
   if (incomeAnalyticsSnapshot?.filterKey === filterKey && incomeAnalyticsSnapshot.version === version) {
@@ -10684,11 +10698,8 @@ async function loadIncomeAnalyticsSnapshot(filter, snapshot) {
   const requestId = ++incomeAnalyticsRequest;
   const isCurrent = () => incomeAnalyticsSnapshot === snapshot && snapshot.version === staffWorkspaceReads.version();
   try {
-    const implicitMonth = (!clean(filter?.period) || clean(filter.period).toLowerCase() === 'monthly')
-      && !clean(filter?.anchorDate) && !clean(filter?.dateFrom) && !clean(filter?.dateTo);
     const fixedFilter = { ...(filter || {}), anchorDate: clean(filter?.anchorDate) || new Date().toISOString().slice(0, 10) };
-    let usedLatestAvailable = false;
-    for (let pass = 0; pass < 2; pass += 1) {
+    for (let pass = 0; pass < 1; pass += 1) {
       const pages = [];
       const seenCursors = new Set();
       let cursor = null;
@@ -10714,28 +10725,6 @@ async function loadIncomeAnalyticsSnapshot(filter, snapshot) {
         }
       } while (cursor);
       const report = combineIncomeAnalyticsPages(pages);
-      if (pass === 0 && implicitMonth && Math.abs(Number(report.summary.totalIncome || 0)) < 0.005) {
-        let latestDate = Math.abs(Number(report.summary.previousTotal || 0)) > 0.005
-          ? report.period.previousDateFrom : '';
-        if (!latestDate) {
-          const response = await staffFetch('/api/income-analytics', {
-            method: 'POST', credentials: 'same-origin', cache: 'no-store',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...filter, findLatest: true })
-          });
-          const data = await response.json().catch(() => ({ ok: false, message: 'Income analytics did not return JSON.' }));
-          if (!isCurrent()) return;
-          if (!response.ok || !data.ok) throw new Error(data.message || 'The latest income period could not be found.');
-          latestDate = data.latestAvailableDate || '';
-        }
-        if (latestDate && latestDate < report.period.dateFrom) {
-          fixedFilter.anchorDate = latestDate;
-          usedLatestAvailable = true;
-          if (activeSection === 'incomeAnalytics') panelEl.innerHTML = '<p class="muted">Loading the latest month with posted income…</p>';
-          continue;
-        }
-      }
-      if (usedLatestAvailable) report.period.usedLatestAvailable = true;
       if (!isCurrent()) return;
       snapshot.report = report;
       incomeAnalyticsData = report;
@@ -10830,7 +10819,7 @@ function renderExternalAudit() {
       <div class="workflow-primary-actions"><button type="button" class="secondary" id="externalAuditFindingPrevious" ${state.findingHistory.length ? '' : 'disabled'}>Previous findings</button><button type="button" id="externalAuditFindingNext" ${state.findingNextCursor ? '' : 'disabled'}>Next findings</button></div>
     </section>`;
   bindExternalAuditEvents();
-  if (['payments', 'records', 'reports'].includes(state.tab)) {
+  if (state.dateFrom && state.dateTo && ['payments', 'records', 'reports'].includes(state.tab)) {
     const root = document.getElementById('externalAuditEvidenceWorkspace');
     const initialRecord = state.evidenceRecord;
     state.evidenceRecord = null;
@@ -10862,10 +10851,7 @@ async function loadExternalAudit() {
       externalAuditState.findingHistory = [];
       externalAuditState.findingPage = 1;
     }
-    if (currentUser?.role === 'External Auditor' && !externalAuditState.dateFrom) {
-      externalAuditState.dateFrom = currentUser.auditDateFrom || '';
-      externalAuditState.dateTo = currentUser.auditDateTo || '';
-    }
+    if (!externalAuditState.dateFrom || !externalAuditState.dateTo) { renderExternalAudit(); return; }
     const [journals, findings] = await Promise.all([
       externalAuditRequest('list', { ...(externalAuditState.cursor ? { cursor: externalAuditState.cursor } : {}) }),
       externalAuditRequest('findings', { ...(externalAuditState.findingCursor ? { findingsCursor: externalAuditState.findingCursor } : {}) })
@@ -11027,7 +11013,7 @@ function bindIncomeAnalyticsEvents() {
   });
   panelEl.querySelectorAll('[data-income-period]').forEach((button) => button.addEventListener('click', () => {
     incomeAnalyticsFilter = {
-      period: button.dataset.incomePeriod,
+      period: button.dataset.incomePeriod, anchorDate: new Date().toISOString().slice(0, 10),
       branchId: incomeAnalyticsFilter.branchId,
       department: incomeAnalyticsFilter.department,
       accountCode: incomeAnalyticsFilter.accountCode,
@@ -19742,7 +19728,8 @@ function renderSchoolInsights() {
 }
 
 async function requestHotelServices(payload = null) {
-  const response = await staffFetch('/api/staff-hotel', payload ? {
+  const hotelUrl = payload ? '/api/staff-hotel' : `/api/staff-hotel?${new URLSearchParams(historyDateWorkspace.range('hotel'))}`;
+  const response = await staffFetch(hotelUrl, payload ? {
     method: 'POST', credentials: 'same-origin', cache: 'no-store',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
@@ -20015,6 +20002,7 @@ function renderSection(active) {
   window.DynamaxVendors?.unmount();
   window.DynamaxVendorPOS?.unmount();
   window.DynamaxProcurement?.unmount();
+  if (!historyDateWorkspace.show(active)) { summaryEl.replaceChildren(); return; }
   if (currentUser?.role === 'Vendor User' && ['tuckShop','organizationStore','restaurant'].includes(active)) {
     summaryEl.replaceChildren();
     window.DynamaxVendorPOS?.mount(panelEl,async (action,payload,signal) => {
@@ -20324,8 +20312,11 @@ function bindDocumentDeleteEvents() {
 }
 
 async function loadMyPayroll() {
+  const range = historyDateWorkspace.range('payroll');
+  if (!window.DynamaxHistoryDates.validHistoryDates(range)) { historyDateWorkspace.show('payroll'); return; }
+  const periodQuery = new URLSearchParams(range).toString();
   try {
-    const response = await staffFetch('/api/staff-payroll', { credentials: 'same-origin', cache: 'no-store' });
+    const response = await staffFetch(`/api/staff-payroll?${periodQuery}`, { credentials: 'same-origin', cache: 'no-store' });
     const data = await response.json().catch(() => ({ ok: false, message: 'Payroll service did not return JSON.' }));
     if (response.status === 401) { showLogin(data.message || 'Your staff session has expired.', 'bad'); return; }
     if (!response.ok || !data.ok) throw new Error(data.message || 'Payroll history could not be loaded.');
@@ -20350,7 +20341,7 @@ async function loadMyPayroll() {
         { label: 'Paid', value: (row) => money(row.PaidAmount) },
         { label: 'Status', value: (row) => row.PaymentStatus },
         { label: 'Tax details', render: (row) => row.TaxProfileId ? `<button type="button" class="secondary" data-tax-breakdown="${escapeHtml(row.ItemId)}">View breakdown</button>` : '<span class="muted">Legacy</span>' },
-        { label: 'Payslip', render: (row) => `<button type="button" class="payslip-download" data-protected-file="${escapeHtml(`/api/staff-payroll?action=payslip&itemId=${encodeURIComponent(row.ItemId)}`)}" data-file-mode="download" data-file-name="${escapeHtml(`payslip-${row.ItemId || row.Month || 'staff'}.pdf`)}">Download PDF</button>` }
+        { label: 'Payslip', render: (row) => `<button type="button" class="payslip-download" data-protected-file="${escapeHtml(`/api/staff-payroll?action=payslip&itemId=${encodeURIComponent(row.ItemId)}&${periodQuery}`)}" data-file-mode="download" data-file-name="${escapeHtml(`payslip-${row.ItemId || row.Month || 'staff'}.pdf`)}">Download PDF</button>` }
       ])}
       <dialog id="taxBreakdownDialog" class="workflow-dialog tax-breakdown-dialog"><div id="taxBreakdownContent"></div><form method="dialog" class="tax-breakdown-close"><button type="submit">Close</button></form></dialog>`;
     bindProtectedFileEvents(panelEl);
@@ -21595,6 +21586,7 @@ function bindFinanceWorkflowEvents() {
 
 async function loadFinanceWorkflow() {
   if (activeSection !== 'financeRequests') return;
+  if (!window.DynamaxHistoryDates.validHistoryDates(historyDateWorkspace.range('financeRequests'))) { historyDateWorkspace.show('financeRequests'); return; }
   try {
     financeData = await financeRequest('list');
     renderModuleSummary('financeRequests', financeData);
@@ -22150,7 +22142,7 @@ function renderSecurityAudit() {
     <section class="security-audit-workspace">
       <div class="workflow-intro security-audit-heading">
         <div><p class="eyebrow">Governance &amp; accountability</p><h2>Aggregated Security Audit Log</h2><p class="muted">Sign-in attempts, permission violations, approvals and operational changes. Routine page loads and refreshes are excluded.</p></div>
-        <div class="security-audit-actions"><button type="button" id="refreshSecurityAudit" class="secondary">Refresh</button><button type="button" id="printSecurityAudit"${securityAuditData.complete === false ? ' disabled' : ''}>Print filtered log</button></div>
+        <div class="security-audit-actions"><button type="button" id="refreshSecurityAudit" class="secondary">Refresh</button><button type="button" id="printSecurityAudit"${!securityAuditData.loadedAt || securityAuditData.complete === false ? ' disabled' : ''}>Print filtered log</button></div>
       </div>
       <div class="security-audit-print-heading">
         <strong>${escapeHtml(clean(document.querySelector('[data-school-name]')?.textContent) || 'Organisation')}</strong>
@@ -22166,8 +22158,9 @@ function renderSecurityAudit() {
         <label>Source<select name="source"><option value="">All sources</option>${(facets.sources || []).map((value) => securityAuditOption(value, filters.source)).join('')}</select></label>
         <label>Branch<select name="branchId"><option value="">All permitted branches</option>${(facets.branches || []).map((value) => securityAuditOption(value, filters.branchId)).join('')}</select></label>
         <label class="security-audit-search">Search<input type="search" name="search" value="${escapeHtml(filters.search)}" placeholder="Action, person, reference or details"></label>
-        <div class="security-audit-filter-actions"><button type="submit">Apply dates</button><button type="button" id="resetSecurityAuditFilters" class="secondary">Clear filters</button></div>
+        <div class="security-audit-filter-actions"><button type="submit"${securityAuditData.loading ? ' disabled' : ''}>Load audit log</button><button type="button" id="stopSecurityAudit"${securityAuditData.loading ? '' : ' hidden'}>Stop loading</button><button type="button" id="resetSecurityAuditFilters" class="secondary">Clear filters</button></div>
       </form>
+      <p class="status" role="status" data-security-audit-loading>${securityAuditData.loading ? 'Loading the selected audit period…' : securityAuditData.loadedAt ? '' : 'Select a From and To date, then click Load audit log. No audit records have been requested.'}</p>
       <label class="security-audit-system-toggle"><input type="checkbox" id="includeRoutineSystemAudit"${filters.includeRoutineSystem ? ' checked' : ''}> Show routine loading and system activity</label>
       <p class="muted" data-security-audit-hidden-system></p>
       ${securityAuditData.loadedAt ? `<p class="muted security-audit-snapshot">Snapshot loaded ${escapeHtml(securityAuditDateTime(securityAuditData.loadedAt))}. Use Refresh to check for newer actions.</p>` : ''}
@@ -22182,6 +22175,10 @@ function renderSecurityAudit() {
       <div class="security-audit-actions security-audit-pagination"><button type="button" id="securityAuditPrevious" class="secondary">Previous page</button><span data-security-audit-page></span><button type="button" id="securityAuditNext" class="secondary">Next page</button></div>
     </section>`;
   const form = document.getElementById('securityAuditFilters');
+  document.getElementById('stopSecurityAudit')?.addEventListener('click', () => {
+    securityAuditData = { ...securityAuditData, loading: false, loadPromise: null, complete: false, warnings: ['Loading stopped. Select a shorter period or load again.'] };
+    renderSecurityAudit();
+  });
   document.getElementById('includeRoutineSystemAudit')?.addEventListener('change', (event) => {
     securityAuditData.filters.includeRoutineSystem = event.currentTarget.checked;
     securityAuditData.page = 0;
@@ -22212,6 +22209,9 @@ function renderSecurityAudit() {
     renderSecurityAudit();
   });
   document.getElementById('refreshSecurityAudit')?.addEventListener('click', (event) => {
+    const values = new FormData(form);
+    securityAuditData.fromDate = clean(values.get('fromDate'));
+    securityAuditData.toDate = clean(values.get('toDate'));
     runButtonAction(event.currentTarget, 'Refreshing...', () => loadSecurityAudit(true));
   });
   for (const [id, direction] of [['securityAuditPrevious', -1], ['securityAuditNext', 1]]) {
@@ -22272,13 +22272,13 @@ function securityAuditCacheKey() {
 function renderSecurityAuditLoading(state) {
   if (activeSection !== 'securityAudit' || securityAuditData !== state) return;
   const { scanned = 0, loaded = 0 } = state.progress || {};
-  panelEl.innerHTML = `<p class="status" role="status" data-security-audit-loading>Loading the complete audit period… ${scanned.toLocaleString()} records checked; ${loaded.toLocaleString()} relevant actions found.</p>`;
+  if (!panelEl.querySelector?.('[data-security-audit-loading]')) renderSecurityAudit();
+  const progress = panelEl.querySelector?.('[data-security-audit-loading]');
+  if (progress) progress.textContent = `Loading the selected audit period… ${scanned.toLocaleString()} records checked; ${loaded.toLocaleString()} relevant actions found.`;
 }
 
 async function loadSecurityAudit(forceReload = false) {
   if (activeSection !== 'securityAudit') return;
-  securityAuditData.fromDate = securityAuditData.fromDate || securityAuditDefaultDate(30);
-  securityAuditData.toDate = securityAuditData.toDate || new Date().toISOString().slice(0, 10);
   const cacheKey = securityAuditCacheKey();
   const sessionSignal = staffSessionAbortController.signal;
   if (!forceReload && securityAuditData.cacheKey === cacheKey && securityAuditData.sessionSignal === sessionSignal) {
@@ -22291,13 +22291,21 @@ async function loadSecurityAudit(forceReload = false) {
       return securityAuditData.loadPromise;
     }
   }
+  if (!forceReload) { renderSecurityAudit(); return; }
+  const validDate = value => /^\d{4}-\d{2}-\d{2}$/.test(value || '') && Number.isFinite(Date.parse(value + 'T00:00:00Z'))
+    && new Date(value + 'T00:00:00Z').toISOString().slice(0, 10) === value;
+  if (!validDate(securityAuditData.fromDate) || !validDate(securityAuditData.toDate) || securityAuditData.fromDate > securityAuditData.toDate) {
+    securityAuditData.warnings = ['Select a valid From and To date, with the start date no later than the end date.'];
+    renderSecurityAudit(); return;
+  }
   const scope = { fromDate: securityAuditData.fromDate, toDate: securityAuditData.toDate };
   const state = { ...securityAuditData, rows: [], facets: {}, warnings: [], complete: false, page: 0,
-    cacheKey, sessionSignal, loadedAt: '', progress: { scanned: 0, loaded: 0 }, loadPromise: null };
+    cacheKey, sessionSignal, loadedAt: '', loading: true, progress: { scanned: 0, loaded: 0 }, loadPromise: null };
   securityAuditData = state;
   // Module navigation does not invalidate the load. Session, access, branch and
   // period changes do, and old requests must never publish into a new workspace.
   const isCurrent = () => securityAuditData === state && !sessionSignal.aborted && securityAuditCacheKey() === cacheKey;
+  renderSecurityAudit();
   renderSecurityAuditLoading(state);
   state.loadPromise = (async () => {
     try {
@@ -22309,11 +22317,11 @@ async function loadSecurityAudit(forceReload = false) {
         renderSecurityAuditLoading(state);
       }, isCurrent);
       if (!data || !isCurrent()) return;
-      Object.assign(state, data, { truncated: false, complete: true, loadedAt: new Date().toISOString() });
+      Object.assign(state, data, { truncated: false, complete: true, loading: false, loadedAt: new Date().toISOString() });
       if (activeSection === 'securityAudit') renderSecurityAudit();
     } catch (error) {
       if (isCurrent()) {
-        state.warnings = [error.message || String(error)];
+        state.loading = false; state.warnings = [error.message || String(error)];
         if (activeSection === 'securityAudit') renderSecurityAudit();
       }
     } finally {

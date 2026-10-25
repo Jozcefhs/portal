@@ -968,8 +968,7 @@ function profileFromForm() {
   };
   if (settingsScopeField.value === 'branch') {
     profile.PaystackSubaccountCode = data.get('PaystackSubaccountCode');
-  } else if (activeSettingsEdition === 'school') {
-    profile.EntranceExamSubjects = data.get('EntranceExamSubjects');
+    if (activeSettingsEdition === 'school') profile.EntranceExamSubjects = data.get('EntranceExamSubjects');
   }
   if (webLogoChanged) profile.WebLogoDataUrl = webLogoDataUrl;
   return profile;
@@ -1081,7 +1080,7 @@ function updateSettingsScopeUI(profile = {}) {
   }
   const branchMode = settingsScopeField.value === 'branch';
   document.getElementById('branch-school-terminology').hidden = activeSettingsEdition !== 'school' || branchMode || scopeLocked;
-  document.getElementById('entranceExamSubjects').disabled = branchMode || scopeLocked;
+  document.getElementById('entranceExamSubjects').disabled = !branchMode;
   if (academicPolicyScopeMode) academicPolicyScopeMode.hidden = !branchMode;
   settingsScopeField.disabled = scopeLocked;
   settingsBranchField.disabled = !branchMode || scopeLocked;

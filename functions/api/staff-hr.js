@@ -1,3 +1,4 @@
+import { loadDatedHistory } from '../lib/history-date-range.js';
 import { listBranchCollection } from '../lib/branch-reads.js';
 import { getDocument, listCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
@@ -118,17 +119,17 @@ async function audit(env, user, action, reference, details = '', branchId = '') 
   });
 }
 
-async function listWorkspace(env, user) {
+async function listWorkspace(env, user, body = {}) {
   const capabilities = hrCapabilitiesFor(user);
   const username = actorUsername(user);
   const [staffUsers, employees, leave, vacancies, reviews, training, lifecycleRecords] = await Promise.all([
     listCollection(env, 'staffUsers'),
     listBranchCollection(env, 'hrEmployees', user.branchId),
-    listBranchCollection(env, 'hrLeaveRequests', user.branchId),
+    loadDatedHistory(env, 'hrLeaveRequests', body, 'CreatedAt', user.branchId),
     listBranchCollection(env, 'hrVacancies', user.branchId),
-    listBranchCollection(env, 'hrPerformanceReviews', user.branchId),
-    listBranchCollection(env, 'hrTrainingRecords', user.branchId),
-    listBranchCollection(env, 'hrLifecycleRecords', user.branchId)
+    loadDatedHistory(env, 'hrPerformanceReviews', body, 'CreatedAt', user.branchId),
+    loadDatedHistory(env, 'hrTrainingRecords', body, 'CreatedAt', user.branchId),
+    loadDatedHistory(env, 'hrLifecycleRecords', body, 'CreatedAt', user.branchId)
   ]);
   const editionStaff = staffUsers.filter((row) => staffRecordMatchesEdition(row, user));
   const staffBranches = staffBranchMap(editionStaff);
@@ -693,7 +694,7 @@ export async function onRequestPost(context) {
     const action = lower(body.action || 'list');
     const capabilities = hrCapabilitiesFor(user);
     let result;
-    if (action === 'list') result = await listWorkspace(context.env, user);
+    if (action === 'list') result = await listWorkspace(context.env, user, body);
     else if (action === 'saveemployee') result = await saveEmployee(context.env, user, body, capabilities);
     else if (action === 'saveleave') result = await saveLeave(context.env, user, body, capabilities);
     else if (action === 'reviewleave') result = await reviewLeave(context.env, user, body, capabilities);

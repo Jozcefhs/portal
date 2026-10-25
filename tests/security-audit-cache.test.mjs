@@ -19,9 +19,9 @@ function context(request) {
     staffSessionAbortController: new AbortController(),
     securityAuditData: { rows: [], facets: {}, warnings: [], fromDate: '2026-09-01', toDate: '2026-10-04',
       filters: { search: 'admin', includeRoutineSystem: true } },
-    panelEl: { innerHTML: '' }, securityAuditDefaultDate: () => '2026-09-01',
+    panelEl: { innerHTML: '', progress: { textContent: '' }, querySelector() { return this.progress; } }, securityAuditDefaultDate: () => '2026-09-01',
     testAuditModule: { loadCompleteSecurityAudit }, securityAuditRequest: request,
-    renderSecurityAudit: () => renders.push({ section: ctx.activeSection, data: ctx.securityAuditData }) });
+    renderSecurityAudit: () => { if (!ctx.securityAuditData.loading) renders.push({ section: ctx.activeSection, data: ctx.securityAuditData }); } });
   vm.runInContext(loader, ctx);
   return { ctx, renders, load: (force = false) => vm.runInContext(`loadSecurityAudit(${force})`, ctx) };
 }
@@ -34,7 +34,7 @@ const deferred = () => {
 test('returning to a completed audit uses the same snapshot, filters and page without new reads', async () => {
   let reads = 0;
   const { ctx, renders, load } = context(async (_action, payload) => { reads++; return batch(payload); });
-  await load();
+  await load(true);
   const cached = ctx.securityAuditData;
   cached.page = 3;
   ctx.activeSection = 'accounts';
@@ -63,7 +63,7 @@ test('navigation during loading shares the running request and retains progress 
     await gate.promise;
     return batch(payload, { rows: [{ ...record, AuditId: 'two' }] });
   });
-  const first = load();
+  const first = load(true);
   await secondStarted.promise;
   const state = ctx.securityAuditData;
   ctx.activeSection = 'accounts';
@@ -72,7 +72,7 @@ test('navigation during loading shares the running request and retains progress 
   const returning = load();
   assert.equal(reads, 2);
   assert.equal(ctx.securityAuditData, state);
-  assert.match(ctx.panelEl.innerHTML, /300 records checked; 1 relevant actions found/);
+  assert.match(ctx.panelEl.progress.textContent, /300 records checked; 1 relevant actions found/);
   gate.resolve();
   await Promise.all([first, returning]);
   assert.equal(reads, 2);
@@ -87,7 +87,7 @@ test('background completion caches the result without overwriting the module cur
   const { ctx, renders, load } = context(async (_action, payload) => {
     reads++; started.resolve(); await gate.promise; return batch(payload);
   });
-  const pending = load();
+  const pending = load(true);
   await started.promise;
   ctx.activeSection = 'accounts';
   ctx.panelEl.innerHTML = 'Accounts';
@@ -113,16 +113,18 @@ test('refresh, changed dates, branch, staff access or session trigger a fresh lo
   ]) {
     let reads = 0;
     const { ctx, load } = context(async (_action, payload) => { reads++; return batch(payload); });
-    await load();
+    await load(true);
     const first = ctx.securityAuditData;
     mutate(ctx);
     await load();
+    assert.equal(reads, 1);
+    await load(true);
     assert.equal(reads, 2);
     assert.notEqual(ctx.securityAuditData, first);
   }
   let reads = 0;
   const { load } = context(async (_action, payload) => { reads++; return batch(payload); });
-  await load();
+  await load(true);
   await load(true);
   assert.equal(reads, 2);
 });
@@ -140,7 +142,7 @@ test('late results from a previous branch or session are discarded and stop furt
       reads++; started.resolve(); await gate.promise;
       return batch(payload, { done: false, nextCursor: { fromDate: payload.fromDate, toDate: payload.toDate, readTime: '2026-10-04T00:00:00Z', sources: {} } });
     });
-    const pending = load();
+    const pending = load(true);
     await started.promise;
     invalidate(ctx);
     gate.resolve();
@@ -158,10 +160,10 @@ test('failed loads are retryable and not reused as completed snapshots', async (
     if (reads === 1) throw new Error('Source unavailable');
     return batch(payload);
   });
-  await load();
+  await load(true);
   assert.equal(ctx.securityAuditData.complete, false);
   assert.equal(ctx.securityAuditData.loadPromise, null);
-  await load();
+  await load(true);
   assert.equal(reads, 2);
   assert.equal(ctx.securityAuditData.complete, true);
 });
@@ -175,4 +177,17 @@ test('both login and branch changes clear cached audit data alongside aborting s
   }
   assert.match(source, /Snapshot loaded/);
   assert.match(source, /Use Refresh to check for newer actions/);
+});
+
+
+test('opening audit without choosing dates performs no history request; invalid dates cannot start a scan', async () => {
+  let reads = 0;
+  const { ctx, load } = context(async (_action, payload) => { reads++; return batch(payload); });
+  await load();
+  assert.equal(reads, 0);
+  for (const dates of [['', ''], ['2026-02-30', '2026-03-01'], ['2026-10-25', '2026-10-01']]) {
+    [ctx.securityAuditData.fromDate, ctx.securityAuditData.toDate] = dates;
+    await load(true);
+    assert.equal(reads, 0);
+  }
 });

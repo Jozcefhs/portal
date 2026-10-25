@@ -1,3 +1,4 @@
+import { loadDatedHistory } from './history-date-range.js';
 import { getDocument, listCollection, upsertDocument } from './firestore.js';
 import {
   CHURCH_COLLECTIONS,
@@ -261,11 +262,11 @@ export async function listChurchServices(env, user, body = {}) {
   const branchId = resolveMembershipBranch(user, body.BranchId || body.branchId);
   const [services, occurrences, attendance, members, audit] = await Promise.all([
     listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.services, branchId)).catch(() => []),
-    listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.serviceOccurrences, branchId)).catch(() => []),
-    listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.attendance, branchId)).catch(() => []),
+    loadDatedHistory(env, churchCollectionPath(CHURCH_COLLECTIONS.serviceOccurrences, branchId), body, 'Date'),
+    loadDatedHistory(env, churchCollectionPath(CHURCH_COLLECTIONS.attendance, branchId), body, 'OccurrenceDate'),
     listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.members, branchId)).catch(() => []),
     capabilities.canViewAudit
-      ? listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.serviceAudit, branchId)).catch(() => [])
+      ? loadDatedHistory(env, churchCollectionPath(CHURCH_COLLECTIONS.serviceAudit, branchId), body, 'Timestamp')
       : Promise.resolve([])
   ]);
   return {

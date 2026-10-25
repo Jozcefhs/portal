@@ -1,5 +1,7 @@
 import { deleteDocument, getDocument, upsertDocument } from './firestore.js';
 import { getSchoolStructure, safeScopeId } from './school-scope.js';
+import { normalizeEntranceSubjects } from './entrance-subjects.js';
+import { recordBranchId } from './branch-scope.js';
 
 const clean = (value) => String(value ?? '').trim();
 
@@ -46,6 +48,7 @@ export const BRANCH_PROFILE_OVERRIDE_FIELDS = Object.freeze([
   'CurrentTerm',
   'DeclarationStatement',
   'ResultDisplayMode',
+  'EntranceExamSubjects',
   'ShowResultsOnline',
   'OnlinePaymentEnabled',
   'PaystackSubaccountCode',
@@ -64,6 +67,7 @@ function profileObject(value) {
 }
 
 function normalizedValue(field, value) {
+  if (field === 'EntranceExamSubjects') return normalizeEntranceSubjects(value);
   if (field === 'OnlinePaymentEnabled' || field === 'DirectBankTransferEnabled') {
     return ['YES', 'NO'].includes(clean(value).toUpperCase()) ? clean(value).toUpperCase() : 'NO';
   }
@@ -91,7 +95,9 @@ export function deriveBranchProfileOverrides(defaultProfile = {}, submittedProfi
   BRANCH_PROFILE_OVERRIDE_FIELDS.forEach((field) => {
     if (!Object.prototype.hasOwnProperty.call(submittedProfile, field)) return;
     const submitted = normalizedValue(field, submittedProfile[field]);
-    if (submitted !== defaults[field]) values[field] = submitted;
+    // Explicitly saved entrance curricula belong to this branch even when they
+    // initially match the legacy organisation defaults.
+    if (field === 'EntranceExamSubjects' || submitted !== defaults[field]) values[field] = submitted;
   });
   return values;
 }
@@ -168,6 +174,13 @@ export async function effectiveBranchProfile(env, defaultProfile = {}, branchId 
   if (!normalizedBranchId) return applyBranchProfileOverrides(defaultProfile);
   const document = await loadBranchProfileOverride(env, normalizedBranchId);
   return applyBranchProfileOverrides(defaultProfile, document, normalizedBranchId);
+}
+
+export async function entranceProfilesForRecords(env, defaultProfile, records, read = getDocument) {
+  const branches = [...new Set(records.map(row => recordBranchId(row)))];
+  return new Map(await Promise.all(branches.map(async branchId => [branchId,
+    applyBranchProfileOverrides(defaultProfile || {}, await read(env, BRANCH_PROFILE_OVERRIDE_COLLECTION, safeScopeId(branchId)), branchId)
+  ])));
 }
 
 export async function saveBranchProfileOverrides(env, {

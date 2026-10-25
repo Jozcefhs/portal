@@ -10,7 +10,7 @@ import {
 } from '../lib/deployment-identity.js';
 import { finishRequestMetric, startRequestMetric } from '../lib/request-metrics.js';
 import { readJsonBody } from '../lib/request-security.js';
-import { normalizeEntranceSubjects } from '../lib/entrance-subjects.js';
+import { retainedOrganisationEntranceSubjects, normalizeEntranceSubjects } from '../lib/entrance-subjects.js';
 import { getWebBranding, saveWebBranding } from '../lib/web-branding.js';
 import { getSchoolStructure } from '../lib/school-scope.js';
 import { saveBranchSchoolSection } from '../lib/branch-school-presentation.js';
@@ -543,7 +543,7 @@ export async function onRequestPost(context) {
       TutorialLinks: normalizeTutorialLinks(existing.TutorialLinks ?? {}),
       TutorialChannelUrl: normalizeYouTubeTutorialUrl(existing.TutorialChannelUrl ?? ''),
       ResultDisplayMode: ['subjects', 'percentage'].includes(clean(incoming.ResultDisplayMode)) ? clean(incoming.ResultDisplayMode) : 'subjects',
-      EntranceExamSubjects: normalizeEntranceSubjects(incoming.EntranceExamSubjects ?? existing.EntranceExamSubjects),
+      EntranceExamSubjects: retainedOrganisationEntranceSubjects(existing.EntranceExamSubjects, incoming.EntranceExamSubjects),
       ShowResultsOnline: ['YES', 'NO'].includes(clean(incoming.ShowResultsOnline).toUpperCase()) ? clean(incoming.ShowResultsOnline).toUpperCase() : 'NO',
       CurrentAcademicSession: clean(incoming.CurrentAcademicSession),
       CurrentTerm: clean(incoming.CurrentTerm) || 'First Term',

@@ -1,4 +1,5 @@
-import { listCollection, requireFirestoreEnv } from '../lib/firestore.js';
+import { getDocument, queryCollectionPages, requireFirestoreEnv } from '../lib/firestore.js';
+import { historyDateRange } from '../lib/history-date-range.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 
 function clean(value) { return String(value ?? '').trim(); }
@@ -66,11 +67,19 @@ export async function onRequestGet(context) {
     requireFirestoreEnv(env);
     const user = await requireStaffSession(env, request);
     const url = new URL(request.url);
-    const [items, runs] = await Promise.all([listCollection(env, 'payrollItems'), listCollection(env, 'payrollRuns')]);
+    const range = historyDateRange(Object.fromEntries(url.searchParams));
+    const items = await queryCollectionPages(env, 'payrollItems', {
+      filters: [{ field: 'Username', op: '==', value: user.username },
+        { field: 'Month', op: '>=', value: `${range.fromDate.slice(0, 4)}-01` },
+        { field: 'Month', op: '<=', value: range.toDate.slice(0, 7) }],
+      cursorField: 'Month', pageSize: 250, maxRows: 10000
+    });
+    const runs = (await Promise.all([...new Set(items.map(row => clean(row.RunId)).filter(Boolean))]
+      .map(id => getDocument(env, 'payrollRuns', id)))).filter(Boolean);
     const visibleRuns = new Set(runs.filter((row) => ['posted', 'part paid', 'paid'].includes(lower(row.Status))).map((row) => lower(row.RunId)));
     const ownItems = items.filter((row) => lower(row.Username) === lower(user.username) && visibleRuns.has(lower(row.RunId)))
       .sort((a, b) => clean(b.Month).localeCompare(clean(a.Month)));
-    const enrichedItems = ownItems.map((item) => {
+    const enrichedItems = ownItems.filter(item => clean(item.Month) >= range.fromDate.slice(0, 7)).map((item) => {
       const month = clean(item.Month); const year = month.slice(0, 4);
       const throughPeriod = ownItems.filter((row) => clean(row.Month).slice(0, 4) === year && clean(row.Month) <= month);
       return { ...item, YtdGross: throughPeriod.reduce((sum, row) => sum + amount(row.GrossPay), 0), YtdPaye: throughPeriod.reduce((sum, row) => sum + amount(row.FinalPaye ?? row.TaxAmount), 0) };

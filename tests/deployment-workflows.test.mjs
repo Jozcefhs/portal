@@ -178,9 +178,9 @@ test('school, church, other organisations and the Dynamax control plane use sepa
   assert.equal(churchConfig.firestore.indexes, 'firestore.church.indexes.json');
   assert.equal(organizationConfig.firestore.indexes, 'firestore.organization.indexes.json');
   assert.equal(platformConfig.firestore.indexes, 'firestore.platform.indexes.json');
-  assert.equal(schoolIndexes.indexes.length, 32);
-  assert.equal(churchIndexes.indexes.length, 18);
-  assert.equal(organizationIndexes.indexes.length, 18);
+  assert.equal(schoolIndexes.indexes.length, 45);
+  assert.equal(churchIndexes.indexes.length, 30);
+  assert.equal(organizationIndexes.indexes.length, 30);
   assert.deepEqual(platformIndexes, { indexes: [], fieldOverrides: [] });
   await assert.rejects(access(new URL('../firebase.json', import.meta.url)));
   await assert.rejects(access(new URL('../firestore.indexes.json', import.meta.url)));
@@ -261,7 +261,7 @@ test('church indexes cover member notifications without carrying school-only com
   assert.equal(churchFields.some((fields) => fields.includes('TargetAccountRefs')), false);
   assert.equal(churchCollections.has('invoices'), false);
   assert.equal(churchCollections.has('payments'), false);
-  assert.equal(churchCollections.has('storeOrders'), false);
+  assert.equal(churchCollections.has('storeOrders'), true);
 });
 
 test('school indexes retain school finance and section-scoped notification queries', () => {

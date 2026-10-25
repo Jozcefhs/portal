@@ -207,6 +207,8 @@ test('staff request integration keeps branch/auth headers, retries failures and 
         return json();
       }
     } });
+  vm.runInContext(await readFile(new URL('../js/history-date-range.js', import.meta.url), 'utf8'), ctx);
+  ctx.historyDateWorkspace = { range: () => ({}) }; ctx.activeSection = 'humanResources';
   vm.runInContext(admin.slice(admin.indexOf('const TRANSIENT_API_STATUS_CODES'), admin.indexOf('async function refreshStaffSiteProfile')), ctx);
   const load = () => vm.runInContext("staffFetch('/api/staff-hr', {method:'POST', dynamaxRetrySafe:true, body:'{\"action\":\"list\"}'})", ctx);
   await load(); await load();

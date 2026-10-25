@@ -6,7 +6,7 @@ import {
   applyBranchProfileOverrides,
   BRANCH_PROFILE_OVERRIDE_FIELDS,
   deriveBranchProfileOverrides,
-  mergeBranchProfileSubmission
+  mergeBranchProfileSubmission, entranceProfilesForRecords
 } from '../functions/lib/branch-profile-settings.js';
 
 test('branch profiles store only differences from organisation defaults', () => {
@@ -133,4 +133,25 @@ test('web and desktop settings use the same branch-effective profile contract', 
   assert.match(setupScript, /settingsScopeField\.value === 'branch'[\s\S]*PaystackSubaccountCode/);
   assert.match(desktopSource, /"SettingsScope": "branch" if branch_settings else "organisation"/);
   assert.match(desktopSource, /def reset_selected_branch_settings/);
+});
+
+
+test('entrance curricula are isolated by branch and explicit selections remain frozen when they match defaults', async () => {
+  const base = { EntranceExamSubjects: [{ id: 'logic', name: 'Logic', maxScore: 100 }] };
+  const primary = deriveBranchProfileOverrides(base, { EntranceExamSubjects: 'Numeracy | 40' });
+  const secondary = deriveBranchProfileOverrides(base, { EntranceExamSubjects: base.EntranceExamSubjects });
+  const primaryDoc = { Values: primary, OverrideFields: Object.keys(primary) };
+  const secondaryDoc = { Values: secondary, OverrideFields: Object.keys(secondary) };
+  assert.equal(applyBranchProfileOverrides(base, primaryDoc, 'primary').EntranceExamSubjects[0].name, 'Numeracy');
+  assert.deepEqual(secondary.EntranceExamSubjects, base.EntranceExamSubjects);
+  assert.equal(applyBranchProfileOverrides({ EntranceExamSubjects: [{ id: 'art', name: 'Art', maxScore: 50 }] }, secondaryDoc, 'secondary').EntranceExamSubjects[0].name, 'Logic');
+  assert.deepEqual(mergeBranchProfileSubmission(primaryDoc, { SchoolPhone: '123' }).EntranceExamSubjects, primary.EntranceExamSubjects);
+  let reads = 0;
+  const profiles = await entranceProfilesForRecords({}, base, [{ BranchId: 'primary' }, { BranchId: 'primary' }, { BranchId: 'secondary' }], async (_env, collection, id) => {
+    reads++; assert.equal(collection, 'branchProfileOverrides'); return id === 'primary' ? primaryDoc : secondaryDoc;
+  });
+  assert.equal(reads, 2);
+  assert.equal(profiles.get('secondary').EntranceExamSubjects[0].name, 'Logic');
+  await entranceProfilesForRecords({}, base, [], async () => assert.fail('No applicants should mean no branch reads'));
+  assert.deepEqual(base.EntranceExamSubjects, [{ id: 'logic', name: 'Logic', maxScore: 100 }]);
 });

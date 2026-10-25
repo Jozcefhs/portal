@@ -45,7 +45,7 @@ import { loadFinanceSchoolProfile } from '../lib/finance-school-profile.js';
 import { invalidateStaffAccessCache, staffAccessFor } from '../lib/staff-auth.js';
 import { beginStaffAccountChange, commitStaffAccountChanges, resolveStaffAccountTarget, staffAccountCondition, staffAccountWrite } from '../lib/staff-account-integrity.js';
 import { mergedProfileText } from '../lib/profile-settings-update.js';
-import { normalizeEntranceSubjects, entranceSubjectRows, entranceScoreUpdates, assertEntranceScoresUnchanged } from '../lib/entrance-subjects.js';
+import { retainedOrganisationEntranceSubjects, normalizeEntranceSubjects, entranceSubjectRows, entranceScoreUpdates, assertEntranceScoresUnchanged } from '../lib/entrance-subjects.js';
 import { selectStudentBillingProfile, selectStudentBillingProfiles, studentProfileValue } from '../lib/student-billing-profile.js';
 import { effectiveInvoiceAfterReversal } from '../lib/invoice-charge-reversal.js';
 import { financialPreviewFingerprint } from '../lib/financial-preview-fingerprint.js';
@@ -142,6 +142,7 @@ import {
   BRANCH_PROFILE_OVERRIDE_FIELDS,
   assertConfiguredProfileBranch,
   effectiveBranchProfile,
+  entranceProfilesForRecords,
   resetBranchProfileOverrides,
   saveBranchProfileOverrides
 } from '../lib/branch-profile-settings.js';
@@ -3042,7 +3043,7 @@ async function saveSchoolProfile(env, body, deploymentIdentity) {
     CurrentTerm: mergedProfileText(existingProfile, body, 'CurrentTerm', 'currentTerm', 'First Term'),
     DeclarationStatement: mergedProfileText(existingProfile, body, 'DeclarationStatement', 'declarationStatement', 'I declare that the information supplied in this application is complete and correct.'),
     ResultDisplayMode: mergedProfileText(existingProfile, body, 'ResultDisplayMode', 'resultDisplayMode', 'subjects'),
-    EntranceExamSubjects: normalizeEntranceSubjects(body.EntranceExamSubjects ?? existingProfile.EntranceExamSubjects),
+    EntranceExamSubjects: retainedOrganisationEntranceSubjects(existingProfile.EntranceExamSubjects, body.EntranceExamSubjects),
     ShowResultsOnline: yesNo(mergedProfileText(existingProfile, body, 'ShowResultsOnline', 'showResultsOnline', 'NO')) || 'NO',
     OfferDocumentBodyTemplate: mergedProfileText(existingProfile, body, 'OfferDocumentBodyTemplate', 'offerDocumentBodyTemplate'),
     AdmissionDocumentBodyTemplate: mergedProfileText(existingProfile, body, 'AdmissionDocumentBodyTemplate', 'admissionDocumentBodyTemplate'),
@@ -4021,8 +4022,9 @@ async function updateEntranceResult(env, body) {
   const existing = id ? await findApplication(env, id) : null;
   if (!existing) throw applicationNotFound(id);
   const staleResultUrl = clean(existing.EntranceResultPdfUrl);
-  const profile = await getDocument(env, 'settings', 'schoolProfile');
-  const updates = buildEntranceResultUpdates(existing, body, nowIso(), profile || {});
+  const baseProfile = await getDocument(env, 'settings', 'schoolProfile');
+  const profile = await effectiveBranchProfile(env, baseProfile || {}, existing.BranchId || existing.branchId || 'main');
+  const updates = buildEntranceResultUpdates(existing, body, nowIso(), profile);
   const saved = await saveApplication(env, { ...existing, ...updates });
   if (staleResultUrl && Object.hasOwn(updates, 'EntranceResultPdfUrl') && !updates.EntranceResultPdfUrl) {
     await deleteStoredDocument(env, staleResultUrl).catch(() => null);
@@ -11596,10 +11598,12 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
           listSchoolCollection(env, 'applications', requestedStudentScope(body)),
           getDocument(env, 'settings', 'schoolProfile')
         ]);
+        const active = await activeAdmissionRows(env, rows);
+        const branchProfiles = await entranceProfilesForRecords(env, profile, active);
         return {
           ok: true,
           message: 'Applications loaded from the database.',
-          applications: (await activeAdmissionRows(env, rows)).map((row) => normalizeApplication(row, profile || {}))
+          applications: active.map(row => normalizeApplication(row, branchProfiles.get(clean(row.BranchId || row.branchId || 'main').toLowerCase()) || profile || {}))
         };
       }
     case 'getStudents':

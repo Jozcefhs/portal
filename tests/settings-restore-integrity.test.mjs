@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import vm from 'node:vm';
+import { normalizeEntranceSubjects } from '../functions/lib/entrance-subjects.js';
 
 const read = (path) => fs.readFile(new URL(`../functions/lib/${path}`, import.meta.url), 'utf8');
 const branchSource = await read('branch-profile-settings.js');
@@ -10,7 +11,7 @@ const unmodule = (source) => source.replace(/^import[\s\S]*?from ['"][^'"]+['"];
 
 function branchHarness(current, { failure = null, changeDuringSave = false } = {}) {
   const writes = [];
-  const context = vm.createContext({ Date, safeScopeId: value => value,
+  const context = vm.createContext({ Date, normalizeEntranceSubjects, safeScopeId: value => value,
     getSchoolStructure: async () => ({ Branches: [{ Id: 'main', Name: 'Main' }] }),
     getDocument: async () => { if (failure) throw failure; return structuredClone(current); },
     upsertDocument: async (_env, path, id, data, condition) => {

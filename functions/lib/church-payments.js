@@ -1,3 +1,4 @@
+import { loadDatedHistory } from './history-date-range.js';
 import {
   createDocumentIfAbsent,
   getDocument,
@@ -254,9 +255,9 @@ export async function listChurchDonations(env, user, body = {}) {
   const capabilities = requireCapability(user, 'canView');
   const branchId = resolveMembershipBranch(user, body.BranchId || body.branchId);
   const [donations, audit, givingSetup] = await Promise.all([
-    listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.donations, branchId)).catch(() => []),
+    loadDatedHistory(env, churchCollectionPath(CHURCH_COLLECTIONS.donations, branchId), body, 'CreatedAt'),
     capabilities.canViewAudit
-      ? listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.donationAudit, branchId)).catch(() => [])
+      ? loadDatedHistory(env, churchCollectionPath(CHURCH_COLLECTIONS.donationAudit, branchId), body, 'Timestamp')
       : Promise.resolve([]),
     ensureGivingTypes(env, branchId)
   ]);

@@ -7,6 +7,7 @@ const [feedback, cacheSource, admin] = await Promise.all([
   'js/staff-action-feedback.js', 'js/staff-workspace-cache.js', 'js/admin.js'
 ].map(path => readFile(new URL(`../${path}`, import.meta.url), 'utf8')));
 const requestSource = admin.slice(admin.indexOf('const TRANSIENT_API_STATUS_CODES'), admin.indexOf('async function refreshStaffSiteProfile'));
+const historySource = await readFile(new URL('../js/history-date-range.js', import.meta.url), 'utf8');
 const reads = ['salesBootstrap', 'recentVendorSales', 'vendorCustomerSearch', 'vendorWalletLookup', 'previewVendorSale'];
 const post = (action, extra = {}) => ({ method: 'POST', body: JSON.stringify({ action, Section: 'tuckShop', ...extra }) });
 function fixture(network = async () => Response.json({ ok: true })) {
@@ -19,7 +20,8 @@ function fixture(network = async () => Response.json({ ok: true })) {
   const context = vm.createContext({ window, URL, Headers, Request, Response, TextEncoder, DOMException,
     staffSessionAbortController: session, selectedBranchId: 'main', staffBearerToken: 'fixture-vendor',
     clean: value => String(value ?? '').trim() });
-  vm.runInContext(`${feedback}\n${cacheSource}`, context);
+  vm.runInContext(`${feedback}\n${cacheSource}\n${historySource}`, context);
+  context.historyDateWorkspace = { range: () => ({}) }; context.activeSection = "tuckShop";
   const cache = window.DynamaxWorkspaceCache.create({ context: () => ({scope:'main|vendor|secondary',signal:session.signal}) });
   context.staffWorkspaceReads = cache;
   vm.runInContext(requestSource, context);
