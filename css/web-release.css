@@ -1,0 +1,4 @@
+#webReleaseNotice{position:sticky;top:0;z-index:11000;display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;padding:12px 20px;background:#fff4d8;color:#503d09;border-bottom:1px solid #d9b45c;font:600 14px/1.5 system-ui,sans-serif}
+#webReleaseNotice button{flex-shrink:0;border:1px solid #075c57;border-radius:7px;background:#087c74;color:#fff;padding:9px 14px;font:inherit;cursor:pointer}
+#webReleaseNotice button:focus-visible{outline:3px solid #1c4fc4;outline-offset:2px}
+@media print{#webReleaseNotice{display:none}}

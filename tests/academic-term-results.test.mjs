@@ -8,6 +8,7 @@ import {
   calculateAcademicTermResultDrafts
 } from '../functions/lib/academic-term-results.js';
 import { defaultAcademicPolicy } from '../functions/lib/academic-policy.js';
+import { publicAcademicResult } from '../functions/lib/academic-result-access.js';
 
 function resultPolicy(positionMode = 'exact-overall') {
   const policy = defaultAcademicPolicy();
@@ -65,6 +66,37 @@ function calculation(overrides = {}) {
     ...overrides
   });
 }
+
+test('incomplete students can remain pending while complete students receive accurate results', () => {
+  const incomplete=studentScores.filter(row=>!(row.StudentRef==='DCA/002'&&row.SubjectId==='math'));
+  const before=structuredClone({memberships,studentScores:incomplete});
+  const output=calculation({StudentScores:incomplete,AllowPartialResults:true});
+  assert.equal(output.Ready,true);assert.equal(output.Partial,true);assert.equal(output.Results.length,1);
+  assert.equal(output.Results[0].StudentRef,'DCA/001');assert.equal(output.Results[0].OverallAverage,75);
+  assert.equal(output.Results[0].ClassAverage,75);assert.equal(output.Results[0].AssessedStudentCount,1);
+  assert.equal(output.Results[0].PendingStudentCount,1);assert.equal(output.Results[0].OverallPosition,1);
+  assert.equal(output.PendingResults[0].StudentRef,'DCA/002');
+  assert.match(output.PendingResults[0].Issues[0],/Mathematics/);
+  assert.deepEqual({memberships,studentScores:incomplete},before);
+  assert.equal(calculation({StudentScores:incomplete}).Ready,false,'legacy all-or-nothing remains explicit');
+  assert.equal(calculation({StudentScores:[],AllowPartialResults:true}).Ready,false,'cannot manufacture a result with no marks');
+});
+
+test('a pending full-term student is excluded from publication calculations without blocking peers',()=>{
+  const output=calculation({AllowPartialResults:true,ScoreSheets:scoreSheets.map(sheet=>({...sheet,PendingStudentRefs:['DCA/002']}))});
+  assert.equal(output.Results.length,1);assert.equal(output.Results[0].StudentRef,'DCA/001');
+  assert.match(output.PendingResults[0].Issues[0],/pending completion and review/);
+});
+
+test('mid-term partial results use only selected tests and do not treat future missing tests as zero',()=>{
+  const policy=resultPolicy();policy.MidTerm={Enabled:true,ComponentIds:['ca']};
+  const input={SessionId:'s1',TermId:'t1',ClassId:'c1',ArmId:'a1',Memberships:memberships,
+    ScoreSheets:scoreSheets.map(row=>({...row,Status:'Draft',PendingStudentRefs:['DCA/001','DCA/002']})),
+    StudentScores:studentScores.filter(row=>row.StudentRef==='DCA/001'),Policy:policy,AllowPartialResults:true};
+  const result=calculateAcademicMidTermResultDrafts(input);
+  assert.equal(result.Ready,true);assert.equal(result.Results.length,1);assert.equal(result.Results[0].OverallAverage,75);
+  assert.equal(result.PendingResults[0].StudentRef,'DCA/002');
+});
 
 test('result calculation resolves catalogue Id aliases without changing saved scores', () => {
   const before = structuredClone(studentScores);
@@ -199,6 +231,75 @@ test('mid-term results use only the one or two policy-authorized assessment comp
   assert.deepEqual(output.Results[0].IncludedAssessmentComponentIds, ['ca']);
   assert.equal(output.Results[0].OverallAverage, 75);
   assert.deepEqual(output.Results[0].Subjects[0].ComponentScores.map((row) => row.ComponentId), ['ca']);
+});
+
+function midTermWithUntaught(overrides = {}) {
+  const policy=resultPolicy();policy.MidTerm={Enabled:true,ComponentIds:['ca']};
+  return {
+    SessionId:'s1',TermId:'t1',ClassId:'c1',ArmId:'a1',Policy:policy,
+    Memberships:memberships.map(row=>({...row,SubjectIds:[...row.SubjectIds,'trade']})),
+    ScoreSheets:scoreSheets,StudentScores:studentScores,
+    Subjects:[{SubjectId:'math',Name:'Mathematics'},{SubjectId:'eng',Name:'English Language'},
+      {SubjectId:'trade',Name:'Computer Hardware and GSM Repairs'}],
+    NotTaughtSubjectIds:['trade'],NotTaughtReason:'Trade lessons have not commenced.',...overrides
+  };
+}
+
+test('explicit not-taught selection unblocks mid-term without changing memberships, marks or average',()=>{
+  const input=midTermWithUntaught(),before=structuredClone(input);
+  assert.equal(calculateAcademicMidTermResultDrafts({...input,NotTaughtSubjectIds:[]}).Ready,false);
+  const output=calculateAcademicMidTermResultDrafts(input);
+  assert.equal(output.Ready,true,output.Issues.join('\n'));
+  assert.equal(output.Results[0].OverallAverage,75);
+  assert.equal(output.Results[0].SubjectCount,2);
+  assert.deepEqual(output.Results[0].NotTaughtSubjects,[{SubjectId:'trade',SubjectName:'Computer Hardware and GSM Repairs',Reason:input.NotTaughtReason,Status:'Not taught this mid-term'}]);
+  assert.equal(output.Results[0].Status,'Calculated Draft','Normal approval/publication workflow remains required');
+  assert.deepEqual(input,before);
+  assert.deepEqual(calculateAcademicMidTermResultDrafts(input),output,'Repeating the calculation is deterministic');
+  const publicResult=publicAcademicResult({...output.Results[0],Status:'Published'},{Allowed:true},input.Policy);
+  assert.deepEqual(publicResult.NotTaughtSubjects,[{SubjectName:'Computer Hardware and GSM Repairs',Status:'Not taught this mid-term'}]);
+  assert.equal('NotTaughtSubjects' in publicAcademicResult(output.Results[0],{Allowed:false},input.Policy),false);
+});
+
+test('not-taught exclusions require a reason, a subject assigned in this classroom and assessed subjects remaining',()=>{
+  for (const overrides of [{NotTaughtReason:''},{NotTaughtReason:'x'.repeat(1001)},{NotTaughtSubjectIds:['other-class-subject']}]) {
+    assert.equal(calculateAcademicMidTermResultDrafts(midTermWithUntaught(overrides)).Ready,false);
+  }
+  const input=midTermWithUntaught({Memberships:memberships.map(row=>({...row,SubjectIds:['trade']}))});
+  const output=calculateAcademicMidTermResultDrafts(input);
+  assert.equal(output.Ready,false);assert.match(output.Issues.join(' '),/no graded subjects/);
+  assert.equal(calculateAcademicTermResultDrafts(midTermWithUntaught()).Ready,false,'End-of-term completeness is never bypassed');
+});
+
+test('existing marks, zeroes, absences, exemptions and split parts cannot be concealed as not taught',()=>{
+  const sheet={...scoreSheets[0],SubjectId:'trade',SheetId:'trade-sheet'};
+  for (const component of [
+    {ComponentId:'ca',State:'Numeric',RawScore:0},
+    {ComponentId:'ca',State:'Absent',RawScore:null},
+    {ComponentId:'ca',State:'Exempt',RawScore:null},
+    {ComponentId:'ca',State:'Missing',RawScore:null,Parts:[{PartId:'theory',State:'Numeric',RawScore:12}]}
+  ]) {
+    const input=midTermWithUntaught({ScoreSheets:[...scoreSheets,sheet],StudentScores:[...studentScores,
+      {...score('trade-sheet','trade','DCA/001',0,'F'),ComponentScores:[component]}]});
+    const output=calculateAcademicMidTermResultDrafts(input);
+    assert.equal(output.Ready,false);assert.match(output.Issues.join(' '),/already has recorded/);
+  }
+});
+
+test('empty trade sheets can be excluded; other classroom marks and inactive memberships do not leak into the decision',()=>{
+  const input=midTermWithUntaught({
+    Memberships:[...midTermWithUntaught().Memberships,{...memberships[0],StudentRef:'OLD',Status:'Archived'}],
+    ScoreSheets:[...scoreSheets,{...scoreSheets[0],SubjectId:'trade',SheetId:'other-trade',ArmId:'other-arm'}],
+    StudentScores:[...studentScores,score('other-trade','trade','DCA/001',90,'A')]
+  });
+  const output=calculateAcademicMidTermResultDrafts(input);
+  assert.equal(output.Ready,true);assert.equal(output.Results.length,2);
+  const later=midTermWithUntaught({NotTaughtSubjectIds:[],ExistingResults:output.Results,
+    ScoreSheets:[...scoreSheets,{...scoreSheets[0],SubjectId:'trade',SheetId:'trade-sheet'}],
+    StudentScores:[...studentScores,...memberships.map(row=>score('trade-sheet','trade',row.StudentRef,90,'A'))]});
+  const recalculated=calculateAcademicMidTermResultDrafts(later);
+  assert.equal(recalculated.Ready,true);assert.equal(recalculated.Results[0].SubjectCount,3);
+  assert.deepEqual(recalculated.Results[0].NotTaughtSubjects,[]);
 });
 
 test('Milestone 9 lifecycle requires review, approval and publication, with controlled withdrawal and reopening', () => {

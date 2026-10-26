@@ -5,6 +5,12 @@ on:
     paths:
       - "functions/**"
       - "js/admin.js"
+      - "js/academic-result-batch.js"
+      - "js/web-release.js"
+      - "css/web-release.css"
+      - "scripts/verify-staff-web-release.mjs"
+      - "tests/web-release-freshness.test.mjs"
+      - "tests/staff-web-release-deployment.test.mjs"
       - "js/parent-dashboard.js"
       - "js/student-maintenance.js"
       - "parent-dashboard.html"
@@ -32,6 +38,7 @@ on:
       - "tests/service-worker-cache-version.test.mjs"
       - "tests/helpers/service-worker-cache-version.mjs"
       - "tests/parent-academic-result-access.test.mjs"
+      - "tests/parent-result-policy-enforcement.test.mjs"
       - "tests/student-cbt-login.test.mjs"
       - "tests/data-backup-restore.test.mjs"
       - "tests/edition-aware-settings.test.mjs"
@@ -45,6 +52,12 @@ on:
     paths:
       - "functions/**"
       - "js/admin.js"
+      - "js/academic-result-batch.js"
+      - "js/web-release.js"
+      - "css/web-release.css"
+      - "scripts/verify-staff-web-release.mjs"
+      - "tests/web-release-freshness.test.mjs"
+      - "tests/staff-web-release-deployment.test.mjs"
       - "js/parent-dashboard.js"
       - "js/student-maintenance.js"
       - "parent-dashboard.html"
@@ -72,6 +85,7 @@ on:
       - "tests/service-worker-cache-version.test.mjs"
       - "tests/helpers/service-worker-cache-version.mjs"
       - "tests/parent-academic-result-access.test.mjs"
+      - "tests/parent-result-policy-enforcement.test.mjs"
       - "tests/student-cbt-login.test.mjs"
       - "tests/data-backup-restore.test.mjs"
       - "tests/edition-aware-settings.test.mjs"
@@ -96,7 +110,12 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: node --test tests/web-release-freshness.test.mjs tests/staff-web-release-deployment.test.mjs
+      - run: node --test tests/academic-audit-log.test.mjs tests/academic-scorebook-opening.test.mjs tests/academic-read-cost.test.mjs tests/branch-read-cost.test.mjs tests/remaining-read-cost.test.mjs tests/security-audit-*.test.mjs
       - run: npm run test:academic-release
+      - run: node --test tests/academic-results-readiness.test.mjs tests/academic-batch-review.test.mjs tests/academic-component-review.test.mjs tests/academic-partial-results-preservation.test.mjs tests/academic-calculation-loading.test.mjs
+      - run: node --test tests/parent-result-policy-enforcement.test.mjs
+      - run: node --test tests/academic-result-batch.test.mjs tests/academic-result-batch-commit.test.mjs
       - run: npm run test:clinic-referrals
       - run: npm run test:tuck-shop
       - run: npm run test:student-intake

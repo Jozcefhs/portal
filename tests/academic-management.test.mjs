@@ -73,7 +73,7 @@ test('every academic workspace stays focused below the Worker subrequest ceiling
     'sessions', 'terms', 'classes', 'arms', 'teacherAllocations'
   ]);
   assert.deepEqual(Object.keys(ACADEMIC_VIEW_STATE_KEYS), [
-    'classrooms', 'classstaff', 'structure', 'bulksetup', 'departments', 'offerings', 'teachers',
+    'audit', 'classrooms', 'classstaff', 'structure', 'bulksetup', 'departments', 'offerings', 'teachers',
     'students', 'timetable', 'presence', 'attendance', 'scorebook', 'results', 'outcomes',
     'analysis', 'clearances', 'readiness', 'cbt'
   ]);
@@ -1446,7 +1446,7 @@ test('student withdrawal sends its reason and withdrawn memberships can be reass
   assert.match(movementSource, /reinstating \|\| reassigningWithdrawn/);
 });
 
-test('staff web workspace exposes responsive academic registers and online-only success', () => {
+test('staff web workspace exposes responsive academic registers and online-only success', async () => {
   assert.match(adminSource, /\['academics', 'Academic Management'\]/);
   assert.match(adminSource, /function renderAcademicManagement/);
   assert.match(adminSource, /let academicManagementView = 'classrooms'/);
@@ -1507,7 +1507,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /name="ClassroomIds"/);
   assert.match(adminSource, /Tick a class to select all its arms/);
   assert.match(adminSource, /function updateAcademicCheckboxGroups/);
-  assert.match(adminSource, /\.result-signatory strong\{max-width:100%;white-space:nowrap\}/);
+  assert.match(await readFile(new URL('../js/academic-result-template.js', import.meta.url), 'utf8'), /\.result-signatory strong\{max-width:100%;white-space:nowrap\}/);
   assert.match(adminSource, /data-academic-checkbox-count/);
   assert.match(adminSource, /const legacySection = configuredSections\.length === 1 \? configuredSections\[0\] : 'secondary'/);
   assert.match(adminSource, /academicManagementFilters\.sessionId = '';[\s\S]{0,120}academicManagementData = null/);

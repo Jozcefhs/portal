@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { assertAcademicScoreSheetAuthority, academicScorebookSnapshot, ACADEMIC_SCOREBOOK_STATE_KEYS } from '../functions/lib/academic-management.js';
+import { academicComponentReviews } from '../functions/lib/academic-component-review.js';
 
 const context = { SessionId: 'session', TermId: 'term', ClassId: 'grade8', ArmId: 'brilliance', SubjectId: 'math' };
 const sheet = { ...context, SheetId: 'sheet', TeacherUsername: 'old.teacher', Status: 'Draft' };
@@ -98,7 +99,7 @@ test('opening a scorebook returns fresh selected marks and the historical scheme
     arm: { ArmId: 'brilliance' }, subject: { SubjectId: 'math' }, allocation, roster: [{}] };
   const before = structuredClone(selected);
   const runtime = vm.createContext({
-    ACADEMIC_SCOREBOOK_STATE_KEYS,
+    ACADEMIC_SCOREBOOK_STATE_KEYS, academicComponentReviews,
     academicScoreSheetContext: async (_env, _user, _input, _capability, keys) => {
       assert.ok(keys.includes('studentScores'));
       assert.ok(!keys.includes('scoreSyncBatches'));
@@ -112,6 +113,7 @@ test('opening a scorebook returns fresh selected marks and the historical scheme
   assert.equal(result.assessmentScheme.RevisionId, 'historic');
   assert.equal(result.scorebookSnapshot.scores[0].ComponentScores[0].RawScore, 85);
   assert.equal(result.scorebookSnapshot.scores.length, 1);
+  assert.deepEqual(Array.from(result.scorebookSnapshot.sheet.TestReviewStatus), []);
   assert.equal(result.scorebookContext.TeacherUsername, 'new.teacher');
   assert.equal(result.scorebookContext.SessionId, 'session');
   assert.equal(result.scorebookContext.TermId, 'term');
@@ -121,5 +123,5 @@ test('opening a scorebook returns fresh selected marks and the historical scheme
 
 test('review register distinguishes entered marks from fully completed term sheets', () => {
   assert.match(adminSource, /label: 'Entered', value: \(row\) => `\$\{row.EnteredCount/);
-  assert.match(adminSource, /label: 'Complete', value: \(row\) => `\$\{row.CompleteCount/);
+  assert.match(adminSource, /label: 'Term complete', value: \(row\) => `\$\{row.CompleteCount/);
 });

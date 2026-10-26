@@ -10,6 +10,10 @@ import { academicCbtScoreSources } from './academic-cbt-multiserver.js';
 import { academicResultWithWeightedComponents } from './academic-result-marks.js';
 import { academicResultWithSubjectLabels } from './academic-result-subject-labels.js';
 import { buildAcademicClassScoreRegister } from './academic-class-score-register.js';
+import { loadAcademicAuditLog } from './academic-audit-log.js';
+import { loadAcademicResultsReadiness } from './academic-results-readiness.js';
+import { planAcademicResultBatch } from './academic-result-batch.js';
+import { commitAcademicResultBatch } from './academic-result-batch-commit.js';
 import { handleDiary } from './academic-diary.js';
 import { commitAcademicSubmission, submissionSettings, submissionPaymentAction } from './academic-submissions.js';
 import { checkClassroomRemovals } from './academic-classroom-removal.js';
@@ -20,6 +24,7 @@ import { assertStudentCanHaveActiveMembership, studentStatusChanged } from './st
 import { staffRecordMatchesEdition } from './records-desk.js';
 import { createNotification } from './notifications.js';
 import { normalizeSchoolCalendar, schoolCalendarDayIsOpen, schoolCalendarSummary } from './academic-school-calendar.js';
+import {academicComponentReviews, academicComponentReviewTransition} from './academic-component-review.js';
 import {
   advanceAcademicTimetableGeneration, buildAcademicGenerationProblem,
   normalizeAcademicGenerationRules, validateAcademicGeneratedEntries
@@ -381,6 +386,13 @@ export const ACADEMIC_RESULTS_STATE_KEYS = Object.freeze([
   'termResults', 'resultEvents'
 ]);
 
+// Calculation needs no teacher directory, lifecycle history or other classrooms.
+// Marks are fetched after the selected sheets, using their stable identities.
+export const ACADEMIC_RESULT_CALCULATION_STATE_KEYS = Object.freeze([
+  'sessions', 'terms', 'classes', 'arms', 'subjects', 'studentMemberships',
+  'schoolCalendars', 'studentAttendance', 'scoreSheets', 'termResults'
+]);
+
 export const ACADEMIC_OUTCOMES_STATE_KEYS = Object.freeze([
   'sessions', 'terms', 'classes', 'arms', 'subjects', 'teacherAllocations',
   'studentMemberships', 'termResults', 'cumulativeResults', 'cumulativeEvents',
@@ -398,8 +410,8 @@ export const ACADEMIC_CLEARANCE_STATE_KEYS = Object.freeze([
 ]);
 
 export const ACADEMIC_READINESS_STATE_KEYS = Object.freeze([
-  'sessions', 'terms', 'classes', 'armTemplates', 'arms', 'subjects', 'departments',
-  'offerings', 'teacherAllocations', 'studentMemberships'
+  'sessions', 'terms', 'classes', 'arms', 'subjects', 'studentMemberships',
+  'scoreSheets', 'studentScores', 'termResults'
 ]);
 
 export const ACADEMIC_SUMMARY_STATE_KEYS = Object.freeze([
@@ -408,6 +420,7 @@ export const ACADEMIC_SUMMARY_STATE_KEYS = Object.freeze([
 ]);
 
 export const ACADEMIC_VIEW_STATE_KEYS = Object.freeze({
+  audit: ['sessions', 'terms'],
   classrooms: ACADEMIC_CLASSROOM_STATE_KEYS,
   classstaff: ACADEMIC_CLASS_TEACHER_STATE_KEYS,
   structure: ACADEMIC_STRUCTURE_STATE_KEYS,
@@ -442,6 +455,7 @@ export function academicManagementViewStateKeys(value = '', permissions = {}) {
 }
 
 const ACADEMIC_VIEW_PEOPLE = Object.freeze({
+  audit: { staff: false, students: false },
   classrooms: { staff: true, students: true },
   classstaff: { staff: true, students: false },
   structure: { staff: false, students: false },
@@ -458,7 +472,7 @@ const ACADEMIC_VIEW_PEOPLE = Object.freeze({
   outcomes: { staff: true, students: true },
   analysis: { staff: true, students: true },
   clearances: { staff: false, students: true },
-  readiness: { staff: false, students: true },
+  readiness: { staff: false, students: false },
   cbt: { staff: true, students: true }
 });
 
@@ -1154,6 +1168,43 @@ export function academicBootstrapReadKeys(keys, view, input = {}, options = {}) 
   return keys.filter(key => !omitted.has(key));
 }
 
+// Navigation never loads historical records just to display selectors. Reports,
+// mutations and older clients retain the complete context they require.
+export function academicWorkspaceReadPlan(view, keys, input = {}, { classRegister = false, registerOnly = false } = {}) {
+  if (view === 'audit') return { keys: ['sessions', 'terms'], deferred: false, requested: false };
+  if (view === 'readiness' && input.WorkspaceLoadMode !== 'records') return {keys:['sessions','terms','classes'],deferred:true,requested:false};
+  const mode = input.WorkspaceLoadMode;
+  if (classRegister || !['navigation', 'records'].includes(mode)) return { keys, deferred: false, requested: false };
+  if (registerOnly) return { keys: ['sessions', 'terms', 'classes'], deferred: false, requested: false };
+  if (mode === 'navigation' && !['structure', 'bulksetup', 'departments', 'offerings'].includes(view)) {
+    return { keys: ['sessions', 'terms', 'classes'], deferred: true, requested: false };
+  }
+  const omitted = new Set();
+  if (view === 'structure') omitted.add('studentMemberships');
+  if (view === 'results') for (const key of ['studentScores', 'scoreSheets', 'studentAttendance', 'schoolCalendars']) omitted.add(key);
+  return { keys: keys.filter(key => !omitted.has(key)), deferred: false, requested: mode === 'records' };
+}
+
+export function academicWorkspaceRecordFilters(key, branchId, scope = {}) {
+  if (!scope.WorkspaceRead) return null;
+  if (scope.ResultCalculation === true) {
+    const classroomKeys = ['studentMemberships','studentAttendance','scoreSheets','termResults'];
+    const fields = classroomKeys.includes(key) ? ['SessionId','TermId','ClassId','ArmId']
+      : key === 'schoolCalendars' ? ['SessionId','TermId'] : [];
+    if (fields.length) return [{field:'BranchId',op:'==',value:branchId},
+      ...fields.filter(field=>clean(scope[field])).map(field=>({field,op:'==',value:clean(scope[field])}))];
+  }
+  const termClassKeys = ['offerings', 'teacherAllocations', 'studentMemberships', 'scoreSheets', 'studentScores',
+    'scoreImports', 'scoreSyncBatches', 'cbtTests', 'termResults', 'resultEvents', 'resultClearances'];
+  const sessionClassKeys = ['cumulativeResults', 'cumulativeEvents', 'promotionDecisions', 'promotionEvents'];
+  const fields = termClassKeys.includes(key) ? ['SessionId', 'TermId', 'ClassId']
+    : sessionClassKeys.includes(key) ? ['SessionId', 'ClassId'] : [];
+  if (!fields.length) return null;
+  return [{ field: 'BranchId', op: '==', value: branchId },
+    ...fields.filter(field => clean(scope[field])).map(field => ({ field, op: '==', value: clean(scope[field]) })),
+    ...(['scoreSheets','studentScores'].includes(key) && clean(scope.SubjectId) ? [{field:'SubjectId',op:'==',value:clean(scope.SubjectId)}] : [])];
+}
+
 async function loadAcademicState(env, branchId, requestedKeys = null, scoreReadScope = {}) {
   if (!Array.isArray(requestedKeys) || !requestedKeys.length) {
     throw failure('Academic Management must request a focused workspace data bundle.', 500, 'ACADEMIC_STATE_BUNDLE_REQUIRED');
@@ -1177,9 +1228,10 @@ async function loadAcademicState(env, branchId, requestedKeys = null, scoreReadS
       && clean(scoreReadScope.ClassId);
     const readScope = classroomRoster ? { ClassId: scoreReadScope.ClassId,
       SessionId: scoreReadScope.SessionId, TermId: scoreReadScope.TermId } : scoreReadScope;
-    const options = { filters: paged || classroomRoster ? academicScoreReadFilters(branchId, readScope)
-      : [{ field: 'BranchId', op: '==', value: branchId }] };
-    const rows = paged
+    const workspaceFilters = academicWorkspaceRecordFilters(key, branchId, scoreReadScope);
+    const options = { filters: workspaceFilters || (paged || classroomRoster ? academicScoreReadFilters(branchId, readScope)
+      : [{ field: 'BranchId', op: '==', value: branchId }]) };
+    const rows = paged || workspaceFilters
       ? await queryCollectionPages(env, collection, { ...options,
         pageSize: 250, maxRows: 50000, readTime: nowIso() })
       : await queryCollection(env, collection, options);
@@ -1851,6 +1903,7 @@ function auditWrite(user, action, type, record, details = '', summary = '') {
     data: {
       AuditId: id, Timestamp: nowIso(), Action: clean(action).toUpperCase(), RecordType: type,
       RecordId: recordId(record), BranchId: record.BranchId, SchoolSection: record.SchoolSection,
+      StudentRef: clean(record.StudentRef), RecordLabel: clean(record.StudentName || record.Name),
       SessionId: clean(record.SessionId), TermId: clean(record.TermId),
       Actor: actorName(user), ActorUsername: actorUsername(user), ActorRole: clean(user.role || user.Role),
       Details: clean(details).slice(0, 1000),
@@ -2163,19 +2216,38 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}, sc
   const permissions = requireCapability(user, 'enabled');
   const scope = await academicScope(env, user, input, { requireSection: false });
   const focusedView = permissions.financeView ? 'clearances' : normalizedAcademicView(input.View || input.Workspace);
+  if (focusedView === 'audit') requireCapability(user, 'canReviewScores');
+  if (focusedView === 'readiness') {
+    requireCapability(user, 'canReviewScores');
+    if (input.WorkspaceLoadMode === 'records' && (!scope.section || !clean(input.RecordClassId) || input.RecordClassId === '*'
+      || !clean(input.SessionId) || !clean(input.TermId))) {
+      throw failure('Choose one school section, class, academic session and term before checking Results Readiness.');
+    }
+  }
   if (focusedView === 'analysis' && !permissions.canViewResultsAnalysis) {
     throw failure('Only school management may open the end-of-session results analysis.', 403, 'ACADEMIC_ANALYSIS_FORBIDDEN');
   }
-  const focusedStateKeys = academicBootstrapReadKeys(
+  // The all-arm register has its own class-scoped read action. Opening its
+  // selectors must not preload the hidden entry, review and import workspaces.
+  // Older clients and explicit class reports retain their existing contract.
+  const registerOnly = focusedView === 'scorebook' && permissions.canReviewScores
+    && input.ScorebookTask === 'classRegister' && !loadOptions.classRegister;
+  const baseStateKeys = registerOnly ? ['sessions', 'terms', 'classes'] : academicBootstrapReadKeys(
     academicManagementViewStateKeys(focusedView, permissions), focusedView, input, loadOptions);
-  const includePeople = input.IncludePeople !== false && lower(input.IncludePeople) !== 'false';
+  const readPlan = academicWorkspaceReadPlan(focusedView, baseStateKeys, input, { ...loadOptions, registerOnly });
+  const requestedClassId = clean(input.RecordClassId) === '*' ? '' : clean(input.RecordClassId);
+  const focusedStateKeys = readPlan.keys;
+  const includePeople = !registerOnly && !readPlan.deferred && input.IncludePeople !== false && lower(input.IncludePeople) !== 'false';
   const peopleOptions = includePeople
     ? (loadOptions.classRegister ? { staff: false, students: true }
       : ACADEMIC_VIEW_PEOPLE[focusedView] || ACADEMIC_VIEW_PEOPLE.classrooms)
     : { staff: false, students: false };
-  const includeReportProfile = ['results', 'outcomes'].includes(focusedView);
+  const includeReportProfile = !readPlan.deferred && ['results', 'outcomes'].includes(focusedView);
   const [rawState, people, reportProfile] = await Promise.all([
-    loadScopedAcademicState(env, scope, focusedStateKeys, scoreReadScope),
+    loadScopedAcademicState(env, scope, focusedStateKeys, readPlan.requested ? {
+      ...scoreReadScope, WorkspaceRead: true, ClassId: requestedClassId,
+      SessionId: clean(input.SessionId), TermId: clean(input.TermId)
+    } : scoreReadScope),
     loadPeople(env, user, scope, peopleOptions),
     includeReportProfile
       ? getDocument(env, 'settings', 'schoolProfile').catch(() => ({}))
@@ -2184,6 +2256,9 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}, sc
   const summary = loadOptions.classRegister ? academicManagementSummary(rawState)
     : await loadAcademicManagementSummary(env, scope, rawState, focusedStateKeys);
   let state = rawState;
+  if (readPlan.requested && requestedClassId) {
+    state.arms = state.arms.filter(row => row.ClassId === requestedClassId);
+  }
   let students = people.students;
   if (permissions.financeView) {
     const visibleStudents = new Set(state.studentMemberships.map((row) => lower(row.StudentRef)));
@@ -2244,15 +2319,17 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}, sc
     students = students.filter((row) => visibleStudents.has(lower(studentReference(row))));
   }
   state = sortAcademicState(state);
-  const migrationReadiness = permissions.canManageStructure && focusedView === 'readiness'
-    ? academicMigrationReadiness(state, students)
+  const resultsReadiness = focusedView === 'readiness' && readPlan.requested
+    ? await loadAcademicResultsReadiness(env, state, {BranchId:scope.branchId, SchoolSection:scope.section,
+      ClassId:requestedClassId, SessionId:clean(input.SessionId), TermId:clean(input.TermId),
+      ResultType:input.ReadinessResultType === 'Mid-Term' ? 'Mid-Term' : 'End of Term'})
     : null;
   const includesAcademicPeriod = focusedStateKeys.includes('sessions') && focusedStateKeys.includes('terms');
   const selection = includesAcademicPeriod ? currentSelection(state, input) : null;
   const selectedSession = selection ? findById(state.sessions, selection.SessionId) : null;
   const selectedTerm = selection ? findById(state.terms, selection.TermId) : null;
   let assessmentScheme = academicAssessmentScheme({});
-  const includeAssessmentPolicy = input.IncludeAssessmentPolicy !== false && lower(input.IncludeAssessmentPolicy) !== 'false';
+  const includeAssessmentPolicy = !registerOnly && !readPlan.deferred && input.IncludeAssessmentPolicy !== false && lower(input.IncludeAssessmentPolicy) !== 'false';
   if (includeAssessmentPolicy && selectedSession && selectedTerm && ['scorebook', 'cbt'].includes(focusedView)) {
     try {
       assessmentScheme = await academicAssessmentForPeriod(env, scope, selectedSession, selectedTerm, { required: false });
@@ -2267,6 +2344,19 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}, sc
     ok: true,
     partialAcademicManagement: true,
     loadedAcademicView: focusedView,
+    workspaceDataDeferred: readPlan.deferred,
+    workspaceRecordSelection: readPlan.requested ? { ClassId: clean(input.RecordClassId), SessionId: clean(input.SessionId), TermId: clean(input.TermId),
+      ...(focusedView === 'readiness' ? {ResultType:input.ReadinessResultType === 'Mid-Term' ? 'Mid-Term' : 'End of Term'} : {}) } : null,
+    ...(readPlan.deferred ? {
+      ...Object.fromEntries(Object.keys(ACADEMIC_MANAGEMENT_COLLECTIONS).filter(key => key !== 'audit' && !focusedStateKeys.includes(key)).map(key => [key, []])),
+      staff: [], students: []
+    } : {}),
+    ...(focusedView === 'scorebook' ? { scorebookWorkspaceDeferred: Boolean(registerOnly) } : {}),
+    ...(registerOnly ? {
+      // Clear any previous workspace's hidden detail rows in partial responses.
+      arms: [], subjects: [], teacherAllocations: [], studentMemberships: [],
+      scoreSheets: [], studentScores: [], scoreImports: [], scoreSyncBatches: [], staff: [], students: []
+    } : {}),
     message: focusedView === 'cbt'
       ? 'Online CBT schedule and class-wide rosters loaded.'
       : `${focusedView.charAt(0).toUpperCase()}${focusedView.slice(1)} academic workspace loaded.`,
@@ -2276,11 +2366,11 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}, sc
     sections: scope.structure.Sections,
     ...(selection ? { selection } : {}),
     ...(includeAssessmentPolicy && ['scorebook', 'cbt'].includes(focusedView) ? { assessmentScheme } : {}),
-    ...(migrationReadiness ? { migrationReadiness } : {}),
+    ...(focusedView === 'readiness' ? {resultsReadiness, migrationReadiness:null} : {}),
     ...(reportProfile ? { reportProfile: publicAcademicReportProfile(reportProfile) } : {}),
     ...Object.fromEntries(Object.entries(state)
       .filter(([key]) => focusedStateKeys.includes(key))
-      .map(([key, rows]) => [key, rows.map(publicRecord)])),
+      .map(([key, rows]) => [key, focusedView === 'readiness' && !['sessions','terms','classes'].includes(key) ? [] : rows.map(publicRecord)])),
     ...(peopleOptions.staff ? { staff: displayStaff(academicSubjectTeacherCandidates(visibleStaff, scope.section)) } : {}),
     ...(peopleOptions.students ? { students: displayStudents(students, state.classes) } : {})
   };
@@ -5499,7 +5589,7 @@ export function assertAcademicScoreSheetAuthority(user, permissions, state, cand
 async function academicScoreSheetContext(env, user, input, capability = 'canEnterScores', stateKeys = ACADEMIC_SCOREBOOK_STATE_KEYS, options = {}) {
   const context = await academicOperationalContext(env, user, input, capability, {
     stateKeys,
-    scoreReadScope: { ClassId: input.ClassId, SubjectId: input.SubjectId,
+    scoreReadScope: { ...(options.workspaceRead ? {WorkspaceRead:true} : {}), ClassId: input.ClassId, SubjectId: input.SubjectId,
       SessionId: input.SessionId, TermId: input.TermId }
   });
   const { permissions, scope, state, session, term } = context;
@@ -5608,6 +5698,11 @@ export async function getAcademicScorebookContext(env, user = {}, input = {}) {
   const context = await academicScoreSheetContext(env, user, input, 'canEnterScores',
     ACADEMIC_SCOREBOOK_STATE_KEYS.filter(key => !['scoreImports', 'scoreSyncBatches'].includes(key)));
   const activeScheme = context.activeScheme;
+  const componentReviews = context.existing ? await academicComponentReviews(context.existing, context.roster, context.state.studentScores) : [];
+  const snapshot = academicScorebookSnapshot(context);
+  // Include the verified display summary in this already-requested snapshot.
+  // It is response-only: no extra reads or stored marks are changed.
+  if (snapshot.sheet) snapshot.sheet.TestReviewStatus = componentReviews.map(({ComponentId,Name,Status,Stale,CompleteCount,RosterCount}) => ({ComponentId,Name,Status,Stale,CompleteCount,RosterCount}));
   const layoutUpdateAvailable = Boolean(
     context.existing
     && activeScheme.Ready
@@ -5620,7 +5715,8 @@ export async function getAcademicScorebookContext(env, user = {}, input = {}) {
     partialAcademicManagement: true,
     message: 'Scorebook context loaded.',
     assessmentScheme: context.scheme,
-    scorebookSnapshot: academicScorebookSnapshot(context),
+    scorebookSnapshot: snapshot,
+    componentReviews,
     scorebookContext: {
       SheetId: context.SheetId,
       SessionId: context.session.SessionId,
@@ -5948,36 +6044,69 @@ export async function reactivateAcademicClassScoreEditing(env, user = {}, input 
     message: `${schoolClass.Name}: ${pending.length} scorebooks reopened across all arms and subjects; ${sheets.length - pending.length} already open. Saved marks and published results are unchanged. Each scorebook locks again after its next save.` };
 }
 
-function assertAcademicScoreSheetComplete(state, sheet, roster) {
+async function assertAcademicScoreSheetComplete(state, sheet, roster, options = {}) {
   const scores = state.studentScores.filter((row) => row.SheetId === sheet.SheetId);
-  const complete = new Set(scores.filter((row) => row.CompletionStatus === 'Complete').map((row) => lower(row.StudentRef)));
+  const scheme = academicAssessmentScheme({Assessment:{Components:sheet.AssessmentComponents,GradeBands:sheet.GradeBands}}, {RevisionId:sheet.AssessmentRevisionId});
+  const complete = new Set(scores.filter((row) => {
+    try { return calculateAcademicStudentScore(scheme, row.ComponentScores).CompletionStatus === 'Complete'; }
+    catch { return false; }
+  }).filter(row => scores.filter(other => lower(other.StudentRef) === lower(row.StudentRef)).length === 1).map((row) => lower(row.StudentRef)));
   const pending = roster.filter((row) => !complete.has(lower(row.StudentRef)));
-  if (pending.length) throw failure(`${pending.length} student score${pending.length === 1 ? ' is' : 's are'} incomplete. Complete every required component before submission.`, 409, 'ACADEMIC_SCORE_SHEET_INCOMPLETE');
-  return scores;
+  if (pending.length && !(options.allowPending === true && pending.length < roster.length)) {
+    const reviews = await academicComponentReviews(sheet, roster, scores);
+    const missing = reviews.filter(row => row.MissingCount && scheme.Components.find(c => c.Id === row.ComponentId)?.Required !== false).map(row => `${row.Name} (${row.MissingCount})`);
+    throw failure(`${pending.length} student score${pending.length === 1 ? ' is' : 's are'} incomplete for the full-term sheet. Required marks still missing: ${missing.join(', ') || 'review unresolved or exempt-only scores'}. To submit a completed test such as CA1, use Review individual tests.`, 409, 'ACADEMIC_SCORE_SHEET_INCOMPLETE');
+  }
+  return options.summary ? {Scores:scores,PendingStudentRefs:pending.map(row=>row.StudentRef),CompleteCount:roster.length-pending.length} : scores;
 }
 
-export async function changeAcademicScoreSheetStatus(env, user = {}, input = {}) {
-  const context = await academicScoreSheetContext(env, user, input, 'canEnterScores');
+async function changeAcademicComponentReview(env, user, input, context) {
+  const {existing, roster, state, permissions} = context;
+  const reviews = await academicComponentReviews(existing, roster, state.studentScores);
+  const review = reviews.find(row => row.ComponentId === clean(input.ComponentId));
+  const target = clean(input.Status || input.TargetStatus), timestamp = nowIso();
+  const update = academicComponentReviewTransition(existing, review, target, permissions,
+    {timestamp, name:actorName(user), username:actorUsername(user)}, input.Reason, input.AllowPendingStudents === true);
+  if (!update) return {ok:true,partialAcademicManagement:true,message:`${review.Name} is already ${target}. No duplicate review was recorded.`};
+  const record = academicScoreSheetRecord(context, existing, user, timestamp, {
+    ComponentReviews:{...(existing.ComponentReviews || {}), [review.ComponentId]:update}
+  });
+  const writes = [{collectionPath:ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSheets,documentId:record.SheetId,
+    data:withoutMetadata(record),...writePrecondition(existing,input.RevisionToken || input.SheetRevisionToken)},
+    auditWrite(user, `TEST_${target.toUpperCase()}`, 'scoreSheet', record, `${review.Name}: ${review.Status} -> ${target}; ${review.CompleteCount} complete, ${review.MissingCount} pending${input.Reason ? `; ${clean(input.Reason)}` : ''}`)];
+  Object.assign(writes[1].data,{ComponentId:review.ComponentId,ComponentName:review.Name,ReviewStatus:target,ScoreDigest:review.ScoreDigest,RosterCount:review.RosterCount});
+  if (target === 'Submitted') await commitAcademicSubmission(env,context,user,input,'scorebook',writes);
+  else await commitAcademicBatch(env,writes,'The marks or test review changed. Reload the saved test before continuing.');
+  return {ok:true,partialAcademicManagement:true,reviewUpdate:update,message:`${review.Name} moved to ${target}; ${review.MissingCount} students remain pending. Other tests and all saved marks are unchanged.`};
+}
+
+export async function changeAcademicScoreSheetStatus(env, user = {}, input = {}, loadedContext = null) {
+  const context = loadedContext || await academicScoreSheetContext(env, user, input, 'canEnterScores');
   const { permissions, scope, state, existing, roster } = context;
   if (!existing) throw failure('Save at least one draft score before changing the score-sheet status.', 409);
+  if (clean(input.ComponentId)) return changeAcademicComponentReview(env,user,input,context);
   const target = oneOf(input.Status || input.TargetStatus, ACADEMIC_SCORE_SHEET_STATUSES, '');
   if (!target) throw failure('Choose Draft, Submitted, Approved or Locked.');
   const current = clean(existing.Status || 'Draft');
+  if (target === 'Approved' && !permissions.canReviewScores) throw failure('Only an academic reviewer may approve submitted scores.', 403);
+  if (target === 'Locked' && !permissions.canApproveScores) throw failure('Only an academic approver may lock approved scores.', 403);
+  if (current === target && ['Submitted','Approved','Locked'].includes(target)) return {ok:true,partialAcademicManagement:true,message:`The sheet is already ${target}. No duplicate approval was recorded.`};
   const reason = clean(input.Reason).slice(0, 500);
   const normalTransition = (current === 'Draft' && target === 'Submitted')
     || (current === 'Submitted' && target === 'Approved')
     || (current === 'Approved' && target === 'Locked');
   const reopening = target === 'Draft' && ['Submitted', 'Approved', 'Locked'].includes(current);
   if (!normalTransition && !reopening) throw failure(`${current} score sheets cannot move directly to ${target}.`, 409, 'ACADEMIC_SCORE_STATUS_INVALID');
-  if (target === 'Submitted') assertAcademicScoreSheetComplete(state, existing, roster);
-  if (target === 'Approved' && !permissions.canReviewScores) throw failure('Only an academic reviewer may approve submitted scores.', 403);
-  if (target === 'Locked' && !permissions.canApproveScores) throw failure('Only an academic approver may lock approved scores.', 403);
+  const completion = ['Submitted','Approved','Locked'].includes(target)
+    ? await assertAcademicScoreSheetComplete(state, existing, roster, {summary:true,allowPending:input.AllowPendingStudents === true || existing.AllowPendingStudents === true}) : null;
   if (reopening && !permissions.canManageScoreCorrections) throw failure('Only an Admin or Management user may reopen recorded scores.', 403);
   if (reopening && !reason) throw failure('Enter the approved reason for reopening this score sheet.');
   const timestamp = nowIso();
   const eventName = target === 'Submitted' ? 'Submitted' : target === 'Approved' ? 'Approved' : target === 'Locked' ? 'Locked' : 'Reopened';
   const record = academicScoreSheetRecord(context, existing, user, timestamp, {
     Status: target,
+    ...(completion ? {PendingStudentRefs:completion.PendingStudentRefs,AllowPendingStudents:completion.PendingStudentRefs.length > 0,
+      ApprovedStudentCount:target === 'Submitted' ? 0 : completion.CompleteCount} : {}),
     [`${eventName}At`]: timestamp,
     [`${eventName}By`]: actorName(user),
     [`${eventName}ByUsername`]: actorUsername(user),
@@ -5993,7 +6122,7 @@ export async function changeAcademicScoreSheetStatus(env, user = {}, input = {})
   const statusWrites = [
     { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSheets, documentId: record.SheetId,
       data: withoutMetadata(record), ...writePrecondition(existing, input.RevisionToken || input.SheetRevisionToken) },
-    auditWrite(user, eventName.toUpperCase(), 'scoreSheet', record, reason || `${current} -> ${target}`)
+    auditWrite(user, eventName.toUpperCase(), 'scoreSheet', record, reason || `${current} -> ${target}; ${completion?.CompleteCount || 0} complete, ${completion?.PendingStudentRefs.length || 0} pending`)
   ];
   if (target === 'Submitted') await commitAcademicSubmission(env, context, user, input, 'scorebook', statusWrites);
   else await commitAcademicBatch(env, statusWrites, 'The score sheet changed while its status was being updated. Reload and try again.');
@@ -6004,8 +6133,65 @@ export async function changeAcademicScoreSheetStatus(env, user = {}, input = {})
   };
 }
 
+export async function batchReviewAcademicScores(env, user = {}, input = {}) {
+  requireCapability(user, 'canReviewScores');
+  const items = input.Items;
+  const target = clean(input.Status);
+  if (!['Submitted','Approved'].includes(target) || !Array.isArray(items) || !items.length || items.length > 25) {
+    throw failure('Choose Submit or Approve and between 1 and 25 subject sheets per batch.');
+  }
+  if (!clean(input.SessionId) || !clean(input.TermId) || !clean(input.SchoolSection)) throw failure('Choose a school section, session and term.');
+  const outcomes = [], seen = new Set();
+  for (const item of items) {
+    const key = `${clean(item.SheetId)}|${clean(item.ComponentId)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    // Never accept a branch, term or permissions override from an individual item.
+    const request = {BranchId:input.BranchId,SchoolSection:input.SchoolSection,SessionId:input.SessionId,TermId:input.TermId,
+      SheetId:clean(item.SheetId),ClassId:clean(item.ClassId),ArmId:clean(item.ArmId),SubjectId:clean(item.SubjectId),
+      TeacherUsername:clean(item.TeacherUsername),ComponentId:clean(item.ComponentId),RevisionToken:clean(item.RevisionToken),
+      Status:target,AllowPendingStudents:input.AllowPendingStudents === true};
+    try {
+      if (!request.SheetId || !request.ClassId || !request.ArmId || !request.SubjectId) throw failure('Choose a saved classroom subject sheet.');
+      const context = await academicScoreSheetContext(env,user,request,'canReviewScores',
+        ACADEMIC_SCOREBOOK_STATE_KEYS.filter(key=>!['scoreImports','scoreSyncBatches'].includes(key)),{workspaceRead:true});
+      const result = await changeAcademicScoreSheetStatus(env,user,request,context);
+      const saved = await getDocument(env,ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSheets,request.SheetId);
+      outcomes.push({SheetId:request.SheetId,ComponentId:request.ComponentId,ok:true,message:result.message,sheet:publicRecord(saved)});
+    } catch (error) {
+      outcomes.push({SheetId:request.SheetId,ComponentId:request.ComponentId,ok:false,message:clean(error.message),code:clean(error.code)});
+    }
+  }
+  return {ok:true,partialAcademicManagement:true,batchReview:outcomes,
+    message:`${outcomes.filter(row=>row.ok).length} subject sheets processed; ${outcomes.filter(row=>!row.ok).length} need attention. Saved marks were not changed.`};
+}
+
+async function loadAcademicCalculationScores(env, scope, sheets) {
+  const sheetIds = uniqueIds(sheets.map(row=>row.SheetId));
+  const groups = [];
+  for (let offset=0; offset<sheetIds.length; offset+=10) groups.push(sheetIds.slice(offset,offset+10));
+  const scores = [], readTime = nowIso();
+  for (let offset=0; offset<groups.length; offset+=4) {
+    const pages = await Promise.all(groups.slice(offset,offset+4).map(ids=>queryCollectionPages(env,
+      ACADEMIC_MANAGEMENT_COLLECTIONS.studentScores, {filters:[{field:'SheetId',op:'in',value:ids}],
+        pageSize:500,maxRows:50000,readTime})));
+    scores.push(...pages.flat());
+  }
+  const selected = new Set(sheetIds);
+  // Sheet identity also finds older marks whose ArmId was never populated.
+  return scopedAcademicRows(scores.filter(row=>selected.has(clean(row.SheetId))
+    && lower(row.BranchId || 'main') === lower(scope.branchId)),scope);
+}
+
 async function academicTermResultContext(env, user, input, capability = 'canCalculateResults') {
-  const context = await academicOperationalContext(env, user, input, capability);
+  const calculation = capability === 'canCalculateResults';
+  if (calculation && ['ClassId','ArmId','SessionId','TermId'].some(field=>!clean(input[field]))) {
+    throw failure('Choose a class, classroom, academic session and term before calculating results.');
+  }
+  const context = await academicOperationalContext(env, user, input, capability, {
+    ...(calculation ? {stateKeys:ACADEMIC_RESULT_CALCULATION_STATE_KEYS} : {}),
+    scoreReadScope:{WorkspaceRead:true,ClassId:input.ClassId,SessionId:input.SessionId,TermId:input.TermId,
+      ...(calculation ? {ResultCalculation:true,ArmId:input.ArmId} : {})}});
   const { scope, state, session, term } = context;
   const schoolClass = assertReference(findById(state.classes, input.ClassId), 'Choose an active class.');
   const arm = assertReference(findById(state.arms, input.ArmId), 'Choose an active classroom arm.');
@@ -6013,9 +6199,11 @@ async function academicTermResultContext(env, user, input, capability = 'canCalc
   const scopeChain = academicPolicyScopeChain({
     BranchId: scope.branchId, SectionId: scope.section, ClassId: schoolClass.ClassId
   });
-  const policyView = await loadAcademicPolicyView(env, {
-    scope: scopeChain.at(-1), scopeChain, period: { Session: session.Name, Term: term.Name }
-  });
+  const [policyView, scores] = await Promise.all([
+    loadAcademicPolicyView(env, {scope:scopeChain.at(-1),scopeChain,period:{Session:session.Name,Term:term.Name}}),
+    calculation ? loadAcademicCalculationScores(env,scope,state.scoreSheets) : Promise.resolve(null)
+  ]);
+  if (calculation) state.studentScores = scores;
   const policyRevisionIds = (policyView.Sources || []).map((row) => clean(row.RevisionId)).filter(Boolean);
   if (!policyRevisionIds.length) {
     throw failure('Activate the academic policy for this class and term before calculating results.', 409, 'ACADEMIC_RESULT_POLICY_REQUIRED');
@@ -6140,17 +6328,18 @@ function academicResultEventWrite(user, result, eventType, details = '') {
   };
 }
 
-async function notifyAcademicResultLifecycle(env, user, scope, results, target) {
+async function notifyAcademicResultLifecycle(env, user, scope, results, target, students = null) {
   if (!['Published', 'Withdrawn'].includes(target)) return;
-  const people = await loadPeople(env, user, scope, { staff: false }).catch(() => ({ students: [] }));
+  const people = students ? {students} : await loadPeople(env, user, scope, { staff: false }).catch(() => ({ students: [] }));
   const byStudent = new Map((people.students || []).map((row) => [lower(studentReference(row)), row]));
-  await Promise.allSettled(results.map((result) => {
+  const outcomes = await Promise.allSettled(results.map((result) => {
     const student = byStudent.get(lower(result.StudentRef)) || {};
     const contacts = academicParentContacts(student);
+    if (!contacts.emails.length && !contacts.accountRefs.length) return {skipped:true};
     const name = clean(student.DisplayName || student.ApplicantName || student.StudentName || result.StudentRef);
     const published = target === 'Published';
     return createNotification(env, {
-      EventKey: `academic-result:${result.ResultId}:${target}:${clean(result.UpdatedAt)}`,
+      EventKey: `academic-result:${result.ResultId}:${target}:${clean(published ? result.PublishedAt || result.UpdatedAt : result.UpdatedAt)}`,
       Type: published ? 'Term result published' : 'Term result withdrawn',
       Category: 'Academics', Audience: 'Parent', Channels: ['InApp', 'Push'],
       TargetEmails: contacts.emails, TargetAccountRefs: contacts.accountRefs,
@@ -6163,12 +6352,14 @@ async function notifyAcademicResultLifecycle(env, user, scope, results, target) 
       ActorType: 'Staff', ActorId: actorUsername(user), CreatedBy: actorName(user)
     });
   }));
+  return {warnings:outcomes.filter(row => row.status === 'rejected' || row.value?.skipped).length};
 }
 
 async function calculateAcademicResultsForType(env, user = {}, input = {}, resultType = 'End of Term') {
   const context = await academicTermResultContext(env, user, input, 'canCalculateResults');
   const { scope, state, session, term, schoolClass, arm, policy, policyRevisionIds, policyFingerprint } = context;
   const midTerm = lower(resultType) === 'mid-term';
+  if (!midTerm && (input.NotTaughtSubjectIds || []).length) throw failure('Subjects not taught can be excluded only from a mid-term result.');
   const memberships = state.studentMemberships.filter((row) => statusActive(row)
     && row.SessionId === session.SessionId && row.TermId === term.TermId
     && row.ClassId === schoolClass.ClassId && row.ArmId === arm.ArmId);
@@ -6177,27 +6368,35 @@ async function calculateAcademicResultsForType(env, user = {}, input = {}, resul
     && row.ClassId === schoolClass.ClassId && row.ArmId === arm.ArmId
     && (midTerm ? lower(row.ResultType) === 'mid-term' : lower(row.ResultType || 'End of Term') !== 'mid-term'));
   const immutable = existingResults.find((row) => lower(row.Status) !== 'calculated draft');
-  if (immutable) {
+  const allowPartial = input.AllowPartialResults === true;
+  if (immutable && !allowPartial) {
     throw failure(`${immutable.StudentRef} already has a ${immutable.Status} result. Reopen or withdraw the affected result through the controlled workflow first.`, 409, 'ACADEMIC_RESULT_IMMUTABLE');
   }
+  const preservedResults = allowPartial ? existingResults.filter(row => lower(row.Status) !== 'calculated draft') : [];
+  const preservedRefs = new Set(preservedResults.map(row => lower(row.StudentRef)));
+  const calculationMemberships = memberships.filter(row => !preservedRefs.has(lower(row.StudentRef)));
+  if (!calculationMemberships.length) throw failure('There are no new or draft results to calculate. Existing reviewed, approved and published results remain unchanged.', 409);
   const ids = new Map();
   const references = new Map();
-  for (const membership of memberships) {
+  await Promise.all(calculationMemberships.map(async membership => {
     const id = academicTermResultId(scope, session.SessionId, term.TermId, schoolClass.ClassId, arm.ArmId, membership.StudentRef, resultType);
     ids.set(lower(membership.StudentRef), id);
     references.set(lower(membership.StudentRef), clean(findById(existingResults, id)?.ResultReference) || await academicResultReference(id));
-  }
+  }));
   const calculation = (midTerm ? calculateAcademicMidTermResultDrafts : calculateAcademicTermResultDrafts)({
     SessionId: session.SessionId, AcademicSession: session.Name,
     TermId: term.TermId, Term: term.Name,
     ClassId: schoolClass.ClassId, ClassName: schoolClass.Name,
     SchoolStage: schoolClass.SchoolStage,
     ArmId: arm.ArmId, ArmName: arm.Name,
-    Memberships: memberships,
+    Memberships: calculationMemberships,
+    AllowPartialResults: allowPartial,
     ScoreSheets: state.scoreSheets,
     StudentScores: state.studentScores,
     Subjects: state.subjects,
     Attendance: state.studentAttendance,
+    NotTaughtSubjectIds: midTerm ? input.NotTaughtSubjectIds : [],
+    NotTaughtReason: midTerm ? input.NotTaughtReason : '',
     SchoolCalendar: state.schoolCalendars.find((row) => row.SessionId === session.SessionId && row.TermId === term.TermId) || null,
     TermDates: { StartDate: term.StartDate, EndDate: term.EndDate },
     AttendanceMode: 'Daily',
@@ -6208,7 +6407,7 @@ async function calculateAcademicResultsForType(env, user = {}, input = {}, resul
     ResultIdFor: (membership) => ids.get(lower(membership.StudentRef)),
     ResultReferenceFor: (membership) => references.get(lower(membership.StudentRef))
   });
-  if (!calculation.Ready) {
+  if (!calculation.Ready && !(allowPartial && calculation.PendingResults?.length)) {
     const summary = calculation.Issues.slice(0, 5).join(' ');
     const remaining = calculation.Issues.length > 5 ? ` ${calculation.Issues.length - 5} more issue(s) require attention.` : '';
     throw failure(`${summary}${remaining}`, 409, 'ACADEMIC_RESULT_CALCULATION_BLOCKED', {
@@ -6224,6 +6423,7 @@ async function calculateAcademicResultsForType(env, user = {}, input = {}, resul
       ...(existing || {}), ...draft,
       SubjectSelectionSnapshot: subjectSelection(memberships.find((row) => lower(row.StudentRef) === lower(draft.StudentRef))),
       SubjectChangeRecalculationRequired: false,
+      CalculationPending: false, CalculationPendingIssues: [],
       RecordId: draft.ResultId,
       BranchId: scope.branchId, SchoolSection: scope.section,
       CalculationRevision: Number(existing?.CalculationRevision || 0) + 1,
@@ -6239,16 +6439,47 @@ async function calculateAcademicResultsForType(env, user = {}, input = {}, resul
       ...writePrecondition(existing, resultRevisionToken(input, result.ResultId))
     });
     writes.push(academicResultEventWrite(user, result, existing ? 'RECALCULATED' : 'CALCULATED',
-      `${result.ResultType}; ${result.SubjectCount} subject(s); ${result.Attendance.RegisterType} attendance; policy ${result.PolicyFingerprint}`));
+      `${result.ResultType}; ${result.SubjectCount} subject(s); ${result.Attendance.RegisterType} attendance; policy ${result.PolicyFingerprint}${(result.NotTaughtSubjects || []).length ? `; Not taught this mid-term: ${result.NotTaughtSubjects.map(row => `${row.SubjectName}: ${row.Reason}`).join('; ')}` : ''}`));
   });
-  writes.push(auditWrite(user, existingResults.length ? 'RECALCULATE' : 'CALCULATE', 'termResult', {
+  // Retain any earlier draft and all its marks, but prevent stale drafts from
+  // being published while the student's current calculation is incomplete.
+  for (const pending of calculation.PendingResults || []) {
+    const existing = existingResults.find(row => lower(row.StudentRef) === lower(pending.StudentRef));
+    if (!existing || lower(existing.Status) !== 'calculated draft') continue;
+    if (existing.CalculationPending && JSON.stringify(existing.CalculationPendingIssues) === JSON.stringify(pending.Issues)) continue;
+    writes.push({collectionPath:ACADEMIC_MANAGEMENT_COLLECTIONS.termResults,documentId:existing.ResultId,
+      data:{CalculationPending:true,CalculationPendingIssues:pending.Issues},updateMask:['CalculationPending','CalculationPendingIssues'],
+      ...writePrecondition(existing,resultRevisionToken(input,existing.ResultId))});
+  }
+  if (writes.length) writes.push(auditWrite(user, existingResults.length ? 'RECALCULATE' : 'CALCULATE', 'termResult', {
     RecordId: `classroom-results-${schoolClass.ClassId}-${arm.ArmId}`,
     SessionId: session.SessionId, TermId: term.TermId,
     BranchId: scope.branchId, SchoolSection: scope.section
-  }, `${calculation.Results.length} ${resultType} Calculated Draft result(s); policy ${policyFingerprint}`));
-  await commitAcademicBatch(env, writes, 'One or more term results changed while the classroom was being calculated. Reload and try again.');
-  return academicOperationalResponse(env, user, input, scope,
-    `${calculation.Results.length} ${resultType.toLowerCase()} result${calculation.Results.length === 1 ? '' : 's'} calculated as Draft from recorded scores.`);
+  }, `${calculation.Results.length} ${resultType} Calculated Draft result(s); ${(calculation.PendingResults || []).length} pending; ${preservedResults.length} existing reviewed or published results preserved; policy ${policyFingerprint}`));
+  const committed = await commitAcademicBatch(env, writes, 'One or more term results changed while the classroom was being calculated. Reload and try again.');
+  const message = `${calculation.Results.length} ${resultType.toLowerCase()} result${calculation.Results.length === 1 ? '' : 's'} calculated as Draft from recorded scores. ${(calculation.PendingResults || []).length} students remain pending; ${preservedResults.length} existing reviewed or published results preserved.`;
+  if (input.ResultResponseMode === 'delta') {
+    // Keep preserved results current too: another officer may have reviewed or
+    // published them since the client loaded its snapshot. No extra reads.
+    const updatedResults = new Map(existingResults.map(row=>[row.ResultId,publicRecord(row)]));
+    const events = [];
+    writes.forEach((write,index)=>{
+      const revision = clean(committed?.writeResults?.[index]?.updateTime);
+      if (write.collectionPath === ACADEMIC_MANAGEMENT_COLLECTIONS.termResults) {
+        const previous = write.updateMask ? findById(existingResults,write.documentId) : {};
+        updatedResults.set(write.documentId,publicRecord({...previous,...write.data,__updateTime:revision}));
+      } else if (write.collectionPath === ACADEMIC_MANAGEMENT_COLLECTIONS.resultEvents) {
+        events.push(publicRecord({...write.data,__updateTime:revision}));
+      }
+    });
+    return {ok:true,partialAcademicManagement:true,message,
+      resultCalculationPending:calculation.PendingResults || [],resultCalculationPreserved:preservedResults.length,
+      resultCalculationUpdate:{results:[...updatedResults.values()],events,scope:{BranchId:scope.branchId,SchoolSection:scope.section,
+        SessionId:session.SessionId,TermId:term.TermId,ClassId:schoolClass.ClassId,ArmId:arm.ArmId,ResultType:resultType}}};
+  }
+  // Older desktop clients still expect the complete workspace response.
+  const response = await academicOperationalResponse(env, user, input, scope, message);
+  return {...response,resultCalculationPending:calculation.PendingResults || [],resultCalculationPreserved:preservedResults.length};
 }
 
 export async function calculateAcademicTermResults(env, user = {}, input = {}) {
@@ -6288,6 +6519,99 @@ export async function previewAcademicTermResultWithdrawal(env, user = {}, input 
   };
 }
 
+async function academicResultBatchRecipients(env, scope, results) {
+  const references = uniqueIds(results.map(row=>row.StudentRef)), students = [];
+  for (let offset=0;offset<references.length;offset+=10) {
+    const refs=references.slice(offset,offset+10);
+    const options={filters:[{field:'AdmissionNo',op:'in',value:refs}],pageSize:100,maxRows:1000};
+    const rows=await queryCollectionPages(env,scopedCollectionPath('students',scope.branchId,scope.section),options);
+    students.push(...rows.filter(row=>lower(row.BranchId || scope.branchId)===lower(scope.branchId)
+      && lower(row.SchoolSection || scope.section)===lower(scope.section)));
+    const missing=refs.filter(ref=>!students.some(row=>lower(studentReference(row))===lower(ref)));
+    if (missing.length) students.push(...scopedAcademicRows((await queryCollectionPages(env,'students',{
+      ...options,filters:[{field:'AdmissionNo',op:'in',value:missing},
+        ...(scope.branchId==='main'?[]:[{field:'BranchId',op:'==',value:scope.branchId}])]
+    })).filter(row=>lower(row.BranchId || 'main')===lower(scope.branchId)),scope));
+  }
+  return students;
+}
+
+export async function batchChangeAcademicResultStatus(env, user = {}, input = {}) {
+  const action=clean(input.Status);
+  if (!['Reviewed','Approved','Published','ReviewApprovePublish'].includes(action)) throw failure('Choose a batch result action.');
+  requireWritableSubscription(user);
+  requireCapability(user,['Published','ReviewApprovePublish'].includes(action)?'canPublishResults':'canReviewResults');
+  if (action==='ReviewApprovePublish') requireCapability(user,'canReviewResults');
+  if (['SessionId','TermId','ClassId','ArmId'].some(key=>!clean(input[key])) || !['Mid-Term','End of Term'].includes(input.ResultType)) {
+    throw failure('Choose one classroom, academic session, term and report type.');
+  }
+  if (!Array.isArray(input.Items) || !input.Items.length || input.Items.length>25) throw failure('Choose between 1 and 25 results per batch.');
+  const items=[...new Map(input.Items.map(item=>[clean(item.ResultId),{ResultId:clean(item.ResultId),RevisionToken:clean(item.RevisionToken)}])).values()];
+  if (items.some(item=>!item.ResultId)) throw failure('Every selected result must have an identity.');
+  const context=await academicOperationalContext(env,user,input,['Published','ReviewApprovePublish'].includes(action)?'canPublishResults':'canReviewResults',{
+    view:'results',stateKeys:['sessions','terms','classes','arms','subjects','studentMemberships','scoreSheets','termResults'],
+    scoreReadScope:{WorkspaceRead:true,ResultCalculation:true,SessionId:input.SessionId,TermId:input.TermId,ClassId:input.ClassId,ArmId:input.ArmId}
+  });
+  const {scope,state}=context;
+  const arm=assertReference(findById(state.arms,input.ArmId),'Choose a valid classroom.');
+  if (arm.ClassId!==input.ClassId) throw failure('The classroom does not belong to the selected class.');
+  const selectedIds=new Set(items.map(item=>item.ResultId));
+  const refs=uniqueIds(state.termResults.filter(row=>selectedIds.has(row.ResultId)).map(row=>row.StudentRef));
+  const related=[];
+  for (let offset=0;offset<refs.length;offset+=10) related.push(...scopedAcademicRows(await queryCollectionPages(env,
+    ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships,{filters:[{field:'BranchId',op:'==',value:scope.branchId},
+      {field:'SessionId',op:'==',value:input.SessionId},{field:'TermId',op:'==',value:input.TermId},
+      {field:'StudentRef',op:'in',value:refs.slice(offset,offset+10)}],pageSize:100,maxRows:1000}),scope));
+  // The focused placement query can be newer than the initial context. Validate
+  // and lock the same versions, including students moved out of this classroom.
+  const selectedRefs=new Set(refs.map(lower));
+  state.studentMemberships=[...state.studentMemberships.filter(row=>!selectedRefs.has(lower(row.StudentRef))),
+    ...related.filter(row=>row.ClassId===input.ClassId && row.ArmId===input.ArmId)];
+  state.studentScores=await loadAcademicCalculationScores(env,scope,state.scoreSheets);
+  const batchScope={BranchId:scope.branchId,SchoolSection:scope.section,SessionId:input.SessionId,TermId:input.TermId,
+    ClassId:input.ClassId,ArmId:input.ArmId,ResultType:input.ResultType};
+  const plan=planAcademicResultBatch(state,batchScope,items,action,related);
+  const timestamp=nowIso(),writes=[],resultWriteIndexes=new Map();
+  for (const change of plan.changes) {
+    const result={...change.previous};
+    const events=[];
+    if (change.pendingIssues) {
+      result.CalculationPending=true;result.CalculationPendingIssues=change.pendingIssues;
+      events.push(academicResultEventWrite(user,result,'PENDING_ASSESSMENTS','Batch check: missing or changed assessments; existing marks and result snapshot preserved.'));
+    } else for (const target of change.stages) {
+      Object.assign(result,{Status:target,PublicationStatus:target,UpdatedAt:timestamp,UpdatedBy:actorName(user),
+        [`${target}At`]:timestamp,[`${target}By`]:actorName(user),[`${target}ByUsername`]:actorUsername(user)});
+      events.push(academicResultEventWrite(user,result,target.toUpperCase(),'Selected batch result workflow.'));
+    }
+    resultWriteIndexes.set(result.ResultId,writes.length);
+    writes.push({collectionPath:ACADEMIC_MANAGEMENT_COLLECTIONS.termResults,documentId:result.ResultId,
+      ...(change.pendingIssues ? {data:{CalculationPending:true,CalculationPendingIssues:change.pendingIssues},
+        updateMask:['CalculationPending','CalculationPendingIssues']} : {data:withoutMetadata(result)}),
+      ...writePrecondition(change.previous,change.previous.__updateTime)});
+    writes.push(...events);
+    plan.outcomes.find(row=>row.ResultId===result.ResultId).result=result;
+  }
+  const published=plan.target==='Published' ? plan.outcomes.filter(row=>['Updated','Already complete'].includes(row.Outcome)
+    && row.result?.Status==='Published').map(row=>row.result) : [];
+  const students=published.length?await academicResultBatchRecipients(env,scope,published):[];
+  if (writes.length) writes.push(auditWrite(user,'BATCH_RESULT_WORKFLOW','termResult',{
+    RecordId:`classroom-results-${input.ClassId}-${input.ArmId}`,...batchScope
+  },`${action}: ${plan.outcomes.filter(row=>row.Outcome==='Updated').length} advanced; ${plan.outcomes.filter(row=>row.Outcome==='Pending').length} pending. Selected students only.`));
+  const committed=await commitAcademicResultBatch(env,writes,batchScope,{
+    refs:uniqueIds(plan.changes.map(change=>change.previous.StudentRef)),memberships:related,sheets:state.scoreSheets
+  });
+  const updates=plan.outcomes.filter(row=>row.result).map(outcome=>{
+    const index=resultWriteIndexes.get(outcome.ResultId);
+    outcome.result=publicRecord({...outcome.result,...(index===undefined?{}:{__updateTime:clean(committed?.writeResults?.[index]?.updateTime)})});
+    return outcome.result;
+  });
+  const notification=published.length?await notifyAcademicResultLifecycle(env,user,scope,published,'Published',students):null;
+  const events=writes.filter(write=>write.collectionPath===ACADEMIC_MANAGEMENT_COLLECTIONS.resultEvents).map(write=>publicRecord(write.data));
+  return {ok:true,partialAcademicManagement:true,batchResults:plan.outcomes,
+    resultCalculationUpdate:{results:updates,events,scope:batchScope},notificationWarnings:notification?.warnings || 0,
+    message:`${plan.outcomes.filter(row=>row.Outcome==='Updated').length} results advanced; ${plan.outcomes.filter(row=>row.Outcome==='Pending').length} students remain pending. Other outcomes are shown individually.`};
+}
+
 export async function changeAcademicTermResultStatus(env, user = {}, input = {}) {
   const target = ACADEMIC_TERM_RESULT_STATUSES.find((value) => lower(value) === lower(input.Status || input.TargetStatus));
   if (!target) throw failure('Choose a valid term-result status.');
@@ -6302,11 +6626,11 @@ export async function changeAcademicTermResultStatus(env, user = {}, input = {})
     const stale = results.find((result) => {
       const membership = state.studentMemberships.find((row) => row.SessionId === result.SessionId && row.TermId === result.TermId
         && lower(row.StudentRef) === lower(result.StudentRef));
-      return result.SubjectChangeRecalculationRequired || (membership && result.SubjectSelectionSnapshot
+      return result.CalculationPending || result.SubjectChangeRecalculationRequired || (membership && result.SubjectSelectionSnapshot
         && (academicSubjectSelectionChanged(membership, result.SubjectSelectionSnapshot)
           || membership.ClassId !== result.ClassId || membership.ArmId !== result.ArmId));
     });
-    if (stale) throw failure(`${stale.StudentRef}'s subjects changed after this result was calculated. Recalculate the draft before reviewing or publishing it.`, 409, 'ACADEMIC_SUBJECT_RESULT_STALE');
+    if (stale) throw failure(stale.CalculationPending ? `${stale.StudentRef}'s result is pending incomplete assessments. Complete the missing tests and recalculate; other complete students may proceed.` : `${stale.StudentRef}'s subjects changed after this result was calculated. Recalculate the draft before reviewing or publishing it.`, 409, 'ACADEMIC_SUBJECT_RESULT_STALE');
   }
   if (target === 'Published') {
     const invalid = results.find((result) => academicPolicyIssues(result.PolicySnapshot || {}, { forActivation: true }).length);
@@ -9054,6 +9378,11 @@ export async function revokeAcademicResultClearance(env, user = {}, input = {}) 
 
 export async function handleAcademicManagementAction(env, user = {}, input = {}) {
   const action = lower(input.action || input.Action).replace(/[^a-z]/g, '');
+  if (action === 'getacademicauditlog') {
+    requireCapability(user, 'canReviewScores');
+    const scope = await academicScope(env, user, input, { requireSection: true });
+    return loadAcademicAuditLog(env, scope, input);
+  }
   if (action === 'entrancecbt') {
     if (!['state', 'offlinePackage', 'offlineResults', 'post'].includes(input.Operation)) throw failure('Choose a valid entrance CBT operation.');
     const { createPortalCbtService } = await import('./portal-cbt.js');
@@ -9140,6 +9469,7 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
   if (['reactivateacademicscoreediting', 'reactivatescoreediting'].includes(action)) return reactivateAcademicScoreEditing(env, user, input);
   if (action === 'reactivateacademicclassscoreediting') return reactivateAcademicClassScoreEditing(env, user, input);
   if (['changeacademicscoresheetstatus', 'changescoresheetstatus'].includes(action)) return changeAcademicScoreSheetStatus(env, user, input);
+  if (action === 'batchreviewacademicscores') return batchReviewAcademicScores(env, user, input);
   if (['previewacademicscoreimport', 'previewscoresheetimport'].includes(action)) return previewAcademicScoreImport(env, user, input);
   if (['importacademicscores', 'commitscoreimport'].includes(action)) return importAcademicScores(env, user, input);
   if (['rollbackacademicscoreimport', 'rollbackscoreimport'].includes(action)) return rollbackAcademicScoreImport(env, user, input);
@@ -9150,6 +9480,7 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
   if (['calculateacademicmidtermresults', 'calculatemidtermresults'].includes(action)) return calculateAcademicMidTermResults(env, user, input);
   if (['previewacademictermresultwithdrawal', 'previewtermresultwithdrawal'].includes(action)) return previewAcademicTermResultWithdrawal(env, user, input);
   if (['changeacademictermresultstatus', 'changetermresultstatus'].includes(action)) return changeAcademicTermResultStatus(env, user, input);
+  if (action === 'batchchangeacademicresultstatus') return batchChangeAcademicResultStatus(env, user, input);
   if (['saveacademictermresultremarks', 'savetermresultremarks'].includes(action)) return saveAcademicTermResultRemarks(env, user, input);
   if (['calculateacademiccumulativeresults', 'calculatecumulativeresults'].includes(action)) return calculateAcademicCumulativeResults(env, user, input);
   if (['changeacademiccumulativestatus', 'changecumulativeresultstatus'].includes(action)) return changeAcademicCumulativeStatus(env, user, input);

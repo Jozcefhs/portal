@@ -126,6 +126,7 @@ function isPassportPhotoRead(route, method) {
 // is not enough: some document previews save files, and reset/export preparation
 // needs its own audit evidence. Keep unknown actions and every failed attempt.
 const ACADEMIC_PREVIEW_ACTIONS = Object.freeze([
+  'getAcademicAuditLog',
   'previewAcademicTimetableGeneration', 'previewAcademicTimetableCopy', 'previewTimetableCopy',
   'previewAcademicScoreImport', 'previewScoreSheetImport', 'previewAcademicTermResultWithdrawal',
   'previewTermResultWithdrawal', 'previewAcademicCbtRoster', 'previewAcademicCbtRosterAdditions',

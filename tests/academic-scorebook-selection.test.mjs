@@ -22,7 +22,7 @@ function harness() {
     academicManagementData: data,
     academicScorebookDraft: { armId: 'a', subjectId: 'math', teacherUsername: 'math.teacher', importPreview: { old: true } },
     academicManagementFilters: { section: 'secondary', sessionId: 'session', termId: 'term' },
-    activeSection: 'academics', academicManagementView: 'scorebook',
+    activeSection: 'academics', academicManagementView: 'scorebook', academicManagementTaskViews: { scorebook: 'entry' },
     clean: value => String(value ?? '').trim(),
     academicFind: (rows, id) => rows.find(row => [row.ArmId, row.SubjectId].includes(id)),
     academicCurrentRows: value => value, academicIsActive: row => row.Status !== 'Inactive',

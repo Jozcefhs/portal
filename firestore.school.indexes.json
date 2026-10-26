@@ -1,6 +1,30 @@
 {
   "indexes": [
     {
+      "collectionGroup": "executiveCorrespondence", "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath":"OfficeKey","order":"ASCENDING"},
+        {"fieldPath":"BranchId","order":"ASCENDING"},
+        {"fieldPath":"UpdatedAt","order":"DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "executiveCorrespondenceTemplates", "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath":"OfficeKey","order":"ASCENDING"},
+        {"fieldPath":"BranchId","order":"ASCENDING"},
+        {"fieldPath":"UpdatedAt","order":"DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "academicManagementAudit",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "BranchId", "order": "ASCENDING" },
+        { "fieldPath": "Timestamp", "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "procurementRequests",
       "queryScope": "COLLECTION",
       "fields": [
@@ -202,6 +226,69 @@
         { "fieldPath": "SessionId", "order": "ASCENDING" },
         { "fieldPath": "TermId", "order": "ASCENDING" },
         { "fieldPath": "ClassId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "academicStudentMemberships",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "BranchId", "order": "ASCENDING" },
+        { "fieldPath": "SessionId", "order": "ASCENDING" },
+        { "fieldPath": "TermId", "order": "ASCENDING" },
+        { "fieldPath": "StudentRef", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "academicStudentAttendance",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "BranchId", "order": "ASCENDING" },
+        { "fieldPath": "SessionId", "order": "ASCENDING" },
+        { "fieldPath": "TermId", "order": "ASCENDING" },
+        { "fieldPath": "ClassId", "order": "ASCENDING" },
+        { "fieldPath": "ArmId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "academicStudentMemberships",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "BranchId", "order": "ASCENDING" },
+        { "fieldPath": "SessionId", "order": "ASCENDING" },
+        { "fieldPath": "TermId", "order": "ASCENDING" },
+        { "fieldPath": "ClassId", "order": "ASCENDING" },
+        { "fieldPath": "ArmId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "academicScoreSheets",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "BranchId", "order": "ASCENDING" },
+        { "fieldPath": "SessionId", "order": "ASCENDING" },
+        { "fieldPath": "TermId", "order": "ASCENDING" },
+        { "fieldPath": "ClassId", "order": "ASCENDING" },
+        { "fieldPath": "ArmId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "academicResults",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "BranchId", "order": "ASCENDING" },
+        { "fieldPath": "SessionId", "order": "ASCENDING" },
+        { "fieldPath": "TermId", "order": "ASCENDING" },
+        { "fieldPath": "ClassId", "order": "ASCENDING" },
+        { "fieldPath": "ArmId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "academicSchoolCalendars",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "BranchId", "order": "ASCENDING" },
+        { "fieldPath": "SessionId", "order": "ASCENDING" },
+        { "fieldPath": "TermId", "order": "ASCENDING" }
       ]
     },
     {

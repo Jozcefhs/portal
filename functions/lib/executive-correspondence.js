@@ -4,6 +4,7 @@ import {
   deleteDocument,
   getDocument,
   listCollection,
+  queryCollection,
   upsertDocument
 } from './firestore.js';
 import { CHURCH_COLLECTIONS, churchCollectionPath } from './church-foundation.js';
@@ -39,6 +40,16 @@ const SNAPSHOT_COLLECTION = 'executiveCorrespondenceSnapshots';
 const TRANSITION_COLLECTION = 'executiveCorrespondenceTransitions';
 const AUDIT_COLLECTION = 'executiveCorrespondenceAudit';
 const PREFERENCE_COLLECTION = 'executiveMetricPreferences';
+const INTERNATIONAL_OFFICE = 'international-studies';
+const internationalOfficer = user => canonicalExecutiveRole(user.role || user.Role) === 'International Studies Officer';
+
+function validateOfficeContent(kind, recipientType, officeKey) {
+  if (officeKey !== INTERNATIONAL_OFFICE) return;
+  if (kind === 'transfer-certificate') throw inputError('Transfer certificates require the head of school office.', 403);
+  if (recipientType && !['student', 'class', 'custom'].includes(recipientType)) {
+    throw inputError('This office can correspond with students, parents and external recipients.', 403);
+  }
+}
 
 export const EXECUTIVE_CORRESPONDENCE_KINDS = Object.freeze([
   Object.freeze({ id: 'official-letter', label: 'Official letter', editions: ['school', 'faith', 'church', 'organization'] }),
@@ -58,11 +69,24 @@ export const EXECUTIVE_TEMPLATE_TOKENS = Object.freeze([
 
 const TOKEN_SET = new Set(EXECUTIVE_TEMPLATE_TOKENS);
 const EXECUTIVE_ROLES = new Set([
+  'International Studies Officer',
   'Principal', 'Vice Principal Academics', 'Vice Principal Administration',
   'Head Teacher', 'Assistant Head Teacher', 'Senior Pastor'
 ]);
 
 const BUILT_IN_TEMPLATES = Object.freeze([
+  Object.freeze({
+    TemplateId: 'builtin-international-recommendation', Name: 'International study recommendation', Kind: 'recommendation',
+    SubjectTemplate: 'Study recommendation — {{STUDENT_NAME}}',
+    BodyTemplate: 'To whom it may concern,\n\nRe: {{STUDENT_NAME}}, {{CLASS}}, {{ORGANISATION_NAME}}.\n\n[Describe the programme, verified academic strengths and reasons for the recommendation.]\n\n[Include application requirements and contact details for follow-up.]',
+    Editions: ['school']
+  }),
+  Object.freeze({
+    TemplateId: 'builtin-study-parent-letter', Name: 'International studies — parent correspondence', Kind: 'official-letter',
+    SubjectTemplate: 'International studies information — {{STUDENT_NAME}}',
+    BodyTemplate: 'Dear Parent/Guardian of {{STUDENT_NAME}},\n\n[Explain the study opportunity, requirements, important dates and next steps.]\n\n[Include the office contact details and any consent or documents required.]',
+    Editions: ['school']
+  }),
   Object.freeze({
     TemplateId: 'builtin-official-letter',
     Name: 'Official letter',
@@ -105,6 +129,7 @@ function inputError(message, status = 400) {
 
 export function canonicalExecutiveRole(value) {
   const role = lower(value);
+  if (role === 'international studies officer') return 'International Studies Officer';
   if (role === 'principal') return 'Principal';
   if (role === 'vice principal academics') return 'Vice Principal Academics';
   if (role === 'vice principal administration') return 'Vice Principal Administration';
@@ -130,7 +155,7 @@ export function executiveOfficeCapabilities(user = {}, editionValue = '') {
     role,
     edition,
     canSearchStudents: enabled && school,
-    canSearchStaff: enabled,
+    canSearchStaff: enabled && !internationalOfficer(user),
     canSearchClasses: enabled && school,
     canSearchMembers: enabled && !school,
     canSearchDepartments: enabled && !school,
@@ -150,7 +175,7 @@ function assertExecutiveAccess(user, edition) {
   return capabilities;
 }
 
-function requestedScope(user = {}, body = {}, edition = 'school') {
+export function requestedExecutiveScope(user = {}, body = {}, edition = 'school') {
   const assignedBranch = lower(user.branchId || user.BranchId);
   const requestedBranch = lower(body.branchId || body.BranchId);
   if (assignedBranch && requestedBranch && assignedBranch !== requestedBranch) {
@@ -168,10 +193,11 @@ function requestedScope(user = {}, body = {}, edition = 'school') {
       ? assignedSection
       : (['primary', 'secondary'].includes(requestedSection) ? requestedSection : 'all');
   }
-  return { edition, branchId, schoolSection };
+  return { edition, branchId, schoolSection, ...(internationalOfficer(user) ? {officeKey: INTERNATIONAL_OFFICE} : {}) };
 }
 
 function rowInScope(row, scope) {
+  if (scope.officeKey && row.OfficeKey !== scope.officeKey) return false;
   if (lower(row.Edition || row.OrganisationEdition) !== scope.edition) return false;
   if (lower(row.BranchId || 'main') !== scope.branchId) return false;
   if (scope.edition !== 'school' || scope.schoolSection === 'all') return true;
@@ -348,6 +374,7 @@ export function normalizeCorrespondenceDraft(input = {}, context = {}) {
     departments: 'department'
   })[recipientTypeInput] || recipientTypeInput;
   const recipientId = boundText(input.RecipientId ?? input.recipientId ?? existing.RecipientId, 200);
+  validateOfficeContent(kind, recipientType, context.officeKey);
   const recipientName = boundText(input.RecipientName ?? input.recipientName ?? existing.RecipientName, 240);
   if (!recipientName) throw inputError('A recipient name is required.');
   if (kind === 'transfer-certificate' && (recipientType !== 'student' || !recipientId)) {
@@ -355,6 +382,7 @@ export function normalizeCorrespondenceDraft(input = {}, context = {}) {
   }
   return {
     CorrespondenceId: id,
+    OfficeKey: clean(context.officeKey || existing.OfficeKey),
     Edition: edition,
     BranchId: clean(context.branchId || existing.BranchId || 'main'),
     SchoolSection: edition === 'school' ? clean(context.schoolSection || existing.SchoolSection || 'all') : '',
@@ -392,6 +420,7 @@ export function normalizeTemplate(input, context) {
   const name = boundText(input.Name || input.name || input.TemplateName || input.templateName || existing.Name, 160);
   if (!name) throw inputError('A template name is required.');
   const kind = normalizeKind(input.Kind || input.kind || existing.Kind, context.edition);
+  validateOfficeContent(kind, '', context.officeKey);
   const subjectTemplate = validateTemplateText(
     input.SubjectTemplate ?? input.subjectTemplate ?? input.Subject ?? input.subject ?? existing.SubjectTemplate,
     'Template subject',
@@ -406,6 +435,7 @@ export function normalizeTemplate(input, context) {
   const now = nowIso();
   return {
     TemplateId: id,
+    OfficeKey: clean(context.officeKey || existing.OfficeKey),
     Edition: context.edition,
     BranchId: context.branchId,
     SchoolSection: context.schoolSection,
@@ -434,17 +464,21 @@ export function validateTemplateWriteTarget(requestedIdValue, existing, scope) {
   return existing;
 }
 
-function builtInTemplates(edition) {
+function builtInTemplates(edition, officeKey = '') {
   return BUILT_IN_TEMPLATES
-    .filter((item) => item.Editions.includes(edition))
+    .filter((item) => item.Editions.includes(edition) && !(officeKey === INTERNATIONAL_OFFICE && item.Kind === 'transfer-certificate'))
     .map((item) => publicTemplate({ ...item, BuiltIn: true }));
 }
 
-function availableKinds(edition) {
-  return EXECUTIVE_CORRESPONDENCE_KINDS.filter((item) => item.editions.includes(edition));
+function availableKinds(edition, officeKey = '') {
+  return EXECUTIVE_CORRESPONDENCE_KINDS.filter((item) => item.editions.includes(edition) && !(officeKey === INTERNATIONAL_OFFICE && item.id === 'transfer-certificate'));
 }
 
-function metricDefinitions(edition) {
+function metricDefinitions(edition, officeKey = '') {
+  if (officeKey === INTERNATIONAL_OFFICE) return [
+    {id:'issuedCorrespondence',label:'Issued letters on loaded page',format:'number'},
+    {id:'correspondenceByStatus',label:'Loaded correspondence by status',format:'bar'}
+  ];
   if (edition === 'school') {
     return [
       { id: 'studentTotal', label: 'Students', format: 'number' },
@@ -474,11 +508,12 @@ function metricDefinitions(edition) {
   ];
 }
 
-export function normalizeExecutiveMetricPreferences(input, edition = 'school') {
-  const allowed = new Set(metricDefinitions(edition).map((item) => item.id));
+export function normalizeExecutiveMetricPreferences(input, edition = 'school', officeKey = '') {
+  const allowed = new Set(metricDefinitions(edition, officeKey).map((item) => item.id));
   const supplied = Array.isArray(input) ? input : [];
   const selected = [...new Set(supplied.map(clean).filter((item) => allowed.has(item)))].slice(0, 8);
   if (selected.length) return selected;
+  if (officeKey === INTERNATIONAL_OFFICE) return ['issuedCorrespondence'];
   return edition === 'school'
     ? ['studentTotal', 'staffTotal', 'classTotal', 'issuedCorrespondence']
     : ['memberTotal', 'departmentTotal', 'staffTotal', 'issuedCorrespondence'];
@@ -574,13 +609,13 @@ async function loadIdentity(env, requestOrigin = '', branchId = '') {
 }
 
 async function loadCustomTemplates(env, scope) {
-  return (await listCollection(env, TEMPLATE_COLLECTION))
+  return (await loadOfficeRows(env, TEMPLATE_COLLECTION, scope))
     .filter((row) => rowInScope(row, scope))
     .sort((a, b) => clean(b.UpdatedAt).localeCompare(clean(a.UpdatedAt)));
 }
 
 async function loadScopedCorrespondence(env, scope) {
-  return (await listCollection(env, CORRESPONDENCE_COLLECTION))
+  return (await loadOfficeRows(env, CORRESPONDENCE_COLLECTION, scope))
     .filter((row) => rowInScope(row, scope))
     .sort((a, b) => clean(b.UpdatedAt || b.CreatedAt).localeCompare(clean(a.UpdatedAt || a.CreatedAt)));
 }
@@ -594,13 +629,23 @@ function preferenceId(user, scope) {
   ].join('__'));
 }
 
+async function loadOfficeRows(env, collection, scope) {
+  if (!scope.officeKey) return listCollection(env, collection);
+  // The new office never scans another office's correspondence or loads a
+  // school-wide directory just to display its landing page.
+  return queryCollection(env, collection, {filters:[
+    {field:'OfficeKey',op:'==',value:scope.officeKey},
+    {field:'BranchId',op:'==',value:scope.branchId}
+  ], orderBy:[{field:'UpdatedAt',direction:'DESCENDING'}], limit:150});
+}
+
 async function loadMetricPreferences(env, user, scope) {
   const row = await getDocument(env, PREFERENCE_COLLECTION, preferenceId(user, scope)).catch(() => null);
-  return normalizeExecutiveMetricPreferences(row?.MetricIds, scope.edition);
+  return normalizeExecutiveMetricPreferences(row?.MetricIds, scope.edition, scope.officeKey);
 }
 
 async function saveMetricPreferences(env, user, scope, input) {
-  const metricIds = normalizeExecutiveMetricPreferences(input, scope.edition);
+  const metricIds = normalizeExecutiveMetricPreferences(input, scope.edition, scope.officeKey);
   await upsertDocument(env, PREFERENCE_COLLECTION, preferenceId(user, scope), {
     Username: clean(user.username || user.Username),
     Edition: scope.edition,
@@ -651,7 +696,7 @@ async function metricData(env, scope, selectedIds, correspondenceRows = null, us
     ]);
     [members, departments, assignments, attendance, registrations] = loads;
   }
-  const definitions = new Map(metricDefinitions(scope.edition).map((item) => [item.id, item]));
+  const definitions = new Map(metricDefinitions(scope.edition, scope.officeKey).map((item) => [item.id, item]));
   const results = [];
   selectedIds.forEach((id) => {
     const definition = definitions.get(id);
@@ -809,13 +854,7 @@ async function authoritativeRecipientTokens(env, correspondence, scope, user = {
   const type = lower(correspondence.RecipientType);
   const id = lower(correspondence.RecipientId);
   if (!id || !['student', 'staff', 'member', 'department', 'class'].includes(type)) return {};
-  const capabilities = {
-    canSearchStudents: scope.edition === 'school',
-    canSearchStaff: true,
-    canSearchClasses: scope.edition === 'school',
-    canSearchMembers: scope.edition !== 'school',
-    canSearchDepartments: scope.edition !== 'school'
-  };
+  const capabilities = executiveOfficeCapabilities(user, scope.edition);
   const rows = (await searchDirectory(env, { query: correspondence.RecipientId, type }, capabilities, scope, user)).results;
   const exact = rows.find((row) => lower(row.id) === id);
   if (!exact) throw inputError('The linked recipient is no longer available in this branch or section.', 404);
@@ -832,6 +871,7 @@ async function authoritativeRecipientTokens(env, correspondence, scope, user = {
 async function loadCorrespondence(env, id, scope) {
   const row = await getDocument(env, CORRESPONDENCE_COLLECTION, safeId(id)).catch(() => null);
   if (!row || !rowInScope(row, scope)) throw inputError('The selected correspondence was not found in your permitted scope.', 404);
+  validateOfficeContent(row.Kind, row.RecipientType, scope.officeKey);
   return row;
 }
 
@@ -1202,6 +1242,7 @@ async function saveDraft(env, user, body, scope) {
   }
   const draft = normalizeCorrespondenceDraft(body, {
     existing,
+    officeKey: scope.officeKey,
     edition: scope.edition,
     branchId: scope.branchId,
     schoolSection: scope.schoolSection,
@@ -1538,7 +1579,7 @@ async function bootstrap(env, user, scope, capabilities, identity) {
   const [customTemplates, correspondence, classes, metricIds, approvalProfile, signatory] = await Promise.all([
     loadCustomTemplates(env, scope),
     loadScopedCorrespondence(env, scope),
-    scope.edition === 'school' ? listCollection(env, 'settings/academics/classes') : [],
+    scope.edition === 'school' && !scope.officeKey ? listCollection(env, 'settings/academics/classes') : [],
     loadMetricPreferences(env, user, scope),
     loadStaffApprovalProfile(env, user.username).catch(() => null),
     loadStaffPosition(env, user)
@@ -1558,10 +1599,10 @@ async function bootstrap(env, user, scope, capabilities, identity) {
       Phone: identity.Phone,
       HasLogo: Boolean(identity.LogoDataUrl || identity.LogoUrl)
     },
-    kinds: availableKinds(scope.edition),
+    kinds: availableKinds(scope.edition, scope.officeKey),
     availableTypes,
     tokens: EXECUTIVE_TEMPLATE_TOKENS,
-    templates: [...builtInTemplates(scope.edition), ...customTemplates.map(publicTemplate)],
+    templates: [...builtInTemplates(scope.edition, scope.officeKey), ...customTemplates.map(publicTemplate)],
     correspondence: correspondence.slice(0, 150).map((row) => publicCorrespondence(row, true)),
     classes: classes.filter((row) => active(row.Active)).map((row) => ({
       id: clean(row.__id || row.ClassName),
@@ -1571,14 +1612,14 @@ async function bootstrap(env, user, scope, capabilities, identity) {
     approvalProfile: publicStaffApprovalProfile(approvalProfile || {}),
     signatory,
     metricPreferences: metricIds,
-    availableMetrics: metricDefinitions(scope.edition),
+    availableMetrics: metricDefinitions(scope.edition, scope.officeKey),
     metrics: await metricData(env, scope, metricIds, correspondence, user)
   };
 }
 
 export async function handleExecutiveOfficeAction(env, user, body = {}, options = {}) {
   const deploymentEdition = requiredDeploymentIdentity(env).edition;
-  const scope = requestedScope(user, body, deploymentEdition);
+  const scope = requestedExecutiveScope(user, body, deploymentEdition);
   const identity = await loadIdentity(env, options.publicOrigin, scope.branchId);
   if (identity.FeatureFlags?.executiveOffice === false) {
     throw inputError('The Executive Office feature is disabled for this subscription.', 403);
@@ -1603,7 +1644,7 @@ export async function handleExecutiveOfficeAction(env, user, body = {}, options 
     return {
       ok: true,
       message: 'Executive correspondence loaded.',
-      templates: [...builtInTemplates(scope.edition), ...templates.map(publicTemplate)],
+      templates: [...builtInTemplates(scope.edition, scope.officeKey), ...templates.map(publicTemplate)],
       correspondence: correspondence.slice(0, 150).map((row) => publicCorrespondence(row, true))
     };
   }
@@ -1615,6 +1656,7 @@ export async function handleExecutiveOfficeAction(env, user, body = {}, options 
     // Preview is never issuance: ignore caller-supplied record identity and use
     // the same scoped recipient/branding renderer without saving a draft.
     const draft = normalizeCorrespondenceDraft({ ...body, CorrespondenceId: 'Preview', correspondenceId: 'Preview' }, {
+      officeKey: scope.officeKey,
       edition: scope.edition, branchId: scope.branchId, schoolSection: scope.schoolSection,
       actor: clean(user.displayName || user.username), username: clean(user.username)
     });
@@ -1636,6 +1678,7 @@ export async function handleExecutiveOfficeAction(env, user, body = {}, options 
     }
     existing = validateTemplateWriteTarget(requestedId, existing, scope);
     const template = normalizeTemplate(body, {
+      officeKey: scope.officeKey,
       existing, edition: scope.edition, branchId: scope.branchId,
       schoolSection: scope.schoolSection, actor: clean(user.displayName || user.username)
     });
@@ -1692,7 +1735,7 @@ export async function handleExecutiveOfficeAction(env, user, body = {}, options 
       ok: true,
       message: 'Executive dashboard preferences saved.',
       metricPreferences: metricIds,
-      availableMetrics: metricDefinitions(scope.edition),
+      availableMetrics: metricDefinitions(scope.edition, scope.officeKey),
       metrics: await metricData(env, scope, metricIds, null, user)
     };
   }

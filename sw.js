@@ -1,6 +1,7 @@
-const CACHE = 'dynamax-v481-uploaded-remote-tests';
-const SHELL = ['/', '/index.html', '/school.html', '/admin.html', '/setup.html', '/activate-account.html', '/onboarding-status.html', '/parent-dashboard.html', '/payments.html', '/buy-form.html', '/register-organization.html', '/subscription-payment.html', '/plan-management.html', '/give.html', '/store.html', '/hotel-booking.html', '/verify-result.html', '/verify-transcript.html', '/css/style.css', '/css/school-landing.css', '/css/guest-fee-payment.css', '/css/notifications.css', '/css/payment-methods.css', '/css/store.css', '/css/store-compact.css', '/css/hotel-booking.css', '/js/preferences.js', '/js/action-feedback.js', '/js/app-dialogs.js', '/js/activate-account.js', '/js/onboarding-status.js', '/js/financial-values.js', '/js/launcher.js', '/js/site-config.js', '/js/list-sorting.js', '/js/academic-results-analysis.js', '/js/admin.js', '/js/student-face-lookup.js', '/js/setup.js', '/js/paystack-connection-status.js', '/js/tutorial-module-catalogue.js', '/js/payment-methods.js', '/js/buy-form.js', '/js/give.js', '/js/payments.js', '/js/store.js', '/js/hotel-booking.js', '/js/notifications.js', '/js/web-push.js', '/js/parent-dashboard.js', '/js/verify-result.js', '/js/verify-transcript.js', '/js/register-organization.js', '/js/subscription-payment.js', '/js/plan-management.js', '/images/Logo.png'];
+const CACHE = 'dynamax-v489-batch-results';
+const SHELL = ['/', '/index.html', '/school.html', '/admin.html', '/setup.html', '/activate-account.html', '/onboarding-status.html', '/parent-dashboard.html', '/payments.html', '/buy-form.html', '/register-organization.html', '/subscription-payment.html', '/plan-management.html', '/give.html', '/store.html', '/hotel-booking.html', '/verify-result.html', '/verify-transcript.html', '/css/style.css', '/css/module-audit.css', '/css/academic-result-preview.css', '/css/school-landing.css', '/css/guest-fee-payment.css', '/css/notifications.css', '/css/payment-methods.css', '/css/store.css', '/css/store-compact.css', '/css/hotel-booking.css', '/js/preferences.js', '/js/action-feedback.js', '/js/app-dialogs.js', '/js/activate-account.js', '/js/onboarding-status.js', '/js/financial-values.js', '/js/launcher.js', '/js/site-config.js', '/js/list-sorting.js', '/js/academic-results-analysis.js', '/js/admin.js', '/js/student-face-lookup.js', '/js/setup.js', '/js/paystack-connection-status.js', '/js/tutorial-module-catalogue.js', '/js/payment-methods.js', '/js/buy-form.js', '/js/give.js', '/js/payments.js', '/js/store.js', '/js/hotel-booking.js', '/js/notifications.js', '/js/web-push.js', '/js/parent-dashboard.js', '/js/verify-result.js', '/js/verify-transcript.js', '/js/register-organization.js', '/js/subscription-payment.js', '/js/plan-management.js', '/images/Logo.png'];
 
+SHELL.push('/js/academic-result-template.js', '/css/parent-academic-results.css');
 SHELL.push('/js/spoken-notifications.js', '/js/display-time.js');
 SHELL.push('/js/staff-action-feedback.js', '/js/history-date-range.js');
 SHELL.push('/js/admission-cycles.js', '/css/admission-cycles.css');
@@ -28,6 +29,9 @@ SHELL.push('/js/manual-payments.js');
 SHELL.push('/js/academic-diary.js', '/js/academic-attendance-print.js', '/js/academic-cbt-rejection-review.js');
 SHELL.push('/css/academic-class-score-register.css');
 SHELL.push('/js/staff-idle-session.js', '/js/staff-workspace-cache.js');
+SHELL.push('/js/web-release.js', '/css/web-release.css');
+SHELL.push('/js/academic-audit-log.js', '/js/academic-component-review.js', '/css/academic-test-review.css');
+SHELL.push('/js/academic-result-batch.js');
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -43,6 +47,8 @@ self.addEventListener('activate', (event) => {
     caches.keys()
       .then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key))))
       .then(() => self.clients.claim())
+      .then(() => self.clients.matchAll({ type: 'window', includeUncontrolled: true }))
+      .then((clients) => clients.forEach((client) => client.postMessage({ type: 'dynamax:web-release', release: CACHE })))
   );
 });
 
@@ -69,7 +75,9 @@ self.addEventListener('fetch', (event) => {
   event.waitUntil(cacheUpdate);
   event.respondWith(
     networkResponse.catch(async () => {
-      const cached = await caches.match(event.request, { ignoreSearch: true });
+      // A versioned script or stylesheet must never silently fall back to another release.
+      const versionedAsset = /^\/(?:js|css)\//.test(url.pathname) && url.searchParams.has('v');
+      const cached = await caches.match(event.request, { ignoreSearch: !versionedAsset });
       if (cached) return cached;
       if (event.request.mode === 'navigate') {
         const shell = await caches.match('/index.html');
