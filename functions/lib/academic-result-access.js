@@ -25,7 +25,9 @@ function periodsMatch(result = {}, currentPeriod = {}, dimension = 'session') {
 }
 
 export function academicResultIsPublished(result = {}) {
-  return ['published', 'locked'].includes(lower(result.PublicationStatus || result.Status));
+  const statuses = [result.Status, result.PublicationStatus].map(lower).filter(Boolean);
+  return statuses.length > 0 && statuses.every(status => ['published', 'locked'].includes(status))
+    && result.CalculationPending !== true && result.SubjectChangeRecalculationRequired !== true;
 }
 
 export function academicResultClearanceIsActive(clearance = {}, now = new Date()) {

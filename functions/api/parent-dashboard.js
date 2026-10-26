@@ -52,6 +52,7 @@ import { loadAcademicPolicyView } from '../lib/academic-policy-store.js';
 import {
   academicFinancialSummary,
   academicFullScholarshipFinancialSummary,
+  academicResultClearanceIsActive,
   evaluateAcademicResultAccess,
   publicAcademicResult
 } from '../lib/academic-result-access.js';
@@ -1004,6 +1005,7 @@ function normalizeLedger(row) {
     FeeName: pick(row, ['FeeName', 'feeName']),
     EntryType: pick(row, ['EntryType', 'entryType']),
     FeeCategory: pick(row, ['FeeCategory', 'feeCategory']),
+    FeeCategoryId: pick(row, ['FeeCategoryId', 'feeCategoryId', 'CategoryId', 'categoryId']),
     Description: pick(row, ['Description', 'description']),
     AcademicSession: pick(row, ['AcademicSession', 'academicSession']),
     Term: pick(row, ['Term', 'term']),
@@ -1028,6 +1030,7 @@ function normalizeInvoice(row) {
     FeeCode: pick(row, ['FeeCode', 'feeCode']),
     FeeName: pick(row, ['FeeName', 'feeName']),
     FeeCategory: pick(row, ['FeeCategory', 'feeCategory']),
+    FeeCategoryId: pick(row, ['FeeCategoryId', 'feeCategoryId', 'CategoryId', 'categoryId']),
     AcademicSession: pick(row, ['AcademicSession', 'academicSession']),
     Term: pick(row, ['Term', 'term']),
     Debit: asMoneyNumber(pick(row, ['Debit', 'debit', 'Amount', 'amount'])),
@@ -1313,12 +1316,16 @@ function academicClearanceForResult(clearances = [], result = {}) {
   const resultId = academicResultId(result);
   const period = academicResultPeriod(result);
   return (clearances || []).find((row) => {
+    if (!academicResultClearanceIsActive(row)) return false;
     const scopedResultId = clean(row.ResultId);
     if (scopedResultId && lower(scopedResultId) !== lower(resultId)) return false;
-    const clearanceSession = clean(row.AcademicSession || row.SessionName || row.SessionId);
-    const clearanceTerm = clean(row.Term || row.TermName || row.TermId);
-    return (!clearanceSession || sameText(clearanceSession, period.Session)) &&
-      (!clearanceTerm || sameText(clearanceTerm, period.Term));
+    const matchesPeriod = (idField, nameFields, resultName) => {
+      if (clean(row[idField]) && clean(result[idField])) return sameText(row[idField], result[idField]);
+      const label = clean(nameFields.map(field => row[field]).find(clean) || row[idField]);
+      return !label || sameText(label, resultName) || sameText(label, result[idField]);
+    };
+    return matchesPeriod('SessionId', ['AcademicSession','SessionName'], period.Session)
+      && matchesPeriod('TermId', ['Term','TermName'], period.Term);
   }) || null;
 }
 
@@ -1389,6 +1396,9 @@ async function parentAcademicResults(env, {
   ).sort((left, right) => clean(right.PublishedAt || right.UpdatedAt).localeCompare(clean(left.PublishedAt || left.UpdatedAt)));
   const financialSummary = academicFinancialSummary(invoices, ledger);
   const output = [];
+  // Reuse a policy within this request only. A new view or print must recheck
+  // the active assignment, so a changed policy takes effect immediately.
+  const policyViews = new Map();
   for (const result of rows) {
     const scholarshipFees = parentAcademicScholarshipFees(child, result, feeItems);
     const period = academicResultPeriod(result);
@@ -1399,7 +1409,9 @@ async function parentAcademicResults(env, {
     });
     let view = null;
     try {
-      view = await loadAcademicPolicyView(env, { scope: chain.at(-1), scopeChain: chain, period });
+      const key = JSON.stringify([chain, period]);
+      if (!policyViews.has(key)) policyViews.set(key, loadAcademicPolicyView(env, { scope: chain.at(-1), scopeChain: chain, period }));
+      view = await policyViews.get(key);
     } catch (_error) {
       view = null;
     }
@@ -1413,8 +1425,10 @@ async function parentAcademicResults(env, {
       currentPeriod: {
         CurrentAcademicSession: schoolProfile.CurrentAcademicSession,
         CurrentTerm: schoolProfile.CurrentTerm,
-        SessionId: schoolProfile.CurrentAcademicSessionId,
-        TermId: schoolProfile.CurrentTermId
+        // Branch operating periods override organisation labels; inherited IDs
+        // must not accidentally allow the organisation's previous period too.
+        SessionId: (schoolProfile.BranchOverrideFields || []).includes('CurrentAcademicSession') ? '' : schoolProfile.CurrentAcademicSessionId,
+        TermId: (schoolProfile.BranchOverrideFields || []).includes('CurrentTerm') ? '' : schoolProfile.CurrentTermId
       },
       finance: {
         ...accountSummary,
@@ -2016,7 +2030,8 @@ async function getChildActivity(env, body, options = {}) {
     throw err;
   }
   const selectedRow = await getSelectedIdentityRow(env, collection, accountRef, requestedScopeValue);
-  const schoolProfile = await getSchoolProfile(env);
+  const profileBranch = scopedPathIdentity(requestedScopePath)?.branchId || scopedRecordBranch(selectedRow || {});
+  let schoolProfile = await getSchoolProfile(env, profileBranch);
   let child = null;
   let applications = [];
   if (selectedRow && collection === 'students') {
@@ -2072,6 +2087,7 @@ async function getChildActivity(env, body, options = {}) {
   }
   child.BranchId = selectedScope.branchId;
   child.SchoolSection = selectedScope.schoolSection;
+  if (profileBranch !== selectedScope.branchId) schoolProfile = await getSchoolProfile(env, selectedScope.branchId);
   const keys = accountKeys(child);
   const [ledgerRows, invoiceRows, paymentRows, clinicRows, summaryRows, linkedApplication, storeItems, storeOrderRows, academicResultRows, academicClearanceRows, academicMembershipRows, academicAttendanceRows, timetableVersionRows, timetableEntryRows, academicSubjectRows, schoolCalendarRows, academicTermRows, libraryLoanRows, scholarshipFeeItems, transferRows] = await Promise.all([
     queryParentFinancialRows(env, 'ledger', keys),
@@ -2211,6 +2227,8 @@ async function getChildActivity(env, body, options = {}) {
   return {
     ok: true,
     accountRef: child.AccountRef,
+    branchId: selectedScope.branchId,
+    schoolSection: selectedScope.schoolSection,
     walletActivity: walletEntries,
     walletBalance: walletBalance(walletEntries),
     accountSummary,
@@ -2261,7 +2279,7 @@ async function getAcademicResultForPrint(env, body) {
     error.status = 403;
     throw error;
   }
-  const reportProfile = await getSchoolProfile(env, clean(result.BranchId || body.BranchId));
+  const reportProfile = await getSchoolProfile(env, activity.branchId);
   return {
     ok: true,
     academicResult: result,
