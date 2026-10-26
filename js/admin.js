@@ -16958,7 +16958,8 @@ async function academicManagementRequest(action, payload = {}, requestOptions = 
     const { openSurchargeCheckout } = await import('./academic-submissions.js');
     const paid = await openSurchargeCheckout({ request: academicManagementRequest, submission: data.submission });
     if (/diary/i.test(action)) return academicManagementRequest('getAcademicDiary', payload);
-    data = { ...paid, refreshAcademicManagement: true };
+    const individualTest = normalizedAction === 'changeacademicscoresheetstatus' && clean(payload.ComponentId);
+    data = { ...paid, refreshAcademicManagement: !individualTest, ...(individualTest ? {partialAcademicManagement:true} : {}) };
   }
   if (!data.ok) {
     const error = new Error(data.message || 'Academic Management could not complete this request.');

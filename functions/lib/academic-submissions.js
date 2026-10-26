@@ -99,13 +99,18 @@ export async function commitAcademicSubmission(env, context, user, input, type, 
   // a timeout. Audit/history UUIDs are excluded from the stable reservation key.
   const targets = writes.filter(w => !/audit|history/i.test(w.collectionPath))
     .sort((a, b) => `${a.collectionPath}/${a.documentId}`.localeCompare(`${b.collectionPath}/${b.documentId}`));
-  const reference = `ACS-${await submissionHash([clean(env.FIREBASE_PROJECT_ID), scope, actor(user), type, selectorFields.map(key => clean(input[key])), targets.map(w => [w.collectionPath, w.documentId, w.updateTime || 'new'])])}`;
+  const reservationKey = [clean(env.FIREBASE_PROJECT_ID), scope, actor(user), type, selectorFields.map(key => clean(input[key])), targets.map(w => [w.collectionPath, w.documentId, w.updateTime || 'new'])];
+  const componentId = type === 'scorebook' ? clean(input.ComponentId) : '';
+  // Different tests on the same saved sheet must not resume each other's
+  // checkout. Keep the existing key unchanged for full-sheet submissions.
+  if (componentId) reservationKey.push({ComponentId:componentId});
+  const reference = `ACS-${await submissionHash(reservationKey)}`;
   let pending = await io.getDocument(env, SUBMISSION_COLLECTIONS.pending, reference);
   if (!pending) {
     pending = { ...scope, EnvironmentId: clean(env.FIREBASE_PROJECT_ID), ScopeKey: id, ActorScopeKey: `${id}:${actor(user)}`, Reference: reference, Actor: actor(user), RecordType: type,
       Description: SUBMISSION_TYPES[type], AmountKobo: rule.AmountKobo, Currency: 'NGN', Deadline: rule.Deadline,
       Rule: rule, Status: 'Awaiting payment', CreatedAt: new Date().toISOString(), Writes: writes,
-      Context: Object.fromEntries([...selectorFields, 'ArmId'].map(key => [key, clean(input[key])])) };
+      Context: {...Object.fromEntries([...selectorFields, 'ArmId'].map(key => [key, clean(input[key])])), ...(componentId ? {ComponentId:componentId} : {})} };
     if (new TextEncoder().encode(JSON.stringify(pending)).length > 500000) throw fail('This submission is too large to reserve for payment. No charge was created.', 413);
     try { await io.batchCommitDocuments(env, [{ collectionPath: SUBMISSION_COLLECTIONS.pending, documentId: reference, data: pending, exists: false }]); }
     catch (error) {

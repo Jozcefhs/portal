@@ -150,6 +150,20 @@ test('pending payment cannot submit; verified payment atomically submits exactly
   assert.equal(f.commits.length, after);
   assert.equal([...f.docs.keys()].filter(key => key.startsWith(C.receipts)).length, 1);
 });
+
+test('individual test reservations remain distinct on one sheet revision and retries resume only the same test', async () => {
+  const f=fixture();await f.enable();
+  async function reserve(ComponentId){
+    const writes=[{collectionPath:'academicScoreSheets',documentId:'sheet',exists:false,data:{Status:'Draft',ComponentReviews:{[ComponentId]:{Status:'Submitted'}}}}];
+    try{await commitAcademicSubmission(f.env,context,user,{ComponentId},'scorebook',writes,f.io);assert.fail('Expected surcharge');}
+    catch(error){assert.equal(error.code,'ACADEMIC_SURCHARGE_REQUIRED');return f.io.getDocument(f.env,C.pending,error.submission.Reference);}
+  }
+  const ca1=await reserve('ca1'),exam=await reserve('exam'),retry=await reserve('ca1'),full=await f.reserve();
+  assert.notEqual(ca1.Reference,exam.Reference);assert.notEqual(ca1.Reference,full.Reference);
+  assert.equal(ca1.Reference,retry.Reference);assert.equal(exam.Context.ComponentId,'exam');
+  assert.equal(exam.Writes[0].data.ComponentReviews.exam.Status,'Submitted');
+  assert.equal(f.docs.has('academicScoreSheets/sheet'),false);
+});
 test('amount, reference, currency and live/test mismatches never submit', async () => {
   for (const bad of [{ amount: 1 }, { reference: 'other' }, { currency: 'USD' }, { domain: 'live' }]) {
     const f = fixture(); await f.enable(); const pending = await f.reserve(); f.setPaid(pending, bad);
