@@ -11,9 +11,10 @@
   const range=prefix=>({fromDate:$(prefix+'From').value,toDate:$(prefix+'To').value});
   const date=n=>new Date(n).toLocaleString('en-GB',{timeZone:'Africa/Lagos'});
   window.DynamaxHospitalBilling={create({api,run,can,writable,status,navigate}){
-    let context=null,selected=null,claim=null,plan=null,settings=null,dirty=false;
+    let context=null,selected=null,claim=null,plan=null,settings=null,dirty=false,funds=null;
     const loaded=new Map();let charges=[],payments=[];
     $('billing').innerHTML=`<h2>Billing and HMO</h2><p>Open a patient’s reception visit to add charges or record HMO eligibility. Choose dates before loading financial records.</p>
+      <div id="billFundsHost"></div>
       <form id="billRegister" class="toolbar">${dates('billList')}<label>Register<select id="billRegisterKind"><option value="billingInvoices">Invoices</option><option value="billingCharges">Charges and return credits</option><option value="hmoClaims">HMO claims</option></select></label><button>Load selected period</button><button id="billReload" type="button" class="secondary">Refresh selected period</button></form>
       <div id="billRows" class="table-wrap"></div><button id="billNext" hidden>Next page</button><button id="billPrev" hidden>Previous page</button><p id="billListNote" class="hint">No financial history requested.</p>
       <section id="billVisit" hidden><h3 id="billVisitTitle"></h3><p id="billCoverage"></p><button id="billVisitRefresh" type="button">Refresh billing context</button>
@@ -47,19 +48,20 @@
         <form id="billPlanForm"><div class="form-grid">${input('Code','Plan code','required maxlength="60"')}${input('Insurer','Insurer','required maxlength="160"')}${input('Name','Plan name','required maxlength="160"')}</div><label class="check-line"><input id="billPlanActive" type="checkbox" checked>Active plan</label>
           <div id="billTariffs"></div><button id="billAddTariff" type="button">Add covered service</button><button>Save HMO plan</button>
         </form></details>
-      <details id="billSettings"><summary>Billing account mappings</summary><p>Use existing active chart-of-account codes. Account codes and historical journals are preserved.</p><button id="billLoadSettings" type="button">Load account mappings</button><form id="billSettingsForm"><div class="form-grid">${Object.entries({PatientReceivable:'Patient receivable (Asset)',HmoReceivable:'HMO receivable (Asset)',Revenue:'Hospital income (Revenue)',Cash:'Cash received (Asset)',Bank:'Bank receipts (Asset)'}).map(([k,v])=>input(k,v,'required maxlength="60"')).join('')}</div><button>Save billing accounts</button></form></details>`;
+      <details id="billSettings"><summary>Billing account mappings</summary><p>Use existing active chart-of-account codes. Account codes and historical journals are preserved.</p><button id="billLoadSettings" type="button">Load account mappings</button><form id="billSettingsForm"><div class="form-grid">${Object.entries({PatientReceivable:'Patient receivable (Asset)',HmoReceivable:'HMO receivable (Asset)',Revenue:'Hospital income (Revenue)',Cash:'Cash received (Asset)',Bank:'Bank receipts (Asset)',PatientDeposit:'Patient deposits (Liability, optional)',HmoPrepayment:'HMO advances (Liability, optional)'}).map(([k,v])=>input(k,v,`${['PatientDeposit','HmoPrepayment'].includes(k)?'':'required '}maxlength="60"`)).join('')}</div><button>Save billing accounts</button></form></details>`;
     $('billing').addEventListener('input',e=>{if(e.target.closest('#billServiceForm,#billEligibilityForm,#billPaymentForm,#billClaimForm,#billCreditForm,#billRefundForm,#billAdjustmentForm,#billPlanForm,#billSettingsForm'))dirty=true;});
-    async function confirmLeave(){if(!dirty)return true;return window.DynamaxDialogs.confirm({title:'Unsaved billing changes',message:'Discard these unsaved billing changes and continue?',confirmText:'Discard edits'});}
+    async function confirmLeave(){if(!await funds.confirmLeave())return false;if(!dirty)return true;return window.DynamaxDialogs.confirm({title:'Unsaved billing changes',message:'Discard these unsaved billing changes and continue?',confirmText:'Discard edits'});}
     const submit=(id,fn)=>$(id).onsubmit=e=>{e.preventDefault();run(fn);};
     const confirm=()=>{if(!$('billConfirm').checked)throw Error('Confirm the patient and financial information first.');};
     const scope=()=>({PatientId:context.patient.PatientId,VisitId:context.visit.VisitId});
     const invoiceScope=()=>({InvoiceId:selected.InvoiceId,PatientId:selected.PatientId,Revision:selected.Revision,ConfirmPatient:true});
     function permissions(){
+      funds?.permissions();
       document.querySelector('[data-tab=billing]').hidden=!(can('billing.read')||can('hmo.work'));
       for(const [id,permission] of Object.entries({billService:'billing.write',billIssue:'billing.write',billPayment:'billing.collect',billCredit:'billing.write',billRefundForm:'billing.refund',billAdjustment:'billing.refund',billClaim:'hmo.work',billEligibility:'hmo.work',billPlanEditor:'hmo.work',billSettings:'billing.configure'}))$(id).hidden=!writable(permission);
       $('billRegisterKind').querySelector('[value=hmoClaims]').disabled=!can('hmo.work');
     }
-    function clear(){context=selected=claim=plan=settings=editingPlan=null;listPages=[];listIndex=0;listPayload=listAction=null;charges=[];payments=[];loaded.clear();dirty=false;
+    function clear(){funds?.clear();context=selected=claim=plan=settings=editingPlan=null;listPages=[];listIndex=0;listPayload=listAction=null;charges=[];payments=[];loaded.clear();dirty=false;
       $('billVisit').hidden=$('billInvoice').hidden=true;$('billing').querySelectorAll('form').forEach(f=>f.reset());
       for(const id of ['billRows','billChargeRows','billInvoiceLines','billHistoryRows','billPayments','billTariffs','billPlanFound','billInvoiceTitle','billInvoiceSummary','billClaimState','billCoverage','billVisitTitle','billEstimate','billRefundReceipt','billAdjustmentCharge'])$(id).replaceChildren();
       for(const id of ['billNext','billPrev','billChargeNext','billHistoryNext','billPaymentsNext'])$(id).hidden=true;
@@ -67,7 +69,7 @@
       $('billListNote').textContent='No financial history requested.';
     }
     async function cached(action,payload,force=false){const key=JSON.stringify([action,payload]);if(force)loaded.delete(key);if(!loaded.has(key))loaded.set(key,await api(action,payload));return loaded.get(key);}
-    function invalidate(){loaded.clear();listPages=[];listIndex=0;$('billRows').replaceChildren();$('billNext').hidden=$('billPrev').hidden=true;$('billListNote').textContent='A record changed. Refresh the register for current balances.';}
+    function invalidate(){funds?.invalidate();loaded.clear();listPages=[];listIndex=0;$('billRows').replaceChildren();$('billNext').hidden=$('billPrev').hidden=true;$('billListNote').textContent='A record changed. Refresh the register for current balances.';}
     let listPages=[],listIndex=0,listPayload=null,listAction=null;
     function rowsTable(head,rows){return `<table><thead><tr>${head.map(v=>`<th>${v}</th>`).join('')}</tr></thead><tbody>${rows.join('')||`<tr><td colspan="${head.length}">No records in the selected period.</td></tr>`}</tbody></table>`;}
     async function register(cursor=null,force=false){
@@ -132,10 +134,11 @@
       $('billHistoryRows').innerHTML=rowsTable(['Date (WAT)','Action','Officer','Reference / amount'],data.rows.map(r=>`<tr><td>${esc(date(r.CreatedAt))}</td><td>${esc(r.Action)}</td><td>${esc(r.ActorName)}</td><td>${esc(r.Reference||r.ReceiptNumber||'')} ${r.AmountCents?esc(money(r.AmountCents)):''}</td></tr>`));$('billHistoryNext').hidden=!data.next;$('billHistoryNext').onclick=()=>run(()=>history(data.next));status('Invoice history loaded.');}
     submit('billHistoryForm',()=>history());
     async function receipts(cursor=null){if(!selected)return;const data=await cached('hospitalPayments',{InvoiceId:selected.InvoiceId,DateRange:range('billHistory'),...(cursor?{Cursor:cursor}:{})});payments=data.rows;
-      $('billPayments').innerHTML=rowsTable(['Receipt','Payer','Paid','Refunded',''],payments.map((r,i)=>`<tr><td>${esc(r.ReceiptNumber)}</td><td>${esc(r.Payer)}</td><td>${esc(money(r.AmountCents))}</td><td>${esc(money(r.RefundedCents))}</td><td><button data-print-receipt="${i}">Print receipt</button></td></tr>`));
-      $('billRefundReceipt').innerHTML=payments.map((r,i)=>`<option value="${i}">${esc(r.ReceiptNumber)} · ${esc(money(r.AmountCents-r.RefundedCents))}</option>`).join('');$('billPaymentsNext').hidden=!data.next;$('billPaymentsNext').onclick=()=>run(()=>receipts(data.next));
-      $('billPayments').querySelectorAll('[data-print-receipt]').forEach(b=>b.onclick=()=>{const r=payments[+b.dataset.printReceipt];$('cardPrint').classList.add('billing-print');$('cardPrint').innerHTML=`<h2>Hospital receipt ${esc(r.ReceiptNumber)}</h2><p>${esc(selected.PatientName)} · ${esc(selected.HospitalNumber)}</p><p>${esc(selected.InvoiceNumber)} · ${esc(date(r.CreatedAt))}</p><p>${esc(r.Payer)} · ${esc(r.Method)} · ${esc(r.Reference)}</p><p>Received ${esc(money(r.AmountCents))}; refunded ${esc(money(r.RefundedCents))}</p>`;window.print();});status('Dated receipts loaded.');}
-    $('billLoadPayments').onclick=()=>run(()=>receipts());submit('billRefundForm',()=>{const receipt=payments[+$('billRefundReceipt').value];if(!receipt)throw Error('Load and select the original receipt.');return mutation('refundHospitalPayment',{...values($('billRefundForm')),PaymentId:receipt.PaymentId,PaymentRevision:receipt.Revision},'Refund recorded.');});
+      $('billPayments').innerHTML=rowsTable(['Receipt / allocation','Payer','Paid / applied','Refunded / returned',''],payments.map((r,i)=>`<tr><td>${esc(r.ReceiptNumber)}</td><td>${esc(r.Payer)}</td><td>${esc(money(r.AmountCents))}</td><td>${esc(money(r.RefundedCents+(r.ReturnedToFundCents||0)))}</td><td>${r.SourceFundId?`<button data-source-fund="${esc(r.SourceFundId)}">Open original advance</button>`:''}<button data-print-receipt="${i}">Print receipt</button></td></tr>`));
+      $('billPayments').querySelectorAll('[data-source-fund]').forEach(b=>b.onclick=()=>run(()=>funds.open(b.dataset.sourceFund)));
+      $('billRefundReceipt').innerHTML=payments.map((r,i)=>r.SourceFundId?'':`<option value="${i}">${esc(r.ReceiptNumber)} · ${esc(money(r.AmountCents-r.RefundedCents))}</option>`).join('');$('billPaymentsNext').hidden=!data.next;$('billPaymentsNext').onclick=()=>run(()=>receipts(data.next));
+      $('billPayments').querySelectorAll('[data-print-receipt]').forEach(b=>b.onclick=()=>{const r=payments[+b.dataset.printReceipt];$('cardPrint').classList.add('billing-print');$('cardPrint').innerHTML=`<h2>Hospital ${r.SourceFundId?'allocation':'receipt'} ${esc(r.ReceiptNumber)}</h2><p>${esc(selected.PatientName)} · ${esc(selected.HospitalNumber)}</p><p>${esc(selected.InvoiceNumber)} · ${esc(date(r.CreatedAt))}</p><p>${esc(r.Payer)} · ${esc(r.Method)} · ${esc(r.Reference)}</p><p>${r.SourceFundId?`Applied from advance ${esc(r.SourceReceiptNumber)}. This allocation is not another cash receipt.`:'Received payment.'}</p><p>Amount ${esc(money(r.AmountCents))}; refunded ${esc(money(r.RefundedCents))}; returned to advance ${esc(money(r.ReturnedToFundCents||0))}</p>`;window.print();});status('Dated receipts loaded.');}
+    $('billLoadPayments').onclick=()=>run(()=>receipts());submit('billRefundForm',()=>{const receipt=payments[+$('billRefundReceipt').value];if(!receipt||receipt.SourceFundId||$('billRefundReceipt').value==='')throw Error('Select an ordinary payment receipt. For an advance allocation, open its original advance receipt.');return mutation('refundHospitalPayment',{...values($('billRefundForm')),PaymentId:receipt.PaymentId,PaymentRevision:receipt.Revision},'Refund recorded.');});
     let editingPlan=null;
     function tariff(row={}){const el=document.createElement('fieldset');el.className='form-grid';el.innerHTML=`<legend>Covered service</legend>${input('ServiceCode','Service code','required maxlength="60"')}${input('Name','Service name','required maxlength="200"')}${amount('Tariff','Agreed unit tariff (NGN)')}${input('CopayPercent','Patient co-payment (%)','required type="number" min="0" max="100" step="0.01"')}<button type="button">Remove from future plan</button>`;
       for(const [k,v]of Object.entries({...row,Tariff:row.TariffCents===undefined?'':row.TariffCents/100,CopayPercent:(row.CopayBasisPoints||0)/100}))if(el.querySelector(`[name="${k}"]`))el.querySelector(`[name="${k}"]`).value=v;
@@ -149,6 +152,7 @@
     $('billLoadSettings').onclick=()=>run(async()=>{if(!await confirmLeave())return;settings=(await api('billingSettings')).settings;$('billSettingsForm').reset();if(settings)for(const e of $('billSettingsForm').elements)if(e.name)e.value=settings[e.name]||'';dirty=false;status('Billing account mappings loaded.');});
     submit('billSettingsForm',async()=>{const saved=await api('saveBillingSettings',{Settings:values($('billSettingsForm')),Revision:settings?.Revision},true);dirty=false;if(!saved.Unchanged)settings=(await api('billingSettings')).settings;status(saved.Unchanged?'No account changes to save.':'Billing account mappings saved.');});
     window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue='';}});
+    funds=window.DynamaxHospitalFunds.create({api,run,can,writable,status,onChange:()=>{invalidate();$('billInvoice').hidden=true;},onOpen:()=>{$('billInvoice').hidden=true;$('billVisit').hidden=true;}});
     return {permissions,clear,confirmLeave,openVisit};
   }};
 })();

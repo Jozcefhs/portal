@@ -17,7 +17,9 @@ export async function onRequestPost({ request, env, data }) {
       'releaseInvestigationReport','pendingCriticalAlerts','acknowledgeCriticalResult',
       'billingSettings','saveBillingSettings','saveHmoPlan','findHmoPlans','billingVisit','saveHmoEligibility','createServiceCharge','billingCharges',
       'voidServiceCharge','billingInvoices','hmoClaims','issueHospitalInvoice','hospitalInvoiceDetails','hospitalBillingHistory','creditHospitalCharge','updateHmoClaim',
-      'recordHospitalPayment','hospitalPayments','refundHospitalPayment'].includes(body.action)) return Response.json({ ok: false, message: 'Choose a valid Hospital action.' }, { status: 400, headers });
+      'recordHospitalPayment','hospitalPayments','refundHospitalPayment',
+      'hospitalDepositPatient','receiveHospitalFunds','hospitalFunds','hospitalFundDetails','hospitalFundInvoice','allocateHospitalFunds',
+      'hospitalFundHistory','hospitalFundAllocations','returnHospitalAllocation','refundHospitalFunds'].includes(body.action)) return Response.json({ ok: false, message: 'Choose a valid Hospital action.' }, { status: 400, headers });
     const result = await createHospitalService(env, user)[body.action](body);
     // Hospital operations own their atomic audit trail. The middleware still records failures.
     if (data) data.securityAuditHandled = true;

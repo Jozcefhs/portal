@@ -15,6 +15,8 @@ Enabled modules, subscription and assigned branches are checked server-side. Fin
 
 Before posting, an administrator opens **Billing and HMO → Billing account mappings**, loads the mappings, and selects existing chart-of-account codes for patient receivables, HMO receivables, hospital revenue, cash and bank. The four balance-sheet accounts must be active Asset accounts; hospital revenue must be an active Revenue account. Each mapping uses a separate code. Account names/codes and existing chart records are not rewritten. Mapping changes retain a version.
 
+For deposits and remittances, also configure separate active **Liability** accounts for **Patient deposits** and **HMO advances**. These two mappings are optional for existing invoice/payment workflows, but required before receiving the corresponding advance. Older clients that omit these fields preserve the saved mappings. Existing account codes are not changed and no accounts are silently created.
+
 ## Service charges and invoices
 
 1. In Reception visits, choose dates, load the relevant visit and select **Open billing / HMO**.
@@ -38,7 +40,20 @@ Use **Void mistaken charge** for an unbilled service entry; a reason is required
 6. A cashier records confirmed insurer payments only after approval. Partial settlements retain the remainder; the last payment marks the claim settled. Posting uses the HMO receivable account and does not recognise the same revenue again.
 7. A return or service credit that reduces a submitted claim marks it **Adjustment required**. Another settlement is blocked until the adjusted claim has been submitted and approved. Prior claim submissions are retained. Refunds update net settlement totals without erasing the original payment.
 
-One recorded receipt applies to one invoice. A single bank remittance spanning several invoices needs a future allocation workflow; do not reuse that bank reference as several separate receipts. Direct insurer connections, external submission delivery, automatic eligibility checks and corporate accounts are not included in this increment.
+The ordinary invoice payment action records one receipt against one invoice. For one bank remittance spanning several invoices, use **Deposits, prepayments and HMO remittances** as described below. The original bank reference must be entered only once; allocations are not new cash receipts. Direct insurer connections, external submission delivery, automatic eligibility checks and corporate accounts are not included in this increment.
+
+## Deposits, prepayments and multi-invoice remittances
+
+1. A cashier opens **Billing and HMO → Deposits, prepayments and HMO remittances → Receive a deposit or HMO remittance**. A patient deposit needs the verified hospital number; no visit or invoice is required yet. For an HMO remittance, enter the insurer's name as saved on its insured invoices.
+2. Record the confirmed cash/bank amount and original receipt/transfer reference. The original receipt records the full amount, payer, branch and account mappings. Bank references share the same duplicate guard as ordinary invoice payments, across the hospital workspace's branches; cash references are branch-specific. A transfer cannot be recorded again by switching payment workflows.
+3. Open **Apply this receipt to invoices**. Find each invoice using its printed invoice number, add it to the batch, and enter the amount to apply. Patient deposits pay only that patient's share, including across visits. HMO receipts pay only approved/partially settled claims with the same saved insurer name. The server compares normalised names against the immutable invoice coverage snapshot; it does not query an external insurer registry.
+4. A batch contains 1–20 distinct invoices in the receipt's branch. Record a stable allocation reference, such as the remittance schedule reference, and confirm the selected amounts. Any unused money stays available for a later batch. Amounts cannot exceed either the invoice's outstanding payer balance or the receipt's available money.
+5. The server validates all invoices, balances, claim states and revisions before committing the whole batch. One stale/conflicting invoice prevents that entire batch from posting. Refresh and review the changed balance before retrying. Same-request retries return the original result; reusing an allocation reference with identical invoice/amount pairs makes no duplicate entries, and a different set is rejected.
+6. The original receipt shows **received, applied, refunded and available**. Choose dates to load receipt history or invoice allocations. The HMO Officer can view HMO receipts/allocations but cannot collect money or refund it. Cashiers cannot authorise refunds or allocation corrections.
+7. To correct an allocation, an administrator opens its dated allocation list and chooses **Review allocation return**. Enter the correction amount, unique reference and reason. The correction reopens that part of the invoice balance and returns the amount to the source receipt's available balance; it does not issue a cash refund. It cannot exceed the unreturned allocation. Original payment and invoice amounts remain intact.
+8. To return unused money, an administrator records **Refund unused money**, with the confirmed refund reference and reason. Allocated money must first be returned to the receipt. The refund uses the original receipt account and cannot exceed the unused balance. This records a confirmed refund; it does not initiate a bank/provider transfer.
+
+Allocations, corrections and refunds retain source links, immutable event records and balanced journals. A corrected HMO allocation updates net settlement and reopens an approved claim when appropriate; a claim already requiring adjustment keeps that state. Existing submissions and approvals are preserved. Printing the advance receipt or an allocation record uses the loaded snapshot without a database request. An allocation printout identifies the original receipt and does not represent a second cash receipt.
 
 ## Payments, credits and refunds
 
@@ -52,6 +67,8 @@ One recorded receipt applies to one invoice. A single bank remittance spanning s
 ## Accounting and record controls
 
 Invoices debit patient/HMO receivables and credit the configured hospital revenue account. Receipts debit cash/bank and credit the relevant receivable. Credits reverse revenue and receivables; refunds debit receivables and credit the original receipt account. The original receivable/revenue mapping is retained on each invoice, so later configuration changes do not redirect historical credits or payments.
+
+Advance receipts debit cash/bank and credit the corresponding advance liability. Allocations debit that original liability and credit each invoice's original patient/HMO receivable. Allocation returns reverse that movement; unused advance refunds debit the liability and credit the original cash/bank account. These actions do not recognise invoice revenue again. Receipt counters supply available funds without scanning past allocations, and invoice net-paid calculations include allocation returns without rewriting original receipts.
 
 Each financial action atomically commits the invoice counters, linked source/reference records, balanced shared `accountingJournals` entry, Hospital financial event, access/change audit and operation receipt. Failed or conflicting commits leave none of that action partially saved. Fresh account checks and a bounded check of potentially applicable accounting periods precede posting; a closed period blocks it. No source payment is copied to the school payment collections or processed through school revenue synchronization.
 
@@ -68,6 +85,10 @@ Invoice counters provide current balances without scanning payment history. The 
 | Open an invoice | Invoice, patient and at most one claim document; one access audit. No payment or journal scan. |
 | Issue an invoice | At most 30 selected charge documents plus exact patient/visit, optional eligibility, configuration/account and operation checks. Two bounded accounting-period queries. |
 | Record payment | Exact invoice, patient, payment-reference, settings and relevant account reads; optional linked claim; two bounded accounting-period queries. No payment/transaction history scan. |
+| Receive advance | Exact duplicate-reference, optional patient, mappings and relevant accounts; two bounded period queries. Six writes including the operation receipt, balanced journal and audit, in one commit. |
+| Find invoice for an allocation | Branch and exact printed invoice number; query limited to two records to detect ambiguity. Optional linked HMO claim lookup; no invoice history scan. |
+| Allocate advance | 1–20 exact invoices plus their distinct patients and, for HMO, linked claims. Each distinct account is fetched once. Two bounded period queries for the whole batch. One atomic commit: `4 × invoice count + 5` writes for patient deposits, `5 × invoice count + 5` for HMO claims. No payment or allocation history scan. |
+| Load advance receipts/history/allocations | Required dates, maximum 93 days, branch-scoped and receipt-scoped where applicable; fetch 31/display 30. Previous loaded pages are reused. |
 | Retry a completed write with the same request ID | One operation receipt read, zero writes or history queries. |
 | Save unchanged mappings, plan or verified eligibility | Current record/revision checks, zero writes. |
 | Load a period/page already loaded in this session | Reused from memory; explicit Refresh requests newer data. Mutations invalidate financial caches. Branch change, access refresh or session expiry clears them. |
@@ -76,6 +97,6 @@ Accounting period checks query periods whose EndDate can still contain today, in
 
 ## Verification and remaining scope
 
-Backend coverage: `tests/hospital-billing.test.mjs`, alongside the Hospital foundation, clinical, pharmacy, storage/audit and data-usage tests. Browser coverage: `scripts/verify-hospital-billing-ui.mjs`, using synthetic records and the actual service. Existing Hospital browser checks also remain in place. New collections participate in backup discovery, and corresponding query indexes are defined but not deployed.
+Backend coverage: `tests/hospital-billing.test.mjs` and `tests/hospital-funds.test.mjs`, alongside the Hospital foundation, clinical, pharmacy, storage/audit and data-usage tests. Browser coverage: `scripts/verify-hospital-billing-ui.mjs` and `scripts/verify-hospital-funds-ui.mjs`, using synthetic records and the actual service. Existing Hospital browser checks also remain in place. New collections participate in backup discovery, and corresponding query indexes are defined but not deployed.
 
-H10 and H11 remain partial. Deposits/prepayments, corporate accounts, insurer remittance allocation across invoices, claim attachments/exports tailored to specific insurers, direct insurer/provider APIs, live bank reconciliation, inventory costing, configurable general service catalogues, desktop/offline parity and practitioner/finance validation remain on the saved checklist. The implementation does not initiate real payments, contact an insurer or change production records.
+H10 and H11 remain partial. Corporate accounts, cross-branch remittance transfers, claim attachments/exports tailored to specific insurers, direct insurer/provider APIs, live bank reconciliation, inventory costing, configurable general service catalogues, desktop/offline parity and practitioner/finance validation remain on the saved checklist. The implementation does not initiate real payments, contact an insurer or change production records.

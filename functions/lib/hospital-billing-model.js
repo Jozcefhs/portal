@@ -1,7 +1,8 @@
 import {fail,stable} from './hospital-model.js';
 import {field,money,dateOnly} from './hospital-orders-model.js';
 
-export const ACCOUNT_TYPES={PatientReceivable:'asset',HmoReceivable:'asset',Revenue:'revenue',Cash:'asset',Bank:'asset'};
+export const ACCOUNT_TYPES={PatientReceivable:'asset',HmoReceivable:'asset',Revenue:'revenue',Cash:'asset',Bank:'asset',PatientDeposit:'liability',HmoPrepayment:'liability'};
+export const OPTIONAL_FUND_ACCOUNTS=['PatientDeposit','HmoPrepayment'];
 export function amount(value){const n=money(value);if(n<=0)fail('Enter an amount greater than zero.');return n;}
 export function cents(value){if(!Number.isSafeInteger(value)||value<0||value>100000000000)fail('The financial amount is outside the supported range.');return value;}
 export function equal(a,b){return JSON.stringify(stable(a))===JSON.stringify(stable(b));}
@@ -30,9 +31,11 @@ export function splitCharge(charge,plan){
   return {GrossCents:gross,PatientCents:patient,HmoCents:gross-patient,SourceAmountCents:source,ServiceCode:charge.ServiceCode||'',Covered:!!service};
 }
 export function balances(invoice){
-  return {PatientBalanceCents:invoice.PatientCents-invoice.PatientCreditCents-invoice.PatientPaidCents+invoice.PatientRefundCents,
-    HmoBalanceCents:invoice.HmoCents-invoice.HmoCreditCents-invoice.HmoPaidCents+invoice.HmoRefundCents};
+  return {PatientBalanceCents:invoice.PatientCents-invoice.PatientCreditCents-netPaid(invoice,'Patient'),
+    HmoBalanceCents:invoice.HmoCents-invoice.HmoCreditCents-netPaid(invoice,'Hmo')};
 }
+export const netPaid=(invoice,payer)=>invoice[`${payer}PaidCents`]-invoice[`${payer}RefundCents`]-(invoice[`${payer}AllocationReturnCents`]||0);
+export const fundsAvailable=fund=>cents(fund.AmountCents-fund.AppliedCents-fund.RefundedCents);
 export function paymentFields(input){
   if(!['Cash','Bank transfer'].includes(input.Method))fail('Choose Cash or Bank transfer. Card-terminal payments remain disabled.');
   return {AmountCents:amount(input.Amount),Method:input.Method,Reference:field(input,'Reference',160,true)};

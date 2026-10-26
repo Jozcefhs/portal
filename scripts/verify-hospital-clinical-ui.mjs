@@ -14,7 +14,7 @@ await f.service.checkIn(request({PatientId,Department:'Outpatients'}));
 const doctor={...actor,username:'doctor',displayName:'Doctor Example',role:'Doctor',assignedBranchIds:['main','north'],
   allowedSections:['hospitalPatients','hospitalReception','hospitalTriage','hospitalConsultations']};
 const assets=new Set(['/hospital.html','/css/hospital.css','/css/app-dialogs.css','/js/hospital.js','/js/hospital-clinical.js','/js/staff-idle-session.js','/js/app-dialogs.js']);
-assets.add('/js/hospital-orders.js'); assets.add('/js/hospital-billing.js');
+assets.add('/js/hospital-orders.js'); assets.add('/js/hospital-billing.js'); assets.add('/js/hospital-funds.js');
 const actions=[];let expire=false;
 f.queries.length=0;
 const server=createServer(async(req,res)=>{

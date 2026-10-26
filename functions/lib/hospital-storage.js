@@ -5,7 +5,8 @@ export const HOSPITAL_COLLECTIONS = Object.freeze([
   'Encounters', 'CareSummaries', 'Consultations', 'ClinicalEntries',
   'Orders', 'OrderEvents', 'MedicineBatches', 'StockReceipts', 'StockMovements', 'Dispenses', 'MedicineReturns', 'ChargeEvents', 'InvestigationReports', 'ReleasedReports', 'CriticalAlerts',
   'BillingSettings','BillingSettingVersions','HmoPlans','HmoPlanVersions','HmoEligibility','HmoEligibilityVersions',
-  'Invoices','BillingEvents','Claims','ClaimVersions','CreditTotals','CreditNotes','Payments','PaymentReferences','Refunds','RefundReferences'
+  'Invoices','BillingEvents','Claims','ClaimVersions','CreditTotals','CreditNotes','Payments','PaymentReferences','Refunds','RefundReferences',
+  'Funds','FundEvents','FundAllocationBatches','FundAllocationReturns','FundRefunds'
 ]);
 
 export function hospitalCollectionPath(env, name) {

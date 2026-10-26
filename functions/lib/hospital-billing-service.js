@@ -1,7 +1,8 @@
 import {clean,fail,id,digest,nameKey,patientSummary} from './hospital-model.js';
 import {field,quantity,dateFilters,watDay,cumulativeCredit,chargeCents} from './hospital-orders-model.js';
-import {ACCOUNT_TYPES,amount,cents,equal,code,planFields,eligibility,splitCharge,balances,paymentFields} from './hospital-billing-model.js';
+import {ACCOUNT_TYPES,OPTIONAL_FUND_ACCOUNTS,amount,cents,equal,code,planFields,eligibility,splitCharge,balances,netPaid,paymentFields} from './hospital-billing-model.js';
 import {accountingCodeAllowedForEdition} from './accounting-edition-scope.js';
+import {createHospitalFundsService} from './hospital-funds-service.js';
 
 export function createHospitalBillingService(ctx){
   const {env,user,db,collection,capabilities,requireCapability,branch,patient,clock,actor,condition,strip,eq,auditWrite,auditRead,operation,page}=ctx;
@@ -29,13 +30,18 @@ export function createHospitalBillingService(ctx){
   function audit(key,c,Action){return auditWrite(key,Action,c.BranchId,c.person,{InvoiceId:c.invoice?.InvoiceId||'',VisitId:c.invoice?.VisitId||c.visit?.VisitId||''});}
   async function settings(BranchId){return read('BillingSettings',await keyFor('settings',BranchId));}
   async function accounts(mapping,keys){
-    const rows=await Promise.all([...new Set(keys.map(k=>mapping[k]))].map(k=>db.getDocument(env,'chartOfAccounts',k)));
-    for(const key of keys){const row=rows.find(r=>r&&(r.Code||r.__id)===mapping[key]);
-      if(!row||['no','false','inactive'].includes(clean(row.Active).toLowerCase())||clean(row.Type).toLowerCase()!==ACCOUNT_TYPES[key]||!accountingCodeAllowedForEdition(mapping[key],'hospital'))fail(`Choose an active ${ACCOUNT_TYPES[key]} account for ${key}.`);}
+    return accountMappings([Object.fromEntries(keys.map(key=>[key,mapping[key]]))]);
   }
-  async function posting(BranchId,keys,mapping){
-    const config=mapping||await settings(BranchId);if(!config)fail('Set Hospital billing account mappings before posting.');
-    await accounts(config,keys);
+  async function accountMappings(mappings){
+    const entries=mappings.flatMap(Object.entries);
+    for(const [key,value] of entries)if(!ACCOUNT_TYPES[key]||!value)fail(`Configure an active ${ACCOUNT_TYPES[key]||'financial'} account for ${key}.`);
+    const codes=[...new Set(entries.map(([,value])=>value))];
+    const rows=await Promise.all(codes.map(value=>db.getDocument(env,'chartOfAccounts',value)));
+    for(const [key,value] of entries){const row=rows.find(r=>r&&(r.Code||r.__id)===value);
+      if(!row||['no','false','inactive'].includes(clean(row.Active).toLowerCase())||clean(row.Type).toLowerCase()!==ACCOUNT_TYPES[key]||!accountingCodeAllowedForEdition(value,'hospital'))fail(`Choose an active ${ACCOUNT_TYPES[key]} account for ${key}.`);}
+  }
+  async function postingMany(mappings){
+    await accountMappings(mappings);
     const day=watDay(clock());
     // Only periods that can still contain today; fail closed on an unexpectedly large configuration.
     // Shared accounting also accepts legacy lower-case period fields. Check both
@@ -43,7 +49,10 @@ export function createHospitalBillingService(ctx){
     const periodGroups=await Promise.all(['EndDate','endDate'].map(field=>db.queryCollection(env,'accountingPeriods',{filters:[{field,op:'>=',value:day}],limit:101})));
     if(periodGroups.some(rows=>rows.length>100))fail('Review the accounting period configuration before posting.',409);
     if(periodGroups.flat().some(r=>clean(r.Status||r.status).toLowerCase()==='closed'&&clean(r.StartDate||r.startDate)<=day))fail('This accounting period is closed.',409);
-    return config;
+  }
+  async function posting(BranchId,keys,mapping){
+    const config=mapping||await settings(BranchId);if(!config)fail('Set Hospital billing account mappings before posting.');
+    await postingMany([Object.fromEntries(keys.map(key=>[key,config[key]]))]);return config;
   }
   function journal(key,c,Action,lines){
     const nonzero=lines.filter(l=>l.DebitCents||l.CreditCents),debit=nonzero.reduce((n,l)=>n+cents(l.DebitCents||0),0),credit=nonzero.reduce((n,l)=>n+cents(l.CreditCents||0),0);
@@ -63,13 +72,18 @@ export function createHospitalBillingService(ctx){
     return {ok:true,rows:result.rows.map(view),next:result.next};
   }
   return {
+    ...createHospitalFundsService({...ctx,read,write,view,stamp,any,revision,confirmed,unchanged,keyFor,settings,postingMany,journal,line,event}),
     async billingSettings(body){any('billing.read','hmo.work');const BranchId=await branch(body);return {ok:true,settings:view(await settings(BranchId))};},
     async saveBillingSettings(body){
-      requireCapability('billing.configure');const BranchId=await branch(body),fields=Object.fromEntries(Object.keys(ACCOUNT_TYPES).map(k=>[k,code(body.Settings?.[k])]));
-      if(new Set(Object.values(fields)).size!==Object.keys(fields).length)fail('Use separate accounts for patient debt, HMO debt, revenue, cash and bank.');
+      requireCapability('billing.configure');const BranchId=await branch(body),fields=Object.fromEntries(Object.keys(ACCOUNT_TYPES).map(k=>[k,OPTIONAL_FUND_ACCOUNTS.includes(k)&&!clean(body.Settings?.[k])?'':code(body.Settings?.[k])]));
+      const configured=Object.keys(fields).filter(k=>fields[k]);
+      if(new Set(configured.map(k=>fields[k])).size!==configured.length)fail('Use separate accounts for receivables, revenue, cash, bank and advance liabilities.');
       return operation(body,'saveBillingSettings',async key=>{
         const settingId=await keyFor('settings',BranchId),old=await read('BillingSettings',settingId);if(old)revision(body,old);
-        if(old&&Object.keys(fields).every(k=>old[k]===fields[k]))return unchanged({});await accounts(fields,Object.keys(fields));
+        // Older clients omit the optional advance accounts; retain saved mappings.
+        for(const k of OPTIONAL_FUND_ACCOUNTS)if(!Object.hasOwn(body.Settings||{},k))fields[k]=old?.[k]||'';
+        const active=Object.keys(fields).filter(k=>fields[k]);if(new Set(active.map(k=>fields[k])).size!==active.length)fail('Use separate accounts for each billing mapping.');
+        if(old&&Object.keys(fields).every(k=>(old[k]||'')===fields[k]))return unchanged({});await accounts(fields,active);
         return {writes:[write('BillingSettings',settingId,{...fields,BranchId,UpdatedAt:clock(),UpdatedBy:actor},old),
           write('BillingSettingVersions',key,{...fields,BranchId,...stamp()},null),auditWrite(key,'Save Hospital billing accounts',BranchId)],result:{}};
       });
@@ -230,7 +244,7 @@ export function createHospitalBillingService(ctx){
         const writes=[write('Invoices',c.invoice.InvoiceId,next,c.invoice),write('Payments',key,row,null),write('PaymentReferences',referenceId,{Signature:signature,PaymentId:key},null),
           ...journal(key,c,'Payment',[line(mapping[cashKey],fields.AmountCents),line(mapping[debtKey],0,fields.AmountCents)]),
           event(key,c,'Record hospital payment',{PaymentId:key,ReceiptNumber:row.ReceiptNumber,AmountCents:fields.AmountCents,Payer:body.Payer,Reference:fields.Reference}),audit(key,c,'Record hospital payment')];
-        if(claim)writes.push(write('Claims',claim.ClaimId,{...strip(claim),Status:fields.AmountCents===due?'Settled':'Partially settled',SettledCents:next.HmoPaidCents-next.HmoRefundCents,UpdatedAt:clock()},claim));
+        if(claim)writes.push(write('Claims',claim.ClaimId,{...strip(claim),Status:fields.AmountCents===due?'Settled':'Partially settled',SettledCents:netPaid(next,'Hmo'),UpdatedAt:clock()},claim));
         return {writes,result:{InvoiceId:c.invoice.InvoiceId,PaymentId:key}};
       });
     },
@@ -239,6 +253,7 @@ export function createHospitalBillingService(ctx){
       requireCapability('billing.refund');confirmed(body);const AmountCents=amount(body.Amount),Reason=field(body,'Reason',2000,true),Reference=field(body,'Reference',160,true);await branch(body);
       return operation(body,'refundHospitalPayment',async key=>{
         const c=await invoice(body),payment=await read('Payments',body.PaymentId);if(!payment||payment.InvoiceId!==c.invoice.InvoiceId||payment.BranchId!==c.BranchId||payment.PatientId!==c.person.PatientId)fail('Choose a receipt for this invoice.',404);
+        if(payment.SourceFundId)fail('Return this allocation to its original deposit or remittance, then refund unused funds there.',409);
         const refId=await keyFor('refund',c.BranchId,nameKey(Reference)),prior=await read('RefundReferences',refId),signature={PaymentId:payment.PaymentId,AmountCents,Reason,Reference};
         if(prior){if(!equal(prior.Signature,signature))fail('This refund reference is already used.',409);return unchanged({InvoiceId:c.invoice.InvoiceId});}
         revision(body,c.invoice);revision(body,payment,'PaymentRevision');
@@ -249,7 +264,7 @@ export function createHospitalBillingService(ctx){
         const writes=[write('Invoices',c.invoice.InvoiceId,next,c.invoice),write('Payments',payment.PaymentId,{...strip(payment),RefundedCents:payment.RefundedCents+AmountCents},payment),
           write('Refunds',key,{RefundId:key,BranchId:c.BranchId,PatientId:c.person.PatientId,InvoiceId:c.invoice.InvoiceId,...signature,...stamp()},null),write('RefundReferences',refId,{Signature:signature,RefundId:key},null),
           ...journal(key,c,'Refund',[line(payment.ReceivableAccount,AmountCents),line(payment.ReceiptAccount,0,AmountCents)]),event(key,c,'Record hospital refund',{PaymentId:payment.PaymentId,AmountCents,Reason,Reference}),audit(key,c,'Record hospital refund')];
-        if(payment.Payer==='Hmo'){const claim=await read('Claims',c.invoice.InvoiceId);if(!claim)fail('The HMO claim is missing.',409);writes.push(write('Claims',claim.ClaimId,{...strip(claim),SettledCents:next.HmoPaidCents-next.HmoRefundCents,UpdatedAt:clock()},claim));}
+        if(payment.Payer==='Hmo'){const claim=await read('Claims',c.invoice.InvoiceId);if(!claim)fail('The HMO claim is missing.',409);writes.push(write('Claims',claim.ClaimId,{...strip(claim),SettledCents:netPaid(next,'Hmo'),UpdatedAt:clock()},claim));}
         return {writes,result:{InvoiceId:c.invoice.InvoiceId}};
       });
     }

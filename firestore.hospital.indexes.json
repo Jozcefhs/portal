@@ -827,6 +827,118 @@
           "order": "ASCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "hospitalFunds",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "BranchId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "Kind",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "CreatedAt",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "hospitalFunds",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "BranchId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "Kind",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "PatientId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "CreatedAt",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "hospitalFunds",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "BranchId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "Kind",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "InsurerKey",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "CreatedAt",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "hospitalFundEvents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "BranchId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "FundId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "CreatedAt",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "hospitalPayments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "BranchId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "SourceFundId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "CreatedAt",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "hospitalInvoices",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "BranchId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "InvoiceNumber",
+          "order": "ASCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": []
