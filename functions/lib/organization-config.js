@@ -73,7 +73,7 @@ export const EDITION_FEATURE_DEFAULTS = Object.freeze({
     branches: true, branding: true, approvals: true, procurement: true,
     executiveOffice: true, humanResources: true, staffAttendance: true,
     bulkCommunication: true, accounting: true, externalAudit: true, payroll: true,
-    hospitalPatients: true, hospitalReception: true,
+    hospitalPatients: true, hospitalReception: true, hospitalTriage: true, hospitalConsultations: true,
     admissions: false, students: false, academics: false, library: false,
     studentConduct: false, parentPortal: false, stores: false, clinic: false,
     kitchen: false, members: false, services: false, funds: false, offerings: false,
@@ -419,6 +419,8 @@ export function organizationProfileDocument(config, audit = {}) {
 const SECTION_FEATURES = Object.freeze({
   hospitalPatients: 'hospitalPatients',
   hospitalReception: Object.freeze(['hospitalPatients', 'hospitalReception']),
+  hospitalTriage: Object.freeze(['hospitalPatients', 'hospitalReception', 'hospitalTriage']),
+  hospitalConsultations: Object.freeze(['hospitalPatients', 'hospitalReception', 'hospitalConsultations']),
   executiveOffice: 'executiveOffice',
   humanResources: 'humanResources',
   admissions: 'admissions',

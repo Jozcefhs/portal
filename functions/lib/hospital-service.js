@@ -5,6 +5,7 @@ import { configuredStaffBranches } from './staff-branch-context.js';
 import { assignedStaffBranches } from './staff-branch-access.js';
 import { historyDateRange } from './history-date-range.js';
 import { hospitalCollectionPath } from './hospital-storage.js';
+import { createHospitalClinicalService } from './hospital-clinical-service.js';
 import { clean, fail, id, nameKey, digest, stable, cardUid, hospitalBranch,
   hospitalCapabilities, patientFields, patientName, patientSummary, patientDetails } from './hospital-model.js';
 
@@ -99,6 +100,8 @@ export function createHospitalService(env, user, overrides = {}) {
     return { rows: shown, next: rows.length > limit ? { id: last.__id, value: last[field] } : null };
   }
   return {
+    ...createHospitalClinicalService({env,user,db,collection,capabilities,requireCapability,branch,patient,clock,actor,
+      condition,strip,eq,auditWrite,auditRead,operation,page}),
     async state() {
       if (!capabilities.length) fail('Your role does not have Hospital workspace access.', 403);
       branches = configuredStaffBranches(await db.getSchoolStructure(env));
@@ -238,6 +241,9 @@ export function createHospitalService(env, user, overrides = {}) {
         const row = await db.getDocument(env, collection('Visits'), id(body.VisitId));
         if (!row || row.BranchId !== branchId) fail('This visit is not available in the selected branch.', 404);
         if (body.Revision !== row.__updateTime || ['Completed', 'Cancelled'].includes(row.Status)) fail('Reload this visit before updating its status.', 409);
+        if (['Completed','Cancelled'].includes(body.Status) && row.ClinicalState && row.ClinicalState !== 'Consultation signed') {
+          fail('Clinical work is still open. The attending clinician must complete and sign the consultation before reception can close this visit.',409);
+        }
         const person = await patient(row.PatientId, branchId);
         const lockId = await digest(JSON.stringify([branchId, row.PatientId]));
         const lock = await db.getDocument(env, collection('OpenVisits'), lockId);

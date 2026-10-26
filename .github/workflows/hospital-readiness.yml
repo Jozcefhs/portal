@@ -1,0 +1,34 @@
+name: Hospital development checks
+
+on:
+  push:
+    branches: [codex/hospital-edition]
+  pull_request:
+    paths:
+      - "functions/**"
+      - "js/hospital*.js"
+      - "hospital.html"
+      - "css/hospital.css"
+      - "firestore.hospital.indexes.json"
+      - "tests/hospital*.test.mjs"
+      - "tests/helpers/hospital-fixture.mjs"
+      - "scripts/verify-hospital*.mjs"
+      - ".github/workflows/hospital-readiness.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Verify Hospital and shared edition behaviour
+        run: node --test tests/hospital*.test.mjs tests/organization-config.test.mjs tests/role-module-access.test.mjs tests/data-backup-restore.test.mjs tests/deployment-identity.test.mjs tests/subscription-plans.test.mjs tests/service-worker-cache-version.test.mjs tests/web-release-freshness.test.mjs

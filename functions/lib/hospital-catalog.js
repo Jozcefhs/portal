@@ -12,15 +12,19 @@ export const HOSPITAL_MODULES = Object.freeze([
     Description: 'Patient identity, demographic records and controlled patient lookup.', Requires: Object.freeze([]) }),
   Object.freeze({ Key: 'hospitalReception', Editions: Object.freeze(['hospital']),
     Labels: Object.freeze({ hospital: 'Reception and visits' }),
-    Description: 'Patient check-in and dated visit queues.', Requires: Object.freeze(['hospitalPatients']) })
+    Description: 'Patient check-in and dated visit queues.', Requires: Object.freeze(['hospitalPatients']) }),
+  Object.freeze({ Key: 'hospitalTriage', Editions: Object.freeze(['hospital']), Labels: Object.freeze({ hospital: 'Triage and nursing' }),
+    Description: 'Recorded observations, allergies and attributable nursing entries.', Requires: Object.freeze(['hospitalPatients','hospitalReception']) }),
+  Object.freeze({ Key: 'hospitalConsultations', Editions: Object.freeze(['hospital']), Labels: Object.freeze({ hospital: 'Consultations' }),
+    Description: 'Consultation drafts, signed notes and retained amendments.', Requires: Object.freeze(['hospitalPatients','hospitalReception']) })
 ]);
 
 export const HOSPITAL_ROLE_CAPABILITIES = Object.freeze({
   'Super Admin': ['patients.read', 'patients.write', 'visits.read', 'visits.write'],
   'Hospital Administrator': ['patients.read', 'patients.write', 'visits.read', 'visits.write'],
-  'Medical Director': ['patients.read', 'visits.read'],
-  'Doctor': ['patients.read', 'visits.read'],
-  'Nurse': ['patients.read', 'visits.read'],
+  'Medical Director': ['patients.read', 'visits.read', 'clinical.read', 'triage.write', 'consultations.write'],
+  'Doctor': ['patients.read', 'visits.read', 'clinical.read', 'triage.write', 'consultations.write'],
+  'Nurse': ['patients.read', 'visits.read', 'clinical.read', 'triage.write'],
   'Registration Officer': ['patients.read', 'patients.write', 'visits.read', 'visits.write'],
   'Medical Records Officer': ['patients.read', 'patients.write', 'visits.read'],
   'Front Desk': ['patients.read', 'patients.write', 'visits.read', 'visits.write']
@@ -30,6 +34,8 @@ export function hospitalRoleModules(role) {
   const capabilities = HOSPITAL_ROLE_CAPABILITIES[role] || [];
   return [
     ...(capabilities.includes('patients.read') ? ['hospitalPatients'] : []),
-    ...(capabilities.includes('visits.read') ? ['hospitalReception'] : [])
+    ...(capabilities.includes('visits.read') ? ['hospitalReception'] : []),
+    ...(capabilities.includes('triage.write') ? ['hospitalTriage'] : []),
+    ...(capabilities.includes('consultations.write') ? ['hospitalConsultations'] : [])
   ];
 }

@@ -299,6 +299,8 @@ let recordsDeskState = {
 const tabConfig = [
   ['hospitalPatients', 'Patient registration'],
   ['hospitalReception', 'Reception and visits'],
+  ['hospitalTriage', 'Triage and nursing'],
+  ['hospitalConsultations', 'Consultations'],
   ['recordsDesk', 'Records Desk'],
   ['executiveOffice', 'Executive Office'],
   ['admissions', 'Admissions'],
@@ -3055,9 +3057,10 @@ function renderModuleSummary(active, liveData = null) {
     renderSummary(dashboardData?.summary || {});
     return;
   }
-  if (['hospitalPatients', 'hospitalReception'].includes(active)) {
+  if (['hospitalPatients', 'hospitalReception', 'hospitalTriage', 'hospitalConsultations'].includes(active)) {
     summaryEl.replaceChildren();
-    panelEl.innerHTML = `<h2>${escapeHtml(staffTabLabel(active, active === 'hospitalPatients' ? 'Patient registration' : 'Reception and visits'))}</h2><p>Search patients by name, hospital number or NFC card. Choose a period to load reception visits.</p><a class="btn" href="/hospital.html?branch=${encodeURIComponent(selectedBranchId || 'main')}&task=${active === 'hospitalReception' ? 'reception' : 'patients'}">Open Hospital workspace</a>`;
+    const task={hospitalPatients:'patients',hospitalReception:'reception',hospitalTriage:'triage',hospitalConsultations:'consultations'}[active];
+    panelEl.innerHTML = `<h2>${escapeHtml(staffTabLabel(active, 'Hospital workspace'))}</h2><p>Search patients by name, hospital number or NFC card. Choose a period to load visits and open the selected care record.</p><a class="btn" href="/hospital.html?branch=${encodeURIComponent(selectedBranchId || 'main')}&task=${task}">Open Hospital workspace</a>`;
     return;
   }
   const departments = dashboardData?.departments || {};

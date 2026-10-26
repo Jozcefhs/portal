@@ -11,6 +11,8 @@ const lower = (value) => clean(value).toLowerCase();
 export const WEB_SECTION_CATALOG = Object.freeze([
   Object.freeze({ key: 'hospitalPatients', label: 'Patient registration' }),
   Object.freeze({ key: 'hospitalReception', label: 'Reception and visits' }),
+  Object.freeze({ key: 'hospitalTriage', label: 'Triage and nursing' }),
+  Object.freeze({ key: 'hospitalConsultations', label: 'Consultations' }),
   Object.freeze({ key: 'recordsDesk', label: 'Records Desk' }),
   Object.freeze({ key: 'executiveOffice', label: 'Executive Office' }),
   Object.freeze({ key: 'admissions', label: 'Admissions' }),
@@ -151,7 +153,7 @@ export function rolesForEdition(edition) {
 export function modulesForEdition(edition, featureFlags = null) {
   const allowed = new Set(filterSectionsForFeatures(WEB_SECTION_KEYS, featureFlags));
   if (normalizeOrganizationEdition(edition) !== 'hospital') {
-    allowed.delete('hospitalPatients'); allowed.delete('hospitalReception');
+    for (const key of allowed) if (key.startsWith('hospital')) allowed.delete(key);
   } else {
     ['members', 'services', 'funds', 'offerings', 'donations', 'organizationStore', 'restaurant', 'hotel', 'vendorSettlements'].forEach(key => allowed.delete(key));
   }

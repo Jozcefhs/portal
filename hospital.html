@@ -2,20 +2,21 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Hospital reception · Dynamax</title>
-  <link rel="stylesheet" href="/css/hospital.css">
+  <title>Hospital workspace · Dynamax</title>
+  <link rel="stylesheet" href="/css/hospital.css?v=20261026-care">
   <link rel="stylesheet" href="/css/app-dialogs.css">
   <script src="/js/app-dialogs.js?v=20261016-grouped-form-validation" defer></script>
   <script src="/js/staff-idle-session.js" defer></script>
-  <script src="/js/hospital.js" defer></script>
+  <script src="/js/hospital-clinical.js?v=20261026-care" defer></script>
+  <script src="/js/hospital.js?v=20261026-care" defer></script>
 </head>
 <body>
   <main>
-    <header><div><p class="eyebrow">Dynamax Hospital</p><h1>Patient registration and reception</h1><p>Find a patient, manage an NFC card or check in a visit.</p></div><a href="/admin.html">Staff workspace</a></header>
+    <header><div><p class="eyebrow">Dynamax Hospital</p><h1>Patient care workspace</h1><p>Registration, NFC patient cards, reception and clinical encounters.</p></div><a href="/admin.html">Staff workspace</a></header>
     <p id="status" role="status" aria-live="polite">Checking your staff session…</p>
     <div id="workspace" hidden>
       <div class="toolbar"><label>Working branch<select id="branch"></select></label><button id="refresh" type="button">Refresh access</button></div>
-      <nav aria-label="Hospital tasks"><button type="button" data-tab="patients">Patients and NFC cards</button><button type="button" data-tab="reception">Reception visits</button></nav>
+      <nav aria-label="Hospital tasks"><button type="button" data-tab="patients">Patients and NFC cards</button><button type="button" data-tab="reception">Reception visits</button><button type="button" data-tab="care" hidden>Clinical record</button></nav>
       <section id="patients">
         <h2>Find a patient</h2>
         <form id="searchForm" class="toolbar">
@@ -65,6 +66,62 @@
         <h2>Reception visits</h2><p>Choose dates before loading. Reception status records the administrative visit; clinical discharge is recorded separately.</p>
         <form id="visitForm" class="toolbar"><label>From<input id="visitFrom" type="date" required></label><label>To<input id="visitTo" type="date" required></label><button type="submit">Load visits</button></form>
         <div id="visitRows" class="table-wrap"></div><button id="moreVisits" type="button" hidden>Next visits</button>
+      </section>
+      <section id="care" hidden>
+        <h2>Clinical encounter</h2><p id="careEmpty">Choose a visit in Reception visits, then select Open care record.</p>
+        <div id="carePanel" hidden>
+          <div class="care-identity"><h2 id="careName"></h2><p id="careIdentity"></p><p id="careVisit"></p></div>
+          <div id="careAllergies" class="care-allergies" role="note"></div>
+          <div class="toolbar"><button id="refreshCare" type="button">Refresh care record</button><button id="closeCare" type="button" class="secondary">Close care record</button><span id="careFreshness" class="hint"></span></div>
+          <p id="careClosed" class="hint" hidden>This visit is closed. Signed originals remain available; authorised corrections use amendments.</p>
+          <div id="latestClinical"></div>
+          <details id="triageEditor" data-write="triage.write"><summary>Record triage and nursing observations</summary>
+            <form id="triageForm">
+              <div class="form-grid"><label>Presenting complaint<textarea name="Complaint" required maxlength="8000" rows="3"></textarea></label>
+                <label>Nursing notes<textarea name="NursingNotes" maxlength="8000" rows="3"></textarea></label>
+                <label>Staff-assessed urgency<select name="Urgency"><option>Not assessed</option><option>Routine</option><option>Urgent</option><option>Emergency</option></select></label>
+                <label>Observed at (WAT)<input type="datetime-local" name="ObservedAt"><small>Leave blank to use the time recorded by the server.</small></label>
+                <label>Allergy status<select name="AllergyStatus"><option>Unknown</option><option>No known allergies</option><option>Known allergies</option></select></label>
+                <label>Known allergies and reactions<textarea name="Allergies" maxlength="2000" rows="2"></textarea></label>
+                <label>Temperature (°C)<input type="number" name="TemperatureC" min="0" max="10000" step="any"></label>
+                <label>Pulse (beats/min)<input type="number" name="PulseBpm" min="0" max="10000" step="any"></label>
+                <label>Respiratory rate (breaths/min)<input type="number" name="RespirationsPerMinute" min="0" max="10000" step="any"></label>
+                <label>Systolic pressure (mmHg)<input type="number" name="SystolicMmHg" min="0" max="10000" step="any"></label>
+                <label>Diastolic pressure (mmHg)<input type="number" name="DiastolicMmHg" min="0" max="10000" step="any"></label>
+                <label>Oxygen saturation (%)<input type="number" name="SpO2Percent" min="0" max="100" step="any"></label>
+                <label>Weight (kg)<input type="number" name="WeightKg" min="0" max="10000" step="any"></label>
+                <label>Height (cm)<input type="number" name="HeightCm" min="0" max="10000" step="any"></label>
+              </div>
+              <p class="hint">Leave unmeasured observations blank. Saving records an attributed entry; corrections retain the original.</p>
+              <button type="submit">Record triage</button>
+            </form>
+          </details>
+          <details id="consultationEditor" data-write="consultations.write"><summary>Consultation notes</summary>
+            <p id="consultationOwner" class="hint"></p>
+            <form id="consultationForm"><div class="form-grid">
+              <label>History<textarea name="History" maxlength="8000" rows="4"></textarea></label>
+              <label>Examination findings<textarea name="Examination" maxlength="8000" rows="4"></textarea></label>
+              <label>Assessment / diagnosis<textarea name="Assessment" maxlength="8000" rows="4"></textarea></label>
+              <label>Treatment plan<textarea name="Plan" maxlength="8000" rows="4"></textarea></label>
+              <label>Follow-up plan<textarea name="FollowUp" maxlength="8000" rows="3"></textarea></label>
+              <label>Referral notes<textarea name="Referral" maxlength="8000" rows="3"></textarea></label>
+            </div><button type="submit">Save consultation draft</button></form>
+            <p class="hint">Treatment and referral notes document the clinician’s plan. Pharmacy dispensing, prescriptions and investigation orders will use their own workflows.</p>
+            <label class="check-line"><input id="confirmCareIdentity" type="checkbox">I reviewed the patient identity, current allergy information and saved consultation.</label>
+            <button id="signConsultation" type="button">Sign saved consultation</button>
+          </details>
+          <details id="amendmentEditor"><summary>Amend a signed entry</summary><p>The original remains unchanged. The amendment records your name, time and reason.</p>
+            <form id="amendmentForm"><label>Signed entry<select id="amendEntry" required></select></label>
+              <label>Reason<input name="Reason" minlength="5" maxlength="1000" required></label>
+              <label>Amendment<textarea name="Text" maxlength="8000" rows="4" required></textarea></label>
+              <button type="submit">Add amendment</button>
+            </form>
+          </details>
+          <section><h3>Dated clinical entries</h3><p id="clinicalHistoryHint">Choose dates before loading earlier entries. Loaded pages remain available while you switch tasks.</p>
+            <form id="clinicalHistoryForm" class="toolbar"><label>From<input id="clinicalFrom" type="date" required></label><label>To<input id="clinicalTo" type="date" required></label><button type="submit">Load clinical entries</button></form>
+            <div id="clinicalEntries"></div><button id="moreClinical" type="button" hidden>Next clinical entries</button>
+          </section>
+        </div>
       </section>
     </div>
     <div id="cardPrint" hidden></div>

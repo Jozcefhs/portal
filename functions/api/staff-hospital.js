@@ -7,10 +7,11 @@ export async function onRequestPost({ request, env, data }) {
   try {
     const origin = request.headers.get('Origin');
     if (origin && origin !== new URL(request.url).origin) return Response.json({ ok: false, message: 'Cross-site requests are not permitted.' }, { status: 403, headers });
-    const body = await readJsonBody(request, { maxBytes: 32 * 1024 });
+    const body = await readJsonBody(request, { maxBytes: 64 * 1024 });
     if (body.action !== 'state' && cleanBranch(request.headers.get('X-Dynamax-Branch')) !== cleanBranch(body.BranchId)) return Response.json({ ok: false, message: 'Select the working branch before continuing.' }, { status: 403, headers });
     const user = await requireStaffSession(env, request);
-    if (!['state', 'search', 'details', 'savePatient', 'assignCard', 'revokeCard', 'checkIn', 'visits', 'updateVisit'].includes(body.action)) return Response.json({ ok: false, message: 'Choose a valid Hospital action.' }, { status: 400, headers });
+    if (!['state', 'search', 'details', 'savePatient', 'assignCard', 'revokeCard', 'checkIn', 'visits', 'updateVisit',
+      'clinicalContext','clinicalHistory','recordTriage','saveConsultation','signConsultation','amendClinicalEntry'].includes(body.action)) return Response.json({ ok: false, message: 'Choose a valid Hospital action.' }, { status: 400, headers });
     const result = await createHospitalService(env, user)[body.action](body);
     // Hospital operations own their atomic audit trail. The middleware still records failures.
     if (data) data.securityAuditHandled = true;

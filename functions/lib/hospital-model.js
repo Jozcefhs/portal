@@ -31,8 +31,10 @@ export function hospitalBranch(user, requested, configured = []) {
 export function hospitalCapabilities(user) {
   if (user.edition !== 'hospital' || user.subscriptionActive === false) return [];
   const sections = new Set(user.allowedSections || []);
-  return (HOSPITAL_ROLE_CAPABILITIES[user.role] || []).filter(capability =>
-    sections.has(capability.startsWith('patients.') ? 'hospitalPatients' : 'hospitalReception'));
+  const modules={'patients.read':['hospitalPatients'],'patients.write':['hospitalPatients'],
+    'visits.read':['hospitalReception'],'visits.write':['hospitalReception'],
+    'clinical.read':['hospitalTriage','hospitalConsultations'],'triage.write':['hospitalTriage'],'consultations.write':['hospitalConsultations']};
+  return (HOSPITAL_ROLE_CAPABILITIES[user.role] || []).filter(capability => modules[capability]?.some(module=>sections.has(module)));
 }
 export function patientFields(input = {}, today = new Date().toISOString().slice(0, 10)) {
   const text = (key, limit = 160) => {
