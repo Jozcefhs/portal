@@ -52,7 +52,7 @@ export function resolveStaffAttendanceBranch(user = {}, requestedBranch = '') {
 
 export function canonicalStaffAttendanceCollectionPath(edition, key, branchId = 'main') {
   const normalizedEdition = clean(edition).toLowerCase();
-  if (!['school', 'faith', 'organization'].includes(normalizedEdition)) {
+  if (!['school', 'faith', 'organization', 'hospital'].includes(normalizedEdition)) {
     throw new Error('A valid organisation edition is required for staff-attendance storage.');
   }
   const root = normalizedEdition === 'school' ? 'schoolBranches' : 'organisationBranches';
@@ -68,6 +68,7 @@ export function staffAttendanceCollectionPath(env, key, branchId = 'main') {
 }
 
 export function staffAttendanceReadPaths(env, key, branchId = 'main') {
+  if (requiredDeploymentIdentity(env).edition === 'hospital') return [staffAttendanceCollectionPath(env, key, branchId)];
   return [...new Set([
     staffAttendanceCollectionPath(env, key, branchId),
     legacyStaffAttendanceCollectionPath(key, branchId)
@@ -110,6 +111,7 @@ async function legacyReadsDisabled(env, branchId = 'main') {
 
 async function activeStaffAttendanceReadPaths(env, key, branchId = 'main') {
   const paths = staffAttendanceReadPaths(env, key, branchId);
+  if (paths.length === 1) return paths;
   return await legacyReadsDisabled(env, branchId) ? paths.slice(0, 1) : paths;
 }
 

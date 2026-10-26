@@ -85,7 +85,7 @@ export async function securityAuditList(env, user, body) {
     const { fromDate, toDate } = securityAuditDateRange(body);
     const paged = body.paged === true;
     const aggregate = await loadAggregatedSecurityAudit(env, { fromDate, toDate, perSourceLimit: 300,
-      paged, batchCursor: body.batchCursor });
+      paged, batchCursor: body.batchCursor, branchId: user.branchId && user.branchId !== 'all' ? user.branchId : body.branchId });
     const visible = await securityAuditDisplayLabels(env, aggregate.rows.filter((row) => branchRecordVisible(row, user)));
     const facets = {
       actions: uniqueOptions(visible, (row) => row.Action),

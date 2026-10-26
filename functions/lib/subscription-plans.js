@@ -1,3 +1,4 @@
+import { HOSPITAL_MODULES } from './hospital-catalog.js';
 import { paidLifecycleWindow } from './paid-subscription-lifecycle.js';
 import { formatDate } from './display-time.js';
 
@@ -14,7 +15,7 @@ export const SUBSCRIPTION_PLAN_NAMES = Object.freeze([
 
 const FULL_ACCESS = '*';
 export const FREE_TRIAL_DAYS = 7;
-export const SUBSCRIPTION_MODULE_CATALOG_VERSION = 12;
+export const SUBSCRIPTION_MODULE_CATALOG_VERSION = 13;
 const RECENT_MODULE_VERSIONS = Object.freeze({ vendorSettlements: 11, externalAudit: 11, procurement: 12 });
 const moduleIntroductionVersion = (key, edition) => edition === 'organization' && ['retail', 'restaurant'].includes(key)
   ? 12 : RECENT_MODULE_VERSIONS[key] || 0;
@@ -59,7 +60,15 @@ export const SUBSCRIPTION_FLEX_PRICE_ESTIMATES_USD = Object.freeze({
   hotel: 6
 });
 
+const HOSPITAL_SHARED_LABELS = Object.freeze({
+  branches: 'Branches and facilities', branding: 'Branding and document identity',
+  approvals: 'Bills, requisitions and approvals', procurement: 'Procurement',
+  executiveOffice: 'Executive Office', humanResources: 'Human Resources',
+  staffAttendance: 'Staff attendance and clocking', accounting: 'Finance and accounting',
+  externalAudit: 'External Audit', payroll: 'Payroll', bulkCommunication: 'Communication'
+});
 export const SUBSCRIPTION_MODULE_CATALOG = Object.freeze([
+  ...HOSPITAL_MODULES,
   Object.freeze({ Key: 'branches', Editions: Object.freeze(['school', 'faith', 'organization']), Labels: Object.freeze({ school: 'Branches & campuses', faith: 'Branches & assemblies', organization: 'Branches & offices' }), Description: 'Branch switching and branch-isolated records.', Requires: Object.freeze([]) }),
   Object.freeze({ Key: 'branding', Editions: Object.freeze(['school', 'faith', 'organization']), Labels: Object.freeze({ school: 'Branding & document identity', faith: 'Branding & document identity', organization: 'Branding & document identity' }), Description: 'Organisation identity, logos and document presentation.', Requires: Object.freeze([]) }),
   Object.freeze({ Key: 'approvals', Editions: Object.freeze(['school', 'faith', 'organization']), Labels: Object.freeze({ school: 'Bills, requisitions & approvals', faith: 'Bills, requisitions & approvals', organization: 'Bills, requisitions & approvals' }), Description: 'Request, review, approval and posting workflows.', Requires: Object.freeze([]) }),
@@ -91,12 +100,15 @@ export const SUBSCRIPTION_MODULE_CATALOG = Object.freeze([
   Object.freeze({ Key: 'retail', Editions: Object.freeze(['faith', 'organization']), Labels: Object.freeze({ faith: 'Organisation store', organization: 'Inventory & Sales' }), Description: 'Inventory, sales, checkout and receipts.', Requires: Object.freeze(['accounting']) }),
   Object.freeze({ Key: 'restaurant', Editions: Object.freeze(['faith', 'organization']), Labels: Object.freeze({ faith: 'Restaurant', organization: 'Catering Operations' }), Description: 'Restaurant and catering stock, ordering and sales operations.', Requires: Object.freeze(['accounting']) }),
   Object.freeze({ Key: 'hotel', Editions: Object.freeze(['faith', 'organization']), Labels: Object.freeze({ faith: 'Hotel services', organization: 'Hotel services' }), Description: 'Rooms, reservations, guest stays, housekeeping, charges and payments.', Requires: Object.freeze(['accounting']) })
-]);
+].map(module => HOSPITAL_SHARED_LABELS[module.Key] ? Object.freeze({
+  ...module, Editions: Object.freeze([...module.Editions, 'hospital']),
+  Labels: Object.freeze({ ...module.Labels, hospital: HOSPITAL_SHARED_LABELS[module.Key] })
+}) : module));
 
 const MODULE_BY_KEY = new Map(SUBSCRIPTION_MODULE_CATALOG.map((module) => [module.Key, module]));
 
 export function subscriptionModulesForEdition(edition) {
-  const normalizedEdition = ['faith', 'organization'].includes(clean(edition).toLowerCase())
+  const normalizedEdition = ['faith', 'organization', 'hospital'].includes(clean(edition).toLowerCase())
     ? clean(edition).toLowerCase()
     : 'school';
   return SUBSCRIPTION_MODULE_CATALOG
@@ -157,7 +169,7 @@ export function migrateSubscriptionModuleEntitlements(edition, value, sourceVers
   return normalizeConfiguredEntitlements(edition, entitlements, []);
 }
 
-export const SUBSCRIPTION_PLAN_DEFINITIONS = Object.freeze({
+const EXISTING_PLAN_DEFINITIONS = Object.freeze({
   Free: Object.freeze({
     UserLimit: 5,
     TrialDays: FREE_TRIAL_DAYS,
@@ -238,6 +250,22 @@ export const SUBSCRIPTION_PLAN_DEFINITIONS = Object.freeze({
   })
 });
 
+const hospitalStarter = Object.freeze(['branches', 'branding', 'hospitalPatients', 'hospitalReception']);
+const hospitalStandard = Object.freeze([...hospitalStarter, 'approvals', 'procurement', 'executiveOffice',
+  'humanResources', 'staffAttendance', 'accounting', 'externalAudit', 'bulkCommunication']);
+export const SUBSCRIPTION_PLAN_DEFINITIONS = Object.freeze(Object.fromEntries(
+  Object.entries(EXISTING_PLAN_DEFINITIONS).map(([name, definition]) => [name, Object.freeze({
+    ...definition,
+    Entitlements: Object.freeze({ ...definition.Entitlements,
+      hospital: name === 'Starter' ? hospitalStarter : name === 'Standard' ? hospitalStandard
+        : name === 'Flex' ? Object.freeze([]) : FULL_ACCESS }),
+    Features: Object.freeze({ ...definition.Features, hospital: Object.freeze(
+      name === 'Flex' ? ['Choose available hospital modules and active users']
+        : name === 'Starter' ? ['Patient registration', 'Reception and visits', 'Branches and branding']
+        : ['Patient registration and reception', 'Shared hospital administration', 'Role and branch access controls']) })
+  })])
+));
+
 export function normalizeSubscriptionPlan(value, fallback = 'Starter') {
   const wanted = clean(value).toLowerCase();
   return SUBSCRIPTION_PLAN_NAMES.find((name) => name.toLowerCase() === wanted)
@@ -257,7 +285,7 @@ export function subscriptionPlanDefinition(value) {
 }
 
 export function subscriptionPlanEntitlements(plan, edition, catalog = null) {
-  const normalizedEdition = ['faith', 'organization'].includes(clean(edition).toLowerCase())
+  const normalizedEdition = ['faith', 'organization', 'hospital'].includes(clean(edition).toLowerCase())
     ? clean(edition).toLowerCase()
     : 'school';
   if (catalog && typeof catalog === 'object') {
@@ -269,7 +297,7 @@ export function subscriptionPlanEntitlements(plan, edition, catalog = null) {
 }
 
 export function subscriptionPlanFeatures(plan, edition, catalog = null) {
-  const normalizedEdition = ['faith', 'organization'].includes(clean(edition).toLowerCase())
+  const normalizedEdition = ['faith', 'organization', 'hospital'].includes(clean(edition).toLowerCase())
     ? clean(edition).toLowerCase()
     : 'school';
   if (catalog && typeof catalog === 'object') {
@@ -415,7 +443,7 @@ export function defaultSubscriptionPlanCatalog() {
         MonthlyAmount: 0,
         YearlyAmount: 0,
         Active: name !== 'Flex',
-        EntitlementsByEdition: Object.fromEntries(['school', 'faith', 'organization'].map((edition) => [
+        EntitlementsByEdition: Object.fromEntries(['school', 'faith', 'organization', 'hospital'].map((edition) => [
           edition,
           normalizeConfiguredEntitlements(edition, definition.Entitlements[edition], [])
         ])),
@@ -424,7 +452,7 @@ export function defaultSubscriptionPlanCatalog() {
         IncludedUsers: name === 'Flex' ? 1 : definition.UserLimit,
         AdditionalUserMonthlyAmount: 0,
         AdditionalUserYearlyAmount: 0,
-        ModulePricesByEdition: Object.fromEntries(['school', 'faith', 'organization'].map((edition) => [
+        ModulePricesByEdition: Object.fromEntries(['school', 'faith', 'organization', 'hospital'].map((edition) => [
           edition,
           Object.fromEntries(subscriptionModulesForEdition(edition).map((module) => [
             module.Key,
@@ -476,7 +504,7 @@ export function normalizeSubscriptionPlanCatalog(value = {}) {
         MonthlyAmount: name === 'Free' ? 0 : money(incoming.MonthlyAmount),
         YearlyAmount: name === 'Free' ? 0 : money(incoming.YearlyAmount),
         Active: enabled(incoming.Active, defaults.Plans[name].Active),
-        EntitlementsByEdition: Object.fromEntries(['school', 'faith', 'organization'].map((edition) => {
+        EntitlementsByEdition: Object.fromEntries(['school', 'faith', 'organization', 'hospital'].map((edition) => {
           const normalizedEntitlements = normalizeConfiguredEntitlements(
             edition,
             Object.prototype.hasOwnProperty.call(configuredEntitlements, edition)
@@ -548,7 +576,7 @@ export function normalizeSubscriptionPlanCatalog(value = {}) {
           : configuredLimit,
         AdditionalUserMonthlyAmount: name === 'Flex' ? money(incoming.AdditionalUserMonthlyAmount) : 0,
         AdditionalUserYearlyAmount: name === 'Flex' ? money(incoming.AdditionalUserYearlyAmount) : 0,
-        ModulePricesByEdition: Object.fromEntries(['school', 'faith', 'organization'].map((edition) => [
+        ModulePricesByEdition: Object.fromEntries(['school', 'faith', 'organization', 'hospital'].map((edition) => [
           edition,
           Object.fromEntries(subscriptionModulesForEdition(edition).map((module) => {
             const price = configuredModulePrices?.[edition]?.[module.Key] || {};
@@ -591,7 +619,7 @@ export function publicSubscriptionPlanCatalog(value = {}) {
     Currency: catalog.Currency,
     UsdToNgnRate: catalog.UsdToNgnRate,
     ModuleCatalogVersion: catalog.ModuleCatalogVersion,
-    ModuleCatalog: Object.fromEntries(['school', 'faith', 'organization'].map((edition) => [
+    ModuleCatalog: Object.fromEntries(['school', 'faith', 'organization', 'hospital'].map((edition) => [
       edition,
       subscriptionModulesForEdition(edition)
     ])),
@@ -606,14 +634,14 @@ export function publicSubscriptionPlanCatalog(value = {}) {
       IncludedUsers: catalog.Plans[name].IncludedUsers,
       AdditionalUserMonthlyAmount: catalog.Plans[name].AdditionalUserMonthlyAmount,
       AdditionalUserYearlyAmount: catalog.Plans[name].AdditionalUserYearlyAmount,
-      ModulePricesByEdition: Object.fromEntries(['school', 'faith', 'organization'].map((edition) => [
+      ModulePricesByEdition: Object.fromEntries(['school', 'faith', 'organization', 'hospital'].map((edition) => [
         edition,
         Object.fromEntries(Object.entries(catalog.Plans[name].ModulePricesByEdition[edition] || {}).map(([key, price]) => [
           key,
           { MonthlyAmount: price.MonthlyAmount, YearlyAmount: price.YearlyAmount }
         ]))
       ])),
-      EntitlementsByEdition: Object.fromEntries(['school', 'faith', 'organization'].map((edition) => [
+      EntitlementsByEdition: Object.fromEntries(['school', 'faith', 'organization', 'hospital'].map((edition) => [
         edition,
         [...catalog.Plans[name].EntitlementsByEdition[edition]]
       ])),
@@ -645,7 +673,7 @@ export function subscriptionPaystackPlanCode(catalog, plan, billingCycle) {
 export function subscriptionFlexQuote(catalog, edition, requestedModules, requestedUserLimit, billingCycle = 'monthly') {
   const normalizedCatalog = normalizeSubscriptionPlanCatalog(catalog);
   const plan = normalizedCatalog.Plans.Flex;
-  const normalizedEdition = ['faith', 'organization'].includes(clean(edition).toLowerCase())
+  const normalizedEdition = ['faith', 'organization', 'hospital'].includes(clean(edition).toLowerCase())
     ? clean(edition).toLowerCase()
     : 'school';
   if (!plan.Active) {

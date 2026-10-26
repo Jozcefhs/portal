@@ -207,7 +207,7 @@ test('school and organisation dashboard graphs remain available on mobile', () =
 
 test('authenticated school edition overrides an organisation-flavoured URL', () => {
   assert.match(adminJs, /function resolveDashboardEdition\(user = \{\}\)/);
-  assert.match(adminJs, /if \(\['school', 'church', 'faith', 'organization'\]\.includes\(explicitEdition\)\) return explicitEdition/);
+  assert.match(adminJs, /if \(\['school', 'church', 'faith', 'organization', 'hospital'\]\.includes\(explicitEdition\)\) return explicitEdition/);
   assert.match(adminJs, /const dashboardEdition = resolveDashboardEdition\(user\)/);
   assert.doesNotMatch(adminJs, /\/dunamis\|digc\|church\/i\.test\(profileName\)/);
   const source = adminJs.slice(
@@ -218,6 +218,7 @@ test('authenticated school edition overrides an organisation-flavoured URL', () 
   const cleanValue = (value) => String(value ?? '').trim();
   assert.equal(resolveFor(cleanValue, 'organization')({ edition: 'school' }), 'school');
   assert.equal(resolveFor(cleanValue, 'faith')({ edition: 'school' }), 'school');
+  assert.equal(resolveFor(cleanValue, 'faith')({ edition: 'hospital' }), 'hospital');
   assert.equal(resolveFor(cleanValue, 'faith')({}), 'faith');
 });
 

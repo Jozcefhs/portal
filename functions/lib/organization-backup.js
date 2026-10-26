@@ -6,6 +6,7 @@ import {
   upsertDocument
 } from './firestore.js';
 import { requiredDeploymentIdentity } from './deployment-identity.js';
+import { HOSPITAL_COLLECTIONS, hospitalCollectionPath } from './hospital-storage.js';
 import { CHURCH_COLLECTIONS, churchCollectionPath } from './church-foundation.js';
 import { getSchoolStructure, schoolCollectionPaths } from './school-scope.js';
 import {
@@ -202,7 +203,7 @@ export async function organizationBackupDescriptors(env) {
     const canonicalPath = canonicalStaffAttendanceCollectionPath(identity.edition, key, branchId);
     const legacyPath = legacyStaffAttendanceCollectionPath(key, branchId);
     descriptors.push({ key: canonicalPath, path: canonicalPath, type: 'staff-attendance' });
-    descriptors.push({ key: legacyPath, path: legacyPath, type: 'staff-attendance-legacy' });
+    if (identity.edition !== 'hospital') descriptors.push({ key: legacyPath, path: legacyPath, type: 'staff-attendance-legacy' });
   }));
   if (identity.edition === 'school') {
     const schoolPaths = (await Promise.all(
@@ -213,6 +214,11 @@ export async function organizationBackupDescriptors(env) {
       const branchId = clean(branch.Id || branch.id || 'main').toLowerCase() || 'main';
       const path = `organisationBranches/${branchId}/${collection}`;
       descriptors.push({ key: path, path, type: 'branch-school-setting' });
+    }));
+  } else if (identity.edition === 'hospital') {
+    descriptors.push(...HOSPITAL_COLLECTIONS.map((name) => {
+      const path = hospitalCollectionPath(env, name);
+      return { key: path, path, type: 'hospital' };
     }));
   } else {
     branches.forEach((branch) => Object.values(CHURCH_COLLECTIONS).forEach((collection) => {
@@ -352,6 +358,8 @@ function restoreCollectionPathAllowed(path, discoveredPaths, edition) {
     return /^schoolBranches\/[a-z0-9._-]+\/sections\/(?:primary|secondary)\/(?:applications|students|studentConductCases|studentConductAudit)$/i.test(path)
       || /^organisationBranches\/[a-z0-9._-]+\/(?:schoolClasses|admissionClasses)$/i.test(path);
   }
+  // Hospital nested paths are enumerated for this exact workspace, including empty collections.
+  if (edition === 'hospital') return false;
   const churchCollections = new Set(Object.values(CHURCH_COLLECTIONS));
   return parts.length === 3
     && parts[0] === 'organisationBranches'

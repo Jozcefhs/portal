@@ -1,6 +1,7 @@
 import { queryCollection, upsertDocument } from './firestore.js';
 import { readStaffSession } from './staff-auth.js';
 import { auditWords, auditSentence, auditNarrative, auditActionContext } from './audit-language.js';
+import { hospitalCollectionPath } from './hospital-storage.js';
 
 export const SECURITY_AUDIT_COLLECTION = 'platformSecurityAudit';
 
@@ -18,6 +19,7 @@ const AUDIT_SOURCES = Object.freeze([
 ]);
 
 const ROUTE_MODULES = Object.freeze([
+  ['/api/staff-hospital', 'Hospital'],
   ['/api/security-audit', 'Security audit'],
   ['/api/staff-session', 'Identity & access'],
   ['/api/staff-passkey', 'Identity & access'],
@@ -590,6 +592,9 @@ export function securityAuditRowVisible(row) {
 }
 
 export async function loadAggregatedSecurityAudit(env, options = {}) {
+  const hospital = lower(env.ORGANISATION_EDITION || env.ORGANIZATION_EDITION) === 'hospital';
+  const sources = hospital ? [...AUDIT_SOURCES, { collection: hospitalCollectionPath(env, 'Audit'), module: 'Hospital', hospital: true }] : AUDIT_SOURCES;
+  const branchId = hospital ? lower(options.branchId) : '';
   const range = sourceDateRange(options.fromDate, options.toDate);
   const filters = [];
   if (range.from) filters.push({ field: 'Timestamp', op: '>=', value: range.from });
@@ -606,11 +611,11 @@ export async function loadAggregatedSecurityAudit(env, options = {}) {
   if (paged && (cursor && (typeof cursor !== 'object' || Array.isArray(cursor)
     || cursor.fromDate !== options.fromDate || cursor.toDate !== options.toDate || !cursor.readTime
     || !cursor.sources || typeof cursor.sources !== 'object' || Array.isArray(cursor.sources)
-    || Object.keys(cursor.sources).length !== AUDIT_SOURCES.length)
+    || Object.keys(cursor.sources).length !== sources.length || hospital && clean(cursor.branchId) !== branchId)
     || !Number.isFinite(Date.parse(readTime)) || Date.parse(readTime) > Date.now()
     || Date.parse(readTime) < Date.now() - 55 * 60 * 1000)) throw invalidCursor();
   if (paged && cursor) {
-    for (const source of AUDIT_SOURCES) {
+    for (const source of sources) {
       if (!Object.prototype.hasOwnProperty.call(cursor.sources, source.collection)) throw invalidCursor();
       const position = cursor.sources[source.collection];
       if (position === null) continue;
@@ -622,12 +627,12 @@ export async function loadAggregatedSecurityAudit(env, options = {}) {
         || range.from && position.timestamp < range.from || range.to && position.timestamp > range.to) throw invalidCursor();
     }
   }
-  const groups = await Promise.all(AUDIT_SOURCES.map(async (source) => {
+  const groups = await Promise.all(sources.map(async (source) => {
     const position = paged && cursor ? cursor.sources[source.collection] : undefined;
     if (paged && position === null) return { rows: [], next: null };
     try {
       const rows = await queryCollection(env, source.collection, {
-        filters,
+        filters: source.hospital && branchId && branchId !== 'all' ? [...filters, { field: 'BranchId', op: '==', value: branchId }] : filters,
         orderBy: [{ field: 'Timestamp', direction: 'DESCENDING' }, ...(paged ? [{ field: '__name__', direction: 'DESCENDING' }] : [])],
         limit: perSourceLimit,
         ...(paged ? { readTime } : {}),
@@ -653,7 +658,8 @@ export async function loadAggregatedSecurityAudit(env, options = {}) {
       scanned: groups.reduce((total, group) => total + (group.scanned || 0), 0),
       nextCursor: groups.every((group) => group.next === null) ? null : {
         fromDate: options.fromDate, toDate: options.toDate, readTime,
-        sources: Object.fromEntries(AUDIT_SOURCES.map((source, index) => [source.collection, groups[index].next]))
+        ...(hospital ? { branchId } : {}),
+        sources: Object.fromEntries(sources.map((source, index) => [source.collection, groups[index].next]))
       }
     } : {})
   };

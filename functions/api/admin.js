@@ -207,7 +207,7 @@ export async function onRequestPost(context) {
     }
     // These modules load their inventory and cursor-paged histories through
     // dedicated endpoints. Do not scan the same growing collections here first.
-    if (['clinic', 'kitchen', 'restaurant', 'tuckShop', 'bookstore', 'uniformStore', 'organizationStore'].includes(requestedSection)) {
+    if (['hospitalPatients', 'hospitalReception', 'clinic', 'kitchen', 'restaurant', 'tuckShop', 'bookstore', 'uniformStore', 'organizationStore'].includes(requestedSection)) {
       return Response.json({ ok: true, user, allowedSections: user.allowedSections,
         availableSections: user.availableSections, restrictedSections: user.restrictedSections,
         subscriptionPlan: user.subscriptionPlan, summary: {}, charts: {},

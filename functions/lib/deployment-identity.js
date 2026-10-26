@@ -3,7 +3,7 @@ import { resolveOrganizationConfig } from './organization-config.js';
 import { refreshOrganizationPlanPolicy } from './plan-policy-sync.js';
 
 const clean = (value) => String(value ?? '').trim();
-const ALLOWED_DEPLOYMENT_EDITIONS = new Set(['school', 'faith', 'organization']);
+const ALLOWED_DEPLOYMENT_EDITIONS = new Set(['school', 'faith', 'organization', 'hospital']);
 const EDITION_ALIASES = new Map([
   ['church', 'faith']
 ]);
@@ -31,7 +31,7 @@ function canonicalDeploymentEdition(value, { required = true, label = 'ORGANISAT
   const canonical = EDITION_ALIASES.get(raw) || raw;
   if (!ALLOWED_DEPLOYMENT_EDITIONS.has(canonical)) {
     throw identityError(
-      `${label} must be school, faith, organization, or the church alias.`,
+      `${label} must be school, faith, organization, hospital, or the church alias.`,
       503,
       'DEPLOYMENT_EDITION_INVALID'
     );

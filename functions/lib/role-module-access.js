@@ -3,11 +3,14 @@ import {
   normalizeOrganizationEdition,
   staffRoleAllowedForEdition
 } from './organization-config.js';
+import { HOSPITAL_STAFF_ROLES, hospitalRoleModules } from './hospital-catalog.js';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
 
 export const WEB_SECTION_CATALOG = Object.freeze([
+  Object.freeze({ key: 'hospitalPatients', label: 'Patient registration' }),
+  Object.freeze({ key: 'hospitalReception', label: 'Reception and visits' }),
   Object.freeze({ key: 'recordsDesk', label: 'Records Desk' }),
   Object.freeze({ key: 'executiveOffice', label: 'Executive Office' }),
   Object.freeze({ key: 'admissions', label: 'Admissions' }),
@@ -64,6 +67,7 @@ export const ORGANIZATION_SECTION_LABELS = Object.freeze({
 });
 
 export const STAFF_ROLE_OPTIONS = Object.freeze([
+  ...HOSPITAL_STAFF_ROLES,
   'Vendor User',
   'Super Admin', 'Director', 'Admin', 'Principal', 'Vice Principal Academics', 'Vice Principal Administration',
   'Head Teacher', 'Assistant Head Teacher', 'Teacher', 'ICT', 'Librarian', 'Senior Pastor', 'Head Minister',
@@ -144,6 +148,11 @@ export function rolesForEdition(edition) {
 
 export function modulesForEdition(edition, featureFlags = null) {
   const allowed = new Set(filterSectionsForFeatures(WEB_SECTION_KEYS, featureFlags));
+  if (normalizeOrganizationEdition(edition) !== 'hospital') {
+    allowed.delete('hospitalPatients'); allowed.delete('hospitalReception');
+  } else {
+    ['members', 'services', 'funds', 'offerings', 'donations', 'organizationStore', 'restaurant', 'hotel', 'vendorSettlements'].forEach(key => allowed.delete(key));
+  }
   if (normalizeOrganizationEdition(edition) !== 'school') {
     ['admissions', 'formPurchases', 'students', 'academics', 'library', 'studentConduct', 'accounts', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore']
       .forEach((key) => allowed.delete(key));
@@ -182,6 +191,7 @@ export function defaultModulesForRole(role, { edition = 'school', featureFlags =
   const base = name === 'Department User'
     ? departmentUserDefaults(department)
     : [...(LEGACY_ROLE_DEFAULTS[name] || []), ...(name ? ['humanResources'] : [])];
+  if (normalizeOrganizationEdition(edition) === 'hospital') base.push(...hospitalRoleModules(name));
   if (name) base.push('staffAttendance');
   if (['Super Admin', 'Director', 'Admin', 'Management', 'Accounts Officer', 'Tuck Shop User', 'Store User', 'Restaurant User', 'Operations Manager'].includes(name)) base.push('vendorSettlements');
   if (['Super Admin', 'Director', 'Admin', 'Management', 'Accounts Officer', 'Procurement Officer',

@@ -33,7 +33,13 @@ test('religious organisations receive dedicated store and restaurant modules wit
 
 test('church staff editor removes school modules, roles and accounting permissions', () => {
   assert.match(adminJs, /function webTabsForEdition/);
-  assert.match(adminJs, /tabConfig\.filter\(\(\[key\]\) => !schoolOnlyWebSections\.has\(key\)\)/);
+  const webTabs = adminJs.slice(adminJs.indexOf('function webTabsForEdition'), adminJs.indexOf('function staffRolesForEdition'));
+  const tabs = new Function('tabConfig','schoolOnlyWebSections', `${webTabs}; return webTabsForEdition;`)([
+    ['members','Members'], ['students','Students'], ['hospitalPatients','Patients'], ['hospitalReception','Reception']
+  ],new Set(['students']));
+  assert.deepEqual(tabs('faith').map(([key])=>key),['members']);
+  assert.deepEqual(tabs('organization').map(([key])=>key),['members']);
+  assert.deepEqual(tabs('hospital').map(([key])=>key),['hospitalPatients','hospitalReception']);
   assert.match(adminJs, /function staffRolesForEdition/);
   assert.match(adminJs, /\$\{schoolEdition \? '<label>School section/);
   assert.match(adminJs, /permissionTabs\.map/);

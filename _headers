@@ -36,6 +36,12 @@
   Cache-Control: no-store
   Referrer-Policy: no-referrer
 
+/hospital*
+  Cache-Control: no-store
+  Referrer-Policy: no-referrer
+  Permissions-Policy: nfc=(self), camera=(), microphone=(), geolocation=()
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'
+
 /exam*
   Cache-Control: no-store
   Referrer-Policy: no-referrer

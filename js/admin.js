@@ -297,6 +297,8 @@ let recordsDeskState = {
 };
 
 const tabConfig = [
+  ['hospitalPatients', 'Patient registration'],
+  ['hospitalReception', 'Reception and visits'],
   ['recordsDesk', 'Records Desk'],
   ['executiveOffice', 'Executive Office'],
   ['admissions', 'Admissions'],
@@ -384,6 +386,8 @@ const schoolOnlyWebSections = new Set([
 ]);
 
 const staffRoleOptions = [
+  'Medical Director', 'Hospital Administrator', 'Doctor', 'Nurse', 'Pharmacist',
+  'Laboratory Scientist', 'Radiographer', 'Registration Officer', 'Medical Records Officer', 'Hospital Cashier', 'HMO Officer',
   'Vendor User',
   'Super Admin', 'Director', 'Admin', 'Principal', 'Vice Principal Academics', 'Vice Principal Administration',
   'Head Teacher', 'Assistant Head Teacher', 'Teacher', 'ICT', 'Librarian', 'Senior Pastor', 'Head Minister',
@@ -438,19 +442,27 @@ const organizationTabLabels = Object.freeze({
 });
 
 function webTabsForEdition(edition = resolveDashboardEdition(currentUser || {})) {
+  const filtered = tabConfig.filter(([key]) => edition === 'hospital' || !key.startsWith('hospital'));
+  if (edition === 'hospital') {
+    const unavailable = new Set([...schoolOnlyWebSections, 'members', 'services', 'funds', 'offerings', 'donations', 'organizationStore', 'restaurant', 'hotel', 'vendorSettlements']);
+    return filtered.filter(([key]) => !unavailable.has(key));
+  }
   return edition === 'school'
-    ? tabConfig
-    : tabConfig.filter(([key]) => !schoolOnlyWebSections.has(key));
+    ? filtered
+    : filtered.filter(([key]) => !schoolOnlyWebSections.has(key));
 }
 
 function staffRolesForEdition(edition = resolveDashboardEdition(currentUser || {})) {
+  const hospitalRoles = new Set(['Medical Director', 'Hospital Administrator', 'Doctor', 'Nurse', 'Pharmacist', 'Laboratory Scientist', 'Radiographer', 'Registration Officer', 'Medical Records Officer', 'Hospital Cashier', 'HMO Officer']);
+  const options = staffRoleOptions.filter(role => edition === 'hospital' || !hospitalRoles.has(role));
+  if (edition === 'hospital') return options.filter(role => !schoolOnlyStaffRoles.has(role) && !faithOnlyStaffRoles.has(role) && !organizationOnlyStaffRoles.has(role) && !nonSchoolOnlyStaffRoles.has(role));
   if (edition === 'school') {
-    return staffRoleOptions.filter((role) => !faithOnlyStaffRoles.has(role) && !organizationOnlyStaffRoles.has(role) && !nonSchoolOnlyStaffRoles.has(role));
+    return options.filter((role) => !faithOnlyStaffRoles.has(role) && !organizationOnlyStaffRoles.has(role) && !nonSchoolOnlyStaffRoles.has(role));
   }
   if (edition === 'organization') {
-    return staffRoleOptions.filter((role) => !schoolOnlyStaffRoles.has(role) && !faithOnlyStaffRoles.has(role));
+    return options.filter((role) => !schoolOnlyStaffRoles.has(role) && !faithOnlyStaffRoles.has(role));
   }
-  return staffRoleOptions.filter((role) => !schoolOnlyStaffRoles.has(role) && !organizationOnlyStaffRoles.has(role));
+  return options.filter((role) => !schoolOnlyStaffRoles.has(role) && !organizationOnlyStaffRoles.has(role));
 }
 
 const tabIcons = {
@@ -2125,7 +2137,7 @@ function showLogin(message = '', type = '') {
 
 function resolveDashboardEdition(user = {}) {
   const explicitEdition = clean(user.organisationEdition || user.organizationEdition || user.edition).toLowerCase();
-  if (['school', 'church', 'faith', 'organization'].includes(explicitEdition)) return explicitEdition;
+  if (['school', 'church', 'faith', 'organization', 'hospital'].includes(explicitEdition)) return explicitEdition;
   if (['church', 'faith', 'organization'].includes(requestedWorkspace)) return requestedWorkspace;
   return 'school';
 }
@@ -2142,6 +2154,7 @@ function schoolPresentationSection() {
 }
 
 function executiveOfficeTitle() {
+  if (resolveDashboardEdition(currentUser || {}) === 'hospital') return 'Executive Office';
   const role = clean(currentUser?.role);
   const faithEdition = document.documentElement.dataset.edition === 'church'
     || ['church', 'faith', 'organization'].includes(resolveDashboardEdition(currentUser || {}));
@@ -2336,8 +2349,8 @@ function showDashboard(user, options = {}) {
   roleEl.textContent = [user.assignedRole || user.role, user.department].filter(Boolean).join(' • ');
   renderProfilePhoto(user.profilePhotoUrl, displayName);
   sidebarEl.querySelector('.staff-sidebar-heading')?.setAttribute('data-initial', displayName.charAt(0).toUpperCase());
-  editionLabel.textContent = isFaith ? 'Religious Organisation' : (isGenericOrganization ? 'Organisation Operations' : 'Staff Web Companion');
-  workspaceTitle.textContent = executiveWorkspaceName || (isOrganisationOperations ? 'Organisation Operations' : 'Operations Centre');
+  editionLabel.textContent = dashboardEdition === 'hospital' ? 'Hospital' : isFaith ? 'Religious Organisation' : (isGenericOrganization ? 'Organisation Operations' : 'Staff Web Companion');
+  workspaceTitle.textContent = dashboardEdition === 'hospital' ? 'Hospital Operations' : executiveWorkspaceName || (isOrganisationOperations ? 'Organisation Operations' : 'Operations Centre');
   overviewLabel.textContent = executiveWorkspaceName ? 'Executive overview' : (isFaith ? 'Community overview' : 'Operations overview');
   welcomeCopy.textContent = executiveWorkspaceName
     ? 'Review the organisation, prepare official correspondence and monitor the summaries selected for your office.'
@@ -3037,6 +3050,11 @@ function applicationIsAdmitted(row) {
 function renderModuleSummary(active, liveData = null) {
   if (active === 'overview') {
     renderSummary(dashboardData?.summary || {});
+    return;
+  }
+  if (['hospitalPatients', 'hospitalReception'].includes(active)) {
+    summaryEl.replaceChildren();
+    panelEl.innerHTML = `<h2>${escapeHtml(staffTabLabel(active, active === 'hospitalPatients' ? 'Patient registration' : 'Reception and visits'))}</h2><p>Search patients by name, hospital number or NFC card. Choose a period to load reception visits.</p><a class="btn" href="/hospital.html?branch=${encodeURIComponent(selectedBranchId || 'main')}&task=${active === 'hospitalReception' ? 'reception' : 'patients'}">Open Hospital workspace</a>`;
     return;
   }
   const departments = dashboardData?.departments || {};

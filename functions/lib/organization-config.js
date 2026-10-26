@@ -8,10 +8,11 @@ import {
   subscriptionPlanUserLimit
 } from './subscription-plans.js';
 import { normalizeNameFormat, personNameFormatProfile } from './person-name-format.js';
+import { HOSPITAL_STAFF_ROLES } from './hospital-catalog.js';
 
 const clean = (value) => String(value ?? '').trim();
 
-export const ORGANIZATION_EDITIONS = Object.freeze(['school', 'faith', 'organization']);
+export const ORGANIZATION_EDITIONS = Object.freeze(['school', 'faith', 'organization', 'hospital']);
 
 export const SCHOOL_ONLY_SECTION_KEYS = Object.freeze([
   'admissions', 'formPurchases', 'students', 'academics', 'library', 'studentConduct', 'accounts',
@@ -51,6 +52,7 @@ export const NON_SCHOOL_OPERATION_ROLES = Object.freeze([
 ]);
 
 const EDITION_STAFF_ROLE_SETS = Object.freeze({
+  hospital: new Set([...SHARED_STAFF_ROLES, ...HOSPITAL_STAFF_ROLES]),
   school: new Set([...SHARED_STAFF_ROLES, ...SCHOOL_ONLY_STAFF_ROLES]),
   faith: new Set([...SHARED_STAFF_ROLES, ...FAITH_ONLY_STAFF_ROLES, ...NON_SCHOOL_OPERATION_ROLES]),
   organization: new Set([
@@ -66,6 +68,17 @@ const NON_SCHOOL_DISABLED_FEATURES = new Set([
 ]);
 
 export const EDITION_FEATURE_DEFAULTS = Object.freeze({
+  hospital: Object.freeze({
+    branches: true, branding: true, approvals: true, procurement: true,
+    executiveOffice: true, humanResources: true, staffAttendance: true,
+    bulkCommunication: true, accounting: true, externalAudit: true, payroll: true,
+    hospitalPatients: true, hospitalReception: true,
+    admissions: false, students: false, academics: false, library: false,
+    studentConduct: false, parentPortal: false, stores: false, clinic: false,
+    kitchen: false, members: false, services: false, funds: false, offerings: false,
+    donations: false, departments: false, programs: false, retail: false,
+    restaurant: false, hotel: false, vendorSettlements: false
+  }),
   school: Object.freeze({
     branches: true,
     branding: true,
@@ -286,7 +299,7 @@ export function resolveOrganizationConfig({ env = {}, organizationProfile = {}, 
       || profileEdition
       || legacy.OrganisationEdition || legacy.OrganizationEdition
   );
-  const fallbackName = edition === 'school' ? 'Your School Name' : 'Your Organisation Name';
+  const fallbackName = edition === 'hospital' ? 'Your Hospital Name' : edition === 'school' ? 'Your School Name' : 'Your Organisation Name';
   const name = clean(
     profile.Name || profile.OrganisationName || profile.OrganizationName
       || legacy.OrganisationName || legacy.OrganizationName || legacy.SchoolName
@@ -403,6 +416,8 @@ export function organizationProfileDocument(config, audit = {}) {
 }
 
 const SECTION_FEATURES = Object.freeze({
+  hospitalPatients: 'hospitalPatients',
+  hospitalReception: Object.freeze(['hospitalPatients', 'hospitalReception']),
   executiveOffice: 'executiveOffice',
   humanResources: 'humanResources',
   admissions: 'admissions',

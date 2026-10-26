@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Hospital reception · Dynamax</title>
+  <link rel="stylesheet" href="/css/hospital.css">
+  <link rel="stylesheet" href="/css/app-dialogs.css">
+  <script src="/js/app-dialogs.js?v=20261016-grouped-form-validation" defer></script>
+  <script src="/js/staff-idle-session.js" defer></script>
+  <script src="/js/hospital.js" defer></script>
+</head>
+<body>
+  <main>
+    <header><div><p class="eyebrow">Dynamax Hospital</p><h1>Patient registration and reception</h1><p>Find a patient, manage an NFC card or check in a visit.</p></div><a href="/admin.html">Staff workspace</a></header>
+    <p id="status" role="status" aria-live="polite">Checking your staff session…</p>
+    <div id="workspace" hidden>
+      <div class="toolbar"><label>Working branch<select id="branch"></select></label><button id="refresh" type="button">Refresh access</button></div>
+      <nav aria-label="Hospital tasks"><button type="button" data-tab="patients">Patients and NFC cards</button><button type="button" data-tab="reception">Reception visits</button></nav>
+      <section id="patients">
+        <h2>Find a patient</h2>
+        <form id="searchForm" class="toolbar">
+          <label>Find by<select id="searchMode"><option value="Query">Surname</option><option value="HospitalNumber">Hospital number</option><option value="CardUid">NFC card</option></select></label>
+          <label class="grow">Search<input id="searchValue" autocomplete="off" maxlength="120" required placeholder="Enter at least two letters of the surname"></label>
+          <button type="submit">Find patient</button><button id="scanLookup" type="button">Scan NFC</button><button id="newPatient" type="button" data-write="patients.write">Register patient</button>
+        </form>
+        <p class="hint">For a USB keyboard reader, select NFC card, focus the search field and tap. No patient history loads until you search.</p>
+        <div id="matches" class="table-wrap"></div><button id="morePatients" type="button" hidden>Next results</button>
+        <section id="patientPanel" hidden>
+          <div class="toolbar"><h2 id="patientTitle">Patient registration</h2><button id="printCard" type="button">Print card layout</button><button id="closePatient" type="button">Close record</button></div>
+          <p id="patientIdentity"></p>
+          <form id="patientForm">
+            <div class="form-grid">
+              <label>First name<input name="FirstName" maxlength="160" required autocomplete="off"></label>
+              <label>Surname<input name="LastName" maxlength="160" required autocomplete="off"></label>
+              <label>Other names<input name="OtherNames" maxlength="160" autocomplete="off"></label>
+              <label>Date of birth<input name="DateOfBirth" type="date"></label>
+              <label>Sex<select name="Sex"><option>Unknown</option><option>Female</option><option>Male</option><option>Other</option></select></label>
+              <label>Phone<input name="Phone" maxlength="40" type="tel" autocomplete="off"></label>
+              <label>Email<input name="Email" maxlength="254" type="email" autocomplete="off"></label>
+              <label>Address<input name="Address" maxlength="1000" autocomplete="off"></label>
+              <label>Emergency contact<input name="EmergencyContactName" maxlength="160" autocomplete="off"></label>
+              <label>Emergency contact phone<input name="EmergencyContactPhone" maxlength="40" type="tel" autocomplete="off"></label>
+              <label>Guardian name<input name="GuardianName" maxlength="160" autocomplete="off"></label>
+              <label>Guardian relationship<input name="GuardianRelationship" maxlength="80" autocomplete="off"></label>
+              <label>Insurer name<input name="InsurerName" maxlength="160" autocomplete="off"></label>
+              <label>Insurance number<input name="InsuranceNumber" maxlength="100" autocomplete="off"></label>
+            </div>
+            <label id="duplicateReview">Reason if this is a different person with a matching registration<input id="duplicateReason" maxlength="1000" autocomplete="off" placeholder="Leave blank unless a duplicate warning requires identity review"></label>
+            <button type="submit" data-write="patients.write">Save patient registration</button>
+          </form>
+          <div id="existingPatient" hidden>
+            <section><h3>NFC patient card</h3><p id="cardStatus"></p>
+              <form id="cardForm" class="form-grid" data-write="patients.write">
+                <label>NFC card UID<input name="CardUid" id="cardUid" maxlength="40" autocomplete="off" placeholder="Tap a USB reader or choose Scan NFC" required></label>
+                <label>Reason for replacement or revocation<input name="Reason" id="cardReason" maxlength="500" autocomplete="off"></label>
+                <div class="toolbar"><button type="button" id="scanAssign">Scan NFC</button><button type="submit">Assign / replace card</button><button type="button" id="revokeCard" class="secondary">Revoke current card</button></div>
+              </form>
+              <p class="hint">The NFC card identifies the patient. Staff permissions control access to records. Card assignment does not authorise payments.</p>
+            </section>
+            <section data-write="visits.write"><h3>Check in</h3><form id="checkInForm" class="toolbar"><label>Receiving department<input name="Department" maxlength="120" placeholder="For example, Outpatients" required></label><button type="submit">Check in patient</button></form></section>
+          </div>
+        </section>
+      </section>
+      <section id="reception" hidden>
+        <h2>Reception visits</h2><p>Choose dates before loading. Reception status records the administrative visit; clinical discharge is recorded separately.</p>
+        <form id="visitForm" class="toolbar"><label>From<input id="visitFrom" type="date" required></label><label>To<input id="visitTo" type="date" required></label><button type="submit">Load visits</button></form>
+        <div id="visitRows" class="table-wrap"></div><button id="moreVisits" type="button" hidden>Next visits</button>
+      </section>
+    </div>
+    <div id="cardPrint" hidden></div>
+  </main>
+</body>
+</html>

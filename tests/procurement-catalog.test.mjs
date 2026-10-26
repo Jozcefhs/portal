@@ -160,7 +160,7 @@ test('Procurement price migration uses the configured currency rate and preserve
         const quote = subscriptionFlexQuote(catalog, edition, ['procurement'], 1, cycle);
         assert.equal(quote.Amount, amount);
         assert.deepEqual(quote.FeatureEntitlements, ['procurement']);
-        assert.equal(quote.PriceSnapshot.ModuleCatalogVersion, 12);
+        assert.equal(quote.PriceSnapshot.ModuleCatalogVersion, SUBSCRIPTION_MODULE_CATALOG_VERSION);
       }
       assert.ok(!subscriptionFlexQuote(catalog, edition, ['approvals'], 1).FeatureEntitlements.includes('procurement'));
     }
@@ -186,7 +186,7 @@ test('v12 policy refresh preserves existing Flex choices without adding Procurem
       assert.deepEqual(refreshed.PlanEntitlements, ['approvals']);
       assert.equal(refreshed.SubscriptionPrice, 123);
       assert.deepEqual(refreshed.SubscriptionPriceSnapshot, snapshot);
-      assert.equal(refreshed.PlanModuleCatalogVersion, 12);
+      assert.equal(refreshed.PlanModuleCatalogVersion, SUBSCRIPTION_MODULE_CATALOG_VERSION);
     }
   } finally { globalThis.fetch = originalFetch; invalidatePlanPolicyCache(); }
 });

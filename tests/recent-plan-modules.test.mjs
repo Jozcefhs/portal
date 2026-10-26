@@ -16,7 +16,7 @@ const editions = ['school', 'faith', 'organization'];
 const recentKeys = ['vendorSettlements', 'externalAudit'];
 
 test('recent finance modules have approved editable prices and dependencies across editions', () => {
-  assert.equal(SUBSCRIPTION_MODULE_CATALOG_VERSION, 12);
+  assert.equal(SUBSCRIPTION_MODULE_CATALOG_VERSION, 13);
   for (const edition of editions) {
     const modules = subscriptionModulesForEdition(edition);
     const vendor = modules.find((row) => row.Key === 'vendorSettlements');

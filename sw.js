@@ -53,6 +53,7 @@ self.addEventListener('fetch', (event) => {
     || url.origin !== self.location.origin
     || url.pathname === '/api'
     || url.pathname.startsWith('/api/')
+    || /^\/hospital(?:\.html)?\/?$/.test(url.pathname)
     || /^\/exams?(?:-admin)?(?:\.html)?\/?$/.test(url.pathname)
     || /^\/staff-password-recovery(?:\.html)?\/?$/.test(url.pathname)
   ) return;
