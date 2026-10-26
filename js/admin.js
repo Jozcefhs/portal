@@ -7779,6 +7779,31 @@ function canEditRevenueAccountNames() {
     && user.subscriptionActive !== false && user.subscriptionReadOnly !== true;
 }
 
+function canUseCardTerminal() {
+  return ['Super Admin', 'Director', 'Accounts Officer', 'Treasurer'].includes(currentUser?.assignedRole || currentUser?.role)
+    && ['accounting', 'incomeAnalytics', 'funds'].some(section => currentUser?.allowedSections?.includes(section))
+    && currentUser?.subscriptionActive !== false && currentUser?.subscriptionReadOnly !== true;
+}
+
+async function openStaffCardTerminal() {
+  const sessionController = staffSessionAbortController, username = currentUser?.username, branch = currentUser?.branchId;
+  const assertContext = () => {
+    if (sessionController !== staffSessionAbortController || username !== currentUser?.username || branch !== currentUser?.branchId) {
+      throw new Error('Workspace changed. Close and reopen Card terminal.');
+    }
+  };
+  const { openCardTerminal } = await import('./paystack-terminals.js?v=20261025');
+  assertContext();
+  await openCardTerminal(async payload => {
+    assertContext();
+    const response = await staffFetch('/api/staff-terminals', { method: 'POST', credentials: 'same-origin', cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const result = await response.json(); assertContext();
+    if (!response.ok || !result.ok) throw new Error(result.message || 'Terminal operation could not be confirmed.');
+    return result;
+  }, { storageKey: `terminal-payment:${username}:${branch}`, branchLabel: currentUser?.branchName || branch });
+}
+
 async function editRevenueAccountNames(selectedCode = '') {
   const sessionController = staffSessionAbortController;
   const username = currentUser?.username;
@@ -10623,7 +10648,7 @@ function renderIncomeAnalytics(data) {
     <div class="income-analytics" id="incomeAnalyticsReport">
       <div class="workflow-intro income-report-heading">
         <div><p class="eyebrow">Finance & accounting</p><h2>Income Analytics</h2><p class="muted">Posted revenue from the shared accounting ledger, without duplicate operational totals.</p></div>
-        <div class="income-report-actions">${canEditRevenueAccountNames() ? '<button type="button" class="secondary" id="editIncomeAccountNames">Edit revenue account names</button>' : ''}<button type="button" class="secondary" id="refreshIncomeAnalytics">Refresh</button><button type="button" class="secondary" id="incomeExportCsv">&#8681; CSV</button><button type="button" id="incomePrintReport">&#9113; Print / PDF</button></div>
+        <div class="income-report-actions">${canUseCardTerminal() ? '<button type="button" class="secondary" id="openCardTerminal">Card terminal</button>' : ''}${canEditRevenueAccountNames() ? '<button type="button" class="secondary" id="editIncomeAccountNames">Edit revenue account names</button>' : ''}<button type="button" class="secondary" id="refreshIncomeAnalytics">Refresh</button><button type="button" class="secondary" id="incomeExportCsv">&#8681; CSV</button><button type="button" id="incomePrintReport">&#9113; Print / PDF</button></div>
       </div>
       <p class="muted">Loaded data is retained while you navigate. Use Refresh for newer transactions.</p>
       <section class="income-filter-card" aria-label="Income report filters">
@@ -11062,6 +11087,9 @@ function exportIncomeAnalyticsCsv() {
 }
 
 function bindIncomeAnalyticsEvents() {
+  document.getElementById('openCardTerminal')?.addEventListener('click', event => {
+    runButtonAction(event.currentTarget, 'Opening…', openStaffCardTerminal);
+  });
   document.getElementById('editIncomeAccountNames')?.addEventListener('click', event => {
     runButtonAction(event.currentTarget, 'Opening…', () => editRevenueAccountNames(document.querySelector('#incomeAnalyticsFilter [name="accountCode"]')?.value));
   });
@@ -16886,13 +16914,42 @@ async function academicManagementRequest(action, payload = {}, requestOptions = 
     throw error;
   }
   if (data.refreshAcademicManagement === true && clean(action).toLowerCase() !== 'bootstrap') {
+    if (['applyactiveacademicscorelayout', 'applyactivescorelayout'].includes(normalizedAction)) {
+      // Bootstrap is a partial workspace response: merging it keeps the old
+      // selected-sheet context and can suppress the subsequent context fetch.
+      // Read back just this sheet before showing success, including its saved
+      // columns, marks, locks and new revision token.
+      try {
+        const refreshed = await academicManagementRequest('getAcademicScorebookContext', payload, requestOptions);
+        if (refreshed.scorebookSnapshot?.SheetId !== payload.SheetId
+          || refreshed.scorebookSnapshot?.sheet?.SheetId !== payload.SheetId
+          || refreshed.scorebookContext?.SheetId !== payload.SheetId
+          || refreshed.scorebookSnapshot.sheet.AssessmentRevisionId !== refreshed.assessmentScheme?.RevisionId) {
+          throw new Error('The returned scorebook did not confirm the saved layout.');
+        }
+        return { ...refreshed, refreshAcademicManagement: false,
+          message: refreshed.scorebookContext.LayoutUpdateAvailable
+            ? 'The saved layout was refreshed, but a newer active assessment is now available. Review the current columns before applying it.'
+            : data.message };
+      } catch (error) {
+        throw new Error(`The layout request completed, but its saved columns could not be refreshed. Reload this scorebook before continuing. ${error.message || ''}`.trim());
+      }
+    }
     const refreshed = await academicManagementRequest('bootstrap', {
       SchoolSection: payload.SchoolSection || academicManagementFilters.section,
       SessionId: payload.SessionId || academicManagementFilters.sessionId,
       TermId: payload.TermId || academicManagementFilters.termId,
       View: payload.View || academicManagementView
     });
-    return { ...refreshed, ...data, refreshAcademicManagement: false };
+    const result = { ...refreshed, ...data, refreshAcademicManagement: false };
+    // A workspace reload must not masquerade as a fresh selected scorebook.
+    // Rendering will request its context once, only if that view is open.
+    if (!data.scorebookContext) {
+      delete result.scorebookContext;
+      delete result.activeAssessmentScheme;
+    }
+    if (!data.scorebookSnapshot) delete result.scorebookSnapshot;
+    return mergeAcademicScorebookSnapshot(result, data.scorebookSnapshot);
   }
   if (data.partialAcademicManagement === true && academicManagementData) {
     return mergeAcademicScorebookSnapshot({ ...academicManagementData, ...data }, data.scorebookSnapshot);
@@ -18738,7 +18795,7 @@ function bindAcademicManagement() {
     if (!sheet) return;
     if (!await window.DynamaxDialogs.confirm({
       title: 'Apply active assessment layout',
-      message: 'Update this Draft to the active assessment columns? Existing CBT scores will move to Objective (A), existing manual scores will move to Theory (B), and every migration will be recorded in the audit trail.',
+      message: 'Update this Draft to the active assessment columns? Existing marks will be preserved. If a mark cannot fit the new layout safely, no changes will be saved. The update is recorded in the audit trail.',
       confirmText: 'Apply active layout'
     })) return;
     await runButtonAction(button, 'Applying...', async () => {
@@ -22127,6 +22184,8 @@ function securityAuditFilteredRows() {
 function securityAuditRoutineSystemSuccess(row) {
   const succeeded = lower(row.Outcome) === 'success' && Number(row.HttpStatus) >= 200 && Number(row.HttpStatus) < 300;
   if (!succeeded) return false;
+  if (row.SourceCollection === 'platformSecurityAudit' && row.ActivityClass === 'Routine preview'
+    && row.Method === 'POST' && Number(row.HttpStatus) === 200) return true;
   if (row.ActivityClass === 'Routine photograph load' && lower(row.Route).replace(/\/+$/, '') === '/api/passport-photo'
     && row.Method === 'POST' && row.Action === 'Loaded existing passport photograph for display'
     && Number(row.HttpStatus) === 200) return true;

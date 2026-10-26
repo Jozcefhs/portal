@@ -34,6 +34,8 @@ const ROUTE_MODULES = Object.freeze([
   ['/api/staff-direct-transfers', 'Finance & accounting'],
   ['/api/staff-payment-corrections', 'Finance & accounting'],
   ['/api/staff-manual-payments', 'Finance & accounting'],
+  ['/api/student-billing-reconciliation', 'Finance & accounting'],
+  ['/api/student-billing-preview', 'Finance & accounting'],
   ['/api/staff-wallet', 'Student wallets'],
   ['/api/staff-procurement', 'Procurement'],
   ['/api/staff-vendor', 'Vendor sales & settlements'],
@@ -116,6 +118,40 @@ function academicWorkspaceLoadPresentation(row) {
 
 function isPassportPhotoRead(route, method) {
   return lower(route).replace(/\/+$/, '') === '/api/passport-photo' && clean(method).toUpperCase() === 'POST';
+}
+
+// Only reviewed, read-only commands belong here. A name beginning with "preview"
+// is not enough: some document previews save files, and reset/export preparation
+// needs its own audit evidence. Keep unknown actions and every failed attempt.
+const ACADEMIC_PREVIEW_ACTIONS = Object.freeze([
+  'previewAcademicTimetableGeneration', 'previewAcademicTimetableCopy', 'previewTimetableCopy',
+  'previewAcademicScoreImport', 'previewScoreSheetImport', 'previewAcademicTermResultWithdrawal',
+  'previewTermResultWithdrawal', 'previewAcademicCbtRoster', 'previewAcademicCbtRosterAdditions',
+  'previewAcademicCbtLateEntry'
+]);
+const ROUTINE_PREVIEW_ACTIONS = Object.freeze({
+  '/api/student-billing-reconciliation': ['previewAll', 'previewBatch', 'preview', 'previewReversalsAll',
+    'previewReversal', 'obsoleteRoster', 'obsoleteBatch', 'previewObsoleteReversal'],
+  '/api/student-billing-preview': ['Submit to student billing preview'],
+  '/api/staff-students': ['previewProfileDefaults', 'previewIntakeCorrection',
+    'Preview First Term intake classification across all classes by admission year'],
+  '/api/staff-payment-corrections': ['Preview manual payment correction'],
+  '/api/staff-academics': ACADEMIC_PREVIEW_ACTIONS,
+  '/api/backend': [...ACADEMIC_PREVIEW_ACTIONS, 'Preview manual payment correction']
+});
+const routineActionKey = value => lower(value).split('—')[0].replace(/[^a-z0-9]/g, '');
+
+function isRoutinePreview(action, route, method) {
+  if (clean(method).toUpperCase() !== 'POST') return false;
+  const commands = ROUTINE_PREVIEW_ACTIONS[lower(route).replace(/\/+$/, '')] || [];
+  return commands.some(command => routineActionKey(command) === routineActionKey(action));
+}
+
+function routinePreviewPresentation(row) {
+  if (!isRoutinePreview(row.OriginalAction || row.Action, row.Route, row.Method)) return null;
+  const note = 'This read-only review does not save a change.';
+  return { ActivityClass: 'Routine preview',
+    Summary: clean(row.Summary).endsWith(note) ? clean(row.Summary) : `${clean(row.Summary)} ${note}`.trim() };
 }
 
 function passportPhotoPresentation(row) {
@@ -363,8 +399,9 @@ export function shouldPersistSecurityAudit(prepared = {}, actor = null, status =
   // Successful workspace refreshes are reads, not academic changes. Historical
   // entries remain visible; failed, denied and unconfirmed loads stay auditable.
   if (isAcademicWorkspaceLoad(prepared.action, path)) return Number(status) !== 200;
-  // Retain photo reads and failures; successful display requests are routine.
-  if (isPassportPhotoRead(path, method)) return true;
+  // Successful previews/photo loads must return before the extra actor lookup
+  // and Firestore audit write. Failures and unconfirmed responses remain visible.
+  if (isRoutinePreview(prepared.action, path, method) || isPassportPhotoRead(path, method)) return Number(status) !== 200;
   // Scheduler GETs perform work, unlike ordinary page reads. Preserve both
   // service runs and authorization failures; visibility is a separate concern.
   if (path === '/api/notification-scheduler') return true;
@@ -426,7 +463,7 @@ export async function writeSecurityAudit(env, event = {}) {
 
 export async function persistRequestSecurityAudit({ env, request, prepared, response, failure, requestId, durationMs, authoritativeActor, authoritativeAction, authoritativeActivityClass, authoritativeOutcome, authoritativeDetails, authoritativeSummary, auditHandled, auditNoChange } = {}) {
   const status = Number(response?.status || failure?.status || 500);
-  if (auditHandled && status < 400) return null;
+  if (auditHandled && status < 400 && !['failed', 'denied'].includes(lower(authoritativeOutcome))) return null;
   const effectivePrepared = { ...prepared, action: authoritativeAction || prepared.action };
   // Only the authenticated notification handlers can attest this no-op. Keep
   // failed/denied attempts and all other mutations in the security ledger.
@@ -538,12 +575,16 @@ export function normalizedLegacyAudit(row, source) {
   // saved by earlier versions. The original database evidence is never rewritten.
   Object.assign(normalized, academicWorkspaceLoadPresentation(normalized));
   Object.assign(normalized, passportPhotoPresentation(normalized));
+  if (source.collection === SECURITY_AUDIT_COLLECTION) Object.assign(normalized, routinePreviewPresentation(normalized));
   return normalized;
 }
 
 export function securityAuditRowVisible(row) {
   if (row.SourceCollection !== SECURITY_AUDIT_COLLECTION) return true;
   if (isAcademicWorkspaceLoad(row.OriginalAction || row.Action, row.Route) || row.ActivityClass === "Routine workspace load") return true;
+  // Retain historical evidence for the routine-activity toggle. No database
+  // cleanup is needed to remove successful preview batches from the main view.
+  if (isRoutinePreview(row.OriginalAction || row.Action, row.Route, row.Method) || isPassportPhotoRead(row.Route, row.Method)) return true;
   return shouldPersistSecurityAudit({ method: row.Method, pathname: row.Route, action: row.Action }, null,
     row.HttpStatus || (lower(row.Outcome) === 'denied' ? 403 : lower(row.Outcome) === 'failed' ? 500 : 200));
 }

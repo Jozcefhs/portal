@@ -13,6 +13,7 @@ export async function onRequestPost(context) {
     context.data.securityAuditActor = user;
     const result = await handleWebManualPayment(env, user, body);
     if (body.action === 'post') {
+      if (result.ok === true && result.duplicate === true && result.payment) context.data.securityAuditHandled = true;
       context.data.securityAuditAction = result.code === 'WALLET_DUPLICATE_REVIEW_REQUIRED' ? 'Review possible duplicate wallet top-up'
         : result.duplicate ? 'Check previously recorded manual payment' : 'Record manual payment';
     }

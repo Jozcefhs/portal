@@ -17,7 +17,7 @@ test('passport-photo requests describe an existing photograph read, with a safe 
   assert.equal(prepared.subject, 'TEST/001');
   assert.equal(prepared.entityType, 'Student/application photograph');
   assert.doesNotMatch(JSON.stringify(prepared), /SECRET-CODE/);
-  for (const status of [200, 202, 206, 401, 403, 404, 500]) assert.equal(shouldPersistSecurityAudit(prepared, null, status), true);
+  for (const status of [200, 202, 206, 401, 403, 404, 500]) assert.equal(shouldPersistSecurityAudit(prepared, null, status), status !== 200);
 });
 
 test('historic passport-photo labels are corrected for display, not rewritten or deleted', () => {

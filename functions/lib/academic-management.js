@@ -6110,7 +6110,7 @@ export async function applyActiveAcademicScoreLayout(env, user = {}, input = {})
   return {
     ok: true,
     refreshAcademicManagement: true,
-    message: `The active assessment layout was applied. Configured Objective (A) and Theory (B) fields are now separate for ${context.subject.Name}.`
+    message: `The active assessment layout was applied for ${context.subject.Name}. ${migratedScores.length} student score record${migratedScores.length === 1 ? '' : 's'} preserved.`
   };
 }
 

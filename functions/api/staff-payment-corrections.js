@@ -14,7 +14,9 @@ export async function onRequestPost(context) {
     context.data ||= {};
     context.data.securityAuditActor = user;
     if (body.action === 'post' && result.ok) {
-      context.data.securityAuditHandled = !result.replayed;
+      // Both the original post and a verified replay have the original atomic
+      // accounting audit. Rechecking it must not create another action entry.
+      context.data.securityAuditHandled = true;
       if (result.replayed) {
         context.data.securityAuditAction = 'Check previously posted manual payment correction';
         context.data.securityAuditSummary = 'The earlier correction was found. This retry did not change any balance again.';

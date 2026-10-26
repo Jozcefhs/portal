@@ -167,6 +167,9 @@ export async function onRequestPost(context) {
 
     const tx = paystackData.data;
     const meta = extractMetadata(tx);
+    if (meta.dynamaxTerminalRequest || meta.paymentType === 'DynamaxTerminal' || tx.channel === 'pos') {
+      return Response.json({ ok: false, message: 'Terminal payments are verified through the staff Card terminal workspace.' }, { status: 409 });
+    }
     const amount = Number(tx.amount || 0) / 100;
     const gatewayFee = Math.max(0, Number(tx.fees || 0) / 100);
     const netAmount = Math.max(0, amount - gatewayFee);

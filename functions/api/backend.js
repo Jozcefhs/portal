@@ -879,6 +879,7 @@ export function requireBackendSecret(env, body) {
 }
 
 const VERIFIED_ACTOR_ACTIONS = new Set([
+  'terminalPayments',
   'getSecurityAudit',
   'entranceCbt',
   'getAcademicSubmissionSettings', 'saveAcademicSubmissionSettings', 'listAcademicSubmissions', 'payAcademicSubmission', 'verifyAcademicSubmission',
@@ -968,6 +969,7 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
 // applyDesktopDeviceBranchScope.  Organisation-wide and legacy credentials
 // retain the existing action surface for backwards compatibility.
 const BRANCH_BOUND_DEVICE_ACTIONS = new Set([
+  'terminalPayments',
   'entranceCbt',
   'requisitionApprovalSettings',
   'manualPaymentCorrection',
@@ -11487,6 +11489,17 @@ async function getSystemHealth(env, body) {
 
 async function routeAction(env, action, body = {}, deploymentIdentity = null, publicOrigin = '') {
   switch (action) {
+    case 'terminalPayments': {
+      const branchId = accountingRequestBranch(body);
+      const access = await staffAccessFor(env, {
+        username: clean(body.UserUsername), role: clean(body.UserRole), assignedRole: clean(body.UserAssignedRole || body.UserRole),
+        branchId, schoolSectionAccess: clean(body.UserSchoolSectionAccess), tabAccess: body.UserTabAccess
+      });
+      const { handleTerminalPayments } = await import('../lib/paystack-terminals.js');
+      return handleTerminalPayments(env, { ...access, username: clean(body.UserUsername), role: clean(body.UserRole),
+        assignedRole: clean(body.UserAssignedRole || body.UserRole), branchId, sourcePlatform: 'Desktop'
+      }, { ...body, action: body.Command });
+    }
     case 'getClubMembers':
     case 'getFeeCollectionSummary': {
       const branchId = accountingRequestBranch(body);
@@ -12343,20 +12356,26 @@ export async function onRequestPost(context) {
     // approved computer branch for downstream reads and writes.
     body = applyDesktopDeviceBranchScope(body, desktopAuthentication);
     const data = await routeAction(env, action, body, deploymentIdentity, new URL(request.url).origin);
+    if (context.data && action === 'terminalPayments' && data.ok && ['settings', 'get', 'history', 'verify'].includes(body.Command)) context.data.securityAuditHandled = true;
     // Start/completion audits are committed atomically with synchronization checkpoints.
     // A continuation or replay must not create another apparent business action.
     if (context.data && action === 'syncAccountingRevenue' && data.ok) context.data.securityAuditHandled = true;
+    // These handlers attest that the original payment/posting was found without
+    // another write. Never infer a replay from a client-supplied flag or label.
+    if (context.data && data.ok === true && data.replayed === true
+      && ['payPayrollItem', 'saveAccountingAdjustment'].includes(action)) context.data.securityAuditHandled = true;
     if (context.data && action === 'recordManualPayment' && data.code === 'WALLET_DUPLICATE_REVIEW_REQUIRED') {
       context.data.securityAuditAction = 'Review possible duplicate manual wallet top-up';
       context.data.securityAuditSummary = `Manual wallet top-up for student ${data.duplicateReview.Student.AccountRef} was stopped for review because ${data.duplicateReview.MatchCount} same-amount credit(s) were found. No new payment or wallet credit was recorded.`;
     }
     if (context.data && action === 'recordManualPayment' && data.ok && data.payment) {
+      if (data.duplicate === true) context.data.securityAuditHandled = true;
       context.data.securityAuditAction = data.duplicate ? 'Check previously recorded manual payment' : 'Record manual payment';
       context.data.securityAuditSummary = paymentAuditSummary(data.payment, { duplicate: data.duplicate });
     }
     if (context.data && action === 'manualPaymentCorrection' && body.Command === 'post' && data.ok) {
       // The atomic correction already writes a detailed accounting audit event.
-      context.data.securityAuditHandled = !data.replayed;
+      context.data.securityAuditHandled = true;
       if (data.replayed) {
         context.data.securityAuditAction = 'Check previously posted manual payment correction';
         context.data.securityAuditSummary = 'The earlier correction was found. This retry did not change any balance again.';

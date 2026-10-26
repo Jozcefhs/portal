@@ -2,6 +2,7 @@ import { onRequestPost as verifyFormPayment } from './verify-form-payment.js';
 import { onRequestPost as verifyPayment } from './verify-payment.js';
 import { getDocument } from '../lib/firestore.js';
 import { verifySubmissionPayment } from '../lib/academic-submissions.js';
+import { terminalPaymentWebhook } from '../lib/paystack-terminals.js';
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -90,6 +91,8 @@ export async function onRequestPost(context) {
         headers: { 'Cache-Control': 'no-store' }
       });
     }
+    const terminalResult = await terminalPaymentWebhook(env, event);
+    if (terminalResult) return Response.json(terminalResult, { headers: { 'Cache-Control': 'no-store' } });
     if (clean(event.event).toLowerCase() !== 'charge.success') {
       return Response.json({ ok: true, ignored: true }, {
         headers: { 'Cache-Control': 'no-store' }

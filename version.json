@@ -1,8 +1,8 @@
 {
-  "version": "3.1.57",
+  "version": "3.1.58",
   "channel": "stable",
   "release_status": "published",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.57.exe",
-  "sha256": "c11b14b28c3b6257abab0d46510b3a6ceb5dd1711a00e1a315df487d2a9e2715",
-  "notes": "Dynamax v3.1.57 adds assigned-branch checkboxes, branch entrance subjects and date-first history on desktop, readable audit names, notification scheduler repairs and authorised-officer final approval. Revenue synchronization now records one start and completion rather than every batch. Existing records are preserved."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.58.exe",
+  "sha256": "96bdc9e1d0e81b216ecd3654b9b149d96665a6c18e2e8d2a39759c49d10fe810",
+  "notes": "Dynamax v3.1.58 removes repetitive successful preview and verified payment-retry audit entries while preserving history, failures and denials. Apply active layout refreshes and verifies the selected scorebook before confirming success. Card terminal preparation is included across all editions, but card terminal payments remain disabled. Existing scores, payments and records are preserved."
 }
