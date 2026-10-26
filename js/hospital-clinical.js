@@ -74,7 +74,9 @@
     });};
     $('consultationForm').onsubmit=event=>{event.preventDefault();run(async()=>{
       if(!await confirmLeave('consultationForm'))return;
-      await api('saveConsultation',{...versions(),Notes:values($('consultationForm'))},true);await load();status('Consultation draft saved. Review it before signing.');
+      const saved=await api('saveConsultation',{...versions(),Notes:values($('consultationForm'))},true);
+      if(saved.Unchanged){dirty.delete('consultationForm');status('No consultation changes to save.');return;}
+      await load();status('Consultation draft saved. Review it before signing.');
     });};
     $('confirmCareIdentity').onchange=permissions;
     $('signConsultation').onclick=()=>run(async()=>{

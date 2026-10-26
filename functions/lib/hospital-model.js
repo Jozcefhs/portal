@@ -33,7 +33,9 @@ export function hospitalCapabilities(user) {
   const sections = new Set(user.allowedSections || []);
   const modules={'patients.read':['hospitalPatients'],'patients.write':['hospitalPatients'],
     'visits.read':['hospitalReception'],'visits.write':['hospitalReception'],
-    'clinical.read':['hospitalTriage','hospitalConsultations'],'triage.write':['hospitalTriage'],'consultations.write':['hospitalConsultations']};
+    'clinical.read':['hospitalTriage','hospitalConsultations'],'triage.write':['hospitalTriage'],'consultations.write':['hospitalConsultations'],
+    'orders.read':['hospitalOrders'],'orders.create':['hospitalOrders'],'pharmacy.work':['hospitalPharmacy'],
+    'laboratory.work':['hospitalLaboratory'],'imaging.work':['hospitalImaging']};
   return (HOSPITAL_ROLE_CAPABILITIES[user.role] || []).filter(capability => modules[capability]?.some(module=>sections.has(module)));
 }
 export function patientFields(input = {}, today = new Date().toISOString().slice(0, 10)) {

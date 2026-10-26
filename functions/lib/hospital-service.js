@@ -6,6 +6,7 @@ import { assignedStaffBranches } from './staff-branch-access.js';
 import { historyDateRange } from './history-date-range.js';
 import { hospitalCollectionPath } from './hospital-storage.js';
 import { createHospitalClinicalService } from './hospital-clinical-service.js';
+import { createHospitalOrdersService } from './hospital-orders-service.js';
 import { clean, fail, id, nameKey, digest, stable, cardUid, hospitalBranch,
   hospitalCapabilities, patientFields, patientName, patientSummary, patientDetails } from './hospital-model.js';
 
@@ -61,6 +62,8 @@ export function createHospitalService(env, user, overrides = {}) {
     let commitStarted = false;
     try {
       const { writes, result } = await work(opId);
+      // Unchanged form saves do not create receipts or repeat audit entries.
+      if (!writes.length && result?.Unchanged === true) return { ok: true, ...result };
       writes.push({ collectionPath: collection('Operations'), documentId: opId, currentDocument: { exists: false },
         data: { Fingerprint: fingerprint, Result: result, CreatedAt: clock(), Actor: actor, Action: action } });
       commitStarted = true;
@@ -100,6 +103,8 @@ export function createHospitalService(env, user, overrides = {}) {
     return { rows: shown, next: rows.length > limit ? { id: last.__id, value: last[field] } : null };
   }
   return {
+    ...createHospitalOrdersService({env,user,db,collection,capabilities,requireCapability,branch,patient,clock,actor,
+      condition,strip,eq,auditWrite,auditRead,operation,page}),
     ...createHospitalClinicalService({env,user,db,collection,capabilities,requireCapability,branch,patient,clock,actor,
       condition,strip,eq,auditWrite,auditRead,operation,page}),
     async state() {
@@ -146,6 +151,9 @@ export function createHospitalService(env, user, overrides = {}) {
         const existing = body.PatientId ? await patient(body.PatientId, branchId) : null;
         if (existing) requireRevision(existing, body);
         const patientId = existing?.PatientId || key;
+        if (existing && Object.entries(fields).every(([name,value]) => clean(existing[name]) === value)) {
+          return { writes: [], result: { PatientId: patientId, HospitalNumber: existing.HospitalNumber, Unchanged: true } };
+        }
         const row = { ...strip(existing), ...fields, PatientId: patientId,
           HospitalNumber: existing?.HospitalNumber || `H-${key.slice(0, 16).toUpperCase()}`,
           AccessBranchIds: existing?.AccessBranchIds || [branchId], Status: existing?.Status || 'Active',

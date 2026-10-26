@@ -579,6 +579,158 @@
           "order": "ASCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "hospitalOrders",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "BranchId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "Kind",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "CreatedAt",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "hospitalOrders",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "BranchId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "Kind",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "PatientId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "CreatedAt",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "hospitalOrderEvents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "BranchId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "OrderId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "CreatedAt",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "hospitalMedicineBatches",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "BranchId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "MedicineKey",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "ExpiryDate",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "hospitalDispenses",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "BranchId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "OrderId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "CreatedAt",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "hospitalStockMovements",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "BranchId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "BatchId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "CreatedAt",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "hospitalCriticalAlerts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "BranchId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "OrderId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "Status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "CreatedAt",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "hospitalReleasedReports",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "BranchId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "OrderId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "CreatedAt",
+          "order": "ASCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": []

@@ -3,12 +3,13 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Hospital workspace · Dynamax</title>
-  <link rel="stylesheet" href="/css/hospital.css?v=20261026-care">
+  <link rel="stylesheet" href="/css/hospital.css?v=20261026-orders">
   <link rel="stylesheet" href="/css/app-dialogs.css">
   <script src="/js/app-dialogs.js?v=20261016-grouped-form-validation" defer></script>
   <script src="/js/staff-idle-session.js" defer></script>
-  <script src="/js/hospital-clinical.js?v=20261026-care" defer></script>
-  <script src="/js/hospital.js?v=20261026-care" defer></script>
+  <script src="/js/hospital-clinical.js?v=20261026-orders" defer></script>
+  <script src="/js/hospital-orders.js?v=20261026-orders" defer></script>
+  <script src="/js/hospital.js?v=20261026-orders" defer></script>
 </head>
 <body>
   <main>
@@ -16,7 +17,8 @@
     <p id="status" role="status" aria-live="polite">Checking your staff session…</p>
     <div id="workspace" hidden>
       <div class="toolbar"><label>Working branch<select id="branch"></select></label><button id="refresh" type="button">Refresh access</button></div>
-      <nav aria-label="Hospital tasks"><button type="button" data-tab="patients">Patients and NFC cards</button><button type="button" data-tab="reception">Reception visits</button><button type="button" data-tab="care" hidden>Clinical record</button></nav>
+      <nav aria-label="Hospital tasks"><button type="button" data-tab="patients">Patients and NFC cards</button><button type="button" data-tab="reception">Reception visits</button><button type="button" data-tab="care" hidden>Clinical record</button><button type="button" data-tab="orders" hidden>Prescriptions and investigations</button></nav>
+      <section id="orders" hidden></section>
       <section id="patients">
         <h2>Find a patient</h2>
         <form id="searchForm" class="toolbar">
@@ -106,7 +108,7 @@
               <label>Follow-up plan<textarea name="FollowUp" maxlength="8000" rows="3"></textarea></label>
               <label>Referral notes<textarea name="Referral" maxlength="8000" rows="3"></textarea></label>
             </div><button type="submit">Save consultation draft</button></form>
-            <p class="hint">Treatment and referral notes document the clinician’s plan. Pharmacy dispensing, prescriptions and investigation orders will use their own workflows.</p>
+            <p class="hint">Treatment and referral notes document the clinician’s plan. Use Prescribe / request investigation on the reception visit to issue orders, then use Prescriptions and investigations to track them.</p>
             <label class="check-line"><input id="confirmCareIdentity" type="checkbox">I reviewed the patient identity, current allergy information and saved consultation.</label>
             <button id="signConsultation" type="button">Sign saved consultation</button>
           </details>

@@ -130,3 +130,26 @@ No full H03/H04 requirement is marked complete. Clinical workflow validation wit
 
 Next implementation milestone: explicit clinical order and prescription states with pharmacy/laboratory roles, record-preserving fulfilment and billing links; then complete the remaining reception/clinical workflows and desktop integration. Continue using this checklist rather than replacing it with a shorter feature list.
 
+### Prescriptions, pharmacy and investigations — 26 October 2026
+
+The user authorised continued implementation with all records preserved, tests and push only. No compilation, installer release or deployment is included in this pass.
+
+- **H04:** Clinician-issued prescriptions and Laboratory/Imaging requests now connect to the existing patient visit. Issued instructions and allergy snapshots are retained; cancellation records a reason and preserves completed work. Nurses have order/result reading access when their module is enabled, without prescribing rights.
+- **H05:** Pharmacist approval/hold, supplier receipt-line deduplication, medicine/strength/form/unit matching, batch expiry checks, full/partial dispensing, stock quarantine and patient returns are implemented. Stock, dispensing, return, charge/credit event, operation receipt and audit writes commit atomically. Charge events await the later billing workflow; no invoice, payment, refund or accounting journal is posted here. Integer arithmetic prevents rounding drift across fractional quantities and cumulative returns.
+- **H06/H07:** Laboratory specimen labels, collection/rejection, report versions, independent verification, release and corrections are implemented. Clinicians see released reports; earlier releases remain accessible through dated history. Critical results require recorded staff communication and individual clinician acknowledgement. A later correction cannot silently clear an earlier unacknowledged critical result. This records human communication; automatic external notification delivery is still pending.
+- **F01/F02/F04-F06:** Backend permissions, edition and branch boundaries, patient references, revision checks, no-store responses, retry receipts, bounded queries, date-first history and backup discovery include the new workflows. Changes update already loaded order rows without another query. Stock views are invalidated after movements. Signed/released originals and stock histories are retained; no production records were changed or deleted.
+- **Verification:** **4,251 top-level automated tests passed**, including **57 Hospital tests**. All three synthetic Hospital browser checks passed, covering NFC/reception, clinical notes, prescriptions, pharmacy, quarantine returns, stock history, specimens, report verification/release, critical acknowledgement, released history, stale-list prevention, unchanged saves, unsaved content, branch/session clearing and desktop/phone layouts. No clinical decisions or real medication doses are generated in these tests.
+- **Evidence:** `tests/hospital-orders.test.mjs`, `tests/helpers/hospital-orders-fixture.mjs` and `scripts/verify-hospital-orders-ui.mjs`, alongside the earlier Hospital tests and browser scripts. Matching Firestore index definitions and the test-only CI workflow are included. Usage and limits are recorded in [hospital-orders-workflows.md](hospital-orders-workflows.md).
+
+H04-H07 remain unchecked because the broader requirements include work still pending: configurable medicine/test catalogues, procurement/payables, inventory costing, broader specimen tracking, attachments/PACS, patient access and practitioner validation. Full billing/HMO, wards/administration, remaining Hospital modules and desktop/offline parity remain on the original checklist. Card-terminal payments remain disabled.
+
+Next: connect the prepared charge/credit events to Hospital billing and HMO workflows without duplicate posting; complete configurable catalogues and the remaining operational integrations, then continue the saved Hospital checklist.
+
+### Foundation rule: controlled reads and writes
+
+During this pass the user explicitly required read/write management from the foundation onward. Every subsequent Hospital module must use explicit, branch-scoped loading; bounded pages and date ranges for history; reuse of already loaded views; and revision checks before clinically or financially significant mutations. Do not add whole-collection scans, background refresh loops or repeated audit writes as a shortcut.
+
+`tests/hospital-data-usage.test.mjs` now enforces data-operation budgets. Unchanged registration, consultation draft, pharmacy review and report saves make no writes. Shared report references are fetched once per details request; pending critical results use their immutable release snapshot instead of per-row document reads. Stock matching reuses the medicine fields already loaded, while dispensing still revalidates live order, stock and allergy data. Retry receipts prevent repeated mutations without suppressing distinct clinical events.
+
+The workflow guide records the measured application-operation limits and their exclusions. These synthetic checks do not claim a live Google Cloud billing measurement. Preserve and extend these checks with future Hospital changes.
+

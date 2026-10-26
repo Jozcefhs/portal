@@ -12,6 +12,7 @@ on:
       - "firestore.hospital.indexes.json"
       - "tests/hospital*.test.mjs"
       - "tests/helpers/hospital-fixture.mjs"
+      - "tests/helpers/hospital-orders-fixture.mjs"
       - "scripts/verify-hospital*.mjs"
       - ".github/workflows/hospital-readiness.yml"
   workflow_dispatch:

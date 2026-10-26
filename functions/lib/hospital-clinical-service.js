@@ -85,6 +85,7 @@ export function createHospitalClinicalService(context){
       requireCapability('consultations.write');await branch(body);const Notes=consultationFields(body.Notes);
       return operation(body,'saveConsultation',async key=>{
         const current=await encounter(body,true);checkVersions(body,current);checkDraft(body,current.draft);
+        if(current.draft&&Object.entries(Notes).every(([key,value])=>clean(current.draft.Notes?.[key])===value))return {writes:[],result:{VisitId:current.visit.VisitId,PatientId:current.person.PatientId,Unchanged:true}};
         const draft={...strip(current.draft),ConsultationId:current.visit.VisitId,PatientId:current.person.PatientId,BranchId:current.branchId,
           VisitId:current.visit.VisitId,Status:'Draft',Notes,CreatedAt:current.draft?.CreatedAt||clock(),UpdatedAt:clock(),
           AuthorUsername:actor,AuthorName:clean(user.displayName)||actor};
