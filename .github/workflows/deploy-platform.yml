@@ -80,3 +80,6 @@ jobs:
 
       - name: Verify live platform catalogue
         run: node scripts/verify-platform-deployment.mjs --url "${PLATFORM_URL}"
+
+      - name: Verify current staff interface assets
+        run: node scripts/verify-staff-web-release.mjs --url "${PLATFORM_URL}"

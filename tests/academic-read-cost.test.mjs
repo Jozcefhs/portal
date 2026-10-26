@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import {
-  academicBootstrapReadKeys, academicScoreReadFilters,
+  academicBootstrapReadKeys, academicScoreReadFilters, academicWorkspaceRecordFilters,
   ACADEMIC_MANAGEMENT_COLLECTIONS, ACADEMIC_SCOREBOOK_STATE_KEYS
 } from '../functions/lib/academic-management.js';
 
@@ -45,7 +45,7 @@ test('the actual loader reads 150 relevant marks rather than 3,000 grade marks, 
     calls.push({ collection, rows: result.length, filters: options.filters });
     return structuredClone(result);
   };
-  const context = vm.createContext({ ACADEMIC_MANAGEMENT_COLLECTIONS, academicScoreReadFilters,
+  const context = vm.createContext({ ACADEMIC_MANAGEMENT_COLLECTIONS, academicScoreReadFilters, academicWorkspaceRecordFilters,
     clean, lower: v => clean(v).toLowerCase(), nowIso: () => '2026-10-24T12:00:00Z',
     queryCollection: query, queryCollectionPages: query, failure: message => new Error(message) });
   vm.runInContext(source.match(/async function loadAcademicState[\s\S]*?\n}/)[0], context);

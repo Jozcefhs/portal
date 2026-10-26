@@ -247,5 +247,5 @@ test('UI and API wire school Accounts, individual / flat fields, explicit previe
   assert.match(admin, /DynamaxBoardingOfferings\?\.canAccess\(currentUser\)/); assert.match(html, /boarding-offerings\.js\?v=/);
   for (const text of ['Apply to selected', 'Preview deductions', 'Confirm wallet deductions', 'authorised student / guardian', 'Record remittance', 'Resume deductions']) assert.ok(ui.includes(text));
   assert.match(api, /requireStaffSession/); assert.match(api, /readJsonBody/); assert.match(api, /no-store/);
-  assert.match(backend, /financialScope \|\| options.strict/); assert.match(backend, /wallet offering/); assert.match(backend, /purchaseJournal.*\n[\s\S]*batchCommitDocuments/);
+  assert.match(backend, /financialScope \|\| options.strict/); assert.match(backend, /wallet offering/); assert.match(backend, /purchaseJournal.*\r?\n[\s\S]*batchCommitDocuments/);
 });

@@ -10,6 +10,7 @@ import { academicCbtScoreSources } from './academic-cbt-multiserver.js';
 import { academicResultWithWeightedComponents } from './academic-result-marks.js';
 import { academicResultWithSubjectLabels } from './academic-result-subject-labels.js';
 import { buildAcademicClassScoreRegister } from './academic-class-score-register.js';
+import { loadAcademicAuditLog } from './academic-audit-log.js';
 import { handleDiary } from './academic-diary.js';
 import { commitAcademicSubmission, submissionSettings, submissionPaymentAction } from './academic-submissions.js';
 import { checkClassroomRemovals } from './academic-classroom-removal.js';
@@ -408,6 +409,7 @@ export const ACADEMIC_SUMMARY_STATE_KEYS = Object.freeze([
 ]);
 
 export const ACADEMIC_VIEW_STATE_KEYS = Object.freeze({
+  audit: ['sessions', 'terms'],
   classrooms: ACADEMIC_CLASSROOM_STATE_KEYS,
   classstaff: ACADEMIC_CLASS_TEACHER_STATE_KEYS,
   structure: ACADEMIC_STRUCTURE_STATE_KEYS,
@@ -442,6 +444,7 @@ export function academicManagementViewStateKeys(value = '', permissions = {}) {
 }
 
 const ACADEMIC_VIEW_PEOPLE = Object.freeze({
+  audit: { staff: false, students: false },
   classrooms: { staff: true, students: true },
   classstaff: { staff: true, students: false },
   structure: { staff: false, students: false },
@@ -1154,6 +1157,34 @@ export function academicBootstrapReadKeys(keys, view, input = {}, options = {}) 
   return keys.filter(key => !omitted.has(key));
 }
 
+// Navigation never loads historical records just to display selectors. Reports,
+// mutations and older clients retain the complete context they require.
+export function academicWorkspaceReadPlan(view, keys, input = {}, { classRegister = false, registerOnly = false } = {}) {
+  if (view === 'audit') return { keys: ['sessions', 'terms'], deferred: false, requested: false };
+  const mode = input.WorkspaceLoadMode;
+  if (classRegister || !['navigation', 'records'].includes(mode)) return { keys, deferred: false, requested: false };
+  if (registerOnly) return { keys: ['sessions', 'terms', 'classes'], deferred: false, requested: false };
+  if (mode === 'navigation' && !['structure', 'bulksetup', 'departments', 'offerings'].includes(view)) {
+    return { keys: ['sessions', 'terms', 'classes'], deferred: true, requested: false };
+  }
+  const omitted = new Set();
+  if (view === 'structure') omitted.add('studentMemberships');
+  if (view === 'results') for (const key of ['studentScores', 'scoreSheets', 'studentAttendance', 'schoolCalendars']) omitted.add(key);
+  return { keys: keys.filter(key => !omitted.has(key)), deferred: false, requested: mode === 'records' };
+}
+
+export function academicWorkspaceRecordFilters(key, branchId, scope = {}) {
+  if (!scope.WorkspaceRead) return null;
+  const termClassKeys = ['offerings', 'teacherAllocations', 'studentMemberships', 'scoreSheets', 'studentScores',
+    'scoreImports', 'scoreSyncBatches', 'cbtTests', 'termResults', 'resultEvents', 'resultClearances'];
+  const sessionClassKeys = ['cumulativeResults', 'cumulativeEvents', 'promotionDecisions', 'promotionEvents'];
+  const fields = termClassKeys.includes(key) ? ['SessionId', 'TermId', 'ClassId']
+    : sessionClassKeys.includes(key) ? ['SessionId', 'ClassId'] : [];
+  if (!fields.length) return null;
+  return [{ field: 'BranchId', op: '==', value: branchId },
+    ...fields.filter(field => clean(scope[field])).map(field => ({ field, op: '==', value: clean(scope[field]) }))];
+}
+
 async function loadAcademicState(env, branchId, requestedKeys = null, scoreReadScope = {}) {
   if (!Array.isArray(requestedKeys) || !requestedKeys.length) {
     throw failure('Academic Management must request a focused workspace data bundle.', 500, 'ACADEMIC_STATE_BUNDLE_REQUIRED');
@@ -1177,9 +1208,10 @@ async function loadAcademicState(env, branchId, requestedKeys = null, scoreReadS
       && clean(scoreReadScope.ClassId);
     const readScope = classroomRoster ? { ClassId: scoreReadScope.ClassId,
       SessionId: scoreReadScope.SessionId, TermId: scoreReadScope.TermId } : scoreReadScope;
-    const options = { filters: paged || classroomRoster ? academicScoreReadFilters(branchId, readScope)
-      : [{ field: 'BranchId', op: '==', value: branchId }] };
-    const rows = paged
+    const workspaceFilters = academicWorkspaceRecordFilters(key, branchId, scoreReadScope);
+    const options = { filters: workspaceFilters || (paged || classroomRoster ? academicScoreReadFilters(branchId, readScope)
+      : [{ field: 'BranchId', op: '==', value: branchId }]) };
+    const rows = paged || workspaceFilters
       ? await queryCollectionPages(env, collection, { ...options,
         pageSize: 250, maxRows: 50000, readTime: nowIso() })
       : await queryCollection(env, collection, options);
@@ -1851,6 +1883,7 @@ function auditWrite(user, action, type, record, details = '', summary = '') {
     data: {
       AuditId: id, Timestamp: nowIso(), Action: clean(action).toUpperCase(), RecordType: type,
       RecordId: recordId(record), BranchId: record.BranchId, SchoolSection: record.SchoolSection,
+      StudentRef: clean(record.StudentRef), RecordLabel: clean(record.StudentName || record.Name),
       SessionId: clean(record.SessionId), TermId: clean(record.TermId),
       Actor: actorName(user), ActorUsername: actorUsername(user), ActorRole: clean(user.role || user.Role),
       Details: clean(details).slice(0, 1000),
@@ -2163,19 +2196,31 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}, sc
   const permissions = requireCapability(user, 'enabled');
   const scope = await academicScope(env, user, input, { requireSection: false });
   const focusedView = permissions.financeView ? 'clearances' : normalizedAcademicView(input.View || input.Workspace);
+  if (focusedView === 'audit') requireCapability(user, 'canReviewScores');
   if (focusedView === 'analysis' && !permissions.canViewResultsAnalysis) {
     throw failure('Only school management may open the end-of-session results analysis.', 403, 'ACADEMIC_ANALYSIS_FORBIDDEN');
   }
-  const focusedStateKeys = academicBootstrapReadKeys(
+  // The all-arm register has its own class-scoped read action. Opening its
+  // selectors must not preload the hidden entry, review and import workspaces.
+  // Older clients and explicit class reports retain their existing contract.
+  const registerOnly = focusedView === 'scorebook' && permissions.canReviewScores
+    && input.ScorebookTask === 'classRegister' && !loadOptions.classRegister;
+  const baseStateKeys = registerOnly ? ['sessions', 'terms', 'classes'] : academicBootstrapReadKeys(
     academicManagementViewStateKeys(focusedView, permissions), focusedView, input, loadOptions);
-  const includePeople = input.IncludePeople !== false && lower(input.IncludePeople) !== 'false';
+  const readPlan = academicWorkspaceReadPlan(focusedView, baseStateKeys, input, { ...loadOptions, registerOnly });
+  const requestedClassId = clean(input.RecordClassId) === '*' ? '' : clean(input.RecordClassId);
+  const focusedStateKeys = readPlan.keys;
+  const includePeople = !registerOnly && !readPlan.deferred && input.IncludePeople !== false && lower(input.IncludePeople) !== 'false';
   const peopleOptions = includePeople
     ? (loadOptions.classRegister ? { staff: false, students: true }
       : ACADEMIC_VIEW_PEOPLE[focusedView] || ACADEMIC_VIEW_PEOPLE.classrooms)
     : { staff: false, students: false };
-  const includeReportProfile = ['results', 'outcomes'].includes(focusedView);
+  const includeReportProfile = !readPlan.deferred && ['results', 'outcomes'].includes(focusedView);
   const [rawState, people, reportProfile] = await Promise.all([
-    loadScopedAcademicState(env, scope, focusedStateKeys, scoreReadScope),
+    loadScopedAcademicState(env, scope, focusedStateKeys, readPlan.requested ? {
+      ...scoreReadScope, WorkspaceRead: true, ClassId: requestedClassId,
+      SessionId: clean(input.SessionId), TermId: clean(input.TermId)
+    } : scoreReadScope),
     loadPeople(env, user, scope, peopleOptions),
     includeReportProfile
       ? getDocument(env, 'settings', 'schoolProfile').catch(() => ({}))
@@ -2184,6 +2229,9 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}, sc
   const summary = loadOptions.classRegister ? academicManagementSummary(rawState)
     : await loadAcademicManagementSummary(env, scope, rawState, focusedStateKeys);
   let state = rawState;
+  if (readPlan.requested && requestedClassId) {
+    state.arms = state.arms.filter(row => row.ClassId === requestedClassId);
+  }
   let students = people.students;
   if (permissions.financeView) {
     const visibleStudents = new Set(state.studentMemberships.map((row) => lower(row.StudentRef)));
@@ -2252,7 +2300,7 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}, sc
   const selectedSession = selection ? findById(state.sessions, selection.SessionId) : null;
   const selectedTerm = selection ? findById(state.terms, selection.TermId) : null;
   let assessmentScheme = academicAssessmentScheme({});
-  const includeAssessmentPolicy = input.IncludeAssessmentPolicy !== false && lower(input.IncludeAssessmentPolicy) !== 'false';
+  const includeAssessmentPolicy = !registerOnly && !readPlan.deferred && input.IncludeAssessmentPolicy !== false && lower(input.IncludeAssessmentPolicy) !== 'false';
   if (includeAssessmentPolicy && selectedSession && selectedTerm && ['scorebook', 'cbt'].includes(focusedView)) {
     try {
       assessmentScheme = await academicAssessmentForPeriod(env, scope, selectedSession, selectedTerm, { required: false });
@@ -2267,6 +2315,18 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}, sc
     ok: true,
     partialAcademicManagement: true,
     loadedAcademicView: focusedView,
+    workspaceDataDeferred: readPlan.deferred,
+    workspaceRecordSelection: readPlan.requested ? { ClassId: clean(input.RecordClassId), SessionId: clean(input.SessionId), TermId: clean(input.TermId) } : null,
+    ...(readPlan.deferred ? {
+      ...Object.fromEntries(Object.keys(ACADEMIC_MANAGEMENT_COLLECTIONS).filter(key => key !== 'audit' && !focusedStateKeys.includes(key)).map(key => [key, []])),
+      staff: [], students: []
+    } : {}),
+    ...(focusedView === 'scorebook' ? { scorebookWorkspaceDeferred: Boolean(registerOnly) } : {}),
+    ...(registerOnly ? {
+      // Clear any previous workspace's hidden detail rows in partial responses.
+      arms: [], subjects: [], teacherAllocations: [], studentMemberships: [],
+      scoreSheets: [], studentScores: [], scoreImports: [], scoreSyncBatches: [], staff: [], students: []
+    } : {}),
     message: focusedView === 'cbt'
       ? 'Online CBT schedule and class-wide rosters loaded.'
       : `${focusedView.charAt(0).toUpperCase()}${focusedView.slice(1)} academic workspace loaded.`,
@@ -9054,6 +9114,11 @@ export async function revokeAcademicResultClearance(env, user = {}, input = {}) 
 
 export async function handleAcademicManagementAction(env, user = {}, input = {}) {
   const action = lower(input.action || input.Action).replace(/[^a-z]/g, '');
+  if (action === 'getacademicauditlog') {
+    requireCapability(user, 'canReviewScores');
+    const scope = await academicScope(env, user, input, { requireSection: true });
+    return loadAcademicAuditLog(env, scope, input);
+  }
   if (action === 'entrancecbt') {
     if (!['state', 'offlinePackage', 'offlineResults', 'post'].includes(input.Operation)) throw failure('Choose a valid entrance CBT operation.');
     const { createPortalCbtService } = await import('./portal-cbt.js');

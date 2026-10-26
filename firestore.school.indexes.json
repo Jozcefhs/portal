@@ -1,6 +1,14 @@
 {
   "indexes": [
     {
+      "collectionGroup": "academicManagementAudit",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "BranchId", "order": "ASCENDING" },
+        { "fieldPath": "Timestamp", "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "procurementRequests",
       "queryScope": "COLLECTION",
       "fields": [

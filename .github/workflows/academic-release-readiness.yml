@@ -5,6 +5,11 @@ on:
     paths:
       - "functions/**"
       - "js/admin.js"
+      - "js/web-release.js"
+      - "css/web-release.css"
+      - "scripts/verify-staff-web-release.mjs"
+      - "tests/web-release-freshness.test.mjs"
+      - "tests/staff-web-release-deployment.test.mjs"
       - "js/parent-dashboard.js"
       - "js/student-maintenance.js"
       - "parent-dashboard.html"
@@ -45,6 +50,11 @@ on:
     paths:
       - "functions/**"
       - "js/admin.js"
+      - "js/web-release.js"
+      - "css/web-release.css"
+      - "scripts/verify-staff-web-release.mjs"
+      - "tests/web-release-freshness.test.mjs"
+      - "tests/staff-web-release-deployment.test.mjs"
       - "js/parent-dashboard.js"
       - "js/student-maintenance.js"
       - "parent-dashboard.html"
@@ -96,6 +106,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: node --test tests/web-release-freshness.test.mjs tests/staff-web-release-deployment.test.mjs
+      - run: node --test tests/academic-audit-log.test.mjs tests/academic-scorebook-opening.test.mjs tests/academic-read-cost.test.mjs tests/branch-read-cost.test.mjs tests/remaining-read-cost.test.mjs tests/security-audit-*.test.mjs
       - run: npm run test:academic-release
       - run: npm run test:clinic-referrals
       - run: npm run test:tuck-shop

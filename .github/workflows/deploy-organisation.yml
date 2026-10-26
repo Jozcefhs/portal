@@ -212,6 +212,9 @@ jobs:
           --workspace "${EXPECTED_WORKSPACE_ID}"
           --edition "${EXPECTED_EDITION}"
 
+      - name: Verify current staff interface assets
+        run: node scripts/verify-staff-web-release.mjs --url "https://${{ inputs.cloudflare_project }}.pages.dev"
+
       - name: Mark managed Paystack deployment complete
         if: ${{ inputs.paystack_deployment_requested_at != '' }}
         env:

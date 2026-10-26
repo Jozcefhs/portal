@@ -73,7 +73,7 @@ test('every academic workspace stays focused below the Worker subrequest ceiling
     'sessions', 'terms', 'classes', 'arms', 'teacherAllocations'
   ]);
   assert.deepEqual(Object.keys(ACADEMIC_VIEW_STATE_KEYS), [
-    'classrooms', 'classstaff', 'structure', 'bulksetup', 'departments', 'offerings', 'teachers',
+    'audit', 'classrooms', 'classstaff', 'structure', 'bulksetup', 'departments', 'offerings', 'teachers',
     'students', 'timetable', 'presence', 'attendance', 'scorebook', 'results', 'outcomes',
     'analysis', 'clearances', 'readiness', 'cbt'
   ]);

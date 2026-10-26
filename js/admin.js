@@ -16793,7 +16793,8 @@ function academicMigrationReadinessWorkspace(data) {
 }
 
 function academicManagementViews(data) {
-  const cbtView = data.permissions?.canCreateCbt ? [['cbt', 'Online CBT']] : [];
+  const cbtView = [...(data.permissions?.canCreateCbt ? [['cbt', 'Online CBT']] : []),
+    ...(data.permissions?.canReviewScores ? [['audit', 'Academic audit log']] : [])];
   const learner = academicLearnerTerms();
   const adminViews = [['classrooms', 'Classrooms'], ...(data.permissions?.canManageAllocations ? [['classStaff', 'Assign class teachers']] : []), ['structure', 'Catalogues'], ...(data.permissions?.canManageStructure ? [['bulkSetup', 'Bulk setup']] : []), ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['offerings', 'Class subjects'], ['teachers', 'Subject teachers'], ['students', `${learner.Singular} records`], ['timetable', 'Timetable'], ['presence', 'Class register'], ['attendance', 'Lesson attendance'], ['scorebook', 'Scorebook'], ['results', 'Results'], ['outcomes', 'Session outcomes'], ...(data.permissions?.canViewResultsAnalysis ? [['analysis', 'Session analysis']] : []), ...(data.permissions?.canManageFinancialClearance ? [['clearances', 'Result clearances']] : []), ...(data.permissions?.canManageStructure ? [['readiness', 'Release readiness']] : []), ...cbtView];
   return data.permissions?.financeView
@@ -16828,6 +16829,18 @@ function academicManagementHeader(data, rows, message = '') {
   <p id="academicManagementStatus" class="status ${message ? 'ok' : ''}" role="status">${escapeHtml(message)}</p>`;
 }
 
+function academicRecordLoadForm(data, title, deferred = false) {
+  const selected = data.workspaceRecordSelection?.ClassId || '*';
+  return `<form class="academic-management-editor academic-management-editor-wide" data-academic-load-records>
+    ${deferred ? `<h3>${escapeHtml(title)}</h3><p>The settings above are ready. Records and history have not been requested.</p>` : ''}
+    <div class="academic-management-form-grid academic-management-form-grid-3"><label>Class<select name="RecordClassId" required>
+      <option value=""${deferred ? ' selected' : ''}>Choose class</option><option value="*"${!deferred && selected === '*' ? ' selected' : ''}>All classes in this branch</option>
+      ${(data.classes || []).map(row => `<option value="${escapeHtml(row.ClassId)}"${!deferred && row.ClassId === selected ? ' selected' : ''}>${escapeHtml(row.Name)}</option>`).join('')}</select></label>
+      <div class="academic-management-form-actions"><button type="submit">Load ${escapeHtml(title.toLowerCase())} records</button></div>
+      <p class="muted">Uses the selected school section and academic period. Choose one class to narrow class-based records.</p></div>
+  </form>`;
+}
+
 function renderAcademicManagement(data = academicManagementData || {}, message = '') {
   academicManagementData = data;
   if (data.permissions?.financeView) academicManagementView = 'clearances';
@@ -16853,6 +16866,29 @@ function renderAcademicManagement(data = academicManagementData || {}, message =
     academicManagementFilters.termId = clean(data.selection?.TermId || terms.find(academicIsActive)?.TermId);
   }
   const rows = academicCurrentRows(data);
+  const workspaceTitle = availableViews.find(([key]) => key === academicManagementView)?.[1] || 'Academic';
+  if (academicManagementView === 'audit') {
+    panelEl.innerHTML = `${academicManagementHeader(data, rows, message)}<section class="academic-management-workspace" data-academic-audit-root></section>`;
+    const root = panelEl.querySelector('[data-academic-audit-root]');
+    const branch = selectedBranchId, section = academicManagementFilters.section, user = currentUser;
+    const isCurrent = () => root.isConnected && selectedBranchId === branch && currentUser === user
+      && academicManagementView === 'audit' && academicManagementFilters.section === section;
+    import('./academic-audit-log.js').then(({mountAcademicAuditLog}) => {
+      if (isCurrent()) mountAcademicAuditLog(root, {
+        scopeKey: JSON.stringify([user?.username, branch, section]), isCurrent,
+        request: payload => academicManagementRequest('getAcademicAuditLog', { ...payload, SchoolSection: section })
+      });
+    }).catch(error => { if (isCurrent()) root.textContent = error.message; });
+    renderModuleSummary('academics', data); bindAcademicManagement(); updateTutorialControls(); return;
+  }
+  if (data.workspaceDataDeferred) {
+    panelEl.innerHTML = `${academicManagementHeader(data, rows, 'Settings loaded. Choose the records to load.')}<section class="academic-management-workspace">
+      ${academicRecordLoadForm(data, workspaceTitle, true)}</section>`;
+    renderModuleSummary('academics', data);
+    bindAcademicManagement();
+    updateTutorialControls();
+    return;
+  }
   let workspace = '';
   if (academicManagementView === 'classrooms') workspace = academicClassroomWorkspace(data, rows);
   else if (academicManagementView === 'classStaff') workspace = academicClassStaffWorkspace(data, rows);
@@ -16872,7 +16908,7 @@ function renderAcademicManagement(data = academicManagementData || {}, message =
   else if (academicManagementView === 'readiness') workspace = academicMigrationReadinessWorkspace(data);
   else if (academicManagementView === 'cbt') workspace = academicCbtWorkspace(data, rows);
   else workspace = academicStructureWorkspace(data, rows);
-  panelEl.innerHTML = `${academicManagementHeader(data, rows, message)}<section class="academic-management-workspace">${workspace}</section>`;
+  panelEl.innerHTML = `${academicManagementHeader(data, rows, message)}${data.workspaceRecordSelection ? academicRecordLoadForm(data, workspaceTitle) : ''}<section class="academic-management-workspace">${workspace}</section>`;
   organizeAcademicManagementWorkspace(academicManagementView);
   renderModuleSummary('academics', data);
   bindAcademicManagement();
@@ -16892,6 +16928,9 @@ async function academicManagementRequest(action, payload = {}, requestOptions = 
     dynamaxRetrySafe: retrySafe,
     ...(requestOptions.signal ? { signal: requestOptions.signal } : {}),
     body: JSON.stringify({ action, BranchId: branchId, View: academicManagementView,
+      ...(academicManagementData?.workspaceRecordSelection ? {
+        WorkspaceLoadMode: 'records', RecordClassId: academicManagementData.workspaceRecordSelection.ClassId
+      } : {}),
       ScoreRowsMode: 'on-demand', ...payload })
   });
   let data = await response.json().catch(() => ({
@@ -17001,6 +17040,9 @@ async function loadAcademicManagement(options = {}) {
       SchoolSection: section,
       SessionId: academicManagementFilters.sessionId,
       TermId: academicManagementFilters.termId,
+      WorkspaceLoadMode: options.records ? 'records' : 'navigation',
+      ...(options.records ? { RecordClassId: clean(options.classId) } : {}),
+      ...(requestedView === 'scorebook' ? { ScorebookTask: academicManagementTaskViews.scorebook || 'classRegister' } : {}),
       View: requestedView
     });
     if (activeSection !== 'academics' || requestId !== academicManagementLoadRequest || requestedView !== academicManagementView) return;
@@ -17405,17 +17447,22 @@ function academicScorebookContextPayload(data = academicManagementData || {}) {
 }
 
 async function loadAcademicScorebookContext() {
+  // Opening the class register must never read an invisible score-entry sheet.
+  if (academicManagementData?.scorebookWorkspaceDeferred
+      || !['entry', 'imports', 'cbtSync'].includes(academicManagementTaskViews.scorebook)) return;
   const payload = academicScorebookContextPayload();
   if (!payload) return;
   const key = [payload.SessionId, payload.TermId, payload.ClassId, payload.ArmId, payload.SubjectId,
     clean(payload.TeacherUsername).toLowerCase()].map(clean).join('|');
-  if (academicScorebookDraft.contextKey === key) return;
+  if (academicScorebookDraft.contextKey === key || academicScorebookDraft.loadingKey === key) return;
+  academicScorebookDraft.loadingKey = key;
   const status = document.getElementById('academicManagementStatus');
   try {
     setStatus(status, 'Loading the selected scorebook and assessment scheme...');
     const data = await academicManagementRequest('getAcademicScorebookContext', payload);
     const current = academicScorebookContextPayload();
     if (activeSection !== 'academics' || academicManagementView !== 'scorebook' || !current
+        || !['entry', 'imports', 'cbtSync'].includes(academicManagementTaskViews.scorebook)
         || [current.SessionId, current.TermId, current.ClassId, current.ArmId, current.SubjectId,
           clean(current.TeacherUsername).toLowerCase()].map(clean).join('|') !== key) return;
     academicScorebookDraft.contextKey = key;
@@ -17423,9 +17470,12 @@ async function loadAcademicScorebookContext() {
   } catch (error) {
     const current = academicScorebookContextPayload();
     if (activeSection !== 'academics' || academicManagementView !== 'scorebook' || !current
+        || !['entry', 'imports', 'cbtSync'].includes(academicManagementTaskViews.scorebook)
         || [current.SessionId, current.TermId, current.ClassId, current.ArmId, current.SubjectId,
           clean(current.TeacherUsername).toLowerCase()].map(clean).join('|') !== key) return;
     setStatus(status, error.message || String(error), 'bad');
+  } finally {
+    if (academicScorebookDraft.loadingKey === key) delete academicScorebookDraft.loadingKey;
   }
 }
 
@@ -17753,6 +17803,9 @@ function bindAcademicTimetableGenerator(panel) {
 
 async function updateAcademicDeadlineButtons() {
   if (!academicManagementFilters.sessionId || !academicManagementFilters.termId) return;
+  const visibleButtons = [...panelEl.querySelectorAll('[data-academic-score-status="Submitted"], [data-academic-cbt-save], [data-academic-attendance-register] button[type="submit"]')]
+    .filter(button => !button.closest('[hidden]'));
+  if (!visibleButtons.length) return;
   const period = { SchoolSection: academicManagementFilters.section, SessionId: academicManagementFilters.sessionId, TermId: academicManagementFilters.termId };
   const anchor = panelEl.querySelector('.academic-homework-actions');
   try {
@@ -17820,6 +17873,13 @@ function bindAcademicCbtRejectionReviews(root) {
 }
 
 function bindAcademicManagement() {
+  panelEl.querySelector('[data-academic-load-records]')?.addEventListener('submit', event => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const classId = form.elements.RecordClassId.value;
+    if (!classId) return;
+    void runButtonAction(form.querySelector('button[type="submit"]'), 'Loading records...', () => loadAcademicManagement({ records: true, classId: classId === '*' ? '' : classId }));
+  });
   bindAcademicTimetableGenerator(panelEl);
   bindAcademicCbtRejectionReviews(panelEl);
   const deadlineButton = document.createElement('button');
@@ -18250,6 +18310,13 @@ function bindAcademicManagement() {
     });
   }
   panelEl.querySelectorAll('[data-academic-task]').forEach((button) => button.addEventListener('click', () => {
+    if (academicManagementView === 'scorebook' && academicManagementData?.scorebookWorkspaceDeferred
+        && button.dataset.academicTask !== 'classRegister') {
+      academicManagementTaskViews.scorebook = button.dataset.academicTask;
+      setStatus(document.getElementById('academicManagementStatus'), `Loading ${button.textContent.trim()}...`);
+      void loadAcademicManagement({ records: true });
+      return;
+    }
     if (academicManagementView === 'cbt' && button.dataset.academicTask === 'create') {
       resetAcademicCbtDraft();
       academicManagementTaskViews.cbt = 'create';
@@ -18257,6 +18324,7 @@ function bindAcademicManagement() {
       return;
     }
     showAcademicManagementTask(academicManagementView, button.dataset.academicTask, { focus: true });
+    if (academicManagementView === 'scorebook') void loadAcademicScorebookContext();
   }));
   panelEl.querySelector('[data-academic-view-select]')?.addEventListener('change', (event) => {
     const select = event.currentTarget;
