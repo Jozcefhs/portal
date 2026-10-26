@@ -18,6 +18,7 @@ export async function onRequestPost({ request, env, data }) {
       'billingSettings','saveBillingSettings','saveHmoPlan','findHmoPlans','billingVisit','saveHmoEligibility','createServiceCharge','billingCharges',
       'voidServiceCharge','billingInvoices','hmoClaims','issueHospitalInvoice','hospitalInvoiceDetails','hospitalBillingHistory','creditHospitalCharge','updateHmoClaim',
       'recordHospitalPayment','hospitalPayments','refundHospitalPayment',
+      'findCorporateAccount','saveCorporateAccount','hospitalCorporateVisit','saveCorporateCoverage','hospitalCorporateStatement',
       'hospitalDepositPatient','receiveHospitalFunds','hospitalFunds','hospitalFundDetails','hospitalFundInvoice','allocateHospitalFunds',
       'hospitalFundHistory','hospitalFundAllocations','returnHospitalAllocation','refundHospitalFunds'].includes(body.action)) return Response.json({ ok: false, message: 'Choose a valid Hospital action.' }, { status: 400, headers });
     const result = await createHospitalService(env, user)[body.action](body);

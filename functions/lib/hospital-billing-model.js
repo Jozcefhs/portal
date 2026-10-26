@@ -1,8 +1,8 @@
 import {fail,stable} from './hospital-model.js';
 import {field,money,dateOnly} from './hospital-orders-model.js';
 
-export const ACCOUNT_TYPES={PatientReceivable:'asset',HmoReceivable:'asset',Revenue:'revenue',Cash:'asset',Bank:'asset',PatientDeposit:'liability',HmoPrepayment:'liability'};
-export const OPTIONAL_FUND_ACCOUNTS=['PatientDeposit','HmoPrepayment'];
+export const ACCOUNT_TYPES={PatientReceivable:'asset',HmoReceivable:'asset',Revenue:'revenue',Cash:'asset',Bank:'asset',PatientDeposit:'liability',HmoPrepayment:'liability',CorporateReceivable:'asset',CorporatePrepayment:'liability'};
+export const OPTIONAL_BILLING_ACCOUNTS=['PatientDeposit','HmoPrepayment','CorporateReceivable','CorporatePrepayment'];
 export function amount(value){const n=money(value);if(n<=0)fail('Enter an amount greater than zero.');return n;}
 export function cents(value){if(!Number.isSafeInteger(value)||value<0||value>100000000000)fail('The financial amount is outside the supported range.');return value;}
 export function equal(a,b){return JSON.stringify(stable(a))===JSON.stringify(stable(b));}
@@ -32,9 +32,10 @@ export function splitCharge(charge,plan){
 }
 export function balances(invoice){
   return {PatientBalanceCents:invoice.PatientCents-invoice.PatientCreditCents-netPaid(invoice,'Patient'),
-    HmoBalanceCents:invoice.HmoCents-invoice.HmoCreditCents-netPaid(invoice,'Hmo')};
+    HmoBalanceCents:invoice.HmoCents-invoice.HmoCreditCents-netPaid(invoice,'Hmo'),
+    CorporateBalanceCents:(invoice.CorporateCents||0)-(invoice.CorporateCreditCents||0)-netPaid(invoice,'Corporate')};
 }
-export const netPaid=(invoice,payer)=>invoice[`${payer}PaidCents`]-invoice[`${payer}RefundCents`]-(invoice[`${payer}AllocationReturnCents`]||0);
+export const netPaid=(invoice,payer)=>(invoice[`${payer}PaidCents`]||0)-(invoice[`${payer}RefundCents`]||0)-(invoice[`${payer}AllocationReturnCents`]||0);
 export const fundsAvailable=fund=>cents(fund.AmountCents-fund.AppliedCents-fund.RefundedCents);
 export function paymentFields(input){
   if(!['Cash','Bank transfer'].includes(input.Method))fail('Choose Cash or Bank transfer. Card-terminal payments remain disabled.');

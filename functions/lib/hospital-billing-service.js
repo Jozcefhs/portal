@@ -1,7 +1,9 @@
 import {clean,fail,id,digest,nameKey,patientSummary} from './hospital-model.js';
 import {field,quantity,dateFilters,watDay,cumulativeCredit,chargeCents} from './hospital-orders-model.js';
-import {ACCOUNT_TYPES,OPTIONAL_FUND_ACCOUNTS,amount,cents,equal,code,planFields,eligibility,splitCharge,balances,netPaid,paymentFields} from './hospital-billing-model.js';
+import {ACCOUNT_TYPES,OPTIONAL_BILLING_ACCOUNTS,amount,cents,equal,code,planFields,eligibility,splitCharge,balances,netPaid,paymentFields} from './hospital-billing-model.js';
 import {accountingCodeAllowedForEdition} from './accounting-edition-scope.js';
+import {splitCorporateCharge,corporateDueDate} from './hospital-corporate-model.js';
+import {createHospitalCorporateService} from './hospital-corporate-service.js';
 import {createHospitalFundsService} from './hospital-funds-service.js';
 
 export function createHospitalBillingService(ctx){
@@ -71,17 +73,19 @@ export function createHospitalBillingService(ctx){
     await auditRead(body,`View dated hospital ${name.toLowerCase()}`,BranchId,{}, {ResultCount:result.rows.length});
     return {ok:true,rows:result.rows.map(view),next:result.next};
   }
+  const corporate=createHospitalCorporateService({...ctx,read,write,view,stamp,revision,confirmed,unchanged,keyFor,visit});
   return {
-    ...createHospitalFundsService({...ctx,read,write,view,stamp,any,revision,confirmed,unchanged,keyFor,settings,postingMany,journal,line,event}),
+    ...corporate.actions,
+    ...createHospitalFundsService({...ctx,read,write,view,stamp,any,revision,confirmed,unchanged,keyFor,settings,postingMany,journal,line,event,corporate}),
     async billingSettings(body){any('billing.read','hmo.work');const BranchId=await branch(body);return {ok:true,settings:view(await settings(BranchId))};},
     async saveBillingSettings(body){
-      requireCapability('billing.configure');const BranchId=await branch(body),fields=Object.fromEntries(Object.keys(ACCOUNT_TYPES).map(k=>[k,OPTIONAL_FUND_ACCOUNTS.includes(k)&&!clean(body.Settings?.[k])?'':code(body.Settings?.[k])]));
+      requireCapability('billing.configure');const BranchId=await branch(body),fields=Object.fromEntries(Object.keys(ACCOUNT_TYPES).map(k=>[k,OPTIONAL_BILLING_ACCOUNTS.includes(k)&&!clean(body.Settings?.[k])?'':code(body.Settings?.[k])]));
       const configured=Object.keys(fields).filter(k=>fields[k]);
       if(new Set(configured.map(k=>fields[k])).size!==configured.length)fail('Use separate accounts for receivables, revenue, cash, bank and advance liabilities.');
       return operation(body,'saveBillingSettings',async key=>{
         const settingId=await keyFor('settings',BranchId),old=await read('BillingSettings',settingId);if(old)revision(body,old);
         // Older clients omit the optional advance accounts; retain saved mappings.
-        for(const k of OPTIONAL_FUND_ACCOUNTS)if(!Object.hasOwn(body.Settings||{},k))fields[k]=old?.[k]||'';
+        for(const k of OPTIONAL_BILLING_ACCOUNTS)if(!Object.hasOwn(body.Settings||{},k))fields[k]=old?.[k]||'';
         const active=Object.keys(fields).filter(k=>fields[k]);if(new Set(active.map(k=>fields[k])).size!==active.length)fail('Use separate accounts for each billing mapping.');
         if(old&&Object.keys(fields).every(k=>(old[k]||'')===fields[k]))return unchanged({});await accounts(fields,active);
         return {writes:[write('BillingSettings',settingId,{...fields,BranchId,UpdatedAt:clock(),UpdatedBy:actor},old),
@@ -153,18 +157,23 @@ export function createHospitalBillingService(ctx){
       return operation(body,'issueHospitalInvoice',async key=>{
         const c=await visit(body),charges=await Promise.all(body.ChargeIds.map(k=>read('ChargeEvents',k)));
         if(charges.some(r=>!r||r.BranchId!==c.BranchId||r.VisitId!==c.visit.VisitId||r.PatientId!==c.person.PatientId||r.AmountCents<0||r.Source==='Return'||r.Status!=='Awaiting billing'))fail('One or more charges are already billed, are credits, or belong to another visit.',409);
+        if(body.UseHmo===true&&body.UseCorporate===true)fail('Choose either corporate coverage or HMO coverage for this invoice.');
+        const corporateContext=body.UseCorporate===true?await corporate.invoiceCoverage(c,body):null;
         let coverage=null;if(body.UseHmo===true){coverage=await read('HmoEligibility',await keyFor('eligibility',c.BranchId,c.visit.VisitId));
           if(!coverage||coverage.PatientId!==c.person.PatientId)fail('Record verified eligibility for this visit first.');revision(body,coverage,'EligibilityRevision');
           if(coverage.From>watDay(clock())||coverage.To<watDay(clock()))fail('The staff-verified eligibility is outside its valid dates.',409);
         }
-        const Lines=charges.map(r=>({ChargeId:r.ChargeId,Source:r.Source,Description:r.Description||'Dispensed medicine',...splitCharge(r,coverage?.Plan)}));
+        const Lines=charges.map(r=>({ChargeId:r.ChargeId,Source:r.Source,Description:r.Description||'Dispensed medicine',...(corporateContext?splitCorporateCharge(r,corporateContext.coverage):splitCharge(r,coverage?.Plan))}));
         const PatientCents=cents(Lines.reduce((s,l)=>s+l.PatientCents,0)),HmoCents=cents(Lines.reduce((s,l)=>s+l.HmoCents,0));
-        const mapping=await posting(c.BranchId,['PatientReceivable','HmoReceivable','Revenue']);
+        const CorporateCents=cents(Lines.reduce((sum,l)=>sum+(l.CorporateCents||0),0));
+        const mapping=await posting(c.BranchId,['Revenue',...(PatientCents?['PatientReceivable']:[]),...(HmoCents?['HmoReceivable']:[]),...(CorporateCents?['CorporateReceivable']:[])]);
         const row={InvoiceId:key,InvoiceNumber:`HI-${key.slice(0,16).toUpperCase()}`,BranchId:c.BranchId,PatientId:c.person.PatientId,PatientName:patientSummary(c.person).DisplayName,
-          HospitalNumber:c.person.HospitalNumber,VisitId:c.visit.VisitId,Currency:'NGN',Lines,PatientCents,HmoCents,PatientCreditCents:0,HmoCreditCents:0,PatientPaidCents:0,HmoPaidCents:0,PatientRefundCents:0,HmoRefundCents:0,
-          Coverage:coverage?strip(coverage):null,Accounts:{PatientReceivable:mapping.PatientReceivable,HmoReceivable:mapping.HmoReceivable,Revenue:mapping.Revenue},Status:'Issued',...stamp()};c.invoice=row;
+          HospitalNumber:c.person.HospitalNumber,VisitId:c.visit.VisitId,Currency:'NGN',Lines,PatientCents,HmoCents,CorporateCents,CorporateCreditCents:0,CorporatePaidCents:0,CorporateRefundCents:0,
+          CompanyId:corporateContext?.company.CompanyId||'',CorporateCoverage:corporateContext?strip(corporateContext.coverage):null,DueDate:corporateContext?corporateDueDate(watDay(clock()),corporateContext.coverage.Company.PaymentTermsDays):'',PatientCreditCents:0,HmoCreditCents:0,PatientPaidCents:0,HmoPaidCents:0,PatientRefundCents:0,HmoRefundCents:0,
+          Coverage:coverage?strip(coverage):null,Accounts:{PatientReceivable:mapping.PatientReceivable,HmoReceivable:mapping.HmoReceivable,Revenue:mapping.Revenue,...(CorporateCents?{CorporateReceivable:mapping.CorporateReceivable}:{})},Status:'Issued',...stamp()};c.invoice=row;
         const writes=[write('Invoices',key,row,null),...charges.map(r=>write('ChargeEvents',r.ChargeId,{...strip(r),InvoiceId:key,Status:'Billed',BilledAt:clock()},r)),
-          ...journal(key,c,'Invoice',[line(mapping.PatientReceivable,PatientCents),line(mapping.HmoReceivable,HmoCents),line(mapping.Revenue,0,PatientCents+HmoCents)]),event(key,c,'Issue invoice'),audit(key,c,'Issue invoice')];
+          ...journal(key,c,'Invoice',[line(mapping.PatientReceivable,PatientCents),line(mapping.HmoReceivable,HmoCents),line(mapping.CorporateReceivable,CorporateCents),line(mapping.Revenue,0,PatientCents+HmoCents+CorporateCents)]),event(key,c,'Issue invoice'),audit(key,c,'Issue invoice')];
+        if(CorporateCents)writes.push(...await corporate.financialChange(row.CompanyId,c.BranchId,{BilledCents:CorporateCents},key,'Issue corporate invoice',{InvoiceId:key,InvoiceNumber:row.InvoiceNumber},corporateContext.company));
         if(HmoCents)writes.push(write('Claims',key,{ClaimId:key,InvoiceId:key,InvoiceNumber:row.InvoiceNumber,PatientId:row.PatientId,PatientName:row.PatientName,BranchId:c.BranchId,
           Insurer:coverage.Plan.Insurer,MemberNumber:coverage.MemberNumber,Authorization:coverage.Authorization,AmountCents:HmoCents,Status:'Prepared',SubmissionNumber:0,...stamp()},null));
         return {writes,result:{InvoiceId:key,PatientId:row.PatientId}};
@@ -200,15 +209,17 @@ export function createHospitalBillingService(ctx){
         if(sourceTotal>original.SourceAmountCents)fail('Returns exceed the original source charge.',409);
         const gross=original.SourceAmountCents?cumulativeCredit(original.GrossCents,sourceTotal,original.SourceAmountCents):0;
         const pat=original.SourceAmountCents?cumulativeCredit(original.PatientCents,sourceTotal,original.SourceAmountCents):0;
-        const PatientCreditCents=pat-(total?.PatientCents||0),HmoCreditCents=gross-pat-(total?.HmoCents||0);
-        const next={...strip(c.invoice),PatientCreditCents:c.invoice.PatientCreditCents+PatientCreditCents,HmoCreditCents:c.invoice.HmoCreditCents+HmoCreditCents};
-        const mapping=await posting(c.BranchId,['PatientReceivable','HmoReceivable','Revenue'],c.invoice.Accounts);
+        const corp=original.CorporateCents?gross-pat:0;
+        const PatientCreditCents=pat-(total?.PatientCents||0),CorporateCreditCents=corp-(total?.CorporateCents||0),HmoCreditCents=gross-pat-corp-(total?.HmoCents||0);
+        const next={...strip(c.invoice),PatientCreditCents:c.invoice.PatientCreditCents+PatientCreditCents,HmoCreditCents:c.invoice.HmoCreditCents+HmoCreditCents,CorporateCreditCents:(c.invoice.CorporateCreditCents||0)+CorporateCreditCents};
+        const mapping=await posting(c.BranchId,['Revenue',...(PatientCreditCents?['PatientReceivable']:[]),...(HmoCreditCents?['HmoReceivable']:[]),...(CorporateCreditCents?['CorporateReceivable']:[])],c.invoice.Accounts);
         const action=adjustment?'Credit hospital service':'Credit returned medicine';
         const writes=[write('Invoices',c.invoice.InvoiceId,next,c.invoice),write('ChargeEvents',credit.ChargeId,{...strip(credit),InvoiceId:c.invoice.InvoiceId,Status:'Credited',CreditedAt:clock()},adjustment?null:credit),
-          write('CreditTotals',totalId,{ChargeId:original.ChargeId,SourceCents:sourceTotal,PatientCents:pat,HmoCents:gross-pat},total),
-          write('CreditNotes',credit.ChargeId,{CreditNoteId:credit.ChargeId,InvoiceId:c.invoice.InvoiceId,BranchId:c.BranchId,PatientId:c.person.PatientId,PatientCreditCents,HmoCreditCents,Reason:adjustment?.Reason||'Pharmacy return',Reference:adjustment?.Reference||credit.SourceId,...stamp()},null),
-          ...journal(key,c,'Credit',[line(mapping.Revenue,PatientCreditCents+HmoCreditCents),line(mapping.PatientReceivable,0,PatientCreditCents),line(mapping.HmoReceivable,0,HmoCreditCents)]),
-          event(key,c,action,{ChargeId:credit.ChargeId,PatientCreditCents,HmoCreditCents,Reason:adjustment?.Reason||'Pharmacy return'}),audit(key,c,action)];
+          write('CreditTotals',totalId,{ChargeId:original.ChargeId,SourceCents:sourceTotal,PatientCents:pat,HmoCents:gross-pat-corp,CorporateCents:corp},total),
+          write('CreditNotes',credit.ChargeId,{CreditNoteId:credit.ChargeId,InvoiceId:c.invoice.InvoiceId,BranchId:c.BranchId,PatientId:c.person.PatientId,PatientCreditCents,HmoCreditCents,CorporateCreditCents,Reason:adjustment?.Reason||'Pharmacy return',Reference:adjustment?.Reference||credit.SourceId,...stamp()},null),
+          ...journal(key,c,'Credit',[line(mapping.Revenue,PatientCreditCents+HmoCreditCents+CorporateCreditCents),line(mapping.PatientReceivable,0,PatientCreditCents),line(mapping.HmoReceivable,0,HmoCreditCents),line(mapping.CorporateReceivable,0,CorporateCreditCents)]),
+          event(key,c,action,{ChargeId:credit.ChargeId,PatientCreditCents,HmoCreditCents,CorporateCreditCents,Reason:adjustment?.Reason||'Pharmacy return'}),audit(key,c,action)];
+        if(CorporateCreditCents)writes.push(...await corporate.financialChange(c.invoice.CompanyId,c.BranchId,{CreditedCents:CorporateCreditCents},key,action,{InvoiceId:c.invoice.InvoiceId,InvoiceNumber:c.invoice.InvoiceNumber}));
         if(HmoCreditCents){const claim=await read('Claims',c.invoice.InvoiceId);if(!claim)fail('The HMO claim is missing. Review before crediting.',409);
           writes.push(write('Claims',claim.ClaimId,{...strip(claim),AmountCents:next.HmoCents-next.HmoCreditCents,Status:claim.Status==='Prepared'?'Prepared':'Adjustment required',UpdatedAt:clock()},claim));}
         return {writes,result:{InvoiceId:c.invoice.InvoiceId}};
@@ -227,7 +238,7 @@ export function createHospitalBillingService(ctx){
       });
     },
     async recordHospitalPayment(body){
-      requireCapability('billing.collect');confirmed(body);const fields=paymentFields(body);if(!['Patient','Hmo'].includes(body.Payer))fail('Choose Patient or Hmo.');await branch(body);
+      requireCapability('billing.collect');confirmed(body);const fields=paymentFields(body);if(!['Patient','Hmo','Corporate'].includes(body.Payer))fail('Choose Patient, HMO or Corporate.');await branch(body);
       return operation(body,'recordHospitalPayment',async key=>{
         // Bank transfer references are unique across this hospital workspace,
         // including branches sharing the receiving bank account.
@@ -236,14 +247,15 @@ export function createHospitalBillingService(ctx){
         if(prior){if(!equal(prior.Signature,signature))fail('This receipt or bank reference is already used for another payment.',409);return unchanged({InvoiceId:c.invoice.InvoiceId,PaymentId:prior.PaymentId});}
         revision(body,c.invoice);const due=balances(c.invoice)[`${body.Payer}BalanceCents`];if(fields.AmountCents>due)fail('Payment exceeds the remaining balance for this payer.',409);
         let claim=null;if(body.Payer==='Hmo'){claim=await read('Claims',c.invoice.InvoiceId);if(!claim||!['Approved','Partially settled'].includes(claim.Status))fail('Record insurer approval before settlement.',409);}
-        const config=await settings(c.BranchId);if(!config)fail('Set billing accounts first.');const cashKey=fields.Method==='Cash'?'Cash':'Bank',debtKey=body.Payer==='Patient'?'PatientReceivable':'HmoReceivable';
+        const config=await settings(c.BranchId);if(!config)fail('Set billing accounts first.');const cashKey=fields.Method==='Cash'?'Cash':'Bank',debtKey=`${body.Payer}Receivable`;
         const mapping=await posting(c.BranchId,[cashKey,debtKey],{...config,...c.invoice.Accounts});
         const row={PaymentId:key,ReceiptNumber:`HR-${key.slice(0,16).toUpperCase()}`,InvoiceId:c.invoice.InvoiceId,PatientId:c.person.PatientId,BranchId:c.BranchId,...fields,Payer:body.Payer,
           RefundedCents:0,ReceiptAccount:mapping[cashKey],ReceivableAccount:mapping[debtKey],...stamp()};
-        const next={...strip(c.invoice),[`${body.Payer}PaidCents`]:c.invoice[`${body.Payer}PaidCents`]+fields.AmountCents};
+        const next={...strip(c.invoice),[`${body.Payer}PaidCents`]:(c.invoice[`${body.Payer}PaidCents`]||0)+fields.AmountCents};
         const writes=[write('Invoices',c.invoice.InvoiceId,next,c.invoice),write('Payments',key,row,null),write('PaymentReferences',referenceId,{Signature:signature,PaymentId:key},null),
           ...journal(key,c,'Payment',[line(mapping[cashKey],fields.AmountCents),line(mapping[debtKey],0,fields.AmountCents)]),
           event(key,c,'Record hospital payment',{PaymentId:key,ReceiptNumber:row.ReceiptNumber,AmountCents:fields.AmountCents,Payer:body.Payer,Reference:fields.Reference}),audit(key,c,'Record hospital payment')];
+        if(body.Payer==='Corporate')writes.push(...await corporate.financialChange(c.invoice.CompanyId,c.BranchId,{PaidCents:fields.AmountCents},key,'Record corporate payment',{InvoiceId:c.invoice.InvoiceId,InvoiceNumber:c.invoice.InvoiceNumber,Reference:fields.Reference}));
         if(claim)writes.push(write('Claims',claim.ClaimId,{...strip(claim),Status:fields.AmountCents===due?'Settled':'Partially settled',SettledCents:netPaid(next,'Hmo'),UpdatedAt:clock()},claim));
         return {writes,result:{InvoiceId:c.invoice.InvoiceId,PaymentId:key}};
       });
@@ -258,12 +270,13 @@ export function createHospitalBillingService(ctx){
         if(prior){if(!equal(prior.Signature,signature))fail('This refund reference is already used.',409);return unchanged({InvoiceId:c.invoice.InvoiceId});}
         revision(body,c.invoice);revision(body,payment,'PaymentRevision');
         if(AmountCents>payment.AmountCents-payment.RefundedCents||AmountCents>-balances(c.invoice)[`${payment.Payer}BalanceCents`])fail('Refund exceeds the credited overpayment or the original receipt.',409);
-        const cashKey=payment.Method==='Cash'?'Cash':'Bank',debtKey=payment.Payer==='Patient'?'PatientReceivable':'HmoReceivable';
+        const cashKey=payment.Method==='Cash'?'Cash':'Bank',debtKey=`${payment.Payer}Receivable`;
         await posting(c.BranchId,[cashKey,debtKey],{[cashKey]:payment.ReceiptAccount,[debtKey]:payment.ReceivableAccount});
-        const next={...strip(c.invoice),[`${payment.Payer}RefundCents`]:c.invoice[`${payment.Payer}RefundCents`]+AmountCents};
+        const next={...strip(c.invoice),[`${payment.Payer}RefundCents`]:(c.invoice[`${payment.Payer}RefundCents`]||0)+AmountCents};
         const writes=[write('Invoices',c.invoice.InvoiceId,next,c.invoice),write('Payments',payment.PaymentId,{...strip(payment),RefundedCents:payment.RefundedCents+AmountCents},payment),
           write('Refunds',key,{RefundId:key,BranchId:c.BranchId,PatientId:c.person.PatientId,InvoiceId:c.invoice.InvoiceId,...signature,...stamp()},null),write('RefundReferences',refId,{Signature:signature,RefundId:key},null),
           ...journal(key,c,'Refund',[line(payment.ReceivableAccount,AmountCents),line(payment.ReceiptAccount,0,AmountCents)]),event(key,c,'Record hospital refund',{PaymentId:payment.PaymentId,AmountCents,Reason,Reference}),audit(key,c,'Record hospital refund')];
+        if(payment.Payer==='Corporate')writes.push(...await corporate.financialChange(c.invoice.CompanyId,c.BranchId,{RefundedCents:AmountCents},key,'Refund corporate overpayment',{InvoiceId:c.invoice.InvoiceId,InvoiceNumber:c.invoice.InvoiceNumber,Reference}));
         if(payment.Payer==='Hmo'){const claim=await read('Claims',c.invoice.InvoiceId);if(!claim)fail('The HMO claim is missing.',409);writes.push(write('Claims',claim.ClaimId,{...strip(claim),SettledCents:netPaid(next,'Hmo'),UpdatedAt:clock()},claim));}
         return {writes,result:{InvoiceId:c.invoice.InvoiceId}};
       });

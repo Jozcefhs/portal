@@ -1,15 +1,15 @@
 import {fail,id,nameKey,patientSummary} from './hospital-model.js';
 import {field,dateFilters} from './hospital-orders-model.js';
-import {amount,cents,equal,balances,netPaid,paymentFields,fundsAvailable} from './hospital-billing-model.js';
+import {amount,cents,equal,balances,netPaid,paymentFields,fundsAvailable,code} from './hospital-billing-model.js';
 
 export function createHospitalFundsService(ctx){
   const {env,db,collection,requireCapability,branch,patient,clock,actor,strip,eq,auditWrite,auditRead,operation,page,
-    read,write,view,stamp,any,revision,confirmed,unchanged,keyFor,settings,postingMany,journal,line,event}=ctx;
-  function kind(value){if(!['Patient','Hmo'].includes(value))fail('Choose Patient deposit or HMO remittance.');return value;}
-  const liabilityKey=fund=>fund.Kind==='Patient'?'PatientDeposit':'HmoPrepayment';
-  const debtKey=fund=>fund.Kind==='Patient'?'PatientReceivable':'HmoReceivable';
+    read,write,view,stamp,any,revision,confirmed,unchanged,keyFor,settings,postingMany,journal,line,event,corporate}=ctx;
+  function kind(value){if(!['Patient','Hmo','Corporate'].includes(value))fail('Choose a patient deposit, HMO remittance or corporate remittance.');return value;}
+  const liabilityKey=fund=>fund.Kind==='Patient'?'PatientDeposit':`${fund.Kind}Prepayment`;
+  const debtKey=fund=>`${fund.Kind}Receivable`;
   const fundView=row=>({...view(row),AvailableCents:fundsAvailable(row)});
-  function access(Kind){kind(Kind);if(Kind==='Patient')requireCapability('billing.read');else any('billing.read','hmo.work');}
+  function access(Kind){kind(Kind);if(Kind!=='Hmo')requireCapability('billing.read');else any('billing.read','hmo.work');}
   async function fundContext(body){
     const BranchId=await branch(body),fund=await read('Funds',body.FundId);
     if(!fund||fund.BranchId!==BranchId)fail('This deposit or remittance is not available in this branch.',404);access(fund.Kind);
@@ -19,10 +19,11 @@ export function createHospitalFundsService(ctx){
   function fundEvent(key,c,Action,details={}){return write('FundEvents',key,{EventId:key,FundId:c.fund.FundId,ReceiptNumber:c.fund.ReceiptNumber,
     BranchId:c.BranchId,PatientId:c.fund.PatientId||'',Insurer:c.fund.Insurer||'',Action,...details,...stamp()},null);}
   function fundAudit(key,c,Action){return auditWrite(key,Action,c.BranchId,c.person,{FundId:c.fund.FundId,ReceiptNumber:c.fund.ReceiptNumber,
-    ...(c.fund.Kind==='Hmo'?{Subject:c.fund.Insurer,SubjectName:c.fund.Insurer,EntityType:'HMO remittance',EntityId:c.fund.FundId}:{})});}
+    ...(c.fund.Kind!=='Patient'?{Subject:c.fund.CompanyName||c.fund.Insurer,SubjectName:c.fund.CompanyName||c.fund.Insurer,EntityType:'Hospital remittance',EntityId:c.fund.FundId}:{})});}
   function matchingInvoice(fund,row){
     if(!row||row.BranchId!==fund.BranchId)fail('Select an invoice in this receipt’s branch.',404);
     if(fund.Kind==='Patient'&&row.PatientId!==fund.PatientId)fail('This deposit belongs to a different patient.',409);
+    if(fund.Kind==='Corporate'&&row.CompanyId!==fund.CompanyId)fail('This invoice belongs to a different company.',409);
     if(fund.Kind==='Hmo'&&(!row.Coverage||nameKey(row.Coverage.Plan.Insurer)!==fund.InsurerKey))fail('This invoice belongs to a different insurer.',409);
   }
   const paymentReference=(BranchId,fields)=>keyFor('receipt',fields.Method==='Cash'?BranchId:'all-branches',fields.Method,nameKey(fields.Reference));
@@ -37,17 +38,18 @@ export function createHospitalFundsService(ctx){
     },
     async receiveHospitalFunds(body){
       requireCapability('billing.collect');confirmed(body);const Kind=kind(body.Kind),fields=paymentFields(body),BranchId=await branch(body);
-      const identity=Kind==='Patient'?{PatientId:id(body.PatientId)}:{Insurer:field(body,'Insurer',160,true)};
+      const identity=Kind==='Patient'?{PatientId:id(body.PatientId)}:Kind==='Corporate'?{CompanyId:await keyFor('corporate-account',BranchId,code(body.CompanyCode))}:{Insurer:field(body,'Insurer',160,true)};
       return operation(body,'receiveHospitalFunds',async key=>{
         const referenceId=await paymentReference(BranchId,fields),prior=await read('PaymentReferences',referenceId),signature={Kind,BranchId,...identity,...fields};
         if(prior){if(!equal(prior.Signature,signature))fail('This receipt or bank reference is already recorded. Open the original receipt instead.',409);return unchanged({FundId:prior.FundId});}
         const person=Kind==='Patient'?await patient(identity.PatientId,BranchId):{PatientId:''};
+        const company=Kind==='Corporate'?await corporate.account(identity.CompanyId,BranchId):null;
         const config=await settings(BranchId);if(!config)fail('Configure billing accounts first.');
-        const cashKey=fields.Method==='Cash'?'Cash':'Bank',liability=Kind==='Patient'?'PatientDeposit':'HmoPrepayment';
+        const cashKey=fields.Method==='Cash'?'Cash':'Bank',liability=Kind==='Patient'?'PatientDeposit':`${Kind}Prepayment`;
         await postingMany([{[cashKey]:config[cashKey],[liability]:config[liability]}]);
         const fund={FundId:key,ReceiptNumber:`HA-${key.slice(0,16).toUpperCase()}`,Kind,BranchId,...identity,
           PatientName:person.PatientId?patientSummary(person).DisplayName:'',HospitalNumber:person.HospitalNumber||'',InsurerKey:identity.Insurer?nameKey(identity.Insurer):'',
-          ...fields,Currency:'NGN',AppliedCents:0,RefundedCents:0,ReceiptAccount:config[cashKey],LiabilityAccount:config[liability],...stamp()};
+          ...(company?{CompanyName:company.Name,CompanyCode:company.Code}:{}),...fields,Currency:'NGN',AppliedCents:0,RefundedCents:0,ReceiptAccount:config[cashKey],LiabilityAccount:config[liability],...stamp()};
         const c={BranchId,person,fund};
         return {writes:[write('Funds',key,fund,null),write('PaymentReferences',referenceId,{Signature:signature,FundId:key},null),
           ...sourceJournal(key,c,'Advance receipt',[line(fund.ReceiptAccount,fields.AmountCents),line(fund.LiabilityAccount,0,fields.AmountCents)]),
@@ -57,6 +59,7 @@ export function createHospitalFundsService(ctx){
     async hospitalFunds(body){
       const Kind=kind(body.Kind);access(Kind);const dates=dateFilters(body.DateRange),BranchId=await branch(body),filters=[eq('BranchId',BranchId),eq('Kind',Kind),...dates];
       if(body.PatientId&&Kind==='Patient')filters.push(eq('PatientId',id(body.PatientId)));
+      if(body.CompanyId&&Kind==='Corporate')filters.push(eq('CompanyId',id(body.CompanyId)));
       if(body.Insurer&&Kind==='Hmo')filters.push(eq('InsurerKey',nameKey(field(body,'Insurer',160,true))));
       const result=await page('Funds',filters,'CreatedAt',body);await auditRead(body,'View dated hospital advances',BranchId,{}, {ResultCount:result.rows.length});
       return {ok:true,rows:result.rows.map(fundView),next:result.next};
@@ -98,10 +101,10 @@ export function createHospitalFundsService(ctx){
         const writes=[],paymentIds=[];
         for(let i=0;i<invoices.length;i++){
           const inv=invoices[i],a=allocations[i],paymentId=await keyFor('fund-payment',batchId,inv.InvoiceId),person=people.get(inv.PatientId),ic={BranchId:c.BranchId,person,invoice:inv,fund:c.fund};
-          const next={...strip(inv),[`${c.fund.Kind}PaidCents`]:cents(inv[`${c.fund.Kind}PaidCents`]+a.AmountCents)};
+          const next={...strip(inv),[`${c.fund.Kind}PaidCents`]:cents((inv[`${c.fund.Kind}PaidCents`]||0)+a.AmountCents)};
           const payment={PaymentId:paymentId,ReceiptNumber:`HA-USE-${paymentId.slice(0,12).toUpperCase()}`,SourceFundId:c.fund.FundId,SourceReceiptNumber:c.fund.ReceiptNumber,
             AllocationBatchId:batchId,AllocationReference:Reference,InvoiceId:inv.InvoiceId,InvoiceNumber:inv.InvoiceNumber,PatientId:inv.PatientId,PatientName:inv.PatientName,BranchId:c.BranchId,
-            Payer:c.fund.Kind,AmountCents:a.AmountCents,Method:c.fund.Kind==='Patient'?'Deposit allocation':'HMO remittance allocation',Reference:c.fund.Reference,
+            Payer:c.fund.Kind,AmountCents:a.AmountCents,Method:c.fund.Kind==='Patient'?'Deposit allocation':c.fund.Kind==='Hmo'?'HMO remittance allocation':'Corporate remittance allocation',Reference:c.fund.Reference,
             RefundedCents:0,ReturnedToFundCents:0,ReceivableAccount:inv.Accounts[debtKey(c.fund)],LiabilityAccount:c.fund.LiabilityAccount,...stamp()};
           writes.push(write('Invoices',inv.InvoiceId,next,inv),write('Payments',paymentId,payment,null),
             ...sourceJournal(paymentId,ic,'Advance allocation',[line(c.fund.LiabilityAccount,a.AmountCents),line(payment.ReceivableAccount,0,a.AmountCents)]),
@@ -109,6 +112,7 @@ export function createHospitalFundsService(ctx){
           const claim=claims.get(inv.InvoiceId);if(claim)writes.push(write('Claims',claim.ClaimId,{...strip(claim),Status:balances(next).HmoBalanceCents===0?'Settled':'Partially settled',SettledCents:netPaid(next,'Hmo'),UpdatedAt:clock()},claim));
           paymentIds.push(paymentId);
         }
+        if(c.fund.Kind==='Corporate')writes.push(...await corporate.financialChange(c.fund.CompanyId,c.BranchId,{PaidCents:total},key,'Allocate corporate remittance',{FundId:c.fund.FundId,Reference,InvoiceCount:invoices.length}));
         writes.push(write('Funds',c.fund.FundId,{...strip(c.fund),AppliedCents:cents(c.fund.AppliedCents+total),UpdatedAt:clock()},c.fund),
           write('FundAllocationBatches',batchId,{BatchId:batchId,FundId:c.fund.FundId,BranchId:c.BranchId,Reference,Signature:signature,PaymentIds:paymentIds,AmountCents:total,...stamp()},null),
           fundEvent(key,c,'Allocate hospital advance',{BatchId:batchId,Reference,AmountCents:total,InvoiceCount:invoices.length}),fundAudit(key,c,'Allocate hospital advance'));
@@ -141,6 +145,7 @@ export function createHospitalFundsService(ctx){
           write('FundAllocationReturns',returnId,{ReturnId:returnId,FundId:c.fund.FundId,InvoiceId:inv.InvoiceId,BranchId:c.BranchId,Signature:signature,...stamp()},null),
           ...sourceJournal(key,ic,'Allocation return',[line(payment.ReceivableAccount,AmountCents),line(c.fund.LiabilityAccount,0,AmountCents)]),
           event(key,ic,'Return advance allocation',{FundId:c.fund.FundId,PaymentId,AmountCents,Reference,Reason}),fundEvent(key,c,'Return advance allocation',{InvoiceNumber:inv.InvoiceNumber,PaymentId,AmountCents,Reference,Reason}),fundAudit(key,c,'Return advance allocation')];
+        if(c.fund.Kind==='Corporate')writes.push(...await corporate.financialChange(c.fund.CompanyId,c.BranchId,{ReturnedCents:AmountCents},key,'Return corporate allocation',{InvoiceId:inv.InvoiceId,InvoiceNumber:inv.InvoiceNumber,FundId:c.fund.FundId,Reference}));
         if(c.fund.Kind==='Hmo'){
           const claim=await read('Claims',inv.InvoiceId);if(!claim||claim.BranchId!==c.BranchId||claim.PatientId!==inv.PatientId)fail('Review the missing HMO claim before returning this allocation.',409);
           let Status=claim.Status;if(['Settled','Partially settled','Approved'].includes(Status))Status=balances(next).HmoBalanceCents<=0?'Settled':netPaid(next,'Hmo')>0?'Partially settled':'Approved';

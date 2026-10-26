@@ -13,7 +13,7 @@ await mkdir(output, { recursive: true });
 const assets = new Set(['/hospital.html','/css/hospital.css','/js/hospital.js','/js/staff-idle-session.js']);
 assets.add('/css/app-dialogs.css'); assets.add('/js/app-dialogs.js');
 assets.add('/js/hospital-clinical.js');
-assets.add('/js/hospital-orders.js'); assets.add('/js/hospital-billing.js'); assets.add('/js/hospital-funds.js');
+assets.add('/js/hospital-orders.js'); assets.add('/js/hospital-billing.js'); assets.add('/js/hospital-funds.js'); assets.add('/js/hospital-corporate.js');
 let expire = false;
 const server = createServer(async (req,res) => {
   try {
@@ -47,7 +47,7 @@ try {
   assert.equal(f.queries.length,0,'opening reception must not scan patients or visits');
   await page.locator('#newPatient').click();
   await page.locator('[name=FirstName]').fill('Ada');await page.locator('[name=LastName]').fill('Fixture');
-  await page.locator('[name=DateOfBirth]').fill('2000-01-02');await page.locator('[name=Phone]').fill('08000000000');
+  await page.locator('[name=DateOfBirth]').fill('2000-01-02');await page.locator('#patientForm [name=Phone]').fill('08000000000');
   await page.locator('#patientForm button[type=submit]').click();await done('Patient registration saved');
   assert.equal(f.rows('Patients').length,1);assert.equal(f.rows('Patients')[0].FirstName,'Ada');
   const patientId=f.rows('Patients')[0].PatientId;
@@ -86,7 +86,7 @@ try {
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
   await page.locator('#branch').selectOption('north');await done('Branch changed');
   assert.equal(await page.locator('#patientTitle').textContent(),'');assert.equal(await page.locator('#matches').textContent(),'');
-  assert.equal(await page.locator('#searchValue').inputValue(),'');assert.equal(await page.locator('[name=Phone]').inputValue(),'');
+  assert.equal(await page.locator('#searchValue').inputValue(),'');assert.equal(await page.locator('#patientForm [name=Phone]').inputValue(),'');
   await page.locator('#searchValue').fill('Fixture');await page.locator('#searchForm button[type=submit]').click();await done('Patient search complete');
   assert.equal(await page.locator('[data-patient]').count(),0,'other branch cannot see this patient');
   expire=true;await page.locator('#searchForm button[type=submit]').click();await done('Staff session expired');
