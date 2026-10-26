@@ -370,7 +370,10 @@ export function calculateAcademicMidTermResultDrafts(input = {}) {
       WeightPercentage: totalWeight > 0 ? component.WeightPercentage * 100 / totalWeight : 0 }))
   } });
   if (!scheme.Ready) return { Ready: false, Issues: scheme.Issues, Results: [] };
-  const scores = (input.StudentScores || []).map((score) => {
+  const selectedSheets = new Set((input.ScoreSheets || []).filter(row=>contextMatches(row,input)).map(row=>lower(row.SheetId)));
+  const selectedStudents = new Set(memberships.map(row=>lower(row.StudentRef)));
+  const scores = (input.StudentScores || []).filter(row=>selectedSheets.has(lower(row.SheetId))
+    && selectedStudents.has(lower(row.StudentRef))).map((score) => {
     const selectedScores = (score.ComponentScores || []).filter((row) => selectedIds.some((id) => lower(id) === lower(row.ComponentId)));
     let calculated;
     try { calculated = calculateAcademicStudentScore(scheme, selectedScores); }

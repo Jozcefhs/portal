@@ -239,6 +239,59 @@
       ]
     },
     {
+      "collectionGroup": "academicStudentAttendance",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "BranchId", "order": "ASCENDING" },
+        { "fieldPath": "SessionId", "order": "ASCENDING" },
+        { "fieldPath": "TermId", "order": "ASCENDING" },
+        { "fieldPath": "ClassId", "order": "ASCENDING" },
+        { "fieldPath": "ArmId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "academicStudentMemberships",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "BranchId", "order": "ASCENDING" },
+        { "fieldPath": "SessionId", "order": "ASCENDING" },
+        { "fieldPath": "TermId", "order": "ASCENDING" },
+        { "fieldPath": "ClassId", "order": "ASCENDING" },
+        { "fieldPath": "ArmId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "academicScoreSheets",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "BranchId", "order": "ASCENDING" },
+        { "fieldPath": "SessionId", "order": "ASCENDING" },
+        { "fieldPath": "TermId", "order": "ASCENDING" },
+        { "fieldPath": "ClassId", "order": "ASCENDING" },
+        { "fieldPath": "ArmId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "academicResults",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "BranchId", "order": "ASCENDING" },
+        { "fieldPath": "SessionId", "order": "ASCENDING" },
+        { "fieldPath": "TermId", "order": "ASCENDING" },
+        { "fieldPath": "ClassId", "order": "ASCENDING" },
+        { "fieldPath": "ArmId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "academicSchoolCalendars",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "BranchId", "order": "ASCENDING" },
+        { "fieldPath": "SessionId", "order": "ASCENDING" },
+        { "fieldPath": "TermId", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "payments",
       "queryScope": "COLLECTION",
       "fields": [

@@ -68,3 +68,33 @@ test('when everyone remaining is incomplete, existing drafts are marked pending 
   assert.equal(results.length,1);assert.equal(results[0].documentId,'result-pending');assert.equal(results[0].data.CalculationPending,true);
   assert.equal('Subjects' in results[0].data,false);assert.equal(f.state.termResults[0].Status,'Published');
 });
+
+test('calculation returns committed results and revision tokens without reloading the workspace',async()=>{
+  const f=fixture(),before=structuredClone(f.state);
+  f.sandbox.ACADEMIC_MANAGEMENT_COLLECTIONS.resultEvents='academicResultEvents';
+  f.sandbox.academicResultEventWrite=(_user,result)=>({collectionPath:'academicResultEvents',documentId:`event-${result.ResultId}`,
+    data:{ResultEventId:`event-${result.ResultId}`,ResultId:result.ResultId,StudentRef:result.StudentRef}});
+  f.sandbox.publicRecord=record=>({...record,RevisionToken:record.__updateTime});
+  f.sandbox.commitAcademicBatch=async(_env,batch)=>{
+    f.writes.push(...batch);return {writeResults:batch.map((_row,index)=>({updateTime:`commit-${index}`}))};
+  };
+  f.sandbox.academicOperationalResponse=()=>{throw new Error('Calculation must not reload the workspace');};
+  const response=await f.sandbox.calculateAcademicResultsForType({}, {},{...f.period,ResultResponseMode:'delta',
+    AllowPartialResults:true,RevisionTokens:{'result-pending':'draft-v1'}},'Mid-Term');
+  assert.equal(response.ok,true);assert.equal(response.partialAcademicManagement,true);
+  const results=response.resultCalculationUpdate.results;assert.equal(results.length,3);
+  const preserved=results.find(row=>row.ResultId==='result-published');assert.equal(preserved.Status,'Published');
+  assert.equal(preserved.RevisionToken,'pub-v1');assert.deepEqual(preserved.Subjects,before.termResults[0].Subjects);
+  const calculated=results.find(row=>row.ResultId==='result-good');assert.equal(calculated.OverallAverage,75);
+  const pending=results.find(row=>row.ResultId==='result-pending');assert.equal(pending.CalculationPending,true);
+  assert.deepEqual(pending.Subjects,before.termResults[1].Subjects);
+  for(const result of [calculated,pending]){
+    const index=f.writes.findIndex(write=>write.collectionPath==='academicResults'&&write.documentId===result.ResultId);
+    assert.equal(result.RevisionToken,`commit-${index}`);
+  }
+  assert.equal(response.resultCalculationUpdate.events.length,1);
+  assert.equal(response.resultCalculationUpdate.events[0].ResultId,'result-good');
+  assert.equal(response.resultCalculationUpdate.scope.ArmId,'a1');
+  assert.equal(response.resultCalculationPreserved,1);assert.equal(response.resultCalculationPending.length,1);
+  assert.deepEqual(f.state,before);
+});

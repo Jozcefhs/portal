@@ -17045,9 +17045,11 @@ async function academicManagementRequest(action, payload = {}, requestOptions = 
     return mergeAcademicScorebookSnapshot(result, data.scorebookSnapshot);
   }
   if (data.partialAcademicManagement === true && academicManagementData) {
-    return mergeAcademicScorebookSnapshot({ ...academicManagementData, ...data }, data.scorebookSnapshot);
+    const merged = mergeAcademicScorebookSnapshot({ ...academicManagementData, ...data }, data.scorebookSnapshot);
+    return data.resultCalculationUpdate ? mergeAcademicResultCalculation(merged, data.resultCalculationUpdate) : merged;
   }
-  return mergeAcademicScorebookSnapshot(data, data.scorebookSnapshot);
+  const merged = mergeAcademicScorebookSnapshot(data, data.scorebookSnapshot);
+  return data.resultCalculationUpdate ? mergeAcademicResultCalculation(merged, data.resultCalculationUpdate) : merged;
 }
 
 function mergeAcademicScorebookSnapshot(data, snapshot) {
@@ -17060,6 +17062,16 @@ function mergeAcademicScorebookSnapshot(data, snapshot) {
     studentScores: [...(data.studentScores || []).filter(row => row.SheetId !== sheetId),
       ...snapshot.scores.filter(row => row.SheetId === sheetId)]
   };
+}
+
+function mergeAcademicResultCalculation(data, update) {
+  const merge = (previous, changed, key) => {
+    const rows = new Map((previous || []).map(row=>[row[key],row]));
+    for (const row of changed || []) if (clean(row[key])) rows.set(row[key],row);
+    return [...rows.values()];
+  };
+  return {...data,termResults:merge(data.termResults,update.results,'ResultId'),
+    resultEvents:merge(data.resultEvents,update.events,'ResultEventId')};
 }
 
 async function showAcademicCalculationFailure(status, error, options = {}) {
@@ -19170,6 +19182,11 @@ function bindAcademicManagement() {
     }
     const arm = academicFind(academicManagementData?.arms || [], resultCalculator.elements.ArmId.value);
     if (!arm) return;
+    const scopeKey = () => JSON.stringify([selectedBranchId,currentUser?.username,academicManagementFilters.section,
+      academicManagementFilters.sessionId,academicManagementFilters.termId,academicResultDraft.armId]);
+    const requestedScope = scopeKey();
+    const isCurrentCalculation = () => resultCalculator.isConnected && activeSection === 'academics'
+      && academicManagementView === 'results' && requestedScope === scopeKey();
     const existing = (academicManagementData?.termResults || []).filter((row) => row.SessionId === academicManagementFilters.sessionId
       && row.TermId === academicManagementFilters.termId && row.ClassId === arm.ClassId && row.ArmId === arm.ArmId
       && (midTerm ? clean(row.ResultType).toLowerCase() === 'mid-term' : clean(row.ResultType || 'End of Term').toLowerCase() !== 'mid-term'));
@@ -19178,6 +19195,7 @@ function bindAcademicManagement() {
       message: `Replace the current Calculated Draft snapshots with a fresh ${midTerm ? 'mid-term calculation from the assessment components authorized in Settings' : 'calculation from the latest Approved or Locked score sheets'}?`,
       confirmText: 'Recalculate Drafts'
     })) return;
+    if (!isCurrentCalculation()) return;
     await runButtonAction(button, 'Calculating...', async () => {
       const status = document.getElementById('academicManagementStatus');
       try {
@@ -19187,11 +19205,13 @@ function bindAcademicManagement() {
           ClassId: arm.ClassId, ArmId: arm.ArmId,
           AttendanceMode: resultCalculator.elements.AttendanceMode.value,
           AllowPartialResults: resultCalculator.elements.AllowPartialResults?.checked === true,
+          ResultResponseMode: 'delta',
           ...(midTerm ? {NotTaughtSubjectIds: notTaughtIds, NotTaughtReason: notTaughtReason} : {}),
           RevisionTokens: Object.fromEntries(existing.map((row) => [row.ResultId, row.RevisionToken]))
         });
-        renderAcademicManagement(data, data.message);
+        if (isCurrentCalculation()) renderAcademicManagement(data, data.message);
       } catch (error) {
+        if (!isCurrentCalculation()) return;
         await showAcademicCalculationFailure(status, error, {
           title: `${midTerm ? 'Mid-term' : 'End-of-term'} results need attention`,
           shortMessage: `${midTerm ? 'Mid-term' : 'End-of-term'} results were not calculated.`,

@@ -384,6 +384,13 @@ export const ACADEMIC_RESULTS_STATE_KEYS = Object.freeze([
   'termResults', 'resultEvents'
 ]);
 
+// Calculation needs no teacher directory, lifecycle history or other classrooms.
+// Marks are fetched after the selected sheets, using their stable identities.
+export const ACADEMIC_RESULT_CALCULATION_STATE_KEYS = Object.freeze([
+  'sessions', 'terms', 'classes', 'arms', 'subjects', 'studentMemberships',
+  'schoolCalendars', 'studentAttendance', 'scoreSheets', 'termResults'
+]);
+
 export const ACADEMIC_OUTCOMES_STATE_KEYS = Object.freeze([
   'sessions', 'terms', 'classes', 'arms', 'subjects', 'teacherAllocations',
   'studentMemberships', 'termResults', 'cumulativeResults', 'cumulativeEvents',
@@ -1178,6 +1185,13 @@ export function academicWorkspaceReadPlan(view, keys, input = {}, { classRegiste
 
 export function academicWorkspaceRecordFilters(key, branchId, scope = {}) {
   if (!scope.WorkspaceRead) return null;
+  if (scope.ResultCalculation === true) {
+    const classroomKeys = ['studentMemberships','studentAttendance','scoreSheets','termResults'];
+    const fields = classroomKeys.includes(key) ? ['SessionId','TermId','ClassId','ArmId']
+      : key === 'schoolCalendars' ? ['SessionId','TermId'] : [];
+    if (fields.length) return [{field:'BranchId',op:'==',value:branchId},
+      ...fields.filter(field=>clean(scope[field])).map(field=>({field,op:'==',value:clean(scope[field])}))];
+  }
   const termClassKeys = ['offerings', 'teacherAllocations', 'studentMemberships', 'scoreSheets', 'studentScores',
     'scoreImports', 'scoreSyncBatches', 'cbtTests', 'termResults', 'resultEvents', 'resultClearances'];
   const sessionClassKeys = ['cumulativeResults', 'cumulativeEvents', 'promotionDecisions', 'promotionEvents'];
@@ -6150,9 +6164,32 @@ export async function batchReviewAcademicScores(env, user = {}, input = {}) {
     message:`${outcomes.filter(row=>row.ok).length} subject sheets processed; ${outcomes.filter(row=>!row.ok).length} need attention. Saved marks were not changed.`};
 }
 
+async function loadAcademicCalculationScores(env, scope, sheets) {
+  const sheetIds = uniqueIds(sheets.map(row=>row.SheetId));
+  const groups = [];
+  for (let offset=0; offset<sheetIds.length; offset+=10) groups.push(sheetIds.slice(offset,offset+10));
+  const scores = [], readTime = nowIso();
+  for (let offset=0; offset<groups.length; offset+=4) {
+    const pages = await Promise.all(groups.slice(offset,offset+4).map(ids=>queryCollectionPages(env,
+      ACADEMIC_MANAGEMENT_COLLECTIONS.studentScores, {filters:[{field:'SheetId',op:'in',value:ids}],
+        pageSize:500,maxRows:50000,readTime})));
+    scores.push(...pages.flat());
+  }
+  const selected = new Set(sheetIds);
+  // Sheet identity also finds older marks whose ArmId was never populated.
+  return scopedAcademicRows(scores.filter(row=>selected.has(clean(row.SheetId))
+    && lower(row.BranchId || 'main') === lower(scope.branchId)),scope);
+}
+
 async function academicTermResultContext(env, user, input, capability = 'canCalculateResults') {
-  const context = await academicOperationalContext(env, user, input, capability, {scoreReadScope:{WorkspaceRead:true,
-    ClassId:input.ClassId,SessionId:input.SessionId,TermId:input.TermId}});
+  const calculation = capability === 'canCalculateResults';
+  if (calculation && ['ClassId','ArmId','SessionId','TermId'].some(field=>!clean(input[field]))) {
+    throw failure('Choose a class, classroom, academic session and term before calculating results.');
+  }
+  const context = await academicOperationalContext(env, user, input, capability, {
+    ...(calculation ? {stateKeys:ACADEMIC_RESULT_CALCULATION_STATE_KEYS} : {}),
+    scoreReadScope:{WorkspaceRead:true,ClassId:input.ClassId,SessionId:input.SessionId,TermId:input.TermId,
+      ...(calculation ? {ResultCalculation:true,ArmId:input.ArmId} : {})}});
   const { scope, state, session, term } = context;
   const schoolClass = assertReference(findById(state.classes, input.ClassId), 'Choose an active class.');
   const arm = assertReference(findById(state.arms, input.ArmId), 'Choose an active classroom arm.');
@@ -6160,9 +6197,11 @@ async function academicTermResultContext(env, user, input, capability = 'canCalc
   const scopeChain = academicPolicyScopeChain({
     BranchId: scope.branchId, SectionId: scope.section, ClassId: schoolClass.ClassId
   });
-  const policyView = await loadAcademicPolicyView(env, {
-    scope: scopeChain.at(-1), scopeChain, period: { Session: session.Name, Term: term.Name }
-  });
+  const [policyView, scores] = await Promise.all([
+    loadAcademicPolicyView(env, {scope:scopeChain.at(-1),scopeChain,period:{Session:session.Name,Term:term.Name}}),
+    calculation ? loadAcademicCalculationScores(env,scope,state.scoreSheets) : Promise.resolve(null)
+  ]);
+  if (calculation) state.studentScores = scores;
   const policyRevisionIds = (policyView.Sources || []).map((row) => clean(row.RevisionId)).filter(Boolean);
   if (!policyRevisionIds.length) {
     throw failure('Activate the academic policy for this class and term before calculating results.', 409, 'ACADEMIC_RESULT_POLICY_REQUIRED');
@@ -6335,11 +6374,11 @@ async function calculateAcademicResultsForType(env, user = {}, input = {}, resul
   if (!calculationMemberships.length) throw failure('There are no new or draft results to calculate. Existing reviewed, approved and published results remain unchanged.', 409);
   const ids = new Map();
   const references = new Map();
-  for (const membership of memberships) {
+  await Promise.all(calculationMemberships.map(async membership => {
     const id = academicTermResultId(scope, session.SessionId, term.TermId, schoolClass.ClassId, arm.ArmId, membership.StudentRef, resultType);
     ids.set(lower(membership.StudentRef), id);
     references.set(lower(membership.StudentRef), clean(findById(existingResults, id)?.ResultReference) || await academicResultReference(id));
-  }
+  }));
   const calculation = (midTerm ? calculateAcademicMidTermResultDrafts : calculateAcademicTermResultDrafts)({
     SessionId: session.SessionId, AcademicSession: session.Name,
     TermId: term.TermId, Term: term.Name,
@@ -6413,9 +6452,29 @@ async function calculateAcademicResultsForType(env, user = {}, input = {}, resul
     SessionId: session.SessionId, TermId: term.TermId,
     BranchId: scope.branchId, SchoolSection: scope.section
   }, `${calculation.Results.length} ${resultType} Calculated Draft result(s); ${(calculation.PendingResults || []).length} pending; ${preservedResults.length} existing reviewed or published results preserved; policy ${policyFingerprint}`));
-  await commitAcademicBatch(env, writes, 'One or more term results changed while the classroom was being calculated. Reload and try again.');
-  const response = await academicOperationalResponse(env, user, input, scope,
-    `${calculation.Results.length} ${resultType.toLowerCase()} result${calculation.Results.length === 1 ? '' : 's'} calculated as Draft from recorded scores. ${(calculation.PendingResults || []).length} students remain pending; ${preservedResults.length} existing reviewed or published results preserved.`);
+  const committed = await commitAcademicBatch(env, writes, 'One or more term results changed while the classroom was being calculated. Reload and try again.');
+  const message = `${calculation.Results.length} ${resultType.toLowerCase()} result${calculation.Results.length === 1 ? '' : 's'} calculated as Draft from recorded scores. ${(calculation.PendingResults || []).length} students remain pending; ${preservedResults.length} existing reviewed or published results preserved.`;
+  if (input.ResultResponseMode === 'delta') {
+    // Keep preserved results current too: another officer may have reviewed or
+    // published them since the client loaded its snapshot. No extra reads.
+    const updatedResults = new Map(existingResults.map(row=>[row.ResultId,publicRecord(row)]));
+    const events = [];
+    writes.forEach((write,index)=>{
+      const revision = clean(committed?.writeResults?.[index]?.updateTime);
+      if (write.collectionPath === ACADEMIC_MANAGEMENT_COLLECTIONS.termResults) {
+        const previous = write.updateMask ? findById(existingResults,write.documentId) : {};
+        updatedResults.set(write.documentId,publicRecord({...previous,...write.data,__updateTime:revision}));
+      } else if (write.collectionPath === ACADEMIC_MANAGEMENT_COLLECTIONS.resultEvents) {
+        events.push(publicRecord({...write.data,__updateTime:revision}));
+      }
+    });
+    return {ok:true,partialAcademicManagement:true,message,
+      resultCalculationPending:calculation.PendingResults || [],resultCalculationPreserved:preservedResults.length,
+      resultCalculationUpdate:{results:[...updatedResults.values()],events,scope:{BranchId:scope.branchId,SchoolSection:scope.section,
+        SessionId:session.SessionId,TermId:term.TermId,ClassId:schoolClass.ClassId,ArmId:arm.ArmId,ResultType:resultType}}};
+  }
+  // Older desktop clients still expect the complete workspace response.
+  const response = await academicOperationalResponse(env, user, input, scope, message);
   return {...response,resultCalculationPending:calculation.PendingResults || [],resultCalculationPreserved:preservedResults.length};
 }
 
