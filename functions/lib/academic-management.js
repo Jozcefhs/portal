@@ -12,6 +12,8 @@ import { academicResultWithSubjectLabels } from './academic-result-subject-label
 import { buildAcademicClassScoreRegister } from './academic-class-score-register.js';
 import { loadAcademicAuditLog } from './academic-audit-log.js';
 import { loadAcademicResultsReadiness } from './academic-results-readiness.js';
+import { planAcademicResultBatch } from './academic-result-batch.js';
+import { commitAcademicResultBatch } from './academic-result-batch-commit.js';
 import { handleDiary } from './academic-diary.js';
 import { commitAcademicSubmission, submissionSettings, submissionPaymentAction } from './academic-submissions.js';
 import { checkClassroomRemovals } from './academic-classroom-removal.js';
@@ -6326,17 +6328,18 @@ function academicResultEventWrite(user, result, eventType, details = '') {
   };
 }
 
-async function notifyAcademicResultLifecycle(env, user, scope, results, target) {
+async function notifyAcademicResultLifecycle(env, user, scope, results, target, students = null) {
   if (!['Published', 'Withdrawn'].includes(target)) return;
-  const people = await loadPeople(env, user, scope, { staff: false }).catch(() => ({ students: [] }));
+  const people = students ? {students} : await loadPeople(env, user, scope, { staff: false }).catch(() => ({ students: [] }));
   const byStudent = new Map((people.students || []).map((row) => [lower(studentReference(row)), row]));
-  await Promise.allSettled(results.map((result) => {
+  const outcomes = await Promise.allSettled(results.map((result) => {
     const student = byStudent.get(lower(result.StudentRef)) || {};
     const contacts = academicParentContacts(student);
+    if (!contacts.emails.length && !contacts.accountRefs.length) return {skipped:true};
     const name = clean(student.DisplayName || student.ApplicantName || student.StudentName || result.StudentRef);
     const published = target === 'Published';
     return createNotification(env, {
-      EventKey: `academic-result:${result.ResultId}:${target}:${clean(result.UpdatedAt)}`,
+      EventKey: `academic-result:${result.ResultId}:${target}:${clean(published ? result.PublishedAt || result.UpdatedAt : result.UpdatedAt)}`,
       Type: published ? 'Term result published' : 'Term result withdrawn',
       Category: 'Academics', Audience: 'Parent', Channels: ['InApp', 'Push'],
       TargetEmails: contacts.emails, TargetAccountRefs: contacts.accountRefs,
@@ -6349,6 +6352,7 @@ async function notifyAcademicResultLifecycle(env, user, scope, results, target) 
       ActorType: 'Staff', ActorId: actorUsername(user), CreatedBy: actorName(user)
     });
   }));
+  return {warnings:outcomes.filter(row => row.status === 'rejected' || row.value?.skipped).length};
 }
 
 async function calculateAcademicResultsForType(env, user = {}, input = {}, resultType = 'End of Term') {
@@ -6513,6 +6517,99 @@ export async function previewAcademicTermResultWithdrawal(env, user = {}, input 
       RequiresReapprovalBeforeRepublishing: true
     }
   };
+}
+
+async function academicResultBatchRecipients(env, scope, results) {
+  const references = uniqueIds(results.map(row=>row.StudentRef)), students = [];
+  for (let offset=0;offset<references.length;offset+=10) {
+    const refs=references.slice(offset,offset+10);
+    const options={filters:[{field:'AdmissionNo',op:'in',value:refs}],pageSize:100,maxRows:1000};
+    const rows=await queryCollectionPages(env,scopedCollectionPath('students',scope.branchId,scope.section),options);
+    students.push(...rows.filter(row=>lower(row.BranchId || scope.branchId)===lower(scope.branchId)
+      && lower(row.SchoolSection || scope.section)===lower(scope.section)));
+    const missing=refs.filter(ref=>!students.some(row=>lower(studentReference(row))===lower(ref)));
+    if (missing.length) students.push(...scopedAcademicRows((await queryCollectionPages(env,'students',{
+      ...options,filters:[{field:'AdmissionNo',op:'in',value:missing},
+        ...(scope.branchId==='main'?[]:[{field:'BranchId',op:'==',value:scope.branchId}])]
+    })).filter(row=>lower(row.BranchId || 'main')===lower(scope.branchId)),scope));
+  }
+  return students;
+}
+
+export async function batchChangeAcademicResultStatus(env, user = {}, input = {}) {
+  const action=clean(input.Status);
+  if (!['Reviewed','Approved','Published','ReviewApprovePublish'].includes(action)) throw failure('Choose a batch result action.');
+  requireWritableSubscription(user);
+  requireCapability(user,['Published','ReviewApprovePublish'].includes(action)?'canPublishResults':'canReviewResults');
+  if (action==='ReviewApprovePublish') requireCapability(user,'canReviewResults');
+  if (['SessionId','TermId','ClassId','ArmId'].some(key=>!clean(input[key])) || !['Mid-Term','End of Term'].includes(input.ResultType)) {
+    throw failure('Choose one classroom, academic session, term and report type.');
+  }
+  if (!Array.isArray(input.Items) || !input.Items.length || input.Items.length>25) throw failure('Choose between 1 and 25 results per batch.');
+  const items=[...new Map(input.Items.map(item=>[clean(item.ResultId),{ResultId:clean(item.ResultId),RevisionToken:clean(item.RevisionToken)}])).values()];
+  if (items.some(item=>!item.ResultId)) throw failure('Every selected result must have an identity.');
+  const context=await academicOperationalContext(env,user,input,['Published','ReviewApprovePublish'].includes(action)?'canPublishResults':'canReviewResults',{
+    view:'results',stateKeys:['sessions','terms','classes','arms','subjects','studentMemberships','scoreSheets','termResults'],
+    scoreReadScope:{WorkspaceRead:true,ResultCalculation:true,SessionId:input.SessionId,TermId:input.TermId,ClassId:input.ClassId,ArmId:input.ArmId}
+  });
+  const {scope,state}=context;
+  const arm=assertReference(findById(state.arms,input.ArmId),'Choose a valid classroom.');
+  if (arm.ClassId!==input.ClassId) throw failure('The classroom does not belong to the selected class.');
+  const selectedIds=new Set(items.map(item=>item.ResultId));
+  const refs=uniqueIds(state.termResults.filter(row=>selectedIds.has(row.ResultId)).map(row=>row.StudentRef));
+  const related=[];
+  for (let offset=0;offset<refs.length;offset+=10) related.push(...scopedAcademicRows(await queryCollectionPages(env,
+    ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships,{filters:[{field:'BranchId',op:'==',value:scope.branchId},
+      {field:'SessionId',op:'==',value:input.SessionId},{field:'TermId',op:'==',value:input.TermId},
+      {field:'StudentRef',op:'in',value:refs.slice(offset,offset+10)}],pageSize:100,maxRows:1000}),scope));
+  // The focused placement query can be newer than the initial context. Validate
+  // and lock the same versions, including students moved out of this classroom.
+  const selectedRefs=new Set(refs.map(lower));
+  state.studentMemberships=[...state.studentMemberships.filter(row=>!selectedRefs.has(lower(row.StudentRef))),
+    ...related.filter(row=>row.ClassId===input.ClassId && row.ArmId===input.ArmId)];
+  state.studentScores=await loadAcademicCalculationScores(env,scope,state.scoreSheets);
+  const batchScope={BranchId:scope.branchId,SchoolSection:scope.section,SessionId:input.SessionId,TermId:input.TermId,
+    ClassId:input.ClassId,ArmId:input.ArmId,ResultType:input.ResultType};
+  const plan=planAcademicResultBatch(state,batchScope,items,action,related);
+  const timestamp=nowIso(),writes=[],resultWriteIndexes=new Map();
+  for (const change of plan.changes) {
+    const result={...change.previous};
+    const events=[];
+    if (change.pendingIssues) {
+      result.CalculationPending=true;result.CalculationPendingIssues=change.pendingIssues;
+      events.push(academicResultEventWrite(user,result,'PENDING_ASSESSMENTS','Batch check: missing or changed assessments; existing marks and result snapshot preserved.'));
+    } else for (const target of change.stages) {
+      Object.assign(result,{Status:target,PublicationStatus:target,UpdatedAt:timestamp,UpdatedBy:actorName(user),
+        [`${target}At`]:timestamp,[`${target}By`]:actorName(user),[`${target}ByUsername`]:actorUsername(user)});
+      events.push(academicResultEventWrite(user,result,target.toUpperCase(),'Selected batch result workflow.'));
+    }
+    resultWriteIndexes.set(result.ResultId,writes.length);
+    writes.push({collectionPath:ACADEMIC_MANAGEMENT_COLLECTIONS.termResults,documentId:result.ResultId,
+      ...(change.pendingIssues ? {data:{CalculationPending:true,CalculationPendingIssues:change.pendingIssues},
+        updateMask:['CalculationPending','CalculationPendingIssues']} : {data:withoutMetadata(result)}),
+      ...writePrecondition(change.previous,change.previous.__updateTime)});
+    writes.push(...events);
+    plan.outcomes.find(row=>row.ResultId===result.ResultId).result=result;
+  }
+  const published=plan.target==='Published' ? plan.outcomes.filter(row=>['Updated','Already complete'].includes(row.Outcome)
+    && row.result?.Status==='Published').map(row=>row.result) : [];
+  const students=published.length?await academicResultBatchRecipients(env,scope,published):[];
+  if (writes.length) writes.push(auditWrite(user,'BATCH_RESULT_WORKFLOW','termResult',{
+    RecordId:`classroom-results-${input.ClassId}-${input.ArmId}`,...batchScope
+  },`${action}: ${plan.outcomes.filter(row=>row.Outcome==='Updated').length} advanced; ${plan.outcomes.filter(row=>row.Outcome==='Pending').length} pending. Selected students only.`));
+  const committed=await commitAcademicResultBatch(env,writes,batchScope,{
+    refs:uniqueIds(plan.changes.map(change=>change.previous.StudentRef)),memberships:related,sheets:state.scoreSheets
+  });
+  const updates=plan.outcomes.filter(row=>row.result).map(outcome=>{
+    const index=resultWriteIndexes.get(outcome.ResultId);
+    outcome.result=publicRecord({...outcome.result,...(index===undefined?{}:{__updateTime:clean(committed?.writeResults?.[index]?.updateTime)})});
+    return outcome.result;
+  });
+  const notification=published.length?await notifyAcademicResultLifecycle(env,user,scope,published,'Published',students):null;
+  const events=writes.filter(write=>write.collectionPath===ACADEMIC_MANAGEMENT_COLLECTIONS.resultEvents).map(write=>publicRecord(write.data));
+  return {ok:true,partialAcademicManagement:true,batchResults:plan.outcomes,
+    resultCalculationUpdate:{results:updates,events,scope:batchScope},notificationWarnings:notification?.warnings || 0,
+    message:`${plan.outcomes.filter(row=>row.Outcome==='Updated').length} results advanced; ${plan.outcomes.filter(row=>row.Outcome==='Pending').length} students remain pending. Other outcomes are shown individually.`};
 }
 
 export async function changeAcademicTermResultStatus(env, user = {}, input = {}) {
@@ -9383,6 +9480,7 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
   if (['calculateacademicmidtermresults', 'calculatemidtermresults'].includes(action)) return calculateAcademicMidTermResults(env, user, input);
   if (['previewacademictermresultwithdrawal', 'previewtermresultwithdrawal'].includes(action)) return previewAcademicTermResultWithdrawal(env, user, input);
   if (['changeacademictermresultstatus', 'changetermresultstatus'].includes(action)) return changeAcademicTermResultStatus(env, user, input);
+  if (action === 'batchchangeacademicresultstatus') return batchChangeAcademicResultStatus(env, user, input);
   if (['saveacademictermresultremarks', 'savetermresultremarks'].includes(action)) return saveAcademicTermResultRemarks(env, user, input);
   if (['calculateacademiccumulativeresults', 'calculatecumulativeresults'].includes(action)) return calculateAcademicCumulativeResults(env, user, input);
   if (['changeacademiccumulativestatus', 'changecumulativeresultstatus'].includes(action)) return changeAcademicCumulativeStatus(env, user, input);

@@ -13802,7 +13802,7 @@ function academicTaskDefinitions(view, root) {
     ],
     results: [
       { key: 'calculate', label: 'Calculate results', title: 'Term-result calculation', description: 'Calculate one classroom only from complete Approved or Locked score sheets and the activated policy snapshot.', nodes: nodes(form('[data-academic-result-calculator]')) },
-      { key: 'workflow', label: 'Review and publish', title: 'Result review and publication', description: 'Review, approve, publish, lock, withdraw or reopen results through the controlled lifecycle.', nodes: nodes(register('Term Result Workflow')) },
+      { key: 'workflow', label: 'Review and publish', title: 'Result review and publication', description: 'Review, approve or publish selected results. Incomplete students remain pending while complete students proceed.', nodes: nodes(form('[data-academic-result-batch-toolbar]'), register('Term Result Workflow')) },
       { key: 'history', label: 'Lifecycle history', title: 'Result audit history', description: 'Review every calculation, status change, withdrawal and draft-comment update.', nodes: nodes(register('Result Lifecycle History')) }
     ],
     outcomes: [
@@ -16058,6 +16058,9 @@ function academicTermResultsWorkspace(data, rows) {
     <div class="academic-management-form-actions"><button type="submit" data-result-calculation="end-term"${selectedArm ? '' : ' disabled'}>${endTermResults.length ? 'Recalculate end-of-term Drafts' : 'Calculate end-of-term results'}</button><button type="submit" class="secondary" data-result-calculation="mid-term"${selectedArm ? '' : ' disabled'}>${midTermResults.length ? 'Recalculate mid-term Drafts' : 'Calculate mid-term results'}</button></div>
   </form>` : `<div class="academic-view-only-note"><strong>Term results are controlled by academic reviewers.</strong><span>Teachers may add draft remarks only for classrooms where they are the Form Teacher or Assistant.</span></div>`;
   const summary = `<div class="academic-result-summary-grid"><div><small>${learner.Plural}</small><strong>${selectedResults.length}</strong></div><div><small>Draft</small><strong>${statusCounts['Calculated Draft'] || 0}</strong></div><div><small>Approved</small><strong>${statusCounts.Approved || 0}</strong></div><div><small>Published / locked</small><strong>${(statusCounts.Published || 0) + (statusCounts.Locked || 0)}</strong></div></div>`;
+  const batchToolbar = data.permissions?.canReviewResults || data.permissions?.canPublishResults
+    ? `<div class="academic-management-editor academic-management-editor-wide" data-academic-result-batch-toolbar><label>Classroom<select data-academic-result-batch-classroom>${academicSelectOptions(classrooms,selectedArm?.ArmId,classroomLabel,'Choose classroom')}</select></label>
+      <button type="button" data-academic-result-batch${selectedArm?'':' disabled'}>Batch review / approve / publish</button><p class="muted">Choose students and a report type. Missing assessments stay pending without holding back complete results.</p></div>` : '';
   const register = table('Term Result Workflow', selectedResults, [
     { label: learner.Singular, render: (row) => `<strong class="academic-result-student-name">${escapeHtml(academicLabel(data.students, row.StudentRef, row.StudentRef))}</strong><small>${escapeHtml(row.StudentRef)}</small>` },
     { label: 'Report', render: (row) => `<strong>${escapeHtml(row.ResultType || 'End of Term')}</strong><small>${escapeHtml((row.IncludedAssessmentComponentIds || []).join(', '))}</small>` },
@@ -16077,7 +16080,7 @@ function academicTermResultsWorkspace(data, rows) {
     { label: 'By', value: (row) => row.CreatedBy },
     { label: 'Details', value: (row) => row.Details }
   ], { emptyMessage: 'No result lifecycle event has been recorded for this classroom.' });
-  return `${calculator}${summary}${register}${events}`;
+  return `${calculator}${summary}${batchToolbar}${register}${events}`;
 }
 
 function academicCumulativeActions(row, permissions = {}) {
@@ -19218,6 +19221,27 @@ function bindAcademicManagement() {
           message: midTerm ? 'Each taught subject needs complete mid-term marks. For subjects whose lessons have not started, use “Subjects not taught this mid-term” in the calculation form and enter a reason.' : 'Each required subject needs the appropriate complete score sheet. Resolve the items below, then calculate again.'
         });
       }
+    });
+  });
+  panelEl.querySelector('[data-academic-result-batch-classroom]')?.addEventListener('change',event=>{
+    academicResultDraft.armId=clean(event.target.value);renderAcademicManagement(academicManagementData);
+  });
+  panelEl.querySelector('[data-academic-result-batch]')?.addEventListener('click',async event=>{
+    const branch=selectedBranchId,username=currentUser?.username,arm=academicFind(academicManagementData?.arms||[],academicResultDraft.armId);
+    if(!arm)return;
+    const scope={SchoolSection:academicManagementFilters.section,SessionId:academicManagementFilters.sessionId,TermId:academicManagementFilters.termId,ClassId:arm.ClassId,ArmId:arm.ArmId};
+    const isCurrent=()=>activeSection==='academics'&&academicManagementView==='results'&&branch===selectedBranchId&&username===currentUser?.username
+      &&scope.SchoolSection===academicManagementFilters.section&&scope.SessionId===academicManagementFilters.sessionId
+      &&scope.TermId===academicManagementFilters.termId&&scope.ArmId===academicResultDraft.armId;
+    await runButtonAction(event.currentTarget,'Opening…',async()=>{
+      try{
+        const {openAcademicResultBatch}=await import('./academic-result-batch.js?v=20261026');if(!isCurrent())return;
+        const rows=academicCurrentRows(academicManagementData),inRoom=row=>row.ClassId===scope.ClassId&&row.ArmId===scope.ArmId;
+        openAcademicResultBatch({results:rows.termResults.filter(inRoom),memberships:rows.studentMemberships.filter(row=>inRoom(row)&&academicIsActive(row)),scope,
+          title:[academicLabel(rows.classes,arm.ClassId),arm.Name,academicLabel(academicManagementData.sessions,scope.SessionId),academicLabel(academicManagementData.terms,scope.TermId)].join(' · '),
+          label:row=>academicLabel(academicManagementData.students,row.StudentRef,row.StudentRef),permissions:academicManagementData.permissions||{},
+          request:academicManagementRequest,isCurrent,onSaved:data=>{if(isCurrent())renderAcademicManagement(data,data.message);}});
+      }catch(error){setStatus(document.getElementById('academicManagementStatus'),error.message,'bad');}
     });
   });
   panelEl.querySelectorAll('[data-academic-result-status]').forEach((button) => button.addEventListener('click', async () => {

@@ -5,7 +5,7 @@ const admin=await readFile(new URL('../js/admin.js',import.meta.url),'utf8');
 const functions=['academicManagementRequest','mergeAcademicScorebookSnapshot','mergeAcademicResultCalculation']
   .map(name=>admin.match(new RegExp(`(?:async )?function ${name}\\([\\s\\S]*?\\n}`))[0]).join('\n');
 const start=admin.indexOf("  resultCalculator?.addEventListener('submit', async (event) => {");
-const end=admin.indexOf("  panelEl.querySelectorAll('[data-academic-result-status]')",start);
+const end=admin.indexOf("  panelEl.querySelector('[data-academic-result-batch-classroom]')",start);
 assert.ok(start>0&&end>start);
 const handler=admin.slice(start,end);
 const playwright=await import(pathToFileURL(`${process.env.PLAYWRIGHT_MODULE}/index.mjs`).href);

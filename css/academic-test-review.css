@@ -5,7 +5,7 @@
 .academic-test-review-dialog table{min-width:640px;width:100%}
 html[data-theme="dark"] .academic-test-review-dialog{background:#111f30;color:#e4eef7}html[data-theme="dark"] .academic-test-review-dialog small{color:#b8c9db}
 .academic-batch-controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:15px 0}
-.academic-batch-controls label{display:flex;flex-direction:column;gap:5px}.academic-batch-check{display:flex;align-items:center;gap:9px}
+.academic-batch-controls label{display:flex;flex-direction:column;gap:5px;min-width:0}.academic-batch-controls select,.academic-batch-controls input{width:100%;min-width:0;max-width:100%}.academic-batch-check{display:flex;align-items:center;gap:9px}
 .academic-batch-review-dialog input[type=checkbox]{width:18px;height:18px;margin:0;flex-shrink:0}
 .academic-batch-review-dialog .admin-table-wrap{max-height:45vh;overflow:auto}.academic-batch-review-dialog [data-status]{overflow-wrap:anywhere}
 .academic-test-review-status{display:flex;flex-direction:column;align-items:flex-start;gap:5px;min-width:160px;white-space:normal}
