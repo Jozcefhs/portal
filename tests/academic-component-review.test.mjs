@@ -118,3 +118,28 @@ test('full-term review recalculates actual saved marks, ignores stale Complete f
   assert.equal((await f.sandbox.assertAcademicScoreSheetComplete({studentScores:complete},sheet,roster)).length,2);
   await assert.rejects(f.sandbox.assertAcademicScoreSheetComplete({studentScores:[...complete,complete[0]]},sheet,roster),/incomplete/);
 });
+
+test('review can explicitly leave missing students pending without inventing or approving their marks',async()=>{
+  const [review]=await academicComponentReviews(sheet,roster,[scores[0]]);
+  assert.equal(review.CompleteCount,1);assert.equal(review.MissingCount,1);
+  assert.throws(()=>academicComponentReviewTransition(sheet,review,'Submitted',perms,actor),/still need required marks/);
+  const submitted=academicComponentReviewTransition(sheet,review,'Submitted',perms,actor,'',true);
+  assert.deepEqual(submitted.PendingStudentRefs,['test/2']);assert.equal(submitted.AllowPendingStudents,true);
+  const saved={...sheet,ComponentReviews:{ca1:submitted}};
+  const [fresh]=await academicComponentReviews(saved,roster,[scores[0]]);
+  const approved=academicComponentReviewTransition(saved,fresh,'Approved',perms,actor);
+  assert.equal(approved.Status,'Approved');assert.deepEqual(approved.PendingStudentRefs,['test/2']);
+  const [empty]=await academicComponentReviews(sheet,roster,[]);
+  assert.throws(()=>academicComponentReviewTransition(sheet,empty,'Submitted',perms,actor,'',true),/still need required marks/);
+  assert.throws(()=>academicComponentReviewTransition(saved,fresh,'Approved',{},actor,'',true),/Only an academic reviewer/);
+});
+
+test('full-sheet pending mode accepts complete students only and changes no scores',async()=>{
+  const f=runtime();
+  const complete={...scores[0],ComponentScores:[...scores[0].ComponentScores,{ComponentId:'exam',State:'Numeric',RawScore:60}]};
+  const state={studentScores:[complete,scores[1]]},before=structuredClone(state);
+  const result=await f.sandbox.assertAcademicScoreSheetComplete(state,sheet,roster,{allowPending:true,summary:true});
+  assert.equal(result.CompleteCount,1);assert.deepEqual(Array.from(result.PendingStudentRefs),['TEST/2']);
+  assert.deepEqual(state,before);
+  await assert.rejects(f.sandbox.assertAcademicScoreSheetComplete({studentScores:[]},sheet,roster,{allowPending:true}),/incomplete/);
+});

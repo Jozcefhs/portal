@@ -13795,7 +13795,7 @@ function academicTaskDefinitions(view, root) {
     scorebook: [
       { key: 'classRegister', label: 'Class score register', title: 'All-arm class score register', description: 'Select a whole class to review every student and their raw marks per subject and test. Read-only; includes Draft scores.', nodes: nodes(form('[data-academic-class-score-register]')) },
       { key: 'entry', label: 'Enter scores', title: 'Class subject scorebook', description: 'Choose one allocated classroom and subject, then enter every configured assessment component for its students.', nodes: nodes(form('[data-academic-scorebook]')) },
-      { key: 'workflow', label: 'Review and approval', title: 'Score-sheet workflow', description: 'Submit full-term sheets, review them, approve them and lock final score records without silent edits.', nodes: nodes(register('Score Sheet Workflow')) },
+      { key: 'workflow', label: 'Review and approval', title: 'Score-sheet workflow', description: 'Review individual tests or approve selected subjects in a batch. Incomplete students can remain pending while complete students proceed.', nodes: nodes(form('[data-academic-batch-toolbar]'),register('Score Sheet Workflow')) },
       { key: 'imports', label: 'Spreadsheet imports', title: 'Preview and import scores', description: 'Download a stable template, preview CSV or XLSX rows, choose the commit policy, and roll back unpublished imports.', nodes: nodes(form('[data-academic-score-import]'), register('Score Import History')) },
       { key: 'cbtSync', label: 'CBT synchronization', title: 'Built-in and external CBT scores', description: 'Synchronize approved local CBT batches or import a provider export into the Draft scorebook with roster, component and digest validation.', nodes: nodes(form('[data-academic-external-cbt]'), register('CBT Score Synchronization History')) },
       { key: 'scheme', label: 'Assessment scheme', title: 'Active components and grading', description: 'Review the activated policy revision used to validate scores, calculate weighted totals and assign grades.', nodes: nodes(form('[data-academic-assessment-scheme]')) }
@@ -13820,7 +13820,7 @@ function academicTaskDefinitions(view, root) {
       { key: 'register', label: 'Clearance register', title: 'Result clearance history', description: 'Review approved, expired and revoked clearances and correct a trial or mistaken entry safely.', nodes: nodes(register('Result Clearance Register')) }
     ],
     readiness: [
-      { key: 'migration', label: 'Migration integrity', title: 'Academic migration readiness', description: 'Resolve missing references, duplicate memberships and curriculum warnings before production rollout.', nodes: nodes(form('.academic-management-editor'), register('Academic Migration Readiness')) }
+      { key: 'results', label: 'Results readiness', title: 'Results readiness for the selected class and term', description: 'Check current result blockers, outstanding workflow steps and saved untaught-subject decisions. Historical warnings are separate.', nodes: nodes(form('.academic-readiness-report')) }
     ]
   };
   return (definitions[view] || []).filter((task) => task.nodes.length);
@@ -15460,7 +15460,8 @@ function academicTestReviewStatusMarkup(row = {}) {
     const name = review.Name || (row.AssessmentComponents || []).find(item => item.Id === review.ComponentId)?.Name || 'Assessment test';
     const status = review.Stale ? 'Changed — resubmit' : review.Status === 'Draft' ? 'Reopened' : review.Status;
     const tone = review.Stale || review.Status === 'Draft' ? 'changed' : review.Status === 'Submitted' ? 'submitted' : 'approved';
-    return `<span class="academic-test-review-badge ${tone}">${escapeHtml(name)} · ${escapeHtml(status)}</span>`;
+    const pending = review.PendingStudentRefs?.length || review.PendingStudentCount || Math.max(0, Number(review.RosterCount || 0)-Number(review.CompleteCount ?? review.RosterCount ?? 0));
+    return `<span class="academic-test-review-badge ${tone}">${escapeHtml(name)} · ${escapeHtml(status)}${pending ? ` · ${pending} pending` : ''}</span>`;
   }).join('')}<small>${verified ? 'Checked against saved marks' : 'Last saved test reviews'}</small></div>`;
 }
 
@@ -15616,14 +15617,14 @@ function academicScorebookWorkspace(data, rows) {
     <div class="academic-attendance-table academic-scorebook-table"><table><thead><tr><th scope="col" class="academic-serial">S/N</th><th class="academic-student-cell">Student</th>${componentHeaders}<th>Total</th><th>Grade</th><th>Completion</th></tr></thead><tbody>${scoreRows || `<tr><td colspan="${scoreFields.length + 5}">Choose an allocated classroom and subject with active students.</td></tr>`}</tbody></table></div>
     <div class="academic-scorebook-actions"><button type="submit" ${canEdit && roster.length && editableCellCount ? '' : 'disabled'}>Save and lock recorded scores</button>${sheet?.Status === 'Draft' && data.permissions?.canEnterScores ? `<button type="button" class="secondary" data-academic-score-status="Submitted" data-academic-id="${escapeHtml(sheet.SheetId)}" data-academic-revision="${escapeHtml(sheet.RevisionToken)}">Submit full-term sheet</button>` : ''}${sheet && data.permissions?.canEnterScores ? `<button type="button" class="secondary" data-academic-test-review="${escapeHtml(sheet.SheetId)}">Review individual tests</button>` : ''}${reactivateButton}</div>
   </form>`;
-  const workflow = table('Score Sheet Workflow', rows.scoreSheets, [
+  const workflow = `${data.permissions?.canReviewScores ? '<div data-academic-batch-toolbar><button type="button" data-academic-batch-review>Batch approve</button><p class="muted">Submit or approve selected tests and subjects. Complete students can proceed while missing marks stay pending.</p></div>' : ''}` + table('Score Sheet Workflow', rows.scoreSheets, [
     { label: 'Classroom', value: (row) => `${academicLabel(rows.classes, row.ClassId)} / ${academicLabel(rows.arms, row.ArmId)}` },
     { label: 'Subject', value: (row) => academicLabel(rows.subjects, row.SubjectId) },
     { label: 'Teacher', value: (row) => academicLabel(data.staff, row.TeacherUsername, row.TeacherUsername) },
     { label: 'Entered', value: (row) => `${row.EnteredCount || 0} / ${row.RosterCount || 0}` },
     { label: 'Term complete', value: (row) => `${row.CompleteCount || 0} / ${row.RosterCount || 0}` },
     { label: 'Test reviews', render: (row) => `<div data-academic-test-review-status="${escapeHtml(row.SheetId)}">${academicTestReviewStatusMarkup(row)}</div>` },
-    { label: 'Full-term status', value: (row) => row.Status },
+    { label: 'Full-term status', render: (row) => `<span data-academic-full-status="${escapeHtml(row.SheetId)}">${escapeHtml(row.Status)}${row.PendingStudentRefs?.length ? ` · ${row.PendingStudentRefs.length} pending` : ''}</span>` },
     { label: 'Actions', render: (row) => academicScoreSheetActions(row, data.permissions || {}) }
   ]);
   const preview = academicScorebookDraft.importPreview;
@@ -15999,6 +16000,7 @@ function printAcademicWeightedResult(record) {
 }
 
 function academicTermResultActions(row, permissions = {}) {
+  if (row.CalculationPending) return '<span class="muted">Pending — complete the missing assessments and recalculate.</span>';
   const actions = [];
   const status = clean(row.Status || 'Calculated Draft');
   if (status === 'Calculated Draft' && permissions.canReviewResults) actions.push(['Reviewed', 'Mark reviewed', '&#10003;']);
@@ -16050,6 +16052,9 @@ function academicTermResultsWorkspace(data, rows) {
     <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}"><input type="hidden" name="SessionId" value="${escapeHtml(academicManagementFilters.sessionId)}"><input type="hidden" name="TermId" value="${escapeHtml(academicManagementFilters.termId)}">
     <div class="academic-management-form-grid academic-management-form-grid-3"><label>Classroom<select name="ArmId" data-academic-result-classroom required>${academicSelectOptions(classrooms, selectedArm?.ArmId, classroomLabel, 'Choose classroom')}</select></label><div class="academic-result-policy-note"><small>Attendance source</small><strong>Daily school presence</strong><span>Only the class register contributes to result attendance; lesson attendance is separate.</span></div><input type="hidden" name="AttendanceMode" value="Daily"><div class="academic-result-policy-note"><small>Publication lifecycle</small><strong>Calculated Draft → Reviewed → Approved → Published → Locked</strong><span>Published corrections must be withdrawn with a reason and reapproved.</span></div></div>
     ${academicMidTermNotTaughtMarkup(rows, selectedArm, midTermResults)}
+    <label class="academic-batch-check"><input type="checkbox" name="AllowPartialResults" checked> Calculate complete students; leave incomplete students pending</label>
+    <p class="muted">A student who missed tests does not hold back others. Missing marks remain missing. Existing reviewed, approved or published results are preserved. Class averages and positions use only students included in this calculation.</p>
+    ${(data.resultCalculationPending || []).length ? `<details open><summary>Students pending (${data.resultCalculationPending.length})</summary><ul>${data.resultCalculationPending.map(row=>`<li><strong>${escapeHtml(academicLabel(data.students,row.StudentRef,row.StudentRef))}</strong>: ${escapeHtml((row.Issues || []).join(' '))}</li>`).join('')}</ul></details>` : ''}
     <div class="academic-management-form-actions"><button type="submit" data-result-calculation="end-term"${selectedArm ? '' : ' disabled'}>${endTermResults.length ? 'Recalculate end-of-term Drafts' : 'Calculate end-of-term results'}</button><button type="submit" class="secondary" data-result-calculation="mid-term"${selectedArm ? '' : ' disabled'}>${midTermResults.length ? 'Recalculate mid-term Drafts' : 'Calculate mid-term results'}</button></div>
   </form>` : `<div class="academic-view-only-note"><strong>Term results are controlled by academic reviewers.</strong><span>Teachers may add draft remarks only for classrooms where they are the Form Teacher or Assistant.</span></div>`;
   const summary = `<div class="academic-result-summary-grid"><div><small>${learner.Plural}</small><strong>${selectedResults.length}</strong></div><div><small>Draft</small><strong>${statusCounts['Calculated Draft'] || 0}</strong></div><div><small>Approved</small><strong>${statusCounts.Approved || 0}</strong></div><div><small>Published / locked</small><strong>${(statusCounts.Published || 0) + (statusCounts.Locked || 0)}</strong></div></div>`;
@@ -16061,7 +16066,7 @@ function academicTermResultsWorkspace(data, rows) {
     { label: 'Grade', value: (row) => row.OverallGrade || '—' },
     { label: 'Attendance', value: (row) => `${row.Attendance?.AttendancePercentage ?? 0}%` },
     { label: 'Position context', value: (row) => row.OverallPosition ? `${row.OverallPosition} of ${row.AssessedStudentCount}` : row.PerformanceBand || `${row.AssessedStudentCount || 0} assessed` },
-    { label: 'Status', render: (row) => `<span class="academic-result-status academic-result-status-${escapeHtml(clean(row.Status).toLowerCase().replace(/[^a-z]+/g, '-'))}">${escapeHtml(row.Status)}</span><small>${escapeHtml(row.ResultReference)}</small>` },
+    { label: 'Status', render: (row) => `<span class="academic-result-status academic-result-status-${escapeHtml(clean(row.Status).toLowerCase().replace(/[^a-z]+/g, '-'))}">${escapeHtml(row.CalculationPending ? 'Pending assessments' : row.Status)}</span><small>${escapeHtml(row.ResultReference)}</small>` },
     { label: 'Actions', render: (row) => academicTermResultActions(row, data.permissions || {}) }
   ], { emptyMessage: selectedArm ? 'No term results have been calculated for this classroom.' : 'Choose a classroom.' });
   const events = table('Result Lifecycle History', rows.resultEvents.filter((event) => !selectedArm || (event.ClassId === selectedArm.ClassId && event.ArmId === selectedArm.ArmId)), [
@@ -16819,33 +16824,29 @@ function academicFinanceClearanceWorkspace(data, rows) {
   return `${form}${register}`;
 }
 
-function academicMigrationReadinessWorkspace(data) {
-  const report = data.migrationReadiness || { Status: 'Unavailable', Errors: 0, Warnings: 0, Issues: [], Counts: {} };
+function academicResultsReadinessWorkspace(data) {
+  const report = data.resultsReadiness;
+  if (!report) return '<p class="academic-view-only-note">Choose a class, session, term and result type, then check Results Readiness.</p>';
   const counts = report.Counts || {};
-  const summary = `<section class="academic-management-editor academic-management-editor-wide">
-    <div class="academic-management-editor-heading"><div><small>Milestone 11 migration gate</small><h3>${escapeHtml(report.Status)}</h3><p class="muted">This read-only audit finds orphaned references, duplicate current memberships, legacy Senior offerings and incomplete Senior curricula before rollout.</p></div><strong>${Number(report.Errors || 0)} errors · ${Number(report.Warnings || 0)} warnings</strong></div>
-    <div class="academic-summary-grid"><div><small>Student profiles</small><strong>${Number(counts.StudentProfiles || 0)}</strong></div><div><small>Memberships</small><strong>${Number(counts.Memberships || 0)}</strong></div><div><small>Classrooms</small><strong>${Number(counts.Arms || 0)}</strong></div><div><small>Subjects</small><strong>${Number(counts.Subjects || 0)}</strong></div></div>
-    <p class="muted">Errors must be resolved before rollout. Warnings require an administrator decision; no record is silently changed or deleted by this audit.</p>
+  const scope = report.Scope || {};
+  const rows = (items, empty) => items.length ? `<div class="module-audit-table-wrap"><table class="module-audit-table"><thead><tr><th>Student / classroom</th><th>Finding</th><th>Action / explanation</th></tr></thead><tbody>${items.map(row => `<tr><td><strong>${escapeHtml(row.RecordLabel || scope.ClassName)}</strong></td><td>${escapeHtml(row.SubjectName || row.Code.replaceAll('_', ' ').toLowerCase())}</td><td>${escapeHtml(row.Message)}</td></tr>`).join('')}</tbody></table></div>` : `<p class="muted">${escapeHtml(empty)}</p>`;
+  return `<section class="academic-readiness-report module-audit-workspace">
+    <header class="academic-management-editor academic-management-editor-wide"><div class="academic-management-editor-heading"><div><small>Results Readiness · ${escapeHtml(scope.ResultType)}</small><h3>${escapeHtml(report.Status)}</h3><p>${escapeHtml([scope.ClassName, scope.Term, scope.AcademicSession].filter(Boolean).join(' · '))}</p></div></div>
+    <div class="academic-result-summary-grid"><div><small>Current students</small><strong>${counts.Students || 0}</strong></div><div><small>Blockers</small><strong>${counts.Blockers || 0}</strong></div><div><small>Workflow steps</small><strong>${counts.NextSteps || 0}</strong></div><div><small>Ready to publish</small><strong>${counts.ReadyToPublish || 0}</strong></div><div><small>Published / locked</small><strong>${counts.Published || 0}</strong></div></div>
+    <p class="muted">${report.CheckedAt ? `Checked ${escapeHtml(new Date(report.CheckedAt).toLocaleString())}. ` : ''}Only this class and term are checked. Findings can repeat for one student; historical warnings are not result blockers. No records are changed by this check.</p></header>
+    <section><h3>Result blockers (${counts.Blockers || 0})</h3>${rows(report.Blockers || [], 'No current result blockers found.')}</section>
+    <section><h3>Approval and publication steps (${counts.NextSteps || 0})</h3>${rows(report.NextSteps || [], 'No outstanding workflow steps found.')}</section>
+    <section><h3>Subjects not taught this mid-term (${counts.UntaughtSubjects || 0})</h3>${rows(report.UntaughtSubjects || [], scope.ResultType === 'Mid-Term' ? 'No saved untaught-subject decisions for these students. For lessons that have not started, use Results → Calculate results → Subjects not taught this mid-term, enter a reason and calculate.' : 'Untaught-subject exceptions apply only to mid-term results. End-of-term requirements remain unchanged.')}</section>
+    <details class="academic-readiness-warnings"><summary>Historical and advisory warnings (${counts.Warnings || 0}) — do not block results</summary>${rows(report.Warnings || [], 'No historical or advisory warnings in the loaded records.')}</details>
+    <p class="muted">Mid-term checks use only the policy’s selected assessments; end-of-term checks require complete Approved or Locked subject sheets. Result review and approval are separate steps. Parent financial clearance remains a separate access check.</p>
   </section>`;
-  const register = table('Academic Migration Readiness', report.Issues || [], [
-    { label: 'Severity', value: (row) => row.Severity },
-    { label: 'Issue', value: (row) => row.Code },
-    { label: 'Record type', value: (row) => row.RecordType },
-    { label: 'Record', render: (row) => {
-      const label = clean(row.RecordLabel) || `${clean(row.RecordType) || 'Academic'} record`;
-      const recordId = clean(row.RecordId);
-      return `<div class="academic-readiness-record"><strong>${escapeHtml(label)}</strong>${recordId ? `<details><summary>Technical ID</summary><div><code>${escapeHtml(recordId)}</code><button type="button" class="secondary" data-academic-copy-record-id="${escapeHtml(recordId)}">Copy ID</button></div></details>` : ''}</div>`;
-    } },
-    { label: 'Required action', value: (row) => row.Message }
-  ], { emptyMessage: 'No migration integrity issues were found.', className: 'academic-readiness-register' });
-  return `${summary}${register}`;
 }
 
 function academicManagementViews(data) {
   const cbtView = [...(data.permissions?.canCreateCbt ? [['cbt', 'Online CBT']] : []),
     ...(data.permissions?.canReviewScores ? [['audit', 'Academic audit log']] : [])];
   const learner = academicLearnerTerms();
-  const adminViews = [['classrooms', 'Classrooms'], ...(data.permissions?.canManageAllocations ? [['classStaff', 'Assign class teachers']] : []), ['structure', 'Catalogues'], ...(data.permissions?.canManageStructure ? [['bulkSetup', 'Bulk setup']] : []), ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['offerings', 'Class subjects'], ['teachers', 'Subject teachers'], ['students', `${learner.Singular} records`], ['timetable', 'Timetable'], ['presence', 'Class register'], ['attendance', 'Lesson attendance'], ['scorebook', 'Scorebook'], ['results', 'Results'], ['outcomes', 'Session outcomes'], ...(data.permissions?.canViewResultsAnalysis ? [['analysis', 'Session analysis']] : []), ...(data.permissions?.canManageFinancialClearance ? [['clearances', 'Result clearances']] : []), ...(data.permissions?.canManageStructure ? [['readiness', 'Release readiness']] : []), ...cbtView];
+  const adminViews = [['classrooms', 'Classrooms'], ...(data.permissions?.canManageAllocations ? [['classStaff', 'Assign class teachers']] : []), ['structure', 'Catalogues'], ...(data.permissions?.canManageStructure ? [['bulkSetup', 'Bulk setup']] : []), ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['offerings', 'Class subjects'], ['teachers', 'Subject teachers'], ['students', `${learner.Singular} records`], ['timetable', 'Timetable'], ['presence', 'Class register'], ['attendance', 'Lesson attendance'], ['scorebook', 'Scorebook'], ['results', 'Results'], ['outcomes', 'Session outcomes'], ...(data.permissions?.canViewResultsAnalysis ? [['analysis', 'Session analysis']] : []), ...(data.permissions?.canManageFinancialClearance ? [['clearances', 'Result clearances']] : []), ...(data.permissions?.canReviewScores ? [['readiness', 'Results readiness']] : []), ...cbtView];
   return data.permissions?.financeView
     ? [['clearances', 'Result clearances']]
     : data.permissions?.teacherView
@@ -16880,12 +16881,15 @@ function academicManagementHeader(data, rows, message = '') {
 
 function academicRecordLoadForm(data, title, deferred = false) {
   const selected = data.workspaceRecordSelection?.ClassId || '*';
+  const readiness = academicManagementView === 'readiness';
+  const resultType = data.workspaceRecordSelection?.ResultType || 'End of Term';
   return `<form class="academic-management-editor academic-management-editor-wide" data-academic-load-records>
     ${deferred ? `<h3>${escapeHtml(title)}</h3><p>The settings above are ready. Records and history have not been requested.</p>` : ''}
     <div class="academic-management-form-grid academic-management-form-grid-3"><label>Class<select name="RecordClassId" required>
-      <option value=""${deferred ? ' selected' : ''}>Choose class</option><option value="*"${!deferred && selected === '*' ? ' selected' : ''}>All classes in this branch</option>
+      <option value=""${deferred ? ' selected' : ''}>Choose class</option>${readiness ? '' : `<option value="*"${!deferred && selected === '*' ? ' selected' : ''}>All classes in this branch</option>`}
       ${(data.classes || []).map(row => `<option value="${escapeHtml(row.ClassId)}"${!deferred && row.ClassId === selected ? ' selected' : ''}>${escapeHtml(row.Name)}</option>`).join('')}</select></label>
-      <div class="academic-management-form-actions"><button type="submit">Load ${escapeHtml(title.toLowerCase())} records</button></div>
+      ${readiness ? `<label>Result type<select name="ReadinessResultType"><option value="End of Term"${resultType === 'End of Term' ? ' selected' : ''}>End of term</option><option value="Mid-Term"${resultType === 'Mid-Term' ? ' selected' : ''}>Mid-term</option></select></label>` : ''}
+      <div class="academic-management-form-actions"><button type="submit">${readiness ? 'Check results readiness' : `Load ${escapeHtml(title.toLowerCase())} records`}</button></div>
       <p class="muted">Uses the selected school section and academic period. Choose one class to narrow class-based records.</p></div>
   </form>`;
 }
@@ -16954,7 +16958,7 @@ function renderAcademicManagement(data = academicManagementData || {}, message =
   else if (academicManagementView === 'outcomes') workspace = academicSessionOutcomesWorkspace(data, rows);
   else if (academicManagementView === 'analysis') workspace = academicSessionAnalysisWorkspace(data);
   else if (academicManagementView === 'clearances') workspace = academicFinanceClearanceWorkspace(data, rows);
-  else if (academicManagementView === 'readiness') workspace = academicMigrationReadinessWorkspace(data);
+  else if (academicManagementView === 'readiness') workspace = academicResultsReadinessWorkspace(data);
   else if (academicManagementView === 'cbt') workspace = academicCbtWorkspace(data, rows);
   else workspace = academicStructureWorkspace(data, rows);
   panelEl.innerHTML = `${academicManagementHeader(data, rows, message)}${data.workspaceRecordSelection ? academicRecordLoadForm(data, workspaceTitle) : ''}<section class="academic-management-workspace">${workspace}</section>`;
@@ -17091,7 +17095,7 @@ async function loadAcademicManagement(options = {}) {
       SessionId: academicManagementFilters.sessionId,
       TermId: academicManagementFilters.termId,
       WorkspaceLoadMode: options.records ? 'records' : 'navigation',
-      ...(options.records ? { RecordClassId: clean(options.classId) } : {}),
+      ...(options.records ? { RecordClassId: clean(options.classId), ...(requestedView === 'readiness' ? {ReadinessResultType:options.resultType || 'End of Term'} : {}) } : {}),
       ...(requestedView === 'scorebook' ? { ScorebookTask: academicManagementTaskViews.scorebook || 'classRegister' } : {}),
       View: requestedView
     });
@@ -17928,7 +17932,7 @@ function bindAcademicManagement() {
     const form = event.currentTarget;
     const classId = form.elements.RecordClassId.value;
     if (!classId) return;
-    void runButtonAction(form.querySelector('button[type="submit"]'), 'Loading records...', () => loadAcademicManagement({ records: true, classId: classId === '*' ? '' : classId }));
+    void runButtonAction(form.querySelector('button[type="submit"]'), 'Loading records...', () => loadAcademicManagement({ records: true, classId: classId === '*' ? '' : classId, resultType: form.elements.ReadinessResultType?.value }));
   });
   bindAcademicTimetableGenerator(panelEl);
   bindAcademicCbtRejectionReviews(panelEl);
@@ -18867,6 +18871,26 @@ function bindAcademicManagement() {
       } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
     });
   });
+  panelEl.querySelector('[data-academic-batch-review]')?.addEventListener('click', async event => {
+    const branch=selectedBranchId, username=currentUser?.username;
+    const scope={SchoolSection:academicManagementFilters.section,SessionId:academicManagementFilters.sessionId,TermId:academicManagementFilters.termId};
+    const periodKey=JSON.stringify(scope);
+    await runButtonAction(event.currentTarget,'Opening…',async()=>{
+      const {openAcademicBatchReview}=await import('./academic-batch-review.js?v=20261026');
+      openAcademicBatchReview({sheets:[...(academicCurrentRows(academicManagementData).scoreSheets || [])],scope,
+        request:academicManagementRequest,
+        label:sheet=>[academicLabel(academicManagementData.classes,sheet.ClassId),academicLabel(academicManagementData.arms,sheet.ArmId),academicLabel(academicManagementData.subjects,sheet.SubjectId)].join(' · '),
+        isCurrent:()=>branch===selectedBranchId&&username===currentUser?.username&&periodKey===JSON.stringify({SchoolSection:academicManagementFilters.section,SessionId:academicManagementFilters.sessionId,TermId:academicManagementFilters.termId}),
+        onSaved:sheet=>{
+          academicManagementData.scoreSheets=(academicManagementData.scoreSheets||[]).map(row=>row.SheetId===sheet.SheetId?sheet:row);
+          refreshAcademicTestReviewRow(panelEl,sheet);
+          panelEl.querySelectorAll('[data-academic-full-status]').forEach(cell=>{if(cell.dataset.academicFullStatus===sheet.SheetId)cell.textContent=`${sheet.Status}${sheet.PendingStudentRefs?.length?` · ${sheet.PendingStudentRefs.length} pending`:''}`;});
+          const form=panelEl.querySelector('[data-academic-scorebook]');
+          if(form?.elements.SheetId?.value===sheet.SheetId)form.elements.SheetRevisionToken.value=sheet.RevisionToken;
+        }
+      });
+    });
+  });
   panelEl.querySelectorAll('[data-academic-test-review]').forEach(button=>button.addEventListener('click',async()=>{
     const sheet=academicFind(academicManagementData?.scoreSheets||[],button.dataset.academicTestReview);if(!sheet)return;
     const branch=selectedBranchId,username=currentUser?.username;
@@ -19162,6 +19186,7 @@ function bindAcademicManagement() {
           SessionId: academicManagementFilters.sessionId, TermId: academicManagementFilters.termId,
           ClassId: arm.ClassId, ArmId: arm.ArmId,
           AttendanceMode: resultCalculator.elements.AttendanceMode.value,
+          AllowPartialResults: resultCalculator.elements.AllowPartialResults?.checked === true,
           ...(midTerm ? {NotTaughtSubjectIds: notTaughtIds, NotTaughtReason: notTaughtReason} : {}),
           RevisionTokens: Object.fromEntries(existing.map((row) => [row.ResultId, row.RevisionToken]))
         });
@@ -19590,7 +19615,7 @@ function bindAcademicManagement() {
     form?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     form?.querySelector('input[name="ClassIds"]')?.focus();
   }));
-  document.getElementById('refreshAcademicManagement')?.addEventListener('click', (event) => runButtonAction(event.currentTarget, 'Refreshing...', () => loadAcademicManagement()));
+  document.getElementById('refreshAcademicManagement')?.addEventListener('click', (event) => runButtonAction(event.currentTarget, 'Refreshing...', () => loadAcademicManagement(academicManagementView === 'readiness' && academicManagementData?.workspaceRecordSelection ? {records:true, classId:academicManagementData.workspaceRecordSelection.ClassId, resultType:academicManagementData.workspaceRecordSelection.ResultType} : {})));
   document.getElementById('academicManagementSection')?.addEventListener('change', (event) => {
     academicManagementFilters.section = event.target.value;
     academicManagementFilters.sessionId = '';

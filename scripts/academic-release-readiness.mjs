@@ -42,7 +42,8 @@ const [
 assert.match(management, /resultClearances:\s*'academicResultClearances'/);
 assert.match(management, /academicMigrationReadiness/);
 assert.match(management, /canManageFinancialClearance/);
-assert.match(admin, /Academic Migration Readiness/);
+assert.match(admin, /Results readiness for the selected class and term/);
+assert.match(management, /loadAcademicResultsReadiness/);
 assert.match(admin, /Result clearances/);
 
 assert.match(headers, /X-Frame-Options: DENY/);
@@ -70,7 +71,7 @@ console.log(JSON.stringify({
   cacheVersion,
   gates: [
     'cryptographic identifiers',
-    'finance clearance and migration readiness',
+    'finance clearance and scoped results readiness',
     'security response headers',
     'versioned browser assets',
     'release and recovery runbook'

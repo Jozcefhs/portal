@@ -101,13 +101,13 @@ test('migration readiness describes records with readable catalogue names while 
   assert.equal(offering.RecordId, 'offering__main__secondary__session__term__class__all-arms__subject');
 });
 
-test('Milestone 11 web UI exposes finance clearance and migration readiness workspaces', () => {
+test('web UI exposes finance clearance and scoped results readiness workspaces', () => {
   assert.match(adminSource, /Result clearances/);
   assert.match(adminSource, /data-academic-finance-clearance/);
   assert.match(adminSource, /grantAcademicResultClearance/);
   assert.match(adminSource, /revokeAcademicResultClearance/);
-  assert.match(adminSource, /Academic Migration Readiness/);
-  assert.match(adminSource, /data-academic-copy-record-id/);
+  assert.match(adminSource, /Results readiness for the selected class and term/);
+  assert.match(adminSource, /Historical and advisory warnings/);
   assert.match(adminSource, /data\.permissions\?\.financeView/);
 });
 

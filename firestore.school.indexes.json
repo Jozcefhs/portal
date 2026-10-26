@@ -229,6 +229,16 @@
       ]
     },
     {
+      "collectionGroup": "academicStudentMemberships",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "BranchId", "order": "ASCENDING" },
+        { "fieldPath": "SessionId", "order": "ASCENDING" },
+        { "fieldPath": "TermId", "order": "ASCENDING" },
+        { "fieldPath": "StudentRef", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "payments",
       "queryScope": "COLLECTION",
       "fields": [

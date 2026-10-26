@@ -49,6 +49,7 @@ function fixture() {
   };
   const read = async (_env, collection, options) => { calls.push({ collection, options }); return structuredClone(records[collection] || []); };
   const context = vm.createContext({ ...management, ...scorebook, safeScopeId, TextEncoder, TextDecoder,
+    loadAcademicResultsReadiness:async(_env,_state,scope)=>({Scope:scope,Blockers:[],Warnings:[],Counts:{Students:0}}),
     getSchoolStructure: async () => ({ ActiveBranchId: 'main', Branches: [{ Id: 'main' }], Sections: ['primary', 'secondary'] }),
     enforceActorBranch: (_actor, branch) => branch,
     queryCollection: read, queryCollectionPages: read, listBranchCollection: read, listSchoolCollection: read,
@@ -180,4 +181,34 @@ test('small catalogue navigation omits membership counts while retaining the cat
   assert.equal(data.workspaceDataDeferred, false);
   assert.ok(f.calls.some(call => call.collection === 'academicSubjects'));
   assert.ok(!f.calls.some(call => ['academicStudentMemberships', 'staffUsers', 'students'].includes(call.collection)));
+});
+
+test('readiness requires explicit class and period before reads, including older clients',async()=>{
+  const f=fixture();
+  await f.context.bootstrapAcademicManagement({},actor,{...input,View:'readiness'});
+  assert.deepEqual(f.calls.map(call=>call.collection).sort(),['academicClasses','academicSessions','academicTerms']);
+  for(const missing of [{RecordClassId:''},{RecordClassId:'*'},{SessionId:''},{TermId:''}]){
+    f.calls.length=0;
+    await assert.rejects(f.context.bootstrapAcademicManagement({},actor,{...input,View:'readiness',WorkspaceLoadMode:'records',
+      RecordClassId:'c',SessionId:'s',TermId:'t',...missing}),/Choose one/);
+    assert.equal(f.calls.length,0);
+  }
+  f.calls.length=0;
+  await assert.rejects(f.context.bootstrapAcademicManagement({}, {...actor,role:'Teacher'}, {...input,View:'readiness'}),/not permitted/);
+  assert.equal(f.calls.length,0);
+});
+
+test('explicit readiness scopes record queries and returns report only without raw scores or profiles',async()=>{
+  const f=fixture();let seen;
+  f.context.loadAcademicResultsReadiness=async(_env,state,scope)=>{seen=scope;return {Scope:scope,Blockers:[]};};
+  const result=await f.context.bootstrapAcademicManagement({},actor,{...input,View:'readiness',WorkspaceLoadMode:'records',
+    RecordClassId:'c',SessionId:'s',TermId:'t',ReadinessResultType:'Mid-Term'});
+  for(const collection of ['academicStudentMemberships','academicStudentScores','academicScoreSheets','academicResults']){
+    const call=f.calls.find(call=>call.collection===collection);assert.ok(call,collection);
+    assert.deepEqual(Array.from(call.options.filters,f=>[f.field,f.value]),[['BranchId','main'],['SessionId','s'],['TermId','t'],['ClassId','c']]);
+  }
+  assert.equal(seen.ResultType,'Mid-Term');assert.equal(result.workspaceRecordSelection.ResultType,'Mid-Term');
+  assert.equal(result.studentScores.length,0);assert.equal(result.studentMemberships.length,0);
+  assert.ok(!f.calls.some(call=>['students','staffUsers','academicManagementAudit'].includes(call.collection)));
+  assert.equal(f.writes.length,0);
 });

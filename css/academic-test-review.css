@@ -4,6 +4,10 @@
 .academic-test-review-dialog button{width:auto;margin:3px}.academic-test-review-dialog th,.academic-test-review-dialog td{padding:12px;vertical-align:top}.academic-test-review-dialog small{display:block;color:#526b80;font-size:11px}
 .academic-test-review-dialog table{min-width:640px;width:100%}
 html[data-theme="dark"] .academic-test-review-dialog{background:#111f30;color:#e4eef7}html[data-theme="dark"] .academic-test-review-dialog small{color:#b8c9db}
+.academic-batch-controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:15px 0}
+.academic-batch-controls label{display:flex;flex-direction:column;gap:5px}.academic-batch-check{display:flex;align-items:center;gap:9px}
+.academic-batch-review-dialog input[type=checkbox]{width:18px;height:18px;margin:0;flex-shrink:0}
+.academic-batch-review-dialog .admin-table-wrap{max-height:45vh;overflow:auto}.academic-batch-review-dialog [data-status]{overflow-wrap:anywhere}
 .academic-test-review-status{display:flex;flex-direction:column;align-items:flex-start;gap:5px;min-width:160px;white-space:normal}
 .academic-test-review-status small{font-size:10px;color:#587087}.academic-test-review-badge{display:inline-block;padding:5px 8px;border-radius:7px;font-size:11px;font-weight:700;background:#edf3f8;color:#31526b}
 .academic-test-review-badge.approved{background:#e2f5ed;color:#06664b}.academic-test-review-badge.submitted{background:#fff3d2;color:#755900}.academic-test-review-badge.changed{background:#fff0e9;color:#983e17}

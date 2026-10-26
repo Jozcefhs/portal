@@ -31,15 +31,17 @@ export async function academicComponentReviews(sheet, roster, scores) {
       MissingCount:missing.length,Complete:refs.length>0&&!missing.length,ScoreDigest:digest,
       Status:unchanged?previous.Status:'Draft',PreviousStatus:previous?.Status||'',Stale:Boolean(previous&&!unchanged),
       ReviewedBy:unchanged?clean(previous[`${previous.Status}By`]):'',
-      MissingStudentRefs:missing.slice(0,10)};
+      AllowPendingStudents:unchanged&&previous?.AllowPendingStudents===true,
+      MissingStudentRefs:missing, PendingStudentCount:missing.length};
   }));
 }
 
-export function academicComponentReviewTransition(sheet, review, target, permissions={}, actor={}, reason='') {
+export function academicComponentReviewTransition(sheet, review, target, permissions={}, actor={}, reason='', allowPending=false) {
   if(!review)throw fail('Choose an assessment test from this score sheet.');
   if(clean(sheet.Status||'Draft')!=='Draft')throw fail('The full score sheet has already been submitted or approved. Reopen it before changing an individual test review.');
   if(!['Draft','Submitted','Approved','Locked'].includes(target))throw fail('Choose a valid test review status.');
-  if(['Submitted','Approved','Locked'].includes(target)&&!review.Complete)throw fail(`${review.Name}: ${review.MissingCount} of ${review.RosterCount} students still need required marks. Other tests do not block this test.`, 'ACADEMIC_COMPONENT_INCOMPLETE');
+  const pendingAllowed = (allowPending === true || review.AllowPendingStudents === true) && review.CompleteCount > 0;
+  if(['Submitted','Approved','Locked'].includes(target)&&!review.Complete&&!pendingAllowed)throw fail(`${review.Name}: ${review.MissingCount} of ${review.RosterCount} students still need required marks. Other tests do not block this test.`, 'ACADEMIC_COMPONENT_INCOMPLETE');
   if(target==='Submitted'&&!permissions.canEnterScores)throw Object.assign(fail('Only an authorised score officer may submit this test.'),{status:403});
   if(target==='Approved'&&!permissions.canReviewScores)throw Object.assign(fail('Only an academic reviewer may approve this test.'),{status:403});
   if(target==='Locked'&&!permissions.canApproveScores)throw Object.assign(fail('Only an academic approver may lock this test.'),{status:403});
@@ -50,6 +52,7 @@ export function academicComponentReviewTransition(sheet, review, target, permiss
   if(!normal&&!(target==='Draft'&&['Submitted','Approved','Locked'].includes(current)))throw fail(`${review.Name} is ${current}. Submit its current saved marks before approval.`);
   const event=target==='Draft'?'Reopened':target;
   return {...(target==='Submitted'?{}:(sheet.ComponentReviews?.[review.ComponentId]||{})),ComponentId:review.ComponentId,Name:review.Name,Status:target,
+    CompleteCount:review.CompleteCount, AllowPendingStudents:pendingAllowed, PendingStudentRefs:pendingAllowed?review.MissingStudentRefs:[],
     ScoreDigest:review.ScoreDigest,RosterCount:review.RosterCount,[`${event}At`]:actor.timestamp,
     [`${event}By`]:actor.name,[`${event}ByUsername`]:actor.username,...(target==='Draft'?{ReopenReason:clean(reason)}:{})};
 }

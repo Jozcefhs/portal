@@ -74,6 +74,6 @@ test('register and score upload contexts explicitly request class/period reads, 
   const register = source.slice(source.indexOf('export async function getAcademicClassScoreRegister'),source.indexOf('export async function getAcademicScorebookContext'));
   assert.match(register,/ClassId: input.ClassId, SessionId: input.SessionId, TermId: input.TermId/);
   const sheet = source.slice(source.indexOf('async function academicScoreSheetContext'),source.indexOf('export async function getAcademicClassScoreRegister'));
-  assert.match(sheet,/scoreReadScope: \{ ClassId: input.ClassId, SubjectId: input.SubjectId,/);
+  assert.match(sheet,/scoreReadScope: \{[^\n]*ClassId: input.ClassId, SubjectId: input.SubjectId,/);
   assert.doesNotMatch(sheet,/scoreReadScope: \{[^}]*ArmId/);
 });

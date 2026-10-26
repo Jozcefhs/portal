@@ -67,6 +67,37 @@ function calculation(overrides = {}) {
   });
 }
 
+test('incomplete students can remain pending while complete students receive accurate results', () => {
+  const incomplete=studentScores.filter(row=>!(row.StudentRef==='DCA/002'&&row.SubjectId==='math'));
+  const before=structuredClone({memberships,studentScores:incomplete});
+  const output=calculation({StudentScores:incomplete,AllowPartialResults:true});
+  assert.equal(output.Ready,true);assert.equal(output.Partial,true);assert.equal(output.Results.length,1);
+  assert.equal(output.Results[0].StudentRef,'DCA/001');assert.equal(output.Results[0].OverallAverage,75);
+  assert.equal(output.Results[0].ClassAverage,75);assert.equal(output.Results[0].AssessedStudentCount,1);
+  assert.equal(output.Results[0].PendingStudentCount,1);assert.equal(output.Results[0].OverallPosition,1);
+  assert.equal(output.PendingResults[0].StudentRef,'DCA/002');
+  assert.match(output.PendingResults[0].Issues[0],/Mathematics/);
+  assert.deepEqual({memberships,studentScores:incomplete},before);
+  assert.equal(calculation({StudentScores:incomplete}).Ready,false,'legacy all-or-nothing remains explicit');
+  assert.equal(calculation({StudentScores:[],AllowPartialResults:true}).Ready,false,'cannot manufacture a result with no marks');
+});
+
+test('a pending full-term student is excluded from publication calculations without blocking peers',()=>{
+  const output=calculation({AllowPartialResults:true,ScoreSheets:scoreSheets.map(sheet=>({...sheet,PendingStudentRefs:['DCA/002']}))});
+  assert.equal(output.Results.length,1);assert.equal(output.Results[0].StudentRef,'DCA/001');
+  assert.match(output.PendingResults[0].Issues[0],/pending completion and review/);
+});
+
+test('mid-term partial results use only selected tests and do not treat future missing tests as zero',()=>{
+  const policy=resultPolicy();policy.MidTerm={Enabled:true,ComponentIds:['ca']};
+  const input={SessionId:'s1',TermId:'t1',ClassId:'c1',ArmId:'a1',Memberships:memberships,
+    ScoreSheets:scoreSheets.map(row=>({...row,Status:'Draft',PendingStudentRefs:['DCA/001','DCA/002']})),
+    StudentScores:studentScores.filter(row=>row.StudentRef==='DCA/001'),Policy:policy,AllowPartialResults:true};
+  const result=calculateAcademicMidTermResultDrafts(input);
+  assert.equal(result.Ready,true);assert.equal(result.Results.length,1);assert.equal(result.Results[0].OverallAverage,75);
+  assert.equal(result.PendingResults[0].StudentRef,'DCA/002');
+});
+
 test('result calculation resolves catalogue Id aliases without changing saved scores', () => {
   const before = structuredClone(studentScores);
   const output = calculation({ Subjects: [{ Id: 'math', Name: 'Mathematics' }, { Id: 'eng', Name: 'English Language' }] });

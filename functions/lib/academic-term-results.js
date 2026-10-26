@@ -199,15 +199,22 @@ export function calculateAcademicTermResultDrafts(input = {}) {
   const issues = [];
   if (!memberships.length) issues.push('No active students are assigned to this classroom for the selected term.');
   if (positionMode === 'unconfigured') issues.push('Activate a position policy before calculating term results.');
+  const globalIssueCount = issues.length;
+  const pendingResults = [];
 
   const sheetsBySubject = new Map();
   scoreSheets.forEach((sheet) => {
     if (acceptedSheetStatuses.has(lower(sheet.Status))) sheetsBySubject.set(lower(sheet.SubjectId), sheet);
   });
   const scoresBySheetStudent = new Map(studentScores.map((row) => [`${lower(row.SheetId)}|${lower(row.StudentRef)}`, row]));
+  const membershipCounts = new Map(), scoreCounts = new Map();
+  memberships.forEach(row=>{const key=lower(row.StudentRef);membershipCounts.set(key,(membershipCounts.get(key)||0)+1);});
+  studentScores.forEach(row=>{const key=`${lower(row.SheetId)}|${lower(row.StudentRef)}`;scoreCounts.set(key,(scoreCounts.get(key)||0)+1);});
 
-  const results = memberships.map((membership) => {
+  let results = memberships.map((membership) => {
+    const issueStart = issues.length;
     const studentRef = clean(membership.StudentRef);
+    if (membershipCounts.get(lower(studentRef)) > 1) issues.push(`${studentRef} has duplicate active memberships in this classroom. Resolve the placement references while preserving history.`);
     const subjectIds = uniqueIds(membership.SubjectIds)
       .filter((subjectId) => subjects.get(lower(subjectId))?.AssessmentCategory !== 'TimetableOnly');
     const coreSubjectIds = new Set(uniqueIds(membership.CoreSubjectIds).map(lower));
@@ -219,6 +226,14 @@ export function calculateAcademicTermResultDrafts(input = {}) {
         return [];
       }
       const score = scoresBySheetStudent.get(`${lower(sheet.SheetId)}|${lower(studentRef)}`);
+      if (scoreCounts.get(`${lower(sheet.SheetId)}|${lower(studentRef)}`) > 1) {
+        issues.push(`${studentRef}: ${subjects.get(lower(subjectId))?.Name || subjectId} has duplicate score records requiring review.`);
+        return [];
+      }
+      if ((sheet.PendingStudentRefs || []).some(ref => lower(ref) === lower(studentRef))) {
+        issues.push(`${studentRef}: ${subjects.get(lower(subjectId))?.Name || subjectId} is pending completion and review.`);
+        return [];
+      }
       if (!score || lower(score.CompletionStatus) !== 'complete') {
         issues.push(`${studentRef}: ${subjects.get(lower(subjectId))?.Name || subjectId} has no complete ${completeScoreLabel} score.`);
         return [];
@@ -233,6 +248,7 @@ export function calculateAcademicTermResultDrafts(input = {}) {
     const OverallAverage = Subjects.length ? rounded(TotalScore / Subjects.length) : 0;
     const overallBand = gradeForPercentage(policy, OverallAverage);
     const existing = existingResults.get(lower(studentRef));
+    if (issues.length > issueStart) pendingResults.push({StudentRef:studentRef, Issues:issues.slice(issueStart)});
     return {
       ResultId: clean(input.ResultIdFor?.(membership) || existing?.ResultId),
       ResultReference: clean(input.ResultReferenceFor?.(membership) || existing?.ResultReference),
@@ -273,7 +289,11 @@ export function calculateAcademicTermResultDrafts(input = {}) {
     };
   });
 
-  if (issues.length) return { Ready: false, Issues: [...new Set(issues)], Results: [] };
+  if (issues.length && (input.AllowPartialResults !== true || globalIssueCount)) return { Ready: false, Issues: [...new Set(issues)], Results: [] };
+  const pendingRefs = new Set(pendingResults.map(row => lower(row.StudentRef)));
+  results = results.filter(row => !pendingRefs.has(lower(row.StudentRef)));
+  if (!results.length) return {Ready:false, Issues:[...new Set(issues)], Results:[], PendingResults:pendingResults};
+  results.forEach(row => {row.AssessedStudentCount = results.length; row.PendingStudentCount = pendingResults.length;});
 
   const subjectRows = new Map();
   results.forEach((result) => result.Subjects.forEach((subject) => {
@@ -306,7 +326,7 @@ export function calculateAcademicTermResultDrafts(input = {}) {
     if (!row.TeacherRemark) row.TeacherRemark = generated.TeacherRemark;
     if (!row.PrincipalRemark) row.PrincipalRemark = generated.PrincipalRemark;
   });
-  return { Ready: true, Issues: [], Results: results };
+  return { Ready: true, Issues: [], Results: results, Partial:pendingResults.length > 0, PendingResults:pendingResults };
 }
 
 export function calculateAcademicMidTermResultDrafts(input = {}) {
@@ -352,7 +372,12 @@ export function calculateAcademicMidTermResultDrafts(input = {}) {
   if (!scheme.Ready) return { Ready: false, Issues: scheme.Issues, Results: [] };
   const scores = (input.StudentScores || []).map((score) => {
     const selectedScores = (score.ComponentScores || []).filter((row) => selectedIds.some((id) => lower(id) === lower(row.ComponentId)));
-    const calculated = calculateAcademicStudentScore(scheme, selectedScores);
+    let calculated;
+    try { calculated = calculateAcademicStudentScore(scheme, selectedScores); }
+    catch (error) {
+      if (input.AllowPartialResults !== true) throw error;
+      return {...score,CompletionStatus:'Incomplete'};
+    }
     return {
       ...score,
       ...calculated,
@@ -361,6 +386,8 @@ export function calculateAcademicMidTermResultDrafts(input = {}) {
   });
   const calculation = calculateAcademicTermResultDrafts({
     ...input,
+    // A full-term pending flag must not hold back a completed selected mid-term test.
+    ScoreSheets:(input.ScoreSheets || []).map(row => ({...row,PendingStudentRefs:[]})),
     // Only this result calculation changes. Memberships and source scores stay intact.
     Memberships: memberships.map(row => ({...row, SubjectIds: uniqueIds(row.SubjectIds).filter(id => !notTaught.has(lower(id)))})),
     StudentScores: scores,
