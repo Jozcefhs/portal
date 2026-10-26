@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
-import {loadAcademicAuditLog, academicAuditPeriod} from '../functions/lib/academic-audit-log.js';
+import {loadAcademicAuditLog, academicAuditPeriod, academicAuditRecordLabels} from '../functions/lib/academic-audit-log.js';
 import {prepareSecurityAudit, shouldPersistSecurityAudit} from '../functions/lib/security-audit.js';
 const scope={branchId:'main',section:'secondary',structure:{Sections:['primary','secondary']}};
 const input={FromDate:'2026-10-01',ToDate:'2026-10-26'};
@@ -9,7 +9,7 @@ const row=i=>({__id:`a${i}`,__name:`projects/test/databases/(default)/documents/
   Timestamp:'2026-10-26T10:00:00.000Z',BranchId:'main',SchoolSection:'secondary',Action:'RESTORE SAVED SUBJECTS',StudentRef:'TEST/1',RecordId:'student-id',Actor:'Officer'});
 function fixture(rows=[]) {
   const calls=[], labels=[];
-  return {calls,labels,db:{queryCollection:async(...args)=>{calls.push(args);return structuredClone(rows);},
+  return {calls,labels,db:{academicAuditRecordLabels:async(_env,_scope,items)=>items,queryCollection:async(...args)=>{calls.push(args);return structuredClone(rows);},
     securityAuditDisplayLabels:async(_env,items)=>{labels.push(items);return items.map(item=>({...item,SubjectDisplay:'Student name'}));}}};
 }
 test('dates are required and valid before a single audit read occurs',async()=>{
@@ -17,6 +17,18 @@ test('dates are required and valid before a single audit read occurs',async()=>{
     const f=fixture(); await assert.rejects(loadAcademicAuditLog({},scope,request,f.db)); assert.equal(f.calls.length,0);
   }
   assert.deepEqual(academicAuditPeriod({FromDate:'2026-10-26',ToDate:'2026-10-26'}),{from:'2026-10-26',to:'2026-10-26',start:'2026-10-25T23:00:00.000Z',end:'2026-10-26T22:59:59.999Z'});
+});
+
+test('attendance and score-sheet labels resolve only this page without exposing hash IDs or other sections',async()=>{
+  const calls=[];
+  const records={academicStudentAttendance:[{BranchId:'main',SchoolSection:'secondary',StudentRef:'TEST/1'}],
+    academicScoreSheets:[{BranchId:'main',SchoolSection:'secondary',ClassId:'class__grade-10',ArmId:'arm__perfection',SubjectId:'subject__maths'}],
+    'schoolBranches/main/sections/secondary/students':[{BranchId:'main',SchoolSection:'secondary',ApplicantName:'Test Student'},{BranchId:'main',SchoolSection:'primary',ApplicantName:'Other student'}]};
+  const raw=[{RecordType:'studentAttendance',RecordId:'attendance-v2-hash'},{RecordType:'scoreSheet',RecordId:'score-sheet__long'},{RecordType:'studentAttendance',StudentRef:'TEST/2'}];
+  const before=structuredClone(raw);
+  const labels=await academicAuditRecordLabels({},scope,raw,async(_env,path,ids)=>{calls.push({path,ids});return records[path]||[];});
+  assert.equal(labels[0].RecordLabel,'Test Student'); assert.equal(labels[1].RecordLabel,'class__grade-10 · arm__perfection · subject__maths');
+  assert.equal(labels[2].RecordLabel,'TEST/2'); assert.equal(calls.length,3); assert.deepEqual(raw,before);
 });
 test('one branch/date query, bounded page and authorised names; no other module logs',async()=>{
   const rows=Array.from({length:51},(_,i)=>row(i)); rows[1].SchoolSection='primary'; rows[2].BranchId='other';
