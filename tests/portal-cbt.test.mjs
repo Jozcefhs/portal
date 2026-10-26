@@ -5,6 +5,8 @@ import { normalizeQuestions, normalizeAnswers, markAnswers } from '../functions/
 import { objectToFirestoreFields, firestoreDocumentToObject, buildStructuredQuery } from '../functions/lib/firestore.js';
 import { verifyAcademicCbtScoreSignature, academicCbtScoreBatchDigest } from '../functions/lib/academic-management.js';
 import { onRequestPost as publicApi } from '../functions/api/portal-cbt.js';
+import { hashStudentPassword, studentLoginCredentialCollection, studentLoginCredentialId } from '../functions/lib/student-login-credentials.js';
+import { academicCbtPaperDigest } from '../functions/lib/academic-cbt-papers.js';
 
 const actor = { username: 'reviewer', role: 'ICT', edition: 'school', allowedSections: ['academics', 'applications'], schoolSectionAccess: 'All' };
 const scope = { Audience: 'applicant', BranchId: 'main', SchoolSection: 'secondary' };
@@ -20,7 +22,7 @@ function fixture(overrides = {}) {
   const db = new Map(), events = [];
   const env = { ORGANISATION_EDITION: 'school', DYNAMAX_WORKSPACE_ID: 'school-a', STAFF_SESSION_SECRET: 'fixture-secret-never-for-production' };
   const objects = new Map();
-  env.DYNAMAX_DOCUMENTS = { put: async (key, bytes) => { objects.set(key, bytes.slice()); return { etag: 'test' }; }, get: async key => objects.has(key) ? { arrayBuffer: async () => objects.get(key).buffer } : null };
+  env.DYNAMAX_DOCUMENTS = { delete: async key => objects.delete(key), put: async (key, bytes) => { objects.set(key, bytes.slice()); return { etag: 'test' }; }, get: async key => objects.has(key) ? { arrayBuffer: async () => objects.get(key).buffer } : null };
   const put = (path, id, data) => {
     const row = firestoreDocumentToObject({ fields: objectToFirestoreFields(data), name: `${path}/${id}`, updateTime: `r${++revision}` });
     db.set(`${path}/${id}`, row); return row;
@@ -49,6 +51,7 @@ function fixture(overrides = {}) {
   put(source, 'app-1', { ApplicationReference: 'APP/001', ApplicantName: 'Candidate One', AcademicSession: '2026/2027', Term: 'First Term', ClassApplyingFor: 'Grade 7', BranchId: 'main', SchoolSection: 'secondary', PaymentRef: 'keep-payment', AdmissionHistory: 'keep-history' });
   put(source, 'app-2', { ApplicationReference: 'APP/002', ApplicantName: 'Candidate Two', AcademicSession: '2026/2027', Term: 'First Term', ClassApplyingFor: 'Grade 7', BranchId: 'main', SchoolSection: 'secondary' });
   const dependencies = { get, query, commit, now: () => now,
+    studentQuery: async (_env, _collection, options) => list('students').filter(row => options.filters.every(filter => row[filter.field] === filter.value)).map(row => ({ ...row, __scopePath: 'students' })),
     schoolRows: async (_env, collection) => list(collection === 'applications' ? source : 'students').map(row => ({ ...row, __scopePath: collection === 'applications' ? source : 'students' })), ...overrides };
   const service = createPortalCbtService(env, actor, dependencies);
   const publicService = createPortalCbtService(env, null, dependencies);
@@ -272,8 +275,8 @@ test('remote student results use the verified academic commit flow and a stable 
   } });
   f.put('students', 'student1', { AdmissionNo: 'ST/001', StudentName: 'Student One' });
   const ready = await f.create({ Audience: 'student', SessionId: 'session', TermId: 'term', ClassId: 'class7', SubjectId: 'logic', AssessmentComponentId: 'ca1' });
-  await f.service.enroll({ ...ready, References: ['ST/001'], Delivery: 'online' });
-  ready.card = (await f.service.cards(ready)).cards[0]; await f.service.schedule(ready);
+  await seedEligibleStudent(f);
+  ready.card = { Reference: 'ST/001', Password: 'StudentPass1!' }; await f.service.schedule(ready);
   const login = await f.login(ready); await f.action(login, 'start'); await f.action(login, 'submit', { SaveVersion: 1, Answers: { Q1: 'B' } });
   const review = await f.service.review({ ...ready, CandidateId: login.CandidateId });
   await f.service.approve({ ...ready, CandidateId: login.CandidateId, Revision: review.candidate.Revision });
@@ -281,6 +284,128 @@ test('remote student results use the verified academic commit flow and a stable 
   assert.equal(calls.length, 4); assert.equal(calls[0].BatchDigest, calls[2].BatchDigest); assert.equal(calls[0].Scores[0].RawScore, 60);
   assert.equal(calls[0].ArmId, 'merit', 'Remote results use the verified current classroom instead of an unnecessary class-only holding sheet');
   assert.equal((await f.get(null, source, 'app-1')).EntranceSubjectScores, undefined);
+});
+
+async function seedEligibleStudent(f, ref = 'ST/001') {
+  f.put('students', ref.replaceAll('/', '-'), { AdmissionNo: ref, StudentName: `Student ${ref}`, BranchId: 'main', SchoolSection: 'secondary', Status: 'Active' });
+  f.put('academicClasses', 'class7', { ClassId: 'class7', Name: 'Grade 7', BranchId: 'main', SchoolSection: 'secondary', SchoolStage: 'senior-secondary', Status: 'Active' });
+  f.put('academicStudentMemberships', ref.replaceAll('/', '-'), { BranchId: 'main', SchoolSection: 'secondary', StudentRef: ref, ClassId: 'class7', SessionId: 'session', TermId: 'term', SubjectIds: ['logic'], Status: 'Active' });
+  f.put(studentLoginCredentialCollection(scope), await studentLoginCredentialId(ref), { BranchId: 'main', SchoolSection: 'secondary', StudentRef: ref, Active: true, ...await hashStudentPassword('StudentPass1!') });
+}
+
+async function uploadedFixture(split = false) {
+  const f = fixture({ academic: async (_env, _actor, input) => ({ component: { Id: 'ca1', Name: 'CA1', MaximumScore: 100,
+    ...(split ? { ScoreEntryMode: 'objective-theory', ObjectiveMaximumScore: 40, TheoryMaximumScore: 60 } : {}) },
+    context: { subject: { SubjectId: 'logic', Name: 'Logic' }, schoolClass: { Name: 'Grade 7' }, session: { Name: '2026/2027' },
+      term: { Name: 'First Term' }, allocation: { TeacherUsername: 'teacher' }, roster: [{ StudentRef: 'ST/001' }] } }) });
+  await seedEligibleStudent(f);
+  const bytes = new TextEncoder().encode('%PDF-1.7 synthetic question paper');
+  const digest = await academicCbtPaperDigest(btoa('%PDF-1.7 synthetic question paper'));
+  const key = 'v1/school/school-a/cbt/source.pdf'; f.objects.set(key, bytes);
+  const metadata = { Url: `r2://dynamax-documents/${key}`, FileName: 'logic.pdf', MimeType: 'application/pdf', Digest: digest, ByteLength: bytes.length };
+  f.put('academicCbtTests', 'uploaded-cbt', { CbtTestId: 'uploaded-cbt', ...scope, SessionId: 'session', TermId: 'term', ClassId: 'class7', SubjectId: 'logic',
+    TeacherUsername: 'teacher', AssessmentComponentId: 'ca1', AssessmentComponentName: 'CA1', Title: 'CA1 · Logic · Grade 7', SubjectName: 'Logic',
+    PaperMode: split ? 'split' : 'single', MaximumScore: 100, ObjectiveMaximumScore: 40, TheoryMaximumScore: 60,
+    PaperFiles: [metadata], TheoryPaperFiles: split ? [metadata] : [], Options: ['True', 'False'], AnswerKey: ['True', 'False'], NumberOfQuestions: 2,
+    DurationMinutes: 30, TheoryDurationMinutes: 40, PackageDigest: 'original-digest', Status: 'Downloaded', StudentRefs: ['ST/001'] });
+  const sourceRecord = await f.get(null, 'academicCbtTests', 'uploaded-cbt');
+  const input = { ...scope, Audience: 'student', CbtTestId: 'uploaded-cbt', Revision: sourceRecord.__updateTime,
+    StartsAt: '2026-10-24T09:00:00Z', EndsAt: '2026-10-24T11:00:00Z', DurationMinutes: 30, AssessmentPartId: split ? 'objective' : '' };
+  return { ...f, input, sourceRecord, sourceKey: key };
+}
+
+test('uploaded CBT selection is period-scoped, private, verified and safe to retry without changing local tests', async () => {
+  const f = await uploadedFixture();
+  const filter = { ...scope, Audience: 'student', SessionId: 'session', TermId: 'term', ClassId: 'class7' };
+  await assert.rejects(f.service.uploadedTests({ ...scope, Audience: 'student' }), /Choose the session/);
+  assert.equal((await f.service.uploadedTests({ ...filter, ClassId: 'other' })).tests.length, 0);
+  const listed = await f.service.uploadedTests(filter); assert.equal(listed.tests.length, 1);
+  assert.doesNotMatch(JSON.stringify(listed), /AnswerKey|r2:|True|False/);
+  const [created, replay] = await Promise.all([f.service.useUploadedTest(f.input), f.service.useUploadedTest(f.input)]);
+  assert.equal(replay.TestId, created.TestId);
+  const saved = decodeExamRecord(await f.get(null, CBT.tests, created.TestId));
+  assert.deepEqual(saved.Questions.map(q => q.AnswerKey), ['A', 'B']);
+  assert.deepEqual(saved.Questions[0].Options.map(q => q.Text), ['True', 'False']);
+  assert.deepEqual(await f.get(null, 'academicCbtTests', 'uploaded-cbt'), f.sourceRecord);
+  assert.equal(f.events.filter(row => row.collectionPath === CBT.tests).length, 1);
+  f.objects.delete(f.sourceKey);
+  assert.match((await f.service.paperPage({ ...created, PageIndex: 0 })).page.MimeType, /pdf/);
+  assert.equal((await f.service.details(created)).available.length, 0, 'No student list or manual registration is loaded');
+});
+
+test('all eligible students can sign in after opening without registration; new memberships qualify automatically', async () => {
+  const f = await uploadedFixture(), ready = await f.service.useUploadedTest(f.input);
+  await f.service.schedule(ready); assert.equal((await f.service.cards(ready)).automaticAccess, true);
+  await assert.rejects(f.service.enroll({ ...ready, References: ['ST/001'], Delivery: 'online' }), /No separate registration/);
+  ready.card = { Reference: 'ST/001', Password: 'StudentPass1!' };
+  const login = await f.login(ready), req = { CandidateId: login.CandidateId, ClientId: client, PageIndex: 0 };
+  await assert.rejects(f.publicService.paperPage(req, login.session), /Start the examination/);
+  const started = await f.action(login, 'start'); assert.doesNotMatch(JSON.stringify(started), /AnswerKey|private-portal/);
+  assert.equal((await f.publicService.paperPage(req, login.session)).page.MimeType, 'application/pdf');
+  await seedEligibleStudent(f, 'ST/002');
+  const second = await f.login({ ...ready, card: { Reference: 'ST/002', Password: 'StudentPass1!' } });
+  assert.notEqual(second.CandidateId, login.CandidateId);
+  await f.action(login, 'submit', { SaveVersion: 1, Answers: { Q1: 'A', Q2: 'B' } });
+  assert.equal((await f.service.review({ ...ready, CandidateId: login.CandidateId })).candidate.RawScore, 100);
+  const resumed = await f.publicService.login({ ...ready, Reference: 'ST/001', Password: 'StudentPass1!', ClientId: client }, login.session);
+  assert.equal(resumed.attempt.Status, 'Submitted');
+  assert.equal((await f.action(resumed, 'start')).attempt.Status, 'Submitted');
+});
+
+test('editing a remote draft schedule preserves the copied paper; an opened sitting cannot be reset', async () => {
+  const f = await uploadedFixture(), created = await f.service.useUploadedTest(f.input);
+  const before = await f.get(null, CBT.tests, created.TestId);
+  await f.service.updateSchedule({ ...created, Revision: before.__updateTime, StartsAt: f.input.StartsAt, EndsAt: f.input.EndsAt, DurationMinutes: 45, Instructions: 'Read carefully.' });
+  const after = await f.get(null, CBT.tests, created.TestId);
+  assert.deepEqual(after.Paper, before.Paper); assert.equal(after.QuestionsJson, before.QuestionsJson);
+  assert.equal(after.DurationMinutes, 45);
+  await assert.rejects(f.service.updateSchedule({ ...created, Revision: before.__updateTime }), /current draft/);
+  await f.service.schedule(created);
+  await assert.rejects(f.service.updateSchedule({ ...created, Revision: after.__updateTime }), /current draft/);
+  assert.deepEqual(await f.get(null, 'academicCbtTests', 'uploaded-cbt'), f.sourceRecord);
+});
+
+test('a local download does not block remote reuse when the uploaded package is unchanged', async () => {
+  const f = await uploadedFixture();
+  f.put('academicCbtTests', 'uploaded-cbt', { ...f.sourceRecord, DownloadedBy: 'second-local-server' });
+  const result = await f.service.useUploadedTest({ ...f.input, PackageDigest: f.sourceRecord.PackageDigest });
+  assert.ok(result.TestId);
+  await assert.rejects(f.service.useUploadedTest({ ...f.input, PackageDigest: 'different-package' }), /changed/);
+});
+
+test('student credentials, active status, branch, class, subject and current membership are enforced before access', async () => {
+  for (const changed of ['password', 'profile', 'membership', 'subject', 'class', 'branch', 'credential']) {
+    const f = await uploadedFixture(), ready = await f.service.useUploadedTest(f.input); await f.service.schedule(ready);
+    if (changed === 'profile') f.put('students', 'ST-001', { AdmissionNo: 'ST/001', BranchId: 'main', SchoolSection: 'secondary', Status: 'Withdrawn' });
+    if (['membership', 'subject', 'class', 'branch'].includes(changed)) {
+      const row = await f.get(null, 'academicStudentMemberships', 'ST-001');
+      f.put('academicStudentMemberships', 'ST-001', { ...row, ...({ membership: { Status: 'Archived' }, subject: { SubjectIds: ['other'] }, class: { ClassId: 'other' }, branch: { BranchId: 'other' } }[changed]) });
+    }
+    if (changed === 'credential') { const id = await studentLoginCredentialId('ST/001'), path = studentLoginCredentialCollection(scope); f.put(path, id, { ...await f.get(null, path, id), Active: false }); }
+    await assert.rejects(f.login({ ...ready, card: { Reference: 'ST/001', Password: changed === 'password' ? 'wrong-password' : 'StudentPass1!' } }), /not eligible/);
+    assert.equal(f.events.filter(row => row.collectionPath === CBT.candidates).length, 0);
+  }
+  const f = await uploadedFixture(), ready = await f.service.useUploadedTest(f.input); await f.service.schedule(ready);
+  const login = await f.login({ ...ready, card: { Reference: 'ST/001', Password: 'StudentPass1!' } });
+  f.put('academicStudentMemberships', 'ST-001', { ...await f.get(null, 'academicStudentMemberships', 'ST-001'), Status: 'Archived' });
+  await assert.rejects(f.action(login, 'start'), /not eligible/);
+});
+
+test('uploaded tests reject changed or foreign papers; objective/theory stay separate and theory needs marking', async () => {
+  const f = await uploadedFixture(true);
+  await assert.rejects(f.service.useUploadedTest({ ...f.input, BranchId: 'other' }), /not available/);
+  await assert.rejects(f.service.useUploadedTest({ ...f.input, Revision: 'stale' }), /changed/);
+  const objective = await f.service.useUploadedTest(f.input), theory = await f.service.useUploadedTest({ ...f.input, AssessmentPartId: 'theory' });
+  assert.notEqual(objective.TestId, theory.TestId);
+  assert.equal((await f.service.details(objective)).test.MaximumScore, 40);
+  assert.equal((await f.service.details(theory)).test.MaximumScore, 60);
+  await f.service.schedule(theory);
+  const login = await f.login({ ...theory, card: { Reference: 'ST/001', Password: 'StudentPass1!' } });
+  await f.action(login, 'start'); await f.action(login, 'submit', { SaveVersion: 1, Answers: { Q1: '1. My written answer' } });
+  assert.equal((await f.service.review({ ...theory, CandidateId: login.CandidateId })).candidate.NeedsMarking, true);
+  const damaged = await uploadedFixture(); damaged.objects.set(damaged.sourceKey, new TextEncoder().encode('damaged'));
+  await assert.rejects(damaged.service.useUploadedTest(damaged.input), /integrity/);
+  assert.equal(damaged.events.length, 0);
 });
 
 test('validation rejects unknown questions, malformed marks and oversized answer packets', () => {

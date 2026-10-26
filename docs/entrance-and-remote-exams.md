@@ -4,15 +4,29 @@
 
 In the web companion, open **Applications → Entrance examinations**, or **Academic Management → Entrance / remote exams**. The selected school, branch and school section apply. School management, ICT and authorized admissions/examination staff can manage admission exams; enrolled-student exams require academic review permission.
 
-Choose **Admission applicants** or **Enrolled students — remote tests**. Each school configures its entrance subjects and maximum marks in **School setup → Entrance examination subjects**. There is no fixed three-subject requirement. Existing student tests on the school network continue through the normal Local CBT Server workflow.
+Choose **Admission applicants** or **Enrolled students — remote tests**. Each school configures its entrance subjects and maximum marks in **School setup → Entrance examination subjects**. There is no fixed three-subject requirement.
+
+## Reuse a test already uploaded for Local CBT
+
+1. Choose **Enrolled students — remote tests → Use uploaded CBT test**.
+2. Select the academic session, term and class, then **Load uploaded tests**. Returning to a loaded selection reuses its list; **Refresh uploaded tests** checks for newer uploads.
+3. Click **Use for remote test** beside the paper. For a split test, choose Objective or Theory; each has its own remote sitting and scorebook part.
+4. Set the remote opening/closing window and duration, then **Save remote draft**. The saved questions and answer key are reused. You do not upload the paper again. Preview the paper and click **Open examination**.
+5. Share the remote examination link with the class. All eligible active students use their **admission number and existing student password** (the student login used by CBT). No manual registration or individual examination access card is required. Use **View / print access instructions** if needed.
+
+Eligibility is checked against the selected branch, section, academic period, class and subject. Newly eligible students can sign in after the examination opens. Inactive or exited students cannot start a new attempt. An existing attempt resumes instead of restarting, and existing scorebook marks are preserved when results are posted.
+
+The remote sitting keeps its own verified private copy of the paper. Local servers continue to pull and use their existing test; their schedules, answers and scores are unchanged. Theory candidates type their numbered written answers and staff mark them before posting. Only papers still available in cloud storage can be reused. A paper removed from cloud storage must be restored/uploaded before it can be used remotely.
+
+This is a web companion change. The desktop **Entrance / remote exams** shortcut opens the same updated page; it does not require another desktop installer.
 
 ## Prepare and issue an examination
 
 1. Create an examination for a session, term, applying class and entrance subject. For enrolled students choose the academic class, subject/teacher and assessment component. When a component is split, Objective and Theory are separate papers; the selected part must accept Built-in CBT or Any approved source.
 2. Set the opening/closing window and duration. Staff schedule fields use West Africa Time. Add multiple-choice and/or written-answer questions. Question marks must total the configured subject/part maximum.
-3. Save the draft. Register the intended candidates from the current applicant/student roster. Applicants can be assigned **School network (offline)** or **Remote over internet**. Remote enrolled-student tests require explicit registration.
-4. Click **Open examination**. This freezes the paper, register and delivery assignments. Existing attempts cannot be replaced by saving another paper with the same subject/test identity. Finish registration and check the paper before opening.
-5. Use **Preview / print access cards**. Give each candidate only their own card. It contains the examination link or LAN instructions, reference/login and generated examination password. These are separate from ordinary student portal passwords.
+3. Save the draft. For admission applicants, register candidates and choose **School network (offline)** or **Remote over internet**. New enrolled-student tests automatically admit all eligible students; no registration is needed.
+4. Click **Open examination**. This freezes the paper and applicant delivery assignments. Existing attempts cannot be replaced by saving another paper with the same subject/test identity. Check the paper before opening.
+5. For applicants, use **Preview / print access cards** and give each applicant only their own card. It contains the link or LAN instructions and an examination password. For enrolled students, share the remote test link; they use their existing student password.
 
 ## Upload a Word or PDF question paper
 
@@ -28,7 +42,7 @@ The updated desktop server downloads the same paper pages when pulling an entran
 
 ## Remote sitting
 
-Candidates open the HTTPS link on their card on a computer, phone or tablet, sign in, then click **Start test** and confirm. Remote access is restricted to registered candidates. A school-network assignment cannot sign in remotely.
+Candidates open the HTTPS examination link on a computer, phone or tablet, sign in, then click **Start test** and confirm. Applicants must have a remote assignment; a school-network applicant cannot sign in remotely. New enrolled-student examinations use automatic academic eligibility. Older examinations that were opened with individual registrations retain their original access cards and assignments.
 
 Answers save automatically. The server controls the timer, and the closing time can shorten a late starter's available duration. The timer does not restart on reload or reconnect. Keep the same browser tab open during temporary connection problems: it retains an unsent recovery copy and retries. Only answers received by the server before the deadline can be marked after time expires. The page displays a submission receipt only after confirmation from the school server.
 

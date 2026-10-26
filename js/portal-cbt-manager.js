@@ -7,6 +7,8 @@
   $('audience').value = params.get('audience') === 'student' ? 'student' : 'applicant';
   let state = {}, options = {}, selected = null, editing = '', revision = '', busy = false;
   let uploadedPaper = null, savedPaper = null;
+  let uploadedOptions = null, remoteSource = null, remoteExisting = null;
+  const uploadedCache = new Map();
   const status = (message, bad = false) => { $('managerStatus').textContent = message; $('managerStatus').className = bad ? 'bad' : 'good'; };
   let sessionActive = false;
   async function request(url, body) {
@@ -45,13 +47,51 @@
   const time = value => value ? new Date(value).toLocaleString('en-GB', { timeZone: 'Africa/Lagos' }) + ' WAT' : '—';
   const selectOptions = (id, rows, key, label, chosen = '') => { $(id).innerHTML = rows.map(row => `<option value="${escape(row[key])}"${row[key] === chosen ? ' selected' : ''}>${escape(label(row))}</option>`).join(''); };
   async function load() {
+    $('useUploaded').hidden = $('audience').value !== 'student';
     selected = null; $('testDetails').hidden = $('resultReview').hidden = $('accessCards').hidden = true;
     state = await api('state'); renderTestList();
     status('Examinations loaded.');
   }
   function renderTestList() {
-    $('testList').innerHTML = `<table><thead><tr><th>Examination</th><th>Period</th><th>Window (WAT)</th><th>Status</th><th>Candidates</th><th></th></tr></thead><tbody>${state.tests.map(test => `<tr><td>${escape(test.Title)}</td><td>${escape(test.AcademicSession)} · ${escape(test.Term)}</td><td>${escape(time(test.StartsAt))}<br>${escape(time(test.EndsAt))}</td><td>${escape(test.Status)}</td><td>${test.CandidateCount}</td><td><button data-open="${test.TestId}" type="button">Open register</button></td></tr>`).join('') || '<tr><td colspan="6">No examinations in this branch and section.</td></tr>'}</tbody></table>`;
+    $('testList').innerHTML = `<table><thead><tr><th>Examination</th><th>Period</th><th>Window (WAT)</th><th>Status</th><th>Access</th><th></th></tr></thead><tbody>${state.tests.map(test => `<tr><td>${escape(test.Title)}</td><td>${escape(test.AcademicSession)} · ${escape(test.Term)}</td><td>${escape(time(test.StartsAt))}<br>${escape(time(test.EndsAt))}</td><td>${escape(test.Status)}</td><td>${test.AccessMode === 'eligible-students' ? 'All eligible students' : test.CandidateCount}</td><td><button data-open="${test.TestId}" type="button">Open register</button></td></tr>`).join('') || '<tr><td colspan="6">No examinations in this branch and section. Use an uploaded CBT test or create an examination.</td></tr>'}</tbody></table>`;
     $('testList').querySelectorAll('[data-open]').forEach(button => { button.onclick = () => run(() => details(button.dataset.open)); });
+  }
+  function uploadedTerms() { selectOptions('uploadedTerm', (uploadedOptions?.terms || []).filter(row => row.SessionId === $('uploadedSession').value), 'TermId', row => row.Name); }
+  async function uploadedPicker() {
+    if (!uploadedOptions) uploadedOptions = await api('uploadOptions');
+    selectOptions('uploadedSession', uploadedOptions.sessions, 'SessionId', row => row.Name);
+    selectOptions('uploadedClass', uploadedOptions.classes, 'ClassId', row => row.Name); uploadedTerms();
+    $('testEditor').hidden = $('remoteSchedule').hidden = true; $('uploadedPicker').hidden = false;
+    $('uploadedList').replaceChildren(); $('uploadedPicker').scrollIntoView({ behavior: 'smooth' });
+  }
+  async function loadUploaded(refresh = false) {
+    const filter = { SessionId: $('uploadedSession').value, TermId: $('uploadedTerm').value, ClassId: $('uploadedClass').value };
+    const key = JSON.stringify([scope(), filter]);
+    if (refresh || !uploadedCache.has(key)) uploadedCache.set(key, await api('uploadedTests', filter));
+    const rows = uploadedCache.get(key).tests;
+    $('uploadedStatus').textContent = `${rows.length} uploaded tests. Loaded data is retained while you switch classes; use Refresh for newer uploads.`;
+    $('uploadedList').innerHTML = `<table><thead><tr><th>Uploaded test</th><th>Subject</th><th>Local status</th><th></th></tr></thead><tbody>${rows.map((row, index) => `<tr><td>${escape(row.Title)}</td><td>${escape(row.SubjectName)}</td><td>${escape(row.Status)}</td><td><button type="button" data-use-upload="${index}">Use for remote test</button></td></tr>`).join('') || '<tr><td colspan="4">No uploaded papers are available for this class and period.</td></tr>'}</tbody></table>`;
+    $('uploadedList').querySelectorAll('[data-use-upload]').forEach(button => { button.onclick = () => remoteSchedule(rows[Number(button.dataset.useUpload)]); });
+  }
+  function remoteSchedule(source, existing = null) {
+    remoteSource = source; remoteExisting = existing; $('remoteTitle').textContent = existing?.Title || source.Title;
+    $('remotePartLabel').hidden = Boolean(existing); selectOptions('remotePart', source?.Parts || [], 'Id', row => row.Name);
+    $('remoteStart').value = existing ? new Date(Date.parse(existing.StartsAt) + 3600000).toISOString().slice(0, 16) : '';
+    $('remoteEnd').value = existing ? new Date(Date.parse(existing.EndsAt) + 3600000).toISOString().slice(0, 16) : '';
+    $('remoteDuration').value = existing?.DurationMinutes || source.Parts[0].DurationMinutes;
+    $('remoteInstructions').value = existing?.Instructions || ''; remotePartChanged();
+    $('remoteSchedule').hidden = false; $('testEditor').hidden = true; $('remoteSchedule').scrollIntoView({ behavior: 'smooth' });
+  }
+  function remotePartChanged() {
+    if (!remoteExisting) $('remoteDuration').value = remoteSource?.Parts.find(part => part.Id === $('remotePart').value)?.DurationMinutes || 30;
+    $('remotePartNote').textContent = $('remotePart').value === 'theory' ? 'Students type their written answers, labelled by question number. Staff review and mark the theory paper.' : 'The saved paper and answer key are reused without another upload.';
+  }
+  async function saveRemoteSchedule() {
+    const window = { StartsAt: `${$('remoteStart').value}:00+01:00`, EndsAt: `${$('remoteEnd').value}:00+01:00`, DurationMinutes: Number($('remoteDuration').value), Instructions: $('remoteInstructions').value };
+    const saved = await api(remoteExisting ? 'updateSchedule' : 'useUploadedTest', { ...window, ...(remoteExisting
+      ? { TestId: remoteExisting.TestId, Revision: remoteExisting.Revision }
+      : { CbtTestId: remoteSource.CbtTestId, Revision: remoteSource.Revision, PackageDigest: remoteSource.PackageDigest, AssessmentPartId: $('remotePart').value }) });
+    $('remoteSchedule').hidden = $('uploadedPicker').hidden = true; await load(); await details(saved.TestId); status(saved.message);
   }
   function academicChoices() {
     const session = $('academicSession').value, term = $('academicTerm').value, classId = $('academicClass').value;
@@ -129,7 +169,7 @@
     holder.replaceChildren();
     for (let index = 0; index < count; index++) {
       const data = await api('paperPage', { TestId: id, PageIndex: index });
-      const image = document.createElement('img'); image.src = `data:${data.page.MimeType};base64,${data.page.FileBase64}`; image.alt = `Question paper page ${index + 1}`; holder.append(image);
+      await window.DynamaxExamPaperViewer.append(holder, data.page, `Question paper ${index + 1}`);
     }
   }
   function question(row = {}) {
@@ -175,9 +215,10 @@
     state.tests = state.tests.map(row => row.TestId === id ? { ...row, ...data.test, CandidateCount: data.candidates.length } : row);
     renderTestList();
     const registered = new Set(data.candidates.map(row => row.Reference.toLowerCase())), available = data.available.filter(row => !registered.has(row.Reference.toLowerCase()));
+    const automatic = data.test.AccessMode === 'eligible-students';
     $('testDetails').hidden = false; $('resultReview').hidden = $('accessCards').hidden = true;
     $('testDetails').innerHTML = `<h2>${escape(data.test.Title)}</h2><p>${escape(data.test.Status)} · ${escape(time(data.test.StartsAt))} to ${escape(time(data.test.EndsAt))}</p><p class="test-link">Remote candidate link: <a href="/exam.html?test=${id}" target="_blank" rel="noopener">${escape(location.origin)}/exam.html?test=${id}</a></p>
-      ${data.test.Status === 'Draft' ? `<p>Register candidates, then open the examination. Opening freezes its questions, candidates and delivery assignments.</p><div class="exam-actions"><button type="button" data-edit>Edit draft</button><button type="button" data-select-all>Select all unregistered</button><select aria-label="Delivery mode" data-delivery>${data.test.Audience === 'applicant' ? '<option value="offline">School network (offline)</option>' : ''}<option value="online">Remote over internet</option></select><button type="button" data-enroll>Register selected candidates</button><button type="button" data-schedule>Open examination</button></div><div class="exam-options">${available.map(row => `<label class="row-check"><input type="checkbox" value="${escape(row.Reference)}" data-candidate-check>${escape(row.DisplayName)} · ${escape(row.Reference)}</label>`).join('') || '<p>No unregistered candidates in this class and period.</p>'}</div>` : '<p>Offline applicants: open Local CBT Server → Entrance exams, then pull this examination before disconnecting the internet. Each offline exam is reserved to one CBT server.</p>'}
+      ${automatic ? `<p>All eligible active students in this class and subject have access automatically. Share the link above. Students sign in with their admission number and existing student password; no separate registration or examination password is needed.</p>${data.test.Status === 'Draft' ? '<div class="exam-actions"><button type="button" data-edit>Edit draft</button><button type="button" data-schedule>Open examination</button></div>' : ''}` : data.test.Status === 'Draft' ? `<p>Register candidates, then open the examination. Opening freezes its questions, candidates and delivery assignments.</p><div class="exam-actions"><button type="button" data-edit>Edit draft</button><button type="button" data-select-all>Select all unregistered</button><select aria-label="Delivery mode" data-delivery>${data.test.Audience === 'applicant' ? '<option value="offline">School network (offline)</option>' : ''}<option value="online">Remote over internet</option></select><button type="button" data-enroll>Register selected candidates</button><button type="button" data-schedule>Open examination</button></div><div class="exam-options">${available.map(row => `<label class="row-check"><input type="checkbox" value="${escape(row.Reference)}" data-candidate-check>${escape(row.DisplayName)} · ${escape(row.Reference)}</label>`).join('') || '<p>No unregistered candidates in this class and period.</p>'}</div>` : '<p>Offline applicants: open Local CBT Server → Entrance exams, then pull this examination before disconnecting the internet. Each offline exam is reserved to one CBT server.</p>'}
       <div class="exam-actions"><button type="button" data-cards>Preview / print access cards</button><button type="button" data-refresh>Refresh results</button><button type="button" data-post-all>Post approved results</button></div>
       <div class="exam-table"><table><thead><tr><th>Candidate</th><th>Reference</th><th>Delivery</th><th>Attempt</th><th>Score</th><th>Online result</th><th></th></tr></thead><tbody>${data.candidates.map(row => `<tr><td>${escape(row.DisplayName)}</td><td>${escape(row.Reference)}</td><td>${escape(row.Delivery)}</td><td>${escape(row.Status)}</td><td>${row.Status === 'Ready' || row.Status === 'In progress' ? '—' : row.NeedsMarking ? 'Needs marking' : escape(row.RawScore)}</td><td>${escape(row.PostMessage || 'Not posted')}</td><td>${['Submitted', 'Approved', 'In progress'].includes(row.Status) ? `<button type="button" data-review="${row.CandidateId}">Review</button>` : ''}${row.Status === 'Approved' ? `<button type="button" data-post="${row.CandidateId}">Post result</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="7">No candidates registered.</td></tr>'}</tbody></table></div>`;
     if (data.test.Paper) {
@@ -187,7 +228,9 @@
       $('testDetails').append(button, preview);
     }
     const find = selector => $('testDetails').querySelector(selector);
-    if (find('[data-edit]')) find('[data-edit]').onclick = () => run(() => editor(data.test));
+    if (find('[data-edit]')) find('[data-edit]').onclick = () => run(() => data.test.UsesUploadedPaper ? remoteSchedule(null, data.test) : editor(data.test));
+    if (automatic) { find('[data-cards]').textContent = 'View / print access instructions';
+      if (!data.candidates.length) $('testDetails').querySelector('tbody').innerHTML = '<tr><td colspan="7">No students have signed in yet. Eligible students appear here when they access the test.</td></tr>'; }
     if (find('[data-select-all]')) find('[data-select-all]').onclick = () => { $('testDetails').querySelectorAll('[data-candidate-check]').forEach(check => { check.checked = true; }); };
     if (find('[data-enroll]')) find('[data-enroll]').onclick = () => run(async () => {
       const refs = [...$('testDetails').querySelectorAll('[data-candidate-check]:checked')].map(el => el.value), delivery = find('[data-delivery]').value;
@@ -208,6 +251,7 @@
   async function cards(id) {
     const data = await api('cards', { TestId: id }); $('accessCards').hidden = false;
     $('accessCards').innerHTML = `<h2>Examination access cards</h2><p>Give each candidate only their own card. Keep this list private.</p><div class="exam-actions"><button type="button" data-print>Print cards</button><button type="button" data-close>Close cards</button></div>${data.cards.map(row => `<article class="access-card"><h3>${escape(data.test.Title)}</h3><p>${escape(row.DisplayName)} · ${escape(row.Reference)}</p><p>${escape(row.Delivery === 'online' ? 'Remote examination — internet required' : 'School-network examination — use the CBT server address / QR supplied by staff')}</p>${row.Delivery === 'online' ? `<p>${escape(location.origin)}/exam.html?test=${id}</p>` : ''}<p>Login: <strong>${escape(row.Delivery === 'offline' ? row.LoginId : row.Reference)}</strong><br>Examination password: <strong>${escape(row.Password)}</strong></p><p>${escape(time(data.test.StartsAt))} · ${data.test.DurationMinutes} minutes</p></article>`).join('')}`;
+    if (data.automaticAccess) $('accessCards').innerHTML = `<h2>${escape(data.test.Title)}</h2><p>All eligible students: open <strong>${escape(location.origin)}/exam.html?test=${id}</strong> and sign in with your admission number and existing student password.</p><p>${escape(time(data.test.StartsAt))} to ${escape(time(data.test.EndsAt))} · ${data.test.DurationMinutes} minutes</p><div class="exam-actions"><button type="button" data-print>Print instructions</button><button type="button" data-close>Close</button></div>`;
     $('accessCards').querySelector('[data-print]').onclick = () => window.print(); $('accessCards').querySelector('[data-close]').onclick = () => { $('accessCards').hidden = true; $('accessCards').replaceChildren(); };
     $('accessCards').scrollIntoView({ behavior: 'smooth' });
   }
@@ -221,6 +265,13 @@
     }); $('resultReview').scrollIntoView({ behavior: 'smooth' });
   }
   $('loadTests').onclick = () => run(load); $('newTest').onclick = () => run(() => editor()); $('addQuestion').onclick = () => question();
+  $('useUploaded').onclick = () => run(uploadedPicker);
+  $('loadUploaded').onclick = () => run(() => loadUploaded()); $('refreshUploaded').onclick = () => run(() => loadUploaded(true));
+  $('uploadedSession').onchange = () => { uploadedTerms(); $('uploadedList').replaceChildren(); };
+  for (const id of ['uploadedTerm', 'uploadedClass']) $(id).onchange = () => { $('uploadedList').replaceChildren(); };
+  $('closeUploaded').onclick = () => { $('uploadedPicker').hidden = true; };
+  $('remotePart').onchange = remotePartChanged; $('cancelRemote').onclick = () => { $('remoteSchedule').hidden = true; };
+  $('remoteSchedule').onsubmit = event => { event.preventDefault(); run(saveRemoteSchedule); };
   $('contentMode').onchange = modeChanged; $('documentCount').oninput = total;
   $('paperFile').onchange = () => run(async () => {
     uploadedPaper = null; savedPaper = null; $('paperConfirmed').checked = false; $('paperPreview').replaceChildren();
@@ -238,6 +289,6 @@
   $('academicTerm').onchange = $('academicClass').onchange = () => { academicChoices(); run(refreshAssessment); };
   $('academicAllocation').onchange = () => run(refreshAssessment);
   $('academicComponent').onchange = $('entranceSubject').onchange = total;
-  for (const id of ['audience', 'section']) $(id).onchange = () => { $('testEditor').hidden = true; run(load); };
+  for (const id of ['audience', 'section']) $(id).onchange = () => { uploadedOptions = null; $('testEditor').hidden = $('uploadedPicker').hidden = $('remoteSchedule').hidden = true; run(load); };
   run(load);
 })();

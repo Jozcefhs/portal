@@ -71,7 +71,7 @@ export function markAnswers(test, answers, manual = {}) {
 }
 
 export function publicTest(test) {
-  return Object.fromEntries(['TestId', 'Title', 'Audience', 'SubjectName', 'ClassName', 'AcademicSession', 'Term', 'StartsAt', 'EndsAt', 'DurationMinutes', 'MaximumScore', 'Instructions', 'Status', 'SchoolName'].map(key => [key, test[key] ?? '']));
+  return Object.fromEntries(['TestId', 'Title', 'Audience', 'AccessMode', 'SubjectName', 'ClassName', 'AcademicSession', 'Term', 'StartsAt', 'EndsAt', 'DurationMinutes', 'MaximumScore', 'Instructions', 'Status', 'SchoolName'].map(key => [key, test[key] ?? '']));
 }
 
 export function publicAttempt(test, candidate, now) {

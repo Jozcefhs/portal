@@ -9,6 +9,7 @@
   const status = text => { $('examStatus').textContent = text; };
   const testId = new URLSearchParams(location.search).get('test') || '';
   $('testId').value = testId;
+  if (/^[a-f0-9]{64}$/.test(testId)) $('testId').closest('label').hidden = true;
   let storageReady = true;
   try {
     client = sessionStorage.getItem('exam-client') || random(); sessionStorage.setItem('exam-client', client);
@@ -101,7 +102,7 @@
       if (q.QuestionType === 'single') q.Options.forEach(option => {
         const label = document.createElement('label'), radio = document.createElement('input'), text = document.createElement('span');
         radio.type = 'radio'; radio.name = q.QuestionId; radio.value = option.Id; radio.checked = answers[q.QuestionId] === option.Id;
-        radio.onchange = () => changed(radio.value); text.textContent = `${option.Id}. ${option.Text}`; label.append(radio, text); field.append(label);
+        radio.onchange = () => changed(radio.value); text.textContent = option.Id === option.Text ? option.Id : `${option.Id}. ${option.Text}`; label.append(radio, text); field.append(label);
       });
       else { const area = document.createElement('textarea'); area.maxLength = 12000; area.value = answers[q.QuestionId] || ''; area.setAttribute('aria-label', `Answer question ${q.Ordinal}`); area.oninput = () => changed(area.value); field.append(area); }
       $('questions').append(field);
@@ -127,8 +128,7 @@
       for (let index = 0; index < count; index++) {
         const data = await request('paperPage', { PageIndex: index });
         if (attempt.Status !== 'In progress') return;
-        const image = document.createElement('img'); image.src = `data:${data.page.MimeType};base64,${data.page.FileBase64}`;
-        image.alt = `Question paper page ${index + 1}`; pages.append(image);
+        await window.DynamaxExamPaperViewer.append(pages, data.page, `Question paper ${index + 1}`);
       }
       message.textContent = 'Read all paper pages below, then choose your answers in the numbered answer sheet. Use Zoom in for larger text.';
     } catch (error) {

@@ -1,5 +1,5 @@
 import { getDocument, queryCollectionPages, batchCommitDocuments } from './firestore.js';
-import { listSchoolCollection } from './school-scope.js';
+import { listSchoolCollection, querySchoolCollection } from './school-scope.js';
 import { enforceActorBranch } from './branch-scope.js';
 import { applyBranchProfileOverrides, BRANCH_PROFILE_OVERRIDE_COLLECTION } from './branch-profile-settings.js';
 import { requiredDeploymentIdentity } from './deployment-identity.js';
@@ -9,6 +9,7 @@ import { hashStudentPassword, verifyStudentPasswordHash } from './student-login-
 import { secureSecretEqual } from './request-security.js';
 import { documentQuestions, saveExamPaper, readExamPage } from './portal-cbt-papers.js';
 import { clean, lower, fail, fields, condition, conflict, normalizeQuestions, normalizeSchedule, normalizeAnswers, markAnswers, publicTest, publicAttempt, startAttempt, completeAttempt } from './portal-cbt-model.js';
+import { automaticStudentAccess, uploadedScopeFields, uploadedPaperFiles, uploadedQuestions, copyUploadedPaper, eligibleRemoteStudent } from './portal-cbt-uploaded.js';
 
 export const CBT = Object.freeze({ tests: 'portalCbtTests', candidates: 'portalCbtCandidates', audit: 'portalCbtAudit' });
 const encoder = new TextEncoder();
@@ -63,6 +64,7 @@ export function createPortalCbtService(env, user = null, dependencies = {}) {
   const query = dependencies.query || queryCollectionPages;
   const commit = dependencies.commit || batchCommitDocuments;
   const schoolRows = dependencies.schoolRows || listSchoolCollection;
+  const studentQuery = dependencies.studentQuery || querySchoolCollection;
   const academic = dependencies.academic || portalCbtAcademicContext;
   const clock = dependencies.now || Date.now;
   const sync = dependencies.sync || syncAcademicCbtScores;
@@ -136,13 +138,50 @@ export function createPortalCbtService(env, user = null, dependencies = {}) {
     const { context } = await academic(env, user, { ...input, ...scope, AssessmentComponentId: '' });
     return { ok: true, components: context.scheme.Components };
   }
-  async function create(input) {
+  async function uploadOptions(input) {
+    const scope = portalCbtScope(env, user, { ...input, Audience: 'student' });
+    const read = async collection => (await rows(collection, 'BranchId', scope.BranchId))
+      .filter(row => row.SchoolSection === scope.SchoolSection && !['archived', 'inactive'].includes(lower(row.Status)));
+    const [sessions, terms, classes] = await Promise.all(['academicSessions', 'academicTerms', 'academicClasses'].map(read));
+    return { ok: true, sessions: sessions.map(row => ({ SessionId: row.SessionId, Name: row.Name, Status: row.Status })),
+      terms: terms.map(row => ({ SessionId: row.SessionId, TermId: row.TermId, Name: row.Name })),
+      classes: classes.map(row => ({ ClassId: row.ClassId, Name: row.Name })) };
+  }
+  async function uploadedTests(input) {
+    const scope = portalCbtScope(env, user, { ...input, Audience: 'student' });
+    if (['SessionId', 'TermId', 'ClassId'].some(key => !clean(input[key]))) throw fail('Choose the session, term and class before loading uploaded tests.');
+    const target = { ...input, ...scope };
+    const records = await query(env, 'academicCbtTests', { filters: uploadedScopeFields.map(field => ({ field, op: '==', value: target[field] })), pageSize: 100, maxRows: 1000 });
+    return { ok: true, tests: records.filter(row => uploadedScopeFields.every(field => row[field] === target[field])
+      && !['superseded', 'archived', 'cancelled'].includes(lower(row.Status)) && !row.CloudPaperRemovedAt && uploadedPaperFiles(row).length)
+      .map(row => ({ CbtTestId: row.CbtTestId || row.__id, Revision: row.__updateTime, PackageDigest: row.PackageDigest || '', Title: row.Title, SubjectName: row.SubjectName,
+        AssessmentComponentName: row.AssessmentComponentName, Status: row.Status,
+        Parts: row.PaperMode === 'split' ? [{ Id: 'objective', Name: 'Objective', DurationMinutes: row.ObjectiveDurationMinutes || row.DurationMinutes },
+          ...(uploadedPaperFiles(row, 'theory').length ? [{ Id: 'theory', Name: 'Theory — written answers', DurationMinutes: row.TheoryDurationMinutes }] : [])]
+          : [{ Id: '', Name: 'Complete paper', DurationMinutes: row.DurationMinutes }] })) };
+  }
+  async function useUploadedTest(input) {
+    const scope = portalCbtScope(env, user, { ...input, Audience: 'student' });
+    if (!/^[\w.:-]{1,250}$/.test(clean(input.CbtTestId))) throw fail('Choose an uploaded CBT test.');
+    const source = await get(env, 'academicCbtTests', input.CbtTestId);
+    if (!source || source.CbtTestId !== input.CbtTestId || lower(source.BranchId || 'main') !== lower(scope.BranchId)
+      || source.SchoolSection !== scope.SchoolSection || ['superseded', 'archived', 'cancelled'].includes(lower(source.Status))) throw fail('This uploaded CBT test is not available in the selected branch and section.', 403);
+    if (source.CloudPaperRemovedAt) throw fail('The cloud copy of this paper was removed. Its local copies and scores are preserved.', 409);
+    if (input.PackageDigest ? input.PackageDigest !== source.PackageDigest : !input.Revision || input.Revision !== source.__updateTime) throw fail('This uploaded test changed. Reload its list before continuing.', 409);
+    const part = source.PaperMode === 'split' ? clean(input.AssessmentPartId) : '';
+    if (source.PaperMode === 'split' && !['objective', 'theory'].includes(part)) throw fail('Choose the Objective or Theory paper.');
+    return create({ ...scope, Audience: 'student', ...Object.fromEntries(['SessionId', 'TermId', 'ClassId', 'SubjectId', 'TeacherUsername', 'AssessmentComponentId'].map(key => [key, source[key]])),
+      AssessmentPartId: part, ContentMode: 'document', Title: `${source.Title}${part ? ` · ${part === 'theory' ? 'Theory' : 'Objective'}` : ''}`,
+      StartsAt: input.StartsAt, EndsAt: input.EndsAt, DurationMinutes: input.DurationMinutes,
+      Instructions: clean(input.Instructions) }, { source, part, questions: uploadedQuestions(source, part) });
+  }
+  async function create(input, imported = null) {
     const audience = input.Audience;
     if (!['applicant', 'student'].includes(audience)) throw fail('Choose applicants or enrolled students.');
     const scope = portalCbtScope(env, user, input);
     const profile = await entranceProfile(scope.BranchId);
     const documentMode = input.ContentMode === 'document';
-    const questions = normalizeQuestions(documentMode ? documentQuestions(input) : input.Questions);
+    const questions = normalizeQuestions(imported?.questions || (documentMode ? documentQuestions(input) : input.Questions));
     const maximum = Number(questions.reduce((sum, q) => sum + q.MaximumScore, 0).toFixed(4));
     const schedule = normalizeSchedule(input);
     if (Date.parse(schedule.EndsAt) <= clock()) throw fail('Choose a future examination window.');
@@ -168,28 +207,37 @@ export function createPortalCbtService(env, user = null, dependencies = {}) {
     }
     const id = await cbtHash(JSON.stringify([scope, audience, session, term, lower(className), subject.id, academicFields?.AssessmentComponentId || 'entrance', academicFields?.AssessmentPartId || '']));
     const previous = await get(env, CBT.tests, id);
+    if (imported && previous) return { ok: true, TestId: id, message: 'A remote examination already exists for this assessment. Open its existing test; its paper, answers and scores were preserved.' };
     if (previous && (previous.Status !== 'Draft' || previous.CandidateCount)) throw fail('This examination already has a register. Open it to continue; its paper and existing attempts are preserved.', 409);
     if (previous && input.Revision !== previous.__updateTime) throw fail('Reload the existing draft before replacing its questions.', 409);
     const title = clean(input.Title) || `${className} · ${subject.name} · ${audience === 'applicant' ? 'Entrance exam' : academicFields.AssessmentComponentName}`;
     if (title.length > 180 || clean(input.Instructions).length > 8000) throw fail('The title or instructions are too long.');
-    const paper = documentMode ? (input.Paper ? await saveExamPaper(env, id, input.Paper) : previous?.Paper) : null;
+    const paper = imported ? await copyUploadedPaper(env, imported.source, imported.part, id)
+      : documentMode ? (input.Paper ? await saveExamPaper(env, id, input.Paper) : previous?.Paper) : null;
     if (documentMode && !paper) throw fail('Upload and preview the question paper first.');
     const test = { TestId: id, Scope: scope, Audience: audience, SubjectId: subject.id, SubjectName: subject.name, MaximumScore: maximum,
       ContentMode: documentMode ? 'document' : 'native', Paper: paper,
+      AccessMode: audience === 'student' ? 'eligible-students' : 'registered-candidates',
+      ...(imported ? { SourceCbtTestId: imported.source.CbtTestId, SourcePackageDigest: imported.source.PackageDigest || '', SourceRevision: imported.source.__updateTime } : {}),
       Academic: academicFields, AcademicSession: session, Term: term, ClassName: className, Title: title,
       SchoolName: clean(profile?.SchoolName || profile?.Name), Instructions: clean(input.Instructions), Questions: questions,
       ...schedule, Status: 'Draft', CandidateCount: 0, CreatedBy: actorName(user), CreatedAt: iso(clock()), UpdatedAt: iso(clock()) };
-    await commit(env, [write(CBT.tests, id, test, previous), audit('SAVE_DRAFT', test)]);
-    return { ok: true, TestId: id, message: 'Draft saved. Register candidates and choose their delivery mode before opening the test.' };
+    try { await commit(env, [write(CBT.tests, id, test, previous), audit('SAVE_DRAFT', test)]); }
+    catch (error) {
+      if (!imported || !conflict(error) || !await get(env, CBT.tests, id)) throw error;
+      return { ok: true, TestId: id, message: 'This remote examination was already created. Its existing paper and results were preserved.' };
+    }
+    return { ok: true, TestId: id, message: audience === 'student' ? 'Draft saved. Open the examination to allow all eligible students to sign in with their student login. No registration is needed.' : 'Draft saved. Register candidates and choose their delivery mode before opening the test.' };
   }
   async function details(input) {
     const test = await staffTest(input.TestId);
     const candidates = await rows(CBT.candidates, 'TestId', test.TestId);
-    return { ok: true, test: { ...publicTest(test), ContentMode: test.ContentMode || 'native', Paper: test.Paper ? { FileName: test.Paper.FileName, PageCount: test.Paper.Pages.length } : null, Academic: test.Academic, Revision: test.__updateTime, Questions: test.Questions },
-      candidates: candidates.map(candidateView), available: (test.Status === 'Draft' ? await sources(test) : []).map(row => sourceIdentity(test, row)).map(({ SourcePath, ...row }) => row) };
+    return { ok: true, test: { ...publicTest(test), UsesUploadedPaper: Boolean(test.SourceCbtTestId), ContentMode: test.ContentMode || 'native', Paper: test.Paper ? { FileName: test.Paper.FileName, PageCount: test.Paper.Pages.length } : null, Academic: test.Academic, Revision: test.__updateTime, Questions: test.Questions },
+      candidates: candidates.map(candidateView), available: (test.Status === 'Draft' && !automaticStudentAccess(test) ? await sources(test) : []).map(row => sourceIdentity(test, row)).map(({ SourcePath, ...row }) => row) };
   }
   async function enroll(input) {
     const test = await staffTest(input.TestId);
+    if (automaticStudentAccess(test)) throw fail('All eligible students already have access. No separate registration is needed.');
     if (test.Status !== 'Draft') throw fail('Register candidates before opening the test.', 409);
     if (!['offline', 'online'].includes(input.Delivery) || (test.Audience === 'student' && input.Delivery !== 'online')) throw fail('Choose a permitted delivery mode. Enrolled students use the existing Local CBT workflow for school-network tests.');
     const refs = [...new Set((input.References || []).map(lower))];
@@ -217,29 +265,43 @@ export function createPortalCbtService(env, user = null, dependencies = {}) {
   }
   async function schedule(input) {
     const test = await staffTest(input.TestId);
-    if (test.Status !== 'Draft' || !test.CandidateCount) throw fail('Save a draft and register at least one candidate first.', 409);
+    if (test.Status !== 'Draft' || (!automaticStudentAccess(test) && !test.CandidateCount)) throw fail('Save a draft and register at least one candidate first.', 409);
     if (Date.parse(test.EndsAt) <= clock()) throw fail('This test window has already ended.');
     await commit(env, [write(CBT.tests, test.TestId, { ...test, Status: 'Scheduled', OpenedBy: actorName(user), OpenedAt: iso(clock()) }, test), audit('OPEN_TEST', test)]);
-    return { ok: true, message: 'Test scheduled. Print the access cards or pull the offline package on the CBT server.' };
+    return { ok: true, message: automaticStudentAccess(test) ? 'Examination opened for all eligible students. Share its link; students use their existing admission number and student password.' : 'Test scheduled. Print the access cards or pull the offline package on the CBT server.' };
+  }
+  async function updateSchedule(input) {
+    const test = await staffTest(input.TestId);
+    if (test.Status !== 'Draft' || input.Revision !== test.__updateTime) throw fail('Only the current draft schedule can be edited. Reload the examination.', 409);
+    const window = normalizeSchedule(input);
+    if (Date.parse(window.EndsAt) <= clock()) throw fail('Choose a future examination window.');
+    if (clean(input.Instructions).length > 8000) throw fail('The instructions are too long.');
+    await commit(env, [write(CBT.tests, test.TestId, { ...test, ...window, Instructions: clean(input.Instructions) }, test), audit('EDIT_DRAFT_SCHEDULE', test)]);
+    return { ok: true, TestId: test.TestId, message: 'Remote schedule saved. Its question paper was preserved.' };
   }
   async function cards(input) {
     const test = await staffTest(input.TestId);
+    if (automaticStudentAccess(test)) return { ok: true, test: publicTest(test), cards: [], automaticAccess: true };
     const candidates = await rows(CBT.candidates, 'TestId', test.TestId);
     return { ok: true, test: publicTest(test), cards: await Promise.all(candidates.map(async row => ({ ...candidateView(row), Password: await passwordFor(row) }))) };
   }
   async function login(input, oldSession = '') {
     if (!/^[a-zA-Z0-9_-]{16,80}$/.test(clean(input.ClientId))) throw fail('This browser could not create an exam session. Enable site storage and reload.');
+    if (!clean(input.Reference) || clean(input.Reference).length > 160 || !input.Password || String(input.Password).length > 128) throw fail('Enter your admission/reference number and password.', 401);
     const test = await testById(input.TestId);
     if (test.Status !== 'Scheduled') throw fail('This test is not available. Contact the school.', 403);
+    const identity = automaticStudentAccess(test) ? await eligibleRemoteStudent(env, test, input.Reference, String(input.Password || ''), { get, query, studentQuery }) : null;
     const id = await cbtHash(`${test.TestId}|${lower(input.Reference)}`);
     return retry(async () => {
-      const row = await get(env, CBT.candidates, id);
-      if (!row || row.Delivery !== 'online' || !(await verifyStudentPasswordHash(row.Password, clean(input.Password)))) throw fail('The test reference or examination password is incorrect.', 401);
+      const previous = await get(env, CBT.candidates, id);
+      const row = previous || (identity ? { ...identity, CandidateId: id, TestId: test.TestId, Scope: test.Scope, Audience: 'student',
+        Delivery: 'online', LoginId: identity.Reference, Status: 'Ready', CreatedAt: iso(clock()) } : null);
+      if (!row || row.Delivery !== 'online' || (!identity && !(await verifyStudentPasswordHash(row.Password, clean(input.Password))))) throw fail('The test reference or examination password is incorrect.', 401);
       const same = oldSession && row.ClientId === input.ClientId && await secureSecretEqual(row.SessionHash, await cbtHash(oldSession));
       if (row.Status === 'In progress' && Date.parse(row.LeaseUntil) > clock() && !same) throw fail('This test is open in another browser. Close it and wait one minute before resuming here.', 409);
       const session = same ? oldSession : token();
       const updated = { ...row, ClientId: input.ClientId, SessionHash: await cbtHash(session), SessionExpiresAt: iso(Math.max(Date.parse(test.EndsAt), clock()) + 12 * 3600000), LeaseUntil: iso(clock() + 60000) };
-      await commit(env, [write(CBT.candidates, id, updated, row)]);
+      await commit(env, [write(CBT.candidates, id, updated, previous)]);
       return { ok: true, session, CandidateId: id, attempt: publicAttempt(test, updated, clock()) };
     });
   }
@@ -254,7 +316,10 @@ export function createPortalCbtService(env, user = null, dependencies = {}) {
       const { test, row } = await authenticated(input, session);
       let next = row;
       if (row.Status === 'In progress' && clock() >= Date.parse(row.ExpiresAt)) next = completeAttempt(test, row, clock());
-      else if (input.action === 'start') next = startAttempt(test, row, clock());
+      else if (input.action === 'start') {
+        if (automaticStudentAccess(test) && row.Status === 'Ready') await eligibleRemoteStudent(env, test, row.Reference, undefined, { get, query, studentQuery });
+        next = startAttempt(test, row, clock());
+      }
       else if (['save', 'submit'].includes(input.action) && row.Status === 'In progress') {
         const version = Number(input.SaveVersion);
         if (!Number.isSafeInteger(version) || version < 1) throw fail('The answer version is invalid.');
@@ -422,5 +487,5 @@ export function createPortalCbtService(env, user = null, dependencies = {}) {
     }
     return { ok: true, results: report };
   }
-  return { state, options, assessment, create, details, enroll, schedule, cards, login, candidateAction, paperPage, review, approve, post, offlinePackage, offlineResults };
+  return { state, options, assessment, uploadOptions, uploadedTests, useUploadedTest, updateSchedule, create, details, enroll, schedule, cards, login, candidateAction, paperPage, review, approve, post, offlinePackage, offlineResults };
 }

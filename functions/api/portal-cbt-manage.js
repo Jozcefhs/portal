@@ -9,7 +9,7 @@ export async function onRequestPost({ request, env }) {
     if (origin && origin !== new URL(request.url).origin) throw Object.assign(new Error('Cross-site exam requests are not allowed.'), { status: 403 });
     const user = academicWebActor(await requireStaffSession(env, request));
     const body = await readJsonBody(request, { maxBytes: 48 * 1024 * 1024 });
-    if (!['state', 'options', 'assessment', 'create', 'details', 'enroll', 'schedule', 'cards', 'paperPage', 'review', 'approve', 'post'].includes(body.action)) throw Object.assign(new Error('Choose a valid examination action.'), { status: 400 });
+    if (!['state', 'options', 'assessment', 'uploadOptions', 'uploadedTests', 'useUploadedTest', 'updateSchedule', 'create', 'details', 'enroll', 'schedule', 'cards', 'paperPage', 'review', 'approve', 'post'].includes(body.action)) throw Object.assign(new Error('Choose a valid examination action.'), { status: 400 });
     const result = await createPortalCbtService(env, user)[body.action](body);
     return Response.json(result, { headers: { 'Cache-Control': 'private, no-store' } });
   } catch (error) {

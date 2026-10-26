@@ -10,6 +10,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const fixture = browserFixture(), root = resolve(import.meta.dirname, '..'), output = resolve(root, 'tmp/portal-cbt-ui');
 await mkdir(output, { recursive: true });
 const files = new Set(['/exam.html', '/exams-admin.html', '/js/portal-cbt-candidate.js', '/js/portal-cbt-manager.js', '/js/exam-document-upload.js', '/css/portal-cbt.css', '/js/app-dialogs.js', '/css/app-dialogs.css', '/js/staff-idle-session.js']);
+files.add('/js/exam-paper-viewer.js'); files.add('/vendor/exam-documents/pdf.min.mjs'); files.add('/vendor/exam-documents/pdf.worker.min.mjs');
 const server = createServer(async (req, res) => {
   try {
     const path = new URL(req.url, 'http://localhost').pathname;
@@ -28,7 +29,7 @@ const server = createServer(async (req, res) => {
       res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(data)); return;
     }
     if (!files.has(path)) { res.writeHead(404); res.end(); return; }
-    res.setHeader('Content-Type', path.endsWith('.js') ? 'text/javascript' : path.endsWith('.css') ? 'text/css' : 'text/html');
+    res.setHeader('Content-Type', /\.m?js$/.test(path) ? 'text/javascript' : path.endsWith('.css') ? 'text/css' : 'text/html');
     res.end(await readFile(resolve(root, '.' + path)));
   } catch (error) { res.writeHead(error.status || 500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: false, message: error.message })); }
 });
@@ -106,6 +107,37 @@ try {
   await admin.locator('#audience').selectOption('student'); await admin.locator('#newTest').click();
   await admin.waitForFunction(() => document.querySelectorAll('#academicComponent option').length === 2);
   await admin.locator('#academicComponent').selectOption('ca1:theory'); assert.match(await admin.locator('#questionTotal').innerText(), /60 marks/);
+  const paper = await browser.newPage(); await paper.setContent('<h1>Logic test</h1><p>1. Choose B.</p><p>2. Choose D.</p>');
+  await fixture.seedUploadedStudentExam(await paper.pdf({ format: 'A4' })); await paper.close();
+  let uploadedReads = 0;
+  admin.on('request', request => { if (request.url().endsWith('/api/portal-cbt-manage') && request.postDataJSON()?.action === 'uploadedTests') uploadedReads++; });
+  await admin.locator('#useUploaded').click(); await admin.locator('#uploadedClass').selectOption('grade7');
+  assert.equal(uploadedReads, 0, 'No uploaded tests read before a class is selected and loaded');
+  await admin.locator('#loadUploaded').click(); await admin.locator('[data-use-upload]').waitFor();
+  await admin.locator('#uploadedClass').selectOption('grade8'); await admin.locator('#loadUploaded').click();
+  await admin.locator('#uploadedList').filter({ hasText: 'No uploaded papers' }).waitFor();
+  await admin.locator('#uploadedClass').selectOption('grade7'); await admin.locator('#loadUploaded').click(); await admin.locator('[data-use-upload]').waitFor();
+  assert.equal(uploadedReads, 2, 'Returning to a loaded class reuses the cached list');
+  await admin.locator('[data-use-upload]').click(); await admin.locator('#remotePart').selectOption('objective');
+  await admin.locator('#remoteStart').fill(wat(Date.now() - 60000)); await admin.locator('#remoteEnd').fill(wat(Date.now() + 3600000));
+  await admin.locator('#remoteSchedule button[type=submit]').click(); await admin.locator('#testDetails').filter({ hasText: 'All eligible active students' }).waitFor();
+  assert.equal(await admin.locator('[data-enroll]').count(), 0);
+  await admin.locator('[data-schedule]').click(); await admin.locator('[data-schedule]').waitFor({ state: 'detached' });
+  const studentTest = (await fixture.staff.state({ Audience: 'student', BranchId: 'main', SchoolSection: 'secondary' })).tests[0];
+  const student = await browser.newPage({ viewport: { width: 390, height: 844 } }); student.on('pageerror', error => errors.push(error.message));
+  await student.goto(`${base}/exam.html?test=${studentTest.TestId}`); await student.locator('#examReference').fill('ST/001'); await student.locator('#examPassword').fill('StudentPass1!');
+  await student.locator('#examLogin button[type=submit]').click(); await student.locator('#startExam').click(); await student.locator('#dialogConfirm').click();
+  await student.locator('#candidatePaper img').waitFor();
+  await student.waitForFunction(() => [...document.querySelectorAll('#candidatePaper img')].every(img => img.complete && img.naturalWidth > 0));
+  assert.equal(await student.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await student.screenshot({ path: resolve(output, 'uploaded-paper-student-mobile.png'), fullPage: true });
+  await student.locator('[name=Q1][value=B]').check(); await student.locator('[name=Q2][value=D]').check();
+  await student.locator('#submitExam').click(); await student.locator('#dialogConfirm').click(); await student.locator('#examDone').waitFor({ state: 'visible' });
+  await admin.locator('[data-refresh]').click(); await admin.locator('[data-review]').click();
+  assert.match(await admin.locator('#resultReview').innerText(), /20 \/ 20/);
+  await admin.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await admin.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await admin.screenshot({ path: resolve(output, 'automatic-student-access-mobile.png'), fullPage: true });
   assert.deepEqual(errors, []);
   console.log('PASS: authoring, access cards/print, candidate login, modal close/Escape, save, disconnect/reload recovery, submit, written marking, application posting and Objective/Theory selectors.');
 } finally { await browser?.close(); await new Promise(resolve => server.close(resolve)); }
