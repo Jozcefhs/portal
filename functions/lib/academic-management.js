@@ -5669,6 +5669,11 @@ export async function getAcademicScorebookContext(env, user = {}, input = {}) {
   const context = await academicScoreSheetContext(env, user, input, 'canEnterScores',
     ACADEMIC_SCOREBOOK_STATE_KEYS.filter(key => !['scoreImports', 'scoreSyncBatches'].includes(key)));
   const activeScheme = context.activeScheme;
+  const componentReviews = context.existing ? await academicComponentReviews(context.existing, context.roster, context.state.studentScores) : [];
+  const snapshot = academicScorebookSnapshot(context);
+  // Include the verified display summary in this already-requested snapshot.
+  // It is response-only: no extra reads or stored marks are changed.
+  if (snapshot.sheet) snapshot.sheet.TestReviewStatus = componentReviews.map(({ComponentId,Name,Status,Stale,CompleteCount,RosterCount}) => ({ComponentId,Name,Status,Stale,CompleteCount,RosterCount}));
   const layoutUpdateAvailable = Boolean(
     context.existing
     && activeScheme.Ready
@@ -5681,8 +5686,8 @@ export async function getAcademicScorebookContext(env, user = {}, input = {}) {
     partialAcademicManagement: true,
     message: 'Scorebook context loaded.',
     assessmentScheme: context.scheme,
-    scorebookSnapshot: academicScorebookSnapshot(context),
-    componentReviews: context.existing ? await academicComponentReviews(context.existing, context.roster, context.state.studentScores) : [],
+    scorebookSnapshot: snapshot,
+    componentReviews,
     scorebookContext: {
       SheetId: context.SheetId,
       SessionId: context.session.SessionId,

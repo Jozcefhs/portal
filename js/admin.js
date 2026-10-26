@@ -15451,6 +15451,29 @@ function academicScoreStateOptions(selected = 'Numeric') {
     .map((state) => `<option value="${state}"${state === selected ? ' selected' : ''}>${state === 'Numeric' ? 'Score' : state}</option>`).join('');
 }
 
+function academicTestReviewStatusMarkup(row = {}) {
+  const verified = Array.isArray(row.TestReviewStatus);
+  const reviews = verified ? row.TestReviewStatus : Object.values(row.ComponentReviews || {});
+  const shown = reviews.filter(review => review.Stale || ['Submitted', 'Approved', 'Locked'].includes(review.Status) || review.ReopenedAt);
+  if (!shown.length) return '<span class="muted">Not yet submitted</span>';
+  return `<div class="academic-test-review-status">${shown.map(review => {
+    const name = review.Name || (row.AssessmentComponents || []).find(item => item.Id === review.ComponentId)?.Name || 'Assessment test';
+    const status = review.Stale ? 'Changed — resubmit' : review.Status === 'Draft' ? 'Reopened' : review.Status;
+    const tone = review.Stale || review.Status === 'Draft' ? 'changed' : review.Status === 'Submitted' ? 'submitted' : 'approved';
+    return `<span class="academic-test-review-badge ${tone}">${escapeHtml(name)} · ${escapeHtml(status)}</span>`;
+  }).join('')}<small>${verified ? 'Checked against saved marks' : 'Last saved test reviews'}</small></div>`;
+}
+
+function refreshAcademicTestReviewRow(root, sheet) {
+  if (!sheet?.SheetId) return;
+  root.querySelectorAll('[data-academic-test-review-status]').forEach(cell => {
+    if (cell.dataset.academicTestReviewStatus === sheet.SheetId) cell.innerHTML = academicTestReviewStatusMarkup(sheet);
+  });
+  root.querySelectorAll('[data-academic-id]').forEach(button => {
+    if (button.dataset.academicId === sheet.SheetId) button.dataset.academicRevision = sheet.RevisionToken;
+  });
+}
+
 function academicScoreSheetActions(row, permissions = {}) {
   const status = clean(row.Status || 'Draft');
   const actions = [];
@@ -15588,7 +15611,7 @@ function academicScorebookWorkspace(data, rows) {
     <div class="academic-management-form-grid academic-management-form-grid-3">
       <label>Classroom<select name="ArmId" data-academic-scorebook-classroom required>${academicSelectOptions(permittedClassrooms, selectedArm?.ArmId, classroomLabel, 'Choose allocated classroom')}</select></label>
       <label>Subject and teacher<select name="AllocationId" data-academic-scorebook-allocation required><option value="">Choose allocated subject</option>${selectedAllocations.map((allocation) => `<option value="${escapeHtml(allocationValue(allocation))}"${allocationValue(allocation) === selectedAllocationValue ? ' selected' : ''}>${escapeHtml(`${academicLabel(rows.subjects, allocation.SubjectId)} · ${academicLabel(data.staff, allocation.TeacherUsername, allocation.TeacherUsername)}`)}</option>`).join('')}</select></label>
-      <label>Workflow status<input value="${escapeHtml(sheet?.Status || 'New Draft')}" readonly></label>
+      <label>Full-term status<input value="${escapeHtml(sheet?.Status || 'New Draft')}" readonly></label>
     </div>
     <div class="academic-attendance-table academic-scorebook-table"><table><thead><tr><th scope="col" class="academic-serial">S/N</th><th class="academic-student-cell">Student</th>${componentHeaders}<th>Total</th><th>Grade</th><th>Completion</th></tr></thead><tbody>${scoreRows || `<tr><td colspan="${scoreFields.length + 5}">Choose an allocated classroom and subject with active students.</td></tr>`}</tbody></table></div>
     <div class="academic-scorebook-actions"><button type="submit" ${canEdit && roster.length && editableCellCount ? '' : 'disabled'}>Save and lock recorded scores</button>${sheet?.Status === 'Draft' && data.permissions?.canEnterScores ? `<button type="button" class="secondary" data-academic-score-status="Submitted" data-academic-id="${escapeHtml(sheet.SheetId)}" data-academic-revision="${escapeHtml(sheet.RevisionToken)}">Submit full-term sheet</button>` : ''}${sheet && data.permissions?.canEnterScores ? `<button type="button" class="secondary" data-academic-test-review="${escapeHtml(sheet.SheetId)}">Review individual tests</button>` : ''}${reactivateButton}</div>
@@ -15598,9 +15621,9 @@ function academicScorebookWorkspace(data, rows) {
     { label: 'Subject', value: (row) => academicLabel(rows.subjects, row.SubjectId) },
     { label: 'Teacher', value: (row) => academicLabel(data.staff, row.TeacherUsername, row.TeacherUsername) },
     { label: 'Entered', value: (row) => `${row.EnteredCount || 0} / ${row.RosterCount || 0}` },
-    { label: 'Complete', value: (row) => `${row.CompleteCount || 0} / ${row.RosterCount || 0}` },
-    { label: 'Scheme revision', value: (row) => row.AssessmentRevisionId || 'Not captured' },
-    { label: 'Status', value: (row) => row.Status },
+    { label: 'Term complete', value: (row) => `${row.CompleteCount || 0} / ${row.RosterCount || 0}` },
+    { label: 'Test reviews', render: (row) => `<div data-academic-test-review-status="${escapeHtml(row.SheetId)}">${academicTestReviewStatusMarkup(row)}</div>` },
+    { label: 'Full-term status', value: (row) => row.Status },
     { label: 'Actions', render: (row) => academicScoreSheetActions(row, data.permissions || {}) }
   ]);
   const preview = academicScorebookDraft.importPreview;
@@ -18845,6 +18868,7 @@ function bindAcademicManagement() {
           title:[academicLabel(academicManagementData.classes,sheet.ClassId),academicLabel(academicManagementData.arms,sheet.ArmId),academicLabel(academicManagementData.subjects,sheet.SubjectId)].join(' · '),
           isCurrent:()=>branch===selectedBranchId&&username===currentUser?.username,
           onLoaded:result=>{academicManagementData=result;const saved=result.scorebookSnapshot?.sheet;
+            refreshAcademicTestReviewRow(panelEl,saved);
             const form=panelEl.querySelector('[data-academic-scorebook]');
             if(saved&&form?.elements.SheetId?.value===saved.SheetId)form.elements.SheetRevisionToken.value=saved.RevisionToken;}
         });

@@ -113,6 +113,7 @@ test('opening a scorebook returns fresh selected marks and the historical scheme
   assert.equal(result.assessmentScheme.RevisionId, 'historic');
   assert.equal(result.scorebookSnapshot.scores[0].ComponentScores[0].RawScore, 85);
   assert.equal(result.scorebookSnapshot.scores.length, 1);
+  assert.deepEqual(Array.from(result.scorebookSnapshot.sheet.TestReviewStatus), []);
   assert.equal(result.scorebookContext.TeacherUsername, 'new.teacher');
   assert.equal(result.scorebookContext.SessionId, 'session');
   assert.equal(result.scorebookContext.TermId, 'term');
@@ -122,5 +123,5 @@ test('opening a scorebook returns fresh selected marks and the historical scheme
 
 test('review register distinguishes entered marks from fully completed term sheets', () => {
   assert.match(adminSource, /label: 'Entered', value: \(row\) => `\$\{row.EnteredCount/);
-  assert.match(adminSource, /label: 'Complete', value: \(row\) => `\$\{row.CompleteCount/);
+  assert.match(adminSource, /label: 'Term complete', value: \(row\) => `\$\{row.CompleteCount/);
 });
