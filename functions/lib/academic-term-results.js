@@ -316,6 +316,33 @@ export function calculateAcademicMidTermResultDrafts(input = {}) {
   if (!selectedIds.length || selectedIds.length > 2) return { Ready: false, Issues: ['Choose one or two assessment components for the mid-term result.'], Results: [] };
   const selected = policy.Assessment.Components.filter((component) => selectedIds.some((id) => lower(id) === lower(component.Id)));
   if (selected.length !== selectedIds.length) return { Ready: false, Issues: ['One or more configured mid-term components are not in the active assessment scheme.'], Results: [] };
+  const notTaughtIds = uniqueIds(input.NotTaughtSubjectIds || []);
+  const notTaught = new Set(notTaughtIds.map(lower));
+  const reason = clean(input.NotTaughtReason);
+  const memberships = (input.Memberships || []).filter(activeMembership).filter(row => contextMatches(row, input));
+  const assigned = new Set(memberships.flatMap(row => uniqueIds(row.SubjectIds).map(lower)));
+  const catalogue = new Map((input.Subjects || []).flatMap(row => ['SubjectId', 'RecordId', '__id', 'Id']
+    .filter(field => clean(row[field])).map(field => [lower(row[field]), row])));
+  const issues = [];
+  if (notTaughtIds.length && (!reason || reason.length > 1000)) issues.push('Enter a reason of up to 1,000 characters for subjects not taught this mid-term.');
+  for (const id of notTaughtIds) {
+    const subject = catalogue.get(lower(id));
+    if (!subject || !assigned.has(lower(id)) || subject.AssessmentCategory === 'TimetableOnly') {
+      issues.push('Choose only graded subjects assigned to students in this classroom.');
+      continue;
+    }
+    const sheets = new Set((input.ScoreSheets || []).filter(row => contextMatches(row, input)
+      && lower(row.SubjectId) === lower(id)).map(row => lower(row.SheetId)));
+    const students = new Set(memberships.filter(row => uniqueIds(row.SubjectIds).some(value => lower(value) === lower(id))).map(row => lower(row.StudentRef)));
+    const hasRecordedMark = component => ['numeric', 'absent', 'exempt'].includes(lower(component.State))
+      || (component.RawScore !== null && component.RawScore !== undefined && component.RawScore !== '')
+      || (component.Parts || []).some(hasRecordedMark);
+    const recorded = (input.StudentScores || []).some(score => sheets.has(lower(score.SheetId)) && students.has(lower(score.StudentRef))
+      && ((score.ComponentScores || []).some(component => selectedIds.some(value => lower(value) === lower(component.ComponentId)) && hasRecordedMark(component))
+        || (!(score.ComponentScores || []).length && lower(score.CompletionStatus) === 'complete')));
+    if (recorded) issues.push(`${subject.Name || subject.SubjectName || 'This subject'} already has recorded mid-term assessment marks or states. It cannot be marked as not taught.`);
+  }
+  if (issues.length) return {Ready:false, Issues:[...new Set(issues)], Results:[]};
   const totalWeight = selected.reduce((sum, component) => sum + component.WeightPercentage, 0);
   const scheme = academicAssessmentScheme({ Assessment: {
     ...policy.Assessment,
@@ -332,8 +359,10 @@ export function calculateAcademicMidTermResultDrafts(input = {}) {
       WeightedTotal: calculated.Percentage
     };
   });
-  return calculateAcademicTermResultDrafts({
+  const calculation = calculateAcademicTermResultDrafts({
     ...input,
+    // Only this result calculation changes. Memberships and source scores stay intact.
+    Memberships: memberships.map(row => ({...row, SubjectIds: uniqueIds(row.SubjectIds).filter(id => !notTaught.has(lower(id)))})),
     StudentScores: scores,
     ResultType: 'Mid-Term',
     IncludedAssessmentComponentIds: selectedIds,
@@ -341,6 +370,14 @@ export function calculateAcademicMidTermResultDrafts(input = {}) {
     ScoreEligibilityLabel: 'Draft, Submitted, Approved or Locked',
     CompleteScoreLabel: 'mid-term'
   });
+  if (calculation.Ready) calculation.Results.forEach(result => {
+    const membership = memberships.find(row => lower(row.StudentRef) === lower(result.StudentRef));
+    result.NotTaughtSubjects = uniqueIds(membership?.SubjectIds).filter(id => notTaught.has(lower(id))).map(id => ({
+      SubjectId:id, SubjectName:academicSubjectName(catalogue.get(lower(id)), input.Subjects || []) || catalogue.get(lower(id))?.Name || 'Subject',
+      Reason:reason, Status:'Not taught this mid-term'
+    }));
+  });
+  return calculation;
 }
 
 export function academicTermResultTransition(currentValue, targetValue) {

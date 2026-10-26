@@ -6265,6 +6265,7 @@ async function calculateAcademicResultsForType(env, user = {}, input = {}, resul
   const context = await academicTermResultContext(env, user, input, 'canCalculateResults');
   const { scope, state, session, term, schoolClass, arm, policy, policyRevisionIds, policyFingerprint } = context;
   const midTerm = lower(resultType) === 'mid-term';
+  if (!midTerm && (input.NotTaughtSubjectIds || []).length) throw failure('Subjects not taught can be excluded only from a mid-term result.');
   const memberships = state.studentMemberships.filter((row) => statusActive(row)
     && row.SessionId === session.SessionId && row.TermId === term.TermId
     && row.ClassId === schoolClass.ClassId && row.ArmId === arm.ArmId);
@@ -6294,6 +6295,8 @@ async function calculateAcademicResultsForType(env, user = {}, input = {}, resul
     StudentScores: state.studentScores,
     Subjects: state.subjects,
     Attendance: state.studentAttendance,
+    NotTaughtSubjectIds: midTerm ? input.NotTaughtSubjectIds : [],
+    NotTaughtReason: midTerm ? input.NotTaughtReason : '',
     SchoolCalendar: state.schoolCalendars.find((row) => row.SessionId === session.SessionId && row.TermId === term.TermId) || null,
     TermDates: { StartDate: term.StartDate, EndDate: term.EndDate },
     AttendanceMode: 'Daily',
@@ -6335,7 +6338,7 @@ async function calculateAcademicResultsForType(env, user = {}, input = {}, resul
       ...writePrecondition(existing, resultRevisionToken(input, result.ResultId))
     });
     writes.push(academicResultEventWrite(user, result, existing ? 'RECALCULATED' : 'CALCULATED',
-      `${result.ResultType}; ${result.SubjectCount} subject(s); ${result.Attendance.RegisterType} attendance; policy ${result.PolicyFingerprint}`));
+      `${result.ResultType}; ${result.SubjectCount} subject(s); ${result.Attendance.RegisterType} attendance; policy ${result.PolicyFingerprint}${(result.NotTaughtSubjects || []).length ? `; Not taught this mid-term: ${result.NotTaughtSubjects.map(row => `${row.SubjectName}: ${row.Reason}`).join('; ')}` : ''}`));
   });
   writes.push(auditWrite(user, existingResults.length ? 'RECALCULATE' : 'CALCULATE', 'termResult', {
     RecordId: `classroom-results-${schoolClass.ClassId}-${arm.ArmId}`,

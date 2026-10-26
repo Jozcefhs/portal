@@ -90,12 +90,13 @@ test('split objective CBT corrections retain theory marks and external CBT corre
 
 test('parent screen and print rows include weighted marks and escape labels', async () => {
   const source = await readFile(new URL('../js/parent-dashboard.js', import.meta.url), 'utf8');
-  const start = source.indexOf('function academicResultComponentColumns('), end = source.indexOf('function renderLibraryLoans(', start);
-  const ctx = vm.createContext({ escapeHtml: value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;') });
-  vm.runInContext(source.slice(start, end), ctx);
+  const ctx = vm.createContext({});
+  vm.runInContext(await readFile(new URL('../js/academic-result-template.js', import.meta.url), 'utf8'), ctx);
   const record = academicResultWithWeightedComponents(result()); record.Subjects[0].SubjectName = '<Maths>';
-  assert.match(ctx.academicResultSubjectHeaders(record), /CA1.*Weighted/s);
-  assert.match(ctx.academicResultSubjectRows(record), /8.5<small> \/ 10/);
-  assert.match(ctx.academicResultSubjectRows(record), /&lt;Maths&gt;/);
-  assert.equal(source.split('${academicResultSubjectHeaders(record)}').length - 1, 2);
+  const markup = ctx.DynamaxAcademicResultTemplate.weightedMarkup(record);
+  assert.match(markup, /CA1.*Weighted/s);
+  assert.match(markup, /8.5 \/ 10/);
+  assert.match(markup, /&lt;Maths&gt;/);
+  assert.match(source, /DynamaxAcademicResultTemplate\.weightedMarkup\(record\)/);
+  assert.match(source, /DynamaxAcademicResultTemplate\.render\(child, record/);
 });

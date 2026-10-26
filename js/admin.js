@@ -15985,32 +15985,16 @@ function bindAcademicClassScoreRegister(form) {
   });
 }
 
-function academicWeightedResultMarkup(record) {
-  const columns = [...new Map((record.Subjects || []).flatMap(subject => (subject.WeightedComponents || [])
-    .map(component => [component.ComponentId, component]))).values()];
-  return `<table class="report-table subject-table"><thead><tr><th>Subject</th>${columns.map(component =>
-    `<th>${escapeHtml(component.Name || component.ComponentId)}<br><small>Weighted</small></th>`).join('')}<th>Total</th><th>Grade</th></tr></thead><tbody>${(record.Subjects || []).map(subject =>
-    `<tr><td>${escapeHtml(subject.SubjectName || subject.SubjectId)}</td>${columns.map(column => {
-      const component = (subject.WeightedComponents || []).find(row => row.ComponentId === column.ComponentId);
-      return `<td>${component?.State === 'Exempt' ? 'Exempt' : component?.WeightedMark == null ? '—'
-        : `${escapeHtml(component.WeightedMark)} / ${escapeHtml(component.MaximumMark)}`}</td>`;
-    }).join('')}<td>${escapeHtml(subject.Total ?? '—')}</td><td>${escapeHtml(subject.Grade || '—')}</td></tr>`).join('')}</tbody></table>
-    <p class="reference">Weighted marks / applicable maximum. Exempt assessments are excluded and remaining weights adjusted. — means no reliable saved breakdown. Totals use unrounded marks.</p>`;
-}
-
 function printAcademicWeightedResult(record) {
   const popup = window.open('', '_blank');
   if (!popup) return setStatus(document.getElementById('academicManagementStatus'), 'Allow pop-ups to preview this result.', 'bad');
   popup.opener = null;
-  const profile = academicManagementData?.reportProfile || {};
-  const student = academicLabel(academicManagementData?.students || [], record.StudentRef, record.StudentRef);
-  const status = ['Published', 'Locked'].includes(record.Status) ? record.Status : `${record.Status || 'Draft'} — STAFF PREVIEW, NOT A PUBLISHED RESULT`;
-  popup.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Academic result</title><style>
-    @page{size:A4 portrait;margin:12mm}*{box-sizing:border-box}body{font:13px/1.5 Arial,sans-serif;margin:24px;color:#17324d}h1{color:#123f6d}table{width:100%;border-collapse:collapse}th,td{padding:8px;border:1px solid #cad8e3;text-align:center;overflow-wrap:anywhere}th{background:#edf3f8}td:first-child{text-align:left}.table-wrap{overflow-x:auto}.reference{font-size:11px;color:#526b80}.logo{width:65px;height:65px;object-fit:contain}@media print{body{margin:0}button{display:none}table{table-layout:fixed;font-size:10px}th,td{padding:5px}th:first-child{width:24%}tr{break-inside:avoid}}
-    </style></head><body><button onclick="window.print()">Print result</button><header><img class="logo" src="${escapeHtml(profile.DocumentLogoUrl || '/api/document-logo')}" alt="School logo"><h1>${escapeHtml(profile.SchoolName || 'School')}</h1></header><h2>${escapeHtml(record.ResultType || 'Academic result')}</h2>
-    <p>${escapeHtml([student, record.StudentRef, record.AcademicSession, record.Term, record.ClassName, record.ArmName].filter(Boolean).join(' · '))}</p><p><strong>${escapeHtml(status)}</strong> · ${escapeHtml(record.ResultReference || '')}</p>
-    <div class="table-wrap">${academicWeightedResultMarkup(record)}</div><p><strong>Overall average:</strong> ${escapeHtml(record.OverallAverage ?? '—')}% · <strong>Grade:</strong> ${escapeHtml(record.OverallGrade || '—')}</p>
-    <p><strong>Teacher:</strong> ${escapeHtml(record.TeacherRemark || '')}</p><p><strong>Head of school:</strong> ${escapeHtml(record.PrincipalRemark || '')}</p></body></html>`);
+  const student = (academicManagementData?.students || []).find(row =>
+    [row.StudentRef, row.AdmissionNo, row.StudentId].includes(record.StudentRef)) || {};
+  popup.document.write(window.DynamaxAcademicResultTemplate.render({
+    ...student, AccountRef: record.StudentRef,
+    DisplayName: student.DisplayName || student.StudentName || academicLabel(academicManagementData?.students || [], record.StudentRef, record.StudentRef)
+  }, record, {profile: academicManagementData?.reportProfile || {}, origin: location.origin, staffPreview: true}));
   popup.document.close();
 }
 
@@ -16027,6 +16011,21 @@ function academicTermResultActions(row, permissions = {}) {
     ? `<button type="button" class="compact-icon-action compact-edit-action" data-academic-result-remarks="${escapeHtml(row.ResultId)}" title="Edit draft remarks" aria-label="Edit draft remarks">&#9998;</button>` : '';
   const workflow = actions.map(([target, title, icon]) => `<button type="button" class="compact-icon-action ${target === 'Withdrawn' ? 'academic-archive-action' : 'compact-edit-action'}" data-academic-result-status="${escapeHtml(target)}" data-academic-result-id="${escapeHtml(row.ResultId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">${icon}</button>`).join('');
   return `<div class="academic-management-row-actions"><button type="button" class="secondary" data-academic-weighted-result="${escapeHtml(row.ResultId)}">View / Print</button>${remarkButton}${workflow}</div>`;
+}
+
+function academicMidTermNotTaughtMarkup(rows, selectedArm, results) {
+  const assigned = new Set(rows.studentMemberships.filter(row => academicIsActive(row)
+    && row.ClassId === selectedArm?.ClassId && row.ArmId === selectedArm?.ArmId).flatMap(row => row.SubjectIds || []));
+  const saved = results.flatMap(row => row.NotTaughtSubjects || []);
+  const selected = new Set(saved.map(row => row.SubjectId));
+  const subjects = rows.subjects.filter(row => assigned.has(row.SubjectId) && row.AssessmentCategory !== 'TimetableOnly');
+  if (!subjects.length) return '';
+  return `<details class="academic-midterm-not-taught"${selected.size ? ' open' : ''}><summary>Subjects not taught this mid-term</summary>
+    <p>For this classroom and term only, select subjects whose lessons have not started. They will be labelled “Not taught this mid-term” and excluded from the average. Saved subject selections stay unchanged. Subjects with recorded mid-term marks cannot be excluded.</p>
+    <div class="academic-midterm-subjects">${subjects.map(row => `<label><input type="checkbox" name="NotTaughtSubjectIds" value="${escapeHtml(row.SubjectId)}"${selected.has(row.SubjectId) ? ' checked' : ''}>${escapeHtml(row.Name)}</label>`).join('')}</div>
+    <label>Reason for not teaching these subjects<textarea name="NotTaughtReason" rows="2" maxlength="1000" placeholder="For example: Trade lessons have not yet commenced.">${escapeHtml(saved[0]?.Reason || '')}</textarea></label>
+    <small>Applied only when you calculate mid-term results. The reason and the calculating officer are retained in result history. End-of-term requirements remain unchanged.</small>
+  </details>`;
 }
 
 function academicTermResultsWorkspace(data, rows) {
@@ -16050,6 +16049,7 @@ function academicTermResultsWorkspace(data, rows) {
     <div class="academic-score-import-toolbar"><button type="button" class="secondary" data-academic-result-sample="nursery">Preview Nursery</button><button type="button" class="secondary" data-academic-result-sample="primary">Preview Primary</button><button type="button" class="secondary" data-academic-result-sample="secondary">Preview Secondary</button></div>
     <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}"><input type="hidden" name="SessionId" value="${escapeHtml(academicManagementFilters.sessionId)}"><input type="hidden" name="TermId" value="${escapeHtml(academicManagementFilters.termId)}">
     <div class="academic-management-form-grid academic-management-form-grid-3"><label>Classroom<select name="ArmId" data-academic-result-classroom required>${academicSelectOptions(classrooms, selectedArm?.ArmId, classroomLabel, 'Choose classroom')}</select></label><div class="academic-result-policy-note"><small>Attendance source</small><strong>Daily school presence</strong><span>Only the class register contributes to result attendance; lesson attendance is separate.</span></div><input type="hidden" name="AttendanceMode" value="Daily"><div class="academic-result-policy-note"><small>Publication lifecycle</small><strong>Calculated Draft → Reviewed → Approved → Published → Locked</strong><span>Published corrections must be withdrawn with a reason and reapproved.</span></div></div>
+    ${academicMidTermNotTaughtMarkup(rows, selectedArm, midTermResults)}
     <div class="academic-management-form-actions"><button type="submit" data-result-calculation="end-term"${selectedArm ? '' : ' disabled'}>${endTermResults.length ? 'Recalculate end-of-term Drafts' : 'Calculate end-of-term results'}</button><button type="submit" class="secondary" data-result-calculation="mid-term"${selectedArm ? '' : ' disabled'}>${midTermResults.length ? 'Recalculate mid-term Drafts' : 'Calculate mid-term results'}</button></div>
   </form>` : `<div class="academic-view-only-note"><strong>Term results are controlled by academic reviewers.</strong><span>Teachers may add draft remarks only for classrooms where they are the Form Teacher or Assistant.</span></div>`;
   const summary = `<div class="academic-result-summary-grid"><div><small>${learner.Plural}</small><strong>${selectedResults.length}</strong></div><div><small>Draft</small><strong>${statusCounts['Calculated Draft'] || 0}</strong></div><div><small>Approved</small><strong>${statusCounts.Approved || 0}</strong></div><div><small>Published / locked</small><strong>${(statusCounts.Published || 0) + (statusCounts.Locked || 0)}</strong></div></div>`;
@@ -16281,8 +16281,6 @@ function printAcademicResultSample(stage = 'primary') {
   const profile = academicManagementData?.reportProfile || {};
   const nursery = stage === 'nursery';
   const primary = stage === 'primary';
-  const pupil = nursery || primary;
-  const executiveLabel = pupil ? 'Head Teacher' : 'Principal';
   const previewLabel = nursery ? 'Nursery' : primary ? 'Primary School' : 'Secondary School';
   const className = nursery ? 'Nursery 2 / Sunflower' : primary ? 'Primary 4 / Excellence' : 'Grade 10 / Brilliance';
   const subjects = nursery
@@ -16291,7 +16289,6 @@ function printAcademicResultSample(stage = 'primary') {
       ? [['English Language', 72, 'A', 5, '6 / 35'], ['Mathematics', 68, 'B', 4, '10 / 35'], ['Basic Science', 75, 'A', 5, '5 / 35'], ['Civic Education', 81, 'A', 5, '2 / 35']]
       : [['English Language', 72, 'A', 5, '8 / 42'], ['Mathematics', 58, 'C', 3, '19 / 42'], ['Biology', 75, 'A', 5, '6 / 42'], ['Computer Studies', 81, 'A', 5, '3 / 42']];
   const resultReference = `SAMPLE-${stage.toUpperCase()}-2026-001`;
-  const verificationUrl = `${location.origin}/verify-result.html?reference=${encodeURIComponent(resultReference)}`;
   // Keep the preview in this workspace: popup policies and embedded browsers
   // can discard a newly opened about:blank window before it is populated.
   document.getElementById('academicResultSampleDialog')?.close();
@@ -16306,18 +16303,31 @@ function printAcademicResultSample(stage = 'primary') {
   dialog.showModal();
   const popup = dialog.querySelector('iframe').contentWindow;
   popup.document.open();
-  popup.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(previewLabel)} Result Preview</title><style>
-    @page{size:A4 portrait;margin:12mm}*{box-sizing:border-box}body{font:12px/1.4 Arial,sans-serif;color:#17324d;margin:22px}.report{border:2px solid #42576b;padding:18px}.letterhead{display:grid;grid-template-columns:82px 1fr 92px;align-items:center;gap:14px;border-bottom:3px solid #08735f;padding-bottom:12px}.logo{width:76px;height:76px;object-fit:contain}.school{text-align:center}.school h1{margin:0;color:#123f6d;font-size:23px}.school p{margin:3px 0;color:#526b80}.passport{width:82px;height:96px;border:2px solid #c5d2dd;border-radius:12px;display:grid;place-items:center;background:#eef3f7;color:#63788c;font-size:22px;font-weight:800}.title{text-align:center;margin:14px 0 10px}.title h2{margin:0;color:#123f6d}.report-table{width:100%;border-collapse:collapse;margin-top:10px;table-layout:fixed}.report-table th,.report-table td{border:1px solid #cad8e3;padding:6px;text-align:left;vertical-align:top}.report-table th{background:#164a78;color:#fff;font-size:9px;text-transform:uppercase}.identity-table{margin-top:0;background:#eef6fb}.identity-table td{padding:7px 9px}.identity-table span{display:block;color:#61768a;font-size:8px;font-weight:700;text-transform:uppercase}.identity-table strong{display:block;margin-top:3px}.subject-table td:not(:first-child),.subject-table th:not(:first-child),.summary-table td,.summary-table th{text-align:center}.summary-table th{background:#edf8f5;color:#08735f}.summary-table td{font-weight:800}.remarks-table td:first-child{width:72%}.remarks-table p{margin:5px 0}.endorsement,.result-signatory{text-align:center}.endorsement .decision{display:block;margin-bottom:4px;color:#08735f}.result-signatory strong{max-width:100%;white-space:nowrap}.stamp{display:block;width:105px;height:82px;margin:0 auto 4px;object-fit:contain}.criteria-table th{background:#eef4f8;color:#123f6d}.criteria-table ul{margin:0;padding-left:17px;font-size:9px}.verification-table td:first-child{width:90px;text-align:center}.verification-table img{width:74px;height:74px}.reference{font-size:9px;color:#647b90;overflow-wrap:anywhere}.sample{margin-top:12px;color:#a42626;font-weight:800;text-align:center}.no-print{margin-top:12px;padding:9px 14px;border:0;border-radius:7px;background:#1769e0;color:#fff;font-weight:700}@media print{body{margin:0}.report{border-color:#42576b}.no-print{display:none}.sample{display:block}}
-  </style></head><body><main class="report"><header class="letterhead"><img class="logo" src="${escapeHtml(profile.DocumentLogoUrl || '/api/document-logo')}" alt="${escapeHtml(profile.SchoolName || 'School')} logo" onerror="this.style.visibility='hidden'"><div class="school"><h1>${escapeHtml(profile.SchoolName || 'Your School')}</h1><p>${escapeHtml(profile.SchoolAddress || '')}</p><p>${escapeHtml([profile.SchoolPhone, profile.SchoolEmail].filter(Boolean).join(' · '))}</p></div><div class="passport" aria-label="Sample passport photograph">SL</div></header><section class="title"><h2>Academic Result</h2></section><table class="report-table identity-table"><tbody><tr><td><span>${pupil ? 'Pupil' : 'Student'}</span><strong>Sample Learner</strong></td><td><span>Admission number</span><strong>SAMPLE/001</strong></td><td><span>Class</span><strong>${escapeHtml(className)}</strong></td></tr><tr><td><span>Gender</span><strong>Female</strong></td><td><span>Academic session</span><strong>2026/2027</strong></td><td><span>Period</span><strong>First Term · End of Term</strong></td></tr></tbody></table><table class="report-table subject-table"><thead><tr><th>Subject</th><th>Total</th><th>Grade</th><th>Point</th><th>Position / assessed</th><th>Remark</th></tr></thead><tbody>${subjects.map(([name, total, grade, point, position]) => `<tr><td>${escapeHtml(name)}</td><td>${total}</td><td>${grade}</td><td>${point}</td><td>${escapeHtml(position)}</td><td>${total >= 70 ? 'Excellent progress' : 'Good progress'}</td></tr>`).join('')}</tbody></table><table class="report-table summary-table"><thead><tr><th>Overall average</th><th>Class average</th><th>Overall grade</th><th>Attendance</th><th>Decision</th></tr></thead><tbody><tr><td>75.5%</td><td>68.2%</td><td>A · 4 of ${primary ? 35 : nursery ? 28 : 42}</td><td>96%</td><td>Promoted</td></tr></tbody></table><table class="report-table remarks-table"><tbody><tr><td><p><strong>Form Teacher:</strong> A commendable performance has been recorded. Continue consistent study habits.</p><p><strong>${executiveLabel}:</strong> Current performance meets the configured promotion benchmark.</p></td><td class="endorsement result-signatory"><strong class="decision">Promoted to the next class</strong><img class="stamp" src="${escapeHtml(profile.DocumentStampUrl || '/api/document-stamp')}" alt="Official stamp" onerror="this.style.visibility='hidden'"><strong>${escapeHtml(profile.ResultSignatoryName || `Authorized ${executiveLabel}`)}</strong><br><small>${escapeHtml(profile.ResultSignatoryTitle || 'Official result signatory')}</small></td></tr></tbody></table><table class="report-table criteria-table"><thead><tr><th>Grade key</th><th>Junior</th><th>Senior</th></tr></thead><tbody><tr><td><ul><li><strong>A</strong> 70-100% - Excellent</li><li><strong>B</strong> 60-69% - Very good</li><li><strong>C</strong> 50-59% - Good</li></ul></td><td><ul><li>Promoted: 50% and above</li><li>Maximum failed subjects: 2</li><li>Minimum attendance: 75%</li></ul></td><td><ul><li>Promoted: minimum required Core credits</li><li>English and Mathematics requirements apply</li><li>Minimum attendance: 75%</li></ul></td></tr></tbody></table><table class="report-table verification-table"><tbody><tr><td><img src="${escapeHtml(`${location.origin}/api/academic-result-qr?reference=${encodeURIComponent(resultReference)}`)}" alt="Result verification QR code" onerror="this.style.visibility='hidden'"></td><td><strong>Result verification</strong><p class="reference">Result reference: ${escapeHtml(resultReference)}<br>Verification: ${escapeHtml(verificationUrl)}</p></td></tr></tbody></table><p class="sample">${escapeHtml(previewLabel.toUpperCase())} SAMPLE PREVIEW · NOT AN OFFICIAL RESULT</p><button class="no-print" onclick="window.print()">Print preview</button></main></body></html>`);
+  // Illustrative data only. Official reports always use saved results and policy.
+  const sample = {
+    ResultReference: resultReference, ResultType: 'End of Term', Term: 'First Term',
+    AcademicSession: '2026/2027', ClassName: className, SchoolStage: stage,
+    OverallAverage: 75.5, ClassAverage: 68.2, OverallGrade: 'A', OverallPosition: 4,
+    AssessedStudentCount: primary ? 35 : nursery ? 28 : 42, Attendance: {AttendancePercentage: 96},
+    Recommendation: 'Promoted', TeacherRemark: 'A commendable performance has been recorded. Continue consistent study habits.',
+    PrincipalRemark: 'Current performance meets the configured promotion benchmark.',
+    PolicySnapshot: {Assessment: {GradeBands: [
+      {Grade: 'A', MinimumPercentage: 70, MaximumPercentage: 100, Remark: 'Excellent'},
+      {Grade: 'B', MinimumPercentage: 60, MaximumPercentage: 69, Remark: 'Very good'},
+      {Grade: 'C', MinimumPercentage: 50, MaximumPercentage: 59, Remark: 'Good'}
+    ]}, Promotion: {MaximumFailedSubjects: 2, MinimumAttendancePercentage: 75,
+      JuniorSecondary: {PromotedMinimumAverage: 50}, SeniorSecondary: {PromotedMinimumCredits: 5, CreditMinimumPercentage: 50}}},
+    Subjects: subjects.map(([name, total, grade]) => ({SubjectName: name, Total: total, Grade: grade,
+      WeightedComponents: [['CA1', 10], ['CA2', 10], ['CA3', 10], ['Exam', 70]].map(([Name, weight]) => ({
+        ComponentId: Name, Name, State: 'Numeric', WeightedMark: Math.round(total * weight) / 100, MaximumMark: weight
+      }))
+    }))
+  };
+  popup.document.write(window.DynamaxAcademicResultTemplate.render({DisplayName: 'Sample Learner', AccountRef: 'SAMPLE/001', Gender: 'Female'}, sample, {
+    profile, origin: location.origin, sampleLabel: previewLabel
+  }));
   popup.document.close();
   popup.focus();
-  // Samples use illustrative 10/10/10/70 weights, never live student marks.
-  const sample = { Subjects: subjects.map(([name, total, grade]) => ({ SubjectName: name, Total: total, Grade: grade,
-    WeightedComponents: [['CA1', 10], ['CA2', 10], ['CA3', 10], ['Exam', 70]].map(([Name, weight]) => ({
-      ComponentId: Name, Name, State: 'Numeric', WeightedMark: Math.round(total * weight) / 100, MaximumMark: weight
-    }))
-  })) };
-  popup.document.querySelector('.subject-table').outerHTML = academicWeightedResultMarkup(sample);
 }
 
 function academicAnalysisSelectOptions(items = [], selected = '', allLabel = 'All') {
@@ -19126,6 +19136,14 @@ function bindAcademicManagement() {
     event.preventDefault();
     const button = event.submitter || resultCalculator.querySelector('button[type="submit"]');
     const midTerm = button?.dataset.resultCalculation === 'mid-term';
+    const notTaughtIds = midTerm ? new FormData(resultCalculator).getAll('NotTaughtSubjectIds') : [];
+    const notTaughtReason = midTerm ? clean(resultCalculator.elements.NotTaughtReason?.value) : '';
+    if (notTaughtIds.length && !notTaughtReason) {
+      resultCalculator.querySelector('.academic-midterm-not-taught').open = true;
+      resultCalculator.elements.NotTaughtReason.focus();
+      setStatus(document.getElementById('academicManagementStatus'), 'Enter the reason these subjects were not taught this mid-term.', 'bad');
+      return;
+    }
     const arm = academicFind(academicManagementData?.arms || [], resultCalculator.elements.ArmId.value);
     if (!arm) return;
     const existing = (academicManagementData?.termResults || []).filter((row) => row.SessionId === academicManagementFilters.sessionId
@@ -19144,6 +19162,7 @@ function bindAcademicManagement() {
           SessionId: academicManagementFilters.sessionId, TermId: academicManagementFilters.termId,
           ClassId: arm.ClassId, ArmId: arm.ArmId,
           AttendanceMode: resultCalculator.elements.AttendanceMode.value,
+          ...(midTerm ? {NotTaughtSubjectIds: notTaughtIds, NotTaughtReason: notTaughtReason} : {}),
           RevisionTokens: Object.fromEntries(existing.map((row) => [row.ResultId, row.RevisionToken]))
         });
         renderAcademicManagement(data, data.message);
@@ -19151,7 +19170,7 @@ function bindAcademicManagement() {
         await showAcademicCalculationFailure(status, error, {
           title: `${midTerm ? 'Mid-term' : 'End-of-term'} results need attention`,
           shortMessage: `${midTerm ? 'Mid-term' : 'End-of-term'} results were not calculated.`,
-          message: 'Each required subject needs the appropriate complete score sheet. Resolve the items below, then calculate again.'
+          message: midTerm ? 'Each taught subject needs complete mid-term marks. For subjects whose lessons have not started, use “Subjects not taught this mid-term” in the calculation form and enter a reason.' : 'Each required subject needs the appropriate complete score sheet. Resolve the items below, then calculate again.'
         });
       }
     });

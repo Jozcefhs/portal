@@ -7,7 +7,7 @@ const browser=await playwright.chromium.launch({channel:process.env.PLAYWRIGHT_C
 try{
   const css=(await Promise.all(['css/style.css','css/module-audit.css','css/academic-result-preview.css'].map(read))).join('\n').replace(/@import[^;]+;/g,'');
   const admin=await read('js/admin.js');
-  const weighted=admin.slice(admin.indexOf('function academicWeightedResultMarkup('),admin.indexOf('function printAcademicWeightedResult('));
+  const weighted=await read('js/academic-result-template.js');
   const sample=admin.slice(admin.indexOf('function printAcademicResultSample('),admin.indexOf('function academicAnalysisSelectOptions('));
   const page=await browser.newPage({viewport:{width:1280,height:900}});
   const errors=[];page.on('pageerror',e=>errors.push(e.message));

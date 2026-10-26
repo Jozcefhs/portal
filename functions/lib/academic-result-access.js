@@ -236,6 +236,10 @@ export function publicAcademicResult(result = {}, access = {}, policyValue = {})
   };
   if (!access.Allowed) return output;
   output.Subjects = (result.Subjects || result.SubjectResults || []).map((subject) => publicSubjectResult(subject, policy.Position.Mode, result.PolicySnapshot || {}));
+  // A visible status explains the omitted marks without exposing staff-only reasons.
+  if (lower(result.ResultType) === 'mid-term') output.NotTaughtSubjects = (result.NotTaughtSubjects || []).map(subject => ({
+    SubjectName:clean(subject.SubjectName) || 'Subject', Status:'Not taught this mid-term'
+  }));
   output.OverallAverage = result.OverallAverage ?? result.Average ?? '';
   output.OverallGrade = clean(result.OverallGrade || result.Grade);
   output.TotalScore = result.TotalScore ?? result.Total ?? '';
