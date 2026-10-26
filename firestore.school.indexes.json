@@ -1,6 +1,22 @@
 {
   "indexes": [
     {
+      "collectionGroup": "executiveCorrespondence", "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath":"OfficeKey","order":"ASCENDING"},
+        {"fieldPath":"BranchId","order":"ASCENDING"},
+        {"fieldPath":"UpdatedAt","order":"DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "executiveCorrespondenceTemplates", "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath":"OfficeKey","order":"ASCENDING"},
+        {"fieldPath":"BranchId","order":"ASCENDING"},
+        {"fieldPath":"UpdatedAt","order":"DESCENDING"}
+      ]
+    },
+    {
       "collectionGroup": "academicManagementAudit",
       "queryScope": "COLLECTION",
       "fields": [

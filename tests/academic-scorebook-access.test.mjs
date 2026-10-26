@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { assertAcademicScoreSheetAuthority, academicScorebookSnapshot, ACADEMIC_SCOREBOOK_STATE_KEYS } from '../functions/lib/academic-management.js';
+import { academicComponentReviews } from '../functions/lib/academic-component-review.js';
 
 const context = { SessionId: 'session', TermId: 'term', ClassId: 'grade8', ArmId: 'brilliance', SubjectId: 'math' };
 const sheet = { ...context, SheetId: 'sheet', TeacherUsername: 'old.teacher', Status: 'Draft' };
@@ -98,7 +99,7 @@ test('opening a scorebook returns fresh selected marks and the historical scheme
     arm: { ArmId: 'brilliance' }, subject: { SubjectId: 'math' }, allocation, roster: [{}] };
   const before = structuredClone(selected);
   const runtime = vm.createContext({
-    ACADEMIC_SCOREBOOK_STATE_KEYS,
+    ACADEMIC_SCOREBOOK_STATE_KEYS, academicComponentReviews,
     academicScoreSheetContext: async (_env, _user, _input, _capability, keys) => {
       assert.ok(keys.includes('studentScores'));
       assert.ok(!keys.includes('scoreSyncBatches'));

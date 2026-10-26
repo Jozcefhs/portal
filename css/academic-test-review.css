@@ -1,0 +1,6 @@
+.academic-test-review-dialog{width:min(960px,95vw);max-width:95vw;max-height:90vh;overflow:auto;border:1px solid #cedbe8;border-radius:14px;padding:18px;background:#fff;color:#173b59}
+.academic-test-review-dialog::backdrop{background:rgba(12,31,50,.6)}
+.academic-test-review-dialog header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.academic-test-review-dialog h2{margin:4px 0}.academic-test-review-dialog header p{margin:0}
+.academic-test-review-dialog button{width:auto;margin:3px}.academic-test-review-dialog th,.academic-test-review-dialog td{padding:12px;vertical-align:top}.academic-test-review-dialog small{display:block;color:#526b80;font-size:11px}
+.academic-test-review-dialog table{min-width:640px;width:100%}
+html[data-theme="dark"] .academic-test-review-dialog{background:#111f30;color:#e4eef7}html[data-theme="dark"] .academic-test-review-dialog small{color:#b8c9db}

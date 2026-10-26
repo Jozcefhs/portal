@@ -13,22 +13,24 @@ export function mountAcademicAuditLog(root, {scopeKey, request, isCurrent = () =
   function render(message = '') {
     if (!isCurrent()) return;
     const page = state.pages[state.page];
-    root.innerHTML = `<h3>Academic audit log</h3>
-      <p>Saved academic changes for this branch and school section. Choose dates to load history. Dates use West Africa Time.</p>
-      <form data-audit-range class="academic-management-editor academic-management-editor-wide">
-        <div class="academic-management-form-grid"><label>From<input type="date" name="FromDate" required value="${escape(state.from)}"></label>
-        <label>To<input type="date" name="ToDate" required value="${escape(state.to)}"></label></div>
-        <button type="submit"${loading ? ' disabled' : ''}>${loading ? 'Loading…' : page ? 'Refresh selected dates' : 'Load academic history'}</button>
-      </form><p role="status">${escape(message || (page ? `Page ${state.page+1}: ${page.rows.length} academic changes. Loaded pages are retained while you navigate.` : 'No academic history has been requested.'))}</p>
-      ${page ? `<label>Find on loaded page<input type="search" data-audit-search placeholder="Student, admission number, action or officer"></label>
-      <div style="overflow:auto;max-height:65vh"><table class="data-table"><thead><tr><th>Date & time</th><th>Action</th><th>Student / record</th><th>Officer</th><th>Details</th></tr></thead><tbody>
-        ${page.rows.map(row => `<tr data-audit-row><td>${escape(time(row.Timestamp))}</td><td>${escape(String(row.Action || '').replace(/_/g,' '))}</td>
-          <td>${escape(row.SubjectDisplay || 'Academic record')}${row.StudentRef ? `<br>${escape(row.StudentRef)}` : ''}</td>
-          <td>${escape(row.Actor || 'System')}</td><td>${escape(row.SummaryDisplay || row.DetailsDisplay || '')}
-          ${row.SummaryDisplay && row.DetailsDisplay ? `<details><summary>More details</summary>${escape(row.DetailsDisplay)}</details>` : ''}</td></tr>`).join('') || '<tr><td colspan="5">No matching changes on this page. If available, use Next page to continue within the selected dates.</td></tr>'}
+    root.innerHTML = `<section class="security-audit-workspace module-audit-workspace">
+      <div class="workflow-intro security-audit-heading"><div><p class="eyebrow">Governance &amp; accountability</p><h2>Academic audit log</h2>
+      <p class="muted">Saved academic changes for this branch and school section. Choose dates to load history. Dates use West Africa Time.</p></div></div>
+      <form data-audit-range class="security-audit-filters">
+        <label>From<input type="date" name="FromDate" required value="${escape(state.from)}"></label>
+        <label>To<input type="date" name="ToDate" required value="${escape(state.to)}"></label>
+        <div class="security-audit-filter-actions"><button type="submit"${loading ? ' disabled' : ''}>${loading ? 'Loading…' : page ? 'Refresh selected dates' : 'Load academic history'}</button></div>
+      </form><p class="muted security-audit-snapshot" role="status">${escape(message || (page ? `Page ${state.page+1}: ${page.rows.length} academic changes. Loaded pages are retained while you navigate.` : 'No academic history has been requested.'))}</p>
+      ${page ? `<div class="security-audit-filters"><label class="security-audit-search">Find on loaded page<input type="search" data-audit-search placeholder="Student, admission number, action or officer"></label></div>
+      <div class="security-audit-result-bar"><strong data-audit-count>${page.rows.length} actions on this page</strong><span>Read-only history. Searching this page makes no additional requests.</span></div>
+      <div class="admin-table-wrap security-audit-table-wrap module-audit-table-wrap"><table class="admin-table security-audit-table module-audit-table"><thead><tr><th scope="col">Date &amp; time</th><th scope="col">Action</th><th scope="col">Student / record</th><th scope="col">Officer</th><th scope="col">Details</th></tr></thead><tbody>
+        ${page.rows.map(row => `<tr data-audit-row><td>${escape(time(row.Timestamp))}</td><td class="security-audit-description"><strong>${escape(String(row.Action || '').replace(/_/g,' '))}</strong></td>
+          <td>${escape(row.SubjectDisplay || 'Academic record')}${row.StudentRef ? `<small>${escape(row.StudentRef)}</small>` : ''}</td>
+          <td>${escape(row.Actor || 'System')}</td><td class="module-audit-details">${escape(row.SummaryDisplay || row.DetailsDisplay || '')}
+          ${row.SummaryDisplay && row.DetailsDisplay ? `<details><summary>More details</summary><p>${escape(row.DetailsDisplay)}</p></details>` : ''}</td></tr>`).join('') || '<tr><td colspan="5">No matching changes on this page. If available, use Next page to continue within the selected dates.</td></tr>'}
       </tbody></table></div>
-      <div class="academic-management-form-actions"><button type="button" data-audit-prev${loading || state.page===0 ? ' disabled' : ''}>Previous page</button>
-      <button type="button" data-audit-next${loading || !page.nextCursor ? ' disabled' : ''}>Next page</button></div>` : ''}`;
+      <div class="security-audit-actions security-audit-pagination"><button type="button" class="secondary" data-audit-prev${loading || state.page===0 ? ' disabled' : ''}>Previous page</button>
+      <span>Page ${state.page+1}</span><button type="button" class="secondary" data-audit-next${loading || !page.nextCursor ? ' disabled' : ''}>Next page</button></div>` : ''}</section>`;
     root.querySelector('[data-audit-range]').addEventListener('submit', event => {
       event.preventDefault(); if (loading) return;
       const form = new FormData(event.currentTarget);
@@ -39,6 +41,7 @@ export function mountAcademicAuditLog(root, {scopeKey, request, isCurrent = () =
     root.querySelector('[data-audit-search]')?.addEventListener('input', event => {
       const value = event.target.value.trim().toLowerCase();
       root.querySelectorAll('[data-audit-row]').forEach(row => { row.hidden = !row.textContent.toLowerCase().includes(value); });
+      root.querySelector('[data-audit-count]').textContent = `${root.querySelectorAll('[data-audit-row]:not([hidden])').length} matching actions on this page`;
     });
     root.querySelector('[data-audit-prev]')?.addEventListener('click', () => { if (!loading && state.page > 0) { state.page--; remember(); render(); } });
     root.querySelector('[data-audit-next]')?.addEventListener('click', () => {

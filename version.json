@@ -1,8 +1,8 @@
 {
-  "version": "3.1.58",
+  "version": "3.1.59",
   "channel": "stable",
   "release_status": "published",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.58.exe",
-  "sha256": "96bdc9e1d0e81b216ecd3654b9b149d96665a6c18e2e8d2a39759c49d10fe810",
-  "notes": "Dynamax v3.1.58 removes repetitive successful preview and verified payment-retry audit entries while preserving history, failures and denials. Apply active layout refreshes and verifies the selected scorebook before confirming success. Card terminal preparation is included across all editions, but card terminal payments remain disabled. Existing scores, payments and records are preserved."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.59.exe",
+  "sha256": "0e6b73ad74e873d7f9fb9d6477d71f4c2f3f9b017583f451d05f817f9707aaa5",
+  "notes": "Dynamax v3.1.59 adds individual-test submission and approval for every school class and subject, preserving all marks and full-term completeness checks. Adds the International Studies Officer role and office-specific correspondence. The web companion includes consistent audit styling and persistent report previews. Loaded class scores remain cached. Card terminal payments remain disabled."
 }

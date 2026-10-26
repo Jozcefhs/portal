@@ -19,6 +19,7 @@ export const SCHOOL_ONLY_SECTION_KEYS = Object.freeze([
 ]);
 
 export const SCHOOL_ONLY_STAFF_ROLES = Object.freeze([
+  'International Studies Officer',
   'Principal', 'Vice Principal Academics', 'Vice Principal Administration',
   'Head Teacher', 'Assistant Head Teacher', 'Teacher', 'ICT', 'Librarian', 'Admissions Officer', 'Student Welfare Officer',
   'Tuck Shop User', 'Clinic User', 'Kitchen User'

@@ -384,6 +384,7 @@ const schoolOnlyWebSections = new Set([
 ]);
 
 const staffRoleOptions = [
+  'International Studies Officer',
   'Vendor User',
   'Super Admin', 'Director', 'Admin', 'Principal', 'Vice Principal Academics', 'Vice Principal Administration',
   'Head Teacher', 'Assistant Head Teacher', 'Teacher', 'ICT', 'Librarian', 'Senior Pastor', 'Head Minister',
@@ -401,6 +402,7 @@ const staffRoleOptions = [
 ];
 
 const schoolOnlyStaffRoles = new Set([
+  'International Studies Officer',
   'Principal', 'Vice Principal Academics', 'Vice Principal Administration',
   'Head Teacher', 'Assistant Head Teacher', 'Teacher', 'ICT', 'Librarian', 'Admissions Officer', 'Student Welfare Officer',
   'Tuck Shop User', 'Clinic User', 'Kitchen User'
@@ -2146,6 +2148,7 @@ function executiveOfficeTitle() {
   const faithEdition = document.documentElement.dataset.edition === 'church'
     || ['church', 'faith', 'organization'].includes(resolveDashboardEdition(currentUser || {}));
   if (!faithEdition) {
+    if (role === 'International Studies Officer') return clean(currentUser?.department) || 'International Studies Office';
     const section = schoolPresentationSection();
     if (section === 'mixed') return 'Executive Office';
     const branch = availableBranches.find((row) => row.id === selectedBranchId);
@@ -3478,6 +3481,7 @@ function renumberAdminListRows(rows) {
 }
 
 function table(title, rows, columns, options = {}) {
+  const audit = options.audit === true || /\baudit\b|\bhistory\b|security activity|correspondence register/i.test(title);
   const sourceRows = Array.isArray(rows) ? rows : [];
   const numbered = options.numbered === true;
   const columnCount = columns.length + Number(numbered);
@@ -3503,11 +3507,12 @@ function table(title, rows, columns, options = {}) {
     }).join('')
     : `<tr><td colspan="${columnCount}">${escapeHtml(options.emptyMessage || 'No records found.')}</td></tr>`;
   const storageKey = adminListStorageKey(title);
-  const wrapClass = ['admin-table-wrap', clean(options.className)].filter(Boolean).join(' ');
+  const wrapClass = ['admin-table-wrap', audit ? 'security-audit-table-wrap module-audit-table-wrap' : '', clean(options.className)].filter(Boolean).join(' ');
   const searchLabel = clean(options.searchLabel || title.toLowerCase());
   return `
-    <h2>${escapeHtml(title)}</h2>
+    <h2${audit ? ' class="module-audit-heading"' : ''}>${escapeHtml(title)}</h2>
     <div class="${escapeHtml(wrapClass)}">
+      ${audit ? `<div class="security-audit-result-bar"><strong>${sourceRows.length} loaded records</strong><span>Audit history</span></div>` : ''}
       <div class="admin-list-sort-toolbar${searchable ? ' admin-list-toolbar-search' : ''}">
         ${searchable ? `<label class="admin-list-search">Search ${escapeHtml(title)}
           <input type="search" data-admin-list-search placeholder="${escapeHtml(options.searchPlaceholder || `Name, ID, class, type or status`)}" autocomplete="off" aria-label="Search ${escapeHtml(title)}">
@@ -3519,7 +3524,7 @@ function table(title, rows, columns, options = {}) {
           </select>
         </label>
       </div>
-      <table class="admin-table">
+      <table class="admin-table${audit ? ' security-audit-table module-audit-table' : ''}">
         <thead><tr>${numbered ? '<th scope="col" class="academic-serial">S/N</th>' : ''}${columns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join('')}</tr></thead>
         <tbody>${body}${searchable && sortedEntries.length ? `<tr data-list-search-empty hidden><td colspan="${columnCount}">${escapeHtml(options.searchEmptyMessage || `No ${searchLabel} match your search.`)}</td></tr>` : ''}</tbody>
       </table>
@@ -13790,7 +13795,7 @@ function academicTaskDefinitions(view, root) {
     scorebook: [
       { key: 'classRegister', label: 'Class score register', title: 'All-arm class score register', description: 'Select a whole class to review every student and their raw marks per subject and test. Read-only; includes Draft scores.', nodes: nodes(form('[data-academic-class-score-register]')) },
       { key: 'entry', label: 'Enter scores', title: 'Class subject scorebook', description: 'Choose one allocated classroom and subject, then enter every configured assessment component for its students.', nodes: nodes(form('[data-academic-scorebook]')) },
-      { key: 'workflow', label: 'Review and approval', title: 'Score-sheet workflow', description: 'Submit complete sheets, review them, approve them and lock final score records without silent edits.', nodes: nodes(register('Score Sheet Workflow')) },
+      { key: 'workflow', label: 'Review and approval', title: 'Score-sheet workflow', description: 'Submit full-term sheets, review them, approve them and lock final score records without silent edits.', nodes: nodes(register('Score Sheet Workflow')) },
       { key: 'imports', label: 'Spreadsheet imports', title: 'Preview and import scores', description: 'Download a stable template, preview CSV or XLSX rows, choose the commit policy, and roll back unpublished imports.', nodes: nodes(form('[data-academic-score-import]'), register('Score Import History')) },
       { key: 'cbtSync', label: 'CBT synchronization', title: 'Built-in and external CBT scores', description: 'Synchronize approved local CBT batches or import a provider export into the Draft scorebook with roster, component and digest validation.', nodes: nodes(form('[data-academic-external-cbt]'), register('CBT Score Synchronization History')) },
       { key: 'scheme', label: 'Assessment scheme', title: 'Active components and grading', description: 'Review the activated policy revision used to validate scores, calculate weighted totals and assign grades.', nodes: nodes(form('[data-academic-assessment-scheme]')) }
@@ -15449,15 +15454,16 @@ function academicScoreStateOptions(selected = 'Numeric') {
 function academicScoreSheetActions(row, permissions = {}) {
   const status = clean(row.Status || 'Draft');
   const actions = [];
-  if (status === 'Draft' && permissions.canEnterScores) actions.push(['Submitted', 'Submit complete sheet', '&#10148;']);
+  if (status === 'Draft' && permissions.canEnterScores) actions.push(['Submitted', 'Submit full-term sheet', '&#10148;']);
   if (status === 'Submitted' && permissions.canReviewScores) actions.push(['Approved', 'Approve submitted sheet', '&#10003;']);
   if (status === 'Approved' && permissions.canApproveScores) actions.push(['Locked', 'Lock approved sheet', '&#128274;']);
   const statusActions = actions.map(([target, title, icon]) => `<button type="button" class="compact-icon-action compact-edit-action" data-academic-score-status="${target}" data-academic-id="${escapeHtml(row.SheetId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">${icon}</button>`).join('');
   const correctionAction = permissions.canManageScoreCorrections && row.ScoreEditingReactivated !== true
     ? `<button type="button" class="compact-icon-action academic-archive-action" data-academic-score-reactivate data-academic-id="${escapeHtml(row.SheetId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="Reactivate saved score editing" aria-label="Reactivate saved score editing">&#8634;</button>`
     : '';
-  return statusActions || correctionAction
-    ? `<div class="academic-management-row-actions">${statusActions}${correctionAction}</div>`
+  const testReview = permissions.canEnterScores ? `<button type="button" class="secondary" data-academic-test-review="${escapeHtml(row.SheetId)}">Review individual tests</button>` : '';
+  return statusActions || correctionAction || testReview
+    ? `<div class="academic-management-row-actions">${testReview}${statusActions}${correctionAction}</div>`
     : '<span class="muted">View only</span>';
 }
 
@@ -15585,7 +15591,7 @@ function academicScorebookWorkspace(data, rows) {
       <label>Workflow status<input value="${escapeHtml(sheet?.Status || 'New Draft')}" readonly></label>
     </div>
     <div class="academic-attendance-table academic-scorebook-table"><table><thead><tr><th scope="col" class="academic-serial">S/N</th><th class="academic-student-cell">Student</th>${componentHeaders}<th>Total</th><th>Grade</th><th>Completion</th></tr></thead><tbody>${scoreRows || `<tr><td colspan="${scoreFields.length + 5}">Choose an allocated classroom and subject with active students.</td></tr>`}</tbody></table></div>
-    <div class="academic-scorebook-actions"><button type="submit" ${canEdit && roster.length && editableCellCount ? '' : 'disabled'}>Save and lock recorded scores</button>${sheet?.Status === 'Draft' && data.permissions?.canEnterScores ? `<button type="button" class="secondary" data-academic-score-status="Submitted" data-academic-id="${escapeHtml(sheet.SheetId)}" data-academic-revision="${escapeHtml(sheet.RevisionToken)}">Submit complete sheet</button>` : ''}${reactivateButton}</div>
+    <div class="academic-scorebook-actions"><button type="submit" ${canEdit && roster.length && editableCellCount ? '' : 'disabled'}>Save and lock recorded scores</button>${sheet?.Status === 'Draft' && data.permissions?.canEnterScores ? `<button type="button" class="secondary" data-academic-score-status="Submitted" data-academic-id="${escapeHtml(sheet.SheetId)}" data-academic-revision="${escapeHtml(sheet.RevisionToken)}">Submit full-term sheet</button>` : ''}${sheet && data.permissions?.canEnterScores ? `<button type="button" class="secondary" data-academic-test-review="${escapeHtml(sheet.SheetId)}">Review individual tests</button>` : ''}${reactivateButton}</div>
   </form>`;
   const workflow = table('Score Sheet Workflow', rows.scoreSheets, [
     { label: 'Classroom', value: (row) => `${academicLabel(rows.classes, row.ClassId)} / ${academicLabel(rows.arms, row.ArmId)}` },
@@ -16263,12 +16269,20 @@ function printAcademicResultSample(stage = 'primary') {
       : [['English Language', 72, 'A', 5, '8 / 42'], ['Mathematics', 58, 'C', 3, '19 / 42'], ['Biology', 75, 'A', 5, '6 / 42'], ['Computer Studies', 81, 'A', 5, '3 / 42']];
   const resultReference = `SAMPLE-${stage.toUpperCase()}-2026-001`;
   const verificationUrl = `${location.origin}/verify-result.html?reference=${encodeURIComponent(resultReference)}`;
-  const popup = window.open('', '_blank', 'width=980,height=760');
-  if (!popup) {
-    setStatus(document.getElementById('academicManagementStatus'), 'Allow pop-ups for this site to open result previews.', 'bad');
-    return;
-  }
-  popup.opener = null;
+  // Keep the preview in this workspace: popup policies and embedded browsers
+  // can discard a newly opened about:blank window before it is populated.
+  document.getElementById('academicResultSampleDialog')?.close();
+  const dialog = document.createElement('dialog');
+  dialog.id = 'academicResultSampleDialog';
+  dialog.className = 'academic-result-preview-dialog';
+  dialog.setAttribute('aria-label', `${previewLabel} result preview`);
+  dialog.innerHTML = `<header><strong>${escapeHtml(previewLabel)} result preview</strong><button type="button" class="secondary" data-close-result-preview>Close preview</button></header><iframe title="${escapeHtml(previewLabel)} sample report"></iframe>`;
+  dialog.querySelector('[data-close-result-preview]').addEventListener('click', () => dialog.close());
+  dialog.addEventListener('close', () => dialog.remove(), {once:true});
+  document.body.appendChild(dialog);
+  dialog.showModal();
+  const popup = dialog.querySelector('iframe').contentWindow;
+  popup.document.open();
   popup.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(previewLabel)} Result Preview</title><style>
     @page{size:A4 portrait;margin:12mm}*{box-sizing:border-box}body{font:12px/1.4 Arial,sans-serif;color:#17324d;margin:22px}.report{border:2px solid #42576b;padding:18px}.letterhead{display:grid;grid-template-columns:82px 1fr 92px;align-items:center;gap:14px;border-bottom:3px solid #08735f;padding-bottom:12px}.logo{width:76px;height:76px;object-fit:contain}.school{text-align:center}.school h1{margin:0;color:#123f6d;font-size:23px}.school p{margin:3px 0;color:#526b80}.passport{width:82px;height:96px;border:2px solid #c5d2dd;border-radius:12px;display:grid;place-items:center;background:#eef3f7;color:#63788c;font-size:22px;font-weight:800}.title{text-align:center;margin:14px 0 10px}.title h2{margin:0;color:#123f6d}.report-table{width:100%;border-collapse:collapse;margin-top:10px;table-layout:fixed}.report-table th,.report-table td{border:1px solid #cad8e3;padding:6px;text-align:left;vertical-align:top}.report-table th{background:#164a78;color:#fff;font-size:9px;text-transform:uppercase}.identity-table{margin-top:0;background:#eef6fb}.identity-table td{padding:7px 9px}.identity-table span{display:block;color:#61768a;font-size:8px;font-weight:700;text-transform:uppercase}.identity-table strong{display:block;margin-top:3px}.subject-table td:not(:first-child),.subject-table th:not(:first-child),.summary-table td,.summary-table th{text-align:center}.summary-table th{background:#edf8f5;color:#08735f}.summary-table td{font-weight:800}.remarks-table td:first-child{width:72%}.remarks-table p{margin:5px 0}.endorsement,.result-signatory{text-align:center}.endorsement .decision{display:block;margin-bottom:4px;color:#08735f}.result-signatory strong{max-width:100%;white-space:nowrap}.stamp{display:block;width:105px;height:82px;margin:0 auto 4px;object-fit:contain}.criteria-table th{background:#eef4f8;color:#123f6d}.criteria-table ul{margin:0;padding-left:17px;font-size:9px}.verification-table td:first-child{width:90px;text-align:center}.verification-table img{width:74px;height:74px}.reference{font-size:9px;color:#647b90;overflow-wrap:anywhere}.sample{margin-top:12px;color:#a42626;font-weight:800;text-align:center}.no-print{margin-top:12px;padding:9px 14px;border:0;border-radius:7px;background:#1769e0;color:#fff;font-weight:700}@media print{body{margin:0}.report{border-color:#42576b}.no-print{display:none}.sample{display:block}}
   </style></head><body><main class="report"><header class="letterhead"><img class="logo" src="${escapeHtml(profile.DocumentLogoUrl || '/api/document-logo')}" alt="${escapeHtml(profile.SchoolName || 'School')} logo" onerror="this.style.visibility='hidden'"><div class="school"><h1>${escapeHtml(profile.SchoolName || 'Your School')}</h1><p>${escapeHtml(profile.SchoolAddress || '')}</p><p>${escapeHtml([profile.SchoolPhone, profile.SchoolEmail].filter(Boolean).join(' · '))}</p></div><div class="passport" aria-label="Sample passport photograph">SL</div></header><section class="title"><h2>Academic Result</h2></section><table class="report-table identity-table"><tbody><tr><td><span>${pupil ? 'Pupil' : 'Student'}</span><strong>Sample Learner</strong></td><td><span>Admission number</span><strong>SAMPLE/001</strong></td><td><span>Class</span><strong>${escapeHtml(className)}</strong></td></tr><tr><td><span>Gender</span><strong>Female</strong></td><td><span>Academic session</span><strong>2026/2027</strong></td><td><span>Period</span><strong>First Term · End of Term</strong></td></tr></tbody></table><table class="report-table subject-table"><thead><tr><th>Subject</th><th>Total</th><th>Grade</th><th>Point</th><th>Position / assessed</th><th>Remark</th></tr></thead><tbody>${subjects.map(([name, total, grade, point, position]) => `<tr><td>${escapeHtml(name)}</td><td>${total}</td><td>${grade}</td><td>${point}</td><td>${escapeHtml(position)}</td><td>${total >= 70 ? 'Excellent progress' : 'Good progress'}</td></tr>`).join('')}</tbody></table><table class="report-table summary-table"><thead><tr><th>Overall average</th><th>Class average</th><th>Overall grade</th><th>Attendance</th><th>Decision</th></tr></thead><tbody><tr><td>75.5%</td><td>68.2%</td><td>A · 4 of ${primary ? 35 : nursery ? 28 : 42}</td><td>96%</td><td>Promoted</td></tr></tbody></table><table class="report-table remarks-table"><tbody><tr><td><p><strong>Form Teacher:</strong> A commendable performance has been recorded. Continue consistent study habits.</p><p><strong>${executiveLabel}:</strong> Current performance meets the configured promotion benchmark.</p></td><td class="endorsement result-signatory"><strong class="decision">Promoted to the next class</strong><img class="stamp" src="${escapeHtml(profile.DocumentStampUrl || '/api/document-stamp')}" alt="Official stamp" onerror="this.style.visibility='hidden'"><strong>${escapeHtml(profile.ResultSignatoryName || `Authorized ${executiveLabel}`)}</strong><br><small>${escapeHtml(profile.ResultSignatoryTitle || 'Official result signatory')}</small></td></tr></tbody></table><table class="report-table criteria-table"><thead><tr><th>Grade key</th><th>Junior</th><th>Senior</th></tr></thead><tbody><tr><td><ul><li><strong>A</strong> 70-100% - Excellent</li><li><strong>B</strong> 60-69% - Very good</li><li><strong>C</strong> 50-59% - Good</li></ul></td><td><ul><li>Promoted: 50% and above</li><li>Maximum failed subjects: 2</li><li>Minimum attendance: 75%</li></ul></td><td><ul><li>Promoted: minimum required Core credits</li><li>English and Mathematics requirements apply</li><li>Minimum attendance: 75%</li></ul></td></tr></tbody></table><table class="report-table verification-table"><tbody><tr><td><img src="${escapeHtml(`${location.origin}/api/academic-result-qr?reference=${encodeURIComponent(resultReference)}`)}" alt="Result verification QR code" onerror="this.style.visibility='hidden'"></td><td><strong>Result verification</strong><p class="reference">Result reference: ${escapeHtml(resultReference)}<br>Verification: ${escapeHtml(verificationUrl)}</p></td></tr></tbody></table><p class="sample">${escapeHtml(previewLabel.toUpperCase())} SAMPLE PREVIEW · NOT AN OFFICIAL RESULT</p><button class="no-print" onclick="window.print()">Print preview</button></main></body></html>`);
@@ -18819,6 +18833,23 @@ function bindAcademicManagement() {
       } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
     });
   });
+  panelEl.querySelectorAll('[data-academic-test-review]').forEach(button=>button.addEventListener('click',async()=>{
+    const sheet=academicFind(academicManagementData?.scoreSheets||[],button.dataset.academicTestReview);if(!sheet)return;
+    const branch=selectedBranchId,username=currentUser?.username;
+    await runButtonAction(button,'Loading tests…',async()=>{
+      try{
+        const {openAcademicTestReviews}=await import('./academic-component-review.js?v=20261026');
+        await openAcademicTestReviews({sheet,payload:academicScoreSheetRequestPayload,request:academicManagementRequest,
+          permissions:academicManagementData.permissions||{},
+          title:[academicLabel(academicManagementData.classes,sheet.ClassId),academicLabel(academicManagementData.arms,sheet.ArmId),academicLabel(academicManagementData.subjects,sheet.SubjectId)].join(' · '),
+          isCurrent:()=>branch===selectedBranchId&&username===currentUser?.username,
+          onLoaded:result=>{academicManagementData=result;const saved=result.scorebookSnapshot?.sheet;
+            const form=panelEl.querySelector('[data-academic-scorebook]');
+            if(saved&&form?.elements.SheetId?.value===saved.SheetId)form.elements.SheetRevisionToken.value=saved.RevisionToken;}
+        });
+      }catch(error){setStatus(document.getElementById('academicManagementStatus'),error.message,'bad');}
+    });
+  }));
   panelEl.querySelectorAll('[data-academic-score-status]').forEach((button) => button.addEventListener('click', async () => {
     const sheet = academicFind(academicManagementData?.scoreSheets || [], button.dataset.academicId);
     if (!sheet) return;
@@ -23444,7 +23475,7 @@ function renderStaffSecurityActivity() {
   panel.innerHTML = `<h2>Security Activity</h2>
     <p class="status${state.error ? ' bad' : ''}" role="status" aria-live="polite">${escapeHtml(message)}</p>
     <button type="button" data-refresh-staff-audit${state.loading ? ' disabled' : ''}>Refresh security activity</button>
-    <div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>Time</th><th>Action</th><th>Account</th><th>Actor</th><th>Platform</th></tr></thead><tbody>
+    <div class="admin-table-wrap security-audit-table-wrap module-audit-table-wrap"><table class="admin-table security-audit-table module-audit-table"><thead><tr><th>Time</th><th>Action</th><th>Account</th><th>Actor</th><th>Platform</th></tr></thead><tbody>
       ${staffAuditData.length ? staffAuditData.map((row) => `<tr><td>${escapeHtml(DynamaxTime.formatDateTime(row.Timestamp))}</td><td>${escapeHtml(row.Action)}</td><td>${escapeHtml(row.Username)}</td><td>${escapeHtml(row.Actor)}</td><td>${escapeHtml(row.SourcePlatform)}</td></tr>`).join('')
         : `<tr><td colspan="5">${state.error ? 'Security history is unavailable; retry below.' : state.loading || !state.loaded ? 'Waiting for security activity.' : state.cursor ? 'No matching entries in the pages checked so far. Load older activity to continue.' : 'No security activity recorded for this branch.'}</td></tr>`}
     </tbody></table></div>

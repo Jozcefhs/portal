@@ -1,0 +1,20 @@
+/* Shared audit appearance. Load this with style.css; no data-loading behaviour. */
+.module-audit-workspace{min-width:0}
+.module-audit-heading{color:var(--finance-navy,#123f6d)}
+.module-audit-table-wrap{overflow:auto;min-height:0;max-height:65vh;scrollbar-gutter:stable}
+.staff-page .module-audit-table{width:100%;min-width:920px;border-collapse:separate;border-spacing:0}
+.staff-page .module-audit-table th{position:sticky;top:0;z-index:1;background:#f1f6fa;color:#486581;padding:12px 10px;text-align:left;font-size:10px;letter-spacing:.035em;text-transform:uppercase;border-bottom:1px solid #dce6ee}
+.staff-page .module-audit-table td{padding:14px 10px;vertical-align:top;border-bottom:1px solid #e2eaf2;white-space:normal;overflow-wrap:anywhere;line-height:1.55;font-size:12px;color:#173b59}
+.staff-page .module-audit-table tbody tr:nth-child(even){background:#f7fbfe}
+.staff-page .module-audit-table tbody tr:hover{background:#edf6fc}
+.staff-page .module-audit-table td:first-child{min-width:148px;white-space:nowrap}
+.staff-page .module-audit-table td:last-child{min-width:220px;max-width:460px;overflow:visible;text-overflow:clip;white-space:normal}
+.staff-page .module-audit-table .security-audit-description{min-width:190px;max-width:300px}
+.module-audit-table details{margin-top:6px}.module-audit-table summary{cursor:pointer;color:#1767ad;font-size:11px}.module-audit-table details p{margin:6px 0 0}
+html[data-theme="dark"] .module-audit-table th{background:#182b40;color:#c4d4e4;border-color:#33465c}
+html[data-theme="dark"] .module-audit-table td{color:#dce8f4;border-color:#33465c}
+html[data-theme="dark"] .module-audit-table tbody tr:nth-child(even){background:#142337}
+html[data-theme="dark"] .module-audit-table tbody tr:hover{background:#20344b}
+html[data-theme="dark"] .module-audit-table summary{color:#93caff}
+@media(max-width:560px){.staff-page .module-audit-table th{font-size:9px}.staff-page .module-audit-table td{font-size:11px;padding:11px 8px}.module-audit-table-wrap{max-height:58vh}}
+@media print{.module-audit-table-wrap{max-height:none;overflow:visible}.staff-page .module-audit-table{min-width:100%}.staff-page .module-audit-table th{position:static}.staff-page .module-audit-table td{min-width:0!important;white-space:normal!important}.module-audit-table tr{break-inside:avoid}}

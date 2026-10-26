@@ -178,7 +178,7 @@ test('school, church, other organisations and the Dynamax control plane use sepa
   assert.equal(churchConfig.firestore.indexes, 'firestore.church.indexes.json');
   assert.equal(organizationConfig.firestore.indexes, 'firestore.organization.indexes.json');
   assert.equal(platformConfig.firestore.indexes, 'firestore.platform.indexes.json');
-  assert.equal(schoolIndexes.indexes.length, 46);
+  assert.equal(schoolIndexes.indexes.length, 48);
   assert.equal(churchIndexes.indexes.length, 30);
   assert.equal(organizationIndexes.indexes.length, 30);
   assert.deepEqual(platformIndexes, { indexes: [], fieldOverrides: [] });

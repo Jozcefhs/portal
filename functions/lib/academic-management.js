@@ -21,6 +21,7 @@ import { assertStudentCanHaveActiveMembership, studentStatusChanged } from './st
 import { staffRecordMatchesEdition } from './records-desk.js';
 import { createNotification } from './notifications.js';
 import { normalizeSchoolCalendar, schoolCalendarDayIsOpen, schoolCalendarSummary } from './academic-school-calendar.js';
+import {academicComponentReviews, academicComponentReviewTransition} from './academic-component-review.js';
 import {
   advanceAcademicTimetableGeneration, buildAcademicGenerationProblem,
   normalizeAcademicGenerationRules, validateAcademicGeneratedEntries
@@ -5681,6 +5682,7 @@ export async function getAcademicScorebookContext(env, user = {}, input = {}) {
     message: 'Scorebook context loaded.',
     assessmentScheme: context.scheme,
     scorebookSnapshot: academicScorebookSnapshot(context),
+    componentReviews: context.existing ? await academicComponentReviews(context.existing, context.roster, context.state.studentScores) : [],
     scorebookContext: {
       SheetId: context.SheetId,
       SessionId: context.session.SessionId,
@@ -6008,18 +6010,47 @@ export async function reactivateAcademicClassScoreEditing(env, user = {}, input 
     message: `${schoolClass.Name}: ${pending.length} scorebooks reopened across all arms and subjects; ${sheets.length - pending.length} already open. Saved marks and published results are unchanged. Each scorebook locks again after its next save.` };
 }
 
-function assertAcademicScoreSheetComplete(state, sheet, roster) {
+async function assertAcademicScoreSheetComplete(state, sheet, roster) {
   const scores = state.studentScores.filter((row) => row.SheetId === sheet.SheetId);
-  const complete = new Set(scores.filter((row) => row.CompletionStatus === 'Complete').map((row) => lower(row.StudentRef)));
+  const scheme = academicAssessmentScheme({Assessment:{Components:sheet.AssessmentComponents,GradeBands:sheet.GradeBands}}, {RevisionId:sheet.AssessmentRevisionId});
+  const complete = new Set(scores.filter((row) => {
+    try { return calculateAcademicStudentScore(scheme, row.ComponentScores).CompletionStatus === 'Complete'; }
+    catch { return false; }
+  }).filter(row => scores.filter(other => lower(other.StudentRef) === lower(row.StudentRef)).length === 1).map((row) => lower(row.StudentRef)));
   const pending = roster.filter((row) => !complete.has(lower(row.StudentRef)));
-  if (pending.length) throw failure(`${pending.length} student score${pending.length === 1 ? ' is' : 's are'} incomplete. Complete every required component before submission.`, 409, 'ACADEMIC_SCORE_SHEET_INCOMPLETE');
+  if (pending.length) {
+    const reviews = await academicComponentReviews(sheet, roster, scores);
+    const missing = reviews.filter(row => row.MissingCount && scheme.Components.find(c => c.Id === row.ComponentId)?.Required !== false).map(row => `${row.Name} (${row.MissingCount})`);
+    throw failure(`${pending.length} student score${pending.length === 1 ? ' is' : 's are'} incomplete for the full-term sheet. Required marks still missing: ${missing.join(', ') || 'review unresolved or exempt-only scores'}. To submit a completed test such as CA1, use Review individual tests.`, 409, 'ACADEMIC_SCORE_SHEET_INCOMPLETE');
+  }
   return scores;
+}
+
+async function changeAcademicComponentReview(env, user, input, context) {
+  const {existing, roster, state, permissions} = context;
+  const reviews = await academicComponentReviews(existing, roster, state.studentScores);
+  const review = reviews.find(row => row.ComponentId === clean(input.ComponentId));
+  const target = clean(input.Status || input.TargetStatus), timestamp = nowIso();
+  const update = academicComponentReviewTransition(existing, review, target, permissions,
+    {timestamp, name:actorName(user), username:actorUsername(user)}, input.Reason);
+  if (!update) return {ok:true,partialAcademicManagement:true,message:`${review.Name} is already ${target}. No duplicate review was recorded.`};
+  const record = academicScoreSheetRecord(context, existing, user, timestamp, {
+    ComponentReviews:{...(existing.ComponentReviews || {}), [review.ComponentId]:update}
+  });
+  const writes = [{collectionPath:ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSheets,documentId:record.SheetId,
+    data:withoutMetadata(record),...writePrecondition(existing,input.RevisionToken || input.SheetRevisionToken)},
+    auditWrite(user, `TEST_${target.toUpperCase()}`, 'scoreSheet', record, `${review.Name}: ${review.Status} -> ${target}${input.Reason ? `; ${clean(input.Reason)}` : ''}`)];
+  Object.assign(writes[1].data,{ComponentId:review.ComponentId,ComponentName:review.Name,ReviewStatus:target,ScoreDigest:review.ScoreDigest,RosterCount:review.RosterCount});
+  if (target === 'Submitted') await commitAcademicSubmission(env,context,user,input,'scorebook',writes);
+  else await commitAcademicBatch(env,writes,'The marks or test review changed. Reload the saved test before continuing.');
+  return {ok:true,partialAcademicManagement:true,message:`${review.Name} moved to ${target}. Other tests and all saved marks are unchanged.`};
 }
 
 export async function changeAcademicScoreSheetStatus(env, user = {}, input = {}) {
   const context = await academicScoreSheetContext(env, user, input, 'canEnterScores');
   const { permissions, scope, state, existing, roster } = context;
   if (!existing) throw failure('Save at least one draft score before changing the score-sheet status.', 409);
+  if (clean(input.ComponentId)) return changeAcademicComponentReview(env,user,input,context);
   const target = oneOf(input.Status || input.TargetStatus, ACADEMIC_SCORE_SHEET_STATUSES, '');
   if (!target) throw failure('Choose Draft, Submitted, Approved or Locked.');
   const current = clean(existing.Status || 'Draft');
@@ -6029,7 +6060,7 @@ export async function changeAcademicScoreSheetStatus(env, user = {}, input = {})
     || (current === 'Approved' && target === 'Locked');
   const reopening = target === 'Draft' && ['Submitted', 'Approved', 'Locked'].includes(current);
   if (!normalTransition && !reopening) throw failure(`${current} score sheets cannot move directly to ${target}.`, 409, 'ACADEMIC_SCORE_STATUS_INVALID');
-  if (target === 'Submitted') assertAcademicScoreSheetComplete(state, existing, roster);
+  if (['Submitted','Approved','Locked'].includes(target)) await assertAcademicScoreSheetComplete(state, existing, roster);
   if (target === 'Approved' && !permissions.canReviewScores) throw failure('Only an academic reviewer may approve submitted scores.', 403);
   if (target === 'Locked' && !permissions.canApproveScores) throw failure('Only an academic approver may lock approved scores.', 403);
   if (reopening && !permissions.canManageScoreCorrections) throw failure('Only an Admin or Management user may reopen recorded scores.', 403);

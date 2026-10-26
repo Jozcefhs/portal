@@ -64,6 +64,7 @@ export const ORGANIZATION_SECTION_LABELS = Object.freeze({
 });
 
 export const STAFF_ROLE_OPTIONS = Object.freeze([
+  'International Studies Officer',
   'Vendor User',
   'Super Admin', 'Director', 'Admin', 'Principal', 'Vice Principal Academics', 'Vice Principal Administration',
   'Head Teacher', 'Assistant Head Teacher', 'Teacher', 'ICT', 'Librarian', 'Senior Pastor', 'Head Minister',
@@ -82,6 +83,7 @@ export const STAFF_ROLE_OPTIONS = Object.freeze([
 ]);
 
 const LEGACY_ROLE_DEFAULTS = Object.freeze({
+  'International Studies Officer': ['executiveOffice'],
   'Super Admin': ['recordsDesk', 'executiveOffice', 'admissions', 'formPurchases', 'students', 'academics', 'library', 'studentConduct', 'accounts', 'incomeAnalytics', 'members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore', 'organizationStore', 'restaurant', 'hotel', 'dataBackup', 'securityAudit', 'staffUsers'],
   Director: ['recordsDesk', 'executiveOffice', 'admissions', 'formPurchases', 'students', 'academics', 'library', 'studentConduct', 'accounts', 'incomeAnalytics', 'members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore', 'organizationStore', 'restaurant', 'hotel', 'dataBackup', 'securityAudit', 'staffUsers'],
   Admin: ['recordsDesk', 'admissions', 'formPurchases', 'students', 'academics', 'library', 'studentConduct', 'accounts', 'incomeAnalytics', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore'],
