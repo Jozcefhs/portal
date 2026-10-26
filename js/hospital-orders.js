@@ -154,7 +154,7 @@
     $('loadCriticalAlerts').onclick=()=>run(()=>loadAlerts());$('nextCriticalAlerts').onclick=()=>run(()=>loadAlerts(alertCursor));
     bind('cancelOrderForm','cancelOrder',()=>fields($('cancelOrderForm')),'Remaining order cancelled. Records preserved.',false);
     $('verifyReport').onclick=()=>run(async()=>{requireConfirm();if(dirty.has('reportForm'))throw Error('Save the report changes before verification.');if(!await confirmLeave('',false))return;await api('verifyInvestigationReport',{...version(),ReportId:current.order.LatestReportId},true);await loadOrder();status('Report independently verified.');});
-    $('printSpecimen').onclick=()=>{const o=current.order,p=current.patient;$('cardPrint').innerHTML=`<h2>Laboratory specimen</h2><strong>${esc(o.OrderNumber)}</strong><p>${esc(p.DisplayName)} · ${esc(p.HospitalNumber)}</p><p>DOB ${esc(p.DateOfBirth||'Not recorded')}</p><p>${esc(o.Fields.Service)} · ${esc(o.Fields.Specimen)}</p>`;window.print();};
+    $('printSpecimen').onclick=()=>{const o=current.order,p=current.patient;$('cardPrint').classList.remove('billing-print');$('cardPrint').innerHTML=`<h2>Laboratory specimen</h2><strong>${esc(o.OrderNumber)}</strong><p>${esc(p.DisplayName)} · ${esc(p.HospitalNumber)}</p><p>DOB ${esc(p.DateOfBirth||'Not recorded')}</p><p>${esc(o.Fields.Service)} · ${esc(o.Fields.Specimen)}</p>`;window.print();};
     async function loadStock(query,next=null){
       if(!next){stockQuery=query;batches=[];}
       const data=await api('stockBatches',{...stockQuery,...(next?{Cursor:next}:{})});batches=[...new Map([...batches,...data.batches].map(b=>[b.BatchId,b])).values()];stockCursor=data.next;

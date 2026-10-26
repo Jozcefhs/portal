@@ -304,6 +304,8 @@ const tabConfig = [
   ['hospitalOrders','Prescriptions and investigations'],
   ['hospitalPharmacy','Pharmacy'],
   ['hospitalLaboratory','Laboratory'],
+  ['hospitalBilling','Billing and payments'],
+  ['hospitalHmo','HMO and insurance'],
   ['hospitalImaging','Imaging investigations'],
   ['recordsDesk', 'Records Desk'],
   ['executiveOffice', 'Executive Office'],
@@ -3061,9 +3063,9 @@ function renderModuleSummary(active, liveData = null) {
     renderSummary(dashboardData?.summary || {});
     return;
   }
-  if (['hospitalPatients', 'hospitalReception', 'hospitalTriage', 'hospitalConsultations','hospitalOrders','hospitalPharmacy','hospitalLaboratory','hospitalImaging'].includes(active)) {
+  if (['hospitalPatients', 'hospitalReception', 'hospitalTriage', 'hospitalConsultations','hospitalOrders','hospitalPharmacy','hospitalLaboratory','hospitalImaging','hospitalBilling','hospitalHmo'].includes(active)) {
     summaryEl.replaceChildren();
-    const task={hospitalPatients:'patients',hospitalReception:'reception',hospitalTriage:'triage',hospitalConsultations:'consultations',hospitalOrders:'orders',hospitalPharmacy:'pharmacy',hospitalLaboratory:'laboratory',hospitalImaging:'imaging'}[active];
+    const task={hospitalPatients:'patients',hospitalReception:'reception',hospitalTriage:'triage',hospitalConsultations:'consultations',hospitalOrders:'orders',hospitalPharmacy:'pharmacy',hospitalLaboratory:'laboratory',hospitalImaging:'imaging',hospitalBilling:'billing',hospitalHmo:'hmo'}[active];
     panelEl.innerHTML = `<h2>${escapeHtml(staffTabLabel(active, 'Hospital workspace'))}</h2><p>Search patients by name, hospital number or NFC card. Choose a period to load visits and open the selected care record.</p><a class="btn" href="/hospital.html?branch=${encodeURIComponent(selectedBranchId || 'main')}&task=${task}">Open Hospital workspace</a>`;
     return;
   }

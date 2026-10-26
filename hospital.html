@@ -3,13 +3,14 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Hospital workspace · Dynamax</title>
-  <link rel="stylesheet" href="/css/hospital.css?v=20261026-orders">
+  <link rel="stylesheet" href="/css/hospital.css?v=20261026-billing">
   <link rel="stylesheet" href="/css/app-dialogs.css">
   <script src="/js/app-dialogs.js?v=20261016-grouped-form-validation" defer></script>
   <script src="/js/staff-idle-session.js" defer></script>
-  <script src="/js/hospital-clinical.js?v=20261026-orders" defer></script>
-  <script src="/js/hospital-orders.js?v=20261026-orders" defer></script>
-  <script src="/js/hospital.js?v=20261026-orders" defer></script>
+  <script src="/js/hospital-clinical.js?v=20261026-billing" defer></script>
+  <script src="/js/hospital-orders.js?v=20261026-billing" defer></script>
+  <script src="/js/hospital-billing.js?v=20261026-billing" defer></script>
+  <script src="/js/hospital.js?v=20261026-billing" defer></script>
 </head>
 <body>
   <main>
@@ -17,7 +18,8 @@
     <p id="status" role="status" aria-live="polite">Checking your staff session…</p>
     <div id="workspace" hidden>
       <div class="toolbar"><label>Working branch<select id="branch"></select></label><button id="refresh" type="button">Refresh access</button></div>
-      <nav aria-label="Hospital tasks"><button type="button" data-tab="patients">Patients and NFC cards</button><button type="button" data-tab="reception">Reception visits</button><button type="button" data-tab="care" hidden>Clinical record</button><button type="button" data-tab="orders" hidden>Prescriptions and investigations</button></nav>
+      <nav aria-label="Hospital tasks"><button type="button" data-tab="patients">Patients and NFC cards</button><button type="button" data-tab="reception">Reception visits</button><button type="button" data-tab="care" hidden>Clinical record</button><button type="button" data-tab="orders" hidden>Prescriptions and investigations</button><button type="button" data-tab="billing" hidden>Billing and HMO</button></nav>
+      <section id="billing" hidden></section>
       <section id="orders" hidden></section>
       <section id="patients">
         <h2>Find a patient</h2>

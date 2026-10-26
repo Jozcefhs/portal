@@ -25,7 +25,7 @@ test('Hospital has a distinct identity, catalogue and dependency-aware plans', (
 });
 
 test('cashiers and finance staff do not gain patient access from shared administration', () => {
-  for (const role of ['Accounts Officer', 'Hospital Cashier', 'Payroll Officer', 'External Auditor']) {
+  for (const role of ['Accounts Officer', 'Payroll Officer', 'External Auditor']) {
     assert.deepEqual(hospitalCapabilities({ ...actor, role }), []);
     assert.ok(!defaultModulesForRole(role, { edition: 'hospital', featureFlags: featureFlagsForEdition('hospital') }).includes('hospitalPatients'));
   }

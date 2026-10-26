@@ -37,6 +37,8 @@ Issued instructions remain part of the original order. To change an order, the p
 
 Dispensing and returns create linked charge/credit events marked **Awaiting billing**. They do not issue invoices, record payments, post journals or initiate refunds. Patient returns cannot create credit above the original dispensing charge. Card-terminal payments remain disabled.
 
+The subsequent [Hospital billing workflow](hospital-billing-workflows.md) now consumes those events explicitly, preserving their original amounts and stock links. New medicine charges include their service code, description and quantity for agreed HMO tariff matching.
+
 ## Laboratory and imaging
 
 1. Select dates in the relevant workspace and open an order.

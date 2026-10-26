@@ -1,0 +1,154 @@
+(() => {
+  'use strict';
+  const $=id=>document.getElementById(id),esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const money=n=>new Intl.NumberFormat('en-NG',{style:'currency',currency:'NGN'}).format((n||0)/100);
+  const values=form=>Object.fromEntries([...form.elements].filter(e=>e.name&&!['checkbox','button','submit'].includes(e.type)).map(e=>[e.name,e.value]));
+  const input=(name,label,attrs='')=>`<label>${label}<input name="${name}" ${attrs}></label>`;
+  const dates=prefix=>`<label>From<input id="${prefix}From" type="date" required></label><label>To<input id="${prefix}To" type="date" required></label>`;
+  const amount=(name='Amount',label='Amount (NGN)')=>input(name,label,'type="number" min="0.01" max="10000000" step="0.01" required');
+  const reference=()=>input('Reference','Receipt / bank / submission reference','maxlength="160" required');
+  const note=(name='Note',label='Notes')=>`<label>${label}<textarea name="${name}" maxlength="2000" required></textarea></label>`;
+  const range=prefix=>({fromDate:$(prefix+'From').value,toDate:$(prefix+'To').value});
+  const date=n=>new Date(n).toLocaleString('en-GB',{timeZone:'Africa/Lagos'});
+  window.DynamaxHospitalBilling={create({api,run,can,writable,status,navigate}){
+    let context=null,selected=null,claim=null,plan=null,settings=null,dirty=false;
+    const loaded=new Map();let charges=[],payments=[];
+    $('billing').innerHTML=`<h2>Billing and HMO</h2><p>Open a patient’s reception visit to add charges or record HMO eligibility. Choose dates before loading financial records.</p>
+      <form id="billRegister" class="toolbar">${dates('billList')}<label>Register<select id="billRegisterKind"><option value="billingInvoices">Invoices</option><option value="billingCharges">Charges and return credits</option><option value="hmoClaims">HMO claims</option></select></label><button>Load selected period</button><button id="billReload" type="button" class="secondary">Refresh selected period</button></form>
+      <div id="billRows" class="table-wrap"></div><button id="billNext" hidden>Next page</button><button id="billPrev" hidden>Previous page</button><p id="billListNote" class="hint">No financial history requested.</p>
+      <section id="billVisit" hidden><h3 id="billVisitTitle"></h3><p id="billCoverage"></p><button id="billVisitRefresh" type="button">Refresh billing context</button>
+        <details id="billService"><summary>Add a service charge</summary><p>Use the same reference when recording the same service again. Medicine charges come from dispensing.</p><form id="billServiceForm"><div class="form-grid">
+          <label>Category<select name="Category"><option>Consultation</option><option>Laboratory</option><option>Imaging</option><option>Procedure</option><option>Bed</option><option>Other</option></select></label>
+          ${input('ServiceCode','Service code','required maxlength="60"')}${input('Description','Service description','required maxlength="200"')}${input('Quantity','Quantity','required type="number" min="0.001" step="0.001" value="1"')}${amount('UnitPrice','Unit price (NGN)')}${reference()}${input('OrderId','Investigation order reference (laboratory / imaging)','maxlength="128"')}
+        </div><button>Save service charge</button></form></details>
+        <details id="billEligibility"><summary>Staff-verified HMO eligibility</summary><p>Verification and authorisation must come from the insurer. Saving here records that verification; it does not contact the insurer.</p>
+          <form id="billPlanFind" class="toolbar">${input('Code','Plan code','required maxlength="60"')}<button>Find plan</button></form><p id="billPlanFound"></p>
+          <form id="billEligibilityForm"><div class="form-grid">${input('MemberNumber','Membership number','required maxlength="100"')}${input('Authorization','Authorisation reference','required maxlength="160"')}${input('From','Eligible from','type="date" required')}${input('To','Eligible to','type="date" required')}${note('VerificationNote','How and when eligibility was verified')}</div><button>Save verified eligibility</button></form>
+        </details>
+        <form id="billVisitCharges" class="toolbar">${dates('billCharge')}<button>Load visit charges</button><button id="billChargeRefresh" type="button">Refresh charges</button></form>
+        <div id="billChargeRows" class="table-wrap"></div><button id="billChargeNext" hidden>More visit charges</button>
+        <label class="check-line"><input id="billUseHmo" type="checkbox">Use the displayed verified HMO plan (uncovered services remain self-pay)</label><p id="billEstimate"></p>
+        <button id="billIssue" type="button">Issue invoice for selected charges</button>
+      </section>
+      <section id="billInvoice" hidden><h3 id="billInvoiceTitle"></h3><p id="billInvoiceSummary"></p><button id="billInvoiceRefresh" type="button">Refresh invoice</button><button id="billPrint" type="button">Print invoice</button>
+        <div id="billInvoiceLines" class="table-wrap"></div><p id="billClaimState"></p>
+        <label class="check-line"><input id="billConfirm" type="checkbox">I checked the patient, payer and financial information.</label>
+        <details id="billPayment"><summary>Record payment / HMO settlement</summary><form id="billPaymentForm"><div class="form-grid"><label>Payer<select name="Payer"><option>Patient</option><option value="Hmo">HMO</option></select></label>${amount()}<label>Payment method<select name="Method"><option>Cash</option><option>Bank transfer</option></select></label>${reference()}</div><p>Record confirmed money received. Card-terminal payments are disabled.</p><button>Record payment</button></form></details>
+        <details id="billClaim"><summary>HMO claim review</summary><button id="billPrintClaim" type="button">Print claim for insurer</button><form id="billClaimForm"><div class="form-grid"><label>Recorded insurer workflow<select name="Status"><option>Submitted</option><option>Approved</option><option>Rejected</option></select></label>${reference()}${note()}</div><button>Save claim status</button></form></details>
+        <details id="billCredit"><summary>Apply a medicine return credit</summary><p>Choose the credit in the dated charges register to fill its reference. The original invoice and charge remain unchanged.</p><form id="billCreditForm">${input('ChargeId','Return credit reference','required maxlength="128"')}<button>Apply return credit</button></form></details>
+        <details id="billAdjustment"><summary>Credit an invoiced service</summary><p>For approved fee corrections or a service not delivered. Medicine credits use the pharmacy return workflow.</p><form id="billAdjustmentForm"><label>Original service<select id="billAdjustmentCharge" required></select></label>${amount()}${reference()}${note('Reason','Reason for service credit')}<button>Issue service credit note</button></form></details>
+        <details id="billHistory"><summary>Receipts, refunds and invoice history</summary><form id="billHistoryForm" class="toolbar">${dates('billHistory')}<button>Load invoice history</button><button id="billLoadPayments" type="button">Load receipts for these dates</button></form><div id="billHistoryRows" class="table-wrap"></div><button id="billHistoryNext" hidden>Next history page</button>
+          <div id="billPayments" class="table-wrap"></div><button id="billPaymentsNext" hidden>Next receipts</button>
+          <form id="billRefundForm"><label>Original receipt<select id="billRefundReceipt" required></select></label>${amount()}${reference()}${note('Reason','Reason for refund')}<button>Record refund</button></form>
+        </details>
+      </section>
+      <details id="billPlanEditor"><summary>HMO plans and agreed tariffs</summary><p>Enter a plan code and load it before editing. Existing invoices retain the tariff and coverage agreed when issued.</p>
+        <form id="billEditPlanFind" class="toolbar">${input('Code','Plan code','required maxlength="60"')}<button>Load plan to edit</button><button id="billNewPlan" type="button">New plan</button></form>
+        <form id="billPlanForm"><div class="form-grid">${input('Code','Plan code','required maxlength="60"')}${input('Insurer','Insurer','required maxlength="160"')}${input('Name','Plan name','required maxlength="160"')}</div><label class="check-line"><input id="billPlanActive" type="checkbox" checked>Active plan</label>
+          <div id="billTariffs"></div><button id="billAddTariff" type="button">Add covered service</button><button>Save HMO plan</button>
+        </form></details>
+      <details id="billSettings"><summary>Billing account mappings</summary><p>Use existing active chart-of-account codes. Account codes and historical journals are preserved.</p><button id="billLoadSettings" type="button">Load account mappings</button><form id="billSettingsForm"><div class="form-grid">${Object.entries({PatientReceivable:'Patient receivable (Asset)',HmoReceivable:'HMO receivable (Asset)',Revenue:'Hospital income (Revenue)',Cash:'Cash received (Asset)',Bank:'Bank receipts (Asset)'}).map(([k,v])=>input(k,v,'required maxlength="60"')).join('')}</div><button>Save billing accounts</button></form></details>`;
+    $('billing').addEventListener('input',e=>{if(e.target.closest('#billServiceForm,#billEligibilityForm,#billPaymentForm,#billClaimForm,#billCreditForm,#billRefundForm,#billAdjustmentForm,#billPlanForm,#billSettingsForm'))dirty=true;});
+    async function confirmLeave(){if(!dirty)return true;return window.DynamaxDialogs.confirm({title:'Unsaved billing changes',message:'Discard these unsaved billing changes and continue?',confirmText:'Discard edits'});}
+    const submit=(id,fn)=>$(id).onsubmit=e=>{e.preventDefault();run(fn);};
+    const confirm=()=>{if(!$('billConfirm').checked)throw Error('Confirm the patient and financial information first.');};
+    const scope=()=>({PatientId:context.patient.PatientId,VisitId:context.visit.VisitId});
+    const invoiceScope=()=>({InvoiceId:selected.InvoiceId,PatientId:selected.PatientId,Revision:selected.Revision,ConfirmPatient:true});
+    function permissions(){
+      document.querySelector('[data-tab=billing]').hidden=!(can('billing.read')||can('hmo.work'));
+      for(const [id,permission] of Object.entries({billService:'billing.write',billIssue:'billing.write',billPayment:'billing.collect',billCredit:'billing.write',billRefundForm:'billing.refund',billAdjustment:'billing.refund',billClaim:'hmo.work',billEligibility:'hmo.work',billPlanEditor:'hmo.work',billSettings:'billing.configure'}))$(id).hidden=!writable(permission);
+      $('billRegisterKind').querySelector('[value=hmoClaims]').disabled=!can('hmo.work');
+    }
+    function clear(){context=selected=claim=plan=settings=editingPlan=null;listPages=[];listIndex=0;listPayload=listAction=null;charges=[];payments=[];loaded.clear();dirty=false;
+      $('billVisit').hidden=$('billInvoice').hidden=true;$('billing').querySelectorAll('form').forEach(f=>f.reset());
+      for(const id of ['billRows','billChargeRows','billInvoiceLines','billHistoryRows','billPayments','billTariffs','billPlanFound','billInvoiceTitle','billInvoiceSummary','billClaimState','billCoverage','billVisitTitle','billEstimate','billRefundReceipt','billAdjustmentCharge'])$(id).replaceChildren();
+      for(const id of ['billNext','billPrev','billChargeNext','billHistoryNext','billPaymentsNext'])$(id).hidden=true;
+      $('billing').querySelectorAll('details').forEach(e=>e.open=false);
+      $('billListNote').textContent='No financial history requested.';
+    }
+    async function cached(action,payload,force=false){const key=JSON.stringify([action,payload]);if(force)loaded.delete(key);if(!loaded.has(key))loaded.set(key,await api(action,payload));return loaded.get(key);}
+    function invalidate(){loaded.clear();listPages=[];listIndex=0;$('billRows').replaceChildren();$('billNext').hidden=$('billPrev').hidden=true;$('billListNote').textContent='A record changed. Refresh the register for current balances.';}
+    let listPages=[],listIndex=0,listPayload=null,listAction=null;
+    function rowsTable(head,rows){return `<table><thead><tr>${head.map(v=>`<th>${v}</th>`).join('')}</tr></thead><tbody>${rows.join('')||`<tr><td colspan="${head.length}">No records in the selected period.</td></tr>`}</tbody></table>`;}
+    async function register(cursor=null,force=false){
+      if(force)loaded.clear();
+      if(!cursor){listAction=$('billRegisterKind').value;listPayload={DateRange:range('billList')};listPages=[];listIndex=0;}
+      const data=await cached(listAction,{...listPayload,...(cursor?{Cursor:cursor}:{})},force);listPages[listIndex]=data;renderRegister(data);
+      status('Selected billing period loaded.');
+    }
+    function renderRegister(data){
+      $('billRows').innerHTML=rowsTable(['Date (WAT)','Patient / reference','Amount','Status','Actions'],data.rows.map((r,i)=>`<tr><td>${esc(date(r.CreatedAt))}</td><td>${esc(r.PatientName||r.Description||r.Source)}<br>${esc(r.InvoiceNumber||r.ServiceCode||'')}</td><td>${esc(money(r.AmountCents??((r.PatientCents||0)+(r.HmoCents||0))))}</td><td>${esc(r.Status)}</td><td>${r.InvoiceId?`<button data-invoice="${i}">Open invoice</button>`:''}${r.Source==='Return'&&r.Status==='Awaiting billing'?`<button data-credit="${i}">Use return credit</button>`:''}</td></tr>`));
+      $('billRows').querySelectorAll('[data-invoice]').forEach(b=>b.onclick=()=>run(()=>openInvoice(data.rows[+b.dataset.invoice])));
+      $('billRows').querySelectorAll('[data-credit]').forEach(b=>b.onclick=()=>{if(!selected){status('Open the original invoice first, then select this return credit.',true);return;}$('billCreditForm').elements.ChargeId.value=data.rows[+b.dataset.credit].ChargeId;$('billCredit').open=true;$('billInvoice').scrollIntoView();});
+      $('billNext').hidden=!data.next;$('billPrev').hidden=listIndex===0;$('billListNote').textContent=`Page ${listIndex+1}: ${data.rows.length} records. Loaded pages are retained; these are not whole-period totals.`;
+      $('billNext').onclick=()=>run(async()=>{if(listPages[listIndex+1])renderRegister(listPages[++listIndex]);else{listIndex++;await register(data.next);}});
+      $('billPrev').onclick=()=>renderRegister(listPages[--listIndex]);
+    }
+    submit('billRegister',()=>register());$('billReload').onclick=()=>run(()=>register(null,true));
+    async function openVisit(row,force=false){if(!await confirmLeave())return;context=await cached('billingVisit',{PatientId:row.PatientId,VisitId:row.VisitId},force);dirty=false;navigate('billing');$('billVisit').hidden=false;$('billInvoice').hidden=true;
+      $('billVisitTitle').textContent=`${context.patient.DisplayName} · ${context.patient.HospitalNumber} · ${context.visit.Department}`;
+      $('billCoverage').textContent=context.coverage?`${context.coverage.Plan.Insurer} / ${context.coverage.Plan.Name} · verified ${context.coverage.From} to ${context.coverage.To} · ${context.coverage.Authorization}`:'Self-pay unless staff-verified HMO eligibility is recorded.';
+      charges=[];$('billChargeRows').replaceChildren();$('billEstimate').textContent='';$('billUseHmo').checked=false;$('billChargeNext').hidden=true;
+      $('billServiceForm').reset();$('billEligibilityForm').reset();plan=null;$('billPlanFound').textContent='';
+      if(context.coverage)for(const [k,v]of Object.entries(context.coverage))if($('billEligibilityForm').elements[k])$('billEligibilityForm').elements[k].value=v;
+      status('Patient billing context loaded.');permissions();
+    }
+    $('billVisitRefresh').onclick=()=>run(()=>openVisit({...scope()},true));
+    submit('billServiceForm',async()=>{if(!context)return;const fields=values($('billServiceForm'));if(!fields.OrderId)delete fields.OrderId;
+      const saved=await api('createServiceCharge',{...scope(),...fields,ConfirmPatient:true},true);dirty=false;if(!saved.Unchanged)invalidate();status(saved.Unchanged?'This service charge is already recorded.':'Service charge recorded. Load or refresh the selected visit charges.');});
+    submit('billPlanFind',async()=>{plan=(await api('findHmoPlans',values($('billPlanFind')))).plan;$('billPlanFound').textContent=plan?`${plan.Insurer} · ${plan.Name} · ${plan.Services.length} covered services`:'Plan not found.';});
+    submit('billEligibilityForm',async()=>{if(!plan||!context)throw Error('Open a visit and find an active plan first.');const saved=await api('saveHmoEligibility',{...scope(),PlanId:plan.PlanId,PlanRevision:plan.Revision,Revision:context.coverage?.Revision,Eligibility:values($('billEligibilityForm')),ConfirmPatient:true},true);dirty=false;
+      if(!saved.Unchanged){invalidate();await openVisit(scope(),true);}status(saved.Unchanged?'No eligibility changes to save.':'Verified HMO eligibility saved.');});
+    async function visitCharges(cursor=null,force=false){if(!context)throw Error('Open a visit first.');const data=await cached('billingCharges',{VisitId:context.visit.VisitId,DateRange:range('billCharge'),...(cursor?{Cursor:cursor}:{})},force);charges=cursor?[...charges,...data.rows]:data.rows;
+      $('billChargeRows').innerHTML=rowsTable(['Select','Service / reference','Quantity','Amount','Status'],charges.map((r,i)=>`<tr><td>${r.Status==='Awaiting billing'&&r.Source!=='Return'?`<input type="checkbox" aria-label="Select ${esc(r.Description||'medicine charge')}" data-charge="${i}">`:''}</td><td>${esc(r.Description||r.Source)}<br><small>${esc(r.ServiceCode||'')}</small></td><td>${esc(r.Quantity||'—')}</td><td>${esc(money(r.AmountCents))}</td><td>${esc(r.Status)}${r.Source==='Service'&&r.Status==='Awaiting billing'&&writable('billing.write')?`<button type="button" data-void-charge="${i}">Void mistaken charge</button>`:''}</td></tr>`));
+      $('billChargeRows').querySelectorAll('[data-void-charge]').forEach(b=>b.onclick=()=>run(async()=>{const r=charges[+b.dataset.voidCharge],Reason=window.prompt('Reason for voiding this unbilled service charge');if(!Reason)return;await api('voidServiceCharge',{...scope(),ChargeId:r.ChargeId,Revision:r.Revision,Reason},true);invalidate();await visitCharges(null,true);status('Unbilled service charge voided; its history is preserved.');}));
+      $('billChargeRows').querySelectorAll('[data-charge]').forEach(e=>e.onchange=estimate);$('billChargeNext').hidden=!data.next;$('billChargeNext').onclick=()=>run(()=>visitCharges(data.next));estimate();status('Visit charges loaded.');}
+    const chosen=()=>[...$('billChargeRows').querySelectorAll('[data-charge]:checked')].map(e=>charges[+e.dataset.charge]);
+    function estimate(){let patient=0,hmo=0;for(const r of chosen()){const service=$('billUseHmo').checked?context.coverage?.Plan.Services.find(s=>s.ServiceCode===r.ServiceCode):null;
+      const gross=service?Math.round(service.TariffCents*(r.Quantity||1)):r.AmountCents,part=service?Math.round(gross*service.CopayBasisPoints/10000):gross;patient+=part;hmo+=gross-part;}
+      $('billEstimate').textContent=`Selected ${chosen().length} charges · patient ${money(patient)} · HMO ${money(hmo)}. The server checks the current charges before issuing.`;}
+    $('billUseHmo').onchange=estimate;submit('billVisitCharges',()=>visitCharges());$('billChargeRefresh').onclick=()=>run(()=>visitCharges(null,true));
+    $('billIssue').onclick=()=>run(async()=>{if(!chosen().length)throw Error('Select at least one charge.');if(!await window.DynamaxDialogs.confirm({title:'Issue invoice',message:`${$('billVisitTitle').textContent}. ${$('billEstimate').textContent}`,confirmText:'Issue invoice'}))return;
+      const saved=await api('issueHospitalInvoice',{...scope(),ChargeIds:chosen().map(r=>r.ChargeId),UseHmo:$('billUseHmo').checked,EligibilityRevision:context.coverage?.Revision,ConfirmPatient:true},true);dirty=false;invalidate();$('billChargeRows').replaceChildren();charges=[];await openInvoice(saved,true);status('Invoice issued.');});
+    async function openInvoice(row,force=false){if(!await confirmLeave())return;const data=await cached('hospitalInvoiceDetails',{InvoiceId:row.InvoiceId,PatientId:row.PatientId},force);selected=data.invoice;claim=data.claim;dirty=false;navigate('billing');$('billInvoice').hidden=false;$('billVisit').hidden=true;$('billConfirm').checked=false;
+      $('billInvoiceTitle').textContent=`${selected.InvoiceNumber} · ${selected.PatientName} · ${selected.HospitalNumber}`;
+      $('billInvoiceSummary').textContent=`Patient balance: ${money(selected.PatientBalanceCents)} · HMO balance: ${money(selected.HmoBalanceCents)}. Negative balance means a credited overpayment awaiting refund.`;
+      $('billInvoiceLines').innerHTML=rowsTable(['Service','Total','Patient','HMO'],selected.Lines.map(l=>`<tr><td>${esc(l.Description)}</td><td>${esc(money(l.GrossCents))}</td><td>${esc(money(l.PatientCents))}</td><td>${esc(money(l.HmoCents))}</td></tr>`));
+      $('billClaimState').textContent=claim?`${claim.Insurer} · claim ${claim.Status} · current claim amount ${money(claim.AmountCents)}`:'No HMO claim on this invoice.';
+      for(const id of ['billPaymentForm','billClaimForm','billCreditForm','billRefundForm','billAdjustmentForm'])$(id).reset();payments=[];$('billPayments').replaceChildren();$('billHistoryRows').replaceChildren();$('billRefundReceipt').replaceChildren();$('billHistoryNext').hidden=$('billPaymentsNext').hidden=true;
+      $('billAdjustmentCharge').innerHTML=selected.Lines.filter(l=>l.Source==='Service').map(l=>`<option value="${esc(l.ChargeId)}">${esc(l.Description)} · ${esc(money(l.SourceAmountCents))} original charge</option>`).join('');
+      status('Invoice loaded.');permissions();
+    }
+    $('billInvoiceRefresh').onclick=()=>run(()=>openInvoice(selected,true));
+    async function mutation(action,fields,message){confirm();const saved=await api(action,{...invoiceScope(),...fields},true);dirty=false;
+      if(!saved.Unchanged){invalidate();await openInvoice(selected,true);}status(saved.Unchanged?'Already recorded; no changes written.':message);}
+    submit('billPaymentForm',()=>mutation('recordHospitalPayment',values($('billPaymentForm')),'Payment recorded.'));
+    submit('billAdjustmentForm',()=>mutation('creditHospitalCharge',{Adjustment:{...values($('billAdjustmentForm')),OriginalChargeId:$('billAdjustmentCharge').value}},'Service credit note issued.'));
+    submit('billCreditForm',()=>mutation('creditHospitalCharge',values($('billCreditForm')),'Return credit applied.'));
+    submit('billClaimForm',()=>{if(!claim)throw Error('This invoice has no HMO claim.');return mutation('updateHmoClaim',{...values($('billClaimForm')),Revision:claim.Revision},'HMO claim status recorded.');});
+    function printInvoice(isClaim=false){if(!selected)return;$('cardPrint').classList.add('billing-print');$('cardPrint').innerHTML=`<h2>${isClaim?'HMO claim':'Hospital invoice'} ${esc(selected.InvoiceNumber)}</h2><p>${esc(selected.PatientName)} · ${esc(selected.HospitalNumber)}</p>${isClaim?`<p>${esc(claim?.Insurer)} · Member ${esc(selected.Coverage?.MemberNumber)} · Authorisation ${esc(selected.Coverage?.Authorization)}</p>`:''}${$('billInvoiceLines').innerHTML}<p>${esc($('billInvoiceSummary').textContent)}</p><p>Issued ${esc(date(selected.CreatedAt))}. Credits and payment history are retained separately.</p>`;window.print();}
+    $('billPrint').onclick=()=>printInvoice();$('billPrintClaim').onclick=()=>printInvoice(true);
+    async function history(cursor=null){if(!selected)return;const data=await cached('hospitalBillingHistory',{...invoiceScope(),DateRange:range('billHistory'),...(cursor?{Cursor:cursor}:{})});
+      $('billHistoryRows').innerHTML=rowsTable(['Date (WAT)','Action','Officer','Reference / amount'],data.rows.map(r=>`<tr><td>${esc(date(r.CreatedAt))}</td><td>${esc(r.Action)}</td><td>${esc(r.ActorName)}</td><td>${esc(r.Reference||r.ReceiptNumber||'')} ${r.AmountCents?esc(money(r.AmountCents)):''}</td></tr>`));$('billHistoryNext').hidden=!data.next;$('billHistoryNext').onclick=()=>run(()=>history(data.next));status('Invoice history loaded.');}
+    submit('billHistoryForm',()=>history());
+    async function receipts(cursor=null){if(!selected)return;const data=await cached('hospitalPayments',{InvoiceId:selected.InvoiceId,DateRange:range('billHistory'),...(cursor?{Cursor:cursor}:{})});payments=data.rows;
+      $('billPayments').innerHTML=rowsTable(['Receipt','Payer','Paid','Refunded',''],payments.map((r,i)=>`<tr><td>${esc(r.ReceiptNumber)}</td><td>${esc(r.Payer)}</td><td>${esc(money(r.AmountCents))}</td><td>${esc(money(r.RefundedCents))}</td><td><button data-print-receipt="${i}">Print receipt</button></td></tr>`));
+      $('billRefundReceipt').innerHTML=payments.map((r,i)=>`<option value="${i}">${esc(r.ReceiptNumber)} · ${esc(money(r.AmountCents-r.RefundedCents))}</option>`).join('');$('billPaymentsNext').hidden=!data.next;$('billPaymentsNext').onclick=()=>run(()=>receipts(data.next));
+      $('billPayments').querySelectorAll('[data-print-receipt]').forEach(b=>b.onclick=()=>{const r=payments[+b.dataset.printReceipt];$('cardPrint').classList.add('billing-print');$('cardPrint').innerHTML=`<h2>Hospital receipt ${esc(r.ReceiptNumber)}</h2><p>${esc(selected.PatientName)} · ${esc(selected.HospitalNumber)}</p><p>${esc(selected.InvoiceNumber)} · ${esc(date(r.CreatedAt))}</p><p>${esc(r.Payer)} · ${esc(r.Method)} · ${esc(r.Reference)}</p><p>Received ${esc(money(r.AmountCents))}; refunded ${esc(money(r.RefundedCents))}</p>`;window.print();});status('Dated receipts loaded.');}
+    $('billLoadPayments').onclick=()=>run(()=>receipts());submit('billRefundForm',()=>{const receipt=payments[+$('billRefundReceipt').value];if(!receipt)throw Error('Load and select the original receipt.');return mutation('refundHospitalPayment',{...values($('billRefundForm')),PaymentId:receipt.PaymentId,PaymentRevision:receipt.Revision},'Refund recorded.');});
+    let editingPlan=null;
+    function tariff(row={}){const el=document.createElement('fieldset');el.className='form-grid';el.innerHTML=`<legend>Covered service</legend>${input('ServiceCode','Service code','required maxlength="60"')}${input('Name','Service name','required maxlength="200"')}${amount('Tariff','Agreed unit tariff (NGN)')}${input('CopayPercent','Patient co-payment (%)','required type="number" min="0" max="100" step="0.01"')}<button type="button">Remove from future plan</button>`;
+      for(const [k,v]of Object.entries({...row,Tariff:row.TariffCents===undefined?'':row.TariffCents/100,CopayPercent:(row.CopayBasisPoints||0)/100}))if(el.querySelector(`[name="${k}"]`))el.querySelector(`[name="${k}"]`).value=v;
+      el.querySelector('button').onclick=()=>{el.remove();dirty=true;};$('billTariffs').append(el);}
+    $('billAddTariff').onclick=()=>{if($('billTariffs').children.length>=40){status('A plan supports up to 40 covered services.',true);return;}tariff();dirty=true;};
+    $('billNewPlan').onclick=async()=>{if(!await confirmLeave())return;editingPlan=null;$('billPlanForm').reset();$('billTariffs').replaceChildren();tariff();dirty=false;};
+    submit('billEditPlanFind',async()=>{if(!await confirmLeave())return;editingPlan=(await api('findHmoPlans',values($('billEditPlanFind')))).plan;if(!editingPlan)throw Error('Plan not found. Choose New plan to create it.');
+      for(const k of ['Code','Name','Insurer'])$('billPlanForm').querySelector(`:scope > .form-grid [name="${k}"]`).value=editingPlan[k];$('billPlanActive').checked=editingPlan.Active;$('billTariffs').replaceChildren();editingPlan.Services.forEach(tariff);dirty=false;status('HMO plan loaded.');});
+    submit('billPlanForm',async()=>{const Plan={Code:$('billPlanForm').querySelector(':scope > .form-grid [name=Code]').value,Name:$('billPlanForm').querySelector(':scope > .form-grid [name=Name]').value,Insurer:$('billPlanForm').querySelector(':scope > .form-grid [name=Insurer]').value,Active:$('billPlanActive').checked,Services:[...$('billTariffs').children].map(el=>Object.fromEntries([...el.querySelectorAll('[name]')].map(e=>[e.name,e.value])))};
+      const result=await api('saveHmoPlan',{Plan,Revision:editingPlan?.Revision},true);dirty=false;if(!result.Unchanged)editingPlan=(await api('findHmoPlans',{Code:Plan.Code})).plan;status(result.Unchanged?'No plan changes to save.':'HMO plan saved.');});
+    $('billLoadSettings').onclick=()=>run(async()=>{if(!await confirmLeave())return;settings=(await api('billingSettings')).settings;$('billSettingsForm').reset();if(settings)for(const e of $('billSettingsForm').elements)if(e.name)e.value=settings[e.name]||'';dirty=false;status('Billing account mappings loaded.');});
+    submit('billSettingsForm',async()=>{const saved=await api('saveBillingSettings',{Settings:values($('billSettingsForm')),Revision:settings?.Revision},true);dirty=false;if(!saved.Unchanged)settings=(await api('billingSettings')).settings;status(saved.Unchanged?'No account changes to save.':'Billing account mappings saved.');});
+    window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue='';}});
+    return {permissions,clear,confirmLeave,openVisit};
+  }};
+})();

@@ -3,7 +3,9 @@ import { requiredDeploymentIdentity } from './deployment-identity.js';
 export const HOSPITAL_COLLECTIONS = Object.freeze([
   'Patients', 'Numbers', 'PatientMatches', 'Cards', 'Operations', 'Audit', 'Visits', 'OpenVisits',
   'Encounters', 'CareSummaries', 'Consultations', 'ClinicalEntries',
-  'Orders', 'OrderEvents', 'MedicineBatches', 'StockReceipts', 'StockMovements', 'Dispenses', 'MedicineReturns', 'ChargeEvents', 'InvestigationReports', 'ReleasedReports', 'CriticalAlerts'
+  'Orders', 'OrderEvents', 'MedicineBatches', 'StockReceipts', 'StockMovements', 'Dispenses', 'MedicineReturns', 'ChargeEvents', 'InvestigationReports', 'ReleasedReports', 'CriticalAlerts',
+  'BillingSettings','BillingSettingVersions','HmoPlans','HmoPlanVersions','HmoEligibility','HmoEligibilityVersions',
+  'Invoices','BillingEvents','Claims','ClaimVersions','CreditTotals','CreditNotes','Payments','PaymentReferences','Refunds','RefundReferences'
 ]);
 
 export function hospitalCollectionPath(env, name) {

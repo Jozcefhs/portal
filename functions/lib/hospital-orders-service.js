@@ -197,6 +197,7 @@ export function createHospitalOrdersService(ctx){
           careLock(c),write('MedicineBatches',batch.BatchId,{...strip(batch),OnHand:qty(batch.OnHand-Quantity),UpdatedAt:clock()},batch),write('Dispenses',key,dispensing,null),
           write('StockMovements',key,{MovementId:key,BatchId:batch.BatchId,BranchId:c.BranchId,Type:'Dispense',Quantity:-Quantity,OrderId:c.order.OrderId,...stamp()},null),
           write('ChargeEvents',key,{ChargeId:key,OrderId:c.order.OrderId,PatientId:c.person.PatientId,VisitId:c.order.VisitId,BranchId:c.BranchId,Source:'Dispense',SourceId:key,
+            ServiceCode:`MED-${c.order.Fields.MedicineKey.slice(0,20).toUpperCase()}`,Description:`${c.order.Fields.Medicine} ${c.order.Fields.Strength} (${c.order.Fields.Unit})`,Quantity,
             AmountCents,Currency:'NGN',Status:'Awaiting billing',...stamp()},null)],result:{...result(c),DispenseId:key}};
       });
     },

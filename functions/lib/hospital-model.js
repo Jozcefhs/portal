@@ -35,7 +35,9 @@ export function hospitalCapabilities(user) {
     'visits.read':['hospitalReception'],'visits.write':['hospitalReception'],
     'clinical.read':['hospitalTriage','hospitalConsultations'],'triage.write':['hospitalTriage'],'consultations.write':['hospitalConsultations'],
     'orders.read':['hospitalOrders'],'orders.create':['hospitalOrders'],'pharmacy.work':['hospitalPharmacy'],
-    'laboratory.work':['hospitalLaboratory'],'imaging.work':['hospitalImaging']};
+    'laboratory.work':['hospitalLaboratory'],'imaging.work':['hospitalImaging'],
+    'billing.read':['hospitalBilling'],'billing.write':['hospitalBilling'],'billing.configure':['hospitalBilling'],
+    'billing.collect':['hospitalBilling'],'billing.refund':['hospitalBilling'],'hmo.work':['hospitalHmo']};
   return (HOSPITAL_ROLE_CAPABILITIES[user.role] || []).filter(capability => modules[capability]?.some(module=>sections.has(module)));
 }
 export function patientFields(input = {}, today = new Date().toISOString().slice(0, 10)) {

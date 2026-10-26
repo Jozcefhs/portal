@@ -23,13 +23,15 @@ export const HOSPITAL_MODULES = Object.freeze([
     Description:'Prescription review, batch stock, dispensing and recorded returns.',Requires:Object.freeze(['hospitalPatients','hospitalReception']) }),
   Object.freeze({ Key:'hospitalLaboratory', Editions:Object.freeze(['hospital']), Labels:Object.freeze({hospital:'Laboratory'}),
     Description:'Specimen handling, report verification and release.',Requires:Object.freeze(['hospitalPatients','hospitalReception']) }),
+  Object.freeze({Key:'hospitalBilling',Editions:Object.freeze(['hospital']),Labels:Object.freeze({hospital:'Billing and payments'}),Description:'Patient invoices, payments, credits and accounting reconciliation.',Requires:Object.freeze(['hospitalPatients','hospitalReception'])}),
+  Object.freeze({Key:'hospitalHmo',Editions:Object.freeze(['hospital']),Labels:Object.freeze({hospital:'HMO and insurance'}),Description:'Tariffs, staff-verified eligibility, claims and settlements.',Requires:Object.freeze(['hospitalPatients','hospitalReception'])}),
   Object.freeze({ Key:'hospitalImaging', Editions:Object.freeze(['hospital']), Labels:Object.freeze({hospital:'Imaging investigations'}),
     Description:'Imaging requests, verified reports and release.',Requires:Object.freeze(['hospitalPatients','hospitalReception']) })
 ]);
 
 export const HOSPITAL_ROLE_CAPABILITIES = Object.freeze({
-  'Super Admin': ['patients.read', 'patients.write', 'visits.read', 'visits.write'],
-  'Hospital Administrator': ['patients.read', 'patients.write', 'visits.read', 'visits.write'],
+  'Super Admin': ['patients.read', 'patients.write', 'visits.read', 'visits.write','billing.read','billing.write','billing.configure','billing.refund','hmo.work'],
+  'Hospital Administrator': ['patients.read', 'patients.write', 'visits.read', 'visits.write','billing.read','billing.write','billing.configure','billing.refund','hmo.work'],
   'Medical Director': ['patients.read', 'visits.read', 'clinical.read', 'triage.write', 'consultations.write','orders.read','orders.create'],
   'Doctor': ['patients.read', 'visits.read', 'clinical.read', 'triage.write', 'consultations.write','orders.read','orders.create'],
   'Nurse': ['patients.read', 'visits.read', 'clinical.read', 'triage.write','orders.read'],
@@ -38,6 +40,8 @@ export const HOSPITAL_ROLE_CAPABILITIES = Object.freeze({
   'Radiographer':['patients.read','visits.read','imaging.work'],
   'Registration Officer': ['patients.read', 'patients.write', 'visits.read', 'visits.write'],
   'Medical Records Officer': ['patients.read', 'patients.write', 'visits.read'],
+  'Hospital Cashier':['patients.read','visits.read','billing.read','billing.write','billing.collect'],
+  'HMO Officer':['patients.read','visits.read','hmo.work'],
   'Front Desk': ['patients.read', 'patients.write', 'visits.read', 'visits.write']
 });
 
@@ -51,6 +55,8 @@ export function hospitalRoleModules(role) {
     ...(capabilities.includes('orders.read') ? ['hospitalOrders'] : []),
     ...(capabilities.includes('pharmacy.work') ? ['hospitalPharmacy'] : []),
     ...(capabilities.includes('laboratory.work') ? ['hospitalLaboratory'] : []),
+    ...(capabilities.includes('billing.read') ? ['hospitalBilling'] : []),
+    ...(capabilities.includes('hmo.work') ? ['hospitalHmo'] : []),
     ...(capabilities.includes('imaging.work') ? ['hospitalImaging'] : [])
   ];
 }

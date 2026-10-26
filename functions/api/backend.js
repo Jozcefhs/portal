@@ -8245,10 +8245,12 @@ async function writeAccountingAudit(env, action, entityType, entityId, body, det
 }
 
 export async function saveAccountingJournal(env, body, system = false, options = {}) {
+  if (!system && (/^Hospital /i.test(clean(body.Source)) || /^HOSP-/i.test(clean(body.JournalNo)))) throw financeFailure('Hospital journals are posted through Hospital billing.', 409);
   const reversalOf = clean(body.ReversalOf);
   if (!system && (reversalOf || lower(body.Source) === 'journal reversal')) {
     if (!reversalOf) throw financeFailure('Select the original posted journal before reversing it.');
     const original = await getDocumentByIdOrField(env, 'accountingJournals', reversalOf, 'JournalNo');
+    if (original && (/^Hospital /i.test(clean(original.Source)) || original.HospitalInvoiceId)) throw financeFailure('Use a Hospital billing credit or refund so the patient and HMO balances stay reconciled.', 409);
     if (!original || lower(original.Status) !== 'posted') throw financeFailure('Only a posted journal can be reversed.', 409);
     if (original.PaymentCorrectionTotal || ['Manual Payment Correction', 'Student Payment Correction Credit Release'].includes(original.Source)
       || (original.Source === 'Fee Payment' && accountingLines(original.Lines).some(line => ['2200', '2310'].includes(line.AccountCode)))) {
