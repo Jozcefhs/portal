@@ -31,7 +31,7 @@ export function hospitalBranch(user, requested, configured = []) {
 export function hospitalCapabilities(user) {
   if (user.edition !== 'hospital' || user.subscriptionActive === false) return [];
   const sections = new Set(user.allowedSections || []);
-  const modules={'inpatient.read':['hospitalInpatients'],'inpatient.configure':['hospitalInpatients'],'inpatient.admit':['hospitalInpatients'],
+  const modules={'nursing.read':['hospitalNursing'],'nursing.write':['hospitalNursing'],'inpatient.read':['hospitalInpatients'],'inpatient.configure':['hospitalInpatients'],'inpatient.admit':['hospitalInpatients'],
     'inpatient.clinical':['hospitalInpatients'],'inpatient.discharge':['hospitalInpatients'],'patients.read':['hospitalPatients'],'patients.write':['hospitalPatients'],
     'visits.read':['hospitalReception'],'visits.write':['hospitalReception'],
     'clinical.read':['hospitalTriage','hospitalConsultations'],'triage.write':['hospitalTriage'],'consultations.write':['hospitalConsultations'],

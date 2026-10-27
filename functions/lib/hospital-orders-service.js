@@ -128,10 +128,10 @@ export function createHospitalOrdersService(ctx){
       if(!['Approved','On hold'].includes(Decision))fail('Approve or place the prescription on hold.');
       return operation(body,'reviewPrescription',async key=>{
         const c=await orderContext(body);revision(body,c.order);pharmacyCurrent(body,c);
-        if(c.order.Status==='Dispensed')fail('This prescription has already been fully dispensed.',409);
+        notCancelled(c.order);
         const ReviewedAllergies=await digest(JSON.stringify(allergySnapshot(c.care)));
         if(c.order.PharmacyReview===Decision&&c.order.ReviewReason===Reason&&c.order.ReviewedAllergies===ReviewedAllergies)return {writes:[],result:{...result(c),Unchanged:true}};
-        return {writes:[...changes(key,c,'Review prescription',{Status:Decision==='Approved'?(c.order.DispensedQuantity?'Partially dispensed':'Ready to dispense'):'On hold',
+        return {writes:[...changes(key,c,'Review prescription',{Status:Decision==='Approved'?(c.order.DispensedQuantity>=c.order.Fields.Quantity?'Dispensed':c.order.DispensedQuantity?'Partially dispensed':'Ready to dispense'):'On hold',
           PharmacyReview:Decision,ReviewedBy:actor,ReviewedAt:clock(),ReviewReason:Reason,ReviewedAllergies},{Decision,Reason}),careLock(c)],result:result(c)};
       });
     },
@@ -210,7 +210,7 @@ export function createHospitalOrdersService(ctx){
         if(!original||original.OrderId!==c.order.OrderId||original.PatientId!==c.person.PatientId||original.BranchId!==c.BranchId)fail('Choose a dispensing entry for this order.',404);
         revision(body,original,'DispenseRevision');
         const returned=qty(original.ReturnedQuantity+Quantity);
-        if(returned>original.Quantity)fail('The return exceeds the quantity dispensed.',409);
+        if(returned>qty(original.Quantity-(original.AdministeredQuantity||0)))fail('The return exceeds the unused dispensed quantity; recorded administration must be accounted for.',409);
         const batch=await read('MedicineBatches',original.BatchId);
         if(!batch||batch.BranchId!==c.BranchId)fail('The original medicine batch is unavailable.',409);
         const credit=cumulativeCredit(original.AmountCents,returned,original.Quantity)-cumulativeCredit(original.AmountCents,original.ReturnedQuantity,original.Quantity);

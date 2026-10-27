@@ -59,7 +59,7 @@
       $('quarantineStockForm').querySelectorAll('input,textarea,button').forEach(el=>el.disabled=!writable('pharmacy.work'));
       const o=current?.order,rx=o?.Kind==='Prescription',worker=o&&writable(o.Kind==='Laboratory'?'laboratory.work':o.Kind==='Imaging'?'imaging.work':'pharmacy.work');
       const active=o&&o.Status!=='Cancelled';
-      const visible={reviewRx:rx&&worker&&active&&o.Status!=='Dispensed',dispenseRx:rx&&worker&&['Ready to dispense','Partially dispensed'].includes(o.Status),returnRx:rx&&can('pharmacy.work'),
+      const visible={reviewRx:rx&&worker&&active,dispenseRx:rx&&worker&&['Ready to dispense','Partially dispensed'].includes(o.Status),returnRx:rx&&can('pharmacy.work'),
         specimenWork:o?.Kind==='Laboratory'&&worker&&['Requested','Specimen collected','Specimen rejected'].includes(o.Status),reportWork:!rx&&worker&&active,
         verifyWork:!rx&&worker&&o?.Status==='Result draft',releaseWork:!rx&&worker&&o?.Status==='Verified',ackWork:writable('orders.create')&&o?.CriticalNeedsAcknowledgement,
         cancelWork:writable('orders.create')&&current?.canCancel&&active&&!o.ReleasedReportId&&o.Status!=='Dispensed'};
@@ -177,8 +177,8 @@
     async function dispensing(next=null){
       if(!next){dispenseRange={fromDate:$('dispensingFrom').value,toDate:$('dispensingTo').value};dispenses=[];}
       const data=await api('dispensingHistory',{...scope,DateRange:dispenseRange,...(next?{Cursor:next}:{})});dispenses=[...dispenses,...data.dispenses];dispenseCursor=data.next;
-      $('dispensingRows').innerHTML=`<table><thead><tr><th>When</th><th>Officer / batch</th><th>Dispensed</th><th>Returned</th></tr></thead><tbody>${dispenses.map(d=>`<tr><td>${esc(date(d.CreatedAt))}</td><td>${esc(d.ActorName)} · ${esc(d.BatchNumber)}</td><td>${d.Quantity} ${esc(d.Unit)}</td><td>${d.ReturnedQuantity}</td></tr>`).join('')}</tbody></table>`;
-      $('returnDispense').innerHTML=dispenses.filter(d=>d.ReturnedQuantity<d.Quantity).map(d=>`<option value="${esc(d.DispenseId)}">${esc(d.BatchNumber)} · ${esc(date(d.CreatedAt))} · ${d.Quantity-d.ReturnedQuantity} returnable</option>`).join('');$('nextDispenses').hidden=!dispenseCursor;status('Dated dispensing entries loaded.');
+      $('dispensingRows').innerHTML=`<table><thead><tr><th>When</th><th>Officer / batch</th><th>Dispensed</th><th>Returned</th><th>Administered</th></tr></thead><tbody>${dispenses.map(d=>`<tr><td>${esc(date(d.CreatedAt))}</td><td>${esc(d.ActorName)} · ${esc(d.BatchNumber)}</td><td>${d.Quantity} ${esc(d.Unit)}</td><td>${d.ReturnedQuantity}</td><td>${d.AdministeredQuantity||0}</td></tr>`).join('')}</tbody></table>`;
+      $('returnDispense').innerHTML=dispenses.filter(d=>d.ReturnedQuantity+(d.AdministeredQuantity||0)<d.Quantity).map(d=>`<option value="${esc(d.DispenseId)}">${esc(d.BatchNumber)} · ${esc(date(d.CreatedAt))} · ${Math.round((d.Quantity-d.ReturnedQuantity-(d.AdministeredQuantity||0))*1000)/1000} returnable</option>`).join('');$('nextDispenses').hidden=!dispenseCursor;status('Dated dispensing entries loaded.');
     }
     $('dispensingFilter').onsubmit=event=>{event.preventDefault();run(()=>dispensing());};$('nextDispenses').onclick=()=>run(()=>dispensing(dispenseCursor));
     const historyRows=(rows,type)=>rows.map(row=>`<article class="clinical-entry"><h3>${esc(row.Action||row.Type)}</h3><p>${esc(row.ActorName)} · ${esc(date(row.CreatedAt))} WAT</p>${pairs(type==='stock'?{Quantity:row.Quantity,Quarantined:row.QuarantinedQuantity||0,Supplier:row.Supplier||'',Receipt:row.ReceiptReference||''}:{Decision:row.Decision||'',Quantity:row.Quantity||'',Reason:row.Reason||row.Note||row.Communication||''})}</article>`).join('')||'<p>No entries in the selected period.</p>';

@@ -7,6 +7,7 @@ import { historyDateRange } from './history-date-range.js';
 import { hospitalCollectionPath } from './hospital-storage.js';
 import { createHospitalClinicalService } from './hospital-clinical-service.js';
 import { createHospitalBillingService } from './hospital-billing-service.js';
+import { createHospitalNursingService } from './hospital-nursing-service.js';
 import { createHospitalInpatientService } from './hospital-inpatient-service.js';
 import { createHospitalOrdersService } from './hospital-orders-service.js';
 import { clean, fail, id, nameKey, digest, stable, cardUid, hospitalBranch,
@@ -105,6 +106,8 @@ export function createHospitalService(env, user, overrides = {}) {
     return { rows: shown, next: rows.length > limit ? { id: last.__id, value: last[field] } : null };
   }
   return {
+    ...createHospitalNursingService({env,user,db,collection,capabilities,requireCapability,branch,patient,clock,actor,
+      condition,strip,eq,auditWrite,auditRead,operation,page}),
     ...createHospitalInpatientService({env,user,db,collection,capabilities,requireCapability,branch,patient,clock,actor,
       condition,strip,eq,auditWrite,auditRead,operation,page}),
     ...createHospitalBillingService({env,user,db,collection,capabilities,requireCapability,branch,patient,clock,actor,
