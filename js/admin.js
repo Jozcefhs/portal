@@ -15692,8 +15692,9 @@ function academicScorebookWorkspace(data, rows) {
   const classRegister = canViewClassRegister || classroomRegister ? `<form class="academic-management-editor academic-management-editor-wide"${classroomRegister ? ' data-classroom-register' : ''} data-academic-class-score-register>
     <div class="academic-management-editor-heading"><div><h3>${classroomRegister ? 'My classroom scores — all subjects' : 'Class score register — all arms'}</h3><p>Read-only raw marks / maximum, including Draft scores. This is not a published result. ${classroomRegister ? 'Choose your assigned classroom to vet all subjects without changing marks.' : 'Choose a class, not a classroom.'}</p></div></div>
     ${classroomRegister && !teacherClassrooms.length ? '<p>No class teacher assignment was found for this session and term. Ask Academic Management to assign your classroom under Assign class teachers.</p>' : ''}
-    <div class="academic-management-form-grid"><label>${classroomRegister ? 'Classroom' : 'Class'}<select name="ClassId" required>${registerChoices}</select></label>
-    <label>Test<select name="TestId"><option value="">All tests</option></select></label><label>Find student<input name="Query" type="search" placeholder="Name or admission number"></label>
+    <div class="class-register-load-controls"><label>${classroomRegister ? 'Classroom' : 'Class'}<select name="ClassId" required>${registerChoices}</select></label>
+    <div class="class-register-actions"><button type="submit">Load ${classroomRegister ? 'classroom' : 'class'} scores</button><button type="button" class="secondary" data-class-register-print disabled>Preview / print</button></div></div>
+    <div class="academic-management-form-grid"><label>Test<select name="TestId"><option value="">All tests</option></select></label><label>Find student<input name="Query" type="search" placeholder="Name or admission number"></label>
     <div class="class-register-subject-field"><span id="class-register-subject-label">Subjects</span><details data-class-register-subjects>
       <summary aria-labelledby="class-register-subject-label class-register-subject-summary"><span id="class-register-subject-summary" data-class-register-subject-summary>Load a class first</span></summary>
       <div class="class-register-subject-panel"><div class="class-register-actions"><button type="button" data-class-register-subject-action="all" disabled>Select all</button><button type="button" data-class-register-subject-action="none" disabled>Clear</button></div>
@@ -15702,7 +15703,7 @@ function academicScorebookWorkspace(data, rows) {
     <label>Score filter<select name="ScoreFilter" aria-describedby="class-register-filter-hint"><option value="all">All students</option><option value="missing">Missing scores (any subject)</option><option value="missing-all">No scores at all</option><option value="partial">Some scores, some missing</option><option value="scored-any">At least one score</option><option value="scored-all">Scores in all selected subjects</option><option value="below">Score below…</option><option value="above">Score above…</option></select></label>
     <label data-class-register-threshold hidden><span data-class-register-threshold-label>Raw score below</span><input name="ScoreThreshold" type="number" min="0" step="any" placeholder="For example, 50" aria-describedby="class-register-filter-hint" disabled></label></div>
     <p id="class-register-filter-hint" data-class-register-filter-hint role="status">Showing all students. Score filters use only the selected test and subjects.</p>
-    <div class="class-register-actions"><button type="submit">Load ${classroomRegister ? 'classroom' : 'class'} scores</button><button type="button" class="secondary" data-class-register-print disabled>Preview / print</button>${!classroomRegister && data.permissions?.canManageScoreCorrections ? '<button type="button" class="secondary" data-class-register-reactivate disabled>Reactivate score for editing — whole class</button>' : ''}</div>
+    ${!classroomRegister && data.permissions?.canManageScoreCorrections ? '<div class="class-register-actions"><button type="button" class="secondary" data-class-register-reactivate disabled>Reactivate score for editing — whole class</button></div>' : ''}
     <p role="status" data-class-register-status>Select a ${classroomRegister ? 'classroom' : 'class'} to load its students and scores.</p>
     <div class="admin-table-wrap" data-class-register-table style="max-width:100%;overflow:auto"></div>
     <div class="academic-management-form-actions"><button type="button" data-class-register-page="-1" disabled>Previous</button><span data-class-register-count></span><button type="button" data-class-register-page="1" disabled>Next</button></div>
@@ -16905,18 +16906,39 @@ function academicManagementHeader(data, rows, message = '') {
   <p id="academicManagementStatus" class="status ${message ? 'ok' : ''}" role="status">${escapeHtml(message)}</p>`;
 }
 
+function focusAcademicClassScoreRegister() {
+  const form = panelEl.querySelector('[data-academic-class-score-register]');
+  if (!form) return;
+  const choice = form.elements.ClassId;
+  const button = form.querySelector('[type="submit"]');
+  const classroom = form.hasAttribute('data-classroom-register');
+  const title = classroom ? 'Classroom scores' : 'Class score register';
+  setStatus(document.getElementById('academicManagementStatus'),
+    `${title} is open. ${choice.value ? 'Use' : `Choose a ${classroom ? 'classroom' : 'class'}, then select`} ${button.textContent.trim()} beside the selector.`, 'ok');
+  form.querySelector('.class-register-load-controls')?.scrollIntoView({ block: 'start', behavior: 'instant' });
+  (choice.value && !button.disabled ? button : choice).focus({ preventScroll: true });
+}
+
 function openAcademicClassScoreRegister() {
   const permissions = academicManagementData?.permissions || {};
   if (!permissions.canViewClassScoreRegister && !permissions.canReviewScores && !permissions.canViewClassroomScores) return;
   academicManagementTaskViews.scorebook = 'classRegister';
   // Reuse an already mounted register, including its loaded classroom cache.
   if (academicManagementView === 'scorebook' && panelEl.querySelector('[data-academic-class-score-register]')) {
-    showAcademicManagementTask('scorebook', 'classRegister', { focus: true });
+    showAcademicManagementTask('scorebook', 'classRegister');
+    focusAcademicClassScoreRegister();
     return;
   }
+  const button = panelEl.querySelector('[data-academic-open-score-register]');
+  if (button?.disabled) return;
+  if (button) button.disabled = true;
   academicManagementView = 'scorebook';
   setStatus(document.getElementById('academicManagementStatus'), 'Opening score register…');
-  void loadAcademicManagement();
+  return loadAcademicManagement().finally(() => {
+    if (button) button.disabled = false;
+    if (activeSection === 'academics' && academicManagementView === 'scorebook'
+        && academicManagementTaskViews.scorebook === 'classRegister') focusAcademicClassScoreRegister();
+  });
 }
 
 function bindAcademicAreaNavigation() {

@@ -1,3 +1,14 @@
+[data-academic-class-score-register] .class-register-load-controls {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+  scroll-margin-top: 20px;
+}
+[data-academic-class-score-register] .class-register-load-controls label { min-width: 0; }
+@media (max-width: 640px) {
+  [data-academic-class-score-register] .class-register-load-controls { grid-template-columns: 1fr; }
+}
 [data-academic-class-score-register] .class-register-actions {
   display: flex;
   flex-wrap: wrap;
