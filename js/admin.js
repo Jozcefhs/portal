@@ -227,7 +227,7 @@ let academicManagementLoadRequest = 0;
 let academicManagementTaskViews = {
   classrooms: 'register', classStaff: 'assign', structure: 'classes', bulkSetup: 'classes', departments: 'register',
   offerings: 'seniorChoices', teachers: 'assign', students: 'allocate',
-  timetable: 'builder', presence: 'mark', attendance: 'mark', scorebook: 'entry', cbt: 'create', outcomes: 'cumulative'
+  timetable: 'builder', presence: 'mark', attendance: 'mark', scorebook: 'classRegister', cbt: 'create', outcomes: 'cumulative'
 };
 let academicManagementFilters = { section: '', sessionId: '', termId: '' };
 let academicClassroomDraft = { sessionId: '', termId: '', classId: '', armId: '', armTemplateId: '' };
@@ -13720,6 +13720,7 @@ function academicTaskDefinitions(view, root) {
   const sectionLabel = sectionName ? sectionName.charAt(0).toUpperCase() + sectionName.slice(1) : 'School';
   const learner = academicLearnerTerms(sectionName);
   const membershipRegister = learner.singular === 'pupil' ? 'Pupil Class & Subject Memberships' : 'Student Class & Subject Memberships';
+  const classroomScores = Boolean(form('[data-classroom-register]'));
   const movementRegister = learner.singular === 'pupil' ? 'Pupil Movement History' : 'Student Movement History';
   const definitions = {
     classrooms: [
@@ -13793,7 +13794,7 @@ function academicTaskDefinitions(view, root) {
       { key: 'corrections', label: 'Corrections', title: 'Late correction requests', description: 'Teachers submit corrections for approval; academic administrators approve or reject them with a reason.', nodes: nodes(register('Attendance Correction Requests')) }
     ],
     scorebook: [
-      { key: 'classRegister', label: 'Class score register', title: 'All-arm class score register', description: 'Select a whole class to review every student and their raw marks per subject and test. Read-only; includes Draft scores.', nodes: nodes(form('[data-academic-class-score-register]')) },
+      { key: 'classRegister', label: classroomScores ? 'My classroom scores' : 'Class score register', title: classroomScores ? 'Vet your classroom scores' : 'All-arm class score register', description: classroomScores ? 'Review every subject offered by your classroom students. Read-only; includes Draft scores, preview and printing.' : 'Select a whole class to review every student and their raw marks per subject and test. Read-only; includes Draft scores.', nodes: nodes(form('[data-academic-class-score-register]')) },
       { key: 'entry', label: 'Enter scores', title: 'Class subject scorebook', description: 'Choose one allocated classroom and subject, then enter every configured assessment component for its students.', nodes: nodes(form('[data-academic-scorebook]')) },
       { key: 'workflow', label: 'Review and approval', title: 'Score-sheet workflow', description: 'Review individual tests or approve selected subjects in a batch. Incomplete students can remain pending while complete students proceed.', nodes: nodes(form('[data-academic-batch-toolbar]'),register('Score Sheet Workflow')) },
       { key: 'imports', label: 'Spreadsheet imports', title: 'Preview and import scores', description: 'Download a stable template, preview CSV or XLSX rows, choose the commit policy, and roll back unpublished imports.', nodes: nodes(form('[data-academic-score-import]'), register('Score Import History')) },
@@ -15676,9 +15677,17 @@ function academicScorebookWorkspace(data, rows) {
     ${blocking}
     <div class="academic-assessment-scheme-grid"><section><h4>Assessment components</h4>${(scheme.Components || []).map((row) => `<div><strong>${escapeHtml(row.Name)}</strong><span>${row.MaximumScore} marks · ${row.WeightPercentage}% · ${escapeHtml(row.SourceMode || 'any source')}</span></div>`).join('') || '<p>No components configured.</p>'}</section><section><h4>Grading bands</h4>${(scheme.GradeBands || []).map((row) => `<div><strong>${escapeHtml(row.Grade)}</strong><span>${row.MinimumPercentage}–${row.MaximumPercentage}% · ${row.GradePoint} points · ${escapeHtml(row.Remark || row.Classification)}</span></div>`).join('') || '<p>No grading bands configured.</p>'}</section></div>
   </section>`;
-  const classRegister = data.permissions?.canReviewScores ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-class-score-register>
-    <div class="academic-management-editor-heading"><div><h3>Class score register — all arms</h3><p>Read-only raw marks / maximum, including Draft scores. This is not a published result. Choose a class, not a classroom.</p></div></div>
-    <div class="academic-management-form-grid"><label>Class<select name="ClassId" required>${academicSelectOptions(rows.classes.filter(academicIsActive), '', row => row.Name, 'Choose class')}</select></label>
+  const classroomRegister = data.permissions?.canViewClassroomScores && !data.permissions?.canReviewScores;
+  const teacherClassrooms = classrooms.filter(arm => rows.teacherAllocations.some(row => academicIsActive(row)
+    && clean(row.AllocationRole).toLowerCase() === 'form teacher' && row.SessionId === sessionId && row.TermId === termId
+    && row.ClassId === arm.ClassId && row.ArmId === arm.ArmId));
+  const registerChoices = classroomRegister ? '<option value="">Choose classroom</option>' + teacherClassrooms.map(arm =>
+    `<option value="${escapeHtml(arm.ArmId)}" data-class-id="${escapeHtml(arm.ClassId)}">${escapeHtml(academicLabel(rows.classes, arm.ClassId))} / ${escapeHtml(arm.Name)}</option>`).join('')
+    : academicSelectOptions(rows.classes.filter(academicIsActive), '', row => row.Name, 'Choose class');
+  const classRegister = data.permissions?.canReviewScores || classroomRegister ? `<form class="academic-management-editor academic-management-editor-wide"${classroomRegister ? ' data-classroom-register' : ''} data-academic-class-score-register>
+    <div class="academic-management-editor-heading"><div><h3>${classroomRegister ? 'My classroom scores — all subjects' : 'Class score register — all arms'}</h3><p>Read-only raw marks / maximum, including Draft scores. This is not a published result. ${classroomRegister ? 'Choose your assigned classroom to vet all subjects without changing marks.' : 'Choose a class, not a classroom.'}</p></div></div>
+    ${classroomRegister && !teacherClassrooms.length ? '<p>No class teacher assignment was found for this session and term. Ask Academic Management to assign your classroom under Assign class teachers.</p>' : ''}
+    <div class="academic-management-form-grid"><label>${classroomRegister ? 'Classroom' : 'Class'}<select name="ClassId" required>${registerChoices}</select></label>
     <label>Test<select name="TestId"><option value="">All tests</option></select></label><label>Find student<input name="Query" type="search" placeholder="Name or admission number"></label>
     <div class="class-register-subject-field"><span id="class-register-subject-label">Subjects</span><details data-class-register-subjects>
       <summary aria-labelledby="class-register-subject-label class-register-subject-summary"><span id="class-register-subject-summary" data-class-register-subject-summary>Load a class first</span></summary>
@@ -15688,8 +15697,8 @@ function academicScorebookWorkspace(data, rows) {
     <label>Score filter<select name="ScoreFilter" aria-describedby="class-register-filter-hint"><option value="all">All students</option><option value="missing">Missing scores (any subject)</option><option value="missing-all">No scores at all</option><option value="partial">Some scores, some missing</option><option value="scored-any">At least one score</option><option value="scored-all">Scores in all selected subjects</option><option value="below">Score below…</option><option value="above">Score above…</option></select></label>
     <label data-class-register-threshold hidden><span data-class-register-threshold-label>Raw score below</span><input name="ScoreThreshold" type="number" min="0" step="any" placeholder="For example, 50" aria-describedby="class-register-filter-hint" disabled></label></div>
     <p id="class-register-filter-hint" data-class-register-filter-hint role="status">Showing all students. Score filters use only the selected test and subjects.</p>
-    <div class="class-register-actions"><button type="submit">Load class scores</button><button type="button" class="secondary" data-class-register-print disabled>Preview / print</button>${data.permissions?.canManageScoreCorrections ? '<button type="button" class="secondary" data-class-register-reactivate disabled>Reactivate score for editing — whole class</button>' : ''}</div>
-    <p role="status" data-class-register-status>Select a class to load its students and scores.</p>
+    <div class="class-register-actions"><button type="submit">Load ${classroomRegister ? 'classroom' : 'class'} scores</button><button type="button" class="secondary" data-class-register-print disabled>Preview / print</button>${!classroomRegister && data.permissions?.canManageScoreCorrections ? '<button type="button" class="secondary" data-class-register-reactivate disabled>Reactivate score for editing — whole class</button>' : ''}</div>
+    <p role="status" data-class-register-status>Select a ${classroomRegister ? 'classroom' : 'class'} to load its students and scores.</p>
     <div class="admin-table-wrap" data-class-register-table style="max-width:100%;overflow:auto"></div>
     <div class="academic-management-form-actions"><button type="button" data-class-register-page="-1" disabled>Previous</button><span data-class-register-count></span><button type="button" data-class-register-page="1" disabled>Next</button></div>
   </form>` : '';
@@ -15761,13 +15770,13 @@ function academicClassRegisterPrintHtml(register, filters, schoolName, period) {
   // Keep wide registers legible: repeat student identity for each group of five score columns.
   for (let offset = 0; offset < columns.length; offset += 5) {
     const group = columns.slice(offset, offset + 5);
-    sections.push(`<section><h1>${escapeHtml(schoolName || 'School')}</h1><h2>${escapeHtml(register.ClassName)} — Class score register</h2>
-      <p>${escapeHtml(period)} · All arms · ${rows.length} matching students</p>
+    sections.push(`<section><h1>${escapeHtml(schoolName || 'School')}</h1><h2>${escapeHtml(register.ClassroomName || register.ClassName)} — ${register.ArmId ? 'Classroom' : 'Class'} score register</h2>
+      <p>${escapeHtml(period)} · ${escapeHtml(register.ArmName || 'All arms')} · ${rows.length} matching students</p>
       <p>Subjects: ${escapeHtml([...new Set(group.map(column => column.SubjectName))].join(', '))}<br>Tests: ${escapeHtml([...new Set(group.map(column => column.TestName))].join(', '))}</p>
       <p>Raw marks / maximum · Includes Draft scores · Not a published result${filters.query ? `<br>Student filter: ${escapeHtml(filters.query)}` : ''}${filters.scoreFilter === 'missing' ? '<br>Score filter: Missing scores in at least one selected subject/test.' : filters.scoreFilter === 'missing-all' ? '<br>Score filter: No scores at all—missing every applicable selected subject/test. Zero, Absent and duplicate-review records exclude a student; Exempt and Not enrolled subjects are ignored.' : filters.scoreFilter === 'partial' ? '<br>Score filter: Some scores, some missing—a numeric mark in one selected subject and a missing mark in another, for the selected test(s). Zero counts; Absent, Exempt, Not enrolled and duplicate-review entries do not count as numeric or missing marks.' : filters.scoreFilter === 'scored-any' ? '<br>Score filter: At least one score—a recorded numeric mark in any selected subject/test, including zero.' : filters.scoreFilter === 'scored-all' ? '<br>Score filter: Scores in all selected subjects—recorded numeric marks in every selected subject/test. Zero counts; missing, Absent, Exempt, Not enrolled and duplicate-review entries are excluded.' : ['below', 'above'].includes(filters.scoreFilter) ? `<br>Score filter: Raw score ${filters.scoreFilter} ${escapeHtml(filters.scoreThreshold)} in at least one selected subject/test (not a percentage).` : ''}</p>
       <p>Subject section ${sections.length + 1} of ${Math.ceil(columns.length / 5)}</p>${academicClassRegisterTable(group, rows)}</section>`);
   }
-  return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(register.ClassName)} class score register</title><style>
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(register.ClassroomName || register.ClassName)} score register</title><style>
     @page{size:A4 landscape;margin:10mm}*{box-sizing:border-box}body{font:11px/1.4 Arial,sans-serif;color:#17324d;margin:24px}h1{font-size:20px;margin:0}h2{font-size:17px}p{margin:6px 0}section{margin:20px 0 36px}section+section{break-before:page}
     table{width:100%;border-collapse:collapse;table-layout:fixed}th,td{border:1px solid #8195a7;padding:6px;text-align:center;overflow-wrap:anywhere}th{background:#edf3f8}th:first-child{width:4%}th:nth-child(2){width:20%}th:nth-child(3){width:13%}th:nth-child(4){width:10%}td:nth-child(2),td:nth-child(3),td:nth-child(4){text-align:left}thead{display:table-header-group}tr{break-inside:avoid}small{display:block}button{padding:10px 18px;margin-bottom:12px}@media print{body{margin:0}button{display:none}section{margin:0}section+section{padding-top:0}}
     </style></head><body><button onclick="window.print()">Print / Save as PDF</button><p>All matching students are included. Wide selections continue in separate subject sections.</p>${sections.join('') || '<p>Select at least one subject to print.</p>'}</body></html>`;
@@ -15808,6 +15817,8 @@ function createAcademicClassRegisterCache({ now = () => Date.now(), maxAge = 10 
 
 function bindAcademicClassScoreRegister(form) {
   if (!form) return;
+  const classroomOnly = form.hasAttribute('data-classroom-register');
+  const scopeLabel = classroomOnly ? 'classroom' : 'class';
   bindAcademicClassRegisterSubjectDismissal();
   let register = null, page = 0, subjectIds = null, busy = false;
   // This read-only cache belongs to this form only: changing workspace, branch,
@@ -15843,7 +15854,7 @@ function bindAcademicClassScoreRegister(form) {
       form.elements.ScoreThreshold.value = saved.scoreThreshold;
     }
     subjectMenu.open = false;
-    status.textContent = `${register.ClassName}: ${register.StudentCount} students across all arms · ${register.SubjectCount} subjects. Raw marks / maximum. Loaded at ${new Date(loadedAt).toLocaleTimeString()}.${cached ? ' Restored without another request.' : ''} Refresh class scores for newer marks.`;
+    status.textContent = `${register.ClassroomName || register.ClassName}: ${register.StudentCount} students${classroomOnly ? '' : ' across all arms'} · ${register.SubjectCount} subjects. Raw marks / maximum. Loaded at ${new Date(loadedAt).toLocaleTimeString()}.${cached ? ' Restored without another request.' : ''} Refresh ${scopeLabel} scores for newer marks.`;
   };
   const resetSubjects = () => {
     subjectMenu.open = false;
@@ -15854,7 +15865,7 @@ function bindAcademicClassScoreRegister(form) {
     form.elements.TestId.innerHTML = '<option value="">All tests</option>';
   };
   const render = () => {
-    loadButton.textContent = register ? 'Refresh class scores' : 'Load class scores';
+    loadButton.textContent = `${register ? 'Refresh' : 'Load'} ${scopeLabel} scores`;
     const mode = form.elements.ScoreFilter.value;
     const comparison = mode === 'below' || mode === 'above';
     form.querySelector('[data-class-register-threshold]').hidden = !comparison;
@@ -15901,11 +15912,12 @@ function bindAcademicClassScoreRegister(form) {
     const button = form.querySelector('[type="submit"]'); button.disabled = true;
     form.elements.ClassId.disabled = true;
     const requestedClassId = form.elements.ClassId.value;
-    subjectMenu.open = false; render(); status.textContent = 'Loading class scores…';
+    subjectMenu.open = false; render(); status.textContent = `Loading ${scopeLabel} scores…`;
     try {
-      const result = await academicManagementRequest('getAcademicClassScoreRegister', {
+      const result = await academicManagementRequest(classroomOnly ? 'getAcademicClassroomScoreRegister' : 'getAcademicClassScoreRegister', {
         SchoolSection: academicManagementFilters.section, SessionId: academicManagementFilters.sessionId,
-        TermId: academicManagementFilters.termId, ClassId: requestedClassId
+        TermId: academicManagementFilters.termId, ClassId: classroomOnly ? form.elements.ClassId.selectedOptions[0]?.dataset.classId : requestedClassId,
+        ...(classroomOnly ? { ArmId: requestedClassId } : {})
       });
       if (!form.isConnected || form.elements.ClassId.value !== requestedClassId) return;
       loadedClassId = requestedClassId;
@@ -15953,7 +15965,7 @@ function bindAcademicClassScoreRegister(form) {
     if (saved) showRegister(saved, true);
     else {
       register = null; page = 0; resetSubjects();
-      status.textContent = 'Load the selected class to review its scores. Recent classes are retained for 10 minutes in this workspace.';
+      status.textContent = `Load the selected ${scopeLabel} to review its scores. Loaded ${scopeLabel} scores are retained for 10 minutes in this workspace.`;
     }
     render();
   });

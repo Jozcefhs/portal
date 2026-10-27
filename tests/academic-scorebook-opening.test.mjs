@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import * as management from '../functions/lib/academic-management.js';
 import * as scorebook from '../functions/lib/academic-scorebook.js';
 import { safeScopeId } from '../functions/lib/school-scope.js';
+import { academicTeacherScoreClassrooms, loadAcademicClassroomScoreRegister } from '../functions/lib/academic-classroom-score-register.js';
 
 const source = await readFile(new URL('../functions/lib/academic-management.js', import.meta.url), 'utf8');
 const admin = await readFile(new URL('../js/admin.js', import.meta.url), 'utf8');
@@ -49,6 +50,7 @@ function fixture() {
   };
   const read = async (_env, collection, options) => { calls.push({ collection, options }); return structuredClone(records[collection] || []); };
   const context = vm.createContext({ ...management, ...scorebook, safeScopeId, TextEncoder, TextDecoder,
+    academicTeacherScoreClassrooms, loadAcademicClassroomScoreRegister,
     loadAcademicResultsReadiness:async(_env,_state,scope)=>({Scope:scope,Blockers:[],Warnings:[],Counts:{Students:0}}),
     getSchoolStructure: async () => ({ ActiveBranchId: 'main', Branches: [{ Id: 'main' }], Sections: ['primary', 'secondary'] }),
     enforceActorBranch: (_actor, branch) => branch,
@@ -98,6 +100,30 @@ test('teachers still open their allocated entry workspace instead of an unavaila
   assert.equal(data.teacherAllocations[0].TeacherUsername, 'teacher-1');
 });
 
+test('web class teachers open assignment selectors without reading students, scores or policy', async () => {
+  const f = fixture();
+  f.records.academicArms = [row({ ArmId: 'a', ClassId: 'c', Name: 'Brilliance', IsClassroom: true }), row({ ArmId: 'b', ClassId: 'c', Name: 'Private' })];
+  f.records.academicTeacherAllocations = [row({ SessionId: 's', TermId: 't', ClassId: 'c', ArmId: 'a', TeacherUsername: 'teacher-1', AllocationRole: 'Form Teacher' }),
+    row({ SessionId: 's', TermId: 't', ClassId: 'c', ArmId: 'b', TeacherUsername: 'other', AllocationRole: 'Form Teacher' })];
+  const webTeacher = f.context.academicWebActor({ ...actor, role: 'Teacher', username: 'teacher-1' });
+  const result = await f.context.bootstrapAcademicManagement({}, webTeacher, { ...input, WorkspaceLoadMode: 'navigation' });
+  assert.equal(result.permissions.canViewClassroomScores, true);
+  assert.equal(result.scorebookWorkspaceDeferred, true); assert.equal(result.workspaceDataDeferred, false);
+  assert.deepEqual(Array.from(result.arms, row => row.ArmId), ['a']);
+  assert.deepEqual(f.calls.map(call => call.collection).sort(), ['academicArms', 'academicClasses', 'academicSessions', 'academicTeacherAllocations', 'academicTerms']);
+  assert.ok(f.calls.find(call => call.collection === 'academicTeacherAllocations').options.filters.some(filter => filter.field === 'TeacherUsername' && filter.value === 'teacher-1'));
+  assert.equal(result.studentScores.length, 0); assert.equal(result.studentMemberships.length, 0); assert.equal(result.students.length, 0);
+  assert.equal(f.writes.length, 0);
+});
+
+test('classroom register handler checks branch and school section before loading academic data', async () => {
+  const f = fixture(), webTeacher = f.context.academicWebActor({ ...actor, role: 'Teacher', username: 'teacher-1' });
+  const request = { ...input, SessionId: 's', TermId: 't', ClassId: 'c', ArmId: 'a' };
+  await assert.rejects(f.context.getAcademicClassroomScoreRegister({}, webTeacher, { ...request, SchoolSection: 'primary' }), { code: 'ACADEMIC_SECTION_FORBIDDEN' });
+  await assert.rejects(f.context.getAcademicClassroomScoreRegister({}, webTeacher, { ...request, BranchId: 'unknown' }), { code: 'ACADEMIC_BRANCH_FORBIDDEN' });
+  assert.equal(f.calls.length, 0); assert.equal(f.writes.length, 0);
+});
+
 function clientFixture(task, deferred = false) {
   const calls = [], rendered = [];
   const payload = { SessionId: 's', TermId: 't', ClassId: 'c', ArmId: 'a', SubjectId: 'math', TeacherUsername: 't' };
@@ -134,6 +160,7 @@ test('entry context coalesces repeated render requests and cannot replace a newl
 });
 
 test('workspace loading requests the remembered task and defaults to the lightweight register', async () => {
+  assert.match(admin.slice(admin.indexOf('let academicManagementTaskViews ='), admin.indexOf('let academicManagementFilters =')), /scorebook: 'classRegister'/);
   const calls = [];
   const context = vm.createContext({ clean: value => String(value ?? '').trim(), activeSection: 'academics',
     academicManagementView: 'scorebook', academicManagementLoadRequest: 0, academicManagementTaskViews: {},

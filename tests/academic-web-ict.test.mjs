@@ -6,12 +6,14 @@ import { academicManagementCapabilities, academicWebActor } from '../functions/l
 
 const ict = { username: 'ict', role: 'ICT', edition: 'school', allowedSections: ['academics'], branchId: 'main', schoolSectionAccess: 'Secondary' };
 
-test('web ICT has every academic capability without changing its role or scope', () => {
+test('web ICT has every academic management capability without changing its role or scope', () => {
   const actor = academicWebActor(ict);
   const permissions = academicManagementCapabilities(actor);
   assert.equal(permissions.fullAcademicAccess, true);
   for (const [name, value] of Object.entries(permissions).filter(([name]) => name.startsWith('can'))) {
-    assert.equal(value, true, name);
+    // ICT uses the existing all-class register; the assigned-classroom view is
+    // a teacher-specific entry point, not an additional management privilege.
+    assert.equal(value, name !== 'canViewClassroomScores', name);
   }
   assert.equal(actor.role, 'ICT');
   assert.equal(actor.branchId, 'main');
