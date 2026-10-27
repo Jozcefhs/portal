@@ -6,8 +6,8 @@ import {defaultAcademicPolicy} from '../functions/lib/academic-policy.js';
 import {calculateAcademicTermResultDrafts,calculateAcademicMidTermResultDrafts} from '../functions/lib/academic-term-results.js';
 import {planAcademicResultBatch} from '../functions/lib/academic-result-batch.js';
 const source=await readFile(new URL('../functions/lib/academic-management.js',import.meta.url),'utf8');
-function fixture(type='Mid-Term'){
-  const scope={BranchId:'main',SchoolSection:'secondary',SessionId:'s',TermId:'t',ClassId:'c',ArmId:'a',ResultType:type};
+function fixture(type='Mid-Term',section='secondary'){
+  const scope={BranchId:'main',SchoolSection:section,SessionId:'s',TermId:'t',ClassId:'c',ArmId:'a',ResultType:type};
   const policy=defaultAcademicPolicy();policy.Position.Mode='none';policy.Promotion.Mode='manual-review';
   policy.ResultAccess.VisibilityMode='current-term';policy.ResultAccess.FinancialClearance.Mode='none';
   policy.Assessment.Components=[{Id:'ca',Name:'CA1',MaximumScore:100,WeightPercentage:100,Required:true}];
@@ -41,8 +41,8 @@ test('saved untaught mid-term subjects remain excluded without inventing scores 
   assert.equal(plan.outcomes[0].Outcome,'Updated');assert.equal(plan.outcomes[0].result.Subjects.length,1);
   assert.equal(plan.outcomes[0].result.NotTaughtSubjects[0].SubjectId,'trade');assert.deepEqual(f.state,before);
 });
-for(const type of ['Mid-Term','End of Term'])test(`${type}: incomplete and changed marks remain pending while complete results follow every selected stage`,()=>{
-  const f=fixture(type),before=structuredClone(f.state);
+for(const section of ['nursery','primary','secondary'])for(const type of ['Mid-Term','End of Term'])test(`${section} ${type}: incomplete and changed marks remain pending while complete results follow every selected stage`,()=>{
+  const f=fixture(type,section),before=structuredClone(f.state);
   const plan=planAcademicResultBatch(f.state,f.scope,f.items,'ReviewApprovePublish');
   assert.deepEqual(plan.changes.find(row=>row.previous.StudentRef==='good').stages,['Reviewed','Approved','Published']);
   assert.equal(plan.outcomes.find(row=>row.StudentRef==='pending').Outcome,'Pending');

@@ -89,10 +89,13 @@ function runtime(){
     writePrecondition:(existing,token)=>{if(token!==existing.__updateTime)throw failure('Reload changed sheet',409,'ACADEMIC_WRITE_CONFLICT');return {updateTime:token};},
     ACADEMIC_MANAGEMENT_COLLECTIONS:{scoreSheets:'academicScoreSheets'},
     auditWrite:(_u,action,_type,_record,details)=>({collectionPath:'academicAuditLog',data:{Action:action,Details:details}}),
+    oneOf:(value,values,fallback)=>values.find(row=>row.toLowerCase()===String(value).toLowerCase())||fallback,
+    ACADEMIC_SCORE_SHEET_STATUSES:['Draft','Submitted','Approved','Locked'],
     commitAcademicSubmission:async(_e,_c,_u,_i,kind,writes)=>{submissions.push(kind);commits.push(writes);},
     commitAcademicBatch:async(_e,writes)=>commits.push(writes),crypto:webcrypto
   });
   for(const name of ['changeAcademicComponentReview','assertAcademicScoreSheetComplete'])vm.runInContext(source.match(new RegExp(`async function ${name}\\([\\s\\S]*?\\n}`))[0],sandbox);
+  vm.runInContext(source.match(/export async function changeAcademicScoreSheetStatus\([\s\S]*?\n}/)[0].replace('export ',''),sandbox);
   return {sandbox,context,commits,submissions};
 }
 
@@ -116,14 +119,14 @@ test('full-term review recalculates actual saved marks, ignores stale Complete f
   await assert.rejects(f.sandbox.assertAcademicScoreSheetComplete({studentScores:fakeComplete},sheet,roster),/Exam \(2\).*Review individual tests/);
   const complete=scores.map(row=>({...row,CompletionStatus:'Incomplete',ComponentScores:[...row.ComponentScores,{ComponentId:'exam',State:'Numeric',RawScore:65}]}));
   assert.equal((await f.sandbox.assertAcademicScoreSheetComplete({studentScores:complete},sheet,roster)).length,2);
-  await assert.rejects(f.sandbox.assertAcademicScoreSheetComplete({studentScores:[...complete,complete[0]]},sheet,roster),/incomplete/);
+  const duplicates=await f.sandbox.assertAcademicScoreSheetComplete({studentScores:[...complete,complete[0]]},sheet,roster,{summary:true});
+  assert.equal(duplicates.CompleteCount,1);assert.deepEqual(Array.from(duplicates.PendingStudentRefs),['TEST/1']);
 });
 
-test('review can explicitly leave missing students pending without inventing or approving their marks',async()=>{
+test('review always leaves missing students pending without inventing or approving their marks',async()=>{
   const [review]=await academicComponentReviews(sheet,roster,[scores[0]]);
   assert.equal(review.CompleteCount,1);assert.equal(review.MissingCount,1);
-  assert.throws(()=>academicComponentReviewTransition(sheet,review,'Submitted',perms,actor),/still need required marks/);
-  const submitted=academicComponentReviewTransition(sheet,review,'Submitted',perms,actor,'',true);
+  const submitted=academicComponentReviewTransition(sheet,review,'Submitted',perms,actor);
   assert.deepEqual(submitted.PendingStudentRefs,['test/2']);assert.equal(submitted.AllowPendingStudents,true);
   const saved={...sheet,ComponentReviews:{ca1:submitted}};
   const [fresh]=await academicComponentReviews(saved,roster,[scores[0]]);
@@ -138,8 +141,31 @@ test('full-sheet pending mode accepts complete students only and changes no scor
   const f=runtime();
   const complete={...scores[0],ComponentScores:[...scores[0].ComponentScores,{ComponentId:'exam',State:'Numeric',RawScore:60}]};
   const state={studentScores:[complete,scores[1]]},before=structuredClone(state);
-  const result=await f.sandbox.assertAcademicScoreSheetComplete(state,sheet,roster,{allowPending:true,summary:true});
+  const result=await f.sandbox.assertAcademicScoreSheetComplete(state,sheet,roster,{allowPending:false,summary:true});
   assert.equal(result.CompleteCount,1);assert.deepEqual(Array.from(result.PendingStudentRefs),['TEST/2']);
   assert.deepEqual(state,before);
   await assert.rejects(f.sandbox.assertAcademicScoreSheetComplete({studentScores:[]},sheet,roster,{allowPending:true}),/incomplete/);
+  await assert.rejects(f.sandbox.assertAcademicScoreSheetComplete(state,sheet,[]),{code:'ACADEMIC_SCORE_SHEET_EMPTY'});
+});
+
+test('one incomplete student never blocks test or full-term submission, approval and locking across school sections and subjects',async()=>{
+  for(const SchoolSection of ['nursery','primary','secondary'])for(const SubjectId of ['math','english','financial-accounting','trade'])for(const ComponentId of ['ca1','']){
+    const f=runtime();
+    Object.assign(f.context.existing,{SchoolSection,SubjectId,ClassId:`${SchoolSection}-class`,ArmId:'classroom'});
+    f.context.state.studentScores[0].ComponentScores.push({ComponentId:'exam',State:'Numeric',RawScore:70});
+    f.context.state.studentScores[1].ComponentScores=[];
+    const before=structuredClone(f.context.state);
+    for(const Status of ['Submitted','Approved','Locked']){
+      await f.sandbox.changeAcademicScoreSheetStatus({}, {},{ComponentId,Status,AllowPendingStudents:false,RevisionToken:'v1'},f.context);
+      const saved=f.commits.at(-1)[0].data;
+      const review=ComponentId?saved.ComponentReviews.ca1:saved;
+      assert.equal(review.Status,Status,`${SchoolSection}/${SubjectId}/${ComponentId}/${Status}`);
+      assert.deepEqual(Array.from(review.PendingStudentRefs,ref=>ref.toLowerCase()),['test/2']);
+      assert.ok(f.commits.at(-1).every(write=>['academicScoreSheets','academicAuditLog'].includes(write.collectionPath)));
+      f.context.existing={...saved,__updateTime:'v1'};
+    }
+    const count=f.commits.length;
+    await f.sandbox.changeAcademicScoreSheetStatus({}, {},{ComponentId,Status:'Locked',RevisionToken:'old'},f.context);
+    assert.equal(f.commits.length,count);assert.deepEqual(f.context.state,before);
+  }
 });

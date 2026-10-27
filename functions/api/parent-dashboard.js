@@ -53,6 +53,7 @@ import {
   academicFinancialSummary,
   academicFullScholarshipFinancialSummary,
   academicResultClearanceIsActive,
+  academicResultIsPublished,
   evaluateAcademicResultAccess,
   publicAcademicResult
 } from '../lib/academic-result-access.js';
@@ -778,12 +779,12 @@ async function querySchoolIdentity(env, collection, email, code) {
   return uniqueRows(codeRows.flat());
 }
 
-async function queryRowsForReferences(env, collection, fields, references) {
+async function queryRowsForReferences(env, collection, fields, references, { strict = false } = {}) {
   const values = [...new Set((references || []).map(clean).filter(Boolean))].slice(0, 30);
   if (!values.length) return [];
   const groups = await Promise.all(fields.map((field) => queryCollection(env, collection, {
     filters: [{ field, op: 'in', value: values }]
-  }).catch(() => [])));
+  }).catch((error) => { if (strict) throw error; return []; })));
   return uniqueRows(groups.flat());
 }
 
@@ -1383,24 +1384,22 @@ async function parentAcademicResults(env, {
   invoices = [],
   ledger = [],
   feeItems = null,
+  loadFinancialContext = null,
   purpose = 'View',
   requestedResultId = ''
 } = {}) {
   const requestedId = clean(requestedResultId);
-  const scopedClearances = (clearanceRows || []).filter((row) =>
-    recordMatchesSelectedChildScope(row, selectedScope) && academicResultBelongsToChild(row, child));
   const rows = (resultRows || []).filter((row) =>
     recordMatchesSelectedChildScope(row, selectedScope) &&
     academicResultBelongsToChild(row, child) &&
     (!requestedId || lower(academicResultId(row)) === lower(requestedId))
   ).sort((left, right) => clean(right.PublishedAt || right.UpdatedAt).localeCompare(clean(left.PublishedAt || left.UpdatedAt)));
-  const financialSummary = academicFinancialSummary(invoices, ledger);
+  let financialContextPromise;
   const output = [];
   // Reuse a policy within this request only. A new view or print must recheck
   // the active assignment, so a changed policy takes effect immediately.
   const policyViews = new Map();
   for (const result of rows) {
-    const scholarshipFees = parentAcademicScholarshipFees(child, result, feeItems);
     const period = academicResultPeriod(result);
     const chain = academicPolicyScopeChain({
       BranchId: selectedScope.branchId,
@@ -1418,6 +1417,16 @@ async function parentAcademicResults(env, {
     const activePolicy = view?.ActivePolicy || {};
     const hasActivePolicy = Boolean(view?.Sources?.length) &&
       academicPolicyIssues(activePolicy, { forActivation: true }).length === 0;
+    // Print/refresh requests load finance only when a published result's active
+    // policy requires it. Failed financial reads propagate; never assume paid.
+    const context = loadFinancialContext && hasActivePolicy && academicResultIsPublished(result)
+      && activePolicy.ResultAccess?.FinancialClearance?.Mode !== 'none'
+      ? await (financialContextPromise ||= loadFinancialContext())
+      : { accountSummary, invoices, ledger, feeItems, clearanceRows };
+    const scholarshipFees = parentAcademicScholarshipFees(child, result, context.feeItems);
+    const scopedClearances = (context.clearanceRows || []).filter((row) =>
+      recordMatchesSelectedChildScope(row, selectedScope) && academicResultBelongsToChild(row, child));
+    const financialSummary = academicFinancialSummary(context.invoices, context.ledger);
     const access = evaluateAcademicResultAccess({
       result,
       policy: activePolicy,
@@ -1431,8 +1440,8 @@ async function parentAcademicResults(env, {
         TermId: (schoolProfile.BranchOverrideFields || []).includes('CurrentTerm') ? '' : schoolProfile.CurrentTermId
       },
       finance: {
-        ...accountSummary,
-        ...(scholarshipFees ? academicFullScholarshipFinancialSummary(scholarshipFees, invoices, ledger, {
+        ...context.accountSummary,
+        ...(scholarshipFees ? academicFullScholarshipFinancialSummary(scholarshipFees, context.invoices, context.ledger, {
           AcademicSession: clean(result.AcademicSession || result.SessionName) || child.AcademicSession,
           Term: clean(result.Term || result.TermName) || child.Term
         }) : financialSummary)
@@ -2088,6 +2097,9 @@ async function getChildActivity(env, body, options = {}) {
   child.BranchId = selectedScope.branchId;
   child.SchoolSection = selectedScope.schoolSection;
   if (profileBranch !== selectedScope.branchId) schoolProfile = await getSchoolProfile(env, selectedScope.branchId);
+  if (options.academicResultsOnly) {
+    return loadParentAcademicResultActivity(env, { email, child, selectedScope, schoolProfile, options });
+  }
   const keys = accountKeys(child);
   const [ledgerRows, invoiceRows, paymentRows, clinicRows, summaryRows, linkedApplication, storeItems, storeOrderRows, academicResultRows, academicClearanceRows, academicMembershipRows, academicAttendanceRows, timetableVersionRows, timetableEntryRows, academicSubjectRows, schoolCalendarRows, academicTermRows, libraryLoanRows, scholarshipFeeItems, transferRows] = await Promise.all([
     queryParentFinancialRows(env, 'ledger', keys),
@@ -2257,6 +2269,40 @@ async function getChildActivity(env, body, options = {}) {
   };
 }
 
+function parentAcademicReportProfile(profile = {}) {
+  return {
+    SchoolName: clean(profile.SchoolName || profile.OrganisationName || profile.OrganizationName),
+    SchoolAddress: clean(profile.SchoolAddress), SchoolPhone: clean(profile.SchoolPhone), SchoolEmail: clean(profile.SchoolEmail),
+    ResultSignatoryName: clean(profile.ResultSignatoryName || profile.SchoolSignatoryName),
+    ResultSignatoryTitle: clean(profile.ResultSignatoryTitle || profile.SchoolSignatoryTitle),
+    DocumentLogoUrl: '/api/document-logo', DocumentStampUrl: '/api/document-stamp'
+  };
+}
+
+// Reached only after getChildActivity has authenticated this parent and child.
+// No billing repair, notifications, clinic, store or timetable work is needed.
+async function loadParentAcademicResultActivity(env, { email, child, selectedScope, schoolProfile, options = {} }) {
+  const keys = accountKeys(child), requestedId = clean(options.requestedAcademicResultId);
+  if (requestedId.includes('/')) throw Object.assign(new Error('Choose a valid academic result.'), { status: 400 });
+  const resultRows = requestedId
+    ? [await getDocument(env, 'academicResults', requestedId)].filter(Boolean)
+    : await queryRowsForReferences(env, 'academicResults', ['StudentRef', 'AdmissionNo', 'AccountRef'], keys, { strict: true });
+  const academicResults = await parentAcademicResults(env, {
+    email, child, selectedScope, schoolProfile, resultRows,
+    purpose: options.academicResultPurpose || 'View', requestedResultId: requestedId,
+    loadFinancialContext: async () => {
+      const [ledger, invoices, clearanceRows, feeItems] = await Promise.all([
+        queryParentFinancialRows(env, 'ledger', keys), queryParentFinancialRows(env, 'invoices', keys),
+        queryRowsForReferences(env, 'academicResultClearances', ['StudentRef', 'AdmissionNo', 'AccountRef'], keys, { strict: true }),
+        isFullScholarship(child.BillingCategory) ? listCollection(env, 'feeItems') : Promise.resolve(null)
+      ]);
+      const inScope = row => recordMatchesSelectedChildScope(row, selectedScope);
+      return { ledger: ledger.filter(inScope).map(normalizeLedger), invoices: invoices.filter(inScope).map(normalizeInvoice), clearanceRows, feeItems };
+    }
+  });
+  return { ok: true, branchId: selectedScope.branchId, academicResults, reportProfile: parentAcademicReportProfile(schoolProfile) };
+}
+
 async function getAcademicResultForPrint(env, body) {
   const requestedResultId = clean(body.resultId || body.ResultId);
   if (!requestedResultId) {
@@ -2265,6 +2311,7 @@ async function getAcademicResultForPrint(env, body) {
     throw error;
   }
   const activity = await getChildActivity(env, body, {
+    academicResultsOnly: true,
     academicResultPurpose: 'Print',
     requestedAcademicResultId: requestedResultId
   });
@@ -2279,20 +2326,10 @@ async function getAcademicResultForPrint(env, body) {
     error.status = 403;
     throw error;
   }
-  const reportProfile = await getSchoolProfile(env, activity.branchId);
   return {
     ok: true,
     academicResult: result,
-    reportProfile: {
-      SchoolName: clean(reportProfile.SchoolName || reportProfile.OrganisationName || reportProfile.OrganizationName),
-      SchoolAddress: clean(reportProfile.SchoolAddress),
-      SchoolPhone: clean(reportProfile.SchoolPhone),
-      SchoolEmail: clean(reportProfile.SchoolEmail),
-      ResultSignatoryName: clean(reportProfile.ResultSignatoryName || reportProfile.SchoolSignatoryName),
-      ResultSignatoryTitle: clean(reportProfile.ResultSignatoryTitle || reportProfile.SchoolSignatoryTitle),
-      DocumentLogoUrl: '/api/document-logo',
-      DocumentStampUrl: '/api/document-stamp'
-    }
+    reportProfile: activity.reportProfile
   };
 }
 
@@ -2663,6 +2700,8 @@ export async function onRequestPost(context) {
       data = await updateParentNotificationConfiguration(env, body, request);
     } else if (action === 'getAcademicResultForPrint') {
       data = await getAcademicResultForPrint(env, body);
+    } else if (action === 'getChildAcademicResults') {
+      data = await getChildActivity(env, body, { academicResultsOnly: true });
     } else if (action === 'getChildActivity') {
       data = await getChildActivity(env, body);
     } else if (action === 'getChildPayable') {

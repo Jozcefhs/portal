@@ -23,7 +23,7 @@ try{
       request:async(action,payload)=>{
         calls.push({action,payload});
         if(action==='getAcademicScorebookContext')return {scorebookSnapshot:{sheet:{SheetId:'sheet',Status:'Draft',RevisionToken:`v${version}`,TestReviewStatus:[{ComponentId:'ca1',Name:'CA1',Status:testStatus}]}},
-          componentReviews:[{ComponentId:'ca1',Name:'CA1',Status:testStatus,Complete:true,CompleteCount:25,RosterCount:25,MissingCount:0},
+          componentReviews:[{ComponentId:'ca1',Name:'CA1',Status:testStatus,Complete:false,CompleteCount:24,RosterCount:25,MissingCount:1},
             {ComponentId:'exam',Name:'Exam',Status:'Draft',Complete:false,CompleteCount:0,RosterCount:25,MissingCount:25}]};
         await new Promise(resolve=>setTimeout(resolve,40));
         if(payload.RevisionToken!==`v${version}`)throw Error('stale revision');
@@ -40,6 +40,7 @@ try{
   await page.getByRole('button',{name:'Lock CA1',exact:true}).waitFor();
   assert.deepEqual(await page.evaluate(()=>calls.map(c=>c.action)),['getAcademicScorebookContext','changeAcademicScoreSheetStatus','getAcademicScorebookContext','changeAcademicScoreSheetStatus','getAcademicScorebookContext']);
   assert.equal(await page.evaluate(()=>calls[3].payload.RevisionToken),'v2');
+  assert.equal(await page.evaluate(()=>calls[3].payload.AllowPendingStudents),true);
   assert.match(await page.locator('[data-academic-test-review-status="sheet"]').textContent(),/CA1 · Approved/);
   assert.equal(await page.locator('[data-academic-id="sheet"]').getAttribute('data-academic-revision'),'v3');
   assert.equal(await page.locator('[data-academic-test-review-status="other"]').textContent(),'Unchanged');

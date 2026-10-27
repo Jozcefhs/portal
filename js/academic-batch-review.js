@@ -11,7 +11,7 @@ export function openAcademicBatchReview({sheets, label, request, scope, isCurren
     <div class="academic-batch-controls"><label>Test<select data-test>${components.map(([id,name])=>`<option value="${esc(id)}">${esc(name)}</option>`).join('')}<option value="">Full-term sheets</option></select></label>
     <label>Action<select data-action><option value="Approved">Approve submitted marks</option><option value="Submitted">Submit saved marks</option></select></label>
     <label>Find classroom or subject<input type="search" data-search></label></div>
-    <label class="academic-batch-check"><input type="checkbox" data-pending checked> Proceed with complete students; leave incomplete students pending</label>
+    <p class="academic-batch-check">Complete students proceed; incomplete students remain pending.</p>
     <p class="muted">Missing tests, including illness or hospitalisation, stay pending. No marks are invented and no records are deleted. At least one student must have complete marks. Approved tests remain separate from full-term approval.</p>
     <div><button type="button" class="secondary" data-select>Select visible subjects</button><button type="button" class="secondary" data-clear>Clear selection</button></div>
     <div class="admin-table-wrap" data-list></div><p data-status role="status"></p><button type="button" data-apply>Approve selected</button>`;
@@ -28,7 +28,7 @@ export function openAcademicBatchReview({sheets, label, request, scope, isCurren
     }).join('')}</tbody></table>`;
     apply.textContent=`${action.value==='Submitted'?'Submit':'Approve'} selected (${selected.size})`;
     apply.disabled=busy||!selected.size;
-    dialog.querySelectorAll('[data-close],[data-test],[data-action],[data-search],[data-pending],[data-select],[data-clear]').forEach(el=>el.disabled=busy);
+    dialog.querySelectorAll('[data-close],[data-test],[data-action],[data-search],[data-select],[data-clear]').forEach(el=>el.disabled=busy);
   }
   dialog.querySelector('[data-close]').onclick=()=>dialog.close();
   dialog.addEventListener('cancel',event=>{if(busy)event.preventDefault();});
@@ -47,7 +47,7 @@ export function openAcademicBatchReview({sheets, label, request, scope, isCurren
       for(let offset=0;offset<chosen.length;offset+=25){
         if(!isCurrent())throw new Error('The workspace changed. Remaining subjects were not processed.');
         message.textContent=`Checking selected subjects ${offset+1}–${Math.min(offset+25,chosen.length)} of ${chosen.length}…`;
-        const result=await request('batchReviewAcademicScores',{...scope,Status:action.value,AllowPendingStudents:dialog.querySelector('[data-pending]').checked,
+        const result=await request('batchReviewAcademicScores',{...scope,Status:action.value,AllowPendingStudents:true,
           Items:chosen.slice(offset,offset+25).map(sheet=>({SheetId:sheet.SheetId,ClassId:sheet.ClassId,ArmId:sheet.ArmId,SubjectId:sheet.SubjectId,
             TeacherUsername:sheet.TeacherUsername,RevisionToken:sheet.RevisionToken,ComponentId:test.value}))});
         for(const row of result.batchReview||[]){

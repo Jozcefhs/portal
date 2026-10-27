@@ -40,7 +40,7 @@ export function academicComponentReviewTransition(sheet, review, target, permiss
   if(!review)throw fail('Choose an assessment test from this score sheet.');
   if(clean(sheet.Status||'Draft')!=='Draft')throw fail('The full score sheet has already been submitted or approved. Reopen it before changing an individual test review.');
   if(!['Draft','Submitted','Approved','Locked'].includes(target))throw fail('Choose a valid test review status.');
-  const pendingAllowed = (allowPending === true || review.AllowPendingStudents === true) && review.CompleteCount > 0;
+  const pendingAllowed = review.CompleteCount > 0 && review.MissingCount > 0;
   if(['Submitted','Approved','Locked'].includes(target)&&!review.Complete&&!pendingAllowed)throw fail(`${review.Name}: ${review.MissingCount} of ${review.RosterCount} students still need required marks. Other tests do not block this test.`, 'ACADEMIC_COMPONENT_INCOMPLETE');
   if(target==='Submitted'&&!permissions.canEnterScores)throw Object.assign(fail('Only an authorised score officer may submit this test.'),{status:403});
   if(target==='Approved'&&!permissions.canReviewScores)throw Object.assign(fail('Only an academic reviewer may approve this test.'),{status:403});

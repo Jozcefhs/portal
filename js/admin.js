@@ -15640,7 +15640,7 @@ function academicScorebookWorkspace(data, rows) {
     ? `<button type="button" class="secondary" data-academic-score-reactivate data-academic-id="${escapeHtml(sheet.SheetId)}" data-academic-revision="${escapeHtml(sheet.RevisionToken)}">Reactivate score editing</button>`
     : '';
   const scorebook = `<form class="academic-management-editor academic-management-editor-wide academic-scorebook" data-academic-scorebook data-editable="${canEdit ? 'true' : 'false'}">
-    <div class="academic-management-editor-heading"><div><small>AM-009 score recording</small><h3>Enter student scores</h3><p class="muted">Scores remain Draft until the complete class-subject sheet is submitted. Missing and Incomplete block submission; Absent counts as zero; Exempt is excluded from the applicable weight.</p></div><strong>${roster.length} students</strong></div>
+    <div class="academic-management-editor-heading"><div><small>AM-009 score recording</small><h3>Enter student scores</h3><p class="muted">Submit complete students’ scores; students with missing or incomplete marks remain pending. Use Review individual tests for completed tests such as CA1. Absent counts as zero only when explicitly recorded; Exempt is excluded from the applicable weight.</p></div><strong>${roster.length} students</strong></div>
     ${blocking}
     ${layoutUpdate}
     ${lockingNotice}
@@ -16104,7 +16104,7 @@ function academicTermResultsWorkspace(data, rows) {
     <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}"><input type="hidden" name="SessionId" value="${escapeHtml(academicManagementFilters.sessionId)}"><input type="hidden" name="TermId" value="${escapeHtml(academicManagementFilters.termId)}">
     <div class="academic-management-form-grid academic-management-form-grid-3"><label>Classroom<select name="ArmId" data-academic-result-classroom required>${academicSelectOptions(classrooms, selectedArm?.ArmId, classroomLabel, 'Choose classroom')}</select></label><div class="academic-result-policy-note"><small>Attendance source</small><strong>Daily school presence</strong><span>Only the class register contributes to result attendance; lesson attendance is separate.</span></div><input type="hidden" name="AttendanceMode" value="Daily"><div class="academic-result-policy-note"><small>Publication lifecycle</small><strong>Calculated Draft → Reviewed → Approved → Published → Locked</strong><span>Published corrections must be withdrawn with a reason and reapproved.</span></div></div>
     ${academicMidTermNotTaughtMarkup(rows, selectedArm, midTermResults)}
-    <label class="academic-batch-check"><input type="checkbox" name="AllowPartialResults" checked> Calculate complete students; leave incomplete students pending</label>
+    <p class="academic-batch-check">Complete students are calculated; incomplete students remain pending.</p>
     <p class="muted">A student who missed tests does not hold back others. Missing marks remain missing. Existing reviewed, approved or published results are preserved. Class averages and positions use only students included in this calculation.</p>
     ${(data.resultCalculationPending || []).length ? `<details open><summary>Students pending (${data.resultCalculationPending.length})</summary><ul>${data.resultCalculationPending.map(row=>`<li><strong>${escapeHtml(academicLabel(data.students,row.StudentRef,row.StudentRef))}</strong>: ${escapeHtml((row.Issues || []).join(' '))}</li>`).join('')}</ul></details>` : ''}
     <div class="academic-management-form-actions"><button type="submit" data-result-calculation="end-term"${selectedArm ? '' : ' disabled'}>${endTermResults.length ? 'Recalculate end-of-term Drafts' : 'Calculate end-of-term results'}</button><button type="submit" class="secondary" data-result-calculation="mid-term"${selectedArm ? '' : ' disabled'}>${midTermResults.length ? 'Recalculate mid-term Drafts' : 'Calculate mid-term results'}</button></div>
@@ -18992,7 +18992,7 @@ function bindAcademicManagement() {
     const scope={SchoolSection:academicManagementFilters.section,SessionId:academicManagementFilters.sessionId,TermId:academicManagementFilters.termId};
     const periodKey=JSON.stringify(scope);
     await runButtonAction(event.currentTarget,'Opening…',async()=>{
-      const {openAcademicBatchReview}=await import('./academic-batch-review.js?v=20261026');
+      const {openAcademicBatchReview}=await import('./academic-batch-review.js?v=20261027-independent-results');
       openAcademicBatchReview({sheets:[...(academicCurrentRows(academicManagementData).scoreSheets || [])],scope,
         request:academicManagementRequest,
         label:sheet=>[academicLabel(academicManagementData.classes,sheet.ClassId),academicLabel(academicManagementData.arms,sheet.ArmId),academicLabel(academicManagementData.subjects,sheet.SubjectId)].join(' · '),
@@ -19012,7 +19012,7 @@ function bindAcademicManagement() {
     const branch=selectedBranchId,username=currentUser?.username;
     await runButtonAction(button,'Loading tests…',async()=>{
       try{
-        const {openAcademicTestReviews}=await import('./academic-component-review.js?v=20261026');
+        const {openAcademicTestReviews}=await import('./academic-component-review.js?v=20261027-independent-results');
         await openAcademicTestReviews({sheet,payload:academicScoreSheetRequestPayload,request:academicManagementRequest,
           permissions:academicManagementData.permissions||{},
           title:[academicLabel(academicManagementData.classes,sheet.ClassId),academicLabel(academicManagementData.arms,sheet.ArmId),academicLabel(academicManagementData.subjects,sheet.SubjectId)].join(' · '),
@@ -19308,7 +19308,7 @@ function bindAcademicManagement() {
           SessionId: academicManagementFilters.sessionId, TermId: academicManagementFilters.termId,
           ClassId: arm.ClassId, ArmId: arm.ArmId,
           AttendanceMode: resultCalculator.elements.AttendanceMode.value,
-          AllowPartialResults: resultCalculator.elements.AllowPartialResults?.checked === true,
+          AllowPartialResults: true,
           ResultResponseMode: 'delta',
           ...(midTerm ? {NotTaughtSubjectIds: notTaughtIds, NotTaughtReason: notTaughtReason} : {}),
           RevisionTokens: Object.fromEntries(existing.map((row) => [row.ResultId, row.RevisionToken]))

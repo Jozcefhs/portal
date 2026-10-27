@@ -112,15 +112,17 @@ test('policy reads are reused only within one view, and printing rechecks change
   f.state.policy=activePolicy('current-term','any-balance');f.args.invoices=[{Debit:100}];
   const profileCalls=[];
   f.sandbox.getChildActivity=async(_env,_body,options)=>{
+    assert.equal(options.academicResultsOnly,true);
     assert.equal(options.academicResultPurpose,'Print');f.args.requestedResultId=options.requestedAcademicResultId;
-    return {branchId:'west',academicResults:await f.run()};
+    return {branchId:'west',academicResults:await f.run(),reportProfile:{SchoolName:'West School'}};
   };
   f.sandbox.getSchoolProfile=async(_env,branch)=>{profileCalls.push(branch);return {SchoolName:'West School'};};
   vm.runInContext(extract('getAcademicResultForPrint'),f.sandbox);
   await assert.rejects(f.sandbox.getAcademicResultForPrint({}, {ResultId:'r1'}),error=>error.status===403);
   assert.equal(f.state.calls.length,2);assert.equal(profileCalls.length,0);
   f.args.ledger=[{Credit:100}];const printed=await f.sandbox.getAcademicResultForPrint({}, {ResultId:'r1',BranchId:'main'});
-  assert.equal(printed.academicResult.Access.Allowed,true);assert.deepEqual(profileCalls,['west']);
+  assert.equal(printed.academicResult.Access.Allowed,true);assert.deepEqual(profileCalls,[]);
+  assert.equal(printed.reportProfile.SchoolName,'West School');
   await assert.rejects(f.sandbox.getAcademicResultForPrint({}, {ResultId:'someone-else'}),error=>error.status===404);
 });
 
@@ -138,4 +140,54 @@ test('the selected branch supplies the current academic session and term before 
   for(const name of ['clean','lower','validatedIdentityScopePath','scopedPathIdentity','getChildActivity'])vm.runInContext(extract(name),sandbox);
   await assert.rejects(sandbox.getChildActivity({}, {sourceType:'student',scopePath:'schoolBranches/west/sections/secondary/students',AccountRef:'TEST/1'}),/profile verified/);
   assert.equal(actualBranch,'west');
+});
+
+function focusedFixture(){
+  const f=fixture(),reads=[];
+  for(const name of ['accountKeys','parentAcademicReportProfile','loadParentAcademicResultActivity'])vm.runInContext(extract(name),f.sandbox);
+  Object.assign(f.sandbox,{
+    getDocument:async(_env,collection,id)=>{reads.push({collection,id});return f.args.resultRows.find(row=>row.ResultId===id);},
+    queryRowsForReferences:async(_env,collection,_fields,keys,options)=>{
+      assert.equal(options.strict,true);reads.push({collection,keys});
+      if(f.resultError)throw f.resultError;
+      return collection==='academicResults'?f.args.resultRows:f.args.clearanceRows;
+    },
+    queryParentFinancialRows:async(_env,collection,keys)=>{reads.push({collection,keys});if(f.financeError)throw f.financeError;return f.args[collection];},
+    isFullScholarship:()=>false,
+    listCollection:()=>{throw new Error('Unexpected full collection read');}
+  });
+  return Object.assign(f,{reads,load:(options={})=>f.sandbox.loadParentAcademicResultActivity({}, {...f.args,options})});
+}
+
+test('focused result print reads only its document and active policy when no financial clearance is required',async()=>{
+  const f=focusedFixture();
+  const response=await f.load({requestedAcademicResultId:'r1',academicResultPurpose:'Print'});
+  assert.equal(response.academicResults[0].Access.Allowed,true);
+  assert.deepEqual(f.reads,[{collection:'academicResults',id:'r1'}]);assert.equal(f.state.calls.length,1);
+  assert.equal(f.state.audits[0].purpose,'Print');
+  assert.equal(response.reportProfile.DocumentLogoUrl,'/api/document-logo');
+  f.args.resultRows[0].StudentRef='OTHER/2';f.reads.length=0;f.state.calls.length=0;
+  assert.equal((await f.load({requestedAcademicResultId:'r1'})).academicResults.length,0);
+  assert.equal(f.state.calls.length,0,'no policy/finance reads for another child');
+  await assert.rejects(f.load({requestedAcademicResultId:'wrong/path'}),error=>error.status===400);
+});
+
+test('focused refresh enforces financial policy, reuses its reads, and fails closed on unavailable evidence',async()=>{
+  const f=focusedFixture();f.state.policy=activePolicy('current-term','any-balance');
+  f.args.resultRows.push({...result,ResultId:'r2',ResultType:'Mid-Term'});
+  f.args.invoices=[{Debit:100,BranchId:'west',SchoolSection:'secondary'}];
+  let response=await f.load();assert.ok(response.academicResults.every(row=>!row.Access.Allowed));
+  assert.equal(f.reads.filter(row=>row.collection==='ledger').length,1);
+  f.args.ledger=[{Credit:100,BranchId:'west',SchoolSection:'secondary'}];
+  response=await f.load();assert.ok(response.academicResults.every(row=>row.Access.Allowed));
+  f.financeError=new Error('Financial evidence unavailable');await assert.rejects(f.load(),/Financial evidence unavailable/);
+  delete f.financeError;f.resultError=new Error('Result query failed');await assert.rejects(f.load(),/Result query failed/);
+  assert.ok(f.reads.every(row=>['academicResults','ledger','invoices','academicResultClearances'].includes(row.collection)));
+});
+
+test('strict child result reads propagate failures without converting them to an empty history',async()=>{
+  const sandbox=vm.createContext({clean:value=>String(value??'').trim(),uniqueRows:rows=>rows,
+    queryCollection:async()=>{throw new Error('Database offline');}});
+  vm.runInContext(extract('queryRowsForReferences'),sandbox);
+  await assert.rejects(sandbox.queryRowsForReferences({},'academicResults',['StudentRef'],['TEST/1'],{strict:true}),/Database offline/);
 });

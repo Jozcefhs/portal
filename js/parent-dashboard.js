@@ -14,6 +14,8 @@ const parentTransferHistory = document.getElementById('parentTransferHistory');
 const parentTransferRecords = document.getElementById('parentTransferRecords');
 const entranceResultPanel = document.getElementById('entranceResultPanel');
 const academicTermResults = document.getElementById('academicTermResults');
+const refreshAcademicResultsBtn = document.getElementById('refreshAcademicResultsBtn');
+const academicResultsStatus = document.getElementById('academicResultsStatus');
 const entranceResults = document.getElementById('entranceResults');
 const parentAcademicSchedule = document.getElementById('parentAcademicSchedule');
 const parentAcademicAttendance = document.getElementById('parentAcademicAttendance');
@@ -94,6 +96,8 @@ let storePage = 1;
 let storeCatalogIdentity = '';
 const parentDocumentIdempotencyKeys = new Map();
 let selectedChildLoadController = null;
+let academicResultsRequest = null;
+const academicResultsVersions = new Map();
 let dashboardLoadController = null;
 let parentNotifications = [];
 let parentNotificationMeta = {};
@@ -1234,6 +1238,8 @@ async function loadPayablesForSelected(force = false) {
   selectedChildLoadController?.abort();
   if (!force && loadedPayables.has(identity)) return;
   const controller = new AbortController();
+  const resultVersion = (academicResultsVersions.get(identity) || 0) + 1;
+  academicResultsVersions.set(identity, resultVersion);
   selectedChildLoadController = controller;
   loadedPayables.delete(identity);
   dashboard.payableItems = dashboard.payableItems || {};
@@ -1328,7 +1334,11 @@ async function loadPayablesForSelected(force = false) {
       setChildResult(dashboard.transferRequests, child, activityData.transferRequests || []);
       setChildResult(dashboard.clinicVisits, child, activityData.clinicVisits || []);
       setChildResult(dashboard.libraryLoans, child, activityData.libraryLoans || []);
-      setChildResult(dashboard.academicResults, child, activityData.academicResults || []);
+      if (academicResultsVersions.get(identity) === resultVersion) {
+        setChildResult(dashboard.academicResults, child, activityData.academicResults || []);
+        dashboard.academicResultsCheckedAt ||= {};
+        setChildResult(dashboard.academicResultsCheckedAt, child, Date.now());
+      }
       setChildResult(dashboard.entranceResults, child, activityData.entranceResults || []);
       setChildResult(dashboard.academicSchedules, child, activityData.academicSchedule || []);
       setChildResult(dashboard.academicAttendanceSummaries, child, activityData.academicAttendanceSummary || {});
@@ -1683,8 +1693,11 @@ async function academicResultPassportDataUrl(child = {}) {
   if (!child.PassportPhotoAvailable) return '';
   const reference = child.PassportPhotoApplicationReference || child.ApplicationReference || child.AccountRef;
   if (!reference) return '';
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
   try {
     const response = await fetch('/api/passport-photo', {
+      signal: controller.signal,
       method: 'POST', credentials: 'same-origin', cache: 'force-cache', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         ...authPayload(), applicationReference: reference,
@@ -1695,6 +1708,53 @@ async function academicResultPassportDataUrl(child = {}) {
     return await fileAsDataUrl(await response.blob());
   } catch (_error) {
     return '';
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function parentResultRequest(body) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30000);
+  try {
+    const response = await fetch('/api/parent-dashboard', {
+      method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal, body: freshBody({ ...authPayload(), ...body })
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.message || 'Could not check result access.');
+    return data;
+  } catch (error) {
+    if (error.name === 'AbortError') throw new Error('The result check took too long. Please try again.');
+    throw error;
+  } finally { clearTimeout(timer); }
+}
+
+async function refreshParentAcademicResults() {
+  const child = selectedChild();
+  if (!child || academicResultsRequest) return;
+  const snapshot = dashboard, identity = childIdentity(child);
+  const version = (academicResultsVersions.get(identity) || 0) + 1;
+  academicResultsVersions.set(identity, version);
+  academicResultsRequest = identity;
+  setActionLoading(refreshAcademicResultsBtn, true, 'Checking results...', 'Refresh results');
+  if (academicResultsStatus) academicResultsStatus.textContent = 'Checking current publication and access...';
+  try {
+    const data = await parentResultRequest({ action: 'getChildAcademicResults', accountRef: child.AccountRef,
+      sourceType: child.SourceType || 'Student', scopePath: child.__scopePath || '' });
+    if (dashboard !== snapshot || academicResultsVersions.get(identity) !== version) return;
+    if (!Array.isArray(data.academicResults)) throw new Error('The server did not confirm the results. Please try again.');
+    dashboard.academicResults ||= {}; dashboard.academicResultsCheckedAt ||= {};
+    setChildResult(dashboard.academicResults, child, data.academicResults);
+    setChildResult(dashboard.academicResultsCheckedAt, child, Date.now());
+    if (selectedChildKey === identity) renderAcademicResults(child);
+  } catch (error) {
+    if (dashboard === snapshot && selectedChildKey === identity && academicResultsStatus) {
+      academicResultsStatus.textContent = `${error.message} The earlier view has been retained; print access is checked again.`;
+    }
+  } finally {
+    academicResultsRequest = null;
+    setActionLoading(refreshAcademicResultsBtn, false, '', 'Refresh results');
   }
 }
 
@@ -1705,30 +1765,29 @@ function academicResultPrintMarkup(child, record, options = {}) {
 }
 
 async function printAcademicResult(child, record, button) {
+  if (button.disabled) return;
   const originalLabel = button.textContent;
   const printWindow = window.open('', '_blank', 'width=980,height=760');
   if (printWindow) {
     printWindow.opener = null;
     printWindow.document.write('<p style="font:16px Arial;padding:24px">Rechecking result access...</p>');
+    printWindow.document.close();
   }
   setActionLoading(button, true, 'Preparing...', originalLabel);
   try {
-    const response = await fetch('/api/parent-dashboard', {
-      method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
-      body: freshBody({
+    if (!printWindow) throw new Error('Allow pop-ups for this site, then try printing again.');
+    const data = await parentResultRequest({
         action: 'getAcademicResultForPrint',
-        ...authPayload(),
         accountRef: child.AccountRef,
         sourceType: child.SourceType || 'Student',
         scopePath: child.__scopePath || '',
         resultId: record.ResultId
-      })
     });
-    const data = await response.json();
-    if (!response.ok || !data.ok || !data.academicResult) throw new Error(data.message || 'Could not prepare this result for printing.');
-    if (!printWindow) throw new Error('Allow pop-ups for this site, then try printing again.');
-    printWindow.document.open();
+    if (!data.academicResult || data.academicResult.Access?.Allowed !== true) throw new Error('This result is not currently available for printing. Refresh results and try again.');
+    if (printWindow.closed) return;
     const passportDataUrl = await academicResultPassportDataUrl(child);
+    if (printWindow.closed) return;
+    printWindow.document.open();
     printWindow.document.write(academicResultPrintMarkup(child, data.academicResult, {
       profile: data.reportProfile || {}, passportDataUrl
     }));
@@ -1748,6 +1807,9 @@ async function printAcademicResult(child, record, button) {
       image.addEventListener('load', done, {once: true});
       image.addEventListener('error', done, {once: true});
     })));
+    // Native print dialogs can block JavaScript until dismissed. The result
+    // has finished preparing, so restore the parent button before opening it.
+    if (button.isConnected) setActionLoading(button, false, '', originalLabel);
     if (!printWindow.closed) printWindow.print();
   } catch (error) {
     printWindow?.close();
@@ -1759,6 +1821,10 @@ async function printAcademicResult(child, record, button) {
 
 function renderAcademicResults(child) {
   if (!academicTermResults) return;
+  const checkedAt = childResult(dashboard.academicResultsCheckedAt, child, 0);
+  if (academicResultsStatus) academicResultsStatus.textContent = checkedAt
+    ? `Last checked ${new Date(checkedAt).toLocaleTimeString('en-GB', { timeZone: 'Africa/Lagos' })} WAT. Use Refresh results after the school publishes or updates a result.`
+    : 'Use Refresh results to check current publication and access.';
   const records = childResult(dashboard.academicResults, child, []);
   academicTermResults.innerHTML = records.length ? '' : '<p class="muted">No published academic result is currently available.</p>';
   const permitted = records.filter((record) => record.Access?.Allowed === true);
@@ -2688,6 +2754,8 @@ restrictionForm.addEventListener('submit', async (event) => {
     setActionLoading(button, false, '', normalText);
   }
 });
+
+refreshAcademicResultsBtn?.addEventListener('click', refreshParentAcademicResults);
 
 if (refreshDashboardBtn) {
   refreshDashboardBtn.addEventListener('click', async () => {
