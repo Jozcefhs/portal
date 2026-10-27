@@ -11,9 +11,8 @@ test('web ICT has every academic management capability without changing its role
   const permissions = academicManagementCapabilities(actor);
   assert.equal(permissions.fullAcademicAccess, true);
   for (const [name, value] of Object.entries(permissions).filter(([name]) => name.startsWith('can'))) {
-    // ICT uses the existing all-class register; the assigned-classroom view is
-    // a teacher-specific entry point, not an additional management privilege.
-    assert.equal(value, name !== 'canViewClassroomScores', name);
+    // ICT can review one permitted classroom without a form-teacher assignment.
+    assert.equal(value, true, name);
   }
   assert.equal(actor.role, 'ICT');
   assert.equal(actor.branchId, 'main');

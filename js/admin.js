@@ -13751,6 +13751,7 @@ function academicTaskDefinitions(view, root) {
   const learner = academicLearnerTerms(sectionName);
   const membershipRegister = learner.singular === 'pupil' ? 'Pupil Class & Subject Memberships' : 'Student Class & Subject Memberships';
   const classroomScores = Boolean(form('[data-classroom-register]'));
+  const assignedClassroomScores = Boolean(form('[data-classroom-teacher-register]'));
   const movementRegister = learner.singular === 'pupil' ? 'Pupil Movement History' : 'Student Movement History';
   const definitions = {
     classrooms: [
@@ -13824,7 +13825,7 @@ function academicTaskDefinitions(view, root) {
       { key: 'corrections', label: 'Corrections', title: 'Late correction requests', description: 'Teachers submit corrections for approval; academic administrators approve or reject them with a reason.', nodes: nodes(register('Attendance Correction Requests')) }
     ],
     scorebook: [
-      { key: 'classRegister', label: classroomScores ? 'My classroom scores' : 'Class score register', title: classroomScores ? 'Vet your classroom scores' : 'All-arm class score register', description: classroomScores ? 'Review every subject offered by your classroom students. Read-only; includes Draft scores, preview and printing.' : 'Select a whole class to review every student and their raw marks per subject and test. Read-only; includes Draft scores.', nodes: nodes(form('[data-academic-class-score-register]')) },
+      { key: 'classRegister', label: assignedClassroomScores ? 'My classroom scores' : classroomScores ? 'Classroom score register' : 'Class score register', title: classroomScores ? 'Vet classroom scores' : 'All-arm class score register', description: classroomScores ? 'Select one classroom to review its students across all offered subjects. Read-only; includes Draft scores, preview and printing.' : 'Select a whole class to review every student and their raw marks per subject and test. Read-only; includes Draft scores.', nodes: nodes(form('[data-academic-class-score-register]')) },
       { key: 'entry', label: 'Enter scores', title: 'Class subject scorebook', description: 'Choose one allocated classroom and subject, then enter every configured assessment component for its students.', nodes: nodes(form('[data-academic-scorebook]')) },
       { key: 'workflow', label: 'Review and approval', title: 'Score-sheet workflow', description: 'Review individual tests or approve selected subjects in a batch. Incomplete students can remain pending while complete students proceed.', nodes: nodes(form('[data-academic-batch-toolbar]'),register('Score Sheet Workflow')) },
       { key: 'imports', label: 'Spreadsheet imports', title: 'Preview and import scores', description: 'Download a stable template, preview CSV or XLSX rows, choose the commit policy, and roll back unpublished imports.', nodes: nodes(form('[data-academic-score-import]'), register('Score Import History')) },
@@ -15712,23 +15713,26 @@ function academicScorebookWorkspace(data, rows) {
     <div class="academic-assessment-scheme-grid"><section><h4>Assessment components</h4>${(scheme.Components || []).map((row) => `<div><strong>${escapeHtml(row.Name)}</strong><span>${row.MaximumScore} marks · ${row.WeightPercentage}% · ${escapeHtml(row.SourceMode || 'any source')}</span></div>`).join('') || '<p>No components configured.</p>'}</section><section><h4>Grading bands</h4>${(scheme.GradeBands || []).map((row) => `<div><strong>${escapeHtml(row.Grade)}</strong><span>${row.MinimumPercentage}–${row.MaximumPercentage}% · ${row.GradePoint} points · ${escapeHtml(row.Remark || row.Classification)}</span></div>`).join('') || '<p>No grading bands configured.</p>'}</section></div>
   </section>`;
   const canViewClassRegister = data.permissions?.canViewClassScoreRegister || data.permissions?.canReviewScores;
-  const classroomRegister = data.permissions?.canViewClassroomScores && !canViewClassRegister;
+  const classroomRegister = data.permissions?.canViewClassroomScores === true;
+  const assignedClassroomRegister = classroomRegister && !canViewClassRegister;
   const teacherClassrooms = classrooms.filter(arm => rows.teacherAllocations.some(row => academicIsActive(row)
     && clean(row.AllocationRole).toLowerCase() === 'form teacher' && row.SessionId === sessionId && row.TermId === termId
     && row.ClassId === arm.ClassId && row.ArmId === arm.ArmId));
-  const registerChoices = classroomRegister ? '<option value="">Choose classroom</option>' + teacherClassrooms.map(arm =>
+  const registerClassrooms = assignedClassroomRegister ? teacherClassrooms : classrooms;
+  const registerChoices = classroomRegister ? '<option value="">Choose classroom</option>' + registerClassrooms.map(arm =>
     `<option value="${escapeHtml(arm.ArmId)}" data-class-id="${escapeHtml(arm.ClassId)}">${escapeHtml(academicLabel(rows.classes, arm.ClassId))} / ${escapeHtml(arm.Name)}</option>`).join('')
     : academicSelectOptions(rows.classes.filter(academicIsActive), '', row => row.Name, 'Choose class');
-  const classRegister = canViewClassRegister || classroomRegister ? `<form class="academic-management-editor academic-management-editor-wide"${classroomRegister ? ' data-classroom-register' : ''} data-academic-class-score-register>
-    <div class="academic-management-editor-heading"><div><h3>${classroomRegister ? 'My classroom scores — all subjects' : 'Class score register — all arms'}</h3><p>Read-only raw marks / maximum, including Draft scores. This is not a published result. ${classroomRegister ? 'Choose your assigned classroom to vet all subjects without changing marks.' : 'Choose a class, not a classroom.'}</p></div></div>
-    ${classroomRegister && !teacherClassrooms.length ? '<p>No class teacher assignment was found for this session and term. Ask Academic Management to assign your classroom under Assign class teachers.</p>' : ''}
+  const classRegister = canViewClassRegister || classroomRegister ? `<form class="academic-management-editor academic-management-editor-wide"${classroomRegister ? ' data-classroom-register' : ''}${assignedClassroomRegister ? ' data-classroom-teacher-register' : ''} data-academic-class-score-register>
+    <div class="academic-management-editor-heading"><div><h3>${assignedClassroomRegister ? 'My classroom scores — all subjects' : classroomRegister ? 'Classroom score register — all subjects' : 'Class score register — all arms'}</h3><p>Read-only raw marks / maximum, including Draft scores. This is not a published result. ${classroomRegister ? 'Choose one classroom to vet all subjects without changing marks.' : 'Choose a class, not a classroom.'}</p></div></div>
+    ${assignedClassroomRegister && !teacherClassrooms.length ? '<p>No class teacher assignment was found for this session and term. Ask Academic Management to assign your classroom under Assign class teachers.</p>' : ''}
+    ${classroomRegister && !assignedClassroomRegister && !registerClassrooms.length ? '<p>No active classrooms are available in this school section. Configure them under Classrooms.</p>' : ''}
     <div class="class-register-load-controls"><label>${classroomRegister ? 'Classroom' : 'Class'}<select name="ClassId" required>${registerChoices}</select></label>
     <div class="class-register-actions"><button type="submit">Load ${classroomRegister ? 'classroom' : 'class'} scores</button><button type="button" class="secondary" data-class-register-print disabled>Preview / print</button></div></div>
     <div class="academic-management-form-grid"><label>Test<select name="TestId"><option value="">All tests</option></select></label><label>Find student<input name="Query" type="search" placeholder="Name or admission number"></label>
     <div class="class-register-subject-field"><span id="class-register-subject-label">Subjects</span><details data-class-register-subjects>
-      <summary aria-labelledby="class-register-subject-label class-register-subject-summary"><span id="class-register-subject-summary" data-class-register-subject-summary>Load a class first</span></summary>
+      <summary aria-labelledby="class-register-subject-label class-register-subject-summary"><span id="class-register-subject-summary" data-class-register-subject-summary>Load a ${classroomRegister ? 'classroom' : 'class'} first</span></summary>
       <div class="class-register-subject-panel"><div class="class-register-actions"><button type="button" data-class-register-subject-action="all" disabled>Select all</button><button type="button" data-class-register-subject-action="none" disabled>Clear</button></div>
-      <div class="class-register-subject-options" data-class-register-subject-options>Load class scores to choose subjects.</div></div>
+      <div class="class-register-subject-options" data-class-register-subject-options>Load ${classroomRegister ? 'classroom' : 'class'} scores to choose subjects.</div></div>
     </details></div>
     <label>Score filter<select name="ScoreFilter" aria-describedby="class-register-filter-hint"><option value="all">All students</option><option value="missing">Missing scores (any subject)</option><option value="missing-all">No scores at all</option><option value="partial">Some scores, some missing</option><option value="scored-any">At least one score</option><option value="scored-all">Scores in all selected subjects</option><option value="below">Score below…</option><option value="above">Score above…</option></select></label>
     <label data-class-register-threshold hidden><span data-class-register-threshold-label>Raw score below</span><input name="ScoreThreshold" type="number" min="0" step="any" placeholder="For example, 50" aria-describedby="class-register-filter-hint" disabled></label></div>
@@ -15895,8 +15899,8 @@ function bindAcademicClassScoreRegister(form) {
   const resetSubjects = () => {
     subjectMenu.open = false;
     subjectIds = null;
-    subjectOptions.textContent = 'Load class scores to choose subjects.';
-    form.querySelector('[data-class-register-subject-summary]').textContent = 'Load a class first';
+    subjectOptions.textContent = `Load ${scopeLabel} scores to choose subjects.`;
+    form.querySelector('[data-class-register-subject-summary]').textContent = `Load a ${scopeLabel} first`;
     form.querySelectorAll('[data-class-register-subject-action]').forEach(button => { button.disabled = true; });
     form.elements.TestId.innerHTML = '<option value="">All tests</option>';
   };
@@ -16916,8 +16920,9 @@ function academicManagementHeader(data, rows, message = '') {
     !['primary', 'secondary'].includes(permittedSection) || section === permittedSection
   ));
   const views = academicManagementViews(data);
-  const scoreRegisterLabel = data.permissions?.canViewClassScoreRegister || data.permissions?.canReviewScores ? 'Class score register'
-    : data.permissions?.canViewClassroomScores ? 'My classroom scores' : '';
+  const scoreRegisterLabel = data.permissions?.canViewClassroomScores
+    ? (data.permissions?.canViewClassScoreRegister || data.permissions?.canReviewScores ? 'Classroom score register' : 'My classroom scores')
+    : data.permissions?.canViewClassScoreRegister || data.permissions?.canReviewScores ? 'Class score register' : '';
   const navigationViews = views.flatMap(([key, label]) => key === 'scorebook' && scoreRegisterLabel
     ? [[key, label], ['classRegister', scoreRegisterLabel]] : [[key, label]]);
   const selectedArea = scoreRegisterLabel && academicManagementView === 'scorebook' && academicManagementTaskViews.scorebook === 'classRegister'
@@ -16942,7 +16947,7 @@ function focusAcademicClassScoreRegister() {
   const choice = form.elements.ClassId;
   const button = form.querySelector('[type="submit"]');
   const classroom = form.hasAttribute('data-classroom-register');
-  const title = classroom ? 'Classroom scores' : 'Class score register';
+  const title = classroom ? 'Classroom score register' : 'Class score register';
   setStatus(document.getElementById('academicManagementStatus'),
     `${title} is open. ${choice.value ? 'Use' : `Choose a ${classroom ? 'classroom' : 'class'}, then select`} ${button.textContent.trim()} beside the selector.`, 'ok');
   form.querySelector('.class-register-load-controls')?.scrollIntoView({ block: 'center', behavior: 'instant' });
