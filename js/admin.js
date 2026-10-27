@@ -3156,8 +3156,8 @@ function renderModuleSummary(active, liveData = null) {
   } else if (active === 'academics' && liveData) {
     const summary = liveData.summary || {};
     cards = [
-      { icon, label: 'Classes', value: summary.Classes ?? '—', note: `${summary.Arms ?? '—'} active arm(s) from ${summary.ArmTemplates ?? '—'} reusable definition(s)` },
-      { icon: '\u{1F4DA}', label: 'Subjects', value: summary.Subjects ?? '—', note: `${summary.Departments ?? '—'} senior department(s)` },
+      { icon, label: 'Classes', value: summary.Classes ?? '—', note: Number.isFinite(summary.Arms) ? `${summary.Arms} classroom${summary.Arms === 1 ? '' : 's'}` : '' },
+      { icon: '\u{1F4DA}', label: 'Subjects', value: summary.Subjects ?? '—', note: Number.isFinite(summary.Departments) ? `${summary.Departments} senior department${summary.Departments === 1 ? '' : 's'}` : '' },
       { icon: '\u{1F9D1}\u200D\u{1F3EB}', label: 'Teacher allocations', value: summary.TeacherAllocations ?? '—', note: 'Selected branch and scope' },
       { icon: '\u{1F393}', label: 'Student memberships', value: summary.StudentMemberships ?? '—', note: 'Class, arm and subjects' }
     ].filter(card => typeof card.value === 'number');
