@@ -251,7 +251,7 @@ const EXISTING_PLAN_DEFINITIONS = Object.freeze({
 });
 
 const hospitalStarter = Object.freeze(['branches', 'branding', 'hospitalPatients', 'hospitalReception']);
-const hospitalStandard = Object.freeze([...hospitalStarter, 'hospitalNursing', 'hospitalInpatients', 'hospitalTriage', 'hospitalConsultations', 'hospitalOrders', 'hospitalPharmacy', 'hospitalLaboratory', 'hospitalImaging', 'hospitalBilling', 'hospitalHmo', 'approvals', 'procurement', 'executiveOffice',
+const hospitalStandard = Object.freeze([...hospitalStarter, 'hospitalTheatre', 'hospitalNursing', 'hospitalInpatients', 'hospitalTriage', 'hospitalConsultations', 'hospitalOrders', 'hospitalPharmacy', 'hospitalLaboratory', 'hospitalImaging', 'hospitalBilling', 'hospitalHmo', 'approvals', 'procurement', 'executiveOffice',
   'humanResources', 'staffAttendance', 'accounting', 'externalAudit', 'bulkCommunication']);
 export const SUBSCRIPTION_PLAN_DEFINITIONS = Object.freeze(Object.fromEntries(
   Object.entries(EXISTING_PLAN_DEFINITIONS).map(([name, definition]) => [name, Object.freeze({

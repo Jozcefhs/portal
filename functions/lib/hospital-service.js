@@ -7,6 +7,7 @@ import { historyDateRange } from './history-date-range.js';
 import { hospitalCollectionPath } from './hospital-storage.js';
 import { createHospitalClinicalService } from './hospital-clinical-service.js';
 import { createHospitalBillingService } from './hospital-billing-service.js';
+import { createHospitalTheatreService } from './hospital-theatre-service.js';
 import { createHospitalNursingService } from './hospital-nursing-service.js';
 import { createHospitalInpatientService } from './hospital-inpatient-service.js';
 import { createHospitalOrdersService } from './hospital-orders-service.js';
@@ -106,6 +107,7 @@ export function createHospitalService(env, user, overrides = {}) {
     return { rows: shown, next: rows.length > limit ? { id: last.__id, value: last[field] } : null };
   }
   return {
+    ...createHospitalTheatreService({env,user,db,collection,capabilities,requireCapability,branch,patient,clock,actor,condition,strip,eq,auditWrite,auditRead,operation,page}),
     ...createHospitalNursingService({env,user,db,collection,capabilities,requireCapability,branch,patient,clock,actor,
       condition,strip,eq,auditWrite,auditRead,operation,page}),
     ...createHospitalInpatientService({env,user,db,collection,capabilities,requireCapability,branch,patient,clock,actor,
@@ -258,6 +260,7 @@ export function createHospitalService(env, user, overrides = {}) {
         const row = await db.getDocument(env, collection('Visits'), id(body.VisitId));
         if (!row || row.BranchId !== branchId) fail('This visit is not available in the selected branch.', 404);
         if (body.Revision !== row.__updateTime || ['Completed', 'Cancelled'].includes(row.Status)) fail('Reload this visit before updating its status.', 409);
+        if (['Completed','Cancelled'].includes(body.Status) && (row.PendingProcedureCount||row.ActiveProcedureCaseId)) fail('Complete or cancel this visit’s procedure bookings before closing it.',409);
         if (['Completed','Cancelled'].includes(body.Status) && row.AdmissionId) fail('Use the inpatient discharge workflow to close an admitted visit.',409);
         if (['Completed','Cancelled'].includes(body.Status) && row.ClinicalState && row.ClinicalState !== 'Consultation signed') {
           fail('Clinical work is still open. The attending clinician must complete and sign the consultation before reception can close this visit.',409);

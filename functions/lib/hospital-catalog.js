@@ -7,6 +7,7 @@ export const HOSPITAL_STAFF_ROLES = Object.freeze([
 ]);
 
 export const HOSPITAL_MODULES = Object.freeze([
+  Object.freeze({Key:'hospitalTheatre',Editions:Object.freeze(['hospital']),Labels:Object.freeze({hospital:'Theatre and procedures'}),Description:'Theatre bookings, clinical checklists, operative records and recovery handover.',Requires:Object.freeze(['hospitalPatients','hospitalReception'])}),
   Object.freeze({Key:'hospitalNursing',Editions:Object.freeze(['hospital']),Labels:Object.freeze({hospital:'Nursing and handovers'}),Description:'Inpatient charts, medication administration and acknowledged shift handovers.',Requires:Object.freeze(['hospitalPatients','hospitalReception','hospitalInpatients','hospitalOrders'])}),
   Object.freeze({Key:'hospitalInpatients',Editions:Object.freeze(['hospital']),Labels:Object.freeze({hospital:'Wards and admissions'}),Description:'Ward setup, admission, bed allocation, transfers and signed discharge.',Requires:Object.freeze(['hospitalPatients','hospitalReception'])}),
   Object.freeze({ Key: 'hospitalPatients', Editions: Object.freeze(['hospital']),
@@ -32,11 +33,11 @@ export const HOSPITAL_MODULES = Object.freeze([
 ]);
 
 export const HOSPITAL_ROLE_CAPABILITIES = Object.freeze({
-  'Super Admin': ['inpatient.read','inpatient.admit','inpatient.configure','patients.read', 'patients.write', 'visits.read', 'visits.write','billing.read','billing.write','billing.configure','billing.refund','hmo.work'],
-  'Hospital Administrator': ['inpatient.read','inpatient.admit','inpatient.configure','patients.read', 'patients.write', 'visits.read', 'visits.write','billing.read','billing.write','billing.configure','billing.refund','hmo.work'],
-  'Medical Director': ['nursing.read','nursing.write','inpatient.read','inpatient.clinical','inpatient.discharge','patients.read', 'visits.read', 'clinical.read', 'triage.write', 'consultations.write','orders.read','orders.create'],
-  'Doctor': ['nursing.read','nursing.write','inpatient.read','inpatient.clinical','inpatient.discharge','patients.read', 'visits.read', 'clinical.read', 'triage.write', 'consultations.write','orders.read','orders.create'],
-  'Nurse': ['nursing.read','nursing.write','inpatient.read','inpatient.clinical','inpatient.admit','patients.read', 'visits.read', 'clinical.read', 'triage.write','orders.read'],
+  'Super Admin': ['theatre.configure','inpatient.read','inpatient.admit','inpatient.configure','patients.read', 'patients.write', 'visits.read', 'visits.write','billing.read','billing.write','billing.configure','billing.refund','hmo.work'],
+  'Hospital Administrator': ['theatre.configure','inpatient.read','inpatient.admit','inpatient.configure','patients.read', 'patients.write', 'visits.read', 'visits.write','billing.read','billing.write','billing.configure','billing.refund','hmo.work'],
+  'Medical Director': ['theatre.read','theatre.schedule','theatre.work','theatre.sign','nursing.read','nursing.write','inpatient.read','inpatient.clinical','inpatient.discharge','patients.read', 'visits.read', 'clinical.read', 'triage.write', 'consultations.write','orders.read','orders.create'],
+  'Doctor': ['theatre.read','theatre.schedule','theatre.work','theatre.sign','nursing.read','nursing.write','inpatient.read','inpatient.clinical','inpatient.discharge','patients.read', 'visits.read', 'clinical.read', 'triage.write', 'consultations.write','orders.read','orders.create'],
+  'Nurse': ['theatre.read','theatre.work','nursing.read','nursing.write','inpatient.read','inpatient.clinical','inpatient.admit','patients.read', 'visits.read', 'clinical.read', 'triage.write','orders.read'],
   'Pharmacist':['patients.read','visits.read','pharmacy.work'],
   'Laboratory Scientist':['patients.read','visits.read','laboratory.work'],
   'Radiographer':['patients.read','visits.read','imaging.work'],
@@ -50,6 +51,7 @@ export const HOSPITAL_ROLE_CAPABILITIES = Object.freeze({
 export function hospitalRoleModules(role) {
   const capabilities = HOSPITAL_ROLE_CAPABILITIES[role] || [];
   return [
+    ...(capabilities.some(c=>c.startsWith('theatre.')) ? ['hospitalTheatre'] : []),
     ...(capabilities.includes('nursing.read') ? ['hospitalNursing'] : []),
     ...(capabilities.includes('inpatient.read') ? ['hospitalInpatients'] : []),
     ...(capabilities.includes('patients.read') ? ['hospitalPatients'] : []),

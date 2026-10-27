@@ -1,0 +1,52 @@
+import assert from 'node:assert/strict';
+import {createServer} from 'node:http';
+import {readFile,mkdir} from 'node:fs/promises';
+import {createRequire} from 'node:module';
+import {resolve} from 'node:path';
+import {theatreFixture,theatreActors,booking,preoperative,operative,recovery} from '../tests/helpers/hospital-theatre-fixture.mjs';
+import {env} from '../tests/helpers/hospital-fixture.mjs';
+import {createHospitalService} from '../functions/lib/hospital-service.js';
+const require=createRequire(import.meta.url),{chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
+const root=resolve(import.meta.dirname,'..'),output=resolve(root,'tmp/hospital-theatre-ui');await mkdir(output,{recursive:true});
+const f=await theatreFixture();let role='admin',expire=false;
+const assets=new Set(['/hospital.html','/css/hospital.css','/css/app-dialogs.css','/js/hospital.js','/js/hospital-clinical.js','/js/hospital-orders.js','/js/hospital-billing.js','/js/hospital-funds.js','/js/hospital-corporate.js','/js/hospital-inpatients.js','/js/hospital-nursing.js','/js/hospital-theatre.js','/js/staff-idle-session.js','/js/app-dialogs.js']);
+const server=createServer(async(req,res)=>{
+  try{
+    const path=new URL(req.url,'http://localhost').pathname,user={...theatreActors[role],assignedBranchIds:['main','north'],activeBranchId:req.headers['x-dynamax-branch']||'main'};
+    if(path==='/api/staff-session'){res.setHeader('Content-Type','application/json');res.end(JSON.stringify({ok:true,authenticated:true,user,session:{id:'theatre-fixture',lastActivityAt:Date.now(),expiresAt:Date.now()+7200000,serverNow:Date.now()}}));return;}
+    if(path==='/api/staff-hospital'){
+      if(expire)throw Object.assign(Error('Staff session expired'),{status:401});let raw='';for await(const c of req)raw+=c;const body=JSON.parse(raw),data=await createHospitalService(env,user,f.db)[body.action](body);res.setHeader('Content-Type','application/json');res.end(JSON.stringify(data));return;
+    }
+    if(!assets.has(path)){res.writeHead(404);res.end();return;}res.setHeader('Content-Type',path.endsWith('.js')?'text/javascript':path.endsWith('.css')?'text/css':'text/html');res.end(await readFile(resolve(root,'.'+path)));
+  }catch(error){res.writeHead(error.status||500,{'Content-Type':'application/json'});res.end(JSON.stringify({ok:false,message:error.message}));}
+});
+await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));let browser;
+try{
+  browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL||'msedge',headless:true});const page=await browser.newPage({viewport:{width:1366,height:960}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
+  const done=async text=>{try{await page.waitForFunction(text=>document.querySelector('#status').textContent.includes(text)&&!document.querySelector('#refresh').disabled,text);}catch(e){console.error('Expected',text,'Status',await page.locator('#status').textContent(),'Errors',errors);throw e;}};
+  const login=async name=>{role=name;const q=f.queries.length,r=f.reads.length;await page.goto(`http://127.0.0.1:${server.address().port}/hospital.html?task=theatre`);await done('Hospital reception ready');assert.equal(f.reads.length,r);assert.equal(f.queries.length,q);};
+  const fill=async(form,fields)=>{for(const [name,value] of Object.entries(fields))await page.locator(`#${form} [name="${name}"]`).fill(String(value));};
+  const dates=async p=>{await page.locator(`#${p}From`).fill('2026-10-26');await page.locator(`#${p}To`).fill('2026-10-26');};
+  const expand=async id=>{if(!await page.locator('#'+id).evaluate(e=>e.open))await page.locator('#'+id+' > summary').click();};
+  const rooms=async()=>{await expand('thRoomsSection');await page.locator('#thLoadRooms').click();await done('Theatre page loaded');};
+  const list=async()=>{await dates('thReg');await page.locator('#thRegisterForm button').first().click();await done('Selected procedure period loaded');};
+  const open=async()=>{await list();await page.locator('[data-th-case]').first().click();await done('Procedure record loaded');};
+  await login('admin');assert.equal(await page.locator('#thRegisterSection').isVisible(),false);await rooms();await page.locator('#thNewRoom').click();await fill('thRoomForm',{Code:'TH-UI',Name:'Procedure suite'});await page.locator('#thRoomForm button').click();await done('Theatre saved');
+  await page.locator('[data-th-edit]').last().click();const writes=f.commits.length;await page.locator('#thRoomForm button').click();await done('No theatre changes');assert.equal(f.commits.length,writes);
+  await login('nurse');await rooms();await page.locator('[data-th-ready]').click();await page.locator('dialog[open] footer .app-decision-confirm').click();await done('Theatre preparation recorded');
+  await login('doctor');await page.locator('[data-tab=reception]').click();await dates('visit');await page.locator('#visitForm button').click();await done('Selected visit period loaded');await page.locator('[data-procedure-visit]').first().click();await done('Procedure visit loaded');await rooms();await page.locator('[data-th-select]').first().click();
+  await fill('thBookingForm',{...booking,StartAt:'2026-10-26T13:00',EndAt:'2026-10-26T15:00'});await page.locator('#thBookingForm [name=ConfirmPatient]').check();await page.locator('#thBookingForm button').click();await done('Procedure booking saved');assert.equal(f.rows('ProcedureCases').length,1);
+  await list();const queries=f.queries.length;await page.locator('[data-tab=patients]').click();await page.locator('[data-tab=theatre]').click();await list();assert.equal(f.queries.length,queries,'loaded register reused');await page.locator('[data-th-case]').first().click();await done('Procedure record loaded');assert.equal(await page.locator('[data-th-case]').count(),1,'opening case retains register');
+  await expand('thPreopSection');await fill('thPreopForm',preoperative);await page.locator('#thPreopForm [name=ConfirmPatient]').check();await page.locator('#thPreopForm [name=ConfirmChecks]').check();await page.locator('#thPreopForm button').click();await done('Preoperative checks recorded');
+  await page.locator('#thStartForm [name=ConfirmPatient]').check();await page.locator('#thStartForm [name=ConfirmTimeOut]').check();await page.locator('#thStartForm button').click();await done('Procedure started');
+  await expand('thOperativeSection');await fill('thOperativeForm',operative);await page.locator('#thOperativeForm [name=ConfirmPatient]').check();await page.locator('#thOperativeForm [name=ConfirmClinicalReview]').check();await page.locator('#thOperativeForm button').click();await done('Operative record signed');
+  await login('nurse');await open();await expand('thRecoverySection');await fill('thRecoveryForm',recovery);await page.locator('#thRecoveryForm [name=ConfirmPatient]').check();await page.locator('#thRecoveryForm [name=ConfirmHandover]').check();await page.locator('#thRecoveryForm button').click();await done('Recovery handover recorded');assert.equal(f.rows('ProcedureCases')[0].Status,'Completed');assert.equal(f.rows('ChargeEvents').length,0);assert.equal(f.rows('Theatres')[0].Ready,false);
+  await login('doctor');await open();await expand('thAmendSection');await page.locator('#thAmendKind').selectOption('Operative');await fill('thAmendForm',{Findings:'Corrected clinical transcription',Reason:'Transcription correction'});await page.locator('#thAmendForm [name=ConfirmPatient]').check();await page.locator('#thAmendForm button').click();await done('Amendment saved');assert.equal(f.rows('ProcedureEvents').filter(e=>e.Type==='Sign operative record').length,1);
+  await dates('thHist');await page.locator('#thHistoryForm button').first().click();await done('Selected procedure history loaded');assert.match(await page.locator('#thHistory').textContent(),/Amend operative record/);await page.screenshot({path:resolve(output,'theatre-desktop.png'),fullPage:true});await page.setViewportSize({width:390,height:844});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));await page.screenshot({path:resolve(output,'theatre-phone.png'),fullPage:true});await page.setViewportSize({width:1366,height:960});
+  await expand('thAmendSection');await page.locator('#thAmendKind').selectOption('Operative');await fill('thAmendForm',{Findings:'Unsaved correction'});await page.locator('#thAmendForm [name=ConfirmPatient]').check();await page.locator('#thAmendForm button').click();await done('Enter Reason');await page.locator('#branch').selectOption('north');await page.locator('dialog[open] footer [data-app-dialog-cancel]').click();await page.waitForFunction(()=>!document.querySelector('#refresh').disabled);assert.equal(await page.locator('#branch').inputValue(),'main');assert.equal(await page.locator('#thAmendForm [name=Findings]').inputValue(),'Unsaved correction');
+  await page.locator('#branch').selectOption('north');await page.locator('dialog[open] footer .app-decision-confirm').click();await done('Branch changed');assert.equal(await page.locator('#thName').textContent(),'');assert.equal(await page.locator('#thSigned').textContent(),'');
+  await login('cashier');assert.equal(await page.locator('[data-tab=theatre]').isVisible(),false);await page.locator('[data-tab=reception]').click();await dates('visit');await page.locator('#visitForm button').click();await done('Selected visit period loaded');await page.locator('[data-billing-visit]').first().click();await done('Patient billing context loaded');
+  await expand('billService');await fill('billServiceForm',{ServiceCode:'SURGERY',Description:'Procedure service',Quantity:1,UnitPrice:'1000.00',Reference:'BILL-UI-1',ProcedureReference:'OP-001'});await page.locator('#billServiceForm [name=Category]').selectOption('Procedure');await page.locator('#billServiceForm button').click();await done('Service charge');assert.equal(f.rows('ChargeEvents').length,1);
+  expire=true;await page.locator('#refresh').click();await done('Staff session expired');assert.equal(await page.locator('#workspace').isVisible(),false);assert.deepEqual(errors,[]);
+  console.log('PASS: theatre setup/preparation, booking, retained registers, preoperative/time-out/operative/recovery stages, amendment history, linked charge, role/privacy controls, failed-save draft protection, branch/session clearing and responsive layout.');
+}finally{await browser?.close();await new Promise(resolve=>server.close(resolve));}

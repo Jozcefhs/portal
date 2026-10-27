@@ -3,18 +3,19 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Hospital workspace · Dynamax</title>
-  <link rel="stylesheet" href="/css/hospital.css?v=20261027-nursing">
+  <link rel="stylesheet" href="/css/hospital.css?v=20261027-theatre">
   <link rel="stylesheet" href="/css/app-dialogs.css">
   <script src="/js/app-dialogs.js?v=20261016-grouped-form-validation" defer></script>
   <script src="/js/staff-idle-session.js" defer></script>
-  <script src="/js/hospital-clinical.js?v=20261027-nursing" defer></script>
-  <script src="/js/hospital-orders.js?v=20261027-nursing" defer></script>
-  <script src="/js/hospital-corporate.js?v=20261027-nursing" defer></script>
-  <script src="/js/hospital-funds.js?v=20261027-nursing" defer></script>
-  <script src="/js/hospital-billing.js?v=20261027-nursing" defer></script>
-  <script src="/js/hospital-inpatients.js?v=20261027-nursing" defer></script>
-  <script src="/js/hospital-nursing.js?v=20261027-nursing" defer></script>
-  <script src="/js/hospital.js?v=20261027-nursing" defer></script>
+  <script src="/js/hospital-clinical.js?v=20261027-theatre" defer></script>
+  <script src="/js/hospital-orders.js?v=20261027-theatre" defer></script>
+  <script src="/js/hospital-corporate.js?v=20261027-theatre" defer></script>
+  <script src="/js/hospital-funds.js?v=20261027-theatre" defer></script>
+  <script src="/js/hospital-billing.js?v=20261027-theatre" defer></script>
+  <script src="/js/hospital-inpatients.js?v=20261027-theatre" defer></script>
+  <script src="/js/hospital-nursing.js?v=20261027-theatre" defer></script>
+  <script src="/js/hospital-theatre.js?v=20261027-theatre" defer></script>
+  <script src="/js/hospital.js?v=20261027-theatre" defer></script>
 </head>
 <body>
   <main>
@@ -22,7 +23,8 @@
     <p id="status" role="status" aria-live="polite">Checking your staff session…</p>
     <div id="workspace" hidden>
       <div class="toolbar"><label>Working branch<select id="branch"></select></label><button id="refresh" type="button">Refresh access</button></div>
-      <nav aria-label="Hospital tasks"><button type="button" data-tab="patients">Patients and NFC cards</button><button type="button" data-tab="reception">Reception visits</button><button type="button" data-tab="care" hidden>Clinical record</button><button type="button" data-tab="orders" hidden>Prescriptions and investigations</button><button type="button" data-tab="nursing" hidden>Nursing and handovers</button><button type="button" data-tab="inpatients" hidden>Wards and admissions</button><button type="button" data-tab="billing" hidden>Billing and HMO</button></nav>
+      <nav aria-label="Hospital tasks"><button type="button" data-tab="patients">Patients and NFC cards</button><button type="button" data-tab="reception">Reception visits</button><button type="button" data-tab="care" hidden>Clinical record</button><button type="button" data-tab="orders" hidden>Prescriptions and investigations</button><button type="button" data-tab="theatre" hidden>Theatre and procedures</button><button type="button" data-tab="nursing" hidden>Nursing and handovers</button><button type="button" data-tab="inpatients" hidden>Wards and admissions</button><button type="button" data-tab="billing" hidden>Billing and HMO</button></nav>
+      <section id="theatre" hidden></section>
       <section id="nursing" hidden></section>
       <section id="inpatients" hidden></section>
       <section id="billing" hidden></section>

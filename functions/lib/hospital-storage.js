@@ -7,6 +7,7 @@ export const HOSPITAL_COLLECTIONS = Object.freeze([
   'BillingSettings','BillingSettingVersions','HmoPlans','HmoPlanVersions','HmoEligibility','HmoEligibilityVersions',
   'Invoices','BillingEvents','Claims','ClaimVersions','CreditTotals','CreditNotes','Payments','PaymentReferences','Refunds','RefundReferences',
   'Funds','FundEvents','FundAllocationBatches','FundAllocationReturns','FundRefunds',
+  'Theatres','TheatreVersions','TheatreReservations','TheatreActiveResources','ProcedureCases','ProcedureEvents',
   'NursingCharts','MedicationDoses','NursingHandovers','NursingEvents',
   'Wards','WardVersions','Beds','BedVersions','Admissions','OpenAdmissions','AdmissionEvents','DischargeSummaries',
   'CorporateAccounts','CorporateAccountVersions','CorporateCoverage','CorporateCoverageVersions','CorporateEvents'

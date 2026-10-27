@@ -16,6 +16,7 @@ export const WEB_SECTION_CATALOG = Object.freeze([
   Object.freeze({ key:'hospitalOrders', label:'Prescriptions and investigations' }),
   Object.freeze({ key:'hospitalPharmacy', label:'Pharmacy' }),
   Object.freeze({ key:'hospitalLaboratory', label:'Laboratory' }),
+  Object.freeze({ key:'hospitalTheatre', label:'Theatre and procedures' }),
   Object.freeze({ key:'hospitalNursing', label:'Nursing and handovers' }),
   Object.freeze({ key:'hospitalInpatients', label:'Wards and admissions' }),
   Object.freeze({ key:'hospitalBilling', label:'Billing and payments' }),

@@ -1,3 +1,4 @@
+import {theatreReference} from './hospital-theatre-model.js';
 import {clean,fail,id,digest,nameKey,patientSummary} from './hospital-model.js';
 import {field,quantity,dateFilters,watDay,cumulativeCredit,chargeCents} from './hospital-orders-model.js';
 import {ACCOUNT_TYPES,OPTIONAL_BILLING_ACCOUNTS,amount,cents,equal,code,planFields,eligibility,splitCharge,balances,netPaid,paymentFields} from './hospital-billing-model.js';
@@ -130,8 +131,15 @@ export function createHospitalBillingService(ctx){
         if(['Laboratory','Imaging'].includes(body.Category)){
           const order=await read('Orders',body.OrderId);if(!order||order.BranchId!==c.BranchId||order.VisitId!==c.visit.VisitId||order.PatientId!==c.person.PatientId||order.Kind!==body.Category||order.Status==='Cancelled')fail('Choose the matching investigation order.',409);
         }
-        const source=body.OrderId?`order:${id(body.OrderId)}`:nameKey(Reference),ChargeId=await keyFor('service',c.BranchId,c.visit.VisitId,source);
-        const old=await read('ChargeEvents',ChargeId),fields={ServiceCode,Description,Quantity,UnitPriceCents,Reference,Category:body.Category,OrderId:body.OrderId||''};
+        let ProcedureCaseId='';
+        if(clean(body.ProcedureReference)){
+          if(body.Category!=='Procedure')fail('Use a procedure reference only for a procedure charge.');
+          ProcedureCaseId=await keyFor('procedure',c.visit.VisitId,theatreReference(body.ProcedureReference));
+          const procedure=await read('ProcedureCases',ProcedureCaseId);
+          if(!procedure||procedure.PatientId!==c.person.PatientId||procedure.BranchId!==c.BranchId||procedure.Status!=='Completed')fail('Choose a completed procedure reference for this patient visit.',409);
+        }
+        const source=ProcedureCaseId?`procedure:${ProcedureCaseId}:${ServiceCode}`:body.OrderId?`order:${id(body.OrderId)}`:nameKey(Reference),ChargeId=await keyFor('service',c.BranchId,c.visit.VisitId,source);
+        const old=await read('ChargeEvents',ChargeId),fields={ServiceCode,Description,Quantity,UnitPriceCents,Reference,Category:body.Category,OrderId:body.OrderId||'',...(ProcedureCaseId?{ProcedureCaseId}:{})};
         if(old){if(!equal(old.Service,fields))fail('This service reference was already charged with different details.',409);return unchanged({ChargeId});}
         return {writes:[write('ChargeEvents',ChargeId,{ChargeId,BranchId:c.BranchId,PatientId:c.person.PatientId,VisitId:c.visit.VisitId,Source:'Service',SourceId:source,Service:fields,
           ServiceCode,Description,Quantity,AmountCents:cents(chargeCents(Quantity,UnitPriceCents)),Currency:'NGN',Status:'Awaiting billing',...stamp()},null),

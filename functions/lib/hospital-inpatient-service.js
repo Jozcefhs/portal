@@ -188,6 +188,7 @@ export function createHospitalInpatientService(context){
       requireCapability('inpatient.admit');await branch(body);
       return operation(body,'dischargeHospitalPatient',async key=>{
         const c=await current(body,true);version(c.visit,body.VisitRevision);
+        if(c.visit.PendingProcedureCount||c.visit.ActiveProcedureCaseId)fail('Complete or cancel outstanding procedures before discharge.',409);
         if(!c.admission.DischargeSummaryId)fail('A clinician must sign the discharge summary before the bed is released.',409);
         if(c.visit.DischargeApprovalId!==c.admission.DischargeSummaryId)fail('Clinical work changed after the discharge review. Ask the clinician to review and sign the summary again.',409);
         if(c.visit.ClinicalState&&c.visit.ClinicalState!=='Consultation signed')fail('Complete and sign the open consultation before discharge.',409);
