@@ -112,6 +112,7 @@ jobs:
       - run: npm ci
       - run: node --test tests/web-release-freshness.test.mjs tests/staff-web-release-deployment.test.mjs
       - run: node --test tests/academic-audit-log.test.mjs tests/academic-scorebook-opening.test.mjs tests/academic-read-cost.test.mjs tests/branch-read-cost.test.mjs tests/remaining-read-cost.test.mjs tests/security-audit-*.test.mjs
+      - run: node --test tests/academic-classroom-score-register.test.mjs tests/academic-class-score-register.test.mjs tests/academic-scorebook-access.test.mjs
       - run: npm run test:academic-release
       - run: node --test tests/academic-results-readiness.test.mjs tests/academic-batch-review.test.mjs tests/academic-component-review.test.mjs tests/academic-partial-results-preservation.test.mjs tests/academic-calculation-loading.test.mjs
       - run: node --test tests/parent-result-policy-enforcement.test.mjs

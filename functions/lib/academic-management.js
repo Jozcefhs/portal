@@ -10,6 +10,7 @@ import { academicCbtScoreSources } from './academic-cbt-multiserver.js';
 import { academicResultWithWeightedComponents } from './academic-result-marks.js';
 import { academicResultWithSubjectLabels } from './academic-result-subject-labels.js';
 import { buildAcademicClassScoreRegister } from './academic-class-score-register.js';
+import { academicTeacherScoreClassrooms, loadAcademicClassroomScoreRegister } from './academic-classroom-score-register.js';
 import { loadAcademicAuditLog } from './academic-audit-log.js';
 import { loadAcademicResultsReadiness } from './academic-results-readiness.js';
 import { planAcademicResultBatch } from './academic-result-batch.js';
@@ -682,6 +683,7 @@ export function academicManagementCapabilities(user = {}) {
     canEnterScores: enabled && (SCORE_REVIEWERS.has(role) || role === 'Teacher' || academicsDepartmentUser),
     canCreateCbt: enabled && (SCORE_REVIEWERS.has(role) || role === 'Teacher' || academicsDepartmentUser),
     canReviewScores: enabled && SCORE_REVIEWERS.has(role),
+    canViewClassroomScores: enabled && user[ACADEMIC_WEB_ACTOR] === true && (role === 'Teacher' || academicsDepartmentUser),
     canApproveScores: enabled && SCORE_APPROVERS.has(role),
     canManageScoreCorrections: enabled && STRUCTURE_MANAGERS.has(role),
     canCalculateResults: enabled && SCORE_REVIEWERS.has(role),
@@ -1175,7 +1177,7 @@ export function academicWorkspaceReadPlan(view, keys, input = {}, { classRegiste
   if (view === 'readiness' && input.WorkspaceLoadMode !== 'records') return {keys:['sessions','terms','classes'],deferred:true,requested:false};
   const mode = input.WorkspaceLoadMode;
   if (classRegister || !['navigation', 'records'].includes(mode)) return { keys, deferred: false, requested: false };
-  if (registerOnly) return { keys: ['sessions', 'terms', 'classes'], deferred: false, requested: false };
+  if (registerOnly) return { keys, deferred: false, requested: false };
   if (mode === 'navigation' && !['structure', 'bulksetup', 'departments', 'offerings'].includes(view)) {
     return { keys: ['sessions', 'terms', 'classes'], deferred: true, requested: false };
   }
@@ -1229,7 +1231,12 @@ async function loadAcademicState(env, branchId, requestedKeys = null, scoreReadS
     const readScope = classroomRoster ? { ClassId: scoreReadScope.ClassId,
       SessionId: scoreReadScope.SessionId, TermId: scoreReadScope.TermId } : scoreReadScope;
     const workspaceFilters = academicWorkspaceRecordFilters(key, branchId, scoreReadScope);
-    const options = { filters: workspaceFilters || (paged || classroomRoster ? academicScoreReadFilters(branchId, readScope)
+    const options = { filters: key === 'teacherAllocations' && scoreReadScope.ClassroomRegisterTeacher
+      ? [{ field: 'BranchId', op: '==', value: branchId },
+        { field: 'TeacherUsername', op: '==', value: scoreReadScope.ClassroomRegisterTeacher },
+        ...['SessionId', 'TermId', 'ClassId'].filter(field => clean(scoreReadScope[field]))
+          .map(field => ({ field, op: '==', value: clean(scoreReadScope[field]) }))]
+      : workspaceFilters || (paged || classroomRoster ? academicScoreReadFilters(branchId, readScope)
       : [{ field: 'BranchId', op: '==', value: branchId }]) };
     const rows = paged || workspaceFilters
       ? await queryCollectionPages(env, collection, { ...options,
@@ -2230,9 +2237,10 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}, sc
   // The all-arm register has its own class-scoped read action. Opening its
   // selectors must not preload the hidden entry, review and import workspaces.
   // Older clients and explicit class reports retain their existing contract.
-  const registerOnly = focusedView === 'scorebook' && permissions.canReviewScores
+  const registerOnly = focusedView === 'scorebook' && (permissions.canReviewScores || permissions.canViewClassroomScores)
     && input.ScorebookTask === 'classRegister' && !loadOptions.classRegister;
-  const baseStateKeys = registerOnly ? ['sessions', 'terms', 'classes'] : academicBootstrapReadKeys(
+  const teacherRegisterOnly = registerOnly && permissions.canViewClassroomScores && !permissions.canReviewScores;
+  const baseStateKeys = registerOnly ? ['sessions', 'terms', 'classes', ...(teacherRegisterOnly ? ['arms', 'teacherAllocations'] : [])] : academicBootstrapReadKeys(
     academicManagementViewStateKeys(focusedView, permissions), focusedView, input, loadOptions);
   const readPlan = academicWorkspaceReadPlan(focusedView, baseStateKeys, input, { ...loadOptions, registerOnly });
   const requestedClassId = clean(input.RecordClassId) === '*' ? '' : clean(input.RecordClassId);
@@ -2247,7 +2255,7 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}, sc
     loadScopedAcademicState(env, scope, focusedStateKeys, readPlan.requested ? {
       ...scoreReadScope, WorkspaceRead: true, ClassId: requestedClassId,
       SessionId: clean(input.SessionId), TermId: clean(input.TermId)
-    } : scoreReadScope),
+    } : teacherRegisterOnly ? { ClassroomRegisterTeacher: actorUsername(user), SessionId: input.SessionId, TermId: input.TermId } : scoreReadScope),
     loadPeople(env, user, scope, peopleOptions),
     includeReportProfile
       ? getDocument(env, 'settings', 'schoolProfile').catch(() => ({}))
@@ -2328,6 +2336,11 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}, sc
   const selection = includesAcademicPeriod ? currentSelection(state, input) : null;
   const selectedSession = selection ? findById(state.sessions, selection.SessionId) : null;
   const selectedTerm = selection ? findById(state.terms, selection.TermId) : null;
+  if (teacherRegisterOnly) {
+    state.arms = academicTeacherScoreClassrooms(state, actorUsername(user), selection || {});
+    const classIds = new Set(state.arms.map(row => row.ClassId));
+    state.classes = state.classes.filter(row => classIds.has(row.ClassId));
+  }
   let assessmentScheme = academicAssessmentScheme({});
   const includeAssessmentPolicy = !registerOnly && !readPlan.deferred && input.IncludeAssessmentPolicy !== false && lower(input.IncludeAssessmentPolicy) !== 'false';
   if (includeAssessmentPolicy && selectedSession && selectedTerm && ['scorebook', 'cbt'].includes(focusedView)) {
@@ -5677,6 +5690,21 @@ function academicScoreRowsInput(value) {
     try { rows = JSON.parse(rows); } catch (_error) { rows = []; }
   }
   return Array.isArray(rows) ? rows : [];
+}
+
+export async function getAcademicClassroomScoreRegister(env, user = {}, input = {}) {
+  requireCapability(user, 'canViewClassroomScores');
+  if (['SessionId', 'TermId', 'ClassId', 'ArmId'].some(field => !clean(input[field]))) {
+    throw failure('Choose a classroom, academic session and term.');
+  }
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  const state = await loadScopedAcademicState(env, scope,
+    ['sessions', 'terms', 'classes', 'arms', 'teacherAllocations', 'subjects'],
+    { ClassroomRegisterTeacher: actorUsername(user), ClassId: input.ClassId, SessionId: input.SessionId, TermId: input.TermId });
+  const classScoreRegister = await loadAcademicClassroomScoreRegister(env, scope, state, actorUsername(user), input, {
+    assessmentScheme: (session, term) => academicAssessmentForPeriod(env, scope, session, term, { required: false })
+  });
+  return { ok: true, partialAcademicManagement: true, classScoreRegister };
 }
 
 export async function getAcademicClassScoreRegister(env, user = {}, input = {}) {
@@ -9465,6 +9493,7 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
   if (['saveacademicscoredraft', 'saveacademicstudentscores'].includes(action)) return saveAcademicScoreDraft(env, user, input);
   if (['getacademicscorebookcontext', 'openscorebook'].includes(action)) return getAcademicScorebookContext(env, user, input);
   if (action === 'getacademicclassscoreregister') return getAcademicClassScoreRegister(env, user, input);
+  if (action === 'getacademicclassroomscoreregister') return getAcademicClassroomScoreRegister(env, user, input);
   if (['applyactiveacademicscorelayout', 'applyactivescorelayout'].includes(action)) return applyActiveAcademicScoreLayout(env, user, input);
   if (['reactivateacademicscoreediting', 'reactivatescoreediting'].includes(action)) return reactivateAcademicScoreEditing(env, user, input);
   if (action === 'reactivateacademicclassscoreediting') return reactivateAcademicClassScoreEditing(env, user, input);
