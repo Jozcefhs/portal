@@ -2,6 +2,8 @@
 
 Open **Academic Area → Scorebook → My classroom scores**. Select the school section, session and term, choose your assigned classroom, then click **Load classroom scores**.
 
+Super Admin and academic reviewers have a direct **Class score register** button at the top of Academic Management and the same choice in the **Academic area** dropdown. It opens the all-arm register even when Scorebook is waiting for a record selection. Class teachers see **My classroom scores** in those same locations. Reopening an already mounted register retains its loaded scores instead of fetching them again.
+
 - The register shows the classroom's current students and marks across their offered subjects, including marks entered by other subject teachers and Draft scores. It is a vetting view, not a published report or a parent-access route.
 - Filter by subject, test, student or score condition. Missing, absent, exempt and not-enrolled cells keep their meaning; a saved zero remains zero.
 - **Preview / print** includes every matching student, including later pages. It repeats student identity across manageable groups of score columns and supports printing or saving as PDF.

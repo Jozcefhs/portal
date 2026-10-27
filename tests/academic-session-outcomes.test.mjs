@@ -347,7 +347,7 @@ test('Results and Session Outcomes workspaces define their classroom labels befo
   assert.match(adminSource, /function academicTermResultsWorkspace\(data, rows\) \{\s+const classroomLabel =/);
   assert.match(adminSource, /function academicSessionOutcomesWorkspace\(data, rows\) \{\s+const classroomLabel =/);
   assert.match(adminSource, /data-academic-view-select/);
-  assert.match(adminSource, /<option value="\$\{key\}"\$\{key === academicManagementView/);
+  assert.match(adminSource, /<option value="\$\{key\}"\$\{key === selectedArea/);
 });
 
 test('public transcript verification discloses validation metadata only', () => {
