@@ -13,7 +13,7 @@ await mkdir(output, { recursive: true });
 const assets = new Set(['/hospital.html','/css/hospital.css','/js/hospital.js','/js/staff-idle-session.js']);
 assets.add('/css/app-dialogs.css'); assets.add('/js/app-dialogs.js');
 assets.add('/js/hospital-clinical.js');
-assets.add('/js/hospital-orders.js'); assets.add('/js/hospital-billing.js'); assets.add('/js/hospital-funds.js'); assets.add('/js/hospital-corporate.js');
+assets.add('/js/hospital-orders.js'); assets.add('/js/hospital-billing.js'); assets.add('/js/hospital-funds.js'); assets.add('/js/hospital-corporate.js');assets.add('/js/hospital-inpatients.js');
 let expire = false;
 const server = createServer(async (req,res) => {
   try {

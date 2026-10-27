@@ -45,7 +45,7 @@ export function createHospitalClinicalService(context){
       // This version also serializes concurrent allergy changes across visits.
       write('CareSummaries',visit.PatientId,{AllergyStatus:'Unknown',Allergies:'',...strip(care),PatientId:visit.PatientId,
         LastClinicalActivityAt:timestamp,...careUpdates},care),
-      write('Visits',visit.VisitId,{...strip(visit),ClinicalState:recordNext.ClinicalState||visit.ClinicalState||'Care started',UpdatedAt:timestamp},visit)];
+      write('Visits',visit.VisitId,{...strip(visit),ClinicalState:recordNext.ClinicalState||visit.ClinicalState||'Care started',...(visit.AdmissionId?{DischargeApprovalId:''}:{}),UpdatedAt:timestamp},visit)];
   }
   return {
     async clinicalContext(body){

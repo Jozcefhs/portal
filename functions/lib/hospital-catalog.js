@@ -7,6 +7,7 @@ export const HOSPITAL_STAFF_ROLES = Object.freeze([
 ]);
 
 export const HOSPITAL_MODULES = Object.freeze([
+  Object.freeze({Key:'hospitalInpatients',Editions:Object.freeze(['hospital']),Labels:Object.freeze({hospital:'Wards and admissions'}),Description:'Ward setup, admission, bed allocation, transfers and signed discharge.',Requires:Object.freeze(['hospitalPatients','hospitalReception'])}),
   Object.freeze({ Key: 'hospitalPatients', Editions: Object.freeze(['hospital']),
     Labels: Object.freeze({ hospital: 'Patient registration' }),
     Description: 'Patient identity, demographic records and controlled patient lookup.', Requires: Object.freeze([]) }),
@@ -30,24 +31,25 @@ export const HOSPITAL_MODULES = Object.freeze([
 ]);
 
 export const HOSPITAL_ROLE_CAPABILITIES = Object.freeze({
-  'Super Admin': ['patients.read', 'patients.write', 'visits.read', 'visits.write','billing.read','billing.write','billing.configure','billing.refund','hmo.work'],
-  'Hospital Administrator': ['patients.read', 'patients.write', 'visits.read', 'visits.write','billing.read','billing.write','billing.configure','billing.refund','hmo.work'],
-  'Medical Director': ['patients.read', 'visits.read', 'clinical.read', 'triage.write', 'consultations.write','orders.read','orders.create'],
-  'Doctor': ['patients.read', 'visits.read', 'clinical.read', 'triage.write', 'consultations.write','orders.read','orders.create'],
-  'Nurse': ['patients.read', 'visits.read', 'clinical.read', 'triage.write','orders.read'],
+  'Super Admin': ['inpatient.read','inpatient.admit','inpatient.configure','patients.read', 'patients.write', 'visits.read', 'visits.write','billing.read','billing.write','billing.configure','billing.refund','hmo.work'],
+  'Hospital Administrator': ['inpatient.read','inpatient.admit','inpatient.configure','patients.read', 'patients.write', 'visits.read', 'visits.write','billing.read','billing.write','billing.configure','billing.refund','hmo.work'],
+  'Medical Director': ['inpatient.read','inpatient.clinical','inpatient.discharge','patients.read', 'visits.read', 'clinical.read', 'triage.write', 'consultations.write','orders.read','orders.create'],
+  'Doctor': ['inpatient.read','inpatient.clinical','inpatient.discharge','patients.read', 'visits.read', 'clinical.read', 'triage.write', 'consultations.write','orders.read','orders.create'],
+  'Nurse': ['inpatient.read','inpatient.clinical','inpatient.admit','patients.read', 'visits.read', 'clinical.read', 'triage.write','orders.read'],
   'Pharmacist':['patients.read','visits.read','pharmacy.work'],
   'Laboratory Scientist':['patients.read','visits.read','laboratory.work'],
   'Radiographer':['patients.read','visits.read','imaging.work'],
-  'Registration Officer': ['patients.read', 'patients.write', 'visits.read', 'visits.write'],
-  'Medical Records Officer': ['patients.read', 'patients.write', 'visits.read'],
+  'Registration Officer': ['inpatient.read','inpatient.admit','patients.read', 'patients.write', 'visits.read', 'visits.write'],
+  'Medical Records Officer': ['inpatient.read','patients.read', 'patients.write', 'visits.read'],
   'Hospital Cashier':['patients.read','visits.read','billing.read','billing.write','billing.collect'],
   'HMO Officer':['patients.read','visits.read','hmo.work'],
-  'Front Desk': ['patients.read', 'patients.write', 'visits.read', 'visits.write']
+  'Front Desk': ['inpatient.read','inpatient.admit','patients.read', 'patients.write', 'visits.read', 'visits.write']
 });
 
 export function hospitalRoleModules(role) {
   const capabilities = HOSPITAL_ROLE_CAPABILITIES[role] || [];
   return [
+    ...(capabilities.includes('inpatient.read') ? ['hospitalInpatients'] : []),
     ...(capabilities.includes('patients.read') ? ['hospitalPatients'] : []),
     ...(capabilities.includes('visits.read') ? ['hospitalReception'] : []),
     ...(capabilities.includes('triage.write') ? ['hospitalTriage'] : []),

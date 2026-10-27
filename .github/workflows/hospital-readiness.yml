@@ -16,6 +16,7 @@ on:
       - "tests/helpers/hospital-billing-fixture.mjs"
       - "tests/helpers/hospital-funds-fixture.mjs"
       - "tests/helpers/hospital-corporate-fixture.mjs"
+      - "tests/helpers/hospital-inpatient-fixture.mjs"
       - "scripts/verify-hospital*.mjs"
       - ".github/workflows/hospital-readiness.yml"
   workflow_dispatch:

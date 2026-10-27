@@ -43,6 +43,7 @@ export function createHospitalOrdersService(ctx){
   function changes(key,current,Action,updates={},details={}){
     const next={...strip(current.order),...updates,UpdatedAt:clock()};
     return [write('Orders',next.OrderId,next,current.order),event(key,current,Action,details),
+      ...(current.visit.AdmissionId&&['Waiting','In progress'].includes(current.visit.Status)?[write('Visits',current.visit.VisitId,{...strip(current.visit),DischargeApprovalId:''},current.visit)]:[]),
       auditWrite(key,Action,current.BranchId,current.person,{OrderId:next.OrderId,OrderNumber:next.OrderNumber})];
   }
   const result=current=>({OrderId:current.order.OrderId,PatientId:current.person.PatientId});
@@ -76,7 +77,7 @@ export function createHospitalOrdersService(ctx){
           DispensedQuantity:0,ReturnedQuantity:0,CriticalNeedsAcknowledgement:false,CriticalPendingCount:0};
         c.order=order;
         return {writes:[write('Orders',key,order,null),careLock(c),
-          write('Visits',c.visit.VisitId,{...strip(c.visit),LastOrderAt:clock()},c.visit),
+          write('Visits',c.visit.VisitId,{...strip(c.visit),LastOrderAt:clock(),...(c.visit.AdmissionId?{DischargeApprovalId:''}:{})},c.visit),
           event(key,c,'Issue hospital order',{Kind}),auditWrite(key,'Issue hospital order',c.BranchId,c.person,{OrderId:key,OrderNumber:order.OrderNumber})],result:result(c)};
       });
     },

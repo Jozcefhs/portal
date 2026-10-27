@@ -3,7 +3,7 @@
   const $ = id => document.getElementById(id);
   const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[char]));
   let state = {}, selected = null, busy = false, session = false, patientCursor = null, visitCursor = null, lastSearch = null, lastVisitRange = null;
-  let scanController = null, recordEpoch = 0, clinical = null, orders = null, billing = null, loadedBranch = '';
+  let scanController = null, recordEpoch = 0, clinical = null, orders = null, billing = null, inpatients = null, loadedBranch = '';
   const pending = new Map();
   const status = (message, bad = false) => { $('status').textContent = message; $('status').className = bad ? 'bad' : 'good'; };
   const can = name => state.capabilities?.includes(name);
@@ -14,6 +14,7 @@
     clinical?.clear();
     orders?.clear();
     billing?.clear();
+    inpatients?.clear();
     ['patientForm','cardForm','checkInForm','searchForm','visitForm'].forEach(id => $(id).reset());
     ['matches','visitRows','cardPrint','patientTitle','patientIdentity','cardStatus'].forEach(id => $(id).replaceChildren());
     $('duplicateReason').value = ''; $('patientPanel').hidden = true;
@@ -57,6 +58,7 @@
     clinical?.permissions();
     orders?.permissions();
     billing?.permissions();
+    inpatients?.permissions();
   }
   async function run(work) {
     if (busy) return; busy = true;
@@ -78,11 +80,11 @@
     state = await api('state'); loadedBranch = $('branch').value; permissions(); $('workspace').hidden = false;
     status('Hospital reception ready. Search for a patient or choose dates to load visits.');
   }
-  function showTab(name) { for(const id of ['patients','reception','care','orders','billing'])$(id).hidden=name!==id; }
+  function showTab(name) { for(const id of ['patients','reception','care','orders','billing','inpatients'])$(id).hidden=name!==id; }
   document.querySelectorAll('[data-tab]').forEach(button => { button.onclick = () => showTab(button.dataset.tab); });
-  $('refresh').onclick = () => run(async () => { if(!await clinical.confirmLeave()||!await orders.confirmLeave()||!await billing.confirmLeave())return; clearRecords(); await loadAccess(); });
+  $('refresh').onclick = () => run(async () => { if(!await clinical.confirmLeave()||!await orders.confirmLeave()||!await billing.confirmLeave()||!await inpatients.confirmLeave())return; clearRecords(); await loadAccess(); });
   $('branch').onchange = () => run(async () => {
-    if(!await clinical.confirmLeave()||!await orders.confirmLeave()||!await billing.confirmLeave()){$('branch').value=loadedBranch;return;}
+    if(!await clinical.confirmLeave()||!await orders.confirmLeave()||!await billing.confirmLeave()||!await inpatients.confirmLeave()){$('branch').value=loadedBranch;return;}
     clearRecords(); state = {}; state = await api('state'); loadedBranch=$('branch').value; permissions(); status('Branch changed. Search or load this branch’s visits.');
   });
   function renderMatches(data) {
@@ -154,7 +156,8 @@
     if (!cursor) lastVisitRange = {fromDate:$('visitFrom').value,toDate:$('visitTo').value};
     const data = await api('visits',{DateRange:lastVisitRange,...(cursor ? {Cursor:cursor} : {})});
     visitCursor = data.next; $('moreVisits').hidden = !visitCursor;
-    $('visitRows').innerHTML = `<table><thead><tr><th>Patient</th><th>Department</th><th>Arrival (WAT)</th><th>Status</th><th>Actions</th></tr></thead><tbody>${data.visits.map((row,index) => `<tr><td>${esc(row.PatientName)}<br>${esc(row.HospitalNumber)}</td><td>${esc(row.Department)}</td><td>${esc(new Date(row.CreatedAt).toLocaleString('en-GB',{timeZone:'Africa/Lagos'}))}</td><td>${esc(row.Status)}${row.ClinicalState?`<br><small>${esc(row.ClinicalState)}</small>`:''}</td><td>${can('billing.read')||can('hmo.work')?`<button data-billing-visit="${index}">Open billing / HMO</button>`:''}${can('clinical.read')?`<button data-care="${index}">Open care record</button>`:''}${writable('orders.create') && ['Waiting','In progress'].includes(row.Status)?`<button data-issue-order="${index}">Prescribe / request investigation</button>`:''}${writable('visits.write') && ['Waiting','In progress'].includes(row.Status) ? `<button data-visit="${index}" data-status="In progress">Start visit</button><button data-visit="${index}" data-status="Completed">Complete reception visit</button><button data-visit="${index}" data-status="Cancelled">Cancel visit</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="5">No visits in this period.</td></tr>'}</tbody></table>`;
+    $('visitRows').innerHTML = `<table><thead><tr><th>Patient</th><th>Department</th><th>Arrival (WAT)</th><th>Status</th><th>Actions</th></tr></thead><tbody>${data.visits.map((row,index) => `<tr><td>${esc(row.PatientName)}<br>${esc(row.HospitalNumber)}</td><td>${esc(row.Department)}</td><td>${esc(new Date(row.CreatedAt).toLocaleString('en-GB',{timeZone:'Africa/Lagos'}))}</td><td>${esc(row.Status)}${row.ClinicalState?`<br><small>${esc(row.ClinicalState)}</small>`:''}</td><td>${can('inpatient.read')?`<button data-inpatient-visit="${index}">${row.AdmissionId?'Open admission':'Ward admission'}</button>`:''}${can('billing.read')||can('hmo.work')?`<button data-billing-visit="${index}">Open billing / HMO</button>`:''}${can('clinical.read')?`<button data-care="${index}">Open care record</button>`:''}${writable('orders.create') && ['Waiting','In progress'].includes(row.Status)?`<button data-issue-order="${index}">Prescribe / request investigation</button>`:''}${writable('visits.write') && ['Waiting','In progress'].includes(row.Status) ? `<button data-visit="${index}" data-status="In progress">Start visit</button><button data-visit="${index}" data-status="Completed">Complete reception visit</button><button data-visit="${index}" data-status="Cancelled">Cancel visit</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="5">No visits in this period.</td></tr>'}</tbody></table>`;
+    $('visitRows').querySelectorAll('[data-inpatient-visit]').forEach(button=>{button.onclick=()=>run(()=>inpatients.openVisit(data.visits[Number(button.dataset.inpatientVisit)]));});
     $('visitRows').querySelectorAll('[data-billing-visit]').forEach(button=>{button.onclick=()=>run(()=>billing.openVisit(data.visits[Number(button.dataset.billingVisit)]));});
     $('visitRows').querySelectorAll('[data-issue-order]').forEach(button=>{button.onclick=()=>run(()=>orders.openVisit(data.visits[Number(button.dataset.issueOrder)]));});
     $('visitRows').querySelectorAll('[data-care]').forEach(button=>{button.onclick=()=>run(()=>clinical.open(data.visits[Number(button.dataset.care)]));});
@@ -173,7 +176,10 @@
   clinical=window.DynamaxHospitalClinical.create({api,run,can,writable,status,navigate:showTab});
   orders=window.DynamaxHospitalOrders.create({api,run,can,writable,status,navigate:showTab});
   billing=window.DynamaxHospitalBilling.create({api,run,can,writable,status,navigate:showTab});
+  inpatients=window.DynamaxHospitalInpatients.create({api,run,can,writable,status,navigate:showTab});
+  inpatients.onCare(row=>clinical.open(row));inpatients.onBilling(row=>billing.openVisit(row));
   run(async () => { await loadAccess(); const task=new URLSearchParams(location.search).get('task');
+    if(task==='inpatients'&&can('inpatient.read'))showTab('inpatients');
     if (['reception','triage','consultations'].includes(task) && can('visits.read')) showTab('reception');
     if(['billing','hmo'].includes(task)&&(can('billing.read')||can('hmo.work')))showTab('billing');
     if(['orders','pharmacy','laboratory','imaging'].includes(task)&&['orders.read','pharmacy.work','laboratory.work','imaging.work'].some(can)){orders.selectTask(task);showTab('orders');}
