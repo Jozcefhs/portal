@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
-import { extractFunction, source } from './helpers/academic-register-fixture.mjs';
-import { academicManagementCapabilities, academicWebActor } from '../functions/lib/academic-management.js';
+import { extractFunction, source, fixture as workspaceFixture, renderWorkspace } from './helpers/academic-register-fixture.mjs';
+import { academicManagementCapabilities, academicWebActor, getAcademicClassScoreRegister } from '../functions/lib/academic-management.js';
 
 const functions = ['academicRecordId', 'academicIsActive', 'academicSelectOptions', 'academicLearnerTerms',
   'academicManagementViews', 'academicManagementHeader', 'openAcademicClassScoreRegister', 'bindAcademicAreaNavigation'].map(extractFunction).join('\n');
@@ -60,4 +60,39 @@ test('navigation preserves teacher classroom scope and does not expose the regis
   const denied = client('Accounts Officer');
   assert.doesNotMatch(denied.context.academicManagementHeader(denied.data, {}), /data-academic-open-score-register|value="classRegister"/);
   denied.context.openAcademicClassScoreRegister(); assert.equal(denied.calls.length, 0);
+});
+
+for (const role of ['Super Admin', 'Director', 'Admin', 'Principal', 'Vice Principal Academics', 'Vice Principal Administration',
+  'Head Teacher', 'Assistant Head Teacher', 'Management', 'ICT', 'Examination Officer', 'Admissions Officer']) {
+  test(`${role}: academic register navigation and viewing are available with module access`, async () => {
+    const f = client(role);
+    assert.equal(f.data.permissions.canViewClassScoreRegister, true);
+    assert.match(f.context.academicManagementHeader(f.data, {}), /data-academic-open-score-register>Class score register/);
+    const input = workspaceFixture(); input.data.permissions = f.data.permissions;
+    assert.match(renderWorkspace('scorebook', input), /data-academic-class-score-register/);
+    f.context.openAcademicClassScoreRegister();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(f.calls[0].payload.ScorebookTask, 'classRegister');
+    for (const override of [{ allowedSections: [] }, { edition: 'faith' }, { edition: 'organization' }]) {
+      const user = academicWebActor({ role, edition: 'school', allowedSections: ['academics'], ...override });
+      assert.equal(academicManagementCapabilities(user).canViewClassScoreRegister, false);
+      await assert.rejects(getAcademicClassScoreRegister({}, user, {}), { code: 'ACADEMIC_ACCESS_FORBIDDEN' });
+    }
+  });
+}
+
+test('new management viewers gain read-only web access without score editing, approval or publication', async () => {
+  for (const role of ['Director', 'Admin', 'Admissions Officer']) {
+    const f = client(role), permissions = f.data.permissions;
+    for (const key of ['canEnterScores', 'canReviewScores', 'canApproveScores', 'canManageScoreCorrections', 'canCalculateResults', 'canPublishResults']) {
+      assert.equal(permissions[key], false, `${role}: ${key}`);
+    }
+    const input = workspaceFixture(); input.data.permissions = permissions;
+    const form = renderWorkspace('scorebook', input).match(/<form[^>]*data-academic-class-score-register>[\s\S]*?<\/form>/)[0];
+    assert.match(form, /Preview \/ print/); assert.doesNotMatch(form, /data-class-register-reactivate/);
+    await assert.rejects(getAcademicClassScoreRegister({}, { role, edition: 'school', allowedSections: ['academics'] }, {}), { code: 'ACADEMIC_ACCESS_FORBIDDEN' });
+  }
+  const departmentTeacher = academicManagementCapabilities(academicWebActor({ role: 'Department User', department: 'Academics', edition: 'school' }));
+  assert.equal(departmentTeacher.canViewClassroomScores, true);
+  assert.equal(departmentTeacher.canViewClassScoreRegister, false);
 });

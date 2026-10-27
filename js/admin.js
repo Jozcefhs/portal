@@ -15681,14 +15681,15 @@ function academicScorebookWorkspace(data, rows) {
     ${blocking}
     <div class="academic-assessment-scheme-grid"><section><h4>Assessment components</h4>${(scheme.Components || []).map((row) => `<div><strong>${escapeHtml(row.Name)}</strong><span>${row.MaximumScore} marks · ${row.WeightPercentage}% · ${escapeHtml(row.SourceMode || 'any source')}</span></div>`).join('') || '<p>No components configured.</p>'}</section><section><h4>Grading bands</h4>${(scheme.GradeBands || []).map((row) => `<div><strong>${escapeHtml(row.Grade)}</strong><span>${row.MinimumPercentage}–${row.MaximumPercentage}% · ${row.GradePoint} points · ${escapeHtml(row.Remark || row.Classification)}</span></div>`).join('') || '<p>No grading bands configured.</p>'}</section></div>
   </section>`;
-  const classroomRegister = data.permissions?.canViewClassroomScores && !data.permissions?.canReviewScores;
+  const canViewClassRegister = data.permissions?.canViewClassScoreRegister || data.permissions?.canReviewScores;
+  const classroomRegister = data.permissions?.canViewClassroomScores && !canViewClassRegister;
   const teacherClassrooms = classrooms.filter(arm => rows.teacherAllocations.some(row => academicIsActive(row)
     && clean(row.AllocationRole).toLowerCase() === 'form teacher' && row.SessionId === sessionId && row.TermId === termId
     && row.ClassId === arm.ClassId && row.ArmId === arm.ArmId));
   const registerChoices = classroomRegister ? '<option value="">Choose classroom</option>' + teacherClassrooms.map(arm =>
     `<option value="${escapeHtml(arm.ArmId)}" data-class-id="${escapeHtml(arm.ClassId)}">${escapeHtml(academicLabel(rows.classes, arm.ClassId))} / ${escapeHtml(arm.Name)}</option>`).join('')
     : academicSelectOptions(rows.classes.filter(academicIsActive), '', row => row.Name, 'Choose class');
-  const classRegister = data.permissions?.canReviewScores || classroomRegister ? `<form class="academic-management-editor academic-management-editor-wide"${classroomRegister ? ' data-classroom-register' : ''} data-academic-class-score-register>
+  const classRegister = canViewClassRegister || classroomRegister ? `<form class="academic-management-editor academic-management-editor-wide"${classroomRegister ? ' data-classroom-register' : ''} data-academic-class-score-register>
     <div class="academic-management-editor-heading"><div><h3>${classroomRegister ? 'My classroom scores — all subjects' : 'Class score register — all arms'}</h3><p>Read-only raw marks / maximum, including Draft scores. This is not a published result. ${classroomRegister ? 'Choose your assigned classroom to vet all subjects without changing marks.' : 'Choose a class, not a classroom.'}</p></div></div>
     ${classroomRegister && !teacherClassrooms.length ? '<p>No class teacher assignment was found for this session and term. Ask Academic Management to assign your classroom under Assign class teachers.</p>' : ''}
     <div class="academic-management-form-grid"><label>${classroomRegister ? 'Classroom' : 'Class'}<select name="ClassId" required>${registerChoices}</select></label>
@@ -16884,7 +16885,7 @@ function academicManagementHeader(data, rows, message = '') {
     !['primary', 'secondary'].includes(permittedSection) || section === permittedSection
   ));
   const views = academicManagementViews(data);
-  const scoreRegisterLabel = data.permissions?.canReviewScores ? 'Class score register'
+  const scoreRegisterLabel = data.permissions?.canViewClassScoreRegister || data.permissions?.canReviewScores ? 'Class score register'
     : data.permissions?.canViewClassroomScores ? 'My classroom scores' : '';
   const navigationViews = views.flatMap(([key, label]) => key === 'scorebook' && scoreRegisterLabel
     ? [[key, label], ['classRegister', scoreRegisterLabel]] : [[key, label]]);
@@ -16906,7 +16907,7 @@ function academicManagementHeader(data, rows, message = '') {
 
 function openAcademicClassScoreRegister() {
   const permissions = academicManagementData?.permissions || {};
-  if (!permissions.canReviewScores && !permissions.canViewClassroomScores) return;
+  if (!permissions.canViewClassScoreRegister && !permissions.canReviewScores && !permissions.canViewClassroomScores) return;
   academicManagementTaskViews.scorebook = 'classRegister';
   // Reuse an already mounted register, including its loaded classroom cache.
   if (academicManagementView === 'scorebook' && panelEl.querySelector('[data-academic-class-score-register]')) {

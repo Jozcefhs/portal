@@ -683,6 +683,9 @@ export function academicManagementCapabilities(user = {}) {
     canEnterScores: enabled && (SCORE_REVIEWERS.has(role) || role === 'Teacher' || academicsDepartmentUser),
     canCreateCbt: enabled && (SCORE_REVIEWERS.has(role) || role === 'Teacher' || academicsDepartmentUser),
     canReviewScores: enabled && SCORE_REVIEWERS.has(role),
+    // Viewing a register does not confer score review, editing or publication.
+    canViewClassScoreRegister: enabled && (SCORE_REVIEWERS.has(role)
+      || (user[ACADEMIC_WEB_ACTOR] === true && ['Director', 'Admin', 'Admissions Officer'].includes(role))),
     canViewClassroomScores: enabled && user[ACADEMIC_WEB_ACTOR] === true && (role === 'Teacher' || academicsDepartmentUser),
     canApproveScores: enabled && SCORE_APPROVERS.has(role),
     canManageScoreCorrections: enabled && STRUCTURE_MANAGERS.has(role),
@@ -2237,9 +2240,9 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}, sc
   // The all-arm register has its own class-scoped read action. Opening its
   // selectors must not preload the hidden entry, review and import workspaces.
   // Older clients and explicit class reports retain their existing contract.
-  const registerOnly = focusedView === 'scorebook' && (permissions.canReviewScores || permissions.canViewClassroomScores)
+  const registerOnly = focusedView === 'scorebook' && (permissions.canViewClassScoreRegister || permissions.canViewClassroomScores)
     && input.ScorebookTask === 'classRegister' && !loadOptions.classRegister;
-  const teacherRegisterOnly = registerOnly && permissions.canViewClassroomScores && !permissions.canReviewScores;
+  const teacherRegisterOnly = registerOnly && permissions.canViewClassroomScores && !permissions.canViewClassScoreRegister;
   const baseStateKeys = registerOnly ? ['sessions', 'terms', 'classes', ...(teacherRegisterOnly ? ['arms', 'teacherAllocations'] : [])] : academicBootstrapReadKeys(
     academicManagementViewStateKeys(focusedView, permissions), focusedView, input, loadOptions);
   const readPlan = academicWorkspaceReadPlan(focusedView, baseStateKeys, input, { ...loadOptions, registerOnly });
@@ -5708,7 +5711,7 @@ export async function getAcademicClassroomScoreRegister(env, user = {}, input = 
 }
 
 export async function getAcademicClassScoreRegister(env, user = {}, input = {}) {
-  requireCapability(user, 'canReviewScores');
+  requireCapability(user, 'canViewClassScoreRegister');
   const data = await bootstrapAcademicManagement(env, user, {
     ...input, View: 'scorebook', IncludePeople: true, IncludeAssessmentPolicy: false
   }, {

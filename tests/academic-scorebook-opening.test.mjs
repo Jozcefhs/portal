@@ -6,6 +6,7 @@ import * as management from '../functions/lib/academic-management.js';
 import * as scorebook from '../functions/lib/academic-scorebook.js';
 import { safeScopeId } from '../functions/lib/school-scope.js';
 import { academicTeacherScoreClassrooms, loadAcademicClassroomScoreRegister } from '../functions/lib/academic-classroom-score-register.js';
+import { buildAcademicClassScoreRegister } from '../functions/lib/academic-class-score-register.js';
 
 const source = await readFile(new URL('../functions/lib/academic-management.js', import.meta.url), 'utf8');
 const admin = await readFile(new URL('../js/admin.js', import.meta.url), 'utf8');
@@ -50,7 +51,7 @@ function fixture() {
   };
   const read = async (_env, collection, options) => { calls.push({ collection, options }); return structuredClone(records[collection] || []); };
   const context = vm.createContext({ ...management, ...scorebook, safeScopeId, TextEncoder, TextDecoder,
-    academicTeacherScoreClassrooms, loadAcademicClassroomScoreRegister,
+    academicTeacherScoreClassrooms, loadAcademicClassroomScoreRegister, buildAcademicClassScoreRegister,
     loadAcademicResultsReadiness:async(_env,_state,scope)=>({Scope:scope,Blockers:[],Warnings:[],Counts:{Students:0}}),
     getSchoolStructure: async () => ({ ActiveBranchId: 'main', Branches: [{ Id: 'main' }], Sections: ['primary', 'secondary'] }),
     enforceActorBranch: (_actor, branch) => branch,
@@ -73,6 +74,20 @@ test('opening the class register reads only its three selector collections, no p
   for (const key of ['students', 'staff', 'studentMemberships', 'teacherAllocations', 'scoreSheets', 'studentScores', 'scoreImports', 'scoreSyncBatches']) assert.equal(data[key].length, 0);
   assert.equal(data.assessmentScheme, undefined);
   assert.equal(f.writes.length, 0); assert.deepEqual(f.records, before);
+});
+
+test('Director, Admin and Admissions Officer open only selectors and can request a permitted class report without writes', async () => {
+  for (const role of ['Director', 'Admin', 'Admissions Officer']) {
+    const f = fixture(), user = f.context.academicWebActor({ ...actor, role });
+    const data = await f.context.bootstrapAcademicManagement({}, user, { ...input, WorkspaceLoadMode: 'navigation' });
+    assert.equal(data.permissions.canViewClassScoreRegister, true);
+    assert.equal(data.permissions.canReviewScores, false);
+    assert.deepEqual(f.calls.map(call => call.collection).sort(), ['academicClasses', 'academicSessions', 'academicTerms']);
+    const result = await f.context.getAcademicClassScoreRegister({}, user, { ...input, SessionId: 's', TermId: 't', ClassId: 'c' });
+    assert.equal(result.classScoreRegister.ClassName, 'Grade 7');
+    await assert.rejects(f.context.getAcademicClassScoreRegister({}, user, { ...input, SessionId: 's', TermId: 't', ClassId: 'private' }), { code: 'ACADEMIC_CLASS_REGISTER_FORBIDDEN' });
+    assert.equal(f.writes.length, 0);
+  }
 });
 
 test('explicit entry, old desktop clients and class report requests retain their required data', async () => {

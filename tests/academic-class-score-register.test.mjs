@@ -93,7 +93,7 @@ test('class-wide API uses scoped bootstrap and rejects unpermitted class or peri
   const source = await readFile(new URL('../functions/lib/academic-management.js', import.meta.url), 'utf8');
   const body = source.slice(source.indexOf('export async function getAcademicClassScoreRegister('), source.indexOf('export async function getAcademicScorebookContext(')).replace('export ', '');
   const ctx = vm.createContext({ buildAcademicClassScoreRegister,
-    requireCapability: (_user, capability) => assert.equal(capability, 'canReviewScores'),
+    requireCapability: (_user, capability) => assert.equal(capability, 'canViewClassScoreRegister'),
     bootstrapAcademicManagement: async (_env, _user, input) => { assert.equal(input.View, 'scorebook'); return fixture(); },
     failure: (message, status, code) => Object.assign(new Error(message), { status, code }) });
   vm.runInContext(body, ctx);

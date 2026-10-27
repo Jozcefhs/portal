@@ -6,8 +6,10 @@ import { academicManagementCapabilities, academicWebActor } from '../functions/l
 
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const role = process.env.ACADEMIC_TEST_ROLE || 'Super Admin';
+const roleSlug = role.toLowerCase().replace(/[^a-z]+/g, '-');
 const input = fixture();
-input.data.permissions = academicManagementCapabilities(academicWebActor({ role: 'Super Admin', edition: 'school', allowedSections: ['academics'] }));
+input.data.permissions = academicManagementCapabilities(academicWebActor({ role, edition: 'school', allowedSections: ['academics'] }));
 input.data.sections = ['secondary'];
 input.data.sessions = [{ SessionId: 'session', Name: '2026/2027' }];
 input.data.terms = [{ SessionId: 'session', TermId: 'term', Name: 'First Term' }];
@@ -25,7 +27,7 @@ try {
   for (const file of ['css/style.css', 'css/academic-class-score-register.css']) await page.addStyleTag({ content: await readFile(new URL(`../${file}`, import.meta.url), 'utf8') });
   await page.addScriptTag({ content: `const clean=v=>String(v??'').trim();
     const escapeHtml=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    const panelEl=document.querySelector('#panel'), currentUser={role:'Super Admin'}, selectedBranchId='main', availableBranches=[{id:'main',name:'Main Branch'}];
+    const panelEl=document.querySelector('#panel'), currentUser={role:${JSON.stringify(role)}}, selectedBranchId='main', availableBranches=[{id:'main',name:'Main Branch'}];
     let academicManagementData=${JSON.stringify(input.data)},academicManagementView='scorebook',academicManagementLoadRequest=0,activeSection='academics';
     const academicManagementTaskViews={scorebook:'entry'},academicManagementFilters={section:'secondary',sessionId:'session',termId:'term'},requests=[];
     const setStatus=(node,text)=>{if(node)node.textContent=text;},updateTutorialControls=()=>{};
@@ -56,7 +58,7 @@ try {
   const [preview] = await Promise.all([page.waitForEvent('popup'), page.click('[data-class-register-print]')]);
   await preview.waitForLoadState('domcontentloaded'); assert.match(await preview.locator('tbody').textContent(), /Sample Student/); await preview.close();
   assert.equal(await page.evaluate(() => requests.length), 2);
-  await page.screenshot({ path: 'tmp/super-admin-score-register-1366.png', fullPage: true });
+  await page.screenshot({ path: `tmp/${roleSlug}-score-register-1366.png`, fullPage: true });
   await page.evaluate(() => showDeferred());
   await page.selectOption('[data-academic-view-select]', 'classRegister');
   await page.waitForSelector('[data-academic-class-score-register]');
@@ -64,7 +66,7 @@ try {
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.locator('[data-academic-open-score-register]').isVisible(), true);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-  await page.screenshot({ path: 'tmp/super-admin-score-register-390.png', fullPage: true });
+  await page.screenshot({ path: `tmp/${roleSlug}-score-register-390.png`, fullPage: true });
   assert.deepEqual(errors, []);
-  console.log('PASS: Super Admin button and area option bypass deferred entry, use selector-only navigation, preserve mounted scores, print, and fit mobile.');
+  console.log(`PASS: ${role} button and area option bypass deferred entry, use selector-only navigation, preserve mounted scores, print, and fit mobile.`);
 } finally { await browser.close(); }
