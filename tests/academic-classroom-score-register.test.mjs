@@ -138,6 +138,45 @@ test('classroom selector lists only exact active form-teacher assignments', () =
   assert.deepEqual(academicTeacherScoreClassrooms(f.state, 'other', input), []);
 });
 
+test('authorised reviewers read one classroom at a time without requiring a teacher assignment', async () => {
+  const f = fixture(); f.state.teacherAllocations = [];
+  const before = structuredClone(f.records);
+  f.dependencies.canViewAllClassrooms = true;
+  const first = await f.load();
+  assert.equal(first.ClassroomName, 'Grade 7 / Brilliance');
+  assert.deepEqual(first.Rows.map(row => row.StudentRef).sort(), ['TEST/1', 'TEST/2']);
+  assert.ok(f.calls.find(call => call.collection === 'academicStudentMemberships').filters.some(filter => filter.field === 'ArmId' && filter.value === 'a'));
+  assert.ok(f.calls.filter(call => call.collection === 'academicStudentScores').every(call => call.filters.some(filter => filter.field === 'StudentRef' && filter.op === 'in' && !filter.value.includes('PRIVATE'))));
+  f.calls.length = 0;
+  const second = await f.load({ ArmId: 'b' });
+  assert.equal(second.ClassroomName, 'Grade 7 / Excellence');
+  assert.deepEqual(second.Rows.map(row => row.StudentRef), ['PRIVATE']);
+  assert.deepEqual(f.records, before);
+  f.calls.length = 0;
+  await assert.rejects(f.load({ ArmId: 'unavailable' }), { code: 'ACADEMIC_CLASSROOM_REGISTER_FORBIDDEN' });
+  assert.equal(f.calls.length, 0);
+});
+
+test('request fields cannot broaden a teacher to unassigned classrooms', async () => {
+  const f = fixture();
+  await assert.rejects(f.load({ ArmId: 'b', canViewAllClassrooms: true }), { code: 'ACADEMIC_CLASSROOM_REGISTER_FORBIDDEN' });
+  assert.equal(f.calls.length, 0);
+});
+
+test('web academic managers select classrooms and receive a read-only form', () => {
+  for (const role of ['Super Admin', 'ICT', 'Principal', 'Director', 'Admin', 'Admissions Officer']) {
+    const f = uiFixture();
+    f.data.permissions = academicManagementCapabilities(academicWebActor({ ...teacher, role }));
+    f.rows.arms.push({ ClassId: 'class', ArmId: 'other-arm', Name: 'Excellence', IsClassroom: true });
+    f.rows.teacherAllocations = [];
+    const form = renderWorkspace('scorebook', f).match(/<form[^>]*data-classroom-register[^>]*>[\s\S]*?<\/form>/)[0];
+    assert.match(form, /Classroom score register — all subjects/);
+    assert.match(form, /Grade 10 \/ Brilliance/); assert.match(form, /Grade 10 \/ Excellence/);
+    assert.match(form, /Load classroom scores/); assert.match(form, /Preview \/ print/);
+    assert.doesNotMatch(form, /all arms|whole class|data-class-register-reactivate|contenteditable/);
+  }
+});
+
 test('teacher interface exposes classroom selection and printing without score mutation buttons', () => {
   const f = uiFixture(); f.data.permissions.canViewClassroomScores = true;
   f.rows.teacherAllocations.push({ SessionId: 'session', TermId: 'term', ClassId: 'class', ArmId: 'arm', AllocationRole: 'Form Teacher' });

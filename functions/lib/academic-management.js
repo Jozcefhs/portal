@@ -686,7 +686,8 @@ export function academicManagementCapabilities(user = {}) {
     // Viewing a register does not confer score review, editing or publication.
     canViewClassScoreRegister: enabled && (SCORE_REVIEWERS.has(role)
       || (user[ACADEMIC_WEB_ACTOR] === true && ['Director', 'Admin', 'Admissions Officer'].includes(role))),
-    canViewClassroomScores: enabled && user[ACADEMIC_WEB_ACTOR] === true && (role === 'Teacher' || academicsDepartmentUser),
+    canViewClassroomScores: enabled && user[ACADEMIC_WEB_ACTOR] === true && (SCORE_REVIEWERS.has(role)
+      || ['Director', 'Admin', 'Admissions Officer', 'Teacher'].includes(role) || academicsDepartmentUser),
     canApproveScores: enabled && SCORE_APPROVERS.has(role),
     canManageScoreCorrections: enabled && STRUCTURE_MANAGERS.has(role),
     canCalculateResults: enabled && SCORE_REVIEWERS.has(role),
@@ -2243,7 +2244,7 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}, sc
   const registerOnly = focusedView === 'scorebook' && (permissions.canViewClassScoreRegister || permissions.canViewClassroomScores)
     && input.ScorebookTask === 'classRegister' && !loadOptions.classRegister;
   const teacherRegisterOnly = registerOnly && permissions.canViewClassroomScores && !permissions.canViewClassScoreRegister;
-  const baseStateKeys = registerOnly ? ['sessions', 'terms', 'classes', ...(teacherRegisterOnly ? ['arms', 'teacherAllocations'] : [])] : academicBootstrapReadKeys(
+  const baseStateKeys = registerOnly ? ['sessions', 'terms', 'classes', ...(permissions.canViewClassroomScores ? ['arms'] : []), ...(teacherRegisterOnly ? ['teacherAllocations'] : [])] : academicBootstrapReadKeys(
     academicManagementViewStateKeys(focusedView, permissions), focusedView, input, loadOptions);
   const readPlan = academicWorkspaceReadPlan(focusedView, baseStateKeys, input, { ...loadOptions, registerOnly });
   const requestedClassId = clean(input.RecordClassId) === '*' ? '' : clean(input.RecordClassId);
@@ -5697,14 +5698,16 @@ function academicScoreRowsInput(value) {
 
 export async function getAcademicClassroomScoreRegister(env, user = {}, input = {}) {
   requireCapability(user, 'canViewClassroomScores');
+  const canViewAllClassrooms = academicManagementCapabilities(user).canViewClassScoreRegister;
   if (['SessionId', 'TermId', 'ClassId', 'ArmId'].some(field => !clean(input[field]))) {
     throw failure('Choose a classroom, academic session and term.');
   }
   const scope = await academicScope(env, user, input, { requireSection: true });
   const state = await loadScopedAcademicState(env, scope,
-    ['sessions', 'terms', 'classes', 'arms', 'teacherAllocations', 'subjects'],
-    { ClassroomRegisterTeacher: actorUsername(user), ClassId: input.ClassId, SessionId: input.SessionId, TermId: input.TermId });
+    ['sessions', 'terms', 'classes', 'arms', 'subjects', ...(canViewAllClassrooms ? [] : ['teacherAllocations'])],
+    { ...(canViewAllClassrooms ? {} : { ClassroomRegisterTeacher: actorUsername(user) }), ClassId: input.ClassId, SessionId: input.SessionId, TermId: input.TermId });
   const classScoreRegister = await loadAcademicClassroomScoreRegister(env, scope, state, actorUsername(user), input, {
+    canViewAllClassrooms,
     assessmentScheme: (session, term) => academicAssessmentForPeriod(env, scope, session, term, { required: false })
   });
   return { ok: true, partialAcademicManagement: true, classScoreRegister };

@@ -33,13 +33,13 @@ try {
     const setStatus=(node,text)=>{if(node)node.textContent=text;},updateTutorialControls=()=>{};
     const academicManagementRequest=async(action,payload)=>{requests.push({action,payload});
       if(action==='bootstrap')return {...academicManagementData,workspaceDataDeferred:false,scorebookWorkspaceDeferred:true};
-      return {classScoreRegister:{ClassId:'class',ClassName:'Grade 10',SessionId:'session',TermId:'term',StudentCount:1,SubjectCount:1,
+      return {classScoreRegister:{ClassId:'class',ClassName:'Grade 10',ArmId:'arm',ArmName:'Brilliance',ClassroomName:'Grade 10 / Brilliance',SessionId:'session',TermId:'term',StudentCount:1,SubjectCount:1,
         Columns:[{Id:'math-ca1',SubjectId:'math',SubjectName:'Mathematics',TestId:'ca1',TestName:'CA1'}],
         Rows:[{StudentRef:'TEST/001',StudentName:'Sample Student',ArmName:'Brilliance',Cells:[{ColumnId:'math-ca1',State:'Numeric',RawScore:85,MaximumScore:100}]}]}};};
     ${functions}
     ${loader}
     function renderAcademicManagement(data){academicManagementData=data;panelEl.innerHTML=academicManagementHeader(data,{})+
-      '<section class="academic-management-workspace" data-academic-task-workspace="scorebook"><button data-academic-task="classRegister">Class score register</button><div data-academic-task-panel="classRegister">'+${JSON.stringify(register)}+'</div></section>';
+      '<section class="academic-management-workspace" data-academic-task-workspace="scorebook"><button data-academic-task="classRegister">Classroom score register</button><div data-academic-task-panel="classRegister">'+${JSON.stringify(register)}+'</div></section>';
       bindAcademicAreaNavigation();bindAcademicClassScoreRegister(panelEl.querySelector('form'));showAcademicManagementTask('scorebook','classRegister');}
     function showDeferred(){academicManagementView='scorebook';academicManagementTaskViews.scorebook='entry';academicManagementData.workspaceDataDeferred=true;
       panelEl.innerHTML=academicManagementHeader(academicManagementData,{})+'<section>Settings loaded. Choose the records to load.</section>';bindAcademicAreaNavigation();}
@@ -50,18 +50,20 @@ try {
   await page.waitForSelector('[data-academic-class-score-register]');
   assert.equal(await page.locator('[data-academic-view-select]').inputValue(), 'classRegister');
   assert.equal(await page.evaluate(() => document.activeElement === document.querySelector('[name="ClassId"]')), true);
-  assert.match(await page.locator('#academicManagementStatus').textContent(), /register is open/);
+  assert.match(await page.locator('#academicManagementStatus').textContent(), /Classroom score register is open/);
   assert.equal(await page.locator('.class-register-load-controls button[type="submit"]').count(), 1);
   assert.equal(await page.locator('.class-register-load-controls [data-class-register-print]').count(), 1);
   const controls = await page.locator('.class-register-load-controls').boundingBox();
   assert.ok(controls.y >= 72 && controls.y + controls.height < 980, 'opening brings load controls below the fixed page header');
   assert.deepEqual(await page.evaluate(() => requests.map(row => [row.action, row.payload.ScorebookTask, row.payload.WorkspaceLoadMode])), [['bootstrap', 'classRegister', 'navigation']]);
-  await page.selectOption('[name=ClassId]', 'class');
+  await page.selectOption('[name=ClassId]', 'arm');
   await page.click('[data-academic-open-score-register]');
   assert.equal(await page.evaluate(() => document.activeElement === document.querySelector('button[type="submit"]')), true);
   assert.equal(await page.evaluate(() => requests.length), 1);
   await page.click('button[type=submit]');
   await page.waitForSelector('tbody tr');
+  assert.deepEqual(await page.evaluate(() => [requests[1].action, requests[1].payload.ClassId, requests[1].payload.ArmId]), ['getAcademicClassroomScoreRegister', 'class', 'arm']);
+  assert.equal(await page.locator('[data-class-register-reactivate]').count(), 0);
   await page.click('[data-academic-open-score-register]');
   assert.equal(await page.evaluate(() => requests.length), 2);
   const reopenedControls = await page.locator('.class-register-load-controls').boundingBox();

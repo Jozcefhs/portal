@@ -76,16 +76,38 @@ test('opening the class register reads only its three selector collections, no p
   assert.equal(f.writes.length, 0); assert.deepEqual(f.records, before);
 });
 
-test('Director, Admin and Admissions Officer open only selectors and can request a permitted class report without writes', async () => {
+test('Director, Admin and Admissions Officer open only classroom selectors and retain legacy report support without writes', async () => {
   for (const role of ['Director', 'Admin', 'Admissions Officer']) {
     const f = fixture(), user = f.context.academicWebActor({ ...actor, role });
     const data = await f.context.bootstrapAcademicManagement({}, user, { ...input, WorkspaceLoadMode: 'navigation' });
     assert.equal(data.permissions.canViewClassScoreRegister, true);
     assert.equal(data.permissions.canReviewScores, false);
-    assert.deepEqual(f.calls.map(call => call.collection).sort(), ['academicClasses', 'academicSessions', 'academicTerms']);
+    assert.deepEqual(f.calls.map(call => call.collection).sort(), ['academicArms', 'academicClasses', 'academicSessions', 'academicTerms']);
     const result = await f.context.getAcademicClassScoreRegister({}, user, { ...input, SessionId: 's', TermId: 't', ClassId: 'c' });
     assert.equal(result.classScoreRegister.ClassName, 'Grade 7');
     await assert.rejects(f.context.getAcademicClassScoreRegister({}, user, { ...input, SessionId: 's', TermId: 't', ClassId: 'private' }), { code: 'ACADEMIC_CLASS_REGISTER_FORBIDDEN' });
+    assert.equal(f.writes.length, 0);
+  }
+});
+
+test('web administrators load only permitted classroom selectors without student or score reads', async () => {
+  for (const role of ['Super Admin', 'ICT', 'Principal', 'Director']) {
+    const f = fixture(), user = f.context.academicWebActor({ ...actor, role });
+    f.records.academicArms = [row({ ClassId: 'c', ArmId: 'a', Name: 'Brilliance', IsClassroom: true }),
+      row({ ClassId: 'c', ArmId: 'other', BranchId: 'north' }), row({ ClassId: 'c', ArmId: 'primary', SchoolSection: 'primary' })];
+    const data = await f.context.bootstrapAcademicManagement({}, user, { ...input, WorkspaceLoadMode: 'navigation' });
+    assert.equal(data.permissions.canViewClassroomScores, true);
+    assert.deepEqual(Array.from(data.arms, arm => arm.ArmId), ['a']);
+    assert.deepEqual(f.calls.map(call => call.collection).sort(), ['academicArms', 'academicClasses', 'academicSessions', 'academicTerms']);
+    f.calls.length = 0;
+    let loaded;
+    f.context.loadAcademicClassroomScoreRegister = async (_env, scope, state, _username, _input, dependencies) => {
+      loaded = { scope, state, dependencies }; return { ArmId: 'a', ReadOnly: true };
+    };
+    await f.context.getAcademicClassroomScoreRegister({}, user, { ...input, ClassId: 'c', ArmId: 'a', SessionId: 's', TermId: 't' });
+    assert.equal(loaded.dependencies.canViewAllClassrooms, true);
+    assert.deepEqual(Array.from(loaded.state.arms, arm => arm.ArmId), ['a']);
+    assert.ok(f.calls.every(call => !['academicTeacherAllocations', 'academicStudentScores', 'academicStudentMemberships', 'students'].includes(call.collection)));
     assert.equal(f.writes.length, 0);
   }
 });

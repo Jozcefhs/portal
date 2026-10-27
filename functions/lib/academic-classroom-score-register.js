@@ -22,11 +22,18 @@ export function academicTeacherScoreClassrooms(state, username, input = {}) {
 // writes, broad student directory loads or history scans are needed for a report.
 export async function loadAcademicClassroomScoreRegister(env, scope, state, username, input, dependencies = {}) {
   const db = { queryCollectionPages, getDocuments, academicAuditRecordLabels, ...dependencies };
-  const arm = academicTeacherScoreClassrooms(state, username, input).find(row =>
+  // This permission is supplied by the authenticated handler, never by request input.
+  const classrooms = dependencies.canViewAllClassrooms === true
+    ? (state.arms || []).filter(active) : academicTeacherScoreClassrooms(state, username, input);
+  const arm = classrooms.find(row =>
     row.ArmId === input.ArmId && row.ClassId === input.ClassId);
   const session = (state.sessions || []).find(row => row.SessionId === input.SessionId);
   const term = (state.terms || []).find(row => row.TermId === input.TermId && row.SessionId === input.SessionId);
-  if (!arm || !session || !term || !(state.classes || []).some(row => row.ClassId === input.ClassId)) throw forbidden();
+  if (!arm || !session || !term || !(state.classes || []).some(row => row.ClassId === input.ClassId)) {
+    if (dependencies.canViewAllClassrooms === true) throw Object.assign(new Error('Choose a permitted classroom, academic session and term.'),
+      { status: 403, code: 'ACADEMIC_CLASSROOM_REGISTER_FORBIDDEN' });
+    throw forbidden();
+  }
   const sections = [...new Set((scope.structure?.Sections || []).map(lower).filter(value => ['primary', 'secondary'].includes(value)))];
   const legacySection = sections.length === 1 ? sections[0] : 'secondary';
   const matches = row => row && lower(row.BranchId || 'main') === lower(scope.branchId)
