@@ -13866,6 +13866,10 @@ function showAcademicManagementTask(view, taskKey, options = {}) {
     ? taskKey : buttons[0]?.dataset.academicTask;
   if (!selected) return;
   academicManagementTaskViews[view] = selected;
+  if (view === 'scorebook') {
+    const area = panelEl.querySelector('[data-academic-view-select]');
+    if (area?.querySelector('option[value="classRegister"]')) area.value = selected === 'classRegister' ? 'classRegister' : 'scorebook';
+  }
   buttons.forEach((button) => {
     const active = button.dataset.academicTask === selected;
     button.classList.toggle('selected', active);
@@ -16910,18 +16914,51 @@ function academicManagementHeader(data, rows, message = '') {
     !['primary', 'secondary'].includes(permittedSection) || section === permittedSection
   ));
   const views = academicManagementViews(data);
+  const scoreRegisterLabel = data.permissions?.canReviewScores ? 'Class score register'
+    : data.permissions?.canViewClassroomScores ? 'My classroom scores' : '';
+  const navigationViews = views.flatMap(([key, label]) => key === 'scorebook' && scoreRegisterLabel
+    ? [[key, label], ['classRegister', scoreRegisterLabel]] : [[key, label]]);
+  const selectedArea = scoreRegisterLabel && academicManagementView === 'scorebook' && academicManagementTaskViews.scorebook === 'classRegister'
+    ? 'classRegister' : academicManagementView;
   return `<div class="academic-management-heading">
     <div><p class="eyebrow">AM-002 to AM-011</p><h2>Academic Management</h2><p class="muted">Branch-isolated structure, ${learner.singular} timetables, attendance, assessment and controlled term-result publication.</p></div>
-    <div class="academic-homework-actions">${data.permissions?.canReviewScores ? `<a class="btn secondary" href="/exams-admin.html?audience=student&branch=${encodeURIComponent(selectedBranchId || 'main')}&section=${encodeURIComponent(academicManagementFilters.section || 'secondary')}">Entrance / remote exams</a>` : ''}${data.permissions?.canEnterScores ? '<button type="button" data-academic-diary>Teaching diaries</button><button type="button" data-teacher-homework>Homework / parent message</button>' : ''}<button type="button" id="refreshAcademicManagement" class="secondary">Refresh</button></div>
+    <div class="academic-homework-actions">${scoreRegisterLabel ? `<button type="button" data-academic-open-score-register>${escapeHtml(scoreRegisterLabel)}</button>` : ''}${data.permissions?.canReviewScores ? `<a class="btn secondary" href="/exams-admin.html?audience=student&branch=${encodeURIComponent(selectedBranchId || 'main')}&section=${encodeURIComponent(academicManagementFilters.section || 'secondary')}">Entrance / remote exams</a>` : ''}${data.permissions?.canEnterScores ? '<button type="button" data-academic-diary>Teaching diaries</button><button type="button" data-teacher-homework>Homework / parent message</button>' : ''}<button type="button" id="refreshAcademicManagement" class="secondary">Refresh</button></div>
   </div>
   <div class="academic-management-filterbar">
     <label>School section<select id="academicManagementSection">${sections.map((section) => `<option value="${escapeHtml(section)}"${section === academicManagementFilters.section ? ' selected' : ''}>${escapeHtml(section.charAt(0).toUpperCase() + section.slice(1))}</option>`).join('')}</select></label>
     <label>Academic session<select id="academicManagementSession">${academicSelectOptions(sessions, academicManagementFilters.sessionId, (row) => row.Name, 'All sessions')}</select></label>
     <label>Term<select id="academicManagementTerm">${academicSelectOptions(terms, academicManagementFilters.termId, (row) => row.Name, 'All terms')}</select></label>
-    <label class="academic-management-area">Academic area<select id="academicManagementWorkspace" data-academic-view-select>${views.map(([key, label]) => `<option value="${key}"${key === academicManagementView ? ' selected' : ''}>${escapeHtml(label)}</option>`).join('')}</select></label>
+    <label class="academic-management-area">Academic area<select id="academicManagementWorkspace" data-academic-view-select>${navigationViews.map(([key, label]) => `<option value="${key}"${key === selectedArea ? ' selected' : ''}>${escapeHtml(label)}</option>`).join('')}</select></label>
     <div><small>Branch</small><strong>${escapeHtml(availableBranches.find((branch) => branch.id === selectedBranchId)?.name || selectedBranchId)}</strong></div>
   </div>
   <p id="academicManagementStatus" class="status ${message ? 'ok' : ''}" role="status">${escapeHtml(message)}</p>`;
+}
+
+function openAcademicClassScoreRegister() {
+  const permissions = academicManagementData?.permissions || {};
+  if (!permissions.canReviewScores && !permissions.canViewClassroomScores) return;
+  academicManagementTaskViews.scorebook = 'classRegister';
+  // Reuse an already mounted register, including its loaded classroom cache.
+  if (academicManagementView === 'scorebook' && panelEl.querySelector('[data-academic-class-score-register]')) {
+    showAcademicManagementTask('scorebook', 'classRegister', { focus: true });
+    return;
+  }
+  academicManagementView = 'scorebook';
+  setStatus(document.getElementById('academicManagementStatus'), 'Opening score register…');
+  void loadAcademicManagement();
+}
+
+function bindAcademicAreaNavigation() {
+  panelEl.querySelector('[data-academic-open-score-register]')?.addEventListener('click', openAcademicClassScoreRegister);
+  panelEl.querySelector('[data-academic-view-select]')?.addEventListener('change', (event) => {
+    const select = event.currentTarget;
+    if (select.value === 'classRegister') { openAcademicClassScoreRegister(); return; }
+    academicManagementView = select.value;
+    if (select.value === 'scorebook' && academicManagementTaskViews.scorebook === 'classRegister') academicManagementTaskViews.scorebook = 'entry';
+    const label = select.selectedOptions[0]?.textContent.trim() || 'academic area';
+    setStatus(document.getElementById('academicManagementStatus'), `Loading ${label}...`);
+    void loadAcademicManagement();
+  });
 }
 
 function academicRecordLoadForm(data, title, deferred = false) {
@@ -18437,13 +18474,7 @@ function bindAcademicManagement() {
     showAcademicManagementTask(academicManagementView, button.dataset.academicTask, { focus: true });
     if (academicManagementView === 'scorebook') void loadAcademicScorebookContext();
   }));
-  panelEl.querySelector('[data-academic-view-select]')?.addEventListener('change', (event) => {
-    const select = event.currentTarget;
-    academicManagementView = select.value;
-    const label = select.selectedOptions[0]?.textContent.trim() || 'academic area';
-    setStatus(document.getElementById('academicManagementStatus'), `Loading ${label}...`);
-    void loadAcademicManagement();
-  });
+  bindAcademicAreaNavigation();
   panelEl.querySelectorAll('[data-academic-view]').forEach((button) => button.addEventListener('click', () => {
     academicManagementView = button.dataset.academicView;
     if (button.closest('[data-academic-catalogue-note="arms"]')) academicManagementTaskViews.bulkSetup = 'applyArms';
