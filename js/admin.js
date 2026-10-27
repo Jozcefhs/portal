@@ -16945,7 +16945,7 @@ function focusAcademicClassScoreRegister() {
   const title = classroom ? 'Classroom scores' : 'Class score register';
   setStatus(document.getElementById('academicManagementStatus'),
     `${title} is open. ${choice.value ? 'Use' : `Choose a ${classroom ? 'classroom' : 'class'}, then select`} ${button.textContent.trim()} beside the selector.`, 'ok');
-  form.querySelector('.class-register-load-controls')?.scrollIntoView({ block: 'start', behavior: 'instant' });
+  form.querySelector('.class-register-load-controls')?.scrollIntoView({ block: 'center', behavior: 'instant' });
   (choice.value && !button.disabled ? button : choice).focus({ preventScroll: true });
 }
 

@@ -23,7 +23,7 @@ const browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL 
 try {
   const page = await browser.newPage({ viewport: { width: 1366, height: 980 } });
   const errors = []; page.on('pageerror', error => errors.push(error.message));
-  await page.setContent('<body class="staff-page"><main id="panel" style="margin:20px"></main></body>');
+  await page.setContent('<body class="staff-page"><header style="position:fixed;inset:0 0 auto;height:72px;background:white;z-index:10000">Staff portal</header><main id="panel" style="margin:20px;padding-top:72px"></main></body>');
   for (const file of ['css/style.css', 'css/academic-class-score-register.css']) await page.addStyleTag({ content: await readFile(new URL(`../${file}`, import.meta.url), 'utf8') });
   await page.addScriptTag({ content: `const clean=v=>String(v??'').trim();
     const escapeHtml=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -54,7 +54,7 @@ try {
   assert.equal(await page.locator('.class-register-load-controls button[type="submit"]').count(), 1);
   assert.equal(await page.locator('.class-register-load-controls [data-class-register-print]').count(), 1);
   const controls = await page.locator('.class-register-load-controls').boundingBox();
-  assert.ok(controls.y >= 0 && controls.y + controls.height < 980, 'opening brings load controls into view');
+  assert.ok(controls.y >= 72 && controls.y + controls.height < 980, 'opening brings load controls below the fixed page header');
   assert.deepEqual(await page.evaluate(() => requests.map(row => [row.action, row.payload.ScorebookTask, row.payload.WorkspaceLoadMode])), [['bootstrap', 'classRegister', 'navigation']]);
   await page.selectOption('[name=ClassId]', 'class');
   await page.click('[data-academic-open-score-register]');
@@ -64,6 +64,8 @@ try {
   await page.waitForSelector('tbody tr');
   await page.click('[data-academic-open-score-register]');
   assert.equal(await page.evaluate(() => requests.length), 2);
+  const reopenedControls = await page.locator('.class-register-load-controls').boundingBox();
+  assert.ok(reopenedControls.y >= 72 && reopenedControls.y + reopenedControls.height < 980, 'reopening loaded scores keeps the controls clear of the fixed header');
   assert.match(await page.locator('tbody').textContent(), /85 \/ 100/);
   const [preview] = await Promise.all([page.waitForEvent('popup'), page.click('[data-class-register-print]')]);
   await preview.waitForLoadState('domcontentloaded'); assert.match(await preview.locator('tbody').textContent(), /Sample Student/); await preview.close();
@@ -76,7 +78,7 @@ try {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.click('[data-academic-open-score-register]');
   const mobileControls = await page.locator('.class-register-load-controls').boundingBox();
-  assert.ok(mobileControls.y >= 0 && mobileControls.y + mobileControls.height < 844, 'mobile opening shows selector and load action together');
+  assert.ok(mobileControls.y >= 72 && mobileControls.y + mobileControls.height < 844, 'mobile opening shows selector and load action below the fixed header');
   assert.equal(await page.locator('[data-academic-open-score-register]').isVisible(), true);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   await page.screenshot({ path: `tmp/${roleSlug}-score-register-390.png`, fullPage: true });
