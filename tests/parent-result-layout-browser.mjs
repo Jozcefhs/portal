@@ -79,7 +79,8 @@ try {
   }
   // Exercise the actual parent action: one access recheck, server-returned marks,
   // images settled before print, and no report when permission is denied.
-  await page.addScriptTag({content:extract(parent,'function academicResultPrintMarkup(','function renderAcademicResults(')});
+  await page.addScriptTag({content:extract(parent,'async function parentResultRequest(','async function refreshParentAcademicResults(')
+    +extract(parent,'function academicResultPrintMarkup(','function renderAcademicResults(')});
   await page.evaluate(()=>{
     window.authPayload=()=>({email:'parent@example.com'});window.freshBody=value=>JSON.stringify(value);
     window.setActionLoading=(button,loading)=>{button.disabled=loading;};

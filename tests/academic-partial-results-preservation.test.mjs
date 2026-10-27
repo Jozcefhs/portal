@@ -3,10 +3,12 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFile} from 'node:fs/promises';
 import {defaultAcademicPolicy} from '../functions/lib/academic-policy.js';
-import {calculateAcademicTermResultDrafts,calculateAcademicMidTermResultDrafts,ACADEMIC_TERM_RESULT_STATUSES} from '../functions/lib/academic-term-results.js';
+import {calculateAcademicTermResultDrafts,calculateAcademicMidTermResultDrafts,ACADEMIC_TERM_RESULT_STATUSES,academicTermResultTransition} from '../functions/lib/academic-term-results.js';
+import {academicPolicyIssues} from '../functions/lib/academic-policy.js';
 const source=await readFile(new URL('../functions/lib/academic-management.js',import.meta.url),'utf8');
 function fixture(){
   const policy=defaultAcademicPolicy();policy.Position.Mode='exact-overall';policy.MidTerm={Enabled:true,ComponentIds:['ca']};
+  policy.Promotion.Mode='manual-review';policy.ResultAccess.VisibilityMode='current-term';policy.ResultAccess.FinancialClearance.Mode='none';
   policy.Assessment.Components=[{Id:'ca',Name:'CA1',MaximumScore:100,WeightPercentage:100,Required:true}];
   policy.Assessment.GradeBands=[{Grade:'A',MinimumPercentage:0,MaximumPercentage:100}];
   const period={SessionId:'s1',TermId:'t1',ClassId:'c1',ArmId:'a1',ResultType:'Mid-Term'};
@@ -22,7 +24,8 @@ function fixture(){
   const sandbox=vm.createContext({clean:v=>String(v??'').trim(),lower:v=>String(v??'').trim().toLowerCase(),
     failure:(message,status=409,code,extra={})=>Object.assign(new Error(message),{status,code,...extra}),statusActive:r=>r.Status==='Active',
     academicTermResultContext:async()=>context,academicOperationalContext:async()=>context,
-    calculateAcademicTermResultDrafts,calculateAcademicMidTermResultDrafts,ACADEMIC_TERM_RESULT_STATUSES,
+    calculateAcademicTermResultDrafts,calculateAcademicMidTermResultDrafts,ACADEMIC_TERM_RESULT_STATUSES,academicTermResultTransition,academicPolicyIssues,
+    notifyAcademicResultLifecycle:async()=>{},
     academicTermResultId:(...args)=>`result-${args[5]}`,academicResultReference:async id=>id,
     findById:(rows,id)=>rows.find(row=>row.ResultId===id),nowIso:()=> '2026-10-26T12:00:00Z',actorName:()=> 'Reviewer',actorUsername:()=> 'reviewer',
     subjectSelection:r=>({SubjectIds:r.SubjectIds}),withoutMetadata:r=>structuredClone(r),
@@ -35,7 +38,7 @@ function fixture(){
   for(const name of ['calculateAcademicResultsForType','resultRevisionToken','changeAcademicTermResultStatus']){
     vm.runInContext(source.match(new RegExp(`(?:export )?(?:async )?function ${name}\\([\\s\\S]*?\\n}`))[0].replace('export ',''),sandbox);
   }
-  return {state,sandbox,writes,period};
+  return {state,sandbox,writes,period,context,policy};
 }
 test('partial calculation preserves published snapshots, pending draft marks and every source score',async()=>{
   const f=fixture(),before=structuredClone(f.state);
@@ -55,9 +58,43 @@ test('a retained pending draft cannot be reviewed, approved or published',async(
   }
   assert.equal(f.writes.length,0);
 });
-test('old all-or-nothing requests never overwrite an existing published result',async()=>{
-  const f=fixture();await assert.rejects(f.sandbox.calculateAcademicResultsForType({}, {},f.period,'Mid-Term'),/Published result/);
-  assert.equal(f.writes.length,0);
+test('old clients calculate ready students without overwriting a published classmate or blocking on a pending student',async()=>{
+  const f=fixture();
+  const response=await f.sandbox.calculateAcademicResultsForType({}, {},{...f.period,RevisionTokens:{'result-pending':'draft-v1'}},'Mid-Term');
+  assert.equal(response.resultCalculationPreserved,1);
+  assert.ok(f.writes.some(row=>row.documentId==='result-good'));
+  assert.ok(!f.writes.some(row=>row.documentId==='result-published'));
+});
+
+test('legacy bulk review, approval, publication and locking advance ready students independently school-wide',async()=>{
+  for(const section of ['nursery','primary','secondary'])for(const [current,Status] of [['Calculated Draft','Reviewed'],['Reviewed','Approved'],['Approved','Published'],['Published','Locked']]){
+    const f=fixture();f.context.scope.section=section;
+    f.state.termResults[1].CalculationPending=true;
+    const ready={...f.period,ResultId:'result-good',StudentRef:'good',Status:current,PolicySnapshot:f.policy,__updateTime:'ready-v1',Subjects:[{Total:75}]};
+    f.state.termResults.push(ready);const before=structuredClone(f.state);
+    const request={ResultIds:['result-pending','result-good'],Status,RevisionTokens:{'result-good':'ready-v1'}};
+    const response=await f.sandbox.changeAcademicTermResultStatus({}, {},request);
+    const results=f.writes.filter(row=>row.collectionPath==='academicResults');
+    assert.equal(results.length,1);assert.equal(results[0].documentId,'result-good');assert.equal(results[0].data.Status,Status);
+    assert.deepEqual(results[0].data.Subjects,ready.Subjects);
+    assert.equal(response.resultWorkflowOutcomes.find(row=>row.StudentRef==='pending').Outcome,'Pending');
+    assert.deepEqual(f.state,before);
+    f.state.termResults[2]=results[0].data;const writeCount=f.writes.length;
+    await f.sandbox.changeAcademicTermResultStatus({}, {},request);
+    assert.equal(f.writes.length,writeCount,'retry produces no duplicate status history');
+  }
+});
+
+test('a stale selection, incomplete policy or unfinished workflow cannot stop a ready classmate publishing',async()=>{
+  for(const change of [{SubjectChangeRecalculationRequired:true},{PolicySnapshot:{}},{Status:'Calculated Draft'}]){
+    const f=fixture();
+    f.state.termResults=[{...f.period,ResultId:'result-pending',StudentRef:'pending',Status:'Approved',PolicySnapshot:f.policy,...change},
+      {...f.period,ResultId:'result-good',StudentRef:'good',Status:'Approved',PolicySnapshot:f.policy,__updateTime:'ready-v1'}];
+    const response=await f.sandbox.changeAcademicTermResultStatus({}, {},{ResultIds:['result-pending','result-good'],Status:'Published',RevisionTokens:{'result-good':'ready-v1'}});
+    assert.equal(response.resultWorkflowOutcomes.find(row=>row.StudentRef==='pending').Outcome,'Pending');
+    assert.equal(f.writes.filter(row=>row.collectionPath==='academicResults').length,1);
+    assert.ok(!f.writes.some(row=>row.documentId==='result-pending'));
+  }
 });
 
 test('when everyone remaining is incomplete, existing drafts are marked pending without creating empty results',async()=>{

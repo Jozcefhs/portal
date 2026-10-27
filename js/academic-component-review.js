@@ -4,7 +4,7 @@ export async function openAcademicTestReviews({sheet,payload,request,permissions
   const dialog=document.createElement('dialog');dialog.className='academic-test-review-dialog';
   dialog.setAttribute('aria-label','Review individual tests');
   dialog.innerHTML=`<header><div><small>Saved assessment marks</small><h2>Review individual tests</h2><p>${esc(title)}</p></div><button type="button" data-review-close>Close</button></header>
-    <p>Submit and approve a completed test independently. Reviews use saved marks. Save any changes before reviewing. Full-term submission still requires every required assessment.</p>
+    <p>Submit and approve complete students independently. Students with missing marks remain pending and do not block classmates. Reviews use saved marks; save changes before reviewing. Each student's full-term result still requires their required assessments.</p>
     <p data-review-message role="status"></p><div class="admin-table-wrap" data-review-content></div>`;
   dialog.querySelector('[data-review-close]').onclick=()=>dialog.close();dialog.addEventListener('close',()=>dialog.remove(),{once:true});
   document.body.appendChild(dialog);dialog.showModal();
@@ -16,7 +16,7 @@ export async function openAcademicTestReviews({sheet,payload,request,permissions
       const target=({Draft:'Submitted',Submitted:'Approved',Approved:'Locked'})[row.Status];
       const allowed=target==='Submitted'?permissions.canEnterScores:target==='Approved'?permissions.canReviewScores:target==='Locked'?permissions.canApproveScores:false;
       const label=({Submitted:'Submit',Approved:'Approve',Locked:'Lock'})[target];
-      return `<tr><td><strong>${esc(row.Name)}</strong></td><td>${row.CompleteCount} / ${row.RosterCount}${row.MissingCount?`<small>${row.MissingCount} students need marks</small>`:''}</td><td>${esc(row.Status)}${row.Stale?'<small>Marks or roster changed — resubmit</small>':''}</td><td>${allowed?`<button type="button" data-review-id="${esc(row.ComponentId)}" data-review-target="${target}"${busy||locked||!row.Complete?' disabled':''}>${label} ${esc(row.Name)}</button>`:''}${permissions.canManageScoreCorrections&&row.Status!=='Draft'?`<button type="button" class="secondary" data-review-id="${esc(row.ComponentId)}" data-review-target="Draft"${busy||locked?' disabled':''}>Reopen review</button>`:''}</td></tr>`;
+      return `<tr><td><strong>${esc(row.Name)}</strong></td><td>${row.CompleteCount} / ${row.RosterCount}${row.MissingCount?`<small>${row.MissingCount} students remain pending</small>`:''}</td><td>${esc(row.Status)}${row.Stale?'<small>Marks or roster changed — resubmit</small>':''}</td><td>${allowed?`<button type="button" data-review-id="${esc(row.ComponentId)}" data-review-target="${target}"${busy||locked||!row.CompleteCount?' disabled':''}>${label} ${esc(row.Name)}</button>`:''}${permissions.canManageScoreCorrections&&row.Status!=='Draft'?`<button type="button" class="secondary" data-review-id="${esc(row.ComponentId)}" data-review-target="Draft"${busy||locked?' disabled':''}>Reopen review</button>`:''}</td></tr>`;
     }).join('')}</tbody></table>`;
   }
   async function load(){
@@ -35,7 +35,7 @@ export async function openAcademicTestReviews({sheet,payload,request,permissions
     if(!isCurrent()){message.textContent='The workspace changed. Close this review and reopen it.';return;}
     busy=true;render();message.textContent=`Updating ${row.Name}…`;
     try{
-      const result=await request('changeAcademicScoreSheetStatus',payload(sheet,{ComponentId:row.ComponentId,Status:target,Reason:reason}));
+      const result=await request('changeAcademicScoreSheetStatus',payload(sheet,{ComponentId:row.ComponentId,Status:target,Reason:reason,AllowPendingStudents:true}));
       await load();message.textContent=result.message;
     }catch(error){message.textContent=error.message||'The test review could not be updated.';}
     finally{busy=false;if(dialog.isConnected)render();}

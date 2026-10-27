@@ -6086,7 +6086,8 @@ async function assertAcademicScoreSheetComplete(state, sheet, roster, options = 
     catch { return false; }
   }).filter(row => scores.filter(other => lower(other.StudentRef) === lower(row.StudentRef)).length === 1).map((row) => lower(row.StudentRef)));
   const pending = roster.filter((row) => !complete.has(lower(row.StudentRef)));
-  if (pending.length && !(options.allowPending === true && pending.length < roster.length)) {
+  if (!roster.length) throw failure('This subject has no current students to submit or approve.', 409, 'ACADEMIC_SCORE_SHEET_EMPTY');
+  if (pending.length && pending.length === roster.length) {
     const reviews = await academicComponentReviews(sheet, roster, scores);
     const missing = reviews.filter(row => row.MissingCount && scheme.Components.find(c => c.Id === row.ComponentId)?.Required !== false).map(row => `${row.Name} (${row.MissingCount})`);
     throw failure(`${pending.length} student score${pending.length === 1 ? ' is' : 's are'} incomplete for the full-term sheet. Required marks still missing: ${missing.join(', ') || 'review unresolved or exempt-only scores'}. To submit a completed test such as CA1, use Review individual tests.`, 409, 'ACADEMIC_SCORE_SHEET_INCOMPLETE');
@@ -6163,7 +6164,7 @@ export async function changeAcademicScoreSheetStatus(env, user = {}, input = {},
   return {
     ok: true,
     refreshAcademicManagement: true,
-    message: reopening ? `Score sheet reopened as Draft: ${reason}` : `Score sheet moved from ${current} to ${target}.`
+    message: reopening ? `Score sheet reopened as Draft: ${reason}` : `Score sheet moved from ${current} to ${target}: ${completion.CompleteCount} complete students; ${completion.PendingStudentRefs.length} students remain pending. Missing marks and all existing scores are unchanged.`
   };
 }
 
@@ -6401,11 +6402,9 @@ async function calculateAcademicResultsForType(env, user = {}, input = {}, resul
   const existingResults = state.termResults.filter((row) => row.SessionId === session.SessionId && row.TermId === term.TermId
     && row.ClassId === schoolClass.ClassId && row.ArmId === arm.ArmId
     && (midTerm ? lower(row.ResultType) === 'mid-term' : lower(row.ResultType || 'End of Term') !== 'mid-term'));
-  const immutable = existingResults.find((row) => lower(row.Status) !== 'calculated draft');
-  const allowPartial = input.AllowPartialResults === true;
-  if (immutable && !allowPartial) {
-    throw failure(`${immutable.StudentRef} already has a ${immutable.Status} result. Reopen or withdraw the affected result through the controlled workflow first.`, 409, 'ACADEMIC_RESULT_IMMUTABLE');
-  }
+  // A student's incomplete or already reviewed result must not hold classmates
+  // back, including requests from older web/desktop clients without this flag.
+  const allowPartial = true;
   const preservedResults = allowPartial ? existingResults.filter(row => lower(row.Status) !== 'calculated draft') : [];
   const preservedRefs = new Set(preservedResults.map(row => lower(row.StudentRef)));
   const calculationMemberships = memberships.filter(row => !preservedRefs.has(lower(row.StudentRef)));
@@ -6654,21 +6653,34 @@ export async function changeAcademicTermResultStatus(env, user = {}, input = {})
   const { scope, state } = context;
   const ids = academicTermResultIds(input.ResultIds || [input.ResultId]);
   if (!ids.length || ids.length > 200) throw failure('Choose between 1 and 200 term results.');
-  const results = ids.map((id) => findById(state.termResults, id));
+  let results = ids.map((id) => findById(state.termResults, id));
   if (results.some((row) => !row)) throw failure('One or more selected term results were not found.', 404);
+  const outcomes = [];
   if (['Reviewed', 'Approved', 'Published', 'Locked'].includes(target)) {
-    const stale = results.find((result) => {
+    // Check each selected result separately. An incomplete student must never
+    // prevent classmates from advancing, including through older clients.
+    results = results.filter((result) => {
+      const stages = ['Calculated Draft', 'Reviewed', 'Approved', 'Published', 'Locked'];
+      if (stages.indexOf(result.Status) >= stages.indexOf(target)) {
+        outcomes.push({ResultId:result.ResultId,StudentRef:result.StudentRef,Outcome:'Already complete',message:`Already ${result.Status}; unchanged.`});
+        return false;
+      }
       const membership = state.studentMemberships.find((row) => row.SessionId === result.SessionId && row.TermId === result.TermId
         && lower(row.StudentRef) === lower(result.StudentRef));
-      return result.CalculationPending || result.SubjectChangeRecalculationRequired || (membership && result.SubjectSelectionSnapshot
+      const stale = result.CalculationPending || result.SubjectChangeRecalculationRequired || (membership && result.SubjectSelectionSnapshot
         && (academicSubjectSelectionChanged(membership, result.SubjectSelectionSnapshot)
           || membership.ClassId !== result.ClassId || membership.ArmId !== result.ArmId));
+      const error = stale
+        ? failure(result.CalculationPending ? `${result.StudentRef}'s result is pending incomplete assessments. Complete the missing tests and recalculate; other complete students may proceed.` : `${result.StudentRef}'s subjects changed after this result was calculated. Recalculate the draft before reviewing or publishing it.`, 409, 'ACADEMIC_SUBJECT_RESULT_STALE')
+        : target === 'Published' && academicPolicyIssues(result.PolicySnapshot || {}, {forActivation:true}).length
+          ? failure(`${result.StudentRef} has an incomplete policy snapshot and cannot be published. Recalculate it after activating the complete policy.`, 409, 'ACADEMIC_RESULT_POLICY_SNAPSHOT_INVALID')
+          : !academicTermResultTransition(result.Status, target).Allowed
+            ? failure(`This result cannot move directly to ${target}. Complete its preceding workflow stage first.`, 409, 'ACADEMIC_RESULT_STATUS_INVALID') : null;
+      if (!error) return true;
+      if (ids.length === 1) throw error;
+      outcomes.push({ResultId:result.ResultId,StudentRef:result.StudentRef,Outcome:'Pending',message:error.message,code:error.code});
+      return false;
     });
-    if (stale) throw failure(stale.CalculationPending ? `${stale.StudentRef}'s result is pending incomplete assessments. Complete the missing tests and recalculate; other complete students may proceed.` : `${stale.StudentRef}'s subjects changed after this result was calculated. Recalculate the draft before reviewing or publishing it.`, 409, 'ACADEMIC_SUBJECT_RESULT_STALE');
-  }
-  if (target === 'Published') {
-    const invalid = results.find((result) => academicPolicyIssues(result.PolicySnapshot || {}, { forActivation: true }).length);
-    if (invalid) throw failure(`${invalid.StudentRef} has an incomplete policy snapshot and cannot be published. Recalculate it after activating the complete policy.`, 409, 'ACADEMIC_RESULT_POLICY_SNAPSHOT_INVALID');
   }
   const reason = clean(input.Reason).slice(0, 500);
   const transitions = results.map((result) => academicTermResultTransition(result.Status, target));
@@ -6681,6 +6693,8 @@ export async function changeAcademicTermResultStatus(env, user = {}, input = {})
   if (target === 'Withdrawn' && input.ImpactAcknowledged !== true) {
     throw failure('Preview and acknowledge the parent-access impact before withdrawing published results.', 409, 'ACADEMIC_RESULT_IMPACT_ACKNOWLEDGEMENT_REQUIRED');
   }
+  if (!results.length) return {ok:true,partialAcademicManagement:true,resultWorkflowOutcomes:outcomes,
+    message:`No results changed. ${outcomes.filter(row=>row.Outcome==='Pending').length} students remain pending; ${outcomes.filter(row=>row.Outcome==='Already complete').length} already complete.`};
   const timestamp = nowIso();
   const writes = [];
   results.forEach((existing) => {
@@ -6713,8 +6727,9 @@ export async function changeAcademicTermResultStatus(env, user = {}, input = {})
   await notifyAcademicResultLifecycle(env, user, scope, results.map((existing) => ({
     ...existing, Status: target, UpdatedAt: timestamp
   })), target);
-  return academicOperationalResponse(env, user, input, scope,
-    `${results.length} term result${results.length === 1 ? '' : 's'} moved to ${target}.`);
+  const response = await academicOperationalResponse(env, user, input, scope,
+    `${results.length} term result${results.length === 1 ? '' : 's'} moved to ${target}. ${outcomes.filter(row=>row.Outcome==='Pending').length} students remain pending; their records are unchanged.`);
+  return {...response,resultWorkflowOutcomes:[...outcomes,...results.map(result=>({ResultId:result.ResultId,StudentRef:result.StudentRef,Outcome:'Updated',message:target}))]};
 }
 
 export async function saveAcademicTermResultRemarks(env, user = {}, input = {}) {
