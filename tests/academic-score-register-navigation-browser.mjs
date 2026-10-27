@@ -15,7 +15,7 @@ input.data.sessions = [{ SessionId: 'session', Name: '2026/2027' }];
 input.data.terms = [{ SessionId: 'session', TermId: 'term', Name: 'First Term' }];
 const register = renderWorkspace('scorebook', input).match(/<form[^>]*data-academic-class-score-register>[\s\S]*?<\/form>/)[0];
 const functions = ['academicRecordId', 'academicIsActive', 'academicFind', 'academicLabel', 'academicSelectOptions', 'academicLearnerTerms',
-  'academicManagementViews', 'academicManagementHeader', 'openAcademicClassScoreRegister', 'bindAcademicAreaNavigation',
+  'academicManagementViews', 'academicManagementHeader', 'focusAcademicClassScoreRegister', 'openAcademicClassScoreRegister', 'bindAcademicAreaNavigation',
   'showAcademicManagementTask', 'academicClassRegisterView', 'academicClassRegisterTable', 'academicClassRegisterPrintHtml',
   'bindAcademicClassRegisterSubjectDismissal', 'createAcademicClassRegisterCache', 'bindAcademicClassScoreRegister'].map(extractFunction).join('\n');
 const loader = source.match(/async function loadAcademicManagement\([\s\S]*?\n}/)[0];
@@ -49,8 +49,18 @@ try {
   await page.click('[data-academic-open-score-register]');
   await page.waitForSelector('[data-academic-class-score-register]');
   assert.equal(await page.locator('[data-academic-view-select]').inputValue(), 'classRegister');
+  assert.equal(await page.evaluate(() => document.activeElement === document.querySelector('[name="ClassId"]')), true);
+  assert.match(await page.locator('#academicManagementStatus').textContent(), /register is open/);
+  assert.equal(await page.locator('.class-register-load-controls button[type="submit"]').count(), 1);
+  assert.equal(await page.locator('.class-register-load-controls [data-class-register-print]').count(), 1);
+  const controls = await page.locator('.class-register-load-controls').boundingBox();
+  assert.ok(controls.y >= 0 && controls.y + controls.height < 980, 'opening brings load controls into view');
   assert.deepEqual(await page.evaluate(() => requests.map(row => [row.action, row.payload.ScorebookTask, row.payload.WorkspaceLoadMode])), [['bootstrap', 'classRegister', 'navigation']]);
-  await page.selectOption('[name=ClassId]', 'class'); await page.click('button[type=submit]');
+  await page.selectOption('[name=ClassId]', 'class');
+  await page.click('[data-academic-open-score-register]');
+  assert.equal(await page.evaluate(() => document.activeElement === document.querySelector('button[type="submit"]')), true);
+  assert.equal(await page.evaluate(() => requests.length), 1);
+  await page.click('button[type=submit]');
   await page.waitForSelector('tbody tr');
   await page.click('[data-academic-open-score-register]');
   assert.equal(await page.evaluate(() => requests.length), 2);
@@ -64,6 +74,9 @@ try {
   await page.waitForSelector('[data-academic-class-score-register]');
   assert.equal(await page.evaluate(() => requests.at(-1).payload.ScorebookTask), 'classRegister');
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.click('[data-academic-open-score-register]');
+  const mobileControls = await page.locator('.class-register-load-controls').boundingBox();
+  assert.ok(mobileControls.y >= 0 && mobileControls.y + mobileControls.height < 844, 'mobile opening shows selector and load action together');
   assert.equal(await page.locator('[data-academic-open-score-register]').isVisible(), true);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   await page.screenshot({ path: `tmp/${roleSlug}-score-register-390.png`, fullPage: true });

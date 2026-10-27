@@ -5,10 +5,16 @@ import { extractFunction, source, fixture as workspaceFixture, renderWorkspace }
 import { academicManagementCapabilities, academicWebActor, getAcademicClassScoreRegister } from '../functions/lib/academic-management.js';
 
 const functions = ['academicRecordId', 'academicIsActive', 'academicSelectOptions', 'academicLearnerTerms',
-  'academicManagementViews', 'academicManagementHeader', 'openAcademicClassScoreRegister', 'bindAcademicAreaNavigation'].map(extractFunction).join('\n');
+  'academicManagementViews', 'academicManagementHeader', 'focusAcademicClassScoreRegister', 'openAcademicClassScoreRegister', 'bindAcademicAreaNavigation'].map(extractFunction).join('\n');
 const load = source.match(/async function loadAcademicManagement\([\s\S]*?\n}/)[0];
 function client(role = 'Super Admin', mounted = false) {
-  const calls = [], shown = [], handlers = {};
+  const calls = [], shown = [], handlers = {}, focused = [], scrolled = [], messages = [];
+  const choice = { value: '', focus: () => focused.push('class') };
+  const loadButton = { textContent: 'Load class scores', disabled: false, focus: () => focused.push('load') };
+  const headerButton = { disabled: false, addEventListener: (event, handler) => { handlers[`[data-academic-open-score-register]:${event}`] = handler; } };
+  const form = { elements: { ClassId: choice }, hasAttribute: () => false,
+    querySelector: selector => selector === '[type="submit"]' ? loadButton
+      : selector === '.class-register-load-controls' ? { scrollIntoView: options => scrolled.push(options) } : null };
   const data = { permissions: academicManagementCapabilities(academicWebActor({ role, edition: 'school', allowedSections: ['academics'] })),
     sections: ['secondary'], sessions: [], terms: [], workspaceDataDeferred: true };
   const context = vm.createContext({ clean: value => String(value ?? '').trim(), escapeHtml: value => String(value ?? ''),
@@ -16,14 +22,15 @@ function client(role = 'Super Admin', mounted = false) {
     academicManagementView: 'scorebook', academicManagementTaskViews: { scorebook: 'entry' },
     academicManagementFilters: { section: 'secondary', sessionId: 'session', termId: 'term' },
     academicManagementData: data, academicManagementLoadRequest: 0, activeSection: 'academics',
-    panelEl: { querySelector: selector => selector === '[data-academic-class-score-register]' ? mounted ? {} : null
+    panelEl: { querySelector: selector => selector === '[data-academic-class-score-register]' ? mounted ? form : null
+      : selector === '[data-academic-open-score-register]' ? headerButton
       : { addEventListener: (event, handler) => { handlers[`${selector}:${event}`] = handler; } } },
-    document: { getElementById: () => ({}) }, setStatus: () => {},
+    document: { getElementById: () => ({}) }, setStatus: (_node, message) => messages.push(message),
     academicManagementRequest: async (action, payload) => { calls.push({ action, payload }); return data; },
     renderAcademicManagement: () => {}, showAcademicManagementTask: (...args) => shown.push(args)
   });
   vm.runInContext(functions + '\n' + load, context);
-  return { context, calls, shown, data, handlers };
+  return { context, calls, shown, data, handlers, focused, scrolled, messages, choice, headerButton };
 }
 
 test('Super Admin header exposes a direct register button and area option even while scorebook records are deferred', () => {
@@ -50,7 +57,25 @@ test('area dropdown reaches the same register and reopening a mounted register m
   f.handlers['[data-academic-view-select]:change']({ currentTarget: { value: 'classRegister' } });
   assert.equal(f.calls.length, 0); assert.equal(f.shown.length, 1);
   assert.deepEqual(f.shown[0].slice(0, 2), ['scorebook', 'classRegister']);
+  assert.deepEqual(f.focused, ['class']); assert.equal(f.scrolled.length, 1);
+  assert.match(f.messages.at(-1), /Class score register is open.*Load class scores/);
   assert.match(f.context.academicManagementHeader(f.data, {}), /value="classRegister" selected/);
+});
+
+test('reopening with a selected class focuses the explicit load action without requesting scores', () => {
+  const f = client('Super Admin', true); f.choice.value = 'grade7';
+  f.context.openAcademicClassScoreRegister();
+  assert.deepEqual(f.focused, ['load']); assert.equal(f.scrolled.length, 1);
+  assert.equal(f.calls.length, 0);
+});
+
+test('repeated header clicks during opening share the pending selector request', async () => {
+  const f = client();
+  const opening = f.context.openAcademicClassScoreRegister();
+  assert.equal(f.headerButton.disabled, true);
+  f.context.openAcademicClassScoreRegister();
+  await opening;
+  assert.equal(f.calls.length, 1); assert.equal(f.headerButton.disabled, false);
 });
 
 test('navigation preserves teacher classroom scope and does not expose the register to finance-only staff', () => {

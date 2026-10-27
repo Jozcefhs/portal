@@ -2,6 +2,8 @@
 
 Open **Academic Area → Scorebook → My classroom scores**. Select the school section, session and term, choose your assigned classroom, then click **Load classroom scores**.
 
+The header shortcut brings the class selector and its **Load scores** and **Preview / print** controls into view. It focuses the selector, or the load/refresh button when a class is already selected. Opening or reopening the register does not fetch scores; use the load button beside the selector to request them.
+
 Super Admin and academic reviewers have a direct **Class score register** button at the top of Academic Management and the same choice in the **Academic area** dropdown. It opens the all-arm register even when Scorebook is waiting for a record selection. Class teachers see **My classroom scores** in those same locations. Reopening an already mounted register retains its loaded scores instead of fetching them again.
 
 The web register is available to Super Admin, Director, Admin, Principal, both Vice Principal roles, Head Teacher, Assistant Head Teacher, Management, ICT, Examination Officer and Admissions Officer when Academic Management access is enabled. Branch and school-section restrictions still apply. Director, Admin and Admissions Officer receive read-only viewing and printing; this addition does not grant score editing, review, approval, calculation, reactivation or publication permissions. Accounts/Finance roles remain limited to their existing result-clearance work. Teachers and Academics Department Users use the assigned-classroom view.
