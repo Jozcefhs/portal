@@ -32,7 +32,9 @@ try {
       {ResultId:'r6',ArmId:'a2',Status:'Approved',ResultType:'Mid-Term'}]};
     window.requestCount=0;window.fetch=()=>{requestCount++;throw Error('Filtering must not read records');};
     window.branchOtherSheets=[{SheetId:'s4',ClassId:'c2',ArmId:'a3',Status:'Draft',AssessmentComponents:[{Id:'ca1'}],ComponentReviews:{ca1:{Status:'Approved'}}},{SheetId:'s5',ClassId:'c3',ArmId:'a4',Status:'Draft',AssessmentComponents:[{Id:'ca1'}],ComponentReviews:{ca1:{Status:'Submitted'}}}];
-    window.academicManagementRequest=async(action,payload)=>{if(action!=='getAcademicReviewArmSummary')throw Error('Unexpected request');requestCount++;return {branchReviewSummary:{sheets:structuredClone([...academicManagementData.scoreSheets,...branchOtherSheets])}};};
+    window.academicManagementRequest=async(action,payload)=>{if(action!=='getAcademicReviewArmSummary')throw Error('Unexpected request');requestCount++;return {branchReviewSummary:{sheets:structuredClone([...academicManagementData.scoreSheets,...branchOtherSheets]),publications:[
+      {ClassId:'c1',ArmId:'a1',ResultType:'Mid-Term',ComponentIds:['ca1'],Published:10,Other:2},
+      {ClassId:'c2',ArmId:'a3',ResultType:'Mid-Term',ComponentIds:['ca1'],Published:20,Other:0}]}};};
     ${admin.match(/function academicReviewArmScopeKey\([\s\S]*?\n}/)[0]}
     ${admin.match(/function bindAcademicWorkflowFilters\([\s\S]*?\n}/)[0]}
     window.draw=()=>{
@@ -52,6 +54,16 @@ try {
   assert.equal(await score.locator('[data-workflow-arm-count="Approved"]').textContent(),'3 branch arms');
   assert.equal(await score.locator('[data-workflow-arm-count="Submitted"]').textContent(),'2 branch arms');
   assert.match(await score.locator('option[value="Approved"]').textContent(),/2 subjects, 3 branch arms/);
+  assert.equal(await score.locator('[data-workflow-arm-count="Published"]').textContent(),'2 branch arms');
+  await score.locator('[data-workflow-stage="Published"]').click();
+  assert.deepEqual(await visibleIds('.academic-score-workflow-table'),['s1','s2']);
+  assert.match(await score.locator('[data-workflow-summary]').textContent(),/1 also have pending/);
+  await page.screenshot({path:'tmp/published-arm-filter-1280.png',fullPage:true});
+  assert.equal(await page.evaluate(()=>requestCount),1,'publication filters reuse the metadata snapshot');
+  await page.locator('[data-academic-review-scope]').selectOption('');
+  assert.equal(await score.locator('[data-workflow-arm-count="Published"]').textContent(),'0 branch arms');
+  assert.deepEqual(await visibleIds('.academic-score-workflow-table'),[],'mid-term publication is not full-term publication');
+  await page.locator('[data-academic-review-scope]').selectOption('ca1');
   await page.screenshot({path:'tmp/workflow-arm-counts-1280.png',fullPage:true});
   await score.getByLabel('Workflow status').selectOption('Submitted');
   assert.deepEqual(await visibleIds('.academic-score-workflow-table'),['s1']);

@@ -55,3 +55,10 @@ refresh is still required to see changes made by other officers.
   requests, duplicate-click protection and desktop/mobile layouts.
 - Existing academic review, partial-results, parent access and release-freshness
   regression tests remain applicable. No production records are modified by tests.
+# Published arm filter
+
+Review and approval now includes **Published results** beside the approval filters. Use **Load/Refresh branch-wide arm counts** to load the chosen branch, school section, session and term. The summary reads projected review and publication metadata only, never student marks, and is retained while switching classrooms or filters.
+
+Published counts arms with at least one Published/Locked result for the selected assessment scope. Test filters use the result's saved included-test list; **Full-term sheets** uses end-of-term results only. The table shows loaded subject sheets in those arms, without labelling individual subjects as published. Arms with other pending/unpublished result records are identified as partial; students with no calculated result are never claimed complete. Approval status remains independent of publication.
+
+Publication, withdrawal and recalculation invalidate the saved summary. Refresh after another officer's changes. All records are preserved.

@@ -65,3 +65,18 @@ test('arm counts follow the selected test, scope and refreshed review statuses',
   rows[0].TestReviewStatus=[];
   assert.equal(workflow.armCounts(rows,byTest('ca1'),workflow.scoreStages).Approved,0);
 });
+
+test('published arm filters use actual results, deduplicate arms and distinguish partial publication and tests',()=>{
+  const rows=[
+    {ClassId:'g7',ArmId:'genius',ResultType:'Mid-Term',ComponentIds:['ca1'],Published:20,Other:2},
+    {ClassId:'g7',ArmId:'genius',ResultType:'End of Term',ComponentIds:[],Published:0,Other:22},
+    {ClassId:'g8',ArmId:'genius',ResultType:'Mid-Term',ComponentIds:['ca2'],Published:15,Other:0},
+    {ClassId:'g9',ArmId:'brilliance',ResultType:'End of Term',ComponentIds:[],Published:18,Other:0},
+    {ClassId:'g10',ArmId:'perfection',ResultType:'Mid-Term',ComponentIds:['ca1'],Published:0,Other:20}
+  ],before=structuredClone(rows);
+  const ca1=workflow.publicationArms(rows,'ca1');assert.equal(ca1.published.size,2);assert.equal(ca1.partial.size,1);
+  assert.ok(ca1.published.has(JSON.stringify(['g7','genius'])));assert.ok(!ca1.published.has(JSON.stringify(['g10','perfection'])));
+  const ca2=workflow.publicationArms(rows,'ca2');assert.equal(ca2.published.size,2);assert.equal(ca2.partial.size,0);
+  const full=workflow.publicationArms(rows,'');assert.equal(full.published.size,1);assert.equal(full.partial.size,0);
+  assert.deepEqual(rows,before);
+});

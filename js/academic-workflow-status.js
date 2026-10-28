@@ -2,9 +2,33 @@
   'use strict';
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const scoreStages = [['All', 'All'], ['Draft', 'Draft / changed'], ['Submitted', 'Submitted'], ['Approved', 'Approved']];
+  const scoreOverviewStages = [...scoreStages, ['Published', 'Published results']];
   const resultStages = [['All', 'All'], ['Draft', 'Draft'], ['Reviewed', 'Submitted / reviewed'], ['Approved', 'Approved'], ['Published', 'Published'], ['Pending', 'Pending'], ['Withdrawn', 'Withdrawn']];
   let branchSnapshot = null;
   function clearBranchSummary() { branchSnapshot = null; }
+  const armKey = row => JSON.stringify([String(row.ClassId ?? '').trim(),String(row.ArmId ?? '').trim()]);
+  function publicationArms(rows, componentId = '') {
+    const groups = new Map();
+    for (const row of rows) {
+      if (!row.ArmId || !row.ClassId) continue;
+      const endTerm = (row.ResultType || 'End of Term') === 'End of Term';
+      if (componentId ? !endTerm && !(row.ComponentIds || []).includes(componentId) : !endTerm) continue;
+      // A classroom can have separate mid-term and end-term results. Unfinished
+      // end-term results do not mark a published mid-term report as partial.
+      const key = JSON.stringify([armKey(row),row.ResultType || 'End of Term']);
+      const group = groups.get(key) || {arm:armKey(row),published:0,other:0};
+      group.published += Number(row.Published || 0);group.other += Number(row.Other || 0);groups.set(key,group);
+    }
+    const published = new Set(),partial = new Set();
+    for (const group of groups.values()) if (group.published > 0) {
+      published.add(group.arm);if(group.other > 0)partial.add(group.arm);
+    }
+    return {published,partial};
+  }
+  function branchPublications(key,componentId) {
+    return branchSnapshot?.key === key && Array.isArray(branchSnapshot.publications)
+      ? publicationArms(branchSnapshot.publications,componentId) : null;
+  }
   function branchArmRows(key, componentId, loadedSheets = []) {
     if (branchSnapshot?.key !== key || !branchSnapshot.rows) return null;
     const rows = new Map(branchSnapshot.rows.map(row => [row.SheetId, row]));
@@ -56,7 +80,7 @@
     return `<span class="academic-workflow-badge workflow-${esc(key.toLowerCase())}">${esc(label)}</span>`;
   }
   // Filters consume loaded records. Branch summaries load only on explicit click.
-  function mount({host, getRows, statusOf, stages, state = {status: 'All'}, unit, countArms = false, getArmRows = null, branchSummary = null, onChange = () => {}}) {
+  function mount({host, getRows, statusOf, stages, state = {status: 'All'}, unit, countArms = false, getArmRows = null, branchSummary = null, getPublication = null, onChange = () => {}}) {
     if (branchSummary && branchSnapshot?.key !== branchSummary.key) branchSnapshot = {key:branchSummary.key, rows:null, loading:false, error:'', listeners:new Map()};
     host.classList.add('academic-workflow-filter');
     host.innerHTML = '<label>Status<select data-workflow-status aria-label="Workflow status"></select></label><div class="academic-workflow-counts" data-workflow-counts aria-label="Status counts"></div><p data-workflow-summary role="status" aria-live="polite"></p>';
@@ -65,18 +89,31 @@
     const refresh = () => {
       const rows = getRows(), totals = counts(rows, statusOf, stages), armRows = getArmRows ? getArmRows() : rows;
       const arms = countArms && armRows ? armCounts(armRows, statusOf, stages) : null;
+      const publication = getPublication?.(), publishedRows = publication ? rows.filter(row => publication.published.has(armKey(row))) : [];
+      if (getPublication) {
+        totals.Published = publishedRows.length;
+        if (arms) {
+          arms.Published = publication?.published.size ?? null;
+          if (publication) arms.All = new Set([...armRows.filter(row=>row.ArmId).map(armKey),...publication.published]).size;
+        }
+      }
       const armLabel = count => `${count ?? '—'} ${getArmRows ? 'branch ' : ''}${count === 1 ? 'arm' : 'arms'}`;
       if (!stages.some(([key]) => key === state.status)) state.status = 'All';
-      select.innerHTML = stages.map(([key, label]) => `<option value="${key}"${state.status === key ? ' selected' : ''}>${esc(label)} (${totals[key]}${countArms ? ` ${totals[key] === 1 ? 'subject' : 'subjects'}, ${armLabel(arms?.[key])}` : ''})</option>`).join('');
-      host.querySelector('[data-workflow-counts]').innerHTML = stages.map(([key, label]) => `<button type="button" class="academic-workflow-count workflow-${key.toLowerCase()}" data-workflow-stage="${key}" aria-pressed="${state.status === key}">${esc(label)} <strong>${totals[key]}</strong>${countArms ? ` ${totals[key] === 1 ? 'subject' : 'subjects'}<span class="academic-workflow-arm-count" data-workflow-arm-count="${key}">${armLabel(arms?.[key])}</span>` : ''}</button>`).join('');
-      const visible = state.status === 'All' ? rows : rows.filter(row => statusOf(row) === state.status);
+      select.innerHTML = stages.map(([key, label]) => `<option value="${key}"${state.status === key ? ' selected' : ''}>${esc(label)} (${key === 'Published' && getPublication ? armLabel(publication?.published.size) : `${totals[key]}${countArms ? ` ${totals[key] === 1 ? 'subject' : 'subjects'}, ${armLabel(arms?.[key])}` : ''}`})</option>`).join('');
+      host.querySelector('[data-workflow-counts]').innerHTML = stages.map(([key, label]) => key === 'Published' && getPublication
+        ? `<button type="button" class="academic-workflow-count workflow-published" data-workflow-stage="Published" aria-pressed="${state.status === key}">${esc(label)}<span class="academic-workflow-arm-count" data-workflow-arm-count="Published">${armLabel(publication?.published.size)}</span></button>`
+        : `<button type="button" class="academic-workflow-count workflow-${key.toLowerCase()}" data-workflow-stage="${key}" aria-pressed="${state.status === key}">${esc(label)} <strong>${totals[key]}</strong>${countArms ? ` ${totals[key] === 1 ? 'subject' : 'subjects'}<span class="academic-workflow-arm-count" data-workflow-arm-count="${key}">${armLabel(arms?.[key])}</span>` : ''}</button>`).join('');
+      const visible = state.status === 'Published' && getPublication ? publishedRows : state.status === 'All' ? rows : rows.filter(row => statusOf(row) === state.status);
       host.querySelector('[data-workflow-summary]').textContent = `Showing ${visible.length} of ${rows.length} loaded ${unit}.${countArms && getArmRows ? ' Arm counts cover arms with saved subject sheets across all classes in this branch, school section and term, using the selected test and status. Class/classroom filters affect subjects only.' : ''}${arms ? ' Mixed-status arms may appear in more than one group.' : countArms ? ' Load branch-wide arm counts to see totals.' : ' Counts use the selected scope only.'}`;
+      if (getPublication && state.status === 'Published') host.querySelector('[data-workflow-summary]').textContent = publication
+        ? `${publication.published.size} branch arms have published results for this assessment scope; ${publication.partial.size} also have pending or unpublished result records. Showing ${visible.length} loaded subject sheets from those arms. This does not mean every student or subject is published.`
+        : 'Load branch-wide arm counts to check published results. Publication has not been loaded yet.';
       if (branchSummary) {
         const snapshot = branchSnapshot?.key === branchSummary.key ? branchSnapshot : null;
         const button = host.querySelector('[data-load-branch-arms]');
         button.disabled = snapshot?.loading === true;
         button.textContent = snapshot?.loading ? 'Loading branch-wide arm counts…' : snapshot?.rows ? 'Refresh branch-wide arm counts' : 'Load branch-wide arm counts';
-        host.querySelector('[data-branch-arms-status]').textContent = snapshot?.error || (snapshot?.rows ? 'Branch review snapshot retained while switching classes. Refresh for changes by other officers.' : 'Loads saved review statuses only; no student marks or history.');
+        host.querySelector('[data-branch-arms-status]').textContent = snapshot?.error || (snapshot?.rows ? 'Branch review and publication snapshot retained while switching classes. Refresh for changes by other officers.' : 'Loads review and publication status metadata only; no student marks or history.');
       }
       onChange(visible, totals);
       return visible;
@@ -98,7 +135,8 @@
         const data = await branchSummary.load();
         if (!Array.isArray(data?.branchReviewSummary?.sheets)) throw new Error('Branch counts were not returned. Try loading them again.');
         snapshot.rows = data.branchReviewSummary.sheets;
-      } catch (error) { snapshot.rows = null; snapshot.error = error.message || 'Branch counts could not be loaded.'; }
+        snapshot.publications = Array.isArray(data.branchReviewSummary.publications) ? data.branchReviewSummary.publications : null;
+      } catch (error) { snapshot.rows = null; snapshot.publications = null; snapshot.error = error.message || 'Branch counts could not be loaded.'; }
       finally {
         snapshot.loading = false;
         if (branchSnapshot === snapshot) for (const [target, update] of snapshot.listeners) {
@@ -109,5 +147,5 @@
     refresh();
     return {refresh, state};
   }
-  root.DynamaxAcademicWorkflow = Object.freeze({scoreStages, resultStages, scoreReview, scoreStatus, resultStatus, counts, armCounts, branchArmRows, clearBranchSummary, badge, mount});
+  root.DynamaxAcademicWorkflow = Object.freeze({scoreStages, scoreOverviewStages, resultStages, scoreReview, scoreStatus, resultStatus, counts, armCounts, branchArmRows, publicationArms, branchPublications, clearBranchSummary, badge, mount});
 })(globalThis);

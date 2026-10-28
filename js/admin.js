@@ -15548,8 +15548,9 @@ function bindAcademicWorkflowFilters() {
     room.innerHTML = '<option value="">All loaded classrooms</option>' + rooms.map(row => `<option value="${escapeHtml(row.ArmId)}">${escapeHtml(academicLabel(academicManagementData.classes, row.ClassId))} / ${escapeHtml(academicLabel(academicManagementData.arms, row.ArmId))}</option>`).join('');
     room.value = state.armId;
     const branchKey = academicReviewArmScopeKey(), canCountBranch = academicManagementData.permissions?.canReviewScores === true;
-    const control = workflow.mount({host: scoreHost, state, stages: workflow.scoreStages, unit: 'subject sheets', countArms: canCountBranch,
+    const control = workflow.mount({host: scoreHost, state, stages: canCountBranch ? workflow.scoreOverviewStages : workflow.scoreStages, unit: 'subject sheets', countArms: canCountBranch,
       ...(canCountBranch ? {getArmRows: () => workflow.branchArmRows(branchKey, state.componentId, sheets()),
+        getPublication: () => workflow.branchPublications(branchKey,state.componentId),
         branchSummary: {key: branchKey, load: () => academicManagementRequest('getAcademicReviewArmSummary', {
           SchoolSection: academicManagementFilters.section, SessionId: academicManagementFilters.sessionId, TermId: academicManagementFilters.termId
         })}} : {}),
@@ -17209,6 +17210,10 @@ async function academicManagementRequest(action, payload = {}, requestOptions = 
     error.issues = Array.isArray(data.issues) ? data.issues.map(clean).filter(Boolean) : [];
     error.issueCount = Math.max(error.issues.length, Number(data.issueCount || 0));
     throw error;
+  }
+  if (['batchchangeacademicresultstatus','changeacademictermresultstatus','changetermresultstatus',
+    'calculateacademictermresults','calculateacademicmidtermresults','calculatetermresults','calculatemidtermresults'].includes(normalizedAction)) {
+    window.DynamaxAcademicWorkflow?.clearBranchSummary();
   }
   if (data.refreshAcademicManagement === true && clean(action).toLowerCase() !== 'bootstrap') {
     if (['applyactiveacademicscorelayout', 'applyactivescorelayout'].includes(normalizedAction)) {

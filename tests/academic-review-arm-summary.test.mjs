@@ -10,10 +10,10 @@ const sheet = (SheetId, ClassId, ArmId, extra={}) => ({...period,SheetId,ClassId
   UpdatedAt:'2026-10-28T12:00:00.000Z', AssessmentComponents:[{Id:'ca1',Name:'CA1',Weight:10}],
   ComponentReviews:{ca1:{Status:'Approved',Stale:false,PendingStudentRefs:['private-student'],Signature:'private-signature'}},
   StudentScores:[{StudentRef:'private-student',Score:80}],...extra});
-function fixture(rows=[], docs={session:period,term:period}) {
+function fixture(rows=[], docs={session:period,term:period}, results=[]) {
   const calls=[];
   return {calls, db:{getDocument:async(_env,path,id)=>{calls.push({path,id});return docs[id];},
-    queryCollectionPages:async(_env,path,options)=>{calls.push({path,options});return rows;}}};
+    queryCollectionPages:async(_env,path,options)=>{calls.push({path,options});return path==='academicResults'?results:rows;}}};
 }
 
 test('review summary covers every class in the selected branch period without loading marks or changing records', async()=>{
@@ -22,7 +22,7 @@ test('review summary covers every class in the selected branch period without lo
   const result=await loadAcademicReviewArmSummary({},scope,input,db);
   assert.deepEqual(result.branchReviewSummary.sheets.map(row=>row.ClassId),['grade7','grade8','grade10']);
   assert.deepEqual(calls.slice(0,2),[{path:'academicSessions',id:'session'},{path:'academicTerms',id:'term'}]);
-  assert.equal(calls.length,3,'two exact period reads and one paginated metadata query');
+  assert.equal(calls.length,4,'two exact period reads and two paginated metadata queries');
   const options=calls[2].options;
   assert.deepEqual(options.filters,[{field:'BranchId',op:'==',value:'main'},{field:'SessionId',op:'==',value:'session'},{field:'TermId',op:'==',value:'term'}]);
   assert.ok(options.select.includes('ComponentReviews'));
@@ -64,4 +64,19 @@ test('database failures never masquerade as empty or partial branch totals', asy
 test('non-reviewers cannot load branch-wide statuses', async()=>{
   await assert.rejects(handleAcademicManagementAction({}, {role:'Teacher',allowedSections:['academics'],edition:'school'},
     {...input,action:'getAcademicReviewArmSummary'}),error=>error.status===403);
+});
+
+test('publication counts use branch-period status metadata and never infer publication from approved sheets',async()=>{
+  const result=(ArmId,Status,extra={})=>({...period,ClassId:'grade10',ArmId,Status,ResultType:'Mid-Term',IncludedAssessmentComponentIds:['ca1'],StudentRef:'PRIVATE',Subjects:[{Total:80}],...extra});
+  const rows=[result('genius','Published'),result('genius','Locked'),result('genius','Approved'),
+    result('perfection','Published',{CalculationPending:true}),result('reserved','Published',{SubjectChangeRecalculationRequired:true}),
+    result('other','Published',{SchoolSection:'primary'}),result('other','Published',{BranchId:'north'}),result('other','Published',{TermId:'old'})];
+  const f=fixture([sheet('s1','grade7','genius')],undefined,rows),before=structuredClone(rows);
+  const summary=(await loadAcademicReviewArmSummary({},scope,input,f.db)).branchReviewSummary;
+  assert.deepEqual(summary.publications[0],{ClassId:'grade10',ArmId:'genius',ResultType:'Mid-Term',ComponentIds:['ca1'],Published:2,Other:1});
+  assert.equal(summary.publications.length,3);assert.equal(summary.publications[1].Published,0);assert.equal(summary.publications[2].Published,0);
+  assert.doesNotMatch(JSON.stringify(summary),/PRIVATE|Subjects|Total/);
+  const query=f.calls.find(c=>c.path==='academicResults').options;
+  assert.ok(!query.select.some(field=>/Subject|Student|Score|Policy/.test(field)&&field!=='SubjectChangeRecalculationRequired'));
+  assert.equal(query.readTime,summary.loadedAt);assert.deepEqual(rows,before);
 });

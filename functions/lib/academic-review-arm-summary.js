@@ -16,16 +16,34 @@ export async function loadAcademicReviewArmSummary(env, scope, input = {}, depen
   if (!session || !term || [session, term].some(row => clean(row.BranchId || 'main') !== scope.branchId || sectionOf(row) !== scope.section)
       || clean(term.SessionId) !== SessionId) throw fail('Choose a session and term belonging to this branch and school section.');
   const loadedAt = new Date().toISOString();
-  const rows = await db.queryCollectionPages(env, 'academicScoreSheets', {
-    filters: [['BranchId', scope.branchId], ['SessionId', SessionId], ['TermId', TermId]].map(([field, value]) => ({ field, op: '==', value })),
+  const filters = [['BranchId', scope.branchId], ['SessionId', SessionId], ['TermId', TermId]].map(([field, value]) => ({ field, op: '==', value }));
+  const [rows, results] = await Promise.all([db.queryCollectionPages(env, 'academicScoreSheets', {
+    filters,
     select: ['SheetId', 'BranchId', 'SchoolSection', 'SessionId', 'TermId', 'ClassId', 'ArmId', 'Status', 'UpdatedAt', 'AssessmentComponents', 'ComponentReviews'],
     pageSize: 250, maxRows: 10000, readTime: loadedAt
-  });
+  }), db.queryCollectionPages(env, 'academicResults', {
+    filters,
+    select: ['BranchId', 'SchoolSection', 'SessionId', 'TermId', 'ClassId', 'ArmId', 'Status', 'ResultType',
+      'IncludedAssessmentComponentIds', 'CalculationPending', 'SubjectChangeRecalculationRequired'],
+    pageSize: 250, maxRows: 20000, readTime: loadedAt
+  })]);
+  const publicationGroups = new Map();
+  for (const row of results) {
+    if (clean(row.BranchId || 'main') !== scope.branchId || sectionOf(row) !== scope.section
+        || row.SessionId !== SessionId || row.TermId !== TermId || !clean(row.ClassId) || !clean(row.ArmId)) continue;
+    const ComponentIds = [...new Set((row.IncludedAssessmentComponentIds || []).map(clean).filter(Boolean))].sort();
+    const ResultType = clean(row.ResultType) || 'End of Term';
+    const key = JSON.stringify([row.ClassId,row.ArmId,ResultType,ComponentIds]);
+    const group = publicationGroups.get(key) || {ClassId:row.ClassId,ArmId:row.ArmId,ResultType,ComponentIds,Published:0,Other:0};
+    if (['Published','Locked'].includes(row.Status) && !row.CalculationPending && !row.SubjectChangeRecalculationRequired) group.Published++;
+    else group.Other++;
+    publicationGroups.set(key,group);
+  }
   const sheets = rows.filter(row => clean(row.BranchId || 'main') === scope.branchId && sectionOf(row) === scope.section
     && row.SessionId === SessionId && row.TermId === TermId).map(row => ({
     SheetId: clean(row.SheetId || row.__id), ClassId: clean(row.ClassId), ArmId: clean(row.ArmId), Status: clean(row.Status), UpdatedAt: clean(row.UpdatedAt),
     AssessmentComponents: (row.AssessmentComponents || []).map(component => ({ Id: clean(component.Id), Name: clean(component.Name) })),
     ComponentReviews: Object.fromEntries(Object.entries(row.ComponentReviews || {}).map(([key, review]) => [key, { Status: clean(review?.Status), Stale: review?.Stale === true }]))
   }));
-  return { ok: true, branchReviewSummary: { BranchId: scope.branchId, SchoolSection: scope.section, SessionId, TermId, loadedAt, sheets } };
+  return { ok: true, branchReviewSummary: { BranchId: scope.branchId, SchoolSection: scope.section, SessionId, TermId, loadedAt, sheets, publications:[...publicationGroups.values()] } };
 }
