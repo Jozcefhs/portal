@@ -198,7 +198,7 @@ function dashboardHtml(data) {
   const start = admin.indexOf('function renderDashboardTimeAttendance(');
   const end = admin.indexOf('function dashboardPresencePollingAllowed(', start);
   const render = runInNewContext(`${admin.slice(start, end)}\nrenderDashboardTimeAttendance`, {
-    dashboardClockEl, activeSection: 'overview', dashboardAttendanceCache: null,
+    dashboardClockEl, currentUser: null, activeSection: 'overview', dashboardAttendanceCache: null,
     dashboardClockTimeZone: 'Africa/Lagos', DynamaxTime: { DEFAULT_TIME_ZONE: 'Africa/Lagos' },
     clean: (value) => String(value ?? '').trim(), escapeHtml: (value) => String(value ?? '').replace(/</g, '&lt;'),
     announceRandomPresenceConfirmation() {}, warmAttendanceIdentity() {},

@@ -27,6 +27,7 @@ const ROUTE_MODULES = Object.freeze([
   ['/api/staff-library', 'School Library'],
   ['/api/staff-hr', 'Human Resources'],
   ['/api/staff-attendance', 'Staff attendance'],
+  ['/api/staff-meetings', 'Staff meetings'],
   ['/api/staff-correspondence', 'Executive Office'],
   ['/api/finance-workflow', 'Bills & requisitions'],
   ['/api/income-analytics', 'Income analytics'],
