@@ -736,7 +736,7 @@ export function academicCanConfigureClassStudentSubjects(user = {}, allocations 
   if (!permissions.canConfigureClassStudentSubjects || !permissions.teacherView) return false;
   const username = actorUsername(user);
   return (allocations || []).some((row) => statusActive(row)
-    && lower(row.AllocationRole) === 'form teacher'
+    && ['form teacher', 'assistant teacher'].includes(lower(row.AllocationRole))
     && lower(row.TeacherUsername) === username
     && row.SessionId === input.SessionId && row.TermId === input.TermId
     && row.ClassId === input.ClassId && row.ArmId === input.ArmId);
@@ -3682,7 +3682,7 @@ export async function bulkAssignAcademicArmStudentSubjects(env, user = {}, input
   if (arm.ClassId !== classId) throw failure('The selected class arm does not belong to this class.');
   if (!academicCanConfigureClassStudentSubjects(user, state.teacherAllocations,
     { SessionId: sessionId, TermId: termId, ClassId: classId, ArmId: armId }, permissions)) {
-    throw failure('Only this classroom’s assigned class teacher or an authorised administrator may configure its student subjects.',
+    throw failure('Only this classroom’s assigned class teacher, assistant or an authorised administrator may configure its student subjects.',
       403, 'ACADEMIC_CLASS_SUBJECTS_FORBIDDEN');
   }
 

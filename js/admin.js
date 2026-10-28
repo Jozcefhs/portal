@@ -14628,7 +14628,7 @@ function academicArmSubjectRegister(data, rows, canManage) {
   const termId = clean(academicManagementFilters.termId);
   const administrator = data.permissions?.canManageAllocations === true;
   const ownClassroomIds = new Set(rows.teacherAllocations.filter((row) => academicIsActive(row)
-    && clean(row.AllocationRole).toLowerCase() === 'form teacher'
+    && ['form teacher', 'assistant teacher'].includes(clean(row.AllocationRole).toLowerCase())
     && row.SessionId === sessionId && row.TermId === termId)
     .map((row) => row.ArmId));
   const seniorClasses = rows.classes.filter((row) => academicIsActive(row)
@@ -14685,7 +14685,7 @@ function academicArmSubjectRegister(data, rows, canManage) {
           : `${memberships.length} assigned student${memberships.length === 1 ? '' : 's'} shown. Mixed classrooms allow individual Core selections; single-department Core subjects remain compulsory.`;
   const mayEditOwnClass = data.permissions?.teacherView === true && ownClassroomIds.size > 0;
   const body = (canManage || mayEditOwnClass) && seniorClasses.length ? `<form class="academic-management-editor academic-management-editor-wide academic-arm-subject-register" data-academic-workflow="bulkAssignAcademicArmStudentSubjects" data-academic-arm-subject-register>
-    <div class="academic-management-editor-heading"><div><small>Senior Secondary arm curriculum</small><h3>Assign student subjects</h3><p class="muted">${administrator ? 'Open an arm after placement.' : 'Only classrooms where you are the assigned class teacher are shown.'} The classroom department controls the subject list. In mixed classrooms, choose each student's Core subjects from all departments. Also select Trade and Optional subjects.</p></div></div>
+    <div class="academic-management-editor-heading"><div><small>Senior Secondary arm curriculum</small><h3>Assign student subjects</h3><p class="muted">${administrator ? 'Open an arm after placement.' : 'Only classrooms where you are the assigned class teacher or assistant are shown.'} The classroom department controls the subject list. In mixed classrooms, choose each student's Core subjects from all departments. Also select Trade and Optional subjects.</p></div></div>
     <input type="hidden" name="SchoolSection" value="secondary">
     <input type="hidden" name="SessionId" value="${escapeHtml(sessionId)}"><input type="hidden" name="TermId" value="${escapeHtml(termId)}">
     <p class="muted">Using the academic session and term selected above. Change them there to open another period.</p>
@@ -14700,7 +14700,7 @@ function academicArmSubjectRegister(data, rows, canManage) {
     <button type="submit"${memberships.length && tradeConfigured ? '' : ' disabled'}>Save subject selections for this arm</button>
   </form>` : `<div class="academic-view-only-note" data-academic-arm-subject-info><strong>Student subject choices</strong><span>${data.permissions?.teacherView
     ? !ownClassroomIds.size
-      ? 'No active Form Teacher assignment is linked to your account for the selected session and term. Ask Academic Management to assign you under Assign class teachers.'
+      ? 'No active class teacher or assistant assignment is linked to your account for the selected session and term. Ask Academic Management to assign you under Assign class teachers.'
       : 'Your assigned classrooms are not classified as Senior Secondary in this section. Junior Secondary students inherit their saved class subjects automatically.'
     : 'No Senior classroom is available for the selected period. Core, Trade and Optional selections require an active Senior class and arm.'}</span></div>`;
   return body + academicSubjectChangeRequests(data);
@@ -15742,7 +15742,7 @@ function academicScorebookWorkspace(data, rows) {
   const classroomRegister = data.permissions?.canViewClassroomScores === true;
   const assignedClassroomRegister = classroomRegister && !canViewClassRegister;
   const teacherClassrooms = classrooms.filter(arm => rows.teacherAllocations.some(row => academicIsActive(row)
-    && clean(row.AllocationRole).toLowerCase() === 'form teacher' && row.SessionId === sessionId && row.TermId === termId
+    && ['form teacher', 'assistant teacher'].includes(clean(row.AllocationRole).toLowerCase()) && row.SessionId === sessionId && row.TermId === termId
     && row.ClassId === arm.ClassId && row.ArmId === arm.ArmId));
   const registerClassrooms = assignedClassroomRegister ? teacherClassrooms : classrooms;
   const registerChoices = classroomRegister ? '<option value="">Choose classroom</option>' + registerClassrooms.map(arm =>
@@ -15750,7 +15750,7 @@ function academicScorebookWorkspace(data, rows) {
     : academicSelectOptions(rows.classes.filter(academicIsActive), '', row => row.Name, 'Choose class');
   const classRegister = canViewClassRegister || classroomRegister ? `<form class="academic-management-editor academic-management-editor-wide"${classroomRegister ? ' data-classroom-register' : ''}${assignedClassroomRegister ? ' data-classroom-teacher-register' : ''} data-academic-class-score-register>
     <div class="academic-management-editor-heading"><div><h3>${assignedClassroomRegister ? 'My classroom scores — all subjects' : classroomRegister ? 'Classroom score register — all subjects' : 'Class score register — all arms'}</h3><p>Read-only raw marks / maximum, including Draft scores. This is not a published result. ${classroomRegister ? 'Choose one classroom to vet all subjects without changing marks.' : 'Choose a class, not a classroom.'}</p></div></div>
-    ${assignedClassroomRegister && !teacherClassrooms.length ? '<p>No class teacher assignment was found for this session and term. Ask Academic Management to assign your classroom under Assign class teachers.</p>' : ''}
+    ${assignedClassroomRegister && !teacherClassrooms.length ? '<p>No class teacher or assistant assignment was found for this session and term. Ask Academic Management to assign your classroom under Assign class teachers.</p>' : ''}
     ${classroomRegister && !assignedClassroomRegister && !registerClassrooms.length ? '<p>No active classrooms are available in this school section. Configure them under Classrooms.</p>' : ''}
     <div class="class-register-load-controls"><label>${classroomRegister ? 'Classroom' : 'Class'}<select name="ClassId" required>${registerChoices}</select></label>
     <div class="class-register-actions"><button type="submit" data-class-register-reload title="Fetch the latest scores for the selected ${classroomRegister ? 'classroom' : 'class'}">Load / refresh scores</button><button type="button" class="secondary" data-class-register-print disabled>Preview / print</button></div></div>
@@ -18107,7 +18107,7 @@ function bindAcademicManagement() {
   panelEl.querySelector('[data-academic-diary]')?.addEventListener('click', async () => {
     try {
       if (!academicManagementFilters.sessionId || !academicManagementFilters.termId) throw new Error('Choose a session and term first.');
-      const { openAcademicDiary } = await import('./academic-diary.js');
+      const { openAcademicDiary } = await import('./academic-diary.js?v=20261028-assistant-classroom-access');
       await openAcademicDiary({ request: academicManagementRequest,
         context: { SchoolSection: academicManagementFilters.section, SessionId: academicManagementFilters.sessionId, TermId: academicManagementFilters.termId },
         schoolName: academicManagementData?.reportProfile?.SchoolName || currentUser?.organizationName || currentUser?.OrganisationName || 'School' });

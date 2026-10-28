@@ -59,7 +59,7 @@ export function diaryAccess(context, user, input) {
   const ownSubjects = permissions.fullAcademicAccess === true ? subjects.map(row => row.SubjectId) : [...new Set(teachers.filter(row => lower(row.AllocationRole) === 'subject teacher'
     && lower(row.TeacherUsername) === username(user)).map(row => row.SubjectId))];
   return { classrooms, classroom, subjects, ownSubjects, reviewer,
-    compiler: permissions.fullAcademicAccess === true || teachers.some(row => row.ArmId === input.ArmId && lower(row.AllocationRole) === 'form teacher'
+    compiler: permissions.fullAcademicAccess === true || teachers.some(row => row.ArmId === input.ArmId && ['form teacher', 'assistant teacher'].includes(lower(row.AllocationRole))
       && lower(row.TeacherUsername) === username(user)) };
 }
 
@@ -188,7 +188,7 @@ export async function handleDiary(context, env, user, input, action, io = { getD
     result = await commit(io, env, DIARY_COLLECTIONS.week, weekId, week, { ...draft, WeekEnding,
       Entries: [...draft.Entries.filter(row => row.SubjectId !== entry.SubjectId), entry] }, user, action);
   } else if (action === 'returnacademicdiaryentry') {
-    if (!access.compiler) throw fail('Only the assigned class teacher may return a subject entry.', 403);
+    if (!access.compiler) throw fail('Only the assigned class teacher or assistant may return a subject entry.', 403);
     assertRevision(week, input);
     if (!week || ['Submitted', 'Approved'].includes(week.Status)) throw fail('Return the compiled diary through Academic Management first.', 409);
     const reason = clean(input.Reason);
@@ -197,7 +197,7 @@ export async function handleDiary(context, env, user, input, action, io = { getD
     result = await commit(io, env, DIARY_COLLECTIONS.week, weekId, week, { ...week,
       Entries: week.Entries.map(row => row.SubjectId === selected.SubjectId ? { ...row, Status: 'Returned', ReturnReason: reason } : row) }, user, action, reason);
   } else if (action === 'submitacademicdiary') {
-    if (!access.compiler) throw fail('Only the assigned class teacher may compile and submit this diary.', 403);
+    if (!access.compiler) throw fail('Only the assigned class teacher or assistant may compile and submit this diary.', 403);
     assertRevision(week, input);
     if (!week || !['Draft', 'Returned'].includes(week.Status)) throw fail('Choose a draft or returned diary to compile.', 409);
     const missing = access.subjects.filter(subject => !week.Entries.some(row => row.SubjectId === subject.SubjectId && row.Status === 'Submitted'));

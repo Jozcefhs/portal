@@ -81,6 +81,20 @@ test('unassigned, inactive, subject-only and wrong-period classrooms fail before
   }
 });
 
+test('assistant class teachers receive the same read-only classroom report with the same bounded reads', async () => {
+  const lead = fixture(), assistant = fixture();
+  assistant.state.teacherAllocations[0].AllocationRole = 'Assistant Teacher';
+  const before = structuredClone({state:assistant.state,records:assistant.records});
+  assert.deepEqual(await assistant.load(), await lead.load());
+  assert.deepEqual(assistant.calls, lead.calls);
+  assert.deepEqual({state:assistant.state,records:assistant.records}, before);
+  for (const patch of [{Status:'Archived'},{SessionId:'old'},{TermId:'old'},{ClassId:'other'},{ArmId:'b'},{TeacherUsername:'other'}]) {
+    const f = fixture(); Object.assign(f.state.teacherAllocations[0],{AllocationRole:'Assistant Teacher',...patch});
+    await assert.rejects(f.load(),{code:'ACADEMIC_CLASSROOM_REGISTER_FORBIDDEN'});
+    assert.equal(f.calls.length,0);
+  }
+});
+
 test('branch and section collisions, historic terms and inactive students cannot enter the report', async () => {
   const f = fixture();
   for (const patch of [{ BranchId: 'private' }, { SchoolSection: 'primary' }, { SessionId: 'old' }, { TermId: 'old' }, { Status: 'Expelled' }]) {
@@ -178,10 +192,16 @@ test('web academic managers select classrooms and receive a read-only form', () 
 });
 
 test('teacher interface exposes classroom selection and printing without score mutation buttons', () => {
-  const f = uiFixture(); f.data.permissions.canViewClassroomScores = true;
-  f.rows.teacherAllocations.push({ SessionId: 'session', TermId: 'term', ClassId: 'class', ArmId: 'arm', AllocationRole: 'Form Teacher' });
-  const html = renderWorkspace('scorebook', f).match(/<form[^>]*data-classroom-register[^>]*>[\s\S]*?<\/form>/)[0];
-  assert.match(html, /My classroom scores/); assert.match(html, /Grade 10 \/ Brilliance/);
-  assert.match(html, /Preview \/ print/); assert.match(html, /data-class-id="class"/);
-  assert.doesNotMatch(html, /data-class-register-reactivate|data-academic-score-status|contenteditable/);
+  const forms=[];
+  for (const AllocationRole of ['Form Teacher','Assistant Teacher']) {
+    const f = uiFixture(); f.data.permissions.canViewClassroomScores = true;
+    f.rows.arms.push({ArmId:'private',ClassId:'class',Name:'Unassigned',IsClassroom:true});
+    f.rows.teacherAllocations.push({ SessionId: 'session', TermId: 'term', ClassId: 'class', ArmId: 'arm', AllocationRole });
+    const html = renderWorkspace('scorebook', f).match(/<form[^>]*data-classroom-register[^>]*>[\s\S]*?<\/form>/)[0];
+    assert.match(html, /My classroom scores/); assert.match(html, /Grade 10 \/ Brilliance/);
+    assert.match(html, /Preview \/ print/); assert.match(html, /data-class-id="class"/);
+    assert.doesNotMatch(html, /data-class-register-reactivate|data-academic-score-status|contenteditable|Unassigned/);
+    forms.push(html);
+  }
+  assert.equal(forms[0],forms[1]);
 });

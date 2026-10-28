@@ -52,6 +52,40 @@ test('class access uses assigned teachers; reviewers see classes but cannot impe
   await assert.rejects(f.request('math.teacher'), /assigned to you/);
 });
 
+test('assistant class teachers have the same diary access within their active classroom and period', () => {
+  const f = fixture(), assignment = {...f.period,TeacherUsername:'assistant',AllocationRole:'Assistant Teacher'};
+  f.state.teacherAllocations.push(assignment);
+  const access = user => diaryAccess(f.context(false),{username:user},f.period);
+  assert.deepEqual(access('assistant'),access('class.teacher'));
+  assert.equal(access('assistant').compiler,true);
+  assert.equal(access('assistant').reviewer,false);
+  assert.deepEqual(access('assistant').ownSubjects,[]);
+  for (const patch of [{Status:'Archived'},{TermId:'old'},{SessionId:'old'},{ClassId:'other'},{ArmId:'other'},{TeacherUsername:'other'}]) {
+    f.state.teacherAllocations[f.state.teacherAllocations.length-1]={...assignment,...patch};
+    assert.throws(()=>access('assistant'),{status:403});
+  }
+});
+
+test('assistants can return entries and compile the shared diary with preserved history and retry guards', async () => {
+  const f = fixture();
+  f.state.teacherAllocations.push({...f.period,TeacherUsername:'assistant',AllocationRole:'Assistant Teacher'});
+  await f.request('math.teacher','submitAcademicDiaryEntry',{SubjectId:'math',WorkCompleted:'Fractions'});
+  await f.request('assistant','returnAcademicDiaryEntry',{SubjectId:'math',Version:1,Reason:'Explain coverage'});
+  await f.request('math.teacher','submitAcademicDiaryEntry',{SubjectId:'math',Version:2,WorkCompleted:'Equivalent fractions'});
+  await f.request('english.teacher','submitAcademicDiaryEntry',{SubjectId:'english',Version:3,WorkCompleted:'Grammar'});
+  const compiled = await f.request('assistant','submitAcademicDiary',{Version:4});
+  assert.equal(compiled.diary.Weekly.Compiled.By,'assistant');
+  assert.equal(compiled.diary.Weekly.Status,'Submitted');
+  assert.equal(compiled.diary.Weekly.Entries.length,2);
+  assert.equal(f.commits.at(-1)[1].data.Previous.Status,'Draft');
+  const commits = f.commits.length;
+  await assert.rejects(f.request('assistant','submitAcademicDiary',{Version:4}),/changed/);
+  await assert.rejects(f.request('class.teacher','submitAcademicDiary',{Version:5}),/draft or returned/);
+  await assert.rejects(f.request('assistant','approveAcademicDiary',{Version:5}),/Academic Management/);
+  assert.equal(f.commits.length,commits);
+  assert.deepEqual((await f.request('class.teacher')).diary.Weekly,compiled.diary.Weekly);
+});
+
 test('only web ICT can perform the complete diary workflow without teacher assignments', async () => {
   const f = fixture();
   const ict = { username: 'ict', role: 'ICT', edition: 'school', allowedSections: ['academics'] };

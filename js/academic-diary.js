@@ -62,7 +62,7 @@ export async function openAcademicDiary({ request, context, schoolName = '' }) {
     .academic-diary-dialog table{border-collapse:collapse;width:100%;min-width:480px}.academic-diary-dialog th,.academic-diary-dialog td{padding:10px;border:1px solid #d3deea;text-align:left;white-space:pre-wrap;overflow-wrap:anywhere}
     @media(max-width:650px){.academic-diary-dialog form[data-load]{grid-template-columns:1fr 1fr}.academic-diary-dialog [data-scheme-row]{flex-wrap:wrap}}
     </style><header><h2>Teaching diary</h2><button type="button" data-close>Close</button></header>
-    <p>A separate diary for each class and arm. Subject teacher → class teacher compilation → Academic Management approval.</p><p role="status" data-status>Loading classrooms…</p>
+    <p>A separate diary for each class and arm. Subject teacher → class teacher or assistant compilation → Academic Management approval.</p><p role="status" data-status>Loading classrooms…</p>
     <form data-load><label>Class / arm<select name="Classroom" required></select></label>
     <label>Subject<select name="SubjectId"><option value="">All subjects</option></select></label>
     <label>Week<input name="Week" type="number" min="1" max="53" value="1" required></label><button>Load diary</button></form><section data-body></section>`;

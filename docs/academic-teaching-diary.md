@@ -2,7 +2,15 @@
 
 Delivery: the class/arm correction is deployed on the web and included in desktop v3.1.45. The installer is uploaded with a verified SHA-256 digest before the public update feed is advanced. Existing saved records are not migrated or merged.
 
-The class-wide diary change is corrected: weekly records and schemes are once again keyed by class **and arm**. Selecting a classroom shows only its subjects and permissions. The original arm-based record IDs, saved work, approval states, history and payment targets are reused without migration. A form teacher can compile only the assigned arm's diary.
+The class-wide diary change is corrected: weekly records and schemes are once again keyed by class **and arm**. Selecting a classroom shows only its subjects and permissions. The original arm-based record IDs, saved work, approval states, history and payment targets are reused without migration. A form teacher or assigned assistant can compile only the assigned arm's diary.
+
+The assistant-access update is tested and prepared for web deployment; it is not
+part of the desktop release described above. Active assistants have the same
+classroom score register (including preview/print), student subject-choice and
+diary compilation access as the class teacher. Assignment, session, term, branch
+and school-section boundaries still apply. Existing attendance, timetable and
+draft-result-comment access already includes assistants. Permissions use the
+saved allocations; no migration, record copying or extra database reads is needed.
 
 Records saved during the class-wide version remain untouched and are not copied into each arm. Academic Management can inspect and print them through **Earlier class-wide records (read-only)**. Existing pending payments still target the original reserved record, never a different arm. Old class-only clients must refresh/update and select an arm before loading or saving.
 
@@ -11,7 +19,7 @@ In Academic Management, select the school section, session and term, then open *
 1. Select a class **and arm**, week, then load. Select a subject and load again.
 2. The allocated subject teacher prepares that term's scheme of work (week, theme/topic, content). Select the other terms in Academic Management to prepare the full session.
 3. Each allocated subject teacher saves and submits their own weekly work, including the common week-ending date. If a lesson was not held, explain that in the work-completed field rather than reporting it as completed.
-4. The assigned Form Teacher compiles and submits when all offered subjects are submitted. Assistant teachers do not automatically gain compiler authority.
+4. The assigned Form Teacher or Assistant Teacher compiles and submits when all offered subjects are submitted. Either can return a submitted subject entry with a reason before compilation. The actual acting officer is recorded in history.
 5. Academic reviewers approve, or return with a reason. Submitted entries lock; returning preserves previous versions in immutable history. Concurrent edits require reload instead of silently overwriting another teacher.
 
 Web companion exception: ICT users with Academic Management access may prepare

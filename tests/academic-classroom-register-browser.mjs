@@ -8,7 +8,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const input = fixture();
 input.data.permissions.canViewClassroomScores = true;
 input.rows.arms.push({ ArmId: 'second', ClassId: 'class', Name: 'Excellence', IsClassroom: true });
-input.rows.teacherAllocations.push(...['arm', 'second'].map(ArmId => ({ SessionId: 'session', TermId: 'term', ClassId: 'class', ArmId, AllocationRole: 'Form Teacher' })));
+input.rows.teacherAllocations.push(...['arm', 'second'].map(ArmId => ({ SessionId: 'session', TermId: 'term', ClassId: 'class', ArmId, AllocationRole: ArmId === 'arm' ? 'Assistant Teacher' : 'Form Teacher' })));
 const form = renderWorkspace('scorebook', input).match(/<form[^>]*data-classroom-register[^>]*>[\s\S]*?<\/form>/)[0];
 const Columns = ['math', 'eng', 'science'].map(SubjectId => ({ Id: SubjectId, SubjectId,
   SubjectName: { math: 'Mathematics', eng: 'English Language', science: 'Basic Science' }[SubjectId], TestId: 'ca1', TestName: 'CA1' }));

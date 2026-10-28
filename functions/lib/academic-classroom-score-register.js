@@ -5,14 +5,14 @@ import { buildAcademicClassScoreRegister } from './academic-class-score-register
 const clean = value => String(value ?? '').trim();
 const lower = value => clean(value).toLowerCase();
 const active = row => !['inactive', 'archived', 'withdrawn', 'transferred', 'graduated', 'expelled'].includes(lower(row.Status));
-const forbidden = () => Object.assign(new Error('Choose a classroom assigned to you as class teacher for this session and term.'),
+const forbidden = () => Object.assign(new Error('Choose a classroom assigned to you as class teacher or assistant for this session and term.'),
   { status: 403, code: 'ACADEMIC_CLASSROOM_REGISTER_FORBIDDEN' });
 
 // Exact classroom assignments only. Subject allocations and historic ownership
 // never confer access to another teacher's entire classroom.
 export function academicTeacherScoreClassrooms(state, username, input = {}) {
   const assignments = (state.teacherAllocations || []).filter(row => active(row)
-    && lower(row.TeacherUsername) === lower(username) && lower(row.AllocationRole) === 'form teacher'
+    && lower(row.TeacherUsername) === lower(username) && ['form teacher', 'assistant teacher'].includes(lower(row.AllocationRole))
     && row.SessionId === input.SessionId && row.TermId === input.TermId && clean(row.ArmId));
   return (state.arms || []).filter(arm => active(arm) && assignments.some(row =>
     row.ArmId === arm.ArmId && row.ClassId === arm.ClassId));

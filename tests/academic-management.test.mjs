@@ -1135,8 +1135,23 @@ test('class teachers configure subjects only for their own active classroom and 
   assert.equal(academicCanConfigureClassStudentSubjects(teacher, [{ ...allocation, AllocationRole: 'Subject Teacher' }], target), false);
   assert.equal(academicCanConfigureClassStudentSubjects({ ...teacher, username: 'ben' }, [allocation], target), false);
   assert.equal(academicCanConfigureClassStudentSubjects({ ...teacher, role: 'Principal' }, [], target), true);
-  assert.match(librarySource, /Only this classroom’s assigned class teacher or an authorised administrator/);
-  assert.match(adminSource, /Only classrooms where you are the assigned class teacher are shown/);
+  assert.match(librarySource, /Only this classroom’s assigned class teacher, assistant or an authorised administrator/);
+  assert.match(adminSource, /Only classrooms where you are the assigned class teacher or assistant are shown/);
+});
+
+test('assistant and class teacher subject-choice permissions match without widening classroom scope', () => {
+  const teacher = {edition:'school',role:'Teacher',username:'ASSISTANT',allowedSections:['academics']};
+  const target = {SessionId:'session',TermId:'term',ClassId:'class',ArmId:'arm'};
+  for (const AllocationRole of ['Form Teacher','Assistant Teacher','assistant teacher']) {
+    const allocation = {...target,TeacherUsername:'assistant',AllocationRole,Status:'Active'};
+    assert.equal(academicCanConfigureClassStudentSubjects(teacher,[allocation],target),true);
+    for (const field of ['SessionId','TermId','ClassId','ArmId']) {
+      assert.equal(academicCanConfigureClassStudentSubjects(teacher,[allocation],{...target,[field]:'other'}),false);
+    }
+    assert.equal(academicCanConfigureClassStudentSubjects(teacher,[{...allocation,Status:'Archived'}],target),false);
+    assert.equal(academicCanConfigureClassStudentSubjects({...teacher,username:'other'},[allocation],target),false);
+  }
+  assert.equal(academicCanConfigureClassStudentSubjects({...teacher,allowedSections:[]},[],target),false);
 });
 
 test('class-teacher student-subject form follows the selected period and remains discoverable', () => {
@@ -1184,13 +1199,15 @@ test('class-teacher student-subject form follows the selected period and remains
   assert.match(html, /data-academic-arm-subject-register/);
   assert.match(html, /name="SessionId" value="current-session"/);
   assert.match(html, /name="TermId" value="current-term"/);
-  assert.match(html, /Only classrooms where you are the assigned class teacher are shown/);
+  assert.match(html, /Only classrooms where you are the assigned class teacher or assistant are shown/);
   assert.match(html, /trade-1/);
   assert.match(html, /<button type="submit">Save subject selections for this arm<\/button>/);
+  const assistantHtml = render(data, {...rows, teacherAllocations:rows.teacherAllocations.map(row=>({...row,AllocationRole:'Assistant Teacher'}))}, false);
+  assert.equal(assistantHtml,html,'An assigned assistant must see the same subject-choice form');
   assert.match(adminSource, /\['students', 'My students & subjects'\]/);
   assert.match(adminSource, /label: 'Student subjects'/);
   const missing = render(data, { ...rows, teacherAllocations: [] }, true);
-  assert.match(missing, /No active Form Teacher assignment is linked to your account/);
+  assert.match(missing, /No active class teacher or assistant assignment is linked to your account/);
   assert.match(missing, /data-academic-arm-subject-info/);
 });
 
