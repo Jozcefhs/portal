@@ -6,6 +6,7 @@ import { webcrypto } from 'node:crypto';
 import * as management from '../functions/lib/academic-management.js';
 import * as results from '../functions/lib/academic-term-results.js';
 import * as studentStatus from '../functions/lib/student-academic-status.js';
+import * as armTransfer from '../functions/lib/academic-arm-transfer.js';
 import { normalizeClassKey, canonicalConfiguredClass } from '../functions/lib/class-names.js';
 import { schoolSectionFor, safeScopeId } from '../functions/lib/school-scope.js';
 import { enforceActorBranch } from '../functions/lib/branch-scope.js';
@@ -25,7 +26,20 @@ const member = { ...scope, ...period, RecordId: 'legacy-member', MembershipId: '
   ClassId: 'grade9', ArmId: 'merit', SchoolStage: 'junior-secondary', SubjectIds: ['math'], CoreSubjectIds: ['math'],
   TradeSubjectIds: [], OptionalSubjectIds: [], DepartmentId: '', CurriculumStatus: 'Complete', __updateTime: 'member-1' };
 const score = { ...scope, ...period, ScoreId: 'score', StudentRef: profile.AdmissionNo, ClassId: 'grade9', ArmId: 'merit', SubjectId: 'math',
+  SheetId: 'source-sheet', AssessmentRevisionId: 'scheme',
   ComponentScores: [{ ComponentId: 'ca1', State: 'Numeric', RawScore: 75, Maximum: 100 }], __updateTime: 'score-1' };
+
+function assertMovedScores(h, original = [score]) {
+  assert.equal(h.state.studentScores.length, original.length);
+  for (const previous of original) {
+    const current = h.state.studentScores.find(row => row.ScoreId === previous.ScoreId);
+    assert.equal(current.ArmId, 'brilliance');
+    assert.notEqual(current.SheetId, previous.SheetId);
+    for (const [field, value] of Object.entries(previous)) {
+      if (!['ArmId', 'SheetId', '__updateTime'].includes(field)) assert.deepEqual(current[field], value, field);
+    }
+  }
+}
 
 function harness({ user = actor, assessed = true, members = [member] } = {}) {
   const state = {
@@ -37,14 +51,18 @@ function harness({ user = actor, assessed = true, members = [member] } = {}) {
     subjects: [{ ...scope, SubjectId: 'math', Name: 'Mathematics' }], departments: [], teacherAllocations: [],
     offerings: ['grade9', 'grade8'].map(ClassId => ({ ...scope, ...period, ClassId, SubjectId: 'math' })),
     studentMemberships: clone(members), studentScores: assessed ? [clone(score)] : [], termResults: [],
+    scoreSheets: [{ ...scope, ...period, ClassId: 'grade9', ArmId: 'merit', SheetId: 'source-sheet', SubjectId: 'math', Status: 'Draft',
+      AssessmentRevisionId: 'scheme', AssessmentComponents: [{ Id: 'ca1', Name: 'CA1', MaximumScore: 100, WeightPercentage: 100, Required: true }],
+      GradeBands: [{ Grade: 'A', MinimumPercentage: 0, MaximumPercentage: 100 }], __updateTime: 'sheet-1' }],
     studentMovements: [{ MovementId: 'old-movement', Reason: 'Original allocation' }], audit: [],
     attendance: [{ StudentRef: profile.AdmissionNo, Status: 'Present', ArmId: 'merit' }]
   };
   const commits = [], directWrites = [];
   let revision = 1;
   const keyFor = path => path === profile.__scopePath ? 'profiles' : Object.keys(management.ACADEMIC_MANAGEMENT_COLLECTIONS).find(key => management.ACADEMIC_MANAGEMENT_COLLECTIONS[key] === path);
-  const idOf = row => row.__id || row.RecordId || row.MembershipId || row.ResultId || row.MovementId;
-  const context = vm.createContext({ ...management, ...results, ...studentStatus, crypto: webcrypto, TextEncoder, TextDecoder,
+  const idOf = row => row.__id || row.RecordId || row.MembershipId || row.ResultId || row.MovementId || row.ScoreId || row.SheetId;
+  const context = vm.createContext({ ...management, ...results, ...studentStatus, ...armTransfer, crypto: webcrypto, TextEncoder, TextDecoder,
+    getDocuments: async (_env, path, ids) => ids.map(id => clone((state[keyFor(path)] || []).find(row => idOf(row) === id) || null)),
     normalizeClassKey, canonicalConfiguredClass, schoolSectionFor, safeScopeId, enforceActorBranch,
     getSchoolStructure: async () => ({ ActiveBranchId: 'main', Branches: [{ Id: 'main' }, { Id: 'annex' }], Sections: ['secondary', 'primary'] }),
     queryCollection: async (_env, path, options) => clone((state[keyFor(path)] || []).filter(row => options.filters.every(filter =>
@@ -116,13 +134,13 @@ test('profile arm change atomically updates the legacy membership and history, p
   assert.equal(h.current().AcademicArmId, 'brilliance');
   assert.equal(h.current().ParentPhone, 'new-phone');
   for (const key of ['WalletCardId', 'MedicalCondition', 'FeeBalance']) assert.equal(h.current()[key], profile[key]);
-  assert.deepEqual(h.state.studentScores, history.scores);
+  assertMovedScores(h, history.scores);
   assert.deepEqual(h.state.attendance, history.attendance);
   assert.deepEqual(h.state.studentMovements[0], history.movement);
   assert.equal(h.state.studentMovements[1].MovementType, 'Arm Transfer');
   assert.equal(h.commits.length, 1);
   assert.equal(h.directWrites.length, 0);
-  assert.ok(h.commits[0].every(write => write.collectionPath !== 'academicStudentScores'));
+  assert.ok(h.commits[0].some(write => write.collectionPath === 'academicStudentScores'));
   const replay = await h.save({ ClassArm: 'Brilliance' });
   assert.equal(replay.status, 200);
   assert.equal(h.state.studentMemberships.length, 1);
@@ -154,7 +172,7 @@ test('ICT profile transfer supersedes pending requests and duplicate copies in t
   assert.equal(history.length, 2);
   for (const row of history) assert.deepEqual(row.OriginalSubjectChangeRequest, pendingRequest);
   assert.deepEqual(h.state.studentMovements[0], original.studentMovements[0]);
-  assert.deepEqual(h.state.studentScores, original.studentScores);
+  assertMovedScores(h, original.studentScores);
   assert.deepEqual(h.state.attendance, original.attendance);
   for (const key of ['FeeBalance', 'WalletCardId', 'MedicalCondition']) assert.equal(h.current()[key], profile[key]);
 });
@@ -229,10 +247,10 @@ test('only confirmed duplicate copies are retired, without deleting historical d
   const h = harness({ members: [member, duplicate, { ...duplicate, RecordId: 'old-term', MembershipId: 'old-term', TermId: 'old-term' }] });
   const response = await h.save({ ClassArm: 'Brilliance' });
   assert.equal(response.status, 200, response.data.message);
-  assert.equal(h.state.studentMemberships[1].Status, 'Archived');
+  assert.equal(h.state.studentMemberships[1].Status, 'Inactive');
   assert.equal(h.state.studentMemberships[1].Notes, 'Keep history');
   assert.equal(h.state.studentMemberships[2].Status, 'Active');
-  assert.deepEqual(h.state.studentScores, [score]);
+  assertMovedScores(h);
   const ambiguous = harness({ members: [member, duplicate] });
   ambiguous.current().AcademicMembershipId = '';
   assert.equal((await ambiguous.save({ ClassArm: 'Brilliance' })).status, 409);
@@ -258,7 +276,7 @@ test('stale forms and concurrent profile, membership, duplicate or result edits 
   for (const target of ['profile', 'membership', 'duplicate', 'result']) {
     const h = harness();
     if (target === 'duplicate') h.state.studentMemberships.push({ ...member, RecordId: 'duplicate', MembershipId: 'duplicate', __updateTime: 'duplicate-1' });
-    if (target === 'result') h.state.termResults.push({ ...scope, ...period, ResultId: 'result', RecordId: 'result', StudentRef: profile.AdmissionNo, Status: 'Draft', __updateTime: 'result-1' });
+    if (target === 'result') h.state.termResults.push({ ...scope, ...period, ResultId: 'result', RecordId: 'result', ClassId: 'grade9', ArmId: 'merit', StudentRef: profile.AdmissionNo, Status: 'Draft', __updateTime: 'result-1' });
     const commit = h.context.batchCommitDocuments;
     h.context.batchCommitDocuments = (...args) => {
       const row = target === 'profile' ? h.current() : target === 'result' ? h.state.termResults[0] : h.state.studentMemberships[target === 'duplicate' ? 1 : 0];

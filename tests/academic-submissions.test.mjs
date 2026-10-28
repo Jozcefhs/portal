@@ -206,3 +206,20 @@ test('all submission types route through server guard; drafts and CBT result upl
   const sync = source.slice(source.indexOf('export async function syncAcademicCbtScores'), source.indexOf('export const ACADEMIC_CBT_OPTION_STYLES'));
   assert.doesNotMatch(sync, /commitAcademicSubmission/);
 });
+
+
+test('large attendance registers retain their transfer guards in one atomic submission',async()=>{
+  const f=fixture(), commits=[];
+  const commit=f.io.batchCommitDocuments;
+  f.io.batchCommitDocuments=(env,writes,options)=>{commits.push(options);return commit(env,writes);};
+  const writes=Array.from({length:600},(_,i)=>({collectionPath:'academicStudentAttendance',documentId:`guarded-${i}`,exists:false,data:{StudentRef:`S${i}`}}));
+  await commitAcademicSubmission(f.env,context,user,{},'attendance',writes,f.io);
+  assert.equal(f.commits.length,1);assert.equal(f.commits[0].length,600);assert.equal(commits[0].allowLargeAtomicBatch,true);
+  const paid=fixture();await paid.enable([{...rule,RecordType:'attendance'}]);
+  const pending=await paid.reserve('attendance',writes);
+  assert.equal(pending.Writes.length,600);assert.equal(paid.docs.has('academicStudentAttendance/guarded-0'),false);
+  paid.setPaid(pending);
+  const result=await verifySubmissionPayment(paid.env,pending.Reference,paid.io);
+  assert.equal(result.submission.Status,'Submitted');
+  assert.equal(paid.docs.has('academicStudentAttendance/guarded-599'),true);
+});

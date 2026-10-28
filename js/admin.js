@@ -14804,7 +14804,7 @@ function academicCurrentMembershipRegisterRows(rows = []) {
   // Explicitly retired duplicates stay in storage and audit history, not in the
   // current classroom register. Profile-status exits/absences remain in movement
   // history and the Students register, not the active classroom list.
-  return rows.filter((row) => !(clean(row.Status).toLowerCase() === 'archived' && clean(row.SupersededByMembershipId))
+  return rows.filter((row) => !(['archived', 'inactive'].includes(clean(row.Status).toLowerCase()) && clean(row.SupersededByMembershipId))
     && !(row.ProfileStatusManaged === true && ['inactive', 'withdrawn'].includes(clean(row.Status).toLowerCase())));
 }
 
@@ -14864,8 +14864,8 @@ function academicStudentWorkspace(data, rows) {
       <label>Find ${learner.singular}<input type="search" data-academic-membership-search placeholder="Search by name, admission number or classroom" autocomplete="off"><small data-academic-membership-search-status aria-live="polite"></small></label>
       <label>Current membership<select name="RecordId" required>${academicSelectOptions(movableMemberships, '', (row) => `${academicLabel(data.students, row.StudentRef, row.StudentRef)} · ${row.StudentRef} — ${academicLabel(rows.classes, row.ClassId)} / ${academicLabel(rows.arms, row.ArmId)}${clean(row.Status).toLowerCase() === 'withdrawn' ? ' — Withdrawn' : ''}`, `Choose ${learner.singular} membership`)}</select></label>
       ${periodFields}${targetFields}
-      <label class="academic-checkbox-option"><input type="checkbox" name="ResetSubjectSelections" value="true">Reset subject selections for the destination classroom</label>
-      <small class="muted">Use this when the destination has different Core subjects. Old scores and movement history are kept, never deleted or copied. Compulsory destination Core subjects are applied; choose mixed-class Core, Trade and Optional subjects after the transfer. ${data.permissions?.fullAcademicAccess ? 'ICT transfers are applied directly in the web companion without a second administrator’s approval. Published results still require controlled reopening.' : "Existing assessment history requires another authorised administrator's approval under Student subjects before the student moves."}</small>
+      <label class="academic-checkbox-option"><input type="checkbox" name="ResetSubjectSelections" value="true">Reset subject selections when changing to a different class</label>
+      <small class="muted">Moving between arms of the same class carries saved subjects, scores, results and attendance with the student. The active student record is retained; no student is archived. Subject reset applies only when changing to a different class. ${data.permissions?.fullAcademicAccess ? 'ICT transfers are applied directly in the web companion without a second administrator’s approval. Same-class arm transfers preserve published results and their existing parent links.' : "Existing assessment history requires another authorised administrator's approval under Student subjects before the student moves."}</small>
       <label>Effective date<input type="date" name="EffectiveDate" value="${new Date().toISOString().slice(0, 10)}" required></label>
       <label>Reason<textarea name="Reason" rows="3" required placeholder="Explain the approved class, arm or department change"></textarea></label>
       <button type="submit">Transfer or reassign ${learner.singular}</button>
@@ -19955,8 +19955,20 @@ function bindAcademicManagement() {
   }));
   const movementForm = panelEl.querySelector('[data-academic-workflow="moveAcademicStudentMembership"]');
   bindAcademicMembershipSearch(movementForm);
+  const syncTransferSubjectReset = () => {
+    const reset = movementForm?.elements.ResetSubjectSelections;
+    if (!reset) return;
+    const member = academicFind(academicManagementData?.studentMemberships || [], movementForm.elements.RecordId?.value);
+    const sameClass = !member || member.ClassId === movementForm.elements.ClassId?.value;
+    reset.disabled = sameClass;
+    if (sameClass) reset.checked = false;
+    reset.closest('label').hidden = sameClass;
+  };
+  movementForm?.addEventListener('change', syncTransferSubjectReset);
+  syncTransferSubjectReset();
   movementForm?.elements.RecordId?.addEventListener('change', (event) => {
     populateAcademicMovementForm(movementForm, academicFind(academicManagementData?.studentMemberships || [], event.target.value));
+    syncTransferSubjectReset();
   });
   panelEl.querySelectorAll('[data-academic-reset]').forEach((button) => button.addEventListener('click', () => {
     const form = panelEl.querySelector(`[data-academic-form="${button.dataset.academicReset}"]`);
@@ -19991,6 +20003,7 @@ function bindAcademicManagement() {
     showAcademicManagementTask('students', 'transfer');
     movementForm?.resetMembershipSearch?.();
     populateAcademicMovementForm(movementForm, record);
+    syncTransferSubjectReset();
     movementForm?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }));
   panelEl.querySelectorAll('[data-academic-withdraw], [data-academic-reinstate]').forEach((button) => button.addEventListener('click', async () => {

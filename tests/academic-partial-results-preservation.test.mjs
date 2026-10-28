@@ -5,6 +5,7 @@ import {readFile} from 'node:fs/promises';
 import {defaultAcademicPolicy} from '../functions/lib/academic-policy.js';
 import {calculateAcademicTermResultDrafts,calculateAcademicMidTermResultDrafts,ACADEMIC_TERM_RESULT_STATUSES,academicTermResultTransition} from '../functions/lib/academic-term-results.js';
 import {academicPolicyIssues} from '../functions/lib/academic-policy.js';
+import {academicScoreMembershipGuards} from '../functions/lib/academic-management.js';
 const source=await readFile(new URL('../functions/lib/academic-management.js',import.meta.url),'utf8');
 function fixture(){
   const policy=defaultAcademicPolicy();policy.Position.Mode='exact-overall';policy.MidTerm={Enabled:true,ComponentIds:['ca']};
@@ -12,7 +13,7 @@ function fixture(){
   policy.Assessment.Components=[{Id:'ca',Name:'CA1',MaximumScore:100,WeightPercentage:100,Required:true}];
   policy.Assessment.GradeBands=[{Grade:'A',MinimumPercentage:0,MaximumPercentage:100}];
   const period={SessionId:'s1',TermId:'t1',ClassId:'c1',ArmId:'a1',ResultType:'Mid-Term'};
-  const state={studentMemberships:['good','pending','published'].map(StudentRef=>({...period,StudentRef,SubjectIds:['math'],Status:'Active'})),
+  const state={studentMemberships:['good','pending','published'].map(StudentRef=>({...period,StudentRef,MembershipId:`membership-${StudentRef}`,__updateTime:`membership-${StudentRef}-v1`,SubjectIds:['math'],Status:'Active'})),
     subjects:[{SubjectId:'math',Name:'Mathematics'}],scoreSheets:[{...period,SheetId:'sheet',SubjectId:'math',Status:'Draft',AssessmentRevisionId:'r1'}],
     studentScores:[{...period,SheetId:'sheet',StudentRef:'good',SubjectId:'math',AssessmentRevisionId:'r1',ComponentScores:[{ComponentId:'ca',State:'Numeric',RawScore:75}]}],
     studentAttendance:[],schoolCalendars:[],termResults:[
@@ -24,7 +25,7 @@ function fixture(){
   const sandbox=vm.createContext({clean:v=>String(v??'').trim(),lower:v=>String(v??'').trim().toLowerCase(),
     failure:(message,status=409,code,extra={})=>Object.assign(new Error(message),{status,code,...extra}),statusActive:r=>r.Status==='Active',
     academicTermResultContext:async()=>context,academicOperationalContext:async()=>context,
-    calculateAcademicTermResultDrafts,calculateAcademicMidTermResultDrafts,ACADEMIC_TERM_RESULT_STATUSES,academicTermResultTransition,academicPolicyIssues,
+    calculateAcademicTermResultDrafts,calculateAcademicMidTermResultDrafts,ACADEMIC_TERM_RESULT_STATUSES,academicTermResultTransition,academicPolicyIssues,academicScoreMembershipGuards,
     notifyAcademicResultLifecycle:async()=>{},
     academicTermResultId:(...args)=>`result-${args[5]}`,academicResultReference:async id=>id,
     findById:(rows,id)=>rows.find(row=>row.ResultId===id),nowIso:()=> '2026-10-26T12:00:00Z',actorName:()=> 'Reviewer',actorUsername:()=> 'reviewer',
@@ -48,7 +49,12 @@ test('partial calculation preserves published snapshots, pending draft marks and
   const calculated=results.find(row=>row.documentId==='result-good');assert.equal(calculated.data.OverallAverage,75);assert.equal(calculated.data.CalculationPending,false);
   const pending=results.find(row=>row.documentId==='result-pending');assert.equal(pending.data.CalculationPending,true);
   assert.deepEqual(Array.from(pending.updateMask),['CalculationPending','CalculationPendingIssues']);assert.equal('Subjects' in pending.data,false);
-  assert.ok(!f.writes.some(row=>row.documentId==='result-published'||/Scores|Memberships/.test(row.collectionPath)));
+  assert.ok(!f.writes.some(row=>row.documentId==='result-published'||/Scores/.test(row.collectionPath)));
+  const membershipWrites=f.writes.filter(row=>/Memberships/.test(row.collectionPath));
+  assert.equal(membershipWrites.length,1);
+  assert.equal(membershipWrites[0].documentId,'membership-good');
+  assert.deepEqual(membershipWrites[0].updateMask,['ScoreHistoryRevision']);
+  assert.equal(membershipWrites[0].updateTime,'membership-good-v1');
   assert.deepEqual(f.state,before);
 });
 test('a retained pending draft cannot be reviewed, approved or published',async()=>{
@@ -134,4 +140,15 @@ test('calculation returns committed results and revision tokens without reloadin
   assert.equal(response.resultCalculationUpdate.scope.ArmId,'a1');
   assert.equal(response.resultCalculationPreserved,1);assert.equal(response.resultCalculationPending.length,1);
   assert.deepEqual(f.state,before);
+});
+
+
+test('recalculation after an arm transfer retains the existing result ID and parent reference',async()=>{
+  const f=fixture();
+  f.state.termResults.push({...f.period,ResultId:'original-arm-result',ResultReference:'stable-parent-link',StudentRef:'good',
+    Status:'Calculated Draft',__updateTime:'moved-v1'});
+  await f.sandbox.calculateAcademicResultsForType({}, {},{...f.period,RevisionTokens:{'original-arm-result':'moved-v1','result-pending':'draft-v1'}},'Mid-Term');
+  const write=f.writes.find(row=>row.documentId==='original-arm-result');
+  assert.equal(write.data.ResultReference,'stable-parent-link');assert.equal(write.data.OverallAverage,75);
+  assert.equal(write.updateTime,'moved-v1');assert.ok(!f.writes.some(row=>row.documentId==='result-good'));
 });

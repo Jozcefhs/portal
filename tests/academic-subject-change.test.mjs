@@ -6,6 +6,7 @@ import { webcrypto } from 'node:crypto';
 import * as management from '../functions/lib/academic-management.js';
 import * as results from '../functions/lib/academic-term-results.js';
 import * as studentStatus from '../functions/lib/student-academic-status.js';
+import * as armTransfer from '../functions/lib/academic-arm-transfer.js';
 import { checkClassroomRemovals } from '../functions/lib/academic-classroom-removal.js';
 
 const source = await readFile(new URL('../functions/lib/academic-management.js', import.meta.url), 'utf8');
@@ -21,6 +22,7 @@ const membership = {
   DepartmentId: '', CurriculumStatus: 'Complete', SchoolStage: 'senior-secondary', __updateTime: 'rev-1'
 };
 const score = { ...period, ...scope, StudentRef: 'S1', SubjectId: 'catering', ScoreId: 'score', RecordId: 'score',
+  SheetId: 'source-sheet', AssessmentRevisionId: 'scheme',
   ComponentScores: [{ State: 'Numeric', RawScore: 0, ComponentId: 'test' }], CompletionStatus: 'Incomplete', __updateTime: 'score-rev' };
 
 function harness({ scores = [score], termResults = [] } = {}) {
@@ -34,13 +36,17 @@ function harness({ scores = [score], termResults = [] } = {}) {
       SeniorChoiceRole: ['catering', 'printing'].includes(id) ? 'Trade' : id === 'music' ? 'Optional' : '' })),
     offerings: [], studentMemberships: [clone(membership)], studentMovements: [], audit: [],
     teacherAllocations: [{ ...scope, ...period, TeacherUsername: 'teacher', AllocationRole: 'Form Teacher' }],
-    studentScores: clone(scores), termResults: clone(termResults)
+    studentScores: clone(scores), termResults: clone(termResults),
+    scoreSheets: [{ ...period, ...scope, SheetId: 'source-sheet', RecordId: 'source-sheet', SubjectId: 'catering', Status: 'Draft',
+      AssessmentRevisionId: 'scheme', AssessmentComponents: [{ Id: 'test', Name: 'Test', MaximumScore: 100, WeightPercentage: 100, Required: true }],
+      GradeBands: [{ Grade: 'A', MinimumPercentage: 0, MaximumPercentage: 100 }], __updateTime: 'sheet-rev' }]
   };
   const writes = [];
   const queries = [];
   let revision = 1;
   const keyFor = collection => Object.keys(management.ACADEMIC_MANAGEMENT_COLLECTIONS).find(key => management.ACADEMIC_MANAGEMENT_COLLECTIONS[key] === collection);
-  const context = vm.createContext({ ...management, ...results, ...studentStatus, crypto: webcrypto, TextEncoder, TextDecoder, safeScopeId: String,
+  const context = vm.createContext({ ...management, ...results, ...studentStatus, ...armTransfer, crypto: webcrypto, TextEncoder, TextDecoder, safeScopeId: String,
+    getDocuments: async (_env, collection, ids) => ids.map(id => clone((state[keyFor(collection)] || []).find(row => (row.RecordId || row.SheetId) === id) || null)),
     queryCollection: async (_env, collection, options) => {
       queries.push({ collection, options: clone(options) });
       return clone((state[keyFor(collection)] || []).filter(row => options.filters.every(filter =>
@@ -109,6 +115,18 @@ function transferHarness(options) {
   return h;
 }
 
+function assertMovedScores(h, original = [score]) {
+  assert.equal(h.state.studentScores.length, original.length);
+  for (const previous of original) {
+    const current = h.state.studentScores.find(row => row.ScoreId === previous.ScoreId);
+    assert.equal(current.ArmId, 'destination');
+    assert.notEqual(current.SheetId, previous.SheetId);
+    for (const [field, value] of Object.entries(previous)) {
+      if (!['ArmId', 'SheetId', '__updateTime'].includes(field)) assert.deepEqual(current[field], value, field);
+    }
+  }
+}
+
 function addLegacyDuplicate(h, extra = {}) {
   const row = { ...clone(membership), RecordId: 'legacy-duplicate', MembershipId: 'legacy-duplicate',
     __updateTime: 'legacy-rev', SavedNotes: 'Keep this historical record', ...extra };
@@ -116,7 +134,7 @@ function addLegacyDuplicate(h, extra = {}) {
   return row;
 }
 
-test('applied transfer archives same-student legacy duplicates atomically and preserves scores and history', async () => {
+test('applied arm transfer retains inactive duplicate aliases and moves marks without archiving a student', async () => {
   const h = transferHarness();
   const legacy = addLegacyDuplicate(h);
   const original = clone(legacy);
@@ -125,17 +143,17 @@ test('applied transfer archives same-student legacy duplicates atomically and pr
   await h.transfer({}, h.context.academicWebActor(ict));
   const archived = h.state.studentMemberships.find(row => row.MembershipId === legacy.MembershipId);
   assert.equal(h.member().ArmId, 'destination');
-  assert.equal(archived.Status, 'Archived');
+  assert.equal(archived.Status, 'Inactive');
   assert.equal(archived.SupersededByMembershipId, h.member().MembershipId);
   for (const field of ['ClassId', 'ArmId', 'SubjectIds', 'TradeSubjectIds', 'SavedNotes']) assert.deepEqual(archived[field], original[field]);
   assert.equal(unrelated.Status, 'Active');
-  assert.deepEqual(h.state.studentScores, [score]);
+  assertMovedScores(h);
   assert.equal(h.state.studentMovements[0].Reason, 'Historical allocation');
-  assert.ok(h.state.audit.some(row => row.Action === 'RETIRE DUPLICATE MEMBERSHIP'));
+  assert.ok(h.state.audit.some(row => row.Action === 'CONSOLIDATE DUPLICATE MEMBERSHIP'));
   const write = h.writes.find(row => row.documentId === legacy.MembershipId);
   assert.equal(write.updateTime, 'legacy-rev');
   assert.deepEqual(write.updateMask.sort(), ['Status', 'SupersededAt', 'SupersededByMembershipId', 'SupersededReason', 'UpdatedAt', 'UpdatedBy'].sort());
-  assert.ok(h.writes.every(row => row.collectionPath !== 'academicStudentScores' && row.operation !== 'delete'));
+  assert.ok(h.writes.every(row => row.operation !== 'delete'));
 });
 
 for (const crossClass of [false, true]) {
@@ -155,7 +173,7 @@ for (const crossClass of [false, true]) {
     assert.equal(active[0].MembershipId, 'member');
     assert.equal(active[0].ArmId, 'destination');
     assert.equal(active[0].ClassId, crossClass ? 'class-11' : 'class');
-    assert.deepEqual(h.state.studentScores, originalScore);
+    if (crossClass) assert.deepEqual(h.state.studentScores, originalScore); else assertMovedScores(h, originalScore);
     assert.equal(h.state.studentMovements.filter(row => row.FromArmId === 'arm').length, 1);
     const targets = await checkClassroomRemovals({
       input: { ClassIds: ['class'], ConfirmClassroomRemoval: true, RemoveClassrooms: [{ ArmId: 'arm', RevisionToken: 'arm-v1' }] },
@@ -164,7 +182,7 @@ for (const crossClass of [false, true]) {
       students: async () => [{ AdmissionNo: 'S1', ClassName: crossClass ? 'Grade 11' : 'Grade 10', ClassArm: 'Genius', Status: 'Active' }]
     });
     assert.deepEqual(targets, [oldArm]);
-    assert.deepEqual(h.state.studentScores, originalScore);
+    if (crossClass) assert.deepEqual(h.state.studentScores, originalScore); else assertMovedScores(h, originalScore);
     const writesBeforeRetry = h.writes.length;
     await assert.rejects(h.transfer({ ClassId: active[0].ClassId }, h.context.academicWebActor(ict)), /different classroom|different class/);
     assert.equal(h.writes.length, writesBeforeRetry);
@@ -178,8 +196,8 @@ test('pending/rejected/cancelled transfers do not retire duplicates; only approv
     await h.transfer();
     assert.equal(h.state.studentMemberships[1].Status, 'Active');
     await h.review(decision, decision === 'Cancel' ? admin : h.approver);
-    assert.equal(h.state.studentMemberships[1].Status, decision === 'Approve' ? 'Archived' : 'Active');
-    assert.deepEqual(h.state.studentScores, [score]);
+    assert.equal(h.state.studentMemberships[1].Status, decision === 'Approve' ? 'Inactive' : 'Active');
+    if (decision === 'Approve') assertMovedScores(h); else assert.deepEqual(h.state.studentScores, [score]);
   }
 });
 
@@ -215,11 +233,11 @@ test('web ICT supersedes source and duplicate pending requests atomically, prese
   assert.match(response.message, /2 pending request\(s\) superseded.*Movement history/);
   assert.equal(h.member().ArmId, 'destination');
   assert.equal(h.member().PendingSubjectChange, undefined);
-  assert.equal(h.state.studentMemberships[1].Status, 'Archived');
+  assert.equal(h.state.studentMemberships[1].Status, 'Inactive');
   assert.equal(h.state.studentMemberships[1].PendingSubjectChange, undefined);
   assert.equal(h.state.studentMemberships[1].SavedNotes, 'Keep this historical record');
   assert.deepEqual(h.state.studentMemberships[2], unrelated);
-  assert.deepEqual(h.state.studentScores, [score]);
+  assertMovedScores(h);
   assert.deepEqual(h.state.studentMovements.slice(0, oldHistory.length), oldHistory);
   const resolutions = h.state.studentMovements.filter(row => row.Status === 'Superseded');
   assert.equal(resolutions.length, 2);
@@ -237,7 +255,7 @@ test('web ICT supersedes source and duplicate pending requests atomically, prese
   assert.deepEqual(h.state.studentMemberships[1].LastSupersededSubjectChange, resolutions[1].SubjectChangeRequest);
   assert.equal(h.member().LastSubjectChange.Status, 'Approved');
   assert.equal(h.state.audit.filter(row => row.Action === 'SUBJECT CHANGE SUPERSEDED').length, 2);
-  assert.ok(h.writes.slice(firstNewWrite).every(write => !/Scores|attendance|payment/i.test(write.collectionPath) && write.operation !== 'delete'));
+  assert.ok(h.writes.slice(firstNewWrite).every(write => !/payment/i.test(write.collectionPath) && write.operation !== 'delete'));
   await assert.rejects(h.review('Approve', admin, { RequestId: sourceRequest.RequestId }), { code: 'ACADEMIC_SUBJECT_CHANGE_NOT_PENDING' });
 });
 
@@ -250,7 +268,7 @@ test('web ICT may supersede an earlier transfer request without applying its old
   assert.equal(h.member().ArmId, 'destination');
   assert.equal(h.member().PendingSubjectChange, undefined);
   assert.deepEqual(h.state.studentMovements.find(row => row.Status === 'Superseded').OriginalSubjectChangeRequest, original);
-  assert.deepEqual(h.state.studentScores, [score]);
+  assertMovedScores(h);
 });
 
 test('ordinary and desktop ICT transfers still cannot supersede pending requests, including forged flags', async () => {
@@ -267,8 +285,8 @@ test('ordinary and desktop ICT transfers still cannot supersede pending requests
   assert.equal(h.writes.length, 0);
 });
 
-test('pending requests survive invalid destinations, published-result locks, and no-op transfers', async () => {
-  for (const invalid of ['destination', 'published', 'same-classroom']) {
+test('pending requests survive invalid destinations and no-op transfers', async () => {
+  for (const invalid of ['destination', 'same-classroom']) {
     const h = transferHarness();
     await h.request();
     if (invalid === 'published') h.state.termResults.push({ ...period, ...scope, ResultId: 'result', StudentRef: 'S1', Status: 'Published', Total: 80, __updateTime: 'result-rev' });
@@ -324,10 +342,10 @@ test('web ICT can approve a pending transfer even when duplicate memberships hav
   assert.equal(h.member().ArmId, 'destination');
   assert.equal(h.member().LastSubjectChange.RequestId, sourceRequest.RequestId);
   assert.equal(h.member().LastSubjectChange.Status, 'Approved');
-  assert.equal(h.state.studentMemberships[1].Status, 'Archived');
+  assert.equal(h.state.studentMemberships[1].Status, 'Inactive');
   assert.equal(h.state.studentMemberships[1].PendingSubjectChange, undefined);
   assert.deepEqual(h.state.studentMovements.find(row => row.Status === 'Superseded').OriginalSubjectChangeRequest, duplicate.PendingSubjectChange);
-  assert.deepEqual(h.state.studentScores, [score]);
+  assertMovedScores(h);
 });
 
 test('web ICT completes initial arm allocation despite pending assessed subject changes, without losing the old request', async () => {
@@ -432,18 +450,16 @@ test('concurrent source, duplicate or result updates keep every pending request 
   }
 });
 
-test('destination reset disconnects old selections, applies compulsory cores and preserves history', async () => {
+test('same-class arm moves ignore legacy reset flags and retain the saved curriculum', async () => {
   const h = transferHarness({ scores: [] });
   const result = await h.transfer();
   assert.equal(h.member().ArmId, 'destination');
-  assert.deepEqual(h.member().SubjectIds, ['history']);
-  assert.deepEqual(h.member().TradeSubjectIds, []);
-  assert.equal(h.member().CurriculumStatus, 'Pending Trade Selection');
+  for (const field of ['SubjectIds','CoreSubjectIds','TradeSubjectIds','OptionalSubjectIds','CurriculumStatus']) assert.deepEqual(h.member()[field], membership[field]);
   assert.deepEqual(h.state.studentMovements[0].FromSubjectIds, membership.SubjectIds);
-  assert.match(result.message, /preserved/);
+  assert.match(result.message, /moved with the student/);
 });
 
-test('assessed transfer waits for independent approval then moves without rewriting any scores', async () => {
+test('assessed transfer waits for independent approval then relocates existing scores without changing marks', async () => {
   const h = transferHarness();
   const result = await h.transfer();
   assert.equal(result.bulkResult.PendingApproval, 1);
@@ -453,23 +469,23 @@ test('assessed transfer waits for independent approval then moves without rewrit
   await assert.rejects(h.review('Approve'), { code: 'ACADEMIC_SUBJECT_CHANGE_SELF_APPROVAL' });
   await h.review('Approve', h.approver);
   assert.equal(h.member().ArmId, 'destination');
-  assert.deepEqual(h.member().SubjectIds, ['history']);
-  assert.deepEqual(h.state.studentScores, [score]);
-  assert.ok(h.writes.every(row => row.collectionPath !== 'academicStudentScores'));
+  assert.deepEqual(h.member().SubjectIds, membership.SubjectIds);
+  assertMovedScores(h);
+  assert.ok(h.writes.some(row => row.collectionPath === 'academicStudentScores'));
 });
 
-test('web ICT transfers an assessed student directly with an audited decision and no score writes', async () => {
+test('web ICT transfers an assessed student directly with an audited decision and stable score IDs', async () => {
   const h = transferHarness();
   await h.transfer({}, h.context.academicWebActor(ict));
   assert.equal(h.member().ArmId, 'destination');
   assert.equal(h.member().PendingSubjectChange, undefined);
   assert.equal(h.member().LastSubjectChange.ApprovalMode, 'Direct ICT web');
   assert.equal(h.member().LastSubjectChange.ReviewedByUsername, 'ict');
-  assert.deepEqual(h.state.studentScores, [score]);
+  assertMovedScores(h);
   assert.equal(h.state.studentMovements.length, 1);
   assert.equal(h.state.studentMovements[0].RecordedByRole, 'ICT');
   assert.equal(h.state.studentMovements[0].SubjectChangeRequest.Status, 'Approved');
-  assert.ok(h.writes.every(row => row.collectionPath !== management.ACADEMIC_MANAGEMENT_COLLECTIONS.studentScores));
+  assert.ok(h.writes.some(row => row.collectionPath === management.ACADEMIC_MANAGEMENT_COLLECTIONS.studentScores));
   assert.ok(h.writes.every(row => !row.data.PendingSubjectChange));
 });
 
@@ -482,7 +498,7 @@ test('desktop ICT and forged client flags still need independent approval', asyn
   await h.review('Approve', h.context.academicWebActor(ict));
   assert.equal(h.member().ArmId, 'destination');
   assert.equal(h.member().LastSubjectChange.ApprovalMode, 'Direct ICT web');
-  assert.deepEqual(h.state.studentScores, [score]);
+  assertMovedScores(h);
 });
 
 test('web ICT applies assessed subject choices directly and can cancel existing requests', async () => {
@@ -501,19 +517,20 @@ test('web ICT applies assessed subject choices directly and can cancel existing 
   assert.deepEqual(pending.member().SubjectIds, membership.SubjectIds);
 });
 
-test('direct ICT changes retain result locks and only flag draft results for recalculation', async () => {
-  for (const operation of ['transfer', 'request']) {
-    const result = { ...period, ...scope, ResultId: 'result', StudentRef: 'S1', Status: 'Published', Total: 72, __updateTime: 'result-rev' };
-    const h = transferHarness({ termResults: [result] });
-    const actor = h.context.academicWebActor(ict);
-    await assert.rejects(h[operation]({}, actor), { code: 'ACADEMIC_RESULT_IMMUTABLE' });
-    assert.equal(h.writes.length, 0);
-    h.state.termResults[0].Status = 'Calculated Draft';
-    await h[operation]({}, actor);
-    assert.equal(h.state.termResults[0].SubjectChangeRecalculationRequired, true);
-    assert.equal(h.state.termResults[0].Total, 72);
-    assert.deepEqual(h.state.studentScores, [score]);
-  }
+test('arm transfers preserve published results; subject-choice changes still require controlled reopening', async () => {
+  const result = { ...period, ...scope, ResultId:'result', StudentRef:'S1', Status:'Published', Total:72, ResultReference:'stable-link', __updateTime:'result-rev' };
+  const h=transferHarness({termResults:[result]});
+  await h.transfer({},h.context.academicWebActor(ict));
+  assert.equal(h.state.termResults[0].Status,'Published');
+  assert.equal(h.state.termResults[0].ArmId,'destination');
+  for(const field of ['ResultId','ResultReference','Total']) assert.equal(h.state.termResults[0][field],result[field]);
+  assertMovedScores(h);
+  const choices=transferHarness({termResults:[result]});
+  await assert.rejects(choices.request({},choices.context.academicWebActor(ict)),{code:'ACADEMIC_RESULT_IMMUTABLE'});
+  assert.equal(choices.writes.length,0);
+  choices.state.termResults[0].Status='Calculated Draft';
+  await choices.request({},choices.context.academicWebActor(ict));
+  assert.equal(choices.state.termResults[0].SubjectChangeRecalculationRequired,true);
 });
 
 test('direct ICT transfers still validate capacity, scope, revision, period and subscription', async () => {
@@ -549,26 +566,26 @@ test('concurrent membership or result changes abort the entire direct ICT transf
   }
 });
 
-test('mixed destination can await subject choices; reset in the current classroom is refused', async () => {
+test('mixed destination retains subject choices; reset in the current classroom is refused', async () => {
   const h = transferHarness({ scores: [] });
   await assert.rejects(h.transfer({ ArmId: 'arm' }), /different classroom/);
   h.state.arms[1].DepartmentId = '';
   await h.transfer();
-  assert.deepEqual(h.member().SubjectIds, []);
-  assert.equal(h.member().CurriculumStatus, 'Pending Core Selection');
+  assert.deepEqual(h.member().SubjectIds, membership.SubjectIds);
+  assert.equal(h.member().CurriculumStatus, 'Complete');
 });
 
 test('pending transfers recheck capacity, curriculum, scores and published results on approval', async () => {
   const h = transferHarness({ termResults: [{ ...period, ...scope, ResultId: 'result', StudentRef: 'S1', Status: 'Published', __updateTime: 'result-rev' }] });
   await h.transfer();
-  await assert.rejects(h.review('Approve', h.approver), { code: 'ACADEMIC_RESULT_IMMUTABLE' });
-  h.state.termResults[0].Status = 'Calculated Draft';
+  // Publication does not prevent a same-class placement correction.
   h.state.arms[1].Capacity = 1;
   h.state.studentMemberships.push({ ...membership, MembershipId: 'second', RecordId: 'second', StudentRef: 'S2', ArmId: 'destination' });
   await assert.rejects(h.review('Approve', h.approver), { code: 'ACADEMIC_ARM_CAPACITY_REACHED' });
   h.state.studentMemberships.pop();
   await h.review('Approve', h.approver);
-  assert.equal(h.state.termResults[0].SubjectChangeRecalculationRequired, true);
+  assert.equal(h.state.termResults[0].Status, 'Published');
+  assert.equal(h.state.termResults[0].ArmId, 'destination');
 });
 
 test('rejecting or cancelling a transfer preserves the original classroom and selections', async () => {
@@ -586,14 +603,15 @@ test('classroom changes with unchanged subject IDs still protect existing assess
   assert.equal(management.academicSubjectChangeImpact(membership, { ...membership, ArmId: 'destination' }, { studentScores: [score] }).RequiresApproval, true);
 });
 
-test('transfer approval revalidates destination curriculum and rejects stale source revisions', async () => {
+test('arm transfer rejects stale source revisions and retains choices despite different destination defaults', async () => {
   const h = transferHarness();
   await assert.rejects(h.transfer({ RevisionToken: 'old' }), { code: 'ACADEMIC_WRITE_CONFLICT' });
   await h.transfer();
   h.state.departments.find(row => row.DepartmentId === 'arts').CoreSubjectIds = ['english'];
-  await assert.rejects(h.review('Approve', h.approver));
-  assert.equal(h.member().ArmId, 'arm');
-  assert.deepEqual(h.state.studentScores, [score]);
+  await h.review('Approve', h.approver);
+  assert.equal(h.member().ArmId, 'destination');
+  assert.deepEqual(h.member().SubjectIds, membership.SubjectIds);
+  assertMovedScores(h);
 });
 
 test('scored subject changes require a meaningful reason, including older client requests', async () => {
@@ -894,4 +912,17 @@ test('subject submission shows server errors and pending approval notices withou
   assert.equal(immediate.alerts.length, 0);
   await immediate.context.showAcademicSubjectWorkflowFeedback({ dataset: { academicWorkflow: 'reviewAcademicSubjectChange' } }, { error: new Error('You cannot approve your own request.') });
   assert.equal(immediate.alerts[0].title, 'Subject-change review not completed');
+});
+
+
+test('approving an older arm-transfer request retains saved subjects and records the actual applied choices',async()=>{
+  const h=transferHarness();await h.transfer();
+  h.member().PendingSubjectChange.After.SubjectIds=['history'];
+  h.member().PendingSubjectChange.After.TradeSubjectIds=[];
+  h.member().PendingSubjectChange.ResetSubjectSelections=true;
+  await h.review('Approve',h.approver);
+  assert.deepEqual(h.member().SubjectIds,membership.SubjectIds);
+  assert.deepEqual(h.member().LastSubjectChange.After.SubjectIds,membership.SubjectIds);
+  assert.deepEqual(h.member().LastSubjectChange.OriginalRequestedAfter.SubjectIds,['history']);
+  assertMovedScores(h);
 });

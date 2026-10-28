@@ -2,6 +2,7 @@ import { normalizeAcademicPolicy } from './academic-policy.js';
 import { academicAssessmentScheme, calculateAcademicStudentScore } from './academic-scorebook.js';
 import { schoolCalendarDayIsOpen, schoolCalendarSummary } from './academic-school-calendar.js';
 import { academicSubjectName } from './academic-result-subject-labels.js';
+import { academicCarriedScoreReview } from './academic-carried-score-review.js';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
@@ -204,7 +205,7 @@ export function calculateAcademicTermResultDrafts(input = {}) {
 
   const sheetsBySubject = new Map();
   scoreSheets.forEach((sheet) => {
-    if (acceptedSheetStatuses.has(lower(sheet.Status))) sheetsBySubject.set(lower(sheet.SubjectId), sheet);
+    if (!sheetsBySubject.has(lower(sheet.SubjectId)) || acceptedSheetStatuses.has(lower(sheet.Status))) sheetsBySubject.set(lower(sheet.SubjectId), sheet);
   });
   const scoresBySheetStudent = new Map(studentScores.map((row) => [`${lower(row.SheetId)}|${lower(row.StudentRef)}`, row]));
   const membershipCounts = new Map(), scoreCounts = new Map();
@@ -226,11 +227,16 @@ export function calculateAcademicTermResultDrafts(input = {}) {
         return [];
       }
       const score = scoresBySheetStudent.get(`${lower(sheet.SheetId)}|${lower(studentRef)}`);
+      const carriedApproval = acceptedSheetStatuses.has(lower(academicCarriedScoreReview(score, sheet)?.Status));
+      if (!acceptedSheetStatuses.has(lower(sheet.Status)) && !carriedApproval) {
+        issues.push(`${studentRef}: ${subjects.get(lower(subjectId))?.Name || subjectId} has no ${scoreEligibilityLabel} score sheet.`);
+        return [];
+      }
       if (scoreCounts.get(`${lower(sheet.SheetId)}|${lower(studentRef)}`) > 1) {
         issues.push(`${studentRef}: ${subjects.get(lower(subjectId))?.Name || subjectId} has duplicate score records requiring review.`);
         return [];
       }
-      if ((sheet.PendingStudentRefs || []).some(ref => lower(ref) === lower(studentRef))) {
+      if (!carriedApproval && (sheet.PendingStudentRefs || []).some(ref => lower(ref) === lower(studentRef))) {
         issues.push(`${studentRef}: ${subjects.get(lower(subjectId))?.Name || subjectId} is pending completion and review.`);
         return [];
       }

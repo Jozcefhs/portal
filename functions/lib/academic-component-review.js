@@ -32,7 +32,7 @@ export async function academicComponentReviews(sheet, roster, scores) {
       Status:unchanged?previous.Status:'Draft',PreviousStatus:previous?.Status||'',Stale:Boolean(previous&&!unchanged),
       ReviewedBy:unchanged?clean(previous[`${previous.Status}By`]):'',
       AllowPendingStudents:unchanged&&previous?.AllowPendingStudents===true,
-      MissingStudentRefs:missing, PendingStudentCount:missing.length};
+      MissingStudentRefs:missing, PendingStudentCount:unchanged ? new Set([...missing, ...(previous?.PendingStudentRefs || []).map(lower)]).size : missing.length};
   }));
 }
 
