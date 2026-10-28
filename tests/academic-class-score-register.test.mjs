@@ -62,6 +62,54 @@ test('retiring a stale membership keeps its recorded marks visible under the con
   assert.deepEqual(data.studentScores, originalScores);
 });
 
+test('identical former-arm copies show the saved mark once without rewriting either record', () => {
+  const data = fixture();
+  data.scoreSheets[1].Status = 'Approved';
+  data.studentScores.push({ ...structuredClone(data.studentScores[0]), ArmId: 'b', SheetId: 'sheet-b' });
+  data.studentMemberships[0].ArmId = 'b';
+  const before = structuredClone(data);
+  const report = buildAcademicClassScoreRegister(data, period);
+  const cell = report.Rows[0].Cells.find(cell => cell.State === 'Numeric');
+  assert.equal(cell.RawScore, 80);
+  assert.equal(cell.MatchingCopies, 2);
+  assert.equal(cell.ArmId, 'b');
+  assert.equal(cell.SheetStatus, 'Approved');
+  assert.equal(report.Rows[0].Cells.some(cell => cell.State === 'Review duplicate'), false);
+  assert.deepEqual(data, before);
+});
+
+test('different marks, scales and absence states remain conflicts even in the current arm', () => {
+  for (const patch of [{ RawScore: 81 }, { MaximumScore: 90 }, { State: 'Absent' }]) {
+    const data = fixture();
+    const copy = structuredClone(data.studentScores[0]);
+    copy.SheetId = 'sheet-b'; copy.ArmId = 'b';
+    Object.assign(copy.ComponentScores[0], patch);
+    data.studentScores.push(copy);
+    data.studentMemberships[0].ArmId = 'b';
+    const report = buildAcademicClassScoreRegister(data, period);
+    assert.ok(report.Rows[0].Cells.some(cell => cell.State === 'Review duplicate'));
+  }
+});
+
+test('duplicate records within one arm remain visible for structural repair', () => {
+  const data = fixture();
+  data.studentScores.push(structuredClone(data.studentScores[0]));
+  assert.ok(buildAcademicClassScoreRegister(data, period).Rows[0].Cells.some(cell => cell.State === 'Review duplicate'));
+});
+
+test('matching split-test parts and numeric zero are retained without inventing missing marks', () => {
+  const data = fixture();
+  data.studentScores[0].ComponentScores = [
+    { ComponentId: 'ca1', State: 'Numeric', RawScore: 0, MaximumScore: 100 },
+    { ComponentId: 'exam', Parts: [{ PartId: 'objective', State: 'Exempt', RawScore: null, MaximumScore: 40 }] }
+  ];
+  data.studentScores.push({ ...structuredClone(data.studentScores[0]), ArmId: 'b', SheetId: 'sheet-b' });
+  const row = buildAcademicClassScoreRegister(data, period).Rows[0];
+  assert.equal(row.Cells.find(cell => cell.State === 'Numeric').RawScore, 0);
+  assert.equal(row.Cells.find(cell => cell.State === 'Exempt').MatchingCopies, 2);
+  assert.equal(row.Cells.some(cell => cell.State === 'Review duplicate'), false);
+});
+
 test('a class-only recorded mark takes precedence over an empty cell in an arm score sheet', () => {
   const data=fixture();
   data.scoreSheets.push({...data.scoreSheets[0],SheetId:'class-only',ArmId:'',ClassOnlyScorebook:true});

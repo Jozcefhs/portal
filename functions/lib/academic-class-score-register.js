@@ -63,7 +63,18 @@ export function buildAcademicClassScoreRegister(data = {}, input = {}) {
         const allEntries = values.get(JSON.stringify([ref, column.Id])) || [];
         const recorded = allEntries.filter(row => ['Numeric', 'Absent', 'Exempt'].includes(row.State));
         const entries = recorded.length ? recorded : allEntries.slice(0, 1);
-        if (entries.length > 1) return { ColumnId: column.Id, State: 'Review duplicate', RawScore: null, MaximumScore: null };
+        if (entries.length > 1) {
+          // A former-arm copy of the same mark is evidence, not a conflicting
+          // mark. Do not rewrite either score or choose between different marks.
+          const identical = entries.every(entry => entry.State === entries[0].State
+            && entry.RawScore === entries[0].RawScore && entry.MaximumScore === entries[0].MaximumScore);
+          const distinctArms = new Set(entries.map(entry => entry.ArmId)).size === entries.length;
+          if (memberships.length === 1 && identical && distinctArms) {
+            const current = entries.find(entry => entry.ArmId === clean(member.ArmId)) || entries[0];
+            return { ColumnId: column.Id, ...current, MatchingCopies: entries.length };
+          }
+          return { ColumnId: column.Id, State: 'Review duplicate', RawScore: null, MaximumScore: null };
+        }
         if (entries.length) return { ColumnId: column.Id, ...entries[0] };
         const offered = memberships.some(row => (row.SubjectIds || []).includes(column.SubjectId));
         return { ColumnId: column.Id, State: offered ? 'Not recorded' : 'Not enrolled', RawScore: null, MaximumScore: null };
