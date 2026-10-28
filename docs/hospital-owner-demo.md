@@ -20,6 +20,10 @@ Deployment secrets are project-specific. Runtime database access uses a dedicate
 
 Standalone Owner Demo profiles receive the edition's implemented module entitlements when no explicit entitlement list exists. Explicit disabled-module preferences and clinical role boundaries still apply. The demo uses `CANONICAL_API_PROXY_SCOPE=public-catalog` for credential-free GET access to the central public plan catalogue only. It is not enrolled in the paid subscription bridge, and this scope cannot proxy platform mutations.
 
-## Verified deployment — 28 October 2026
+## Initial verified deployment — 28 October 2026
 
 The isolated Owner's Demo is deployed with Hospital indexes and separate document storage. Live checks confirmed Hospital/workspace identity, public catalogue availability, all nine role sign-ins, owner/clinical permission separation, three example visits and the signed referral. Unauthenticated Hospital requests return HTTP 401. Eleven Hospital assets and fifteen shared web assets matched the source. The final regression suite passed 4,503 tests; all eleven synthetic Hospital browser workflows and the pushed Hospital CI passed. No desktop application or installer was compiled or released.
+
+## Investigation update verification — 28 October 2026
+
+Web commit `b8c848a9` is deployed to this demo, including investigation catalogues and specimen receipt/recollection. All three additional indexes are READY. The full regression suite passed 4,646 tests, all eleven synthetic Hospital browser workflows passed, and GitHub checks passed. Live checks confirmed all nine demo roles can sign in, owner/doctor/laboratory/imaging catalogue access works, repeated catalogue loads reuse the loaded page, and unauthenticated access remains blocked. Eleven Hospital assets and nineteen shared assets match the tested source. The three existing example visits and signed referral remain available; no patient, clinical, stock or financial records were changed by the deployment verification. No desktop application or installer was compiled or released.
