@@ -172,7 +172,7 @@ test('web academic managers select classrooms and receive a read-only form', () 
     const form = renderWorkspace('scorebook', f).match(/<form[^>]*data-classroom-register[^>]*>[\s\S]*?<\/form>/)[0];
     assert.match(form, /Classroom score register — all subjects/);
     assert.match(form, /Grade 10 \/ Brilliance/); assert.match(form, /Grade 10 \/ Excellence/);
-    assert.match(form, /Load classroom scores/); assert.match(form, /Preview \/ print/);
+    assert.match(form, /data-class-register-reload[^>]*>Load \/ refresh scores<\/button>/); assert.match(form, /Preview \/ print/);
     assert.doesNotMatch(form, /all arms|whole class|data-class-register-reactivate|contenteditable/);
   }
 });

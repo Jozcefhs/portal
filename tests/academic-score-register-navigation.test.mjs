@@ -10,7 +10,7 @@ const load = source.match(/async function loadAcademicManagement\([\s\S]*?\n}/)[
 function client(role = 'Super Admin', mounted = false) {
   const calls = [], shown = [], handlers = {}, focused = [], scrolled = [], messages = [];
   const choice = { value: '', focus: () => focused.push('class') };
-  const loadButton = { textContent: 'Load classroom scores', disabled: false, focus: () => focused.push('load') };
+  const loadButton = { textContent: 'Load / refresh scores', disabled: false, focus: () => focused.push('load') };
   const headerButton = { disabled: false, addEventListener: (event, handler) => { handlers[`[data-academic-open-score-register]:${event}`] = handler; } };
   const form = { elements: { ClassId: choice }, hasAttribute: name => name === 'data-classroom-register',
     querySelector: selector => selector === '[type="submit"]' ? loadButton
@@ -58,7 +58,7 @@ test('area dropdown reaches the same register and reopening a mounted register m
   assert.equal(f.calls.length, 0); assert.equal(f.shown.length, 1);
   assert.deepEqual(f.shown[0].slice(0, 2), ['scorebook', 'classRegister']);
   assert.deepEqual(f.focused, ['class']); assert.equal(f.scrolled.length, 1);
-  assert.match(f.messages.at(-1), /Classroom score register is open.*Load classroom scores/);
+  assert.match(f.messages.at(-1), /Classroom score register is open.*Load \/ refresh scores/);
   assert.match(f.context.academicManagementHeader(f.data, {}), /value="classRegister" selected/);
 });
 
