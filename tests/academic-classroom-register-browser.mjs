@@ -34,8 +34,13 @@ try {
     const academicManagementData={sessions:[{SessionId:'session',Name:'2026/2027'}],terms:[{TermId:'term',Name:'First Term'}]};
     ${functions};bindAcademicClassScoreRegister(document.querySelector('form'));` });
   assert.equal(await page.evaluate(() => requests.length), 0);
+  const reload = page.locator('[data-class-register-reload]');
+  assert.equal(await reload.textContent(), 'Load / refresh scores');
+  assert.equal(await reload.isVisible(), true);
+  assert.equal(await reload.isDisabled(), true);
   assert.equal(await page.locator('[data-class-register-reactivate]').count(), 0);
   await page.selectOption('[name=ClassId]', 'arm');
+  assert.equal(await reload.isEnabled(), true);
   await page.click('button[type=submit]');
   await page.waitForSelector('tbody tr');
   assert.deepEqual(await page.evaluate(() => requests[0]), { action: 'getAcademicClassroomScoreRegister',
@@ -43,6 +48,8 @@ try {
   assert.equal(await page.locator('tbody tr').count(), 30);
   assert.match(await page.locator('[data-class-register-status]').textContent(), /Grade 10 \/ Brilliance: 35 students/);
   assert.doesNotMatch(await page.locator('[data-class-register-status]').textContent(), /all arms/);
+  assert.equal(await reload.textContent(), 'Load / refresh scores');
+  assert.match(await page.locator('[data-class-register-status]').textContent(), /Use Load \/ refresh scores above/);
   await page.click('[data-class-register-page="1"]');
   assert.equal(await page.locator('tbody tr').count(), 5);
   const [preview] = await Promise.all([page.waitForEvent('popup'), page.click('[data-class-register-print]')]);
@@ -61,17 +68,31 @@ try {
   await page.selectOption('[name=ClassId]', 'arm');
   assert.match(await page.locator('[data-class-register-count]').textContent(), /31–35/);
   assert.equal(await page.evaluate(() => requests.length), 2);
+  assert.equal(await reload.textContent(), 'Load / refresh scores');
   await page.selectOption('[name=ScoreFilter]', 'missing');
   assert.equal(await page.locator('tbody tr').count(), 1);
   assert.match(await page.locator('tbody').textContent(), /TEST\/034/);
   assert.equal(await page.evaluate(() => requests.length), 2);
+  // Explicit refresh must fetch again even when the classroom has a cached snapshot.
+  await page.selectOption('[name=ScoreFilter]', 'all');
+  await page.evaluate(() => { report.Rows[0].Cells[0].RawScore = 88; });
+  await reload.click();
+  await page.waitForFunction(() => requests.length === 3 && !document.querySelector('[data-class-register-reload]').disabled);
+  assert.equal(await reload.textContent(), 'Load / refresh scores');
+  assert.match(await page.locator('tbody').textContent(), /88 \/ 100/);
+  await page.selectOption('[name=ScoreFilter]', 'missing');
   await page.screenshot({ path: 'tmp/classroom-register-1366.png', fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  assert.equal(await reload.isVisible(), true);
+  const reloadBox = await reload.boundingBox();
+  assert.ok(reloadBox.x >= 0 && reloadBox.x + reloadBox.width <= 390);
   await page.screenshot({ path: 'tmp/classroom-register-390.png', fullPage: true });
   await page.evaluate(() => { failLoad = true; }); await page.click('button[type=submit]');
   await page.waitForFunction(() => document.querySelector('[data-class-register-status]').textContent.includes('refresh did not complete'));
   assert.equal(await page.locator('tbody tr').count(), 1);
+  assert.equal(await reload.textContent(), 'Load / refresh scores');
+  assert.equal(await reload.isEnabled(), true);
   assert.equal(await page.evaluate(() => requests.every(request => request.action === 'getAcademicClassroomScoreRegister')), true);
   assert.deepEqual(errors, []);
   console.log('PASS: Classroom scope, all-subject scores, read-only controls, complete print preview, cached classroom switching, missing-score filter, failed refresh preservation and mobile layout.');

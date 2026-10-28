@@ -15697,7 +15697,7 @@ function academicScorebookWorkspace(data, rows) {
     ${assignedClassroomRegister && !teacherClassrooms.length ? '<p>No class teacher assignment was found for this session and term. Ask Academic Management to assign your classroom under Assign class teachers.</p>' : ''}
     ${classroomRegister && !assignedClassroomRegister && !registerClassrooms.length ? '<p>No active classrooms are available in this school section. Configure them under Classrooms.</p>' : ''}
     <div class="class-register-load-controls"><label>${classroomRegister ? 'Classroom' : 'Class'}<select name="ClassId" required>${registerChoices}</select></label>
-    <div class="class-register-actions"><button type="submit">Load ${classroomRegister ? 'classroom' : 'class'} scores</button><button type="button" class="secondary" data-class-register-print disabled>Preview / print</button></div></div>
+    <div class="class-register-actions"><button type="submit" data-class-register-reload title="Fetch the latest scores for the selected ${classroomRegister ? 'classroom' : 'class'}">Load / refresh scores</button><button type="button" class="secondary" data-class-register-print disabled>Preview / print</button></div></div>
     <div class="academic-management-form-grid"><label>Test<select name="TestId"><option value="">All tests</option></select></label><label>Find student<input name="Query" type="search" placeholder="Name or admission number"></label>
     <div class="class-register-subject-field"><span id="class-register-subject-label">Subjects</span><details data-class-register-subjects>
       <summary aria-labelledby="class-register-subject-label class-register-subject-summary"><span id="class-register-subject-summary" data-class-register-subject-summary>Load a ${classroomRegister ? 'classroom' : 'class'} first</span></summary>
@@ -15864,7 +15864,7 @@ function bindAcademicClassScoreRegister(form) {
       form.elements.ScoreThreshold.value = saved.scoreThreshold;
     }
     subjectMenu.open = false;
-    status.textContent = `${register.ClassroomName || register.ClassName}: ${register.StudentCount} students${classroomOnly ? '' : ' across all arms'} · ${register.SubjectCount} subjects. Raw marks / maximum. Loaded at ${new Date(loadedAt).toLocaleTimeString()}.${cached ? ' Restored without another request.' : ''} Refresh ${scopeLabel} scores for newer marks.`;
+    status.textContent = `${register.ClassroomName || register.ClassName}: ${register.StudentCount} students${classroomOnly ? '' : ' across all arms'} · ${register.SubjectCount} subjects. Raw marks / maximum. Loaded at ${new Date(loadedAt).toLocaleTimeString()}.${cached ? ' Restored without another request.' : ''} Use Load / refresh scores above to check for updated marks.`;
   };
   const resetSubjects = () => {
     subjectMenu.open = false;
@@ -15875,7 +15875,9 @@ function bindAcademicClassScoreRegister(form) {
     form.elements.TestId.innerHTML = '<option value="">All tests</option>';
   };
   const render = () => {
-    loadButton.textContent = `${register ? 'Refresh' : 'Load'} ${scopeLabel} scores`;
+    loadButton.textContent = 'Load / refresh scores';
+    loadButton.disabled = busy || !form.elements.ClassId.value;
+    loadButton.setAttribute('aria-busy', String(busy));
     const mode = form.elements.ScoreFilter.value;
     const comparison = mode === 'below' || mode === 'above';
     form.querySelector('[data-class-register-threshold]').hidden = !comparison;
@@ -16006,6 +16008,7 @@ function bindAcademicClassScoreRegister(form) {
     popup.document.write(academicClassRegisterPrintHtml(register, filters(), academicManagementData?.reportProfile?.SchoolName, period));
     popup.document.close();
   });
+  render();
 }
 
 function printAcademicWeightedResult(record) {

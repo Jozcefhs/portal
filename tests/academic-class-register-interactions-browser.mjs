@@ -373,7 +373,7 @@ try {
   assert.match(await page.locator('[data-class-register-count]').textContent(), /31–60/);
   assert.match(await page.locator('[data-class-register-status]').textContent(), /Restored without another request/);
   assert.equal(await isOpen(), false);
-  assert.equal(await page.locator('button[type=submit]').textContent(), 'Refresh class scores');
+  assert.equal(await page.locator('button[type=submit]').textContent(), 'Load / refresh scores');
   await page.evaluate(() => { failLoad = true; });
   await page.click('button[type=submit]');
   await page.waitForFunction(() => !document.querySelector('button[type=submit]').disabled);
