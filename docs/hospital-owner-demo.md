@@ -10,6 +10,8 @@ Synthetic examples include three labelled patients and reception visits, a signe
 
 The web modules cover patient/NFC records, appointments, clinical encounters, prescriptions/investigations, pharmacy, billing, HMO/corporate payments and advances, inpatient beds/discharge, nursing, theatre and referrals. This is a working development demo; remaining specialist workflows, desktop/offline parity, direct insurer integrations and practitioner validation remain tracked in `hospital-edition-scope.md`.
 
+The investigation update adds branch-based laboratory/imaging catalogues. From the owner's **Laboratory** or **Imaging** workspace, expand **Laboratory and imaging catalogue**, then **Load catalogue** or **New service**. The owner configures services without gaining access to clinical results. Doctors can choose these services when issuing an investigation; laboratory staff record collection, receipt and rejection with separate recollection labels. Catalogue and history loading is explicit, and existing orders keep their original instructions and workflow. See [hospital-orders-workflows.md](hospital-orders-workflows.md).
+
 ## Deployment isolation
 
 `deploy/hospital-owner-demo.json` identifies the sole destination. It is deliberately separate from the organisation deployment registry, so routine DCA/faith deployments do not include this demo. Deploy from `codex/hospital-edition` after tests. Publish the ordinary web assets/functions to the named Pages project with production branch `main`, and apply `firebase.hospital.json` only to the named Firebase project. Never deploy this development branch to DCA or other active edition projects.

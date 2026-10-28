@@ -11,7 +11,8 @@ Development branch: `codex/hospital-edition`. These workflows are implemented in
 | Pharmacist | Review prescriptions; receive and quarantine batch stock; dispense full or partial quantities; record patient returns; inspect stock and dispensing history. |
 | Laboratory Scientist | Handle labelled specimens; enter reports; independently verify another officer's report; release verified laboratory results. |
 | Radiographer | Enter, independently verify and release imaging reports. |
-| Reception / Finance / Hospital Administrator | Existing administrative access does not grant access to these clinical workflows. |
+| Super Admin / Hospital Administrator | Configure laboratory and imaging catalogues when those modules are enabled; this does not grant patient order/report access. |
+| Reception / Finance | Existing administrative access does not grant access to these clinical workflows. |
 
 Each role also needs the relevant enabled module and branch assignment. Subscription read-only mode permits viewing but prevents writes. Pharmacy and investigation roles can identify patients without receiving general access to consultation notes.
 
@@ -20,7 +21,7 @@ Each role also needs the relevant enabled module and branch assignment. Subscrip
 1. In **Reception visits**, select dates and load the relevant visit.
 2. Choose **Prescribe / request investigation**. Check the displayed patient identity and current allergy information.
 3. For a prescription, enter the medicine, strength, form, dispensing unit, dose, route, frequency, duration, quantity and any instructions. These are the clinician's entries; the software does not recommend doses or infer drug-allergy compatibility.
-4. For an investigation, choose Laboratory or Imaging, enter the requested service, clinical indication and urgency. Laboratory requests also identify the required specimen.
+4. For an investigation, choose Laboratory or Imaging, then **Choose from catalogue** or **Use custom investigation**. Review the saved preparation/handling instructions and enter clinical indication and urgency. Laboratory requests also identify the required specimen. An issued order retains its catalogue version even if the service is later renamed or made inactive.
 5. Confirm the identity/information check and choose **Sign and issue order**.
 
 Issued instructions remain part of the original order. To change an order, the prescriber or Medical Director cancels the remaining work with a reason and issues a new order. Existing dispensing, specimen events and reports are retained. Fully dispensed prescriptions use the return workflow; released reports use report corrections.
@@ -41,8 +42,16 @@ The subsequent [Hospital billing workflow](hospital-billing-workflows.md) now co
 
 ## Laboratory and imaging
 
+### Reusable services
+
+Open **Laboratory and imaging catalogue** in the investigation workspace. Choose a type and load services for the current branch; optional name-prefix and inactive-service filters narrow the list. Opening the workspace does not fetch catalogue records. Loaded pages are retained, and **Refresh catalogue** explicitly checks for changes.
+
+Laboratory Scientists and Radiographers configure their own type. Super Admin, Hospital Administrator and Medical Director can configure enabled investigation modules. **New service** records a permanent code, name, specimen (laboratory), preparation and handling instructions. Codes cannot be renamed. Editing requires the current revision and a reason for an actual change; earlier versions remain available under **Edit / history** with selected dates. Deactivating a service prevents new catalogue-based orders without changing issued orders or reports. Unchanged saves make no writes. Catalogue services do not create or alter billing tariffs.
+
+### Specimens and reports
+
 1. Select dates in the relevant workspace and open an order.
-2. For laboratory work, use **Print specimen label** and check the label reference against the patient and specimen. Record collection or rejection with details. A rejected specimen requires another collection entry before reporting.
+2. For new laboratory orders, use **Print specimen label**, check patient identity and scan/type the label reference. Record **Collected**, then **Received** when the laboratory receives it, or **Rejected** with details. Reporting requires receipt. Each recollection uses a fresh numbered label; the earlier attempt remains in history. Optional actual handling time uses WAT and cannot precede the order or preceding handling event, or be in the future. Earlier orders retain their original collection/report workflow without migration.
 3. Enter the report, including findings, units and applicable reference ranges. Mark critical results explicitly. Saving creates a report version for verification.
 4. A second authorised officer of the relevant investigation role reviews the report and chooses **Verify latest report**. The report author cannot verify their own version.
 5. Release the verified report. For critical results, record who was contacted, how and when. This records a staff communication; it does not claim that an automatic message was sent.
@@ -74,6 +83,12 @@ Draft and unverified reports are not returned to the clinician's result view. La
 | View an investigation whose latest report is also released | At most five document reads, including one report read; no history query | One access audit |
 | Load pending critical results | At most four identity/order document reads and one bounded alert query; new alerts need no per-row report lookup | One access audit |
 | Issue an order | At most four document reads; no history query | Six linked writes in one atomic commit, including its operation receipt and audit |
+| Select catalogue service when issuing | One additional exact catalogue read | No additional writes; instructions are saved in the order |
+| Load a catalogue page | One branch/type/name query; fetch 31, display 30 | None; configuration browsing adds no clinical audit |
+| Save a catalogue change | Two exact document reads | Four atomic writes: current item, immutable version, audit and operation receipt |
+| Save an unchanged catalogue item | Two exact document reads | None |
+| Handle an outpatient specimen | Five exact document reads | Four atomic writes; inpatient changes additionally protect discharge state |
+| Retry a completed catalogue/specimen request | One operation receipt read | None |
 | Retry that completed issue request | One operation receipt read | None |
 | Save an unchanged form | Current record/revision checks | None |
 
@@ -81,10 +96,10 @@ Future Hospital work must retain these tests and add a bounded query and mutatio
 
 ## Remaining Hospital scope
 
-The complete checklist remains in [hospital-edition-scope.md](hospital-edition-scope.md). Remaining work includes configurable medicine/test catalogues, procurement and supplier-payable integration, inventory costing, full billing/HMO, patient access, report attachments/PACS, broader specimen transport/accession workflows, automatic communication delivery, desktop/offline integration, and practitioner validation. The existence of a working order workflow does not mark the whole Pharmacy, Laboratory or Imaging module complete.
+The complete checklist remains in [hospital-edition-scope.md](hospital-edition-scope.md). Billing/HMO workflows are documented separately. Remaining investigation/pharmacy work includes a reusable medicine catalogue, procurement and supplier-payable integration, inventory costing, patient access, structured lab panels/reference intervals, analyser integration, report attachments/PACS, specimen transport/accession beyond collection/receipt/rejection, automatic communication delivery, desktop/offline integration, and practitioner validation. The existence of a working order workflow does not mark the whole Pharmacy, Laboratory or Imaging module complete.
 
 ## Verification
 
-- Backend: `tests/hospital-orders.test.mjs`, alongside the Hospital foundation, clinical and backup/audit tests.
+- Backend: `tests/hospital-orders.test.mjs`, `tests/hospital-investigations.test.mjs`, alongside the Hospital foundation, clinical and backup/audit tests.
 - Browser: `scripts/verify-hospital-orders-ui.mjs`, `scripts/verify-hospital-clinical-ui.mjs`, `scripts/verify-hospital-ui.mjs`, using synthetic records and isolated local servers.
 - CI: `.github/workflows/hospital-readiness.yml`; test execution only, with no compile, deployment or installer release steps.

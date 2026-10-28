@@ -33,9 +33,9 @@ export const HOSPITAL_MODULES = Object.freeze([
 ]);
 
 export const HOSPITAL_ROLE_CAPABILITIES = Object.freeze({
-  'Super Admin': ['appointments.read','appointments.write','appointments.configure','theatre.configure','inpatient.read','inpatient.admit','inpatient.configure','patients.read', 'patients.write', 'visits.read', 'visits.write','billing.read','billing.write','billing.configure','billing.refund','hmo.work'],
-  'Hospital Administrator': ['appointments.read','appointments.write','appointments.configure','theatre.configure','inpatient.read','inpatient.admit','inpatient.configure','patients.read', 'patients.write', 'visits.read', 'visits.write','billing.read','billing.write','billing.configure','billing.refund','hmo.work'],
-  'Medical Director': ['appointments.read','appointments.write','appointments.configure','theatre.read','theatre.schedule','theatre.work','theatre.sign','nursing.read','nursing.write','inpatient.read','inpatient.clinical','inpatient.discharge','patients.read', 'visits.read', 'clinical.read', 'triage.write', 'consultations.write','orders.read','orders.create'],
+  'Super Admin': ['laboratory.configure','imaging.configure','appointments.read','appointments.write','appointments.configure','theatre.configure','inpatient.read','inpatient.admit','inpatient.configure','patients.read', 'patients.write', 'visits.read', 'visits.write','billing.read','billing.write','billing.configure','billing.refund','hmo.work'],
+  'Hospital Administrator': ['laboratory.configure','imaging.configure','appointments.read','appointments.write','appointments.configure','theatre.configure','inpatient.read','inpatient.admit','inpatient.configure','patients.read', 'patients.write', 'visits.read', 'visits.write','billing.read','billing.write','billing.configure','billing.refund','hmo.work'],
+  'Medical Director': ['laboratory.configure','imaging.configure','appointments.read','appointments.write','appointments.configure','theatre.read','theatre.schedule','theatre.work','theatre.sign','nursing.read','nursing.write','inpatient.read','inpatient.clinical','inpatient.discharge','patients.read', 'visits.read', 'clinical.read', 'triage.write', 'consultations.write','orders.read','orders.create'],
   'Doctor': ['appointments.read','appointments.write','appointments.configure','theatre.read','theatre.schedule','theatre.work','theatre.sign','nursing.read','nursing.write','inpatient.read','inpatient.clinical','inpatient.discharge','patients.read', 'visits.read', 'clinical.read', 'triage.write', 'consultations.write','orders.read','orders.create'],
   'Nurse': ['appointments.read','theatre.read','theatre.work','nursing.read','nursing.write','inpatient.read','inpatient.clinical','inpatient.admit','patients.read', 'visits.read', 'clinical.read', 'triage.write','orders.read'],
   'Pharmacist':['patients.read','visits.read','pharmacy.work'],
@@ -60,9 +60,9 @@ export function hospitalRoleModules(role) {
     ...(capabilities.includes('consultations.write') ? ['hospitalConsultations'] : []),
     ...(capabilities.includes('orders.read') ? ['hospitalOrders'] : []),
     ...(capabilities.includes('pharmacy.work') ? ['hospitalPharmacy'] : []),
-    ...(capabilities.includes('laboratory.work') ? ['hospitalLaboratory'] : []),
+    ...((capabilities.includes('laboratory.work') || capabilities.includes('laboratory.configure')) ? ['hospitalLaboratory'] : []),
     ...(capabilities.includes('billing.read') ? ['hospitalBilling'] : []),
     ...(capabilities.includes('hmo.work') ? ['hospitalHmo'] : []),
-    ...(capabilities.includes('imaging.work') ? ['hospitalImaging'] : [])
+    ...((capabilities.includes('imaging.work') || capabilities.includes('imaging.configure')) ? ['hospitalImaging'] : [])
   ];
 }

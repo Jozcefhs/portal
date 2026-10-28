@@ -1,5 +1,5 @@
 import {clean,fail,id,digest,patientSummary} from './hospital-model.js';
-import {field,quantity,qty,money,chargeCents,cumulativeCredit,dateOnly,watDay,dateFilters,medicine,prescription,investigation,allergySnapshot} from './hospital-orders-model.js';
+import {field,quantity,qty,money,chargeCents,cumulativeCredit,dateOnly,watDay,dateFilters,medicine,prescription,investigation,allergySnapshot,specimenLabel} from './hospital-orders-model.js';
 
 export function createHospitalOrdersService(ctx){
   const {env,user,db,collection,capabilities,requireCapability,branch,patient,clock,actor,condition,strip,eq,auditWrite,auditRead,operation,page}=ctx;
@@ -70,9 +70,19 @@ export function createHospitalOrdersService(ctx){
       const Kind=body.Kind,Fields=Kind==='Prescription'?await prescription(body.Prescription):investigation({...body.Investigation,Kind});
       return operation(body,'createOrder',async key=>{
         const c=await visitContext(body,true);revision(body,c.visit,'VisitRevision');revision(body,c.care,'CareRevision');
+        let CatalogSnapshot = null;
+        if (body.CatalogId) {
+          if (Kind === 'Prescription') fail('Choose an investigation before selecting the catalogue.');
+          const item = await read('InvestigationCatalog', body.CatalogId);
+          if (!item || item.BranchId !== c.BranchId || item.Kind !== Kind || !item.Active) fail('This investigation catalogue item is unavailable. Reload the catalogue.',409);
+          if (body.CatalogRevision !== item.__updateTime) fail('The investigation catalogue changed. Reload it and review the saved instructions.',409);
+          if (Fields.Service !== item.Name || Fields.Specimen !== item.Specimen) fail('The selected service or specimen was changed. Reselect the catalogue item, or choose a custom investigation.');
+          CatalogSnapshot = { CatalogId:item.CatalogId, VersionId:item.VersionId, Code:item.Code, Name:item.Name, Specimen:item.Specimen,
+            Preparation:item.Preparation, Instructions:item.Instructions };
+        }
         const order={OrderId:key,OrderNumber:`${Kind==='Prescription'?'RX':'INV'}-${key.slice(0,12).toUpperCase()}`,
           PatientId:c.person.PatientId,PatientName:patientSummary(c.person).DisplayName,HospitalNumber:c.person.HospitalNumber,VisitId:c.visit.VisitId,BranchId:c.BranchId,
-          Kind,Fields,Status:Kind==='Prescription'?'Awaiting pharmacy review':'Requested',CreatedAt:clock(),UpdatedAt:clock(),
+          Kind,Fields,...(CatalogSnapshot?{CatalogSnapshot}:{}),...(Kind==='Laboratory'?{SpecimenWorkflow:2,SpecimenSequence:0}:{}),Status:Kind==='Prescription'?'Awaiting pharmacy review':'Requested',CreatedAt:clock(),UpdatedAt:clock(),
           PrescriberUsername:actor,PrescriberName:clean(user.displayName)||actor,AllergySnapshot:allergySnapshot(c.care),
           DispensedQuantity:0,ReturnedQuantity:0,CriticalNeedsAcknowledgement:false,CriticalPendingCount:0};
         c.order=order;
@@ -96,7 +106,7 @@ export function createHospitalOrdersService(ctx){
       const releasedRead=isWorker&&c.order.ReleasedReportId&&c.order.ReleasedReportId===c.order.LatestReportId?latestRead:report(c.order,c.order.ReleasedReportId);
       const [latest,released]=await Promise.all([latestRead,releasedRead]);
       await auditRead(body,'View hospital order',c.BranchId,c.person,{OrderId:c.order.OrderId});
-      return {ok:true,order:publicRow(c.order),patient:patientSummary(c.person),care:publicRow(c.care)||{AllergyStatus:'Unknown',Allergies:'',Revision:''},
+      return {ok:true,order:{...publicRow(c.order),LabelToPrint:specimenLabel(c.order)},patient:patientSummary(c.person),care:publicRow(c.care)||{AllergyStatus:'Unknown',Allergies:'',Revision:''},
         latestReport:publicRow(latest),releasedReport:publicRow(released),canVerify:!!latest&&latest.ActorUsername!==actor&&isWorker,
         canCancel:can('orders.create')&&(c.order.PrescriberUsername===actor||user.role==='Medical Director')};
     },
@@ -231,11 +241,26 @@ export function createHospitalOrdersService(ctx){
     },
     async recordSpecimen(body){
       requireCapability('laboratory.work');await branch(body);confirmed(body);const Note=field(body,'Note',2000,true);
-      if(!['Collected','Rejected'].includes(body.Decision))fail('Choose Collected or Rejected.');
+      if(!['Collected','Received','Rejected'].includes(body.Decision))fail('Choose Collected, Received or Rejected.');
       return operation(body,'recordSpecimen',async key=>{
         const c=await orderContext(body);revision(body,c.order);notCancelled(c.order);
-        if(c.order.Kind!=='Laboratory'||!['Requested','Specimen rejected','Specimen collected'].includes(c.order.Status))fail('This order is not awaiting specimen handling.',409);
-        if(body.SpecimenLabel!==c.order.OrderNumber)fail('Match the specimen label to this patient and order.');
+        if(c.order.Kind!=='Laboratory'||!['Requested','Specimen rejected','Specimen collected','Specimen received'].includes(c.order.Status))fail('This order is not awaiting specimen handling.',409);
+        if(body.SpecimenLabel!==specimenLabel(c.order))fail('Match the specimen label to this patient and collection attempt.');
+        if(c.order.SpecimenWorkflow===2){
+          const old=c.order.CurrentSpecimen,Decision=body.Decision;
+          if(Decision==='Collected'&&!['Requested','Specimen rejected'].includes(c.order.Status))fail('This collection is already recorded. Receive or reject the specimen before another collection.',409);
+          if(Decision==='Received'&&old?.Status!=='Collected')fail('Record collection before laboratory receipt. A received specimen cannot be received twice.',409);
+          if(Decision==='Rejected'&&c.order.Status==='Specimen rejected')fail('This specimen is already rejected. Record a new collection.',409);
+          const OccurredAt=clean(body.OccurredAt)||clock(),previousTime=old?.RejectedAt||old?.ReceivedAt||old?.CollectedAt;
+          if(!/^\d{4}-\d{2}-\d{2}T/.test(OccurredAt)||!Number.isFinite(Date.parse(OccurredAt))||Date.parse(OccurredAt)>Date.parse(clock())||Date.parse(OccurredAt)<Date.parse(c.order.CreatedAt)
+            ||previousTime&&Date.parse(OccurredAt)<Date.parse(previousTime))fail('Choose a handling time between the order/previous handling time and now.');
+          const fresh=Decision==='Collected'||!old,Sequence=fresh?(c.order.SpecimenSequence||0)+1:old.Sequence;
+          const specimen={...(fresh?{}:old),Label:body.SpecimenLabel,Sequence,Status:Decision,Note,
+            [`${Decision}At`]:new Date(OccurredAt).toISOString(),[`${Decision}By`]:actor,RecordedAt:clock()};
+          return {writes:changes(key,c,'Record laboratory specimen',{Status:`Specimen ${Decision.toLowerCase()}`,SpecimenSequence:Sequence,CurrentSpecimen:specimen,
+            SpecimenLabel:specimen.Label,SpecimenHandledAt:clock(),SpecimenHandledBy:actor},{Decision,Note,Specimen:specimen}),result:result(c)};
+        }
+        if(body.Decision==='Received')fail('This earlier order uses the original collection workflow. Its recorded specimen and reports are preserved.');
         return {writes:changes(key,c,'Record laboratory specimen',{Status:body.Decision==='Collected'?'Specimen collected':'Specimen rejected',
           SpecimenLabel:c.order.OrderNumber,SpecimenHandledAt:clock(),SpecimenHandledBy:actor},{Decision:body.Decision,Note}),result:result(c)};
       });
@@ -246,11 +271,11 @@ export function createHospitalOrdersService(ctx){
       const ReportFingerprint=await digest(JSON.stringify({Text,Reason,Critical}));
       return operation(body,'recordInvestigationReport',async key=>{
         const c=await orderContext(body);worker(c.order.Kind);revision(body,c.order);notCancelled(c.order);
-        if(c.order.Kind==='Laboratory'&&!['Specimen collected','Result draft','Verified','Released'].includes(c.order.Status))fail('Collect and identify the specimen before recording laboratory results.',409);
+        if(c.order.Kind==='Laboratory'&&(c.order.SpecimenWorkflow===2?c.order.CurrentSpecimen?.Status!=='Received':!['Specimen collected','Result draft','Verified','Released'].includes(c.order.Status)))fail('Collect, identify and receive the specimen in the laboratory before recording results.',409);
         if(c.order.ReportFingerprint===ReportFingerprint)return {writes:[],result:{...result(c),ReportId:c.order.LatestReportId,Unchanged:true}};
         if(c.order.LatestReportId&&!Reason)fail('Record why this report is being corrected. Earlier versions will be retained.');
         const row={ReportId:key,OrderId:c.order.OrderId,PatientId:c.person.PatientId,BranchId:c.BranchId,Text,Critical,Reason,
-          PreviousReportId:c.order.LatestReportId||'',...stamp()};
+          PreviousReportId:c.order.LatestReportId||'',...(c.order.CurrentSpecimen?{SpecimenSnapshot:c.order.CurrentSpecimen}:{}),...stamp()};
         return {writes:[...changes(key,c,'Record investigation report',{Status:'Result draft',LatestReportId:key,ReportFingerprint,VerifiedReportId:'',VerifiedBy:'',VerifiedAt:''},{ReportId:key}),
           write('InvestigationReports',key,row,null)],result:{...result(c),ReportId:key}};
       });

@@ -96,7 +96,8 @@ test('laboratory specimens must match patient/order and draft reports cannot be 
   await assert.rejects(f.laboratory.recordInvestigationReport(await f.body(order,{Text:'Synthetic result'},f.laboratory)),/Collect/);
   const c=await f.laboratory.orderDetails(request(order));
   await assert.rejects(f.laboratory.recordSpecimen(await f.body(order,{SpecimenLabel:'WRONG',Decision:'Collected',Note:'Collected'},f.laboratory)),/label/);
-  await f.laboratory.recordSpecimen(await f.body(order,{SpecimenLabel:c.order.OrderNumber,Decision:'Collected',Note:'Identity and label checked'},f.laboratory));
+  await f.laboratory.recordSpecimen(await f.body(order,{SpecimenLabel:c.order.LabelToPrint,Decision:'Collected',Note:'Identity and label checked'},f.laboratory));
+  await f.laboratory.recordSpecimen(await f.body(order,{SpecimenLabel:c.order.LabelToPrint,Decision:'Received',Note:'Received and identity checked'},f.laboratory));
   const report=await f.laboratory.recordInvestigationReport(await f.body(order,{Text:'Synthetic result',Critical:false},f.laboratory));
   const doctorView=await f.doctor.orderDetails(request(order));assert.equal(doctorView.latestReport,null);assert.equal(doctorView.releasedReport,null);
   await assert.rejects(f.laboratory.releaseInvestigationReport(await f.body(order,{ReportId:report.ReportId},f.laboratory)),/Verify/);
