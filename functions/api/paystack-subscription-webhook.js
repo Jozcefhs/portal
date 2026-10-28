@@ -11,7 +11,27 @@ import {
 } from '../lib/paid-subscription-lifecycle.js';
 
 const MAX_WEBHOOK_BYTES = 512 * 1024;
+const HARBORKIDS_WEBHOOK_URL = 'https://harborkids.pages.dev/api/paystack/webhook';
+const HARBORKIDS_REFERENCE = /^HK-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const clean = (value) => String(value ?? '').trim();
+
+async function forwardHarborKidsPayment(bytes, signature) {
+  const response = await fetch(HARBORKIDS_WEBHOOK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-paystack-signature': signature },
+    body: bytes,
+    redirect: 'error',
+    cache: 'no-store',
+    signal: AbortSignal.timeout(10000)
+  });
+  await response.body?.cancel();
+  if (response.status !== 200) {
+    const error = new Error('HarborKids payment delivery is pending retry.');
+    error.status = 503;
+    throw error;
+  }
+  return Response.json({ ok: true }, { headers: { 'Cache-Control': 'no-store' } });
+}
 
 async function readBoundedBody(request) {
   const declared = Number(request.headers.get('Content-Length') || 0);
@@ -187,7 +207,6 @@ async function updateSubscriptionStatus(env, platformEnv, event, data) {
 
 export async function onRequestPost({ request, env }) {
   try {
-    const platformEnv = requirePlatformFirestoreEnv(env);
     if (!clean(env.PAYSTACK_SECRET_KEY)) {
       return Response.json({ ok: false, message: 'Paystack webhook verification is not configured.' }, { status: 503 });
     }
@@ -201,6 +220,10 @@ export async function onRequestPost({ request, env }) {
     const event = JSON.parse(new TextDecoder().decode(bytes) || '{}');
     const eventName = clean(event.event).toLowerCase();
     const data = event.data || {};
+    if (eventName === 'charge.success' && HARBORKIDS_REFERENCE.test(clean(data.reference))) {
+      return await forwardHarborKidsPayment(bytes, request.headers.get('x-paystack-signature'));
+    }
+    const platformEnv = requirePlatformFirestoreEnv(env);
     if (eventName === 'charge.success' && clean(data.reference)) {
       const intent = await getDocument(platformEnv, 'subscriptionPayments', clean(data.reference)).catch(() => null);
       if (intent) await recordVerifiedSubscriptionPayment(env, data).catch(() => null);
