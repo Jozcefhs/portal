@@ -50,6 +50,10 @@ try {
     assert.equal(await report.locator('.subject-table th').count(),7);
     assert.equal(await report.locator('.sample').count(),0);
     assert.equal(await report.locator('.subject-table th').first().evaluate(node=>getComputedStyle(node).backgroundColor),'rgb(22, 74, 120)');
+    assert.equal(await report.locator('.identity-table tbody tr').count(),3);
+    assert.match(await report.locator('.identity-table').innerText(),/DATE OF BIRTH/);
+    assert.match(await report.locator('.identity-table').innerText(),/26 Oct 2026/);
+    assert.doesNotMatch(await report.locator('.subject-table').innerText(),/WEIGHTED/);
     if(stage==='secondary') {
       await report.screenshot({path:'tmp/parent-result-matched-layout.png',fullPage:true});
       fixture.record.Subjects[0].SubjectName='Computer Hardware and GSM Repairs';
@@ -109,7 +113,7 @@ try {
   });
   const popupPromise=page.waitForEvent('popup');await page.locator('#parentPrint').click();const popup=await popupPromise;
   await popup.waitForSelector('body[data-printed=yes]');
-  assert.match(await popup.locator('.summary-table').innerText(),/79%/);
+  assert.match(await popup.locator('.summary-table').innerText(),/79.0%/);
   assert.equal(await popup.locator('body').getAttribute('data-images-settled'),'true',JSON.stringify(await popup.evaluate(()=>({url:location.href,state:document.readyState,images:[...document.images].map(image=>({src:image.src,complete:image.complete,width:image.naturalWidth}))}))));
   assert.equal(await page.evaluate(()=>requests.length),1);
   assert.equal(await page.evaluate(()=>requests[0].action),'getAcademicResultForPrint');

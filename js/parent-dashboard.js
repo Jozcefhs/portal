@@ -1838,7 +1838,7 @@ function renderAcademicResults(child) {
       .sort((left, right) => Number(left.Total) - Number(right.Total)).slice(0, 3);
     const overview = document.createElement('section');
     overview.className = 'academic-progress-overview';
-    overview.innerHTML = `<header><div><small>Current approved progress</small><strong>${escapeHtml([current.Term, current.AcademicSession].filter(Boolean).join(' · '))}</strong></div><span>${escapeHtml(current.ClassName || '')}</span></header><div class="academic-progress-metrics"><div><small>Current average</small><strong>${escapeHtml(current.OverallAverage ?? '—')}%</strong></div><div><small>Previous permitted term</small><strong>${previous ? `${escapeHtml(previous.OverallAverage ?? '—')}%` : 'Not available'}</strong></div><div><small>Change</small><strong>${change === null ? '—' : `${change > 0 ? '+' : ''}${escapeHtml(change)} points`}</strong></div><div><small>Attendance</small><strong>${escapeHtml(current.Attendance?.AttendancePercentage ?? 0)}%</strong></div></div>${focusSubjects.length ? `<p><strong>Subjects to watch:</strong> ${focusSubjects.map((subject) => `${escapeHtml(subject.SubjectName || subject.SubjectId)} (${escapeHtml(subject.Total)}%)`).join(' · ')}</p>` : ''}${current.Recommendation ? `<p><strong>Approved recommendation:</strong> ${escapeHtml(current.Recommendation)}</p>` : ''}`;
+    overview.innerHTML = `<header><div><small>Current approved progress</small><strong>${escapeHtml([current.Term, current.AcademicSession].filter(Boolean).join(' · '))}</strong></div><span>${escapeHtml(current.ClassName || '')}</span></header><div class="academic-progress-metrics"><div><small>Current average</small><strong>${escapeHtml(window.DynamaxAcademicResultTemplate.formatAverage(current.OverallAverage))}</strong></div><div><small>Previous permitted term</small><strong>${previous ? escapeHtml(window.DynamaxAcademicResultTemplate.formatAverage(previous.OverallAverage)) : 'Not available'}</strong></div><div><small>Change</small><strong>${change === null ? '—' : `${change > 0 ? '+' : ''}${escapeHtml(change)} points`}</strong></div><div><small>Attendance</small><strong>${escapeHtml(current.Attendance?.AttendancePercentage ?? 0)}%</strong></div></div>${focusSubjects.length ? `<p><strong>Subjects to watch:</strong> ${focusSubjects.map((subject) => `${escapeHtml(subject.SubjectName || subject.SubjectId)} (${escapeHtml(subject.Total)}%)`).join(' · ')}</p>` : ''}${current.Recommendation ? `<p><strong>Approved recommendation:</strong> ${escapeHtml(current.Recommendation)}</p>` : ''}`;
     academicTermResults.appendChild(overview);
   }
   records.forEach((record) => {
@@ -1856,7 +1856,7 @@ function renderAcademicResults(child) {
     const summary = document.createElement('div');
     summary.className = 'academic-result-summary';
     [
-      ['Average', record.OverallAverage],
+      ['Average', window.DynamaxAcademicResultTemplate.formatAverage(record.OverallAverage)],
       ['Grade', record.OverallGrade],
       ['Position', record.OverallPosition],
       ['Band', record.PerformanceBand],
