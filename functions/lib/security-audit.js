@@ -92,7 +92,7 @@ function isAcademicWorkspaceLoad(action, route) {
   // unrelated module's "bootstrap" performs no writes.
   if (lower(route).replace(/\/+$/, '') !== '/api/staff-academics') return false;
   const key = lower(action).split('—')[0].replace(/[^a-z]/g, '');
-  return ['bootstrap', 'loadacademicmanagementworkspace', 'loadedacademicmanagementworkspace',
+  return ['bootstrap', 'getacademicreviewarmsummary', 'loadacademicmanagementworkspace', 'loadedacademicmanagementworkspace',
     'failedtoloadacademicmanagementworkspace', 'accessdeniedacademicmanagementworkspace'].includes(key);
 }
 

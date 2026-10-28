@@ -75,7 +75,7 @@ test('idle renewal does not cancel concurrent academic reads or reuse a cached t
 });
 
 test('academic submission settings and register are live reads; saves and payment verification still invalidate', () => {
-  for (const action of ['getAcademicSubmissionSettings', 'listAcademicSubmissions']) {
+  for (const action of ['getAcademicSubmissionSettings', 'listAcademicSubmissions', 'getAcademicReviewArmSummary']) {
     const policy = requestPolicy(url('/api/staff-academics'), post(action));
     assert.equal(policy.cacheable, false, action);
     assert.equal(policy.mutation, false, action);
@@ -84,6 +84,19 @@ test('academic submission settings and register are live reads; saves and paymen
   for (const action of ['saveAcademicSubmissionSettings', 'payAcademicSubmission', 'verifyAcademicSubmission']) {
     assert.equal(requestPolicy(url('/api/staff-academics'), post(action)).mutation, true, action);
   }
+});
+
+test('explicit branch-summary refresh stays live without evicting loaded class records', async () => {
+  const {cache}=fixture(); let classReads=0, summaryReads=0;
+  const loadClass=()=>cache.fetch(url('/api/staff-academics'),post('bootstrap',{ClassId:'grade7'}),async()=>{
+    classReads++;return json({ok:true,scoreSheets:[{SheetId:'saved'}]});
+  });
+  await loadClass();
+  for(let i=0;i<2;i++) await cache.fetch(url('/api/staff-academics'),post('getAcademicReviewArmSummary'),async()=>{
+    summaryReads++;return json({ok:true,branchReviewSummary:{sheets:[]}});
+  });
+  await loadClass();
+  assert.equal(classReads,1);assert.equal(summaryReads,2);
 });
 
 test('homework context reuses scoped snapshots but audience preview stays live and sends invalidate reads', async () => {

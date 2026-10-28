@@ -1891,6 +1891,7 @@ function clearStaffWorkspaceState() {
   executiveAvailableDirectoryTypes = [];
   executiveSelectedRecipient = null;
   academicManagementData = null;
+  window.DynamaxAcademicWorkflow?.clearBranchSummary();
   academicManagementView = 'classrooms';
   academicManagementFilters = { section: '', sessionId: '', termId: '' };
   academicClassroomDraft = { sessionId: '', termId: '', classId: '', armId: '', armTemplateId: '' };
@@ -2049,6 +2050,7 @@ function clearBranchScopedWorkspaceData() {
   studentConductData = null;
   schoolLibraryData = null;
   academicManagementData = null;
+  window.DynamaxAcademicWorkflow?.clearBranchSummary();
   academicManagementView = 'classrooms';
   academicManagementFilters = { section: '', sessionId: '', termId: '' };
   academicClassroomDraft = { sessionId: '', termId: '', classId: '', armId: '', armTemplateId: '' };
@@ -15511,6 +15513,11 @@ function refreshAcademicTestReviewRow(root, sheet) {
   root.querySelector('[data-academic-score-workflow-filter]')?.refreshWorkflow?.();
 }
 
+function academicReviewArmScopeKey() {
+  return JSON.stringify([currentUser?.username, currentUser?.role, selectedBranchId,
+    academicManagementFilters.section, academicManagementFilters.sessionId, academicManagementFilters.termId]);
+}
+
 function bindAcademicWorkflowFilters() {
   const workflow = window.DynamaxAcademicWorkflow;
   const applyRows = (table, visible, idKey) => {
@@ -15540,7 +15547,12 @@ function bindAcademicWorkflowFilters() {
     if (state.armId && !rooms.some(row => row.ArmId === state.armId)) state.armId = '';
     room.innerHTML = '<option value="">All loaded classrooms</option>' + rooms.map(row => `<option value="${escapeHtml(row.ArmId)}">${escapeHtml(academicLabel(academicManagementData.classes, row.ClassId))} / ${escapeHtml(academicLabel(academicManagementData.arms, row.ArmId))}</option>`).join('');
     room.value = state.armId;
-    const control = workflow.mount({host: scoreHost, state, stages: workflow.scoreStages, unit: 'subject sheets', countArms: true,
+    const branchKey = academicReviewArmScopeKey(), canCountBranch = academicManagementData.permissions?.canReviewScores === true;
+    const control = workflow.mount({host: scoreHost, state, stages: workflow.scoreStages, unit: 'subject sheets', countArms: canCountBranch,
+      ...(canCountBranch ? {getArmRows: () => workflow.branchArmRows(branchKey, state.componentId, sheets()),
+        branchSummary: {key: branchKey, load: () => academicManagementRequest('getAcademicReviewArmSummary', {
+          SchoolSection: academicManagementFilters.section, SessionId: academicManagementFilters.sessionId, TermId: academicManagementFilters.termId
+        })}} : {}),
       getRows: () => sheets().filter(row => (!state.armId || row.ArmId === state.armId) && (!state.componentId || (row.AssessmentComponents || []).some(component => component.Id === state.componentId))),
       statusOf: row => workflow.scoreStatus(workflow.scoreReview(row, state.componentId)),
       onChange: visible => applyRows(panelEl.querySelector('.academic-score-workflow-table'), visible, 'SheetId')});
@@ -19051,8 +19063,9 @@ function bindAcademicManagement() {
     const scope={SchoolSection:academicManagementFilters.section,SessionId:academicManagementFilters.sessionId,TermId:academicManagementFilters.termId};
     const periodKey=JSON.stringify(scope);
     await runButtonAction(event.currentTarget,'Opening…',async()=>{
-      const {openAcademicBatchReview}=await import('./academic-batch-review.js?v=20261028-workflow-arm-counts');
+      const {openAcademicBatchReview}=await import('./academic-batch-review.js?v=20261028-workflow-branch-wide-arm-counts');
       openAcademicBatchReview({sheets:[...(academicCurrentRows(academicManagementData).scoreSheets || [])],scope,
+        getBranchArmRows: componentId => window.DynamaxAcademicWorkflow.branchArmRows(academicReviewArmScopeKey(), componentId, academicCurrentRows(academicManagementData).scoreSheets || []),
         request:academicManagementRequest,
         label:sheet=>[academicLabel(academicManagementData.classes,sheet.ClassId),academicLabel(academicManagementData.arms,sheet.ArmId),academicLabel(academicManagementData.subjects,sheet.SubjectId)].join(' · '),
         isCurrent:()=>branch===selectedBranchId&&username===currentUser?.username&&periodKey===JSON.stringify({SchoolSection:academicManagementFilters.section,SessionId:academicManagementFilters.sessionId,TermId:academicManagementFilters.termId}),

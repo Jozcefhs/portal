@@ -2,7 +2,7 @@ const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;
 
 // Opens from the loaded workflow. Only an explicit Submit/Approve click reads
 // the chosen sheets; filters and selections make no requests.
-export function openAcademicBatchReview({sheets, label, request, scope, isCurrent=()=>true, onSaved=()=>{}}) {
+export function openAcademicBatchReview({sheets, label, request, scope, getBranchArmRows=null, isCurrent=()=>true, onSaved=()=>{}}) {
   const workflow=window.DynamaxAcademicWorkflow;
   const dialog=document.createElement('dialog');dialog.className='academic-test-review-dialog academic-batch-review-dialog';
   dialog.setAttribute('aria-label','Batch approve scores');
@@ -35,7 +35,8 @@ export function openAcademicBatchReview({sheets, label, request, scope, isCurren
     dialog.querySelectorAll('[data-close],[data-test],[data-action],[data-search],[data-select],[data-clear],[data-workflow-status],[data-workflow-stage]').forEach(el=>el.disabled=busy);
   }
   const control=workflow.mount({host:dialog.querySelector('[data-status-filter]'),getRows:scoped,
-    statusOf:sheet=>workflow.scoreStatus(reviewOf(sheet)),stages:workflow.scoreStages,unit:'subject sheets',countArms:true,
+    statusOf:sheet=>workflow.scoreStatus(reviewOf(sheet)),stages:workflow.scoreStages,unit:'subject sheets',countArms:!!getBranchArmRows,
+    ...(getBranchArmRows ? {getArmRows:()=>getBranchArmRows(test.value)} : {}),
     onChange:rows=>{visibleRows=rows;const visibleIds=new Set(rows.filter(eligible).map(row=>row.SheetId));for(const id of selected)if(!visibleIds.has(id))selected.delete(id);renderList();}});
   function render(){control.refresh();}
   dialog.querySelector('[data-close]').onclick=()=>dialog.close();

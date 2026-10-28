@@ -10,6 +10,14 @@ const load = { AuditId: 'LOAD-1', Actor: 'Test Officer', ActorRole: 'Teacher', R
   ActionContext: 'School section: secondary', Summary: 'Test Officer requested to bootstrap in Academic management.' };
 const normalize = row => normalizedLegacyAudit(row, source);
 
+test('branch review summaries create no successful-load audit noise while denied requests remain auditable', async () => {
+  const prepared = await prepareSecurityAudit(new Request('https://example.test/api/staff-academics', {
+    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'getAcademicReviewArmSummary'})
+  }), '/api/staff-academics');
+  assert.equal(shouldPersistSecurityAudit(prepared,null,200),false);
+  for (const status of [401,403,500]) assert.equal(shouldPersistSecurityAudit(prepared,null,status),true);
+});
+
 test('successful workspace refreshes do not write audit noise; failures and unconfirmed attempts remain auditable', async () => {
   const prepared = await prepareSecurityAudit(new Request('https://example.test/api/staff-academics', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'bootstrap', SchoolSection: 'secondary' })

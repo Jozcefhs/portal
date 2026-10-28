@@ -9,14 +9,25 @@ permissions, revision checks, history and parent-access rules.
 
 In **Scorebook → Review and approval**, select the assessment test (for example,
 CA1) or **Full-term sheets**, then a loaded classroom and status. Status buttons
-show counts of subject sheets and distinct arms using the same selected test,
-classroom and academic scope. An arm is counted once per matching status, even
-when several subject sheets match. The same reusable arm in different classes
-counts separately; sheets without an arm do not invent an extra classroom.
-Mixed-status arms can appear in several status groups. These counts do not certify
-that every subject in an arm is complete. The batch approval dialog uses the same
-arm counts and also respects its search filter. All counts come from already-loaded
-records, without additional database reads or writes. An approved
+show subject-sheet counts for the loaded class/classroom. **Load branch-wide arm
+counts** adds distinct arm counts across every class in the selected branch,
+school section, session and term. The class/classroom selector and batch search
+do not narrow these branch totals; the selected test and status do.
+
+An arm with saved subject sheets is counted once per matching status, even when
+several subjects match. The same reusable arm in different classes counts
+separately. Arms with no saved sheets are not represented, and missing arm IDs
+do not invent an extra classroom. Mixed-status arms can appear in several groups;
+these counts do not certify that every subject in an arm is complete.
+
+The explicit load checks reviewer permissions and the selected period, then pages
+through projected sheet metadata for that branch and term. It does not fetch
+student marks, rosters or history, and creates no database writes or successful
+load audit entries. The in-memory snapshot survives class/filter changes and
+incorporates newer local approvals. **Refresh branch-wide arm counts** requests
+new statuses from other officers. Branch/section/period/account changes clear the
+snapshot. Unloaded or failed counts display a dash, never a misleading zero.
+Filtering itself makes no additional requests. An approved
 test does not imply full-term approval. Locked sheets belong to Approved;
 changed/reopened test reviews belong to Draft. Fresh review checks override older
 saved badges. Partial approvals retain their pending-student annotation.

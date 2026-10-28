@@ -35,7 +35,7 @@
   const scopedLiveReads = {
     '/api/staff-meetings': ['bootstrap', 'setup', 'list', 'report'],
     '/api/staff-session': ['activity'],
-    '/api/staff-academics': ['getacademicsubmissionsettings', 'listacademicsubmissions']
+    '/api/staff-academics': ['getacademicsubmissionsettings', 'listacademicsubmissions', 'getacademicreviewarmsummary']
   };
   function stable(value) {
     if (Array.isArray(value)) return value.map(stable);
