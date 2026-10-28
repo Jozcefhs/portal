@@ -22980,6 +22980,7 @@ function renderStaffUsers() {
     </div>
     <p class="status staff-seat-scope-note">Organisation plan seats: ${organisationActiveUsers} of ${organisationUserLimit} active login${organisationActiveUsers === 1 ? '' : 's'}.${otherBranchActiveUsers ? ` This branch view excludes ${otherBranchActiveUsers} active login${otherBranchActiveUsers === 1 ? '' : 's'} assigned to other branches.` : ''}</p>
     <section class="staff-account-register" data-staff-account-register data-staff-user-query="${escapeHtml(staffListFilters.search)}" aria-label="Staff accounts">
+      <p class="muted">Current sign-in usernames are shown below. Use Refresh to see changes made by staff while this page is open.</p>
       <div class="admin-list-sort-toolbar admin-list-toolbar-search staff-user-list-toolbar">
         <label class="admin-list-search">Search staff accounts
           <input type="search" name="staff-account-filter" data-staff-user-search value="${escapeHtml(staffListFilters.search)}" placeholder="Name, username, department or branch" autocomplete="off" data-lpignore="true" data-1p-ignore readonly aria-label="Search staff accounts">
@@ -23064,7 +23065,7 @@ function renderStaffUsers() {
       <div class="workflow-dialog-header"><div><small>Identity & access</small><h2 id="staffUserDialogTitle">New Staff Account</h2></div><button type="button" data-close-user-dialog aria-label="Close">×</button></div>
       <form id="staffUserForm" class="workflow-form config-dialog-form">
         <section class="config-group"><header><strong>Account identity</strong><small>Basic sign-in identity and organizational access.</small></header><div class="config-grid">
-          <label>Username <span class="required">*</span><input name="Username" required></label>
+          <label>Sign-in username <span class="required">*</span><input name="Username" autocomplete="off" required><small data-staff-login-help></small></label>
           <label>First name <span class="required">*</span><input name="FirstName" autocomplete="given-name" required></label>
           <label>Surname <span class="required">*</span><input name="Surname" autocomplete="family-name" required></label>
           <label>Middle name<input name="MiddleName" autocomplete="additional-name"></label>
@@ -23088,7 +23089,7 @@ function renderStaffUsers() {
         <section class="config-group" data-staff-tabs-group><header><strong>Additional module access</strong><small>Select extra modules for this staff member. Their role's default modules remain available automatically, including future role changes. Unchecked boxes do not remove role access. Leave all clear to use only the role defaults. My Payroll and Finance Requests &amp; Imprest remain available to ordinary staff accounts.</small></header><div class="approval-account-list config-option-list config-option-grid">${permissionTabs.map(([key, label]) => `<label class="check-row"><input type="checkbox" name="TabAccessOption" value="${escapeHtml(key)}"> ${escapeHtml(label)}</label>`).join('')}</div></section>
         <section class="config-group"><header><strong>Security</strong><small>Password and account-state controls.</small></header><div class="config-grid">
           <label>New or reset password<input name="Password" type="password" minlength="6" autocomplete="new-password"><small>Required for a new account. Leave blank when editing unless resetting it.</small></label>
-          <label>Login-account email<input name="RecoveryEmail" type="email" maxlength="254" autocomplete="off"><small>Password recovery codes go to this inbox, not to HR contact details. No administrator email verification is needed. Staff can set or change it in their own Login details using their current password.</small></label>
+          <label>Password recovery email<input name="RecoveryEmail" type="email" maxlength="254" autocomplete="off"><small>Password recovery codes go to this inbox, not to HR contact details. No administrator email verification is needed. Staff can set or change it in their own Login details using their current password.</small></label>
           <div class="config-toggle-stack"><label class="check-row"><input name="Active" type="checkbox" checked> Account active</label><label class="check-row"><input name="MustChangePassword" type="checkbox" checked> Require password change at next sign-in</label>${schoolEdition ? '<label class="check-row sensitive-access-toggle"><input name="BiometricLookupEnabled" type="checkbox"> Allow student face-enrollment management</label>' : ''}</div>
         </div></section>
         <div class="config-dialog-actions"><p class="status" data-user-form-status></p><div class="config-dialog-action-buttons"><a class="subscription-plans-link" data-subscription-plans-link href="register-organization.html#plans" target="_blank" rel="noopener" hidden>View Dynamax plans</a><button type="submit">Save staff account</button></div></div>
@@ -23229,9 +23230,12 @@ function openStaffUserDialog(username = '') {
   if (plansLink) plansLink.hidden = true;
   form.elements.Username.readOnly = Boolean(user);
   form.dataset.originalUsername = user?.Username || '';
+  form.querySelector('[data-staff-login-help]').textContent = user
+    ? 'Current sign-in username. Staff can change it in Account & settings → Login details.'
+    : 'Choose the username this staff member will use to sign in.';
   document.getElementById('staffUserDialogTitle').textContent = user ? 'Manage Staff Account' : 'New Staff Account';
   if (user) {
-    form.elements.Username.value = user.Username;
+    form.elements.Username.value = user.LoginUsername || user.Username;
     form.elements.RecoveryEmail.value = user.RecoveryEmail || '';
     form.elements.FirstName.value = user.FirstName || '';
     form.elements.MiddleName.value = user.MiddleName || '';
@@ -23464,6 +23468,8 @@ function bindStaffUserEvents() {
     }
     payload.Active = form.elements.Active.checked;
     payload.OriginalUsername = form.dataset.originalUsername || '';
+    // The displayed login can change; saves must still target the existing account.
+    if (payload.OriginalUsername) payload.Username = payload.OriginalUsername;
     payload.MustChangePassword = form.elements.MustChangePassword.checked;
     payload.ApprovalEnabled = form.elements.ApprovalEnabled.checked;
     payload.RequisitionEditEnabled = form.elements.RequisitionEditEnabled.checked;
