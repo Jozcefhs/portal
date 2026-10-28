@@ -321,7 +321,7 @@ export function resolveOrganizationConfig({ env = {}, organizationProfile = {}, 
     ?? legacy.PlanEntitlements ?? legacy.FeatureEntitlements ?? null;
   const sourceModuleCatalogVersion = profile.PlanModuleCatalogVersion ?? legacy.PlanModuleCatalogVersion
     ?? profile.SubscriptionPriceSnapshot?.ModuleCatalogVersion ?? legacy.SubscriptionPriceSnapshot?.ModuleCatalogVersion ?? 0;
-  const planEntitlements = Array.isArray(configuredEntitlements) || configuredEntitlements === '*'
+  let planEntitlements = Array.isArray(configuredEntitlements) || configuredEntitlements === '*'
     ? migrateSubscriptionModuleEntitlements(edition, configuredEntitlements, sourceModuleCatalogVersion)
     : null;
   const configuredPlan = clean(
@@ -332,6 +332,11 @@ export function resolveOrganizationConfig({ env = {}, organizationProfile = {}, 
   const ownerDemo = profile.OwnerDemo === true
     || legacy.OwnerDemo === true
     || configuredPlan.toLowerCase() === 'owner demo';
+  // Standalone owner demos have no central registration to supply entitlements.
+  // Keep explicit overrides/preferences, but do not default their modules to Starter.
+  if (ownerDemo && planEntitlements === null) {
+    planEntitlements = subscriptionModulesForEdition(edition).map(module => module.Key);
+  }
   // Profiles created before subscription plans existed retain full operations
   // until an explicit plan is selected. New profiles are written with Starter.
   const plan = ownerDemo ? 'Owner Demo' : normalizeSubscriptionPlan(configuredPlan || 'Professional');

@@ -78,6 +78,7 @@ function canonicalProxyPathAllowed(env, pathname, method) {
   const normalizedPath = String(pathname || '').replace(/\/+$/, '') || '/';
   if (normalizedPath === '/api/tutorial-catalog' && String(method || 'GET').toUpperCase() !== 'GET') return false;
   const scope = String(env.CANONICAL_API_PROXY_SCOPE || '').trim().toLowerCase();
+  if (scope === 'public-catalog') return normalizedPath === '/api/plan-catalog' && String(method || 'GET').toUpperCase() === 'GET';
   if (!scope) return true;
   if (scope !== 'platform-subscriptions') return false;
   return PLATFORM_SUBSCRIPTION_PROXY_PATHS.has(normalizedPath);
@@ -187,7 +188,10 @@ async function proxyApiRequest({ request, env, url, requestId }) {
     return { response: unavailableResponse(requestId, 'The configured canonical API proxy is invalid.') };
   }
   const target = new URL(`${url.pathname}${url.search}`, configuredUrl.origin);
-  const headers = new Headers(request.headers);
+  // A standalone demo can read public plan information without enrolling in
+  // the subscription bridge or forwarding its staff session to another site.
+  const catalogOnly = String(env.CANONICAL_API_PROXY_SCOPE || '').trim().toLowerCase() === 'public-catalog';
+  const headers = catalogOnly ? new Headers({ Accept: 'application/json' }) : new Headers(request.headers);
   headers.set('X-Dynamax-Portal', url.hostname);
   headers.set('X-Request-Id', requestId);
   headers.delete('host');

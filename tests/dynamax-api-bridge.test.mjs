@@ -6,6 +6,19 @@ import { onRequest, onRequestWithIdentityLoader } from '../functions/_middleware
 const middleware = await readFile(new URL('../functions/_middleware.js', import.meta.url), 'utf8');
 const routes = JSON.parse(await readFile(new URL('../_routes.json', import.meta.url), 'utf8'));
 
+test('standalone demo public catalogue scope forwards no staff credentials and cannot proxy mutations', async () => {
+ const originalFetch=globalThis.fetch;let calls=0;
+ globalThis.fetch=async request=>{calls++;assert.equal(request.headers.get('Cookie'),null);assert.equal(request.headers.get('Authorization'),null);assert.equal(request.headers.get('X-Dynamax-Branch'),null);return Response.json({ok:true,catalog:{}});};
+ try{
+  const env={FIREBASE_PROJECT_ID:'hospital-demo',ALLOW_CANONICAL_API_PROXY:'true',CANONICAL_API_PROXY_SCOPE:'public-catalog',CANONICAL_PORTAL_URL:'https://dynamax.cc'};
+  for(const [path,method,status]of [['/api/plan-catalog','GET',200],['/api/plan-catalog','POST',503],['/api/register-organization','POST',503],['/api/tenant-project-pool','GET',503]]){
+   const response=await onRequestWithIdentityLoader({env,request:new Request(`https://demo.example${path}`,{method,headers:{Cookie:'staff=private',Authorization:'Bearer private','X-Dynamax-Branch':'main'}}),next:async()=>{throw Error('Must not invoke local platform administration');}},async()=>{throw Error('Must not load tenant operational records');});
+   assert.equal(response.status,status);
+  }
+  assert.equal(calls,1);
+ }finally{globalThis.fetch=originalFetch;}
+});
+
 test('Dynamax Pages fail closed unless an API proxy is explicitly configured', () => {
   assert.match(middleware, /env\.FIREBASE_PROJECT_ID/);
   assert.match(middleware, /hasPlatformFirestoreConfiguration/);

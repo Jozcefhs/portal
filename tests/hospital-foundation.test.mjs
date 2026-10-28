@@ -9,6 +9,14 @@ import { requiredDeploymentIdentity } from '../functions/lib/deployment-identity
 
 import { env, actor, profile, request, fixture } from './helpers/hospital-fixture.mjs';
 
+test('a standalone Hospital owner demo includes clinical modules while keeping explicit preferences', () => {
+  const config=resolveOrganizationConfig({env,organizationProfile:{OwnerDemo:true,Plan:'Owner Demo'}});
+  for(const key of ['hospitalConsultations','hospitalNursing','hospitalPharmacy','hospitalLaboratory','hospitalBilling'])assert.equal(config.FeatureFlags[key],true,key);
+  assert.equal(config.FeatureFlags.students,false);
+  const limited=resolveOrganizationConfig({env,organizationProfile:{OwnerDemo:true,Plan:'Owner Demo',DisabledFeatureEntitlements:['hospitalPharmacy']}});
+  assert.equal(limited.FeatureFlags.hospitalPharmacy,false);
+});
+
 test('Hospital has a distinct identity, catalogue and dependency-aware plans', () => {
   assert.equal(requiredDeploymentIdentity(env).edition, 'hospital');
   const config = resolveOrganizationConfig({ env });
