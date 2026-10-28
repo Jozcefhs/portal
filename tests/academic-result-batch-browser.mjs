@@ -10,6 +10,7 @@ try{
   await page.route('**/*',route=>route.fulfill({status:404,body:''}));
   const css=(await Promise.all(['css/style.css','css/academic-test-review.css'].map(read))).join('\n').replace(/@import[^;]+;/g,'');
   await page.setContent(`<style>${css}</style><body class="staff-page"><main id="workspace"></main></body>`);
+  await page.addScriptTag({content:await read('js/academic-workflow-status.js')});
   await page.evaluate(async source=>{
     const module=await import(URL.createObjectURL(new Blob([source],{type:'text/javascript'})));
     window.openBatch=module.openAcademicResultBatch;window.requests=[];window.saved=[];window.scopeCurrent=true;

@@ -2,6 +2,7 @@ const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;
 const stages=['Calculated Draft','Reviewed','Approved','Published','Locked'];
 
 export function openAcademicResultBatch({results,memberships,label,title,request,scope,permissions,isCurrent=()=>true,onSaved=()=>{}}) {
+  const workflow=window.DynamaxAcademicWorkflow;
   const dialog=document.createElement('dialog');dialog.className='academic-test-review-dialog academic-batch-review-dialog';
   dialog.setAttribute('aria-label','Batch review, approve and publish results');
   const actions=[...(permissions.canReviewResults?[['Reviewed','Review drafts'],['Approved','Approve reviewed results']]:[]),
@@ -12,41 +13,46 @@ export function openAcademicResultBatch({results,memberships,label,title,request
     <div class="academic-batch-controls"><label>Report type<select data-type><option>Mid-Term</option><option>End of Term</option></select></label>
     <label>Action<select data-action aria-label="Action">${actions.map(([value,name])=>`<option value="${value}">${esc(name)}</option>`).join('')}</select></label>
     <label>Find student<input type="search" data-search placeholder="Name or admission number"></label></div>
-    <p data-pending class="muted"></p><button type="button" class="secondary" data-select>Select eligible visible students</button><button type="button" class="secondary" data-clear>Clear selection</button>
+    <p data-pending class="muted"></p><div data-status-filter></div><button type="button" class="secondary" data-select>Select eligible visible students</button><button type="button" class="secondary" data-clear>Clear selection</button>
     <div class="admin-table-wrap" data-list></div><p data-status role="status" aria-live="polite"></p><button type="button" data-apply>Apply to selected students</button>`;
   const type=dialog.querySelector('[data-type]'),action=dialog.querySelector('[data-action]'),search=dialog.querySelector('[data-search]');
   const apply=dialog.querySelector('[data-apply]'),message=dialog.querySelector('[data-status]');
   type.value=results.some(row=>row.ResultType==='Mid-Term')?'Mid-Term':'End of Term';
   const selected=new Set(),outcomes=new Map();let busy=false;
   const reportRows=()=>results.filter(row=>(row.ResultType||'End of Term')===type.value);
-  const visible=()=>reportRows().filter(row=>`${label(row)} ${row.StudentRef}`.toLowerCase().includes(search.value.toLowerCase()));
+  const scoped=()=>reportRows().filter(row=>`${label(row)} ${row.StudentRef}`.toLowerCase().includes(search.value.toLowerCase()));
+  let visibleRows=[];
   const eligible=row=>{
     if(row.CalculationPending||row.SubjectChangeRecalculationRequired)return false;
     const index=stages.indexOf(row.Status);
     return action.value==='ReviewApprovePublish'?index>=0&&index<3:index===stages.indexOf(action.value)-1;
   };
-  function render(){
+  function renderList(){
     const rows=reportRows(),missing=memberships.filter(row=>!rows.some(result=>result.StudentRef===row.StudentRef));
     const pending=rows.filter(row=>row.CalculationPending||row.SubjectChangeRecalculationRequired);
     dialog.querySelector('[data-pending]').textContent=`${pending.length} results pending assessments or recalculation; ${missing.length} students have no calculated ${type.value.toLowerCase()} result. They will not block eligible students. Calculate their complete results when ready.`;
-    dialog.querySelector('[data-list]').innerHTML=`<table class="admin-table"><thead><tr><th>Select</th><th>Student</th><th>Current status</th><th>Outcome</th></tr></thead><tbody>${visible().map(row=>`<tr>
+    dialog.querySelector('[data-list]').innerHTML=`<table class="admin-table"><thead><tr><th>Select</th><th>Student</th><th>Current status</th><th>Outcome</th></tr></thead><tbody>${visibleRows.map(row=>`<tr>
       <td><input type="checkbox" data-result="${esc(row.ResultId)}" aria-label="Select ${esc(label(row))}"${selected.has(row.ResultId)?' checked':''}${busy||!eligible(row)?' disabled':''}></td>
-      <td>${esc(label(row))}<small>${esc(row.StudentRef)}</small></td><td>${esc(row.CalculationPending?'Pending assessments':row.SubjectChangeRecalculationRequired?'Recalculation required':row.Status)}</td>
+      <td>${esc(label(row))}<small>${esc(row.StudentRef)}</small></td><td>${workflow.badge(workflow.resultStatus(row),row.CalculationPending?'Pending assessments':row.SubjectChangeRecalculationRequired?'Recalculation required':row.Status)}</td>
       <td>${esc(outcomes.get(row.ResultId)||'')}</td></tr>`).join('')||'<tr><td colspan="4">No calculated results match this selection.</td></tr>'}</tbody></table>`;
     const verb={Reviewed:'Review',Approved:'Approve',Published:'Publish',ReviewApprovePublish:'Review, approve and publish'}[action.value]||'Process';
     apply.textContent=`${verb} selected (${selected.size})`;apply.disabled=busy||!selected.size;
-    dialog.querySelectorAll('[data-type],[data-action],[data-search],[data-close],[data-select],[data-clear]').forEach(el=>el.disabled=busy);
+    dialog.querySelectorAll('[data-type],[data-action],[data-search],[data-close],[data-select],[data-clear],[data-workflow-status],[data-workflow-stage]').forEach(el=>el.disabled=busy);
   }
+  const control=workflow.mount({host:dialog.querySelector('[data-status-filter]'),getRows:scoped,statusOf:workflow.resultStatus,
+    stages:workflow.resultStages,unit:'student results',onChange:rows=>{visibleRows=rows;
+      const ids=new Set(rows.filter(eligible).map(row=>row.ResultId));for(const id of selected)if(!ids.has(id))selected.delete(id);renderList();}});
+  function render(){control.refresh();}
   dialog.querySelector('[data-close]').onclick=()=>dialog.close();
   dialog.addEventListener('cancel',event=>{if(busy)event.preventDefault();});dialog.addEventListener('close',()=>dialog.remove(),{once:true});
   type.onchange=action.onchange=()=>{selected.clear();outcomes.clear();message.textContent='';render();};search.oninput=render;
-  dialog.querySelector('[data-select]').onclick=()=>{visible().filter(eligible).forEach(row=>selected.add(row.ResultId));render();};
+  dialog.querySelector('[data-select]').onclick=()=>{visibleRows.filter(eligible).forEach(row=>selected.add(row.ResultId));render();};
   dialog.querySelector('[data-clear]').onclick=()=>{selected.clear();render();};
   dialog.querySelector('[data-list]').onchange=event=>{const id=event.target.dataset.result;if(id){if(event.target.checked)selected.add(id);else selected.delete(id);render();}};
   apply.onclick=async()=>{
     if(busy||!selected.size)return;
     if(!isCurrent()){message.textContent='The branch, classroom, user or academic period changed. Close this window and reopen it.';return;}
-    const chosen=reportRows().filter(row=>selected.has(row.ResultId)&&eligible(row));
+    const chosen=visibleRows.filter(row=>selected.has(row.ResultId)&&eligible(row));
     busy=true;outcomes.clear();render();const counts={Updated:0,Pending:0,'Already complete':0,Other:0};let warnings=0;
     try{
       for(let offset=0;offset<chosen.length;offset+=25){

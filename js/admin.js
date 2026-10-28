@@ -15479,6 +15479,62 @@ function refreshAcademicTestReviewRow(root, sheet) {
   root.querySelectorAll('[data-academic-id]').forEach(button => {
     if (button.dataset.academicId === sheet.SheetId) button.dataset.academicRevision = sheet.RevisionToken;
   });
+  root.querySelectorAll('[data-academic-full-status]').forEach(cell => {
+    if (cell.dataset.academicFullStatus === sheet.SheetId) cell.innerHTML = window.DynamaxAcademicWorkflow.badge(
+      window.DynamaxAcademicWorkflow.scoreStatus(sheet), `${sheet.Status}${sheet.PendingStudentRefs?.length ? ` · ${sheet.PendingStudentRefs.length} pending` : ''}`);
+  });
+  root.querySelector('[data-academic-score-workflow-filter]')?.refreshWorkflow?.();
+}
+
+function bindAcademicWorkflowFilters() {
+  const workflow = window.DynamaxAcademicWorkflow;
+  const applyRows = (table, visible, idKey) => {
+    if (!table) return;
+    const ids = new Set(visible.map(row => row[idKey]));
+    table.querySelectorAll('[data-workflow-id]').forEach(cell => { cell.closest('tr').hidden = !ids.has(cell.dataset.workflowId); });
+    let empty = table.querySelector('[data-workflow-empty]');
+    if (!empty && table.querySelector('[data-workflow-id]')) {
+      empty = document.createElement('tr'); empty.dataset.workflowEmpty = '';
+      const cell = document.createElement('td'); cell.colSpan = table.querySelectorAll('thead th').length;
+      cell.textContent = 'No loaded records match this status. Choose another status or All.';
+      empty.append(cell); table.querySelector('tbody').append(empty);
+    }
+    if (empty) empty.hidden = visible.length > 0;
+  };
+  const scoreHost = panelEl.querySelector('[data-academic-score-workflow-filter]');
+  if (scoreHost) {
+    const state = academicScorebookDraft.workflowFilters ||= {status: 'All', componentId: null, armId: ''};
+    const scope = panelEl.querySelector('[data-academic-review-scope]');
+    const room = panelEl.querySelector('[data-academic-review-room]');
+    const sheets = () => academicCurrentRows(academicManagementData).scoreSheets || [];
+    const components = [...new Map(sheets().flatMap(sheet => (sheet.AssessmentComponents || []).map(row => [row.Id, row.Name || 'Assessment test']))).entries()];
+    if (state.componentId === null || (state.componentId && !components.some(([id]) => id === state.componentId))) state.componentId = components[0]?.[0] || '';
+    scope.innerHTML = components.map(([id, name]) => `<option value="${escapeHtml(id)}">${escapeHtml(name)}</option>`).join('') + '<option value="">Full-term sheets</option>';
+    scope.value = state.componentId;
+    const rooms = [...new Map(sheets().map(sheet => [sheet.ArmId, sheet])).values()];
+    if (state.armId && !rooms.some(row => row.ArmId === state.armId)) state.armId = '';
+    room.innerHTML = '<option value="">All loaded classrooms</option>' + rooms.map(row => `<option value="${escapeHtml(row.ArmId)}">${escapeHtml(academicLabel(academicManagementData.classes, row.ClassId))} / ${escapeHtml(academicLabel(academicManagementData.arms, row.ArmId))}</option>`).join('');
+    room.value = state.armId;
+    const control = workflow.mount({host: scoreHost, state, stages: workflow.scoreStages, unit: 'subject sheets',
+      getRows: () => sheets().filter(row => (!state.armId || row.ArmId === state.armId) && (!state.componentId || (row.AssessmentComponents || []).some(component => component.Id === state.componentId))),
+      statusOf: row => workflow.scoreStatus(workflow.scoreReview(row, state.componentId)),
+      onChange: visible => applyRows(panelEl.querySelector('.academic-score-workflow-table'), visible, 'SheetId')});
+    scoreHost.refreshWorkflow = control.refresh;
+    scope.onchange = () => { state.componentId = scope.value; control.refresh(); };
+    room.onchange = () => { state.armId = room.value; control.refresh(); };
+  }
+  const resultHost = panelEl.querySelector('[data-academic-result-workflow-filter]');
+  if (resultHost) {
+    const state = academicResultDraft.workflowFilters ||= {status: 'All', type: ''};
+    const type = panelEl.querySelector('[data-academic-result-workflow-type]');
+    type.value = state.type;
+    const control = workflow.mount({host: resultHost, state, stages: workflow.resultStages, unit: 'student results',
+      getRows: () => (academicCurrentRows(academicManagementData).termResults || []).filter(row =>
+        (!academicResultDraft.armId || row.ArmId === academicResultDraft.armId) && (!state.type || (row.ResultType || 'End of Term') === state.type)),
+      statusOf: workflow.resultStatus,
+      onChange: visible => applyRows(panelEl.querySelector('.academic-result-workflow-table'), visible, 'ResultId')});
+    type.onchange = () => { state.type = type.value; control.refresh(); };
+  }
 }
 
 function academicScoreSheetActions(row, permissions = {}) {
@@ -15623,16 +15679,16 @@ function academicScorebookWorkspace(data, rows) {
     <div class="academic-attendance-table academic-scorebook-table"><table><thead><tr><th scope="col" class="academic-serial">S/N</th><th class="academic-student-cell">Student</th>${componentHeaders}<th>Total</th><th>Grade</th><th>Completion</th></tr></thead><tbody>${scoreRows || `<tr><td colspan="${scoreFields.length + 5}">Choose an allocated classroom and subject with active students.</td></tr>`}</tbody></table></div>
     <div class="academic-scorebook-actions"><button type="submit" ${canEdit && roster.length && editableCellCount ? '' : 'disabled'}>Save and lock recorded scores</button>${sheet?.Status === 'Draft' && data.permissions?.canEnterScores ? `<button type="button" class="secondary" data-academic-score-status="Submitted" data-academic-id="${escapeHtml(sheet.SheetId)}" data-academic-revision="${escapeHtml(sheet.RevisionToken)}">Submit full-term sheet</button>` : ''}${sheet && data.permissions?.canEnterScores ? `<button type="button" class="secondary" data-academic-test-review="${escapeHtml(sheet.SheetId)}">Review individual tests</button>` : ''}${reactivateButton}</div>
   </form>`;
-  const workflow = `${data.permissions?.canReviewScores ? '<div data-academic-batch-toolbar><button type="button" data-academic-batch-review>Batch approve</button><p class="muted">Submit or approve selected tests and subjects. Complete students can proceed while missing marks stay pending.</p></div>' : ''}` + table('Score Sheet Workflow', rows.scoreSheets, [
+  const workflow = `<div data-academic-batch-toolbar><div class="academic-batch-controls"><label>Review scope<select data-academic-review-scope></select></label><label>Classroom<select data-academic-review-room></select></label></div><div data-academic-score-workflow-filter></div><p class="muted">Test approvals and full-term approvals are separate. Approved includes locked sheets; publication is shown under Results. Pending students do not block ready classmates.</p>${data.permissions?.canReviewScores ? '<button type="button" data-academic-batch-review>Batch approve</button>' : ''}</div>` + table('Score Sheet Workflow', rows.scoreSheets, [
     { label: 'Classroom', value: (row) => `${academicLabel(rows.classes, row.ClassId)} / ${academicLabel(rows.arms, row.ArmId)}` },
     { label: 'Subject', value: (row) => academicLabel(rows.subjects, row.SubjectId) },
     { label: 'Teacher', value: (row) => academicLabel(data.staff, row.TeacherUsername, row.TeacherUsername) },
     { label: 'Entered', value: (row) => `${row.EnteredCount || 0} / ${row.RosterCount || 0}` },
     { label: 'Term complete', value: (row) => `${row.CompleteCount || 0} / ${row.RosterCount || 0}` },
     { label: 'Test reviews', render: (row) => `<div data-academic-test-review-status="${escapeHtml(row.SheetId)}">${academicTestReviewStatusMarkup(row)}</div>` },
-    { label: 'Full-term status', render: (row) => `<span data-academic-full-status="${escapeHtml(row.SheetId)}">${escapeHtml(row.Status)}${row.PendingStudentRefs?.length ? ` · ${row.PendingStudentRefs.length} pending` : ''}</span>` },
+    { label: 'Full-term status', render: (row) => `<span data-workflow-id="${escapeHtml(row.SheetId)}" data-academic-full-status="${escapeHtml(row.SheetId)}">${window.DynamaxAcademicWorkflow.badge(window.DynamaxAcademicWorkflow.scoreStatus(row), `${row.Status}${row.PendingStudentRefs?.length ? ` · ${row.PendingStudentRefs.length} pending` : ''}`)}</span>` },
     { label: 'Actions', render: (row) => academicScoreSheetActions(row, data.permissions || {}) }
-  ]);
+  ], {className: 'academic-score-workflow-table'});
   const preview = academicScorebookDraft.importPreview;
   const spreadsheetComponents = (scheme.Components || []).filter((component) => ['any', 'spreadsheet'].includes(clean(component.SourceMode || 'any').toLowerCase()));
   const previewRows = (preview?.Rows || []).map((row) => `<tr><td>${row.RowNumber}</td><td>${escapeHtml(row.StudentRef || '—')}</td><td>${row.Valid ? 'Valid' : 'Invalid'}</td><td>${escapeHtml((row.Issues || []).join(' ') || 'Ready to import')}</td></tr>`).join('');
@@ -16086,9 +16142,8 @@ function academicTermResultsWorkspace(data, rows) {
     <div class="academic-management-form-actions"><button type="submit" data-result-calculation="end-term"${selectedArm ? '' : ' disabled'}>${endTermResults.length ? 'Recalculate end-of-term Drafts' : 'Calculate end-of-term results'}</button><button type="submit" class="secondary" data-result-calculation="mid-term"${selectedArm ? '' : ' disabled'}>${midTermResults.length ? 'Recalculate mid-term Drafts' : 'Calculate mid-term results'}</button></div>
   </form>` : `<div class="academic-view-only-note"><strong>Term results are controlled by academic reviewers.</strong><span>Teachers may add draft remarks only for classrooms where they are the Form Teacher or Assistant.</span></div>`;
   const summary = `<div class="academic-result-summary-grid"><div><small>${learner.Plural}</small><strong>${selectedResults.length}</strong></div><div><small>Draft</small><strong>${statusCounts['Calculated Draft'] || 0}</strong></div><div><small>Approved</small><strong>${statusCounts.Approved || 0}</strong></div><div><small>Published / locked</small><strong>${(statusCounts.Published || 0) + (statusCounts.Locked || 0)}</strong></div></div>`;
-  const batchToolbar = data.permissions?.canReviewResults || data.permissions?.canPublishResults
-    ? `<div class="academic-management-editor academic-management-editor-wide" data-academic-result-batch-toolbar><label>Classroom<select data-academic-result-batch-classroom>${academicSelectOptions(classrooms,selectedArm?.ArmId,classroomLabel,'Choose classroom')}</select></label>
-      <button type="button" data-academic-result-batch${selectedArm?'':' disabled'}>Batch review / approve / publish</button><p class="muted">Choose students and a report type. Missing assessments stay pending without holding back complete results.</p></div>` : '';
+  const batchToolbar = `<div class="academic-management-editor academic-management-editor-wide" data-academic-result-batch-toolbar><div class="academic-batch-controls"><label>Classroom<select data-academic-result-batch-classroom>${academicSelectOptions(classrooms,selectedArm?.ArmId,classroomLabel,'Choose classroom')}</select></label><label>Report type<select data-academic-result-workflow-type><option value="">All report types</option><option>Mid-Term</option><option>End of Term</option></select></label></div>
+      <div data-academic-result-workflow-filter></div><p class="muted">Submitted / reviewed means ready for approval. Published includes locked results. Missing assessments remain pending without holding back complete results.</p>${data.permissions?.canReviewResults || data.permissions?.canPublishResults ? `<button type="button" data-academic-result-batch${selectedArm?'':' disabled'}>Batch review / approve / publish</button>` : ''}</div>`;
   const register = table('Term Result Workflow', selectedResults, [
     { label: learner.Singular, render: (row) => `<strong class="academic-result-student-name">${escapeHtml(academicLabel(data.students, row.StudentRef, row.StudentRef))}</strong><small>${escapeHtml(row.StudentRef)}</small>` },
     { label: 'Report', render: (row) => `<strong>${escapeHtml(row.ResultType || 'End of Term')}</strong><small>${escapeHtml((row.IncludedAssessmentComponentIds || []).join(', '))}</small>` },
@@ -16097,9 +16152,9 @@ function academicTermResultsWorkspace(data, rows) {
     { label: 'Grade', value: (row) => row.OverallGrade || '—' },
     { label: 'Attendance', value: (row) => `${row.Attendance?.AttendancePercentage ?? 0}%` },
     { label: 'Position context', value: (row) => row.OverallPosition ? `${row.OverallPosition} of ${row.AssessedStudentCount}` : row.PerformanceBand || `${row.AssessedStudentCount || 0} assessed` },
-    { label: 'Status', render: (row) => `<span class="academic-result-status academic-result-status-${escapeHtml(clean(row.Status).toLowerCase().replace(/[^a-z]+/g, '-'))}">${escapeHtml(row.CalculationPending ? 'Pending assessments' : row.Status)}</span><small>${escapeHtml(row.ResultReference)}</small>` },
+    { label: 'Status', render: (row) => `<span data-workflow-id="${escapeHtml(row.ResultId)}">${window.DynamaxAcademicWorkflow.badge(window.DynamaxAcademicWorkflow.resultStatus(row), row.CalculationPending ? 'Pending assessments' : row.SubjectChangeRecalculationRequired ? 'Recalculation required' : row.Status)}</span><small>${escapeHtml(row.ResultReference)}</small>` },
     { label: 'Actions', render: (row) => academicTermResultActions(row, data.permissions || {}) }
-  ], { emptyMessage: selectedArm ? 'No term results have been calculated for this classroom.' : 'Choose a classroom.' });
+  ], { className: 'academic-result-workflow-table', emptyMessage: selectedArm ? 'No term results have been calculated for this classroom.' : 'Choose a classroom.' });
   const events = table('Result Lifecycle History', rows.resultEvents.filter((event) => !selectedArm || (event.ClassId === selectedArm.ClassId && event.ArmId === selectedArm.ArmId)), [
     { label: 'Date', value: (row) => row.CreatedAt ? DynamaxTime.formatDateTime(row.CreatedAt) : '—' },
     { label: learner.Singular, value: (row) => academicLabel(data.students, row.StudentRef, row.StudentRef) },
@@ -18026,6 +18081,7 @@ function bindAcademicCbtRejectionReviews(root) {
 }
 
 function bindAcademicManagement() {
+  bindAcademicWorkflowFilters();
   panelEl.querySelector('[data-academic-load-records]')?.addEventListener('submit', event => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -18969,7 +19025,7 @@ function bindAcademicManagement() {
     const scope={SchoolSection:academicManagementFilters.section,SessionId:academicManagementFilters.sessionId,TermId:academicManagementFilters.termId};
     const periodKey=JSON.stringify(scope);
     await runButtonAction(event.currentTarget,'Opening…',async()=>{
-      const {openAcademicBatchReview}=await import('./academic-batch-review.js?v=20261027-independent-results');
+      const {openAcademicBatchReview}=await import('./academic-batch-review.js?v=20261028-workflow-status-filters');
       openAcademicBatchReview({sheets:[...(academicCurrentRows(academicManagementData).scoreSheets || [])],scope,
         request:academicManagementRequest,
         label:sheet=>[academicLabel(academicManagementData.classes,sheet.ClassId),academicLabel(academicManagementData.arms,sheet.ArmId),academicLabel(academicManagementData.subjects,sheet.SubjectId)].join(' · '),
@@ -18977,7 +19033,6 @@ function bindAcademicManagement() {
         onSaved:sheet=>{
           academicManagementData.scoreSheets=(academicManagementData.scoreSheets||[]).map(row=>row.SheetId===sheet.SheetId?sheet:row);
           refreshAcademicTestReviewRow(panelEl,sheet);
-          panelEl.querySelectorAll('[data-academic-full-status]').forEach(cell=>{if(cell.dataset.academicFullStatus===sheet.SheetId)cell.textContent=`${sheet.Status}${sheet.PendingStudentRefs?.length?` · ${sheet.PendingStudentRefs.length} pending`:''}`;});
           const form=panelEl.querySelector('[data-academic-scorebook]');
           if(form?.elements.SheetId?.value===sheet.SheetId)form.elements.SheetRevisionToken.value=sheet.RevisionToken;
         }
@@ -18989,7 +19044,7 @@ function bindAcademicManagement() {
     const branch=selectedBranchId,username=currentUser?.username;
     await runButtonAction(button,'Loading tests…',async()=>{
       try{
-        const {openAcademicTestReviews}=await import('./academic-component-review.js?v=20261027-independent-results');
+        const {openAcademicTestReviews}=await import('./academic-component-review.js?v=20261028-workflow-status-filters');
         await openAcademicTestReviews({sheet,payload:academicScoreSheetRequestPayload,request:academicManagementRequest,
           permissions:academicManagementData.permissions||{},
           title:[academicLabel(academicManagementData.classes,sheet.ClassId),academicLabel(academicManagementData.arms,sheet.ArmId),academicLabel(academicManagementData.subjects,sheet.SubjectId)].join(' · '),
@@ -19313,7 +19368,7 @@ function bindAcademicManagement() {
       &&scope.TermId===academicManagementFilters.termId&&scope.ArmId===academicResultDraft.armId;
     await runButtonAction(event.currentTarget,'Opening…',async()=>{
       try{
-        const {openAcademicResultBatch}=await import('./academic-result-batch.js?v=20261026');if(!isCurrent())return;
+        const {openAcademicResultBatch}=await import('./academic-result-batch.js?v=20261028-workflow-status-filters');if(!isCurrent())return;
         const rows=academicCurrentRows(academicManagementData),inRoom=row=>row.ClassId===scope.ClassId&&row.ArmId===scope.ArmId;
         openAcademicResultBatch({results:rows.termResults.filter(inRoom),memberships:rows.studentMemberships.filter(row=>inRoom(row)&&academicIsActive(row)),scope,
           title:[academicLabel(rows.classes,arm.ClassId),arm.Name,academicLabel(academicManagementData.sessions,scope.SessionId),academicLabel(academicManagementData.terms,scope.TermId)].join(' · '),

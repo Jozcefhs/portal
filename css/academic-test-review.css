@@ -12,3 +12,22 @@ html[data-theme="dark"] .academic-test-review-dialog{background:#111f30;color:#e
 .academic-test-review-status small{font-size:10px;color:#587087}.academic-test-review-badge{display:inline-block;padding:5px 8px;border-radius:7px;font-size:11px;font-weight:700;background:#edf3f8;color:#31526b}
 .academic-test-review-badge.approved{background:#e2f5ed;color:#06664b}.academic-test-review-badge.submitted{background:#fff3d2;color:#755900}.academic-test-review-badge.changed{background:#fff0e9;color:#983e17}
 html[data-theme="dark"] .academic-test-review-status small{color:#b8c9db}html[data-theme="dark"] .academic-test-review-badge.approved{background:#163d34;color:#9ee8d2}
+.academic-workflow-filter{margin:12px 0;min-width:0}
+.academic-workflow-filter>label{display:block;max-width:320px;font-weight:700}
+.academic-workflow-filter select{display:block;width:100%;margin-top:5px;min-height:40px}
+.academic-workflow-counts{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.academic-workflow-count,.academic-workflow-badge{--workflow-bg:#edf2f7;--workflow-ink:#354b63;background:var(--workflow-bg);color:var(--workflow-ink);border:1px solid currentColor;border-radius:8px;font-size:12px;font-weight:700;line-height:1.4}
+.academic-workflow-count{padding:8px 12px;min-height:38px;box-shadow:none}
+.academic-workflow-count:hover,.academic-workflow-count[aria-pressed="true"]{background:var(--workflow-bg);color:var(--workflow-ink);outline:2px solid currentColor;outline-offset:1px}
+.academic-workflow-count:focus-visible{outline:3px solid #1765dc;outline-offset:3px}
+.academic-workflow-count strong{margin-left:6px;font-variant-numeric:tabular-nums}
+.academic-workflow-badge{display:inline-block;padding:4px 8px}
+.workflow-submitted,.workflow-reviewed{--workflow-bg:#fff1ce;--workflow-ink:#795000}
+.workflow-approved{--workflow-bg:#dff5ea;--workflow-ink:#07543c}
+.workflow-published{--workflow-bg:#e8e9ff;--workflow-ink:#40388b}
+.workflow-pending,.workflow-withdrawn{--workflow-bg:#ffebe9;--workflow-ink:#9a2930}
+.academic-workflow-filter p{font-size:12px;margin:10px 0;color:#526780}
+.academic-score-workflow-table tr[hidden],.academic-result-workflow-table tr[hidden]{display:none!important}
+html[data-theme="dark"] .academic-workflow-filter p{color:#c6d6e9}
+html[data-theme="dark"] .academic-workflow-badge,html[data-theme="dark"] .academic-workflow-count{border-color:transparent}
+@media(max-width:600px){.academic-workflow-count{flex:1 1 140px}.academic-workflow-filter>label{max-width:none}}

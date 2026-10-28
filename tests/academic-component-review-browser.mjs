@@ -9,6 +9,7 @@ try{
   page.on('pageerror',e=>errors.push(e.message));
   await page.setContent(`<style>${(await read('css/style.css')).replace(/@import[^;]+;/g,'')}\n${await read('css/academic-test-review.css')}</style><body><table class="admin-table"><thead><tr><th>Subject</th><th>Test reviews</th><th>Full-term status</th></tr></thead><tbody><tr><td>Financial Accounting</td><td data-academic-test-review-status="sheet"></td><td>Draft</td></tr><tr><td>Civic Education</td><td data-academic-test-review-status="other">Unchanged</td><td>Draft</td></tr></tbody></table><input id="unsaved" value="Unsaved work"><button data-academic-id="sheet" data-academic-revision="old">Full term</button></body>`);
   const admin=await read('js/admin.js');
+  await page.addScriptTag({content:await read('js/academic-workflow-status.js')});
   await page.evaluate(source=>{
     window.escapeHtml=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     (0,eval)(source);

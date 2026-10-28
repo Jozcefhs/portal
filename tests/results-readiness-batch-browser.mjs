@@ -12,6 +12,7 @@ try {
   await page.setContent(`<style>${css}</style><body class="staff-page"><main id="workspace"></main></body>`);
   const admin=await read('js/admin.js');
   const functions=['academicResultsReadinessWorkspace','academicRecordLoadForm'].map(name=>admin.match(new RegExp(`function ${name}\\([\\s\\S]*?\\n}`))[0]).join('\n');
+  await page.addScriptTag({content:await read('js/academic-workflow-status.js')});
   await page.evaluate(source=>{
     window.escapeHtml=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     window.academicManagementView='readiness';(0,eval)(source);
