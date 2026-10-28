@@ -93,8 +93,10 @@ export async function commitAcademicSubmission(env, context, user, input, type, 
   const scope = scopeOf(context), id = await submissionHash(fields.map(key => scope[key]));
   const settings = await io.getDocument(env, SUBMISSION_COLLECTIONS.settings, id);
   const rule = applicableSubmissionRule(settings, type, input);
-  if (!rule || !writes.length) return io.batchCommitDocuments(env, writes);
-  if (writes.length > 497 || writes.some(write => !write.updateTime && write.exists !== false)) throw fail('This submission cannot be reserved safely. Ask Academic Management to review it.', 409);
+  if (!rule || !writes.length) return io.batchCommitDocuments(env, writes, { allowLargeAtomicBatch: type === 'attendance' });
+  // Attendance carries a membership revision guard per student so a transfer
+  // cannot race the register. Keep one atomic save, including those guards.
+  if (writes.length > (type === 'attendance' ? 997 : 497) || writes.some(write => !write.updateTime && write.exists !== false)) throw fail('This submission cannot be reserved safely. Ask Academic Management to review it.', 409);
   // The same actor/record/revision always resumes the same checkout, even after
   // a timeout. Audit/history UUIDs are excluded from the stable reservation key.
   const targets = writes.filter(w => !/audit|history/i.test(w.collectionPath))
@@ -222,7 +224,8 @@ export async function verifySubmissionPayment(env, reference, io = ioDefault) {
     // Financial receipt, reserved academic writes and consumed-payment status
     // commit atomically. Repeated webhook/callback delivery cannot submit twice.
     await io.batchCommitDocuments(env, [...writes, receiptWrite,
-      { collectionPath: SUBMISSION_COLLECTIONS.pending, documentId: reference, updateTime: pending.__updateTime, data: paid }]);
+      { collectionPath: SUBMISSION_COLLECTIONS.pending, documentId: reference, updateTime: pending.__updateTime, data: paid }],
+      { allowLargeAtomicBatch: pending.RecordType === 'attendance' });
     return { ok: true, submission: submissionSummary(paid) };
   } catch (error) {
     const current = await io.getDocument(env, SUBMISSION_COLLECTIONS.pending, reference);

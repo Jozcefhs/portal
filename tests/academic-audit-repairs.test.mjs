@@ -8,6 +8,7 @@ import * as scorebook from '../functions/lib/academic-scorebook.js';
 import * as policies from '../functions/lib/academic-policy.js';
 import * as timetable from '../functions/lib/academic-timetable-attendance.js';
 import * as attendanceIdentity from '../functions/lib/academic-attendance-identity.js';
+import { academicCarriedScoreSnapshot } from '../functions/lib/academic-carried-score-review.js';
 import { safeScopeId } from '../functions/lib/school-scope.js';
 import { calculateAcademicMidTermResultDrafts } from '../functions/lib/academic-term-results.js';
 import { evaluateAcademicResultAccess } from '../functions/lib/academic-result-access.js';
@@ -29,7 +30,7 @@ const conflict = () => Object.assign(new Error('Concurrent update'), { status: 4
 
 function managementHarness(records = {}) {
   const context = {
-    ...management, ...scorebook, ...timetable, ...attendanceIdentity, ...cbtRetention, academicResultWithWeightedComponents, academicResultWithSubjectLabels, TextEncoder, TextDecoder, crypto: webcrypto,
+    ...management, ...scorebook, ...timetable, ...attendanceIdentity, ...cbtRetention, academicCarriedScoreSnapshot, academicResultWithWeightedComponents, academicResultWithSubjectLabels, TextEncoder, TextDecoder, crypto: webcrypto,
     getSchoolStructure: async () => ({ ActiveBranchId: 'main', Branches: [{ Id: 'main' }], Sections: ['primary', 'secondary'] }),
     enforceActorBranch: (_actor, branch) => branch, safeScopeId,
     queryCollection: async (_env, collection) => structuredClone(records[collection] || []),
@@ -45,8 +46,9 @@ function managementHarness(records = {}) {
       for (const change of changes) {
         const collection = records[change.collectionPath] ||= [];
         const index = collection.findIndex(record => (record.RecordId || record.VersionId || record.CbtTestId) === change.documentId);
+        const previous = collection[index];
         if (index >= 0) collection.splice(index, 1);
-        if (change.operation !== 'delete') collection.push({ ...structuredClone(change.data), __updateTime: webcrypto.randomUUID() });
+        if (change.operation !== 'delete') collection.push({ ...(change.updateMask ? previous : {}), ...structuredClone(change.data), __updateTime: webcrypto.randomUUID() });
       }
       return { writeResults: changes.map(() => ({ updateTime: 'committed' })) };
     }
@@ -215,7 +217,7 @@ function dailyAttendanceFixture() {
   const register = { SessionId: session.SessionId, TermId: term.TermId, ClassId: schoolClass.ClassId, ArmId: arm.ArmId };
   const records = { academicSessions: [session], academicTerms: [term], academicClasses: [schoolClass], academicArms: [arm],
     academicSubjects: [row({ SubjectId: 'math' }), row({ SubjectId: 'english' })],
-    academicStudentMemberships: [row({ ...register, MembershipId: 'membership', StudentRef: 'TEST/24/1633' })],
+    academicStudentMemberships: [row({ ...register, MembershipId: 'membership', RecordId: 'membership', StudentRef: 'TEST/24/1633', __updateTime: 'membership-v1' })],
     academicTeacherAllocations: [row({ ...register, TeacherUsername: 'teacher', AllocationRole: 'Form Teacher' })] };
   const teacher = { ...actor, role: 'Teacher', username: 'teacher' };
   const form = { ...input, ...register, AttendanceDate: '2026-10-15', Mode: 'Daily', Entries: [{ StudentRef: 'TEST/24/1633', Status: 'Absent' }] };
@@ -416,4 +418,16 @@ test('term activation atomically queues closed-term paper cleanup; stale activat
       assert.equal(records.academicCbtPaperCleanupJobs[0].ActivatedTermId,'new');
     }
   }
+});
+
+
+test('attendance opened before an arm transfer cannot save a new old-arm record',async()=>{
+  const h=dailyAttendanceFixture(),commit=h.context.batchCommitDocuments;
+  h.context.batchCommitDocuments=(...args)=>{
+    h.records.academicStudentMemberships[0].__updateTime='transferred';
+    h.records.academicStudentMemberships[0].ArmId='destination';
+    return commit(...args);
+  };
+  await assert.rejects(h.save({}),{status:409});
+  assert.equal((h.records.academicStudentAttendance||[]).length,0);
 });

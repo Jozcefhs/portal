@@ -19,6 +19,8 @@ import { handleDiary } from './academic-diary.js';
 import { commitAcademicSubmission, submissionSettings, submissionPaymentAction } from './academic-submissions.js';
 import { checkClassroomRemovals } from './academic-classroom-removal.js';
 import { academicAttendanceId, findExistingAttendance, attendanceCorrectionMatches } from './academic-attendance-identity.js';
+import { isAcademicArmTransfer, preserveAcademicArmSubjects, planAcademicArmDataTransfer } from './academic-arm-transfer.js';
+import { academicCarriedScoreSnapshot } from './academic-carried-score-review.js';
 import { enforceActorBranch } from './branch-scope.js';
 import { normalizeClassKey } from './class-names.js';
 import { assertStudentCanHaveActiveMembership, studentStatusChanged } from './student-academic-status.js';
@@ -1889,7 +1891,9 @@ function validateAcademicRecord(state, type, record, people = {}) {
       const currentClass = clean(student.ClassName || student.ClassAdmitted || student.ClassApplyingFor) || 'another class';
       throw failure(`${record.StudentRef} belongs to ${currentClass}. Choose an arm within that student\u2019s existing class.`, 409, 'ACADEMIC_STUDENT_CLASS_MISMATCH');
     }
-    applyAcademicStudentCurriculum(state, record, {
+    if (people.preserveArmSubjects === true && isAcademicArmTransfer(people.existing, record)) {
+      preserveAcademicArmSubjects(people.existing, record);
+    } else applyAcademicStudentCurriculum(state, record, {
       allowIncompleteCurriculum: people.allowIncompleteCurriculum === true
     });
     assertAcademicMembershipCapacity(state, record, recordId(people.existing || {}));
@@ -3806,6 +3810,29 @@ function academicSubjectChangeResultGuards(impact, evidence) {
   });
 }
 
+async function academicArmTransferPlan(env, state, existing, record, evidence, scope, user) {
+  return planAcademicArmDataTransfer(env, { state, before: existing, after: record, evidence,
+    sheetIdFor: subjectId => academicScoreSheetId(scope, record.SessionId, record.TermId, record.ClassId, record.ArmId, subjectId),
+    actor: { timestamp: nowIso(), name: actorName(user) } }, { queryCollection, getDocuments,
+    sectionFor: row => effectiveAcademicSection(row, scope) });
+}
+
+function academicTransferDuplicateWrites(state, record, user, reason, resolutions, armTransfer) {
+  const writes = duplicateMembershipRetirementWrites(state, record, user, reason, resolutions);
+  if (!armTransfer) return writes;
+  // Legacy duplicate documents remain as inactive aliases for old references.
+  // A normal transfer updates the one existing active membership in place.
+  for (const write of writes) {
+    if (write.collectionPath === ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships) write.data.Status = 'Inactive';
+    else if (write.collectionPath === ACADEMIC_MANAGEMENT_COLLECTIONS.audit) {
+      write.data.Action = 'CONSOLIDATE DUPLICATE MEMBERSHIP';
+      write.data.Details = `Duplicate linked to current membership ${recordId(record)}. Student data moved with the current placement; original references preserved.`;
+      write.data.Summary = write.data.Details;
+    }
+  }
+  return writes;
+}
+
 function directAcademicChange(user, request) {
   return { ...request, Status: 'Approved', ApprovalMode: 'Direct ICT web', ReviewReason: request.Reason,
     ReviewedAt: nowIso(), ReviewedBy: actorName(user), ReviewedByUsername: actorUsername(user) };
@@ -3874,6 +3901,8 @@ export async function reviewAcademicSubjectChange(env, user = {}, input = {}) {
   let record = { ...withoutMetadata(existing) };
   let impact = request.Impact;
   const resultGuards = [];
+  let armTransferPlan;
+  const armTransfer = isTransfer && isAcademicArmTransfer(existing, { ...existing, ...request.After });
   if (decision === 'Approve') {
     assertReference(findById(state.sessions, existing.SessionId), 'The academic session is closed or inactive.');
     assertReference(findById(state.terms, existing.TermId), 'The academic term is closed or inactive.');
@@ -3883,7 +3912,8 @@ export async function reviewAcademicSubjectChange(env, user = {}, input = {}) {
     if (isTransfer) {
       const people = await loadPeople(env, user, scope, { staff: false });
       validateAcademicRecord(state, 'studentmembership', record, { ...people, existing,
-        allowDuplicateMembershipRetirement: true, allowIncompleteCurriculum: request.ResetSubjectSelections === true });
+        allowDuplicateMembershipRetirement: true, preserveArmSubjects: armTransfer,
+        allowIncompleteCurriculum: request.ResetSubjectSelections === true });
       delete record.WithdrawalDate;
       delete record.WithdrawalReason;
       const compatibility = studentCompatibilityWrite(people, state, record);
@@ -3891,13 +3921,18 @@ export async function reviewAcademicSubjectChange(env, user = {}, input = {}) {
     } else {
       applyAcademicStudentCurriculum(state, record, { requireTradeSelection: true });
     }
-    if (academicSubjectSelectionChanged(record, request.After)) throw failure('The classroom curriculum has changed. Reject this request and submit the revised choices.', 409);
+    if (!armTransfer && academicSubjectSelectionChanged(record, request.After)) throw failure('The classroom curriculum has changed. Reject this request and submit the revised choices.', 409);
     const evidence = await loadAcademicSubjectChangeEvidence(env, scope, existing);
     impact = academicSubjectChangeImpact(existing, record, evidence, scope);
-    resultGuards.push(...academicSubjectChangeResultGuards(impact, evidence));
+    if (armTransfer) {
+      armTransferPlan = await academicArmTransferPlan(env, state, existing, record, evidence, scope, user);
+      resultGuards.push(...armTransferPlan.writes);
+    } else resultGuards.push(...academicSubjectChangeResultGuards(impact, evidence));
   }
   delete record.PendingSubjectChange;
   const resolved = { ...request, Status: decision === 'Approve' ? 'Approved' : decision === 'Reject' ? 'Rejected' : 'Cancelled',
+    ...(armTransfer && decision === 'Approve' ? { OriginalRequestedAfter: request.After,
+      After: { ...request.After, ...subjectSelection(record), DepartmentId: record.DepartmentId }, ResetSubjectSelections: false } : {}),
     ...(permissions.fullAcademicAccess ? { ApprovalMode: 'Direct ICT web' } : {}),
     ReviewReason: note, ReviewedAt: nowIso(), ReviewedBy: actorName(user), ReviewedByUsername: actorUsername(user), Impact: impact };
   record.LastSubjectChange = resolved;
@@ -3913,17 +3948,18 @@ export async function reviewAcademicSubjectChange(env, user = {}, input = {}) {
   await commitAcademicBatch(env, [
     ...resultGuards,
     ...superseded.writes,
-    ...(decision === 'Approve' && isTransfer ? duplicateMembershipRetirementWrites(state,
-      { ...record, __updateTime: existing.__updateTime }, user, `Approved transfer: ${request.Reason}`, superseded.resolutions) : []),
+    ...(decision === 'Approve' && isTransfer ? academicTransferDuplicateWrites(state,
+      { ...record, __updateTime: existing.__updateTime }, user, `Approved transfer: ${request.Reason}`, superseded.resolutions, armTransfer) : []),
     { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships, documentId: recordId(existing),
       data: withoutMetadata(record), updateTime: existing.__updateTime },
-    movementWrite(user, { ...movement, Status: resolved.Status, SubjectChangeRequest: resolved }),
+    movementWrite(user, { ...movement, Status: resolved.Status, SubjectChangeRequest: resolved,
+      ...(armTransferPlan ? { ArmDataTransfer: armTransferPlan.summary } : {}) }),
     auditWrite(user, `${changeLabel.toUpperCase()} ${resolved.Status.toUpperCase()}`, 'studentmembership', record,
-      `${existing.StudentRef}: ${resolved.Status.toLowerCase()} ${changeLabel} requested by ${request.RequestedBy}. Request: ${request.Reason}. Review: ${note}. Old scores preserved; no marks transferred. Recalculate draft results separately.`,
-      `${actorName(user)} ${resolved.Status.toLowerCase()} ${request.RequestedBy}'s ${changeLabel} request for ${existing.StudentRef}. ${decision === 'Approve' ? 'The requested placement and subject choices are now active; existing drafts require recalculation.' : 'The current placement and subject choices were not changed.'} Existing scores remain under their original classrooms and subjects; no marks were copied or deleted.`)
-  ], 'The student or request changed during review. Reload before trying again.');
+      `${existing.StudentRef}: ${resolved.Status.toLowerCase()} ${changeLabel} requested by ${request.RequestedBy}. Request: ${request.Reason}. Review: ${note}. ${armTransfer && decision === 'Approve' ? 'Saved subjects, marks, results and attendance moved with the student; no student was archived.' : 'Existing marks preserved.'}`,
+      `${actorName(user)} ${resolved.Status.toLowerCase()} ${request.RequestedBy}'s ${changeLabel} request for ${existing.StudentRef}. ${decision === 'Approve' ? armTransfer ? 'The student and their saved data are now in the destination arm.' : 'The requested placement and subject choices are now active; existing drafts require recalculation.' : 'The current placement, subjects and scores were not changed.'}`)
+  ], 'The student or request changed during review. Reload before trying again.', { allowLargeAtomicBatch: armTransfer });
   const response = await bootstrapAcademicManagement(env, user, { ...input, BranchId: scope.branchId, SchoolSection: scope.section, View: 'students' });
-  response.message = `${existing.StudentRef}: ${changeLabel} ${resolved.Status.toLowerCase()}. ${decision === 'Approve' ? `Old scores remain under their original classrooms and subjects. ${isTransfer ? 'Complete destination subject choices under Student subjects. ' : ''}Assess the new subjects and recalculate draft results separately.` : 'Current placement, subjects and scores are unchanged.'}`;
+  response.message = `${existing.StudentRef}: ${changeLabel} ${resolved.Status.toLowerCase()}. ${decision === 'Approve' ? armTransfer ? 'Saved subjects, marks, results and attendance moved with the student. The same active membership was retained; no student was archived.' : `Old scores remain under their original classrooms and subjects. ${isTransfer ? 'Complete destination subject choices under Student subjects. ' : ''}Assess the new subjects and recalculate draft results separately.` : 'Current placement, subjects and scores are unchanged.'}`;
   return response;
 }
 
@@ -3951,7 +3987,9 @@ export async function manageAcademicStudentMembership(env, user = {}, input = {}
   if (!permissions.fullAcademicAccess) assertNoPendingSubjectChange(existing);
   const reason = clean(input.Reason || input.MovementReason);
   if (!reason) throw failure('Enter the reason for this student movement.');
-  const resetSubjects = !operation.startsWith('withdraw')
+  const armTransfer = !operation.startsWith('withdraw') && isAcademicArmTransfer(existing, {
+    ...existing, ClassId: input.ClassId || existing.ClassId, ArmId: input.ArmId || existing.ArmId });
+  const resetSubjects = !armTransfer && !operation.startsWith('withdraw')
     && (input.ResetSubjectSelections === true || lower(input.ResetSubjectSelections) === 'true');
   let record;
   if (operation === 'withdraw' || operation === 'withdrawal') {
@@ -3975,7 +4013,7 @@ export async function manageAcademicStudentMembership(env, user = {}, input = {}
       Object.assign(record, subjectSelection({}), { DepartmentId: '' });
     }
     validateAcademicRecord(state, 'studentmembership', record, { ...people, existing,
-      allowDuplicateMembershipRetirement: true, allowIncompleteCurriculum: resetSubjects });
+      allowDuplicateMembershipRetirement: true, preserveArmSubjects: armTransfer, allowIncompleteCurriculum: resetSubjects });
     if (reassigningWithdrawn && existing.ClassId === record.ClassId && existing.ArmId === record.ArmId) {
       throw failure('Choose a different classroom, or use Reinstate to restore the student to the original classroom.');
     }
@@ -3989,9 +4027,11 @@ export async function manageAcademicStudentMembership(env, user = {}, input = {}
   }
   const resultGuards = [];
   let directChange;
+  let armTransferEvidence;
   const classroomChanged = record.ClassId !== existing.ClassId || record.ArmId !== existing.ArmId;
   if (academicSubjectSelectionChanged(existing, record) || classroomChanged) {
     const evidence = await loadAcademicSubjectChangeEvidence(env, scope, existing);
+    if (armTransfer) armTransferEvidence = evidence;
     const impact = academicSubjectChangeImpact(existing, record, evidence, scope);
     if (impact.RequiresApproval) {
       if (!classroomChanged && !permissions.fullAcademicAccess) throw failure('This movement changes assessed subjects. Request approval under Student subjects before changing this membership; no subjects or scores were changed.', 409, 'ACADEMIC_SUBJECT_CHANGE_APPROVAL_REQUIRED');
@@ -4004,7 +4044,7 @@ export async function manageAcademicStudentMembership(env, user = {}, input = {}
         EffectiveDate: movement.EffectiveDate, MovementType: movement.MovementType,
         Reason: reason, Impact: impact, RequestedAt: nowIso(), RequestedBy: actorName(user), RequestedByUsername: actorUsername(user) };
       if (permissions.fullAcademicAccess) {
-        resultGuards.push(...academicSubjectChangeResultGuards(impact, evidence));
+        if (!armTransfer) resultGuards.push(...academicSubjectChangeResultGuards(impact, evidence));
         directChange = directAcademicChange(user, request);
         record.LastSubjectChange = directChange;
       } else {
@@ -4026,6 +4066,9 @@ export async function manageAcademicStudentMembership(env, user = {}, input = {}
       }
     }
   }
+  const armTransferPlan = armTransfer
+    ? await academicArmTransferPlan(env, state, existing, record, armTransferEvidence, scope, user) : null;
+  if (armTransferPlan) resultGuards.push(...armTransferPlan.writes);
   stampAcademicRecord(record, user, existing);
   const movement = academicMovementForState(state, {
     ...input, StudentRef: existing.StudentRef,
@@ -4044,20 +4087,21 @@ export async function manageAcademicStudentMembership(env, user = {}, input = {}
   const writes = [
     ...resultGuards,
     ...superseded.writes,
-    ...duplicateMembershipRetirementWrites(state, { ...record, __updateTime: expected }, user, reason, superseded.resolutions),
+    ...academicTransferDuplicateWrites(state, { ...record, __updateTime: expected }, user, reason, superseded.resolutions, armTransfer),
     {
       collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships,
       documentId: existing.MembershipId, data: withoutMetadata(record), updateTime: expected
     },
-    movementWrite(user, { ...movement, ...(directChange ? { Status: 'Approved', SubjectChangeRequest: directChange } : {}) }),
+    movementWrite(user, { ...movement, ...(directChange ? { Status: 'Approved', SubjectChangeRequest: directChange } : {}),
+      ...(armTransferPlan ? { ArmDataTransfer: armTransferPlan.summary } : {}) }),
     auditWrite(user, movement.MovementType, 'studentmembership', record, reason)
   ];
   const compatibility = studentCompatibilityWrite(people, projected, record);
   if (compatibility) writes.push(compatibility);
-  const message = `${movement.MovementType} recorded online for ${existing.StudentRef}.${superseded.resolutions.size ? ` ${superseded.resolutions.size} pending request(s) superseded by ${actionLabel}; the original requests are preserved in Movement history.` : ''}${resetSubjects ? ' Previous subject selections were disconnected; existing scores and history were preserved. Complete the destination Core, Trade and Optional choices under Student subjects.' : ''}`;
+  const message = `${movement.MovementType} recorded online for ${existing.StudentRef}.${armTransfer ? ' Saved subjects, marks, results and attendance moved with the student; no student was archived.' : ''}${superseded.resolutions.size ? ` ${superseded.resolutions.size} pending request(s) superseded by ${actionLabel}; the original requests are preserved in Movement history.` : ''}${resetSubjects ? ' Previous subject selections were disconnected; existing scores and history were preserved. Complete the destination Core, Trade and Optional choices under Student subjects.' : ''}`;
   if (options.prepareOnly === true) return { writes, record, pendingApproval: false, message };
   try {
-    await batchCommitDocuments(env, writes);
+    await batchCommitDocuments(env, writes, { allowLargeAtomicBatch: armTransfer });
   } catch (error) {
     if ([409, 412].includes(Number(error?.status))) {
       throw failure('This student or membership changed while the movement was being saved. Reload and try again.', 409, 'ACADEMIC_WRITE_CONFLICT');
@@ -4156,7 +4200,7 @@ export async function saveStudentProfileAcademicPlacement(env, user, before, aft
   profileWrite.updateTime = before.__updateTime;
   const writes = plan.writes.filter(write => write.collectionPath !== before.__scopePath || write.documentId !== before.__id);
   writes.push(profileWrite);
-  const committed = await commitAcademicBatch(env, writes, 'This student, membership or assessment history changed while saving. Refresh and try again; no partial changes were saved.');
+  const committed = await commitAcademicBatch(env, writes, 'This student, membership or assessment history changed while saving. Refresh and try again; no partial changes were saved.', { allowLargeAtomicBatch: true });
   return { student: { ...profileWrite.data, __id: before.__id, __scopePath: before.__scopePath,
     __updateTime: committed?.writeResults?.[writes.length - 1]?.updateTime || '' },
     pendingApproval: plan.pendingApproval === true, message: plan.message };
@@ -5417,6 +5461,11 @@ export async function saveAcademicStudentAttendance(env, user = {}, input = {}) 
     if (lower(record.Status) === 'absent') absentRecords.push(record);
     if (existing) corrected += 1; else created += 1;
   }
+  // A register opened before an arm transfer must not create new attendance in
+  // the old classroom after the transfer has committed.
+  writes.push(...academicScoreMembershipGuards(state, writes.filter(write => [
+    ACADEMIC_MANAGEMENT_COLLECTIONS.studentAttendance, ACADEMIC_MANAGEMENT_COLLECTIONS.attendanceCorrections
+  ].includes(write.collectionPath)).map(write => write.data)));
   if (writes.length) await commitAcademicSubmission(env, context, user, {
     ...input, SubjectId: mode === 'Subject' ? clean(input.SubjectId) : ''
   }, 'attendance', writes);
@@ -5450,7 +5499,8 @@ export async function decideAcademicAttendanceCorrection(env, user = {}, input =
   if (decision === 'Approved' && !attendanceCorrectionMatches(correction, existing)) {
     throw failure('This correction refers to a different attendance day or register. Reject it and mark the intended day separately; the original history is unchanged.', 409, 'ACADEMIC_ATTENDANCE_REGISTER_MISMATCH');
   }
-  if (decision === 'Approved' && clean(existing.__updateTime) !== clean(correction.AttendanceRevision)) {
+  if (decision === 'Approved' && clean(existing.__updateTime) !== clean(correction.AttendanceRevision)
+    && correction.AttendanceTransferState !== academicCarriedScoreSnapshot(withoutMetadata(existing))) {
     throw failure('The attendance record changed after this correction was requested. Reject it and review the latest record.', 409, 'ACADEMIC_WRITE_CONFLICT');
   }
   const timestamp = nowIso();
@@ -6412,7 +6462,11 @@ async function calculateAcademicResultsForType(env, user = {}, input = {}, resul
   const ids = new Map();
   const references = new Map();
   await Promise.all(calculationMemberships.map(async membership => {
-    const id = academicTermResultId(scope, session.SessionId, term.TermId, schoolClass.ClassId, arm.ArmId, membership.StudentRef, resultType);
+    // Arm transfers retain result IDs and parent links. Recalculate that same
+    // draft, rather than creating a second result under the destination ID.
+    const retained = existingResults.filter(row => lower(row.StudentRef) === lower(membership.StudentRef));
+    if (retained.length > 1) throw failure('This student has duplicate results in the selected period. Resolve the duplicate references before recalculating.', 409);
+    const id = retained[0]?.ResultId || academicTermResultId(scope, session.SessionId, term.TermId, schoolClass.ClassId, arm.ArmId, membership.StudentRef, resultType);
     ids.set(lower(membership.StudentRef), id);
     references.set(lower(membership.StudentRef), clean(findById(existingResults, id)?.ResultReference) || await academicResultReference(id));
   }));
@@ -6484,12 +6538,15 @@ async function calculateAcademicResultsForType(env, user = {}, input = {}, resul
       data:{CalculationPending:true,CalculationPendingIssues:pending.Issues},updateMask:['CalculationPending','CalculationPendingIssues'],
       ...writePrecondition(existing,resultRevisionToken(input,existing.ResultId))});
   }
+  // Creating a result races the same membership revision as a transfer. This
+  // prevents a new old-arm result appearing after its student's records moved.
+  if (writes.length) writes.push(...academicScoreMembershipGuards(state, calculation.Results));
   if (writes.length) writes.push(auditWrite(user, existingResults.length ? 'RECALCULATE' : 'CALCULATE', 'termResult', {
     RecordId: `classroom-results-${schoolClass.ClassId}-${arm.ArmId}`,
     SessionId: session.SessionId, TermId: term.TermId,
     BranchId: scope.branchId, SchoolSection: scope.section
   }, `${calculation.Results.length} ${resultType} Calculated Draft result(s); ${(calculation.PendingResults || []).length} pending; ${preservedResults.length} existing reviewed or published results preserved; policy ${policyFingerprint}`));
-  const committed = await commitAcademicBatch(env, writes, 'One or more term results changed while the classroom was being calculated. Reload and try again.');
+  const committed = await commitAcademicBatch(env, writes, 'One or more term results changed while the classroom was being calculated. Reload and try again.', { allowLargeAtomicBatch: true });
   const message = `${calculation.Results.length} ${resultType.toLowerCase()} result${calculation.Results.length === 1 ? '' : 's'} calculated as Draft from recorded scores. ${(calculation.PendingResults || []).length} students remain pending; ${preservedResults.length} existing reviewed or published results preserved.`;
   if (input.ResultResponseMode === 'delta') {
     // Keep preserved results current too: another officer may have reviewed or
