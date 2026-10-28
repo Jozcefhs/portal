@@ -50,12 +50,13 @@ try {
     assert.equal(await report.locator('.subject-table th').count(),7);
     assert.equal(await report.locator('.sample').count(),0);
     assert.equal(await report.locator('.subject-table th').first().evaluate(node=>getComputedStyle(node).backgroundColor),'rgb(22, 74, 120)');
-    assert.equal(await report.locator('.identity-table tbody tr').count(),3);
+    assert.equal(await report.locator('.identity-table tbody tr').count(),2);
     assert.match(await report.locator('.identity-table').innerText(),/DATE OF BIRTH/);
     assert.match(await report.locator('.identity-table').innerText(),/26 Oct 2026/);
     assert.doesNotMatch(await report.locator('.subject-table').innerText(),/WEIGHTED/);
     if(stage==='secondary') {
       await report.screenshot({path:'tmp/parent-result-matched-layout.png',fullPage:true});
+      fixture.child.DisplayName='Chinwendu Chiamaka Oluwaseun Oghenekevwe Okafor';
       fixture.record.Subjects[0].SubjectName='Computer Hardware and GSM Repairs';
       fixture.record.Subjects[1].SubjectName='Physical and Health Education';
       fixture.record.ResultType='Mid-Term';

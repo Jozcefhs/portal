@@ -10,9 +10,11 @@
     /* Give the subject its full intrinsic width; marks share the remaining space. */
     .subject-table{table-layout:auto}
     .subject-table col{width:calc(100% / var(--report-column-count))}
-    .subject-table th,.subject-table td{width:auto}
+    .subject-table th,.subject-table td{width:auto;padding:3px 6px}
     .subject-table th:first-child,.subject-table td:first-child{white-space:nowrap;overflow-wrap:normal;word-break:normal}
     .subject-table tr{break-inside:avoid}
+    .identity-table{table-layout:auto}
+    .identity-table tr:first-child td:first-child{width:1%;white-space:nowrap;overflow-wrap:normal;word-break:normal}
     .report-table thead{display:table-header-group}
     .identity-table,.summary-table,.remarks-table,.verification-table{break-inside:avoid}
     @media screen and (max-width:740px){body{margin:12px}.report{min-width:680px}}
@@ -93,12 +95,12 @@ function academicResultIdentityMarkup(child = {}, record = {}, learnerLabel = 'S
     ['Admission number', child.AccountRef || child.AdmissionNo || record.StudentRef || '-'],
     ['Class', classLabel],
     ['Gender', child.Gender || record.Gender || 'Not recorded'],
+    ['Date of birth', reportDate(child.DateOfBirth || child.dateOfBirth || record.DateOfBirth, true) || 'Not recorded'],
     ['Academic session', record.AcademicSession || '-'],
     ['Term', record.Term || '-'],
-    ['Date of birth', reportDate(child.DateOfBirth || child.dateOfBirth || record.DateOfBirth, true) || 'Not recorded'],
     ['Result release date', released ? reportDate(record.PublishedAt) || 'Not recorded' : 'Not released']
   ];
-  return `<table class="report-table identity-table"><tbody>${[cells.slice(0, 3), cells.slice(3, 6), cells.slice(6)].map((row) => `<tr>${row.map(([label, value], index) => `<td${row.length === 2 && index === 1 ? ' colspan="2"' : ''}><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></td>`).join('')}</tr>`).join('')}</tbody></table>`;
+  return `<table class="report-table identity-table"><tbody>${[cells.slice(0, 4), cells.slice(4)].map((row) => `<tr>${row.map(([label, value]) => `<td><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></td>`).join('')}</tr>`).join('')}</tbody></table>`;
 }
 
 function academicResultSummaryMarkup(record = {}) {
