@@ -16339,6 +16339,7 @@ function printAcademicResultSample(stage = 'primary') {
   // Illustrative data only. Official reports always use saved results and policy.
   const sample = {
     ResultReference: resultReference, ResultType: 'End of Term', Term: 'First Term',
+    PublicationStatus: 'Published', PublishedAt: '2026-10-26T12:00:00.000Z',
     AcademicSession: '2026/2027', ClassName: className, SchoolStage: stage,
     OverallAverage: 75.5, ClassAverage: 68.2, OverallGrade: 'A', OverallPosition: 4,
     AssessedStudentCount: primary ? 35 : nursery ? 28 : 42, Attendance: {AttendancePercentage: 96},
@@ -16356,7 +16357,7 @@ function printAcademicResultSample(stage = 'primary') {
       }))
     }))
   };
-  popup.document.write(window.DynamaxAcademicResultTemplate.render({DisplayName: 'Sample Learner', AccountRef: 'SAMPLE/001', Gender: 'Female'}, sample, {
+  popup.document.write(window.DynamaxAcademicResultTemplate.render({DisplayName: 'Sample Learner', AccountRef: 'SAMPLE/001', Gender: 'Female', DateOfBirth: nursery ? '2022-05-14' : primary ? '2018-05-14' : '2011-05-14'}, sample, {
     profile, origin: location.origin, sampleLabel: previewLabel
   }));
   popup.document.close();

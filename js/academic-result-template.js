@@ -23,13 +23,37 @@ function weightedMarkup(record) {
   const columns = [...new Map((record.Subjects || []).flatMap(subject => (subject.WeightedComponents || [])
     .map(component => [component.ComponentId, component]))).values()];
   return `<table class="report-table subject-table" style="--report-column-count:${columns.length + 3}"><colgroup>${'<col>'.repeat(columns.length + 3)}</colgroup><thead><tr><th>Subject</th>${columns.map(component =>
-    `<th>${escapeHtml(component.Name || 'Assessment')}<br><small>Weighted</small></th>`).join('')}<th>Total</th><th>Grade</th></tr></thead><tbody>${(record.Subjects || []).map(subject =>
+    `<th>${escapeHtml(component.Name || 'Assessment')}</th>`).join('')}<th>Total</th><th>Grade</th></tr></thead><tbody>${(record.Subjects || []).map(subject =>
     `<tr><td>${escapeHtml(subject.SubjectName || 'Subject')}</td>${columns.map(column => {
       const component = (subject.WeightedComponents || []).find(row => row.ComponentId === column.ComponentId);
       return `<td>${component?.State === 'Exempt' ? 'Exempt' : component?.WeightedMark == null ? '—'
         : `${escapeHtml(component.WeightedMark)} / ${escapeHtml(component.MaximumMark)}`}</td>`;
-    }).join('')}<td>${escapeHtml(subject.Total ?? '—')}</td><td>${escapeHtml(subject.Grade || '—')}</td></tr>`).join('')}${clean(record.ResultType).toLowerCase() === 'mid-term' ? (record.NotTaughtSubjects || []).map(subject => `<tr><td>${escapeHtml(subject.SubjectName || 'Subject')}</td><td colspan="${columns.length + 2}">Not taught this mid-term · Not included in average</td></tr>`).join('') : ''}</tbody></table>
-    <p class="reference">Weighted marks / applicable maximum. Exempt assessments are excluded and remaining weights adjusted. — means no reliable saved breakdown. Totals use unrounded marks.</p>`;
+    }).join('')}<td>${escapeHtml(subject.Total ?? '—')}</td><td>${escapeHtml(subject.Grade || '—')}</td></tr>`).join('')}${clean(record.ResultType).toLowerCase() === 'mid-term' ? (record.NotTaughtSubjects || []).map(subject => `<tr><td>${escapeHtml(subject.SubjectName || 'Subject')}</td><td colspan="${columns.length + 2}">Not taught this mid-term · Not included in average</td></tr>`).join('') : ''}</tbody></table>`;
+}
+
+function formatAverage(value) {
+  return present(value) && clean(value) && Number.isFinite(Number(value)) ? `${Number(value).toFixed(1)}%` : '—';
+}
+
+function reportDate(value, birthDate = false) {
+  const text = clean(value);
+  if (!text) return '';
+  let date;
+  if (birthDate) {
+    // Birth dates are calendar dates, independent of the viewing device's zone.
+    const iso = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:$|T)/);
+    const legacy = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (!iso && !legacy) return '';
+    const [year, month, day] = iso ? iso.slice(1).map(Number) : [Number(legacy[3]), Number(legacy[2]), Number(legacy[1])];
+    date = new Date(Date.UTC(year, month - 1, day));
+    if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return '';
+  } else {
+    date = new Date(text);
+    if (!Number.isFinite(date.getTime())) return '';
+  }
+  return new Intl.DateTimeFormat('en-GB', {
+    day: '2-digit', month: 'short', year: 'numeric', timeZone: birthDate ? 'UTC' : 'Africa/Lagos'
+  }).format(date);
 }
 
 function academicResultCriteriaMarkup(record = {}) {
@@ -63,15 +87,18 @@ function academicResultIdentityMarkup(child = {}, record = {}, learnerLabel = 'S
   const classLabel = armName && !className.toLowerCase().includes(armName.toLowerCase())
     ? `${className} / ${armName}`
     : className;
+  const released = ['published', 'locked'].includes(clean(record.PublicationStatus || record.Status).toLowerCase());
   const cells = [
     [learnerLabel, child.DisplayName || child.StudentName || record.StudentName || child.AccountRef || learnerLabel],
     ['Admission number', child.AccountRef || child.AdmissionNo || record.StudentRef || '-'],
     ['Class', classLabel],
     ['Gender', child.Gender || record.Gender || 'Not recorded'],
     ['Academic session', record.AcademicSession || '-'],
-    ['Period', [record.Term, record.ResultType].filter(Boolean).join(' · ') || '-']
+    ['Term', record.Term || '-'],
+    ['Date of birth', reportDate(child.DateOfBirth || child.dateOfBirth || record.DateOfBirth, true) || 'Not recorded'],
+    ['Result release date', released ? reportDate(record.PublishedAt) || 'Not recorded' : 'Not released']
   ];
-  return `<table class="report-table identity-table"><tbody>${[cells.slice(0, 3), cells.slice(3)].map((row) => `<tr>${row.map(([label, value]) => `<td><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></td>`).join('')}</tr>`).join('')}</tbody></table>`;
+  return `<table class="report-table identity-table"><tbody>${[cells.slice(0, 3), cells.slice(3, 6), cells.slice(6)].map((row) => `<tr>${row.map(([label, value], index) => `<td${row.length === 2 && index === 1 ? ' colspan="2"' : ''}><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></td>`).join('')}</tr>`).join('')}</tbody></table>`;
 }
 
 function academicResultSummaryMarkup(record = {}) {
@@ -79,8 +106,8 @@ function academicResultSummaryMarkup(record = {}) {
     ? ` · ${record.OverallPosition}${record.AssessedStudentCount ? ` of ${record.AssessedStudentCount}` : ''}`
     : '';
   const cells = [
-    ['Overall average', present(record.OverallAverage) ? `${record.OverallAverage}%` : '-'],
-    ['Class average', present(record.ClassAverage) ? `${record.ClassAverage}%` : '-'],
+    ['Overall average', formatAverage(record.OverallAverage)],
+    ['Class average', formatAverage(record.ClassAverage)],
     ['Overall grade', `${record.OverallGrade || '-'}${position}`],
     ['Attendance', present(record.Attendance?.AttendancePercentage) ? `${record.Attendance.AttendancePercentage}%` : '—'],
     ['Decision', record.Recommendation || record.OverallRemark || record.OverallClassification || 'Pending review']
@@ -115,5 +142,5 @@ function render(child, record, options = {}) {
 }
 
 
-  globalThis.DynamaxAcademicResultTemplate = Object.freeze({ render, weightedMarkup, styles });
+  globalThis.DynamaxAcademicResultTemplate = Object.freeze({ render, weightedMarkup, formatAverage, styles });
 })();
