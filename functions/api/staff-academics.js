@@ -23,6 +23,9 @@ export async function onRequestPost(context) {
     const body = await readJsonBody(request, { maxBytes: 768 * 1024 });
     action = clean(body.action || body.Action || 'bootstrap');
     const data = await handleAcademicManagementAction(env, user, body);
+    // Only the server's persisted receipt can silence a successful retry.
+    if (context.data && action.toLowerCase().replace(/[^a-z]/g, '') === 'resolveacademicduplicatescore'
+        && data.ok === true && data.alreadyResolved === true) context.data.securityAuditHandled = true;
     finishRequestMetric(metric, { status: 200, action: `staff-academics-${action}` });
     return Response.json(data, {
       headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0' }

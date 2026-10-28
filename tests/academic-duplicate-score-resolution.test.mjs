@@ -4,6 +4,8 @@ import {academicDuplicateScoreResolution,planAcademicDuplicateCell} from '../fun
 import {academicScoreCell,resolvedAcademicScoreEntry} from '../functions/lib/academic-duplicate-score-values.js';
 import {buildAcademicClassScoreRegister} from '../functions/lib/academic-class-score-register.js';
 import {handleAcademicManagementAction} from '../functions/lib/academic-management.js';
+import {readFile} from 'node:fs/promises';
+import vm from 'node:vm';
 const scope={branchId:'main',section:'secondary'};
 const period={BranchId:'main',SchoolSection:'secondary',SessionId:'session',TermId:'term',ClassId:'grade9'};
 const input={...period,ArmId:'perfection',SubjectId:'music',StudentRef:'TEST/1',TestId:'ca1'};
@@ -32,6 +34,20 @@ function fixture(){
  return {rows,db,reads,commits,member};
 }
 const payload=(preview,selected='old')=>({...input,RevisionToken:preview.duplicateReview.RevisionToken,SelectedScoreId:selected,Reason:'Retain verified original test mark'});
+
+test('only a verified server receipt suppresses a repeated security audit, never a client claim',async()=>{
+ const source=await readFile(new URL('../functions/api/staff-academics.js',import.meta.url),'utf8');
+ for(const alreadyResolved of [false,true]){
+   const ctx=vm.createContext({Response,clean:v=>String(v??'').trim(),startRequestMetric:()=>({}),finishRequestMetric:()=>{},
+     requiredDeploymentIdentity:()=>({edition:'school'}),requireFirestoreEnv:()=>{},academicWebActor:u=>u,requireStaffSession:async()=>({role:'Super Admin'}),
+     readJsonBody:async()=>({action:'resolveAcademicDuplicateScore',alreadyResolved:true,securityAuditHandled:true}),
+     handleAcademicManagementAction:async()=>({ok:true,alreadyResolved})});
+   vm.runInContext(source.slice(source.indexOf('export async function onRequestPost')).replace('export ',''),ctx);
+   const context={request:{},env:{},data:{}};
+   assert.equal((await ctx.onRequestPost(context)).status,200);
+   assert.equal(context.data.securityAuditHandled===true,alreadyResolved);
+ }
+});
 
 test('preview reads only the selected student/subject, shows named classrooms and never writes',async()=>{
  const f=fixture(),before=structuredClone(f.rows);
