@@ -15769,7 +15769,7 @@ function academicClassRegisterTable(columns, rows, start = 0) {
     const byColumn = new Map((row.Cells || []).map(cell => [cell.ColumnId, cell]));
     return `<tr><td>${start + index + 1}</td><td>${escapeHtml(row.StudentName)}${row.RosterConflict ? '<small class="class-register-note">Review duplicate membership</small>' : ''}</td><td>${escapeHtml(row.StudentRef)}</td><td>${escapeHtml(row.ArmName)}</td>${columns.map(column => {
       const cell = byColumn.get(column.Id);
-      return `<td title="${escapeHtml(cell?.SheetStatus || '')}">${cell?.State === 'Numeric' ? `${escapeHtml(cell.RawScore)} / ${escapeHtml(cell.MaximumScore)}` : escapeHtml(cell?.State || 'Not recorded')}</td>`;
+      return `<td data-score-state="${escapeHtml(cell?.State || 'Not recorded')}" title="${escapeHtml(cell?.SheetStatus || '')}">${cell?.State === 'Numeric' ? `${escapeHtml(cell.RawScore)} / ${escapeHtml(cell.MaximumScore)}` : escapeHtml(cell?.State || 'Not recorded')}</td>`;
     }).join('')}</tr>`;
   }).join('') || `<tr><td colspan="${columns.length + 4}">No matching students.</td></tr>`}</tbody></table>`;
 }
@@ -15788,6 +15788,9 @@ function academicClassRegisterPrintHtml(register, filters, schoolName, period) {
   }
   return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(register.ClassroomName || register.ClassName)} score register</title><style>
     @page{size:A4 landscape;margin:10mm}*{box-sizing:border-box}body{font:11px/1.4 Arial,sans-serif;color:#17324d;margin:24px}h1{font-size:20px;margin:0}h2{font-size:17px}p{margin:6px 0}section{margin:20px 0 36px}section+section{break-before:page}
+    td[data-score-state="Not enrolled"]{color:#6b21a8;background:#f3e8ff;font-weight:700}
+    td[data-score-state="Not recorded"]{color:#9a3412;background:#fff7ed;font-weight:700}
+    td[data-score-state]{print-color-adjust:exact;-webkit-print-color-adjust:exact}
     table{width:100%;border-collapse:collapse;table-layout:fixed}th,td{border:1px solid #8195a7;padding:6px;text-align:center;overflow-wrap:anywhere}th{background:#edf3f8}th:first-child{width:4%}th:nth-child(2){width:20%}th:nth-child(3){width:13%}th:nth-child(4){width:10%}td:nth-child(2),td:nth-child(3),td:nth-child(4){text-align:left}thead{display:table-header-group}tr{break-inside:avoid}small{display:block}button{padding:10px 18px;margin-bottom:12px}@media print{body{margin:0}button{display:none}section{margin:0}section+section{padding-top:0}}
     </style></head><body><button onclick="window.print()">Print / Save as PDF</button><p>All matching students are included. Wide selections continue in separate subject sections.</p>${sections.join('') || '<p>Select at least one subject to print.</p>'}</body></html>`;
 }
