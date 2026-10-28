@@ -237,3 +237,50 @@ test('controls stay with the Staff accounts tab and filter locally without fetch
   assert.match(css, /\.staff-user-list-toolbar\{position:static;display:grid/);
   assert.match(css, /@media \(max-width:520px\)\{\.staff-user-list-toolbar/);
 });
+
+test('editing a renamed login displays the current username but saves the original account identity', async () => {
+  const user = { ...users[0], RecoveryEmail: 'recovery@example.test', ApprovalAccounts: [], TabAccess: [] };
+  const before = structuredClone(user);
+  const fields = Object.fromEntries(['Username', 'RecoveryEmail', 'FirstName', 'MiddleName', 'Surname', 'DisplayName',
+    'Role', 'AuditDateFrom', 'AuditDateTo', 'AuditExpiresAt', 'Department', 'SchoolSectionAccess', 'ApprovalEnabled',
+    'RequisitionEditEnabled', 'ApprovalMaxAmount', 'Active', 'MustChangePassword', 'Password'].map(name => [name, { value: '', checked: false }]));
+  const help = { textContent: '' }, status = {}, button = {}, plans = {}, title = {};
+  let submit, saved, reloads = 0, open = false;
+  const form = { elements: fields, dataset: {}, reset() {},
+    querySelector: selector => ({ '[data-staff-login-help]': help, '[data-user-form-status]': status,
+      '[data-subscription-plans-link]': plans, 'button[type="submit"]': button, '[name="StaffAllBranches"]': {checked:true} })[selector],
+    querySelectorAll: () => [], addEventListener: (_event, listener) => { submit = listener; } };
+  const dialog = { showModal: () => { open = true; }, close: () => { open = false; } };
+  const { context } = fixture({ staffUsersData: [user], document: { getElementById: id => ({
+    staffUserDialog: dialog, staffUserForm: form, staffUserDialogTitle: title, staffUsersStatus: status
+  })[id] }, setStatus() {}, setStaffBranchChecks() {}, syncStaffDisplayName() {},
+    setFinancialInputValue: (input, value) => { input.value = value; }, syncSchoolLeadershipRoleOptions() {},
+    syncRequisitionEditPermission() {}, syncExternalAuditUserForm() {}, setButtonLoading() {},
+    FormData: class { entries() { return Object.entries(fields).map(([name, input]) => [name, input.value]); } },
+    staffUserRequest: async (action, payload) => { saved = { action, ...payload }; return { message: 'Saved' }; },
+    loadStaffUsers: async () => { reloads++; }
+  });
+  const opener = admin.slice(admin.indexOf('function openStaffUserDialog('), admin.indexOf('function bindStaffUserEvents('));
+  const start = admin.indexOf("document.getElementById('staffUserForm')?.addEventListener('submit'");
+  vm.runInContext(opener + admin.slice(start, admin.indexOf('\n  });', start) + '\n  });'.length), context);
+  context.openStaffUserDialog('zoe');
+  assert.equal(open, true);
+  assert.equal(fields.Username.value, 'zoe@example.test');
+  assert.equal(fields.Username.readOnly, true);
+  assert.equal(fields.RecoveryEmail.value, user.RecoveryEmail);
+  assert.match(help.textContent, /Current sign-in username/);
+  await submit({ preventDefault() {}, currentTarget: form });
+  assert.equal(saved.action, 'save');
+  assert.equal(saved.Username, 'zoe');
+  assert.equal(saved.OriginalUsername, 'zoe');
+  assert.equal(saved.RecoveryEmail, user.RecoveryEmail);
+  assert.equal(open, false);
+  assert.equal(reloads, 1);
+  assert.deepEqual(user, before);
+  // A newly created account still uses the chosen sign-in username as its identity.
+  form.dataset.originalUsername = '';
+  fields.Username.value = 'new.staff';
+  await submit({ preventDefault() {}, currentTarget: form });
+  assert.equal(saved.Username, 'new.staff');
+  assert.equal(saved.OriginalUsername, '');
+});
