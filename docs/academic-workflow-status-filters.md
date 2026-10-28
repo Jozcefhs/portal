@@ -9,7 +9,14 @@ permissions, revision checks, history and parent-access rules.
 
 In **Scorebook → Review and approval**, select the assessment test (for example,
 CA1) or **Full-term sheets**, then a loaded classroom and status. Status buttons
-show counts of subject sheets, not counts of fully completed classes. An approved
+show counts of subject sheets and distinct arms using the same selected test,
+classroom and academic scope. An arm is counted once per matching status, even
+when several subject sheets match. The same reusable arm in different classes
+counts separately; sheets without an arm do not invent an extra classroom.
+Mixed-status arms can appear in several status groups. These counts do not certify
+that every subject in an arm is complete. The batch approval dialog uses the same
+arm counts and also respects its search filter. All counts come from already-loaded
+records, without additional database reads or writes. An approved
 test does not imply full-term approval. Locked sheets belong to Approved;
 changed/reopened test reviews belong to Draft. Fresh review checks override older
 saved badges. Partial approvals retain their pending-student annotation.

@@ -38,3 +38,30 @@ test('status labels escape markup and preserve human-readable text alongside col
   assert.match(workflow.badge('Approved','Approved · 2 pending'),/workflow-approved.*Approved · 2 pending/);
   assert.ok(!workflow.badge('Draft','<script>alert(1)</script>').includes('<script>'));
 });
+
+test('arm counts deduplicate subjects, keep different classes separate and retain mixed statuses', () => {
+  const rows=[
+    {ClassId:'grade7',ArmId:'genius',Status:'Approved'},
+    {ClassId:'grade7',ArmId:'genius',Status:'Locked'},
+    {ClassId:'grade7',ArmId:'genius',Status:'Submitted'},
+    {ClassId:'grade8',ArmId:'genius',Status:'Approved'},
+    {ClassId:'grade8',ArmId:'brilliance',Status:'Draft'},
+    {ClassId:'grade8',ArmId:'',Status:'Approved'}
+  ],before=structuredClone(rows);
+  assert.deepEqual(workflow.armCounts(rows,workflow.scoreStatus,workflow.scoreStages),{All:3,Draft:1,Submitted:1,Approved:2});
+  assert.deepEqual(workflow.armCounts([],workflow.scoreStatus,workflow.scoreStages),{All:0,Draft:0,Submitted:0,Approved:0});
+  assert.deepEqual(rows,before);
+});
+
+test('arm counts follow the selected test, scope and refreshed review statuses', () => {
+  const rows=[
+    {ClassId:'grade7',ArmId:'genius',Status:'Draft',ComponentReviews:{ca1:{Status:'Approved'},exam:{Status:'Submitted'}}},
+    {ClassId:'grade7',ArmId:'brilliance',Status:'Draft',ComponentReviews:{ca1:{Status:'Approved',Stale:true},exam:{Status:'Draft'}}}
+  ];
+  const byTest=id=>row=>workflow.scoreStatus(workflow.scoreReview(row,id));
+  assert.deepEqual(workflow.armCounts(rows,byTest('ca1'),workflow.scoreStages),{All:2,Draft:1,Submitted:0,Approved:1});
+  assert.deepEqual(workflow.armCounts(rows,byTest('exam'),workflow.scoreStages),{All:2,Draft:1,Submitted:1,Approved:0});
+  assert.deepEqual(workflow.armCounts(rows.filter(row=>row.ArmId==='genius'),byTest(''),workflow.scoreStages),{All:1,Draft:1,Submitted:0,Approved:0});
+  rows[0].TestReviewStatus=[];
+  assert.equal(workflow.armCounts(rows,byTest('ca1'),workflow.scoreStages).Approved,0);
+});

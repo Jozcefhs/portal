@@ -27,21 +27,34 @@
     for (const row of rows) { const key = statusOf(row); result[key] = (result[key] || 0) + 1; }
     return result;
   }
+  function armCounts(rows, statusOf, stages) {
+    const groups = Object.fromEntries(stages.map(([key]) => [key, new Set()]));
+    for (const row of rows) {
+      const arm = String(row.ArmId ?? '').trim();
+      if (!arm) continue;
+      // Reusable arm names/definitions can occur in more than one class.
+      const identity = JSON.stringify([String(row.ClassId ?? '').trim(), arm]);
+      groups.All.add(identity);
+      groups[statusOf(row)]?.add(identity);
+    }
+    return Object.fromEntries(Object.entries(groups).map(([key, arms]) => [key, arms.size]));
+  }
   function badge(key, label = key) {
     return `<span class="academic-workflow-badge workflow-${esc(key.toLowerCase())}">${esc(label)}</span>`;
   }
   // Only consumes the caller's loaded records. No persistence, requests or polling.
-  function mount({host, getRows, statusOf, stages, state = {status: 'All'}, unit, onChange = () => {}}) {
+  function mount({host, getRows, statusOf, stages, state = {status: 'All'}, unit, countArms = false, onChange = () => {}}) {
     host.classList.add('academic-workflow-filter');
     host.innerHTML = '<label>Status<select data-workflow-status aria-label="Workflow status"></select></label><div class="academic-workflow-counts" data-workflow-counts aria-label="Status counts"></div><p data-workflow-summary role="status" aria-live="polite"></p>';
     const select = host.querySelector('[data-workflow-status]');
     const refresh = () => {
-      const rows = getRows(), totals = counts(rows, statusOf, stages);
+      const rows = getRows(), totals = counts(rows, statusOf, stages), arms = countArms ? armCounts(rows, statusOf, stages) : null;
+      const armLabel = count => `${count} ${count === 1 ? 'arm' : 'arms'}`;
       if (!stages.some(([key]) => key === state.status)) state.status = 'All';
-      select.innerHTML = stages.map(([key, label]) => `<option value="${key}"${state.status === key ? ' selected' : ''}>${esc(label)} (${totals[key]})</option>`).join('');
-      host.querySelector('[data-workflow-counts]').innerHTML = stages.map(([key, label]) => `<button type="button" class="academic-workflow-count workflow-${key.toLowerCase()}" data-workflow-stage="${key}" aria-pressed="${state.status === key}">${esc(label)} <strong>${totals[key]}</strong></button>`).join('');
+      select.innerHTML = stages.map(([key, label]) => `<option value="${key}"${state.status === key ? ' selected' : ''}>${esc(label)} (${totals[key]}${arms ? ` ${totals[key] === 1 ? 'subject' : 'subjects'}, ${armLabel(arms[key])}` : ''})</option>`).join('');
+      host.querySelector('[data-workflow-counts]').innerHTML = stages.map(([key, label]) => `<button type="button" class="academic-workflow-count workflow-${key.toLowerCase()}" data-workflow-stage="${key}" aria-pressed="${state.status === key}">${esc(label)} <strong>${totals[key]}</strong>${arms ? ` ${totals[key] === 1 ? 'subject' : 'subjects'}<span class="academic-workflow-arm-count" data-workflow-arm-count="${key}">${armLabel(arms[key])}</span>` : ''}</button>`).join('');
       const visible = state.status === 'All' ? rows : rows.filter(row => statusOf(row) === state.status);
-      host.querySelector('[data-workflow-summary]').textContent = `Showing ${visible.length} of ${rows.length} loaded ${unit}. Counts use the selected scope only.`;
+      host.querySelector('[data-workflow-summary]').textContent = `Showing ${visible.length} of ${rows.length} loaded ${unit}.${arms ? ` ${armLabel(arms[state.status])} with matching subjects (${arms.All} in this scope). Mixed-status arms may appear in more than one group.` : ''} Counts use the selected scope only.`;
       onChange(visible, totals);
       return visible;
     };
@@ -53,5 +66,5 @@
     refresh();
     return {refresh, state};
   }
-  root.DynamaxAcademicWorkflow = Object.freeze({scoreStages, resultStages, scoreReview, scoreStatus, resultStatus, counts, badge, mount});
+  root.DynamaxAcademicWorkflow = Object.freeze({scoreStages, resultStages, scoreReview, scoreStatus, resultStatus, counts, armCounts, badge, mount});
 })(globalThis);

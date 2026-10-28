@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const files=['js/staff-action-feedback.js','js/staff-workspace-cache.js','js/staff-meetings.js','css/staff-meetings.css','admin.html','js/admin.js','css/academic-class-score-register.css','css/web-release.css','js/web-release.js','js/academic-audit-log.js','css/module-audit.css','css/academic-result-preview.css','js/academic-component-review.js','css/academic-test-review.css','js/academic-result-template.js','parent-dashboard.html','js/parent-dashboard.js','css/parent-academic-results.css','sw.js'];
+const files=['js/staff-action-feedback.js','js/staff-workspace-cache.js','js/staff-meetings.js','css/staff-meetings.css','admin.html','js/admin.js','css/academic-class-score-register.css','css/web-release.css','js/web-release.js','js/academic-audit-log.js','css/module-audit.css','css/academic-result-preview.css','js/academic-component-review.js','js/academic-workflow-status.js','js/academic-batch-review.js','css/academic-test-review.css','js/academic-result-template.js','parent-dashboard.html','js/parent-dashboard.js','css/parent-academic-results.css','sw.js'];
 const hash=text=>createHash('sha256').update(text.replace(/\r\n/g,'\n').replace(/^\uFEFF/,'')).digest('hex');
 export async function verifyStaffWebRelease(base,{fetcher=fetch,read=path=>readFile(new URL(`../${path}`,import.meta.url),'utf8')}={}) {
   const url=new URL(base);

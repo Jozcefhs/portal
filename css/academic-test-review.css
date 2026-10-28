@@ -21,6 +21,7 @@ html[data-theme="dark"] .academic-test-review-status small{color:#b8c9db}html[da
 .academic-workflow-count:hover,.academic-workflow-count[aria-pressed="true"]{background:var(--workflow-bg);color:var(--workflow-ink);outline:2px solid currentColor;outline-offset:1px}
 .academic-workflow-count:focus-visible{outline:3px solid #1765dc;outline-offset:3px}
 .academic-workflow-count strong{margin-left:6px;font-variant-numeric:tabular-nums}
+.academic-workflow-arm-count{display:block;font-size:12px;font-weight:600;color:inherit;font-variant-numeric:tabular-nums}
 .academic-workflow-badge{display:inline-block;padding:4px 8px}
 .workflow-submitted,.workflow-reviewed{--workflow-bg:#fff1ce;--workflow-ink:#795000}
 .workflow-approved{--workflow-bg:#dff5ea;--workflow-ink:#07543c}
