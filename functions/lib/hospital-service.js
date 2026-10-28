@@ -1,3 +1,4 @@
+import { createHospitalReferralsService } from './hospital-referrals-service.js';
 import { getDocument, queryCollection, batchCommitLiteralDocuments } from './firestore.js';
 import { requiredDeploymentIdentity } from './deployment-identity.js';
 import { getSchoolStructure } from './school-scope.js';
@@ -108,6 +109,7 @@ export function createHospitalService(env, user, overrides = {}) {
     return { rows: shown, next: rows.length > limit ? { id: last.__id, value: last[field] } : null };
   }
   return {
+    ...createHospitalReferralsService({env,user,db,collection,capabilities,requireCapability,branch,patient,clock,actor,condition,strip,eq,auditWrite,auditRead,operation,page}),
     ...createHospitalAppointmentsService({env,user,db,collection,capabilities,requireCapability,branch,patient,clock,actor,condition,strip,eq,auditWrite,auditRead,operation,page}),
     ...createHospitalTheatreService({env,user,db,collection,capabilities,requireCapability,branch,patient,clock,actor,condition,strip,eq,auditWrite,auditRead,operation,page}),
     ...createHospitalNursingService({env,user,db,collection,capabilities,requireCapability,branch,patient,clock,actor,
@@ -125,7 +127,7 @@ export function createHospitalService(env, user, overrides = {}) {
       branches = configuredStaffBranches(await db.getSchoolStructure(env));
       const assigned = assignedStaffBranches(user);
       const permitted = branches.filter(row => assigned === null || assigned.includes(clean(row.id).toLowerCase()));
-      return { ok: true, branches: permitted, capabilities, readOnly: user.subscriptionReadOnly === true };
+      return { ok: true, ownerDemo: env.HOSPITAL_OWNER_DEMO === 'true', branches: permitted, capabilities, readOnly: user.subscriptionReadOnly === true };
     },
     async search(body) {
       requireCapability('patients.read'); const branchId = await branch(body);

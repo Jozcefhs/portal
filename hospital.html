@@ -15,8 +15,9 @@
   <script src="/js/hospital-inpatients.js?v=20261028-appointments" defer></script>
   <script src="/js/hospital-nursing.js?v=20261028-appointments" defer></script>
   <script src="/js/hospital-theatre.js?v=20261028-appointments" defer></script>
+  <script src="/js/hospital-referrals.js?v=20261028-referrals" defer></script>
   <script src="/js/hospital-appointments.js?v=20261028-appointments" defer></script>
-  <script src="/js/hospital.js?v=20261028-appointments" defer></script>
+  <script src="/js/hospital.js?v=20261028-referrals" defer></script>
 </head>
 <body>
   <main>
@@ -24,7 +25,8 @@
     <p id="status" role="status" aria-live="polite">Checking your staff sessionâ€¦</p>
     <div id="workspace" hidden>
       <div class="toolbar"><label>Working branch<select id="branch"></select></label><button id="refresh" type="button">Refresh access</button></div>
-      <nav aria-label="Hospital tasks"><button type="button" data-tab="patients">Patients and NFC cards</button><button type="button" data-tab="reception">Reception visits</button><button type="button" data-tab="appointments" hidden>Appointments</button><button type="button" data-tab="care" hidden>Clinical record</button><button type="button" data-tab="orders" hidden>Prescriptions and investigations</button><button type="button" data-tab="theatre" hidden>Theatre and procedures</button><button type="button" data-tab="nursing" hidden>Nursing and handovers</button><button type="button" data-tab="inpatients" hidden>Wards and admissions</button><button type="button" data-tab="billing" hidden>Billing and HMO</button></nav>
+      <p id="hospitalOwnerDemo" class="hint" hidden><strong>Hospital Owner’s Demo</strong> · Use synthetic demonstration records only. This workspace has a separate database.</p>
+      <nav aria-label="Hospital tasks"><button type="button" data-tab="patients">Patients and NFC cards</button><button type="button" data-tab="reception">Reception visits</button><button type="button" data-tab="appointments" hidden>Appointments</button><button type="button" data-tab="referrals" hidden>Referrals and care transfers</button><button type="button" data-tab="care" hidden>Clinical record</button><button type="button" data-tab="orders" hidden>Prescriptions and investigations</button><button type="button" data-tab="theatre" hidden>Theatre and procedures</button><button type="button" data-tab="nursing" hidden>Nursing and handovers</button><button type="button" data-tab="inpatients" hidden>Wards and admissions</button><button type="button" data-tab="billing" hidden>Billing and HMO</button></nav>
       <section id="appointments" hidden></section>
       <section id="theatre" hidden></section>
       <section id="nursing" hidden></section>
@@ -139,6 +141,7 @@
         </div>
       </section>
     </div>
+    <section id="referrals" hidden></section>
     <div id="cardPrint" hidden></div>
   </main>
 </body>

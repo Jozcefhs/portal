@@ -1,0 +1,12 @@
+{
+  "cloudflareProject": "dynamax-hospital-review",
+  "firebaseProject": "dynamax-hospital-review",
+  "workspaceId": "dynamax-hospital-review",
+  "edition": "hospital",
+  "ownerDemo": true,
+  "url": "https://dynamax-hospital-review.pages.dev",
+  "sourceBranch": "codex/hospital-edition",
+  "firebaseConfig": "firebase.hospital.json",
+  "purpose": "Isolated owner review using synthetic demonstration records only",
+  "automaticDeployment": false
+}

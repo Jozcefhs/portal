@@ -2,6 +2,7 @@ import { requiredDeploymentIdentity } from './deployment-identity.js';
 
 export const HOSPITAL_COLLECTIONS = Object.freeze([
   'Patients', 'Numbers', 'PatientMatches', 'Cards', 'Operations', 'Audit', 'Visits', 'OpenVisits',
+  'Referrals','ReferralEvents','ReferralGuards',
   'AppointmentSchedules','AppointmentScheduleEvents','Appointments','AppointmentEvents',
   'Encounters', 'CareSummaries', 'Consultations', 'ClinicalEntries',
   'Orders', 'OrderEvents', 'MedicineBatches', 'StockReceipts', 'StockMovements', 'Dispenses', 'MedicineReturns', 'ChargeEvents', 'InvestigationReports', 'ReleasedReports', 'CriticalAlerts',
