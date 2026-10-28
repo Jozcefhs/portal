@@ -15857,12 +15857,12 @@ function academicClassRegisterView(register, { testId = '', subjectIds = null, q
   return { columns, rows };
 }
 
-function academicClassRegisterTable(columns, rows, start = 0) {
+function academicClassRegisterTable(columns, rows, start = 0, canResolve = false) {
   return `<table class="admin-table class-score-register-table"><thead><tr><th scope="col">S/N</th><th scope="col">Student</th><th scope="col">Admission number</th><th scope="col">Arm</th>${columns.map(column => `<th scope="col">${escapeHtml(column.SubjectName)}<br><small>${escapeHtml(column.TestName)}</small></th>`).join('')}</tr></thead><tbody>${rows.map((row, index) => {
     const byColumn = new Map((row.Cells || []).map(cell => [cell.ColumnId, cell]));
     return `<tr><td>${start + index + 1}</td><td>${escapeHtml(row.StudentName)}${row.RosterConflict ? '<small class="class-register-note">Review duplicate membership</small>' : ''}</td><td>${escapeHtml(row.StudentRef)}</td><td>${escapeHtml(row.ArmName)}</td>${columns.map(column => {
       const cell = byColumn.get(column.Id);
-      return `<td data-score-state="${escapeHtml(cell?.State || 'Not recorded')}" title="${escapeHtml(cell?.SheetStatus || '')}">${cell?.State === 'Numeric' ? `${escapeHtml(cell.RawScore)} / ${escapeHtml(cell.MaximumScore)}` : escapeHtml(cell?.State || 'Not recorded')}</td>`;
+      return `<td data-score-state="${escapeHtml(cell?.State || 'Not recorded')}" title="${escapeHtml(cell?.SheetStatus || '')}">${cell?.State === 'Numeric' ? `${escapeHtml(cell.RawScore)} / ${escapeHtml(cell.MaximumScore)}` : cell?.State === 'Review duplicate' && canResolve ? `<button type="button" class="secondary" data-resolve-score-student="${escapeHtml(row.StudentRef)}" data-resolve-score-subject="${escapeHtml(column.SubjectId)}" data-resolve-score-test="${escapeHtml(column.TestId)}">Resolve duplicate</button>` : escapeHtml(cell?.State || 'Not recorded')}</td>`;
     }).join('')}</tr>`;
   }).join('') || `<tr><td colspan="${columns.length + 4}">No matching students.</td></tr>`}</tbody></table>`;
 }
@@ -15999,7 +15999,7 @@ function bindAcademicClassScoreRegister(form) {
     const start = page * pageSize;
     form.querySelector('[data-class-register-table]').innerHTML = register ? columns.length
       ? comparison && !validThreshold ? '<p>Enter a valid raw-score threshold to filter students.</p>'
-        : academicClassRegisterTable(columns, rows.slice(start, start + pageSize), start)
+        : academicClassRegisterTable(columns, rows.slice(start, start + pageSize), start, academicManagementData?.permissions?.canManageScoreCorrections === true)
       : '<p>Select at least one subject with scores for this test.</p>' : '';
     form.querySelector('[data-class-register-count]').textContent = register ? `${rows.length ? start + 1 : 0}–${Math.min(start + pageSize, rows.length)} of ${rows.length} students` : '';
     form.querySelector('[data-class-register-page="-1"]').disabled = page <= 0;
@@ -16020,6 +16020,7 @@ function bindAcademicClassScoreRegister(form) {
     const button = form.querySelector('[type="submit"]'); button.disabled = true;
     form.elements.ClassId.disabled = true;
     const requestedClassId = form.elements.ClassId.value;
+    const retainedFilters = register && requestedClassId === loadedClassId ? filters() : undefined;
     subjectMenu.open = false; render(); status.textContent = `Loading ${scopeLabel} scores…`;
     try {
       const result = await academicManagementRequest(classroomOnly ? 'getAcademicClassroomScoreRegister' : 'getAcademicClassScoreRegister', {
@@ -16029,11 +16030,35 @@ function bindAcademicClassScoreRegister(form) {
       });
       if (!form.isConnected || form.elements.ClassId.value !== requestedClassId) return;
       loadedClassId = requestedClassId;
-      showRegister({ register: result.classScoreRegister, loadedAt: Date.now() });
+      showRegister({ register: result.classScoreRegister, loadedAt: Date.now(), filters: retainedFilters });
       remember();
       render();
     } catch (error) { status.textContent = `${error.message || String(error)}${register ? ' Previously loaded scores remain displayed; refresh did not complete.' : ''}`; }
     finally { busy = false; button.disabled = false; form.elements.ClassId.disabled = false; render(); }
+  });
+  form.querySelector('[data-class-register-table]').addEventListener('click', async event => {
+    const button = event.target.closest('[data-resolve-score-student]');
+    if (!button || busy || !register || !academicManagementData?.permissions?.canManageScoreCorrections) return;
+    const target = register, branch = selectedBranchId, username = currentUser?.username;
+    const student = target.Rows.find(row => row.StudentRef === button.dataset.resolveScoreStudent);
+    const column = target.Columns.find(row => row.SubjectId === button.dataset.resolveScoreSubject && row.TestId === button.dataset.resolveScoreTest);
+    if (!student || !column) return;
+    button.disabled = true;
+    try {
+      const {openAcademicDuplicateScoreReview} = await import('./academic-duplicate-score-review.js?v=20261028-self-service');
+      openAcademicDuplicateScoreReview({request:academicManagementRequest,
+        scope:{SchoolSection:academicManagementFilters.section,SessionId:target.SessionId,TermId:target.TermId,ClassId:target.ClassId,
+          ...(target.ArmId ? {ArmId:target.ArmId} : {}),StudentRef:student.StudentRef,SubjectId:column.SubjectId,TestId:column.TestId},
+        studentName:student.StudentName,subjectName:column.SubjectName,testName:column.TestName,
+        isCurrent:()=>form.isConnected&&target===register&&branch===selectedBranchId&&username===currentUser?.username&&form.elements.ClassId.value===loadedClassId,
+        onSaved:result=>{
+          if (!form.isConnected) return;
+          cache.clear();academicScorebookDraft.contextKey='';academicManagementData.scorebookContext=null;
+          window.DynamaxAcademicWorkflow?.clearBranchSummary();
+          status.textContent=result.message;form.requestSubmit();
+        }});
+    } catch(error) {status.textContent=error.message||String(error);}
+    finally {if(button.isConnected)button.disabled=false;}
   });
   reactivateButton?.addEventListener('click', async () => {
     if (busy || !register) return;

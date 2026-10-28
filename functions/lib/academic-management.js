@@ -13,6 +13,7 @@ import { buildAcademicClassScoreRegister } from './academic-class-score-register
 import { academicTeacherScoreClassrooms, loadAcademicClassroomScoreRegister } from './academic-classroom-score-register.js';
 import { loadAcademicAuditLog } from './academic-audit-log.js';
 import { loadAcademicReviewArmSummary } from './academic-review-arm-summary.js';
+import { academicDuplicateScoreResolution } from './academic-duplicate-score-resolution.js';
 import { loadAcademicResultsReadiness } from './academic-results-readiness.js';
 import { planAcademicResultBatch } from './academic-result-batch.js';
 import { commitAcademicResultBatch } from './academic-result-batch-commit.js';
@@ -9486,6 +9487,14 @@ export async function revokeAcademicResultClearance(env, user = {}, input = {}) 
 
 export async function handleAcademicManagementAction(env, user = {}, input = {}) {
   const action = lower(input.action || input.Action).replace(/[^a-z]/g, '');
+  if (['getacademicduplicatescorereview','resolveacademicduplicatescore'].includes(action)) {
+    requireCapability(user, 'canManageScoreCorrections');
+    const save = action === 'resolveacademicduplicatescore';
+    if (save) requireWritableSubscription(user);
+    const scope = await academicScope(env, user, input, { requireSection: true });
+    return academicDuplicateScoreResolution(env, {...scope,legacySection:effectiveAcademicSection({},scope)},input,
+      {name:actorName(user),username:actorUsername(user),role:clean(user.role||user.Role),timestamp:nowIso()},save);
+  }
   if (action === 'getacademicreviewarmsummary') {
     requireCapability(user, 'canReviewScores');
     const scope = await academicScope(env, user, input, { requireSection: true });

@@ -57,6 +57,11 @@ test('unknown previews, exports, actual saves and client replay claims cannot si
   ]) assert.equal(shouldPersistSecurityAudit(await prepared(path, body), null, 200), true, `${path} ${JSON.stringify(body)}`);
 });
 
+test('duplicate-score comparison is a quiet read, but resolution keeps its security audit', async()=>{
+  assert.equal(shouldPersistSecurityAudit(await prepared('/api/staff-academics',{action:'getAcademicDuplicateScoreReview'}),null,200),false);
+  assert.equal(shouldPersistSecurityAudit(await prepared('/api/staff-academics',{action:'resolveAcademicDuplicateScore'}),null,200),true);
+});
+
 test('one complete multi-batch billing review still checks every student without audit writes or actor lookups', async () => {
   const profiles = Array.from({ length: 23 }, (_, i) => ({ AccountRef: `TEST/${i}`, revision: 'one' }));
   let batches = 0, students = 0;

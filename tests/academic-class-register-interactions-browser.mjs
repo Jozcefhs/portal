@@ -65,6 +65,15 @@ try {
   await page.locator('[data-class-register-subject]').first().press('Escape');
   assert.equal(await isOpen(), false);
   assert.equal(await summary.evaluate(element => document.activeElement === element), true);
+  // Explicit refresh preserves the user's test, subject and search selections.
+  await page.selectOption('[name=TestId]','CA1');
+  await summary.click();await page.uncheck('[data-class-register-subject][value=s0]');
+  await page.locator('#outside').click();
+  await page.click('button[type=submit]');await page.waitForFunction(()=>!document.querySelector('button[type=submit]').disabled);
+  assert.equal(await page.locator('[name=TestId]').inputValue(),'CA1');
+  assert.equal(await page.locator('[data-class-register-subject][value=s0]').isChecked(),false);
+  await page.selectOption('[name=TestId]','');
+  await summary.click();await page.click('[data-class-register-subject-action="all"]');await page.locator('#outside').click();
   await summary.click(); await summary.click();
   assert.equal(await isOpen(), false);
 

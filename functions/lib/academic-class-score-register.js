@@ -1,4 +1,5 @@
 // Read-only class (all arms) projection. Call only after staff/branch/section checks.
+import { resolvedAcademicScoreEntry } from './academic-duplicate-score-values.js';
 const clean = value => String(value ?? '').trim();
 const lower = value => clean(value).toLowerCase();
 const active = row => !['inactive', 'archived', 'withdrawn', 'transferred'].includes(lower(row.Status));
@@ -48,7 +49,7 @@ export function buildAcademicClassScoreRegister(data = {}, input = {}) {
       const key = JSON.stringify([lower(score.StudentRef), Id]);
       const entries = values.get(key) || [];
       entries.push({ State: cell.State, RawScore: cell.RawScore ?? null, MaximumScore: cell.MaximumScore ?? null,
-        SheetStatus: clean(sheet.Status), ArmId: clean(score.ArmId) });
+        SheetStatus: clean(sheet.Status), ArmId: clean(score.ArmId), ScoreId:clean(score.__id||score.ScoreId), Resolutions:score.DuplicateScoreResolutions });
       values.set(key, entries);
     }
   }
@@ -63,7 +64,11 @@ export function buildAcademicClassScoreRegister(data = {}, input = {}) {
         const allEntries = values.get(JSON.stringify([ref, column.Id])) || [];
         const recorded = allEntries.filter(row => ['Numeric', 'Absent', 'Exempt'].includes(row.State));
         const entries = recorded.length ? recorded : allEntries.slice(0, 1);
+        // Resolution evidence is internal; only the selected cell value leaves this projection.
+        const display = entry => Object.fromEntries(Object.entries(entry).filter(([key]) => !['ScoreId','Resolutions'].includes(key)));
         if (entries.length > 1) {
+          const resolved = memberships.length === 1 && resolvedAcademicScoreEntry(entries,member,column.TestId);
+          if (resolved) return {ColumnId:column.Id,...display(resolved),DuplicateResolved:true};
           // A former-arm copy of the same mark is evidence, not a conflicting
           // mark. Do not rewrite either score or choose between different marks.
           const identical = entries.every(entry => entry.State === entries[0].State
@@ -71,11 +76,11 @@ export function buildAcademicClassScoreRegister(data = {}, input = {}) {
           const distinctArms = new Set(entries.map(entry => entry.ArmId)).size === entries.length;
           if (memberships.length === 1 && identical && distinctArms) {
             const current = entries.find(entry => entry.ArmId === clean(member.ArmId)) || entries[0];
-            return { ColumnId: column.Id, ...current, MatchingCopies: entries.length };
+            return { ColumnId: column.Id, ...display(current), MatchingCopies: entries.length };
           }
           return { ColumnId: column.Id, State: 'Review duplicate', RawScore: null, MaximumScore: null };
         }
-        if (entries.length) return { ColumnId: column.Id, ...entries[0] };
+        if (entries.length) return { ColumnId: column.Id, ...display(entries[0]) };
         const offered = memberships.some(row => (row.SubjectIds || []).includes(column.SubjectId));
         return { ColumnId: column.Id, State: offered ? 'Not recorded' : 'Not enrolled', RawScore: null, MaximumScore: null };
       }) };

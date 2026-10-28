@@ -75,13 +75,13 @@ test('idle renewal does not cancel concurrent academic reads or reuse a cached t
 });
 
 test('academic submission settings and register are live reads; saves and payment verification still invalidate', () => {
-  for (const action of ['getAcademicSubmissionSettings', 'listAcademicSubmissions', 'getAcademicReviewArmSummary']) {
+  for (const action of ['getAcademicSubmissionSettings', 'listAcademicSubmissions', 'getAcademicReviewArmSummary', 'getAcademicDuplicateScoreReview']) {
     const policy = requestPolicy(url('/api/staff-academics'), post(action));
     assert.equal(policy.cacheable, false, action);
     assert.equal(policy.mutation, false, action);
     assert.equal(requestPolicy(url('/api/unrecognised'), post(action)).mutation, true);
   }
-  for (const action of ['saveAcademicSubmissionSettings', 'payAcademicSubmission', 'verifyAcademicSubmission']) {
+  for (const action of ['saveAcademicSubmissionSettings', 'payAcademicSubmission', 'verifyAcademicSubmission', 'resolveAcademicDuplicateScore']) {
     assert.equal(requestPolicy(url('/api/staff-academics'), post(action)).mutation, true, action);
   }
 });

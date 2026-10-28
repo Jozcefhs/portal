@@ -32,3 +32,11 @@ html[data-theme="dark"] .academic-test-review-status small{color:#b8c9db}html[da
 html[data-theme="dark"] .academic-workflow-filter p{color:#c6d6e9}
 html[data-theme="dark"] .academic-workflow-badge,html[data-theme="dark"] .academic-workflow-count{border-color:transparent}
 @media(max-width:600px){.academic-workflow-count{flex:1 1 140px}.academic-workflow-filter>label{max-width:none}}
+.duplicate-score-option{display:flex;align-items:flex-start;gap:10px;padding:12px;margin:8px 0;border:1px solid #c9d8e8;border-radius:8px;background:#f5f9fd;cursor:pointer}
+.duplicate-score-option input[type=radio]{flex:0 0 18px;width:18px;height:18px;margin:4px 0 0}
+.duplicate-score-option span{min-width:0;overflow-wrap:anywhere}
+.academic-test-review-dialog:has(.duplicate-score-option) fieldset{min-width:0}
+.academic-test-review-dialog:has(.duplicate-score-option) textarea{box-sizing:border-box;width:100%;max-width:100%}
+.duplicate-score-option small{color:#4e647c}
+.duplicate-score-option:has(input:checked){border-color:#087f75;background:#edf9f5}
+html[data-theme="dark"] .duplicate-score-option{background:#152c40;color:#e4eef7}html[data-theme="dark"] .duplicate-score-option:has(input:checked){background:#124738}

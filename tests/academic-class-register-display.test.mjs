@@ -63,6 +63,15 @@ test('names and labels are escaped in table and preview', () => {
   assert.match(html, /&lt;script&gt;/);
 });
 
+test('only correction officers receive resolve buttons and printed registers remain read-only',()=>{
+  const register=registerFixture();register.Rows[0].Cells[0].State='Review duplicate';
+  const plain=context.academicClassRegisterTable(register.Columns,register.Rows);
+  assert.match(plain,/Review duplicate/);assert.doesNotMatch(plain,/data-resolve-score-student/);
+  const authorised=context.academicClassRegisterTable(register.Columns,register.Rows,0,true);
+  assert.match(authorised,/data-resolve-score-student="TEST\/000"/);assert.match(authorised,/>Resolve duplicate<\/button>/);
+  assert.doesNotMatch(context.academicClassRegisterPrintHtml(register,{},'School','Term'),/data-resolve-score-student/);
+});
+
 function scoreFilterFixture() {
   const Columns = [
     { Id: 'math-ca1', SubjectId: 'math', SubjectName: 'Maths', TestId: 'CA1', TestName: 'CA1' },
