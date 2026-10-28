@@ -10,10 +10,11 @@ import {createHospitalService} from '../functions/lib/hospital-service.js';
 const require=createRequire(import.meta.url),{chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
 const root=resolve(import.meta.dirname,'..'),output=resolve(root,'tmp/hospital-orders-ui');await mkdir(output,{recursive:true});
 const f=await ordersFixture();let role='doctor',expire=false;
+const demoActors={...actors,owner:{...actors.doctor,role:'Super Admin',username:'catalog-owner',allowedSections:['hospitalPatients','hospitalReception','hospitalLaboratory','hospitalImaging']}};
 const assets=new Set(['/hospital.html','/css/hospital.css','/css/app-dialogs.css','/js/hospital.js','/js/hospital-appointments.js','/js/hospital-referrals.js','/js/hospital-clinical.js','/js/hospital-orders.js','/js/hospital-billing.js','/js/hospital-funds.js','/js/hospital-corporate.js','/js/hospital-inpatients.js','/js/hospital-nursing.js','/js/hospital-theatre.js','/js/staff-idle-session.js','/js/app-dialogs.js']);
 const server=createServer(async(req,res)=>{
   try{
-    const path=new URL(req.url,'http://localhost').pathname,user={...actors[role],assignedBranchIds:['main','north'],activeBranchId:req.headers['x-dynamax-branch']||'main'};
+    const path=new URL(req.url,'http://localhost').pathname,user={...demoActors[role],assignedBranchIds:['main','north'],activeBranchId:req.headers['x-dynamax-branch']||'main'};
     if(path==='/api/staff-session'){res.setHeader('Content-Type','application/json');res.end(JSON.stringify({ok:true,authenticated:true,user,session:{id:'orders-fixture',lastActivityAt:Date.now(),expiresAt:Date.now()+7200000,serverNow:Date.now()}}));return;}
     if(path==='/api/staff-hospital'){
       if(expire)throw Object.assign(Error('Staff session expired'),{status:401});
@@ -35,6 +36,12 @@ try{
   const period=async prefix=>{await page.locator(`#${prefix}From`).fill('2026-10-26');await page.locator(`#${prefix}To`).fill('2026-10-26');};
   const openList=async()=>{await period('orders');await page.locator('#ordersFilter button').click();await done('Selected order period loaded');await page.locator('[data-open-order]').first().click();await done('Order loaded');};
   const issueContext=async()=>{await page.locator('[data-tab=reception]').click();await page.locator('#visitFrom').fill('2026-10-26');await page.locator('#visitTo').fill('2026-10-26');await page.locator('#visitForm button').click();await done('Selected visit period loaded');await page.locator('[data-issue-order]').click();await done('Prescribing context loaded');};
+  for(const task of ['laboratory','imaging']){
+    await login('owner',task);assert.equal(await page.locator('#investigationCatalogPanel').isVisible(),true);
+    assert.equal(await page.locator('#investigationCatalogPanel').evaluate(el=>el.open),true);
+    assert.equal(await page.locator('#catalogKind').inputValue(),task==='laboratory'?'Laboratory':'Imaging');
+    assert.equal(await page.locator('#ordersFilter').isVisible(),false);assert.equal(await page.locator('#newCatalogItem').isVisible(),true);
+  }
   await login('laboratory','laboratory');await expand('investigationCatalogPanel');await page.locator('#newCatalogItem').click();
   await fill('catalogItemForm',{Code:'LAB-DEMO',Name:'Synthetic laboratory investigation',Specimen:'Labelled specimen',Preparation:'Local preparation instructions',Instructions:'Local handling instructions'});
   await page.locator('#catalogItemForm button:not([type=button])').click();await done('Catalogue service saved');assert.equal(f.rows('InvestigationCatalogVersions').length,1);

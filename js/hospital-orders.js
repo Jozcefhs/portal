@@ -258,7 +258,7 @@
     $('loadReleasedHistory').onclick=()=>run(()=>releasedHistory());$('nextReleasedHistory').onclick=()=>run(()=>releasedHistory(releasedCursor));
     async function stockHistory(next=null){if(!next)stockHistoryQuery={BatchId:$('stockHistoryBatch').value,DateRange:{fromDate:$('stockHistoryFrom').value,toDate:$('stockHistoryTo').value}};const data=await api('stockHistory',{...stockHistoryQuery,...(next?{Cursor:next}:{})});stockHistoryCursor=data.next;if(!next)$('stockHistoryRows').replaceChildren();$('stockHistoryRows').insertAdjacentHTML('beforeend',historyRows(data.movements,'stock'));$('nextStockHistory').hidden=!stockHistoryCursor;status('Dated stock movements loaded.');}
     $('stockHistoryFilter').onsubmit=event=>{event.preventDefault();run(()=>stockHistory());};$('nextStockHistory').onclick=()=>run(()=>stockHistory(stockHistoryCursor));
-    function selectTask(task){const kind={pharmacy:'Prescription',laboratory:'Laboratory',imaging:'Imaging'}[task];if(kind&&kinds().includes(kind))$('ordersKind').value=kind;}
+    function selectTask(task){const kind={pharmacy:'Prescription',laboratory:'Laboratory',imaging:'Imaging'}[task];if(kind&&kinds().includes(kind))$('ordersKind').value=kind;if(['Laboratory','Imaging'].includes(kind)&&catalogAllowed(kind)){$('catalogKind').value=kind;if(!kinds().length)$('investigationCatalogPanel').open=true;}permissions();}
     return {openVisit,clear,permissions,confirmLeave,selectTask};
   }};
 })();
