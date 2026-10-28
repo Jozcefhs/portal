@@ -34,6 +34,7 @@ export function hospitalCapabilities(user) {
   const modules={'theatre.read':['hospitalTheatre'],'theatre.configure':['hospitalTheatre'],'theatre.work':['hospitalTheatre'],'theatre.schedule':['hospitalTheatre'],'theatre.sign':['hospitalTheatre'],'nursing.read':['hospitalNursing'],'nursing.write':['hospitalNursing'],'inpatient.read':['hospitalInpatients'],'inpatient.configure':['hospitalInpatients'],'inpatient.admit':['hospitalInpatients'],
     'inpatient.clinical':['hospitalInpatients'],'inpatient.discharge':['hospitalInpatients'],'patients.read':['hospitalPatients'],'patients.write':['hospitalPatients'],
     'visits.read':['hospitalReception'],'visits.write':['hospitalReception'],
+    'appointments.read':['hospitalReception'],'appointments.write':['hospitalReception'],'appointments.configure':['hospitalReception'],
     'clinical.read':['hospitalTriage','hospitalConsultations'],'triage.write':['hospitalTriage'],'consultations.write':['hospitalConsultations'],
     'orders.read':['hospitalOrders'],'orders.create':['hospitalOrders'],'pharmacy.work':['hospitalPharmacy'],
     'laboratory.work':['hospitalLaboratory'],'imaging.work':['hospitalImaging'],

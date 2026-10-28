@@ -8,6 +8,7 @@ import { hospitalCollectionPath } from './hospital-storage.js';
 import { createHospitalClinicalService } from './hospital-clinical-service.js';
 import { createHospitalBillingService } from './hospital-billing-service.js';
 import { createHospitalTheatreService } from './hospital-theatre-service.js';
+import { createHospitalAppointmentsService } from './hospital-appointments-service.js';
 import { createHospitalNursingService } from './hospital-nursing-service.js';
 import { createHospitalInpatientService } from './hospital-inpatient-service.js';
 import { createHospitalOrdersService } from './hospital-orders-service.js';
@@ -107,6 +108,7 @@ export function createHospitalService(env, user, overrides = {}) {
     return { rows: shown, next: rows.length > limit ? { id: last.__id, value: last[field] } : null };
   }
   return {
+    ...createHospitalAppointmentsService({env,user,db,collection,capabilities,requireCapability,branch,patient,clock,actor,condition,strip,eq,auditWrite,auditRead,operation,page}),
     ...createHospitalTheatreService({env,user,db,collection,capabilities,requireCapability,branch,patient,clock,actor,condition,strip,eq,auditWrite,auditRead,operation,page}),
     ...createHospitalNursingService({env,user,db,collection,capabilities,requireCapability,branch,patient,clock,actor,
       condition,strip,eq,auditWrite,auditRead,operation,page}),

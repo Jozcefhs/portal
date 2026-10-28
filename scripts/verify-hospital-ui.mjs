@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const f = fixture(), root = resolve(import.meta.dirname, '..'), output = resolve(root, 'tmp/hospital-ui');
 await mkdir(output, { recursive: true });
-const assets = new Set(['/hospital.html','/css/hospital.css','/js/hospital.js','/js/staff-idle-session.js']);
+const assets = new Set(['/hospital.html','/css/hospital.css','/js/hospital.js','/js/hospital-appointments.js','/js/staff-idle-session.js']);
 assets.add('/css/app-dialogs.css'); assets.add('/js/app-dialogs.js');
 assets.add('/js/hospital-clinical.js');
 assets.add('/js/hospital-orders.js'); assets.add('/js/hospital-billing.js'); assets.add('/js/hospital-funds.js'); assets.add('/js/hospital-corporate.js');assets.add('/js/hospital-inpatients.js');assets.add('/js/hospital-nursing.js');assets.add('/js/hospital-theatre.js');
@@ -55,7 +55,7 @@ try {
   assert.equal(await page.evaluate(()=>document.activeElement.id),'cardUid');
   await page.locator('#cardUid').fill('01:02:03:04');await page.locator('#cardForm button[type=submit]').click();await done('NFC card assignment saved');
   assert.equal(f.rows('Cards')[0].Status,'Active');
-  await page.locator('[name=Department]').fill('Outpatients');await page.locator('#checkInForm button[type=submit]').click();await done('Patient checked in');
+  await page.locator('#checkInForm [name=Department]').fill('Outpatients');await page.locator('#checkInForm button[type=submit]').click();await done('Patient checked in');
   await page.screenshot({path:resolve(output,'patient-nfc-desktop.png'),fullPage:true});
   await page.locator('#cardUid').fill('05:06:07:08');await page.locator('#cardReason').fill('Lost original card');
   await page.locator('#cardForm button[type=submit]').click();await done('NFC card assignment saved');

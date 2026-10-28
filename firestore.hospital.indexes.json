@@ -1337,6 +1337,64 @@
           "order": "ASCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "hospitalAppointmentSchedules",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "BranchId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "DayStartAt",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "hospitalAppointments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "BranchId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "StartAt",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "hospitalAppointmentEvents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "BranchId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "AppointmentId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "CreatedAt",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "ASCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": []
