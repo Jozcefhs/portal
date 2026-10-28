@@ -1,0 +1,101 @@
+const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const DAYS=['SUN','MON','TUE','WED','THU','FRI','SAT'];
+const caches=new Map();
+function remember(map,key,value){map.delete(key);map.set(key,value);while(map.size>20)map.delete(map.keys().next().value);return value;}
+function time(value,zone){return value?new Date(value).toLocaleTimeString('en-GB',{timeZone:zone,hour:'2-digit',minute:'2-digit'}):'—';}
+export function filterMeetingRows(rows,status='',search='',department=''){
+  const text=search.trim().toLowerCase();
+  return rows.filter(row=>(!department||row.Department===department)&&(!text||`${row.DisplayName} ${row.Username} ${row.Department}`.toLowerCase().includes(text))&&
+    (!status||status==='Present'&&Boolean(row.FirstClockIn)||status==='Early departure'&&row.EarlyDepartureMinutes>0||status==='Missing check-out'&&row.MissingClockOut||row.Status===status));
+}
+function table(rows,zone){return `<table><thead><tr><th>Staff member</th><th>Department</th><th>Status</th><th>In</th><th>Out</th><th>Late (min)</th><th>Notes</th></tr></thead><tbody>${rows.map(row=>`<tr><td><strong>${esc(row.DisplayName)}</strong><small>${esc(row.Username)}</small></td><td>${esc(row.Department||'No department')}</td><td><span class="meeting-status status-${esc(row.Status.toLowerCase())}">${esc(row.Status)}</span></td><td>${esc(time(row.FirstClockIn,zone))}</td><td>${esc(time(row.LastClockOut,zone))}</td><td>${Number(row.LateMinutes)||'—'}</td><td>${row.MissingClockOut?'Missing check-out':row.EarlyDepartureMinutes>0?`Left ${Number(row.EarlyDepartureMinutes)} min early`:esc(row.AttendanceState)}</td></tr>`).join('')||'<tr><td colspan="7">No matching staff.</td></tr>'}</tbody></table>`;}
+export function meetingPrintDocument(report,rows,schoolName,filterDescription){
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(report.meeting.Title)} attendance</title><style>body{font:12px Arial,sans-serif;color:#153752;margin:24px}h1{font-size:20px}h2{font-size:16px}table{width:100%;border-collapse:collapse}th,td{padding:7px;border:1px solid #c3d5e2;text-align:left}th{background:#174773;color:white}td small{display:block;color:#52667b}tr{break-inside:avoid}.status-absent{color:#a61d31;font-weight:bold}.status-late{color:#875000;font-weight:bold}.status-present{color:#00735c;font-weight:bold}.status-pending{color:#53647c}thead{display:table-header-group}@page{size:A4 landscape;margin:12mm}@media print{body{margin:0}*{print-color-adjust:exact;-webkit-print-color-adjust:exact}}</style></head><body><h1>${esc(schoolName)}</h1><h2>${esc(report.meeting.Title)} — Attendance</h2><p>${esc(report.Date)} · ${esc(report.meeting.StartTime)}–${esc(report.meeting.EndTime)} (${esc(report.meeting.TimeZone)}) · ${rows.length} staff shown</p><p>${esc(filterDescription)} · Snapshot: ${esc(new Date(report.LoadedAt).toLocaleString('en-GB',{timeZone:report.meeting.TimeZone}))}</p>${table(rows,report.meeting.TimeZone)}</body></html>`;
+}
+
+export async function openStaffMeetings({request,verify,position,cacheKey,schoolName='School',branchName='Current branch'}){
+  if(document.querySelector('dialog.staff-meetings'))return;
+  if(!document.querySelector('link[data-meeting-style]')){const css=document.createElement('link');css.rel='stylesheet';css.href='/css/staff-meetings.css?v=20261028';css.dataset.meetingStyle='';document.head.append(css);}
+  if(!caches.has(cacheKey)){if(caches.size>=4)caches.delete(caches.keys().next().value);caches.set(cacheKey,{lists:new Map(),reports:new Map()});}
+  const cache=caches.get(cacheKey),dialog=document.createElement('dialog');dialog.className='staff-meetings';
+  dialog.innerHTML=`<header><div><small>STAFF MEETINGS · ${esc(branchName)}</small><h2>Meetings & attendance</h2></div><button type="button" data-close aria-label="Close meetings">Close</button></header><p role="status" data-status>Opening meeting controls…</p><main data-main></main>`;
+  document.body.append(dialog);dialog.showModal();
+  const main=dialog.querySelector('[data-main]'),status=dialog.querySelector('[data-status]');
+  let info,selectedDate='',busy=false,activeReport=null,filter='',search='',department='';
+  const close=()=>{if(busy){status.textContent='Please wait for the current request to finish.';return;}dialog.close();dialog.remove();};
+  dialog.querySelector('[data-close]').onclick=close;dialog.addEventListener('cancel',event=>{event.preventDefault();close();});
+  function message(text,bad=false){status.textContent=text;status.classList.toggle('error',bad);}
+  async function run(action){
+    if(busy)return;busy=true;dialog.setAttribute('aria-busy','true');
+    const controls=[...main.querySelectorAll('button,input,select')].filter(el=>!el.disabled);controls.forEach(el=>el.disabled=true);
+    try{await action();}catch(error){message(error.message||String(error),true);}finally{busy=false;dialog.removeAttribute('aria-busy');controls.forEach(el=>{if(el.isConnected)el.disabled=false;});}
+  }
+  function renderList(){
+    activeReport=null;
+    const loaded=cache.lists.get(selectedDate),meetings=loaded?.meetings||[];
+    main.innerHTML=`<div class="meeting-toolbar"><label>Meeting date<input type="date" data-date value="${esc(selectedDate)}"></label><button type="button" data-load>Load meetings</button><button type="button" data-refresh>Refresh</button>${info.canManage?'<button type="button" data-new>Create meeting</button>':''}</div><p class="muted">Select a date, then load meetings. Attendance is separate from your daily work clocking.</p><div class="meeting-cards">${loaded?(meetings.map(meeting=>{
+      const attendance=meeting.attendance||{},schedule=meeting.Schedule,now=Date.now(),ended=now>=Date.parse(schedule.EndAt),open=now>=Date.parse(schedule.StartAt)-meeting.OpenMinutes*60000;
+      const canIn=meeting.Invited&&!attendance.FirstClockIn&&open&&!ended;
+      const canOut=meeting.Invited&&attendance.FirstClockIn&&!attendance.LastClockOut&&now<=Date.parse(schedule.EndAt)+meeting.CheckoutMinutes*60000;
+      return `<article><h3>${esc(meeting.Title)}</h3><p>${esc(meeting.Type)} · ${esc(meeting.StartTime)}–${esc(meeting.EndTime)} (${esc(meeting.TimeZone)})</p><p>${esc(meeting.Site.Name)} · ${esc(meeting.Site.Policy==='NETWORK_ONLY'?'Approved meeting network':meeting.Site.Policy==='GEOFENCE_ONLY'?'Meeting GPS location':'Meeting GPS location or network')}</p><p>${meeting.ExpectedCount} invited · ${meeting.Invited?(attendance.FirstClockIn?`You checked in at ${esc(time(attendance.FirstClockIn,meeting.TimeZone))}${attendance.LastClockOut?` · Out ${esc(time(attendance.LastClockOut,meeting.TimeZone))}`:''}`:ended?'You did not attend':'You are invited'):'You are not on this meeting roster'}</p><div class="meeting-actions">${meeting.Invited?`<button type="button" data-in="${esc(meeting.MeetingId)}" ${canIn?'':'disabled'}>Check in</button><button type="button" data-out="${esc(meeting.MeetingId)}" ${canOut?'':'disabled'}>Check out</button>`:''}${info.canManage?`<button type="button" data-report="${esc(meeting.MeetingId)}">Attendance register</button><button type="button" data-edit="${esc(meeting.MeetingId)}">Edit future meetings</button>`:''}</div></article>`;
+    }).join('')||'<p>No meetings scheduled for you on this date.</p>'):'<p>No meeting records requested for this date.</p>'}</div>`;
+    main.querySelector('[data-date]').onchange=event=>{selectedDate=event.target.value;renderList();message(cache.lists.has(selectedDate)?'Previously loaded meetings restored. Use Refresh for current attendance.':'Choose Load meetings to request this date.');};
+    main.querySelector('[data-load]').onclick=()=>run(()=>loadList(false));
+    main.querySelector('[data-refresh]').onclick=()=>run(()=>loadList(true));
+    main.querySelector('[data-new]')?.addEventListener('click',()=>run(()=>editMeeting('')));
+    main.querySelectorAll('[data-edit]').forEach(button=>button.onclick=()=>run(()=>editMeeting(button.dataset.edit)));
+    main.querySelectorAll('[data-report]').forEach(button=>button.onclick=()=>run(()=>loadReport(button.dataset.report)));
+    for(const direction of ['in','out'])main.querySelectorAll(`[data-${direction}]`).forEach(button=>button.onclick=()=>run(async()=>{
+      const meeting=meetings.find(row=>row.MeetingId===button.dataset[direction]);message('Verifying your identity and meeting location…');
+      const evidence=await verify(loaded.policy,meeting.ProofSiteId,direction.toUpperCase());
+      const result=await request('clock',{MeetingId:meeting.MeetingId,Date:selectedDate,Direction:direction.toUpperCase(),Location:evidence.location,AttendanceProof:evidence.attendanceProof});
+      meeting.attendance=result.attendance;cache.reports.delete(`${meeting.MeetingId}|${selectedDate}`);renderList();message(result.message);
+    }));
+  }
+  async function loadList(refresh){
+    if(!selectedDate)throw new Error('Select a meeting date first.');
+    if(refresh||!cache.lists.has(selectedDate)){message('Loading the selected date…');remember(cache.lists,selectedDate,await request('list',{Date:selectedDate}));}
+    renderList();message('Meeting snapshot loaded. Use Refresh to check for changes.');
+  }
+  async function loadReport(id,refresh=false){
+    const key=`${id}|${selectedDate}`;
+    if(refresh||!cache.reports.has(key)){message('Loading this meeting’s register…');remember(cache.reports,key,await request('report',{MeetingId:id,Date:selectedDate}));}
+    activeReport=cache.reports.get(key);filter='';search='';department='';renderReport();message('Attendance snapshot loaded. Filters and preview use these loaded records.');
+  }
+  function renderReport(){
+    const report=activeReport,rows=report.rows,counts={Present:rows.filter(row=>row.FirstClockIn).length,Late:rows.filter(row=>row.Status==='Late').length,Absent:rows.filter(row=>row.Status==='Absent').length,Pending:rows.filter(row=>row.Status==='Pending').length};
+    main.innerHTML=`<div class="meeting-toolbar"><button type="button" data-back>Back to meetings</button><button type="button" data-report-refresh>Refresh register</button><button type="button" data-preview>Preview / print</button></div><h3>${esc(report.meeting.Title)} · ${esc(report.Date)}</h3><p>${esc(report.meeting.StartTime)}–${esc(report.meeting.EndTime)} (${esc(report.meeting.TimeZone)}) · ${esc(report.meeting.Site.Name)}</p><div class="meeting-counts">${Object.entries(counts).map(([key,count])=>`<span class="meeting-status status-${key.toLowerCase()}">${key}: ${count}</span>`).join('')}</div><p class="muted">Present includes late arrivals. Staff who have not checked in remain pending until the meeting finishes. Snapshot: ${esc(new Date(report.LoadedAt).toLocaleString('en-GB',{timeZone:report.meeting.TimeZone}))}</p><div class="meeting-toolbar"><label>Attendance filter<select data-filter>${['All staff','Present','Late','Absent','Pending','Early departure','Missing check-out'].map((label,i)=>`<option value="${i?label:''}">${label}</option>`).join('')}</select></label><label>Department<select data-department><option value="">All departments</option>${[...new Set(rows.map(row=>row.Department).filter(Boolean))].sort().map(name=>`<option>${esc(name)}</option>`).join('')}</select></label><label>Find staff<input type="search" data-search placeholder="Name or username"></label></div><p data-row-count></p><div class="meeting-table" data-table></div>`;
+    const update=()=>{const shown=filterMeetingRows(rows,filter,search,department);main.querySelector('[data-table]').innerHTML=table(shown,report.meeting.TimeZone);main.querySelector('[data-row-count]').textContent=`${shown.length} of ${rows.length} staff`;};
+    main.querySelector('[data-filter]').onchange=event=>{filter=event.target.value;update();};main.querySelector('[data-department]').onchange=event=>{department=event.target.value;update();};main.querySelector('[data-search]').oninput=event=>{search=event.target.value;update();};update();
+    main.querySelector('[data-back]').onclick=renderList;
+    main.querySelector('[data-report-refresh]').onclick=()=>run(()=>loadReport(report.meeting.MeetingId,true));
+    main.querySelector('[data-preview]').onclick=()=>{
+      const preview=document.createElement('dialog');preview.className='staff-meeting-preview';preview.innerHTML='<header><h2>Meeting attendance preview</h2><button data-print>Print</button><button data-close>Close preview</button></header><iframe title="Meeting attendance print preview"></iframe>';
+      const frame=preview.querySelector('iframe');frame.srcdoc=meetingPrintDocument(report,filterMeetingRows(rows,filter,search,department),schoolName,`${filter||'All staff'} · ${department||'All departments'}${search?' · Search: '+search:''}`);document.body.append(preview);preview.showModal();
+      preview.querySelector('[data-print]').onclick=()=>frame.contentWindow.print();const closePreview=()=>{preview.close();preview.remove();};preview.querySelector('[data-close]').onclick=closePreview;preview.addEventListener('cancel',event=>{event.preventDefault();closePreview();});
+    };
+  }
+  async function editMeeting(id){
+    message('Loading departments and the meeting settings…');const setup=await request('setup',{MeetingId:id||undefined});
+    const old=setup.meeting||{},site=old.Site||{},meetingId=id||crypto.randomUUID();
+    const tomorrow=new Date(`${info.Date}T12:00:00Z`);tomorrow.setUTCDate(tomorrow.getUTCDate()+1);const nextDay=tomorrow.toISOString().slice(0,10);
+    const field=(label,name,value,type='text',extra='')=>`<label>${label}<input type="${type}" name="${name}" value="${esc(value)}" ${extra}></label>`;
+    main.innerHTML=`<h3>${id?'Edit future meetings':'Create meeting'}</h3><p>${id?'Changes take effect from tomorrow or later. Existing attendance and past rosters are retained.':'Choose the departments expected to attend. Unchecked departments are excluded.'}</p><form data-editor><div class="meeting-form-grid">${field('Meeting title','Title',old.Title||'','text','required maxlength="140"')}<label>Meeting type<select name="Type"><option value="Dated">Dated meeting</option><option value="Daily" ${old.Type==='Daily'?'selected':''}>Daily / recurring meeting</option></select></label>${field('Start date','StartDate',old.StartDate||selectedDate||info.Date,'date','required')}${field('Finish date (recurring, optional)','EndDate',old.EndDate||'','date')}${field('Start time','StartTime',old.StartTime||'08:00','time','required')}${field('Finish time','EndTime',old.EndTime||'09:00','time','required')}${field('Time zone','TimeZone',old.TimeZone||info.TimeZone,'text','required')}${id?field('Changes effective from','EffectiveFrom',old.EffectiveFrom>nextDay?old.EffectiveFrom:nextDay,'date',`required min="${nextDay}"`):''}${field('Late grace (minutes)','GraceMinutes',old.GraceMinutes??0,'number','min="0" max="180" required')}${field('Check-in opens before start (minutes)','OpenMinutes',old.OpenMinutes??30,'number','min="0" max="360" required')}${field('Check-out allowed after finish (minutes)','CheckoutMinutes',old.CheckoutMinutes??120,'number','min="0" max="720" required')}</div>
+      <fieldset data-days><legend>Recurring days</legend><div class="meeting-checks">${DAYS.map(day=>`<label><input type="checkbox" name="Days" value="${day}" ${(old.Days||['MON','TUE','WED','THU','FRI']).includes(day)?'checked':''}>${day}</label>`).join('')}</div></fieldset>
+      <fieldset><legend>Departments to include</legend><div class="meeting-actions"><button type="button" data-all>Include all</button><button type="button" data-none>Clear selection</button></div><div class="meeting-checks">${setup.departments.map(dept=>`<label><input type="checkbox" name="Departments" value="${esc(dept.Id)}" ${(old.Departments||[]).includes(dept.Id)?'checked':''}>${esc(dept.Name)} (${dept.Count})</label>`).join('')||'<p>No active staff departments found for this branch.</p>'}</div><p class="muted">The selected staff list is saved with the meeting. Edit future meetings to include later department or staffing changes.</p></fieldset>
+      <fieldset><legend>Meeting location / network</legend><p>These settings apply only to this meeting. Staff use the same identity check as daily clocking.</p><div class="meeting-form-grid">${field('Location name','SiteName',site.Name||'','text','required')}<label>Verification rule<select name="Policy"><option value="GEOFENCE_ONLY">GPS location</option><option value="NETWORK_ONLY">Approved network</option><option value="GEOFENCE_OR_NETWORK">GPS location or approved network</option></select></label>${field('Latitude','Latitude',site.Latitude??'','number','step="any" min="-90" max="90"')}${field('Longitude','Longitude',site.Longitude??'','number','step="any" min="-180" max="180"')}${field('Allowed radius (metres)','RadiusMetres',site.RadiusMetres??150,'number','min="20" max="5000" required')}${field('Maximum GPS accuracy (metres)','MaxAccuracyMetres',site.MaxAccuracyMetres??100,'number','min="10" max="2000" required')}${field('Approved public IP addresses (comma separated)','AllowedPublicIps',(site.AllowedPublicIps||[]).join(', '))}</div><div class="meeting-actions"><button type="button" data-gps>Use my GPS location</button><label><input type="checkbox" name="UseCurrentNetwork">Add my current network on save</label></div><p class="muted">Use the public address of the meeting’s Wi-Fi/network. A network name alone cannot verify attendance.</p></fieldset>${id?`<label><input type="checkbox" name="Cancelled" ${old.Cancelled?'checked':''}>Cancel occurrences from the effective date</label>`:''}<div class="meeting-actions"><button type="submit">Save meeting</button><button type="button" data-cancel>Cancel</button></div></form>`;
+    const form=main.querySelector('form');form.elements.Policy.value=site.Policy||'GEOFENCE_ONLY';
+    const updateType=()=>{const daily=form.elements.Type.value==='Daily';form.querySelector('[data-days]').hidden=!daily;form.elements.EndDate.disabled=!daily;};updateType();form.elements.Type.onchange=updateType;
+    form.querySelector('[data-all]').onclick=()=>form.querySelectorAll('[name="Departments"]').forEach(input=>input.checked=true);form.querySelector('[data-none]').onclick=()=>form.querySelectorAll('[name="Departments"]').forEach(input=>input.checked=false);
+    form.querySelector('[data-cancel]').onclick=renderList;
+    form.querySelector('[data-gps]').onclick=()=>run(async()=>{const loc=await position();form.elements.Latitude.value=loc.Latitude??loc.latitude;form.elements.Longitude.value=loc.Longitude??loc.longitude;message('Current GPS coordinates copied. Check the allowed radius before saving.');});
+    let saveAttempt=null;
+    form.onsubmit=event=>{event.preventDefault();const get=name=>form.elements[name]?.value;const body={MeetingId:meetingId,ExpectedRevision:setup.Revision,Title:get('Title'),Type:get('Type'),StartDate:get('StartDate'),EndDate:get('EndDate'),StartTime:get('StartTime'),EndTime:get('EndTime'),TimeZone:get('TimeZone'),EffectiveFrom:get('EffectiveFrom')||get('StartDate'),GraceMinutes:get('GraceMinutes'),OpenMinutes:get('OpenMinutes'),CheckoutMinutes:get('CheckoutMinutes'),Days:[...form.querySelectorAll('[name="Days"]:checked')].map(el=>el.value),Departments:[...form.querySelectorAll('[name="Departments"]:checked')].map(el=>el.value),Site:{Name:get('SiteName'),Policy:get('Policy'),Latitude:get('Latitude'),Longitude:get('Longitude'),RadiusMetres:get('RadiusMetres'),MaxAccuracyMetres:get('MaxAccuracyMetres'),AllowedPublicIps:get('AllowedPublicIps')},UseCurrentNetwork:form.elements.UseCurrentNetwork.checked,Cancelled:form.elements.Cancelled?.checked||false};
+      const signature=JSON.stringify(body);if(saveAttempt?.signature!==signature)saveAttempt={signature,key:crypto.randomUUID()};
+      void run(async()=>{message('Saving meeting…');const result=await request('save',body,saveAttempt.key);cache.lists.clear();cache.reports.clear();renderList();message(result.message+' Load the relevant date to view it.');});
+    };
+    message('Select the included departments and meeting-specific location settings.');
+  }
+  await run(async()=>{info=await request('bootstrap',{});selectedDate=info.Date;renderList();message('Choose a date before loading meeting records.');});
+  return dialog;
+}

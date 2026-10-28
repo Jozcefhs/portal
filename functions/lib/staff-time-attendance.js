@@ -431,7 +431,7 @@ export function evaluateAttendancePresence(site = {}, location = {}, clientIp = 
   };
 }
 
-function verifiedAttendanceIdentity(policy = {}, proof = null) {
+export function verifiedAttendanceIdentity(policy = {}, proof = null) {
   const required = clean(policy.IdentityVerification || 'NONE').toUpperCase();
   if (required === 'NONE') return 'Session identity';
   const method = lower(proof?.method);

@@ -22,7 +22,7 @@ export function canonicalRecordEdition(value) {
   const edition = lower(value);
   if (FAITH_EDITIONS.has(edition) || ['religious', 'religious organisation', 'religious organization'].includes(edition)) return 'faith';
   if (['organization', 'organisation', 'other'].includes(edition)) return 'organization';
-  return edition === 'school' ? 'school' : '';
+  return ['school', 'hospital'].includes(edition) ? edition : '';
 }
 
 export function staffRecordEdition(row = {}) {

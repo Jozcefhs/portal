@@ -2761,9 +2761,15 @@ function renderDashboardTimeAttendance(data = null, message = '', tone = '') {
                   </div>`
                 : ''}`
             : '<p class="muted">Attendance information could not be loaded.</p>'}
+      <button type="button" id="dashboardStaffMeetings">Staff meetings</button>
       <p id="dashboardAttendanceStatus" class="status ${tone}">${escapeHtml(message)}</p>
     </article>`;
   updateDashboardClockFace();
+  document.getElementById('dashboardStaffMeetings')?.addEventListener('click', () => { void openStaffMeetingWorkspace().catch(error => setStatus(document.getElementById('dashboardAttendanceStatus'), error.message, 'bad')); });
+  if (!loading && currentUser && new URLSearchParams(location.search).get('staffMeetings') === '1') {
+    const nextUrl = new URL(location.href); nextUrl.searchParams.delete('staffMeetings'); history.replaceState(null, '', nextUrl);
+    void openStaffMeetingWorkspace().catch(error => setStatus(document.getElementById('dashboardAttendanceStatus'), error.message, 'bad'));
+  }
   const siteSelect = document.getElementById('dashboardAttendanceSite');
   siteSelect?.addEventListener('change', () => {
     try { window.localStorage.setItem(dashboardAttendanceSiteStorageKey(data?.branchId), clean(siteSelect.value)); } catch (_error) { /* Browser storage is optional. */ }
@@ -8840,6 +8846,25 @@ async function loadChurchDonations() {
   } catch (error) {
     if (activeSection === 'donations') panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
   }
+}
+
+async function openStaffMeetingWorkspace() {
+  const branchId = clean(selectedBranchId) && selectedBranchId !== 'all' ? selectedBranchId : clean(currentUser?.activeBranchId || currentUser?.branchId) || 'main';
+  const { openStaffMeetings } = await import('./staff-meetings.js?v=20261028');
+  return openStaffMeetings({
+    cacheKey: `${currentUser?.username}|${branchId}`,
+    branchName: availableBranches.find(branch => branch.id === branchId)?.name || branchId,
+    schoolName: academicManagementData?.reportProfile?.SchoolName || currentUser?.organizationName || 'Organisation',
+    verify: attendanceVerificationEvidence, position: browserPosition,
+    request: async (action, payload = {}, idempotencyKey = '') => {
+      const response = await staffFetch('/api/staff-meetings', { method: 'POST', credentials: 'same-origin', cache: 'no-store',
+        headers: { 'Content-Type': 'application/json', ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}) },
+        body: JSON.stringify({ action, ...payload, BranchId: branchId }) });
+      const data = await response.json().catch(() => ({ ok: false, message: 'The meeting service did not return a response. Please retry.' }));
+      if (!response.ok || !data.ok) throw receivedResponseError(data.message || 'Meeting action failed.');
+      return data;
+    }
+  });
 }
 
 async function staffAttendanceRequest(action, payload = {}) {
@@ -16936,7 +16961,7 @@ function academicManagementHeader(data, rows, message = '') {
     ? 'classRegister' : academicManagementView;
   return `<div class="academic-management-heading">
     <div><p class="eyebrow">AM-002 to AM-011</p><h2>Academic Management</h2><p class="muted">Branch-isolated structure, ${learner.singular} timetables, attendance, assessment and controlled term-result publication.</p></div>
-    <div class="academic-homework-actions">${scoreRegisterLabel ? `<button type="button" data-academic-open-score-register>${escapeHtml(scoreRegisterLabel)}</button>` : ''}${data.permissions?.canReviewScores ? `<a class="btn secondary" href="/exams-admin.html?audience=student&branch=${encodeURIComponent(selectedBranchId || 'main')}&section=${encodeURIComponent(academicManagementFilters.section || 'secondary')}">Entrance / remote exams</a>` : ''}${data.permissions?.canEnterScores ? '<button type="button" data-academic-diary>Teaching diaries</button><button type="button" data-teacher-homework>Homework / parent message</button>' : ''}<button type="button" id="refreshAcademicManagement" class="secondary">Refresh</button></div>
+    <div class="academic-homework-actions">${data.permissions?.canManageStructure ? '<button type="button" data-staff-meetings>Staff meetings</button>' : ''}${scoreRegisterLabel ? `<button type="button" data-academic-open-score-register>${escapeHtml(scoreRegisterLabel)}</button>` : ''}${data.permissions?.canReviewScores ? `<a class="btn secondary" href="/exams-admin.html?audience=student&branch=${encodeURIComponent(selectedBranchId || 'main')}&section=${encodeURIComponent(academicManagementFilters.section || 'secondary')}">Entrance / remote exams</a>` : ''}${data.permissions?.canEnterScores ? '<button type="button" data-academic-diary>Teaching diaries</button><button type="button" data-teacher-homework>Homework / parent message</button>' : ''}<button type="button" id="refreshAcademicManagement" class="secondary">Refresh</button></div>
   </div>
   <div class="academic-management-filterbar">
     <label>School section<select id="academicManagementSection">${sections.map((section) => `<option value="${escapeHtml(section)}"${section === academicManagementFilters.section ? ' selected' : ''}>${escapeHtml(section.charAt(0).toUpperCase() + section.slice(1))}</option>`).join('')}</select></label>
@@ -18056,6 +18081,7 @@ function bindAcademicCbtRejectionReviews(root) {
 }
 
 function bindAcademicManagement() {
+  panelEl.querySelector('[data-staff-meetings]')?.addEventListener('click', () => { void openStaffMeetingWorkspace().catch(error => setStatus(document.getElementById('academicManagementStatus'), error.message, 'bad')); });
   panelEl.querySelector('[data-academic-load-records]')?.addEventListener('submit', event => {
     event.preventDefault();
     const form = event.currentTarget;
