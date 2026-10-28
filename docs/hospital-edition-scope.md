@@ -243,7 +243,7 @@ The user requested resumption of Hospital work after the school report fixes. Th
 H02 remains partial: recurring schedule templates, waitlists, reminders, formal external referrals, patient self-booking, live clinician queue/overrun coordination, desktop/offline parity and practitioner validation remain pending. No production patient records were accessed or changed and no messages were sent. Patient cards remain NFC; card-terminal payments remain disabled. Continue the full original roadmap; next everyday-care priorities include formal referrals and remaining pharmacy/laboratory workflow gaps before patient portal and specialist completion.
 
 
-### Referrals, care transfers and Owner's Demo — 28 October 2026
+### Referrals, care transfers and Owner's Demo â€” 28 October 2026
 
 The user authorised referrals/care-transfer work and deployment to see all Hospital progress, with no compilation. They explicitly requested an Owner's Demo. This supersedes the previous deployment restriction for this isolated Hospital web demo only.
 
