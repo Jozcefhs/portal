@@ -16,6 +16,8 @@
     try { body = typeof init.body === 'string' ? JSON.parse(init.body) : {}; } catch (_) { return false; }
     const action = String(body.action || body.Action || body.mode || url.searchParams.get('action') || '').toLowerCase().replace(/[^a-z]/g, '');
     if (readActions.has(action) || /^(?:get|list|search|lookup|preview|validate|check|download|export|poll|verify|prepare)/.test(action)) return false;
+    // Meeting setup only reads the department roster and saved settings.
+    if (url.pathname === '/api/staff-meetings' && action === 'setup') return false;
     // Identity challenges are intermediate steps, not completed business actions.
     if (/passkey|webauthn|staff-session|staff-mfa|approval-profile/.test(url.pathname)) return false;
     // Restore/reset chunks belong to one action; its completion is reported once.
