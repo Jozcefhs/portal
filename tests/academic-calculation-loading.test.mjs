@@ -99,7 +99,9 @@ test('mid-term math ignores other classrooms and preserved students instead of p
 });
 
 test('saved result updates merge into the loaded workspace without another request or losing other classrooms',async()=>{
+  let summaryInvalidations=0;
   const calls=[],context=vm.createContext({clean:v=>String(v??'').trim(),selectedBranchId:'main',currentUser:{},academicManagementView:'results',
+    window:{DynamaxAcademicWorkflow:{clearBranchSummary:()=>{summaryInvalidations++;}}},
     academicManagementData:{termResults:[{ResultId:'unchanged',Status:'Published'},{ResultId:'changed',RevisionToken:'old'}],
       resultEvents:[{ResultEventId:'old-event'}],students:[{StudentRef:'keep'}]},
     staffFetch:async(_url,options)=>{calls.push(JSON.parse(options.body));return {status:200,json:async()=>({ok:true,partialAcademicManagement:true,
@@ -111,5 +113,6 @@ test('saved result updates merge into the loaded workspace without another reque
   assert.equal(calls.length,1);assert.equal(result.termResults.length,2);assert.equal(result.termResults[0].Status,'Published');
   assert.equal(result.termResults[1].RevisionToken,'committed');assert.equal(result.students[0].StudentRef,'keep');
   assert.equal(result.resultEvents.length,2);
+  assert.equal(summaryInvalidations,1,'recalculation invalidates publication counts without loading them again');
   const replay=context.mergeAcademicResultCalculation(result,result.resultCalculationUpdate);assert.equal(replay.resultEvents.length,2);
 });
