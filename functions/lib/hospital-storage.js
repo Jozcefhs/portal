@@ -4,6 +4,7 @@ export const HOSPITAL_COLLECTIONS = Object.freeze([
   'Patients', 'Numbers', 'PatientMatches', 'Cards', 'Operations', 'Audit', 'Visits', 'OpenVisits',
   'Referrals','ReferralEvents','ReferralGuards',
   'InvestigationCatalog','InvestigationCatalogVersions',
+  'MedicineCatalog','MedicineCatalogVersions','MedicineCatalogIdentities',
   'AppointmentSchedules','AppointmentScheduleEvents','Appointments','AppointmentEvents',
   'Encounters', 'CareSummaries', 'Consultations', 'ClinicalEntries',
   'Orders', 'OrderEvents', 'MedicineBatches', 'StockReceipts', 'StockMovements', 'Dispenses', 'MedicineReturns', 'ChargeEvents', 'InvestigationReports', 'ReleasedReports', 'CriticalAlerts',

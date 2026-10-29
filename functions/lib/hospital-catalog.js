@@ -23,7 +23,7 @@ export const HOSPITAL_MODULES = Object.freeze([
   Object.freeze({ Key:'hospitalOrders', Editions:Object.freeze(['hospital']), Labels:Object.freeze({hospital:'Prescriptions and investigations'}),
     Description:'Clinician-issued prescriptions and investigation requests.',Requires:Object.freeze(['hospitalPatients','hospitalReception']) }),
   Object.freeze({ Key:'hospitalPharmacy', Editions:Object.freeze(['hospital']), Labels:Object.freeze({hospital:'Pharmacy'}),
-    Description:'Prescription review, batch stock, dispensing and recorded returns.',Requires:Object.freeze(['hospitalPatients','hospitalReception']) }),
+    Description:'Medicine catalogue, prescription review, batch stock, dispensing and recorded returns.',Requires:Object.freeze(['hospitalPatients','hospitalReception']) }),
   Object.freeze({ Key:'hospitalLaboratory', Editions:Object.freeze(['hospital']), Labels:Object.freeze({hospital:'Laboratory'}),
     Description:'Specimen handling, report verification and release.',Requires:Object.freeze(['hospitalPatients','hospitalReception']) }),
   Object.freeze({Key:'hospitalBilling',Editions:Object.freeze(['hospital']),Labels:Object.freeze({hospital:'Billing and payments'}),Description:'Patient invoices, payments, credits and accounting reconciliation.',Requires:Object.freeze(['hospitalPatients','hospitalReception'])}),
@@ -33,9 +33,9 @@ export const HOSPITAL_MODULES = Object.freeze([
 ]);
 
 export const HOSPITAL_ROLE_CAPABILITIES = Object.freeze({
-  'Super Admin': ['laboratory.configure','imaging.configure','appointments.read','appointments.write','appointments.configure','theatre.configure','inpatient.read','inpatient.admit','inpatient.configure','patients.read', 'patients.write', 'visits.read', 'visits.write','billing.read','billing.write','billing.configure','billing.refund','hmo.work'],
-  'Hospital Administrator': ['laboratory.configure','imaging.configure','appointments.read','appointments.write','appointments.configure','theatre.configure','inpatient.read','inpatient.admit','inpatient.configure','patients.read', 'patients.write', 'visits.read', 'visits.write','billing.read','billing.write','billing.configure','billing.refund','hmo.work'],
-  'Medical Director': ['laboratory.configure','imaging.configure','appointments.read','appointments.write','appointments.configure','theatre.read','theatre.schedule','theatre.work','theatre.sign','nursing.read','nursing.write','inpatient.read','inpatient.clinical','inpatient.discharge','patients.read', 'visits.read', 'clinical.read', 'triage.write', 'consultations.write','orders.read','orders.create'],
+  'Super Admin': ['pharmacy.configure','laboratory.configure','imaging.configure','appointments.read','appointments.write','appointments.configure','theatre.configure','inpatient.read','inpatient.admit','inpatient.configure','patients.read', 'patients.write', 'visits.read', 'visits.write','billing.read','billing.write','billing.configure','billing.refund','hmo.work'],
+  'Hospital Administrator': ['pharmacy.configure','laboratory.configure','imaging.configure','appointments.read','appointments.write','appointments.configure','theatre.configure','inpatient.read','inpatient.admit','inpatient.configure','patients.read', 'patients.write', 'visits.read', 'visits.write','billing.read','billing.write','billing.configure','billing.refund','hmo.work'],
+  'Medical Director': ['pharmacy.configure','laboratory.configure','imaging.configure','appointments.read','appointments.write','appointments.configure','theatre.read','theatre.schedule','theatre.work','theatre.sign','nursing.read','nursing.write','inpatient.read','inpatient.clinical','inpatient.discharge','patients.read', 'visits.read', 'clinical.read', 'triage.write', 'consultations.write','orders.read','orders.create'],
   'Doctor': ['appointments.read','appointments.write','appointments.configure','theatre.read','theatre.schedule','theatre.work','theatre.sign','nursing.read','nursing.write','inpatient.read','inpatient.clinical','inpatient.discharge','patients.read', 'visits.read', 'clinical.read', 'triage.write', 'consultations.write','orders.read','orders.create'],
   'Nurse': ['appointments.read','theatre.read','theatre.work','nursing.read','nursing.write','inpatient.read','inpatient.clinical','inpatient.admit','patients.read', 'visits.read', 'clinical.read', 'triage.write','orders.read'],
   'Pharmacist':['patients.read','visits.read','pharmacy.work'],
@@ -59,7 +59,7 @@ export function hospitalRoleModules(role) {
     ...(capabilities.includes('triage.write') ? ['hospitalTriage'] : []),
     ...(capabilities.includes('consultations.write') ? ['hospitalConsultations'] : []),
     ...(capabilities.includes('orders.read') ? ['hospitalOrders'] : []),
-    ...(capabilities.includes('pharmacy.work') ? ['hospitalPharmacy'] : []),
+    ...((capabilities.includes('pharmacy.work') || capabilities.includes('pharmacy.configure')) ? ['hospitalPharmacy'] : []),
     ...((capabilities.includes('laboratory.work') || capabilities.includes('laboratory.configure')) ? ['hospitalLaboratory'] : []),
     ...(capabilities.includes('billing.read') ? ['hospitalBilling'] : []),
     ...(capabilities.includes('hmo.work') ? ['hospitalHmo'] : []),

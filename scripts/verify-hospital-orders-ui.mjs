@@ -10,8 +10,8 @@ import {createHospitalService} from '../functions/lib/hospital-service.js';
 const require=createRequire(import.meta.url),{chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
 const root=resolve(import.meta.dirname,'..'),output=resolve(root,'tmp/hospital-orders-ui');await mkdir(output,{recursive:true});
 const f=await ordersFixture();let role='doctor',expire=false;
-const demoActors={...actors,owner:{...actors.doctor,role:'Super Admin',username:'catalog-owner',allowedSections:['hospitalPatients','hospitalReception','hospitalLaboratory','hospitalImaging']}};
-const assets=new Set(['/hospital.html','/css/hospital.css','/css/app-dialogs.css','/js/hospital.js','/js/hospital-appointments.js','/js/hospital-referrals.js','/js/hospital-clinical.js','/js/hospital-orders.js','/js/hospital-billing.js','/js/hospital-funds.js','/js/hospital-corporate.js','/js/hospital-inpatients.js','/js/hospital-nursing.js','/js/hospital-theatre.js','/js/staff-idle-session.js','/js/app-dialogs.js']);
+const demoActors={...actors,owner:{...actors.doctor,role:'Super Admin',username:'catalog-owner',allowedSections:['hospitalPatients','hospitalReception','hospitalLaboratory','hospitalImaging','hospitalPharmacy']}};
+const assets=new Set(['/hospital.html','/css/hospital.css','/css/app-dialogs.css','/js/hospital.js','/js/hospital-appointments.js','/js/hospital-referrals.js','/js/hospital-clinical.js','/js/hospital-medicines.js','/js/hospital-orders.js','/js/hospital-billing.js','/js/hospital-funds.js','/js/hospital-corporate.js','/js/hospital-inpatients.js','/js/hospital-nursing.js','/js/hospital-theatre.js','/js/staff-idle-session.js','/js/app-dialogs.js']);
 const server=createServer(async(req,res)=>{
   try{
     const path=new URL(req.url,'http://localhost').pathname,user={...demoActors[role],assignedBranchIds:['main','north'],activeBranchId:req.headers['x-dynamax-branch']||'main'};
@@ -52,7 +52,20 @@ try{
   await page.locator('#catalogHistoryFrom').fill('2026-10-26');await page.locator('#catalogHistoryTo').fill('2026-10-26');await page.locator('#loadCatalogHistory').click();await done('Saved catalogue versions loaded');
   assert.equal(await page.locator('#catalogHistoryRows article').count(),1);
   await page.screenshot({path:resolve(output,'catalogue-desktop.png'),fullPage:true});await page.setViewportSize({width:390,height:844});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));await page.screenshot({path:resolve(output,'catalogue-phone.png'),fullPage:true});await page.setViewportSize({width:1366,height:960});
+  await login('owner','pharmacy');assert.equal(await page.locator('#medicineCatalogPanel').evaluate(el=>el.open),true);
+  assert.equal(await page.locator('#ordersFilter').isVisible(),false);assert.equal(await page.locator('#stockWorkspace').isVisible(),false);
+  await page.locator('#newMedicine').click();await fill('medicineItemForm',{Code:'MED-UI',...medicine,HandlingNotes:'Synthetic storage notes'});
+  await page.locator('#medicineItemForm button:not([type=button])').click();await done('Medicine saved');assert.equal(f.rows('MedicineCatalogVersions').length,1);
+  await page.locator('#medicineCatalogFilter button:not([type=button])').click();await done('Medicine catalogue loaded');const medicineQueries=f.queries.length;
+  await page.locator('#medicineCatalogFilter button:not([type=button])').click();await done('Loaded medicines restored');assert.equal(f.queries.length,medicineQueries);
+  await page.locator('[data-medicine-edit]').click();const medicineWrites=f.commits.length;
+  assert.equal(await page.locator('#medicineItemForm [name=Unit]').getAttribute('readonly'),'');
+  await page.locator('#medicineItemForm button:not([type=button])').click();await done('No medicine changes');assert.equal(f.commits.length,medicineWrites);
+  await period('medicineHistory');await page.locator('#loadMedicineHistory').click();await done('Saved medicine versions loaded');assert.equal(await page.locator('#medicineHistoryRows article').count(),1);
+  await page.screenshot({path:resolve(output,'medicine-catalogue-desktop.png'),fullPage:true});await page.setViewportSize({width:390,height:844});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));await page.screenshot({path:resolve(output,'medicine-catalogue-phone.png'),fullPage:true});await page.setViewportSize({width:1366,height:960});
   await login('doctor','reception');await issueContext();await fill('issueOrderForm',{...rx,Instructions:'Synthetic staff instructions'});
+  await page.locator('#issueOrderFormChooseMedicine').click();await done('Medicine catalogue loaded');await page.locator('[data-medicine-use]').click();
+  assert.match(await page.locator('#issueOrderFormMedicineChoice').textContent(),/MED-UI/);assert.equal(await page.locator('#newMedicine').isVisible(),false);
   await page.locator('#branch').selectOption('north');await page.locator('dialog[open]').waitFor();await page.locator('dialog footer [data-app-dialog-cancel]').click();
   await page.waitForFunction(()=>!document.querySelector('#refresh').disabled);assert.equal(await page.locator('#branch').inputValue(),'main');assert.equal(await page.locator('#issueOrderForm [name=Medicine]').inputValue(),medicine.Medicine);
   await page.locator('#confirmIssue').check();await page.locator('#issueOrderForm button:not([type=button])').click();await done('Order signed and issued');
@@ -62,7 +75,9 @@ try{
   const reviewWrites=f.commits.length;await page.locator('#reviewRxForm [name=Reason]').fill('Prescription and allergies reviewed');await page.locator('#confirmOrder').check();await page.locator('#reviewRxForm button').click();await done('No changes to save');assert.equal(f.commits.length,reviewWrites,'unchanged review must not write or trigger another details-read audit');
   await page.locator('#stockWorkspace summary').filter({hasText:'Receive a medicine batch'}).click();
   await fill('receiveStockForm',{...medicine,BatchNumber:'UI-BATCH',ExpiryDate:'2027-12-31',Quantity:20,UnitPrice:'12.50',Supplier:'Synthetic supplier',ReceiptReference:'UI-INVOICE',LineReference:'1'});
-  await page.locator('#receiveStockForm button').click();await done('Medicine batch received');
+  await page.locator('#receiveStockFormChooseMedicine').click();await done('Medicine catalogue loaded');await page.locator('[data-medicine-use]').click();
+  await page.locator('#receiveStockForm button:not([type=button])').click();await done('Medicine batch received');
+  assert.equal(f.rows('StockReceipts')[0].MedicineCatalogSnapshot.Code,'MED-UI');assert.equal(f.rows('Orders')[0].MedicineCatalogSnapshot.Code,'MED-UI');
   await expand('dispenseRx');await page.locator('#matchingStock').click();await done('Matching batches loaded');await page.locator('#dispenseRxForm [name=Quantity]').fill('4');
   await page.locator('#confirmOrder').check();await page.locator('#dispenseRxForm button').click();await done('Dispensing recorded');
   assert.equal(f.rows('MedicineBatches')[0].OnHand,16);assert.equal(f.rows('Dispenses').length,1);assert.equal(f.rows('ChargeEvents').length,1);
@@ -70,10 +85,10 @@ try{
   await expand('returnRx');await period('dispensing');await page.locator('#dispensingFilter button').click();await done('Dated dispensing entries loaded');
   await fill('returnRxForm',{Quantity:1,Reason:'Synthetic returned quantity'});await page.locator('#confirmOrder').check();await page.locator('#returnRxForm button').click();await done('Return recorded in quarantine');
   assert.equal(f.rows('MedicineBatches')[0].OnHand,16);assert.equal(f.rows('MedicineBatches')[0].Quarantined,1);assert.equal(f.rows('Orders')[0].Fields.Quantity,10);
-  await page.locator('#stockWorkspace summary').filter({hasText:'Find medicine batches'}).click();await fill('stockSearchForm',medicine);await page.locator('#stockSearchForm button').click();await done('Matching batches loaded');
+  await page.locator('#stockWorkspace summary').filter({hasText:'Find medicine batches'}).click();await fill('stockSearchForm',medicine);await page.locator('#stockSearchForm button:not([type=button])').click();await done('Matching batches loaded');
   await fill('quarantineStockForm',{Quantity:1,Reason:'Synthetic damaged stock'});await page.locator('#quarantineStockForm button').click();await done('Stock moved to quarantine');
   assert.equal(f.rows('MedicineBatches')[0].OnHand,15);assert.equal(f.rows('MedicineBatches')[0].Quarantined,2);
-  await page.locator('#stockSearchForm button').click();await done('Matching batches loaded');await period('stockHistory');await page.locator('#stockHistoryFilter button').click();await done('Dated stock movements loaded');assert.equal(await page.locator('#stockHistoryRows article').count(),4);
+  await page.locator('#stockSearchForm button:not([type=button])').click();await done('Matching batches loaded');await period('stockHistory');await page.locator('#stockHistoryFilter button').click();await done('Dated stock movements loaded');assert.equal(await page.locator('#stockHistoryRows article').count(),4);
   const readCount=f.reads.length;await page.locator('[data-tab=patients]').click();await page.locator('[data-tab=orders]').click();assert.equal(f.reads.length,readCount,'task switching uses already loaded data');
   await page.screenshot({path:resolve(output,'pharmacy-desktop.png'),fullPage:true});
   await page.setViewportSize({width:390,height:844});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'phone layout fits viewport');await page.screenshot({path:resolve(output,'pharmacy-phone.png'),fullPage:true});

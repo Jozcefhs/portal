@@ -1,4 +1,5 @@
 import { createHospitalInvestigationsService } from './hospital-investigations-service.js';
+import { createHospitalMedicinesService } from './hospital-medicines-service.js';
 import { createHospitalReferralsService } from './hospital-referrals-service.js';
 import { getDocument, queryCollection, batchCommitLiteralDocuments } from './firestore.js';
 import { requiredDeploymentIdentity } from './deployment-identity.js';
@@ -110,6 +111,7 @@ export function createHospitalService(env, user, overrides = {}) {
     return { rows: shown, next: rows.length > limit ? { id: last.__id, value: last[field] } : null };
   }
   return {
+    ...createHospitalMedicinesService({env,user,db,collection,capabilities,branch,clock,actor,condition,strip,eq,auditWrite,operation,page}),
     ...createHospitalInvestigationsService({env,user,db,collection,capabilities,branch,clock,actor,condition,strip,eq,auditWrite,operation,page}),
     ...createHospitalReferralsService({env,user,db,collection,capabilities,requireCapability,branch,patient,clock,actor,condition,strip,eq,auditWrite,auditRead,operation,page}),
     ...createHospitalAppointmentsService({env,user,db,collection,capabilities,requireCapability,branch,patient,clock,actor,condition,strip,eq,auditWrite,auditRead,operation,page}),

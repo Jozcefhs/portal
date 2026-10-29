@@ -12,6 +12,8 @@ The web modules cover patient/NFC records, appointments, clinical encounters, pr
 
 The investigation update adds branch-based laboratory/imaging catalogues. From the owner's **Laboratory** or **Imaging** workspace, expand **Laboratory and imaging catalogue**, then **Load catalogue** or **New service**. The owner configures services without gaining access to clinical results. Doctors can choose these services when issuing an investigation; laboratory staff record collection, receipt and rejection with separate recollection labels. Catalogue and history loading is explicit, and existing orders keep their original instructions and workflow. See [hospital-orders-workflows.md](hospital-orders-workflows.md).
 
+The medicine update adds **Pharmacy → Medicine catalogue**. The owner can create medicine definitions, edit handling/storage notes and availability, and inspect dated versions. Doctors choose these definitions while prescribing; pharmacists use them for stock receipts and batch searches. This does not grant the owner access to prescriptions or dispensing. Catalogue selection never supplies a patient's dose or treatment directions. Existing prescriptions, stock movements and financial records are retained.
+
 ## Deployment isolation
 
 `deploy/hospital-owner-demo.json` identifies the sole destination. It is deliberately separate from the organisation deployment registry, so routine DCA/faith deployments do not include this demo. Deploy from `codex/hospital-edition` after tests. Publish the ordinary web assets/functions to the named Pages project with production branch `main`, and apply `firebase.hospital.json` only to the named Firebase project. Never deploy this development branch to DCA or other active edition projects.

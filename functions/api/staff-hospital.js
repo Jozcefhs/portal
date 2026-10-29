@@ -12,6 +12,7 @@ export async function onRequestPost({ request, env, data }) {
     const user = await requireStaffSession(env, request);
     if (!['state', 'search', 'details', 'savePatient', 'assignCard', 'revokeCard', 'checkIn', 'visits', 'updateVisit',
       'investigationCatalog','saveInvestigationCatalogItem','investigationCatalogHistory',
+      'medicineCatalog','saveMedicineCatalogItem','medicineCatalogHistory',
       'referralContext','signReferral','referralRegister','referralDetails','updateReferral','referralHistory',
       'appointmentSchedules','saveAppointmentSchedule','saveAppointment','appointmentRegister','appointmentDetails','closeAppointment','checkInAppointment','appointmentHistory',
       'theatreRooms','saveTheatreRoom','prepareTheatre','theatreVisit','saveProcedureBooking','theatreRegister','theatreCase','theatreHistory','cancelProcedure','recordProcedurePreoperative','startProcedure','signProcedureOperative','completeProcedureRecovery','amendProcedureRecord',

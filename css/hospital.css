@@ -12,6 +12,6 @@ textarea{font:inherit;width:100%;min-width:0;padding:10px;border:1px solid #bccd
 #appointments form>label{margin:14px 0}#appointments .nurse-check{display:flex;flex-direction:row;align-items:center;gap:10px}#appointments .nurse-check input{width:20px;min-height:20px;flex-shrink:0}#appointments button{max-width:100%}#appointments .care-identity,#apSummary,#apScheduleChoice{overflow-wrap:anywhere}
 
 #referrals form>label{margin:14px 0}#referrals .rf-check{display:flex;flex-direction:row;align-items:center;gap:10px}#referrals .rf-check input{width:20px;min-height:20px;flex-shrink:0}.rf-text{white-space:pre-wrap;overflow-wrap:anywhere}#referrals button{max-width:100%}
-#catalogRows td small { display:block; margin-top:4px; color:#52657b; }
-#catalogRows td button { margin:3px; }
-#catalogItemForm > button { margin:4px 6px 4px 0; }
+#catalogRows td small, #medicineCatalogRows td small { display:block; margin-top:4px; color:#52657b; }
+#catalogRows td button, #medicineCatalogRows td button { margin:3px; }
+#catalogItemForm > button, #medicineItemForm > button { margin:4px 6px 4px 0; }

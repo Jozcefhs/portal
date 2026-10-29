@@ -28,6 +28,20 @@ Issued instructions remain part of the original order. To change an order, the p
 
 ## Pharmacy
 
+### Reusable medicine catalogue
+
+Open **Pharmacy → Medicine catalogue**. Choose **Load medicines** to browse the current branch, optionally narrowing by medicine-name prefix or including inactive entries. The workspace does not load the catalogue automatically. Loaded pages are retained; **Refresh medicines** explicitly checks for changes.
+
+Pharmacists, Medical Directors, Hospital Administrators and Super Admins can maintain the catalogue when Pharmacy is enabled. Configuration permission alone does not grant access to prescriptions, dispensing or clinical notes. Doctors and other authorised order readers can view catalogue details and dated versions without editing them.
+
+**New medicine** records a permanent code, medicine name, strength, form, dispensing unit and handling/storage notes. The code and medicine identity stay fixed after creation so edits cannot reinterpret existing stock. Create a separate item for a different identity. Notes and availability can be changed with a reason; every saved version is retained. Duplicate codes and duplicate normalised medicine definitions are rejected, including concurrent attempts. Inactive entries remain in history and can be reactivated.
+
+Use **Choose medicine from catalogue** when prescribing, receiving stock or finding batches. Selection fills the four matching medicine fields; **Use manual medicine entry** retains support for earlier workflows. Dose, route, frequency, duration and quantity are entered for the individual prescription. Catalogue selection does not supply or recommend these clinical directions. The server checks the selected version and medicine identity again on prescription/receipt save. Issued prescriptions and receipt movements retain their catalogue snapshot, even after deactivation or a notes update. Existing orders and stock are not migrated.
+
+Catalogue reads fetch at most 31 records to display 30, use no per-row lookup and produce no clinical access-audit writes. A new entry uses three exact reads and five atomic writes (including its uniqueness guard, version, operation receipt and audit); an edit uses two reads/four writes. Unchanged saves use two reads/no writes; completed retries use one read/no writes. Selecting a catalogue medicine adds one exact read to prescription/stock-receipt saves, with no extra writes. Dated version history requires a maximum 93-day range. These are application-operation budgets, excluding authentication/configuration and cloud index charges.
+
+### Review, stock and dispensing
+
 1. Open **Pharmacy**, select dates and load prescriptions. Open the required order.
 2. Review the patient, allergies and prescription; enter review findings and approve it or place it on hold. A changed allergy record requires another pharmacy review before dispensing.
 3. Under **Pharmacy inventory**, receive stock using medicine, strength, form and dispensing unit, manufacturer batch, expiry date, supplier, invoice/receipt reference and line reference. The same supplier receipt line cannot be entered twice. Selling prices are entered per dispensing unit.
@@ -96,10 +110,10 @@ Future Hospital work must retain these tests and add a bounded query and mutatio
 
 ## Remaining Hospital scope
 
-The complete checklist remains in [hospital-edition-scope.md](hospital-edition-scope.md). Billing/HMO workflows are documented separately. Remaining investigation/pharmacy work includes a reusable medicine catalogue, procurement and supplier-payable integration, inventory costing, patient access, structured lab panels/reference intervals, analyser integration, report attachments/PACS, specimen transport/accession beyond collection/receipt/rejection, automatic communication delivery, desktop/offline integration, and practitioner validation. The existence of a working order workflow does not mark the whole Pharmacy, Laboratory or Imaging module complete.
+The complete checklist remains in [hospital-edition-scope.md](hospital-edition-scope.md). Billing/HMO workflows are documented separately. Remaining investigation/pharmacy work includes procurement and supplier-payable integration, inventory costing, patient access, structured lab panels/reference intervals, analyser integration, report attachments/PACS, specimen transport/accession beyond collection/receipt/rejection, automatic communication delivery, desktop/offline integration, and practitioner validation. The existence of a working order workflow does not mark the whole Pharmacy, Laboratory or Imaging module complete.
 
 ## Verification
 
-- Backend: `tests/hospital-orders.test.mjs`, `tests/hospital-investigations.test.mjs`, alongside the Hospital foundation, clinical and backup/audit tests.
+- Backend: `tests/hospital-orders.test.mjs`, `tests/hospital-investigations.test.mjs`, `tests/hospital-medicines.test.mjs`, alongside the Hospital foundation, clinical and backup/audit tests.
 - Browser: `scripts/verify-hospital-orders-ui.mjs`, `scripts/verify-hospital-clinical-ui.mjs`, `scripts/verify-hospital-ui.mjs`, using synthetic records and isolated local servers.
 - CI: `.github/workflows/hospital-readiness.yml`; test execution only, with no compile, deployment or installer release steps.

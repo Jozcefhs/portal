@@ -1,4 +1,5 @@
 import {clean,fail,id,digest,patientSummary} from './hospital-model.js';
+import {medicineCatalogSnapshot} from './hospital-medicines-service.js';
 import {field,quantity,qty,money,chargeCents,cumulativeCredit,dateOnly,watDay,dateFilters,medicine,prescription,investigation,allergySnapshot,specimenLabel} from './hospital-orders-model.js';
 
 export function createHospitalOrdersService(ctx){
@@ -70,6 +71,8 @@ export function createHospitalOrdersService(ctx){
       const Kind=body.Kind,Fields=Kind==='Prescription'?await prescription(body.Prescription):investigation({...body.Investigation,Kind});
       return operation(body,'createOrder',async key=>{
         const c=await visitContext(body,true);revision(body,c.visit,'VisitRevision');revision(body,c.care,'CareRevision');
+        if(body.MedicineCatalogId && Kind!=='Prescription')fail('Choose a prescription before selecting a medicine.');
+        const MedicineCatalogSnapshot=await medicineCatalogSnapshot(body,Fields,c.BranchId,read);
         let CatalogSnapshot = null;
         if (body.CatalogId) {
           if (Kind === 'Prescription') fail('Choose an investigation before selecting the catalogue.');
@@ -82,7 +85,7 @@ export function createHospitalOrdersService(ctx){
         }
         const order={OrderId:key,OrderNumber:`${Kind==='Prescription'?'RX':'INV'}-${key.slice(0,12).toUpperCase()}`,
           PatientId:c.person.PatientId,PatientName:patientSummary(c.person).DisplayName,HospitalNumber:c.person.HospitalNumber,VisitId:c.visit.VisitId,BranchId:c.BranchId,
-          Kind,Fields,...(CatalogSnapshot?{CatalogSnapshot}:{}),...(Kind==='Laboratory'?{SpecimenWorkflow:2,SpecimenSequence:0}:{}),Status:Kind==='Prescription'?'Awaiting pharmacy review':'Requested',CreatedAt:clock(),UpdatedAt:clock(),
+          Kind,Fields,...(MedicineCatalogSnapshot?{MedicineCatalogSnapshot}:{}),...(CatalogSnapshot?{CatalogSnapshot}:{}),...(Kind==='Laboratory'?{SpecimenWorkflow:2,SpecimenSequence:0}:{}),Status:Kind==='Prescription'?'Awaiting pharmacy review':'Requested',CreatedAt:clock(),UpdatedAt:clock(),
           PrescriberUsername:actor,PrescriberName:clean(user.displayName)||actor,AllergySnapshot:allergySnapshot(c.care),
           DispensedQuantity:0,ReturnedQuantity:0,CriticalNeedsAcknowledgement:false,CriticalPendingCount:0};
         c.order=order;
@@ -153,13 +156,14 @@ export function createHospitalOrdersService(ctx){
       const BatchId=await digest(JSON.stringify([BranchId,m.MedicineKey,BatchNumber,ExpiryDate]));
       const receiptKey=await digest(JSON.stringify([BranchId,Supplier.toLowerCase(),ReceiptReference.toLowerCase(),LineReference.toLowerCase()]));
       return operation(body,'receiveMedicine',async key=>{
+        const MedicineCatalogSnapshot=await medicineCatalogSnapshot(body,m,BranchId,read);
         if(await read('StockReceipts',receiptKey))fail('This supplier receipt line has already been recorded.',409);
         const old=await read('MedicineBatches',BatchId);
         if(old&&old.UnitPriceCents!==UnitPriceCents)fail('This batch has a different selling price. Use the existing batch price to receive additional stock.',409);
         const batch={...strip(old),...m,BatchId,BranchId,BatchNumber,ExpiryDate,UnitPriceCents,OnHand:qty((old?.OnHand||0)+Quantity),
           Quarantined:old?.Quarantined||0,CreatedAt:old?.CreatedAt||clock(),UpdatedAt:clock()};
-        return {writes:[write('MedicineBatches',BatchId,batch,old),write('StockReceipts',receiptKey,{ReceiptId:receiptKey,BatchId,BranchId,Quantity,Supplier,ReceiptReference,LineReference,...stamp()},null),
-          write('StockMovements',key,{MovementId:key,BatchId,BranchId,Type:'Receipt',Quantity,ReceiptId:receiptKey,Supplier,ReceiptReference,LineReference,...stamp()},null),
+        return {writes:[write('MedicineBatches',BatchId,batch,old),write('StockReceipts',receiptKey,{ReceiptId:receiptKey,BatchId,BranchId,Quantity,Supplier,ReceiptReference,LineReference,...(MedicineCatalogSnapshot?{MedicineCatalogSnapshot}:{}),...stamp()},null),
+          write('StockMovements',key,{MovementId:key,BatchId,BranchId,Type:'Receipt',Quantity,ReceiptId:receiptKey,Supplier,ReceiptReference,LineReference,...(MedicineCatalogSnapshot?{MedicineCatalogSnapshot}:{}),...stamp()},null),
           auditWrite(key,'Receive pharmacy stock',BranchId,{}, {BatchId,Medicine:m.Medicine,Quantity})],result:{BatchId}};
       });
     },

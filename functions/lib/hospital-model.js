@@ -36,7 +36,7 @@ export function hospitalCapabilities(user) {
     'visits.read':['hospitalReception'],'visits.write':['hospitalReception'],
     'appointments.read':['hospitalReception'],'appointments.write':['hospitalReception'],'appointments.configure':['hospitalReception'],
     'clinical.read':['hospitalTriage','hospitalConsultations'],'triage.write':['hospitalTriage'],'consultations.write':['hospitalConsultations'],
-    'orders.read':['hospitalOrders'],'orders.create':['hospitalOrders'],'pharmacy.work':['hospitalPharmacy'],
+    'orders.read':['hospitalOrders'],'orders.create':['hospitalOrders'],'pharmacy.work':['hospitalPharmacy'],'pharmacy.configure':['hospitalPharmacy'],
     'laboratory.configure':['hospitalLaboratory'],'imaging.configure':['hospitalImaging'],
     'laboratory.work':['hospitalLaboratory'],'imaging.work':['hospitalImaging'],
     'billing.read':['hospitalBilling'],'billing.write':['hospitalBilling'],'billing.configure':['hospitalBilling'],
