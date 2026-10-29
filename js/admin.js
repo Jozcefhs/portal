@@ -17022,9 +17022,18 @@ function academicManagementHeader(data, rows, message = '') {
     ? [[key, label], ['classRegister', scoreRegisterLabel]] : [[key, label]]);
   const selectedArea = scoreRegisterLabel && academicManagementView === 'scorebook' && academicManagementTaskViews.scorebook === 'classRegister'
     ? 'classRegister' : academicManagementView;
-  return `<div class="academic-management-heading">
-    <div><p class="eyebrow">AM-002 to AM-011</p><h2>Academic Management</h2><p class="muted">Branch-isolated structure, ${learner.singular} timetables, attendance, assessment and controlled term-result publication.</p></div>
-    <div class="academic-homework-actions">${data.permissions?.canManageStructure ? '<button type="button" data-staff-meetings>Staff meetings</button>' : ''}${scoreRegisterLabel ? `<button type="button" data-academic-open-score-register>${escapeHtml(scoreRegisterLabel)}</button>` : ''}${data.permissions?.canReviewScores ? `<a class="btn secondary" href="/exams-admin.html?audience=student&branch=${encodeURIComponent(selectedBranchId || 'main')}&section=${encodeURIComponent(academicManagementFilters.section || 'secondary')}">Entrance / remote exams</a>` : ''}${data.permissions?.canEnterScores ? '<button type="button" data-academic-diary>Teaching diaries</button><button type="button" data-teacher-homework>Homework / parent message</button>' : ''}<button type="button" id="refreshAcademicManagement" class="secondary">Refresh</button></div>
+  return `<div class="academic-toolbar">
+  <div class="academic-management-heading academic-toolbar-header">
+    <div><p class="eyebrow">AM-002 to AM-011</p><h2>Academic Management</h2></div>
+    <button type="button" id="refreshAcademicManagement" class="secondary">Refresh</button>
+    <p class="muted">Branch-isolated structure, ${learner.singular} timetables, attendance, assessment and controlled term-result publication.</p>
+  </div>
+  <div class="academic-homework-actions academic-toolbar-actions" role="group" aria-label="Academic shortcuts">
+    ${scoreRegisterLabel ? `<button type="button" data-academic-open-score-register>${escapeHtml(scoreRegisterLabel)}</button>` : ''}
+    ${data.permissions?.canReviewScores ? `<a class="btn secondary" href="/exams-admin.html?audience=student&branch=${encodeURIComponent(selectedBranchId || 'main')}&section=${encodeURIComponent(academicManagementFilters.section || 'secondary')}">Entrance / remote exams</a>` : ''}
+    ${data.permissions?.canEnterScores ? '<button type="button" data-academic-diary>Teaching diaries</button><button type="button" data-teacher-homework>Homework / parent message</button>' : ''}
+    ${data.permissions?.canManageStructure ? '<button type="button" data-staff-meetings>Staff meetings</button>' : ''}
+  </div>
   </div>
   <div class="academic-management-filterbar">
     <label>School section<select id="academicManagementSection">${sections.map((section) => `<option value="${escapeHtml(section)}"${section === academicManagementFilters.section ? ' selected' : ''}>${escapeHtml(section.charAt(0).toUpperCase() + section.slice(1))}</option>`).join('')}</select></label>
