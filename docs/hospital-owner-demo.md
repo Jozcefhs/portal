@@ -35,3 +35,12 @@ Web commit `b8c848a9` is deployed to this demo, including investigation catalogu
 Web commit `ca7327c2` is deployed to the isolated demo. All three medicine indexes are READY. The full top-level suite passed 4,558 tests, all eleven synthetic Hospital browser workflows passed, and Hospital CI succeeded. Twelve deployed Hospital assets match the tested source. Live checks confirmed all nine demo role sign-ins, catalogue configuration/read boundaries, date-selected version history, no catalogue request on workspace entry and cached repeated loads. The demo clinician account is a Medical Director; the Nurse demonstrates catalogue viewing without edit permission. Unauthenticated access remains blocked.
 
 Open **Pharmacy → Medicine catalogue → Load medicines**, or [open the catalogue directly](https://dynamax-hospital-review.pages.dev/hospital.html?task=pharmacy). One explicitly synthetic entry, **DEMO training medicine**, was added for review. No prescriptions, stock receipts, payments or clinical entries were created from it. The three original example visits and signed referral remain available. No desktop application or installer was compiled or released.
+
+
+### Pharmacy procurement and supplier billing
+
+The Hospital workspace now includes **Pharmacy procurement**, also reachable at `/hospital.html?task=procurement`. Suppliers, purchase approvals, partial stock receiving and supplier invoices have separate role-controlled steps. The owner can configure suppliers, review/approve purchases and bills, and review corrections; pharmacists receive stock; cashiers record confirmed supplier payments. Existing clinical permissions are unchanged.
+
+Use the supplier directory or choose a register and dates before loading. Open a purchase/bill for its workflow and preview/print. Supplier invoices require the two new optional billing mappings (Pharmacy purchases expense and Pharmacy supplier payable liability) before posting. No actual payments are initiated. See [the workflow guide](hospital-pharmacy-procurement.md) for the safeguards and remaining pharmacy scope.
+
+Local verification for this increment: 4,583 repository tests passed, including 25 procurement cases; all 12 Hospital browser workflows passed. All 17 new Firestore indexes are READY before the web deployment.

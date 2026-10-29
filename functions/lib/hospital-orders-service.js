@@ -1,4 +1,5 @@
 import {clean,fail,id,digest,patientSummary} from './hospital-model.js';
+import {stockReceiptFields,prepareStockReceipt} from './hospital-stock-receipt.js';
 import {medicineCatalogSnapshot} from './hospital-medicines-service.js';
 import {field,quantity,qty,money,chargeCents,cumulativeCredit,dateOnly,watDay,dateFilters,medicine,prescription,investigation,allergySnapshot,specimenLabel} from './hospital-orders-model.js';
 
@@ -149,22 +150,11 @@ export function createHospitalOrdersService(ctx){
       });
     },
     async receiveMedicine(body){
-      requireCapability('pharmacy.work');const BranchId=await branch(body),m=await medicine(body.Stock),Quantity=quantity(body.Stock?.Quantity);
-      const BatchNumber=field(body.Stock,'BatchNumber',120,true),ExpiryDate=dateOnly(body.Stock?.ExpiryDate),Supplier=field(body.Stock,'Supplier',160,true),
-        ReceiptReference=field(body.Stock,'ReceiptReference',160,true),LineReference=field(body.Stock,'LineReference',60,true),UnitPriceCents=money(body.Stock?.UnitPrice);
-      if(ExpiryDate<=watDay(clock()))fail('Receive only stock with a future expiry date into usable inventory.');
-      const BatchId=await digest(JSON.stringify([BranchId,m.MedicineKey,BatchNumber,ExpiryDate]));
-      const receiptKey=await digest(JSON.stringify([BranchId,Supplier.toLowerCase(),ReceiptReference.toLowerCase(),LineReference.toLowerCase()]));
+      requireCapability('pharmacy.work');const BranchId=await branch(body),fields=await stockReceiptFields(body.Stock,BranchId,clock);
       return operation(body,'receiveMedicine',async key=>{
-        const MedicineCatalogSnapshot=await medicineCatalogSnapshot(body,m,BranchId,read);
-        if(await read('StockReceipts',receiptKey))fail('This supplier receipt line has already been recorded.',409);
-        const old=await read('MedicineBatches',BatchId);
-        if(old&&old.UnitPriceCents!==UnitPriceCents)fail('This batch has a different selling price. Use the existing batch price to receive additional stock.',409);
-        const batch={...strip(old),...m,BatchId,BranchId,BatchNumber,ExpiryDate,UnitPriceCents,OnHand:qty((old?.OnHand||0)+Quantity),
-          Quarantined:old?.Quarantined||0,CreatedAt:old?.CreatedAt||clock(),UpdatedAt:clock()};
-        return {writes:[write('MedicineBatches',BatchId,batch,old),write('StockReceipts',receiptKey,{ReceiptId:receiptKey,BatchId,BranchId,Quantity,Supplier,ReceiptReference,LineReference,...(MedicineCatalogSnapshot?{MedicineCatalogSnapshot}:{}),...stamp()},null),
-          write('StockMovements',key,{MovementId:key,BatchId,BranchId,Type:'Receipt',Quantity,ReceiptId:receiptKey,Supplier,ReceiptReference,LineReference,...(MedicineCatalogSnapshot?{MedicineCatalogSnapshot}:{}),...stamp()},null),
-          auditWrite(key,'Receive pharmacy stock',BranchId,{}, {BatchId,Medicine:m.Medicine,Quantity})],result:{BatchId}};
+        const MedicineCatalogSnapshot=await medicineCatalogSnapshot(body,fields.details,BranchId,read);
+        const receipt=await prepareStockReceipt({read,write,strip,clock,stamp},fields,BranchId,key,MedicineCatalogSnapshot?{MedicineCatalogSnapshot}:{});
+        return {writes:[...receipt.writes,auditWrite(key,'Receive pharmacy stock',BranchId,{}, {BatchId:receipt.BatchId,Medicine:fields.details.Medicine,Quantity:fields.Quantity})],result:{BatchId:receipt.BatchId}};
       });
     },
     async stockBatches(body){

@@ -117,3 +117,6 @@ The complete checklist remains in [hospital-edition-scope.md](hospital-edition-s
 - Backend: `tests/hospital-orders.test.mjs`, `tests/hospital-investigations.test.mjs`, `tests/hospital-medicines.test.mjs`, alongside the Hospital foundation, clinical and backup/audit tests.
 - Browser: `scripts/verify-hospital-orders-ui.mjs`, `scripts/verify-hospital-clinical-ui.mjs`, `scripts/verify-hospital-ui.mjs`, using synthetic records and isolated local servers.
 - CI: `.github/workflows/hospital-readiness.yml`; test execution only, with no compile, deployment or installer release steps.
+
+
+Pharmacy procurement now links approved catalogue purchase lines to the same batch/stock receipt implementation as direct stock intake. Partial deliveries retain supplier costs and catalogue snapshots; supplier invoice claims and financial postings are handled separately. Existing stock receipts and clinical dispensing remain unchanged. See [hospital-pharmacy-procurement.md](hospital-pharmacy-procurement.md).

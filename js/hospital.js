@@ -3,7 +3,7 @@
   const $ = id => document.getElementById(id);
   const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[char]));
   let state = {}, selected = null, busy = false, session = false, patientCursor = null, visitCursor = null, lastSearch = null, lastVisitRange = null;
-  let scanController = null, recordEpoch = 0, clinical = null, orders = null, billing = null, inpatients = null, nursing = null, theatre = null, appointments = null, referrals = null, loadedBranch = '';
+  let scanController = null, recordEpoch = 0, clinical = null, orders = null, billing = null, inpatients = null, nursing = null, theatre = null, appointments = null, referrals = null, procurement = null, loadedBranch = '';
   const pending = new Map();
   const status = (message, bad = false) => { $('status').textContent = message; $('status').className = bad ? 'bad' : 'good'; };
   const can = name => state.capabilities?.includes(name);
@@ -19,6 +19,7 @@
     theatre?.clear();
     appointments?.clear();
     referrals?.clear();
+    procurement?.clear();
     ['patientForm','cardForm','checkInForm','searchForm','visitForm'].forEach(id => $(id).reset());
     ['matches','visitRows','cardPrint','patientTitle','patientIdentity','cardStatus'].forEach(id => $(id).replaceChildren());
     $('duplicateReason').value = ''; $('patientPanel').hidden = true;
@@ -68,6 +69,7 @@
     theatre?.permissions();
     appointments?.permissions();
     referrals?.permissions();
+    procurement?.permissions();
   }
   async function run(work) {
     if (busy) return; busy = true;
@@ -89,11 +91,11 @@
     state = await api('state'); loadedBranch = $('branch').value; permissions(); $('workspace').hidden = false;
     status('Hospital reception ready. Search for a patient or choose dates to load visits.');
   }
-  function showTab(name) { for(const id of ['patients','reception','care','orders','billing','inpatients','nursing','theatre','appointments','referrals'])$(id).hidden=name!==id; }
+  function showTab(name) { for(const id of ['patients','reception','care','orders','billing','inpatients','nursing','theatre','appointments','referrals','procurement'])$(id).hidden=name!==id; }
   document.querySelectorAll('[data-tab]').forEach(button => { button.onclick = () => showTab(button.dataset.tab); });
-  $('refresh').onclick = () => run(async () => { if(!await clinical.confirmLeave()||!await orders.confirmLeave()||!await billing.confirmLeave()||!await inpatients.confirmLeave()||!await nursing.confirmLeave()||!await theatre.confirmLeave()||!await appointments.confirmLeave()||!await referrals.confirmLeave())return; clearRecords(); await loadAccess(); });
+  $('refresh').onclick = () => run(async () => { if(!await clinical.confirmLeave()||!await orders.confirmLeave()||!await billing.confirmLeave()||!await inpatients.confirmLeave()||!await nursing.confirmLeave()||!await theatre.confirmLeave()||!await appointments.confirmLeave()||!await referrals.confirmLeave()||!await procurement.confirmLeave())return; clearRecords(); await loadAccess(); });
   $('branch').onchange = () => run(async () => {
-    if(!await clinical.confirmLeave()||!await orders.confirmLeave()||!await billing.confirmLeave()||!await inpatients.confirmLeave()||!await nursing.confirmLeave()||!await theatre.confirmLeave()||!await appointments.confirmLeave()||!await referrals.confirmLeave()){$('branch').value=loadedBranch;return;}
+    if(!await clinical.confirmLeave()||!await orders.confirmLeave()||!await billing.confirmLeave()||!await inpatients.confirmLeave()||!await nursing.confirmLeave()||!await theatre.confirmLeave()||!await appointments.confirmLeave()||!await referrals.confirmLeave()||!await procurement.confirmLeave()){$('branch').value=loadedBranch;return;}
     clearRecords(); state = {}; state = await api('state'); loadedBranch=$('branch').value; permissions(); status('Branch changed. Search or load this branch’s visits.');
   });
   function renderMatches(data) {
@@ -185,6 +187,7 @@
     if (!selected) return;
     $('cardPrint').classList.remove('billing-print'); $('cardPrint').innerHTML = `<h2>Hospital patient card</h2><p><strong>${esc(selected.DisplayName)}</strong></p><p>${esc(selected.HospitalNumber)}</p><p>NFC identification · ${esc(selected.CardStatus)}</p>`; window.print();
   };
+  procurement=window.DynamaxHospitalProcurement.create({api,run,can,writable,status});
   clinical=window.DynamaxHospitalClinical.create({api,run,can,writable,status,navigate:showTab});
   orders=window.DynamaxHospitalOrders.create({api,run,can,writable,status,navigate:showTab});
   billing=window.DynamaxHospitalBilling.create({api,run,can,writable,status,navigate:showTab});
@@ -198,6 +201,7 @@
   inpatients.onNursing(row=>nursing.open(row));
   inpatients.onCare(row=>clinical.open(row));inpatients.onBilling(row=>billing.openVisit(row));
   run(async () => { await loadAccess(); const task=new URLSearchParams(location.search).get('task');
+    if(task==='procurement'&&can('procurement.read'))showTab('procurement');
     if(task==='referrals'&&can('consultations.write'))showTab('referrals');
     if(task==='appointments'&&can('appointments.read'))showTab('appointments');
     if(task==='theatre'&&(can('theatre.read')||can('theatre.configure')))showTab('theatre');

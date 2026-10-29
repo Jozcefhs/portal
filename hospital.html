@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Hospital workspace · Dynamax</title>
-  <link rel="stylesheet" href="/css/hospital.css?v=20261029-medicine-catalogue">
+  <link rel="stylesheet" href="/css/hospital.css?v=20261029-procurement">
   <link rel="stylesheet" href="/css/app-dialogs.css">
   <script src="/js/app-dialogs.js?v=20261016-grouped-form-validation" defer></script>
   <script src="/js/staff-idle-session.js" defer></script>
@@ -12,13 +12,14 @@
   <script src="/js/hospital-orders.js?v=20261029-medicine-catalogue" defer></script>
   <script src="/js/hospital-corporate.js?v=20261028-appointments" defer></script>
   <script src="/js/hospital-funds.js?v=20261028-appointments" defer></script>
-  <script src="/js/hospital-billing.js?v=20261028-appointments" defer></script>
+  <script src="/js/hospital-billing.js?v=20261029-procurement" defer></script>
   <script src="/js/hospital-inpatients.js?v=20261028-appointments" defer></script>
   <script src="/js/hospital-nursing.js?v=20261028-appointments" defer></script>
   <script src="/js/hospital-theatre.js?v=20261028-appointments" defer></script>
   <script src="/js/hospital-referrals.js?v=20261028-referrals" defer></script>
   <script src="/js/hospital-appointments.js?v=20261028-appointments" defer></script>
-  <script src="/js/hospital.js?v=20261029-medicine-catalogue" defer></script>
+  <script src="/js/hospital-procurement.js?v=20261029-procurement" defer></script>
+  <script src="/js/hospital.js?v=20261029-procurement" defer></script>
 </head>
 <body>
   <main>
@@ -27,11 +28,12 @@
     <div id="workspace" hidden>
       <div class="toolbar"><label>Working branch<select id="branch"></select></label><button id="refresh" type="button">Refresh access</button></div>
       <p id="hospitalOwnerDemo" class="hint" hidden><strong>Hospital Owner&rsquo;s Demo</strong> &middot; Use synthetic demonstration records only. This workspace has a separate database.</p>
-      <nav aria-label="Hospital tasks"><button type="button" data-tab="patients">Patients and NFC cards</button><button type="button" data-tab="reception">Reception visits</button><button type="button" data-tab="appointments" hidden>Appointments</button><button type="button" data-tab="referrals" hidden>Referrals and care transfers</button><button type="button" data-tab="care" hidden>Clinical record</button><button type="button" data-tab="orders" hidden>Prescriptions and investigations</button><button type="button" data-tab="theatre" hidden>Theatre and procedures</button><button type="button" data-tab="nursing" hidden>Nursing and handovers</button><button type="button" data-tab="inpatients" hidden>Wards and admissions</button><button type="button" data-tab="billing" hidden>Billing and HMO</button></nav>
+      <nav aria-label="Hospital tasks"><button type="button" data-tab="patients">Patients and NFC cards</button><button type="button" data-tab="reception">Reception visits</button><button type="button" data-tab="appointments" hidden>Appointments</button><button type="button" data-tab="referrals" hidden>Referrals and care transfers</button><button type="button" data-tab="care" hidden>Clinical record</button><button type="button" data-tab="orders" hidden>Prescriptions and investigations</button><button type="button" data-tab="theatre" hidden>Theatre and procedures</button><button type="button" data-tab="nursing" hidden>Nursing and handovers</button><button type="button" data-tab="inpatients" hidden>Wards and admissions</button><button type="button" data-tab="billing" hidden>Billing and HMO</button><button type="button" data-tab="procurement" hidden>Pharmacy procurement</button></nav>
       <section id="appointments" hidden></section>
       <section id="theatre" hidden></section>
       <section id="nursing" hidden></section>
       <section id="inpatients" hidden></section>
+      <section id="procurement" hidden></section>
       <section id="billing" hidden></section>
       <section id="orders" hidden></section>
       <section id="patients">

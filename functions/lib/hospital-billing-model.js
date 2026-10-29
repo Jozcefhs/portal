@@ -1,8 +1,8 @@
 import {fail,stable} from './hospital-model.js';
 import {field,money,dateOnly} from './hospital-orders-model.js';
 
-export const ACCOUNT_TYPES={PatientReceivable:'asset',HmoReceivable:'asset',Revenue:'revenue',Cash:'asset',Bank:'asset',PatientDeposit:'liability',HmoPrepayment:'liability',CorporateReceivable:'asset',CorporatePrepayment:'liability'};
-export const OPTIONAL_BILLING_ACCOUNTS=['PatientDeposit','HmoPrepayment','CorporateReceivable','CorporatePrepayment'];
+export const ACCOUNT_TYPES={PatientReceivable:'asset',HmoReceivable:'asset',Revenue:'revenue',Cash:'asset',Bank:'asset',PatientDeposit:'liability',HmoPrepayment:'liability',CorporateReceivable:'asset',CorporatePrepayment:'liability',PharmacyPurchases:'expense',SupplierPayable:'liability'};
+export const OPTIONAL_BILLING_ACCOUNTS=['PatientDeposit','HmoPrepayment','CorporateReceivable','CorporatePrepayment','PharmacyPurchases','SupplierPayable'];
 export function amount(value){const n=money(value);if(n<=0)fail('Enter an amount greater than zero.');return n;}
 export function cents(value){if(!Number.isSafeInteger(value)||value<0||value>100000000000)fail('The financial amount is outside the supported range.');return value;}
 export function equal(a,b){return JSON.stringify(stable(a))===JSON.stringify(stable(b));}

@@ -1,3 +1,4 @@
+import {createHospitalProcurementService} from './hospital-procurement-service.js';
 import {theatreReference} from './hospital-theatre-model.js';
 import {clean,fail,id,digest,nameKey,patientSummary} from './hospital-model.js';
 import {field,quantity,dateFilters,watDay,cumulativeCredit,chargeCents} from './hospital-orders-model.js';
@@ -62,8 +63,8 @@ export function createHospitalBillingService(ctx){
     if(debit!==credit)fail('The hospital posting is not balanced.',409);if(!debit)return [];
     const JournalNo=`HOSP-${key}`;
     return [{collectionPath:'accountingJournals',documentId:JournalNo,currentDocument:{exists:false},data:{JournalNo,Date:watDay(clock()),BranchId:c.BranchId,
-      Source:`Hospital ${Action}`,SourceId:key,Reference:c.invoice?.InvoiceNumber||key,Description:`Hospital ${Action}`,Currency:'NGN',BaseCurrency:'NGN',Status:'Posted',System:'YES',
-      Edition:'hospital',WorkspaceId:env.DYNAMAX_WORKSPACE_ID,HospitalPatientId:c.person.PatientId,HospitalInvoiceId:c.invoice?.InvoiceId||'',
+      Source:`Hospital ${Action}`,SourceId:key,Reference:c.Reference||c.invoice?.InvoiceNumber||key,Description:`Hospital ${Action}`,Currency:'NGN',BaseCurrency:'NGN',Status:'Posted',System:'YES',
+      Edition:'hospital',WorkspaceId:env.DYNAMAX_WORKSPACE_ID,HospitalPatientId:c.person.PatientId,HospitalInvoiceId:c.invoice?.InvoiceId||'',...(c.SupplierId?{HospitalSupplierId:c.SupplierId,HospitalSupplierBillId:c.SupplierBillId}:{}),
       Lines:nonzero.map((l,i)=>({LineNo:i+1,AccountCode:l.AccountCode,Debit:(l.DebitCents||0)/100,Credit:(l.CreditCents||0)/100})),
       TotalDebit:debit/100,TotalCredit:credit/100,CreatedAt:clock(),UpdatedAt:clock(),PostedAt:clock(),CreatedBy:actor,PostedBy:actor}}];
   }
@@ -77,6 +78,7 @@ export function createHospitalBillingService(ctx){
   const corporate=createHospitalCorporateService({...ctx,read,write,view,stamp,revision,confirmed,unchanged,keyFor,visit});
   return {
     ...corporate.actions,
+    ...createHospitalProcurementService({...ctx,read,write,view,stamp,revision,unchanged,keyFor,settings,posting,postingMany,journal,line}),
     ...createHospitalFundsService({...ctx,read,write,view,stamp,any,revision,confirmed,unchanged,keyFor,settings,postingMany,journal,line,event,corporate}),
     async billingSettings(body){any('billing.read','hmo.work');const BranchId=await branch(body);return {ok:true,settings:view(await settings(BranchId))};},
     async saveBillingSettings(body){

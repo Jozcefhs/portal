@@ -15,3 +15,14 @@ textarea{font:inherit;width:100%;min-width:0;padding:10px;border:1px solid #bccd
 #catalogRows td small, #medicineCatalogRows td small { display:block; margin-top:4px; color:#52657b; }
 #catalogRows td button, #medicineCatalogRows td button { margin:3px; }
 #catalogItemForm > button, #medicineItemForm > button { margin:4px 6px 4px 0; }
+
+/* Pharmacy procurement: keep lengthy supplier documents inside their own viewport. */
+#procurement{min-width:0}#procurement form:not(.toolbar){margin-block:1rem;padding:1rem;border:1px solid #cbd9e5;border-radius:10px}
+#procurement .table-wrap{max-width:100%;overflow:auto;margin-block:.75rem}#procurement small{display:block;color:#52687e;margin-top:.25rem}
+#procurement table{width:100%;border-collapse:collapse}#procurement th{background:#eaf2f8;text-align:left}#procurement td,#procurement th{padding:.6rem;border-bottom:1px solid #d7e3ee;vertical-align:top}
+#procurement tbody tr:nth-child(even){background:#f5f9fc}#procurement .table-wrap input[type=number]{min-width:6rem;max-width:8rem}
+#procurement details{padding:.75rem;border:1px solid #cbd9e5;border-radius:8px}#procurement summary{cursor:pointer;font-weight:700}
+#pcPreview{width:min(1000px,95vw);max-height:90vh;overflow:auto;border:1px solid #b8cddd;border-radius:12px;padding:1rem}#pcPreview::backdrop{background:#122b46aa}
+@media(max-width:600px){#procurement form:not(.toolbar){padding:.65rem}#procurement .toolbar>button{flex:1 1 46%}#procurement .toolbar>label{flex:1 1 100%;min-width:0}#procurement .form-grid{grid-template-columns:minmax(0,1fr)}#procurement .toolbar,#procurement .form-grid{min-width:0}#procurement input,#procurement select,#procurement textarea{max-width:100%;box-sizing:border-box}#pcPreview .toolbar{flex-wrap:wrap}}
+
+#pcPurchaseSummary,#pcBillSummary,#pcPreviewBody{max-width:100%;overflow-x:auto}
