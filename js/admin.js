@@ -14140,9 +14140,9 @@ function academicStructureWorkspace(data, rows) {
   const classOptions = academicSelectOptions(activeClasses, '', (row) => row.Name, 'Choose class');
   const nextClassOptions = academicSelectOptions(activeClasses, '', (row) => row.Name, 'No next class');
   const activeArmTemplates = rows.armTemplates.filter(academicIsActive);
-  const armTemplateUsage = (template) => new Set(
-    rows.arms.filter((arm) => arm.ArmTemplateId === template.ArmTemplateId).map((arm) => arm.ClassId)
-  ).size;
+  const armTemplateUsage = (template) => [...new Set(rows.arms.map(arm => arm.ClassId))].filter(classId =>
+    academicExistingClassroomTemplateIds(classId, rows.arms, [template]).includes(template.ArmTemplateId)
+  ).length;
   const unappliedArmTemplates = activeArmTemplates.filter((template) => armTemplateUsage(template) === 0).length;
   const armCatalogueStatus = `<div class="academic-view-only-note" data-academic-catalogue-note="arms">
     <strong>${activeArmTemplates.length} reusable arm definition${activeArmTemplates.length === 1 ? '' : 's'}; ${unappliedArmTemplates} not yet applied</strong>
@@ -14274,7 +14274,7 @@ function academicBulkSetupWorkspace(data, rows) {
     <form class="academic-management-editor" data-academic-workflow="bulkCreateAcademicArmTemplates">
       <div class="academic-management-editor-heading"><div><small>Definitions only</small><h3>Create reusable arm definitions</h3></div></div>
       <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
-      <label>Arm definitions<textarea name="ArmTemplateLines" rows="9" required placeholder="A | A | 40&#10;B | B | 40&#10;Gold | GOLD | 35"></textarea><small>One reusable definition per line: Name | Code | Default capacity. The | separators are required. This step does not create class arms; use Apply arms to classes afterward.</small></label>
+      <label>Arm definitions<textarea name="ArmTemplateLines" rows="9" required placeholder="A | A | 40&#10;B | B | 40&#10;Gold | GOLD | 35"></textarea><small>One reusable definition per line: Name | Code | Default capacity. The | separators are required. Matching definitions in this branch are reused with their saved settings. This step does not create class arms; use Apply arms to classes afterward.</small></label>
       <button type="submit">Create reusable definitions</button>
     </form>
     <form class="academic-management-editor" data-academic-form="armTemplate">

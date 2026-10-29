@@ -1011,7 +1011,7 @@ test('Academic writes are audited, optimistic and preserve legacy class/student 
   assert.match(librarySource, /Import at most 100 student memberships at a time/);
   assert.match(librarySource, /ProfileCompletionStatus: 'Needs completion'/);
   assert.match(librarySource, /scopedCollectionPath\('students', scope\.branchId, scope\.section\)/);
-  assert.match(librarySource, /ACADEMIC_IMPORT_STUDENT_SCOPE_CONFLICT/);
+  assert.match(librarySource, /ACADEMIC_IMPORT_STUDENT_ID_CONFLICT/);
   assert.match(librarySource, /allowIncompleteCurriculum: true/);
   assert.match(adminSource, /Core subject codes for mixed classrooms, Trade and Optional subject codes may be left blank and completed in the app/);
   assert.match(adminSource, /ProfileCompletionStatus/);

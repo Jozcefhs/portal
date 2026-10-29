@@ -2422,6 +2422,16 @@ export async function saveAcademicManagementRecord(env, user = {}, input = {}) {
   if (existing && effectiveAcademicSection(existing, scope) !== scope.section) throw failure('This academic record belongs to another school section.', 403);
   const normalizedInput = type === 'studentmembership' && !existing ? { ...input, Status: 'Active' } : input;
   const record = definition.normalize(normalizedInput, scope, existing);
+  if (type === 'armtemplate' && !existing) {
+    if (existingAcademicArmTemplate(state.armTemplates, record)) {
+      const response = await bootstrapAcademicManagement(env, user, {
+        ...input, BranchId: scope.branchId, SchoolSection: scope.section, View: 'bulksetup'
+      });
+      response.message = `${record.Name} is ready to use in this branch. Its saved settings were kept. Use Apply arms to classes to create classrooms; use Edit to change the existing definition.`;
+      return response;
+    }
+    availableAcademicArmId(state.armTemplates, record, 'ArmTemplateId');
+  }
   if (type === 'term') assertAcademicTermRetentionEdit(existing, record);
   if (type === 'term' && existing?.CbtPaperCleanupStatus === 'Complete'
       && record.Status === 'Active' && existing.Status !== 'Active') {
@@ -2595,6 +2605,28 @@ function sameSetupRecord(existing, record, keys) {
   });
 }
 
+function existingAcademicArmTemplate(rows, record) {
+  // IDs stay immutable when a definition is renamed. A generated ID may now
+  // belong to an unrelated definition; identify reusable arms by current fields.
+  const matches = rows.filter(row => lower(row.Code) === lower(record.Code) || lower(row.Name) === lower(record.Name));
+  if (matches.length > 1) throw failure(`${record.Name} matches more than one reusable arm in this branch. Open the reusable arm catalogue to review them.`, 409, 'ACADEMIC_ARM_TEMPLATE_AMBIGUOUS');
+  const existing = matches[0];
+  if (!existing) return null;
+  if (!statusActive(existing)) throw failure(`${existing.Name} is inactive in this branch. Edit its existing reusable-arm catalogue entry and set Status to Active; do not create another copy.`, 409, 'ACADEMIC_ARM_TEMPLATE_INACTIVE');
+  if (lower(existing.Name) !== lower(record.Name) || lower(existing.Code) !== lower(record.Code)) {
+    throw failure(`${existing.Name} already uses code ${existing.Code} in this branch. Use that name and code, or edit its existing reusable-arm catalogue entry.`, 409, 'ACADEMIC_BULK_ARM_TEMPLATE_CONFLICT');
+  }
+  return existing;
+}
+
+function availableAcademicArmId(rows, record, key) {
+  const base = record[key];
+  let id = base, suffix = 2;
+  while (findById(rows, id)) id = `${base}__${suffix++}`;
+  // Deterministic allocation plus exists:false also serializes concurrent creates.
+  record.RecordId = record[key] = id;
+}
+
 async function commitAcademicBatch(env, writes, conflictMessage, options = {}) {
   if (!writes.length) return { writeResults: [] };
   try {
@@ -2667,14 +2699,14 @@ export async function bulkCreateAcademicArmTemplates(env, user = {}, input = {})
   let skipped = 0;
   for (const row of rows) {
     const record = normalizeAcademicArmTemplate({ ...row, Status: 'Active' }, scope);
-    const existing = findById(projected.armTemplates, record.ArmTemplateId);
+    const existing = existingAcademicArmTemplate(projected.armTemplates, record);
     if (existing) {
-      if (sameSetupRecord(existing, record, ['Name', 'Code', 'DefaultCapacity'])) {
-        skipped += 1;
-        continue;
-      }
-      throw failure(`${record.Name} already exists with different reusable-arm settings. Edit that catalogue entry instead.`, 409, 'ACADEMIC_BULK_ARM_TEMPLATE_CONFLICT');
+      // Creation reuses a matching definition, including legacy document IDs.
+      // Capacity changes belong in the explicit edit form, never a create retry.
+      skipped += 1;
+      continue;
     }
+    availableAcademicArmId(projected.armTemplates, record, 'ArmTemplateId');
     stampAcademicRecord(record, user);
     projected.armTemplates.push(record);
     createdRecords.push(record);
@@ -2688,8 +2720,8 @@ export async function bulkCreateAcademicArmTemplates(env, user = {}, input = {})
     ...input, BranchId: scope.branchId, SchoolSection: scope.section, View: 'bulksetup'
   });
   response.message = createdRecords.length
-    ? `${createdRecords.length} reusable arm${createdRecords.length === 1 ? '' : 's'} created online${skipped ? `; ${skipped} already matched and were skipped` : ''}.`
-    : 'Every submitted reusable arm already exists with the same settings.';
+    ? `${createdRecords.length} reusable arm${createdRecords.length === 1 ? '' : 's'} created online${skipped ? `; ${skipped} existing definitions kept with their saved settings` : ''}. Use Apply arms to classes to create classrooms.`
+    : 'These reusable arms are ready to use in this branch. Their saved settings were kept. Use Apply arms to classes to create classrooms.';
   response.bulkResult = { Requested: rows.length, Created: createdRecords.length, Skipped: skipped };
   return response;
 }
@@ -2847,7 +2879,10 @@ export async function bulkApplyAcademicArmTemplates(env, user = {}, input = {}) 
         ArmTemplateId: template.ArmTemplateId, Capacity: template.DefaultCapacity,
         SortOrder: template.SortOrder, IsClassroom: true, Status: 'Active'
       }, scope);
-      const existing = findById(projected.arms, record.ArmId);
+      const matches = projected.arms.filter(row => row.ClassId === schoolClass.ClassId
+        && (row.ArmTemplateId === template.ArmTemplateId || lower(row.Name) === lower(template.Name)));
+      if (matches.length > 1) throw failure(`${schoolClass.Name} / ${template.Name} matches more than one existing classroom. Review the applied class arms before continuing.`, 409, 'ACADEMIC_ARM_AMBIGUOUS');
+      const existing = matches[0];
       if (existing) {
         if (statusActive(existing) && lower(existing.Name) === lower(record.Name)) {
           if (!activeValue(existing.IsClassroom, false)) {
@@ -2868,6 +2903,7 @@ export async function bulkApplyAcademicArmTemplates(env, user = {}, input = {}) 
         }
         throw failure(`${schoolClass.Name} / ${template.Name} already exists with different arm settings. Edit that arm instead.`, 409, 'ACADEMIC_BULK_ARM_CONFLICT');
       }
+      availableAcademicArmId(projected.arms, record, 'ArmId');
       validateAcademicRecord(projected, 'arm', record, {});
       stampAcademicRecord(record, user);
       projected.arms.push(record);
@@ -3503,10 +3539,9 @@ export async function bulkImportAcademicStudentMemberships(env, user = {}, input
   const sessionId = clean(input.SessionId);
   const termId = clean(input.TermId);
   if (!sessionId || !termId) throw failure('Choose the academic session and term for this import.');
-  const [state, people, allStudents, nameProfile] = await Promise.all([
+  const [state, people, nameProfile] = await Promise.all([
     loadScopedAcademicState(env, scope, ACADEMIC_STUDENT_STATE_KEYS),
     loadPeople(env, user, scope, { staff: false }),
-    listSchoolCollection(env, 'students'),
     loadOrganizationNameProfile(env)
   ]);
   const session = assertReference(findById(state.sessions, sessionId), 'The selected session is not active.');
@@ -3548,25 +3583,17 @@ export async function bulkImportAcademicStudentMemberships(env, user = {}, input
       let student = people.students.find((candidate) => lower(studentReference(candidate)) === studentKey);
       let createdProfile = null;
       if (!student) {
-        const conflictingStudent = allStudents.find((candidate) => lower(studentReference(candidate)) === studentKey);
-        if (conflictingStudent) {
-          const conflictingBranch = safeScopeId(conflictingStudent.BranchId || conflictingStudent.branchId || 'main');
-          const conflictingSection = schoolSectionFor(conflictingStudent);
-          throw failure(
-            `Row ${rowNumber}: student "${row.StudentRef}" already exists in branch "${conflictingBranch}", ${conflictingSection}. Switch to that scope or correct the student profile first.`,
-            409,
-            'ACADEMIC_IMPORT_STUDENT_SCOPE_CONFLICT'
-          );
-        }
+        // Admission references identify pupils within this branch and section.
+        // A matching reference elsewhere must never block an import or supply
+        // another pupil's profile, credentials, memberships or scores.
         const documentId = academicStudentDocumentId(row.StudentRef);
-        const documentConflict = allStudents.find((candidate) => lower(candidate.__id) === lower(documentId));
+        const documentConflict = people.students.find((candidate) => lower(candidate.__id) === lower(documentId));
         if (documentConflict) {
           throw failure(`Row ${rowNumber}: student reference "${row.StudentRef}" conflicts with another student record.`, 409, 'ACADEMIC_IMPORT_STUDENT_ID_CONFLICT');
         }
         createdProfile = importedAcademicStudentProfile(row, scope, schoolClass, arm, session, term, user, nameProfile);
         student = createdProfile;
         people.students.push(student);
-        allStudents.push(student);
       }
       const schoolStage = schoolStageValue(schoolClass.SchoolStage, schoolClass.SchoolSection, schoolClass.Name);
       // Legacy DepartmentCode columns are accepted but cannot override the classroom.
