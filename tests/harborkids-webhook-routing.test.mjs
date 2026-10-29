@@ -23,6 +23,7 @@ test('signed HarborKids charge forwards unchanged bytes and signature, then ackn
     calls++;
     assert.equal(destination, target);
     assert.equal(options.method, 'POST');
+    assert.equal(options.redirect, 'manual', 'never forward the signature to a redirect destination');
     assert.equal(options.headers['x-paystack-signature'], signature);
     assert.equal(new TextDecoder().decode(options.body), body);
     return new Response(null, { status: 200 });
@@ -38,12 +39,15 @@ test('invalid signatures never forward and HarborKids delivery failures request 
   const original = globalThis.fetch;
   const body = JSON.stringify({ event: 'charge.success', data: { reference } });
   let calls = 0;
-  globalThis.fetch = async () => { calls++; return new Response(null, { status: 503 }); };
+  let status = 503;
+  globalThis.fetch = async () => { calls++; return new Response(null, { status }); };
   try {
     assert.equal((await onRequestPost({ request: signed(body, 'bad'), env: { PAYSTACK_SECRET_KEY: secret } })).status, 401);
     assert.equal(calls, 0);
-    assert.equal((await onRequestPost({ request: signed(body), env: { PAYSTACK_SECRET_KEY: secret } })).status, 503);
-    assert.equal(calls, 1);
+    for (status of [503, 302, 307]) {
+      assert.equal((await onRequestPost({ request: signed(body), env: { PAYSTACK_SECRET_KEY: secret } })).status, 503);
+    }
+    assert.equal(calls, 3);
   } finally { globalThis.fetch = original; }
 });
 
