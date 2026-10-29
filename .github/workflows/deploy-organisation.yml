@@ -196,6 +196,9 @@ jobs:
           cp ./*.html .pages-deploy/
           cp app-icon.svg manifest.webmanifest sw.js version.json .pages-deploy/
 
+      - name: Verify prepared web release metadata
+        run: node scripts/check-web-release-metadata.mjs --root .pages-deploy
+
       - name: Deploy Cloudflare Pages production
         uses: cloudflare/wrangler-action@v3
         with:

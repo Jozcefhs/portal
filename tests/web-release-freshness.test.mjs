@@ -5,11 +5,11 @@ import vm from 'node:vm';
 
 const read = path => readFile(new URL(`../${path}`,import.meta.url),'utf8');
 const [script,worker,html] = await Promise.all(['js/web-release.js','sw.js','admin.html'].map(read));
-function harness() {
-  let clock=0,remote='dynamax-v482-web-release-notice',failure=false,reloads=0,fetches=0;
+function harness(loaded='dynamax-v482-web-release-notice') {
+  let clock=0,remote=loaded,failure=false,reloads=0,fetches=0;
   const events={},messages={},nodes=[];
   const createElement=tag=>({tag,children:[],listeners:{},setAttribute(){},append(...children){this.children.push(...children);},addEventListener(name,fn){this.listeners[name]=fn;}});
-  const document={hidden:false,querySelector:()=>({content:'dynamax-v482-web-release-notice'}),createElement,
+  const document={hidden:false,querySelector:()=>({content:loaded}),createElement,
     body:{prepend:node=>nodes.push(node)},addEventListener:(name,fn)=>{events[name]=fn;}};
   const context={document,Date:{now:()=>clock},AbortController,setTimeout:()=>1,clearTimeout(){},setInterval(){},
     window:{location:{reload:()=>reloads++},addEventListener:(name,fn)=>{events[name]=fn;}},
@@ -35,6 +35,17 @@ test('a newer release shows one notice, keeps current work, and reloads only on 
   h.messages.message({data:{type:'dynamax:web-release',release:'dynamax-v484-further-update'}});
   assert.equal(h.nodes.length,1);assert.equal(h.counts().reloads,0);
   h.nodes[0].children[1].listeners.click();assert.equal(h.counts().reloads,1);
+});
+
+test('the current staff page stays free of an update notice across repeated refresh checks and worker activation',async()=>{
+  const h=harness(/name="dynamax-web-release" content="([^"]+)"/.exec(html)[1]);
+  const release=/const CACHE = '([^']+)'/.exec(worker)[1];
+  h.remote(release);await h.flush();
+  for(let i=1;i<=3;i++){
+    h.clock(i*300001);await h.events.pageshow();await h.flush();
+    h.messages.message({data:{type:'dynamax:web-release',release}});
+  }
+  assert.equal(h.nodes.length,0);assert.equal(h.counts().reloads,0);
 });
 
 test('checks are throttled and do not poll hidden tabs or the database',async()=>{
