@@ -48,7 +48,7 @@ const panelEl = document.getElementById('adminPanel');
 const historyDateWorkspace = window.DynamaxHistoryDates.createHistoryDateWorkspace({
   panel: panelEl, scope: () => JSON.stringify([currentUser?.username, selectedBranchId]),
   title: module => staffTabLabel(module, module),
-  load: module => { staffWorkspaceReads.clear(); invalidatedDashboardSections.add(module); renderSection(module); }
+  load: module => { if(module!=='financeRequests')staffWorkspaceReads.clear(); invalidatedDashboardSections.add(module); renderSection(module); }
 });
 const welcomeEl = document.querySelector('.staff-welcome');
 const staffMainContent = document.querySelector('.staff-main-content');
@@ -1872,6 +1872,7 @@ function clearStaffWorkspaceState() {
   externalAuditState = { tab: 'payments', dateFrom: '', dateTo: '', cursor: null, history: [], page: 1, journals: [], findings: [], nextCursor: null, scope: null, pageSize: 0, findingCursor: null, findingNextCursor: null, findingHistory: [], findingPage: 1, findingPageSize: 0 };
   incomeAnalyticsData = null;
   historyDateWorkspace.clear();
+  financeWorkflowSnapshots.clear();
   incomeAnalyticsFilter = { period: 'monthly' };
   organizationDepartmentWorkspaceTab = 'overview';
   dashboardAttendanceRequest += 1;
@@ -2042,6 +2043,7 @@ function clearBranchScopedWorkspaceData() {
   approvalProfile = null;
   incomeAnalyticsData = null;
   historyDateWorkspace.clear();
+  financeWorkflowSnapshots.clear();
   incomeAnalyticsFilter = { period: 'monthly' };
   executiveOfficeData = null;
   executiveDirectoryResults = [];
@@ -21767,7 +21769,7 @@ function renderFinanceWorkflow() {
       <div><small>Outstanding</small><strong>${escapeHtml(money(imprestSummary.outstanding || 0))}</strong><span>Unretired staff advances</span></div>
       <div><small>Imprest Records</small><strong>${Number(imprestSummary.total || 0)}</strong><span>Current branch view</span></div>
     </div>
-    <div class="workflow-ledger-heading"><div><h2>Recent Transactions</h2><p class="muted">Requisitions and bills synchronized with desktop accounting</p></div></div>
+    <div class="workflow-ledger-heading"><div><h2>${financeData.queueView==='completed'?'Completed requests':'Open requests'}</h2><p class="muted">Requisitions and bills synchronized with desktop accounting</p></div></div>
     ${financeRecordsSection('Expense Requisitions', requisitions, 'requisition', capabilities)}
     ${financeRecordsSection('Supplier Bills', bills, 'bill', capabilities)}
     ${imprestRecordsSection(imprests, capabilities)}
@@ -21783,6 +21785,15 @@ function renderFinanceWorkflow() {
     { key: 'imprest', label: 'Imprest & petty cash', icon: '\u{1F4B5}', count: imprests.length, nodes: [[panelEl.querySelector(':scope > .imprest-kpis')], financeLists[2]] }
   ]);
   bindFinanceWorkflowEvents();
+  financeLists.forEach((section,index)=>{
+    const kind = ['requisitions','bills','imprests'][index];
+    if (!section) return;
+    const note = document.createElement('p'); note.className='muted';
+    note.textContent=`${financeData.queueView==='completed'?'Completed history for the selected dates':'Open requests across all dates'}. Counts and totals cover loaded records.`;
+    section.append(note);
+    if(financeData.queuePages?.[kind]) { const button=document.createElement('button');button.type='button';button.textContent='Load more';button.dataset.financeMore=kind;
+      button.onclick=()=>runButtonAction(button,'Loading...',()=>loadFinanceWorkflow({more:kind}));section.append(button); }
+  });
   document.getElementById('configureRequisitionApprovals')?.addEventListener('click', configureRequisitionApprovals);
 }
 
@@ -22097,7 +22108,7 @@ function bindImprestWorkflowForms() {
 
 function bindFinanceWorkflowEvents() {
   document.getElementById('refreshFinanceWorkflow')?.addEventListener('click', (event) => {
-    runButtonAction(event.currentTarget, 'Refreshing...', loadFinanceWorkflow);
+    runButtonAction(event.currentTarget, 'Refreshing...', () => loadFinanceWorkflow({refresh:true}));
   });
   panelEl.querySelectorAll('[data-open-dialog]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -22154,15 +22165,36 @@ function bindFinanceWorkflowEvents() {
   });
 }
 
-async function loadFinanceWorkflow() {
+const financeWorkflowSnapshots = new Map();
+function financeWorkflowScope() { return JSON.stringify([currentUser?.username,selectedBranchId,staffWorkspaceReads.version(),historyDateWorkspace.range('financeRequests')]); }
+async function loadFinanceWorkflow({more='',refresh=false} = {}) {
   if (activeSection !== 'financeRequests') return;
-  if (!window.DynamaxHistoryDates.validHistoryDates(historyDateWorkspace.range('financeRequests'))) { historyDateWorkspace.show('financeRequests'); return; }
+  const range=historyDateWorkspace.range('financeRequests');
+  if (range.view==='completed' && !window.DynamaxHistoryDates.validHistoryDates(range)) { historyDateWorkspace.show('financeRequests'); return; }
+  if(refresh){staffWorkspaceReads.clear();financeWorkflowSnapshots.clear();}
+  const scope=financeWorkflowScope(), saved=financeWorkflowSnapshots.get(scope);
   try {
-    financeData = await financeRequest('list');
+    if (saved?.loading) return;
+    if(more && !saved?.data.queuePages?.[more])return;
+    const entry=saved||{data:null,loading:false};entry.loading=true;financeWorkflowSnapshots.set(scope,entry);
+    let data;
+    try { data=more ? await financeRequest('list',{QueueKind:more,QueueCursor:entry.data.queuePages[more]}) : entry.data || await financeRequest('list'); }
+    finally {entry.loading=false;}
+    if(scope!==financeWorkflowScope() || activeSection!=='financeRequests')return;
+    if(more){
+      const id=row=>row.__name||row.__id||row.ExpenseNo||row.BillNo||row.ImprestNo;
+      const previous=entry.data;
+      data={...previous,[more]:[...new Map([...previous[more],...data[more]].map(row=>[id(row),row])).values()],queuePages:{...previous.queuePages,...data.queuePages}};
+      if(more==='imprests')data.imprestSummary=data.imprests.reduce((s,r)=>{const open=['submitted','approved','issued','retirement submitted'].includes(clean(r.Status).toLowerCase());s.total++;if(open){s.open++;s.outstanding+=Number(r.AmountIssued||r.AmountApproved||r.AmountRequested||0);if(r.DueDate&&r.DueDate<new Date().toISOString().slice(0,10))s.overdue++;}return s;},{total:0,open:0,outstanding:0,overdue:0});
+    }
+    entry.data=data;financeData=data;
+    if(financeWorkflowSnapshots.size>12)financeWorkflowSnapshots.delete(financeWorkflowSnapshots.keys().next().value);
     renderModuleSummary('financeRequests', financeData);
     renderFinanceWorkflow();
   } catch (error) {
-    if (activeSection === 'financeRequests') panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
+    if (activeSection !== 'financeRequests' || scope!==financeWorkflowScope()) return;
+    if(saved?.data){financeData=saved.data;renderFinanceWorkflow();setStatus(document.getElementById('financeWorkflowStatus'),error.message||String(error),'bad');}
+    else {panelEl.innerHTML=`<p class="status bad">${escapeHtml(error.message||String(error))}</p><button type="button" data-retry-finance>Retry loading requests</button>`;panelEl.querySelector('[data-retry-finance]').onclick=()=>loadFinanceWorkflow({refresh:true});}
   }
 }
 

@@ -505,7 +505,16 @@
     {"collectionGroup": "payrollItems", "queryScope": "COLLECTION", "fields": [{"fieldPath": "Username", "order": "ASCENDING"}, {"fieldPath": "Month", "order": "ASCENDING"}]},
     {"collectionGroup": "hotelReservations", "queryScope": "COLLECTION", "fields": [{"fieldPath": "BranchId", "order": "ASCENDING"}, {"fieldPath": "CreatedAt", "order": "ASCENDING"}]},
     {"collectionGroup": "hotelHousekeeping", "queryScope": "COLLECTION", "fields": [{"fieldPath": "BranchId", "order": "ASCENDING"}, {"fieldPath": "CreatedAt", "order": "ASCENDING"}]},
-    {"collectionGroup": "hotelAudit", "queryScope": "COLLECTION", "fields": [{"fieldPath": "BranchId", "order": "ASCENDING"}, {"fieldPath": "Timestamp", "order": "ASCENDING"}]}
+    {"collectionGroup": "hotelAudit", "queryScope": "COLLECTION", "fields": [{"fieldPath": "BranchId", "order": "ASCENDING"}, {"fieldPath": "Timestamp", "order": "ASCENDING"}]},
+    {"collectionGroup":"accountingExpenses","queryScope":"COLLECTION","fields":[{"fieldPath":"BranchId","order":"ASCENDING"},{"fieldPath":"Status","order":"ASCENDING"},{"fieldPath":"__name__","order":"ASCENDING"}]},
+    {"collectionGroup":"accountingExpenses","queryScope":"COLLECTION","fields":[{"fieldPath":"BranchId","order":"ASCENDING"},{"fieldPath":"Status","order":"ASCENDING"},{"fieldPath":"Date","order":"ASCENDING"},{"fieldPath":"__name__","order":"ASCENDING"}]},
+    {"collectionGroup":"accountingExpenses","queryScope":"COLLECTION","fields":[{"fieldPath":"Status","order":"ASCENDING"},{"fieldPath":"Date","order":"ASCENDING"},{"fieldPath":"__name__","order":"ASCENDING"}]},
+    {"collectionGroup":"accountingSupplierBills","queryScope":"COLLECTION","fields":[{"fieldPath":"BranchId","order":"ASCENDING"},{"fieldPath":"Status","order":"ASCENDING"},{"fieldPath":"__name__","order":"ASCENDING"}]},
+    {"collectionGroup":"accountingSupplierBills","queryScope":"COLLECTION","fields":[{"fieldPath":"BranchId","order":"ASCENDING"},{"fieldPath":"Status","order":"ASCENDING"},{"fieldPath":"Date","order":"ASCENDING"},{"fieldPath":"__name__","order":"ASCENDING"}]},
+    {"collectionGroup":"accountingSupplierBills","queryScope":"COLLECTION","fields":[{"fieldPath":"Status","order":"ASCENDING"},{"fieldPath":"Date","order":"ASCENDING"},{"fieldPath":"__name__","order":"ASCENDING"}]},
+    {"collectionGroup":"accountingImprests","queryScope":"COLLECTION","fields":[{"fieldPath":"BranchId","order":"ASCENDING"},{"fieldPath":"Status","order":"ASCENDING"},{"fieldPath":"__name__","order":"ASCENDING"}]},
+    {"collectionGroup":"accountingImprests","queryScope":"COLLECTION","fields":[{"fieldPath":"BranchId","order":"ASCENDING"},{"fieldPath":"Status","order":"ASCENDING"},{"fieldPath":"Date","order":"ASCENDING"},{"fieldPath":"__name__","order":"ASCENDING"}]},
+    {"collectionGroup":"accountingImprests","queryScope":"COLLECTION","fields":[{"fieldPath":"Status","order":"ASCENDING"},{"fieldPath":"Date","order":"ASCENDING"},{"fieldPath":"__name__","order":"ASCENDING"}]}
   ],
   "fieldOverrides": [
   ]

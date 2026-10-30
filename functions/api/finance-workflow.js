@@ -1,4 +1,4 @@
-import { loadDatedHistory } from '../lib/history-date-range.js';
+import { financeRequestPage, FINANCE_QUEUES } from '../lib/finance-request-queue.js';
 import { batchUpsertDocuments, deleteDocument, findOneByField, getDocument, listCollection, queryCollection, queryCollectionPages, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { getAccountingChartRows } from '../lib/accounting-reference-cache.js';
 import { assertFinanceRoleLimit } from '../lib/accounting-mutation-guards.js';
@@ -399,12 +399,15 @@ async function writeAudit(env, user, action, recordType, recordId, details = '')
 
 async function listWorkflow(env, user, body = {}) {
   const access = capabilities(user);
-  const [requests, bills, imprests, approvalProfile] = await Promise.all([
-    loadDatedHistory(env, 'accountingExpenses', body, 'Date', user.branchId),
-    loadDatedHistory(env, 'accountingSupplierBills', body, 'Date', user.branchId),
-    loadDatedHistory(env, 'accountingImprests', body, 'Date', user.branchId),
-    loadStaffApprovalProfile(env, user.username)
+  const kinds = body.QueueKind ? [body.QueueKind] : Object.keys(FINANCE_QUEUES);
+  if (kinds.some(kind=>!Object.hasOwn(FINANCE_QUEUES,kind))) throw Object.assign(new Error('Invalid request queue.'), {status:400});
+  if (body.QueueCursor && !body.QueueKind) throw Object.assign(new Error('Choose the request queue for this page.'), {status:400});
+  const [pages, approvalProfile] = await Promise.all([
+    Promise.all(kinds.map(kind=>financeRequestPage(env,user,kind,body,rows=>scopedRows(rows,user,access)))),
+    body.QueueKind ? Promise.resolve(null) : loadStaffApprovalProfile(env, user.username)
   ]);
+  const queues = Object.fromEntries(kinds.map((kind,index)=>[kind,pages[index]]));
+  const requests = queues.requisitions?.rows || [], bills = queues.bills?.rows || [], imprests = queues.imprests?.rows || [];
   const approvalProfileSummary = publicStaffApprovalProfile(approvalProfile || {});
   delete approvalProfileSummary.SignatureDataUrl;
   delete approvalProfileSummary.StampDataUrl;
@@ -412,6 +415,8 @@ async function listWorkflow(env, user, body = {}) {
   const scopedImprests = publicRows(sortRecent(scopedRows(imprests, user, access)));
   return {
     ok: true,
+    queuePages: Object.fromEntries(kinds.map(kind=>[kind,queues[kind].next])),
+    queueView: pages[0].view,
     message: 'Department finance workflow loaded.',
     department: userDepartment(user),
     capabilities: access,
