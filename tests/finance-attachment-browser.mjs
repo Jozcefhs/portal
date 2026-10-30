@@ -26,7 +26,7 @@ try {
  const materialItemsTable=()=>'', DynamaxTime={formatDateTime:v=>v};
  ${['protectedFileName','clearProtectedFilePreview','ensureProtectedFilePreviewDialog','prepareProtectedFilePreview','showProtectedFilePreview','showProtectedFilePreviewError','openProtectedFile','bindProtectedFileEvents','protectedFinanceDocumentUrl','financeWorkflowStatus','financeRequisitionStageHelp','financeRecordAttachmentActions','financeRecordRow','approvalEndorsementBlock','requisitionEditHistoryBlock','openFinanceRecordPrint'].map(declaration).join('\n')}
  window.record={ExpenseNo:'REQ-1',Status:'Posted',AdminReviewedAt:'2026-10-30',Department:'ICT',AttachmentUrl:'r2://private-secret/key',Description:'Completed requisition',Amount:25};
- window.render=(status='Posted',type='requisition',attachment=true)=>{record.Status=status;record.AttachmentUrl=attachment?'r2://private-secret/key':'';panelEl.innerHTML='<table><tbody>'+financeRecordRow(record,type,{canEditRequisitions:false})+'</tbody></table><button id="preview">View and print</button>';bindProtectedFileEvents(panelEl);document.getElementById('preview').onclick=()=>openFinanceRecordPrint(record,type);};render();
+ window.render=(status='Posted',type='requisition',attachment=true)=>{record.Status=status;record.AttachmentUrl=attachment?'r2://private-secret/key':'';panelEl.innerHTML='<table><tbody>'+financeRecordRow(record,type,{canEditRequisitions:false})+'</tbody></table><button id="preview">View and print</button>';bindProtectedFileEvents(panelEl);document.getElementById('preview').onclick=()=>{const p=window.open('','_blank','width=900,height=720');p.document.write('<p>Loading document...</p>');openFinanceRecordPrint(record,type,{},p);};};render();
  `});
  for(const status of ['Submitted','Accounts Confirmed','Approved','Posted','Paid','Rejected']) {
    await page.evaluate(status=>render(status),status);
@@ -43,7 +43,7 @@ try {
  assert.equal((await download).suggestedFilename(),'Evidence.png');
  assert.equal(await page.evaluate(()=>calls.length),2);
  const opened=page.waitForEvent('popup');await page.locator('#preview').click();const preview=await opened;
- await preview.waitForSelector('.finance-supporting-document');assert.equal(await preview.locator('[data-protected-file]').count(),2);
+ await preview.waitForSelector('.finance-supporting-document');assert.doesNotMatch(await preview.locator('body').innerText(),/Loading document/);assert.equal(await preview.locator('[data-protected-file]').count(),2);
  await preview.getByRole('button',{name:'View attachment for REQ-1',exact:true}).click();
  await preview.waitForFunction(()=>document.querySelector('[data-protected-file-preview-frame]')?.src.startsWith('blob:'));
  assert.equal(await preview.locator('dialog[open]').count(),1);assert.equal(await page.locator('dialog[open]').count(),0,'Preview opens in the document window');
