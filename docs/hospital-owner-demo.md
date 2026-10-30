@@ -18,6 +18,8 @@ The medicine update adds **Pharmacy → Medicine catalogue**. The owner can crea
 
 ### Supplier payment remittances
 
+Deployed and verified on 30 October 2026: [Hospital demo](https://dynamax-hospital-review.pages.dev/hospital.html?task=procurement), [verification](hospital-remittances-verification.md).
+
 In **Pharmacy procurement**, the owner can inspect **Bills**, **Payments** and **Remittances** for a chosen date range. Use the separate demo cashier to select approved invoices from **Bills → Pay selected supplier invoices**. One confirmed payment can cover up to 20 invoices for one supplier. Each allocation remains traceable, and the remittance has preview/print and reversal history. No example payments are automatically posted to the demo; end-to-end payment checks use synthetic in-memory records. Card terminals remain disabled.
 
 ### Deployment target
