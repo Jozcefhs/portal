@@ -2,6 +2,7 @@ import {fail,id,nameKey} from './hospital-model.js';
 import {field,quantity,qty,money,chargeCents,cumulativeCredit,dateOnly,dateFilters,watDay} from './hospital-orders-model.js';
 import {code,cents,amount,equal,paymentFields} from './hospital-billing-model.js';
 import {stockReceiptFields,prepareStockReceipt} from './hospital-stock-receipt.js';
+import {createHospitalSupplierRemittanceService} from './hospital-supplier-remittances.js';
 
 export function createHospitalProcurementService(ctx){
   const {user,capabilities,requireCapability,branch,clock,actor,strip,eq,auditWrite,operation,page,
@@ -13,7 +14,7 @@ export function createHospitalProcurementService(ctx){
   const billStatus=bill=>balance(bill)===0?'Settled':bill.PaidCents?'Part paid':'Approved';
   async function scoped(name,key,BranchId){const row=await read(name,key);if(!row||row.BranchId!==BranchId)fail('This record is unavailable in the selected branch.',404);return row;}
   function events(key,BranchId,Action,row,extra={}){
-    const EntityId=row.PurchaseId||row.BillId||row.SupplierId;
+    const EntityId=row.PurchaseId||row.BillId||row.RemittanceId||row.SupplierId;
     return [write('ProcurementEvents',key,{EventId:key,BranchId,EntityId,SupplierId:row.SupplierId,Action,Snapshot:strip(row),...extra,...stamp()},null),
       auditWrite(key,Action,BranchId,{}, {SupplierName:row.Supplier?.Name||row.Name,Reference:row.Reference||row.Code,EntityId,EntityType:'Hospital pharmacy procurement'})];
   }
@@ -28,6 +29,7 @@ export function createHospitalProcurementService(ctx){
   }
   function supplierView(row){if(!row)return null;const result=view(row);if(!can('procurement.finance'))delete result.OutstandingCents;return result;}
   return {
+    ...createHospitalSupplierRemittanceService({...ctx,need,confirm,scoped,snapshot,balance,billStatus,supplierChange,events}),
     async pharmacySuppliers(body){
       need('read');const BranchId=await branch(body);
       if(body.Code)return {ok:true,items:[supplierView(await read('PharmacySuppliers',await keyFor('supplier',BranchId,code(body.Code))))].filter(Boolean),next:null};
@@ -129,14 +131,14 @@ export function createHospitalProcurementService(ctx){
     },
     async procurementRegister(body){
       need('read');const BranchId=await branch(body),filters=[eq('BranchId',BranchId),...dateFilters(body.DateRange)];
-      const name={Purchases:'PharmacyPurchases',Receipts:'PharmacyReceipts',Returns:'PharmacySupplierReturns',Bills:'SupplierBills',Payments:'SupplierPayments'}[body.Kind];if(!name)fail('Choose a procurement register.');
-      if(['Bills','Payments'].includes(body.Kind))need('finance');
+      const name={Purchases:'PharmacyPurchases',Receipts:'PharmacyReceipts',Returns:'PharmacySupplierReturns',Bills:'SupplierBills',Payments:'SupplierPayments',Remittances:'SupplierRemittances'}[body.Kind];if(!name)fail('Choose a procurement register.');
+      if(['Bills','Payments','Remittances'].includes(body.Kind))need('finance');
       if(body.SupplierId)filters.push(eq('SupplierId',id(body.SupplierId)));if(body.Status){if(!['Purchases','Bills'].includes(body.Kind))fail('Status filtering is available for purchases and bills.');filters.push(eq('Status',field(body,'Status',40,true)));}
       const data=await page(name,filters,'CreatedAt',body);return {ok:true,rows:data.rows.map(view),next:data.next};
     },
     async procurementHistory(body){
       need('read');const BranchId=await branch(body),filters=dateFilters(body.DateRange);
-      const name={Purchase:'PharmacyPurchases',Supplier:'PharmacySuppliers',Bill:'SupplierBills'}[body.Kind];if(!name)fail('Choose a supplier, purchase or bill.');if(body.Kind==='Bill')need('finance');
+      const name={Purchase:'PharmacyPurchases',Supplier:'PharmacySuppliers',Bill:'SupplierBills',Remittance:'SupplierRemittances'}[body.Kind];if(!name)fail('Choose a supplier, purchase, bill or remittance.');if(['Bill','Remittance'].includes(body.Kind))need('finance');
       await scoped(name,body.EntityId,BranchId);const data=await page('ProcurementEvents',[eq('BranchId',BranchId),eq('EntityId',id(body.EntityId)),...filters],'CreatedAt',body);
       return {ok:true,rows:data.rows.map(r=>{const result=view(r);if(body.Kind==='Supplier'&&!can('procurement.finance'))delete result.Snapshot.OutstandingCents;return result;}),next:data.next};
     },
@@ -205,8 +207,9 @@ export function createHospitalProcurementService(ctx){
         if(await read('ProcurementReferences',guardId))fail('This supplier payment reversal reference already exists.',409);
         await postingMany([payment.Mapping]);const cashKey=payment.Method==='Cash'?'Cash':'Bank',next={...strip(bill),PaidCents:cents(bill.PaidCents-AmountCents),UpdatedAt:clock()};next.Status=billStatus(next);
         return {writes:[write('SupplierPayments',payment.PaymentId,{...strip(payment),ReversedCents:payment.ReversedCents+AmountCents},payment),write('SupplierBills',bill.BillId,next,bill),supplierChange(supplier,AmountCents),
-          write('SupplierPaymentReversals',key,{ReversalId:key,PaymentId:payment.PaymentId,BillId:bill.BillId,BranchId,SupplierId:payment.SupplierId,AmountCents,Reference,Reason,...stamp()},null),write('ProcurementReferences',guardId,{ReversalId:key,BranchId},null),
-          ...journal(key,financeContext(bill),'Supplier payment reversal',[line(payment.Mapping[cashKey],AmountCents),line(payment.Mapping.SupplierPayable,0,AmountCents)]),...events(key,BranchId,'Record supplier payment reversal',next,{AmountCents,Reference,Reason,PaymentId:payment.PaymentId})],result:{BillId:bill.BillId}};
+          write('SupplierPaymentReversals',key,{ReversalId:key,PaymentId:payment.PaymentId,BillId:bill.BillId,BranchId,SupplierId:payment.SupplierId,...(payment.RemittanceId?{RemittanceId:payment.RemittanceId}:{}),AmountCents,Reference,Reason,...stamp()},null),write('ProcurementReferences',guardId,{ReversalId:key,BranchId},null),
+          ...journal(key,{...financeContext(bill),SupplierRemittanceId:payment.RemittanceId},'Supplier payment reversal',[line(payment.Mapping[cashKey],AmountCents),line(payment.Mapping.SupplierPayable,0,AmountCents)]),...events(key,BranchId,'Record supplier payment reversal',next,{AmountCents,Reference,Reason,PaymentId:payment.PaymentId}),
+          ...(payment.RemittanceId?events(await keyFor('remittance-reversal-event',key),BranchId,'Reverse supplier remittance allocation',{RemittanceId:payment.RemittanceId,SupplierId:payment.SupplierId,Supplier:payment.Supplier,Reference:payment.Reference},{AmountCents,Reference,Reason,PaymentId:payment.PaymentId,BillId:bill.BillId}).slice(0,1):[])],result:{BillId:bill.BillId}};
       });
     },
     async creditSupplierBill(body){

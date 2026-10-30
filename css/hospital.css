@@ -25,4 +25,14 @@ textarea{font:inherit;width:100%;min-width:0;padding:10px;border:1px solid #bccd
 #pcPreview{width:min(1000px,95vw);max-height:90vh;overflow:auto;border:1px solid #b8cddd;border-radius:12px;padding:1rem}#pcPreview::backdrop{background:#122b46aa}
 @media(max-width:600px){#procurement form:not(.toolbar){padding:.65rem}#procurement .toolbar>button{flex:1 1 46%}#procurement .toolbar>label{flex:1 1 100%;min-width:0}#procurement .form-grid{grid-template-columns:minmax(0,1fr)}#procurement .toolbar,#procurement .form-grid{min-width:0}#procurement input,#procurement select,#procurement textarea{max-width:100%;box-sizing:border-box}#pcPreview .toolbar{flex-wrap:wrap}}
 
-#pcPurchaseSummary,#pcBillSummary,#pcPreviewBody{max-width:100%;overflow-x:auto}
+#pcPurchaseSummary,#pcBillSummary,#pcRemittanceSummary,#pcPreviewBody{max-width:100%;overflow-x:auto}
+@media(max-width:600px){
+  #pcRemittanceAllocations table,#pcRemittanceAllocations tbody{display:block;min-width:0;width:100%}
+  #pcRemittanceAllocations thead{display:none}
+  #pcRemittanceAllocations tr{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);border:1px solid #d7e3ee;margin-bottom:.65rem}
+  #pcRemittanceAllocations td{min-width:0;border:0;overflow-wrap:anywhere}
+  #pcRemittanceAllocations td:first-child{grid-column:1/-1;font-weight:600}
+  #pcRemittanceAllocations td:nth-child(2)::before{content:'Unpaid';display:block;color:#52687e;font-size:.85em;margin-bottom:.3rem}
+  #pcRemittanceAllocations td:nth-child(3)::before{content:'Pay now (₦)';display:block;color:#52687e;font-size:.85em;margin-bottom:.3rem}
+  #pcRemittanceAllocations input[type=number]{width:100%;min-width:0;max-width:100%}
+}

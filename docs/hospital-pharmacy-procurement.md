@@ -4,6 +4,12 @@ Implemented on the Hospital development branch, with web deployment restricted t
 
 ## Workflow
 
+**Multi-invoice payments:** In the **Bills** register, a cashier can check 1–20 approved or part-paid invoices for one supplier and select **Pay selected supplier invoices**. Enter each allocation and the matching confirmed total. The **Remittances** register has date filters, retained snapshots and preview/print. Finance viewers can inspect it; supervisors use **Payments** to reverse individual allocations while retaining the original remittance and invoice history.
+
+Every revision, approval status, unpaid balance, mapping and accounting period is checked before one atomic commit. A changed or invalid invoice prevents the entire batch. Single and batch payments share normalised evidence guards, including bank references across branches; lost-response retries return the original receipt. A remittance creates one balanced journal, one supplier-balance update and one security-audit event, with separate per-invoice business histories. No stock or patient charge is rewritten. Exact lookups are bounded by 20 invoices, each account is checked once, and registers return 30 rows with a lookahead. Selection and printing require no history reads; two additive indexes support the new backed-up collection.
+
+The new workflow has 13 regression tests plus synthetic browser checks for allocations, concurrency, duplicate references, permissions, immutable reversals, mobile layout, cached previews and branch clearing. Financial test data stays in memory.
+
 1. An administrator maintains the branch supplier directory. Permanent codes, retained name aliases and revision checks prevent accidental duplicate suppliers. Name/contact changes retain history and do not rewrite earlier documents.
 2. A pharmacist requests up to 20 medicine-catalogue lines with quantities and agreed supplier unit costs. Submit the draft for an authorised purchase approver. The requester cannot approve their own purchase unless acting as Super Admin; approval requires a recorded reason.
 3. A pharmacist receives an approved purchase in partial deliveries, identifying the supplier delivery reference and line, medicine batch, future expiry, accepted quantity and selling price. Purchase cost and selling price are separate. Receipt, batch, stock movement and purchase counters commit together. Direct stock intake and purchase receiving share the existing supplier receipt-line guard.

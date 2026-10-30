@@ -16,6 +16,12 @@ The medicine update adds **Pharmacy → Medicine catalogue**. The owner can crea
 
 ## Deployment isolation
 
+### Supplier payment remittances
+
+In **Pharmacy procurement**, the owner can inspect **Bills**, **Payments** and **Remittances** for a chosen date range. Use the separate demo cashier to select approved invoices from **Bills → Pay selected supplier invoices**. One confirmed payment can cover up to 20 invoices for one supplier. Each allocation remains traceable, and the remittance has preview/print and reversal history. No example payments are automatically posted to the demo; end-to-end payment checks use synthetic in-memory records. Card terminals remain disabled.
+
+### Deployment target
+
 `deploy/hospital-owner-demo.json` identifies the sole destination. It is deliberately separate from the organisation deployment registry, so routine DCA/faith deployments do not include this demo. Deploy from `codex/hospital-edition` after tests. Publish the ordinary web assets/functions to the named Pages project with production branch `main`, and apply `firebase.hospital.json` only to the named Firebase project. Never deploy this development branch to DCA or other active edition projects.
 
 Deployment secrets are project-specific. Runtime database access uses a dedicated service account limited to this project's datastore user role. Demo sign-in accounts have newly generated passwords. Public access does not bypass staff authentication. No payment-provider or notification-provider credentials are configured for the demo.

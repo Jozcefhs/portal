@@ -64,7 +64,7 @@ export function createHospitalBillingService(ctx){
     const JournalNo=`HOSP-${key}`;
     return [{collectionPath:'accountingJournals',documentId:JournalNo,currentDocument:{exists:false},data:{JournalNo,Date:watDay(clock()),BranchId:c.BranchId,
       Source:`Hospital ${Action}`,SourceId:key,Reference:c.Reference||c.invoice?.InvoiceNumber||key,Description:`Hospital ${Action}`,Currency:'NGN',BaseCurrency:'NGN',Status:'Posted',System:'YES',
-      Edition:'hospital',WorkspaceId:env.DYNAMAX_WORKSPACE_ID,HospitalPatientId:c.person.PatientId,HospitalInvoiceId:c.invoice?.InvoiceId||'',...(c.SupplierId?{HospitalSupplierId:c.SupplierId,HospitalSupplierBillId:c.SupplierBillId}:{}),
+      Edition:'hospital',WorkspaceId:env.DYNAMAX_WORKSPACE_ID,HospitalPatientId:c.person.PatientId,HospitalInvoiceId:c.invoice?.InvoiceId||'',...(c.SupplierId?{HospitalSupplierId:c.SupplierId,HospitalSupplierBillId:c.SupplierBillId}:{}),...(c.SupplierRemittanceId?{HospitalSupplierRemittanceId:c.SupplierRemittanceId}:{}),
       Lines:nonzero.map((l,i)=>({LineNo:i+1,AccountCode:l.AccountCode,Debit:(l.DebitCents||0)/100,Credit:(l.CreditCents||0)/100})),
       TotalDebit:debit/100,TotalCredit:credit/100,CreatedAt:clock(),UpdatedAt:clock(),PostedAt:clock(),CreatedBy:actor,PostedBy:actor}}];
   }

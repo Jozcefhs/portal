@@ -2,6 +2,12 @@
 
 Scope confirmed: 26 October 2026, Africa/Lagos.
 
+## Latest increment — 30 October 2026
+
+Multi-invoice supplier remittances extend H05 / H10 / H13 and F02 / F05 / F06. Cashiers record one confirmed payment across up to 20 approved invoices with atomic balance/revision checks, shared duplicate-evidence guards, one journal and one security-audit entry. Individual allocation reversals preserve the original payment, invoices and remittance. Date-first registers, retained snapshots, mobile allocation forms and print previews avoid history scans. Backup discovery includes the new collection; two indexes are additive.
+
+No migration, deletion, automatic demo payment, patient-charge change, desktop compilation or installer release is included. Card terminals remain disabled; patient cards remain NFC. Validation: 4,594 repository tests passed, followed by two additional remittance boundary tests (4,596 total cases) and a final 325-test Hospital/shared regression run. The synthetic browser workflow passed desktop/mobile layouts, payment recording, printing, cached snapshots and branch clearing. Live deployment verification is recorded separately. Perpetual inventory valuation, controlled-drug witnesses, specialist workflows, desktop/offline parity and practitioner validation remain pending; this increment does not complete the full Hospital scope.
+
 The user wants Hospital to become the fourth Dynamax edition, alongside School, Faith and Other Organisations, and wants every feature in the proposed Hospital scope included. This document is the implementation checklist for that full scope, covering the web companion, desktop and shared backend.
 
 All items below are pending implementation and verification for Hospital. Existing shared capabilities may be reused, but reuse alone does not establish that Hospital integration is complete. This document records scope; it does not claim a hospital release is ready.
@@ -278,7 +284,7 @@ Evidence: [hospital-orders-workflows.md](hospital-orders-workflows.md), `tests/h
 Deployment verification: commit `ca7327c2` is live on the Owner's Demo only; all three additive indexes are READY, Hospital CI passed, and live checks passed for all nine demo roles. Twelve deployed assets match source. Only one labelled synthetic catalogue example was added; existing clinical, stock and financial records were preserved. See [hospital-owner-demo.md](hospital-owner-demo.md). The next pharmacy priority is procurement and supplier-bill linkage, retaining the current stock/financial source guards and bounded loading rules.
 
 
-### 2026-10-29 � Pharmacy procurement and supplier billing
+### 2026-10-29 — Pharmacy procurement and supplier billing
 
 The requested increment connects branch suppliers, catalogue purchase requests, approval, partial batch receiving, supplier invoice matching/approval, partial payments and retained corrections. Purchase cost and selling price remain separate. A supplier receipt never creates a patient charge. Bills post balanced expense/payable journals; payments and reversals retain their original account snapshots and documents.
 
