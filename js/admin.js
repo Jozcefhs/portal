@@ -110,7 +110,7 @@ let approvalAssetState = { signature: '', stamp: '' };
 let pendingFinanceDecision = null;
 let financeDecisionBiometricVerified = false;
 let financeDecisionApprovalProof = '';
-let protectedFilePreviewObjectUrl = '';
+const protectedFilePreviewObjectUrls = new WeakMap();
 let profilePhotoState = '';
 let staffBearerToken = '';
 let staffSessionTimingData = null;
@@ -4303,23 +4303,24 @@ function protectedFileName(response, fallback = 'document') {
   return clean(fileName).replace(/[\\/:*?"<>|]+/g, '_') || 'document';
 }
 
-function clearProtectedFilePreview() {
-  const dialog = document.getElementById('protectedFilePreviewDialog');
+function clearProtectedFilePreview(ownerDocument = document) {
+  const dialog = ownerDocument.getElementById('protectedFilePreviewDialog');
   const frame = dialog?.querySelector('[data-protected-file-preview-frame]');
   if (frame) {
     frame.hidden = true;
     frame.removeAttribute('src');
   }
-  if (protectedFilePreviewObjectUrl) {
-    URL.revokeObjectURL(protectedFilePreviewObjectUrl);
-    protectedFilePreviewObjectUrl = '';
+  const objectUrl = dialog && protectedFilePreviewObjectUrls.get(dialog);
+  if (objectUrl) {
+    URL.revokeObjectURL(objectUrl);
+    protectedFilePreviewObjectUrls.delete(dialog);
   }
 }
 
-function ensureProtectedFilePreviewDialog() {
-  let dialog = document.getElementById('protectedFilePreviewDialog');
+function ensureProtectedFilePreviewDialog(ownerDocument = document) {
+  let dialog = ownerDocument.getElementById('protectedFilePreviewDialog');
   if (dialog) return dialog;
-  dialog = document.createElement('dialog');
+  dialog = ownerDocument.createElement('dialog');
   dialog.id = 'protectedFilePreviewDialog';
   dialog.className = 'workflow-dialog protected-file-preview-dialog';
   dialog.innerHTML = `
@@ -4328,15 +4329,16 @@ function ensureProtectedFilePreviewDialog() {
       <p class="status" data-protected-file-preview-status>Opening document...</p>
       <iframe data-protected-file-preview-frame title="Secure document preview" hidden></iframe>
     </div>`;
-  document.body.appendChild(dialog);
+  ownerDocument.body.appendChild(dialog);
   dialog.querySelector('[data-close-protected-file-preview]')?.addEventListener('click', () => dialog.close());
-  dialog.addEventListener('close', clearProtectedFilePreview);
+  dialog.addEventListener('close', () => clearProtectedFilePreview(ownerDocument));
+  ownerDocument.defaultView?.addEventListener('pagehide', () => clearProtectedFilePreview(ownerDocument), { once: true });
   return dialog;
 }
 
-function prepareProtectedFilePreview(fileName = 'Document') {
-  const dialog = ensureProtectedFilePreviewDialog();
-  clearProtectedFilePreview();
+function prepareProtectedFilePreview(fileName = 'Document', ownerDocument = document) {
+  const dialog = ensureProtectedFilePreviewDialog(ownerDocument);
+  clearProtectedFilePreview(ownerDocument);
   const title = dialog.querySelector('[data-protected-file-preview-title]');
   const status = dialog.querySelector('[data-protected-file-preview-status]');
   if (title) title.textContent = fileName;
@@ -4353,12 +4355,13 @@ function showProtectedFilePreview(dialog, blob, fileName) {
   const frame = dialog?.querySelector('[data-protected-file-preview-frame]');
   const title = dialog?.querySelector('[data-protected-file-preview-title]');
   const status = dialog?.querySelector('[data-protected-file-preview-status]');
-  if (!frame || !dialog) return;
-  protectedFilePreviewObjectUrl = URL.createObjectURL(blob);
+  if (!frame || !dialog?.open) return;
+  const objectUrl = URL.createObjectURL(blob);
+  protectedFilePreviewObjectUrls.set(dialog, objectUrl);
   if (title) title.textContent = fileName || 'Document preview';
   if (status) status.hidden = true;
   frame.title = fileName ? `Preview of ${fileName}` : 'Secure document preview';
-  frame.src = protectedFilePreviewObjectUrl;
+  frame.src = objectUrl;
   frame.hidden = false;
 }
 
@@ -4375,7 +4378,8 @@ async function openProtectedFile(button) {
   const mode = clean(button.dataset.fileMode) || 'download';
   if (!resourceUrl) return;
   const requestedName = clean(button.dataset.fileName) || 'Document preview';
-  const viewer = mode === 'view' ? prepareProtectedFilePreview(requestedName) : null;
+  const ownerDocument = button.ownerDocument || document;
+  const viewer = mode === 'view' ? prepareProtectedFilePreview(requestedName, ownerDocument) : null;
   const normalMarkup = button.innerHTML;
   setButtonLoading(button, true, mode === 'view' ? 'Opening...' : 'Downloading...', normalMarkup);
   try {
@@ -4399,10 +4403,10 @@ async function openProtectedFile(button) {
       showProtectedFilePreview(viewer, blob, fileName);
     } else {
       const objectUrl = URL.createObjectURL(blob);
-      const link = document.createElement('a');
+      const link = ownerDocument.createElement('a');
       link.href = objectUrl;
       link.download = fileName;
-      document.body.appendChild(link);
+      ownerDocument.body.appendChild(link);
       link.click();
       link.remove();
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
@@ -21341,6 +21345,17 @@ function financeRequisitionStageHelp(record, capabilities) {
   return `<small class="finance-next-step">${escapeHtml(next)}${directorWaiting ? '<br>Final approval becomes available after the enabled earlier stages.' : ''}${revised ? '<br>Edited and resubmitted: earlier approvals were reset.' : ''}</small>`;
 }
 
+function financeRecordAttachmentActions(record, type) {
+  const id = pick(record, type === 'bill' ? ['BillNo', '__id'] : ['ExpenseNo', '__id']);
+  if (!id || !clean(record.AttachmentUrl)) return '';
+  const recordType = type === 'bill' ? 'supplier-bill'
+    : clean(record.RequisitionType).toLowerCase() === 'material' ? 'material-requisition' : 'expense-requisition';
+  return `<span class="finance-attachment-actions">${['view', 'download'].map(mode => {
+    const label = mode === 'view' ? 'View attachment' : 'Download attachment';
+    return `<button type="button" class="compact-text-action" data-protected-file="${escapeHtml(protectedFinanceDocumentUrl({recordType, recordId: id, mode}))}" data-file-mode="${mode}" data-file-name="${escapeHtml(`Supporting document - ${id}`)}" aria-label="${escapeHtml(`${label} for ${id}`)}">${label}</button>`;
+  }).join('')}</span>`;
+}
+
 function financeRecordRow(record, type, capabilities) {
   const id = pick(record, type === 'bill' ? ['BillNo', '__id'] : ['ExpenseNo', '__id']);
   const status = financeWorkflowStatus(record, type);
@@ -21411,7 +21426,7 @@ function financeRecordRow(record, type, capabilities) {
       <td>${escapeHtml(record.Date || '-')}</td>
       <td>${escapeHtml(type === 'bill' ? (record.DueDate || '-') : (record.Vendor || '-'))}</td>
       <td><span class="workflow-status status-${escapeHtml(clean(status).toLowerCase().replace(/\s+/g, '-'))}">${escapeHtml(status)}</span>${type === 'requisition' ? financeRequisitionStageHelp(record, capabilities) : ''}</td>
-      <td><div class="finance-row-actions">${actions}</div></td>
+      <td><div class="finance-row-actions">${actions}${financeRecordAttachmentActions(record, type)}</div></td>
     </tr>
   `;
 }
@@ -21467,7 +21482,9 @@ function openFinanceRecordPrint(record, type, endorsements = {}, printableWindow
   printable.opener = null;
   printable.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(heading)} ${escapeHtml(id)}</title><style>
     body{margin:32px;color:#102a43;font:13px Arial,sans-serif}h1{margin:0 0 4px;font-size:22px}.muted{color:#627d98}.summary{width:100%;margin:20px 0;border-collapse:collapse}.summary th,.summary td,.admin-table th,.admin-table td{padding:8px;border:1px solid #cbd7e5;text-align:left;vertical-align:top}.summary th,.admin-table th{background:#edf3f8;font-size:10px;text-transform:uppercase}.admin-table{width:100%;border-collapse:collapse}.admin-table-wrap{margin:14px 0}.material-grand-total-row th{border-top:2px solid #102a43;background:#e3edf6;font-size:12px}.material-grand-total-row th:first-child{text-align:right}.print-action{margin:0 0 20px;padding:8px 14px;border:0;border-radius:6px;background:#102a43;color:#fff}.notes{padding:10px;border-left:3px solid #19a7a0;background:#f5f8fb}.approval-block{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-top:16px;padding:12px;border:1px solid #cbd7e5;border-radius:7px}.approval-block strong,.approval-block span,.approval-block small{display:block}.approval-block span{margin-top:4px}.approval-block small{margin-top:3px;color:#627d98}.approval-images{display:flex;align-items:flex-end;gap:18px}.approval-images figure{margin:0;text-align:center}.approval-images img{display:block;max-width:150px;max-height:70px;object-fit:contain}.approval-images figcaption{margin-top:3px;color:#627d98;font-size:9px;text-transform:uppercase}@media print{.print-action{display:none}body{margin:12mm}.approval-block{break-inside:avoid}}
+    .finance-attachment-actions{display:flex;flex-wrap:wrap;gap:8px}.finance-attachment-actions button{min-height:44px;padding:8px 12px;border:1px solid #aac1d6;border-radius:6px;background:#edf5ff;color:#123e64;cursor:pointer}.finance-supporting-document{margin:16px 0;padding:12px;border:1px solid #cbd7e5;border-radius:7px}.finance-supporting-document h2{font-size:15px;margin:0 0 8px}.protected-file-preview-dialog{box-sizing:border-box;width:min(1100px,calc(100vw - 24px));height:calc(100vh - 24px);max-height:calc(100vh - 24px);padding:16px;border:1px solid #aac1d6;border-radius:10px;color:#102a43}.protected-file-preview-dialog::backdrop{background:#102a4380}.protected-file-preview-dialog .workflow-dialog-header{display:flex;justify-content:space-between;align-items:center;gap:12px}.protected-file-preview-dialog h2{font-size:18px}.protected-file-preview-dialog [data-close-protected-file-preview]{min-width:44px;min-height:44px;font-size:24px}.protected-file-preview-body{height:calc(100% - 80px);min-height:0}.protected-file-preview-body iframe{box-sizing:border-box;width:100%;height:100%;border:1px solid #cbd7e5}.protected-file-preview-dialog [hidden]{display:none}.protected-file-preview-dialog .bad{color:#b42318}@media print{.finance-supporting-document,.protected-file-preview-dialog{display:none}}
   </style></head><body><button class="print-action" onclick="window.print()">Print</button><h1>${escapeHtml(heading)}</h1><p class="muted">${escapeHtml(id)} · ${escapeHtml(record.Status || 'Submitted')}</p>
+  ${financeRecordAttachmentActions(record, type) ? `<section class="finance-supporting-document"><h2>Supporting document</h2>${financeRecordAttachmentActions(record, type)}</section>` : ''}
   <table class="summary"><tbody>
     ${isMaterial
       ? `<tr><th>Description</th><td colspan="3">${escapeHtml(record.Description || '-')}</td></tr>`
@@ -21497,8 +21514,8 @@ function openFinanceRecordPrint(record, type, endorsements = {}, printableWindow
   ${type === 'requisition' ? requisitionEditHistoryBlock(record) : ''}
   </body></html>`);
   printable.document.close();
+  bindProtectedFileEvents(printable.document);
   printable.focus();
-  window.setTimeout(() => printable.print(), 250);
 }
 
 function imprestRecordRow(record, capabilities) {
@@ -22107,6 +22124,7 @@ function bindImprestWorkflowForms() {
 }
 
 function bindFinanceWorkflowEvents() {
+  bindProtectedFileEvents(panelEl);
   document.getElementById('refreshFinanceWorkflow')?.addEventListener('click', (event) => {
     runButtonAction(event.currentTarget, 'Refreshing...', () => loadFinanceWorkflow({refresh:true}));
   });

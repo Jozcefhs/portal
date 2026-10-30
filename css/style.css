@@ -4208,3 +4208,6 @@ html[data-theme="dark"] .external-audit-finding{background:#0d1a29}
 .finance-queue-views button[aria-pressed="true"]{background:#087f73;color:white;border-color:#087f73}
 .history-date-range [hidden]{display:none!important}
 @media(max-width:600px){.finance-queue-views button{flex:1 1 140px}}
+.finance-attachment-actions{display:flex;flex-wrap:wrap;gap:6px}
+.finance-attachment-actions .compact-text-action{min-height:36px;margin:0;white-space:nowrap}
+@media(max-width:640px){.finance-attachment-actions .compact-text-action{min-height:44px}}

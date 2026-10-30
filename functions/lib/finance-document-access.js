@@ -1,3 +1,5 @@
+import { hasPrincipalApprovalGrant } from './requisition-workflow.js';
+
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
 
@@ -9,6 +11,10 @@ const DOCUMENT_TYPES = Object.freeze({
   'material-requisition': Object.freeze({
     collection: 'accountingExpenses',
     referenceFields: Object.freeze(['ExpenseNo'])
+  }),
+  'supplier-bill': Object.freeze({
+    collection: 'accountingSupplierBills',
+    referenceFields: Object.freeze(['BillNo'])
   }),
   'imprest-receipt': Object.freeze({
     collection: 'accountingImprests',
@@ -54,14 +60,16 @@ function userDepartment(user = {}) {
 export function staffCanAccessFinanceDocument(user = {}, record = {}) {
   const userBranch = lower(user.branchId);
   const recordBranch = lower(record.BranchId || 'main');
-  if (userBranch && userBranch !== 'all' && userBranch !== recordBranch) return false;
+  if (userBranch && userBranch !== recordBranch) return false;
 
   const userSection = lower(user.schoolSectionAccess || 'all');
   const recordSection = lower(record.SchoolSection || 'secondary');
   if (userSection && userSection !== 'all' && userSection !== recordSection) return false;
 
-  if (['super admin', 'management', 'accounts officer'].includes(lower(user.role))) return true;
-  return Boolean(userDepartment(user)) && lower(userDepartment(user)) === lower(record.Department);
+  // Match finance-workflow scopedRows: viewing never depends on edit rights or status.
+  if (['super admin', 'director', 'admin', 'management', 'accounts officer'].includes(lower(user.assignedRole || user.role))) return true;
+  return lower(userDepartment(user)) === lower(record.Department)
+    || Boolean(record.ExpenseNo && hasPrincipalApprovalGrant(user));
 }
 
 export function storedFinanceDocumentUrl(record = {}, definition = null, lineIndex = '') {

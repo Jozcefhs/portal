@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import vm from 'node:vm';
+import { hasPrincipalApprovalGrant } from '../functions/lib/requisition-workflow.js';
+import { storedDocumentResponse } from '../functions/lib/document-storage.js';
+import * as documentAccess from '../functions/lib/finance-document-access.js';
 
 import {
   financeDocumentDefinition,
@@ -20,6 +24,7 @@ const [adminJs, endpoint, storage] = await Promise.all([
 test('finance document definitions resolve only authoritative record locations', () => {
   assert.equal(financeDocumentDefinition('expense-requisition').collection, 'accountingExpenses');
   assert.equal(financeDocumentDefinition('material-requisition').collection, 'accountingExpenses');
+  assert.equal(financeDocumentDefinition('supplier-bill').collection, 'accountingSupplierBills');
   assert.equal(financeDocumentDefinition('imprest-receipt').collection, 'accountingImprests');
   assert.equal(financeDocumentDefinition('drive-url'), null);
   assert.equal(safeFinanceDocumentId('WEB/REQ?#1'), 'WEB-REQ--1');
@@ -64,7 +69,7 @@ test('protected finance documents use the same access path in every edition', ()
     SchoolSection: 'Secondary',
     Department: 'Accounts'
   };
-  for (const organisationEdition of ['school', 'faith', 'organization']) {
+  for (const organisationEdition of ['school', 'faith', 'organization', 'hospital']) {
     assert.equal(staffCanAccessFinanceDocument({
       role: 'Accounts Officer',
       organisationEdition,
@@ -72,6 +77,62 @@ test('protected finance documents use the same access path in every edition', ()
       schoolSectionAccess: 'All'
     }, record), true, organisationEdition);
   }
+});
+
+test('attachment permissions match requisition visibility for read-only officers and locked requests', async () => {
+  const workflow = await readFile(new URL('functions/api/finance-workflow.js', portalRoot), 'utf8');
+  const declaration = name => workflow.match(new RegExp(`function ${name}\\([^]*?\\n}`))[0];
+  const clean = v => String(v ?? '').trim(), lower = v => clean(v).toLowerCase();
+  const scopedRows = vm.runInNewContext(`${declaration('userDepartment')}\n(${declaration('scopedRows')})`, {
+    clean, lower, same: (a,b) => lower(a) === lower(b), hasPrincipalApprovalGrant
+  });
+  const users = [
+    {role:'Super Admin'}, {role:'Management'}, {role:'Accounts Officer'},
+    {role:'Management',assignedRole:'Director'}, {role:'Management',assignedRole:'Admin'},
+    {role:'Department User',department:'ICT'}, {role:'Department User',department:'Clinic'},
+    {role:'Principal',department:'Management',approvalEnabled:true},
+    {role:'Vendor User',department:'Vendor',approvalEnabled:true},
+    {role:'External Auditor',department:'Audit',approvalEnabled:true},
+    {role:'Super Admin',branchId:'east'}, {role:'Super Admin',schoolSectionAccess:'Primary'},
+    {role:'Super Admin',branchId:'all'}
+  ];
+  for (const edition of ['school','faith','organization','hospital']) {
+    for (const Status of ['Submitted','Accounts Confirmed','Admin Reviewed','Approved','Posted','Paid','Rejected','Cancelled']) {
+      const record = {ExpenseNo:'REQ-1',BranchId:'main',SchoolSection:'Secondary',Department:'ICT',Status};
+      for (const extra of users) {
+        const user = {branchId:'main',schoolSectionAccess:'All',organisationEdition:edition,requisitionEditEnabled:false,...extra};
+        const access = {canViewAll:['Super Admin','Director','Admin','Management','Accounts Officer'].includes(user.assignedRole || user.role)};
+        assert.equal(staffCanAccessFinanceDocument(user,record),scopedRows([record],user,access).length===1,JSON.stringify({user,Status}));
+      }
+    }
+  }
+  assert.equal(staffCanAccessFinanceDocument({role:'Principal',approvalEnabled:true}, {BillNo:'B1',Department:'ICT'}),false,'requisition approval grant does not grant other departments bill access');
+});
+
+test('protected attachment GET streams only the authorized file, at all statuses, without writes', async () => {
+  const record = {ExpenseNo:'REQ-1',AttachmentUrl:'r2://dynamax-documents/private-file',Department:'ICT',BranchId:'main',SchoolSection:'Secondary'};
+  let user = {role:'Department User',department:'ICT',branchId:'main',schoolSectionAccess:'All',requisitionEditEnabled:false};
+  let recordReads=0, fileReads=0, signedIn=true;
+  const get = vm.runInNewContext(endpoint.replace(/import[\s\S]*?;\r?\n/g,'').replaceAll('export ', '')+'\nonRequestGet', {
+    ...documentAccess, URL, Response, storedDocumentResponse,
+    requireFirestoreEnv:()=>{}, requireStaffSession:async()=>{if(!signedIn)throw Object.assign(new Error('Sign in'),{status:401});return user;},
+    getDocument:async(_env,collection,id)=>{recordReads++;assert.equal(collection,'accountingExpenses');return id==='REQ-1'?record:null;},
+    getStoredDocument:async(_env,url)=>{fileReads++;assert.equal(url,record.AttachmentUrl);return {fileName:'Supporting.pdf',mimeType:'application/pdf',object:{body:'%PDF-1.7\nfixture'}};}
+  });
+  const request = mode => ({request:new Request(`https://example.test/api/finance-document?recordType=expense-requisition&recordId=REQ-1&mode=${mode}`),env:{}});
+  for (const Status of ['Submitted','Approved','Posted','Paid','Rejected']) {
+    record.Status=Status;const before=structuredClone(record);
+    for (const mode of ['view','download']) {
+      const reads=[recordReads,fileReads],res=await get(request(mode));assert.equal(res.status,200);
+      assert.equal(await res.text(),'%PDF-1.7\nfixture');assert.match(res.headers.get('Content-Disposition'),mode==='download'?/^attachment/:/^inline/);
+      assert.equal(res.headers.get('Cache-Control'),'private, no-store');
+      assert.deepEqual([recordReads,fileReads],[reads[0]+1,reads[1]+1]);assert.deepEqual(record,before);
+    }
+  }
+  user={...user,branchId:'east'};const files=fileReads;
+  assert.equal((await get(request('view'))).status,403);assert.equal(fileReads,files);
+  signedIn=false;const reads=recordReads;
+  assert.equal((await get(request('view'))).status,401);assert.equal(recordReads,reads);
 });
 
 test('finance document endpoint requires a staff session and returns hardened private files', () => {
