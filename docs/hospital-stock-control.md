@@ -1,5 +1,7 @@
 # Pharmacy expiry registers and physical stock counts
 
+The deployed Owner Demo and completed checks are recorded in [the verification report](hospital-stock-control-verification.md).
+
 Requirements: H05, H13, H14, F01, F02, F05 and F06. Web/backend increment, 30 October 2026.
 
 Open **Hospital workspace → Pharmacy stock control**, or `/hospital.html?task=stock-control`.
