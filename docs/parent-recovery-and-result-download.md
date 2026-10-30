@@ -26,3 +26,9 @@ The PDF libraries load only when requested. No server PDF service or additional 
 - Web release metadata: `dynamax-v525-parent-recovery-result-download`.
 
 No student, score, payment or family-link migration is required. No desktop installer compilation or release is included.
+
+## Production verification
+
+Source commit: `be4dd8b4baa6ce06f353a66ab1289c43af319915` on `codex/school-score-register-release`.
+
+Deployed to `https://destinychristianacademy.pages.dev` through deployment `https://eb3b186c.destinychristianacademy.pages.dev`. Eight read-only/invalid-action checks verified the release marker, fingerprint icon, recovery page with no-store headers, parent recovery link, exact source content for the download helper and PDF library, and recovery endpoint availability. The endpoint check supplied an unsupported action, so it requested no email and changed no account. Live inbox delivery was not tested.
