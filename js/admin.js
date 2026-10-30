@@ -13470,7 +13470,12 @@ function academicStudentAllocationCandidates(sessionId, termId, classId) {
   if (!schoolClass || !sessionId || !termId) {
     return { schoolClass, students: [], candidates: [], assignedCount: 0, unavailableCount: 0 };
   }
-  const students = (academicManagementData?.students || []).filter((student) => {
+  const teacherOnly = academicManagementData?.permissions?.canAllocateClassStudents === true
+    && !academicManagementData?.permissions?.canManageAllocations;
+  const period = academicManagementData?.allocationPeriod;
+  const available = teacherOnly ? (period?.SessionId === sessionId && period?.TermId === termId
+    ? academicManagementData.allocationCandidates || [] : []) : academicManagementData?.students || [];
+  const students = available.filter((student) => {
     const section = clean(student.SchoolSection).toLowerCase();
     return (!section || section === academicManagementFilters.section) && academicStudentBelongsToClass(student, schoolClass);
   }).sort((left, right) => clean(left.StudentName).localeCompare(clean(right.StudentName), undefined, { sensitivity: 'base' }));
@@ -13494,6 +13499,14 @@ function academicStudentAllocationCandidates(sessionId, termId, classId) {
     assignedCount,
     unavailableCount
   };
+}
+
+function academicStudentPlacementClassrooms(data, sessionId, termId) {
+  const arms = (data.arms || []).filter(academicIsActive);
+  if (data.permissions?.canManageAllocations) return arms;
+  return arms.filter(arm => (data.teacherAllocations || []).some(row => academicIsActive(row)
+    && ['form teacher', 'assistant teacher'].includes(clean(row.AllocationRole).toLowerCase())
+    && row.SessionId === sessionId && row.TermId === termId && row.ClassId === arm.ClassId && row.ArmId === arm.ArmId));
 }
 
 const ACADEMIC_STUDENT_IMPORT_COLUMNS = [
@@ -13578,7 +13591,8 @@ function syncAcademicStudentPlacementForm(form, changedName = '') {
   if (!sessionControl || !termControl || !classControl || !armControl) return;
 
   const sessionId = clean(sessionControl.value);
-  const termRows = (academicManagementData.terms || []).filter((row) => academicIsActive(row) && row.SessionId === sessionId);
+  const termRows = (academicManagementData.terms || []).filter((row) => academicIsActive(row) && row.SessionId === sessionId
+    && (academicManagementData.permissions?.canManageAllocations || row.TermId === academicManagementFilters.termId));
   const currentTermId = clean(termControl.value);
   const termId = changedName !== 'SessionId' && academicFind(termRows, currentTermId)
     ? currentTermId
@@ -13590,7 +13604,8 @@ function syncAcademicStudentPlacementForm(form, changedName = '') {
     && (!academicManagementFilters.section || clean(row.SchoolSection).toLowerCase() === academicManagementFilters.section));
   if (!academicFind(classRows, classId)) classControl.value = '';
   const selectedClassId = clean(classControl.value);
-  const armRows = (academicManagementData.arms || []).filter((row) => academicIsActive(row) && row.ClassId === selectedClassId);
+  const armRows = academicStudentPlacementClassrooms(academicManagementData, sessionId, termId)
+    .filter((row) => row.ClassId === selectedClassId);
   const currentArmId = clean(armControl.value);
   const armId = changedName !== 'ClassId' && academicFind(armRows, currentArmId) ? currentArmId : '';
   armControl.innerHTML = academicSelectOptions(armRows, armId, (row) => row.Name, selectedClassId ? 'Choose arm' : 'Choose class first');
@@ -14837,13 +14852,15 @@ function academicCurrentMembershipRegisterRows(rows = []) {
 
 function academicStudentWorkspace(data, rows) {
   const canManage = data.permissions?.canManageAllocations === true;
+  const canAllocate = canManage || data.permissions?.canAllocateClassStudents === true;
+  const teacherOnly = canAllocate && !canManage;
   const learner = academicLearnerTerms();
   const membershipRegister = learner.singular === 'pupil' ? 'Pupil Class & Subject Memberships' : 'Student Class & Subject Memberships';
   const movementRegister = learner.singular === 'pupil' ? 'Pupil Movement History' : 'Student Movement History';
-  const sessions = rows.sessions.filter(academicIsActive);
+  const sessions = rows.sessions.filter(row => academicIsActive(row) && (!teacherOnly || row.SessionId === academicManagementFilters.sessionId));
   const terms = (data.terms || []).filter((row) => academicIsActive(row) && (!academicManagementFilters.sessionId || row.SessionId === academicManagementFilters.sessionId));
-  const classes = rows.classes.filter(academicIsActive);
-  const arms = rows.arms.filter(academicIsActive);
+  const arms = academicStudentPlacementClassrooms(data, academicManagementFilters.sessionId, academicManagementFilters.termId);
+  const classes = rows.classes.filter(row => academicIsActive(row) && (!teacherOnly || arms.some(arm => arm.ClassId === row.ClassId)));
   const departments = rows.departments.filter(academicIsActive);
   const movableMemberships = rows.studentMemberships.filter((row) => academicIsActive(row) || clean(row.Status).toLowerCase() === 'withdrawn');
   const periodFields = `
@@ -14855,12 +14872,12 @@ function academicStudentWorkspace(data, rows) {
     ${academicManagementFilters.section === 'secondary' ? '<p class="muted">Senior subjects follow the destination classroom’s department. For Mixed departments, choose each student’s subjects in Student subjects.</p>' : ''}`;
   const draftSessionId = clean(academicFind(sessions, academicStudentAllocationDraft.sessionId)?.SessionId
     || academicFind(sessions, academicManagementFilters.sessionId)?.SessionId);
-  const bulkTerms = (data.terms || []).filter((row) => academicIsActive(row) && row.SessionId === draftSessionId);
+  const bulkTerms = (data.terms || []).filter((row) => academicIsActive(row) && row.SessionId === draftSessionId && (!teacherOnly || row.TermId === academicManagementFilters.termId));
   const draftTermId = clean(academicFind(bulkTerms, academicStudentAllocationDraft.termId)?.TermId
     || academicFind(bulkTerms, academicManagementFilters.termId)?.TermId || bulkTerms.find(academicIsActive)?.TermId);
-  const draftClassId = clean(academicFind(classes, academicStudentAllocationDraft.classId)?.ClassId);
+  const draftClassId = clean(academicFind(classes, academicStudentAllocationDraft.classId)?.ClassId || (teacherOnly ? classes[0]?.ClassId : ''));
   const bulkArms = arms.filter((row) => row.ClassId === draftClassId);
-  const draftArmId = clean(academicFind(bulkArms, academicStudentAllocationDraft.armId)?.ArmId);
+  const draftArmId = clean(academicFind(bulkArms, academicStudentAllocationDraft.armId)?.ArmId || (teacherOnly && bulkArms.length === 1 ? bulkArms[0].ArmId : ''));
   academicStudentAllocationDraft = { sessionId: draftSessionId, termId: draftTermId, classId: draftClassId, armId: draftArmId };
   const bulkPeriodFields = `
     <label>Session<select name="SessionId" required>${academicSelectOptions(sessions, draftSessionId, (row) => row.Name, 'Choose session')}</select></label>
@@ -14869,11 +14886,12 @@ function academicStudentWorkspace(data, rows) {
     <label>Class<select name="ClassId" required>${academicSelectOptions(classes, draftClassId, (row) => `${row.Name} — ${academicSchoolStageLabel(row.SchoolStage)}`, 'Choose class')}</select></label>
     <label>Arm<select name="ArmId" required${draftClassId ? '' : ' disabled'}>${academicSelectOptions(bulkArms, draftArmId, (row) => row.Name, draftClassId ? 'Choose arm' : 'Choose class first')}</select></label>
     ${academicManagementFilters.section === 'secondary' ? '<p class="muted">Senior subjects follow the classroom’s department. Mixed classrooms offer Core subjects from all departments for individual selection.</p>' : ''}`;
-  const forms = canManage ? `<div class="academic-management-editor-grid">
+  const forms = canAllocate ? `<div class="academic-management-editor-grid">
     <form class="academic-student-allocation-layout" data-academic-workflow="bulkAllocateAcademicStudents" data-academic-student-placement="bulk">
       <section class="academic-management-editor academic-student-allocation-controls">
         <div class="academic-management-editor-heading"><div><small>One or up to 100 at once</small><h3>Assign ${learner.plural} to a class arm</h3><p class="muted">Choose a class and arm to show only ${learner.plural} already in that class who remain unassigned for the selected period.</p></div></div>
         <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
+        ${teacherOnly ? `<p class="muted">Only your assigned classrooms are available. Change the academic session and term above, then load records for that period.</p>` : ''}
         ${bulkPeriodFields}
         ${bulkTargetFields}
         <label>Allocation note<input name="Reason" placeholder="New term allocation"></label>
@@ -14885,7 +14903,7 @@ function academicStudentWorkspace(data, rows) {
         ${academicCheckboxField({ name: 'StudentRefs', label: learner.singular === 'pupil' ? 'Pupils awaiting an arm' : 'Students awaiting an arm', options: [], required: true, max: 100, idPrefix: 'bulk-allocation-students', purpose: 'student-arm-candidates', help: `Choose the session, term, class and arm to display unassigned ${learner.plural}. Select one checkbox, then Shift-click another to select the range.` })}
       </section>
     </form>
-    <form class="academic-management-editor" data-academic-workflow="moveAcademicStudentMembership">
+    ${canManage ? `<form class="academic-management-editor" data-academic-workflow="moveAcademicStudentMembership">
       <div class="academic-management-editor-heading"><div><small>Audited history</small><h3>Transfer or reassign</h3><p class="muted">Move an active ${learner.singular} directly, or reassign a withdrawn ${learner.singular} to a different classroom.</p></div></div>
       <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}"><input type="hidden" name="RevisionToken">
       <label>Find ${learner.singular}<input type="search" data-academic-membership-search placeholder="Search by name, admission number or classroom" autocomplete="off"><small data-academic-membership-search-status aria-live="polite"></small></label>
@@ -14907,7 +14925,7 @@ function academicStudentWorkspace(data, rows) {
         <input type="file" accept=".csv,text/csv" data-academic-student-import-file hidden>
       </div>
       <small class="muted">Maximum 100 rows per import. StudentRef, FirstName, Surname and ClassCode are required. MiddleName, ArmCode and the remaining columns are optional. StudentRef remains the unique identity. References already registered in another branch or school section are rejected; conflicting current-term memberships must use Transfer or change.</small>
-    </form>
+    </form>` : ''}
   </div>` : `<div class="academic-view-only-note"><strong>My class registers</strong><span>${learner.Plural} and movement history shown here come only from your teaching allocations.</span></div>`;
   return `${forms}${academicArmSubjectRegister(data, rows, canManage || data.permissions?.canConfigureClassStudentSubjects === true)}${academicArchivedMembershipWorkspace(data, rows)}${table(membershipRegister, academicCurrentMembershipRegisterRows(rows.studentMemberships), [
     { label: learner.Singular, value: (row) => academicLabel(data.students, row.StudentRef, row.StudentRef) },

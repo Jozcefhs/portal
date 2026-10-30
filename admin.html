@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Organisation Staff Portal</title>
   <meta name="theme-color" content="#071b33">
-  <meta name="dynamax-web-release" content="dynamax-v523-branch-import-arm-reuse">
+  <meta name="dynamax-web-release" content="dynamax-v524-teacher-initial-allocation">
   <link rel="stylesheet" href="css/web-release.css?v=20261026">
   <script src="js/web-release.js?v=20261026" defer></script>
   <script src="js/preferences.js?v=20260812-audio-face-guidance"></script>
@@ -77,7 +77,7 @@
         <input id="staffPassword" name="password" type="password" autocomplete="current-password" required>
         <button id="staffLoginButton" type="submit">Sign In</button>
         <button id="staffPasskeyLogin" type="button" class="staff-passkey-button" hidden>
-          <span aria-hidden="true">◉</span> Sign in with biometrics
+          <span aria-hidden="true">â—‰</span> Sign in with biometrics
         </button>
         <p id="staffLoginStatus" class="status" role="status"></p>
       </form>
@@ -164,7 +164,7 @@
       <div class="staff-module-sheet">
         <header>
           <div><small>Quick access</small><h2 id="staffModuleDialogTitle">All Modules</h2></div>
-          <button type="button" id="staffModuleClose" aria-label="Close all modules">×</button>
+          <button type="button" id="staffModuleClose" aria-label="Close all modules">Ã—</button>
         </header>
         <div id="staffModuleGrid" class="staff-module-grid"></div>
       </div>
@@ -454,7 +454,7 @@
         <legend>Confirm your identity</legend>
         <label>Current password<input name="approvalPassword" type="password" autocomplete="current-password"></label>
         <div class="decision-verification-divider"><span>or</span></div>
-        <button id="financeDecisionBiometric" type="button" class="staff-passkey-button"><span aria-hidden="true">◉</span> Verify with biometric</button>
+        <button id="financeDecisionBiometric" type="button" class="staff-passkey-button"><span aria-hidden="true">â—‰</span> Verify with biometric</button>
         <p id="financeDecisionVerificationStatus" class="status" role="status"></p>
       </fieldset>
       <button id="financeDecisionSubmit" type="submit">Confirm Decision</button>
@@ -488,7 +488,7 @@
   <script src="js/history-date-range.js?v=20261025"></script>
   <script src="js/academic-result-template.js?v=20261028-result-identity-two-rows"></script>
   <script src="js/academic-workflow-status.js?v=20261028-published-arm-filter"></script>
-  <script src="js/admin.js?v=20261008-wallet-card-setup-billing-review-completion-student-maintenance-library-returns-vendor-sales-settlements-summary-ready-timetable-generator-20261009-original-pos-lookup-staff-account-search-20261010-sidebar-collapse-product-count-staff-search-default-teacher-selection-boarding-offerings-wat-timestamps-batch-items-20261011-module-tutorials-integrity-repairs-attendance-groups-procurement-clinic-usage-visible-items-delivery-email-payment-corrections-audit-journal-layout-fee-summary-20261013-academic-register-hotel-self-service-20261014-audit-language-workspace-loads-academic-serial-search-autoselect-classroom-curriculum-20261015-controlled-subject-changes-fees-club-register-approval-settings-cbt-transfers-action-results-20261016-signed-clinic-referrals-photo-audit-tuck-shop-mobile-student-lookup-vendor-student-lookup-admission-year-intake-billing-credit-review-missing-only-profile-recheck-subject-reselection-staff-security-history-growing-history-attendance-reviewed-obsolete-charges-20261017-ict-role-vendor-access-junior-cbt-20261018-web-parity-20261023-score-sources-class-reactivation-pinned-student-subject-menu-web-ict-academic-access-idle-session-profile-membership-transfer-20261024-admission-cycles-student-status-archived-memberships-empty-classrooms-20261026-scorebook-lazy-opening-audit-labels-20261026-studies-office-audit-preview-test-reviews-visible-approvals-shared-report-results-readiness-fast-calculation-batch-results-20261027-classroom-score-review-super-admin-navigation-role-access-academic-summary-register-opening-visible-controls-classroom-register-independent-results-arm-transfer-data-visible-score-refresh-result-report-details-current-staff-login-preview-status-colors-workflow-status-filters-assistant-classroom-access-staff-meetings-branch-wide-arm-counts-duplicate-score-resolution-published-arm-filter-academic-toolbar-mobile"></script>
+  <script src="js/admin.js?v=20261008-wallet-card-setup-billing-review-completion-student-maintenance-library-returns-vendor-sales-settlements-summary-ready-timetable-generator-20261009-original-pos-lookup-staff-account-search-20261010-sidebar-collapse-product-count-staff-search-default-teacher-selection-boarding-offerings-wat-timestamps-batch-items-20261011-module-tutorials-integrity-repairs-attendance-groups-procurement-clinic-usage-visible-items-delivery-email-payment-corrections-audit-journal-layout-fee-summary-20261013-academic-register-hotel-self-service-20261014-audit-language-workspace-loads-academic-serial-search-autoselect-classroom-curriculum-20261015-controlled-subject-changes-fees-club-register-approval-settings-cbt-transfers-action-results-20261016-signed-clinic-referrals-photo-audit-tuck-shop-mobile-student-lookup-vendor-student-lookup-admission-year-intake-billing-credit-review-missing-only-profile-recheck-subject-reselection-staff-security-history-growing-history-attendance-reviewed-obsolete-charges-20261017-ict-role-vendor-access-junior-cbt-20261018-web-parity-20261023-score-sources-class-reactivation-pinned-student-subject-menu-web-ict-academic-access-idle-session-profile-membership-transfer-20261024-admission-cycles-student-status-archived-memberships-empty-classrooms-20261026-scorebook-lazy-opening-audit-labels-20261026-studies-office-audit-preview-test-reviews-visible-approvals-shared-report-results-readiness-fast-calculation-batch-results-20261027-classroom-score-review-super-admin-navigation-role-access-academic-summary-register-opening-visible-controls-classroom-register-independent-results-arm-transfer-data-visible-score-refresh-result-report-details-current-staff-login-preview-status-colors-workflow-status-filters-assistant-classroom-access-staff-meetings-branch-wide-arm-counts-duplicate-score-resolution-published-arm-filter-academic-toolbar-mobile-20261030-teacher-initial-allocation"></script>
   <script src="js/web-push.js?v=20260927-spoken-alerts"></script>
   <script src="js/spoken-notifications.js?v=20260927-spoken-alerts"></script>
   <script src="js/notifications.js?v=20260927-spoken-alerts-wat-timestamps"></script>
