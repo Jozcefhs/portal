@@ -26,7 +26,7 @@ test('parent passwords use a salted hash and remain case-sensitive', async () =>
 });
 
 test('parent session survives a new request without exposing a password', async () => {
-  const token = await createParentSession(env, 'Parent@Example.com');
+  const token = await createParentSession(env, 'Parent@Example.com', {getCredential:async()=>null});
   const cookie = parentSessionCookie(token);
   assert.match(cookie, /__Host-digc_parent_session=/);
   assert.match(cookie, /HttpOnly/);
@@ -37,7 +37,7 @@ test('parent session survives a new request without exposing a password', async 
   const request = new Request('https://school.example/api/parent-dashboard', {
     headers: { Cookie: cookie.split(';', 1)[0] }
   });
-  assert.deepEqual(await readParentSession(env, request), { email: 'parent@example.com' });
+  assert.deepEqual(await readParentSession(env, request, {getCredential:async()=>null}), { email: 'parent@example.com' });
 
   const [payload, signature] = token.split('.');
   const tampered = `${payload}.${signature[0] === 'a' ? 'b' : 'a'}${signature.slice(1)}`;

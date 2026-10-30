@@ -36,6 +36,8 @@ const EXCLUDED_ROOT_COLLECTIONS = new Set([
   'staffLoginAttempts',
   'staffPasswordRecovery',
   'staffPasswordRecoveryLimits',
+  'parentPasswordRecovery',
+  'parentPasswordRecoveryLimits',
   'staffCredentialRevocations',
   'staffMfaChallenges',
   'staffMfaProfiles',

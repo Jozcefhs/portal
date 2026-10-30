@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Organisation Staff Portal</title>
   <meta name="theme-color" content="#071b33">
-  <meta name="dynamax-web-release" content="dynamax-v524-teacher-initial-allocation">
+  <meta name="dynamax-web-release" content="dynamax-v525-parent-recovery-result-download">
   <link rel="stylesheet" href="css/web-release.css?v=20261026">
   <script src="js/web-release.js?v=20261026" defer></script>
   <script src="js/preferences.js?v=20260812-audio-face-guidance"></script>
@@ -77,7 +77,7 @@
         <input id="staffPassword" name="password" type="password" autocomplete="current-password" required>
         <button id="staffLoginButton" type="submit">Sign In</button>
         <button id="staffPasskeyLogin" type="button" class="staff-passkey-button" hidden>
-          <span aria-hidden="true">â—‰</span> Sign in with biometrics
+          <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 8a5 5 0 0 1 10 0v4c0 4-1 7-3 9M4 12V8a8 8 0 0 1 16 0v4M10 21c2-4 2-7 2-12M7 12c0 3-1 6-2 8M17 15c0 2-1 4-2 6"/></svg> Sign in with biometrics
         </button>
         <p id="staffLoginStatus" class="status" role="status"></p>
       </form>
@@ -164,7 +164,7 @@
       <div class="staff-module-sheet">
         <header>
           <div><small>Quick access</small><h2 id="staffModuleDialogTitle">All Modules</h2></div>
-          <button type="button" id="staffModuleClose" aria-label="Close all modules">Ã—</button>
+          <button type="button" id="staffModuleClose" aria-label="Close all modules">&#215;</button>
         </header>
         <div id="staffModuleGrid" class="staff-module-grid"></div>
       </div>
@@ -454,7 +454,7 @@
         <legend>Confirm your identity</legend>
         <label>Current password<input name="approvalPassword" type="password" autocomplete="current-password"></label>
         <div class="decision-verification-divider"><span>or</span></div>
-        <button id="financeDecisionBiometric" type="button" class="staff-passkey-button"><span aria-hidden="true">â—‰</span> Verify with biometric</button>
+        <button id="financeDecisionBiometric" type="button" class="staff-passkey-button"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 8a5 5 0 0 1 10 0v4c0 4-1 7-3 9M4 12V8a8 8 0 0 1 16 0v4M10 21c2-4 2-7 2-12M7 12c0 3-1 6-2 8M17 15c0 2-1 4-2 6"/></svg> Verify with biometric</button>
         <p id="financeDecisionVerificationStatus" class="status" role="status"></p>
       </fieldset>
       <button id="financeDecisionSubmit" type="submit">Confirm Decision</button>

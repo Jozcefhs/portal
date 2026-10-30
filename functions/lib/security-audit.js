@@ -397,7 +397,7 @@ export function shouldPersistSecurityAudit(prepared = {}, actor = null, status =
   if (method === 'OPTIONS' || method === 'HEAD') return false;
   // Recovery success is atomically audited by the reset transaction. Requests
   // deliberately have a generic result and must not imply an email was sent.
-  if (path === '/api/staff-password-recovery') return false;
+  if (['/api/staff-password-recovery','/api/parent-password-recovery'].includes(path)) return false;
   // Successful workspace refreshes are reads, not academic changes. Historical
   // entries remain visible; failed, denied and unconfirmed loads stay auditable.
   if (isAcademicWorkspaceLoad(prepared.action, path)) return Number(status) !== 200;

@@ -66,7 +66,8 @@
         <div class="grid two">
           <div>
             <label for="parentEmail">Parent Email <span class="required">*</span></label>
-            <input id="parentEmail" name="username" type="email" autocomplete="username" required>
+            <input id="parentEmail" name="username" type="email" autocomplete="username" placeholder="parent@example.com" aria-describedby="parentEmailHint" required>
+            <small id="parentEmailHint" class="muted">Use the parent's email address registered with the school. A student admission number is not an email address.</small>
           </div>
           <div>
             <label for="verificationCode">Parent Password / Verification Code <span class="required">*</span></label>
@@ -75,6 +76,7 @@
           </div>
         </div>
         <button type="submit" id="loadDashboardBtn">Open Dashboard</button>
+        <p><a href="parent-password-recovery.html">Forgot password?</a></p>
         <button type="button" id="openParentOnboardingBtn" class="secondary">Complete an imported student profile</button>
         <p id="parentStatus" class="status"></p>
       </form>
@@ -386,6 +388,7 @@
   <script src="js/financial-values.js?v=20260803-finance-commas"></script>
   <script src="js/payment-methods.js?v=20260809-direct-transfer-sharp-text"></script>
   <script src="js/academic-result-template.js?v=20261028-result-identity-two-rows"></script>
-  <script src="js/parent-dashboard.js?v=20261008-stock-dropdown-wat-timestamps-transfer-rejections-payment-corrections-billing-credit-review-20261023-configurable-entrance-subjects-shared-report-focused-results-result-report-details"></script>
+  <script src="js/academic-result-download.js?v=20261030"></script>
+  <script src="js/parent-dashboard.js?v=20261030-parent-recovery-result-download"></script>
 </body>
 </html>

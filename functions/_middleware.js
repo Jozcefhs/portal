@@ -4,6 +4,7 @@ import { persistRequestSecurityAudit, prepareSecurityAudit } from './lib/securit
 import { secureExamAdminPage } from './lib/exam-admin-page.js';
 
 const LOW_READ_IDENTITY_PATHS = new Set([
+  '/api/parent-password-recovery',
   '/api/staff-password-recovery',
   '/api/staff-session',
   '/api/staff-passkey',
@@ -33,6 +34,7 @@ const PLATFORM_SUBSCRIPTION_PROXY_PATHS = new Set([
 ]);
 
 const SUBSCRIPTION_RECOVERY_PATHS = new Set([
+  '/api/parent-password-recovery',
   '/api/staff-password-recovery',
   '/api/admin',
   '/api/staff-session',

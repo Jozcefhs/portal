@@ -107,7 +107,7 @@ function cookieValue(request, name) {
   return '';
 }
 
-function parentCredentialId(email) {
+export function parentCredentialId(email) {
   return lower(email).replace(/[\/\\?#\[\]]/g, '-').slice(0, 240);
 }
 
@@ -118,6 +118,7 @@ export async function hashParentPassword(password, iterations = PASSWORD_ITERATI
     error.status = 400;
     throw error;
   }
+  if(value.length>128)throw Object.assign(new Error('Password must be no more than 128 characters.'),{status:400});
   const salt = bytesToHex(crypto.getRandomValues(new Uint8Array(16)));
   const material = await crypto.subtle.importKey('raw', encoder.encode(value), 'PBKDF2', false, ['deriveBits']);
   const bits = await crypto.subtle.deriveBits({
@@ -184,6 +185,7 @@ export async function saveParentPassword(env, email, password) {
     Email: normalizedEmail,
     ...passwordFields,
     PasswordChangedAt: now,
+    SessionEpoch: crypto.randomUUID(),
     UpdatedAt: now,
     CreatedAt: clean(existing?.CreatedAt) || now
   };
@@ -191,13 +193,18 @@ export async function saveParentPassword(env, email, password) {
   return record;
 }
 
-export async function createParentSession(env, email) {
+export async function createParentSession(env, email, options = {}) {
   const normalizedEmail = lower(email);
   if (!normalizedEmail) throw new Error('Parent email is required for a session.');
   const now = Math.floor(Date.now() / 1000);
+  const credential = await (options.getCredential || getParentCredential)(env, normalizedEmail);
+  if(options.authenticatedAfter&&Date.parse(credential?.PasswordChangedAt)>options.authenticatedAfter){
+    throw Object.assign(new Error('Your password changed while signing in. Sign in again with the current password.'),{status:401});
+  }
   const payload = {
     email: normalizedEmail,
     purpose: 'parent-session',
+    epoch: clean(credential?.SessionEpoch),
     iat: now,
     exp: now + SESSION_SECONDS
   };
@@ -232,11 +239,14 @@ export async function readParentPasswordSetupToken(env, token) {
   return email && admissionNo ? { email, admissionNo } : null;
 }
 
-export async function readParentSession(env, request) {
+export async function readParentSession(env, request, options = {}) {
   const payload = await verifiedSignedPayload(env, cookieValue(request, SESSION_COOKIE));
   if (!payload || payload.purpose !== 'parent-session') return null;
   if (!payload.exp || Number(payload.exp) <= Math.floor(Date.now() / 1000)) return null;
   const email = lower(payload.email);
+  if(!email)return null;
+  const credential = await (options.getCredential || getParentCredential)(env, email);
+  if(clean(payload.epoch)!==clean(credential?.SessionEpoch))return null;
   return email ? { email } : null;
 }
 

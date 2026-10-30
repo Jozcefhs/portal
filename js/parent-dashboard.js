@@ -1878,9 +1878,25 @@ function renderAcademicResults(child) {
     printButton.textContent = 'Print result';
     printButton.addEventListener('click', () => printAcademicResult(child, record, printButton));
     actions.appendChild(printButton);
+    const downloadButton=document.createElement('button');
+    downloadButton.type='button';downloadButton.textContent='Download PDF';
+    downloadButton.addEventListener('click',()=>downloadAcademicResult(child,record,downloadButton));
+    actions.appendChild(downloadButton);
     item.appendChild(actions);
     academicTermResults.appendChild(item);
   });
+}
+
+async function downloadAcademicResult(child,record,button){
+  if(button.disabled)return;const label=button.textContent;setActionLoading(button,true,'Preparing PDF...',label);
+  try{
+    const data=await parentResultRequest({action:'getAcademicResultForPrint',accountRef:child.AccountRef,sourceType:child.SourceType||'Student',scopePath:child.__scopePath||'',resultId:record.ResultId});
+    if(!data.academicResult||data.academicResult.Access?.Allowed!==true)throw Error('This result is not currently available. Refresh results and try again.');
+    const passportDataUrl=await academicResultPassportDataUrl(child),markup=academicResultPrintMarkup(child,data.academicResult,{profile:data.reportProfile||{},passportDataUrl});
+    const filename=[child.DisplayName||child.AccountRef||'Student',data.academicResult.AcademicSession,data.academicResult.Term,data.academicResult.ResultType||'Result'].filter(Boolean).join(' - ')+'.pdf';
+    await window.DynamaxAcademicResultDownload.download(markup,filename);
+  }catch(error){await window.DynamaxDialogs.alert({title:'Result download not completed',tone:'danger',message:error.message||'The result could not be downloaded. Please try again.'});}
+  finally{setActionLoading(button,false,label,label);}
 }
 
 function renderAcademicSchedule(child) {

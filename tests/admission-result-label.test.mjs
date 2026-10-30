@@ -18,6 +18,6 @@ test('entrance results use the combined label without changing the saved score f
 });
 
 test('parent dashboard refreshes cached assets for the updated admissions label', () => {
-  assert.match(read('../parent-dashboard.html'), /parent-dashboard\.js\?v=[^"\s]+-20261023-configurable-entrance-subjects/);
+  assert.match(read('../parent-dashboard.html'), /parent-dashboard\.js\?v=20261030-parent-recovery-result-download/);
   assertServiceWorkerCacheVersion(read('../sw.js'), 450);
 });

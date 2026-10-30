@@ -36,6 +36,10 @@
   Cache-Control: no-store
   Referrer-Policy: no-referrer
 
+/parent-password-recovery*
+  Cache-Control: no-store
+  Referrer-Policy: no-referrer
+
 /exam*
   Cache-Control: no-store
   Referrer-Policy: no-referrer

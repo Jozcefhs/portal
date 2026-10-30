@@ -2630,6 +2630,7 @@ function parentResponseHeaders(cookie = '') {
 }
 
 export async function onRequestPost(context) {
+  const authenticationStartedAt=Date.now();
   try {
     const { request, env } = context;
     const body = await readJsonBody(request, { maxBytes: 256 * 1024 });
@@ -2721,7 +2722,7 @@ export async function onRequestPost(context) {
     }
     const shouldIssueSession = (action === 'getDashboard' || action === 'changeParentPassword') && !data.passwordChangeRequired;
     const cookie = shouldIssueSession
-      ? parentSessionCookie(await createParentSession(env, data.parentEmail || body.email))
+      ? parentSessionCookie(await createParentSession(env, data.parentEmail || body.email, action==='getDashboard'?{authenticatedAfter:authenticationStartedAt}:{}))
       : '';
     return Response.json(data, {
       headers: parentResponseHeaders(cookie)

@@ -303,7 +303,7 @@ test('product and category content remains escaped in the new storefront', () =>
 
 test('responsive cards, pagination, cart and order history use scoped accessible markup', () => {
   assert.match(html, /css\/parent-store\.css\?v=20261008-stock-dropdown/);
-  assert.match(html, /js\/parent-dashboard\.js\?v=20261008-stock-dropdown/);
+  assert.match(html, /js\/parent-dashboard\.js\?v=20261030-parent-recovery-result-download/);
   assert.match(html, /id="storePagination"[^>]*aria-label="Store pages" hidden/);
   assert.match(html, /<details id="storeCartPanel"[^>]*open>/);
   assert.match(html, /<details class="parent-store-orders">/);

@@ -13,7 +13,7 @@ const pageStyleVersions = new Map([
   ['register-organization.html', '20260918-neutral-plan-cards']
 ]);
 const adminScriptVersion = '20261008-wallet-card-setup-billing-review-completion';
-const parentScriptVersion = '20261008-stock-dropdown';
+const parentScriptVersion = '20261030-parent-recovery-result-download';
 const notificationScriptVersion = '20260927-spoken-alerts';
 const notificationStyleVersion = '20260804-read-efficiency';
 const pageNames = [
