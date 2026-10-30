@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const f = fixture(), root = resolve(import.meta.dirname, '..'), output = resolve(root, 'tmp/hospital-ui');
 await mkdir(output, { recursive: true });
-const assets = new Set(['/hospital.html','/css/hospital.css','/js/hospital.js','/js/hospital-appointments.js','/js/hospital-referrals.js','/js/staff-idle-session.js']);
+const assets = new Set(['/hospital.html','/css/hospital.css','/js/hospital-stock-control.js','/js/hospital.js','/js/hospital-appointments.js','/js/hospital-referrals.js','/js/staff-idle-session.js']);
 assets.add('/css/app-dialogs.css'); assets.add('/js/app-dialogs.js');
 assets.add('/js/hospital-clinical.js');
 assets.add('/js/hospital-medicines.js'); assets.add('/js/hospital-procurement.js');assets.add('/js/hospital-orders.js'); assets.add('/js/hospital-billing.js'); assets.add('/js/hospital-funds.js'); assets.add('/js/hospital-corporate.js');assets.add('/js/hospital-inpatients.js');assets.add('/js/hospital-nursing.js');assets.add('/js/hospital-theatre.js');

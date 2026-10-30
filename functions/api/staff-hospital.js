@@ -14,6 +14,7 @@ export async function onRequestPost({ request, env, data }) {
       'investigationCatalog','saveInvestigationCatalogItem','investigationCatalogHistory',
       'pharmacySuppliers','savePharmacySupplier','savePharmacyPurchase','pharmacyPurchase','transitionPharmacyPurchase','receivePharmacyPurchase','returnPharmacyPurchase','procurementRegister','procurementHistory','saveSupplierBill','supplierBill','transitionSupplierBill','recordSupplierPayment','reverseSupplierPayment','creditSupplierBill',
       'recordSupplierRemittance','supplierRemittance',
+      'stockExpiryRegister','stockBatchForCount','stockCountRegister','stockCountDetails','stockCountHistory','submitStockCount','reviewStockCount',
       'medicineCatalog','saveMedicineCatalogItem','medicineCatalogHistory',
       'referralContext','signReferral','referralRegister','referralDetails','updateReferral','referralHistory',
       'appointmentSchedules','saveAppointmentSchedule','saveAppointment','appointmentRegister','appointmentDetails','closeAppointment','checkInAppointment','appointmentHistory',

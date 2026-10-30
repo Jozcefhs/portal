@@ -36,3 +36,7 @@ textarea{font:inherit;width:100%;min-width:0;padding:10px;border:1px solid #bccd
   #pcRemittanceAllocations td:nth-child(3)::before{content:'Pay now (₦)';display:block;color:#52687e;font-size:.85em;margin-bottom:.3rem}
   #pcRemittanceAllocations input[type=number]{width:100%;min-width:0;max-width:100%}
 }
+
+.stock-state{display:inline-block;padding:.2rem .5rem;border-radius:.3rem;font-weight:700;font-size:.85rem}.stock-pending{background:#fff2cc;color:#704800}.stock-approved{background:#e1f5ed;color:#075e4c}.stock-expired,.stock-rejected{background:#fde8eb;color:#9b1738}.stock-cancelled{background:#e9edf3;color:#42536a}#scPreview{width:min(960px,94vw);max-height:90vh;overflow:auto}#scPreviewBody{overflow:auto}#scCountSummary{overflow-x:auto}
+
+@media screen and (max-width:650px){#scExpiryRows table,#scCountsRows table{min-width:0}#scExpiryRows thead,#scCountsRows thead{display:none}#scExpiryRows tr,#scCountsRows tr{display:block;border:1px solid #cbd9e5;border-radius:8px;margin-bottom:12px;padding:8px}#scExpiryRows td,#scCountsRows td{display:block;border:0;padding:7px;overflow-wrap:anywhere}#scExpiryRows td::before,#scCountsRows td::before{content:attr(data-label);display:block;font-size:.72rem;color:#526a79;font-weight:700;margin-bottom:3px}#stockControl button{max-width:100%}#scCountForm>button{margin:4px 4px 4px 0}}

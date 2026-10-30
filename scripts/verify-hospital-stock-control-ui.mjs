@@ -1,0 +1,37 @@
+import assert from 'node:assert/strict';
+import {createServer} from 'node:http';
+import {readFile,mkdir} from 'node:fs/promises';
+import {createRequire} from 'node:module';
+import {resolve} from 'node:path';
+import {stockFixture,stockOwner,actors,env,createHospitalService} from '../tests/helpers/hospital-stock-control-fixture.mjs';
+const require=createRequire(import.meta.url),{chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
+const root=resolve(import.meta.dirname,'..'),output=resolve(root,'tmp/hospital-stock-control-ui');await mkdir(output,{recursive:true});
+const f=await stockFixture(),users={pharmacist:actors.pharmacist,owner:stockOwner,nurse:{...actors.doctor,role:'Nurse'}},calls=[];let role='pharmacist',rejectNext=false;
+const html=await readFile(resolve(root,'hospital.html'),'utf8'),assets=new Set(['/hospital.html',...Array.from(html.matchAll(/(?:src|href)="(\/(?:js|css)\/[^"?]+)(?:[^" ]*)"/g),m=>m[1])]);
+const server=createServer(async(req,res)=>{try{
+  const path=new URL(req.url,'http://localhost').pathname,user={...users[role],assignedBranchIds:['main','north'],activeBranchId:req.headers['x-dynamax-branch']||'main'};
+  if(path==='/api/staff-session'){res.setHeader('Content-Type','application/json');res.end(JSON.stringify({ok:true,authenticated:true,user,session:{id:'stock-fixture',lastActivityAt:Date.now(),expiresAt:Date.now()+7200000,serverNow:Date.now()}}));return;}
+  if(path==='/api/staff-hospital'){let raw='';for await(const chunk of req)raw+=chunk;const body=JSON.parse(raw);calls.push(body.action);if(body.action==='submitStockCount'&&rejectNext){rejectNext=false;throw Error('Synthetic connection failure');}const data=await createHospitalService(env,user,f.db)[body.action](body);res.setHeader('Content-Type','application/json');res.end(JSON.stringify(data));return;}
+  if(!assets.has(path)){res.writeHead(404);res.end();return;}res.setHeader('Content-Type',path.endsWith('.js')?'text/javascript':path.endsWith('.css')?'text/css':'text/html');res.end(await readFile(resolve(root,'.'+path)));
+}catch(error){res.writeHead(error.status||500,{'Content-Type':'application/json'});res.end(JSON.stringify({ok:false,message:error.message}));}});
+await new Promise(r=>server.listen(0,'127.0.0.1',r));let browser;
+try{
+  browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL||'chrome',headless:true});const page=await browser.newPage({viewport:{width:1366,height:960}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
+  const done=async text=>{try{await page.locator('#status').filter({hasText:text}).waitFor();await page.waitForFunction(()=>!document.querySelector('#refresh').disabled);}catch(error){console.error(await page.locator('#status').textContent());await page.screenshot({path:resolve(output,'failure.png'),fullPage:true});throw error;}};
+  const fill=async(form,data)=>{for(const [k,v]of Object.entries(data))await page.locator(`#${form} [name="${k}"]`).fill(String(v));};
+  const submit=async form=>page.locator(`#${form} button:not([type=button])`).click();
+  const login=async who=>{role=who;const q=f.queries.length;await page.goto(`http://127.0.0.1:${server.address().port}/hospital.html?task=stock-control`);await done('Hospital reception ready');assert.equal(f.queries.length,q);};
+  const counts=async()=>{await fill('scCountsFilter',{fromDate:'2026-10-26',toDate:'2026-10-26'});await submit('scCountsFilter');await done('Selected stock count period loaded');};
+  await login('pharmacist');await fill('scExpiryFilter',{fromDate:'2027-12-01',toDate:'2027-12-31'});await submit('scExpiryFilter');await done('Selected expiry period loaded');const q=f.queries.length;await submit('scExpiryFilter');await done('Selected expiry period loaded');assert.equal(f.queries.length,q,'repeat load reuses expiry snapshot');
+  await page.locator('[data-sc-batch]').click();await done('Current batch loaded');await fill('scCountForm',{Reference:'COUNT-UI-001',CountedAt:'2026-10-26T13:00',OnHand:'18',Quarantined:'0',Reason:'Synthetic physical count evidence'});await page.locator('#scCountForm [name=Confirmed]').check();rejectNext=true;await submit('scCountForm');await done('Synthetic connection failure');assert.equal(await page.locator('#scCountForm [name=OnHand]').inputValue(),'18');assert.equal(f.batch().OnHand,20);
+  await page.setViewportSize({width:390,height:844});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));assert.ok(await page.locator('#scCountForm input').evaluateAll(es=>es.every(e=>e.getBoundingClientRect().right<=innerWidth)));await page.screenshot({path:resolve(output,'count-mobile.png'),fullPage:true});
+  await submit('scCountForm');await done('Physical count submitted');assert.equal(f.rows('StockCounts').length,1);assert.equal(f.batch().OnHand,20);assert.deepEqual(await page.locator('#scReviewForm [name=Decision] option').allTextContents(),['Cancel']);
+  await login('owner');await counts();const before=f.queries.length;await submit('scCountsFilter');await done('Selected stock count period loaded');assert.equal(f.queries.length,before);await page.locator('[data-sc-count]').click();await done('Stock count loaded');assert.deepEqual(await page.locator('#scReviewForm [name=Decision] option').allTextContents(),['Approve','Reject']);
+  const reads=f.reads.length;await page.locator('#scDetailPrint').click();assert.match(await page.locator('#scPreviewBody').textContent(),/COUNT-UI-001/);await page.evaluate(()=>window.print=()=>window.__printed=true);await page.locator('#scPrint').click();assert.equal(await page.evaluate(()=>window.__printed),true);assert.equal(f.reads.length,reads);
+  await page.locator('#scReviewForm [name=Decision]').selectOption('Approve');await fill('scReviewForm',{Reason:'Independent count and discrepancy checked'});await page.locator('#scReviewForm [name=Confirmed]').check();await submit('scReviewForm');await done('Stock count decision saved');assert.equal(f.batch().OnHand,18);assert.equal(await page.locator('#scReviewForm').isVisible(),false);assert.match(await page.locator('#scCountSummary').textContent(),/Approved/);
+  await fill('scHistoryFilter',{fromDate:'2026-10-26',toDate:'2026-10-26'});await submit('scHistoryFilter');await done('Selected count history loaded');assert.match(await page.locator('#scHistoryRows').textContent(),/Approve physical stock count/);
+  await page.setViewportSize({width:1366,height:960});await page.screenshot({path:resolve(output,'approved-desktop.png'),fullPage:true});await page.setViewportSize({width:390,height:844});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));await page.screenshot({path:resolve(output,'approved-mobile.png'),fullPage:true});
+  await page.locator('#branch').selectOption('north');await done('Branch changed');assert.equal(await page.locator('#scCountSummary').textContent(),'');assert.equal(await page.locator('#scDetail').isVisible(),false);assert.equal(await page.locator('#scCountsRows').textContent(),'');
+  await login('nurse');assert.equal(await page.locator('[data-tab=stockControl]').isVisible(),false);assert.deepEqual(errors,[]);
+  console.log(JSON.stringify({ok:true,independentApproval:true,mobile:true,failedSaveRetained:true,cachedRead:true,printWithoutReads:true,branchCleared:true,liveRecordsChanged:false,calls:calls.length}));
+}finally{await browser?.close();await new Promise(r=>server.close(r));}

@@ -22,6 +22,7 @@ on:
       - "tests/helpers/hospital-appointments-fixture.mjs"
       - "tests/helpers/hospital-referrals-fixture.mjs"
       - "tests/helpers/hospital-procurement-fixture.mjs"
+      - "tests/helpers/hospital-stock-control-fixture.mjs"
       - "scripts/verify-hospital*.mjs"
       - ".github/workflows/hospital-readiness.yml"
   workflow_dispatch:
