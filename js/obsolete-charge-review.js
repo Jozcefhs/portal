@@ -37,7 +37,7 @@ export function obsoleteChargeTable(plans, verified = false) {
   return `<div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>Student / period</th><th>Charges to reverse</th><th>Bill before → after</th><th>Existing allocation released</th><th>Review</th></tr></thead><tbody>${plans.map(plan =>
     `<tr><td>${escaped(plan.profile?.DisplayName || '')}<br>${escaped(ref(plan))}<br>${escaped(plan.profile?.ClassName || '')} · ${escaped(plan.profile?.SchoolSection || '')}<br>${escaped(plan.profile?.AcademicSession || '')} · ${escaped(plan.profile?.Term || '')}</td>
     <td>${(plan.charges || []).map(charge => `${escaped(charge.name)} (${escaped(charge.code)}): ${money(charge.amount)}<br><small>${escaped(charge.invoiceId)}<br>${escaped(charge.reason || charge.explanation || '')}</small>`).join('<br>') || 'Not verified'}</td>
-    <td>${plan.postedTotal == null ? 'Not verified' : `${money(plan.postedTotal)} → ${money(plan.afterPostedTotal)}<br><small>${plan.expectedTotal == null ? 'Full fee comparison awaits profile completion.' : `Total of applicable fee components: ${money(plan.expectedTotal)}`}</small>${feeBreakdown(plan)}`}</td>
+    <td>${plan.postedTotal == null ? 'Not verified' : `${money(plan.postedTotal)} → ${money(plan.afterPostedTotal)}<br><small>${plan.expectedTotal == null ? 'Full fee comparison awaits profile completion.' : `Total of applicable fee components: ${money(plan.expectedTotal)}`}</small>${feeBreakdown(plan)}${(plan.replacementInvoicesToCreate || []).length ? `<p><strong>Correct charges to add: ${money(plan.replacementTotal)}</strong></p><ul>${plan.replacementInvoicesToCreate.map(row => `<li>${escaped(row.FeeName)} (${escaped(row.FeeCode)}): ${money(row.Amount)}</li>`).join('')}</ul>` : ''}`}</td>
     <td>${plan.releasedCredit == null ? 'Not verified' : money(plan.releasedCredit)}</td>
     <td>${escaped(verified && reviewedBoardingWearPlan(plan) ? 'Verified — eligible for approval' : plan.reason || 'Candidate — receipt and journal checks required')}${plan.eligibilityNote ? `<br><small>${escaped(plan.eligibilityNote)}</small>` : ''}</td></tr>`).join('')}</tbody></table></div>`;
 }
@@ -59,7 +59,7 @@ export async function openObsoleteChargeReview({ dialog, content, request, isCur
     const report = await reviewObsoleteChargeAccounts(request, (checked, total) => progress(`Checked ${checked} of ${total} profiles…`));
     if (!isCurrent()) return;
     content.innerHTML = `<h3>Incorrect school fee charge review</h3><p>${report.total} profiles checked; ${report.rows.length} accounts flagged; ${report.matched} have no obsolete charges identified. Changed or ambiguous profiles stay flagged for rechecking.</p>
-      <p>Tuition and textbook charges for a different billing category can qualify when the applicable replacement is already correctly billed. Wrong-gender uniform charges can qualify when the saved gender and fee rule prove the mismatch. Textbook/yearbook charges can qualify when a saved fee rule proves they belong to a different class, or to returning students instead of New Intake. Review the student's saved class and classifications before approving a correction. Valid fees, payments and receipts are preserved.</p>
+      <p>Tuition and textbook corrections follow the saved category and class. A verified missing replacement is posted in the same correction; explicit Full Scholarship exemptions are recognised. Wrong-gender uniform charges can qualify when the saved gender and fee rule prove the mismatch. Textbook/yearbook charges can qualify when a saved fee rule proves they belong to a different class, or to returning students instead of New Intake. Review the student's saved class and classifications before approving a correction. Valid fees, payments and receipts are preserved.</p>
       ${obsoleteChargeTable(report.rows)}${report.rows.length && !readOnly ? '<button type="button" data-prepare-obsolete>Prepare correction for all affected students</button>' : ''}<p role="status" aria-live="polite" data-obsolete-status></p>`;
     content.querySelector('[data-prepare-obsolete]')?.addEventListener('click', async event => {
       const prepareButton = event.currentTarget;
@@ -80,7 +80,7 @@ export async function openObsoleteChargeReview({ dialog, content, request, isCur
           if (post.disabled) return;
           if (!reason) { await notify('Approval reason required', 'Enter a reason before approving these corrections.', 'error'); return; }
           post.disabled = true;
-          if (!await confirm({ title: 'Approve obsolete fee charge reversals', message: `Reverse ${money(amount)} across ${eligible.length} accounts? ${blocked} blocked accounts are excluded. No payments or receipts will be deleted. Keep this review open until results are shown.`, confirmText: 'Approve and post all' })) { post.disabled = false; return; }
+          if (!await confirm({ title: 'Approve obsolete fee charge reversals', message: `Reverse ${money(amount)} across ${eligible.length} accounts, with ${money(eligible.reduce((sum, plan) => sum + (plan.replacementTotal || 0), 0))} in verified replacement charges? ${blocked} blocked accounts are excluded. No payments or receipts will be deleted. Keep this review open until results are shown.`, confirmText: 'Approve and post all' })) { post.disabled = false; return; }
           post.textContent = 'Posting reviewed corrections…';
           let posted = 0, message = '';
           try {
@@ -113,7 +113,7 @@ export async function openStudentBillingConflictReview({ dialog, content, reques
     const eligible = reviewedBoardingWearPlan(plan);
     const remaining = (plan.conflicts || []).filter(row => !eligible || !(plan.charges || []).some(charge => charge.code.toLowerCase() === row.code.toLowerCase()));
     const snapshot = JSON.stringify([plan.profile, plan.ready, plan.reason, plan.charges, plan.conflicts,
-      plan.expectedTotal, plan.postedTotal, plan.afterPostedTotal, plan.releasedCredit, plan.expectedComponents, plan.reallocations]);
+      plan.expectedTotal, plan.postedTotal, plan.afterPostedTotal, plan.releasedCredit, plan.expectedComponents, plan.reallocations, plan.replacementInvoicesToCreate]);
     const unchanged = previousReview === snapshot;
     previousReview = snapshot;
     content.innerHTML = `<h3>Resolve billing conflicts</h3>
@@ -122,7 +122,7 @@ export async function openStudentBillingConflictReview({ dialog, content, reques
       <p>A conflict means a posted invoice disagrees with the current fee setup. It can follow a class/profile change, a changed fee rule or an incorrect original charge. This comparison alone cannot identify which change caused it.</p>
       <p>First confirm that the saved class and classifications are correct. If they are wrong, close this review, correct the student profile and preview billing again. If the fee rule is wrong, correct it in fee settings. If the charge itself is wrong, review the correction below.</p>
       ${plan.charges?.length || remaining.length ? obsoleteChargeTable([plan], true) : ''}
-      ${eligible ? `<p><strong>Proposed reversal: ${money(plan.amount)}. Outstanding removed: ${money(plan.outstandingRemoved)}. Existing allocation released: ${money(plan.releasedCredit)}.</strong> Original invoices, payments and receipts remain in the audit trail. This creates no new payment or refund.</p>` : `<p role="status"><strong>${escaped(Array.isArray(plan.conflicts) && !plan.conflicts.length ? 'No conflicting posted charges remain for this period.' : plan.reason || 'No verified charge reversal is available.')}</strong> No charges can be changed from this preview. Use the billing preview to check any missing charges.</p>`}
+      ${eligible ? `<p><strong>Proposed reversal: ${money(plan.amount)}. Correct replacement charges: ${money(plan.replacementTotal || 0)}. Existing allocation released: ${money(plan.releasedCredit)}.</strong> Original invoices, payments and receipts remain in the audit trail. This creates no new payment or refund.</p>` : `<p role="status"><strong>${escaped(Array.isArray(plan.conflicts) && !plan.conflicts.length ? 'No conflicting posted charges remain for this period.' : plan.reason || 'No verified charge reversal is available.')}</strong> No charges can be changed from this preview. Use the billing preview to check any missing charges.</p>`}
       ${(plan.reallocations || []).length ? `<p><strong>Existing payment allocation to move:</strong></p><ul>${plan.reallocations.map(row => `<li>${escaped(row.name)}: ${money(row.amount)}</li>`).join('')}</ul><p>This uses existing paid money; it does not record a new payment.</p>` : ''}
       ${remaining.length ? `<details open><summary>${remaining.length} other or unresolved component(s)</summary><ul>${remaining.map(row => `<li>${escaped(row.name || row.code)} (${escaped(row.code)}): ${escaped(row.review)}. Current setup ${money(row.expected)}; posted ${money(row.invoiced)}. Invoice(s): ${(row.invoiceIds || []).map(escaped).join(', ')}.</li>`).join('')}</ul><p>Duplicate invoice references, changed amounts or missing payment evidence need a source-record correction; they cannot safely be cleared by this reversal.</p></details>` : ''}
       ${eligible && !readOnly ? '<label>Correction reason<textarea data-conflict-reason maxlength="500" required></textarea></label><button type="button" data-post-conflict>Approve this charge correction</button>' : ''}
@@ -157,7 +157,7 @@ export async function openStudentBillingConflictReview({ dialog, content, reques
       button.disabled = true;
       button.setAttribute('aria-busy', 'true');
       const recheck = content.querySelector('[data-recheck-conflict]'); recheck.disabled = true;
-      if (!await confirm({ title: 'Approve this charge correction', message: `Reverse ${money(plan.amount)} for ${plan.profile.DisplayName || accountRef} (${accountRef})? Confirm that the saved class is correct and these charges should not apply. Original payments and receipts are preserved.`, confirmText: 'Approve correction' })) {
+      if (!await confirm({ title: 'Approve this charge correction', message: `Reverse ${money(plan.amount)} and post ${money(plan.replacementTotal || 0)} in verified replacement charges for ${plan.profile.DisplayName || accountRef} (${accountRef})? Confirm that the saved class is correct and these charges should not apply. Original payments and receipts are preserved.`, confirmText: 'Approve correction' })) {
         if (isCurrent()) { button.disabled = false; button.removeAttribute('aria-busy'); recheck.disabled = false; } return;
       }
       if (!isCurrent()) return;
@@ -204,7 +204,7 @@ export async function openLoadedBillingConflictReview({ content, request, isCurr
     const selected = [...content.querySelectorAll('[data-batch-account]:checked')].map(box => eligible[Number(box.dataset.batchAccount)]);
     if (!reason || !selected.length) { await notify('Selection and reason required', 'Select at least one verified account and enter an approval reason.', 'error'); return; }
     button.disabled = true; button.setAttribute('aria-busy', 'true');
-    if (!await confirm({ title: 'Approve selected charge corrections', message: `Reverse ${money(selected.reduce((sum, plan) => sum + plan.amount, 0))} across ${selected.length} account(s)? Existing payments and receipts are preserved. Each account is rechecked before posting.`, confirmText: 'Approve selected' })) {
+    if (!await confirm({ title: 'Approve selected charge corrections', message: `Reverse ${money(selected.reduce((sum, plan) => sum + plan.amount, 0))} across ${selected.length} account(s), with ${money(selected.reduce((sum, plan) => sum + (plan.replacementTotal || 0), 0))} in verified replacement charges? Existing payments and receipts are preserved. Each account is rechecked before posting.`, confirmText: 'Approve selected' })) {
       if (isCurrent()) { button.disabled = false; button.removeAttribute('aria-busy'); } return;
     }
     if (!isCurrent()) return;

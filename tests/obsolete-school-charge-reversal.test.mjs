@@ -654,12 +654,11 @@ test('category correction removes regular tuition/textbook duplicates and reallo
 test('category proof refuses missing, duplicate, wrong-period, wrong-scope or changed replacement evidence',async()=>{
   for(const change of [
     (d,p)=>{p.BillingCategory='';},(d,p)=>{p.StudentType='';},(d,p)=>{p.EnrollmentCategory='';},
-    d=>{d.feeItems.find(r=>r.FeeCode==='TUI_1T').BillingCategory='All';},
     d=>{d.feeItems.find(r=>r.FeeCode==='TUI_1T').ClassName='Grade 10';},
     d=>{d.feeItems.find(r=>r.FeeCode==='TUI_1T').Active='NO';},
     d=>{d.feeItems.push({...d.feeItems.find(r=>r.FeeCode==='TUI_1T'),__id:'duplicate-rule'});},
     d=>{d.invoices.find(r=>r.FeeCode==='TUI_1T').Amount++;},
-    d=>{d.invoices=d.invoices.filter(r=>r.FeeCode!=='TUI_CCH');},
+    d=>{d.invoices.find(r=>r.FeeCode==='TUI_CCH').Status='Cancelled';},
     d=>{d.feeItems.find(r=>r.FeeCode==='TUI_CCH').BillingCategory='All';},
     d=>{d.feeItems.find(r=>r.FeeCode==='TUI_CCH').SchoolSection='primary';},
     d=>{d.feeItems.find(r=>r.FeeCode==='TUI_CCH').Currency='USD';},
@@ -694,4 +693,115 @@ test('lost category-correction response cannot duplicate reversals or payment al
   const h=harness({configure:categoryChargeFixture,lostResponse:true}),plan=await h.plan();
   await assert.rejects(h.post(plan.previewToken),/Response lost/);const saved=h.read();
   await assert.rejects(h.post(plan.previewToken));assert.equal(h.commits.length,1);assert.deepEqual(h.read(),saved);
+});
+
+function missingCategoryReplacement(data, profile) {
+  categoryChargeFixture(data, profile);
+  data.invoices = data.invoices.filter(row => row.FeeCode !== 'TUI_CCH');
+  data.journals = data.journals.filter(row => row.SourceId !== 'INV-TUI_CCH');
+}
+
+test('a missing category tuition replacement is created atomically with reversals and uses only existing receipt credit', async () => {
+  const h = harness({ configure: missingCategoryReplacement }), before = h.read(), plan = await h.plan();
+  assert.equal(plan.ready, true, plan.reason); assert.equal(plan.replacementTotal, 102300);
+  assert.equal(plan.replacementInvoicesToCreate.length, 1); assert.equal(plan.afterPostedTotal, 1386585);
+  const id = plan.replacementInvoicesToCreate[0].InvoiceId;
+  assert.match(id, /^INV-PROFILE-[a-f0-9]{64}$/);
+  assert.equal((await h.plan()).previewToken, plan.previewToken, 'stable preview with no writes');
+  const result = await h.post(plan.previewToken), after = h.read();
+  assert.equal(result.replacementsCreated, 1); assert.equal(result.summary.TotalDebit, 1386585);
+  assert.equal(result.summary.TotalCredit, 1385585);
+  assert.equal(after.invoices.length, before.invoices.length + 1);
+  const created = after.invoices.find(row => row.InvoiceId === id);
+  assert.equal(created.FeeCode, 'TUI_CCH'); assert.equal(created.Amount, 102300);
+  assert.equal(schoolInvoiceCreditJournalGap(normalizeInvoice(created), after.journals).missing, 0);
+  for (const key of ['payments', 'ledger', 'feeItems']) assert.deepEqual(after[key].map(withoutRevision), before[key].map(withoutRevision));
+  for (const journal of after.journals) assert.equal(journal.TotalDebit, journal.TotalCredit);
+  await assert.rejects(h.post(plan.previewToken)); assert.equal(h.commits.length, 1);
+});
+
+test('a new replacement invoice collision or lost response cannot duplicate a charge or partially reverse originals', async () => {
+  const h = harness({ configure: missingCategoryReplacement, beforeCommit: (db, writes) => {
+    const created = writes.find(row => row.collectionPath === 'invoices' && row.exists === false);
+    db.set('invoices/' + created.documentId, { __id: created.documentId, Amount: 102300 });
+  } });
+  await assert.rejects(h.post((await h.plan()).previewToken), /revision/);
+  assert.equal(h.commits.length, 0); assert.equal(h.read().invoices.find(row => row.FeeCode === 'TUI_1T').FeeChargeReversed, undefined);
+  const lost = harness({ configure: missingCategoryReplacement, lostResponse: true }), plan = await lost.plan();
+  await assert.rejects(lost.post(plan.previewToken), /lost/);
+  const saved = lost.read(); await assert.rejects(lost.post(plan.previewToken));
+  assert.deepEqual(lost.read(), saved); assert.equal(lost.commits.length, 1);
+});
+
+test('selected tuition and textbook scholarship exemptions preserve unrelated fees and every receipt', async () => {
+  const h = harness({ configure: (data, profile) => {
+    categoryChargeFixture(data, profile); profile.BillingCategory = 'Full Scholarship';
+  } });
+  const ids = ['INV-TUI_1T', 'INV-TXT_REG'], deps = { ...h.deps, invoiceIds: ids };
+  const before = h.read(), plan = await obsoleteSchoolChargeReversalPlan(h.profile,
+    await getObsoleteSchoolChargeReversalData({}, h.profile, deps), { invoiceIds: ids });
+  assert.equal(plan.ready, true, plan.reason); assert.equal(plan.charges.length, 2);
+  assert.ok(plan.charges.every(row => row.basis === 'full-scholarship')); assert.equal(plan.replacementTotal, 0);
+  await reverseObsoleteSchoolCharges({}, h.profile, plan.previewToken, actor, 'Correct the selected scholarship fees only.', deps);
+  for (const old of before.invoices.filter(row => !ids.includes(row.InvoiceId))) {
+    assert.deepEqual(withoutRevision(h.read().invoices.find(row => row.InvoiceId === old.InvoiceId)), withoutRevision(old));
+  }
+  for (const key of ['payments', 'ledger']) assert.deepEqual(h.read()[key].map(withoutRevision), before[key].map(withoutRevision));
+  assert.equal(h.commits.length, 1);
+});
+
+test('scholarship exemptions require explicit saved category, actual rule evidence and no explicit payable exception', async () => {
+  for (const change of [
+    (d,p) => { p.BillingCategory = 'Sponsored'; }, (d,p) => { p.StudentType = ''; },
+    d => { d.feeItems.find(row => row.FeeCode === 'TUI_1T').ClassName = 'Grade 12'; },
+    d => { d.feeItems.find(row => row.FeeCode === 'TUI_1T').Active = 'NO'; },
+    d => { d.feeItems.push({ ...d.feeItems.find(row => row.FeeCode === 'TUI_1T'), __id: 'duplicate' }); },
+    d => { d.feeItems.find(row => row.FeeCode === 'TUI_CCH').BillingCategory = 'Full Scholarship'; }
+  ]) {
+    const h = harness({ configure: (d,p) => { categoryChargeFixture(d,p); p.BillingCategory = 'Full Scholarship'; change(d,p); } });
+    const plan = await obsoleteSchoolChargeReversalPlan(h.profile, h.read(), { invoiceIds: ['INV-TUI_1T'] });
+    assert.equal(plan.ready, false, String(change)); assert.equal(h.commits.length, 0);
+  }
+});
+
+test('invoice selection is covered by preview token and cannot be expanded, omitted or forged when posting', async () => {
+  const h = harness({ configure: categoryChargeFixture }), ids = ['INV-TUI_1T'];
+  const plan = await obsoleteSchoolChargeReversalPlan(h.profile, h.read(), { invoiceIds: ids });
+  assert.equal(plan.ready, true, plan.reason);
+  await assert.rejects(h.post(plan.previewToken), /changed/);
+  await assert.rejects(obsoleteSchoolChargeReversalPlan(h.profile, h.read(), { invoiceIds: ['x', 'x'] }), /distinct/);
+  assert.equal((await obsoleteSchoolChargeReversalPlan(h.profile, h.read(), { invoiceIds: ['unknown'] })).ready, false);
+  assert.equal(h.commits.length, 0);
+});
+
+test('a correction cannot replace a balance snapshot belonging to another branch', async () => {
+  const h = harness({ configure: categoryChargeFixture });
+  h.db.set('accountSummaries/' + safeDocumentId(h.profile.AccountRef), { __id: safeDocumentId(h.profile.AccountRef),
+    __updateTime: 'other', AccountRef: h.profile.AccountRef, BranchId: 'area-1-primary', SchoolSection: 'primary' });
+  await assert.rejects(h.post((await h.plan()).previewToken), /another school scope/);
+  assert.equal(h.commits.length, 0);
+});
+
+test('a missing correct-class textbook is posted with the wrong-class reversal, without a new payment', async () => {
+  const h = harness({ configure: (data, profile) => {
+    classChargeFixture(data, profile, 143880);
+    data.feeItems.push({...data.feeItems[1], __id:'correct-book', FeeCode:'TXT_SNR_10', ClassName:'Grade 10', Amount:148060});
+  } });
+  const plan = await h.plan(); assert.equal(plan.ready, true, plan.reason);
+  assert.equal(plan.replacementTotal,148060);assert.equal(plan.replacementInvoicesToCreate[0].FeeCode,'TXT_SNR_10');
+  const before = h.read(), result = await h.post(plan.previewToken);
+  assert.equal(result.replacementsCreated,1);assert.equal(result.reallocatedCredit,143880);
+  assert.equal(result.summary.TotalDebit,734720);
+  for(const key of ['payments','ledger']) assert.deepEqual(h.read()[key].map(withoutRevision),before[key].map(withoutRevision));
+});
+
+test('a broad staff category price replaces a class-specific generic textbook rule in the same reviewed correction', async () => {
+  const h = harness({configure:(data,profile)=>{
+    missingCategoryReplacement(data,profile);
+    data.feeItems.find(row=>row.FeeCode==='TXT_REG').BillingCategory='All';
+    data.feeItems.find(row=>row.FeeCode==='TXT_REG').ClassName='Grade 7';
+  }}), plan=await h.plan();
+  assert.equal(plan.ready,true,plan.reason);
+  assert.ok(plan.charges.some(row=>row.code==='TXT_REG'&&row.basis==='different-billing-category'));
+  await h.post(plan.previewToken);assert.equal(h.commits.length,1);
 });

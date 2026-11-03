@@ -1383,17 +1383,18 @@ function feeBillingSpecificity(fee, app) {
   return feeFieldMatches(rules, actual || 'Regular', true) ? 2 : 0;
 }
 
-function feeOverrideKey(fee) {
+function feeOverrideKey(fee, app) {
+  // Callers pass fees already matched to this student's class and classifications.
+  // A category price covering All classes must replace the same named standard
+  // fee for one class, rather than adding a second textbook/tuition charge.
+  const period = field => ['all', '*', ''].includes(normalizeMatchText(fee[field]))
+    ? normalizeMatchText(app[field]) : normalizeMatchText(fee[field]);
   return [
+    feeBranchId(fee),
+    normalizeMatchText(fee.SchoolSection || fee.schoolSection || app.SchoolSection || app.schoolSection || ''),
     normalizeMatchText(fee.FeeName || fee.FeeCode || ''),
     normalizeMatchText(fee.FeeCategory || ''),
-    normalizeMatchText(fee.ClassName || 'All'),
-    normalizeMatchText(fee.StudentType || 'All'),
-    normalizeMatchText(fee.Gender || 'All'),
-    normalizeMatchText(fee.EnrollmentCategory || 'All'),
-    normalizeMatchText(fee.AcademicProgress || 'All'),
-    normalizeMatchText(fee.AcademicSession || 'All'),
-    normalizeMatchText(fee.Term || 'All')
+    normalizeMatchText(fee.Currency || 'NGN'), period('AcademicSession'), period('Term')
   ].join('||');
 }
 
@@ -1401,7 +1402,7 @@ export function applyBillingCategoryOverrides(fees, app) {
   const grouped = {};
   fees.forEach((fee) => {
     if (isFullScholarship(app.BillingCategory) && !feeBillingCategoryMatches(fee, app)) return;
-    const key = feeOverrideKey(fee);
+    const key = feeOverrideKey(fee, app);
     grouped[key] = grouped[key] || [];
     grouped[key].push(fee);
   });

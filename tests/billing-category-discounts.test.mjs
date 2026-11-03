@@ -38,6 +38,25 @@ test('component category override precedes one total fixed discount', () => {
   assert.deepEqual(result.map(row => row.Amount), [40000, 24000, 16000]);
   assert.deepEqual(discounted(result, { DiscountType: 'Fixed amount', DiscountValue: 20000 }), result, 'recalculation must not compound');
 });
+
+test('a staff-child price covering all classes replaces a matching class-specific textbook charge', async () => {
+  const standard = fee('BOOKS_G7', 148060, { FeeName: 'Textbooks (All Subjects)', ClassName: 'Grade 7', EnrollmentCategory: 'Returning' });
+  const special = fee('BOOKS_STAFF', 120065, { FeeName: standard.FeeName, BillingCategory: 'School Staff Child', ClassName: 'All', EnrollmentCategory: 'All', AcademicSession: 'All' });
+  assert.deepEqual(applyBillingCategoryOverrides([standard, special], account).map(row => row.FeeCode), ['BOOKS_STAFF']);
+  const preview = await buildStudentBillingPreview(account, { schoolProfile: {}, feeItems: [standard, special], invoices: [], payments: [], ledger: [], accountSummaries: [] });
+  assert.equal(preview.expectedTotal, 120065); assert.equal(preview.rows.length, 1);
+  assert.equal(preview.rows[0].code, 'BOOKS_STAFF');
+});
+
+test('category overrides keep separate branches, periods, currencies and different named components distinct', () => {
+  const original = fee('BOOKS_G7', 148060, { FeeName: 'Textbooks', ClassName: 'Grade 7' });
+  const special = fee('BOOKS_STAFF', 120065, { FeeName: 'Textbooks', BillingCategory: 'School Staff Child' });
+  for (const change of [{BranchId:'area-1-primary'}, {SchoolSection:'primary'}, {Term:'Second Term'}, {AcademicSession:'2025/2026'}, {Currency:'USD'}, {FeeName:'Cambridge Textbooks'}]) {
+    assert.equal(applyBillingCategoryOverrides([original, {...special,...change}], account).length, 2);
+  }
+  const sameRank = {...special, FeeCode:'OTHER_STAFF'};
+  assert.equal(applyBillingCategoryOverrides([original,special,sameRank],account).length,2,'ambiguous category prices remain visible for review');
+});
 test('fractional kobo allocation is exact, deterministic and capped at the fee total', () => {
   const tiny = [fee('A', .01), fee('B', .01), fee('C', .01)];
   assert.deepEqual(discounted(tiny, { DiscountValue: 50 }).map(row => row.Amount), [0, 0, .01]);

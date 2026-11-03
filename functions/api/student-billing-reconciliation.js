@@ -91,9 +91,10 @@ export async function onRequestPost({ request, env }) {
       querySchoolCollection(env, 'students', { filters: [{ field, op: '==', value: reference }], limit: 3, scope })));
     const student = billingPreviewStudent(groups.flat(), user, reference);
     if (['previewObsoleteReversal', 'applyObsoleteReversal'].includes(body.action)) {
+      const review = { invoiceIds: body.InvoiceIds ?? null };
       const result = body.action === 'applyObsoleteReversal'
-        ? await reverseObsoleteSchoolCharges(env, student, clean(body.PreviewToken), user, clean(body.Reason))
-        : await obsoleteSchoolChargeReversalPlan(student, await getObsoleteSchoolChargeReversalData(env, student));
+        ? await reverseObsoleteSchoolCharges(env, student, clean(body.PreviewToken), user, clean(body.Reason), review)
+        : await obsoleteSchoolChargeReversalPlan(student, await getObsoleteSchoolChargeReversalData(env, student, review), review);
       return Response.json(result, { headers: { 'Cache-Control': 'no-store' } });
     }
     if (['previewReversal', 'applyReversal'].includes(body.action)) {
