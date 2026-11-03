@@ -12396,6 +12396,7 @@ export async function onRequestPost(context) {
     // approved computer branch for downstream reads and writes.
     body = applyDesktopDeviceBranchScope(body, desktopAuthentication);
     const data = await routeAction(env, action, body, deploymentIdentity, new URL(request.url).origin);
+    if (context.data && data.ok && (action === 'getBillingDiscountSettings' || action === 'saveBillingDiscountSettings' && data.changed === false)) context.data.securityAuditNoChange = true;
     if (context.data && action === 'terminalPayments' && data.ok && ['settings', 'get', 'history', 'verify'].includes(body.Command)) context.data.securityAuditHandled = true;
     // Start/completion audits are committed atomically with synchronization checkpoints.
     // A continuation or replay must not create another apparent business action.

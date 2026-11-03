@@ -152,6 +152,11 @@ test('account overview and billing review share discounted totals; posted record
 });
 
 const backend = await readFile(new URL('../functions/api/backend.js', import.meta.url), 'utf8');
+test('opening or repeating discount settings does not generate another audit event', async () => {
+  const endpoint = await readFile(new URL('../functions/api/billing-discounts.js', import.meta.url), 'utf8');
+  assert.match(endpoint, /body.action === 'list' \|\| result.changed === false.*securityAuditNoChange = true/);
+  assert.match(backend, /action === 'getBillingDiscountSettings' \|\| action === 'saveBillingDiscountSettings' && data.changed === false.*securityAuditNoChange = true/);
+});
 test('invoice retry reuses discounted bills and refuses changed discounts without writes', async () => {
   const block = backend.slice(backend.indexOf('async function generateSchoolFeeInvoicesForAccount('), backend.indexOf('function ledgerDocumentId('));
   let policy = rule, feeReads = 0, policyReads = 0, counter = 0; const invoices = new Map(), writes = [];
