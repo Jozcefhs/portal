@@ -20,7 +20,8 @@ async function forwardHarborKidsPayment(bytes, signature) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-paystack-signature': signature },
     body: bytes,
-    redirect: 'error',
+    // Workers supports manual redirects; any non-200 result stays retryable.
+    redirect: 'manual',
     cache: 'no-store',
     signal: AbortSignal.timeout(10000)
   });
