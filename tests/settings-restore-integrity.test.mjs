@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import vm from 'node:vm';
 import { normalizeEntranceSubjects } from '../functions/lib/entrance-subjects.js';
+import { normalizeNameFormat } from '../functions/lib/person-name-format.js';
 
 const read = (path) => fs.readFile(new URL(`../functions/lib/${path}`, import.meta.url), 'utf8');
 const branchSource = await read('branch-profile-settings.js');
@@ -11,7 +12,7 @@ const unmodule = (source) => source.replace(/^import[\s\S]*?from ['"][^'"]+['"];
 
 function branchHarness(current, { failure = null, changeDuringSave = false } = {}) {
   const writes = [];
-  const context = vm.createContext({ Date, normalizeEntranceSubjects, safeScopeId: value => value,
+  const context = vm.createContext({ Date, normalizeEntranceSubjects, normalizeNameFormat, safeScopeId: value => value,
     getSchoolStructure: async () => ({ Branches: [{ Id: 'main', Name: 'Main' }] }),
     getDocument: async () => { if (failure) throw failure; return structuredClone(current); },
     upsertDocument: async (_env, path, id, data, condition) => {
@@ -48,6 +49,18 @@ test('R04 confirmed absence supports a create-only override; concurrent updates 
   const concurrent = branchHarness({ Values: { SchoolPhone: 'old' }, __updateTime: 'v1' }, { changeDuringSave: true });
   await assert.rejects(concurrent.context.saveBranchProfileOverrides({}, { branchId: 'main', submittedProfile: { SchoolPhone: 'new' } }), /Concurrent/);
   assert.equal(concurrent.writes.length, 0);
+});
+
+test('branch name-format saves touch only the chosen override document and preserve unrelated values', async () => {
+  const h = branchHarness({ Values: { SchoolPhone: '123', NameFormat: 'Surname, first name, middle name' }, __updateTime: 'v1' });
+  await h.context.saveBranchProfileOverrides({}, { branchId: 'main',
+    defaultProfile: { NameFormat: 'Surname, first name, middle name' },
+    submittedProfile: { NameFormat: 'First name, middle name, surname' } });
+  assert.equal(h.writes.length, 1);
+  assert.equal(h.writes[0].path, 'branchProfileOverrides');
+  assert.equal(h.writes[0].id, 'main');
+  assert.equal(h.writes[0].condition.updateTime, 'v1');
+  assert.deepEqual(JSON.parse(JSON.stringify(h.writes[0].data.Values)), { SchoolPhone: '123', NameFormat: 'First name, middle name, surname' });
 });
 
 function backupHarness(current, failure = null) {

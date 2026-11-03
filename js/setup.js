@@ -90,7 +90,7 @@ let emailProviderConnectionReady = false;
 let emailProviderSelfServiceAvailable = false;
 let emailConnectionCallbackHandled = false;
 const organisationOnlyControlIds = [
-  'organisationEdition', 'nameFormat', 'webLogoFile', 'removeWebLogo',
+  'organisationEdition', 'webLogoFile', 'removeWebLogo',
   'googleDocumentsUrl', 'subscriptionPlan', 'userLimit'
 ];
 let academicPolicyTutorialUrl = '';
@@ -948,7 +948,6 @@ function profileFromForm() {
     AdmissionSignatoryName: data.get('AdmissionSignatoryName'),
     AdmissionSignatoryTitle: data.get('AdmissionSignatoryTitle'),
     EmailGreetingTemplate: data.get('EmailGreetingTemplate'),
-    NameFormat: data.get('NameFormat'),
     PortalHeadline: data.get('PortalHeadline'),
     PortalSubheading: data.get('PortalSubheading'),
     PortalNotice: data.get('PortalNotice'),
@@ -967,6 +966,7 @@ function profileFromForm() {
     ...senderProfile
   };
   if (settingsScopeField.value === 'branch') {
+    profile.NameFormat = data.get('NameFormat');
     profile.PaystackSubaccountCode = data.get('PaystackSubaccountCode');
     if (activeSettingsEdition === 'school') profile.EntranceExamSubjects = data.get('EntranceExamSubjects');
   }
@@ -1099,6 +1099,12 @@ function updateSettingsScopeUI(profile = {}) {
     control.disabled = branchMode || id === 'organisationEdition';
     control.closest('.settings-section, .settings-field, .settings-logo-card')?.classList.toggle('settings-scope-locked', branchMode);
   });
+  const nameFormat = document.getElementById('nameFormat');
+  if (nameFormat) nameFormat.disabled = !branchMode;
+  const nameFormatHelp = document.getElementById('nameFormatHelp');
+  if (nameFormatHelp) nameFormatHelp.textContent = branchMode
+    ? `Controls name display in ${branchName}. Saved first, middle and surnames are unchanged. Other branches keep their own format.`
+    : 'Select a branch above to choose its name format. The existing format remains the fallback for branches that have not saved a preference.';
   const paystackSubaccountCode = document.getElementById('paystackSubaccountCode');
   const paystackSubaccountField = document.getElementById('paystackSubaccountField');
   const paystackSubaccountHelp = document.getElementById('paystackSubaccountHelp');
@@ -1124,8 +1130,8 @@ function updateSettingsScopeUI(profile = {}) {
   const emailProviderScopeHelp = document.getElementById('emailProviderScopeHelp');
   if (emailProviderScopeHelp) {
     emailProviderScopeHelp.textContent = branchMode
-      ? `${branchName} inherits the organisation email provider. Only its sender and reply-to identities below can be overridden here.`
-      : 'Every branch uses this provider while retaining its own sender and reply-to identities.';
+      ? `${branchName} uses the shared sending account. Reconnecting it affects every branch, so the connection is managed in organisation settings. Set this branch’s sender and reply-to identities below.`
+      : 'This is the shared sending account for every branch. Changing the provider or connected Google account affects all branches. Each branch can set its sender and reply-to identities separately.';
   }
   if (branchMode) {
     webLogoDataUrl = '';

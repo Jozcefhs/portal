@@ -7,6 +7,8 @@ import { loadFinanceSchoolProfile } from '../functions/lib/finance-school-profil
 import { getAccountsOverview } from '../functions/api/backend.js';
 import { accountingRequestBranch, accountingRowsForBranch } from '../functions/lib/accounting-branch-scope.js';
 import { ORGANIZATION_EDITIONS } from '../functions/lib/organization-config.js';
+import { branchProfilesForRecords } from '../functions/lib/branch-profile-settings.js';
+import { recordBranchId } from '../functions/lib/branch-scope.js';
 
 const adminSource = await readFile(new URL('../functions/api/admin.js', import.meta.url), 'utf8');
 const backendSource = await readFile(new URL('../functions/api/backend.js', import.meta.url), 'utf8');
@@ -39,6 +41,7 @@ function financeHarness(options = {}) {
   const reader = settingsReader(options);
   const financeQueries = [], overviewCalls = [];
   const common = {
+    branchProfilesForRecords: (env, profile, rows) => branchProfilesForRecords(env, profile, rows, reader.readDocument), recordBranchId,
     loadBillingDiscounts: async () => [],
     clean,
     feeRowsForBranch,

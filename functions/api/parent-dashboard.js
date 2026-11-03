@@ -46,7 +46,7 @@ import {
   removePushSubscription,
   savePushSubscription
 } from '../lib/firebase-messaging.js';
-import { effectiveBranchProfile } from '../lib/branch-profile-settings.js';
+import { effectiveBranchProfile, branchProfilesForRecords } from '../lib/branch-profile-settings.js';
 import { academicPolicyIssues, academicPolicyScopeChain } from '../lib/academic-policy.js';
 import { schoolCalendarDayIsOpen, schoolCalendarSummary } from '../lib/academic-school-calendar.js';
 import { loadAcademicPolicyView } from '../lib/academic-policy-store.js';
@@ -1479,7 +1479,7 @@ async function resolveParentAdmissionApplication(env, body, email, code, account
     }
   }
   if (selected && collection === 'students') {
-    const student = normalizeStudent(selected, await getSchoolProfile(env));
+    const student = normalizeStudent(selected, await getSchoolProfile(env, scopedRecordBranch(selected)));
     const emailMatches = lower(student.ParentEmail || student.Email || student.VerificationEmail) === email;
     const codeMatches = [student.ParentLoginCode, student.VerificationCode, student.LoginCode]
       .map((value) => clean(value).toUpperCase()).includes(code);
@@ -1850,8 +1850,13 @@ async function getDashboard(env, body, options = {}) {
     const codeMatch = clean(pick(app, ['VerificationCode', 'verificationCode'])).toUpperCase() === code;
     return emailMatch || codeMatch;
   });
+  const nameProfiles = await branchProfilesForRecords(env, schoolProfile, [...children, ...parentApplications]
+    .map(row => ({ ...row, BranchId: scopedRecordBranch(row) })));
+  children.forEach(child => {
+    child.DisplayName = formatPersonName(child, nameProfiles.get(scopedRecordBranch(child)) || schoolProfile, child.DisplayName);
+  });
   parentApplications
-    .map((row) => normalizeApplicationChild(row, schoolProfile))
+    .map((row) => normalizeApplicationChild(row, nameProfiles.get(scopedRecordBranch(row)) || schoolProfile))
     .filter((candidate) => candidate.AccountRef &&
       !children.some((child) => applicationMatchesChild(candidate, child)))
     .forEach((child) => {

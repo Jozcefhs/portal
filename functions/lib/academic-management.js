@@ -3710,7 +3710,7 @@ export async function bulkImportAcademicStudentMemberships(env, user = {}, input
   const [state, people, nameProfile] = await Promise.all([
     loadScopedAcademicState(env, scope, ACADEMIC_STUDENT_STATE_KEYS),
     loadPeople(env, user, scope, { staff: false }),
-    loadOrganizationNameProfile(env)
+    loadOrganizationNameProfile(env, scope.branchId)
   ]);
   const session = assertReference(findById(state.sessions, sessionId), 'The selected session is not active.');
   const term = assertReference(findById(state.terms, termId), 'The selected term is not active.');

@@ -13,6 +13,8 @@ import { loadPublishedTutorials } from '../lib/tutorial-catalog.js';
 import { withStudentProfileDefaults } from '../lib/student-profile-defaults.js';
 import { studentWalletProfile } from '../lib/student-wallet-profile.js';
 import { loadFinanceSchoolProfile } from '../lib/finance-school-profile.js';
+import { branchProfilesForRecords } from '../lib/branch-profile-settings.js';
+import { recordBranchId } from '../lib/branch-scope.js';
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -54,7 +56,7 @@ function applicationWithConfiguredName(row = {}, profile = {}) {
 function studentWithConfiguredName(row = {}, profile = {}) {
   row = withStudentProfileDefaults(row);
   row = { ...row, ...studentWalletProfile(row) };
-  const displayName = displayNameForProfile(
+  const displayName = profile === null ? clean(row.DisplayName || row.ApplicantName || row.StudentName) : displayNameForProfile(
     row,
     profile,
     row.DisplayName || row.displayName || row.ApplicantName || row.applicantName || row.StudentName || row.studentName
@@ -222,7 +224,7 @@ export async function onRequestPost(context) {
       .some((section) => shouldLoad(section));
     const schoolProfile = shouldLoad('accounts')
       ? await loadFinanceSchoolProfile(env, user.branchId)
-      : (shouldLoad('admissions') || shouldLoad('students'))
+      : shouldLoad('admissions')
         ? await getDocument(env, 'settings', 'schoolProfile').catch(() => null)
         : null;
     const financeSession = clean(schoolProfile?.CurrentAcademicSession);
@@ -305,10 +307,13 @@ export async function onRequestPost(context) {
       }
     }
     const displayInvoices = reconcileInvoiceDisplay(invoices, accountOverview && accountOverview.ok ? accountOverview.accounts : []);
-    const visibleApplications = (applications.length ? await activeAdmissionRows(env, staffScope(applications)) : [])
-      .map((row) => applicationWithConfiguredName(row, schoolProfile || {}));
-    const visibleStudents = staffScope(students)
-      .map((row) => studentWithConfiguredName(row, schoolProfile || {}));
+    const scopedApplications = applications.length ? await activeAdmissionRows(env, staffScope(applications)) : [];
+    const scopedStudents = staffScope(students);
+    const nameProfiles = await branchProfilesForRecords(env, schoolProfile || {}, scopedApplications);
+    const visibleApplications = scopedApplications
+      .map((row) => applicationWithConfiguredName(row, nameProfiles.get(recordBranchId(row)) || schoolProfile || {}));
+    const visibleStudents = scopedStudents
+      .map((row) => studentWithConfiguredName(row, null));
     const visibleFormSales = staffScope(formSales);
     const visibleClinicRecords = staffScope(clinicRecords);
     const visibleClinicMovements = staffScope(clinicMovements);

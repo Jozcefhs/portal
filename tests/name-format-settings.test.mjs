@@ -118,8 +118,8 @@ test('legacy unsplit names remain intact instead of being guessed', () => {
 });
 
 test('web and desktop student/staff reads apply the current saved profile', () => {
-  assert.match(adminSource, /studentWithConfiguredName\(row, schoolProfile \|\| \{\}\)/);
-  assert.match(backendSource, /normalizeStudent\(row, profile \|\| \{\}\)/);
+  assert.match(adminSource, /studentWithConfiguredName\(row, null\)/);
+  assert.match(backendSource, /normalizeStudent\(row, null\)/);
   assert.match(backendSource, /DisplayName: formatPersonName\(row, profile \|\| \{\}/);
   assert.match(staffSource, /listUsers\(staffRows, actor, profile \|\| \{\}\)/);
 });

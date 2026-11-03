@@ -3,6 +3,8 @@ import { deleteDocument, getDocument, listCollection, queryCollection, upsertDoc
 import { normalizeClassKey } from './class-names.js';
 import { withStudentProfileDefaults } from './student-profile-defaults.js';
 import { withStudentDisplayName } from './student-display-name.js';
+import { branchProfilesForRecords } from './branch-profile-settings.js';
+import { recordBranchId } from './branch-scope.js';
 import { saveStudentStatusWithMemberships, studentStatusChanged } from './student-academic-status.js';
 
 function clean(value) { return String(value ?? '').trim(); }
@@ -111,7 +113,9 @@ export async function listSchoolCollection(env, collection, requestedScope = nul
   const rows = groups.flatMap((rows, index) => rows
     .filter((row) => index !== 0 || legacyRowAllowed(row, scope))
     .map((row) => ({ ...row, __scopePath: uniquePaths[index] })));
-  return collection === 'students' ? rows.map((row) => withStudentDisplayName(row, nameProfile || {})) : rows;
+  if (collection !== 'students') return rows;
+  const profiles = await branchProfilesForRecords(env, nameProfile || {}, rows, getDocument);
+  return rows.map((row) => withStudentDisplayName(row, profiles.get(recordBranchId(row)) || nameProfile || {}));
 }
 
 export async function schoolCollectionPaths(env, collection, requestedScope = null) {
@@ -141,7 +145,9 @@ export async function getSchoolDocumentsById(env, collection, documentId, reques
     collection === 'students' ? getDocument(env, 'settings', 'schoolProfile').catch(() => null) : null
   ]);
   const rows = groups.filter(Boolean);
-  return collection === 'students' ? rows.map((row) => withStudentDisplayName(row, nameProfile || {})) : rows;
+  if (collection !== 'students') return rows;
+  const profiles = await branchProfilesForRecords(env, nameProfile || {}, rows, getDocument);
+  return rows.map((row) => withStudentDisplayName(row, profiles.get(recordBranchId(row)) || nameProfile || {}));
 }
 
 export async function getSchoolDocumentById(env, collection, documentId, requestedScope = null) {

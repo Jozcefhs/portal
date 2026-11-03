@@ -8,6 +8,7 @@ import {
   deriveBranchProfileOverrides,
   mergeBranchProfileSubmission, entranceProfilesForRecords
 } from '../functions/lib/branch-profile-settings.js';
+import { formatPersonName } from '../functions/lib/person-name-format.js';
 
 test('branch profiles store only differences from organisation defaults', () => {
   const defaults = {
@@ -25,6 +26,20 @@ test('branch profiles store only differences from organisation defaults', () => 
 
   assert.deepEqual(values, { SchoolEmail: 'branch@example.org' });
   assert.equal(BRANCH_PROFILE_OVERRIDE_FIELDS.includes('SubscriptionPlan'), false);
+});
+
+test('saved branch name formats are independent even when they initially match the legacy default', () => {
+  const first = 'First name, middle name, surname', surname = 'Surname, first name, middle name';
+  const defaults = { NameFormat: surname };
+  const main = deriveBranchProfileOverrides(defaults, { NameFormat: surname });
+  const garden = deriveBranchProfileOverrides(defaults, { NameFormat: first });
+  const document = Values => ({ Values, OverrideFields: Object.keys(Values) });
+  const person = Object.freeze({ FirstName: 'Ada', MiddleName: 'Grace', Surname: 'Okafor', DisplayName: 'Original saved name' });
+  assert.equal(formatPersonName(person, applyBranchProfileOverrides({ NameFormat: first }, document(main), 'main')), 'Okafor Ada Grace');
+  assert.equal(formatPersonName(person, applyBranchProfileOverrides(defaults, document(garden), 'garden')), 'Ada Grace Okafor');
+  assert.equal(applyBranchProfileOverrides(defaults, null, 'area-1').NameFormat, surname);
+  assert.equal(mergeBranchProfileSubmission(document(garden), { SchoolPhone: '123' }).NameFormat, first);
+  assert.equal(person.DisplayName, 'Original saved name');
 });
 
 test('effective branch settings preserve explicit blank overrides and inheritance metadata', () => {

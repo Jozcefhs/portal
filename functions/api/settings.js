@@ -536,7 +536,9 @@ export async function onRequestPost(context) {
       AdmissionSignatoryName: clean(incoming.AdmissionSignatoryName),
       AdmissionSignatoryTitle: clean(incoming.AdmissionSignatoryTitle),
       EmailGreetingTemplate: clean(incoming.EmailGreetingTemplate) || 'Dear Parent/Guardian,',
-      NameFormat: clean(incoming.NameFormat) || 'Surname, first name, middle name',
+      // Name format is edited through branch overrides. Preserve the legacy
+      // default so unrelated organisation saves cannot change every branch.
+      NameFormat: existing.NameFormat || 'Surname, first name, middle name',
       PortalHeadline: mergedProfileText(existing, incoming, 'PortalHeadline'),
       PortalSubheading: mergedProfileText(existing, incoming, 'PortalSubheading'),
       PortalNotice: mergedProfileText(existing, incoming, 'PortalNotice'),

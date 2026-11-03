@@ -668,7 +668,8 @@ function normalizeApplication(row, profile = {}) {
 }
 
 function normalizeStudent(row, profile = {}) {
-  const displayName = formatPersonName(row, profile, pick(row, ['displayName', 'DisplayName', 'applicantName', 'ApplicantName']));
+  const fallback = pick(row, ['displayName', 'DisplayName', 'applicantName', 'ApplicantName']);
+  const displayName = profile === null ? fallback : formatPersonName(row, profile, fallback);
   return {
     ...row,
     AdmissionNo: studentProfileValue(row, 'AdmissionNo', ['admissionNo', '__id']),
@@ -3065,7 +3066,7 @@ async function saveSchoolProfile(env, body, deploymentIdentity) {
     OrganisationExecutiveSenderEmail: mergedProfileText(existingProfile, body, 'OrganisationExecutiveSenderEmail', 'organisationExecutiveSenderEmail'),
     OrganisationExecutiveReplyToEmail: mergedProfileText(existingProfile, body, 'OrganisationExecutiveReplyToEmail', 'organisationExecutiveReplyToEmail'),
     OrganisationExecutiveReplyToName: mergedProfileText(existingProfile, body, 'OrganisationExecutiveReplyToName', 'organisationExecutiveReplyToName'),
-    NameFormat: mergedProfileText(existingProfile, body, 'NameFormat', 'nameFormat', 'Surname, first name, middle name'),
+    NameFormat: existingOrganization?.NameFormat || existingProfile?.NameFormat || 'Surname, first name, middle name',
     PortalHeadline: mergedProfileText(existingProfile, body, 'PortalHeadline', 'portalHeadline', 'Admissions and parent services in one place'),
     PortalSubheading: mergedProfileText(existingProfile, body, 'PortalSubheading', 'portalSubheading', 'Buy forms, complete applications, upload documents, pay fees, and monitor student activity from a secure school portal.'),
     PortalNotice: mergedProfileText(existingProfile, body, 'PortalNotice', 'portalNotice'),
@@ -4155,7 +4156,7 @@ async function importStudents(env, body) {
     err.status = 400;
     throw err;
   }
-  const [existingStudents, classNames, schoolProfile] = await Promise.all([
+  const [existingStudents, classNames, defaultProfile] = await Promise.all([
     listSchoolCollection(env, 'students'),
     configuredClassNames(env),
     getDocument(env, 'settings', 'schoolProfile').catch(() => null)
@@ -4164,6 +4165,7 @@ async function importStudents(env, body) {
   const importScope = requestedStudentScope(body);
   const structure = await getSchoolStructure(env);
   const branchId = canonicalSchoolBranchId(importScope.branchId || structure.ActiveBranchId);
+  const schoolProfile = await effectiveBranchProfile(env, defaultProfile || {}, branchId);
   let imported = 0;
   let skipped = 0;
   const failures = [];
@@ -11671,14 +11673,12 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
       }
     case 'getStudents':
       {
-        const [rows, profile] = await Promise.all([
-          listSchoolCollection(env, 'students', requestedStudentScope(body)),
-          getDocument(env, 'settings', 'schoolProfile').catch(() => null)
-        ]);
+        const rows = await listSchoolCollection(env, 'students', requestedStudentScope(body));
         return {
           ok: true,
           message: 'Students loaded from the database.',
-          students: rows.map((row) => normalizeStudent(row, profile || {}))
+          // The scoped directory already resolved each branch's name format.
+          students: rows.map((row) => normalizeStudent(row, null))
         };
       }
     case 'getSchoolLibrary':

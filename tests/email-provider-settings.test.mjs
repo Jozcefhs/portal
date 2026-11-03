@@ -73,7 +73,8 @@ test('organisation settings offer Google OAuth, Brevo fallback and provider test
   assert.match(setupScript, /Unsupported provider configuration/);
   assert.match(setupScript, /SettingsScope: 'organisation'/);
   assert.match(setupScript, /emailProviderPanel\?\.classList\.toggle\('settings-scope-locked', branchMode\)/);
-  assert.match(setupScript, /Only its sender and reply-to identities below can be overridden here/);
+  assert.match(setupScript, /Reconnecting it affects every branch/);
+  assert.match(setupScript, /Set this branch’s sender and reply-to identities below/);
 });
 
 test('Google callback feedback returns administrators to communication settings', () => {

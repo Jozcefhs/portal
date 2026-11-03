@@ -6,6 +6,8 @@ import { withStudentDisplayName } from '../functions/lib/student-display-name.js
 import { displayNameForProfile } from '../functions/api/admin.js';
 import { studentSearchCard, studentDetailProjection, recordMatches } from '../functions/lib/records-desk.js';
 import { studentParentDeliveryEmail } from '../functions/lib/executive-correspondence.js';
+import { branchProfilesForRecords } from '../functions/lib/branch-profile-settings.js';
+import { recordBranchId } from '../functions/lib/branch-scope.js';
 
 const scopeSource = await readFile(new URL('../functions/lib/school-scope.js', import.meta.url), 'utf8');
 const recordsSource = await readFile(new URL('../functions/api/staff-records.js', import.meta.url), 'utf8');
@@ -27,11 +29,14 @@ function functionSource(source, name, next) {
   return source.slice(start, end).replace('export async function', 'async function');
 }
 
-function scopedReads(profile, sources) {
+function scopedReads(profile, sources, branchOverrides = {}) {
   const calls = [];
   const paths = Object.keys(sources);
   const context = {
-    clean, withStudentDisplayName,
+    clean, withStudentDisplayName, recordBranchId,
+    branchProfilesForRecords: (env, defaults, rows) => branchProfilesForRecords(env, defaults, rows, async (_env, collection, id) => {
+      calls.push(['get', collection, id]); return branchOverrides[id] || null;
+    }),
     accessScope: (scope) => scope,
     schoolCollectionPaths: async () => paths,
     legacyRowAllowed: (row, scope) => (!scope.branchId || row.BranchId === scope.branchId)
@@ -117,6 +122,18 @@ test('non-student collections and historical invoice names are untouched and nee
   assert.equal(row.DisplayName, '#NAME? James Daniel');
   assert.equal(row.Amount, 150000);
   assert.equal(readers.calls.some(([, path]) => path === 'settings'), false);
+});
+
+test('student directories format each branch once per read and preserve all stored names', async () => {
+  const rows = [corrected, { ...corrected, __id: 'OTHER', BranchId: 'garden' }, { ...corrected, __id: 'ANOTHER', BranchId: 'garden' }];
+  const before = JSON.stringify(rows);
+  const readers = scopedReads({ NameFormat: 'Surname, first name, middle name' }, { students: rows }, {
+    garden: { BranchId: 'garden', Values: { NameFormat: 'First name, middle name, surname' }, OverrideFields: ['NameFormat'] }
+  });
+  const result = await readers.listSchoolCollection({}, 'students');
+  assert.deepEqual(Array.from(result, row => row.DisplayName), ['James Daniel', 'Daniel James', 'Daniel James']);
+  assert.equal(readers.calls.filter(([, collection]) => collection === 'branchProfileOverrides').length, 2);
+  assert.equal(JSON.stringify(rows), before);
 });
 
 test('Records Desk search cards and detail headers use the corrected name without exposing credentials', () => {
