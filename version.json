@@ -1,8 +1,8 @@
 {
-  "version": "3.1.60",
+  "version": "3.1.61",
   "channel": "stable",
   "release_status": "published",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.60.exe",
-  "sha256": "86d7893145e51be39aca5472c3155b274b5afc1d9029a1fc4726adf2fc776c43",
-  "notes": "Dynamax v3.1.60 shows individual test approvals separately from full-term Draft status on desktop and web. Approved tests remain visible, and the web table updates immediately after review without additional scans or losing unsaved work. Existing scores, approvals, payments and history are preserved. Card terminal payments remain disabled."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.61.exe",
+  "sha256": "8bb58fe840470eb6635a7a6012d2f45afeaa6e39153814c5a27f33fafc0de54c",
+  "notes": "Dynamax v3.1.61 adds branch-specific percentage or fixed discounts on total school fees for School Staff Child, Church Staff Child, Sibling Discount and custom billing categories. Configure rates in Billing lists; no rates are enabled automatically. Existing invoices, payments and history are preserved. Classes & Arms buttons remain visible at smaller sizes. Includes automatic bounded Online Collections loading. Card terminal payments remain disabled."
 }
