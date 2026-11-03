@@ -129,12 +129,17 @@ async function schoolPlan(env, record, amount, entry, id, user, date, timestamp,
   }
   if (release) fail('The excess payment cannot be safely released from invoices. Accounts review is required.');
   // Guard the records used for the balance calculation, including previous credit actions.
-  for (const [collection, rows, field] of [['ledger', ledger, 'Credit'], ['invoices', invoices, 'Credit']]) {
+  for (const [collection, rows] of [['ledger', ledgerRows], ['invoices', invoiceRows]]) {
     for (const row of rows) {
       version(row);
       if (collection === 'invoices' && updatedInvoices.has(row.__id)) continue;
       if (collection === 'ledger' && row.__id === record.deposit.__id) continue;
-      writes.push(patch(collection, row, { [field]: row[field] ?? 0 }));
+      // Lock an unchanged source field, never a normalized financial value.
+      // Reversed invoices have effective Credit=0 for calculations, while their
+      // original gross credit must remain intact in the saved record.
+      const field = Object.keys(row).find(key => !key.startsWith('__') && row[key] !== undefined);
+      if (!field) fail('An account record cannot be locked. Refresh before correcting it.');
+      writes.push(patch(collection, row, { [field]: row[field] }));
     }
   }
   const before = calculateAccountFinancialSummary(invoices, ledger, ref, date);

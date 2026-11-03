@@ -2572,6 +2572,7 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
     let totalCredit = 0;
     let totalReceipts = 0;
     let accountCreditDebit = 0;
+    let paymentCorrectionDebit = 0;
     let schoolFeeCredit = 0;
     let schoolFeeExpectedDebit = 0;
     let walletBalance = asMoneyNumber(account.WalletBalance);
@@ -2606,9 +2607,13 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
         return;
       }
       if (debit > 0) {
-        totalDebit += debit;
         if (normalizeMatchText(row.FeeCategory) === 'account credit') {
           accountCreditDebit += debit;
+          if (sameText(row.Source, 'Manual Payment Correction') || sameText(row.FeeCode, 'PAYMENT_CORRECTION')) {
+            paymentCorrectionDebit += debit;
+          }
+        } else {
+          totalDebit += debit;
         }
       }
       if (credit > 0) {
@@ -2648,18 +2653,26 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
         totalDebit = expectedFeeDebit;
       }
     }
-    // Account-credit allocation rows are already included in totalDebit above.
-    // Adding accountCreditDebit again doubled balances on the dashboard.
+    // A correction/refund/credit transfer removes available payment credit;
+    // it is not a new fee. Keep source receipts and compensating ledger rows
+    // intact, but display the net credit once in both desktop and web readers.
+    const grossCredit = totalCredit;
+    const grossReceipts = totalReceipts;
+    totalCredit = asMoneyNumber(totalCredit - accountCreditDebit);
+    totalReceipts = asMoneyNumber(totalReceipts - paymentCorrectionDebit);
     const netBalance = asMoneyNumber(totalDebit - totalCredit);
     return {
       ...account,
       TotalDebit: totalDebit,
       TotalCredit: totalCredit,
       TotalReceipts: totalReceipts,
+      GrossCredit: grossCredit,
+      GrossReceipts: grossReceipts,
+      PaymentCorrectionDebits: paymentCorrectionDebit,
       AccountCreditDebits: accountCreditDebit,
       Balance: netBalance,
       OutstandingBalance: Math.max(0, netBalance),
-      SchoolFeeOutstanding: calculateSchoolFeeOutstanding(schoolFeeExpectedDebit, schoolFeeCredit),
+      SchoolFeeOutstanding: calculateSchoolFeeOutstanding(schoolFeeExpectedDebit, schoolFeeCredit - accountCreditDebit),
       ExcessCredit: asMoneyNumber(accountSummaryByRef.get(referenceIdentityKey(account.AccountRef))?.CreditBalance ?? allPeriodSummary.CreditBalance),
       WalletBalance: asMoneyNumber(walletBalance),
       LastPaymentAt: lastPaymentAt

@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { handleManualPaymentCorrection } from '../functions/lib/manual-payment-corrections.js';
 import { schoolInvoiceCreditJournalGap, summarizeWalletActivity, calculateAccountFinancialSummary,
   payableLedgerAfterPaymentCorrections, buildSchoolInvoiceCreditAutomaticJournal,
-  correctedPayableInvoices, correctedInvoicePaidAmount } from '../functions/api/backend.js';
+  correctedPayableInvoices, correctedInvoicePaidAmount, getAccountsOverview } from '../functions/api/backend.js';
 import { paymentHistoryForChild } from '../functions/api/parent-dashboard.js';
 
 const user = { username: 'accountant', role: 'Accounts Officer', assignedRole: 'Accounts Officer', edition: 'school',
@@ -191,6 +191,41 @@ test('school-fee excess reopens settled invoice by 4000 and survives journal-gap
   await f.post({ CorrectAmount: 8000, OperationId: 'test-operation-0002' });
   assert.equal(f.db.get('invoices/INV1').Credit, 8000);
   assert.equal(schoolInvoiceCreditJournalGap(f.db.get('invoices/INV1'), f.rows('accountingJournals')).missing, 0);
+});
+
+test('desktop account totals keep fees due fixed and reduce fees paid after correction and retry', async () => {
+  const f = fixture(false);
+  const overview = async () => (await getAccountsOverview({}, {
+    schoolProfile: {}, students: [f.db.get('students/S1')], accounts: [], applications: [],
+    invoices: f.rows('invoices'), payments: f.rows('payments'), ledger: f.rows('ledger'),
+    feeItems: [], billingCategories: [], accountSummaries: f.rows('accountSummaries')
+  }, { BranchId: 'main' })).accounts[0];
+  const totals = row => [row.TotalDebit, row.TotalCredit, row.Balance, row.TotalReceipts];
+  assert.deepEqual(totals(await overview()), [14000, 14000, 0, 14000]);
+  await f.post();
+  assert.deepEqual(totals(await overview()), [14000, 10000, 4000, 10000]);
+  await f.call('post', { PreviewDigest: 'lost-response' });
+  assert.deepEqual(totals(await overview()), [14000, 10000, 4000, 10000]);
+  assert.equal(f.commits(), 1);
+  await f.post({ Kind: 'reverse', OperationId: 'test-school-reverse-0002' });
+  assert.deepEqual(totals(await overview()), [14000, 0, 14000, 0]);
+  assert.equal(f.rows('payments').length, 1);
+  assert.equal(f.rows('invoices').length, 1);
+  assert.equal(f.db.get('payments/MANUAL-1').Amount, 14000);
+  assert.equal(f.db.get('invoices/INV1').Debit, 14000);
+});
+
+test('payment correction preserves gross values of an already reversed invoice', async () => {
+  const f = fixture(false);
+  f.add('invoices', 'OLD', { ...f.db.get('invoices/INV1'), InvoiceId: 'OLD',
+    Amount: 1000, Debit: 1000, Credit: 500, Balance: 500,
+    FeeChargeReversed: 'YES', FeeChargeReversalId: 'PRIOR-REVERSAL',
+    FeeChargeReversalAmount: 1000, FeeChargeReleasedCredit: 500 });
+  const before = structuredClone(f.db.get('invoices/OLD'));
+  await f.post();
+  const after = f.db.get('invoices/OLD');
+  assert.deepEqual({ ...after, __updateTime: before.__updateTime }, before);
+  assert.equal(calculateAccountFinancialSummary(f.rows('invoices'), f.rows('ledger'), 'S1').OutstandingBalance, 4000);
 });
 test('automatic fee allocation uses a new identity after a correction releases the same amount', () => {
   const invoice = { InvoiceId: 'I1', FeeCategory: 'School Fee', Amount: 14000, Credit: 10000 };
