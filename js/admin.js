@@ -3877,13 +3877,21 @@ function bindStudentEditor(students) {
     const user = currentUser, branch = selectedBranchId, controller = new AbortController();
     const dialog = document.getElementById('studentBillingPreviewDialog');
     const content = document.querySelector('[data-billing-preview-content]');
-    if (content.querySelector('[aria-busy="true"]')) return;
+    if (dialog.billingChargeReview || content.querySelector('[aria-busy="true"]')) return;
+    const review = {};
+    dialog.billingChargeReview = review;
     const sessionSignal = staffSessionAbortController.signal;
     let reviewClosed = false;
     const abort = () => controller.abort();
-    dialog.addEventListener('close', () => { reviewClosed = true; abort(); }, { once: true });
+    const cleanup = () => {
+      reviewClosed = true; abort(); back?.remove();
+      sessionSignal.removeEventListener('abort', abort);
+      dialog.removeEventListener('close', cleanup);
+      if (dialog.billingChargeReview === review) delete dialog.billingChargeReview;
+    };
+    dialog.addEventListener('close', cleanup, { once: true });
     sessionSignal.addEventListener('abort', abort, { once: true });
-    const isCurrent = () => !reviewClosed && !sessionSignal.aborted && dialog.open && currentUser === user && selectedBranchId === branch && activeSection === 'students';
+    const isCurrent = () => dialog.billingChargeReview === review && !reviewClosed && !sessionSignal.aborted && dialog.open && currentUser === user && selectedBranchId === branch && activeSection === 'students';
     const loadedButtons = [...content.querySelectorAll('[data-review-billing-conflicts]')];
     const savedNodes = loadedButtons.length ? [...content.childNodes] : [];
     const originalSubtitle = dialog.querySelector('.workflow-dialog-header small')?.textContent;
@@ -3892,15 +3900,15 @@ function bindStudentEditor(students) {
     let back;
     if (savedNodes.length) {
       back = document.createElement('button'); back.type = 'button'; back.className = 'secondary'; back.textContent = 'Back to loaded review';
+      back.dataset.billingReviewBack = '';
       content.before(back);
       back.onclick = () => {
         if (!isCurrent() || content.querySelector('[aria-busy="true"]')) return;
         content.replaceChildren(...savedNodes); dialog.scrollTop = savedScroll;
         savedTableScroll.forEach(({ element, top, left }) => { element.scrollTop = top; element.scrollLeft = left; });
         if (originalSubtitle) dialog.querySelector('.workflow-dialog-header small').textContent = originalSubtitle;
-        back.remove(); reviewClosed = true; abort(); sessionSignal.removeEventListener('abort', abort);
+        cleanup();
       };
-      dialog.addEventListener('close', () => back.remove(), { once: true });
     }
     const onResults = outcomes => outcomes.forEach(({ reference, result, error, plan }) => {
       const original = loadedButtons.find(item => item.dataset.reviewBillingConflicts === reference);
@@ -3915,10 +3923,13 @@ function bindStudentEditor(students) {
     });
     const request = async (payload) => {
       if (!isCurrent() || controller.signal.aborted) throw new Error('The review stopped or the staff workspace changed. Run a fresh review.');
-      const timer = setTimeout(abort, 60000);
+      const requestController = new AbortController();
+      const cancelRequest = () => requestController.abort();
+      controller.signal.addEventListener('abort', cancelRequest, { once: true });
+      const timer = setTimeout(cancelRequest, 60000);
       try {
         const response = await staffFetch('/api/student-billing-reconciliation', { method: 'POST', credentials: 'same-origin',
-          signal: controller.signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+          signal: requestController.signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
         const data = await response.json();
         if (!isCurrent() || controller.signal.aborted) throw new Error('The review stopped or its workspace changed.');
         if (!response.ok || !data.ok) throw new Error(data.message || 'The correction could not be confirmed.');
@@ -3926,23 +3937,22 @@ function bindStudentEditor(students) {
       } catch (error) {
         if (payload.action === 'applyObsoleteReversal') throw new Error(`${error.message} Posting was not confirmed; it may already have saved. Run a fresh review before another submission.`);
         throw error;
-      } finally { clearTimeout(timer); }
+      } finally { clearTimeout(timer); controller.signal.removeEventListener('abort', cancelRequest); }
     };
-    dialog.addEventListener('close', () => sessionSignal.removeEventListener('abort', abort), { once: true });
     setButtonLoading(button, true, 'Reviewing obsolete charges…');
     dialog.scrollTop = 0;
     try {
-      const { openObsoleteChargeReview } = await import('./obsolete-charge-review.js?v=20261103-fee-breakdown');
+      const { openObsoleteChargeReview } = await import('./obsolete-charge-review.js?v=20261103-review-feedback');
       await openObsoleteChargeReview({ dialog, content, request, isCurrent, accountRef, loadedAccounts, onResults, readOnly: user.subscriptionReadOnly || user.subscriptionActive === false,
         confirm: options => window.DynamaxDialogs.confirm(options),
         notify: (title, message, tone) => window.DynamaxDialogs.alert({ title, message, tone: tone === 'error' ? 'danger' : 'success', confirmText: 'Close' }) });
-    } catch (error) { setStatus(maintenanceStatus, error.message, 'bad'); }
+    } catch (error) { setStatus(maintenanceStatus, error.message, 'bad'); if (!back) cleanup(); }
     finally { setButtonLoading(button, false, '', normalText); }
   };
   panelEl.querySelector('[data-review-obsolete-charges]')?.addEventListener('click', event => openBillingChargeReview(event.currentTarget));
   const bindBillingConflictButtons = content => {
     const buttons = [...content.querySelectorAll('[data-review-billing-conflicts]')];
-    buttons.forEach(button => button.addEventListener('click', () => openBillingChargeReview(button, button.dataset.reviewBillingConflicts)));
+    buttons.forEach(button => { button.onclick = () => openBillingChargeReview(button, button.dataset.reviewBillingConflicts); });
     if (buttons.length > 1 && !content.querySelector('[data-review-loaded-conflicts]')) {
       const batch = document.createElement('button'); batch.type = 'button'; batch.dataset.reviewLoadedConflicts = '';
       batch.textContent = 'Batch review / approve loaded conflicts';

@@ -105,12 +105,17 @@ export async function openObsoleteChargeReview({ dialog, content, request, isCur
 export async function openStudentBillingConflictReview({ dialog, content, request, isCurrent, confirm, notify, readOnly = false, accountRef, onResults = () => {} }) {
   content.innerHTML = '<h3>Resolve billing conflicts</h3><p>Checking this account’s invoices, fee rules and payment evidence…</p><p role="status" data-conflict-status></p>';
   if (!dialog.open) dialog.showModal();
-  const render = async () => {
+  let previousReview = '', rechecking = false;
+  const render = async (recheck = false) => {
     const plan = await request({ action: 'previewObsoleteReversal', AccountRef: accountRef });
     if (!isCurrent()) return;
     if (ref(plan).toLowerCase() !== String(accountRef).trim().toLowerCase()) throw new Error('The preview belongs to a different account. Close and review again.');
     const eligible = reviewedBoardingWearPlan(plan);
     const remaining = (plan.conflicts || []).filter(row => !eligible || !(plan.charges || []).some(charge => charge.code.toLowerCase() === row.code.toLowerCase()));
+    const snapshot = JSON.stringify([plan.profile, plan.ready, plan.reason, plan.charges, plan.conflicts,
+      plan.expectedTotal, plan.postedTotal, plan.afterPostedTotal, plan.releasedCredit, plan.expectedComponents, plan.reallocations]);
+    const unchanged = previousReview === snapshot;
+    previousReview = snapshot;
     content.innerHTML = `<h3>Resolve billing conflicts</h3>
       <p><strong>${escaped(plan.profile.DisplayName)}</strong> · ${escaped(accountRef)} · ${escaped(plan.profile.ClassName)}</p>
       <p>${escaped(plan.profile.AcademicSession)} · ${escaped(plan.profile.Term)}</p>
@@ -121,11 +126,29 @@ export async function openStudentBillingConflictReview({ dialog, content, reques
       ${(plan.reallocations || []).length ? `<p><strong>Existing payment allocation to move:</strong></p><ul>${plan.reallocations.map(row => `<li>${escaped(row.name)}: ${money(row.amount)}</li>`).join('')}</ul><p>This uses existing paid money; it does not record a new payment.</p>` : ''}
       ${remaining.length ? `<details open><summary>${remaining.length} other or unresolved component(s)</summary><ul>${remaining.map(row => `<li>${escaped(row.name || row.code)} (${escaped(row.code)}): ${escaped(row.review)}. Current setup ${money(row.expected)}; posted ${money(row.invoiced)}. Invoice(s): ${(row.invoiceIds || []).map(escaped).join(', ')}.</li>`).join('')}</ul><p>Duplicate invoice references, changed amounts or missing payment evidence need a source-record correction; they cannot safely be cleared by this reversal.</p></details>` : ''}
       ${eligible && !readOnly ? '<label>Correction reason<textarea data-conflict-reason maxlength="500" required></textarea></label><button type="button" data-post-conflict>Approve this charge correction</button>' : ''}
-      <button type="button" class="secondary" data-recheck-conflict>Recheck this account</button><p role="status" aria-live="polite" data-conflict-status></p>`;
+      <button type="button" class="secondary" data-recheck-conflict>Recheck this account</button><p role="status" aria-live="polite" tabindex="-1" data-conflict-status></p>`;
+    if (recheck) {
+      const status = content.querySelector('[data-conflict-status]');
+      const outcome = eligible ? 'A verified correction is available for review and approval.'
+        : Array.isArray(plan.conflicts) && !plan.conflicts.length ? 'No conflicting posted charges remain for this period.'
+          : `This account still needs finance review: ${plan.reason || 'The listed conflicts need a source-record correction.'}`;
+      status.textContent = `Rechecked at ${new Date().toLocaleTimeString()}. ${unchanged ? 'No changes found.' : 'The review has been updated.'} ${outcome} Rechecking only refreshes the evidence; it does not change invoices, fees or payments.`;
+      status.focus({ preventScroll: true });
+      status.scrollIntoView({ block: 'nearest' });
+    }
     content.querySelector('[data-recheck-conflict]').addEventListener('click', async event => {
-      event.currentTarget.disabled = true;
+      if (rechecking || !isCurrent()) return;
+      const button = event.currentTarget;
+      rechecking = true;
+      button.disabled = true; button.textContent = 'Rechecking this account…'; button.setAttribute('aria-busy', 'true');
+      content.querySelector('[data-conflict-status]').textContent = 'Checking this account’s latest invoices, fee rules and payment evidence…';
       content.querySelector('[data-post-conflict]')?.setAttribute('disabled', '');
-      try { await render(); } catch (error) { if (isCurrent()) content.querySelector('[data-conflict-status]').textContent = error.message; }
+      try { await render(true); }
+      catch (error) { if (isCurrent()) content.querySelector('[data-conflict-status]').textContent = `Recheck failed: ${error.message} The previous preview has not been refreshed. Try Recheck this account again before approving any correction.`; }
+      finally {
+        rechecking = false;
+        if (isCurrent() && button.isConnected) { button.disabled = false; button.textContent = 'Recheck this account'; button.removeAttribute('aria-busy'); }
+      }
     });
     content.querySelector('[data-post-conflict]')?.addEventListener('click', async event => {
       const button = event.currentTarget, reason = content.querySelector('[data-conflict-reason]').value.trim();

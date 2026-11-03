@@ -29,12 +29,18 @@ await mkdir('tmp/billing-conflict-ui', {recursive: true});
 try {
   const context = await browser.newContext({viewport: {width: 1366, height: 900}}), page = await context.newPage();
   page.on('pageerror', error => errors.push(error.message));
-  let posted = false, lostResponse = false, uniformMode = false, batchMode = false;
+  let posted = false, lostResponse = false, uniformMode = false, batchMode = false, blockedMode = false, failedRead = false;
   const batchPosted = new Set();
   await context.route('**/*', async route => {
     const path = new URL(route.request().url()).pathname;
     if (path === '/api/student-billing-reconciliation') {
       const body = route.request().postDataJSON(); calls.push(body);
+      if (failedRead) { failedRead = false; return route.abort('failed'); }
+      if (blockedMode) {
+        assert.equal(body.action, 'previewObsoleteReversal');
+        await new Promise(resolve => setTimeout(resolve, 200));
+        return route.fulfill({json: {...plan, ready: false, reason: 'One active returning-only fee rule must confirm that this charge is obsolete.'}});
+      }
       if (batchMode) {
         assert.ok(batchRefs.includes(body.AccountRef));
         if (body.action === 'previewObsoleteReversal') return route.fulfill({json: {...plan, profile: {...plan.profile, AccountRef: body.AccountRef},
@@ -158,6 +164,42 @@ try {
   assert.equal(calls.length,beforeEmpty,'An exhausted batch never requests a new school-wide roster');
   await page.getByRole('button',{name:'Close billing review',exact:true}).click();
   batchMode=false;
+  // Competing entry clicks and repeated binding share one review/navigation owner.
+  blockedMode=true;
+  const beforeOpening=calls.length;
+  await page.evaluate(() => {
+    renderReport(false,true);
+    bindBillingConflictButtons(content);
+    const buttons=[...content.querySelectorAll('[data-review-billing-conflicts]')];
+    buttons[0].click(); buttons[1].click(); buttons[0].click();
+  });
+  await page.getByRole('button',{name:'Recheck this account',exact:true}).waitFor();
+  assert.equal(calls.length,beforeOpening+1,'Competing clicks open only one account');
+  assert.equal(await page.getByRole('button',{name:'Back to loaded review',exact:true}).count(),1);
+  const beforeRecheck=calls.length;
+  await page.evaluate(() => {
+    const button=document.querySelector('[data-recheck-conflict]');
+    button.click(); button.click();
+  });
+  await page.getByRole('button',{name:'Rechecking this account…',exact:true}).waitFor();
+  await page.locator('[data-conflict-status]').filter({hasText:'No changes found.'}).waitFor();
+  assert.equal(calls.length,beforeRecheck+1,'A recheck performs one account read and no writes');
+  assert.match(await page.locator('[data-conflict-status]').innerText(),/still needs finance review.*returning-only/);
+  assert.equal(await page.locator('[data-post-conflict]').count(),0);
+  await page.screenshot({path:'tmp/billing-conflict-ui/blocked-recheck-mobile.png'});
+  failedRead=true;
+  await page.getByRole('button',{name:'Recheck this account',exact:true}).click();
+  await page.locator('[data-conflict-status]').filter({hasText:'Recheck failed:'}).waitFor();
+  assert.equal(await page.getByRole('button',{name:'Recheck this account',exact:true}).isEnabled(),true);
+  blockedMode=false; uniformMode=true;
+  await page.getByRole('button',{name:'Recheck this account',exact:true}).click();
+  await page.locator('[data-conflict-status]').filter({hasText:'The review has been updated.'}).waitFor();
+  await page.getByRole('button',{name:'Approve this charge correction',exact:true}).waitFor();
+  const beforeReturn=calls.length;
+  await page.getByRole('button',{name:'Back to loaded review',exact:true}).click();
+  assert.equal(calls.length,beforeReturn);
+  assert.equal(await page.locator('[data-billing-review-back]').count(),0);
+  await page.getByRole('button',{name:'Close billing review',exact:true}).click();
   await page.evaluate(() => renderReport());
   await page.getByRole('button', {name: 'Review / resolve conflicts', exact: true}).click();
   await page.getByLabel('Correction reason', {exact: true}).fill('Reviewed class mismatch.');

@@ -450,7 +450,7 @@ test('school-wide UI batches every profile, prepares exact accounts and never si
   assert.match(ui, /confirmText: 'Approve and post all'/); assert.match(ui, /finally \{ post.disabled = true/);
   const admin = await readFile(new URL('../js/admin.js', import.meta.url), 'utf8');
   const handler = admin.slice(admin.indexOf('const openBillingChargeReview ='), admin.indexOf('const reviewBoardingWearReversal ='));
-  assert.match(handler, /reviewClosed = true; abort\(\)/); assert.match(handler, /const isCurrent = \(\) => !reviewClosed/);
+  assert.match(handler, /reviewClosed = true; abort\(\)/); assert.match(handler, /const isCurrent = \(\) => dialog.billingChargeReview === review && !reviewClosed/);
   assert.match(handler, /60000/); assert.match(handler, /sessionSignal\.removeEventListener/);
 });
 
