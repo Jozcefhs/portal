@@ -181,6 +181,7 @@ export async function obsoleteSchoolChargeReversalPlan(student, data, { candidat
     payments: data.payments, summaries: data.accountSummaries, journals: data.journals }, ['feeItems', 'invoices', 'ledger', 'payments', 'summaries', 'journals']);
   return { ok: true, readOnly: true, candidateOnly, profile, charges, amount, releasedCredit, reallocations,
     conflicts: preview.rows.filter(row => row.conflict),
+    expectedComponents: savedType ? preview.rows.filter(row => row.expected > 0).map(({ code, name, expected }) => ({ code, name, amount: expected })) : [],
     outstandingRemoved: money(amount - releasedCredit), expectedTotal: savedType ? preview.expectedTotal : null, postedTotal: preview.invoicedTotal,
     afterPostedTotal: money(preview.invoicedTotal - amount), ready: !reason, reason, previewToken, baselineJournals, writeCount,
     eligibilityNote: !savedType && !reason ? 'Student Type not required: these charges are obsolete for both day and boarding students. The incomplete profile is unchanged.' : '',

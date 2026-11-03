@@ -23,6 +23,8 @@ export async function onRequestPost(context) {
     const body = await readJsonBody(request, { maxBytes: 768 * 1024 });
     action = clean(body.action || body.Action || 'bootstrap');
     const data = await handleAcademicManagementAction(env, user, body);
+    if (context.data && action.toLowerCase().replace(/[^a-z]/g, '') === 'syncacademiccbtanswers'
+        && data.ok && data.answerCopyReceipt) context.data.securityAuditHandled = true;
     // Only the server's persisted receipt can silence a successful retry.
     if (context.data && action.toLowerCase().replace(/[^a-z]/g, '') === 'resolveacademicduplicatescore'
         && data.ok === true && data.alreadyResolved === true) context.data.securityAuditHandled = true;

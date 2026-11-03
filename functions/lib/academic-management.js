@@ -9880,6 +9880,10 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
   if (['importacademicscores', 'commitscoreimport'].includes(action)) return importAcademicScores(env, user, input);
   if (['rollbackacademicscoreimport', 'rollbackscoreimport'].includes(action)) return rollbackAcademicScoreImport(env, user, input);
   if (action === 'resolveacademiccbtscoreplacement') return resolveAcademicCbtScorePlacement(env, user, input);
+  if (action === 'syncacademiccbtanswers') {
+    const { localCbtAnswerCopies } = await import('./local-cbt-answer-copies.js');
+    return localCbtAnswerCopies(env, user).upload(input);
+  }
   if (['syncacademiccbtscores', 'synccbtresults'].includes(action)) return syncAcademicCbtScores(env, user, input);
   if (['synclocalcbtstudentpasswords', 'synccbtstudentpasswords'].includes(action)) return syncLocalCbtStudentPasswords(env, user, input);
   if (['calculateacademictermresults', 'calculatetermresults'].includes(action)) return calculateAcademicTermResults(env, user, input);

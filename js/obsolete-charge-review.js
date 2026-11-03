@@ -28,11 +28,16 @@ export async function reviewObsoleteChargeAccounts(request, progress = () => {})
   return report;
 }
 
+function feeBreakdown(plan) {
+  if (!Array.isArray(plan.expectedComponents) || !plan.expectedComponents.length) return '';
+  return `<details><summary>View ${plan.expectedComponents.length} fee components</summary><p>Combined total for ${escaped(plan.profile?.BillingCategory || 'the saved billing category')}. This is not a single fee item or the outstanding balance.</p><ul>${plan.expectedComponents.map(row => `<li>${escaped(row.name)} (${escaped(row.code)}): ${money(row.amount)}</li>`).join('')}</ul></details>`;
+}
+
 export function obsoleteChargeTable(plans, verified = false) {
   return `<div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>Student / period</th><th>Charges to reverse</th><th>Bill before → after</th><th>Existing allocation released</th><th>Review</th></tr></thead><tbody>${plans.map(plan =>
     `<tr><td>${escaped(plan.profile?.DisplayName || '')}<br>${escaped(ref(plan))}<br>${escaped(plan.profile?.ClassName || '')} · ${escaped(plan.profile?.SchoolSection || '')}<br>${escaped(plan.profile?.AcademicSession || '')} · ${escaped(plan.profile?.Term || '')}</td>
     <td>${(plan.charges || []).map(charge => `${escaped(charge.name)} (${escaped(charge.code)}): ${money(charge.amount)}<br><small>${escaped(charge.invoiceId)}<br>${escaped(charge.reason || charge.explanation || '')}</small>`).join('<br>') || 'Not verified'}</td>
-    <td>${plan.postedTotal == null ? 'Not verified' : `${money(plan.postedTotal)} → ${money(plan.afterPostedTotal)}<br><small>${plan.expectedTotal == null ? 'Full fee comparison awaits profile completion.' : `Current fee setup: ${money(plan.expectedTotal)}`}</small>`}</td>
+    <td>${plan.postedTotal == null ? 'Not verified' : `${money(plan.postedTotal)} → ${money(plan.afterPostedTotal)}<br><small>${plan.expectedTotal == null ? 'Full fee comparison awaits profile completion.' : `Total of applicable fee components: ${money(plan.expectedTotal)}`}</small>${feeBreakdown(plan)}`}</td>
     <td>${plan.releasedCredit == null ? 'Not verified' : money(plan.releasedCredit)}</td>
     <td>${escaped(verified && reviewedBoardingWearPlan(plan) ? 'Verified — eligible for approval' : plan.reason || 'Candidate — receipt and journal checks required')}${plan.eligibilityNote ? `<br><small>${escaped(plan.eligibilityNote)}</small>` : ''}</td></tr>`).join('')}</tbody></table></div>`;
 }

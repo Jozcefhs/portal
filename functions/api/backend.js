@@ -932,7 +932,7 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
   'bulkAssignAcademicArmStudentSubjects', 'reviewAcademicSubjectChange',
   'moveAcademicStudentMembership', 'withdrawAcademicStudentMembership', 'reinstateAcademicStudentMembership',
   'archiveAcademicRecord', 'deleteAcademicRecord',
-  'syncAcademicCbtScores', 'syncLocalCbtStudentPasswords', 'resolveAcademicCbtScorePlacement',
+  'syncAcademicCbtScores', 'syncLocalCbtStudentPasswords', 'syncAcademicCbtAnswers', 'resolveAcademicCbtScorePlacement',
   'rescheduleAcademicCbtTest', 'downloadAcademicCbtTestPackage', 'acknowledgeAcademicCbtImport',
   'previewAcademicCbtRoster', 'refreshAcademicCbtRoster',
   'previewAcademicCbtLateEntry', 'createAcademicCbtLateEntry',
@@ -1008,7 +1008,7 @@ const BRANCH_BOUND_DEVICE_ACTIONS = new Set([
   'getAcademicDiary', 'saveAcademicDiaryScheme', 'saveAcademicDiaryEntry', 'submitAcademicDiaryEntry',
   'returnAcademicDiaryEntry', 'submitAcademicDiary', 'approveAcademicDiary', 'returnAcademicDiary',
   'reactivateAcademicScoreEditing', 'reactivateAcademicClassScoreEditing', 'changeAcademicScoreSheetStatus', 'previewAcademicScoreImport',
-  'importAcademicScores', 'rollbackAcademicScoreImport', 'syncAcademicCbtScores', 'resolveAcademicCbtScorePlacement',
+  'importAcademicScores', 'rollbackAcademicScoreImport', 'syncAcademicCbtScores', 'syncAcademicCbtAnswers', 'resolveAcademicCbtScorePlacement',
   'syncLocalCbtStudentPasswords', 'rescheduleAcademicCbtTest', 'downloadAcademicCbtTestPackage',
   'previewAcademicCbtRoster', 'refreshAcademicCbtRoster',
   'previewAcademicCbtLateEntry', 'createAcademicCbtLateEntry',
@@ -11816,6 +11816,7 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     case 'importAcademicScores':
     case 'rollbackAcademicScoreImport':
     case 'syncAcademicCbtScores':
+    case 'syncAcademicCbtAnswers':
     case 'resolveAcademicCbtScorePlacement':
     case 'syncLocalCbtStudentPasswords':
     case 'rescheduleAcademicCbtTest':
@@ -12429,6 +12430,8 @@ export async function onRequestPost(context) {
     if (context.data && action === 'terminalPayments' && data.ok && ['settings', 'get', 'history', 'verify'].includes(body.Command)) context.data.securityAuditHandled = true;
     // Start/completion audits are committed atomically with synchronization checkpoints.
     // A continuation or replay must not create another apparent business action.
+    // The immutable answer-copy document records uploader, source receipt and time.
+    if (context.data && action === 'syncAcademicCbtAnswers' && data.ok && data.answerCopyReceipt) context.data.securityAuditHandled = true;
     if (context.data && action === 'syncAccountingRevenue' && data.ok) context.data.securityAuditHandled = true;
     // These handlers attest that the original payment/posting was found without
     // another write. Never infer a replay from a client-supplied flag or label.

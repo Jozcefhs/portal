@@ -86,6 +86,8 @@ test('a saved Grade 11 textbook rule on a Grade 10 returning account has a revie
     assert.equal(plan.ready, true, plan.reason);
     assert.equal(plan.amount, 143880); assert.equal(plan.postedTotal, 730540); assert.equal(plan.afterPostedTotal, 586660);
     assert.equal(plan.expectedTotal, 586660); assert.equal(plan.releasedCredit, credit);
+    assert.equal(plan.expectedComponents.reduce((sum, row) => sum + row.amount, 0), plan.expectedTotal);
+    assert.match(obsoleteChargeTable([plan]), /View \d+ fee components/);
     assert.equal(plan.charges[0].basis, 'different-class'); assert.equal(plan.charges[0].ruleClass, 'Grade 11');
     assert.match(plan.charges[0].explanation, /Grade 11.*Grade 10/);
     assert.equal(JSON.stringify(h.read()), before, 'preview does not write');
