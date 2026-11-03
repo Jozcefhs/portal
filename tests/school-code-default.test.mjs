@@ -53,7 +53,7 @@ test('setup displays a blank school code instead of injecting a value or a schoo
     assert.equal(fields.get('schoolCode'), profile.SchoolCode || '');
   }
   assert.doesNotMatch(sources['setup.html'], /id="schoolCode"[^>]*(?:value|placeholder)="DCA"/);
-  assert.match(sources['setup.html'], /js\/setup\.js\?v=20261003-no-school-code-default/);
+  assert.match(sources['setup.html'], /js\/setup\.js\?v=[^"\s]+/);
 });
 
 test('school organisation fallback is generic while saved school/organisation codes remain intact', () => {

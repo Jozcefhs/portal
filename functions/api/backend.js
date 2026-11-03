@@ -4758,10 +4758,15 @@ function branchSchoolCollection(branchId, collectionName) {
   return `organisationBranches/${safeScopeId(branchId)}/${collectionName}`;
 }
 
-async function schoolSettingsContext(env, options = {}) {
+async function schoolSettingsContext(env, options = {}, requireBranch = false) {
   const requestedBranch = clean(options.BranchId || options.branchId);
   const assignedBranch = clean(options.UserBranchId || options.userBranchId);
   const settingsScope = clean(options.SettingsScope || options.settingsScope).toLowerCase();
+  if (requireBranch && !requestedBranch && !assignedBranch) {
+    const error = new Error('Select a branch before changing classes or admission settings. In desktop Settings, choose Selected branch overrides and reopen this window.');
+    error.status = 400;
+    throw error;
+  }
   if (!requestedBranch && !assignedBranch && settingsScope !== 'branch') {
     return { scope: 'organisation', branchId: '', branchName: '', metadata: {} };
   }
@@ -4771,7 +4776,7 @@ async function schoolSettingsContext(env, options = {}) {
     throw error;
   }
   const branch = await assertConfiguredProfileBranch(env, assignedBranch || requestedBranch);
-  const metadata = await getDocument(env, BRANCH_SCHOOL_SETTINGS_COLLECTION, branch.id).catch(() => null) || {};
+  const metadata = await getDocument(env, BRANCH_SCHOOL_SETTINGS_COLLECTION, branch.id) || {};
   return { scope: 'branch', branchId: branch.id, branchName: branch.name, metadata };
 }
 
@@ -4821,6 +4826,22 @@ export async function getSchoolClasses(env, options = {}) {
   const classes = (await listCollection(env, collectionPath))
     .map(normalizeSchoolClass)
     .sort((a, b) => asMoneyNumber(a.SortOrder) - asMoneyNumber(b.SortOrder));
+  // Fee setup may need newer academic classes absent from the legacy setup.
+  // Read only this branch's small catalogue, never its learners or history.
+  if (context.scope === 'branch' && options.IncludeAcademicClasses === true) {
+    const academicClasses = await queryCollection(env, 'academicClasses', {
+      filters: [{ field: 'BranchId', op: '==', value: context.branchId }], limit: 500
+    });
+    if (academicClasses.length >= 500) throw new Error('The branch class catalogue exceeds the supported setup size. Please review its class definitions.');
+    const known = new Set(classes.map(row => clean(row.ClassName).toLowerCase()));
+    for (const row of academicClasses) {
+      const name = clean(row.Name || row.ClassName);
+      if (!name || known.has(name.toLowerCase()) || clean(row.Status).toLowerCase() !== 'active') continue;
+      known.add(name.toLowerCase());
+      classes.push(normalizeSchoolClass({ ClassName: name, Active: 'YES', BranchId: context.branchId, SortOrder: row.SortOrder || 100 }));
+    }
+    classes.sort((a, b) => asMoneyNumber(a.SortOrder) - asMoneyNumber(b.SortOrder));
+  }
   return {
     ok: true,
     message: context.scope === 'branch'
@@ -4845,7 +4866,7 @@ async function saveSchoolClasses(env, body) {
   }
   const updatedAt = nowIso();
   const updatedBy = clean(body.UpdatedBy || body.updatedBy) || 'School Office';
-  const context = await schoolSettingsContext(env, body);
+  const context = await schoolSettingsContext(env, body, true);
   const collectionPath = context.scope === 'branch'
     ? branchSchoolCollection(context.branchId, 'schoolClasses')
     : 'settings/academics/classes';
@@ -4877,7 +4898,7 @@ async function saveSchoolClasses(env, body) {
 }
 
 async function resetSchoolClasses(env, body) {
-  const context = await schoolSettingsContext(env, { ...body, SettingsScope: 'branch' });
+  const context = await schoolSettingsContext(env, { ...body, SettingsScope: 'branch' }, true);
   for (const row of await listCollection(env, branchSchoolCollection(context.branchId, 'schoolClasses'))) {
     const id = clean(row.__id || safeDocumentId(row.ClassName || ''));
     if (id) await deleteDocument(env, branchSchoolCollection(context.branchId, 'schoolClasses'), id);
@@ -4938,7 +4959,7 @@ async function saveAdmissionClasses(env, body) {
   }
   const updatedAt = nowIso();
   const updatedBy = clean(body.RecordedBy || body.UpdatedBy || body.updatedBy) || 'Admissions Office';
-  const context = await schoolSettingsContext(env, body);
+  const context = await schoolSettingsContext(env, body, true);
   const schoolClassSetup = await getSchoolClasses(
     env,
     context.scope === 'branch' ? { BranchId: context.branchId } : {}
@@ -4988,7 +5009,7 @@ async function saveAdmissionClasses(env, body) {
 }
 
 async function resetAdmissionClasses(env, body) {
-  const context = await schoolSettingsContext(env, { ...body, SettingsScope: 'branch' });
+  const context = await schoolSettingsContext(env, { ...body, SettingsScope: 'branch' }, true);
   const collectionPath = branchSchoolCollection(context.branchId, 'admissionClasses');
   for (const row of await listCollection(env, collectionPath)) {
     const id = clean(row.__id || safeDocumentId(row.ClassName || ''));
