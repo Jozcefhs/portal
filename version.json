@@ -3,6 +3,6 @@
   "channel": "stable",
   "release_status": "published",
   "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.61.exe",
-  "sha256": "8bb58fe840470eb6635a7a6012d2f45afeaa6e39153814c5a27f33fafc0de54c",
+  "sha256": "4f8a225723ec712be1ad356db446c47ebb7a171782222ebf957dbd238374abc6",
   "notes": "Dynamax v3.1.61 adds branch-specific percentage or fixed discounts on total school fees for School Staff Child, Church Staff Child, Sibling Discount and custom billing categories. Configure rates in Billing lists; no rates are enabled automatically. Existing invoices, payments and history are preserved. Classes & Arms buttons remain visible at smaller sizes. Includes automatic bounded Online Collections loading. Card terminal payments remain disabled."
 }
