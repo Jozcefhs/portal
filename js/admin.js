@@ -3942,7 +3942,7 @@ function bindStudentEditor(students) {
     setButtonLoading(button, true, 'Reviewing obsolete charges…');
     dialog.scrollTop = 0;
     try {
-      const { openObsoleteChargeReview } = await import('./obsolete-charge-review.js?v=20261103-review-feedback');
+      const { openObsoleteChargeReview } = await import('./obsolete-charge-review.js?v=20261103-category-charge-correction');
       await openObsoleteChargeReview({ dialog, content, request, isCurrent, accountRef, loadedAccounts, onResults, readOnly: user.subscriptionReadOnly || user.subscriptionActive === false,
         confirm: options => window.DynamaxDialogs.confirm(options),
         notify: (title, message, tone) => window.DynamaxDialogs.alert({ title, message, tone: tone === 'error' ? 'danger' : 'success', confirmText: 'Close' }) });

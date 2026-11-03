@@ -59,7 +59,7 @@ export async function openObsoleteChargeReview({ dialog, content, request, isCur
     const report = await reviewObsoleteChargeAccounts(request, (checked, total) => progress(`Checked ${checked} of ${total} profiles…`));
     if (!isCurrent()) return;
     content.innerHTML = `<h3>Incorrect school fee charge review</h3><p>${report.total} profiles checked; ${report.rows.length} accounts flagged; ${report.matched} have no obsolete charges identified. Changed or ambiguous profiles stay flagged for rechecking.</p>
-      <p>Wrong-gender uniform charges can qualify when the saved gender and fee rule prove the mismatch. Textbook/yearbook charges can qualify when a saved fee rule proves they belong to a different class, or to returning students instead of New Intake. Review the student's saved class and classifications before approving a correction. Valid fees, payments and receipts are preserved.</p>
+      <p>Tuition and textbook charges for a different billing category can qualify when the applicable replacement is already correctly billed. Wrong-gender uniform charges can qualify when the saved gender and fee rule prove the mismatch. Textbook/yearbook charges can qualify when a saved fee rule proves they belong to a different class, or to returning students instead of New Intake. Review the student's saved class and classifications before approving a correction. Valid fees, payments and receipts are preserved.</p>
       ${obsoleteChargeTable(report.rows)}${report.rows.length && !readOnly ? '<button type="button" data-prepare-obsolete>Prepare correction for all affected students</button>' : ''}<p role="status" aria-live="polite" data-obsolete-status></p>`;
     content.querySelector('[data-prepare-obsolete]')?.addEventListener('click', async event => {
       const prepareButton = event.currentTarget;
@@ -73,7 +73,7 @@ export async function openObsoleteChargeReview({ dialog, content, request, isCur
         const released = eligible.reduce((sum, plan) => sum + plan.releasedCredit, 0);
         content.innerHTML = `<h3>School fee correction — ready for approval</h3><p>${eligible.length} accounts ready; ${blocked} require further review.</p>
           <p><strong>Charges to reverse: ${money(amount)}. Existing allocations released: ${money(released)}.</strong></p>
-          <p>Each account is revalidated and committed atomically. Original invoice amounts, payments and receipts stay intact. Released uniform allocations move to verified correct uniform invoices where available; remaining credit stays on the account. No new payment, refund or wallet credit is created.</p>
+          <p>Each account is revalidated and committed atomically. Original invoice amounts, payments and receipts stay intact. Released uniform allocations move to verified correct uniform invoices; billing-category allocations move to verified due school fees. Remaining credit stays on the account. No new payment, refund or wallet credit is created.</p>
           ${obsoleteChargeTable(plans, true)}${eligible.length ? '<label>Approval reason<textarea data-obsolete-reason maxlength="500" required></textarea></label><button type="button" data-post-obsolete>Approve and post all eligible reversals</button>' : ''}<p role="status" aria-live="polite" data-obsolete-status></p>`;
         content.querySelector('[data-post-obsolete]')?.addEventListener('click', async event => {
           const post = event.currentTarget, reason = content.querySelector('[data-obsolete-reason]').value.trim();

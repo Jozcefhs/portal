@@ -8,6 +8,7 @@ import { getStudentBillingData, buildStudentBillingPreview, normalizeInvoice, no
   buildSchoolInvoiceChargeAccountingJournal, buildSchoolInvoiceCreditAccountingJournal,
   buildSchoolInvoiceCreditAutomaticJournal,
   buildPaymentAccountingJournal, schoolInvoiceCreditJournalGap, calculateAccountFinancialSummary,
+  calculateDueSchoolFeeCreditAllocations,
   accountingPeriodIsClosed, normalizedJournal, accountingAuditWrite, safeDocumentId, accountRefsFrom } from '../api/backend.js';
 
 const clean = value => String(value ?? '').trim();
@@ -18,7 +19,8 @@ const active = value => ['yes', 'true', '1'].includes(lower(value));
 const fail = (message, status = 409) => { throw Object.assign(new Error(message), { status }); };
 const closedInvoice = row => ['void', 'voided', 'cancelled', 'canceled', 'reversed'].includes(lower(row.Status));
 const uniform = row => /^UNI_[MF]$/i.test(clean(row.FeeCode)) || /\buniforms?\b/i.test(clean(row.FeeName));
-const supported = row => uniform(row) || /^(TXT(?:_|$)|LEG$)/i.test(clean(row.FeeCode)) || /\b(textbooks?|yearbook)\b/i.test(clean(row.FeeName));
+const tuition = row => /\btuition\b/i.test(clean(row.FeeName));
+const supported = row => tuition(row) || uniform(row) || /^(TXT(?:_|$)|LEG$)/i.test(clean(row.FeeCode)) || /\b(textbooks?|yearbook)\b/i.test(clean(row.FeeName));
 const dbDefaults = { batchCommitDocuments, getDocument, queryCollectionPages, getStudentBillingData, accountingPeriodIsClosed };
 const classificationFields = ['Gender', 'BillingCategory', 'AcademicProgress'];
 const savedValue = (student, field) => studentProfileValue(student, field, [field[0].toLowerCase() + field.slice(1)]);
@@ -119,17 +121,39 @@ export async function obsoleteSchoolChargeReversalPlan(student, data, { candidat
     const differentGender = uniform(invoice) && ['male', 'female'].includes(savedGender) &&
       genderRulesByType.every(matches => matches.length === 1) &&
       !profiles.some(candidate => componentFees.some(fee => potentiallyApplies(fee, candidate, student)));
-    const rules = (differentGender ? genderRulesByType : differentClass ? classRulesByType : rulesByType).flat();
+    // Tuition/textbook category replacements need an explicit saved category,
+    // proof that category is the only mismatch, and one already-correct invoice
+    // for the same named component. Never infer a replacement from a code suffix.
+    const categoryRules = componentFees.filter(fee =>
+      (!clean(fee.SchoolSection || fee.schoolSection) || same(fee.SchoolSection || fee.schoolSection, profile.SchoolSection)) &&
+      feeMatchesAccountPeriod({ ...fee, BillingCategory: 'All', BillingCategories: ['All'] }, profile) &&
+      !feeMatchesAccountPeriod(fee, profile));
+    const replacementRules = fees.filter(fee => active(fee.Active) && !same(fee.FeeCode, invoice.FeeCode) &&
+      same(fee.FeeName, invoice.FeeName) && same(fee.FeeCategory, invoice.FeeCategory) &&
+      same(fee.BranchId, profile.BranchId) && feeMatchesAccountPeriod(fee, profile) &&
+      (!clean(fee.SchoolSection || fee.schoolSection) || same(fee.SchoolSection || fee.schoolSection, profile.SchoolSection)) &&
+      fee.BillingCategories?.some(category => same(category, profile.BillingCategory)) &&
+      preview.rows.some(row => same(row.code, fee.FeeCode) && !row.conflict && row.expected > 0 && row.expected === fee.Amount && row.invoiced === row.expected));
+    const replacementInvoices = replacementRules.length === 1 ? current.filter(row =>
+      same(row.FeeCode, replacementRules[0].FeeCode) && isSchoolFeeInvoice(row) && row.Debit === replacementRules[0].Amount) : [];
+    const differentCategory = !uniform(invoice) && (tuition(invoice) || /\btextbooks?\b/i.test(invoice.FeeName)) &&
+      ['BillingCategory', 'StudentType', 'EnrollmentCategory', 'AcademicProgress'].every(field => !!savedValue(student, field)) &&
+      categoryRules.length === 1 && !componentFees.some(fee => potentiallyApplies(fee, profile, student)) &&
+      replacementRules.length === 1 && replacementInvoices.length === 1 &&
+      replacementInvoices[0].Credit >= 0 && replacementInvoices[0].Credit <= replacementInvoices[0].Debit &&
+      same(replacementRules[0].Currency, 'NGN') && same(replacementInvoices[0].Currency || 'NGN', 'NGN');
+    const rules = differentCategory ? categoryRules : (differentGender ? genderRulesByType : differentClass ? classRulesByType : rulesByType).flat();
     let reason = '';
-    if (uniform(invoice) && !differentGender) reason = 'Uniform correction requires a saved Male or Female profile and one active fee rule proving that only the gender does not match.';
-    else if (!differentGender && !differentClass && !same(profile.EnrollmentCategory, 'New Intake')) reason = 'This correction requires one verified rule showing that the charge belongs to another class, or a returning-only charge on a New Intake profile. Check the saved class and fee rule.';
+    if (tuition(invoice) && !differentCategory) reason = 'Tuition correction requires a verified billing-category mismatch and one correctly billed replacement tuition component.';
+    else if (uniform(invoice) && !differentGender) reason = 'Uniform correction requires a saved Male or Female profile and one active fee rule proving that only the gender does not match.';
+    else if (!differentCategory && !differentGender && !differentClass && !same(profile.EnrollmentCategory, 'New Intake')) reason = 'This correction requires one verified rule showing that the charge belongs to another class, or a returning-only charge on a New Intake profile. Check the saved class and fee rule.';
     else if (['ClassName', 'AcademicSession', 'Term'].some(field => !savedValue(student, field))) reason = 'Verify the saved class, session and term first.';
     else if (current.filter(row => same(row.FeeCode, invoice.FeeCode)).length !== 1) reason = 'Duplicate invoices for this component require individual finance review.';
     else if (invoices.filter(row => same(row.InvoiceId, invoice.InvoiceId)).length !== 1) reason = 'Duplicate invoice references require individual finance review.';
-    else if (!differentGender && !differentClass && rulesByType.some(matches => matches.length !== 1 || !same(matches[0].EnrollmentCategory, 'Returning'))) reason = savedType
+    else if (!differentCategory && !differentGender && !differentClass && rulesByType.some(matches => matches.length !== 1 || !same(matches[0].EnrollmentCategory, 'Returning'))) reason = savedType
       ? 'One active returning-only fee rule must confirm that this charge is obsolete.'
       : 'Student Type is not saved. One active returning-only fee rule must confirm this charge for each of day and boarding students.';
-    else if (!differentGender && !differentClass && !savedType && profiles.some(candidate => componentFees.some(fee => potentiallyApplies(fee, candidate, student))))
+    else if (!differentCategory && !differentGender && !differentClass && !savedType && profiles.some(candidate => componentFees.some(fee => potentiallyApplies(fee, candidate, student))))
       reason = 'Student Type is not saved and this charge may still apply to a day or boarding New Intake student. Review the fee rules first.';
     else if (rules.some(rule => classificationFields.some(field => clean(rule[field]) && !['all', '*'].includes(lower(rule[field])) &&
       !savedValue(student, field)))) reason = 'Verify the billing classifications required by this fee rule first.';
@@ -140,8 +164,10 @@ export async function obsoleteSchoolChargeReversalPlan(student, data, { candidat
       (clean(invoice.SchoolSection || invoice.schoolSection) && !same(invoice.SchoolSection || invoice.schoolSection, profile.SchoolSection))) reason = 'Invoice scope differs from the student profile.';
     return { invoiceId: invoice.InvoiceId, code: invoice.FeeCode, name: invoice.FeeName, amount: invoice.Debit,
       releasedCredit: invoice.Credit, outstandingRemoved: money(invoice.Debit - invoice.Credit), reason, ready: !reason,
-      basis: differentGender ? 'different-gender' : differentClass ? 'different-class' : 'new-intake', ruleClass: [...new Set(rules.map(rule => rule.ClassName))].join('; '),
-      explanation: differentGender ? `The saved uniform fee rule is for ${rules[0].Gender} students, but the student's saved gender is ${profile.Gender}.`
+      basis: differentCategory ? 'different-billing-category' : differentGender ? 'different-gender' : differentClass ? 'different-class' : 'new-intake', ruleClass: [...new Set(rules.map(rule => rule.ClassName))].join('; '),
+      ...(differentCategory ? { replacementInvoiceId: replacementInvoices[0].InvoiceId, replacementCode: replacementRules[0].FeeCode } : {}),
+      explanation: differentCategory ? `The original rule is for ${categoryRules[0].BillingCategory}; the saved category is ${profile.BillingCategory}. The matching ${replacementRules[0].FeeCode} charge is already correctly billed.`
+        : differentGender ? `The saved uniform fee rule is for ${rules[0].Gender} students, but the student's saved gender is ${profile.Gender}.`
         : differentClass ? `The saved fee rule applies to ${[...new Set(rules.map(rule => rule.ClassName))].join('; ')}, but the student's saved class is ${profile.ClassName}.`
         : 'The saved fee rule is for returning students, but this student is classified as New Intake.' };
   });
@@ -160,13 +186,40 @@ export async function obsoleteSchoolChargeReversalPlan(student, data, { candidat
       previousCredit: invoice.Credit, Credit: money(invoice.Credit + amount), Balance: money(invoice.Debit - invoice.Credit - amount) });
     remainingUniformCredit = money(remainingUniformCredit - amount);
   }
-  let reason = charges.find(row => row.reason)?.reason || (!charges.length ? 'No eligible obsolete textbook, yearbook or wrong-gender uniform charges in this period.' : '');
+  // Reuse existing payment credit only, capped by the category allocations
+  // released here. Other periods, disputed charges and future invoices stay put.
+  const categoryCharges = charges.filter(row => row.ready && row.basis === 'different-billing-category');
+  let remainingCategoryCredit = money(categoryCharges.reduce((sum, row) => sum + row.releasedCredit, 0));
+  if (remainingCategoryCredit > 0) {
+    const effective = data.invoices.map(row => {
+      const charge = categoryCharges.find(item => same(item.invoiceId, normalizeInvoice(row).InvoiceId));
+      return charge ? { ...row, FeeChargeReversed: 'YES', FeeChargeReversalId: 'preview-only',
+        FeeChargeReversalAmount: charge.amount, FeeChargeReleasedCredit: charge.releasedCredit } : row;
+    });
+    for (const { invoice, applied } of calculateDueSchoolFeeCreditAllocations(effective, data.ledger).allocations) {
+      if (remainingCategoryCredit <= 0) break;
+      const component = preview.rows.find(row => same(row.code, invoice.FeeCode));
+      if (!sameFinancialPeriod(invoice, profile.AcademicSession, profile.Term) || !component || component.conflict ||
+        component.expected <= 0 || component.expected !== component.invoiced ||
+        current.filter(row => same(row.FeeCode, invoice.FeeCode)).length !== 1 ||
+        reallocations.some(row => same(row.invoiceId, invoice.InvoiceId)) ||
+        !same(invoice.Currency || 'NGN', 'NGN')) continue;
+      const amount = money(Math.min(applied, remainingCategoryCredit));
+      reallocations.push({ invoiceId: invoice.InvoiceId, code: invoice.FeeCode, name: invoice.FeeName, amount,
+        previousCredit: invoice.Credit, Credit: money(invoice.Credit + amount), Balance: money(invoice.Debit - invoice.Credit - amount),
+        basis: 'billing-category', releasedFrom: categoryCharges.map(row => row.invoiceId) });
+      remainingCategoryCredit = money(remainingCategoryCredit - amount);
+    }
+  }
+  let reason = charges.find(row => row.reason)?.reason || (!charges.length ? 'No eligible obsolete school fee charges in this period.' : '');
   if (['invoices', 'ledger', 'payments'].some(key => (data[key] || []).some(row =>
     !same(row.BranchId || 'main', profile.BranchId) || (clean(row.SchoolSection || row.schoolSection) &&
       !same(row.SchoolSection || row.schoolSection, profile.SchoolSection))))) reason = 'Financial record scope differs from the student profile; finance review is required.';
   let baselineJournals = [];
   if (!reason && !candidateOnly) {
-    try { baselineJournals = financialEvidence(profile, [...candidates, ...current.filter(invoice => reallocations.some(row => row.invoiceId === invoice.InvoiceId))], data); }
+    try { baselineJournals = financialEvidence(profile, [...new Map([...candidates, ...current.filter(invoice =>
+      reallocations.some(row => row.invoiceId === invoice.InvoiceId) || charges.some(row => row.replacementInvoiceId === invoice.InvoiceId))]
+      .map(invoice => [lower(invoice.InvoiceId), invoice])).values()], data); }
     catch (error) { reason = error.message; }
   }
   const writeCount = 2 + ['feeItems', 'invoices', 'payments', 'ledger', 'journals'].reduce((sum, key) => sum + (data[key]?.length || 0), 0)
@@ -174,10 +227,10 @@ export async function obsoleteSchoolChargeReversalPlan(student, data, { candidat
   if (!candidateOnly && writeCount > 450) reason = 'Too many source records for one safe correction; individual finance review is required.';
   const amount = money(charges.reduce((sum, row) => sum + row.amount, 0));
   const releasedCredit = money(charges.reduce((sum, row) => sum + row.releasedCredit, 0));
-  const previewToken = candidateOnly ? '' : await financialPreviewFingerprint({ kind: 'obsolete-school-fees-v4',
+  const previewToken = candidateOnly ? '' : await financialPreviewFingerprint({ kind: 'obsolete-school-fees-v5-category',
     // Other students' no-op fee guards advance revisions. Keep all rule values
     // in the token; the commit still guards the freshly read fee revisions.
-    profile, revision: student.__updateTime, feeItems: (data.feeItems || []).map(({ __updateTime, __createTime, ...rule }) => rule), invoices: data.invoices, ledger: data.ledger,
+    profile, revision: student.__updateTime, charges, reallocations, feeItems: (data.feeItems || []).map(({ __updateTime, __createTime, ...rule }) => rule), invoices: data.invoices, ledger: data.ledger,
     payments: data.payments, summaries: data.accountSummaries, journals: data.journals }, ['feeItems', 'invoices', 'ledger', 'payments', 'summaries', 'journals']);
   return { ok: true, readOnly: true, candidateOnly, profile, charges, amount, releasedCredit, reallocations,
     conflicts: preview.rows.filter(row => row.conflict),
@@ -193,8 +246,10 @@ export async function getObsoleteSchoolChargeReversalData(env, student, override
   const db = { ...dbDefaults, ...overrides };
   const data = await db.getStudentBillingData(env, student, { section: student.SchoolSection });
   const journals = [];
+  const preview = await obsoleteSchoolChargeReversalPlan(student, data, { candidateOnly: true });
+  const targetIds = new Set(preview.reallocations.map(row => lower(row.invoiceId)));
   // Bound concurrency; financial history is scoped to one student, not the school.
-  for (const invoice of data.invoices.map(normalizeInvoice).filter(supported)) journals.push(...await db.queryCollectionPages(env, 'accountingJournals', {
+  for (const invoice of data.invoices.map(normalizeInvoice).filter(row => supported(row) || targetIds.has(lower(row.InvoiceId)))) journals.push(...await db.queryCollectionPages(env, 'accountingJournals', {
     filters: [{ field: 'SourceId', op: '==', value: invoice.InvoiceId }], pageSize: 250, maxRows: 2000
   }));
   for (const receipt of data.payments.map(normalizePayment).filter(isAvailableSchoolCreditReceipt)) {
@@ -271,20 +326,22 @@ export async function reverseObsoleteSchoolCharges(env, student, token, actor, a
     const invoice = data.invoices.find(row => same(normalizeInvoice(row).InvoiceId, transfer.invoiceId));
     if (!invoice?.__id || !invoice.__updateTime) fail('The receiving invoice lacks its database revision.');
     const fields = { Credit: transfer.Credit, Balance: transfer.Balance, Status: transfer.Balance <= 0 ? 'Paid' : 'Part Paid',
-      UpdatedAt: stamp, UniformCorrectionAllocatedCredit: money(Number(invoice.UniformCorrectionAllocatedCredit || 0) + transfer.amount) };
+      UpdatedAt: stamp };
+    const allocationField = transfer.basis === 'billing-category' ? 'FeeCorrectionAllocatedCredit' : 'UniformCorrectionAllocatedCredit';
+    fields[allocationField] = money(Number(invoice[allocationField] || 0) + transfer.amount);
     // Keep legacy aliases consistent; normalizers prefer these where present.
     for (const [field, value] of [['paidAmount', transfer.Credit], ['PaidAmount', transfer.Credit], ['balanceAmount', transfer.Balance],
       ['BalanceAmount', transfer.Balance], ['status', fields.Status]]) if (Object.hasOwn(invoice, field)) fields[field] = value;
     updates.set(invoice.__id, fields);
     writes.push({ collectionPath: 'invoices', documentId: invoice.__id, updateTime: invoice.__updateTime, updateMask: Object.keys(fields), data: fields });
     const journal = buildSchoolInvoiceCreditAutomaticJournal(normalizeInvoice(invoice), transfer.previousCredit, transfer.Credit, date);
-    if (!journal) fail('The uniform credit transfer has no accounting journal.');
+    if (!journal) fail('The fee credit transfer has no accounting journal.');
     journals.push({ ...journal, RecordedBy: actor.displayName || actor.username, Reason: clean(approvalReason), SchoolSection: identity.section });
-    const audit = accountingAuditWrite('REALLOCATE UNIFORM PAYMENT CREDIT', 'Student invoice', transfer.invoiceId,
+    const audit = accountingAuditWrite(transfer.basis === 'billing-category' ? 'REALLOCATE BILLING CATEGORY PAYMENT CREDIT' : 'REALLOCATE UNIFORM PAYMENT CREDIT', 'Student invoice', transfer.invoiceId,
       { UserRole: actor.role, UserUsername: actor.username, RecordedBy: actor.displayName || actor.username, BranchId: identity.branch }, clean(approvalReason));
     audit.exists = false;
     Object.assign(audit.data, { SourcePlatform: 'Web', AccountRef: plan.profile.AccountRef, SchoolSection: identity.section,
-      Amount: transfer.amount, Before: invoice, After: fields, ReleasedFrom: plan.charges.filter(row => row.basis === 'different-gender').map(row => row.invoiceId) });
+      Amount: transfer.amount, Before: invoice, After: fields, ReleasedFrom: transfer.releasedFrom || plan.charges.filter(row => row.basis === 'different-gender').map(row => row.invoiceId) });
     writes.push(audit);
   }
   for (const row of data.invoices) if (!updates.has(row.__id)) guard(row, 'invoices');
@@ -303,5 +360,5 @@ export async function reverseObsoleteSchoolCharges(env, student, token, actor, a
   await db.batchCommitDocuments(env, writes, { literalDocumentIds: true });
   return { ok: true, reversed: plan.charges.length, amount: plan.amount, releasedCredit: plan.releasedCredit,
     reallocatedCredit: money(plan.reallocations.reduce((sum, row) => sum + row.amount, 0)), summary,
-    message: 'Verified incorrect school fee charges reversed. Original invoices, payments and receipts preserved. Released allocations were applied to verified correct uniforms where available; any remainder stays on the account. No new payment or refund created. Refresh Accounts and the parent portal.' };
+    message: 'Verified incorrect school fee charges reversed. Original invoices, payments and receipts preserved. Released allocations were applied to verified correct fees where available; any remainder stays on the account. No new payment or refund created. Refresh Accounts and the parent portal.' };
 }
