@@ -9,6 +9,7 @@ await mkdir(output, { recursive: true });
 let lists = 0, reviews = 0, empty = false;
 const copyId = 'a'.repeat(64), candidate = { AttemptId: 'one', Reference: 'DCA/001', DisplayName: 'Example Learner', Status: 'Submitted' };
 const files = new Set(['/cbt-answers.html', '/js/local-cbt-answers.js', '/js/cbt-answer-comparison.js', '/css/portal-cbt.css', '/css/cbt-answer-comparison.css', '/js/staff-idle-session.js']);
+for (const path of ['/exams-admin.html', '/js/portal-cbt-manager.js', '/js/app-dialogs.js', '/css/app-dialogs.css', '/js/exam-document-upload.js', '/js/exam-paper-viewer.js']) files.add(path);
 const server = createServer(async (request, response) => {
   try {
     const path = new URL(request.url, 'http://localhost').pathname;
@@ -40,8 +41,9 @@ try {
   browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || 'msedge', headless: true });
   const page = await browser.newPage({ viewport: { width: 1366, height: 900 } }), errors = [];
   page.on('pageerror', error => errors.push(error.message));
-  await page.goto(`http://127.0.0.1:${server.address().port}/cbt-answers.html?branch=main&section=secondary&source=geography`);
+  await page.goto(`http://127.0.0.1:${server.address().port}/exams-admin.html?audience=student&branch=main&section=secondary&source=geography`);
   await page.getByRole('button', { name: 'Load answers', exact: true }).waitFor();
+  assert.ok(page.url().includes('/cbt-answers.html?'), 'legacy Answers / print links redirect to the new page');
   assert.equal(lists, 1); assert.equal(reviews, 0);
   await page.getByRole('button', { name: 'Load answers', exact: true }).click();
   await page.getByRole('button', { name: 'Preview / print answers', exact: true }).waitFor();

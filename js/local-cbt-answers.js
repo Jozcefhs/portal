@@ -5,7 +5,7 @@
   const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   let copies = [], after = '', busy = false, selected = null;
   const cache = new Map();
-  $('remoteAnswers').href = `/exams-admin.html?audience=student&${new URLSearchParams({ branch: scope.BranchId, section: scope.SchoolSection, source: scope.CbtTestId })}`;
+  $('remoteAnswers').href = `/exams-admin.html?audience=student&remote=1&${new URLSearchParams({ branch: scope.BranchId, section: scope.SchoolSection, source: scope.CbtTestId })}`;
   async function api(action, extra = {}) {
     const response = await fetch('/api/local-cbt-answers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...scope, ...extra, action }) });
     const data = await response.json();

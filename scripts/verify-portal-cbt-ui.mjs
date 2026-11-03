@@ -166,7 +166,7 @@ try {
   await admin.screenshot({ path: resolve(output, 'automatic-student-access-mobile.png'), fullPage: true });
   // Direct entry from Academic Area → Online CBT uses one source-specific read.
   const beforeLink=reviewApiRequests, beforeLinkRecords=JSON.stringify([...fixture.db]);
-  await admin.goto(`${base}/exams-admin.html?audience=student&branch=main&section=secondary&source=uploaded-test`);
+  await admin.goto(`${base}/exams-admin.html?audience=student&branch=main&section=secondary&source=uploaded-test&remote=1`);
   await admin.locator('#managerStatus').filter({hasText:'Examinations loaded.'}).waitFor();
   assert.equal(reviewApiRequests-beforeLink,1,'No full examination list or candidate roster is fetched on entry');
   await admin.getByRole('heading',{name:'Answers / print: CA1 · Logic · Grade 7',exact:true}).waitFor();

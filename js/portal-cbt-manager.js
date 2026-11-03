@@ -6,6 +6,13 @@
   $('section').value = params.get('section') === 'primary' ? 'primary' : 'secondary';
   $('audience').value = params.get('audience') === 'student' ? 'student' : 'applicant';
   let sourceTest = params.get('source') || '';
+  // Older Online CBT buttons and bookmarks must reach the new local-answer
+  // page too. Remote review remains an explicit, separate destination.
+  if (sourceTest && params.get('remote') !== '1') {
+    location.replace(`/cbt-answers.html?${new URLSearchParams({ branch, section: $('section').value, source: sourceTest })}`);
+    return;
+  }
+
   let state = {}, options = {}, selected = null, editing = '', revision = '', busy = false;
   let uploadedPaper = null, savedPaper = null;
   let uploadedOptions = null, remoteSource = null, remoteExisting = null;
