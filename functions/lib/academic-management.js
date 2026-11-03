@@ -5675,6 +5675,7 @@ async function academicAssessmentForPeriod(env, scope, session, term, { required
   });
   const sourceRevisionIds = (view.Sources || []).map((row) => clean(row.RevisionId)).filter(Boolean);
   const scheme = academicAssessmentScheme(view.ActivePolicy);
+  scheme.MidTerm = normalizeAcademicPolicy(view.ActivePolicy || {}).MidTerm;
   if (sourceRevisionIds.length) {
     scheme.RevisionId = await academicAssessmentFingerprint(scheme);
     scheme.SourceRevisionIds = sourceRevisionIds;
@@ -5923,6 +5924,7 @@ export async function getAcademicScorebookContext(env, user = {}, input = {}) {
       SubjectId: context.subject.SubjectId,
       TeacherUsername: context.allocation.TeacherUsername,
       RosterCount: context.roster.length,
+      MidTerm: activeScheme.MidTerm || { Enabled: false, ComponentIds: [] },
       LayoutUpdateAvailable: layoutUpdateAvailable,
       ActiveAssessmentRevisionId: layoutUpdateAvailable ? activeScheme.RevisionId : ''
     },
@@ -6075,7 +6077,8 @@ export function academicManualScoreCorrection(scheme, previous, nextScores, shee
 }
 
 export async function saveAcademicScoreDraft(env, user = {}, input = {}) {
-  const context = await academicScoreSheetContext(env, user, input, 'canEnterScores');
+  const context = await academicScoreSheetContext(env, user, input, 'canEnterScores',
+    ACADEMIC_SCOREBOOK_STATE_KEYS.filter(key => !['scoreImports', 'scoreSyncBatches'].includes(key)));
   const { scope, state, SheetId, existing, roster, scheme } = context;
   if (existing && lower(existing.Status) !== 'draft') throw failure('Only a Draft score sheet can be edited.', 409, 'ACADEMIC_SCORE_SHEET_LOCKED');
   const suppliedRows = academicScoreRowsInput(input.Rows);
@@ -6084,6 +6087,9 @@ export async function saveAcademicScoreDraft(env, user = {}, input = {}) {
   const rosterRefs = new Set(roster.map((row) => lower(row.StudentRef)));
   const seen = new Set();
   const timestamp = nowIso();
+  // Keep the existing desktop combined-save contract until its UI is updated.
+  // All authenticated web subject teachers use the separate save/lock workflow.
+  const lockOnSave = user[ACADEMIC_WEB_ACTOR] !== true;
   const updatedScores = suppliedRows.map((row) => {
     const studentRef = clean(row.StudentRef);
     const key = lower(studentRef);
@@ -6110,10 +6116,12 @@ export async function saveAcademicScoreDraft(env, user = {}, input = {}) {
         ClassId: context.schoolClass.ClassId, ArmId: context.arm.ArmId, SubjectId: context.subject.SubjectId,
         AssessmentRevisionId: scheme.RevisionId,
         ...calculated,
-        LockedComponentIds: academicRecordedScoreComponentIds(calculated.ComponentScores),
-        LockedScoreCellIds: academicRecordedScoreCellIds(calculated.ComponentScores),
-        ScoreCellsLockedAt: timestamp, ScoreCellsLockedBy: actorName(user),
-        ScoreCellsLockedByUsername: actorUsername(user),
+        LockedComponentIds: lockOnSave ? academicRecordedScoreComponentIds(calculated.ComponentScores)
+          : existing?.ScoreEditingReactivated ? [] : academicLockedScoreComponentIds(previous || {}),
+        LockedScoreCellIds: lockOnSave ? academicRecordedScoreCellIds(calculated.ComponentScores)
+          : existing?.ScoreEditingReactivated ? [] : academicLockedScoreCellIds(previous || {}),
+        ...(lockOnSave ? { ScoreCellsLockedAt: timestamp, ScoreCellsLockedBy: actorName(user),
+          ScoreCellsLockedByUsername: actorUsername(user) } : {}),
         SourceType: corrections.length ? 'ManualCorrection' : 'Manual', SourceId: '',
         ...(corrections.length ? { ManualScoreCorrections: [
           ...(previous?.ManualScoreCorrections || []).filter(old => !corrections.some(row => row.CellId === old.CellId)),
@@ -6124,19 +6132,21 @@ export async function saveAcademicScoreDraft(env, user = {}, input = {}) {
         CreatedBy: clean(previous?.CreatedBy) || actorName(user),
         UpdatedAt: timestamp, UpdatedBy: actorName(user), UpdatedByUsername: actorUsername(user)
       },
-      revisionToken: clean(row.RevisionToken)
+      revisionToken: clean(row.RevisionToken),
+      unchanged: !lockOnSave && previous && JSON.stringify(calculateAcademicStudentScore(scheme, previous.ComponentScores).ComponentScores) === JSON.stringify(calculated.ComponentScores)
     };
-  });
+  }).filter(item => !item.unchanged);
+  if (!updatedScores.length) return {ok:true,partialAcademicManagement:true,message:'No changed scores to save. Use Lock recorded scores when you are ready to submit.'};
   const projectedScores = [
     ...state.studentScores.filter((row) => row.SheetId === SheetId && !updatedScores.some((item) => item.record.ScoreId === row.ScoreId)),
     ...updatedScores.map((item) => item.record)
   ];
   const sheet = academicScoreSheetRecord(context, existing, user, timestamp, {
     ...academicScoreSheetCounts(projectedScores), LastSavedAt: timestamp, LastSavedBy: actorName(user),
-    ScoreEditingReactivated: false,
+    ...(lockOnSave ? { ScoreEditingReactivated: false,
     ScoreEditingRelockedAt: timestamp,
     ScoreEditingRelockedBy: actorName(user),
-    ScoreEditingRelockedByUsername: actorUsername(user)
+    ScoreEditingRelockedByUsername: actorUsername(user) } : {})
   });
   const writes = updatedScores.map(({ previous, record, revisionToken }) => ({
     collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentScores,
@@ -6162,8 +6172,78 @@ export async function saveAcademicScoreDraft(env, user = {}, input = {}) {
   return {
     ok: true,
     refreshAcademicManagement: true,
-    message: `${updatedScores.length} student score${updatedScores.length === 1 ? '' : 's'} saved. Recorded score cells are now locked.`
+    SheetId,
+    message: `${updatedScores.length} student score${updatedScores.length === 1 ? '' : 's'} saved. ${lockOnSave ? 'Recorded score cells are now locked.' : 'Use Lock recorded scores before submitting.'}`
   };
+}
+
+export async function lockAcademicRecordedScores(env, user = {}, input = {}) {
+  const context = await academicScoreSheetContext(env, user, input, 'canEnterScores',
+    ACADEMIC_SCOREBOOK_STATE_KEYS.filter(key => !['scoreImports', 'scoreSyncBatches'].includes(key)));
+  const {existing, state, roster, SheetId} = context;
+  if (!existing || lower(existing.Status) !== 'draft') throw failure('Save a Draft score sheet before locking recorded scores.', 409);
+  const refs = new Set(roster.map(row => lower(row.StudentRef)));
+  const scores = state.studentScores.filter(row => row.SheetId === SheetId && refs.has(lower(row.StudentRef)));
+  const counts = new Map();
+  for (const row of scores) counts.set(lower(row.StudentRef),(counts.get(lower(row.StudentRef)) || 0)+1);
+  const duplicates = [...counts.values()].filter(count => count > 1).length;
+  const recorded = scores.filter(row => counts.get(lower(row.StudentRef)) === 1 && academicRecordedScoreCellIds(row.ComponentScores).length);
+  if (!recorded.length) throw failure(duplicates ? 'Resolve duplicate score records or save another student’s scores before locking.' : 'Save at least one recorded score before locking.', 409, duplicates ? 'ACADEMIC_SCORE_DUPLICATE' : 'ACADEMIC_SCORE_SHEET_EMPTY');
+  const pending = recorded.filter(row => academicRecordedScoreCellIds(row.ComponentScores)
+    .some(id => !academicLockedScoreCellIds(row).includes(id)));
+  if (!pending.length && existing.ScoreEditingReactivated !== true) return {ok:true,partialAcademicManagement:true,message:'Recorded scores are already locked. No changes were needed.'};
+  const timestamp = nowIso();
+  const writes = pending.map(row => ({collectionPath:ACADEMIC_MANAGEMENT_COLLECTIONS.studentScores,
+    documentId:row.ScoreId, ...writePrecondition(row,row.__updateTime), data:withoutMetadata({...row,
+      LockedScoreCellIds:academicRecordedScoreCellIds(row.ComponentScores),
+      LockedComponentIds:academicRecordedScoreComponentIds(row.ComponentScores),
+      ScoreCellsLockedAt:timestamp, ScoreCellsLockedBy:actorName(user), ScoreCellsLockedByUsername:actorUsername(user)
+    })}));
+  const record = academicScoreSheetRecord(context, existing, user, timestamp, {
+    ScoreEditingReactivated:false, ScoreEditingRelockedAt:timestamp,
+    ScoreEditingRelockedBy:actorName(user), ScoreEditingRelockedByUsername:actorUsername(user)
+  });
+  writes.push(...academicScoreMembershipGuards(state, recorded));
+  writes.push({collectionPath:ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSheets,documentId:SheetId,
+    data:withoutMetadata(record),...writePrecondition(existing,input.SheetRevisionToken || input.RevisionToken)},
+    auditWrite(user,'LOCK_RECORDED_SCORES','scoreSheet',record,`${recorded.length} students with recorded scores locked; missing scores remain pending`));
+  await commitAcademicBatch(env,writes,'The scores changed before they could be locked. Reload the scorebook and try again.');
+  return {ok:true,refreshAcademicManagement:true,SheetId,message:`Recorded scores locked. You may now submit mid-term scores or the full-term sheet. Missing scores remain pending.${duplicates ? ` ${duplicates} students with duplicate records remain pending for review.` : ''}`};
+}
+
+export async function submitAcademicMidTermScores(env, user = {}, input = {}) {
+  const context = await academicScoreSheetContext(env,user,input,'canEnterScores',
+    ACADEMIC_SCOREBOOK_STATE_KEYS.filter(key => !['scoreImports', 'scoreSyncBatches'].includes(key)));
+  const {existing,roster,state,permissions,activeScheme} = context;
+  if (!existing) throw failure('Save and lock recorded scores before submitting mid-term scores.',409);
+  const policy = activeScheme.MidTerm || {};
+  const ids = [...new Set(policy.ComponentIds || [])];
+  if (!policy.Enabled || !ids.length) throw failure('Enable mid-term results and select their tests in the active Academic Policy first.',409,'ACADEMIC_MIDTERM_POLICY_REQUIRED');
+  const reviews = await academicComponentReviews(existing,roster,state.studentScores);
+  const selected = ids.map(id => reviews.find(row => row.ComponentId === id));
+  if (selected.some(row => !row)) throw failure('The mid-term policy uses tests missing from this score sheet. Review the active assessment layout first.',409);
+  const timestamp = nowIso(), updates = [];
+  for (const review of selected) {
+    if (['Submitted','Approved','Locked'].includes(review.Status) && !review.Stale) continue;
+    if (!review.CompleteCount) continue; // Entirely missing tests remain pending.
+    const update = academicComponentReviewTransition(existing,review,'Submitted',permissions,
+      {timestamp,name:actorName(user),username:actorUsername(user)},'',true);
+    if (update) updates.push(update);
+  }
+  if (!updates.length) {
+    if (!selected.some(row => row.CompleteCount)) throw failure('No complete mid-term test scores are ready to submit. Missing students remain pending.',409,'ACADEMIC_COMPONENT_INCOMPLETE');
+    return {ok:true,partialAcademicManagement:true,message:'Ready mid-term tests are already submitted or approved. No duplicate submission was recorded.'};
+  }
+  const record = academicScoreSheetRecord(context,existing,user,timestamp,{
+    ComponentReviews:{...(existing.ComponentReviews || {}),...Object.fromEntries(updates.map(row => [row.ComponentId,row]))}
+  });
+  const audit = auditWrite(user,'SUBMIT_MIDTERM_SCORES','scoreSheet',record,updates.map(row => `${row.Name}: ${row.CompleteCount} ready, ${row.PendingStudentRefs.length} pending`).join('; '));
+  audit.data.ComponentIds = updates.map(row => row.ComponentId);
+  await commitAcademicSubmission(env,context,user,{...input,ComponentId:`midterm:${[...ids].sort().join(',')}`},'scorebook',[
+    {collectionPath:ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSheets,documentId:record.SheetId,
+      data:withoutMetadata(record),...writePrecondition(existing,input.SheetRevisionToken || input.RevisionToken)},audit
+  ]);
+  return {ok:true,refreshAcademicManagement:true,SheetId:record.SheetId,message:`Mid-term scores submitted for ${updates.map(row => row.Name).join(', ')}. Incomplete students remain pending; the full-term sheet stays Draft.`};
 }
 
 export async function reactivateAcademicScoreEditing(env, user = {}, input = {}) {
@@ -6200,7 +6280,7 @@ export async function reactivateAcademicScoreEditing(env, user = {}, input = {})
   return {
     ok: true,
     refreshAcademicManagement: true,
-    message: `Score editing reactivated for ${context.schoolClass.Name} / ${context.arm.Name} · ${context.subject.Name}. The cells will lock again after the next save.`
+    message: `Score editing reactivated for ${context.schoolClass.Name} / ${context.arm.Name} · ${context.subject.Name}. Save corrections, then lock the recorded scores before submitting.`
   };
 }
 
@@ -6238,7 +6318,7 @@ export async function reactivateAcademicClassScoreEditing(env, user = {}, input 
     { allowLargeAtomicBatch: true });
   return { ok: true, partialAcademicManagement: true, ReactivatedCount: pending.length,
     AlreadyReactivatedCount: sheets.length - pending.length,
-    message: `${schoolClass.Name}: ${pending.length} scorebooks reopened across all arms and subjects; ${sheets.length - pending.length} already open. Saved marks and published results are unchanged. Each scorebook locks again after its next save.` };
+    message: `${schoolClass.Name}: ${pending.length} scorebooks reopened across all arms and subjects; ${sheets.length - pending.length} already open. Saved marks and published results are unchanged. Save corrections, then lock recorded scores before submitting.` };
 }
 
 async function assertAcademicScoreSheetComplete(state, sheet, roster, options = {}) {
@@ -6297,6 +6377,12 @@ export async function changeAcademicScoreSheetStatus(env, user = {}, input = {},
   if (!normalTransition && !reopening) throw failure(`${current} score sheets cannot move directly to ${target}.`, 409, 'ACADEMIC_SCORE_STATUS_INVALID');
   const completion = ['Submitted','Approved','Locked'].includes(target)
     ? await assertAcademicScoreSheetComplete(state, existing, roster, {summary:true,allowPending:input.AllowPendingStudents === true || existing.AllowPendingStudents === true}) : null;
+  if (target === 'Submitted') {
+    const pending = new Set(completion.PendingStudentRefs.map(lower));
+    const ready = roster.filter(row => !pending.has(lower(row.StudentRef)));
+    const reviews = await academicComponentReviews(existing,ready,state.studentScores);
+    if (reviews.some(row => row.UnlockedCompleteCount > 0)) throw failure('Lock recorded scores before submitting the full-term sheet.',409,'ACADEMIC_SCORE_LOCK_REQUIRED');
+  }
   if (reopening && !permissions.canManageScoreCorrections) throw failure('Only an Admin or Management user may reopen recorded scores.', 403);
   if (reopening && !reason) throw failure('Enter the approved reason for reopening this score sheet.');
   const timestamp = nowIso();
@@ -9695,6 +9781,8 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
   if (['saveacademicstudentattendance', 'saveacademicattendance'].includes(action)) return saveAcademicStudentAttendance(env, user, input);
   if (['decideacademicattendancecorrection', 'decideattendancecorrection'].includes(action)) return decideAcademicAttendanceCorrection(env, user, input);
   if (['saveacademicscoredraft', 'saveacademicstudentscores'].includes(action)) return saveAcademicScoreDraft(env, user, input);
+  if (action === 'lockacademicrecordedscores') return lockAcademicRecordedScores(env, user, input);
+  if (action === 'submitacademicmidtermscores') return submitAcademicMidTermScores(env, user, input);
   if (['getacademicscorebookcontext', 'openscorebook'].includes(action)) return getAcademicScorebookContext(env, user, input);
   if (action === 'getacademicclassscoreregister') return getAcademicClassScoreRegister(env, user, input);
   if (action === 'getacademicclassroomscoreregister') return getAcademicClassroomScoreRegister(env, user, input);

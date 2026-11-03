@@ -68,14 +68,16 @@ test('failed or mismatched readback cannot display a successful layout refresh',
   }
 });
 
-test('general mutation refresh discards stale sheet context so rendering can load fresh marks once', async () => {
-  const { runtime, calls } = web(body => response(body.action === 'bootstrap'
-    ? { ok: true, partialAcademicManagement: true, assessmentScheme: { RevisionId: 'branch-default' } }
-    : { ok: true, refreshAcademicManagement: true, message: 'Saved.' }));
-  const result = await runtime.academicManagementRequest('saveAcademicScoreDraft', payload);
-  assert.deepEqual(calls.map(row => row.action), ['saveAcademicScoreDraft', 'bootstrap']);
-  for (const key of ['scorebookContext', 'scorebookSnapshot', 'activeAssessmentScheme']) assert.equal(result[key], undefined);
-  assert.equal(result.studentScores.length, 2, 'unrelated loaded data is not discarded');
+test('save, lock and midterm submission refresh only their selected sheet without a workspace reload', async () => {
+  for (const action of ['saveAcademicScoreDraft','lockAcademicRecordedScores','submitAcademicMidTermScores']) {
+    const { runtime, calls } = web(body => response(body.action === 'getAcademicScorebookContext'
+      ? fresh : { ok: true, refreshAcademicManagement: true, SheetId:'sheet', message: 'Saved.' }));
+    const result = await runtime.academicManagementRequest(action, payload);
+    assert.deepEqual(calls.map(row => row.action), [action, 'getAcademicScorebookContext']);
+    assert.equal(result.scorebookContext.SheetId,'sheet');
+    assert.equal(result.scoreSheets.find(row=>row.SheetId==='sheet').RevisionToken,'new-revision');
+    assert.equal(result.studentScores.length, 2, 'unrelated loaded data is not discarded');
+  }
 });
 
 function migration({ conflict = false, excessive = false } = {}) {

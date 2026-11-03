@@ -3,6 +3,10 @@ import {academicAssessmentScheme, calculateAcademicStudentScore} from './academi
 const clean=value=>String(value??'').trim();
 const lower=value=>clean(value).toLowerCase();
 const fail=(message,code='ACADEMIC_COMPONENT_REVIEW_INVALID')=>Object.assign(new Error(message),{status:409,code});
+const recordedCellIds=cells=>cells.flatMap(component=>(component.Parts?.length
+  ? component.Parts.map(part=>({...part,CellId:`${component.ComponentId}:${part.PartId}`}))
+  : [{...component,CellId:component.ComponentId}]))
+  .filter(cell=>['Numeric','Absent','Exempt'].includes(cell.State)).map(cell=>cell.CellId);
 
 // Reviews approve a particular saved version of a test. A changed mark, roster
 // or assessment definition invalidates that review without erasing its history.
@@ -13,7 +17,7 @@ export async function academicComponentReviews(sheet, roster, scores) {
   for(const score of scores)if(score.SheetId===sheet.SheetId)byStudent.get(lower(score.StudentRef))?.push(score);
   return Promise.all(scheme.Components.map(async component=>{
     const definition={...component,Required:true};
-    const missing=[],snapshot=[];
+    const missing=[],snapshot=[],unlocked=[];
     for(const ref of refs){
       const records=byStudent.get(ref);
       const cells=records.length===1?(records[0].ComponentScores||[]).filter(cell=>lower(cell.ComponentId)===lower(component.Id)):[];
@@ -21,6 +25,13 @@ export async function academicComponentReviews(sheet, roster, scores) {
       try{calculated=calculateAcademicStudentScore({...scheme,Components:[definition]},cells);}
       catch{calculated=null;}
       if(records.length!==1||!calculated||calculated.UnresolvedComponentIds.length)missing.push(ref);
+      else {
+        // Older records were locked on save. An explicit empty array is a new,
+        // editable draft, including zero/absent/exempt marks and split tests.
+        const record=records[0];
+        const locks=Array.isArray(record.LockedScoreCellIds)?new Set(record.LockedScoreCellIds):null;
+        if(sheet.ScoreEditingReactivated===true || (locks && recordedCellIds(cells).some(id=>!locks.has(id))))unlocked.push(ref);
+      }
       snapshot.push([ref,records.length,calculated?.ComponentScores||cells]);
     }
     const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify([sheet.SheetId,definition,snapshot])));
@@ -29,6 +40,7 @@ export async function academicComponentReviews(sheet, roster, scores) {
     const unchanged=previous?.ScoreDigest===digest;
     return {ComponentId:component.Id,Name:component.Name,RosterCount:refs.length,CompleteCount:refs.length-missing.length,
       MissingCount:missing.length,Complete:refs.length>0&&!missing.length,ScoreDigest:digest,
+      UnlockedCompleteCount:unlocked.length,
       Status:unchanged?previous.Status:'Draft',PreviousStatus:previous?.Status||'',Stale:Boolean(previous&&!unchanged),
       ReviewedBy:unchanged?clean(previous[`${previous.Status}By`]):'',
       AllowPendingStudents:unchanged&&previous?.AllowPendingStudents===true,
@@ -48,6 +60,7 @@ export function academicComponentReviewTransition(sheet, review, target, permiss
   if(target==='Draft'&&(!permissions.canManageScoreCorrections||!clean(reason)))throw Object.assign(fail('An authorised correction officer must give a reason to reopen this test.'),{status:403});
   const current=review.Status;
   if(current===target&&!review.Stale)return null;
+  if(target==='Submitted'&&review.UnlockedCompleteCount>0)throw fail(`Lock the recorded scores before submitting ${review.Name}.`, 'ACADEMIC_SCORE_LOCK_REQUIRED');
   const normal=(current==='Draft'&&target==='Submitted')||(current==='Submitted'&&target==='Approved')||(current==='Approved'&&target==='Locked');
   if(!normal&&!(target==='Draft'&&['Submitted','Approved','Locked'].includes(current)))throw fail(`${review.Name} is ${current}. Submit its current saved marks before approval.`);
   const event=target==='Draft'?'Reopened':target;

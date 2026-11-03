@@ -15632,6 +15632,25 @@ function academicCbtUploadStatus(row = {}) {
   return row.Status || 'Recorded';
 }
 
+function academicScoreActionState(sheet, scores, midTerm = {}) {
+  let recorded = 0, unlocked = 0;
+  const counts = new Map();
+  for (const score of scores) if (score.StudentRef) {
+    const ref = String(score.StudentRef).trim().toLowerCase();
+    counts.set(ref,(counts.get(ref) || 0)+1);
+  }
+  for (const score of scores.filter(row => !row.StudentRef || counts.get(String(row.StudentRef).trim().toLowerCase()) === 1)) for (const component of score.ComponentScores || []) {
+    const cells = component.Parts?.length ? component.Parts.map(part => ({...part, id:`${component.ComponentId}:${part.PartId}`}))
+      : [{...component, id:component.ComponentId}];
+    for (const cell of cells) if (['Numeric','Absent','Exempt'].includes(cell.State)) {
+      recorded++;
+      if (sheet?.ScoreEditingReactivated || (Array.isArray(score.LockedScoreCellIds) && !score.LockedScoreCellIds.includes(cell.id))) unlocked++;
+    }
+  }
+  return {recorded, unlocked, canSubmit:sheet?.Status === 'Draft' && recorded > 0 && unlocked === 0,
+    midTermEnabled:midTerm.Enabled === true && midTerm.ComponentIds?.length > 0};
+}
+
 function academicScorebookWorkspace(data, rows) {
   let scheme = data.assessmentScheme || { Ready: false, Components: [], GradeBands: [], Issues: ['No assessment scheme is loaded.'] };
   const sessionId = academicManagementFilters.sessionId;
@@ -15673,6 +15692,10 @@ function academicScorebookWorkspace(data, rows) {
     && (row.SubjectIds || []).includes(selectedAllocation?.SubjectId))
     .sort((a, b) => academicLabel(data.students, a.StudentRef, a.StudentRef).localeCompare(academicLabel(data.students, b.StudentRef, b.StudentRef), undefined, { sensitivity: 'base' }));
   const correctionActive = sheet?.ScoreEditingReactivated === true;
+  const midTerm = data.scorebookContext?.MidTerm || {};
+  const currentRosterRefs = new Set(roster.map(row => clean(row.StudentRef).toLowerCase()));
+  const scoreActions = academicScoreActionState(sheet, sheetScores.filter(score => currentRosterRefs.has(clean(score.StudentRef).toLowerCase())), midTerm);
+  const midTermNames = (midTerm.ComponentIds || []).map(id => (scheme.Components || []).find(row => row.Id === id)?.Name).filter(Boolean).join(', ');
   const layoutUpdateAvailable = data.scorebookContext?.LayoutUpdateAvailable === true;
   const canEdit = data.permissions?.canEnterScores === true && (!sheet || sheet.Status === 'Draft') && scheme.Ready;
   let editableCellCount = 0;
@@ -15718,7 +15741,7 @@ function academicScorebookWorkspace(data, rows) {
       const cellLocked = lockedScoreCellIds.has(field.cellId) && !correctionActive;
       const cellEditable = canEdit && manualAllowed && !cellLocked;
       if (cellEditable) editableCellCount += 1;
-      return `<td><div class="academic-score-component${manualAllowed ? '' : ' is-source-locked'}${cellLocked ? ' is-saved-locked' : ''}" data-academic-score-component="${escapeHtml(component.Id)}" data-academic-score-part="${escapeHtml(field.part?.Id || '')}" data-maximum="${field.maximum}" data-weight="${field.weight}" data-required="${component.Required === false ? 'false' : 'true'}" data-manual-allowed="${manualAllowed ? 'true' : 'false'}" data-cell-locked="${cellLocked ? 'true' : 'false'}" data-state-explicit="${entry.StateExplicit === true ? 'true' : 'false'}"${cellLocked ? ' title="Saved score locked. Admin or Management must reactivate this subject and arm before correction."' : ''}><input type="number" min="0" max="${field.maximum}" step="0.01" value="${numeric ? escapeHtml(entry.RawScore) : ''}" data-academic-score-value ${numeric && cellEditable ? '' : 'disabled'} aria-label="${escapeHtml(field.name)} score for ${escapeHtml(academicLabel(data.students, membership.StudentRef, membership.StudentRef))}"><select data-academic-score-state ${cellEditable ? '' : 'disabled'} aria-label="${escapeHtml(field.name)} status">${academicScoreStateOptions(entry.State || 'Numeric')}</select>${cellLocked ? '<small class="academic-score-cell-lock">&#128274; Saved</small>' : (!manualAllowed ? '<small class="academic-score-cell-lock">CBT only</small>' : '')}</div></td>`;
+      return `<td><div class="academic-score-component${manualAllowed ? '' : ' is-source-locked'}${cellLocked ? ' is-saved-locked' : ''}" data-academic-score-component="${escapeHtml(component.Id)}" data-academic-score-part="${escapeHtml(field.part?.Id || '')}" data-maximum="${field.maximum}" data-weight="${field.weight}" data-required="${component.Required === false ? 'false' : 'true'}" data-manual-allowed="${manualAllowed ? 'true' : 'false'}" data-cell-locked="${cellLocked ? 'true' : 'false'}" data-state-explicit="${entry.StateExplicit === true ? 'true' : 'false'}"${cellLocked ? ' title="Saved score locked. Admin or Management must reactivate this subject and arm before correction."' : ''}><input type="number" min="0" max="${field.maximum}" step="0.01" value="${numeric ? escapeHtml(entry.RawScore) : ''}" data-academic-score-value ${numeric && cellEditable ? '' : 'disabled'} aria-label="${escapeHtml(field.name)} score for ${escapeHtml(academicLabel(data.students, membership.StudentRef, membership.StudentRef))}"><select data-academic-score-state ${cellEditable ? '' : 'disabled'} aria-label="${escapeHtml(field.name)} status">${academicScoreStateOptions(entry.State || 'Numeric')}</select>${cellLocked ? '<small class="academic-score-cell-lock">&#128274; Locked</small>' : (!manualAllowed ? '<small class="academic-score-cell-lock">CBT only</small>' : '')}</div></td>`;
     }).join('');
     return `<tr data-academic-score-student="${escapeHtml(membership.StudentRef)}" data-score-id="${escapeHtml(score.ScoreId || '')}" data-revision-token="${escapeHtml(score.RevisionToken || '')}"><td class="academic-serial">${index + 1}</td><td class="academic-student-cell"><strong>${escapeHtml(academicLabel(data.students, membership.StudentRef, membership.StudentRef))}</strong><small>${escapeHtml(membership.StudentRef)}</small></td>${componentCells}<td data-academic-score-total>${score.Percentage === null || score.Percentage === undefined ? '—' : `${score.Percentage}%`}</td><td data-academic-score-grade>${escapeHtml(score.Grade || '—')}</td><td data-academic-score-completion>${escapeHtml(score.CompletionStatus || 'Incomplete')}</td></tr>`;
   }).join('');
@@ -15732,8 +15755,8 @@ function academicScorebookWorkspace(data, rows) {
     : '';
   const lockingNotice = sheet
     ? correctionActive
-      ? `<div class="academic-score-lock-banner is-reactivated"><strong>Correction access active</strong><span>Recorded marks, including CBT marks, may be corrected. Enter raw marks, not weighted marks. Corrections are audited; all recorded cells lock again after the next save. Published results still require withdrawal and reapproval.</span></div>`
-      : `<div class="academic-score-lock-banner"><strong>Saved cells are protected</strong><span>Recorded scores are locked. Blank and incomplete cells remain available for entry.</span></div>`
+      ? `<div class="academic-score-lock-banner is-reactivated"><strong>Correction access active</strong><span>Recorded marks, including CBT marks, may be corrected. Enter raw marks, not weighted marks. Corrections are audited. Save changes, then use Lock recorded scores before submitting. Published results still require withdrawal and reapproval.</span></div>`
+      : `<div class="academic-score-lock-banner"><strong>Save, lock, then submit</strong><span>Save keeps new marks editable. Lock recorded scores protects them before submission. Blank and incomplete cells remain available for entry.</span></div>`
     : '';
   const reactivateButton = sheet && data.permissions?.canManageScoreCorrections && !correctionActive
     ? `<button type="button" class="secondary" data-academic-score-reactivate data-academic-id="${escapeHtml(sheet.SheetId)}" data-academic-revision="${escapeHtml(sheet.RevisionToken)}">Reactivate score editing</button>`
@@ -15750,7 +15773,13 @@ function academicScorebookWorkspace(data, rows) {
       <label>Full-term status<input value="${escapeHtml(sheet?.Status || 'New Draft')}" readonly></label>
     </div>
     <div class="academic-attendance-table academic-scorebook-table"><table><thead><tr><th scope="col" class="academic-serial">S/N</th><th class="academic-student-cell">Student</th>${componentHeaders}<th>Total</th><th>Grade</th><th>Completion</th></tr></thead><tbody>${scoreRows || `<tr><td colspan="${scoreFields.length + 5}">Choose an allocated classroom and subject with active students.</td></tr>`}</tbody></table></div>
-    <div class="academic-scorebook-actions"><button type="submit" ${canEdit && roster.length && editableCellCount ? '' : 'disabled'}>Save and lock recorded scores</button>${sheet?.Status === 'Draft' && data.permissions?.canEnterScores ? `<button type="button" class="secondary" data-academic-score-status="Submitted" data-academic-id="${escapeHtml(sheet.SheetId)}" data-academic-revision="${escapeHtml(sheet.RevisionToken)}">Submit full-term sheet</button>` : ''}${sheet && data.permissions?.canEnterScores ? `<button type="button" class="secondary" data-academic-test-review="${escapeHtml(sheet.SheetId)}">Review individual tests</button>` : ''}${reactivateButton}</div>
+    <div class="academic-scorebook-actions" role="group" aria-label="Save, lock and submit scores">
+      <button type="submit" ${canEdit && roster.length && editableCellCount ? '' : 'disabled'}>Save scores</button>
+      <button type="button" class="secondary" data-academic-lock-scores ${canEdit && scoreActions.recorded && (scoreActions.unlocked || correctionActive) ? '' : 'disabled'}>Lock recorded scores</button>
+      ${sheet?.Status === 'Draft' && data.permissions?.canEnterScores ? `<button type="button" class="secondary" data-academic-submit-midterm ${scoreActions.canSubmit && scoreActions.midTermEnabled ? '' : 'disabled'}>Submit mid-term scores</button><button type="button" class="secondary" data-academic-score-status="Submitted" data-academic-id="${escapeHtml(sheet.SheetId)}" data-academic-revision="${escapeHtml(sheet.RevisionToken)}" ${scoreActions.canSubmit ? '' : 'disabled'}>Submit full-term sheet</button>` : ''}
+      ${sheet && data.permissions?.canEnterScores ? `<button type="button" class="secondary" data-academic-test-review="${escapeHtml(sheet.SheetId)}">Review individual tests</button>` : ''}${reactivateButton}
+    </div>
+    <p class="muted" data-score-action-hint>${scoreActions.midTermEnabled ? `Mid-term tests: ${escapeHtml(midTermNames)}. ` : 'Mid-term submission requires an active mid-term policy. '}Save changes, lock recorded scores, then submit. Incomplete students remain pending.</p>
   </form>`;
   const workflow = `<div data-academic-batch-toolbar><div class="academic-batch-controls"><label>Review scope<select data-academic-review-scope></select></label><label>Classroom<select data-academic-review-room></select></label></div><div data-academic-score-workflow-filter></div><p class="muted">Test approvals and full-term approvals are separate. Approved includes locked sheets; publication is shown under Results. Pending students do not block ready classmates.</p>${data.permissions?.canReviewScores ? '<button type="button" data-academic-batch-review>Batch approve</button>' : ''}</div>` + table('Score Sheet Workflow', rows.scoreSheets, [
     { label: 'Classroom', value: (row) => `${academicLabel(rows.classes, row.ClassId)} / ${academicLabel(rows.arms, row.ArmId)}` },
@@ -17065,6 +17094,7 @@ function academicManagementHeader(data, rows, message = '') {
   </div>
   <div class="academic-homework-actions academic-toolbar-actions" role="group" aria-label="Academic shortcuts">
     ${scoreRegisterLabel ? `<button type="button" data-academic-open-score-register>${escapeHtml(scoreRegisterLabel)}</button>` : ''}
+    ${data.permissions?.canAllocateClassStudents ? `<button type="button" data-academic-open-allocation>Allocate ${escapeHtml(learner.plural)}</button>` : ''}
     ${data.permissions?.canReviewScores ? `<a class="btn secondary" href="/exams-admin.html?audience=student&branch=${encodeURIComponent(selectedBranchId || 'main')}&section=${encodeURIComponent(academicManagementFilters.section || 'secondary')}">Entrance / remote exams</a>` : ''}
     ${data.permissions?.canEnterScores ? '<button type="button" data-academic-diary>Teaching diaries</button><button type="button" data-teacher-homework>Homework / parent message</button>' : ''}
     ${data.permissions?.canManageStructure ? '<button type="button" data-staff-meetings>Staff meetings</button>' : ''}
@@ -17115,7 +17145,25 @@ function openAcademicClassScoreRegister() {
   });
 }
 
+async function openAcademicStudentAllocation() {
+  if (!academicManagementData?.permissions?.canAllocateClassStudents) return;
+  academicManagementTaskViews.students = 'allocate';
+  if (academicManagementView === 'students' && panelEl.querySelector('[data-academic-student-placement]')) {
+    showAcademicManagementTask('students', 'allocate');
+  } else {
+    academicManagementView = 'students';
+    // Explicit allocation shortcut loads only the authorised classroom pool.
+    await loadAcademicManagement({records:true});
+  }
+  if (academicManagementView !== 'students') return;
+  const form = panelEl.querySelector('[data-academic-student-placement]');
+  form?.scrollIntoView({block:'center',behavior:'instant'});
+  form?.querySelector('input:not([type="hidden"]),select')?.focus({preventScroll:true});
+}
+
 function bindAcademicAreaNavigation() {
+  panelEl.querySelector('[data-academic-open-allocation]')?.addEventListener('click', event =>
+    runButtonAction(event.currentTarget, 'Opening…', openAcademicStudentAllocation));
   panelEl.querySelector('[data-academic-open-score-register]')?.addEventListener('click', openAcademicClassScoreRegister);
   panelEl.querySelector('[data-academic-view-select]')?.addEventListener('change', (event) => {
     const select = event.currentTarget;
@@ -17260,6 +17308,10 @@ async function academicManagementRequest(action, payload = {}, requestOptions = 
     window.DynamaxAcademicWorkflow?.clearBranchSummary();
   }
   if (data.refreshAcademicManagement === true && clean(action).toLowerCase() !== 'bootstrap') {
+    if (['saveacademicscoredraft','lockacademicrecordedscores','submitacademicmidtermscores'].includes(normalizedAction)) {
+      const refreshed = await academicManagementRequest('getAcademicScorebookContext', {...payload, SheetId:data.SheetId || payload.SheetId}, requestOptions);
+      return {...refreshed, refreshAcademicManagement:false, message:data.message};
+    }
     if (['applyactiveacademicscorelayout', 'applyactivescorelayout'].includes(normalizedAction)) {
       // Bootstrap is a partial workspace response: merging it keeps the old
       // selected-sheet context and can suppress the subsequent context fetch.
@@ -19101,6 +19153,31 @@ function bindAcademicManagement() {
     renderAcademicManagement(academicManagementData || {});
   });
   scorebookForm?.querySelectorAll('[data-academic-score-student]').forEach((row) => updateAcademicScorebookRow(row));
+  if (scorebookForm) {
+    scorebookForm.dataset.scoreDirty = 'false';
+    const markDirty = event => {
+      if (!event.target.matches('[data-academic-score-value],[data-academic-score-state]')) return;
+      scorebookForm.dataset.scoreDirty = 'true';
+      scorebookForm.querySelectorAll('[data-academic-lock-scores],[data-academic-submit-midterm],[data-academic-score-status],[data-academic-test-review]').forEach(button => button.disabled = true);
+      scorebookForm.querySelector('[data-score-action-hint]').textContent = 'Unsaved changes. Save scores before locking or submitting.';
+    };
+    scorebookForm.addEventListener('input', markDirty);
+    scorebookForm.addEventListener('change', markDirty);
+    for (const [selector, action, busyText] of [
+      ['[data-academic-lock-scores]','lockAcademicRecordedScores','Locking…'],
+      ['[data-academic-submit-midterm]','submitAcademicMidTermScores','Submitting…']
+    ]) scorebookForm.querySelector(selector)?.addEventListener('click', async event => {
+      if (scorebookForm.dataset.scoreDirty === 'true') return;
+      const sheet = academicFind(academicManagementData?.scoreSheets || [], scorebookForm.elements.SheetId.value);
+      if (!sheet) return;
+      await runButtonAction(event.currentTarget,busyText,async()=>{
+        try {
+          const data = await academicManagementRequest(action,academicScoreSheetRequestPayload(sheet));
+          renderAcademicManagement(data,data.message);
+        } catch (error) { setStatus(document.getElementById('academicManagementStatus'),error.message || String(error),'bad'); }
+      });
+    });
+  }
   scorebookForm?.addEventListener('change', (event) => {
     if (!event.target.matches('[data-academic-score-state]')) return;
     const component = event.target.closest('[data-academic-score-component]');
@@ -19157,7 +19234,7 @@ function bindAcademicManagement() {
     const branch=selectedBranchId,username=currentUser?.username;
     await runButtonAction(button,'Loading tests…',async()=>{
       try{
-        const {openAcademicTestReviews}=await import('./academic-component-review.js?v=20261028-workflow-status-filters');
+        const {openAcademicTestReviews}=await import('./academic-component-review.js?v=20261028-workflow-status-filters-20261103-lock-before-submit');
         await openAcademicTestReviews({sheet,payload:academicScoreSheetRequestPayload,request:academicManagementRequest,
           permissions:academicManagementData.permissions||{},
           title:[academicLabel(academicManagementData.classes,sheet.ClassId),academicLabel(academicManagementData.arms,sheet.ArmId),academicLabel(academicManagementData.subjects,sheet.SubjectId)].join(' · '),

@@ -82,9 +82,11 @@ test('navigation preserves teacher classroom scope and does not expose the regis
   const teacher = client('Teacher');
   assert.match(teacher.context.academicManagementHeader(teacher.data, {}), /data-academic-open-score-register>My classroom scores/);
   assert.equal(teacher.data.permissions.canReviewScores, false);
+  assert.match(teacher.context.academicManagementHeader(teacher.data, {}), /data-academic-open-allocation>Allocate students/);
   const denied = client('Accounts Officer');
   assert.doesNotMatch(denied.context.academicManagementHeader(denied.data, {}), /data-academic-open-score-register|value="classRegister"/);
   denied.context.openAcademicClassScoreRegister(); assert.equal(denied.calls.length, 0);
+  assert.doesNotMatch(denied.context.academicManagementHeader(denied.data, {}), /data-academic-open-allocation/);
 });
 
 for (const role of ['Super Admin', 'Director', 'Admin', 'Principal', 'Vice Principal Academics', 'Vice Principal Administration',

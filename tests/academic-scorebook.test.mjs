@@ -296,7 +296,7 @@ test('Milestone 5 server and web contracts expose controlled score sheets, impor
   assert.match(backendSource, /case 'applyActiveAcademicScoreLayout'/);
   assert.match(adminSource, /data-academic-score-layout-update/);
   assert.match(adminSource, /Apply active layout/);
-  assert.match(adminSource, /Save and lock recorded scores/);
+  for (const label of ['Save scores', 'Lock recorded scores', 'Submit mid-term scores', 'Submit full-term sheet']) assert.ok(adminSource.includes(label), label);
   assert.match(styleSource, /\.academic-score-component\.is-saved-locked/);
 });
 
