@@ -9,7 +9,7 @@ import { withStudentProfileDefaults } from '../lib/student-profile-defaults.js';
 import { studentWalletProfile } from '../lib/student-wallet-profile.js';
 import { effectiveInvoiceAfterReversal } from '../lib/invoice-charge-reversal.js';
 import { isActiveClinicVisit } from '../lib/clinic-stock-usage.js';
-import { createDocumentIfAbsent, getDocument, listCollection, queryCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
+import { batchCommitLiteralDocuments, createDocumentIfAbsent, getDocument, listCollection, queryCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import {
   querySchoolCollection,
   schoolCollectionPaths,
@@ -18,14 +18,15 @@ import {
 } from '../lib/school-scope.js';
 import { getStoredDocument } from '../lib/document-storage.js';
 import { consumeRequestAllowance, readJsonBody, secureSecretEqual } from '../lib/request-security.js';
+import { onboardingStatus, requireParentOnboardingStudent, parentOnboardingPasswordStep,
+  finishParentOnboardingPassword } from '../lib/parent-onboarding.js';
+export { onboardingStatus } from '../lib/parent-onboarding.js';
 import { getWebBranding } from '../lib/web-branding.js';
 import {
   clearParentSessionCookie,
-  createParentPasswordSetupToken,
   createParentSession,
   getParentCredential,
   parentSessionCookie,
-  readParentPasswordSetupToken,
   readParentSession,
   saveParentPassword,
   verifyStoredParentPassword
@@ -69,22 +70,6 @@ function lower(value) {
   return clean(value).toLowerCase();
 }
 
-const PARENT_ONBOARDING_TEMPORARY_PASSWORD = '12345678';
-
-export function onboardingStatus(student = {}) {
-  const explicitStatus = lower(student.ParentOnboardingStatus || student.parentOnboardingStatus);
-  if (explicitStatus) return explicitStatus;
-  // Academic Management staged student profiles before the parent onboarding
-  // field existed. Its "Needs completion" marker is the staff-side signal that
-  // those records are still awaiting their first parent profile submission.
-  const profileStatus = lower(student.ProfileCompletionStatus || student.profileCompletionStatus);
-  const profileWasCompleted = clean(student.ParentOnboardingProfileCompletedAt || student.parentOnboardingProfileCompletedAt);
-  const onboardingWasCompleted = clean(student.ParentOnboardingCompletedAt || student.parentOnboardingCompletedAt);
-  return profileStatus === 'needs completion' && !profileWasCompleted && !onboardingWasCompleted
-    ? 'pendingprofile'
-    : '';
-}
-
 function validParentEmail(value) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(lower(value));
 }
@@ -99,24 +84,6 @@ function validIsoDate(value) {
   return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
 }
 
-async function requireParentOnboardingStudent(env, body, expectedStatus = 'pendingprofile') {
-  const admissionNo = clean(body.admissionNo || body.AdmissionNo);
-  const temporaryPassword = String(body.temporaryPassword || body.password || '');
-  if (!admissionNo || !temporaryPassword) {
-    const error = new Error('Admission number and one-time password are required.');
-    error.status = 400;
-    throw error;
-  }
-  const student = await getSelectedIdentityRow(env, 'students', admissionNo);
-  const passwordMatches = await secureSecretEqual(temporaryPassword, PARENT_ONBOARDING_TEMPORARY_PASSWORD);
-  if (!student || onboardingStatus(student) !== expectedStatus || !passwordMatches) {
-    const error = new Error('This admission number or one-time sign-in is invalid, or onboarding has already been completed.');
-    error.status = 401;
-    throw error;
-  }
-  return student;
-}
-
 function publicOnboardingStudent(student = {}) {
   return {
     admissionNo: clean(student.AdmissionNo || student.__id),
@@ -126,6 +93,8 @@ function publicOnboardingStudent(student = {}) {
     surname: clean(student.Surname),
     gender: clean(student.Gender),
     className: clean(student.ClassName || student.ClassAdmitted),
+    branchName: clean(student.BranchName || student.BranchId) || 'Main Branch',
+    schoolSection: schoolSectionFor(student),
     previousSchool: clean(student.PreviousSchool),
     dateOfBirth: clean(student.DateOfBirth),
     studentType: clean(student.StudentType),
@@ -159,7 +128,8 @@ async function assertParentOnboardingAllowance(env, request) {
 
 async function beginParentOnboarding(env, body, request) {
   await assertParentOnboardingAllowance(env, request);
-  const student = await requireParentOnboardingStudent(env, body);
+  const student = await requireParentOnboardingStudent(env, body, { statuses: ['pendingprofile', 'awaitingpassword'] });
+  if (onboardingStatus(student) === 'awaitingpassword') return parentOnboardingPasswordStep(env, student);
   return {
     ok: true,
     student: publicOnboardingStudent(student),
@@ -255,18 +225,19 @@ async function completeParentOnboardingProfile(env, body, request) {
   const schoolProfile = await getSchoolProfile(env, student.BranchId);
   const correctedName = formatPersonName(values, schoolProfile);
   const now = nowIso();
-  const updated = {
-    ...student,
+  const profilePatch = {
     ...values,
     DisplayName: correctedName,
     ApplicantName: correctedName,
-    ParentOnboardingTokenHash: '',
+    ParentOnboardingTokenHash: existingCredential ? '' : student.ParentOnboardingTokenHash,
+    ParentOnboardingExpiresAt: existingCredential ? '' : student.ParentOnboardingExpiresAt,
     ParentOnboardingStatus: existingCredential ? 'Complete' : 'AwaitingPassword',
     ParentOnboardingProfileCompletedAt: now,
     ProfileCompletionStatus: 'Complete',
     UpdatedAt: now,
     UpdatedBy: 'Parent onboarding'
   };
+  const updated = { ...student, ...profilePatch };
   if (!student.__updateTime) {
     const error = new Error('The student record could not be verified for a one-time update. Please retry.');
     error.status = 503;
@@ -274,91 +245,23 @@ async function completeParentOnboardingProfile(env, body, request) {
   }
   try {
     // Firestore's version precondition makes simultaneous completions for the
-    // same admission number mutually exclusive.
-    await upsertSchoolDocument(env, 'students', safeDocumentId(student.__id || student.AdmissionNo), updated, {
-      updateTime: student.__updateTime
-    });
+    // same scoped learner record mutually exclusive.
+    await batchCommitLiteralDocuments(env, [{ collectionPath: student.__scopePath, documentId: student.__id,
+      updateTime: student.__updateTime, updateMask: Object.keys(profilePatch), data: profilePatch }]);
   } catch (error) {
     if (![409, 412].includes(Number(error?.status))) throw error;
     const conflict = new Error('This student profile was already completed or changed. Contact the school if you still need to update it.');
     conflict.status = 409;
     throw conflict;
   }
-  return {
-    ok: true,
-    parentEmail: values.ParentEmail,
-    requiresTemporaryLogin: !existingCredential,
-    message: existingCredential
-      ? 'Profile completed. Sign in with your existing parent password.'
-      : 'Profile completed. Sign in again with your email address and the one-time password 12345678, then create your private password.'
-  };
-}
-
-async function pendingParentPasswordStudent(env, email, secret) {
-  if (!validParentEmail(email)) return null;
-  if (!(await secureSecretEqual(secret, PARENT_ONBOARDING_TEMPORARY_PASSWORD))) return null;
-  if (await getParentCredential(env, email)) return null;
-  const rows = await querySchoolCollection(env, 'students', {
-    filters: [{ field: 'ParentEmail', op: '==', value: lower(email) }]
-  }).catch(() => []);
-  const pending = rows.filter((row) => onboardingStatus(row) === 'awaitingpassword');
-  return pending[0] || null;
-}
-
-async function requireParentPasswordChange(env, email, secret, request) {
-  if (!(await secureSecretEqual(secret, PARENT_ONBOARDING_TEMPORARY_PASSWORD))) return null;
-  await assertParentOnboardingAllowance(env, request);
-  const student = await pendingParentPasswordStudent(env, email, secret);
-  if (!student) return null;
-  return {
-    ok: true,
-    passwordChangeRequired: true,
-    parentEmail: lower(email),
-    passwordSetupToken: await createParentPasswordSetupToken(env, email, student.AdmissionNo || student.__id),
-    message: 'Create a private password before opening the parent dashboard.'
-  };
+  return existingCredential
+    ? { ok: true, parentEmail: values.ParentEmail, message: 'Profile completed. Sign in with your existing parent password.' }
+    : parentOnboardingPasswordStep(env, updated);
 }
 
 async function completeParentPasswordSetup(env, body, request) {
   await assertParentOnboardingAllowance(env, request);
-  const setup = await readParentPasswordSetupToken(env, body.passwordSetupToken);
-  if (!setup) {
-    const error = new Error('The password setup request has expired. Sign in with the one-time password again.');
-    error.status = 401;
-    throw error;
-  }
-  const newPassword = String(body.newPassword || '');
-  const confirmPassword = String(body.confirmPassword || '');
-  if (newPassword !== confirmPassword) {
-    const error = new Error('The new password and confirmation do not match.');
-    error.status = 400;
-    throw error;
-  }
-  if (await secureSecretEqual(newPassword, PARENT_ONBOARDING_TEMPORARY_PASSWORD)) {
-    const error = new Error('Choose a private password that is different from the one-time password.');
-    error.status = 400;
-    throw error;
-  }
-  const student = await getSelectedIdentityRow(env, 'students', setup.admissionNo);
-  if (!student || onboardingStatus(student) !== 'awaitingpassword' || lower(student.ParentEmail) !== setup.email) {
-    const error = new Error('This password setup request is no longer valid.');
-    error.status = 401;
-    throw error;
-  }
-  await saveParentPassword(env, setup.email, newPassword);
-  const now = nowIso();
-  await upsertSchoolDocument(env, 'students', safeDocumentId(student.__id || student.AdmissionNo), {
-    ...student,
-    ParentOnboardingStatus: 'Complete',
-    ParentOnboardingCompletedAt: now,
-    UpdatedAt: now,
-    UpdatedBy: 'Parent onboarding'
-  });
-  return {
-    ok: true,
-    parentEmail: setup.email,
-    message: 'Private password saved. Your parent dashboard is now ready.'
-  };
+  return finishParentOnboardingPassword(env, body);
 }
 
 export function parentChildIdentity(child = {}) {
@@ -2649,8 +2552,8 @@ export async function onRequestPost(context) {
     }
 
     if (action === 'completeParentPasswordSetup') {
-      const data = await completeParentPasswordSetup(env, body, request);
-      const cookie = parentSessionCookie(await createParentSession(env, data.parentEmail));
+      const { credentialEpoch, ...data } = await completeParentPasswordSetup(env, body, request);
+      const cookie = parentSessionCookie(await createParentSession(env, data.parentEmail, { expectedEpoch: credentialEpoch }));
       return Response.json(data, { headers: parentResponseHeaders(cookie) });
     }
 
@@ -2666,17 +2569,6 @@ export async function onRequestPost(context) {
       const error = new Error('Parent email and password or verification code are required.');
       error.status = 401;
       throw error;
-    }
-    if (action === 'getDashboard' && !body.__parentSessionEmail) {
-      const requiredPasswordChange = await requireParentPasswordChange(
-        env,
-        suppliedEmail,
-        suppliedSecret,
-        request
-      );
-      if (requiredPasswordChange) {
-        return Response.json(requiredPasswordChange, { headers: parentResponseHeaders() });
-      }
     }
     if (!body.__parentSessionEmail && !['getDashboard', 'changeParentPassword'].includes(action)) {
       const sources = await loadParentSources(env, 'identity', body);

@@ -87,7 +87,7 @@
           <div>
             <small>NEW STUDENT PROFILE</small>
             <h2>Complete your child's information</h2>
-            <p class="muted">Enter the admission number and temporary password to review and correct your child's details.</p>
+            <p class="muted">Open the personal link issued by your child's school. Each link belongs to one learner in one branch and expires after 7 days.</p>
           </div>
           <button type="button" id="closeParentOnboardingBtn" class="secondary">&larr; Sign in</button>
         </div>
@@ -99,7 +99,7 @@
               <input id="onboardingAdmissionNo" autocomplete="off" required>
             </div>
             <div>
-              <label for="onboardingTemporaryPassword">One-time password <span class="required">*</span></label>
+              <label for="onboardingTemporaryPassword">Personal access code or link <span class="required">*</span></label>
               <input id="onboardingTemporaryPassword" type="password" autocomplete="one-time-code" required>
             </div>
           </div>
@@ -112,6 +112,7 @@
             <div><span>Current school record</span><strong id="onboardingStudentName"></strong></div>
             <div><span>Admission number</span><strong id="onboardingStudentAdmission"></strong></div>
             <div><span>Class</span><strong id="onboardingStudentClass"></strong></div>
+            <div><span>Branch / school section</span><strong id="onboardingStudentBranch"></strong></div>
           </div>
           <p class="muted">Check and correct every field below, even if the current school record is wrong. Admission number and class placement are assigned by the school; ask the school to correct either of those.</p>
           <h3>Student details</h3>
@@ -389,6 +390,6 @@
   <script src="js/payment-methods.js?v=20260809-direct-transfer-sharp-text"></script>
   <script src="js/academic-result-template.js?v=20261028-result-identity-two-rows"></script>
   <script src="js/academic-result-download.js?v=20261030"></script>
-  <script src="js/parent-dashboard.js?v=20261030-parent-recovery-result-download"></script>
+  <script src="js/parent-dashboard.js?v=20261030-parent-recovery-result-download-20261103-parent-branch-links"></script>
 </body>
 </html>

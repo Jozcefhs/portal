@@ -105,6 +105,15 @@ let parentNotificationHistoryRows = [];
 const onboardingHash = new URLSearchParams(window.location.hash.replace(/^#/, ''));
 const parentOnboardingRequested = onboardingHash.has('onboarding') || onboardingHash.has('onboard');
 const parentOnboardingAdmission = onboardingHash.get('admission') || '';
+const parentOnboardingAccess = onboardingHash.get('access') || '';
+
+function personalOnboardingToken() {
+  const value = document.getElementById('onboardingTemporaryPassword').value.trim();
+  if (value.includes('#')) {
+    return new URLSearchParams(value.slice(value.indexOf('#') + 1)).get('access') || '';
+  }
+  return value;
+}
 let parentPasswordSetupToken = '';
 if (window.location.hash && !parentOnboardingRequested) {
   window.history.replaceState(window.history.state, '', `${window.location.pathname}${window.location.search}`);
@@ -424,6 +433,7 @@ function openParentOnboarding() {
   parentOnboardingProfileForm.hidden = true;
   const admissionInput = document.getElementById('onboardingAdmissionNo');
   if (admissionInput && parentOnboardingAdmission) admissionInput.value = parentOnboardingAdmission;
+  if (parentOnboardingAccess) document.getElementById('onboardingTemporaryPassword').value = parentOnboardingAccess;
   setInlineStatus(
     parentOnboardingAccessStatus,
     '',
@@ -447,6 +457,7 @@ function populateParentOnboardingProfile(student = {}) {
   document.getElementById('onboardingStudentName').textContent = student.studentName || 'Student';
   document.getElementById('onboardingStudentAdmission').textContent = student.admissionNo || '';
   document.getElementById('onboardingStudentClass').textContent = student.className || '';
+  document.getElementById('onboardingStudentBranch').textContent = [student.branchName, student.schoolSection].filter(Boolean).join(' / ');
   const values = {
     onboardingFirstName: student.firstName,
     onboardingMiddleName: student.middleName,
@@ -505,11 +516,12 @@ parentOnboardingAccessForm?.addEventListener('submit', async (event) => {
       body: freshBody({
         action: 'beginParentOnboarding',
         admissionNo: document.getElementById('onboardingAdmissionNo').value.trim(),
-        temporaryPassword: document.getElementById('onboardingTemporaryPassword').value
+        onboardingToken: personalOnboardingToken()
       })
     });
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(data.message || 'Could not confirm the student record.');
+    if (data.passwordChangeRequired) { openRequiredParentPassword(data); return; }
     populateParentOnboardingProfile(data.student);
   } catch (error) {
     setInlineStatus(parentOnboardingAccessStatus, error.message, 'bad');
@@ -532,7 +544,7 @@ parentOnboardingProfileForm?.addEventListener('submit', async (event) => {
       body: freshBody({
         action: 'completeParentOnboardingProfile',
         admissionNo: document.getElementById('onboardingAdmissionNo').value.trim(),
-        temporaryPassword: document.getElementById('onboardingTemporaryPassword').value,
+        onboardingToken: personalOnboardingToken(),
         profile: {
           firstName: document.getElementById('onboardingFirstName').value,
           middleName: document.getElementById('onboardingMiddleName').value,
@@ -559,6 +571,12 @@ parentOnboardingProfileForm?.addEventListener('submit', async (event) => {
     });
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(data.message || 'Could not complete the student profile.');
+    if (data.passwordChangeRequired) {
+      parentOnboardingProfileForm.hidden = true;
+      parentOnboardingAccessForm.hidden = false;
+      openRequiredParentPassword(data);
+      return;
+    }
     parentOnboardingProfileForm.reset();
     parentOnboardingAccessForm.reset();
     window.history.replaceState(window.history.state, '', `${window.location.pathname}${window.location.search}`);
@@ -580,7 +598,7 @@ document.getElementById('cancelRequiredParentPassword')?.addEventListener('click
   parentPasswordSetupToken = '';
   requiredParentPasswordForm?.reset();
   requiredParentPasswordDialog?.close();
-  setStatus('Sign in again when you are ready to create your private password.', '');
+  setStatus('Reopen your personal school link, or click Continue, when you are ready to create your private password.', '');
 });
 
 requiredParentPasswordForm?.addEventListener('submit', async (event) => {
@@ -610,6 +628,7 @@ requiredParentPasswordForm?.addEventListener('submit', async (event) => {
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(data.message || 'Could not save the private password.');
     parentPasswordSetupToken = '';
+    closeParentOnboarding();
     requiredParentPasswordDialog.close();
     document.getElementById('verificationCode').value = '';
     await loadDashboard({ sessionOnly: true });

@@ -25,8 +25,9 @@ test('minimal student import keeps separate names and applies the configured dis
   assert.match(importer, /formatPersonName\([^;]+schoolProfile/);
   assert.match(importer, /ParentOnboardingTokenHash: ''/);
   assert.match(importer, /ParentOnboardingStatus: 'PendingProfile'/);
-  assert.match(importer, /TemporaryPassword: '12345678'/);
-  assert.match(importer, /ParentOnboardingPath: '\/parent-dashboard#onboarding=1'/);
+  assert.match(importer, /prepareParentOnboarding\(env, student, importedBy\)/);
+  assert.doesNotMatch(importer, /TemporaryPassword: '12345678'/);
+  assert.match(importer, /ParentOnboardingPath: onboarding\.onboardingPath/);
 
   const persistedStudent = importer.slice(importer.indexOf('const student = {'), importer.indexOf('const saved ='));
   assert.doesNotMatch(persistedStudent, /TemporaryPassword|ParentOnboardingToken:/);
@@ -34,18 +35,13 @@ test('minimal student import keeps separate names and applies the configured dis
   assert.match(persistedStudent, /VerificationCode: ''/);
 });
 
-test('shared parent completion link becomes unusable after profile completion and dashboard access waits for a private password', () => {
-  const verifier = api.slice(api.indexOf('async function requireParentOnboardingStudent'), api.indexOf('function publicOnboardingStudent'));
-  assert.doesNotMatch(verifier, /onboardingToken|ParentOnboardingToken/);
-  assert.match(verifier, /admissionNo/);
-  assert.match(verifier, /PARENT_ONBOARDING_TEMPORARY_PASSWORD/);
-  assert.match(api, /ParentOnboardingTokenHash: ''/);
+test('personal parent completion leads directly to scoped private password setup', () => {
+  assert.match(api, /requireParentOnboardingStudent/);
   assert.match(api, /updateTime: student\.__updateTime/);
-  assert.match(api, /onboardingStatus\(student\) !== expectedStatus/);
   assert.match(api, /ParentOnboardingStatus: existingCredential \? 'Complete' : 'AwaitingPassword'/);
-  assert.match(api, /passwordChangeRequired: true/);
+  assert.match(api, /parentOnboardingPasswordStep\(env, updated\)/);
   assert.match(api, /completeParentPasswordSetup/);
-  assert.match(api, /parentSessionCookie\(await createParentSession\(env, data\.parentEmail\)\)/);
+  assert.match(api, /expectedEpoch: credentialEpoch/);
   assert.match(html, /Complete an imported student profile/);
   assert.match(html, /id="onboardingAdmissionNo"/);
   assert.match(html, /id="onboardingParentEmail"/);
@@ -64,10 +60,11 @@ test('shared parent completion link becomes unusable after profile completion an
   assert.doesNotMatch(script, /(?:localStorage|sessionStorage)\.setItem\([^\n]*(?:onboard|passwordSetupToken|temporaryPassword)/i);
 });
 
-test('staff can re-enable onboarding for an existing student and copy the shared link', () => {
+test('staff can issue a personal link for an explicitly selected learner', () => {
   assert.match(staffStudents, /reissueparentonboarding/);
-  assert.match(staffStudents, /ParentOnboardingStatus: 'PendingProfile'/);
-  assert.match(staffStudents, /onboardingPath: '\/parent-dashboard#onboarding=1'/);
+  assert.match(staffStudents, /issueStaffParentOnboarding\(env, user, body\)/);
+  assert.match(admin, /ScopePath: button\.dataset\.parentOnboardingScope/);
+  assert.match(admin, /DocumentId: button\.dataset\.parentOnboardingId/);
   assert.match(admin, /data-parent-onboarding-student/);
   assert.match(admin, /data-copy-shared-parent-onboarding/);
   assert.match(admin, /\/parent-dashboard#onboarding=1/);
@@ -100,7 +97,7 @@ test('parent completion can correct the full student identity and profile withou
   assert.match(api, /DisplayName: correctedName/);
   assert.match(api, /ApplicantName: correctedName/);
   assert.match(api, /formatPersonName\(values, schoolProfile\)/);
-  const completion = api.slice(api.indexOf('async function completeParentOnboardingProfile'), api.indexOf('async function pendingParentPasswordStudent'));
+  const completion = api.slice(api.indexOf('async function completeParentOnboardingProfile'), api.indexOf('async function completeParentPasswordSetup'));
   assert.doesNotMatch(completion, /ClassName: clean\(profile\.|AdmissionNo: clean\(profile\./);
 });
 

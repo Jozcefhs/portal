@@ -1,3 +1,4 @@
+import { prepareParentOnboarding, issueParentOnboarding } from '../lib/parent-onboarding.js';
 import { securityAuditList } from './security-audit.js';
 import { loadDatedHistory } from '../lib/history-date-range.js';
 import { assignedStaffBranches, assertStaffScopeManageable, resolveStaffBranchAssignment } from '../lib/staff-branch-access.js';
@@ -12,7 +13,7 @@ import { financeMoney, financeDate, financeData, financeWrite, financeFailure, f
 import { getAccountingChartRows, invalidateAccountingChartRows, primeAccountingChartRows } from '../lib/accounting-reference-cache.js';
 import { continueRevenueSync, revenueSyncWrite, revenueSyncReader } from '../lib/accounting-revenue-sync.js';
 import { mergeSchoolBranchMetadata, saveBranchSchoolSection } from '../lib/branch-school-presentation.js';
-import { canonicalSchoolBranchId, deleteSchoolDocument, getSchoolDocumentById, getSchoolDocumentsById, getSchoolStructure, invalidateSchoolStructureCache, listSchoolCollection, normalizeSchoolStructure, querySchoolCollection, safeScopeId, schoolCollectionPaths, schoolSectionFor, upsertSchoolDocument } from '../lib/school-scope.js';
+import { canonicalSchoolBranchId, deleteSchoolDocument, getSchoolDocumentById, getSchoolDocumentsById, getSchoolStructure, invalidateSchoolStructureCache, listSchoolCollection, normalizeSchoolStructure, querySchoolCollection, safeScopeId, scopedCollectionPath, schoolCollectionPaths, schoolSectionFor, upsertSchoolDocument } from '../lib/school-scope.js';
 import { canonicalConfiguredClass, classNamesMatch } from '../lib/class-names.js';
 import { explicitlyIncludesFullScholarship, isFullScholarship } from '../lib/full-scholarship.js';
 import { categoryApplies, deleteStoreCategory, ensureStoreCategories, resolveStoreCategory, saveStoreCategory } from '../lib/store-categories.js';
@@ -4148,6 +4149,9 @@ async function importStudents(env, body) {
     getDocument(env, 'settings', 'schoolProfile').catch(() => null)
   ]);
   const importedBy = clean(body.ImportedBy || body.importedBy) || 'Admissions Office';
+  const importScope = requestedStudentScope(body);
+  const structure = await getSchoolStructure(env);
+  const branchId = canonicalSchoolBranchId(importScope.branchId || structure.ActiveBranchId);
   let imported = 0;
   let skipped = 0;
   const failures = [];
@@ -4184,8 +4188,11 @@ async function importStudents(env, body) {
       failures.push(`Row ${rowNo} (${admissionNo}): missing gender.`);
       continue;
     }
+    const section = ['primary', 'secondary'].includes(lower(importScope.schoolSectionAccess))
+      ? lower(importScope.schoolSectionAccess) : schoolSectionFor({ ClassName: classAdmitted });
     const duplicate = [...existingStudents, ...savedStudents].find((row) =>
-      sameReferenceIdentity(row.AdmissionNo || row.admissionNo || row.__id, admissionNo)
+      canonicalSchoolBranchId(row.BranchId || 'main') === branchId && schoolSectionFor(row) === section
+      && sameReferenceIdentity(row.AdmissionNo || row.admissionNo || row.__id, admissionNo)
     );
     if (duplicate) {
       skipped += 1;
@@ -4193,6 +4200,9 @@ async function importStudents(env, body) {
       continue;
     }
     const student = {
+      __id: safeDocumentId(admissionNo),
+      __scopePath: scopedCollectionPath('students', branchId, section),
+      BranchId: branchId, SchoolSection: section,
       EnrolledAt: nowIso(),
       ApplicationReference: '',
       AdmissionNo: admissionNo,
@@ -4216,13 +4226,16 @@ async function importStudents(env, body) {
       EnrolledBy: importedBy,
       UpdatedAt: nowIso()
     };
-    const saved = await saveStudent(env, student);
+    const onboarding = await prepareParentOnboarding(env, student, importedBy);
+    Object.assign(student, onboarding.patch);
+    const saved = await saveStudent(env, student, { exists: false });
     savedStudents.push(saved);
     credentials.push({
       AdmissionNo: admissionNo,
       DisplayName: applicantName,
-      TemporaryPassword: '12345678',
-      ParentOnboardingPath: '/parent-dashboard#onboarding=1',
+      TemporaryPassword: '',
+      ParentOnboardingPath: onboarding.onboardingPath,
+      ParentOnboardingExpiresAt: onboarding.expiresAt,
       OnboardingStatus: 'Pending profile completion'
     });
     imported += 1;
@@ -4234,24 +4247,7 @@ async function reissueParentOnboarding(env, body) {
   const accountRef = clean(body.AccountRef || body.AdmissionNo || body.accountRef);
   const existing = await findStudentByAccountRef(env, accountRef, requestedStudentScope(body));
   if (!existing) throw applicationNotFound(accountRef);
-  const now = nowIso();
-  const student = await saveStudent(env, {
-    ...existing,
-    ParentOnboardingTokenHash: '',
-    ParentOnboardingStatus: 'PendingProfile',
-    ProfileCompletionStatus: 'Needs completion',
-    ParentOnboardingReissuedAt: now,
-    UpdatedAt: now,
-    UpdatedBy: clean(body.RecordedBy || body.UpdatedBy) || 'Student Register'
-  });
-  return {
-    ok: true,
-    message: 'Parent onboarding is ready. The shared link is available to copy.',
-    onboardingPath: '/parent-dashboard#onboarding=1',
-    admissionNo: student.AdmissionNo,
-    temporaryPassword: '12345678',
-    student
-  };
+  return issueParentOnboarding(env, existing, clean(body.RecordedBy || body.UpdatedBy) || 'Student Register');
 }
 
 async function promoteStudents(env, body) {

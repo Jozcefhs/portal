@@ -4162,7 +4162,7 @@ function bindStudentEditor(students) {
     const onboardingUrl = new URL('/parent-dashboard#onboarding=1', window.location.origin).href;
     try {
       await copyTextToClipboard(onboardingUrl);
-      setStatus(dashboardStatus, `Shared parent profile link copied: ${onboardingUrl}. Parents enter their child's admission number and the temporary password 12345678.`, 'ok');
+      setStatus(dashboardStatus, `Shared parent profile link copied: ${onboardingUrl}. This page requires a personal access link. Use the link icon beside the intended learner to issue one.`, 'ok');
     } catch (error) {
       setStatus(dashboardStatus, error.message || String(error), 'bad');
     }
@@ -4216,14 +4216,15 @@ function bindStudentEditor(students) {
         credentials: 'same-origin',
         cache: 'no-store',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'reissueParentOnboarding', AccountRef: admissionNo })
+        body: JSON.stringify({ action: 'reissueParentOnboarding', AccountRef: admissionNo,
+          ScopePath: button.dataset.parentOnboardingScope, DocumentId: button.dataset.parentOnboardingId })
       });
       const data = await response.json().catch(() => ({ ok: false, message: 'Student service did not return JSON.' }));
       if (!response.ok || !data.ok) throw new Error(data.message || 'Could not reissue parent onboarding.');
-      const onboardingUrl = new URL(data.onboardingPath || '/parent-dashboard#onboarding=1', window.location.origin).href;
+      const onboardingUrl = new URL(data.onboardingPath, window.location.origin).href;
       await copyTextToClipboard(onboardingUrl);
-      await loadDashboard();
-      setStatus(dashboardStatus, `Parent profile access enabled for ${admissionNo}. The shared link was copied. Send the admission number and one-time password 12345678 to the parent.`, 'ok');
+      setStatus(dashboardStatus, `Personal link copied for ${admissionNo} (${data.branchName}, ${data.schoolSection}). Send it only to this learner's parent. It expires in 7 days and replaces the previous link.`, 'ok');
+      setButtonLoading(button, false, '', '🔗');
     } catch (error) {
       setStatus(dashboardStatus, error.message || String(error), 'bad');
       setButtonLoading(button, false, '', '🔗');
@@ -20731,7 +20732,7 @@ function renderSection(active) {
     const learner = staffLearnerTerms();
     const handoff = takeRecordsDeskHandoff('students');
     const reference = recordsDeskHandoffReference(handoff);
-    panelEl.innerHTML = recordsDeskHandoffBanner(handoff, reference) + `<div class="student-onboarding-link-action"><button type="button" class="secondary" data-copy-shared-parent-onboarding>Copy shared parent completion link</button>${currentUser?.role === 'Super Admin' && (currentUser.allowedSections || []).includes('accounts') ? '<button type="button" class="secondary" data-review-all-student-billing>Review all student billing</button>' : ''}</div><p class="status" role="status" aria-live="polite" data-student-maintenance-status></p><button type="button" class="secondary" data-refresh-student-defaults hidden>Refresh Students to view saved defaults</button>` + studentClassExportToolbar(students) + studentAdmissionYearIntakeToolbar(students) + table(learner.Plural, students, [
+    panelEl.innerHTML = recordsDeskHandoffBanner(handoff, reference) + `<div class="student-onboarding-link-action"><button type="button" class="secondary" data-copy-shared-parent-onboarding>Copy parent setup page</button>${currentUser?.role === 'Super Admin' && (currentUser.allowedSections || []).includes('accounts') ? '<button type="button" class="secondary" data-review-all-student-billing>Review all student billing</button>' : ''}</div><p class="status" role="status" aria-live="polite" data-student-maintenance-status></p><button type="button" class="secondary" data-refresh-student-defaults hidden>Refresh Students to view saved defaults</button>` + studentClassExportToolbar(students) + studentAdmissionYearIntakeToolbar(students) + table(learner.Plural, students, [
       { label: 'Admission No', value: (row) => pick(row, ['AdmissionNo', 'AccountRef', '__id']) },
       { label: 'Name', render: studentSearchIdentity },
       { label: 'Class', value: studentExportClass },
@@ -20741,7 +20742,7 @@ function renderSection(active) {
       { label: 'Actions', render: (row) => {
         const studentRef = escapeHtml(pick(row, ['AdmissionNo', 'AccountRef', '__id']));
         const studentName = escapeHtml(pick(row, ['DisplayName', 'ApplicantName', 'StudentName']) || 'student');
-        return `<span class="compact-row-actions"><button type="button" class="student-edit-icon compact-icon-action compact-edit-action" data-edit-student="${studentRef}" aria-label="Edit profile for ${studentName}" title="Edit student profile"><span aria-hidden="true">&#9998;</span></button><button type="button" class="compact-icon-action" data-parent-onboarding-student="${studentRef}" aria-label="Reissue and copy parent onboarding link for ${studentName}" title="Reissue and copy parent onboarding link"><span aria-hidden="true">&#128279;</span></button></span>`;
+        return `<span class="compact-row-actions"><button type="button" class="student-edit-icon compact-icon-action compact-edit-action" data-edit-student="${studentRef}" aria-label="Edit profile for ${studentName}" title="Edit student profile"><span aria-hidden="true">&#9998;</span></button><button type="button" class="compact-icon-action" data-parent-onboarding-student="${studentRef}" data-parent-onboarding-scope="${escapeHtml(row.__scopePath || '')}" data-parent-onboarding-id="${escapeHtml(row.__id || '')}" aria-label="Reissue and copy parent onboarding link for ${studentName}" title="Reissue and copy parent onboarding link"><span aria-hidden="true">&#128279;</span></button></span>`;
       } }
     ], {
       className: 'student-register-table',

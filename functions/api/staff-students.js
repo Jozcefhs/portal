@@ -1,5 +1,6 @@
 import { batchCommitDocuments, listCollection, requireFirestoreEnv } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
+import { issueStaffParentOnboarding } from '../lib/parent-onboarding.js';
 import { listSchoolCollection, schoolSectionFor, upsertSchoolDocument } from '../lib/school-scope.js';
 import { canonicalConfiguredClass } from '../lib/class-names.js';
 import { readJsonBody } from '../lib/request-security.js';
@@ -155,34 +156,19 @@ export async function onRequestPost(context) {
         message: `${updated} student record(s) marked New Intake for First Term ${plan.academicSession}. Existing invoices and payments were not changed.`
       }, noStore);
     }
+    if (action === 'reissueparentonboarding') {
+      return Response.json(await issueStaffParentOnboarding(env, user, body), { headers: { 'Cache-Control': 'no-store' } });
+    }
     const accountRef = clean(body.AccountRef || body.accountRef || body.AdmissionNo);
     const rows = await listSchoolCollection(env, 'students', {
       branchId: user.branchId,
       schoolSectionAccess: user.schoolSectionAccess
     });
-    const existing = rows.find((row) => referenceMatches(row, accountRef) && visibleToUser(row, user));
+    const matches = rows.filter((row) => referenceMatches(row, accountRef) && visibleToUser(row, user));
+    if (matches.length > 1) throw Object.assign(new Error('This admission number matches more than one learner. Select one school section before editing.'), { status: 409 });
+    const existing = matches[0];
     if (!existing) {
       const err = new Error('Student was not found in your current school section.'); err.status = 404; throw err;
-    }
-    if (action === 'reissueparentonboarding') {
-      const now = new Date().toISOString();
-      const documentId = clean(existing.__id || existing.AdmissionNo || existing.AccountRef);
-      const saved = await upsertSchoolDocument(env, 'students', documentId, {
-        ...existing,
-        ParentOnboardingTokenHash: '',
-        ParentOnboardingStatus: 'PendingProfile',
-        ProfileCompletionStatus: 'Needs completion',
-        ParentOnboardingReissuedAt: now,
-        UpdatedAt: now,
-        UpdatedBy: user.displayName || user.username
-      });
-      return Response.json({
-        ok: true,
-        message: 'Parent onboarding is ready. The shared link is available to copy.',
-        onboardingPath: '/parent-dashboard#onboarding=1',
-        admissionNo: clean(saved.AdmissionNo || saved.__id),
-        temporaryPassword: '12345678'
-      });
     }
     const editableFields = [
       'DisplayName', 'ApplicantName', 'Surname', 'FirstName', 'MiddleName', 'Gender',

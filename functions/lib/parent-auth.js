@@ -198,6 +198,9 @@ export async function createParentSession(env, email, options = {}) {
   if (!normalizedEmail) throw new Error('Parent email is required for a session.');
   const now = Math.floor(Date.now() / 1000);
   const credential = await (options.getCredential || getParentCredential)(env, normalizedEmail);
+  if (options.expectedEpoch && clean(credential?.SessionEpoch) !== options.expectedEpoch) {
+    throw Object.assign(new Error('Your password changed during setup. Sign in with your current password.'), { status: 401 });
+  }
   if(options.authenticatedAfter&&Date.parse(credential?.PasswordChangedAt)>options.authenticatedAfter){
     throw Object.assign(new Error('Your password changed while signing in. Sign in again with the current password.'),{status:401});
   }
@@ -212,7 +215,28 @@ export async function createParentSession(env, email, options = {}) {
   return `${encoded}.${await signPayload(env, encoded)}`;
 }
 
-export async function createParentPasswordSetupToken(env, email, admissionNo) {
+// Purpose, tenant and exact learner identity are signed; client scope is never trusted.
+export async function createParentOnboardingToken(env, identity, expiresAt) {
+  const payload = { ...identity, project: clean(env.FIREBASE_PROJECT_ID),
+    workspace: clean(env.DYNAMAX_WORKSPACE_ID), edition: clean(env.ORGANISATION_EDITION),
+    purpose: 'parent-onboarding', nonce: bytesToHex(crypto.getRandomValues(new Uint8Array(32))),
+    exp: Math.floor(Date.parse(expiresAt) / 1000) };
+  if (!payload.project || !Number.isFinite(payload.exp)) throw new Error('Onboarding scope is not configured.');
+  const encoded = base64Url(JSON.stringify(payload));
+  return `${encoded}.${await signPayload(env, encoded)}`;
+}
+
+export async function readParentOnboardingToken(env, token) {
+  if (typeof token !== 'string' || token.length > 4096) return null;
+  const payload = await verifiedSignedPayload(env, token);
+  if (!payload || payload.purpose !== 'parent-onboarding' || !payload.nonce
+      || payload.project !== clean(env.FIREBASE_PROJECT_ID)
+      || payload.workspace !== clean(env.DYNAMAX_WORKSPACE_ID) || payload.edition !== clean(env.ORGANISATION_EDITION)
+      || !Number.isFinite(payload.exp) || payload.exp <= Math.floor(Date.now() / 1000)) return null;
+  return payload;
+}
+
+export async function createParentPasswordSetupToken(env, email, admissionNo, identity = {}) {
   const normalizedEmail = lower(email);
   const normalizedAdmissionNo = clean(admissionNo);
   if (!normalizedEmail || !normalizedAdmissionNo) {
@@ -220,6 +244,9 @@ export async function createParentPasswordSetupToken(env, email, admissionNo) {
   }
   const now = Math.floor(Date.now() / 1000);
   const payload = {
+    ...identity,
+    project: clean(env.FIREBASE_PROJECT_ID),
+    workspace: clean(env.DYNAMAX_WORKSPACE_ID), edition: clean(env.ORGANISATION_EDITION),
     email: normalizedEmail,
     admissionNo: normalizedAdmissionNo,
     purpose: 'parent-password-setup',
@@ -231,12 +258,16 @@ export async function createParentPasswordSetupToken(env, email, admissionNo) {
 }
 
 export async function readParentPasswordSetupToken(env, token) {
+  if (typeof token !== 'string' || token.length > 4096) return null;
   const payload = await verifiedSignedPayload(env, token);
   if (!payload || payload.purpose !== 'parent-password-setup') return null;
+  if (!payload.project || payload.project !== clean(env.FIREBASE_PROJECT_ID)
+      || payload.workspace !== clean(env.DYNAMAX_WORKSPACE_ID) || payload.edition !== clean(env.ORGANISATION_EDITION)
+      || !payload.scopePath || !payload.documentId || !payload.accessHash) return null;
   if (!payload.exp || Number(payload.exp) <= Math.floor(Date.now() / 1000)) return null;
   const email = lower(payload.email);
   const admissionNo = clean(payload.admissionNo);
-  return email && admissionNo ? { email, admissionNo } : null;
+  return email && admissionNo ? { ...payload, email, admissionNo } : null;
 }
 
 export async function readParentSession(env, request, options = {}) {

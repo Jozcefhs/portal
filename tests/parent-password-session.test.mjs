@@ -13,7 +13,7 @@ import {
   verifyParentPasswordHash
 } from '../functions/lib/parent-auth.js';
 
-const env = { PARENT_SESSION_SECRET: 'test-parent-session-secret-with-enough-entropy' };
+const env = { FIREBASE_PROJECT_ID: 'synthetic-school', PARENT_SESSION_SECRET: 'test-parent-session-secret-with-enough-entropy' };
 
 test('parent passwords use a salted hash and remain case-sensitive', async () => {
   const credential = await hashParentPassword('FamilyPass9');
@@ -48,11 +48,13 @@ test('parent session survives a new request without exposing a password', async 
 });
 
 test('first-time parent password setup uses a short-lived signed token without exposing the temporary password', async () => {
-  const token = await createParentPasswordSetupToken(env, 'Parent@Example.com', 'DCA/26/0001');
-  assert.deepEqual(await readParentPasswordSetupToken(env, token), {
-    email: 'parent@example.com',
-    admissionNo: 'DCA/26/0001'
-  });
+  const identity = { scopePath: 'schoolBranches/main/sections/primary/students', documentId: 'DCA-26-0001', accessHash: 'synthetic-hash' };
+  const token = await createParentPasswordSetupToken(env, 'Parent@Example.com', 'DCA/26/0001', identity);
+  const setup = await readParentPasswordSetupToken(env, token);
+  assert.equal(setup.email, 'parent@example.com');
+  assert.equal(setup.admissionNo, 'DCA/26/0001');
+  assert.equal(setup.scopePath, identity.scopePath);
+  assert.equal(setup.accessHash, identity.accessHash);
   assert.doesNotMatch(token, /12345678|password/i);
   const [payload, signature] = token.split('.');
   const tampered = `${payload}.${signature[0] === 'a' ? 'b' : 'a'}${signature.slice(1)}`;
@@ -97,8 +99,8 @@ test('parent portal uses browser password manager fields and never stores raw pa
   assert.doesNotMatch(script, /(?:localStorage|sessionStorage)\.setItem\([^\n]*(?:password|verificationCode)/i);
   assert.match(api, /parentSessionCookie/);
   assert.match(api, /saveParentPassword/);
-  assert.match(api, /PARENT_ONBOARDING_TEMPORARY_PASSWORD = '12345678'/);
-  assert.match(api, /passwordChangeRequired: true/);
+  assert.doesNotMatch(api, /PARENT_ONBOARDING_TEMPORARY_PASSWORD/);
+  assert.match(api, /parentOnboardingPasswordStep/);
   assert.match(upload, /readParentSession/);
   assert.doesNotMatch(upload, /storedPassword\.configured\s*&&\s*!storedPassword\.valid/);
   assert.match(upload, /authenticated:\s*Boolean\(session \|\| storedPassword\.valid\)/);
