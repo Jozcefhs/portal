@@ -178,11 +178,11 @@ test('school, church, other organisations and the Dynamax control plane use sepa
   assert.equal(churchConfig.firestore.indexes, 'firestore.church.indexes.json');
   assert.equal(organizationConfig.firestore.indexes, 'firestore.organization.indexes.json');
   assert.equal(platformConfig.firestore.indexes, 'firestore.platform.indexes.json');
-  assert.equal(schoolIndexes.indexes.length, 63);
+  assert.equal(schoolIndexes.indexes.length, 66);
   assert.ok(schoolIndexes.indexes.some(index=>index.collectionGroup==='academicStudentMemberships'
     && index.fields.map(field=>field.fieldPath).join(',')==='BranchId,SessionId,TermId,StudentRef'));
-  assert.equal(churchIndexes.indexes.length, 39);
-  assert.equal(organizationIndexes.indexes.length, 39);
+  assert.equal(churchIndexes.indexes.length, 42);
+  assert.equal(organizationIndexes.indexes.length, 42);
   assert.deepEqual(platformIndexes, { indexes: [], fieldOverrides: [] });
   await assert.rejects(access(new URL('../firebase.json', import.meta.url)));
   await assert.rejects(access(new URL('../firestore.indexes.json', import.meta.url)));
@@ -262,7 +262,8 @@ test('church indexes cover member notifications without carrying school-only com
   assert.equal(churchFields.some((fields) => fields.includes('SchoolSection')), false);
   assert.equal(churchFields.some((fields) => fields.includes('TargetAccountRefs')), false);
   assert.equal(churchCollections.has('invoices'), false);
-  assert.equal(churchCollections.has('payments'), false);
+  assert.deepEqual(churchIndexes.indexes.filter(index => index.collectionGroup === 'payments').map(indexFields),
+    ['Gateway|PaidAt', 'BranchId|Gateway|PaidAt']); // Shared online receipts; no school-fee history composites.
   assert.equal(churchCollections.has('storeOrders'), true);
 });
 

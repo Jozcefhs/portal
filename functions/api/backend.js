@@ -9,6 +9,7 @@ import { normalizeRecoveryEmail } from '../lib/staff-password-recovery.js';
 import { activeAdmissionRows } from '../lib/admission-cycle.js';
 import { billingComponentDiagnostics, billingDiagnostics } from '../lib/student-billing-diagnostics.js';
 import { loadBranchFinanceRows, loadBranchFinancePage } from '../lib/finance-branch-reads.js';
+import { onlineCollectionsPage } from '../lib/online-collections-page.js';
 import { financeMoney, financeDate, financeData, financeWrite, financeFailure, financeOperationId, journalFinancialSignature, assertFinanceRoleLimit } from '../lib/accounting-mutation-guards.js';
 import { getAccountingChartRows, invalidateAccountingChartRows, primeAccountingChartRows } from '../lib/accounting-reference-cache.js';
 import { continueRevenueSync, revenueSyncWrite, revenueSyncReader } from '../lib/accounting-revenue-sync.js';
@@ -894,7 +895,7 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
   'cancelLibraryReservation', 'saveLibraryPolicy',
   'saveOrganizationModulePreferences',
   'exportBackup', 'prepareRestoreBackup', 'clearRestoreCollection', 'writeRestoreCollection', 'completeRestoreBackup',
-  'getAccountingOverview', 'getAccountingJournalPage', 'getAccountingFinancePage', 'getSystemHealth', 'optimizeFirestoreData', 'getPayrollTaxConfiguration',
+  'getAccountingOverview', 'getAccountingJournalPage', 'getAccountingFinancePage', 'getOnlineCollections', 'getSystemHealth', 'optimizeFirestoreData', 'getPayrollTaxConfiguration',
   'seedTraditionalPayeConfiguration', 'savePayrollSalaryComponent', 'savePayrollTaxProfile',
   'clonePayrollTaxProfile', 'savePayrollTaxBands', 'savePayrollTaxReliefRules',
   'savePayrollLedgerMapping', 'validatePayrollTaxConfiguration', 'migratePayrollTaxPhase2',
@@ -12097,6 +12098,9 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
       return getAccountSnapshot(env, body);
     case 'getAccountingOverview':
       return getAccountingOverview(env, body);
+    case 'getOnlineCollections':
+      requireAccountingRole(body, ['Super Admin', 'Accounts Officer', 'Management']);
+      return onlineCollectionsPage(env, body, buildGatewayCollectionsReport);
     case 'getAccountingJournalPage':
       return getAccountingJournalPage(env, body);
     case 'getAccountingFinancePage':

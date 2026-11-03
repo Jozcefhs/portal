@@ -1,6 +1,18 @@
 {
   "indexes": [
     {
+      "collectionGroup": "payments", "queryScope": "COLLECTION",
+      "fields": [{"fieldPath":"Gateway","order":"ASCENDING"},{"fieldPath":"PaidAt","order":"DESCENDING"}]
+    },
+    {
+      "collectionGroup": "payments", "queryScope": "COLLECTION",
+      "fields": [{"fieldPath":"BranchId","order":"ASCENDING"},{"fieldPath":"Gateway","order":"ASCENDING"},{"fieldPath":"PaidAt","order":"DESCENDING"}]
+    },
+    {
+      "collectionGroup": "paymentGatewayCharges", "queryScope": "COLLECTION",
+      "fields": [{"fieldPath":"BranchId","order":"ASCENDING"},{"fieldPath":"Date","order":"DESCENDING"}]
+    },
+    {
       "collectionGroup": "executiveCorrespondence", "queryScope": "COLLECTION",
       "fields": [
         {"fieldPath":"OfficeKey","order":"ASCENDING"},
