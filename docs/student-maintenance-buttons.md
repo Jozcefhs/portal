@@ -52,6 +52,14 @@ Other Organisation editions do not acquire school billing permissions.
 
 ## Review obsolete textbook / yearbook charges
 
+The school-wide billing review and individual student billing preview now include
+**Review / resolve conflicts** on accounts with conflicting posted charges. This
+opens that account directly, checks its financial evidence and shows the exact
+invoice, fee-rule explanation and proposed reversal. Confirm the student's saved
+class first, enter a correction reason, then approve the reviewed correction.
+**Recheck this account** loads a fresh preview after posting or an uncertain
+response. A lost response never automatically resubmits the correction.
+
 In **Students**, a School Super Admin with Accounts and Students access can use
 **Review obsolete textbook / yearbook charges**, then **Prepare correction for
 all affected students**. Check the per-student preview, enter an approval reason,
@@ -62,10 +70,16 @@ and explicitly approve posting. Select each working branch in turn as needed.
   must still be saved and verifiable. Changed or ambiguous profiles are flagged
   for rechecking without stopping the other students.
 - Only current-period textbook/yearbook charges confirmed by an active,
-  matching Returning-only rule on a New Intake student's account qualify.
+  matching Returning-only rule on a New Intake student's account, or by a rule
+  belonging exclusively to another class, qualify. Class mismatches require a
+  unique matching rule with class as its only mismatch, saved class/session/term
+  and enrollment classification, and no potentially applicable competing rule.
+  Fee-code suffixes alone never authorize reversals.
   Valid charges, other components and other periods are untouched. Duplicate
   invoices, missing or changed fee rules, amount/currency mismatches and gaps in
   payment/journal evidence remain blocked for individual finance review.
+  The preview explains that incorrect profiles or fee rules should be corrected
+  at their source rather than compensated with a charge reversal.
 - Preparation performs read-only receipt and journal checks. The preview shows
   the exact invoice references, charges before/after and existing allocations
   to release. Candidate previews cannot authorize posting.

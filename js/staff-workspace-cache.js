@@ -33,6 +33,8 @@
   // stay fresh without invalidating the concurrent read as if records changed.
   // Payment verification is deliberately excluded: it can submit academic data.
   const scopedLiveReads = {
+    '/api/student-billing-reconciliation': ['preview', 'previewall', 'previewbatch', 'previewreversal', 'previewreversalsall', 'obsoleteroster', 'obsoletebatch', 'previewobsoletereversal'],
+    '/api/student-billing-preview': ['preview', ''],
     '/api/staff-admission-forms': ['genericqr', ''],
     '/api/staff-stores': ['genericqr'],
     '/api/staff-church-payments': ['genericqr'],

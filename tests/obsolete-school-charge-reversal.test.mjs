@@ -66,6 +66,67 @@ function harness({ configure = () => {}, beforeCommit, closed = () => false, los
     post: (token, who = actor, reason = 'Returning-only fees were posted before intake classification was corrected.') => reverseObsoleteSchoolCharges({}, profile, token, who, reason, deps) };
 }
 
+function classChargeFixture(data, profile, credit = 0) {
+  Object.assign(profile, { AdmissionNo: 'TEST/22/001', AccountRef: 'TEST/22/001', ClassName: 'Grade 10', EnrollmentCategory: 'Returning' });
+  for (const rows of [data.payments, data.ledger]) rows.forEach(row => { row.AccountRef = profile.AccountRef; });
+  data.feeItems = [{ ...data.feeItems[0], Amount: 586660 },
+    { ...data.feeItems[1], FeeCode: 'TXT_SNR_11', FeeName: 'Grade 11 textbooks', ClassName: 'Grade 11', Amount: 143880 }];
+  data.invoices = data.feeItems.map((fee, i) => ({ ...fee, __id: `class-invoice-${i}`, __updateTime: 'v1', InvoiceId: `CLASS-INV-${i}`,
+    AccountRef: profile.AccountRef, Debit: fee.Amount, Credit: i ? credit : 0, Status: 'Unpaid', Date: '2026-10-01', CreatedAt: '2026-10-01' }));
+  data.journals = data.invoices.flatMap(invoice => [buildSchoolInvoiceChargeAccountingJournal(invoice),
+    ...(invoice.Credit ? [buildSchoolInvoiceCreditAccountingJournal(invoice)] : [])]);
+  data.journals.push(buildPaymentAccountingJournal(data.payments[0]));
+  data.journals = data.journals.map((row, i) => ({ ...row, __id: safeDocumentId(row.JournalNo), __updateTime: `class-j${i}` }));
+}
+
+test('a saved Grade 11 textbook rule on a Grade 10 returning account has a reviewed class-mismatch resolution', async () => {
+  for (const credit of [0, 35000, 143880]) {
+    const h = harness({ configure: (data, profile) => classChargeFixture(data, profile, credit) });
+    const before = JSON.stringify(h.read()), plan = await h.plan();
+    assert.equal(plan.ready, true, plan.reason);
+    assert.equal(plan.amount, 143880); assert.equal(plan.postedTotal, 730540); assert.equal(plan.afterPostedTotal, 586660);
+    assert.equal(plan.expectedTotal, 586660); assert.equal(plan.releasedCredit, credit);
+    assert.equal(plan.charges[0].basis, 'different-class'); assert.equal(plan.charges[0].ruleClass, 'Grade 11');
+    assert.match(plan.charges[0].explanation, /Grade 11.*Grade 10/);
+    assert.equal(JSON.stringify(h.read()), before, 'preview does not write');
+    const receipts = copy(h.read().payments), ledger = copy(h.read().ledger);
+    await h.post(plan.previewToken, actor, 'Verified the saved class and the obsolete Grade 11 textbook charge.');
+    assert.deepEqual(h.read().payments.map(withoutRevision), receipts.map(withoutRevision));
+    assert.deepEqual(h.read().ledger.map(withoutRevision), ledger.map(withoutRevision));
+    const original = h.read().invoices.find(row => row.FeeCode === 'TXT_SNR_11');
+    assert.equal(original.Amount, 143880); assert.equal(original.Credit, credit); assert.equal(original.FeeChargeReversed, 'YES');
+    assert.equal((await h.plan()).ready, false);
+    await assert.rejects(h.post(plan.previewToken)); assert.equal(h.commits.length, 1);
+  }
+});
+
+test('class mismatch corrections require actual applicable rule evidence, not an ID or incomplete classification', async () => {
+  for (const change of [
+    (d, p) => { p.ClassName = ''; }, (d, p) => { p.EnrollmentCategory = ''; },
+    d => { d.feeItems[1].ClassName = 'Grade 10'; }, d => { d.feeItems[1].ClassName = 'Grade 9, Grade 10'; },
+    d => { d.feeItems[1].ClassName = 'All'; }, d => { d.feeItems[1].Active = 'NO'; },
+    d => { d.feeItems[1].Amount = 150000; }, d => { d.feeItems[1].Currency = 'USD'; }, d => { d.feeItems[1].Term = 'Second Term'; },
+    d => { d.feeItems[1].EnrollmentCategory = 'New Intake'; }, d => { d.feeItems[1].Gender = 'Female'; },
+    d => { d.feeItems = d.feeItems.slice(0, 1); },
+    d => { d.feeItems.push({ ...d.feeItems[1], __id: 'second-rule' }); },
+    d => { d.invoices.push({ ...d.invoices[1], __id: 'duplicate', InvoiceId: 'DUPLICATE' }); },
+    (d, p) => { p.StudentType = ''; d.feeItems.push({ ...d.feeItems[1], __id: 'day-rule', ClassName: 'Grade 10', StudentType: 'Day Student' }); }
+  ]) {
+    const h = harness({ configure: (d, p) => { classChargeFixture(d, p); change(d, p); } });
+    assert.equal((await h.plan()).ready, false, String(change));
+    assert.equal(h.commits.length, 0);
+  }
+});
+
+test('class or fee edits after preview invalidate the proposed class correction', async () => {
+  for (const edit of ['class', 'fee']) {
+    const h = harness({ configure: classChargeFixture }), plan = await h.plan();
+    if (edit === 'class') h.profile.ClassName = 'Grade 11';
+    else h.db.get('feeItems/feeItems-1').ClassName = 'Grade 10';
+    await assert.rejects(h.post(plan.previewToken)); assert.equal(h.commits.length, 0);
+  }
+});
+
 test('the reported Grade 8 bill previews exactly 128030 obsolete charges; boys and girls retain correct fees', async () => {
   for (const gender of ['Male', 'Female']) {
     const data = fixture();
@@ -386,7 +447,7 @@ test('school-wide UI batches every profile, prepares exact accounts and never si
   const ui = await readFile(new URL('../js/obsolete-charge-review.js', import.meta.url), 'utf8');
   assert.match(ui, /confirmText: 'Approve and post all'/); assert.match(ui, /finally \{ post.disabled = true/);
   const admin = await readFile(new URL('../js/admin.js', import.meta.url), 'utf8');
-  const handler = admin.slice(admin.indexOf("panelEl.querySelector('[data-review-obsolete-charges]')"), admin.indexOf('const reviewBoardingWearReversal ='));
+  const handler = admin.slice(admin.indexOf('const openBillingChargeReview ='), admin.indexOf('const reviewBoardingWearReversal ='));
   assert.match(handler, /reviewClosed = true; abort\(\)/); assert.match(handler, /const isCurrent = \(\) => !reviewClosed/);
   assert.match(handler, /60000/); assert.match(handler, /sessionSignal\.removeEventListener/);
 });

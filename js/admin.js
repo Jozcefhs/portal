@@ -3871,12 +3871,13 @@ function bindStudentEditor(students) {
     if (!response.ok || !data.ok) throw new Error(data.message || 'Billing reconciliation failed.');
     return data;
   };
-  panelEl.querySelector('[data-review-obsolete-charges]')?.addEventListener('click', async (event) => {
-    const button = event.currentTarget;
+  const openBillingChargeReview = async (button, accountRef = '') => {
     if (button.disabled) return;
+    const normalText = button.textContent;
     const user = currentUser, branch = selectedBranchId, controller = new AbortController();
     const dialog = document.getElementById('studentBillingPreviewDialog');
     const content = document.querySelector('[data-billing-preview-content]');
+    if (content.querySelector('[aria-busy="true"]')) return;
     const sessionSignal = staffSessionAbortController.signal;
     let reviewClosed = false;
     const abort = () => controller.abort();
@@ -3901,12 +3902,16 @@ function bindStudentEditor(students) {
     dialog.addEventListener('close', () => sessionSignal.removeEventListener('abort', abort), { once: true });
     setButtonLoading(button, true, 'Reviewing obsolete charges…');
     try {
-      const { openObsoleteChargeReview } = await import('./obsolete-charge-review.js?v=20261016-reviewed-reversals');
-      await openObsoleteChargeReview({ dialog, content, request, isCurrent, readOnly: user.subscriptionReadOnly,
+      const { openObsoleteChargeReview } = await import('./obsolete-charge-review.js?v=20261103-class-charge-resolution');
+      await openObsoleteChargeReview({ dialog, content, request, isCurrent, accountRef, readOnly: user.subscriptionReadOnly || user.subscriptionActive === false,
         confirm: options => window.DynamaxDialogs.confirm(options),
         notify: (title, message, tone) => window.DynamaxDialogs.alert({ title, message, tone: tone === 'error' ? 'danger' : 'success', confirmText: 'Close' }) });
     } catch (error) { setStatus(maintenanceStatus, error.message, 'bad'); }
-    finally { setButtonLoading(button, false, '', 'Review obsolete textbook / yearbook charges'); }
+    finally { setButtonLoading(button, false, '', normalText); }
+  };
+  panelEl.querySelector('[data-review-obsolete-charges]')?.addEventListener('click', event => openBillingChargeReview(event.currentTarget));
+  const bindBillingConflictButtons = content => content.querySelectorAll('[data-review-billing-conflicts]').forEach(button => {
+    button.addEventListener('click', () => openBillingChargeReview(button, button.dataset.reviewBillingConflicts));
   });
   const reviewBoardingWearReversal = async (reference) => {
     const plan = await reconcileRequest({ action: 'previewReversal', AccountRef: reference });
@@ -4086,9 +4091,10 @@ function bindStudentEditor(students) {
         <div class="admin-table-wrap billing-review-table"><table class="admin-table"><thead><tr><th>Student / period</th><th>Charge check</th><th>Findings</th></tr></thead><tbody>${report.rows.map((row) =>
           `<tr><td><strong>${escapeHtml(row.profile.DisplayName || '')}</strong><br>${escapeHtml(row.profile.AccountRef)}<br><small>${escapeHtml([row.profile.ClassName, row.profile.StudentType, row.profile.Gender, row.profile.EnrollmentCategory].filter(Boolean).join(' · '))}<br>${escapeHtml([row.profile.AcademicSession, row.profile.Term].filter(Boolean).join(' · '))}</small></td>
           <td>${Array.isArray(row.rows) ? `Current setup: <strong>${money(row.expectedTotal)}</strong><br>Posted: ${money(row.invoicedTotal)}<br>Difference: ${money(row.difference)}<br><strong>Valid missing charges to add: ${money(row.ready ? row.postingTotal : 0)}</strong><br><small>Recorded credit: ${row.recordedCreditSource === 'unavailable' ? 'not loaded' : money(row.recordedCredit)} — unverified</small>` : 'Not checked'}</td>
-          <td><strong>${row.needsRecheck ? 'Recheck required — profile not reviewed' : row.ready ? `Eligible for missing-charge posting${row.requiresReview ? ' — other components still need review' : ''}` : 'Blocked — finance review required'}</strong><p>${escapeHtml(row.reason || `${row.eligibleMissing?.length || 0} valid missing component(s)`)}</p>${row.reviewWarning ? `<p>${escapeHtml(row.reviewWarning)}</p>` : ''}${row.rows?.length ? `<details><summary>View ${row.missing?.length || 0} missing / ${row.conflicts?.length || 0} conflicting components</summary><ul>${row.rows.filter((item) => item.missing || item.conflict).map((item) => `<li><strong>${escapeHtml(item.name || item.code)}</strong> (${escapeHtml(item.code)}): ${escapeHtml(row.blockedMissing?.find((blocked) => blocked.code === item.code)?.postingBlock || item.review)}. Current setup ${money(item.expected)}; posted ${money(item.invoiced)}.${item.invoiceIds.length ? ` Invoice(s): ${item.invoiceIds.map(escapeHtml).join(', ')}.` : ''}</li>`).join('')}</ul></details>` : ''}</td></tr>`).join('')}</tbody></table></div>
+          <td><strong>${row.needsRecheck ? 'Recheck required — profile not reviewed' : row.ready ? `Eligible for missing-charge posting${row.requiresReview ? ' — other components still need review' : ''}` : 'Blocked — finance review required'}</strong><p>${escapeHtml(row.reason || `${row.eligibleMissing?.length || 0} valid missing component(s)`)}</p>${row.reviewWarning ? `<p>${escapeHtml(row.reviewWarning)}</p>` : ''}${row.rows?.length ? `<details><summary>View ${row.missing?.length || 0} missing / ${row.conflicts?.length || 0} conflicting components</summary><ul>${row.rows.filter((item) => item.missing || item.conflict).map((item) => `<li><strong>${escapeHtml(item.name || item.code)}</strong> (${escapeHtml(item.code)}): ${escapeHtml(row.blockedMissing?.find((blocked) => blocked.code === item.code)?.postingBlock || item.review)}. Current setup ${money(item.expected)}; posted ${money(item.invoiced)}.${item.invoiceIds.length ? ` Invoice(s): ${item.invoiceIds.map(escapeHtml).join(', ')}.` : ''}</li>`).join('')}</ul></details>` : ''}${row.conflicts?.length ? `<p><button type="button" class="secondary" data-review-billing-conflicts="${escapeHtml(row.profile.AccountRef)}">Review / resolve conflicts</button></p>` : ''}</td></tr>`).join('')}</tbody></table></div>
         <p class="status" data-billing-reconcile-status></p>${ready.length && !currentUser?.subscriptionReadOnly ? `<button type="button" data-apply-billing-plans>Post valid missing charges for ${ready.length} reviewed accounts (${money(ready.reduce((sum, row) => sum + row.postingTotal, 0))})</button>` : ''}${report.recheck ? '<button type="button" data-refresh-billing-review>Run a fresh review</button>' : ''}`;
       content.querySelector('[data-apply-billing-plans]')?.addEventListener('click', (e) => reconcilePlans(ready, e.currentTarget, content.querySelector('[data-billing-reconcile-status]')));
+      bindBillingConflictButtons(content);
       content.querySelector('[data-refresh-billing-review]')?.addEventListener('click', () => {
         if (content.querySelector('[data-apply-billing-plans]')?.getAttribute('aria-busy') === 'true') return;
         button.click();
@@ -4134,6 +4140,10 @@ function bindStudentEditor(students) {
         ${canReconcile ? `<p><strong>Valid missing charges to add: ${money(preview.ready ? preview.postingTotal : 0)}</strong></p><p>${escapeHtml(preview.reason || (preview.requiresReview ? 'Only valid missing charges will be added. Existing invoices, payments and allocations remain unchanged; the balance remains provisional pending finance review.' : 'Only missing components will be added; available existing credit will be applied without creating another payment.'))}</p>${preview.reviewWarning ? `<p>${escapeHtml(preview.reviewWarning)}</p>` : ''}<p class="status" data-billing-reconcile-status></p>${preview.ready ? '<button type="button" data-apply-billing-plans>Post valid missing charges</button>' : ''}` : ''}`;
       const content = document.querySelector('[data-billing-preview-content]');
       content.querySelector('[data-apply-billing-plans]')?.addEventListener('click', (e) => reconcilePlans([preview], e.currentTarget, content.querySelector('[data-billing-reconcile-status]')));
+      if (canReconcile && preview.conflicts?.length) {
+        content.insertAdjacentHTML('beforeend', `<button type="button" class="secondary" data-review-billing-conflicts="${escapeHtml(profile.AccountRef)}">Review / resolve conflicts</button>`);
+        bindBillingConflictButtons(content);
+      }
       if (canReconcile && profile.EnrollmentCategory === 'Returning' && preview.rows.some((row) => row.code === 'BOW' && row.expected === 0 && row.invoiced > 0)) {
         content.insertAdjacentHTML('beforeend', '<button type="button" data-review-boardwear-reversal>Review Boarding Wear reversal</button>');
         content.querySelector('[data-review-boardwear-reversal]').addEventListener('click', async () => {

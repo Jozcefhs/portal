@@ -63,6 +63,20 @@ test('reusable QR previews stay live and do not discard previously loaded record
   assert.equal(requestPolicy(url('/api/unrecognised'), post('genericQr')).mutation, true);
 });
 
+test('billing conflict previews stay live without evicting loaded records; posting still invalidates', async () => {
+  const { cache } = fixture(); let reads = 0;
+  const load = () => cache.fetch(url('/api/finance-workflow'), post('list'), async () => { reads++; return json(); });
+  await load();
+  for (const action of ['preview', 'previewAll', 'previewBatch', 'previewReversal', 'obsoleteRoster', 'obsoleteBatch', 'previewObsoleteReversal']) {
+    const policy = requestPolicy(url('/api/student-billing-reconciliation'), post(action));
+    assert.equal(policy.cacheable, false); assert.equal(policy.mutation, false);
+    await cache.fetch(url('/api/student-billing-reconciliation'), post(action), async () => json());
+  }
+  await load(); assert.equal(reads, 1);
+  await cache.fetch(url('/api/student-billing-reconciliation'), post('applyObsoleteReversal'), async () => json());
+  await load(); assert.equal(reads, 2);
+});
+
 test('academic deadline reads do not cancel the classroom scorebook loading alongside them', async () => {
   const { cache } = fixture();
   const scoreGate = deferred(), settingsGate = deferred();
