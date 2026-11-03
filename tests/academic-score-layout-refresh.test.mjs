@@ -35,6 +35,22 @@ function web(responseFor) {
 }
 const response = data => ({ status: 200, json: async () => structuredClone(data) });
 
+test('classroom context is carried across actions but discarded when branch, section or period changes',async()=>{
+  const {runtime,calls}=web(()=>response({ok:true}));
+  runtime.academicManagementData.teacherWorkspace={BranchId:'main',SchoolSection:'secondary',SessionId:'session',TermId:'term',ClassId:'grade7',ArmId:'merit'};
+  runtime.academicManagementData.workspaceRecordSelection={ClassId:'grade7'};
+  await runtime.academicManagementRequest('bootstrap',{SchoolSection:'secondary',SessionId:'session',TermId:'term'});
+  assert.equal(calls.at(-1).RecordArmId,'merit');assert.equal(calls.at(-1).TeacherAutoScope,true);
+  for(const patch of [{SchoolSection:'primary'},{SessionId:'next-session'},{TermId:'next-term'},{RecordClassId:'grade8'}]){
+    await runtime.academicManagementRequest('bootstrap',patch);
+    assert.equal(calls.at(-1).RecordArmId,undefined);
+    if(!patch.RecordClassId)assert.equal(calls.at(-1).RecordClassId,undefined);
+  }
+  runtime.selectedBranchId='garden';
+  await runtime.academicManagementRequest('bootstrap',{});
+  assert.equal(calls.at(-1).RecordArmId,undefined);assert.equal(calls.at(-1).RecordClassId,undefined);
+});
+
 test('applying a layout reads back the selected sheet, replaces stale columns/marks and removes the old warning', async () => {
   for (const action of ['applyActiveAcademicScoreLayout', 'applyActiveScoreLayout']) {
     const { runtime, calls } = web(body => response(body.action === 'getAcademicScorebookContext'

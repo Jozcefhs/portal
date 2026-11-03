@@ -11,6 +11,7 @@ import { academicResultWithWeightedComponents } from './academic-result-marks.js
 import { academicResultWithSubjectLabels } from './academic-result-subject-labels.js';
 import { buildAcademicClassScoreRegister } from './academic-class-score-register.js';
 import { academicTeacherScoreClassrooms, loadAcademicClassroomScoreRegister } from './academic-classroom-score-register.js';
+import { commitAcademicOfferingSetup } from './academic-compulsory-subjects.js';
 import { loadAcademicAuditLog } from './academic-audit-log.js';
 import { loadAcademicReviewArmSummary } from './academic-review-arm-summary.js';
 import { academicDuplicateScoreResolution } from './academic-duplicate-score-resolution.js';
@@ -2263,6 +2264,33 @@ export function academicTeacherVisibleTimetable(state = {}, username = '', focus
   };
 }
 
+export function academicTeacherWorkspace(state, user, scope, input, view, registerOnly = false) {
+  const period = currentSelection(state, input);
+  const inScope = row => lower(row.BranchId || 'main') === lower(scope.branchId)
+    && lower(row.SchoolSection || 'secondary') === lower(scope.section);
+  const allocations = (state.teacherAllocations || []).filter(row => statusActive(row) && inScope(row)
+    && lower(row.TeacherUsername) === actorUsername(user) && row.SessionId === period.SessionId && row.TermId === period.TermId);
+  const allRooms = (state.arms || []).filter(arm => statusActive(arm) && inScope(arm)
+    && state.classes.some(row => row.ClassId === arm.ClassId && statusActive(row) && inScope(row)))
+    .map(arm => {
+      const assigned = allocations.filter(row => row.ClassId === arm.ClassId && (!row.ArmId || row.ArmId === arm.ArmId));
+      const home = assigned.some(row => ['form teacher','assistant teacher'].includes(lower(row.AllocationRole)) && row.ArmId === arm.ArmId);
+      return {...arm, assigned:assigned.length > 0, home};
+    }).filter(arm => arm.assigned);
+  const homeOnly = registerOnly || ['students','presence','results'].includes(view);
+  const rooms = allRooms.filter(arm => !homeOnly || arm.home)
+    .sort((a,b) => Number(b.home)-Number(a.home) || clean(a.Name).localeCompare(clean(b.Name)));
+  const requestedArm = clean(input.RecordArmId), requestedClass = clean(input.RecordClassId);
+  if (requestedArm && !allRooms.some(arm => arm.ArmId === requestedArm)) throw failure('This classroom is not assigned to you for the selected branch and term.',403,'ACADEMIC_TEACHER_CLASSROOM_FORBIDDEN');
+  if (requestedClass && requestedClass !== '*' && !allRooms.some(arm => arm.ClassId === requestedClass)) throw failure('This class is not assigned to you for the selected branch and term.',403,'ACADEMIC_TEACHER_CLASSROOM_FORBIDDEN');
+  const selected = rooms.find(arm => arm.ArmId === requestedArm)
+    || rooms.find(arm => arm.ClassId === requestedClass) || rooms[0];
+  return { ...period, BranchId:scope.branchId, SchoolSection:scope.section,
+    ClassId:selected?.ClassId || '', ArmId:selected?.ArmId || '',
+    Classrooms:rooms.map(arm => ({ClassId:arm.ClassId,ArmId:arm.ArmId,Name:arm.Name,
+      ClassName:state.classes.find(row => row.ClassId === arm.ClassId)?.Name || '',Homeroom:arm.home})) };
+}
+
 export async function bootstrapAcademicManagement(env, user = {}, input = {}, scoreReadScope = {}, loadOptions = {}) {
   const permissions = requireCapability(user, 'enabled');
   const scope = await academicScope(env, user, input, { requireSection: false });
@@ -2285,11 +2313,41 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}, sc
     && input.ScorebookTask === 'classRegister' && !loadOptions.classRegister;
   const teacherRegisterOnly = registerOnly && permissions.canViewClassroomScores && !permissions.canViewClassScoreRegister;
   const teacherAllocationView = focusedView === 'students' && permissions.teacherView && permissions.canAllocateClassStudents;
+  const teacherDirect = permissions.teacherView && user[ACADEMIC_WEB_ACTOR] === true && input.TeacherAutoScope === true
+    && !loadOptions.classRegister && !['timetable','attendance','cbt','teachers'].includes(focusedView);
+  let teacherSelectors = null, teacherWorkspace = null;
+  if (teacherDirect) {
+    // Resolve active assignments before requesting any student or score records.
+    // Reuse these five selector collections in the requested workspace below.
+    teacherSelectors = await loadScopedAcademicState(env,scope,ACADEMIC_CLASS_TEACHER_STATE_KEYS,{
+      ClassroomRegisterTeacher:actorUsername(user),SessionId:input.SessionId,TermId:input.TermId
+    });
+    if (!scope.section) {
+      const assigned = teacherSelectors.teacherAllocations.filter(row => statusActive(row) && lower(row.TeacherUsername) === actorUsername(user))
+        .sort((a,b) => Number(['form teacher','assistant teacher'].includes(lower(b.AllocationRole)))
+          - Number(['form teacher','assistant teacher'].includes(lower(a.AllocationRole))));
+      const active = assigned.find(row => {
+        const section = lower(row.SchoolSection || 'secondary');
+        const period = currentSelection(scopedAcademicState(teacherSelectors,{...scope,section}),input);
+        return row.SessionId === period.SessionId && row.TermId === period.TermId;
+      });
+      if (active) {
+        scope.section = lower(active.SchoolSection || 'secondary');
+        teacherSelectors = scopedAcademicState(teacherSelectors,scope);
+      }
+    }
+    teacherWorkspace = academicTeacherWorkspace(teacherSelectors,user,scope,input,focusedView,teacherRegisterOnly);
+    input = {...input,SessionId:teacherWorkspace.SessionId,TermId:teacherWorkspace.TermId,
+      RecordClassId:teacherWorkspace.ClassId,RecordArmId:teacherWorkspace.ArmId,
+      WorkspaceLoadMode:teacherWorkspace.ArmId ? 'records' : 'navigation'};
+  }
   const baseStateKeys = registerOnly ? ['sessions', 'terms', 'classes', ...(permissions.canViewClassroomScores ? ['arms'] : []), ...(teacherRegisterOnly ? ['teacherAllocations'] : [])] : academicBootstrapReadKeys(
     academicManagementViewStateKeys(focusedView, permissions), focusedView, input, loadOptions);
-  const readPlan = academicWorkspaceReadPlan(focusedView, baseStateKeys, input, { ...loadOptions, registerOnly });
+  const readPlan = teacherDirect && !teacherWorkspace.ArmId
+    ? {keys:[...ACADEMIC_CLASS_TEACHER_STATE_KEYS],deferred:true,requested:false}
+    : academicWorkspaceReadPlan(focusedView, baseStateKeys, input, { ...loadOptions, registerOnly });
   const requestedClassId = clean(input.RecordClassId) === '*' ? '' : clean(input.RecordClassId);
-  const focusedStateKeys = teacherAllocationView
+  const focusedStateKeys = teacherAllocationView || teacherDirect
     ? [...new Set([...readPlan.keys.filter(key => key !== 'studentMovements'), 'teacherAllocations', 'arms'])]
     : readPlan.keys;
   const includePeople = !registerOnly && !readPlan.deferred && input.IncludePeople !== false && lower(input.IncludePeople) !== 'false';
@@ -2299,18 +2357,30 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}, sc
       : ACADEMIC_VIEW_PEOPLE[focusedView] || ACADEMIC_VIEW_PEOPLE.classrooms)
     : { staff: false, students: false };
   const includeReportProfile = !readPlan.deferred && ['results', 'outcomes'].includes(focusedView);
-  const [rawState, people, reportProfile] = await Promise.all([
-    loadScopedAcademicState(env, scope, focusedStateKeys, readPlan.requested ? {
+  const remainingKeys = teacherSelectors ? focusedStateKeys.filter(key => !ACADEMIC_CLASS_TEACHER_STATE_KEYS.includes(key)) : focusedStateKeys;
+  const [loadedState, people, reportProfile] = await Promise.all([
+    remainingKeys.length ? loadScopedAcademicState(env, scope, remainingKeys, readPlan.requested ? {
       ...scoreReadScope, WorkspaceRead: true, ClassId: requestedClassId,
       SessionId: clean(input.SessionId), TermId: clean(input.TermId),
       ...(teacherAllocationView ? { ClassroomRegisterTeacher: actorUsername(user) } : {})
-    } : teacherRegisterOnly || teacherAllocationView ? { ClassroomRegisterTeacher: actorUsername(user), SessionId: input.SessionId, TermId: input.TermId } : scoreReadScope),
-    loadPeople(env, user, scope, peopleOptions),
+    } : teacherRegisterOnly || teacherAllocationView ? { ClassroomRegisterTeacher: actorUsername(user), SessionId: input.SessionId, TermId: input.TermId } : scoreReadScope) : Promise.resolve({}),
+    teacherDirect && !teacherAllocationView
+      ? Promise.resolve({staff:peopleOptions.staff ? [{Username:actorUsername(user),DisplayName:actorName(user),
+        Role:clean(user.role || user.Role),Department:clean(user.department || user.Department)}] : [],students:[]})
+      : loadPeople(env, user, scope, peopleOptions),
     includeReportProfile
       ? getDocument(env, 'settings', 'schoolProfile').catch(() => ({}))
       : Promise.resolve(null)
   ]);
-  const summary = loadOptions.classRegister ? academicManagementSummary(rawState)
+  const rawState = teacherSelectors ? {...teacherSelectors,
+    ...Object.fromEntries(remainingKeys.map(key => [key,loadedState[key] || []]))} : loadedState;
+  if (teacherDirect && !teacherAllocationView && peopleOptions.students) {
+    const roster = academicTeacherVisibleMemberships(rawState,actorUsername(user)).filter(row =>
+      row.SessionId === teacherWorkspace.SessionId && row.TermId === teacherWorkspace.TermId
+      && row.ClassId === teacherWorkspace.ClassId && row.ArmId === teacherWorkspace.ArmId);
+    people.students = await academicResultBatchRecipients(env,scope,roster);
+  }
+  let summary = loadOptions.classRegister || teacherDirect ? academicManagementSummary(rawState)
     : await loadAcademicManagementSummary(env, scope, rawState, focusedStateKeys);
   let state = rawState;
   if (readPlan.requested && requestedClassId) {
@@ -2331,6 +2401,7 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}, sc
     const substituteClassrooms = state.timetableEntries.filter((row) => substituteEntryIds.has(row.EntryId));
     state.teacherAllocations = state.teacherAllocations.filter((row) => lower(row.TeacherUsername) === username);
     state.studentMemberships = academicTeacherVisibleMemberships(state, username, substituteClassrooms);
+    if (teacherWorkspace) state.studentMemberships = state.studentMemberships.filter(row => row.ClassId === teacherWorkspace.ClassId && row.ArmId === teacherWorkspace.ArmId);
     const ownDailyClassrooms = new Set(state.teacherAllocations.filter((row) => statusActive(row)
       && ['form teacher', 'assistant teacher'].includes(lower(row.AllocationRole)))
       .map((row) => `${row.SessionId}|${row.TermId}|${row.ClassId}|${row.ArmId}`));
@@ -2358,7 +2429,8 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}, sc
     const visibleAttendanceIds = new Set(state.studentAttendance.map((row) => row.AttendanceId));
     state.attendanceCorrections = state.attendanceCorrections.filter((row) => lower(row.RequestedByUsername) === username
       && (focusedView !== 'presence' || visibleAttendanceIds.has(row.AttendanceId)));
-    state.scoreSheets = state.scoreSheets.filter((row) => academicTeacherCanReadScoreSheet(row, state.teacherAllocations, substituteClassrooms));
+    state.scoreSheets = state.scoreSheets.filter((row) => academicTeacherCanReadScoreSheet(row, state.teacherAllocations, substituteClassrooms)
+      && (!teacherWorkspace || (row.ClassId === teacherWorkspace.ClassId && row.ArmId === teacherWorkspace.ArmId)));
     const visibleScoreSheets = new Set(state.scoreSheets.map((row) => row.SheetId));
     state.studentScores = state.studentScores.filter((row) => visibleScoreSheets.has(row.SheetId) && visibleStudents.has(lower(row.StudentRef)));
     state.scoreImports = state.scoreImports.filter((row) => visibleScoreSheets.has(row.SheetId));
@@ -2394,6 +2466,13 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}, sc
     const classIds = new Set(state.arms.map(row => row.ClassId));
     state.classes = state.classes.filter(row => classIds.has(row.ClassId));
   }
+  if (teacherWorkspace) {
+    state.classes = state.classes.filter(row => row.ClassId === teacherWorkspace.ClassId);
+    state.arms = state.arms.filter(row => row.ArmId === teacherWorkspace.ArmId);
+    state.teacherAllocations = state.teacherAllocations.filter(row => row.ClassId === teacherWorkspace.ClassId
+      && (!row.ArmId || row.ArmId === teacherWorkspace.ArmId));
+    summary = academicManagementSummary(state);
+  }
   let assessmentScheme = academicAssessmentScheme({});
   const includeAssessmentPolicy = !registerOnly && !readPlan.deferred && input.IncludeAssessmentPolicy !== false && lower(input.IncludeAssessmentPolicy) !== 'false';
   if (includeAssessmentPolicy && selectedSession && selectedTerm && ['scorebook', 'cbt'].includes(focusedView)) {
@@ -2411,7 +2490,9 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}, sc
     partialAcademicManagement: true,
     loadedAcademicView: focusedView,
     workspaceDataDeferred: readPlan.deferred,
+    teacherWorkspace,
     workspaceRecordSelection: readPlan.requested ? { ClassId: clean(input.RecordClassId), SessionId: clean(input.SessionId), TermId: clean(input.TermId),
+      ...(teacherWorkspace ? {ArmId:teacherWorkspace.ArmId} : {}),
       ...(focusedView === 'readiness' ? {ResultType:input.ReadinessResultType === 'Mid-Term' ? 'Mid-Term' : 'End of Term'} : {}) } : null,
     ...(readPlan.deferred ? {
       ...Object.fromEntries(Object.keys(ACADEMIC_MANAGEMENT_COLLECTIONS).filter(key => key !== 'audit' && !focusedStateKeys.includes(key)).map(key => [key, []])),
@@ -2524,7 +2605,8 @@ export async function saveAcademicManagementRecord(env, user = {}, input = {}) {
     if (compatibility) writes.push(compatibility);
   }
   try {
-    await batchCommitDocuments(env, writes);
+    if (type === 'offering') await commitAcademicOfferingSetup(env,writes,[record],state,user);
+    else await batchCommitDocuments(env, writes);
   } catch (error) {
     if ([409, 412].includes(Number(error?.status))) {
       throw failure('This academic record changed while it was being saved. Reload and try again.', 409, 'ACADEMIC_WRITE_CONFLICT');
@@ -3041,14 +3123,17 @@ export async function bulkApplyAcademicSubjects(env, user = {}, input = {}) {
     BranchId: scope.branchId, SchoolSection: scope.section,
     SessionId: clean(input.SessionId), TermId: clean(input.TermId), OfferingId: `bulk-${Date.now()}`
   }, `${createdRecords.length} class-subject offering(s) created; ${skipped} already matched.`));
-  await commitAcademicBatch(env, writes, 'The class or subject catalogue changed while offerings were being saved. Reload and try again.');
+  const linked = await commitAcademicOfferingSetup(env,writes,projected.offerings.filter(row =>
+    row.SessionId === input.SessionId && row.TermId === input.TermId && classIds.includes(row.ClassId)
+    && subjectIds.includes(row.SubjectId) && !row.ArmId),state,user);
   const response = await bootstrapAcademicManagement(env, user, {
     ...input, BranchId: scope.branchId, SchoolSection: scope.section, View: 'offerings'
   });
   response.message = createdRecords.length
     ? `${createdRecords.length} class-subject offering${createdRecords.length === 1 ? '' : 's'} created online${skipped ? `; ${skipped} already matched and were skipped` : ''}.`
     : 'Every selected class already has the selected reusable subjects.';
-  response.bulkResult = { Requested: classIds.length * subjectIds.length, Created: createdRecords.length, Skipped: skipped };
+  response.bulkResult = { Requested: classIds.length * subjectIds.length, Created: createdRecords.length, Skipped: skipped, MembershipsUpdated: linked.membershipsUpdated || 0 };
+  if (linked.membershipsUpdated) response.message += ` Compulsory subject lists updated for ${linked.membershipsUpdated} existing pupils; scores were preserved.`;
   return response;
 }
 

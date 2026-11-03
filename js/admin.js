@@ -15851,7 +15851,7 @@ function academicScorebookWorkspace(data, rows) {
     `<option value="${escapeHtml(arm.ArmId)}" data-class-id="${escapeHtml(arm.ClassId)}">${escapeHtml(academicLabel(rows.classes, arm.ClassId))} / ${escapeHtml(arm.Name)}</option>`).join('')
     : academicSelectOptions(rows.classes.filter(academicIsActive), '', row => row.Name, 'Choose class');
   const classRegister = canViewClassRegister || classroomRegister ? `<form class="academic-management-editor academic-management-editor-wide"${classroomRegister ? ' data-classroom-register' : ''}${assignedClassroomRegister ? ' data-classroom-teacher-register' : ''} data-academic-class-score-register>
-    <div class="academic-management-editor-heading"><div><h3>${assignedClassroomRegister ? 'My classroom scores — all subjects' : classroomRegister ? 'Classroom score register — all subjects' : 'Class score register — all arms'}</h3><p>Read-only raw marks / maximum, including Draft scores. This is not a published result. ${classroomRegister ? 'Choose one classroom to vet all subjects without changing marks.' : 'Choose a class, not a classroom.'}</p></div></div>
+    <div class="academic-management-editor-heading"><div><h3>${assignedClassroomRegister ? 'My classroom scores — all subjects' : classroomRegister ? 'Classroom score register — all subjects' : 'Class score register — all arms'}</h3><p>Read-only raw marks / maximum, including Draft scores. This is not a published result. ${data.teacherWorkspace?.ArmId ? 'Review all subjects in your classroom without changing marks.' : classroomRegister ? 'Choose one classroom to vet all subjects without changing marks.' : 'Choose a class, not a classroom.'}</p></div></div>
     ${assignedClassroomRegister && !teacherClassrooms.length ? '<p>No class teacher or assistant assignment was found for this session and term. Ask Academic Management to assign your classroom under Assign class teachers.</p>' : ''}
     ${classroomRegister && !assignedClassroomRegister && !registerClassrooms.length ? '<p>No active classrooms are available in this school section. Configure them under Classrooms.</p>' : ''}
     <div class="class-register-load-controls"><label>${classroomRegister ? 'Classroom' : 'Class'}<select name="ClassId" required>${registerChoices}</select></label>
@@ -17177,6 +17177,18 @@ function bindAcademicAreaNavigation() {
 }
 
 function academicRecordLoadForm(data, title, deferred = false) {
+  if (data.teacherWorkspace) {
+    const own = data.teacherWorkspace;
+    const selected = own.Classrooms.find(row => row.ArmId === own.ArmId);
+    if (!selected) return '<section class="academic-view-only-note"><strong>No classroom assignment for this period</strong><p>Ask Academic Management to check your class teacher, assistant or subject-teacher assignment for the selected branch, session and term.</p></section>';
+    return `<form class="academic-management-editor academic-management-editor-wide" data-academic-load-records data-academic-own-classroom>
+      <input type="hidden" name="RecordClassId" value="${escapeHtml(selected.ClassId)}">
+      <div class="academic-management-form-grid"><label>My classroom${own.Classrooms.length === 1
+        ? `<input value="${escapeHtml(`${selected.ClassName} / ${selected.Name}`)}" readonly><input type="hidden" name="RecordArmId" value="${escapeHtml(selected.ArmId)}">`
+        : `<select name="RecordArmId">${own.Classrooms.map(row => `<option value="${escapeHtml(row.ArmId)}" data-class-id="${escapeHtml(row.ClassId)}"${row.ArmId === own.ArmId ? ' selected' : ''}>${escapeHtml(`${row.ClassName} / ${row.Name}`)}</option>`).join('')}</select>`}</label>
+      <div class="academic-management-form-actions"><button type="submit">Refresh my classroom</button></div></div>
+    </form>`;
+  }
   const selected = data.workspaceRecordSelection?.ClassId || '*';
   const readiness = academicManagementView === 'readiness';
   const resultType = data.workspaceRecordSelection?.ResultType || 'End of Term';
@@ -17189,6 +17201,29 @@ function academicRecordLoadForm(data, title, deferred = false) {
       <div class="academic-management-form-actions"><button type="submit">${readiness ? 'Check results readiness' : `Load ${escapeHtml(title.toLowerCase())} records`}</button></div>
       <p class="muted">Uses the selected school section and academic period. Choose one class to narrow class-based records.</p></div>
   </form>`;
+}
+
+function applyAcademicTeacherClassroomControls(data) {
+  if (!data.teacherWorkspace?.ArmId) return;
+  // Retain the original controls for form payloads and validation, displaying
+  // the assigned name instead of repeatedly asking for the same classroom.
+  panelEl.querySelectorAll('select[name="ClassId"],select[name="ArmId"],select[name="ReportArmId"]').forEach(select => {
+    const choices = [...select.options].filter(option => option.value);
+    if (choices.length !== 1) return;
+    select.value = choices[0].value;
+    select.hidden = true;
+    const name = select.nextElementSibling?.hasAttribute('data-assigned-classroom-name') ? select.nextElementSibling : document.createElement('input');
+    name.type = 'text'; name.readOnly = true; name.value = choices[0].textContent.trim();
+    name.setAttribute('data-assigned-classroom-name','');select.after(name);
+  });
+  const register = panelEl.querySelector('[data-academic-class-score-register]');
+  if (register && academicManagementView === 'scorebook' && academicManagementTaskViews.scorebook === 'classRegister'
+    && !register.dataset.assignedAutoLoaded && register.elements.ClassId.value) {
+    register.dataset.assignedAutoLoaded = 'true';
+    queueMicrotask(() => {
+      if (register.isConnected && academicManagementView === 'scorebook' && academicManagementTaskViews.scorebook === 'classRegister') register.requestSubmit();
+    });
+  }
 }
 
 function renderAcademicManagement(data = academicManagementData || {}, message = '') {
@@ -17216,6 +17251,17 @@ function renderAcademicManagement(data = academicManagementData || {}, message =
     academicManagementFilters.termId = clean(data.selection?.TermId || terms.find(academicIsActive)?.TermId);
   }
   const rows = academicCurrentRows(data);
+  if (data.teacherWorkspace?.ArmId) {
+    const {ClassId:classId,ArmId:armId,SessionId:sessionId,TermId:termId} = data.teacherWorkspace;
+    academicClassroomDraft = {...academicClassroomDraft,classId,armId,sessionId,termId};
+    academicStudentAllocationDraft = {...academicStudentAllocationDraft,classId,armId,sessionId,termId};
+    academicArmSubjectDraft = {...academicArmSubjectDraft,classId,armId,sessionId,termId};
+    academicAttendanceDraft = {...academicAttendanceDraft,classId,armId,reportArmId:armId};
+    academicScorebookDraft = {...academicScorebookDraft,classId,armId};
+    academicResultDraft = {...academicResultDraft,armId};
+    academicOutcomeDraft = {...academicOutcomeDraft,armId};
+    academicTimetableDraft = {...academicTimetableDraft,classId,armId};
+  }
   const workspaceTitle = availableViews.find(([key]) => key === academicManagementView)?.[1] || 'Academic';
   if (academicManagementView === 'audit') {
     panelEl.innerHTML = `${academicManagementHeader(data, rows, message)}<section class="academic-management-workspace" data-academic-audit-root></section>`;
@@ -17258,10 +17304,11 @@ function renderAcademicManagement(data = academicManagementData || {}, message =
   else if (academicManagementView === 'readiness') workspace = academicResultsReadinessWorkspace(data);
   else if (academicManagementView === 'cbt') workspace = academicCbtWorkspace(data, rows);
   else workspace = academicStructureWorkspace(data, rows);
-  panelEl.innerHTML = `${academicManagementHeader(data, rows, message)}${data.workspaceRecordSelection ? academicRecordLoadForm(data, workspaceTitle) : ''}<section class="academic-management-workspace">${workspace}</section>`;
+  panelEl.innerHTML = `${academicManagementHeader(data, rows, message)}${data.workspaceRecordSelection || data.teacherWorkspace ? academicRecordLoadForm(data, workspaceTitle) : ''}<section class="academic-management-workspace">${workspace}</section>`;
   organizeAcademicManagementWorkspace(academicManagementView);
   renderModuleSummary('academics', data);
   bindAcademicManagement();
+  applyAcademicTeacherClassroomControls(data);
   updateTutorialControls();
   if (academicManagementView === 'scorebook') queueMicrotask(() => { void loadAcademicScorebookContext(); });
 }
@@ -17270,6 +17317,10 @@ async function academicManagementRequest(action, payload = {}, requestOptions = 
   const branchId = clean(selectedBranchId || currentUser?.branchId);
   if (!branchId || branchId === 'all') throw new Error('Select one school branch before using Academic Management.');
   const normalizedAction = clean(action).toLowerCase();
+  const ownRoom = academicManagementData?.teacherWorkspace;
+  const retainRoom = ownRoom?.BranchId === branchId && ['SchoolSection','SessionId','TermId'].every(key =>
+    !clean(payload[key]) || clean(payload[key]) === clean(ownRoom[key]))
+    && (!clean(payload.RecordClassId) || payload.RecordClassId === ownRoom.ClassId);
   const retrySafe = normalizedAction === 'bootstrap'
     || normalizedAction.startsWith('get')
     || normalizedAction.startsWith('preview');
@@ -17277,8 +17328,9 @@ async function academicManagementRequest(action, payload = {}, requestOptions = 
     method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
     dynamaxRetrySafe: retrySafe,
     ...(requestOptions.signal ? { signal: requestOptions.signal } : {}),
-    body: JSON.stringify({ action, BranchId: branchId, View: academicManagementView,
-      ...(academicManagementData?.workspaceRecordSelection ? {
+    body: JSON.stringify({ action, BranchId: branchId, View: academicManagementView, TeacherAutoScope: true,
+      ...(retainRoom ? {RecordArmId:ownRoom.ArmId} : {}),
+      ...(academicManagementData?.workspaceRecordSelection && (!ownRoom || retainRoom) ? {
         WorkspaceLoadMode: 'records', RecordClassId: academicManagementData.workspaceRecordSelection.ClassId
       } : {}),
       ScoreRowsMode: 'on-demand', ...payload })
@@ -17412,6 +17464,7 @@ async function loadAcademicManagement(options = {}) {
       SessionId: academicManagementFilters.sessionId,
       TermId: academicManagementFilters.termId,
       WorkspaceLoadMode: options.records ? 'records' : 'navigation',
+      ...(options.armId ? {RecordArmId:options.armId} : {}),
       ...(options.records ? { RecordClassId: clean(options.classId), ...(requestedView === 'readiness' ? {ReadinessResultType:options.resultType || 'End of Term'} : {}) } : {}),
       ...(requestedView === 'scorebook' ? { ScorebookTask: academicManagementTaskViews.scorebook || 'classRegister' } : {}),
       View: requestedView
@@ -18249,10 +18302,11 @@ function bindAcademicManagement() {
   panelEl.querySelector('[data-academic-load-records]')?.addEventListener('submit', event => {
     event.preventDefault();
     const form = event.currentTarget;
-    const classId = form.elements.RecordClassId.value;
+    const classId = form.elements.RecordArmId?.selectedOptions?.[0]?.dataset.classId || form.elements.RecordClassId.value;
     if (!classId) return;
-    void runButtonAction(form.querySelector('button[type="submit"]'), 'Loading records...', () => loadAcademicManagement({ records: true, classId: classId === '*' ? '' : classId, resultType: form.elements.ReadinessResultType?.value }));
+    void runButtonAction(form.querySelector('button[type="submit"]'), 'Loading records...', () => loadAcademicManagement({ records: true, classId: classId === '*' ? '' : classId, armId:form.elements.RecordArmId?.value, resultType: form.elements.ReadinessResultType?.value }));
   });
+  panelEl.querySelector('[data-academic-own-classroom] select[name="RecordArmId"]')?.addEventListener('change',event => event.currentTarget.form.requestSubmit());
   bindAcademicTimetableGenerator(panelEl);
   bindAcademicCbtRejectionReviews(panelEl);
   const deadlineButton = document.createElement('button');

@@ -9,6 +9,7 @@ import * as studentStatus from '../functions/lib/student-academic-status.js';
 import { academicAssessmentScheme } from '../functions/lib/academic-scorebook.js';
 import { safeScopeId } from '../functions/lib/school-scope.js';
 import { normalizeClassKey } from '../functions/lib/class-names.js';
+import { academicTeacherScoreClassrooms } from '../functions/lib/academic-classroom-score-register.js';
 
 const source = await readFile(new URL('../functions/lib/academic-management.js', import.meta.url), 'utf8');
 const ui = await readFile(new URL('../js/admin.js', import.meta.url), 'utf8');
@@ -42,7 +43,7 @@ function harness(role = 'Form Teacher') {
   const store = Object.fromEntries(Object.entries(state).map(([key, rows]) => [management.ACADEMIC_MANAGEMENT_COLLECTIONS[key], rows]));
   store[profilePath] = profiles;
   const writes = [], reads = [];
-  const context = vm.createContext({ ...management, ...outcomes, ...studentStatus, normalizeClassKey, academicAssessmentScheme, safeScopeId, crypto: webcrypto, TextEncoder, TextDecoder,
+  const context = vm.createContext({ ...management, ...outcomes, ...studentStatus, normalizeClassKey, academicAssessmentScheme, academicTeacherScoreClassrooms, safeScopeId, crypto: webcrypto, TextEncoder, TextDecoder,
     listSchoolCollection: async () => copy(profiles), loadOrganizationNameProfile: async () => ({}),
     batchCommitDocuments: async (_env, batch) => {
       for (const w of batch) {
@@ -204,4 +205,109 @@ test('candidate visibility never mistakes another arm placement or duplicate for
   h.state.studentMemberships.push({ ...h.state.studentMemberships[0], MembershipId: 'duplicate', ArmId: '' });
   data = await h.bootstrap();
   assert.deepEqual(copy(data.allocationCandidates.map(r => r.StudentRef)), ['P2']);
+});
+
+for (const role of ['Form Teacher','Assistant Teacher']) test(`${role} opens directly into the assigned classroom without a branch-wide record read`, async () => {
+  const h=harness(role),before=copy(h.state);
+  const data=await h.bootstrap({TeacherAutoScope:true,WorkspaceLoadMode:'navigation',RecordClassId:''});
+  assert.equal(data.workspaceDataDeferred,false);
+  assert.equal(data.teacherWorkspace.ArmId,'arm');assert.equal(data.workspaceRecordSelection.ClassId,'class');
+  assert.deepEqual(copy(data.classes.map(row=>row.ClassId)),['class']);
+  assert.deepEqual(copy(data.arms.map(row=>row.ArmId)),['arm']);
+  assert.deepEqual(copy(data.allocationCandidates.map(row=>row.StudentRef)),['P1','P2']);
+  assert.equal(h.reads.length,2);
+  assert.equal(h.reads[0].filters.ClassroomRegisterTeacher,'teacher');
+  assert.equal(h.reads[1].filters.ClassId,'class');
+  assert.equal(h.reads[1].filters.SessionId,'session');assert.equal(h.reads[1].filters.TermId,'term');
+  const allKeys=h.reads.flatMap(row=>row.keys);assert.equal(new Set(allKeys).size,allKeys.length,'selector reads must be reused');
+  assert.ok(!allKeys.includes('studentScores')&&!allKeys.includes('studentMovements'));
+  assert.deepEqual(h.state,before);assert.equal(h.writes.length,0);
+});
+
+test('direct classroom opening rejects foreign targets before requesting learner records',async()=>{
+  for(const input of [{RecordArmId:'other-arm'},{RecordClassId:'other-class'}]){
+    const h=harness();await assert.rejects(h.bootstrap({TeacherAutoScope:true,...input}),{code:'ACADEMIC_TEACHER_CLASSROOM_FORBIDDEN'});
+    assert.equal(h.reads.length,1);assert.ok(!h.reads[0].keys.includes('studentMemberships'));assert.equal(h.writes.length,0);
+  }
+});
+
+test('missing or expired assignments never fall back to all branch learners',async()=>{
+  for(const mismatch of [{Status:'Inactive'},{TermId:'old-term'},{SchoolSection:'secondary'},{BranchId:'main'}]){
+    const h=harness();Object.assign(h.state.teacherAllocations[0],mismatch);
+    const data=await h.bootstrap({TeacherAutoScope:true,WorkspaceLoadMode:'navigation',RecordClassId:''});
+    assert.equal(data.teacherWorkspace.Classrooms.length,0);assert.equal(data.classes.length,0);assert.equal(data.arms.length,0);
+    assert.equal(data.workspaceDataDeferred,true);assert.equal(h.reads.length,1);assert.equal(h.writes.length,0);
+  }
+});
+
+test('multiple personal assignments preserve the home classroom while allowing another assigned teaching room',()=>{
+  const h=harness('Assistant Teacher');
+  h.state.arms.push({...target,ArmId:'subject-arm',ClassId:'other-class',Name:'Radiance',Status:'Active'});
+  h.state.teacherAllocations.push({...target,ClassId:'other-class',ArmId:'subject-arm',SubjectId:'math',AllocationRole:'Subject Teacher',TeacherUsername:'teacher',Status:'Active'});
+  const context={branchId:'garden',section:'primary'};
+  const home=management.academicTeacherWorkspace(h.state,teacher,context,period,'scorebook');
+  assert.equal(home.ArmId,'arm');assert.deepEqual(home.Classrooms.map(row=>row.ArmId),['arm','subject-arm']);
+  const changed=management.academicTeacherWorkspace(h.state,teacher,context,{...period,RecordArmId:'subject-arm'},'scorebook');
+  assert.equal(changed.ClassId,'other-class');
+  const presence=management.academicTeacherWorkspace(h.state,teacher,context,{...period,RecordArmId:'subject-arm'},'presence');
+  assert.equal(presence.ArmId,'arm');assert.equal(presence.Classrooms.length,1);
+});
+
+test('first opening resolves the active homeroom section before loading records',async()=>{
+  const h=harness();
+  h.context.academicScope=async()=>({branchId:'garden',section:'',structure:{Sections:['secondary','primary']}});
+  const data=await h.bootstrap({TeacherAutoScope:true,SchoolSection:'all',RecordClassId:'',WorkspaceLoadMode:'navigation'});
+  assert.equal(data.scope.SchoolSection,'primary');assert.equal(data.teacherWorkspace.ArmId,'arm');
+  assert.equal(h.reads[1].filters.ClassId,'class');assert.equal(h.writes.length,0);
+});
+
+test('teacher scorebook opening reads profiles only for its roster, with no scores or directory scan',async()=>{
+  const h=harness();h.state.studentMemberships[0].ArmId='arm';
+  h.context.loadPeople=async()=>{throw new Error('Do not scan the directory');};
+  const requested=[];
+  h.context.academicResultBatchRecipients=async(_env,scope,roster)=>{
+    assert.equal(scope.branchId,'garden');assert.equal(scope.section,'primary');
+    requested.push(...roster.map(row=>row.StudentRef));return copy(h.profiles.filter(row=>roster.some(r=>r.StudentRef===row.AdmissionNo)));
+  };
+  const data=await h.bootstrap({TeacherAutoScope:true,View:'scorebook',ScorebookTask:'entry',ScoreRowsMode:'on-demand',IncludeAssessmentPolicy:false,RecordClassId:''});
+  assert.deepEqual(requested,['P1']);assert.equal(data.students.length,1);
+  assert.equal(data.staff[0].Username,'teacher');
+  assert.ok(h.reads.every(read=>!read.keys.includes('studentScores')));assert.equal(h.writes.length,0);
+});
+
+test('teacher classroom register opening reuses selectors without reading entry or review data',async()=>{
+  const h=harness('Assistant Teacher');h.context.loadPeople=async()=>{throw new Error('No directory read needed');};
+  const data=await h.bootstrap({TeacherAutoScope:true,View:'scorebook',ScorebookTask:'classRegister',RecordClassId:''});
+  assert.equal(data.teacherWorkspace.ArmId,'arm');assert.equal(data.workspaceDataDeferred,false);
+  assert.equal(h.reads.length,1);assert.equal(data.scorebookWorkspaceDeferred,true);
+  for(const key of ['studentScores','scoreSheets','studentMemberships','resultEvents']) assert.ok(!h.reads[0].keys.includes(key),key);
+  assert.equal(h.writes.length,0);
+});
+
+test('personal allocations and timetable routes retain all assigned lessons, including substitutes',async()=>{
+  for(const view of ['teachers','timetable','attendance','cbt']){
+    const h=harness();const data=await h.bootstrap({TeacherAutoScope:true,View:view,RecordClassId:'',WorkspaceLoadMode:'navigation'});
+    assert.equal(data.teacherWorkspace,null,'do not restrict personal lessons to the homeroom');
+    assert.equal(h.writes.length,0);
+  }
+});
+
+test('a valid section with no current assignment remains empty instead of switching branches',async()=>{
+  const h=harness();h.state.teacherAllocations=[];
+  const data=await h.bootstrap({TeacherAutoScope:true,RecordClassId:'',WorkspaceLoadMode:'navigation'});
+  assert.equal(data.scope.BranchId,'garden');assert.equal(data.scope.SchoolSection,'primary');
+  assert.equal(data.teacherWorkspace.ArmId,'');assert.deepEqual(copy(data.students),[]);
+});
+
+test('own classroom header replaces branch-wide choices without changing the administrator controls',()=>{
+  const f=allocationUiFixture();f.context.academicManagementView='scorebook';
+  vm.runInContext(declaration('academicRecordLoadForm'),f.context);
+  const classroom={...target,Classrooms:[{ClassId:'class',ArmId:'arm',Name:'Excellence',ClassName:'Grade 1'}]};
+  const single=f.context.academicRecordLoadForm({...f.data,teacherWorkspace:classroom},'Scorebook');
+  assert.match(single,/Grade 1 \/ Excellence/);assert.match(single,/readonly/);
+  assert.doesNotMatch(single,/<select|All classes|Choose class/);
+  classroom.Classrooms.push({ClassId:'class2',ArmId:'arm2',Name:'Merit',ClassName:'Grade 2'});
+  const multiple=f.context.academicRecordLoadForm({...f.data,teacherWorkspace:classroom},'Scorebook');
+  assert.match(multiple,/<select name="RecordArmId">/);assert.doesNotMatch(multiple,/other-class|All classes/);
+  assert.match(f.context.academicRecordLoadForm(f.data,'Scorebook'),/All classes in this branch/);
 });
