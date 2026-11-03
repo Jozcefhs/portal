@@ -46,6 +46,23 @@ test('concurrent loads share one network request and each caller can consume its
   assert.deepEqual(await responses[0].json(), await responses[1].json());
 });
 
+test('reusable QR previews stay live and do not discard previously loaded records', async () => {
+  const { cache } = fixture(); let recordReads = 0, qrReads = 0;
+  const records = () => cache.fetch(url('/api/finance-workflow'), post('list'), async () => { recordReads++; return json(); });
+  await records();
+  for (const [path, action] of [['staff-admission-forms', 'genericQr'], ['staff-admission-forms', ''], ['staff-stores', 'genericQr'], ['staff-church-payments', 'genericQr']]) {
+    const policy = requestPolicy(url(`/api/${path}`), post(action));
+    assert.equal(policy.cacheable, false);
+    assert.equal(policy.mutation, false);
+    for (let i = 0; i < 2; i++) await cache.fetch(url(`/api/${path}`), post(action), async () => { qrReads++; return json(); });
+  }
+  await records();
+  assert.equal(recordReads, 1);
+  assert.equal(qrReads, 8);
+  assert.equal(requestPolicy(url('/api/staff-direct-transfers'), post('approve')).mutation, true);
+  assert.equal(requestPolicy(url('/api/unrecognised'), post('genericQr')).mutation, true);
+});
+
 test('academic deadline reads do not cancel the classroom scorebook loading alongside them', async () => {
   const { cache } = fixture();
   const scoreGate = deferred(), settingsGate = deferred();

@@ -16,6 +16,9 @@
     try { body = typeof init.body === 'string' ? JSON.parse(init.body) : {}; } catch (_) { return false; }
     const action = String(body.action || body.Action || body.mode || url.searchParams.get('action') || '').toLowerCase().replace(/[^a-z]/g, '');
     if (readActions.has(action) || /^(?:get|list|search|lookup|preview|validate|check|download|export|poll|verify|prepare)/.test(action)) return false;
+    // Reusable QR previews do not save a purchase, donation or payment.
+    if ((action === 'genericqr' && ['/api/staff-admission-forms', '/api/staff-stores', '/api/staff-church-payments'].includes(url.pathname))
+      || (url.pathname === '/api/staff-admission-forms' && !action)) return false;
     // Meeting setup only reads the department roster and saved settings.
     if (url.pathname === '/api/staff-meetings' && action === 'setup') return false;
     // Identity challenges are intermediate steps, not completed business actions.
@@ -45,6 +48,9 @@
     const data = await result.clone().json().catch(() => null);
     lastServerResult = Date.now();
     if (result.ok && data?.ok === true) {
+      // Bank verification reports resumable stages inline. Only its final
+      // response completes the action; do not queue a modal for every stage.
+      if (data.continueApproval === true) return;
       void report(data.message || 'The server confirmed that your action was completed.', 'ok',
         Number(data.bulkResult?.PendingApproval || 0) > 0 ? { title: 'Request saved — awaiting approval' } : {});
     } else if (data?.ok === false && result.status < 500) {

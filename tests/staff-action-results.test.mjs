@@ -56,3 +56,43 @@ test('client validation errors are visible and background success messages do no
 test('staff feedback leaves form validation to the shared dialogue component', () => {
   assert.equal(harness().listeners.invalid, undefined);
 });
+
+test('reusable QR previews stay quiet without silencing payment mutations', () => {
+  const { api } = harness();
+  const check = (path, action) => api.isMutation(new URL(path, 'https://school.example'), { method: 'POST', body: JSON.stringify({ action }) });
+  for (const path of ['/api/staff-admission-forms', '/api/staff-stores', '/api/staff-church-payments']) {
+    assert.equal(check(path, 'genericQr'), false, path);
+  }
+  assert.equal(check('/api/staff-admission-forms', ''), false, 'default action is the reusable QR');
+  assert.equal(check('/api/staff-stores', 'recordSale'), true);
+  assert.equal(check('/api/staff-church-payments', 'initpayment'), true);
+  assert.equal(check('/api/staff-direct-transfers', 'approve'), true);
+  assert.equal(check('/api/staff-unrecognised', 'genericQr'), true, 'exception is route scoped');
+});
+
+test('staged transfer approval shows one final outcome and preserves response bodies', async () => {
+  const { api, alerts } = harness();
+  api.begin();
+  for (const stage of ['record-payment', 'deliver-receipt', 'finish-verification']) {
+    const response = Response.json({ ok: true, continueApproval: true, stage, message: `Continuing: ${stage}` }, { status: 202 });
+    await api.response(response);
+    api.inline(`Continuing: ${stage}`, '');
+    assert.equal(alerts.length, 0, stage);
+    assert.equal((await response.json()).continueApproval, true);
+  }
+  await api.response(Response.json({ ok: true, message: 'Transfer verified and receipt issued.' }));
+  api.inline('Transfer verified and receipt issued.', 'ok');
+  api.end();
+  assert.equal(alerts.length, 1);
+  assert.equal(alerts[0].message, 'Transfer verified and receipt issued.');
+});
+
+test('continuation never suppresses failure, uncertain outcomes or explicit completion', async () => {
+  const { api, alerts } = harness();
+  await api.response(Response.json({ ok: false, continueApproval: true, message: 'Transfer could not be verified.' }, { status: 409 }));
+  assert.equal(alerts[0].tone, 'danger');
+  await api.response(Response.json({ ok: false, continueApproval: true, message: 'Temporary outage.' }, { status: 503 }));
+  assert.equal(alerts[1].title, 'Check the outcome before retrying');
+  await api.response(Response.json({ ok: true, continueApproval: false, message: 'Complete.' }));
+  assert.equal(alerts[2].title, 'Action completed');
+});
