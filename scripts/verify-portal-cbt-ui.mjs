@@ -11,6 +11,8 @@ const fixture = browserFixture(), root = resolve(import.meta.dirname, '..'), out
 await mkdir(output, { recursive: true });
 const files = new Set(['/exam.html', '/exams-admin.html', '/js/portal-cbt-candidate.js', '/js/portal-cbt-manager.js', '/js/exam-document-upload.js', '/css/portal-cbt.css', '/js/app-dialogs.js', '/css/app-dialogs.css', '/js/staff-idle-session.js']);
 files.add('/js/exam-paper-viewer.js'); files.add('/vendor/exam-documents/pdf.min.mjs'); files.add('/vendor/exam-documents/pdf.worker.min.mjs');
+files.add('/js/cbt-answer-comparison.js'); files.add('/css/cbt-answer-comparison.css');
+let reviewApiRequests = 0;
 const server = createServer(async (req, res) => {
   try {
     const path = new URL(req.url, 'http://localhost').pathname;
@@ -19,6 +21,7 @@ const server = createServer(async (req, res) => {
         session: { id: 'fixture-session', lastActivityAt: Date.now(), expiresAt: Date.now() + 7200000, serverNow: Date.now() } })); return;
     }
     if (req.method === 'POST' && ['/api/portal-cbt', '/api/portal-cbt-manage'].includes(path)) {
+      reviewApiRequests++;
       let raw = ''; for await (const part of req) raw += part;
       const input = JSON.parse(raw), cookie = /fixture=([^;]+)/.exec(req.headers.cookie || '')?.[1] || '';
       let data;
@@ -30,6 +33,7 @@ const server = createServer(async (req, res) => {
     }
     if (!files.has(path)) { res.writeHead(404); res.end(); return; }
     res.setHeader('Content-Type', /\.m?js$/.test(path) ? 'text/javascript' : path.endsWith('.css') ? 'text/css' : 'text/html');
+    if (path === '/exams-admin.html') res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
     res.end(await readFile(resolve(root, '.' + path)));
   } catch (error) { res.writeHead(error.status || 500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: false, message: error.message })); }
 });
@@ -100,6 +104,27 @@ try {
   await page.waitForFunction(() => document.querySelector('#saveState').textContent.includes('Not yet saved'));
   disconnect = false; await page.reload(); await page.locator('#examDone').waitFor({ state: 'visible' });
   await admin.locator('[data-refresh]').click(); await admin.locator('[data-review]').first().click(); await admin.locator('[data-mark=Q2]').fill('35');
+  const beforePreview = JSON.stringify([...fixture.db]), beforePreviewRequests = reviewApiRequests;
+  const popupPromise = admin.waitForEvent('popup'); await admin.locator('[data-preview-answers]').click();
+  const preview = await popupPromise; preview.on('pageerror', error => errors.push(error.message));
+  await preview.waitForLoadState();
+  assert.match(await preview.locator('tbody').innerText(), /B — 4/);
+  assert.match(await preview.locator('tbody').innerText(), /Awaiting marking/);
+  assert.match(await preview.locator('tbody').innerText(), /Pending/); // Unsaved 35 is not a saved mark.
+  assert.equal(await preview.locator('th').first().evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(24, 78, 121)');
+  assert.equal(await preview.evaluate(() => window.opener), null);
+  await preview.screenshot({ path: resolve(output, 'answer-comparison-desktop.png'), fullPage: true });
+  await preview.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await preview.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await preview.screenshot({ path: resolve(output, 'answer-comparison-mobile.png'), fullPage: true });
+  await preview.evaluate(() => { window.printCalls = 0; window.print = () => window.printCalls++; });
+  await preview.locator('#printAnswers').click(); assert.equal(await preview.evaluate(() => window.printCalls), 1);
+  await preview.emulateMedia({ media: 'print' }); assert.equal(await preview.locator('nav').isVisible(), false);
+  await preview.pdf({ path: resolve(output, 'answer-comparison.pdf'), preferCSSPageSize: true });
+  assert.equal(reviewApiRequests, beforePreviewRequests, 'Preview/print issues no extra API requests');
+  assert.equal(JSON.stringify([...fixture.db]), beforePreview, 'Preview/print preserves every stored record');
+  await preview.emulateMedia({ media: 'screen' });
+  await Promise.all([preview.waitForEvent('close'), preview.locator('#closeAnswers').click()]);
   await admin.locator('[data-approve]').click(); await admin.locator('[data-post]').first().click();
   await admin.locator('#managerStatus').filter({ hasText: 'Entrance score saved' }).waitFor();
   await admin.screenshot({ path: resolve(output, 'staff-results.png'), fullPage: true });
@@ -134,10 +159,11 @@ try {
   await student.locator('[name=Q1][value=B]').check(); await student.locator('[name=Q2][value=D]').check();
   await student.locator('#submitExam').click(); await student.locator('#dialogConfirm').click(); await student.locator('#examDone').waitFor({ state: 'visible' });
   await admin.locator('[data-refresh]').click(); await admin.locator('[data-review]').click();
+  await admin.waitForFunction(() => document.querySelector('#resultReview').textContent.includes('20 / 20'));
   assert.match(await admin.locator('#resultReview').innerText(), /20 \/ 20/);
   await admin.setViewportSize({ width: 390, height: 844 });
   assert.equal(await admin.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   await admin.screenshot({ path: resolve(output, 'automatic-student-access-mobile.png'), fullPage: true });
   assert.deepEqual(errors, []);
-  console.log('PASS: authoring, access cards/print, candidate login, modal close/Escape, save, disconnect/reload recovery, submit, written marking, application posting and Objective/Theory selectors.');
+  console.log('PASS: authoring, access cards/print, candidate login, modal close/Escape, save, disconnect/reload recovery, submit, written marking, answer comparison preview/PDF/mobile with no extra reads or writes, application posting and Objective/Theory selectors.');
 } finally { await browser?.close(); await new Promise(resolve => server.close(resolve)); }
