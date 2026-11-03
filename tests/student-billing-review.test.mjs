@@ -22,6 +22,7 @@ const invoice = (overrides = {}) => ({ __id: 'invoice', InvoiceId: 'INV-1', Acco
 function fixture({ students = [profile()], feeItems = [fee()], invoices = [invoice()], summaries = [], schoolProfile = {}, overrides = {} } = {}) {
   const calls = [];
   const deps = {
+    loadBillingDiscounts: async () => [],
     schoolCollectionPaths: async () => ['students', primaryPath, secondaryPath],
     getDocument: async (_env, collection, id) => { assert.equal(collection, 'settings'); assert.equal(id, 'schoolProfile'); return schoolProfile; },
     listCollectionForReport: async (_env, path) => {

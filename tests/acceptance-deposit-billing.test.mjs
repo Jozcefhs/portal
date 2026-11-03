@@ -47,6 +47,7 @@ function invoiceGenerator(feeItems) {
   const generatorSource = source.slice(source.indexOf('async function generateSchoolFeeInvoicesForAccount('),
     source.indexOf('function ledgerDocumentId('));
   const generate = vm.runInNewContext(`(${generatorSource})`, {
+    lower, loadBillingDiscount: async () => null,
     assertManualPaymentScope, scopedPaymentWriteCondition,
     clean, normalizeMatchText: lower,
     yesNo: value => ['yes', 'true', '1'].includes(lower(value)) ? 'YES' : 'NO',

@@ -39,6 +39,7 @@ function financeHarness(options = {}) {
   const reader = settingsReader(options);
   const financeQueries = [], overviewCalls = [];
   const common = {
+    loadBillingDiscounts: async () => [],
     clean,
     feeRowsForBranch,
     loadBranchFinanceRows: async (_env, collection, branchId, query = {}) => {

@@ -3,13 +3,14 @@ import { schoolCollectionPaths, querySchoolCollection } from './school-scope.js'
 import { selectStudentBillingProfiles, studentBillingIdentity, studentProfileValue } from './student-billing-profile.js';
 import { withStudentDisplayName } from './student-display-name.js';
 import { feeRowsForBranch } from './fee-branch-scope.js';
+import { loadBillingDiscounts } from './billing-category-discounts.js';
 import { financialRowMatchesAccount, studentBillingReconciliationPlan } from '../api/backend.js';
 
 const clean = (value) => String(value ?? '').trim();
 const fields = ['AccountRef', 'AdmissionNo', 'ApplicationReference', 'accountRef', 'admissionNo', 'applicationReference'];
 export const BILLING_REVIEW_BATCH_SIZE = 10;
 const dependencies = { getDocument, listCollectionForReport, queryCollectionPages, schoolCollectionPaths,
-  querySchoolCollection, studentBillingReconciliationPlan };
+  querySchoolCollection, studentBillingReconciliationPlan, loadBillingDiscounts };
 function fail(message, status = 409) { const error = new Error(message); error.status = status; throw error; }
 function stable(value) {
   if (Array.isArray(value)) return value.map(stable);
@@ -29,14 +30,14 @@ function recheckProfile(AccountRef, reason) {
     reason: `${reason} Recheck this student's profile and run a fresh billing preview. No charges were prepared for this account.` };
 }
 async function configuration(env, user, deps) {
-  const [schoolProfile, allFees] = await Promise.all([
-    deps.getDocument(env, 'settings', 'schoolProfile'), deps.listCollectionForReport(env, 'feeItems')
+  const [schoolProfile, allFees, billingCategoryDiscounts] = await Promise.all([
+    deps.getDocument(env, 'settings', 'schoolProfile'), deps.listCollectionForReport(env, 'feeItems'), deps.loadBillingDiscounts(env, user.branchId)
   ]);
   const feeItems = feeRowsForBranch(allFees, user.branchId);
-  const signature = JSON.stringify(stable([scopeFor(user), schoolProfile,
+  const signature = JSON.stringify(stable([scopeFor(user), schoolProfile, billingCategoryDiscounts,
     [...feeItems].sort((a, b) => clean(a.__name || a.__id).localeCompare(clean(b.__name || b.__id)))]));
   const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(signature));
-  return { schoolProfile, feeItems, configurationToken: [...new Uint8Array(hash)].map((byte) => byte.toString(16).padStart(2, '0')).join('') };
+  return { schoolProfile, feeItems, billingCategoryDiscounts, configurationToken: [...new Uint8Array(hash)].map((byte) => byte.toString(16).padStart(2, '0')).join('') };
 }
 
 // Read the authorized roster once. Financial data is fetched only for each

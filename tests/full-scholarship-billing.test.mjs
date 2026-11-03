@@ -221,6 +221,7 @@ test('actual invoice generator treats scholarship-without-assigned-fees as a suc
   let creditApplications = 0;
   const lower = (value) => String(value ?? '').trim().toLowerCase();
   const run = vm.runInNewContext(`(${block})`, {
+    lower, loadBillingDiscount: async () => null,
     assertManualPaymentScope, scopedPaymentWriteCondition,
     clean: (value) => String(value ?? '').trim(), normalizeMatchText: lower,
     yesNo: (value) => lower(value) === 'yes' ? 'YES' : 'NO', asMoneyNumber: (value) => Number(value) || 0,

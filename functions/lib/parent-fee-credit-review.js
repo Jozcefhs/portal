@@ -3,6 +3,7 @@ import { loadBranchFinanceRows } from './finance-branch-reads.js';
 import { feeRowsForBranch } from './fee-branch-scope.js';
 import { parentCreditReview } from './student-billing-diagnostics.js';
 import { queryCollectionPages } from './firestore.js';
+import { loadBillingDiscount } from './billing-category-discounts.js';
 
 // Financial reads must finish completely or fail, not silently become empty
 // after a database error or stop at the first page of a long payment history.
@@ -25,13 +26,13 @@ export async function queryParentFinancialRows(env, collection, references, over
 // Reuse those scoped financial rows. No writes or school-wide financial scans.
 export async function reviewParentFeeCredit(env, child, summary, data, overrides = {}) {
   if (!(summary.CreditBalance > 0)) return null;
-  const deps = { loadBranchFinanceRows, buildStudentBillingPreview, ...overrides };
+  const deps = { loadBranchFinanceRows, buildStudentBillingPreview, loadBillingDiscount, ...overrides };
   if (child.SourceType === 'Application' || !child.BranchId || child.BranchId === 'all' ||
       !child.AcademicSession || !child.Term || String(child.ProfileCompletionStatus).toLowerCase() !== 'complete') return parentCreditReview(null);
   try {
-    const fees = await deps.loadBranchFinanceRows(env, 'feeItems', child.BranchId, { report: true });
+    const [fees, discount] = await Promise.all([deps.loadBranchFinanceRows(env, 'feeItems', child.BranchId, { report: true }), deps.loadBillingDiscount(env, child)]);
     const preview = await deps.buildStudentBillingPreview(child, { ...data,
-      feeItems: feeRowsForBranch(fees, child.BranchId) });
+      feeItems: feeRowsForBranch(fees, child.BranchId), billingCategoryDiscounts: discount ? [discount] : [] });
     // Expose only the status and explanation, not invoice IDs or fee catalogue.
     return parentCreditReview(preview);
   } catch {

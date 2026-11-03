@@ -134,6 +134,7 @@ function billingLoader(failCollection = '') {
     accountRefsFrom: row => [row.AccountRef, row.AdmissionNo, row.ApplicationReference],
     canonicalSchoolBranchId: value => lower(value || 'main'), financialRowMatchesAccount,
     feeBranchId, feeRowsForBranch,
+    loadBillingDiscount: async () => null,
     queryCollectionPages: async (_env, collection, options) => {
       calls.push({ collection, options });
       if (collection === failCollection) throw new Error('Read failed; no partial result');

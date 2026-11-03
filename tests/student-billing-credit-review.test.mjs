@@ -115,6 +115,7 @@ test('credit is flagged provisional, never zeroed or mixed with wallet/club rece
   assert.equal(summary.CreditBalance, 494035);
   const before = JSON.stringify({ data, summary, student });
   const review = await reviewParentFeeCredit({}, student, summary, data, {
+    loadBillingDiscount: async () => null,
     loadBranchFinanceRows: async (_env, collection, branch, options) => {
       assert.equal(collection, 'feeItems'); assert.equal(branch, 'main'); assert.equal(options.report, true);
       return data.feeItems;
@@ -169,6 +170,7 @@ test('another branch fee catalogue cannot turn a matching bill into a conflict',
   data.feeItems = [data.feeItems[0]];
   data.invoices = [data.invoices[0]];
   const review = await reviewParentFeeCredit({}, student, { CreditBalance: 500 }, data, {
+    loadBillingDiscount: async () => null,
     loadBranchFinanceRows: async () => [...data.feeItems, { ...data.feeItems[0], BranchId: 'annex', Amount: 999999 }]
   });
   assert.equal(review.status, 'matched');

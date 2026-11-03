@@ -10,6 +10,7 @@ import { activeAdmissionRows } from '../lib/admission-cycle.js';
 import { billingComponentDiagnostics, billingDiagnostics } from '../lib/student-billing-diagnostics.js';
 import { loadBranchFinanceRows, loadBranchFinancePage } from '../lib/finance-branch-reads.js';
 import { onlineCollectionsPage } from '../lib/online-collections-page.js';
+import { applyTotalBillingDiscount, billingFeesWithPostedAmounts, selectBillingDiscount, loadBillingDiscount, loadBillingDiscounts, handleBillingDiscounts } from '../lib/billing-category-discounts.js';
 import { financeMoney, financeDate, financeData, financeWrite, financeFailure, financeOperationId, journalFinancialSignature, assertFinanceRoleLimit } from '../lib/accounting-mutation-guards.js';
 import { getAccountingChartRows, invalidateAccountingChartRows, primeAccountingChartRows } from '../lib/accounting-reference-cache.js';
 import { continueRevenueSync, revenueSyncWrite, revenueSyncReader } from '../lib/accounting-revenue-sync.js';
@@ -953,7 +954,7 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
   'saveSchoolClasses', 'resetSchoolClasses',
   'saveAdmissionClasses', 'resetAdmissionClasses',
   'saveFeeItem', 'saveFeeItems', 'deleteFeeItem', 'seedDefaultFeeItems',
-  'saveBillingCategory', 'deleteBillingCategory', 'updateStudentBillingCategory',
+  'saveBillingCategory', 'deleteBillingCategory', 'updateStudentBillingCategory', 'getBillingDiscountSettings', 'saveBillingDiscountSettings',
   'generateSchoolFeeInvoices', 'recordManualPayment', 'importHistoricalPayments',
   'saveWalletCard', 'recordWalletPurchase', 'recordCreditAction',
   'getTuckShopCatalog', 'searchTuckShopCustomers', 'recordTuckShopStaffSale',
@@ -971,6 +972,7 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
 // applyDesktopDeviceBranchScope.  Organisation-wide and legacy credentials
 // retain the existing action surface for backwards compatibility.
 const BRANCH_BOUND_DEVICE_ACTIONS = new Set([
+  'getBillingDiscountSettings', 'saveBillingDiscountSettings',
   'terminalPayments',
   'entranceCbt',
   'requisitionApprovalSettings',
@@ -1409,7 +1411,7 @@ export function applyBillingCategoryOverrides(fees, app) {
       if (feeBillingSpecificity(item, app) === bestSpecificity) result.push(item);
     });
   });
-  return result;
+  return app.BillingDiscount ? applyTotalBillingDiscount(result, app, isSchoolFeeInvoice) : result;
 }
 
 export function matchingFullScholarshipFeeItems(feeRows, account = {}) {
@@ -2021,7 +2023,8 @@ export async function getPayableFees(env, body = {}) {
     student = await findStudentForApplication(env, app);
   }
   if (student) accountRef = student.AdmissionNo || student.AccountRef || student.ApplicationReference || accountRef;
-  const billingApp = { ...app };
+  const billingApp = { ...app, BranchId: feeBranchId(student || app),
+    SchoolSection: student?.SchoolSection || app.SchoolSection };
   if (student) {
     if (student.ClassAdmitted || student.ClassName) {
       billingApp.ClassApplyingFor = student.ClassAdmitted || student.ClassName;
@@ -2054,18 +2057,21 @@ export async function getPayableFees(env, body = {}) {
     billingApp.AdmissionNumber
   ].map(clean).filter(Boolean));
   const rowMatchesAccount = (row) => {
+    if (feeBranchId(row) !== feeBranchId(billingApp)) return false;
+    if (clean(row.SchoolSection) && clean(billingApp.SchoolSection) && !sameText(row.SchoolSection, billingApp.SchoolSection)) return false;
     const primary = clean(row.AccountRef || row.AdmissionNo);
     if (primary) return [accountRef, billingApp.AdmissionNo, app.AdmissionNo].map(clean).filter(Boolean).some((ref) => sameReferenceIdentity(primary, ref));
     const applicationRef = clean(row.ApplicationReference || row.ApplicationID);
     return Boolean(applicationRef && [app.ApplicationReference, app.ApplicationID, billingApp.ApplicationReference].map(clean).filter(Boolean).some((ref) => sameReferenceIdentity(applicationRef, ref)));
   };
 
-  let [feeRows, paymentRows, invoiceRows, ledgerRows] = await Promise.all([
+  let [feeRows, paymentRows, invoiceRows, ledgerRows, billingDiscount] = await Promise.all([
     loadBranchFinanceRows(env, 'feeItems', feeBranchId(billingApp)),
     queryAccountRows(env, 'payments', accountRef),
     queryAccountRows(env, 'invoices', accountRef),
-    queryAccountRows(env, 'ledger', accountRef)
+    queryAccountRows(env, 'ledger', accountRef), loadBillingDiscount(env, billingApp)
   ]);
+  billingApp.BillingDiscount = billingDiscount;
   const correctedInvoices = correctedPayableInvoices(invoiceRows, ledgerRows);
   ledgerRows = payableLedgerAfterPaymentCorrections(ledgerRows);
   const allFees = feeRowsForBranch(feeRows, feeBranchId(billingApp)).map(normalizeFeeItem)
@@ -2086,13 +2092,12 @@ export async function getPayableFees(env, body = {}) {
       if (asMoneyNumber(row.Credit) <= 0) return false;
       return isAcceptanceFeeLike(row);
     });
-  const matchedFees = applyBillingCategoryOverrides(allFees.filter((fee) => {
+  const matchedFees = billingFeesWithPostedAmounts(applyBillingCategoryOverrides(allFees.filter((fee) => {
     const amount = asMoneyNumber(fee.Amount);
     const category = normalizeMatchText(fee.FeeCategory || '');
     const requiredForEnrollment = yesNo(fee.RequiredForEnrollment) === 'YES';
     const isAcceptanceFee = isAcceptanceFeeLike(fee);
     if (!isWalletFee(fee) && amount <= 0) return false;
-    if (yesNo(fee.PayableOnline || 'YES') !== 'YES') return false;
     if (!feeMatchesApplication(fee, billingApp)) return false;
     if (isAcceptanceFee) {
       if (acceptanceAlreadyPaid) return false;
@@ -2103,7 +2108,7 @@ export async function getPayableFees(env, body = {}) {
       return category === 'admission' || requiredForEnrollment;
     }
     return true;
-  }), billingApp);
+  }), billingApp), billingApp, invoiceRows.filter(rowMatchesAccount)).filter(fee => yesNo(fee.PayableOnline || 'YES') === 'YES');
 
   const feeBalanceMap = {};
   const paymentCodeMap = {};
@@ -2168,13 +2173,13 @@ export async function getPayableFees(env, body = {}) {
     if (!currentTermRank) return true;
     return rowTermRank === currentTermRank;
   };
-  const priorSchoolFeeCharge = currentTermRank ? applyBillingCategoryOverrides(allFees.filter((fee) => {
+  const priorSchoolFeeCharge = currentTermRank ? billingFeesWithPostedAmounts(applyBillingCategoryOverrides(allFees.filter((fee) => {
     if (yesNo(fee.Active) !== 'YES') return false;
     if (isWalletFee(fee) || isAcceptanceFeeLike(fee)) return false;
     if (normalizeMatchText(fee.FeeCategory || 'School Fee') !== 'school fee') return false;
     const feeRank = termRank(fee.Term);
     return feeRank && feeRank < currentTermRank && feeMatchesAccountBase(fee, billingApp);
-  }), billingApp).reduce((sum, fee) => sum + asMoneyNumber(fee.Amount), 0) : 0;
+  }), billingApp), billingApp, invoiceRows.filter(rowMatchesAccount)).reduce((sum, fee) => sum + asMoneyNumber(fee.Amount), 0) : 0;
   const schoolFeeRelatedCredit = currentTermRank ? paidLedgerRows.reduce((sum, row) => {
     return isAvailableSchoolCreditReceipt(row) ? sum + asMoneyNumber(row.Credit) : sum;
   }, 0) : 0;
@@ -2362,7 +2367,7 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
       maxRows: 15000
     });
   };
-  const [loadedAccounts, loadedPayments, loadedInvoices, loadedFeeItems, loadedLedger, loadedApplications, loadedStudents, billingCategories, loadedAccountSummaries] = await Promise.all([
+  const [loadedAccounts, loadedPayments, loadedInvoices, loadedFeeItems, loadedLedger, loadedApplications, loadedStudents, billingCategories, loadedAccountSummaries, billingCategoryDiscounts] = await Promise.all([
     provided('accounts') ? Promise.resolve(preloaded.accounts) : loadBranchFinanceRows(env, 'accounts', branchId),
     provided('payments') ? Promise.resolve(preloaded.payments) : financeRows('payments'),
     provided('invoices') ? Promise.resolve(preloaded.invoices) : financeRows('invoices'),
@@ -2373,7 +2378,9 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
     provided('billingCategories') ? Promise.resolve(preloaded.billingCategories) : listCollection(env, 'billingCategories'),
     provided('accountSummaries') ? Promise.resolve(preloaded.accountSummaries)
       : provided('payments') && provided('invoices') && provided('ledger') ? Promise.resolve([])
-      : loadBranchFinanceRows(env, 'accountSummaries', branchId)
+      : loadBranchFinanceRows(env, 'accountSummaries', branchId),
+    provided('billingCategoryDiscounts') ? Promise.resolve(preloaded.billingCategoryDiscounts)
+      : provided('feeItems') ? Promise.resolve([]) : loadBillingDiscounts(env, branchId)
   ]);
   const accounts = branchRows(loadedAccounts);
   const feeItems = feeRowsForBranch(loadedFeeItems, branchId);
@@ -2564,6 +2571,7 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
   const storedLedgerForAccount = financialRowsByIdentity(normalizedStoredLedger);
   const ledgerForAccount = financialRowsByIdentity(ledgerRows);
   const accountRows = Array.from(accountMap.values()).map((account) => {
+    if (billingCategoryDiscounts.length) account = { ...account, BillingDiscount: selectBillingDiscount(billingCategoryDiscounts, account) };
     const refs = accountRefsFrom(account);
     const allPeriodSummary = calculateAccountFinancialSummary(
       invoicesForAccount(account),
@@ -2699,7 +2707,8 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
     invoices: visibleInvoices,
     ledger: visibleLedger,
     feeItems: feeItems.map(normalizeFeeItem),
-    billingCategories: billingCategories.map((row) => clean(row.Name || row.BillingCategory || row.__id)).filter(Boolean).sort()
+    billingCategories: [...new Set([...billingCategories.map((row) => clean(row.Name || row.BillingCategory || row.__id)), ...billingCategoryDiscounts.map(row => row.Name)])].filter(Boolean).sort(),
+    billingCategoryDiscounts
   };
 }
 
@@ -3334,14 +3343,14 @@ export async function buildStudentBillingPreview(student, data = {}) {
   const overview = await getAccountsOverview({}, {
     schoolProfile: data.schoolProfile || {}, students: [student], applications: [], accounts: [],
     payments: data.payments || [], invoices: data.invoices || [], ledger: data.ledger || [],
-    feeItems: data.feeItems || [], billingCategories: [], accountSummaries: data.accountSummaries || []
+    feeItems: data.feeItems || [], billingCategories: [], billingCategoryDiscounts: data.billingCategoryDiscounts || [], accountSummaries: data.accountSummaries || []
   }, { BranchId: student.BranchId || 'main' });
   const account = overview.accounts[0];
   if (!account) throw new Error('No student billing profile was found.');
   const expected = applyBillingCategoryOverrides(overview.feeItems.filter((fee) =>
-    yesNo(fee.Active) === 'YES' && yesNo(fee.PayableOnline || 'YES') === 'YES' &&
+    yesNo(fee.Active) === 'YES' &&
     !isWalletFee(fee) && !isOptionalSubscriptionFee(fee) && !isAcceptanceFeeLike(fee) &&
-    feeMatchesAccountPeriod(fee, account)), account);
+    feeMatchesAccountPeriod(fee, account)), account).filter(fee => yesNo(fee.PayableOnline || 'YES') === 'YES');
   const periodInvoices = overview.invoices.filter((invoice) =>
     financialRowMatchesAccount(invoice, account) && isSchoolFeeInvoice(invoice) &&
     !['void', 'voided', 'cancelled', 'canceled'].includes(lower(invoice.Status)) &&
@@ -3367,7 +3376,7 @@ export async function buildStudentBillingPreview(student, data = {}) {
   return {
     ok: true, readOnly: true, generatedAt: nowIso(),
     profile: Object.fromEntries(['AccountRef', 'DisplayName', 'ClassName', 'StudentType', 'Gender', 'BillingCategory',
-      'EnrollmentCategory', 'AcademicProgress', 'AcademicSession', 'Term', 'BranchId', 'SchoolSection', 'StudentScopePath', 'ProfileCompletionStatus']
+      'EnrollmentCategory', 'AcademicProgress', 'AcademicSession', 'Term', 'BranchId', 'SchoolSection', 'StudentScopePath', 'ProfileCompletionStatus', 'BillingDiscount']
       .map((field) => [field, (field === 'ProfileCompletionStatus' ? student.ProfileCompletionStatus : account[field]) || ''])),
     expectedTotal, invoicedTotal, difference: asMoneyNumber(expectedTotal - invoicedTotal),
     recordedCredit: account.ExcessCredit, rows, billingReview: billingDiagnostics(rows),
@@ -3398,12 +3407,12 @@ export async function getStudentBillingData(env, student, options = {}) {
       .filter((row) => !options.section || !clean(row.SchoolSection || row.schoolSection) ||
         sameText(row.SchoolSection || row.schoolSection, options.section));
   };
-  const [schoolProfile, feeItems, invoices, payments, ledger, accountSummaries] = await Promise.all([
+  const [schoolProfile, feeItems, invoices, payments, ledger, accountSummaries, billingDiscount] = await Promise.all([
     getDocument(env, 'settings', 'schoolProfile'), loadBranchFinanceRows(env, 'feeItems', feeBranchId(student)),
-    load('invoices'), load('payments'), load('ledger'), load('accountSummaries')
+    load('invoices'), load('payments'), load('ledger'), load('accountSummaries'), loadBillingDiscount(env, student)
   ]);
   return {
-    schoolProfile, invoices, payments, ledger, accountSummaries,
+    schoolProfile, invoices, payments, ledger, accountSummaries, billingCategoryDiscounts: billingDiscount ? [billingDiscount] : [],
     feeItems: feeRowsForBranch(feeItems, feeBranchId(student))
   };
 }
@@ -3519,8 +3528,9 @@ export async function studentBillingReconciliationPlan(student, data) {
 
 function studentMissingChargeFees(data, profile, code) {
   return applyBillingCategoryOverrides((data.feeItems || []).map(normalizeFeeItem).filter((fee) =>
-    sameText(fee.FeeCode, code) && yesNo(fee.Active) === 'YES' && yesNo(fee.PayableOnline || 'YES') === 'YES' &&
-    !isWalletFee(fee) && !isOptionalSubscriptionFee(fee) && !isAcceptanceFeeLike(fee) && feeMatchesAccountPeriod(fee, profile)), profile);
+    yesNo(fee.Active) === 'YES' &&
+    !isWalletFee(fee) && !isOptionalSubscriptionFee(fee) && !isAcceptanceFeeLike(fee) && feeMatchesAccountPeriod(fee, profile)), profile)
+    .filter(fee => sameText(fee.FeeCode, code) && yesNo(fee.PayableOnline || 'YES') === 'YES');
 }
 
 // Only absent components are added. Posted amounts and receipts are never rewritten.
@@ -3574,6 +3584,7 @@ export async function reconcileStudentBilling(env, student, token, actor) {
       ParentEmails: [...new Set([...(student.ParentEmails || []), student.ParentEmail, student.FatherEmail, student.MotherEmail, student.GuardianEmail].map(lower).filter(Boolean))],
       FeeCode: fee.FeeCode, FeeName: fee.FeeName, FeeCategory: fee.FeeCategory, Currency: fee.Currency || 'NGN',
       Amount: missing.expected, Debit: missing.expected, Credit: 0, Balance: missing.expected,
+      ...(fee.BillingDiscount ? { BillingDiscount: fee.BillingDiscount } : {}),
       DueDate: feeDueDate(fee.DueDate) || fee.DueDate || '', Status: 'Unpaid', Date: stamp, CreatedAt: stamp, UpdatedAt: stamp,
       RecordedBy: actor.displayName || actor.username, Source: 'Student profile reconciliation' };
     writes.push({ collectionPath: 'invoices', documentId: invoiceId, exists: false, data: invoice });
@@ -6392,9 +6403,9 @@ async function generateSchoolFeeInvoices(env, body, financialScope = null) {
     err.status = 400;
     throw err;
   }
-  const results = [];
+  const results = [], generationCache = new Map();
   for (const accountRef of accountRefs) {
-    results.push(await generateSchoolFeeInvoicesForAccount(env, body, accountRef, financialScope));
+    results.push(await generateSchoolFeeInvoicesForAccount(env, body, accountRef, financialScope, generationCache));
   }
   if (results.length === 1) return results[0];
   const created = results.reduce((sum, result) => sum + result.created, 0);
@@ -6408,7 +6419,8 @@ async function generateSchoolFeeInvoices(env, body, financialScope = null) {
   };
 }
 
-async function generateSchoolFeeInvoicesForAccount(env, body, accountRef, financialScope = null) {
+async function generateSchoolFeeInvoicesForAccount(env, body, accountRef, financialScope = null, generationCache = new Map()) {
+  const once = (key, load) => { if (!generationCache.has(key)) generationCache.set(key, load()); return generationCache.get(key); };
   let student = body.ResolvedStudent || await findStudentByAccountRef(env, accountRef, {
     branchId: clean(body.BranchId || body.branchId),
     schoolSectionAccess: clean(body.SchoolSection || body.schoolSection)
@@ -6441,7 +6453,8 @@ async function generateSchoolFeeInvoicesForAccount(env, body, accountRef, financ
   };
   const billingSession = clean(billingApp.AcademicSession);
   const billingTerm = clean(billingApp.Term);
-  const fees = applyBillingCategoryOverrides((await loadBranchFinanceRows(env, 'feeItems', feeBranchId(billingApp))).map(normalizeFeeItem).filter((fee) => {
+  billingApp.BillingDiscount = await once(`discount:${feeBranchId(billingApp)}:${lower(billingApp.BillingCategory)}`, () => loadBillingDiscount(env, billingApp));
+  const fees = applyBillingCategoryOverrides((await once(`fees:${feeBranchId(billingApp)}`, () => loadBranchFinanceRows(env, 'feeItems', feeBranchId(billingApp)))).map(normalizeFeeItem).filter((fee) => {
     return yesNo(fee.Active) === 'YES' &&
       isSchoolFeeInvoice(fee) &&
       !isWalletFee(fee) &&
@@ -6459,6 +6472,13 @@ async function generateSchoolFeeInvoicesForAccount(env, body, accountRef, financ
   }
   // Payment posting can update invoices after its caller took a snapshot.
   const existing = (await queryAccountRows(env, 'invoices', accountRef, financialScope)).map(normalizeInvoice);
+  for (const fee of fees) {
+    const prior = existing.find(invoice => sameText(invoice.FeeCode, fee.FeeCode) && sameFinancialPeriod(invoice,
+      resolvedPeriodValue(fee.AcademicSession, billingSession), resolvedPeriodValue(fee.Term, billingTerm)));
+    if (prior && (fee.BillingDiscount || prior.BillingDiscount) && asMoneyNumber(prior.Debit) !== asMoneyNumber(fee.Amount)) {
+      const error = new Error('The billing discount differs from posted invoices. Use the billing review before changing existing charges; invoices and payments were preserved.'); error.status = 409; throw error;
+    }
+  }
   const linkedReferences = [student.ApplicationReference].map(clean).filter(Boolean);
   let created = 0;
   let updated = 0;
@@ -6474,6 +6494,7 @@ async function generateSchoolFeeInvoicesForAccount(env, body, accountRef, financ
         sameText(invoice.FeeCode, fee.FeeCode) &&
         sameFinancialPeriod(invoice, invoiceSession, invoiceTerm);
     });
+    if (duplicate && (fee.BillingDiscount || duplicate.BillingDiscount)) { generatedInvoices.push(duplicate); continue; }
     const credit = Math.min(debit, asMoneyNumber(duplicate?.Credit));
     const balance = Math.max(0, debit - credit);
     const status = balance <= 0 ? 'Paid' : credit > 0 ? 'Part Paid' : 'Unpaid';
@@ -6506,6 +6527,7 @@ async function generateSchoolFeeInvoicesForAccount(env, body, accountRef, financ
       StudentType: student.StudentType || '',
       BillingCategory: student.BillingCategory || 'Regular',
       FeeCode: fee.FeeCode,
+      ...(fee.BillingDiscount ? { BillingDiscount: fee.BillingDiscount } : {}),
       FeeName: fee.FeeName,
       FeeCategory: fee.FeeCategory,
       Amount: debit,
@@ -12019,6 +12041,11 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
       return saveFeeItems(env, body);
     case 'saveBillingCategory':
       return saveBillingCategory(env, body);
+    case 'getBillingDiscountSettings':
+    case 'saveBillingDiscountSettings':
+      return handleBillingDiscounts(env, { username: body.UserUsername, role: body.UserRole, branchId: body.UserBranchId,
+        ...desktopStaffAssignmentActor(body), deviceBranchId: body.DeviceBranchId, allowedSections: ['accounts'] },
+      { ...body, action: action === 'getBillingDiscountSettings' ? 'list' : 'save' });
     case 'deleteBillingCategory':
       return deleteBillingCategory(env, body);
     case 'getStoreOverview':
