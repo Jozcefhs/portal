@@ -159,14 +159,14 @@ test('opening or repeating discount settings does not generate another audit eve
 });
 test('invoice retry reuses discounted bills and refuses changed discounts without writes', async () => {
   const block = backend.slice(backend.indexOf('async function generateSchoolFeeInvoicesForAccount('), backend.indexOf('function ledgerDocumentId('));
-  let policy = rule, feeReads = 0, policyReads = 0, counter = 0; const invoices = new Map(), writes = [];
+  let policy = rule, catalogue = fees, feeReads = 0, policyReads = 0, counter = 0; const invoices = new Map(), writes = [];
   const run = vm.runInNewContext(`(${block})`, {
     clean, lower, normalizeMatchText: lower, sameText: (a,b) => lower(a) === lower(b), sameFinancialPeriod,
     assertManualPaymentScope, scopedPaymentWriteCondition, isFullScholarship, resolveStudentEnrollmentCategory,
     normalizeFeeItem: row => row, normalizeInvoice: row => row, asMoneyNumber: v => Number(v) || 0,
     yesNo: v => lower(v) === 'yes' ? 'YES' : 'NO', applyBillingCategoryOverrides, feeMatchesApplication, isSchoolFeeInvoice,
     isWalletFee: () => false, feeBranchId, loadBillingDiscount: async () => { policyReads++; return policy; },
-    loadBranchFinanceRows: async () => { feeReads++; return fees; }, queryAccountRows: async () => [...invoices.values()],
+    loadBranchFinanceRows: async () => { feeReads++; return catalogue; }, queryAccountRows: async () => [...invoices.values()],
     resolvedPeriodValue: (v,fallback) => !v || lower(v) === 'all' ? fallback : v, normalizeReferenceText: lower,
     ledgerDocumentId: () => `NEW-${++counter}`, schoolSectionFor: row => row.SchoolSection,
     invoiceReminderFields: () => ({}), nowIso: () => '2026-11-03T00:00:00Z', feeDueDate: v => v, safeDocumentId: v => v,
@@ -183,4 +183,11 @@ test('invoice retry reuses discounted bills and refuses changed discounts withou
   policy = { ...rule, DiscountValue: 20 };
   await assert.rejects(run({}, body, account.AccountRef), /posted invoices/);
   assert.equal(JSON.stringify([...invoices]), before); assert.equal(writes.length, 3);
+  policy = rule; catalogue = [...fees, fees[0]];
+  await assert.rejects(run({}, body, account.AccountRef), /Multiple fee rules/);
+  assert.equal(writes.length, 3);
+  catalogue = fees;
+  invoices.set('LEGACY-DUPLICATE', { ...invoices.values().next().value, InvoiceId: 'LEGACY-DUPLICATE' });
+  await assert.rejects(run({}, body, account.AccountRef), /Multiple existing invoices/);
+  assert.equal(writes.length, 3); assert.equal(invoices.size, 4, 'existing duplicate records are preserved for review');
 });

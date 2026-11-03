@@ -6471,10 +6471,18 @@ async function generateSchoolFeeInvoicesForAccount(env, body, accountRef, financ
     throw err;
   }
   // Payment posting can update invoices after its caller took a snapshot.
+  const feeKeys = new Set();
+  for (const fee of fees) {
+    const key = JSON.stringify([lower(fee.FeeCode), resolvedPeriodValue(fee.AcademicSession, billingSession), resolvedPeriodValue(fee.Term, billingTerm)]);
+    if (feeKeys.has(key)) { const error = new Error('Multiple fee rules match the same component and period. Review the fee setup before billing; no invoices were changed.'); error.status = 409; throw error; }
+    feeKeys.add(key);
+  }
   const existing = (await queryAccountRows(env, 'invoices', accountRef, financialScope)).map(normalizeInvoice);
   for (const fee of fees) {
-    const prior = existing.find(invoice => sameText(invoice.FeeCode, fee.FeeCode) && sameFinancialPeriod(invoice,
+    const matches = existing.filter(invoice => sameText(invoice.FeeCode, fee.FeeCode) && sameFinancialPeriod(invoice,
       resolvedPeriodValue(fee.AcademicSession, billingSession), resolvedPeriodValue(fee.Term, billingTerm)));
+    if (matches.length > 1) { const error = new Error('Multiple existing invoices match this fee component. Use finance review; no invoices were changed.'); error.status = 409; throw error; }
+    const prior = matches[0];
     if (prior && (fee.BillingDiscount || prior.BillingDiscount) && asMoneyNumber(prior.Debit) !== asMoneyNumber(fee.Amount)) {
       const error = new Error('The billing discount differs from posted invoices. Use the billing review before changing existing charges; invoices and payments were preserved.'); error.status = 409; throw error;
     }
