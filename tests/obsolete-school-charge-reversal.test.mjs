@@ -283,7 +283,7 @@ test('type-independent approval rechecks new fee rules, completed profiles, prof
 test('type-independent review explains eligibility without presenting a default Day Student fee total', async () => {
   const plan = await obsoleteSchoolChargeReversalPlan({ ...student, StudentType: '' }, fixture());
   const html = obsoleteChargeTable([plan], true);
-  assert.match(html, /Verified — included in approval/); assert.match(html, /obsolete for both day and boarding/);
+  assert.match(html, /Verified — eligible for approval/); assert.match(html, /obsolete for both day and boarding/);
   assert.match(html, /Full fee comparison awaits profile completion/);
   assert.doesNotMatch(html, /Current fee setup:/); assert.match(html, /1,616,915.00 → ₦1,488,885.00/);
   assert.match(obsoleteChargeTable([{ ...plan, eligibilityNote: '<script>' }]), /&lt;script&gt;/);
@@ -502,4 +502,109 @@ test('subscription grace allows only the new read-only correction commands, not 
     assert.equal(await gate(make(), '/api/student-billing-reconciliation'), action !== 'applyObsoleteReversal');
     assert.equal(await gate(make(), '/api/backend'), false);
   }
+});
+
+
+function uniformFixture(data, profile, gender = 'Male') {
+  Object.assign(profile, { ClassName: 'Grade 7', Gender: gender });
+  const base = { ...data.feeItems[0], FeeCode: 'BASE', FeeName: 'Other school fees', Amount: 1310885, Gender: 'All' };
+  const boys = { ...base, __id: 'boys-rule', FeeCode: 'UNI_M', FeeName: 'Boys uniforms', Gender: 'Male', Amount: 178000 };
+  const girls = { ...base, __id: 'girls-rule', FeeCode: 'UNI_F', FeeName: 'Girls uniforms', Gender: 'Female', Amount: 192000 };
+  data.feeItems = [base, boys, girls];
+  const correct = gender === 'Male' ? boys : girls, wrong = gender === 'Male' ? girls : boys;
+  data.invoices = [[base, 'base', 1310885], [correct, 'correct', 0], [wrong, 'wrong', 178000]].map(([fee, id, credit]) => ({
+    ...fee, __id: id, InvoiceId: id, AccountRef: profile.AccountRef, Debit: fee.Amount, Credit: credit,
+    Balance: fee.Amount - credit, Status: credit === fee.Amount ? 'Paid' : credit ? 'Part Paid' : 'Unpaid'
+  }));
+  data.ledger[0].Credit = 1488885; data.payments[0].Amount = 1488885;
+  data.journals = data.invoices.flatMap(invoice => [buildSchoolInvoiceChargeAccountingJournal(invoice),
+    ...(invoice.Credit ? [buildSchoolInvoiceCreditAccountingJournal(invoice)] : [])]);
+  data.journals.push(buildPaymentAccountingJournal(data.payments[0]));
+  data.journals = data.journals.map((row, i) => ({ ...row, __id: safeDocumentId(row.JournalNo), __updateTime: `j${i}` }));
+}
+
+test('wrong-gender uniforms reverse in either direction and transfer only existing credit to the correct uniform', async () => {
+  for (const gender of ['Male', 'Female']) {
+    const h = harness({ configure: (data, profile) => uniformFixture(data, profile, gender) });
+    const before = h.read(), plan = await h.plan();
+    assert.equal(plan.ready, true, plan.reason);
+    assert.equal(plan.charges.length, 1); assert.equal(plan.charges[0].basis, 'different-gender');
+    assert.equal(plan.amount, gender === 'Male' ? 192000 : 178000);
+    assert.equal(plan.reallocations[0].amount, 178000);
+    const result = await h.post(plan.previewToken), after = h.read();
+    assert.equal(result.summary.TotalDebit, gender === 'Male' ? 1488885 : 1502885);
+    assert.equal(result.summary.TotalCredit, 1488885);
+    assert.equal(result.summary.OutstandingBalance, gender === 'Male' ? 0 : 14000);
+    assert.equal(result.reallocatedCredit, 178000);
+    for (const key of ['payments', 'ledger', 'feeItems']) assert.deepEqual(after[key].map(withoutRevision), before[key].map(withoutRevision));
+    const source = after.invoices.find(row => row.InvoiceId === 'wrong'), destination = after.invoices.find(row => row.InvoiceId === 'correct');
+    assert.equal(source.Amount, before.invoices.find(row => row.InvoiceId === 'wrong').Amount);
+    assert.equal(source.Credit, 178000); assert.equal(source.FeeChargeReversed, 'YES');
+    assert.equal(destination.Credit, 178000);
+    assert.equal(schoolInvoiceCreditJournalGap(destination, after.journals).missing, 0);
+    for (const journal of after.journals) assert.equal(journal.TotalDebit, journal.TotalCredit);
+    await assert.rejects(h.post(plan.previewToken), /No eligible/);
+    assert.equal(h.commits.length, 1);
+  }
+});
+
+test('uniform proof needs a saved gender and one matching rule; labels, other mismatches and ambiguous rules cannot authorize correction', async () => {
+  for (const change of [
+    (_d, p) => { p.Gender = ''; },
+    d => { d.feeItems.find(r => r.FeeCode === 'UNI_F').Gender = 'All'; },
+    d => { d.feeItems.find(r => r.FeeCode === 'UNI_F').Gender = 'Male'; },
+    d => { d.feeItems.find(r => r.FeeCode === 'UNI_F').ClassName = 'Grade 10'; },
+    d => { d.feeItems.find(r => r.FeeCode === 'UNI_F').Active = 'NO'; },
+    d => { d.feeItems.push({ ...d.feeItems.find(r => r.FeeCode === 'UNI_F'), __id: 'duplicate-rule' }); },
+    d => { d.invoices.find(r => r.InvoiceId === 'wrong').Amount = 192001; },
+  ]) {
+    const h = harness({ configure: (d, p) => { uniformFixture(d, p); change(d, p); } });
+    assert.equal((await h.plan()).ready, false, String(change)); assert.equal(h.commits.length, 0);
+  }
+});
+
+test('uniform correction leaves unallocated credit available when no undisputed correct invoice exists', async () => {
+  const h = harness({ configure: (d, p) => {
+    uniformFixture(d, p);
+    d.invoices = d.invoices.filter(row => row.InvoiceId !== 'correct');
+    d.journals = d.journals.filter(row => row.SourceId !== 'correct');
+  } });
+  const plan = await h.plan(); assert.equal(plan.ready, true, plan.reason); assert.deepEqual(plan.reallocations, []);
+  const result = await h.post(plan.previewToken);
+  assert.equal(result.reallocatedCredit, 0); assert.equal(result.summary.CreditBalance, 178000);
+});
+
+test('uniform allocation preserves legacy amount aliases and refuses stale target or changed gender', async () => {
+  const h = harness({ configure: (d, p) => {
+    uniformFixture(d, p); Object.assign(d.invoices.find(r => r.InvoiceId === 'correct'), { paidAmount: 0, balanceAmount: 178000, status: 'Unpaid' });
+  } });
+  const plan = await h.plan(); await h.post(plan.previewToken);
+  const corrected = normalizeInvoice(h.read().invoices.find(r => r.InvoiceId === 'correct'));
+  assert.equal(corrected.Credit, 178000); assert.equal(corrected.Status, 'Paid'); assert.equal(corrected.Balance, 0);
+  const stale = harness({ configure: uniformFixture, beforeCommit: db => { db.get('invoices/correct').__updateTime = 'changed'; } });
+  await assert.rejects(stale.post((await stale.plan()).previewToken), /revision/); assert.equal(stale.commits.length, 0);
+  const changed = harness({ configure: uniformFixture }), old = await changed.plan(); changed.profile.Gender = 'Female';
+  await assert.rejects(changed.post(old.previewToken)); assert.equal(changed.commits.length, 0);
+});
+
+test('uniform correction follows branch and section and does not treat old-period uniforms as current mistakes', async () => {
+  for (const [branch, section, name] of [['main', 'secondary', 'Grade 7'], ['area-1-primary', 'primary', 'Grade 1']]) {
+    const data = fixture(), profile = { ...student }; uniformFixture(data, profile);
+    Object.assign(profile, { BranchId: branch, SchoolSection: section, ClassName: name, __scopePath: `schoolBranches/${branch}/sections/${section}/students` });
+    for (const rows of Object.values(data).filter(Array.isArray)) for (const row of rows) { row.BranchId = branch; row.SchoolSection = section; }
+    const plan = await obsoleteSchoolChargeReversalPlan(profile, data, { candidateOnly: true });
+    assert.equal(plan.ready, true, plan.reason); assert.equal(plan.amount, 192000);
+    data.invoices.find(row => row.InvoiceId === 'wrong').Term = 'Third Term';
+    assert.equal((await obsoleteSchoolChargeReversalPlan(profile, data, { candidateOnly: true })).charges.length, 0);
+  }
+});
+
+test('lost uniform correction response cannot post another transfer, and conflicting target journals block the entire change', async () => {
+  const h = harness({ configure: uniformFixture, lostResponse: true }), plan = await h.plan();
+  await assert.rejects(h.post(plan.previewToken), /lost/);
+  await assert.rejects(h.post(plan.previewToken), /No eligible/);
+  assert.equal(h.commits.length, 1);
+  assert.equal(normalizeInvoice(h.read().invoices.find(row => row.InvoiceId === 'correct')).Credit, 178000);
+  const conflict = harness({ configure: (d, p) => { uniformFixture(d, p); d.journals.find(row => row.SourceId === 'correct').Lines[0].Debit++; } });
+  assert.equal((await conflict.plan()).ready, false); assert.equal(conflict.commits.length, 0);
 });

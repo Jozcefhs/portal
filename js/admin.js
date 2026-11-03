@@ -3871,7 +3871,7 @@ function bindStudentEditor(students) {
     if (!response.ok || !data.ok) throw new Error(data.message || 'Billing reconciliation failed.');
     return data;
   };
-  const openBillingChargeReview = async (button, accountRef = '') => {
+  const openBillingChargeReview = async (button, accountRef = '', loadedAccounts = null) => {
     if (button.disabled) return;
     const normalText = button.textContent;
     const user = currentUser, branch = selectedBranchId, controller = new AbortController();
@@ -3884,6 +3884,35 @@ function bindStudentEditor(students) {
     dialog.addEventListener('close', () => { reviewClosed = true; abort(); }, { once: true });
     sessionSignal.addEventListener('abort', abort, { once: true });
     const isCurrent = () => !reviewClosed && !sessionSignal.aborted && dialog.open && currentUser === user && selectedBranchId === branch && activeSection === 'students';
+    const loadedButtons = [...content.querySelectorAll('[data-review-billing-conflicts]')];
+    const savedNodes = loadedButtons.length ? [...content.childNodes] : [];
+    const originalSubtitle = dialog.querySelector('.workflow-dialog-header small')?.textContent;
+    const savedScroll = dialog.scrollTop;
+    const savedTableScroll = [...content.querySelectorAll('.admin-table-wrap')].map(element => ({ element, top: element.scrollTop, left: element.scrollLeft }));
+    let back;
+    if (savedNodes.length) {
+      back = document.createElement('button'); back.type = 'button'; back.className = 'secondary'; back.textContent = 'Back to loaded review';
+      content.before(back);
+      back.onclick = () => {
+        if (!isCurrent() || content.querySelector('[aria-busy="true"]')) return;
+        content.replaceChildren(...savedNodes); dialog.scrollTop = savedScroll;
+        savedTableScroll.forEach(({ element, top, left }) => { element.scrollTop = top; element.scrollLeft = left; });
+        if (originalSubtitle) dialog.querySelector('.workflow-dialog-header small').textContent = originalSubtitle;
+        back.remove(); reviewClosed = true; abort(); sessionSignal.removeEventListener('abort', abort);
+      };
+      dialog.addEventListener('close', () => back.remove(), { once: true });
+    }
+    const onResults = outcomes => outcomes.forEach(({ reference, result, error, plan }) => {
+      const original = loadedButtons.find(item => item.dataset.reviewBillingConflicts === reference);
+      if (!original) return;
+      const cell = original.closest('td'), row = original.closest('tr');
+      const remaining = (plan?.conflicts || []).filter(conflict => !(plan?.charges || []).some(charge => String(charge.code || '').toLowerCase() === String(conflict.code || '').toLowerCase()));
+      original.dataset.billingCorrection = result && !remaining.length ? 'posted' : error ? 'unconfirmed' : '';
+      original.textContent = result ? remaining.length ? 'Review remaining conflicts' : 'Correction posted — recheck' : 'Posting unconfirmed — recheck';
+      const message = document.createElement('p'); message.textContent = result ? `Correction posted. ${remaining.length} unresolved component(s) remain.` : error;
+      if (cell) cell.replaceChildren(message, original);
+      if (result && row?.children[1]) row.children[1].textContent = `Current fee setup: ${plan.expectedTotal == null ? 'Not verified' : money(plan.expectedTotal)}. Posted after correction: ${money(plan.afterPostedTotal)}.`;
+    });
     const request = async (payload) => {
       if (!isCurrent() || controller.signal.aborted) throw new Error('The review stopped or the staff workspace changed. Run a fresh review.');
       const timer = setTimeout(abort, 60000);
@@ -3901,18 +3930,30 @@ function bindStudentEditor(students) {
     };
     dialog.addEventListener('close', () => sessionSignal.removeEventListener('abort', abort), { once: true });
     setButtonLoading(button, true, 'Reviewing obsolete charges…');
+    dialog.scrollTop = 0;
     try {
-      const { openObsoleteChargeReview } = await import('./obsolete-charge-review.js?v=20261103-class-charge-resolution');
-      await openObsoleteChargeReview({ dialog, content, request, isCurrent, accountRef, readOnly: user.subscriptionReadOnly || user.subscriptionActive === false,
+      const { openObsoleteChargeReview } = await import('./obsolete-charge-review.js?v=20261103-loaded-batch');
+      await openObsoleteChargeReview({ dialog, content, request, isCurrent, accountRef, loadedAccounts, onResults, readOnly: user.subscriptionReadOnly || user.subscriptionActive === false,
         confirm: options => window.DynamaxDialogs.confirm(options),
         notify: (title, message, tone) => window.DynamaxDialogs.alert({ title, message, tone: tone === 'error' ? 'danger' : 'success', confirmText: 'Close' }) });
     } catch (error) { setStatus(maintenanceStatus, error.message, 'bad'); }
     finally { setButtonLoading(button, false, '', normalText); }
   };
   panelEl.querySelector('[data-review-obsolete-charges]')?.addEventListener('click', event => openBillingChargeReview(event.currentTarget));
-  const bindBillingConflictButtons = content => content.querySelectorAll('[data-review-billing-conflicts]').forEach(button => {
-    button.addEventListener('click', () => openBillingChargeReview(button, button.dataset.reviewBillingConflicts));
-  });
+  const bindBillingConflictButtons = content => {
+    const buttons = [...content.querySelectorAll('[data-review-billing-conflicts]')];
+    buttons.forEach(button => button.addEventListener('click', () => openBillingChargeReview(button, button.dataset.reviewBillingConflicts)));
+    if (buttons.length > 1 && !content.querySelector('[data-review-loaded-conflicts]')) {
+      const batch = document.createElement('button'); batch.type = 'button'; batch.dataset.reviewLoadedConflicts = '';
+      batch.textContent = 'Batch review / approve loaded conflicts';
+      batch.onclick = () => {
+        const accounts = buttons.filter(item => !item.dataset.billingCorrection).map(item => item.dataset.reviewBillingConflicts);
+        if (!accounts.length) { batch.disabled = true; batch.textContent = 'Loaded corrections processed — recheck unconfirmed accounts individually'; return; }
+        return openBillingChargeReview(batch, '', accounts);
+      };
+      content.prepend(batch);
+    }
+  };
   const reviewBoardingWearReversal = async (reference) => {
     const plan = await reconcileRequest({ action: 'previewReversal', AccountRef: reference });
     const content = document.querySelector('[data-billing-preview-content]');
@@ -16993,7 +17034,7 @@ function academicCbtWorkspace(data, rows) {
     { label: 'Questions', value: (row) => row.NumberOfQuestions },
     { label: 'Saved student list', value: (row) => row.RosterCount },
     { label: 'Status', render: (row) => { const status = academicCbtStatus(row); return `<span class="academic-cbt-status academic-cbt-status-${status.className}">${escapeHtml(status.label)}</span>`; } },
-    { label: 'Actions', render: (row) => `<div class="academic-management-row-actions">${row.Status === 'Scheduled' && clean(row.LocalDownloadedAt || row.LocalPackageIssuedAt) ? `<button type="button" data-academic-cbt-refresh-roster="${escapeHtml(row.CbtTestId)}" data-add-only="true">Add missing eligible students</button>` : ''}${!row.LateEntryParentId && academicCbtHasCloudPapers(row) && row.Status === 'Scheduled' && (clean(row.LocalDownloadedAt || row.LocalPackageIssuedAt) || Date.parse(row.StartsAt) <= Date.now()) ? `<button type="button" data-academic-cbt-late-entry="${escapeHtml(row.CbtTestId)}">Add late-entry students</button>` : ''}${!row.LateEntryParentId && !clean(row.LocalDownloadedAt || row.LocalPackageIssuedAt) && row.Status === 'Scheduled' && Date.parse(row.StartsAt) > Date.now() ? `<button type="button" data-academic-cbt-refresh-roster="${escapeHtml(row.CbtTestId)}">Refresh student list</button>` : ''}<button type="button" class="compact-icon-action compact-edit-action" data-academic-cbt-reschedule="${escapeHtml(row.CbtTestId)}" title="Reschedule date and time" aria-label="Reschedule date and time"><span aria-hidden="true">&#128197;</span></button>${clean(row.LocalDownloadedAt || row.LocalPackageIssuedAt)
+    { label: 'Actions', render: (row) => `<div class="academic-management-row-actions">${data.permissions?.canReviewScores ? `<a class="btn secondary" href="/exams-admin.html?audience=student&amp;branch=${encodeURIComponent(selectedBranchId || 'main')}&amp;section=${encodeURIComponent(academicManagementFilters.section || 'secondary')}&amp;source=${encodeURIComponent(row.CbtTestId)}">Answers / print</a>` : ''}${row.Status === 'Scheduled' && clean(row.LocalDownloadedAt || row.LocalPackageIssuedAt) ? `<button type="button" data-academic-cbt-refresh-roster="${escapeHtml(row.CbtTestId)}" data-add-only="true">Add missing eligible students</button>` : ''}${!row.LateEntryParentId && academicCbtHasCloudPapers(row) && row.Status === 'Scheduled' && (clean(row.LocalDownloadedAt || row.LocalPackageIssuedAt) || Date.parse(row.StartsAt) <= Date.now()) ? `<button type="button" data-academic-cbt-late-entry="${escapeHtml(row.CbtTestId)}">Add late-entry students</button>` : ''}${!row.LateEntryParentId && !clean(row.LocalDownloadedAt || row.LocalPackageIssuedAt) && row.Status === 'Scheduled' && Date.parse(row.StartsAt) > Date.now() ? `<button type="button" data-academic-cbt-refresh-roster="${escapeHtml(row.CbtTestId)}">Refresh student list</button>` : ''}<button type="button" class="compact-icon-action compact-edit-action" data-academic-cbt-reschedule="${escapeHtml(row.CbtTestId)}" title="Reschedule date and time" aria-label="Reschedule date and time"><span aria-hidden="true">&#128197;</span></button>${clean(row.LocalDownloadedAt || row.LocalPackageIssuedAt)
       ? (clean(row.LocalDownloadedAt) && academicCbtHasCloudPapers(row) ? `<button type="button" class="compact-icon-action academic-archive-action" data-academic-cbt-remove-cloud-paper="${escapeHtml(row.CbtTestId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="Remove paper files from Cloudflare R2" aria-label="Remove paper files from Cloudflare R2"><span aria-hidden="true">&#128465;</span></button>` : '')
       : `${!row.LateEntryParentId ? `<button type="button" class="compact-icon-action compact-edit-action" data-academic-cbt-edit="${escapeHtml(row.CbtTestId)}" title="Edit test package" aria-label="Edit test package"><span aria-hidden="true">&#9998;</span></button>` : ''}<button type="button" class="compact-icon-action academic-archive-action" data-academic-cbt-delete="${escapeHtml(row.CbtTestId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="Delete test" aria-label="Delete test"><span aria-hidden="true">&#128465;</span></button>`}</div>` }
   ], { emptyMessage: 'No online CBT tests have been scheduled for this period.',
@@ -20893,7 +20934,7 @@ function renderSection(active) {
       ].filter(Boolean).join(' ')
     }) + renderStudentEditor(students);
     if (currentUser?.role === 'Super Admin' && (currentUser.allowedSections || []).includes('accounts')) {
-      panelEl.querySelector('.student-onboarding-link-action')?.insertAdjacentHTML('beforeend', '<button type="button" class="secondary" data-save-student-profile-defaults>Save missing profile defaults</button><button type="button" class="secondary" data-review-boardwear-all>Review returning-student Boarding Wear</button><button type="button" class="secondary" data-review-obsolete-charges>Review obsolete textbook / yearbook charges</button>');
+      panelEl.querySelector('.student-onboarding-link-action')?.insertAdjacentHTML('beforeend', '<button type="button" class="secondary" data-save-student-profile-defaults>Save missing profile defaults</button><button type="button" class="secondary" data-review-boardwear-all>Review returning-student Boarding Wear</button><button type="button" class="secondary" data-review-obsolete-charges>Review incorrect school fee charges</button>');
     }
     bindStudentEditor(students);
     bindStudentClassExport(students);

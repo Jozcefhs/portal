@@ -15,21 +15,38 @@ const plan = {ok: true, readOnly: true, candidateOnly: false, ready: true, previ
   conflicts: [{code: 'TXT_SNR_11', expected: 0, invoiced: 143880, invoiceIds: ['INV-11'], conflict: true, review: 'Posted charge does not apply under the current fee setup'}]};
 const report = {total: 1, matched: 0, incomplete: 0, missingAccounts: 0, ready: 0, blockedMissingAccounts: 0, review: 1, recheck: 0, readyWithReview: 0,
   rows: [{...plan, ready: false, invoicedTotal: 730540, difference: -143880, rows: plan.conflicts, missing: [], recordedCredit: 0, reason: 'Existing invoice conflicts need review.'}]};
+const uniformPlan = {...plan, amount: 192000, releasedCredit: 178000, outstandingRemoved: 14000, postedTotal: 1680885, afterPostedTotal: 1488885, expectedTotal: 1488885,
+  profile: {...plan.profile, ClassName: 'Grade 7', Gender: 'Male'},
+  charges: [{invoiceId: 'INV-GIRLS', code: 'UNI_F', name: 'Girls uniforms', amount: 192000, ready: true, explanation: 'The saved uniform fee rule is for Female students, but the student’s saved gender is Male.'}],
+  conflicts: [{code: 'UNI_F', expected: 0, invoiced: 192000, invoiceIds: ['INV-GIRLS'], conflict: true}],
+  reallocations: [{invoiceId: 'INV-BOYS', code: 'UNI_M', name: 'Boys uniforms', amount: 178000}]};
 const markup = await renderBillingReport(report), calls = [], errors = [];
+const batchRefs = ['TEST/22/001', 'TEST/22/002', 'TEST/22/003', 'TEST/22/004'];
+const batchMarkup = await renderBillingReport({...report, total: 4, review: 4, rows: batchRefs.map(AccountRef => ({...report.rows[0], profile: {...plan.profile, AccountRef}}))});
 const {chromium} = await import(pathToFileURL(`${process.env.PLAYWRIGHT_MODULE}/index.mjs`).href);
 const browser = await chromium.launch({channel: 'chrome', headless: true});
 await mkdir('tmp/billing-conflict-ui', {recursive: true});
 try {
   const context = await browser.newContext({viewport: {width: 1366, height: 900}}), page = await context.newPage();
   page.on('pageerror', error => errors.push(error.message));
-  let posted = false, lostResponse = false;
+  let posted = false, lostResponse = false, uniformMode = false, batchMode = false;
+  const batchPosted = new Set();
   await context.route('**/*', async route => {
     const path = new URL(route.request().url()).pathname;
     if (path === '/api/student-billing-reconciliation') {
       const body = route.request().postDataJSON(); calls.push(body);
+      if (batchMode) {
+        assert.ok(batchRefs.includes(body.AccountRef));
+        if (body.action === 'previewObsoleteReversal') return route.fulfill({json: {...plan, profile: {...plan.profile, AccountRef: body.AccountRef},
+          ...(body.AccountRef.endsWith('004') || batchPosted.has(body.AccountRef) ? {ready: false, amount: 0, charges: [], reason: 'Needs further review'} : {})}});
+        assert.equal(body.action, 'applyObsoleteReversal'); assert.ok(body.Reason); assert.equal(body.PreviewToken, plan.previewToken);
+        assert.ok(!batchPosted.has(body.AccountRef), 'No duplicate write'); batchPosted.add(body.AccountRef);
+        if (body.AccountRef.endsWith('002')) return route.abort('failed');
+        return route.fulfill({json: {ok:true, message:'Correction saved.'}});
+      }
       assert.equal(body.AccountRef, 'TEST/22/001');
       if (body.action === 'previewObsoleteReversal') return route.fulfill({json: posted
-        ? {...plan, ready: false, amount: 0, charges: [], conflicts: [], reason: 'No eligible obsolete textbook or yearbook charges in this period.'} : plan});
+        ? {...plan, ready: false, amount: 0, charges: [], conflicts: [], reason: 'No eligible obsolete textbook or yearbook charges in this period.'} : uniformMode ? uniformPlan : plan});
       assert.equal(body.action, 'applyObsoleteReversal'); assert.equal(body.PreviewToken, plan.previewToken);
       assert.ok(body.Reason); posted = true;
       if (lostResponse) return route.abort('failed');
@@ -46,11 +63,12 @@ try {
     let currentUser={role:'Super Admin'},selectedBranchId='main',activeSection='students';
     const panelEl=document.getElementById('panel'), maintenanceStatus=document.getElementById('status'),staffSessionAbortController=new AbortController();
     const staffFetch=(url,options)=>fetch(url,options);
+    const money=value=>'₦'+Number(value).toLocaleString('en-NG',{minimumFractionDigits:2,maximumFractionDigits:2});
     ${declarations}
     ${handler}
     const dialog=document.getElementById('studentBillingPreviewDialog'),content=document.querySelector('[data-billing-preview-content]');
     document.getElementById('close-review').onclick=()=>dialog.close();
-    window.renderReport=(readOnly=false)=>{currentUser={role:'Super Admin',subscriptionReadOnly:readOnly};selectedBranchId='main';content.innerHTML=${JSON.stringify(markup)};bindBillingConflictButtons(content);if(!dialog.open)dialog.showModal();};
+    window.renderReport=(readOnly=false,batch=false)=>{currentUser={role:'Super Admin',subscriptionReadOnly:readOnly};selectedBranchId='main';content.innerHTML=batch?${JSON.stringify(batchMarkup)}:${JSON.stringify(markup)};bindBillingConflictButtons(content);if(!dialog.open)dialog.showModal();};
     renderReport();
   `});
   await page.getByRole('button', {name: 'Review / resolve conflicts', exact: true}).click();
@@ -73,9 +91,14 @@ try {
   await page.getByRole('button', {name: 'Close', exact: true}).click();
   assert.equal(calls.filter(row => row.action === 'applyObsoleteReversal').length, 1);
   assert.equal(await page.getByRole('button', {name: 'Correction posted', exact: true}).isDisabled(), true);
+  const callsBeforeBack=calls.length;
+  await page.getByRole('button', {name:'Back to loaded review',exact:true}).click();
+  assert.equal(calls.length,callsBeforeBack,'Return retains the loaded report without a read');
+  await page.getByRole('button', {name:'Correction posted — recheck',exact:true}).click();
+  await page.getByText('No conflicting posted charges remain for this period.', {exact: true}).waitFor();
   await page.getByRole('button', {name: 'Recheck this account', exact: true}).click();
   await page.getByText('No conflicting posted charges remain for this period.', {exact: true}).waitFor();
-  assert.equal(calls.length, 3); assert.equal(await page.locator('[data-post-conflict]').count(), 0);
+  assert.equal(calls.length, 4); assert.equal(await page.locator('[data-post-conflict]').count(), 0);
   await page.getByRole('button', {name: 'Close billing review', exact: true}).click();
 
   // Lost responses remain non-retryable until a new read, and read-only staff cannot post.
@@ -89,19 +112,59 @@ try {
   assert.equal(await page.getByRole('button', {name: 'Recheck required', exact: true}).isDisabled(), true);
   assert.equal(calls.filter(row => row.action === 'applyObsoleteReversal').length, 2);
   await page.getByRole('button', {name: 'Close billing review', exact: true}).click();
-  posted = false; lostResponse = false;
+  posted = false; lostResponse = false; uniformMode = true;
   await page.evaluate(() => renderReport(true));
   await page.getByRole('button', {name: 'Review / resolve conflicts', exact: true}).click();
   await page.getByRole('button', {name: 'Recheck this account', exact: true}).waitFor();
   assert.equal(await page.locator('[data-post-conflict]').count(), 0);
+  assert.match(await page.locator('[data-billing-preview-content]').innerText(), /Boys uniforms: ₦178,000.00/);
+  assert.match(await page.locator('[data-billing-preview-content]').innerText(), /does not record a new payment/);
+  await page.screenshot({path: 'tmp/billing-conflict-ui/uniform-mobile.png'});
   await page.getByRole('button', {name: 'Close billing review', exact: true}).click();
+
+  // Batch: only loaded accounts; selection, partial outcomes, no retry, retained rows.
+  batchMode=true;
+  await page.evaluate(()=>renderReport(false,true));
+  const initialReads=calls.length;
+  await page.getByRole('button',{name:'Batch review / approve loaded conflicts',exact:true}).click();
+  await page.getByRole('button',{name:'Approve selected corrections',exact:true}).waitFor();
+  assert.equal(calls.length-initialReads,4);
+  assert.equal(await page.locator('[data-batch-account]').count(),3);
+  await page.locator('[data-batch-account="2"]').uncheck();
+  await page.getByLabel('Approval reason',{exact:true}).fill('Confirmed obsolete charges against saved classifications.');
+  await page.screenshot({path:'tmp/billing-conflict-ui/batch-mobile.png'});
+  await page.getByRole('button',{name:'Approve selected corrections',exact:true}).click();
+  await page.getByRole('button',{name:'Approve selected',exact:true}).click();
+  await page.getByText('1 corrected; 1 need rechecking; 2 left unchanged.',{exact:true}).waitFor();
+  assert.deepEqual([...batchPosted],batchRefs.slice(0,2));
+  const afterBatch=calls.length;
+  await page.getByRole('button',{name:'Back to loaded review',exact:true}).click();
+  assert.equal(calls.length,afterBatch);
+  assert.equal(await page.locator('[data-review-billing-conflicts]').count(),4);
+  await page.getByRole('button',{name:'Posting unconfirmed — recheck',exact:true}).waitFor();
+  await page.getByRole('button',{name:'Batch review / approve loaded conflicts',exact:true}).click();
+  await page.getByRole('button',{name:'Approve selected corrections',exact:true}).waitFor();
+  assert.deepEqual(calls.slice(afterBatch).map(row=>row.AccountRef),batchRefs.slice(2),'Posted and unconfirmed accounts are excluded from the next batch');
+  await page.getByRole('button',{name:'Back to loaded review',exact:true}).click();
+  await page.getByRole('button',{name:'Close billing review',exact:true}).click();
+  await page.evaluate(()=>renderReport(true,true));
+  await page.getByRole('button',{name:'Batch review / approve loaded conflicts',exact:true}).click();
+  await page.getByText('Verified accounts to correct',{exact:true}).waitFor();
+  assert.equal(await page.locator('[data-batch-post]').count(),0,'Read-only users cannot approve a batch');
+  await page.getByRole('button',{name:'Back to loaded review',exact:true}).click();
+  await page.evaluate(()=>document.querySelectorAll('[data-review-billing-conflicts]').forEach(button=>button.dataset.billingCorrection='posted'));
+  const beforeEmpty=calls.length;
+  await page.getByRole('button',{name:'Batch review / approve loaded conflicts',exact:true}).click();
+  assert.equal(calls.length,beforeEmpty,'An exhausted batch never requests a new school-wide roster');
+  await page.getByRole('button',{name:'Close billing review',exact:true}).click();
+  batchMode=false;
   await page.evaluate(() => renderReport());
   await page.getByRole('button', {name: 'Review / resolve conflicts', exact: true}).click();
   await page.getByLabel('Correction reason', {exact: true}).fill('Reviewed class mismatch.');
   await page.getByRole('button', {name: 'Approve this charge correction', exact: true}).click();
   await page.evaluate(() => { selectedBranchId='another-branch'; });
   await page.getByRole('button', {name: 'Approve correction', exact: true}).click();
-  assert.equal(calls.filter(row => row.action === 'applyObsoleteReversal').length, 2, 'No write after scope change');
+  assert.equal(calls.filter(row => row.action === 'applyObsoleteReversal').length, 4, 'No write after scope change');
   assert.deepEqual(errors, []);
   console.log('PASS: direct row resolution, one-account reads, desktop/mobile preview, reason and confirmation, single posting, recheck, lost-response handling, read-only and branch guards.');
 } finally { await browser.close(); }

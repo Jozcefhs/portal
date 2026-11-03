@@ -437,3 +437,25 @@ test('entrance exam subject choices and validation use the exam branch instead o
   await f.create({ BranchId: 'primary', SubjectId: 'numeracy' });
   assert.deepEqual(f.db.get(`${source}/app-1`), oldRecord);
 });
+
+
+test('uploaded answer register lists only matching authorised remote sittings without writing records', async () => {
+  const f = await uploadedFixture(true);
+  assert.deepEqual((await f.service.uploadedResults(f.input)).tests, []);
+  const objective = await f.service.useUploadedTest(f.input);
+  const theory = await f.service.useUploadedTest({ ...f.input, AssessmentPartId: 'theory' });
+  const saved = decodeExamRecord(await f.get(null, CBT.tests, objective.TestId));
+  f.put(CBT.tests, 'foreign', {...saved, TestId: 'foreign', Scope: {...saved.Scope, BranchId:'other'}});
+  f.put(CBT.tests, 'other-source', {...saved, TestId:'other-source', SourceCbtTestId:'different-test'});
+  const before = f.events.length;
+  const results = await f.service.uploadedResults(f.input);
+  assert.deepEqual(results.tests.map(row=>row.TestId).sort(),[objective.TestId,theory.TestId].sort());
+  assert.doesNotMatch(JSON.stringify(results), /AnswerKey|Questions|private-portal/);
+  assert.equal(f.events.length,before);
+  await assert.rejects(f.service.uploadedResults({...f.input,BranchId:'other'}), /not available/);
+  await assert.rejects(f.service.uploadedResults({...f.input,SchoolSection:'primary'}), /not available/);
+  await assert.rejects(f.service.uploadedResults({...f.input,CbtTestId:'../bad'}), /Choose an uploaded/);
+  // Removing only the cloud paper must not hide completed remote attempts.
+  f.put('academicCbtTests','uploaded-cbt',{...f.sourceRecord,CloudPaperRemovedAt:'2026-11-03T00:00:00Z'});
+  assert.equal((await f.service.uploadedResults(f.input)).tests.length,2);
+});

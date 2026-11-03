@@ -160,6 +160,18 @@ export function createPortalCbtService(env, user = null, dependencies = {}) {
           ...(uploadedPaperFiles(row, 'theory').length ? [{ Id: 'theory', Name: 'Theory — written answers', DurationMinutes: row.TheoryDurationMinutes }] : [])]
           : [{ Id: '', Name: 'Complete paper', DurationMinutes: row.DurationMinutes }] })) };
   }
+  async function uploadedResults(input) {
+    const scope = portalCbtScope(env, user, { ...input, Audience: 'student' });
+    const id = clean(input.CbtTestId);
+    if (!/^[\w.:-]{1,250}$/.test(id)) throw fail('Choose an uploaded CBT test.');
+    const source = await get(env, 'academicCbtTests', id);
+    if (!source || source.CbtTestId !== id || lower(source.BranchId || 'main') !== lower(scope.BranchId)
+      || source.SchoolSection !== scope.SchoolSection) throw fail('This uploaded CBT test is not available in the selected branch and section.', 403);
+    const linked = await rows(CBT.tests, 'SourceCbtTestId', id);
+    return { ok: true, source: { Title: source.Title, CbtTestId: id }, tests: linked.filter(test => test.Audience === 'student'
+      && test.Scope?.WorkspaceId === scope.WorkspaceId && test.Scope?.BranchId === scope.BranchId && test.Scope?.SchoolSection === scope.SchoolSection)
+      .map(test => ({ ...publicTest(test), ...test.Scope, Revision: test.__updateTime, CandidateCount: test.CandidateCount || 0 })) };
+  }
   async function useUploadedTest(input) {
     const scope = portalCbtScope(env, user, { ...input, Audience: 'student' });
     if (!/^[\w.:-]{1,250}$/.test(clean(input.CbtTestId))) throw fail('Choose an uploaded CBT test.');
@@ -487,5 +499,5 @@ export function createPortalCbtService(env, user = null, dependencies = {}) {
     }
     return { ok: true, results: report };
   }
-  return { state, options, assessment, uploadOptions, uploadedTests, useUploadedTest, updateSchedule, create, details, enroll, schedule, cards, login, candidateAction, paperPage, review, approve, post, offlinePackage, offlineResults };
+  return { state, options, assessment, uploadOptions, uploadedTests, uploadedResults, useUploadedTest, updateSchedule, create, details, enroll, schedule, cards, login, candidateAction, paperPage, review, approve, post, offlinePackage, offlineResults };
 }

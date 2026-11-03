@@ -164,6 +164,23 @@ try {
   await admin.setViewportSize({ width: 390, height: 844 });
   assert.equal(await admin.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   await admin.screenshot({ path: resolve(output, 'automatic-student-access-mobile.png'), fullPage: true });
+  // Direct entry from Academic Area → Online CBT uses one source-specific read.
+  const beforeLink=reviewApiRequests, beforeLinkRecords=JSON.stringify([...fixture.db]);
+  await admin.goto(`${base}/exams-admin.html?audience=student&branch=main&section=secondary&source=uploaded-test`);
+  await admin.locator('#managerStatus').filter({hasText:'Examinations loaded.'}).waitFor();
+  assert.equal(reviewApiRequests-beforeLink,1,'No full examination list or candidate roster is fetched on entry');
+  await admin.getByRole('heading',{name:'Answers / print: CA1 · Logic · Grade 7',exact:true}).waitFor();
+  await admin.getByRole('button',{name:'Open register',exact:true}).click();
+  await admin.getByRole('button',{name:'Answers / print',exact:true}).click();
+  await admin.getByRole('button',{name:'Preview / print answers',exact:true}).waitFor();
+  assert.equal(await admin.locator('#resultReview > .exam-actions').first().locator('[data-preview-answers]').count(),1,'Print action is above the question list');
+  const [linkedPreview] = await Promise.all([admin.waitForEvent('popup'),admin.getByRole('button',{name:'Preview / print answers',exact:true}).click()]);
+  await linkedPreview.waitForLoadState();
+  assert.match(await linkedPreview.locator('body').innerText(), /Student answer|Student selection|Student’s|Chosen/i);
+  assert.equal(JSON.stringify([...fixture.db]),beforeLinkRecords,'Opening and previewing answers never changes saved scores');
+  await linkedPreview.close();
+  await admin.screenshot({path:resolve(output,'online-cbt-answer-entry-mobile.png'),fullPage:true});
+
   assert.deepEqual(errors, []);
   console.log('PASS: authoring, access cards/print, candidate login, modal close/Escape, save, disconnect/reload recovery, submit, written marking, answer comparison preview/PDF/mobile with no extra reads or writes, application posting and Objective/Theory selectors.');
 } finally { await browser?.close(); await new Promise(resolve => server.close(resolve)); }
