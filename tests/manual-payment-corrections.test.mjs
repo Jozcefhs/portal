@@ -62,6 +62,105 @@ function fixture(wallet = true) {
   return { db, rows, io, call, post, add, commits: () => commits };
 }
 
+function directFixture(wallet = true) {
+  const f = fixture(wallet), payment = f.db.get('payments/MANUAL-1');
+  Object.assign(payment, { Gateway: 'Direct Bank Transfer', GatewayReference: 'BANK-PROOF-1',
+    GrossAmount: payment.Amount, NetAmount: payment.Amount, GatewayFee: 0 });
+  f.add('directTransferRequests', payment.Reference, { Reference: payment.Reference, Context: 'school-payment',
+    Status: 'Verified', ApprovalStage: 'completed', BranchId: 'main', Amount: payment.Amount, Currency: 'NGN',
+    BankReference: payment.GatewayReference, ReviewedBy: 'Original approving officer', ReviewedAt: '2026-10-10T11:00:00Z',
+    Payload: { AccountRef: payment.AccountRef, AdmissionNo: payment.AdmissionNo, BranchId: 'main', SchoolSection: 'secondary',
+      Amount: payment.Amount, Currency: 'NGN', FeeCode: payment.FeeCode, FeeCategory: payment.FeeCategory, StoreCart: [] } });
+  f.add('verifiedBankReferences', 'bank-reservation', { Reference: payment.Reference, BankReference: payment.GatewayReference });
+  return f;
+}
+
+test('verified direct-bank receipt lookup and preview are read-only; full reversal and replay preserve approval history', async () => {
+  const f = directFixture();
+  const source = structuredClone(f.db.get('directTransferRequests/MANUAL-1'));
+  const reservation = structuredClone(f.db.get('verifiedBankReferences/bank-reservation'));
+  f.add('payments', 'SECOND', { ...f.db.get('payments/MANUAL-1'), Reference: 'SECOND', GatewayReference: 'BANK-PROOF-2' });
+  f.add('ledger', 'SECOND', { AccountRef: 'S1', BranchId: 'main', SchoolSection: 'secondary', FeeCategory: 'Wallet', Credit: 14000, Debit: 0 });
+  const otherReceipt = structuredClone(f.db.get('payments/SECOND'));
+  const lookup = await f.call('lookup');
+  assert.equal(lookup.Receipt.CurrentWalletBalance, 28000);
+  const preview = await f.call('preview', { Kind: 'reverse' });
+  assert.equal(preview.Amount, 14000); assert.equal(preview.BalanceAfter, 14000); assert.equal(f.commits(), 0);
+  const posted = await f.call('post', { Kind: 'reverse', PreviewDigest: preview.PreviewDigest });
+  assert.equal(posted.RemainingAmount, 0); assert.equal(f.commits(), 1);
+  assert.equal(f.db.get('payments/MANUAL-1').Amount, 14000);
+  assert.equal(f.db.get('payments/MANUAL-1').CorrectionTotal, 14000);
+  assert.equal(f.db.get('ledger/LED-MANUAL-1').Credit, 14000);
+  assert.deepEqual(f.db.get('payments/SECOND'), otherReceipt);
+  const approvalAfter = f.db.get('directTransferRequests/MANUAL-1');
+  assert.notEqual(approvalAfter.__updateTime, source.__updateTime);
+  assert.deepEqual({ ...approvalAfter, __updateTime: source.__updateTime }, source, 'approval payload and Verified status remain unchanged');
+  assert.deepEqual(f.db.get('verifiedBankReferences/bank-reservation'), reservation);
+  const replay = await f.call('post', { Kind: 'reverse', PreviewDigest: 'lost-response-retry' });
+  assert.equal(replay.replayed, true); assert.equal(f.commits(), 1);
+  assert.equal(f.rows('accountingAudit').length, 1);
+  assert.equal(summarizeWalletActivity(f.rows('ledger'), 'S1').balance, 14000);
+  await assert.rejects(f.call('preview', { Kind: 'reverse', OperationId: 'another-operation-0002' }), /fully corrected/);
+});
+
+test('verified bank wallet reversal cannot spend school credit or force an insufficient wallet negative', async () => {
+  const f = directFixture();
+  f.add('ledger', 'SPEND', { AccountRef: 'S1', FeeCategory: 'Wallet', Debit: 1000 });
+  f.add('ledger', 'SCHOOL-CREDIT', { AccountRef: 'S1', FeeCategory: 'School Fee', Credit: 500000 });
+  await assert.rejects(f.post({ Kind: 'reverse' }), /insufficient remaining funds/);
+  assert.equal(f.commits(), 0); assert.equal(summarizeWalletActivity(f.rows('ledger'), 'S1').balance, 13000);
+});
+
+for (const [label, mutate] of [
+  ['missing approval', f => f.db.delete('directTransferRequests/MANUAL-1')],
+  ['unverified request', f => { f.db.get('directTransferRequests/MANUAL-1').Status = 'Awaiting Verification'; }],
+  ['incomplete approval stage', f => { f.db.get('directTransferRequests/MANUAL-1').ApprovalStage = 'record'; }],
+  ['wrong context', f => { f.db.get('directTransferRequests/MANUAL-1').Context = 'organization-store'; }],
+  ['wrong amount', f => { f.db.get('directTransferRequests/MANUAL-1').Amount = 28000; }],
+  ['wrong payload amount', f => { f.db.get('directTransferRequests/MANUAL-1').Payload.Amount = 13000; }],
+  ['wrong currency', f => { f.db.get('directTransferRequests/MANUAL-1').Currency = 'USD'; }],
+  ['wrong reference', f => { f.db.get('directTransferRequests/MANUAL-1').Reference = 'OTHER'; }],
+  ['wrong document identity', f => { f.db.get('directTransferRequests/MANUAL-1').__id = 'OTHER'; }],
+  ['wrong bank evidence', f => { f.db.get('directTransferRequests/MANUAL-1').BankReference = 'OTHER-BANK'; }],
+  ['wrong account', f => { f.db.get('directTransferRequests/MANUAL-1').Payload.AccountRef = 'S2'; }],
+  ['conflicting account alias', f => { f.db.get('directTransferRequests/MANUAL-1').Payload.admissionNo = 'S2'; }],
+  ['wrong branch', f => { f.db.get('directTransferRequests/MANUAL-1').BranchId = 'other'; }],
+  ['wrong payload section', f => { f.db.get('directTransferRequests/MANUAL-1').Payload.SchoolSection = 'primary'; }],
+  ['wrong fee', f => { f.db.get('directTransferRequests/MANUAL-1').Payload.FeeCode = 'SCHOOL_FEES_TOTAL'; }],
+  ['store purchase', f => { f.db.get('directTransferRequests/MANUAL-1').Payload.StoreCart = [{ Amount: 14000 }]; }],
+  ['unfinished receipt', f => { f.db.get('payments/MANUAL-1').ProcessingStatus = ''; }],
+  ['missing revision', f => { delete f.db.get('directTransferRequests/MANUAL-1').__updateTime; }]
+]) test(`direct-bank correction rejects ${label} before any mutation`, async () => {
+  const f = directFixture(); mutate(f);
+  await assert.rejects(f.call('preview', { Kind: 'reverse' }));
+  assert.equal(f.commits(), 0); assert.equal(f.rows('accountingAudit').length, 0);
+});
+
+test('approval changes invalidate a bank-transfer preview and racing evidence changes abort its entire commit', async () => {
+  const stale = directFixture(), preview = await stale.call('preview', { Kind: 'reverse' });
+  stale.add('directTransferRequests', 'MANUAL-1', stale.db.get('directTransferRequests/MANUAL-1'));
+  await assert.rejects(stale.call('post', { Kind: 'reverse', PreviewDigest: preview.PreviewDigest }), /changed after preview/);
+  assert.equal(stale.commits(), 0);
+  const race = directFixture(), commit = race.io.commit;
+  race.io.commit = async (env, writes) => {
+    race.add('directTransferRequests', 'MANUAL-1', { ...race.db.get('directTransferRequests/MANUAL-1'), ReviewedBy: 'Concurrent reviewer' });
+    return commit(env, writes);
+  };
+  await assert.rejects(race.post({ Kind: 'reverse' }), /Records changed during posting/);
+  assert.equal(race.commits(), 0);
+  assert.equal(race.db.get('payments/MANUAL-1').CorrectionTotal, undefined);
+  assert.equal(race.rows('ledger').length, 1); assert.equal(race.rows('accountingAudit').length, 0);
+});
+
+test('unavailable approval evidence fails closed and verified school receipts keep existing invoice correction behavior', async () => {
+  const f = directFixture(), get = f.io.get;
+  f.io.get = async (env, collection, id) => { if (collection === 'directTransferRequests') throw Error('Evidence unavailable'); return get(env, collection, id); };
+  await assert.rejects(f.call('lookup'), /Evidence unavailable/); assert.equal(f.commits(), 0);
+  const school = directFixture(false); await school.post();
+  assert.equal(school.db.get('invoices/INV1').Credit, 10000);
+  assert.equal(school.db.get('directTransferRequests/MANUAL-1').Status, 'Verified');
+});
+
 test('receipt lookup distinguishes original amount from the live wallet balance without writes', async () => {
   const f = fixture();
   f.add('ledger', 'OTHER', { AccountRef: 'S1', FeeCategory: 'Wallet', Credit: 31000, Debit: 750 });

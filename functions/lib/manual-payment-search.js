@@ -1,6 +1,7 @@
 import { assertManualPaymentScope, bindManualPaymentIdentity } from './manual-payment-scope.js';
 import { financeFailure } from './accounting-mutation-guards.js';
 import { isAvailableSchoolCreditReceipt } from '../api/backend.js';
+import { isCorrectablePaymentGateway, isDirectBankReceipt, assertVerifiedBankReceipt, bankReceiptEvidenceForSearch } from './manual-payment-eligibility.js';
 
 const clean = value => String(value ?? '').trim();
 const lower = value => clean(value).toLowerCase();
@@ -9,14 +10,14 @@ const PAGE_SIZE = 100;
 const fields = ['Reference', 'ReceiptNo', 'AccountRef', 'accountRef', 'AdmissionNo', 'admissionNo', 'AdmissionNumber', 'admissionNumber',
   'ApplicationReference', 'applicationReference', 'ApplicationID', 'BranchId', 'branchId',
   'SchoolSection', 'schoolSection', 'ClassName', 'ClassApplyingFor', 'AcademicSession', 'Term', 'FeeCode', 'FeeName', 'FeeCategory',
-  'Amount', 'GrossAmount', 'NetAmount', 'GatewayFee', 'Currency', 'Gateway', 'Method', 'Channel', 'Status',
+  'Amount', 'GrossAmount', 'NetAmount', 'GatewayFee', 'Currency', 'Gateway', 'GatewayReference', 'Method', 'Channel', 'Status',
   'ProcessingStatus', 'PaidAt', 'RecordedAt', 'Date', 'RecordedBy', 'CorrectionTotal', 'CorrectionStatus'];
 
 function resultRow(row) {
   const amount = Number(row.Amount), corrected = Number(row.CorrectionTotal || 0);
   const wallet = lower(row.FeeCategory) === 'wallet' || clean(row.FeeCode).toUpperCase() === 'WALLET_TOPUP';
   let unavailable = '';
-  if (lower(row.Gateway) !== 'manual') unavailable = 'Not a manual payment — cannot be corrected here';
+  if (!isCorrectablePaymentGateway(row)) unavailable = 'Not a manual payment or verified bank transfer — cannot be corrected here';
   else if (lower(row.Status) !== 'paid' || (row.ProcessingStatus && lower(row.ProcessingStatus) !== 'completed')) unavailable = 'Payment is not completed';
   else if (!wallet && (!isAvailableSchoolCreditReceipt(row) || /acceptance/i.test(`${row.FeeCode} ${row.FeeName}`))) unavailable = 'Not a wallet top-up or school-fee receipt';
   else if (!clean(row.Reference) || !clean(row.AccountRef) || !Number.isFinite(amount) || amount <= 0
@@ -74,7 +75,13 @@ export async function searchStudentPaymentHistory(env, body, scope, io) {
   for (const row of scanned) {
     try { assertManualPaymentScope(row, bound, 'Payment'); }
     catch (error) { if (error.code === 'MANUAL_PAYMENT_SCOPE_MISMATCH') continue; throw error; }
-    rows.push(resultRow(row));
+    rows.push({ payment: row, result: resultRow(row) });
+  }
+  const direct = rows.filter(row => row.result.CanSelect && isDirectBankReceipt(row.payment));
+  const evidence = await bankReceiptEvidenceForSearch(env, direct.map(row => row.payment), io);
+  for (const { payment, result } of direct) {
+    try { assertVerifiedBankReceipt(payment, evidence.get(clean(payment.Reference)), bound); }
+    catch { result.CanSelect = false; result.UnavailableReason = 'Verified bank-transfer approval needs finance review'; }
   }
   let next = '';
   if (page.length > PAGE_SIZE) {
@@ -83,5 +90,5 @@ export async function searchStudentPaymentHistory(env, body, scope, io) {
     next = JSON.stringify({ version: 1, binding, last });
   }
   return { ok: true, Student: { AccountRef: accountRef, DisplayName: clean(student.DisplayName),
-    ClassName: clean(student.ClassName), SchoolSection: bound.schoolSectionAccess }, Rows: rows, NextCursor: next, Complete: !next };
+    ClassName: clean(student.ClassName), SchoolSection: bound.schoolSectionAccess }, Rows: rows.map(row => row.result), NextCursor: next, Complete: !next };
 }

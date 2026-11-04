@@ -1,5 +1,6 @@
 import { batchCommitDocuments, getDocument, queryCollection, queryCollectionPages, listCollectionForReport } from './firestore.js';
 import { searchStudentPaymentHistory } from './manual-payment-search.js';
+import { isCorrectablePaymentGateway, isDirectBankReceipt, directTransferReceiptId, assertVerifiedBankReceipt } from './manual-payment-eligibility.js';
 import { getAccountingChartRows } from './accounting-reference-cache.js';
 import { financeFailure, financeMoney, financeOperationId, financeWrite } from './accounting-mutation-guards.js';
 import { validateRequisitionPosting } from './requisition-posting.js';
@@ -32,8 +33,8 @@ async function receipt(env, body, scope, io) {
   if (rows.length !== 1) fail(rows.length ? 'This reference is ambiguous. Accounts must review the duplicate receipts.' : 'No payment with that reference was found.', 404);
   const payment = version(rows[0]);
   assertManualPaymentScope(payment, scope, 'Payment');
-  if (lower(payment.Gateway) !== 'manual' || lower(payment.Status) !== 'paid' || Number(payment.GatewayFee || 0) !== 0
-    || (payment.ProcessingStatus && lower(payment.ProcessingStatus) !== 'completed')) fail('Only completed manual payments without gateway charges can be corrected here. Online payments require their own refund process.');
+  if (!isCorrectablePaymentGateway(payment) || lower(payment.Status) !== 'paid' || Number(payment.GatewayFee || 0) !== 0
+    || (payment.ProcessingStatus && lower(payment.ProcessingStatus) !== 'completed')) fail('Only completed manual payments or verified bank transfers without gateway charges can be corrected here. Online payments require their own refund process.');
   const wallet = lower(payment.FeeCategory) === 'wallet' || clean(payment.FeeCode).toUpperCase() === 'WALLET_TOPUP';
   if (!wallet && (!isAvailableSchoolCreditReceipt(payment) || /acceptance/i.test(`${payment.FeeCode} ${payment.FeeName}`))) fail('This screen supports student wallet top-ups and school-fee receipts, not admission or earmarked service payments.');
   const student = version(await io.student(env, payment.AccountRef, { ...scope,
@@ -47,7 +48,9 @@ async function receipt(env, body, scope, io) {
   if (clean(payment.Currency || 'NGN').toUpperCase() !== 'NGN'
     || (payment.GrossAmount !== undefined && cents(payment.GrossAmount) !== original)
     || (payment.NetAmount !== undefined && cents(payment.NetAmount) !== original)) fail('This receipt has currency or net-amount differences that need finance review.');
-  return { payment, student, bound, wallet, original, remaining: original - corrected };
+  const transfer = isDirectBankReceipt(payment)
+    ? assertVerifiedBankReceipt(payment, await io.get(env, 'directTransferRequests', directTransferReceiptId(payment)), bound) : null;
+  return { payment, student, bound, wallet, original, transfer, remaining: original - corrected };
 }
 
 function identity(student, account = {}) {
@@ -234,6 +237,9 @@ export async function handleManualPaymentCorrection(env, user, body, dependencie
     patch('accountingJournals', posted, { PaymentCorrectionTotal: fields.CorrectionTotal }),
     patch(student.__scopePath, student, { WalletLastPurchaseAt: timestamp, WalletLastPurchaseNo: id }),
     financeWrite('ledger', entry.LedgerNo, entry), financeWrite('accountingJournals', adjustment.JournalNo, adjustment)];
+  // Retain the original approved request and bank-reference reservation. This
+  // unchanged-field write only enforces the approval revision read at preview.
+  if (record.transfer) writes.push(patch('directTransferRequests', record.transfer, { Status: record.transfer.Status }));
   let school = null;
   if (!wallet) { school = await schoolPlan(env, record, amount, entry, id, user, date, timestamp, io); writes.push(...school.writes); }
   const walletSummaryVersions = [];
@@ -259,7 +265,7 @@ export async function handleManualPaymentCorrection(env, user, body, dependencie
     ...(target ? { Target: identity(target, targetAccount), TargetBalanceBefore: Number(targetAccount.WalletBalance), TargetBalanceAfter: (cents(targetAccount.WalletBalance) + amount) / 100 } : {}) };
   if (school) result.SchoolFees = { Before: school.Before, After: school.After, Invoices: school.changes };
   const digest = await financeOperationId('PREVIEW', input, date, payment.__updateTime, deposit.__updateTime, posted.__updateTime,
-    student.__updateTime, target?.__updateTime, walletSummaryVersions, result, school?.versions.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))));
+    student.__updateTime, target?.__updateTime, record.transfer?.__updateTime, walletSummaryVersions, result, school?.versions.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))));
   if (action === 'preview') return { ok: true, ...result, PreviewDigest: digest, message: 'Review this correction. No balances have changed.' };
   if (body.PreviewDigest !== digest) fail('The payment, wallet or invoice balances changed after preview. Preview again before confirming.');
   writes.push(financeWrite('manualPaymentCorrections', id, { ...source, ...input, CorrectionId: id, Amount: value,

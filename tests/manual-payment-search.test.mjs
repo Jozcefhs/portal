@@ -113,3 +113,57 @@ test('no-match history is complete and read failures never masquerade as an empt
   f.io.page = async () => { throw Error('Database unavailable'); };
   await assert.rejects(f.call(),/Database unavailable/);
 });
+
+function bankPayment(id, extra = {}) {
+  return payment(id, { Gateway: 'Direct Bank Transfer', GatewayReference: `BANK-${id}`, Method: 'Bank Transfer', ...extra });
+}
+function approval(receipt, extra = {}) {
+  return { __id: receipt.Reference, __updateTime: 'approval-v1', Reference: receipt.Reference,
+    Context: 'school-payment', Status: 'Verified', ApprovalStage: 'completed', BranchId: 'main', Amount: receipt.Amount,
+    Currency: 'NGN', BankReference: receipt.GatewayReference, ReviewedBy: 'Approving officer', ReviewedAt: '2025-10-10T11:00:00Z',
+    Payload: { AccountRef: receipt.AccountRef, BranchId: 'main', SchoolSection: 'secondary', Amount: receipt.Amount,
+      FeeCode: receipt.FeeCode, FeeCategory: receipt.FeeCategory, Currency: 'NGN', StoreCart: [] }, ...extra };
+}
+function approvalReads(f, evidence) {
+  const queries = [];
+  f.io.query = async (_env, collection, options) => {
+    assert.equal(collection, 'directTransferRequests'); queries.push(options);
+    assert.ok(options.filters[0].value.length <= 30);
+    assert.equal(options.filters[0].field, 'Reference'); assert.equal(options.filters[0].op, 'in');
+    assert.ok(!options.select.includes('ProofDataUrl')); assert.ok(!options.select.includes('ProofFileName'));
+    buildStructuredQuery(collection, options);
+    return evidence.filter(row => options.filters[0].value.includes(row.Reference));
+  };
+  return queries;
+}
+
+test('search verifies direct-transfer approvals in bounded projected batches, alongside unchanged manual eligibility', async () => {
+  const direct = Array.from({ length: 31 }, (_, index) => bankPayment(`bank-${String(index).padStart(2, '0')}`));
+  const f = fixture([...direct, payment('manual'), payment('online', { Gateway: 'Paystack' })]);
+  const queries = approvalReads(f, direct.map(row => approval(row)));
+  const result = await f.call();
+  assert.equal(queries.length, 2); assert.deepEqual(queries.map(row => row.filters[0].value.length), [30, 1]);
+  assert.equal(result.Rows.filter(row => row.CanSelect).length, 32);
+  assert.equal(result.Rows.find(row => row.Id === 'online').CanSelect, false);
+  assert.ok(result.Rows.filter(row => row.Id.startsWith('bank-')).every(row => row.Source === 'Direct Bank Transfer'));
+  assert.doesNotMatch(JSON.stringify(result), /BANK-bank|Approving officer|Payload|ProofDataUrl/);
+});
+
+test('search disables missing, ambiguous or mismatched direct-transfer approvals without revealing their contents', async () => {
+  const direct = ['valid', 'missing', 'amount', 'account', 'pending', 'ambiguous', 'corrected', 'processing'].map(id => bankPayment(id));
+  direct.find(row => row.__id === 'corrected').CorrectionTotal = 22400;
+  direct.find(row => row.__id === 'processing').ProcessingStatus = 'Processing';
+  const evidence = direct.filter(row => row.__id !== 'missing').map(row => approval(row));
+  evidence.find(row => row.Reference === 'REF-amount').Amount = 1;
+  evidence.find(row => row.Reference === 'REF-account').Payload.AccountRef = 'OTHER/001';
+  evidence.find(row => row.Reference === 'REF-pending').Status = 'Awaiting Verification';
+  evidence.push({ ...evidence.find(row => row.Reference === 'REF-ambiguous'), __id: 'OTHER-DOCUMENT' });
+  const f = fixture(direct), queries = approvalReads(f, evidence);
+  const result = await f.call();
+  assert.deepEqual(result.Rows.filter(row => row.CanSelect).map(row => row.Id), ['valid']);
+  assert.ok(!queries[0].filters[0].value.includes('REF-corrected'));
+  assert.ok(!queries[0].filters[0].value.includes('REF-processing'));
+  assert.doesNotMatch(JSON.stringify(result), /OTHER\/001|OTHER-DOCUMENT|BANK-/);
+  f.io.query = async () => { throw Error('Approval query unavailable'); };
+  await assert.rejects(f.call(), /Approval query unavailable/);
+});

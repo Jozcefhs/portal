@@ -330,6 +330,36 @@ test('replaying an original manual receipt cannot overwrite its correction or re
   assert.equal(f.rows('ledger').reduce((sum, row) => sum + Number(row.Credit || 0) - Number(row.Debit || 0), 0), 1000);
 });
 
+test('replaying a verified direct-bank recorder after a full audited reversal never restores the removed wallet credit', async t => {
+  const f = fixture(t); f.student();
+  const original = { Reference: 'DIRECT-APPROVED-1', Gateway: 'Direct Bank Transfer', GatewayReference: 'BANK-ONLY-1',
+    Method: 'Bank Transfer', Amount: 13600, GrossAmount: 13600, NetAmount: 13600, GatewayFee: 0 };
+  await f.record(original);
+  const receipt = f.get('payments', original.Reference);
+  f.put('directTransferRequests', original.Reference, { Reference: original.Reference, Context: 'school-payment',
+    Status: 'Verified', ApprovalStage: 'completed', BranchId: 'main', Amount: 13600, Currency: 'NGN',
+    BankReference: original.GatewayReference, ReviewedAt: '2026-10-09T11:00:00Z', ReviewedBy: 'Original officer',
+    Payload: { AccountRef: 'STU-001', AdmissionNo: 'STU-001', BranchId: 'main', SchoolSection: 'secondary',
+      FeeCode: receipt.FeeCode, FeeCategory: receipt.FeeCategory, Amount: 13600, Currency: 'NGN', StoreCart: [] } });
+  f.put('verifiedBankReferences', 'bank-claim', { Reference: original.Reference, BankReference: original.GatewayReference });
+  const user = { username: 'accounts@example.test', role: 'Accounts Officer', edition: 'school', branchId: 'main',
+    schoolSectionAccess: 'secondary', allowedSections: ['accounts'] };
+  const instruction = { Reference: original.Reference, Kind: 'reverse', Reason: 'Duplicate bank receipt entered twice',
+    OperationId: 'direct-bank-correction-0001' };
+  const deps = { authorize: async () => true, now: () => new Date('2026-10-13T11:00:00Z') };
+  const preview = await handleManualPaymentCorrection(f.env, user, { ...instruction, action: 'preview' }, deps);
+  assert.equal(preview.BalanceAfter, 0);
+  await handleManualPaymentCorrection(f.env, user, { ...instruction, action: 'post', PreviewDigest: preview.PreviewDigest }, deps);
+  const snapshot = [...f.documents.entries()].map(([key, value]) => [key, structuredClone(value)]), count = f.mutations.length;
+  const replay = await f.record(original);
+  assert.equal(replay.duplicate, true); assert.equal(f.mutations.length, count);
+  assert.deepEqual([...f.documents.entries()], snapshot);
+  assert.equal(f.get('payments', original.Reference).CorrectionTotal, 13600);
+  assert.equal(f.get('directTransferRequests', original.Reference).Status, 'Verified');
+  assert.equal(f.get('verifiedBankReferences', 'bank-claim').Reference, original.Reference);
+  assert.equal(f.rows('ledger').reduce((sum, row) => sum + Number(row.Credit || 0) - Number(row.Debit || 0), 0), 0);
+});
+
 for (const branch of ['main', 'north']) {
   test(`${branch}: branch-approved laptop may post a wallet top-up only to its authorised account`, async t => {
     const f = fixture(t, branch);
