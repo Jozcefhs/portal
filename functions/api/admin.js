@@ -1,5 +1,5 @@
 import { loadDatedHistory } from '../lib/history-date-range.js';
-import { getAccountsOverview } from './backend.js';
+import { getAccountsOverview, loadAccountsWalletLedger } from './backend.js';
 import { withVendorStorePolicy } from '../lib/vendor-store-policy.js';
 import { activeAdmissionRows } from '../lib/admission-cycle.js';
 import { getDocument, listCollection, listCollectionForReport, requireFirestoreEnv } from '../lib/firestore.js';
@@ -117,7 +117,7 @@ function reconcileInvoiceDisplay(invoices, accounts) {
   });
 }
 
-async function currentSessionFinanceRows(env, collection, academicSession, branchId) {
+async function currentSessionFinanceRows(env, collection, academicSession, branchId, readTime) {
   if (!academicSession) {
     const error = new Error('Set the current academic session in School Profile before opening finance summaries.');
     error.status = 409;
@@ -125,6 +125,7 @@ async function currentSessionFinanceRows(env, collection, academicSession, branc
   }
   return loadBranchFinanceRows(env, collection, branchId, {
     filters: [{ field: 'AcademicSession', op: 'in', value: [academicSession, '', 'All'] }],
+    readTime,
     pageSize: 500,
     maxRows: 15000
   });
@@ -228,6 +229,10 @@ export async function onRequestPost(context) {
         ? await getDocument(env, 'settings', 'schoolProfile').catch(() => null)
         : null;
     const financeSession = clean(schoolProfile?.CurrentAcademicSession);
+    if (shouldLoad('accounts') && !financeSession) {
+      throw Object.assign(new Error('Set the current academic session in School Profile before opening finance summaries.'), { status: 409 });
+    }
+    const financeReadTime = new Date().toISOString();
 
     const [
       applications,
@@ -237,6 +242,7 @@ export async function onRequestPost(context) {
       payments,
       invoices,
       ledger,
+      walletLedger,
       clinicRecords,
       clinicInventory,
       kitchenInventory,
@@ -259,10 +265,11 @@ export async function onRequestPost(context) {
       }) : Promise.resolve([]),
       shouldLoad('formPurchases') ? loadDatedHistory(env, 'formSales', requestedSection === 'formPurchases' ? { ...body, HistoryDateRange: body.HistoryDateRange || {} } : body, 'PaymentDate', user.branchId) : Promise.resolve([]),
       shouldLoad('accounts') ? loadBranchFinanceRows(env, 'accountSummaries', user.branchId) : Promise.resolve([]),
-      shouldLoad('accounts') ? currentSessionFinanceRows(env, 'payments', financeSession, user.branchId) : Promise.resolve([]),
-      shouldLoad('accounts') ? currentSessionFinanceRows(env, 'invoices', financeSession, user.branchId) : Promise.resolve([]),
-      shouldLoad('accounts') ? currentSessionFinanceRows(env, 'ledger', financeSession, user.branchId)
+      shouldLoad('accounts') ? currentSessionFinanceRows(env, 'payments', financeSession, user.branchId, financeReadTime) : Promise.resolve([]),
+      shouldLoad('accounts') ? currentSessionFinanceRows(env, 'invoices', financeSession, user.branchId, financeReadTime) : Promise.resolve([]),
+      shouldLoad('accounts') ? currentSessionFinanceRows(env, 'ledger', financeSession, user.branchId, financeReadTime)
         : shouldLoad('tuckShop') ? listCollectionForReport(env, 'ledger') : Promise.resolve([]),
+      shouldLoad('accounts') ? loadAccountsWalletLedger(env, user.branchId || 'all', financeReadTime) : Promise.resolve([]),
       shouldLoad('clinic') ? listCollection(env, 'clinicRecords') : Promise.resolve([]),
       shouldLoad('clinic') ? listCollection(env, 'clinicInventory') : Promise.resolve([]),
       shouldLoad('kitchen') ? listCollection(env, 'kitchenInventory') : Promise.resolve([]),
@@ -294,6 +301,7 @@ export async function onRequestPost(context) {
           payments: staffScope(payments),
           invoices: staffScope(invoices),
           ledger: staffScope(ledger),
+          walletLedger: staffScope(walletLedger),
           ...(schoolProfile ? { schoolProfile } : {})
         };
         if (schoolInsights || shouldLoad('admissions')) overviewInputs.applications = applications;

@@ -2352,15 +2352,45 @@ export async function getPayableFees(env, body = {}) {
   };
 }
 
+// Wallet funds carry across academic periods. This union remains inside the
+// branch reader's AND filter; an account-by-account read or a historical school
+// ledger scan is unnecessary. Include the legacy field aliases used by readers.
+export async function loadAccountsWalletLedger(env, branchId, readTime, overrides = {}) {
+  const read = overrides.loadBranchFinanceRows || loadBranchFinanceRows;
+  const selectors = [
+    ['FeeCategory', ['Wallet', 'wallet', 'WALLET']],
+    ['FeeCode', ['WALLET_TOPUP', 'wallet_topup']],
+    ['EntryType', ['Wallet Deposit', 'Wallet Purchase', 'Wallet Offering', 'Wallet Refund',
+      'Wallet Correction Debit', 'Wallet Correction Credit', 'Wallet Top-up', 'Wallet Topup']]
+  ];
+  const filters = selectors.flatMap(([field, value]) => [field, field[0].toLowerCase() + field.slice(1)]
+    .map(name => ({ field: name, op: 'in', value })));
+  return read(env, 'ledger', branchId, {
+    filters: [{ filterJoin: 'OR', filters }], readTime, pageSize: 500, maxRows: 40000
+  });
+}
+
+function mergeAccountsLedgerRows(periodRows, walletRows) {
+  const unique = new Map();
+  for (const row of [...periodRows, ...walletRows.filter(row => isWalletLedger(normalizeLedger(row)))]) {
+    const key = clean(row.__id || row.__name || row.LedgerNo || row.ledgerNo || row.LedgerId || row.LedgerID);
+    unique.set(key || JSON.stringify(row), row);
+  }
+  return [...unique.values()];
+}
+
 export async function getAccountsOverview(env, preloaded = {}, requestedScope = null) {
   const provided = (key) => Array.isArray(preloaded?.[key]);
   const branchId = accountingRequestBranch(requestedScope || {});
   const branchRows = (rows) => accountingRowsForBranch(rows, branchId);
   const schoolScope = { branchId, schoolSectionAccess: requestedScope?.UserSchoolSectionAccess || requestedScope?.schoolSectionAccess };
+  const walletSection = ['primary', 'secondary'].includes(lower(schoolScope.schoolSectionAccess))
+    ? lower(schoolScope.schoolSectionAccess) : '';
   // Preloaded inputs are an already resolved snapshot (including one-account
   // calculations); live desktop reads resolve the authoritative branch here.
   const schoolProfile = preloaded?.schoolProfile || await loadFinanceSchoolProfile(env, branchId);
   const financeSession = clean(schoolProfile?.CurrentAcademicSession);
+  const financeReadTime = nowIso();
   const financeRows = (collection) => {
     if (!financeSession) {
       const error = new Error('Set the current academic session in School Profile before opening Accounts.');
@@ -2369,11 +2399,12 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
     }
     return loadBranchFinanceRows(env, collection, branchId, {
       filters: [{ field: 'AcademicSession', op: 'in', value: [financeSession, '', 'All'] }],
+      readTime: financeReadTime,
       pageSize: 500,
       maxRows: 15000
     });
   };
-  const [loadedAccounts, loadedPayments, loadedInvoices, loadedFeeItems, loadedLedger, loadedApplications, loadedStudents, billingCategories, loadedAccountSummaries, billingCategoryDiscounts] = await Promise.all([
+  const [loadedAccounts, loadedPayments, loadedInvoices, loadedFeeItems, loadedLedger, loadedApplications, loadedStudents, billingCategories, loadedAccountSummaries, billingCategoryDiscounts, loadedWalletLedger] = await Promise.all([
     provided('accounts') ? Promise.resolve(preloaded.accounts) : loadBranchFinanceRows(env, 'accounts', branchId),
     provided('payments') ? Promise.resolve(preloaded.payments) : financeRows('payments'),
     provided('invoices') ? Promise.resolve(preloaded.invoices) : financeRows('invoices'),
@@ -2386,13 +2417,16 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
       : provided('payments') && provided('invoices') && provided('ledger') ? Promise.resolve([])
       : loadBranchFinanceRows(env, 'accountSummaries', branchId),
     provided('billingCategoryDiscounts') ? Promise.resolve(preloaded.billingCategoryDiscounts)
-      : provided('feeItems') ? Promise.resolve([]) : loadBillingDiscounts(env, branchId)
+      : provided('feeItems') ? Promise.resolve([]) : loadBillingDiscounts(env, branchId),
+    provided('walletLedger') ? Promise.resolve(preloaded.walletLedger)
+      : provided('ledger') ? Promise.resolve([]) : loadAccountsWalletLedger(env, branchId, financeReadTime)
   ]);
   const accounts = branchRows(loadedAccounts);
   const feeItems = feeRowsForBranch(loadedFeeItems, branchId);
   const payments = branchRows(loadedPayments);
   const invoices = branchRows(loadedInvoices);
-  const storedLedger = branchRows(loadedLedger);
+  const storedLedger = branchRows(mergeAccountsLedgerRows(loadedLedger, loadedWalletLedger))
+    .filter(row => !walletSection || !isWalletLedger(normalizeLedger(row)) || identityRecordSection(row) === walletSection);
   const applications = provided('applications') ? branchRows(loadedApplications) : loadedApplications;
   const students = provided('students') ? branchRows(loadedStudents) : loadedStudents;
   const resolvedSchoolProfile = schoolProfile || {};
@@ -2559,6 +2593,9 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
     });
   });
   const ledgerRows = ledger.map(normalizeLedger).map((row) => {
+    // Wallet availability comes from its posted subledger, including refunds
+    // and compensating corrections, not a payment sharing the same reference.
+    if (isWalletLedger(row)) return row;
     if (asMoneyNumber(row.Credit) <= 0) return row;
     const payment = paymentsByReference.get(clean(row.Reference).toLowerCase());
     if (!payment) return row;
@@ -2591,10 +2628,21 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
     let paymentCorrectionDebit = 0;
     let schoolFeeCredit = 0;
     let schoolFeeExpectedDebit = 0;
-    let walletBalance = asMoneyNumber(account.WalletBalance);
+    let walletBalance = 0;
     let lastPaymentAt = clean(account.LastPaymentAt);
     const countedLedgerKeys = new Set();
     ledgerForAccount(account).forEach((row) => {
+      if (isWalletLedger(row)) {
+        if (identityRecordBranch(row) !== identityRecordBranch(account)
+          || identityRecordSection(row) !== identityRecordSection(account)
+          || !financialRowMatchesAccount(row, account)) return;
+        const walletKey = clean(row.__id || row.__name || row.LedgerNo)
+          || `${row.Date}|${row.AccountRef}|${row.Reference}|${row.Debit}|${row.Credit}`;
+        if (countedLedgerKeys.has(`wallet:${walletKey}`)) return;
+        countedLedgerKeys.add(`wallet:${walletKey}`);
+        walletBalance += asMoneyNumber(row.Credit) - asMoneyNumber(row.Debit);
+        return;
+      }
       const ledgerKey = clean(row.LedgerNo || row.Reference || `${row.Date}|${row.AccountRef}|${row.FeeCode}|${row.Debit}|${row.Credit}`);
       if (ledgerKey && countedLedgerKeys.has(ledgerKey)) return;
       if (ledgerKey) countedLedgerKeys.add(ledgerKey);
@@ -2611,10 +2659,6 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
       const debit = asMoneyNumber(row.Debit);
       const credit = asMoneyNumber(row.Credit);
       if (debit > 0 && isAcceptanceFeeLike(row) && !isNewIntakeApplication(account)) return;
-      if (isWalletLedger(row)) {
-        walletBalance += credit - debit;
-        return;
-      }
       if (isOptionalSubscriptionFee(row) || isStorePurchase(row)) {
         if (credit > 0) totalReceipts += credit;
         if (credit > 0 && row.Date && (!lastPaymentAt || String(row.Date) > String(lastPaymentAt))) {

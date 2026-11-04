@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { feeRowsForBranch } from '../functions/lib/fee-branch-scope.js';
 import { loadFinanceSchoolProfile } from '../functions/lib/finance-school-profile.js';
-import { getAccountsOverview } from '../functions/api/backend.js';
+import { getAccountsOverview, loadAccountsWalletLedger } from '../functions/api/backend.js';
 import { accountingRequestBranch, accountingRowsForBranch } from '../functions/lib/accounting-branch-scope.js';
 import { ORGANIZATION_EDITIONS } from '../functions/lib/organization-config.js';
 import { branchProfilesForRecords } from '../functions/lib/branch-profile-settings.js';
@@ -18,6 +18,11 @@ const branchOverride = (session, term = 'First Term') => ({
   OverrideFields: ['CurrentAcademicSession', 'CurrentTerm'],
   Values: { CurrentAcademicSession: session, CurrentTerm: term }
 });
+const matchesFilter = (row, filter) => filter.filters
+  ? filter.filterJoin === 'OR' ? filter.filters.some(child => matchesFilter(row, child))
+    : filter.filters.every(child => matchesFilter(row, child))
+  : Object.hasOwn(row, filter.field) && (filter.op === 'in'
+    ? filter.value.includes(row[filter.field]) : row[filter.field] === filter.value);
 
 function settingsReader({ profile = { CurrentAcademicSession: '' }, branches = {
   main: branchOverride('2026/2027')
@@ -39,16 +44,24 @@ function settingsReader({ profile = { CurrentAcademicSession: '' }, branches = {
 
 function financeHarness(options = {}) {
   const reader = settingsReader(options);
-  const financeQueries = [], overviewCalls = [];
+  const financeQueries = [], overviewCalls = [], overviewResults = [];
   const common = {
     branchProfilesForRecords: (env, profile, rows) => branchProfilesForRecords(env, profile, rows, reader.readDocument), recordBranchId,
     loadBillingDiscounts: async () => [],
     clean,
+    lower: value => clean(value).toLowerCase(),
+    nowIso: () => '2026-11-04T14:00:00.000Z',
     feeRowsForBranch,
     loadBranchFinanceRows: async (_env, collection, branchId, query = {}) => {
       if (query.filters) financeQueries.push({ collection, query, branchId });
-      return [];
+      if (options.failWalletQuery && query.filters?.some(filter => filter.filterJoin === 'OR')) {
+        throw Object.assign(new Error('Wallet history is unavailable'), { status: 503 });
+      }
+      return (options.rows?.[collection] || []).filter(row => (query.filters || []).every(filter => matchesFilter(row, filter)));
     },
+    loadAccountsWalletLedger: (env, branch, readTime) => loadAccountsWalletLedger(env, branch, readTime,
+      { loadBranchFinanceRows: common.loadBranchFinanceRows }),
+    mergeAccountsLedgerRows: (ledger, walletLedger) => [...ledger, ...walletLedger],
     loadFinanceSchoolProfile: (env, branch) => loadFinanceSchoolProfile(env, branch, reader.readDocument),
     getDocument: reader.readDocument,
     listCollection: async () => [],
@@ -76,6 +89,12 @@ function financeHarness(options = {}) {
       studentWalletProfile: () => ({}),
       getAccountsOverview: async (_env, preloaded, scope) => {
         overviewCalls.push({ preloaded, scope });
+        if (options.realOverview) {
+          const result = await getAccountsOverview(_env, { accounts: [], feeItems: [], applications: [],
+            students: options.students || [], billingCategories: [], billingCategoryDiscounts: [], ...preloaded }, scope);
+          overviewResults.push(result);
+          return result;
+        }
         return { ok: true, accounts: [] };
       }
     }
@@ -89,16 +108,23 @@ function financeHarness(options = {}) {
     normalizeStudent: row => row, selectStudentBillingProfiles: rows => rows,
     financialRowsByIdentity: () => () => []
   });
-  return { reader, financeQueries, overviewCalls, admin, desktop };
+  return { reader, financeQueries, overviewCalls, overviewResults, admin, desktop };
 }
 
 function assertFinanceSession(queries, session) {
-  assert.deepEqual(queries.map(row => row.collection).sort(), ['invoices', 'ledger', 'payments']);
-  for (const { query } of queries) {
+  const periodQueries = queries.filter(row => row.query.filters.some(filter => filter.field === 'AcademicSession'));
+  const walletQueries = queries.filter(row => row.query.filters.some(filter => filter.filterJoin === 'OR'));
+  assert.deepEqual(periodQueries.map(row => row.collection).sort(), ['invoices', 'ledger', 'payments']);
+  assert.equal(walletQueries.length, 1, 'both web and desktop request lifetime wallet data once');
+  assert.equal(queries.length, 4);
+  for (const { query } of periodQueries) {
     assert.deepEqual(plain(query.filters), [{ field: 'AcademicSession', op: 'in', value: [session, '', 'All'] }]);
     assert.equal(query.pageSize, 500);
     assert.equal(query.maxRows, 15000);
   }
+  assert.equal(walletQueries[0].collection, 'ledger');
+  assert.equal(walletQueries[0].query.readTime, periodQueries[0].query.readTime);
+  assert.ok(periodQueries.every(row => row.query.readTime === periodQueries[0].query.readTime));
 }
 
 test('saved Main Branch session works even when organisation session is blank', async () => {
@@ -262,4 +288,46 @@ test('already resolved one-account snapshots stay offline and keep the supplied 
   }, { BranchId: 'main' });
   assert.equal(result.financeAcademicSession, '2025/2026');
   assert.deepEqual(result.accounts, []);
+});
+
+test('web period preload passes missing-period refunds into the real wallet projection once', async () => {
+  const identity = { AccountRef: 'TEST/25/18', AdmissionNo: 'TEST/25/18', BranchId: 'main', SchoolSection: 'secondary',
+    ClassName: 'Grade 8', AcademicSession: '2026/2027', Term: 'First Term' };
+  const ledger = [
+    { ...identity, LedgerNo: 'FEES', FeeCategory: 'School Fee', Reference: 'PAY-FEES', Credit: 805720, Debit: 0 },
+    { ...identity, LedgerNo: 'DEPOSIT', FeeCategory: 'Wallet', EntryType: 'Wallet Deposit', Credit: 6000, Debit: 0 },
+    { ...identity, LedgerNo: 'PURCHASES', FeeCategory: 'Wallet', EntryType: 'Wallet Purchase', Credit: 0, Debit: 9500 },
+    { AccountRef: identity.AccountRef, AdmissionNo: identity.AdmissionNo, BranchId: 'main', SchoolSection: 'secondary',
+      LedgerNo: 'REFUND', FeeCategory: 'Wallet', EntryType: 'Wallet Refund', Credit: 3500, Debit: 0 },
+    { ...identity, LedgerNo: 'OTHER-BRANCH', BranchId: 'north', FeeCategory: 'Wallet', Credit: 3000 },
+    { ...identity, LedgerNo: 'OTHER-SECTION', SchoolSection: 'primary', FeeCategory: 'Wallet', Credit: 4000 }
+  ];
+  const h = financeHarness({ realOverview: true, user: { schoolSectionAccess: 'secondary' }, students: [identity], rows: {
+    ledger, payments: [{ ...identity, Reference: 'PAY-FEES', FeeCategory: 'School Fee', Amount: 805720, Status: 'Paid' }],
+    invoices: [{ ...identity, InvoiceId: 'INV-FEE', FeeCategory: 'School Fee', Amount: 600000, Credit: 600000 }],
+    accountSummaries: [{ ...identity, WalletBalance: 900, CreditBalance: 205720 }]
+  } });
+  const response = await h.admin({ env: {}, request: {} });
+  assert.equal(response.status, 200, JSON.stringify(await response.json()));
+  assertFinanceSession(h.financeQueries, identity.AcademicSession);
+  assert.equal(h.overviewCalls[0].preloaded.ledger.some(row => row.LedgerNo === 'REFUND'), false);
+  assert.deepEqual(h.overviewCalls[0].preloaded.walletLedger.map(row => row.LedgerNo), ['DEPOSIT', 'PURCHASES', 'REFUND']);
+  assert.equal(h.overviewResults.length, 1);
+  const account = h.overviewResults[0].accounts.find(row => row.AccountRef === identity.AccountRef);
+  assert.equal(account.WalletBalance, 0);
+  assert.equal(account.ExcessCredit, 205720);
+  assert.equal(account.TotalCredit, 805720);
+  assert.equal(account.TotalDebit, 600000);
+  assert.equal(h.overviewResults[0].ledger.filter(row => row.FeeCategory === 'Wallet').length, 3);
+});
+
+test('wallet preload fails closed and unrelated web modules do not load wallet history', async () => {
+  const failed = financeHarness({ failWalletQuery: true });
+  const response = await failed.admin({ env: {}, request: {} });
+  assert.equal(response.status, 503);
+  assert.equal(failed.overviewCalls.length, 0);
+  const students = financeHarness({ user: { allowedSections: ['students'] }, body: { section: 'students' } });
+  assert.equal((await students.admin({ env: {}, request: {} })).status, 200);
+  assert.equal(students.financeQueries.length, 0);
+  assert.equal(students.overviewCalls.length, 0);
 });

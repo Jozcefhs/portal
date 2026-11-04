@@ -334,6 +334,12 @@ function collectionQueryLocation(collectionPath) {
 }
 
 function structuredFieldFilter(filter = {}) {
+  if (Object.hasOwn(filter, 'filters')) {
+    const join = String(filter.filterJoin || 'AND').trim().toUpperCase();
+    if (!Array.isArray(filter.filters) || !filter.filters.length || !['AND', 'OR'].includes(join)
+      || filter.field || filter.fieldPath) throw new Error('A database filter group requires filters and an AND or OR join.');
+    return { compositeFilter: { op: join, filters: filter.filters.map(structuredFieldFilter) } };
+  }
   const opMap = {
     '==': 'EQUAL',
     '=': 'EQUAL',
