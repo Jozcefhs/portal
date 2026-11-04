@@ -20,6 +20,7 @@ import {
 } from '../lib/direct-bank-transfer.js';
 import { requireGuestFeePaymentToken } from '../lib/guest-fee-payment.js';
 import { resolveSchoolStoreStock } from '../lib/school-store-stock.js';
+import { quoteSchoolFeePaymentPlan } from '../lib/school-fee-payment-plans.js';
 
 const PAYSTACK_INIT_URL = 'https://api.paystack.co/transaction/initialize';
 function cleanReference(value) {
@@ -88,22 +89,16 @@ function isYes(value) {
 }
 
 function schoolFeeInstallmentRules(components) {
-  const total = toAmount((components || []).reduce((sum, item) => sum + toAmount(item.Amount), 0));
-  const installmentItems = (components || []).filter((item) => {
-    const mode = String(item.PartPaymentMode || 'Item').trim().toLowerCase();
-    return isYes(item.AllowInstallment) && (mode === 'total' || mode === 'both');
+  return quoteSchoolFeePaymentPlan({ components,
+    originalTotal: toAmount((components || []).reduce((sum, item) => sum + toAmount(item.OriginalAmount ?? item.Amount), 0)),
+    balance: toAmount((components || []).reduce((sum, item) => sum + toAmount(item.Amount), 0))
   });
-  const installmentMinimum = installmentItems.reduce((max, item) => Math.max(max, toAmount(item.MinAmount)), 0);
-  const minimumInstallmentPortion = installmentItems.length && installmentMinimum <= 0 ? 1 : installmentMinimum;
-  const minAmount = Math.min(total, minimumInstallmentPortion);
-  const allowInstallment = installmentItems.length > 0 && minAmount < total;
-  return { total, minAmount, maxAmount: total, allowInstallment };
 }
 
-function allocateSchoolFeePayment(components, amount) {
+export function allocateSchoolFeePayment(components, amount, aggregatePlan = false) {
   let remaining = toAmount(amount);
   const allocations = [];
-  const totalMode = (components || []).some((item) => isYes(item.AllowInstallment) && ['total', 'both'].includes(String(item.PartPaymentMode || '').toLowerCase()));
+  const totalMode = aggregatePlan || (components || []).some((item) => isYes(item.AllowInstallment) && ['total', 'both'].includes(String(item.PartPaymentMode || '').toLowerCase()));
   const ordered = totalMode ? [...(components || [])] : [
     ...(components || []).filter((item) => !isYes(item.AllowInstallment)),
     ...(components || []).filter((item) => isYes(item.AllowInstallment))
@@ -179,7 +174,8 @@ export async function onRequestPost(context) {
         AuthenticatedParentEmail: authenticatedParentEmail,
         AccountRef: accountRef,
         SourceType: sourceType,
-        ScopePath: scopePath
+        ScopePath: scopePath,
+        IncludeSchoolFeePaymentPlan: feeCode === SCHOOL_FEES_TOTAL_CODE
       });
     } catch (firestoreErr) {
       return Response.json({ ok: false, message: firestoreErr.message || String(firestoreErr) }, { status: firestoreErr.status || 500 });
@@ -188,6 +184,25 @@ export async function onRequestPost(context) {
       return Response.json(feeData, { status: 400 });
     }
     const payableAccount = feeData.account || {};
+    const claimCheckout = async () => {
+      const { turnstileToken: _turnstileToken, turnstileAction: _turnstileAction,
+        idempotencyKey: _idempotencyKey, ...idempotencyPayload } = body;
+      idempotency = await beginIdempotentRequest(env, request, body, {
+        scope: 'init-payment', actor: `${email}:${payableAccount.AccountRef || accountRef}`,
+        ttlMinutes: 2 * 24 * 60, fingerprintPayload: idempotencyPayload
+      });
+      return idempotency.replay ? Response.json(idempotency.response, {
+        status: idempotency.status || (idempotency.response?.ok === false ? 409 : 200),
+        headers: { 'Cache-Control': 'no-store', 'Idempotency-Replayed': 'true' }
+      }) : null;
+    };
+    // The payable lookup has authenticated ownership and branch. Return an already
+    // accepted total checkout before applying a newer plan to that same request.
+    if (feeCode === SCHOOL_FEES_TOTAL_CODE) {
+      const replay = await claimCheckout();
+      if (replay) return replay;
+    }
+    const rejectCheckout = (message, status = 400) => { throw Object.assign(new Error(message), { status }); };
 
     let storeCart = [];
     let fee = (feeData.fees || []).find((item) => String(item.FeeCode || '').trim() === feeCode);
@@ -209,7 +224,7 @@ export async function onRequestPost(context) {
     }
     const schoolFeeComponents = (feeData.schoolFeeBreakdown || []).filter(isSchoolFee);
     if (feeCode === SCHOOL_FEES_TOTAL_CODE && schoolFeeComponents.length) {
-      const rules = schoolFeeInstallmentRules(schoolFeeComponents);
+      const rules = feeData.schoolFeePaymentPlan || schoolFeeInstallmentRules(schoolFeeComponents);
       fee = {
         FeeCode: SCHOOL_FEES_TOTAL_CODE,
         FeeName: 'School Fees Total',
@@ -220,6 +235,7 @@ export async function onRequestPost(context) {
         MinAmount: rules.allowInstallment ? rules.minAmount : '',
         MaxAmount: rules.total,
         PaymentType: 'SchoolFeesTotal',
+        SchoolFeePaymentPlan: rules,
         AcademicSession: schoolFeeComponents[0].AcademicSession || '',
         Term: schoolFeeComponents[0].Term || '',
         Components: schoolFeeComponents.map((item) => ({
@@ -256,7 +272,7 @@ export async function onRequestPost(context) {
       };
     }
     if (!fee) {
-      return Response.json({ ok: false, message: 'That fee is not currently payable.' }, { status: 400 });
+      rejectCheckout('That fee is not currently payable.');
     }
 
     const guestFeeCategory = String(fee.FeeCategory || '').trim().toLowerCase();
@@ -267,13 +283,16 @@ export async function onRequestPost(context) {
     const isWallet = isWalletFee(fee);
     const isSchoolFeesTotal = feeCode === SCHOOL_FEES_TOTAL_CODE;
     const configuredAmount = toAmount(fee.Amount);
-    const schoolFeeRules = isSchoolFeesTotal ? schoolFeeInstallmentRules(fee.Components || []) : null;
+    const schoolFeeRules = isSchoolFeesTotal ? fee.SchoolFeePaymentPlan : null;
     const canPartPaySchoolFees = Boolean(schoolFeeRules && schoolFeeRules.allowInstallment);
     const partMode = String(fee.PartPaymentMode || 'Item').trim().toLowerCase();
     const canPartPayItem = !isSchoolFeesTotal && isYes(fee.AllowInstallment) && ['item', 'both'].includes(partMode);
-    const amount = (isWallet || canPartPaySchoolFees || canPartPayItem) ? requestedAmount : configuredAmount;
+    const totalAmountProvided = body.amount !== undefined && body.amount !== null && String(body.amount).trim() !== '';
+    const amount = isSchoolFeesTotal
+      ? (totalAmountProvided ? requestedAmount : configuredAmount)
+      : (isWallet || canPartPayItem) ? requestedAmount : configuredAmount;
     if (!Number.isFinite(amount) || amount <= 0) {
-      return Response.json({ ok: false, message: (isWallet || canPartPaySchoolFees || canPartPayItem) ? 'Enter an amount greater than zero.' : 'This fee amount has not been configured.' }, { status: 400 });
+      rejectCheckout((isWallet || canPartPaySchoolFees || canPartPayItem) ? 'Enter an amount greater than zero.' : 'This fee amount has not been configured.');
     }
     const minAmount = toAmount(fee.MinAmount);
     const maxAmount = toAmount(fee.MaxAmount);
@@ -292,37 +311,26 @@ export async function onRequestPost(context) {
     if (canPartPayItem && amount > configuredAmount) {
       return Response.json({ ok: false, message: `Payment cannot exceed ${configuredAmount}.` }, { status: 400 });
     }
-    if (isSchoolFeesTotal && !canPartPaySchoolFees && Math.abs(amount - configuredAmount) > 0.01) {
-      return Response.json({ ok: false, message: 'Part payment is not enabled for this school fee.' }, { status: 400 });
+    if (isSchoolFeesTotal && !canPartPaySchoolFees && toAmount(amount) !== configuredAmount) {
+      rejectCheckout('Part payment is not enabled for this school fee.');
     }
     if (canPartPaySchoolFees && schoolFeeRules.minAmount > 0 && amount < schoolFeeRules.minAmount) {
-      return Response.json({ ok: false, message: `Minimum school fee payment is ${schoolFeeRules.minAmount}.` }, { status: 400 });
+      rejectCheckout(`Minimum school fee payment is ${schoolFeeRules.minAmount}.`);
     }
     if (canPartPaySchoolFees && schoolFeeRules.maxAmount > 0 && amount > schoolFeeRules.maxAmount) {
-      return Response.json({ ok: false, message: `Maximum school fee payment is ${schoolFeeRules.maxAmount}.` }, { status: 400 });
+      rejectCheckout(`Maximum school fee payment is ${schoolFeeRules.maxAmount}.`);
     }
     const schoolFeeItems = isSchoolFeesTotal
-      ? allocateSchoolFeePayment(fee.Components || [], amount)
+      ? allocateSchoolFeePayment(fee.Components || [], amount, schoolFeeRules.planMode !== 'Existing fee-item rules')
       : undefined;
+    if (isSchoolFeesTotal && (toAmount(amount) !== amount || toAmount(schoolFeeItems.reduce((sum, item) => sum + item.Amount, 0)) !== amount)) {
+      rejectCheckout('Enter an amount with at most two decimal places within the outstanding school-fee balance.');
+    }
 
     const account = payableAccount;
-    const {
-      turnstileToken: _turnstileToken,
-      turnstileAction: _turnstileAction,
-      idempotencyKey: _idempotencyKey,
-      ...idempotencyPayload
-    } = body;
-    idempotency = await beginIdempotentRequest(env, request, body, {
-      scope: 'init-payment',
-      actor: `${email}:${account.AccountRef || accountRef}`,
-      ttlMinutes: 2 * 24 * 60,
-      fingerprintPayload: idempotencyPayload
-    });
-    if (idempotency.replay) {
-      return Response.json(idempotency.response, {
-        status: idempotency.status || (idempotency.response?.ok === false ? 409 : 200),
-        headers: { 'Cache-Control': 'no-store', 'Idempotency-Replayed': 'true' }
-      });
+    if (!idempotency) {
+      const replay = await claimCheckout();
+      if (replay) return replay;
     }
     const origin = new URL(request.url).origin;
     const paymentBranchId = String(account.BranchId || 'main').trim().toLowerCase() || 'main';
@@ -355,6 +363,7 @@ export async function onRequestPost(context) {
       FeeName: fee.FeeName,
       FeeCategory: fee.FeeCategory || '',
       Amount: amount,
+      ...(isSchoolFeesTotal ? { SchoolFeePaymentPlan: schoolFeeRules } : {}),
       Currency: String(fee.Currency || 'NGN'),
       PaymentMethod: paymentMethod === 'direct_bank_transfer' ? 'Direct Bank Transfer' : 'Paystack',
       PaystackSubaccountCode: paymentConfiguration?.paystack?.subaccountCode || '',
@@ -394,6 +403,7 @@ export async function onRequestPost(context) {
           Currency: String(fee.Currency || 'NGN'),
           AuthorizationMode: guestAccess ? 'Parent OTP Guest Payment' : (session ? 'Parent Session' : 'Parent Credential'),
           FeeItems: schoolFeeItems || [],
+          ...(isSchoolFeesTotal ? { SchoolFeePaymentPlan: schoolFeeRules } : {}),
           StoreCart: storeCart
         }
       });
@@ -418,6 +428,7 @@ export async function onRequestPost(context) {
           feeCategory: fee.FeeCategory || '',
           paymentType: isWallet ? 'Wallet' : (isSchoolFeesTotal ? 'SchoolFeesTotal' : 'Fee'),
           feeItems: schoolFeeItems,
+          schoolFeePaymentPlan: isSchoolFeesTotal ? schoolFeeRules : undefined,
           fullSchoolFeeAmount: isSchoolFeesTotal ? configuredAmount : undefined,
           partPayment: isSchoolFeesTotal && amount < configuredAmount,
           accountRef: account.AccountRef,

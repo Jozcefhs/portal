@@ -11,6 +11,7 @@ import { billingComponentDiagnostics, billingDiagnostics } from '../lib/student-
 import { loadBranchFinanceRows, loadBranchFinancePage } from '../lib/finance-branch-reads.js';
 import { onlineCollectionsPage } from '../lib/online-collections-page.js';
 import { applyTotalBillingDiscount, billingFeesWithPostedAmounts, selectBillingDiscount, loadBillingDiscount, loadBillingDiscounts, handleBillingDiscounts } from '../lib/billing-category-discounts.js';
+import { loadSchoolFeePaymentPlans, selectSchoolFeePaymentPlan, quoteSchoolFeePaymentPlan, handleSchoolFeePaymentPlans } from '../lib/school-fee-payment-plans.js';
 import { financeMoney, financeDate, financeData, financeWrite, financeFailure, financeOperationId, journalFinancialSignature, assertFinanceRoleLimit } from '../lib/accounting-mutation-guards.js';
 import { getAccountingChartRows, invalidateAccountingChartRows, primeAccountingChartRows } from '../lib/accounting-reference-cache.js';
 import { continueRevenueSync, revenueSyncWrite, revenueSyncReader } from '../lib/accounting-revenue-sync.js';
@@ -955,7 +956,7 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
   'saveSchoolClasses', 'resetSchoolClasses',
   'saveAdmissionClasses', 'resetAdmissionClasses',
   'saveFeeItem', 'saveFeeItems', 'deleteFeeItem', 'seedDefaultFeeItems',
-  'saveBillingCategory', 'deleteBillingCategory', 'updateStudentBillingCategory', 'getBillingDiscountSettings', 'saveBillingDiscountSettings',
+  'saveBillingCategory', 'deleteBillingCategory', 'updateStudentBillingCategory', 'getBillingDiscountSettings', 'saveBillingDiscountSettings', 'getPartPaymentSettings', 'savePartPaymentSettings',
   'generateSchoolFeeInvoices', 'recordManualPayment', 'importHistoricalPayments',
   'saveWalletCard', 'recordWalletPurchase', 'recordCreditAction',
   'getTuckShopCatalog', 'searchTuckShopCustomers', 'recordTuckShopStaffSale',
@@ -973,7 +974,7 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
 // applyDesktopDeviceBranchScope.  Organisation-wide and legacy credentials
 // retain the existing action surface for backwards compatibility.
 const BRANCH_BOUND_DEVICE_ACTIONS = new Set([
-  'getBillingDiscountSettings', 'saveBillingDiscountSettings',
+  'getBillingDiscountSettings', 'saveBillingDiscountSettings', 'getPartPaymentSettings', 'savePartPaymentSettings',
   'terminalPayments',
   'entranceCbt',
   'requisitionApprovalSettings',
@@ -2071,11 +2072,12 @@ export async function getPayableFees(env, body = {}) {
     return Boolean(applicationRef && [app.ApplicationReference, app.ApplicationID, billingApp.ApplicationReference].map(clean).filter(Boolean).some((ref) => sameReferenceIdentity(applicationRef, ref)));
   };
 
-  let [feeRows, paymentRows, invoiceRows, ledgerRows, billingDiscount] = await Promise.all([
+  let [feeRows, paymentRows, invoiceRows, ledgerRows, billingDiscount, paymentPlans] = await Promise.all([
     loadBranchFinanceRows(env, 'feeItems', feeBranchId(billingApp)),
     queryAccountRows(env, 'payments', accountRef),
     queryAccountRows(env, 'invoices', accountRef),
-    queryAccountRows(env, 'ledger', accountRef), loadBillingDiscount(env, billingApp)
+    queryAccountRows(env, 'ledger', accountRef), loadBillingDiscount(env, billingApp),
+    body.IncludeSchoolFeePaymentPlan === false ? null : loadSchoolFeePaymentPlans(env, feeBranchId(billingApp))
   ]);
   billingApp.BillingDiscount = billingDiscount;
   const correctedInvoices = correctedPayableInvoices(invoiceRows, ledgerRows);
@@ -2326,6 +2328,13 @@ export async function getPayableFees(env, body = {}) {
     asMoneyNumber(fee.OriginalAmount || fee.Amount) > 0
   );
   const schoolFeeTotal = schoolFeeBreakdown.reduce((total, fee) => total + asMoneyNumber(fee.Amount), 0);
+  // Reuse the already calculated fee breakdown, including fully paid components.
+  // A plan never creates a charge or changes the bill, receipts or allocations.
+  const schoolFeePaymentPlan = body.IncludeSchoolFeePaymentPlan === false ? null : quoteSchoolFeePaymentPlan({
+    rule: selectSchoolFeePaymentPlan(paymentPlans, billingApp),
+    originalTotal: schoolFeeBreakdown.reduce((total, fee) => total + asMoneyNumber(fee.OriginalAmount ?? fee.Amount), 0),
+    balance: schoolFeeTotal, components: schoolFeeBreakdown
+  });
   const identityScope = student || selectedApplication || app || billingApp;
   return {
     ok: true,
@@ -2348,7 +2357,8 @@ export async function getPayableFees(env, body = {}) {
     },
     fees,
     schoolFeeBreakdown,
-    schoolFeeTotal
+    schoolFeeTotal,
+    schoolFeePaymentPlan
   };
 }
 
@@ -12152,6 +12162,13 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
       { ...body, action: action === 'getBillingDiscountSettings' ? 'list' : 'save' });
     case 'deleteBillingCategory':
       return deleteBillingCategory(env, body);
+    case 'getPartPaymentSettings':
+    case 'savePartPaymentSettings': {
+      const actor = await desktopSchoolOperationsActor(env, body, 'accounts', action === 'savePartPaymentSettings');
+      return handleSchoolFeePaymentPlans(env, { ...actor,
+        ...desktopStaffAssignmentActor(body), deviceBranchId: body.DeviceBranchId },
+      { ...body, action: action === 'getPartPaymentSettings' ? 'list' : 'save' });
+    }
     case 'getStoreOverview':
       return getStoreOverview(env, body);
     case 'saveStoreItem':
@@ -12501,6 +12518,7 @@ export async function onRequestPost(context) {
     body = applyDesktopDeviceBranchScope(body, desktopAuthentication);
     const data = await routeAction(env, action, body, deploymentIdentity, new URL(request.url).origin);
     if (context.data && data.ok && (action === 'getBillingDiscountSettings' || action === 'saveBillingDiscountSettings' && data.changed === false)) context.data.securityAuditNoChange = true;
+    if (context.data && data.ok && ['getPartPaymentSettings', 'savePartPaymentSettings'].includes(action)) context.data.securityAuditHandled = true;
     if (context.data && action === 'terminalPayments' && data.ok && ['settings', 'get', 'history', 'verify'].includes(body.Command)) context.data.securityAuditHandled = true;
     // Start/completion audits are committed atomically with synchronization checkpoints.
     // A continuation or replay must not create another apparent business action.

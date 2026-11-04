@@ -2,6 +2,7 @@
 // Parent-facing dashboard for child activity and wallet restrictions.
 
 import { getPayableFees, matchingFullScholarshipFeeItems } from './backend.js';
+import { quoteSchoolFeePaymentPlan } from '../lib/school-fee-payment-plans.js';
 import { reviewParentFeeCredit, queryParentFinancialRows } from '../lib/parent-fee-credit-review.js';
 import { isFullScholarship } from '../lib/full-scholarship.js';
 import { entranceSubjectRows } from '../lib/entrance-subjects.js';
@@ -1577,18 +1578,15 @@ export function schoolFeeCreditSummary(items, total, originalTotal) {
   };
 }
 
-export function schoolFeeTotalItem(breakdown) {
+export function schoolFeeTotalItem(breakdown, paymentPlan = null) {
   const items = (breakdown || []).filter(isSchoolFee);
   if (!items.length) return null;
   const total = asMoneyNumber(items.reduce((sum, fee) => sum + asMoneyNumber(fee.Amount), 0));
   if (total <= 0) return null;
   const originalTotal = asMoneyNumber(items.reduce((sum, fee) => sum + asMoneyNumber(fee.OriginalAmount || fee.Amount), 0));
   const creditSummary = schoolFeeCreditSummary(items, total, originalTotal);
-  const installmentItems = items.filter((fee) => isYes(fee.AllowInstallment) && ['total', 'both'].includes(lower(fee.PartPaymentMode || 'Item')));
-  const installmentMinimum = installmentItems.reduce((max, fee) => Math.max(max, asMoneyNumber(fee.MinAmount)), 0);
-  const minimumInstallmentPortion = installmentItems.length && installmentMinimum <= 0 ? 1 : installmentMinimum;
-  const minAmount = Math.min(total, minimumInstallmentPortion);
-  const allowInstallment = installmentItems.length > 0;
+  const plan = paymentPlan || quoteSchoolFeePaymentPlan({ components: items, originalTotal, balance: total });
+  const { minAmount, allowInstallment } = plan;
   return {
     FeeCode: 'SCHOOL_FEES_TOTAL',
     FeeName: 'School Fees Total',
@@ -1602,6 +1600,8 @@ export function schoolFeeTotalItem(breakdown) {
     MinAmount: allowInstallment ? minAmount : '',
     MaxAmount: total,
     PaymentType: 'SchoolFeesTotal',
+    PartPaymentMode: 'Total',
+    SchoolFeePaymentPlan: plan,
     AcademicSession: items[0].AcademicSession || '',
     Term: items[0].Term || '',
     DueDate: items.map((item) => clean(item.DueDate)).filter(Boolean).sort()[0] || '',
@@ -1628,9 +1628,9 @@ export function schoolFeeTotalItem(breakdown) {
   };
 }
 
-function buildPayableItems(fees, breakdown) {
+function buildPayableItems(fees, breakdown, paymentPlan = null) {
   const items = [];
-  const schoolTotal = schoolFeeTotalItem(breakdown);
+  const schoolTotal = schoolFeeTotalItem(breakdown, paymentPlan);
   if (schoolTotal) items.push(schoolTotal);
   (fees || []).forEach((fee) => {
     if (!isSchoolFee(fee)) items.push(fee);
@@ -2323,7 +2323,7 @@ async function getChildPayable(env, body) {
     ScopePath: body.scopePath || body.ScopePath,
     AuthenticatedParentEmail: body.__parentSessionEmail || body.__parentAuthenticatedEmail
   });
-  const items = buildPayableItems(payable.fees || [], payable.schoolFeeBreakdown || []);
+  const items = buildPayableItems(payable.fees || [], payable.schoolFeeBreakdown || [], payable.schoolFeePaymentPlan);
   if (!items.some(isWalletFee) && clean(payable.account && payable.account.AdmissionNo)) {
     items.push(walletTopupItem(payable.account));
   }

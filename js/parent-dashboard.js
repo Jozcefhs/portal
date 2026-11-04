@@ -1107,11 +1107,34 @@ function isYes(value) {
   return ['yes', 'y', 'true', '1'].includes(String(value || '').trim().toLowerCase());
 }
 
+function appendSchoolFeePlanDetails(container, fee) {
+  const plan = fee.SchoolFeePaymentPlan;
+  if (!plan || String(fee.FeeCode || '').trim() !== 'SCHOOL_FEES_TOTAL') return;
+  const format = value => new Intl.NumberFormat('en-NG', { style:'currency', currency:fee.Currency || 'NGN' }).format(Number(value) || 0);
+  const summary = document.createElement('small');
+  summary.textContent = `${plan.description || plan.planMode || 'School-fee payment plan'} Minimum now: ${format(plan.minAmount)}. Outstanding: ${format(plan.total)}. ${Number(plan.minAmount) >= Number(plan.total) ? 'The remaining balance is payable in full.' : 'You may pay more, up to the outstanding balance.'}`;
+  container.appendChild(summary);
+  if (!Array.isArray(plan.schedule) || !plan.schedule.length) return;
+  const wrapper = document.createElement('div'); wrapper.style.cssText = 'max-width:100%;overflow:auto;margin:10px 0';
+  const table = document.createElement('table');table.style.cssText = 'width:100%;font-size:12px';table.setAttribute('aria-label','School-fee installment schedule');
+  const header = document.createElement('tr');
+  for (const label of ['Installment','Due date','Amount','Remaining']) { const cell=document.createElement('th');cell.textContent=label;header.appendChild(cell); }
+  const head=document.createElement('thead');head.appendChild(header);table.appendChild(head);
+  const body=document.createElement('tbody');
+  for (const row of plan.schedule) {
+    const line=document.createElement('tr');
+    for (const value of [row.number,row.dueDate || 'Not scheduled',format(row.amount),format(row.remainingAmount)]) { const cell=document.createElement('td');cell.textContent=String(value);line.appendChild(cell); }
+    body.appendChild(line);
+  }
+  table.appendChild(body);wrapper.appendChild(table);container.appendChild(wrapper);
+}
+
 function isWalletFee(fee) {
   return String(fee.FeeCode || '').trim() === 'WALLET_TOPUP' || String(fee.FeeCategory || '').trim().toLowerCase() === 'wallet';
 }
 
 function allowsItemPartPayment(fee) {
+  if (String(fee.FeeCode || '').trim() === 'SCHOOL_FEES_TOTAL') return isYes(fee.AllowInstallment);
   const mode = String(fee.PartPaymentMode || 'Item').trim().toLowerCase();
   return isYes(fee.AllowInstallment) && (mode === 'item' || mode === 'both');
 }
@@ -1619,6 +1642,7 @@ function renderPayableItems(child) {
     if (fee.Components?.length) {
       renderComponents(item, fee.Components);
     }
+    if (fee.SchoolFeePaymentPlan) appendSchoolFeePlanDetails(item, fee);
     if (allowAmountEntry) {
       const label = document.createElement('label');
       label.setAttribute('for', amountInputId(fee));

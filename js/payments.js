@@ -68,6 +68,28 @@ function formatMoney(amount, currency) {
   }).format(Number.isFinite(number) ? number : 0);
 }
 
+function appendSchoolFeePlanDetails(container, fee) {
+  const plan = fee.SchoolFeePaymentPlan;
+  if (!plan || String(fee.FeeCode || '').trim() !== 'SCHOOL_FEES_TOTAL') return;
+  const format = value => new Intl.NumberFormat('en-NG', { style:'currency', currency:fee.Currency || 'NGN' }).format(Number(value) || 0);
+  const summary = document.createElement('small');
+  summary.textContent = `${plan.description || plan.planMode || 'School-fee payment plan'} Minimum now: ${format(plan.minAmount)}. Outstanding: ${format(plan.total)}. ${Number(plan.minAmount) >= Number(plan.total) ? 'The remaining balance is payable in full.' : 'You may pay more, up to the outstanding balance.'}`;
+  container.appendChild(summary);
+  if (!Array.isArray(plan.schedule) || !plan.schedule.length) return;
+  const wrapper = document.createElement('div'); wrapper.style.cssText = 'max-width:100%;overflow:auto;margin:10px 0';
+  const table = document.createElement('table');table.style.cssText = 'width:100%;font-size:12px';table.setAttribute('aria-label','School-fee installment schedule');
+  const header = document.createElement('tr');
+  for (const label of ['Installment','Due date','Amount','Remaining']) { const cell=document.createElement('th');cell.textContent=label;header.appendChild(cell); }
+  const head=document.createElement('thead');head.appendChild(header);table.appendChild(head);
+  const body=document.createElement('tbody');
+  for (const row of plan.schedule) {
+    const line=document.createElement('tr');
+    for (const value of [row.number,row.dueDate || 'Not scheduled',format(row.amount),format(row.remainingAmount)]) { const cell=document.createElement('td');cell.textContent=String(value);line.appendChild(cell); }
+    body.appendChild(line);
+  }
+  table.appendChild(body);wrapper.appendChild(table);container.appendChild(wrapper);
+}
+
 function isWalletFee(fee) {
   return fee && (fee.FeeCode === 'WALLET_TOPUP' || String(fee.FeeCategory || '').toLowerCase() === 'wallet');
 }
@@ -201,22 +223,19 @@ function renderBreakdown(breakdown) {
   breakdownEl.appendChild(totalRow);
 }
 
-function schoolFeeTotalItem(breakdown) {
+function schoolFeeTotalItem(breakdown, paymentPlan = null) {
   const items = (breakdown || []).filter(isSchoolFee);
   if (!items.length) return null;
-  const total = items.reduce((sum, fee) => {
+  const calculatedTotal = items.reduce((sum, fee) => {
     return sum + toAmount(fee.Amount);
   }, 0);
+  const total = paymentPlan ? toAmount(paymentPlan.total) : calculatedTotal;
   if (total <= 0) return null;
-  const installmentItems = items.filter((fee) => isYes(fee.AllowInstallment));
-  const installmentMinimum = items.reduce((sum, fee) => {
-    if (!isYes(fee.AllowInstallment)) return sum;
-    const min = toAmount(fee.MinAmount);
-    return sum + (min > 0 ? min : 0);
-  }, 0);
+  const installmentItems = items.filter(fee => isYes(fee.AllowInstallment) && ['total','both'].includes(String(fee.PartPaymentMode || 'Item').trim().toLowerCase()));
+  const installmentMinimum = installmentItems.reduce((max,fee) => Math.max(max,toAmount(fee.MinAmount)),0);
   const minimumInstallmentPortion = installmentItems.length && installmentMinimum <= 0 ? 1 : installmentMinimum;
-  const minAmount = Math.min(total, minimumInstallmentPortion);
-  const allowInstallment = installmentItems.length > 0 && minAmount < total;
+  const minAmount = paymentPlan ? Math.min(total,toAmount(paymentPlan.minAmount)) : Math.min(total, minimumInstallmentPortion);
+  const allowInstallment = paymentPlan ? paymentPlan.allowInstallment === true : installmentItems.length > 0 && minAmount < total;
   const originalTotal = items.reduce((sum, fee) => sum + toAmount(fee.OriginalAmount || fee.Amount), 0);
   const acceptanceCreditApplied = items.reduce((sum, fee) => sum + toAmount(fee.AcceptanceCreditApplied), 0);
   const schoolFeesTotalCreditApplied = items.reduce((sum, fee) => sum + toAmount(fee.SchoolFeesTotalCreditApplied), 0);
@@ -238,6 +257,8 @@ function schoolFeeTotalItem(breakdown) {
     MinAmount: allowInstallment ? minAmount : '',
     MaxAmount: total,
     PaymentType: 'SchoolFeesTotal',
+    PartPaymentMode: 'Total',
+    ...(paymentPlan ? { SchoolFeePaymentPlan: paymentPlan } : {}),
     AcademicSession: items[0].AcademicSession || '',
     Term: items[0].Term || '',
     Components: items.map((fee) => ({
@@ -261,9 +282,9 @@ function schoolFeeTotalItem(breakdown) {
   };
 }
 
-function buildPayableItems(fees, breakdown) {
+function buildPayableItems(fees, breakdown, paymentPlan = null) {
   const items = [];
-  const schoolTotal = schoolFeeTotalItem(breakdown);
+  const schoolTotal = schoolFeeTotalItem(breakdown, paymentPlan);
   if (schoolTotal) {
     items.push(schoolTotal);
   }
@@ -274,10 +295,10 @@ function buildPayableItems(fees, breakdown) {
   return items;
 }
 
-function renderFees(account, fees, breakdown) {
+function renderFees(account, fees, breakdown, paymentPlan = null) {
   currentBranchId = String(account?.BranchId || 'main').trim().toLowerCase() || 'main';
   paymentIdempotencyKey = '';
-  currentFees = buildPayableItems(fees || [], breakdown || []);
+  currentFees = buildPayableItems(fees || [], breakdown || [], paymentPlan);
   feeList.innerHTML = '';
   feePanel.hidden = false;
   const accountPeriod = termText(account);
@@ -308,6 +329,8 @@ function renderFees(account, fees, breakdown) {
     input.checked = index === 0;
     input.addEventListener('change', () => {
       paymentIdempotencyKey = '';
+      window.DynamaxFinancialValues?.set(walletAmountInput, '');
+      walletAmountInput.value = '';
       updateWalletAmountVisibility();
     });
     const textWrap = document.createElement('span');
@@ -323,6 +346,7 @@ function renderFees(account, fees, breakdown) {
       amount.textContent = formatMoney(fee.Amount, fee.Currency);
     }
     textWrap.append(name, amount);
+    if (fee.SchoolFeePaymentPlan) appendSchoolFeePlanDetails(textWrap,fee);
     row.append(input, textWrap);
     feeList.appendChild(row);
   });
@@ -410,7 +434,7 @@ lookupForm.addEventListener('submit', async (event) => {
     if (!response.ok || !data?.ok) {
       throw new Error(data.message || 'Could not load payable fees.');
     }
-    renderFees(data.account || {}, data.fees || [], data.schoolFeeBreakdown || []);
+    renderFees(data.account || {}, data.fees || [], data.schoolFeeBreakdown || [], data.schoolFeePaymentPlan || null);
     lookupForm.hidden = true;
     setStatus(`Parent approval confirmed for ${currentAdmissionNumber}. Review the payable amount, then choose a payment method.`, 'ok');
   } catch (error) {

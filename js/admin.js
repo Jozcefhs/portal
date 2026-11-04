@@ -21354,6 +21354,31 @@ function renderSection(active) {
         finally { button.disabled = false; }
       });
       panelEl.querySelector('.workflow-intro')?.append(button);
+      if (resolveDashboardEdition() === 'school') {
+        const planButton = document.createElement('button');
+        planButton.type = 'button'; planButton.className = 'secondary'; planButton.textContent = 'Part-payment plans';
+        planButton.addEventListener('click', async () => {
+          if (planButton.disabled) return;
+          const user = currentUser, branch = selectedBranchId, signal = staffSessionAbortController.signal;
+          if (!branch || branch === 'all') { alert('Choose one working branch before opening part-payment plans.'); return; }
+          const isCurrent = () => currentUser === user && selectedBranchId === branch && activeSection === 'accounts' && !signal.aborted;
+          planButton.disabled = true;
+          try {
+            const { openSchoolFeePaymentPlans } = await import('./school-fee-payment-plans.js?v=20261104');
+            if (!isCurrent()) return;
+            await openSchoolFeePaymentPlans(async payload => {
+              if (!isCurrent()) throw new Error('The workspace changed. Reopen part-payment plans.');
+              const response = await staffFetch('/api/part-payment-plans', { method:'POST',credentials:'same-origin',cache:'no-store',signal,
+                headers:{'Content-Type':'application/json'},body:JSON.stringify({...payload,BranchId:branch}) });
+              const data = await response.json();
+              if (!response.ok || !data.ok) throw new Error(data.message || 'Part-payment plans could not be loaded.');
+              return data;
+            }, { isCurrent, scopeOwner:user, branchId:branch, readOnly:user.subscriptionReadOnly === true || user.subscriptionActive === false });
+          } catch (error) { if (isCurrent()) alert(error.message || 'Part-payment plans could not be opened.'); }
+          finally { planButton.disabled = false; }
+        });
+        panelEl.querySelector('.workflow-intro')?.append(planButton);
+      }
     }
     if (window.DynamaxBoardingOfferings?.canAccess(currentUser)) {
       const button = document.createElement('button');
