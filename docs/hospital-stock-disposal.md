@@ -1,5 +1,7 @@
 # Hospital quarantined-stock disposal
 
+See the [deployment and verification record](hospital-stock-disposal-verification.md).
+
 This increment extends H05, H13 and F01/F02/F05/F06. It records disposal evidence and independent confirmation for stock already in quarantine. It does not initiate physical disposal, provide disposal instructions, or complete the separate controlled-drug workflow.
 
 ## Workflow
