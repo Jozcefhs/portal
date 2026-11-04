@@ -499,9 +499,9 @@ test('subscription grace allows only the new read-only correction commands, not 
   const gate = vm.runInNewContext(`${source.slice(source.indexOf('const READ_ONLY_POST_ACTIONS'), source.indexOf('function logIdentityFailure'))}; subscriptionReadOnlyRequestAllowed`, {
     subscriptionGateExempt: () => false
   });
-  for (const action of ['obsoleteRoster', 'obsoleteBatch', 'previewObsoleteReversal', 'applyObsoleteReversal']) {
+  for (const action of ['obsoleteRoster', 'obsoleteBatch', 'previewObsoleteReversal', 'applyObsoleteReversal', 'previewReinstatedCharges', 'applyReinstatedCharges']) {
     const make = () => new Request('https://example.test/api/student-billing-reconciliation', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action }) });
-    assert.equal(await gate(make(), '/api/student-billing-reconciliation'), action !== 'applyObsoleteReversal');
+    assert.equal(await gate(make(), '/api/student-billing-reconciliation'), !action.startsWith('apply'));
     assert.equal(await gate(make(), '/api/backend'), false);
   }
 });

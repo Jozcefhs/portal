@@ -133,7 +133,7 @@ const ACADEMIC_PREVIEW_ACTIONS = Object.freeze([
 ]);
 const ROUTINE_PREVIEW_ACTIONS = Object.freeze({
   '/api/student-billing-reconciliation': ['previewAll', 'previewBatch', 'preview', 'previewReversalsAll',
-    'previewReversal', 'obsoleteRoster', 'obsoleteBatch', 'previewObsoleteReversal'],
+    'previewReversal', 'obsoleteRoster', 'obsoleteBatch', 'previewObsoleteReversal', 'previewReinstatedCharges'],
   '/api/student-billing-preview': ['Submit to student billing preview'],
   '/api/staff-students': ['previewProfileDefaults', 'previewIntakeCorrection',
     'Preview First Term intake classification across all classes by admission year'],

@@ -887,6 +887,74 @@ function money(value) {
     : clean(value);
 }
 
+async function openReinstatedSchoolChargeRecovery({ content, request, isCurrent, accountRef, readOnly = false,
+  confirm, setReviewBusy = () => {}, onApplied = () => {} }) {
+  if (!isCurrent() || content.querySelector('[aria-busy="true"]')) return;
+  content.querySelector('[data-reinstated-charge-review]')?.remove();
+  const section = document.createElement('section');
+  section.dataset.reinstatedChargeReview = ''; section.className = 'config-group'; section.tabIndex = -1;
+  section.setAttribute('aria-label', 'Review textbook and yearbook charges');
+  section.setAttribute('aria-busy', 'true');
+  section.innerHTML = '<h3>Review textbook / yearbook charges</h3><p>Checking applicable missing charges after earlier reversals. No records are changed by this review.</p>';
+  content.append(section);
+  setReviewBusy(true);
+  try {
+    const plan = await request({ action: 'previewReinstatedCharges', AccountRef: accountRef });
+    if (!isCurrent() || !section.isConnected) return;
+    if (String(plan.profile?.AccountRef || '').trim().toLowerCase() !== String(accountRef).trim().toLowerCase()) {
+      throw new Error('The review belongs to a different account. Close and review the intended student.');
+    }
+    const ready = plan.ready === true && !plan.noOp && Boolean(plan.previewToken) && Number(plan.amount) > 0;
+    const verifiedMoney = value => value == null ? 'Not verified' : money(value);
+    section.innerHTML = `<h3>Review textbook / yearbook charges</h3>
+      <p><strong>${escapeHtml(plan.profile.DisplayName || accountRef)}</strong> · ${escapeHtml(accountRef)} · ${escapeHtml(plan.profile.AcademicSession || '')} · ${escapeHtml(plan.profile.Term || '')}</p>
+      <p>Earlier invoices stay reversed. This review can create new charges only where the current fee setup and reversal history support them. Existing payments and all original records are preserved.</p>
+      <div class="config-grid"><p>Current applicable fee setup<br><strong>${verifiedMoney(plan.expectedTotal)}</strong></p><p>Posted charges before → after<br><strong>${verifiedMoney(plan.postedTotal)} → ${verifiedMoney(plan.afterPostedTotal)}</strong></p>
+      <p>Existing fee credit to apply<br><strong>${verifiedMoney(plan.creditToApply)}</strong></p><p>Fee credit before → after<br><strong>${verifiedMoney(plan.existingCredit)} → ${verifiedMoney(plan.afterCredit)}</strong></p><p>Outstanding after posting<br><strong>${verifiedMoney(plan.afterOutstanding)}</strong></p></div>
+      ${(plan.charges || []).length ? `<div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>Applicable component</th><th>New charge</th><th>Earlier reversed invoice</th></tr></thead><tbody>${plan.charges.map(charge => `<tr><td>${escapeHtml(charge.name || charge.code)}<br><small>${escapeHtml(charge.code || '')}</small></td><td>${money(charge.amount)}</td><td>${(charge.priorInvoiceIds || [charge.sourceInvoiceId]).filter(Boolean).map(escapeHtml).join('<br>')}</td></tr>`).join('')}</tbody></table></div>` : ''}
+      <p role="status">${escapeHtml(plan.reason || (plan.noOp ? 'No applicable missing textbook or yearbook charges require recovery.' : ready ? 'The listed charges are ready for review.' : 'This account requires further finance review.'))}</p>
+      ${(plan.remainingMissing || []).length ? '<p>Other missing fee components remain outside this correction. Review those separately in the billing preview.</p>' : ''}
+      ${ready && !readOnly ? '<label>Approval reason<textarea data-reinstated-reason maxlength="500" required></textarea></label><button type="button" data-post-reinstated-charges>Approve charges and apply existing credit</button>' : ''}
+      <p role="status" aria-live="polite" data-reinstated-status></p>`;
+    section.querySelector('[data-post-reinstated-charges]')?.addEventListener('click', async event => {
+      const button = event.currentTarget;
+      if (button.disabled || readOnly || !isCurrent() || !section.isConnected) return;
+      const reason = section.querySelector('[data-reinstated-reason]').value.trim();
+      const status = section.querySelector('[data-reinstated-status]');
+      if (!reason) { setStatus(status, 'Enter the reason for approving these charges.', 'bad'); return; }
+      button.disabled = true; section.setAttribute('aria-busy', 'true'); setReviewBusy(true);
+      const controls = [...content.querySelectorAll('[data-post-conflict], [data-recheck-conflict]')].map(control => ({ control, disabled: control.disabled }));
+      controls.forEach(({ control }) => { control.disabled = true; });
+      let attempted = false;
+      try {
+        if (!await confirm({ title: 'Approve textbook / yearbook charges',
+          message: `Post ${money(plan.amount)} in reviewed charges for ${accountRef} and apply ${money(plan.creditToApply)} from existing fee credit? Posted charges will be ${money(plan.afterPostedTotal)}, with ${money(plan.afterCredit)} fee credit and ${money(plan.afterOutstanding)} outstanding. Existing payments and earlier reversed invoices are preserved.`,
+          confirmText: 'Approve and post charges' })) return;
+        if (!isCurrent() || !section.isConnected) return;
+        attempted = true; setButtonLoading(button, true, 'Posting reviewed charges…');
+        const result = await request({ action: 'applyReinstatedCharges', AccountRef: accountRef, PreviewToken: plan.previewToken, Reason: reason });
+        if (!isCurrent() || !section.isConnected) return;
+        const summary = result.summary || {};
+        setStatus(status, `${result.message || 'Reviewed charges posted.'} Posted charges: ${money(summary.TotalDebit ?? plan.afterPostedTotal)}; fee credit: ${money(summary.CreditBalance ?? plan.afterCredit)}; outstanding: ${money(summary.OutstandingBalance ?? plan.afterOutstanding)}.`, 'good');
+        onApplied(result, plan);
+        button.dataset.reinstatedPosted = 'true';
+      } catch (error) {
+        if (isCurrent() && section.isConnected) setStatus(status, `${error.message} Posting may already have saved. Recheck textbook / yearbook charges before another approval. This preview will not be submitted again.`, 'bad');
+      } finally {
+        section.setAttribute('aria-busy', 'false'); setReviewBusy(false);
+        if (attempted) {
+          setButtonLoading(button, false, '', button.dataset.reinstatedPosted ? 'Charges posted — recheck before another correction' : 'Recheck required');
+          button.disabled = true; section.querySelector('[data-reinstated-reason]').readOnly = true;
+        } else button.disabled = false;
+        controls.forEach(({ control, disabled }) => { control.disabled = attempted && control.matches('[data-post-conflict]') ? true : disabled; });
+      }
+    });
+    section.focus({ preventScroll: true }); section.scrollIntoView({ block: 'nearest' });
+  } catch (error) {
+    if (isCurrent() && section.isConnected) section.innerHTML = `<h3>Textbook / yearbook review not completed</h3><p role="status">${escapeHtml(error.message)} No posting controls are available. Use Review textbook / yearbook charges to check again.</p>`;
+  } finally { section.setAttribute('aria-busy', 'false'); setReviewBusy(false); }
+}
+
 function moneyInCurrency(value, currency = 'NGN') {
   const amount = Number(String(value ?? '0').replace(/[,\s]/g, ''));
   const code = clean(currency || 'NGN').toUpperCase();
@@ -3984,7 +4052,7 @@ function bindStudentEditor(students) {
     if (!response.ok || !data.ok) throw new Error(data.message || 'Billing reconciliation failed.');
     return data;
   };
-  const openBillingChargeReview = async (button, accountRef = '', loadedAccounts = null) => {
+  const openBillingChargeReview = async (button, accountRef = '', loadedAccounts = null, recoveryOnly = false) => {
     if (button.disabled) return;
     const normalText = button.textContent;
     const user = currentUser, branch = selectedBranchId, controller = new AbortController();
@@ -3995,18 +4063,25 @@ function bindStudentEditor(students) {
     dialog.billingChargeReview = review;
     const sessionSignal = staffSessionAbortController.signal;
     let reviewClosed = false;
+    let recoveryControl;
     const abort = () => controller.abort();
-    const cleanup = () => {
-      reviewClosed = true; abort(); back?.remove();
+    const cleanup = event => {
+      // A close event can be queued immediately before another review opens.
+      // It must not cancel the new owner of this shared dialog.
+      if (event?.type === 'close' && dialog.open) return;
+      reviewClosed = true; abort(); back?.remove(); recoveryControl?.remove();
       sessionSignal.removeEventListener('abort', abort);
       dialog.removeEventListener('close', cleanup);
+      dialog.removeEventListener('beforetoggle', closingDialog);
       if (dialog.billingChargeReview === review) delete dialog.billingChargeReview;
     };
-    dialog.addEventListener('close', cleanup, { once: true });
+    const closingDialog = event => { if (event.newState === 'closed') cleanup(); };
+    dialog.addEventListener('beforetoggle', closingDialog);
+    dialog.addEventListener('close', cleanup);
     sessionSignal.addEventListener('abort', abort, { once: true });
     const isCurrent = () => dialog.billingChargeReview === review && !reviewClosed && !sessionSignal.aborted && dialog.open && currentUser === user && selectedBranchId === branch && activeSection === 'students';
     const loadedButtons = [...content.querySelectorAll('[data-review-billing-conflicts]')];
-    const savedNodes = loadedButtons.length ? [...content.childNodes] : [];
+    const savedNodes = loadedButtons.length || content.querySelector('[data-review-reinstated-charges]') ? [...content.childNodes] : [];
     const originalSubtitle = dialog.querySelector('.workflow-dialog-header small')?.textContent;
     const savedScroll = dialog.scrollTop;
     const savedTableScroll = [...content.querySelectorAll('.admin-table-wrap')].map(element => ({ element, top: element.scrollTop, left: element.scrollLeft }));
@@ -4048,19 +4123,48 @@ function bindStudentEditor(students) {
         if (!response.ok || !data.ok) throw new Error(data.message || 'The correction could not be confirmed.');
         return data;
       } catch (error) {
-        if (payload.action === 'applyObsoleteReversal') throw new Error(`${error.message} Posting was not confirmed; it may already have saved. Run a fresh review before another submission.`);
+        if (['applyObsoleteReversal', 'applyReinstatedCharges'].includes(payload.action)) throw new Error(`${error.message} Posting was not confirmed; it may already have saved. Run a fresh review before another submission.`);
         throw error;
       } finally { clearTimeout(timer); controller.signal.removeEventListener('abort', cancelRequest); }
     };
-    setButtonLoading(button, true, 'Reviewing obsolete charges…');
+    const reviewReinstated = () => openReinstatedSchoolChargeRecovery({ content, request, isCurrent, accountRef,
+      readOnly: user.subscriptionReadOnly || user.subscriptionActive === false,
+      confirm: options => window.DynamaxDialogs.confirm(options),
+      setReviewBusy: busy => { if (recoveryControl) { recoveryControl.disabled = busy; recoveryControl.setAttribute('aria-busy', String(busy)); } },
+      onApplied: (result, plan) => {
+        const original = loadedButtons.find(item => item.dataset.reviewBillingConflicts === accountRef);
+        if (original) {
+          original.dataset.billingCorrection = 'posted'; original.textContent = 'Charges posted — recheck account';
+          const row = original.closest('tr');
+          if (row?.children[1]) row.children[1].textContent = `Current fee setup: ${money(plan.expectedTotal)}. Posted after correction: ${money(result.summary?.TotalDebit ?? plan.afterPostedTotal)}.`;
+        }
+      } });
+    if (accountRef) {
+      recoveryControl = document.createElement('button'); recoveryControl.type = 'button'; recoveryControl.className = 'secondary';
+      recoveryControl.dataset.reviewReinstatedControl = ''; recoveryControl.textContent = 'Review textbook / yearbook charges';
+      recoveryControl.disabled = true;
+      recoveryControl.onclick = async () => {
+        if (recoveryControl.disabled || !isCurrent()) return;
+        await reviewReinstated();
+        if (isCurrent()) recoveryControl.textContent = 'Recheck textbook / yearbook charges';
+      };
+      content.before(recoveryControl);
+    }
+    setButtonLoading(button, true, recoveryOnly ? 'Reviewing applicable charges…' : 'Reviewing obsolete charges…');
     dialog.scrollTop = 0;
     try {
-      const { openObsoleteChargeReview } = await import('./obsolete-charge-review.js?v=20261103-school-fee-category-audit');
-      await openObsoleteChargeReview({ dialog, content, request, isCurrent, accountRef, loadedAccounts, onResults, readOnly: user.subscriptionReadOnly || user.subscriptionActive === false,
-        confirm: options => window.DynamaxDialogs.confirm(options),
-        notify: (title, message, tone) => window.DynamaxDialogs.alert({ title, message, tone: tone === 'error' ? 'danger' : 'success', confirmText: 'Close' }) });
+      if (recoveryOnly) {
+        content.replaceChildren(); if (!dialog.open) dialog.showModal();
+        await reviewReinstated();
+        if (isCurrent()) recoveryControl.textContent = 'Recheck textbook / yearbook charges';
+      } else {
+        const { openObsoleteChargeReview } = await import('./obsolete-charge-review.js?v=20261103-school-fee-category-audit');
+        await openObsoleteChargeReview({ dialog, content, request, isCurrent, accountRef, loadedAccounts, onResults, readOnly: user.subscriptionReadOnly || user.subscriptionActive === false,
+          confirm: options => window.DynamaxDialogs.confirm(options),
+          notify: (title, message, tone) => window.DynamaxDialogs.alert({ title, message, tone: tone === 'error' ? 'danger' : 'success', confirmText: 'Close' }) });
+      }
     } catch (error) { setStatus(maintenanceStatus, error.message, 'bad'); if (!back) cleanup(); }
-    finally { setButtonLoading(button, false, '', normalText); }
+    finally { setButtonLoading(button, false, '', normalText); if (recoveryControl && isCurrent()) recoveryControl.disabled = false; }
   };
   panelEl.querySelector('[data-review-obsolete-charges]')?.addEventListener('click', event => openBillingChargeReview(event.currentTarget));
   const bindBillingConflictButtons = content => {
@@ -4304,6 +4408,10 @@ function bindStudentEditor(students) {
         ${canReconcile ? `<p><strong>Valid missing charges to add: ${money(preview.ready ? preview.postingTotal : 0)}</strong></p><p>${escapeHtml(preview.reason || (preview.requiresReview ? 'Only valid missing charges will be added. Existing invoices, payments and allocations remain unchanged; the balance remains provisional pending finance review.' : 'Only missing components will be added; available existing credit will be applied without creating another payment.'))}</p>${preview.reviewWarning ? `<p>${escapeHtml(preview.reviewWarning)}</p>` : ''}<p class="status" data-billing-reconcile-status></p>${preview.ready ? '<button type="button" data-apply-billing-plans>Post valid missing charges</button>' : ''}` : ''}`;
       const content = document.querySelector('[data-billing-preview-content]');
       content.querySelector('[data-apply-billing-plans]')?.addEventListener('click', (e) => reconcilePlans([preview], e.currentTarget, content.querySelector('[data-billing-reconcile-status]')));
+      if (canReconcile) {
+        content.insertAdjacentHTML('beforeend', '<button type="button" class="secondary" data-review-reinstated-charges>Review textbook / yearbook charges</button>');
+        content.querySelector('[data-review-reinstated-charges]').addEventListener('click', event => openBillingChargeReview(event.currentTarget, profile.AccountRef, null, true));
+      }
       if (canReconcile && preview.conflicts?.length) {
         content.insertAdjacentHTML('beforeend', `<button type="button" class="secondary" data-review-billing-conflicts="${escapeHtml(profile.AccountRef)}">Review / resolve conflicts</button>`);
         bindBillingConflictButtons(content);

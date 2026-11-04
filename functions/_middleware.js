@@ -148,7 +148,7 @@ async function subscriptionReadOnlyRequestAllowed(request, pathname) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return false;
   const action = String(body.action || body.mode || body.operation || '').trim().toLowerCase();
   if (pathname === '/api/student-billing-reconciliation' &&
-    ['obsoleteroster', 'obsoletebatch', 'previewobsoletereversal'].includes(action)) return true;
+    ['obsoleteroster', 'obsoletebatch', 'previewobsoletereversal', 'previewreinstatedcharges'].includes(action)) return true;
   return READ_ONLY_POST_ACTIONS.has(action);
 }
 

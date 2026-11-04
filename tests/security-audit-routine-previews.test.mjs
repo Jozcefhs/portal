@@ -12,7 +12,7 @@ const prepared = async (path, body) => prepareSecurityAudit(new Request(`https:/
 }), path);
 const previews = [
   ...['previewAll', 'previewBatch', 'preview', 'previewReversalsAll', 'previewReversal',
-    'obsoleteRoster', 'obsoleteBatch', 'previewObsoleteReversal'].map(action => ['/api/student-billing-reconciliation', { action }]),
+    'obsoleteRoster', 'obsoleteBatch', 'previewObsoleteReversal', 'previewReinstatedCharges'].map(action => ['/api/student-billing-reconciliation', { action }]),
   ['/api/student-billing-preview', { AccountRef: 'TEST/001' }],
   ...['previewProfileDefaults', 'previewIntakeCorrection'].map(action => ['/api/staff-students', { action }]),
   ['/api/staff-payment-corrections', { action: 'preview', Kind: 'reduce' }],
@@ -43,6 +43,7 @@ test('unknown previews, exports, actual saves and client replay claims cannot si
     ['/api/student-billing-reconciliation', { action: 'apply' }],
     ['/api/student-billing-reconciliation', { action: 'applyReversal' }],
     ['/api/student-billing-reconciliation', { action: 'applyObsoleteReversal' }],
+    ['/api/student-billing-reconciliation', { action: 'applyReinstatedCharges' }],
     ['/api/staff-students', { action: 'applyProfileDefaults' }],
     ['/api/staff-students', { action: 'applyIntakeCorrection' }],
     ['/api/staff-academics', { action: 'saveAcademicTimetableGeneration' }],

@@ -3365,15 +3365,19 @@ export async function buildStudentBillingPreview(student, data = {}) {
   const components = new Map();
   for (const fee of expected) {
     const key = lower(fee.FeeCode);
-    const row = components.get(key) || { code: fee.FeeCode, name: fee.FeeName, expected: 0, invoiced: 0, invoiceIds: [] };
+    const row = components.get(key) || { code: fee.FeeCode, name: fee.FeeName, expected: 0, invoiced: 0, invoiceIds: [], reversedInvoiceIds: [] };
     row.expected = asMoneyNumber(row.expected + asMoneyNumber(fee.Amount));
     components.set(key, row);
   }
   for (const invoice of periodInvoices) {
     const key = lower(invoice.FeeCode);
-    const row = components.get(key) || { code: invoice.FeeCode, name: invoice.FeeName, expected: 0, invoiced: 0, invoiceIds: [] };
+    const row = components.get(key) || { code: invoice.FeeCode, name: invoice.FeeName, expected: 0, invoiced: 0, invoiceIds: [], reversedInvoiceIds: [] };
     row.invoiced = asMoneyNumber(row.invoiced + invoice.Debit);
-    row.invoiceIds.push(invoice.InvoiceId);
+    // normalizeInvoice has validated the full reversal and retained its gross
+    // history. It is not a second active charge beside a reviewed replacement.
+    if (invoice.FeeChargeReversed === 'YES' && invoice.Debit === 0 && invoice.Credit === 0 && invoice.Balance === 0) {
+      row.reversedInvoiceIds.push(invoice.InvoiceId);
+    } else row.invoiceIds.push(invoice.InvoiceId);
     components.set(key, row);
   }
   const rows = [...components.values()].map((row) => billingComponentDiagnostics({ ...row, difference: asMoneyNumber(row.expected - row.invoiced) }));
@@ -3502,7 +3506,8 @@ export async function studentBillingReconciliationPlan(student, data) {
     const prior = (data.invoices || []).map(normalizeInvoice).some((invoice) => sameText(row.code, invoice.FeeCode) &&
       feeFieldMatches(invoice.AcademicSession || 'All', preview.profile.AcademicSession) &&
       feeFieldMatches(invoice.Term || 'All', preview.profile.Term));
-    const reason = prior ? 'A cancelled or legacy invoice already uses this component; finance review is required.'
+    const reason = row.reversedInvoiceIds?.length ? 'A reversed invoice already uses this component; reviewed charge recovery is required.'
+      : prior ? 'A cancelled or legacy invoice already uses this component; finance review is required.'
       : !clean(row.code) || fees.length !== 1 || !Number.isFinite(row.expected) || fees[0].Amount !== row.expected
         ? 'The fee configuration is ambiguous; finance review is required.' : '';
     (reason ? blockedMissing : eligibleMissing).push({ ...row, ...(reason ? { postingBlock: reason } : {}) });
@@ -3524,7 +3529,8 @@ export async function studentBillingReconciliationPlan(student, data) {
       // Guard-only writes from another student's posting advance the revision
       // without changing this reviewed rule. Commit still checks fresh revisions.
       .map((fee) => [fee.__id || '', fee.FeeCode, fee.Amount, fee.Currency, fee.DueDate]),
-    rows: preview.rows.map(({ code, expected, invoiced, invoiceIds }) => ({ code, expected, invoiced, invoiceIds: [...invoiceIds].sort() }))
+    rows: preview.rows.map(({ code, expected, invoiced, invoiceIds, reversedInvoiceIds }) => ({ code, expected, invoiced,
+      invoiceIds: [...invoiceIds].sort(), reversedInvoiceIds: [...reversedInvoiceIds].sort() }))
       .sort((a, b) => a.code.localeCompare(b.code)) });
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(signature));
   const previewToken = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
@@ -6513,11 +6519,19 @@ async function generateSchoolFeeInvoicesForAccount(env, body, accountRef, financ
     feeKeys.add(key);
   }
   const existing = (await queryAccountRows(env, 'invoices', accountRef, financialScope)).map(normalizeInvoice);
+  // A valid full reversal remains historical evidence. Ordinary generation
+  // must never reuse it, or create a replacement without a reviewed recovery.
+  const reversedInvoice = invoice => invoice.FeeChargeReversed === 'YES' &&
+    asMoneyNumber(invoice.Debit) === 0 && asMoneyNumber(invoice.Credit) === 0 && asMoneyNumber(invoice.Balance) === 0;
   for (const fee of fees) {
-    const matches = existing.filter(invoice => sameText(invoice.FeeCode, fee.FeeCode) && sameFinancialPeriod(invoice,
+    const history = existing.filter(invoice => sameText(invoice.FeeCode, fee.FeeCode) && sameFinancialPeriod(invoice,
       resolvedPeriodValue(fee.AcademicSession, billingSession), resolvedPeriodValue(fee.Term, billingTerm)));
+    const matches = history.filter(invoice => !reversedInvoice(invoice));
     if (matches.length > 1) { const error = new Error('Multiple existing invoices match this fee component. Use finance review; no invoices were changed.'); error.status = 409; throw error; }
     const prior = matches[0];
+    if (history.some(reversedInvoice) && (!prior || asMoneyNumber(prior.Debit) !== asMoneyNumber(fee.Amount))) {
+      const error = new Error('A reversed charge requires reviewed recovery before billing this component. Existing invoice history was preserved.'); error.status = 409; throw error;
+    }
     if (prior && (fee.BillingDiscount || prior.BillingDiscount) && asMoneyNumber(prior.Debit) !== asMoneyNumber(fee.Amount)) {
       const error = new Error('The billing discount differs from posted invoices. Use the billing review before changing existing charges; invoices and payments were preserved.'); error.status = 409; throw error;
     }
@@ -6533,10 +6547,14 @@ async function generateSchoolFeeInvoicesForAccount(env, body, accountRef, financ
     const invoiceTerm = resolvedPeriodValue(fee.Term, billingTerm);
     const debit = asMoneyNumber(fee.Amount);
     const duplicate = existing.find((invoice) => {
-      return sameText(invoice.AccountRef, accountRef) &&
+      return !reversedInvoice(invoice) && sameText(invoice.AccountRef, accountRef) &&
         sameText(invoice.FeeCode, fee.FeeCode) &&
         sameFinancialPeriod(invoice, invoiceSession, invoiceTerm);
     });
+    // A matching reviewed replacement is already posted. Keep its gross fields,
+    // links and allocations intact when the user repeats Generate School Fees.
+    if (duplicate && existing.some(invoice => reversedInvoice(invoice) && sameText(invoice.FeeCode, fee.FeeCode) &&
+      sameFinancialPeriod(invoice, invoiceSession, invoiceTerm))) { generatedInvoices.push(duplicate); continue; }
     if (duplicate && (fee.BillingDiscount || duplicate.BillingDiscount)) { generatedInvoices.push(duplicate); continue; }
     const credit = Math.min(debit, asMoneyNumber(duplicate?.Credit));
     const balance = Math.max(0, debit - credit);

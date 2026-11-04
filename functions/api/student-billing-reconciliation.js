@@ -7,6 +7,7 @@ import { studentBillingReviewRoster, studentBillingReviewBatch } from '../lib/st
 import { billingPreviewStudent } from './student-billing-preview.js';
 import { feeRowsForBranch } from '../lib/fee-branch-scope.js';
 import { obsoleteSchoolChargeReversalPlan, getObsoleteSchoolChargeReversalData, reverseObsoleteSchoolCharges } from '../lib/obsolete-school-charge-reversal.js';
+import { getReinstatedSchoolChargeRecoveryData, reinstatedSchoolChargeRecoveryPlan, recoverReinstatedSchoolCharges } from '../lib/reinstated-school-charge-recovery.js';
 import { financialRowMatchesAccount, studentBillingReconciliationPlan, getStudentBillingData, reconcileStudentBilling,
   boardingWearReversalPlan, getBoardingWearReversalData, reverseBoardingWearCharge } from './backend.js';
 
@@ -17,14 +18,14 @@ export async function onRequestPost({ request, env }) {
   try {
     requireFirestoreEnv(env);
     const user = await requireStaffSession(env, request);
-    if (user.role !== 'Super Admin' || user.edition !== 'school' || !clean(user.branchId) ||
+    if (user.role !== 'Super Admin' || user.edition !== 'school' || !clean(user.branchId) || ['all', '*'].includes(clean(user.branchId).toLowerCase()) ||
       !(user.allowedSections || []).includes('accounts') || !(user.allowedSections || []).includes('students')) {
       fail('Select a school branch and use a Super Admin account with Accounts and Students access.', 403);
     }
     const body = await readJsonBody(request, { maxBytes: 4096 });
     if (!['previewAll', 'previewBatch', 'preview', 'apply', 'previewReversalsAll', 'previewReversal', 'applyReversal',
-      'obsoleteRoster', 'obsoleteBatch', 'previewObsoleteReversal', 'applyObsoleteReversal'].includes(body.action)) fail('Choose a reconciliation action.', 400);
-    if (['apply', 'applyReversal', 'applyObsoleteReversal'].includes(body.action) && (user.subscriptionReadOnly || user.subscriptionActive === false)) fail('The subscription is read-only.', 403);
+      'obsoleteRoster', 'obsoleteBatch', 'previewObsoleteReversal', 'applyObsoleteReversal', 'previewReinstatedCharges', 'applyReinstatedCharges'].includes(body.action)) fail('Choose a reconciliation action.', 400);
+    if (['apply', 'applyReversal', 'applyObsoleteReversal', 'applyReinstatedCharges'].includes(body.action) && (user.subscriptionReadOnly || user.subscriptionActive === false)) fail('The subscription is read-only.', 403);
     if (body.action === 'apply' && body.PostingMode !== 'missing-only-v2') {
       fail('Refresh Students and review the valid missing-charge total before posting.', 409);
     }
@@ -90,6 +91,12 @@ export async function onRequestPost({ request, env }) {
     const groups = await Promise.all(['AdmissionNo', 'admissionNo', 'AccountRef', 'accountRef'].map((field) =>
       querySchoolCollection(env, 'students', { filters: [{ field, op: '==', value: reference }], limit: 3, scope })));
     const student = billingPreviewStudent(groups.flat(), user, reference);
+    if (['previewReinstatedCharges', 'applyReinstatedCharges'].includes(body.action)) {
+      const result = body.action === 'applyReinstatedCharges'
+        ? await recoverReinstatedSchoolCharges(env, student, clean(body.PreviewToken), user, clean(body.Reason))
+        : await reinstatedSchoolChargeRecoveryPlan(student, await getReinstatedSchoolChargeRecoveryData(env, student));
+      return Response.json(result, { headers: { 'Cache-Control': 'no-store' } });
+    }
     if (['previewObsoleteReversal', 'applyObsoleteReversal'].includes(body.action)) {
       const review = { invoiceIds: body.InvoiceIds ?? null };
       const result = body.action === 'applyObsoleteReversal'
