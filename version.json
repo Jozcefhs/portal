@@ -1,8 +1,8 @@
 {
-  "version": "3.1.61",
+  "version": "3.1.62",
   "channel": "stable",
   "release_status": "published",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.61.exe",
-  "sha256": "4f8a225723ec712be1ad356db446c47ebb7a171782222ebf957dbd238374abc6",
-  "notes": "Dynamax v3.1.61 adds branch-specific percentage or fixed discounts on total school fees for School Staff Child, Church Staff Child, Sibling Discount and custom billing categories. Configure rates in Billing lists; no rates are enabled automatically. Existing invoices, payments and history are preserved. Classes & Arms buttons remain visible at smaller sizes. Includes automatic bounded Online Collections loading. Card terminal payments remain disabled."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.62.exe",
+  "sha256": "95b3a2a58266e18b2514f2061798e69f855ad5866cb7bc08de5cfb366af8d729",
+  "notes": "Dynamax v3.1.62 includes branch-specific setup and fee class choices, fee classification preview without selecting a student, visible total-fee discount and billing-category actions, printable CBT answer comparisons, signed local CBT answer uploads alongside scores, and scoped personal parent links. Update every local CBT server and push saved results again to upload earlier answer copies. Existing records and payments are preserved. Card terminal payments remain disabled."
 }
