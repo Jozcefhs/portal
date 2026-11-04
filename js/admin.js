@@ -803,6 +803,76 @@ function showPersonalParentLinkForManualCopy(url, admissionNo) {
   document.body.append(dialog); dialog.showModal(); dialog.querySelector('textarea').select();
 }
 
+function branchParentOnboardingMessage(data, expectedBranch, origin = window.location.origin) {
+  const invalid = () => new Error('The service did not return a setup link for this branch. Reopen the branch setup dialog and try again.');
+  try {
+    const url = new URL(data?.onboardingPath || '', origin);
+    const params = new URLSearchParams(url.hash.slice(1));
+    const token = clean(params.get('branchAccess'));
+    if (url.origin !== origin || url.pathname !== '/parent-dashboard' || url.search
+        || params.get('onboarding') !== '1' || params.has('access') || params.has('admission')
+        || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token) || token.length > 4096
+        || clean(data.branchId) !== expectedBranch || !clean(data.setupCode)
+        || !(Date.parse(data.expiresAt) > Date.now())) throw invalid();
+    const encoded = token.split('.')[0].replace(/-/g, '+').replace(/_/g, '/');
+    const payload = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(encoded), char => char.charCodeAt(0))));
+    if (payload.branchId !== expectedBranch || payload.purpose !== 'parent-branch-onboarding'
+        || !Number.isFinite(payload.exp) || payload.exp <= Math.floor(Date.now() / 1000)) throw invalid();
+    const expiry = new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Africa/Lagos' }).format(new Date(data.expiresAt));
+    const sections = (data.schoolSections || []).map(section => section === 'primary' ? 'Nursery / Primary' : 'Secondary').join(', ');
+    return `${clean(data.branchName) || expectedBranch} — parent profile setup${sections ? ` (${sections})` : ''}\n\nOpen this link:\n${url.href}\n\nSetup code: ${clean(data.setupCode)}\n\nEnter your child's admission number and this setup code. Complete the profile, then create your private password. The setup can be used once for each unfinished learner profile in this branch. If you already have parent access, sign in normally.\n\nValid until ${expiry} WAT. Please share only in this branch's parent group.`;
+  } catch { throw invalid(); }
+}
+
+function openBranchParentOnboardingDialog() {
+  const branch = clean(selectedBranchId || currentUser?.branchId);
+  if (!branch || ['all', '*'].includes(branch) || currentUser?.subscriptionReadOnly) {
+    setStatus(dashboardStatus, 'Select one working branch with permission to manage students first.', 'bad');
+    return;
+  }
+  const branchName = availableBranches.find(row => row.id === branch)?.name || currentUser?.branchName || branch;
+  const dialog = document.createElement('dialog');
+  dialog.setAttribute('aria-label', 'Branch parent setup link');
+  dialog.style.cssText = 'box-sizing:border-box;width:min(660px,94vw);max-height:90vh;overflow:auto;border:1px solid #ccdbea;border-radius:16px;padding:24px';
+  dialog.innerHTML = `<h2>Branch parent setup link</h2><p><strong>${escapeHtml(branchName)}</strong></p><p>Generate one link and setup code for this branch's WhatsApp parent group. Parents do not need to have contact details saved beforehand.</p><p>This is for unfinished learner profiles only. It expires after 7 days. Generating a replacement disables the previous group link for this scope.</p><button type="button" data-generate-branch-parent-link>Generate link and code</button><label data-branch-parent-message-label hidden style="margin-top:16px">Message to share<textarea readonly aria-label="Message to share" style="box-sizing:border-box;width:100%;min-height:240px;overflow-wrap:anywhere"></textarea></label><p role="status" aria-live="polite"></p><div style="display:flex;flex-wrap:wrap;gap:8px"><button type="button" data-copy-branch-parent-message hidden>Copy message for WhatsApp</button><button type="button" class="secondary" data-close-branch-parent-link>Close</button></div>`;
+  const generate = dialog.querySelector('[data-generate-branch-parent-link]');
+  const status = dialog.querySelector('[role=status]');
+  const textarea = dialog.querySelector('textarea');
+  const copy = dialog.querySelector('[data-copy-branch-parent-message]');
+  generate.onclick = async () => {
+    if (generate.disabled) return;
+    if (branch !== clean(selectedBranchId || currentUser?.branchId)) {
+      status.textContent = 'The working branch changed. Close this dialog and open it again.';
+      return;
+    }
+    setButtonLoading(generate, true, 'Generating...', 'Generate link and code');
+    try {
+      const response = await staffFetch('/api/staff-students', { method: 'POST', credentials: 'same-origin', cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'issueBranchParentOnboarding' }) });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.message || 'Could not generate the branch setup link.');
+      if (!dialog.isConnected) return;
+      textarea.value = branchParentOnboardingMessage(data, branch);
+      dialog.querySelector('[data-branch-parent-message-label]').hidden = false;
+      copy.hidden = false;
+      generate.hidden = true;
+      status.textContent = 'Ready. Copy the complete message and paste it in this branch’s WhatsApp parent group.';
+      copy.focus();
+    } catch (error) {
+      status.textContent = error.message || String(error);
+    } finally {
+      if (generate.isConnected) setButtonLoading(generate, false, '', 'Generate link and code');
+    }
+  };
+  copy.onclick = async () => {
+    try { await copyTextToClipboard(textarea.value); status.textContent = 'Message copied. Paste it in this branch’s WhatsApp parent group.'; }
+    catch { textarea.focus(); textarea.select(); status.textContent = 'Use your browser’s Copy command to copy the selected message.'; }
+  };
+  dialog.querySelector('[data-close-branch-parent-link]').onclick = () => dialog.close();
+  dialog.addEventListener('close', () => { textarea.value = ''; dialog.remove(); });
+  document.body.append(dialog); dialog.showModal();
+}
+
 function pick(row, keys) {
   for (const key of keys) {
     if (row && row[key] !== undefined && row[key] !== null && clean(row[key]) !== '') return row[key];
@@ -20956,7 +21026,7 @@ function renderSection(active) {
     const learner = staffLearnerTerms();
     const handoff = takeRecordsDeskHandoff('students');
     const reference = recordsDeskHandoffReference(handoff);
-    panelEl.innerHTML = recordsDeskHandoffBanner(handoff, reference) + `<p class="muted" data-personal-parent-link-help>To give a parent access, use the link icon beside their child. Each personal link is tied to that learner and branch; there is no shared temporary password.</p><div class="student-onboarding-link-action">${currentUser?.role === 'Super Admin' && (currentUser.allowedSections || []).includes('accounts') ? '<button type="button" class="secondary" data-review-all-student-billing>Review all student billing</button>' : ''}</div><p class="status" role="status" aria-live="polite" data-student-maintenance-status></p><button type="button" class="secondary" data-refresh-student-defaults hidden>Refresh Students to view saved defaults</button>` + studentClassExportToolbar(students) + studentAdmissionYearIntakeToolbar(students) + table(learner.Plural, students, [
+    panelEl.innerHTML = recordsDeskHandoffBanner(handoff, reference) + `<p class="muted" data-personal-parent-link-help>For a branch parent group, use Branch parent setup link. For one learner, use the link icon beside their name. Existing parent accounts continue to use their private passwords.</p><div class="student-onboarding-link-action"><button type="button" class="secondary" data-branch-parent-onboarding${!clean(selectedBranchId || currentUser?.branchId) || ['all', '*'].includes(clean(selectedBranchId || currentUser?.branchId)) || currentUser?.subscriptionReadOnly ? ' disabled' : ''}>Branch parent setup link</button>${currentUser?.role === 'Super Admin' && (currentUser.allowedSections || []).includes('accounts') ? '<button type="button" class="secondary" data-review-all-student-billing>Review all student billing</button>' : ''}</div><p class="status" role="status" aria-live="polite" data-student-maintenance-status></p><button type="button" class="secondary" data-refresh-student-defaults hidden>Refresh Students to view saved defaults</button>` + studentClassExportToolbar(students) + studentAdmissionYearIntakeToolbar(students) + table(learner.Plural, students, [
       { label: 'Admission No', value: (row) => pick(row, ['AdmissionNo', 'AccountRef', '__id']) },
       { label: 'Name', render: studentSearchIdentity },
       { label: 'Class', value: studentExportClass },
@@ -20988,6 +21058,7 @@ function renderSection(active) {
     if (currentUser?.role === 'Super Admin' && (currentUser.allowedSections || []).includes('accounts')) {
       panelEl.querySelector('.student-onboarding-link-action')?.insertAdjacentHTML('beforeend', '<button type="button" class="secondary" data-save-student-profile-defaults>Save missing profile defaults</button><button type="button" class="secondary" data-review-boardwear-all>Review returning-student Boarding Wear</button><button type="button" class="secondary" data-review-obsolete-charges>Review incorrect school fee charges</button>');
     }
+    panelEl.querySelector('[data-branch-parent-onboarding]')?.addEventListener('click', openBranchParentOnboardingDialog);
     bindStudentEditor(students);
     bindStudentClassExport(students);
     bindStudentAdmissionYearIntake();

@@ -236,6 +236,29 @@ export async function readParentOnboardingToken(env, token) {
   return payload;
 }
 
+// Shared branch invitations and their learner-specific continuations use
+// distinct purposes. Neither can be used as a personal link or parent session.
+export async function createParentBranchOnboardingToken(env, identity, expiresAt, claim = false) {
+  const payload = { ...identity, project: clean(env.FIREBASE_PROJECT_ID),
+    workspace: clean(env.DYNAMAX_WORKSPACE_ID), edition: clean(env.ORGANISATION_EDITION),
+    purpose: claim ? 'parent-branch-onboarding-claim' : 'parent-branch-onboarding',
+    nonce: bytesToHex(crypto.getRandomValues(new Uint8Array(32))),
+    exp: Math.floor(Date.parse(expiresAt) / 1000) };
+  if (!payload.project || !Number.isFinite(payload.exp)) throw new Error('Onboarding scope is not configured.');
+  const encoded = base64Url(JSON.stringify(payload));
+  return `${encoded}.${await signPayload(env, encoded)}`;
+}
+
+export async function readParentBranchOnboardingToken(env, token, claim = false) {
+  if (typeof token !== 'string' || token.length > 4096) return null;
+  const payload = await verifiedSignedPayload(env, token);
+  if (!payload || payload.purpose !== (claim ? 'parent-branch-onboarding-claim' : 'parent-branch-onboarding')
+      || !payload.nonce || payload.project !== clean(env.FIREBASE_PROJECT_ID)
+      || payload.workspace !== clean(env.DYNAMAX_WORKSPACE_ID) || payload.edition !== clean(env.ORGANISATION_EDITION)
+      || !Number.isFinite(payload.exp) || payload.exp <= Math.floor(Date.now() / 1000)) return null;
+  return payload;
+}
+
 export async function createParentPasswordSetupToken(env, email, admissionNo, identity = {}) {
   const normalizedEmail = lower(email);
   const normalizedAdmissionNo = clean(admissionNo);

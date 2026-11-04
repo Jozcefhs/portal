@@ -87,7 +87,7 @@
           <div>
             <small>NEW STUDENT PROFILE</small>
             <h2>Complete your child's information</h2>
-            <p class="muted">Open the personal link issued by your child's school. Each link belongs to one learner in one branch and expires after 7 days.</p>
+            <p id="parentOnboardingInstructions" class="muted">Open the personal link issued by your child's school. Each link belongs to one learner in one branch and expires after 7 days.</p>
           </div>
           <button type="button" id="closeParentOnboardingBtn" class="secondary">&larr; Sign in</button>
         </div>
@@ -99,11 +99,17 @@
               <input id="onboardingAdmissionNo" autocomplete="off" required>
             </div>
             <div>
-              <label for="onboardingTemporaryPassword">Personal access code or link <span class="required">*</span></label>
+              <label for="onboardingTemporaryPassword"><span id="onboardingAccessLabel">Personal access code or link</span> <span class="required">*</span></label>
               <input id="onboardingTemporaryPassword" type="password" autocomplete="one-time-code" required>
+            </div>
+            <div id="onboardingBranchSectionField" hidden>
+              <label for="onboardingBranchSection">School section</label>
+              <select id="onboardingBranchSection"><option value="">Choose automatically</option><option value="primary">Nursery / Primary</option><option value="secondary">Secondary</option></select>
+              <small class="muted">Select the section if the same admission number is used in both sections of your branch.</small>
             </div>
           </div>
           <button type="submit" id="verifyParentOnboardingBtn">Continue</button>
+          <button type="button" id="resumeBranchParentPasswordBtn" hidden>Create your private password</button>
           <p id="parentOnboardingAccessStatus" class="status" role="status" aria-live="polite"></p>
         </form>
 
@@ -390,6 +396,6 @@
   <script src="js/payment-methods.js?v=20260809-direct-transfer-sharp-text"></script>
   <script src="js/academic-result-template.js?v=20261028-result-identity-two-rows"></script>
   <script src="js/academic-result-download.js?v=20261030"></script>
-  <script src="js/parent-dashboard.js?v=20261030-parent-recovery-result-download-20261103-parent-branch-links-20261104-personal-parent-links"></script>
+  <script src="js/parent-dashboard.js?v=20261030-parent-recovery-result-download-20261103-parent-branch-links-20261104-personal-parent-links-branch-setup"></script>
 </body>
 </html>

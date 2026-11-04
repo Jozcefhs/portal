@@ -1,6 +1,7 @@
 import { batchCommitDocuments, listCollection, requireFirestoreEnv } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { issueStaffParentOnboarding } from '../lib/parent-onboarding.js';
+import { issueStaffBranchParentOnboarding } from '../lib/parent-branch-onboarding.js';
 import { listSchoolCollection, schoolSectionFor, upsertSchoolDocument } from '../lib/school-scope.js';
 import { canonicalConfiguredClass } from '../lib/class-names.js';
 import { readJsonBody } from '../lib/request-security.js';
@@ -37,7 +38,7 @@ export async function onRequestPost(context) {
     if (['previewgrade7intake', 'applygrade7intake'].includes(action)) {
       const err = new Error('Reload Students to review the new admission-year intake rule across all classes. No records were changed.'); err.status = 409; throw err;
     }
-    if (!['update', 'reissueparentonboarding', 'previewintakecorrection', 'applyintakecorrection', 'previewprofiledefaults', 'applyprofiledefaults'].includes(action)) {
+    if (!['update', 'reissueparentonboarding', 'issuebranchparentonboarding', 'previewintakecorrection', 'applyintakecorrection', 'previewprofiledefaults', 'applyprofiledefaults'].includes(action)) {
       const err = new Error('Choose a valid student action.'); err.status = 400; throw err;
     }
     if (['previewprofiledefaults', 'applyprofiledefaults'].includes(action)) {
@@ -158,6 +159,11 @@ export async function onRequestPost(context) {
     }
     if (action === 'reissueparentonboarding') {
       return Response.json(await issueStaffParentOnboarding(env, user, body), { headers: { 'Cache-Control': 'no-store' } });
+    }
+    if (action === 'issuebranchparentonboarding') {
+      const data = await issueStaffBranchParentOnboarding(env, user, body);
+      (context.data ||= {}).securityAuditHandled = true;
+      return Response.json(data, { headers: { 'Cache-Control': 'no-store' } });
     }
     const accountRef = clean(body.AccountRef || body.accountRef || body.AdmissionNo);
     const rows = await listSchoolCollection(env, 'students', {

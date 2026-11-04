@@ -106,6 +106,11 @@ const onboardingHash = new URLSearchParams(window.location.hash.replace(/^#/, ''
 const parentOnboardingRequested = onboardingHash.has('onboarding') || onboardingHash.has('onboard');
 const parentOnboardingAdmission = onboardingHash.get('admission') || '';
 const parentOnboardingAccess = onboardingHash.get('access') || '';
+const branchParentInviteToken = onboardingHash.get('branchAccess') || '';
+const branchParentOnboardingRequested = Boolean(branchParentInviteToken) || onboardingHash.get('branchSetup') === '1';
+let branchParentClaimToken = '';
+let branchParentPasswordStep = null;
+let parentOnboardingRequestVersion = 0;
 
 function personalOnboardingToken() {
   const value = document.getElementById('onboardingTemporaryPassword').value.trim();
@@ -425,7 +430,8 @@ function setInlineStatus(element, message, type = '') {
 }
 
 function openParentOnboarding() {
-  window.history.replaceState(window.history.state, '', `${window.location.pathname}${window.location.search}#onboarding=1`);
+  parentOnboardingRequestVersion += 1;
+  window.history.replaceState(window.history.state, '', `${window.location.pathname}${window.location.search}#onboarding=1${branchParentOnboardingRequested ? '&branchSetup=1' : ''}`);
   dashboardContent.hidden = true;
   loginForm.hidden = true;
   parentOnboardingPanel.hidden = false;
@@ -433,16 +439,25 @@ function openParentOnboarding() {
   parentOnboardingProfileForm.hidden = true;
   const admissionInput = document.getElementById('onboardingAdmissionNo');
   if (admissionInput && parentOnboardingAdmission) admissionInput.value = parentOnboardingAdmission;
-  if (parentOnboardingAccess) document.getElementById('onboardingTemporaryPassword').value = parentOnboardingAccess;
+  if (parentOnboardingAccess && !branchParentOnboardingRequested) document.getElementById('onboardingTemporaryPassword').value = parentOnboardingAccess;
+  document.getElementById('onboardingAccessLabel').textContent = branchParentOnboardingRequested ? 'Branch setup code' : 'Personal access code or link';
+  document.getElementById('onboardingBranchSectionField').hidden = !branchParentOnboardingRequested;
+  document.getElementById('parentOnboardingInstructions').textContent = branchParentOnboardingRequested
+    ? 'Use the link and setup code shared by your child\'s branch. Enter your child\'s admission number below. Setup is available once for each learner; afterwards, sign in with your email and private password.'
+    : 'Open the personal link issued by your child\'s school. Each link belongs to one learner in one branch and expires after 7 days.';
+  document.getElementById('verifyParentOnboardingBtn').hidden = Boolean(branchParentPasswordStep);
+  document.getElementById('resumeBranchParentPasswordBtn').hidden = !branchParentPasswordStep;
   setInlineStatus(
     parentOnboardingAccessStatus,
-    '',
+    branchParentOnboardingRequested && !branchParentInviteToken ? 'Reopen the full branch link shared by your school to continue. A setup code alone cannot select your branch.' : '',
     ''
   );
   updateParentTutorialControl();
 }
 
 function closeParentOnboarding() {
+  parentOnboardingRequestVersion += 1;
+  branchParentClaimToken = '';
   window.history.replaceState(window.history.state, '', `${window.location.pathname}${window.location.search}`);
   parentOnboardingAccessForm?.reset();
   parentOnboardingProfileForm?.reset();
@@ -504,31 +519,47 @@ document.getElementById('closeParentOnboardingBtn')?.addEventListener('click', c
 
 parentOnboardingAccessForm?.addEventListener('submit', async (event) => {
   event.preventDefault();
+  if (branchParentPasswordStep) { openRequiredParentPassword(branchParentPasswordStep); return; }
   const button = event.submitter || document.getElementById('verifyParentOnboardingBtn');
+  if (button?.disabled) return;
+  const requestVersion = parentOnboardingRequestVersion;
   const normalText = button?.textContent || 'Continue';
   setActionLoading(button, true, 'Checking...', normalText);
   setInlineStatus(parentOnboardingAccessStatus, 'Confirming the student record...');
   try {
-    const onboardingToken = personalOnboardingToken();
-    if (!onboardingToken || onboardingToken === '12345678') {
+    const onboardingToken = branchParentOnboardingRequested ? '' : personalOnboardingToken();
+    if (branchParentOnboardingRequested && !branchParentInviteToken) {
+      throw new Error('Reopen the full branch link shared by your school. The setup code cannot be used without its branch link.');
+    }
+    if (!branchParentOnboardingRequested && (!onboardingToken || onboardingToken === '12345678')) {
       throw new Error('The old shared link and temporary password no longer provide access. Ask your school to open Students in your child\'s branch and copy the personal parent link from your child\'s row. Open that full link, or paste it here.');
     }
+    const access = branchParentOnboardingRequested ? {
+      action: 'beginBranchParentOnboarding', branchInviteToken: branchParentInviteToken,
+      setupCode: document.getElementById('onboardingTemporaryPassword').value.trim(),
+      schoolSection: document.getElementById('onboardingBranchSection').value
+    } : { action: 'beginParentOnboarding', onboardingToken };
+    branchParentClaimToken = '';
     const response = await fetch('/api/parent-dashboard', {
       method: 'POST',
       cache: 'no-store',
       headers: { 'Content-Type': 'application/json' },
       body: freshBody({
-        action: 'beginParentOnboarding',
+        ...access,
         admissionNo: document.getElementById('onboardingAdmissionNo').value.trim(),
-        onboardingToken
       })
     });
     const data = await response.json();
+    if (requestVersion !== parentOnboardingRequestVersion) return;
     if (!response.ok || !data.ok) throw new Error(data.message || 'Could not confirm the student record.');
+    if (branchParentOnboardingRequested) {
+      if (!data.branchClaimToken) throw new Error('Could not confirm access for this learner. Reopen your branch link and retry.');
+      branchParentClaimToken = data.branchClaimToken;
+    }
     if (data.passwordChangeRequired) { openRequiredParentPassword(data); return; }
     populateParentOnboardingProfile(data.student);
   } catch (error) {
-    setInlineStatus(parentOnboardingAccessStatus, error.message, 'bad');
+    if (requestVersion === parentOnboardingRequestVersion) setInlineStatus(parentOnboardingAccessStatus, error.message, 'bad');
   } finally {
     setActionLoading(button, false, '', normalText);
   }
@@ -537,10 +568,13 @@ parentOnboardingAccessForm?.addEventListener('submit', async (event) => {
 parentOnboardingProfileForm?.addEventListener('submit', async (event) => {
   event.preventDefault();
   const button = event.submitter || document.getElementById('submitParentOnboardingBtn');
+  if (button?.disabled) return;
+  const requestVersion = parentOnboardingRequestVersion;
   const normalText = button?.textContent || 'Submit completed profile';
   setActionLoading(button, true, 'Submitting...', normalText);
   setInlineStatus(parentOnboardingProfileStatus, 'Saving the completed student profile...');
   try {
+    if (branchParentOnboardingRequested && !branchParentClaimToken) throw new Error('Reopen the branch link and confirm your child\'s admission number before submitting.');
     const response = await fetch('/api/parent-dashboard', {
       method: 'POST',
       cache: 'no-store',
@@ -548,7 +582,7 @@ parentOnboardingProfileForm?.addEventListener('submit', async (event) => {
       body: freshBody({
         action: 'completeParentOnboardingProfile',
         admissionNo: document.getElementById('onboardingAdmissionNo').value.trim(),
-        onboardingToken: personalOnboardingToken(),
+        ...(branchParentOnboardingRequested ? { branchClaimToken: branchParentClaimToken } : { onboardingToken: personalOnboardingToken() }),
         profile: {
           firstName: document.getElementById('onboardingFirstName').value,
           middleName: document.getElementById('onboardingMiddleName').value,
@@ -574,8 +608,16 @@ parentOnboardingProfileForm?.addEventListener('submit', async (event) => {
       })
     });
     const data = await response.json();
+    if (requestVersion !== parentOnboardingRequestVersion) return;
     if (!response.ok || !data.ok) throw new Error(data.message || 'Could not complete the student profile.');
     if (data.passwordChangeRequired) {
+      if (branchParentOnboardingRequested) {
+        branchParentClaimToken = '';
+        branchParentPasswordStep = data;
+        document.getElementById('verifyParentOnboardingBtn').hidden = true;
+        document.getElementById('resumeBranchParentPasswordBtn').hidden = false;
+        document.getElementById('onboardingTemporaryPassword').value = '';
+      }
       parentOnboardingProfileForm.hidden = true;
       parentOnboardingAccessForm.hidden = false;
       openRequiredParentPassword(data);
@@ -583,6 +625,7 @@ parentOnboardingProfileForm?.addEventListener('submit', async (event) => {
     }
     parentOnboardingProfileForm.reset();
     parentOnboardingAccessForm.reset();
+    branchParentClaimToken = '';
     window.history.replaceState(window.history.state, '', `${window.location.pathname}${window.location.search}`);
     parentOnboardingPanel.hidden = true;
     loginForm.hidden = false;
@@ -592,17 +635,25 @@ parentOnboardingProfileForm?.addEventListener('submit', async (event) => {
     setStatus(data.message, 'ok');
     document.getElementById('verificationCode').focus();
   } catch (error) {
-    setInlineStatus(parentOnboardingProfileStatus, error.message, 'bad');
+    if (requestVersion === parentOnboardingRequestVersion) setInlineStatus(parentOnboardingProfileStatus, error.message, 'bad');
   } finally {
     setActionLoading(button, false, '', normalText);
   }
 });
 
 document.getElementById('cancelRequiredParentPassword')?.addEventListener('click', () => {
-  parentPasswordSetupToken = '';
+  if (!branchParentPasswordStep) parentPasswordSetupToken = '';
   requiredParentPasswordForm?.reset();
   requiredParentPasswordDialog?.close();
-  setStatus('Reopen your personal school link, or click Continue, when you are ready to create your private password.', '');
+  if (branchParentPasswordStep) {
+    setInlineStatus(parentOnboardingAccessStatus, 'Your profile is saved. Choose Create your private password to finish setup on this page. If you close this page, ask the school for a personal link to finish securely.');
+  } else {
+    setStatus('Reopen your personal school link, or click Continue, when you are ready to create your private password.', '');
+  }
+});
+
+document.getElementById('resumeBranchParentPasswordBtn')?.addEventListener('click', () => {
+  if (branchParentPasswordStep) openRequiredParentPassword(branchParentPasswordStep);
 });
 
 requiredParentPasswordForm?.addEventListener('submit', async (event) => {
@@ -632,6 +683,7 @@ requiredParentPasswordForm?.addEventListener('submit', async (event) => {
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(data.message || 'Could not save the private password.');
     parentPasswordSetupToken = '';
+    branchParentPasswordStep = null;
     closeParentOnboarding();
     requiredParentPasswordDialog.close();
     document.getElementById('verificationCode').value = '';

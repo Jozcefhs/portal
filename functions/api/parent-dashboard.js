@@ -20,6 +20,7 @@ import { getStoredDocument } from '../lib/document-storage.js';
 import { consumeRequestAllowance, readJsonBody, secureSecretEqual } from '../lib/request-security.js';
 import { onboardingStatus, requireParentOnboardingStudent, parentOnboardingPasswordStep,
   finishParentOnboardingPassword } from '../lib/parent-onboarding.js';
+import { beginBranchParentOnboarding, requireBranchParentOnboardingClaim } from '../lib/parent-branch-onboarding.js';
 export { onboardingStatus } from '../lib/parent-onboarding.js';
 import { getWebBranding } from '../lib/web-branding.js';
 import {
@@ -139,7 +140,11 @@ async function beginParentOnboarding(env, body, request) {
 
 async function completeParentOnboardingProfile(env, body, request) {
   await assertParentOnboardingAllowance(env, request);
-  const student = await requireParentOnboardingStudent(env, body);
+  const branchClaim = clean(body.branchClaimToken) ? await requireBranchParentOnboardingClaim(env, body) : null;
+  const student = branchClaim?.student || await requireParentOnboardingStudent(env, body);
+  if (branchClaim?.replay) return onboardingStatus(student) === 'awaitingpassword'
+    ? parentOnboardingPasswordStep(env, student)
+    : { ok: true, parentEmail: lower(student.ParentEmail), message: 'Profile completed. Sign in with your existing parent password.' };
   const profile = body.profile && typeof body.profile === 'object' ? body.profile : {};
   const confirmedParentEmail = lower(profile.confirmParentEmail || profile.ConfirmParentEmail);
   const values = {
@@ -221,16 +226,22 @@ async function completeParentOnboardingProfile(env, body, request) {
     error.status = 400;
     throw error;
   }
+  // The group invitation does not disclose saved private fields. Leaving an
+  // optional blank in that form must not erase information already held.
+  if (branchClaim) for (const field of ['PreviousSchool', 'CityArea', 'StateOfResidence', 'BloodGroup', 'Genotype', 'MedicalCondition', 'NIN']) {
+    if (!values[field] && clean(student[field])) values[field] = clean(student[field]);
+  }
   const existingCredential = await getParentCredential(env, values.ParentEmail);
   const schoolProfile = await getSchoolProfile(env, student.BranchId);
   const correctedName = formatPersonName(values, schoolProfile);
   const now = nowIso();
   const profilePatch = {
     ...values,
+    ...(branchClaim?.patch || {}),
     DisplayName: correctedName,
     ApplicantName: correctedName,
-    ParentOnboardingTokenHash: existingCredential ? '' : student.ParentOnboardingTokenHash,
-    ParentOnboardingExpiresAt: existingCredential ? '' : student.ParentOnboardingExpiresAt,
+    ParentOnboardingTokenHash: existingCredential ? '' : (branchClaim?.patch.ParentOnboardingTokenHash || student.ParentOnboardingTokenHash),
+    ParentOnboardingExpiresAt: existingCredential ? '' : (branchClaim?.patch.ParentOnboardingExpiresAt || student.ParentOnboardingExpiresAt),
     ParentOnboardingStatus: existingCredential ? 'Complete' : 'AwaitingPassword',
     ParentOnboardingProfileCompletedAt: now,
     ProfileCompletionStatus: 'Complete',
@@ -2549,6 +2560,12 @@ export async function onRequestPost(context) {
       });
     }
 
+    if (action === 'beginBranchParentOnboarding') {
+      await assertParentOnboardingAllowance(env, request);
+      const data = await beginBranchParentOnboarding(env, body);
+      (context.data ||= {}).securityAuditHandled = true;
+      return Response.json(data, { headers: parentResponseHeaders() });
+    }
     if (action === 'beginParentOnboarding' || action === 'completeParentOnboardingProfile') {
       const data = action === 'beginParentOnboarding'
         ? await beginParentOnboarding(env, body, request)
