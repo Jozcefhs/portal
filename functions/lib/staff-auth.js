@@ -582,6 +582,7 @@ export async function finalizeStaffAuthentication(env, username, sourcePlatform 
   }
   let authenticated = null;
   if (user) {
+    if (expectedEpoch !== undefined && clean(user.PasswordRecoveryEpoch) !== clean(expectedEpoch)) return null;
     const active = user.Active === undefined ? true : !['no', 'false', '0', 'inactive', 'disabled'].includes(lower(user.Active));
     if (!active || externalAuditAccessExpired(user)) return null;
     const loginAt = new Date().toISOString();
@@ -617,8 +618,8 @@ export async function finalizeStaffAuthentication(env, username, sourcePlatform 
   return authenticated;
 }
 
-export async function authenticateStaffPasskey(env, username) {
-  return finalizeStaffAuthentication(env, username, 'Web Passkey');
+export async function authenticateStaffPasskey(env, username, expectedEpoch = '') {
+  return finalizeStaffAuthentication(env, username, 'Web Passkey', expectedEpoch);
 }
 
 export async function verifyStaffApprovalPassword(env, username, password) {
@@ -735,6 +736,7 @@ export async function requireStaffSession(env, request) {
     err.status = 401;
     throw err;
   }
+  const verifiedAuthEpoch = clean(user.authEpoch);
   const envAdmin = lower(env.ADMIN_WEB_USERNAME || 'admin');
   const current = await findStaffUserRecord(env, user.username);
   if (current) {
@@ -750,6 +752,9 @@ export async function requireStaffSession(env, request) {
       throw err;
     }
     user = publicUser(current);
+    if (clean(user.authEpoch) !== verifiedAuthEpoch) {
+      throw Object.assign(new Error('Your account security changed. Please sign in again.'), { status: 401 });
+    }
   } else if (lower(user.username) !== envAdmin || user.role !== 'Super Admin') {
     const err = new Error('This staff account has been disabled or deleted.');
     err.status = 401;

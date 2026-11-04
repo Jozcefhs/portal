@@ -1,7 +1,8 @@
 import QRCode from 'qrcode';
-import { staffCredentialEpochCurrent } from './staff-credential-state.js';
+import { staffCredentialEpochCurrent, staffCredentialWriteGuard } from './staff-credential-state.js';
+import { recoverStaffSecurity } from './staff-security-recovery.js';
 import {
-  batchUpsertDocuments,
+  batchCommitLiteralDocuments,
   createDocumentIfAbsent,
   deleteDocumentIfCurrent,
   getDocument,
@@ -575,21 +576,26 @@ export async function resolveStaffMfaActor(env, request, ticket = '', options = 
 
 export async function beginTotpSetup(env, actor) {
   const username = clean(actor.user.username || actor.user.Username || actor.user.__id);
+  const authEpoch = clean(actor.viaTicket ? actor.challenge.AuthEpoch : actor.user.authEpoch ?? actor.user.PasswordRecoveryEpoch);
+  const guard = await staffCredentialWriteGuard(env, username, authEpoch);
   const secret = base32Encode(crypto.getRandomValues(new Uint8Array(20)));
   const encrypted = await encryptSecret(env, username, secret);
   const profileId = profileDocumentId(username);
   const current = await getDocument(env, PROFILE_COLLECTION, profileId);
   const now = Date.now();
-  await upsertDocument(env, PROFILE_COLLECTION, profileId, {
+  if (current && !current.__updateTime) throw Object.assign(new Error('Refresh authenticator setup before continuing.'), { status: 409 });
+  await batchCommitLiteralDocuments(env, [{ collectionPath: PROFILE_COLLECTION, documentId: profileId,
+    ...(current ? { updateTime: current.__updateTime } : { exists: false }), data: {
     ...publicDocument(current || {}),
     Username: username,
     UsernameKey: lower(username),
     PendingTotpCiphertext: encrypted.ciphertext,
     PendingTotpIv: encrypted.iv,
     PendingTotpExpiresAt: new Date(now + SETUP_SECONDS * 1000).toISOString(),
+    PendingTotpAuthEpoch: authEpoch,
     UpdatedAt: new Date(now).toISOString(),
     UpdatedBy: username
-  });
+  } }, guard]);
   const issuer = await organizationMfaName(env);
   const uri = `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(username)}?secret=${encodeURIComponent(secret)}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`;
   return {
@@ -604,13 +610,16 @@ export async function beginTotpSetup(env, actor) {
 
 export async function confirmTotpSetup(env, actor, code, currentPassword = '') {
   const username = clean(actor.user.username || actor.user.Username || actor.user.__id);
+  const authEpoch = clean(actor.viaTicket ? actor.challenge.AuthEpoch : actor.user.authEpoch ?? actor.user.PasswordRecoveryEpoch);
+  const guard = await staffCredentialWriteGuard(env, username, authEpoch);
   if (!actor.viaTicket && !await verifyStaffApprovalPassword(env, username, currentPassword)) {
     const error = new Error('Enter your current password to enable or replace the authenticator app.');
     error.status = 401;
     throw error;
   }
   const profile = await getStaffMfaProfile(env, username);
-  if (!profile || !clean(profile.PendingTotpCiphertext) || Date.parse(profile.PendingTotpExpiresAt) <= Date.now()) {
+  if (!profile || !clean(profile.PendingTotpCiphertext) || Date.parse(profile.PendingTotpExpiresAt) <= Date.now()
+    || clean(profile.PendingTotpAuthEpoch) !== authEpoch) {
     const error = new Error('The authenticator setup expired. Start again.');
     error.status = 400;
     throw error;
@@ -624,7 +633,8 @@ export async function confirmTotpSetup(env, actor, code, currentPassword = '') {
   }
   const recovery = await newRecoveryCodes(env, username);
   const now = new Date().toISOString();
-  await updateDocumentIfCurrent(env, PROFILE_COLLECTION, profile.__id, {
+  if (!profile.__updateTime) throw Object.assign(new Error('Refresh authenticator setup before continuing.'), { status: 409 });
+  await batchCommitLiteralDocuments(env, [{ collectionPath: PROFILE_COLLECTION, documentId: profile.__id, updateTime: profile.__updateTime, data: {
     ...publicDocument(profile),
     TotpCiphertext: profile.PendingTotpCiphertext,
     TotpIv: profile.PendingTotpIv,
@@ -638,9 +648,10 @@ export async function confirmTotpSetup(env, actor, code, currentPassword = '') {
     PendingTotpCiphertext: '',
     PendingTotpIv: '',
     PendingTotpExpiresAt: '',
+    PendingTotpAuthEpoch: '',
     UpdatedAt: now,
     UpdatedBy: username
-  }, profile);
+  } }, guard]);
   let session = null;
   if (actor.viaTicket) {
     await consumeChallenge(env, actor.challengeId, actor.challenge);
@@ -830,64 +841,7 @@ export async function staffMfaAdministrationStatus(env, request) {
 
 export async function adminResetStaffMfa(env, request, body = {}) {
   const user = await requireStaffSession(env, request);
-  const assignedBranchId = clean(
-    user.assignedBranchId || (user.canSwitchBranches === false ? user.branchId : '')
-  );
-  if (clean(user.role) !== 'Super Admin' || assignedBranchId) {
-    const error = new Error('Only an organisation-wide Super Administrator can reset staff two-factor authentication.');
-    error.status = 403;
-    throw error;
-  }
-  if (!await verifyStaffApprovalPassword(env, user.username, body.currentPassword)) {
-    const error = new Error('The current administrator password is incorrect.');
-    error.status = 401;
-    throw error;
-  }
-  const target = clean(body.targetUsername);
-  if (!target) {
-    const error = new Error('Choose the staff account to reset.');
-    error.status = 400;
-    throw error;
-  }
-  if (lower(target) === lower(user.username)) {
-    const error = new Error('For safety, use your own security settings to change your two-factor methods.');
-    error.status = 409;
-    throw error;
-  }
-  const [profile, passkeys] = await Promise.all([
-    getStaffMfaProfile(env, target),
-    activeStaffPasskeys(env, target)
-  ]);
-  const now = new Date().toISOString();
-  const writes = passkeys.map((passkey) => ({
-    collectionPath: PASSKEY_COLLECTION,
-    documentId: passkey.__id,
-    data: { ...publicDocument(passkey), Active: false, RevokedAt: now, RevokedBy: user.username }
-  }));
-  if (profile) {
-    writes.push({
-      collectionPath: PROFILE_COLLECTION,
-      documentId: profile.__id,
-      data: {
-        ...publicDocument(profile),
-        TotpActive: false,
-        TotpCiphertext: '',
-        TotpIv: '',
-        RecoveryCodeHashes: [],
-        PendingTotpCiphertext: '',
-        PendingTotpIv: '',
-        PendingTotpExpiresAt: '',
-        UpdatedAt: now,
-        UpdatedBy: user.username,
-        AdministratorResetAt: now
-      }
-    });
-  }
-  if (writes.length) await batchUpsertDocuments(env, writes);
-  await writeMfaAudit(env, {
-    action: 'ADMINISTRATOR RESET TWO-FACTOR AUTHENTICATION', username: target, actor: user.username,
-    details: `${passkeys.length} passkey(s) revoked; authenticator and recovery codes cleared`
-  });
+  return recoverStaffSecurity(env, user, body);
 }
 
 export async function writeMfaAudit(env, event = {}) {

@@ -15,7 +15,7 @@ import {
   staffSessionCookie
 } from '../lib/staff-auth.js';
 import {
-  createDocumentIfAbsent,
+  batchCommitLiteralDocuments,
   deleteDocumentIfCurrent,
   findOneByField,
   getDocument,
@@ -25,6 +25,7 @@ import {
   updateDocumentIfCurrent,
   upsertDocument
 } from '../lib/firestore.js';
+import { credentialStateId, staffCredentialWriteGuard } from '../lib/staff-credential-state.js';
 import { consumePasskeyAuthenticationOptionAllowance } from '../lib/login-protection.js';
 import { readJsonBody } from '../lib/request-security.js';
 import {
@@ -106,6 +107,7 @@ async function saveCeremony(env, type, challenge, username = '', scope = {}) {
     RecordType: lower(scope.recordType),
     DecisionAction: clean(scope.action),
     MfaChallengeId: clean(scope.mfaChallengeId),
+    AuthEpoch: clean(scope.authEpoch),
     CreatedAt: new Date(now).toISOString(),
     ExpiresAt: new Date(now + CEREMONY_SECONDS * 1000).toISOString()
   });
@@ -181,15 +183,16 @@ async function registrationOptions(request, env) {
   });
   return response({
     ok: true,
-    ceremonyId: await saveCeremony(env, 'registration', options.challenge, user.username),
+    ceremonyId: await saveCeremony(env, 'registration', options.challenge, user.username, { authEpoch: user.authEpoch }),
     options
   });
 }
 
 async function verifyRegistration(request, env, body) {
   const user = await requireStaffSession(env, request);
+  const guard = await staffCredentialWriteGuard(env, user.username, user.authEpoch);
   const ceremony = await consumeCeremony(env, body.ceremonyId, 'registration');
-  if (lower(ceremony.UsernameKey) !== lower(user.username)) {
+  if (lower(ceremony.UsernameKey) !== lower(user.username) || clean(ceremony.AuthEpoch) !== clean(user.authEpoch)) {
     return response({ ok: false, message: 'This biometric request belongs to another staff account.' }, 403);
   }
   const rp = relyingPartySettings(request, env);
@@ -224,20 +227,9 @@ async function verifyRegistration(request, env, body) {
     CreatedAt: duplicate?.CreatedAt || now,
     LastUsedAt: ''
   };
-  if (duplicate) {
-    await updateDocumentIfCurrent(env, 'staffPasskeys', duplicate.__id || id, passkey, duplicate);
-  } else {
-    const claim = await createDocumentIfAbsent(env, 'staffPasskeys', id, passkey);
-    if (!claim.created) {
-      if (lower(claim.document?.Username) !== lower(user.username)) {
-        return response({ ok: false, message: 'This biometric credential is already linked to another staff account.' }, 409);
-      }
-      await updateDocumentIfCurrent(env, 'staffPasskeys', id, {
-        ...passkey,
-        CreatedAt: claim.document?.CreatedAt || now
-      }, claim.document);
-    }
-  }
+  if (duplicate && !duplicate.__updateTime) throw Object.assign(new Error('Refresh biometric setup before continuing.'), { status: 409 });
+  await batchCommitLiteralDocuments(env, [{ collectionPath: 'staffPasskeys', documentId: duplicate?.__id || id,
+    ...(duplicate ? { updateTime: duplicate.__updateTime } : { exists: false }), data: passkey }, guard]);
   return response({ ok: true, message: 'Biometric sign-in is ready on this account.' });
 }
 
@@ -375,6 +367,10 @@ async function verifyAuthentication(request, env, body) {
       || (pendingMfa && lower(stored.UsernameKey || stored.Username) !== lower(pendingMfa.challenge.UsernameKey))) {
     return response({ ok: false, message: 'Biometric sign-in was not recognized.' }, 401);
   }
+  // Pin the epoch before verifying/recording this proof. A recovery either
+  // changes the credential revision or prevents finalisation under this epoch.
+  const credentialState = await getDocument(env, 'staffCredentialRevocations', await credentialStateId(stored.Username));
+  const proofEpoch = clean(credentialState?.Epoch);
   const rp = relyingPartySettings(request, env);
   const verification = await verifyAuthenticationResponse({
     response: body.credential,
@@ -403,7 +399,7 @@ async function verifyAuthentication(request, env, body) {
       user: completed.user
     }, 200, completed.sessionCookie);
   }
-  const user = await authenticateStaffPasskey(env, stored.Username);
+  const user = await authenticateStaffPasskey(env, stored.Username, proofEpoch);
   if (!user) {
     return response({ ok: false, message: 'This staff account is inactive or no longer exists.' }, 401);
   }

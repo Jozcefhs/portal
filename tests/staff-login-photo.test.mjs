@@ -63,7 +63,7 @@ test('biometric and MFA completion retain the photo from the common authenticate
   const completed = await context.completedSession({}, user.Username, 'Web MFA TOTP');
   assert.equal(completed.user.profilePhotoUrl, photo);
   assert.equal(completed.sessionToken, 'signed-token');
-  assert.match(passkeySource, /const user = await authenticateStaffPasskey\(env, stored.Username\)/);
+  assert.match(passkeySource, /const user = await authenticateStaffPasskey\(env, stored.Username, proofEpoch\)/);
   assert.match(passkeySource, /user: \{ \.\.\.user, \.\.\.access \}/);
 });
 

@@ -23425,6 +23425,113 @@ function staffMfaAccountLabel(username = '') {
   return `${methods.join(' + ')} • ${Number(account.recoveryCodesRemaining || 0)} recovery code${Number(account.recoveryCodesRemaining || 0) === 1 ? '' : 's'}`;
 }
 
+function canResetStaffBiometrics(target = {}) {
+  const user = currentUser || {}, mode = lower(user.BranchAccess ?? user.branchAccess);
+  const branchIds = user.assignedBranchIds ?? user.BranchIds ?? user.branchIds;
+  const legacyBranch = lower(user.assignedBranchId || (user.canSwitchBranches === true ? '' : user.BranchId || user.branchId));
+  const organisationWide = mode === 'all' || (mode !== 'selected' && !Array.isArray(branchIds) && (!legacyBranch || legacyBranch === 'all'));
+  return clean(user.role) === 'Super Admin' && organisationWide && !currentUser?.subscriptionReadOnly
+    && currentUser?.subscriptionActive !== false && Boolean(clean(target.Username))
+    && lower(target.Username) !== lower(currentUser?.username) && yes(target.Active) && !yes(target.PasswordSetupRequired);
+}
+
+function staffBiometricRecoveryAction(target = {}) {
+  return canResetStaffBiometrics(target)
+    ? `<button type="button" class="secondary staff-user-recovery-action" data-recover-staff-biometrics="${escapeHtml(target.Username)}">Lost phone / reset biometrics</button>` : '';
+}
+
+function openStaffBiometricRecovery(username = '') {
+  const target = staffUsersData.find(row => lower(row.Username) === lower(username));
+  if (!target || !canResetStaffBiometrics(target)) {
+    setStatus(document.getElementById('staffUsersStatus'), 'An organisation-wide Super Admin can recover another active staff account with a password already set. Enable the account or complete its password setup using Edit first if needed. Your own account must be recovered by another authorised administrator.', 'bad');
+    return;
+  }
+  const existing = document.getElementById('staffBiometricRecoveryDialog');
+  if (existing?.open) { existing.focus(); return; }
+  existing?.remove();
+  const actor = currentUser, branch = selectedBranchId, sessionSignal = staffSessionAbortController.signal;
+  const operationId = newIdempotencyKey();
+  let busy = false, attempted = false, completed = false, savedReason = '';
+  const dialog = document.createElement('dialog');
+  dialog.id = 'staffBiometricRecoveryDialog'; dialog.className = 'workflow-dialog staff-recovery-dialog';
+  dialog.setAttribute('aria-labelledby', 'staffBiometricRecoveryTitle');
+  dialog.innerHTML = `<div class="workflow-dialog-header"><div><small>Staff account recovery</small><h2 id="staffBiometricRecoveryTitle">Lost phone / reset biometrics</h2></div><button type="button" data-close-staff-recovery aria-label="Close staff recovery">×</button></div>
+    <form class="workflow-form" data-staff-recovery-form>
+      <section class="config-group"><strong>${escapeHtml(target.DisplayName || target.LoginUsername || target.Username)}</strong><p>@${escapeHtml(target.LoginUsername || target.Username)} · ${escapeHtml(target.Role || '')}</p>
+      <p>Use this when the staff member has lost or replaced the phone or computer used for sign-in. It revokes their registered passkeys, authenticator setup and recovery codes, and signs out their existing sessions.</p>
+      <p>Their password, role, permissions and records remain unchanged. Required two-factor protection still applies: they will set up a replacement method after signing in with their password.</p></section>
+      <label>Your current administrator password<input type="password" name="currentPassword" autocomplete="current-password" required></label>
+      <label>Recovery reason<textarea name="reason" maxlength="500" required>Lost or replaced phone</textarea></label>
+      <label class="check-row"><input type="checkbox" name="identityConfirmed" required>I have verified this staff member's identity.</label>
+      <p class="status" role="status" aria-live="polite" data-staff-recovery-status></p>
+      <div class="staff-recovery-actions"><button type="submit" class="danger" data-submit-staff-recovery>Reset biometrics and sign out devices</button><button type="button" class="secondary" data-close-staff-recovery>Cancel</button></div>
+      <section class="config-group" data-staff-recovery-next hidden><strong>Next steps for the staff member</strong><p data-staff-recovery-instructions></p><p>Password forgotten too? Reset it separately from the staff account's Security section.</p><button type="button" class="secondary" data-staff-recovery-password>Open staff password reset</button></section>
+    </form>`;
+  document.body.append(dialog);
+  const form = dialog.querySelector('form'), button = dialog.querySelector('[data-submit-staff-recovery]');
+  const status = dialog.querySelector('[data-staff-recovery-status]');
+  const isCurrent = () => dialog.open && dialog.isConnected && currentUser === actor && selectedBranchId === branch
+    && activeSection === 'staffUsers' && !sessionSignal.aborted && canResetStaffBiometrics(target);
+  const dispose = () => { form.elements.currentPassword.value = ''; sessionSignal.removeEventListener('abort', close); dialog.remove(); };
+  const close = () => { form.elements.currentPassword.value = ''; if (dialog.open) dialog.close(); else dispose(); };
+  dialog.addEventListener('close', dispose, { once: true });
+  dialog.addEventListener('cancel', event => { if (busy) event.preventDefault(); });
+  sessionSignal.addEventListener('abort', close, { once: true });
+  dialog.querySelectorAll('[data-close-staff-recovery]').forEach(control => { control.onclick = () => { if (!busy) close(); }; });
+  dialog.querySelector('[data-staff-recovery-password]').onclick = () => {
+    if (!completed || !isCurrent()) return;
+    close(); openStaffUserDialog(target.Username);
+    const input = document.querySelector('#staffUserForm [name="Password"]');
+    input?.scrollIntoView({ block: 'center' }); input?.focus();
+  };
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (busy || completed || !isCurrent()) return;
+    const currentPassword = form.elements.currentPassword.value;
+    const reason = attempted ? savedReason : form.elements.reason.value.trim();
+    if (!currentPassword || !reason || !form.elements.identityConfirmed.checked) {
+      setStatus(status, 'Enter your administrator password, give the recovery reason and confirm the staff member’s identity.', 'bad'); return;
+    }
+    busy = true; button.disabled = true;
+    dialog.querySelectorAll('[data-close-staff-recovery]').forEach(control => { control.disabled = true; });
+    try {
+      if (!await window.DynamaxDialogs.confirm({ title: attempted ? 'Retry the same staff recovery' : 'Reset this staff member’s sign-in methods',
+        message: `${target.DisplayName || target.LoginUsername || target.Username} (@${target.LoginUsername || target.Username}): revoke all registered biometric/passkey and authenticator methods, replace recovery access and sign out existing sessions? Their password and organisation security policy remain unchanged.`,
+        tone: 'danger', confirmText: attempted ? 'Retry same recovery' : 'Reset sign-in methods' })) return;
+      if (!isCurrent()) return;
+      attempted = true; savedReason = reason; form.elements.reason.readOnly = true; form.elements.identityConfirmed.disabled = true;
+      setButtonLoading(button, true, 'Resetting sign-in methods…');
+      const data = await mfaRequest('admin-reset', { targetUsername: target.Username, currentPassword, reason, operationId });
+      if (!isCurrent()) return;
+      completed = true;
+      const replay = data.replay === true || data.alreadyCompleted === true;
+      const accounts = staffMfaAdminData?.accounts || [];
+      if (!replay) staffMfaAdminData = { ...(staffMfaAdminData || {}), accounts: accounts.map(account => lower(account.username) === lower(target.Username)
+        ? { ...account, totpActive: false, passkeyCount: 0, recoveryCodesRemaining: 0 } : account) };
+      panelEl.querySelectorAll('[data-edit-user]').forEach(edit => {
+        if (lower(edit.dataset.editUser) === lower(target.Username)) {
+          const label = edit.closest('[data-staff-user-row]')?.querySelector('.staff-mfa-account-state');
+          if (label) label.textContent = replay ? 'Recovery already completed. Refresh staff accounts for current security methods.' : staffMfaAccountLabel(target.Username);
+        }
+      });
+      setStatus(status, replay ? 'This recovery was already completed. Any security methods enrolled afterwards remain unchanged.' : data.message || 'Registered security methods reset and existing sessions signed out.', 'ok');
+      dialog.querySelector('[data-staff-recovery-next]').hidden = false;
+      dialog.querySelector('[data-staff-recovery-instructions]').textContent = `Choose password sign-in and use the current password. ${data.reEnrollmentRequired ? 'Two-factor protection is required, so complete the replacement-method setup shown during sign-in.' : 'They can add a new biometric device after signing in. If organisation policy requires another security check, follow the setup shown.'}${yes(target.Active) ? '' : ' This account is currently disabled; enable it separately if access should be restored.'}`;
+      form.elements.currentPassword.disabled = true;
+      dialog.querySelector('.staff-recovery-actions [data-close-staff-recovery]').textContent = 'Close';
+    } catch (error) {
+      if (isCurrent()) setStatus(status, `${error.message || error} Recovery was not confirmed. Re-enter your administrator password and use Retry same recovery; the same request is retained to prevent a duplicate reset.`, 'bad');
+    } finally {
+      form.elements.currentPassword.value = '';
+      busy = false;
+      setButtonLoading(button, false, '', completed ? 'Recovery completed' : attempted ? 'Retry same recovery' : 'Reset biometrics and sign out devices');
+      button.disabled = completed;
+      dialog.querySelectorAll('[data-close-staff-recovery]').forEach(control => { control.disabled = false; });
+    }
+  });
+  dialog.showModal(); form.elements.currentPassword.focus();
+}
+
 function staffNameFieldOrder(value = staffNameFormat) {
   const supported = new Set(['first name', 'middle name', 'surname']);
   const order = clean(value).toLowerCase().split(',').map(clean).filter((part) => supported.has(part));
@@ -23597,7 +23704,7 @@ function renderStaffUsers() {
   const policyScope = clean(staffRoleAccessData?.scope || 'global');
   const mfaPolicy = staffMfaAdminData?.policy || { Mode: 'OPTIONAL', RequiredRoles: [], GraceDays: 7, EnforceFrom: '' };
   const mfaPolicyRoles = new Set(mfaPolicy.RequiredRoles || []);
-  const resettableStaff = staffUsersData.filter((user) => clean(user.Username).toLowerCase() !== clean(currentUser?.username).toLowerCase());
+  const resettableStaff = staffUsersData.filter(canResetStaffBiometrics);
   const canManageOrganisationPolicy = canManageOrganisationSettings(currentUser);
   const canManageMfaPolicy = canManageOrganisationPolicy;
   const canAssignAnyStaffBranch = canAssignStaffBranches;
@@ -23624,6 +23731,7 @@ function renderStaffUsers() {
     <p class="status staff-seat-scope-note">Organisation plan seats: ${organisationActiveUsers} of ${organisationUserLimit} active login${organisationActiveUsers === 1 ? '' : 's'}.${otherBranchActiveUsers ? ` This branch view excludes ${otherBranchActiveUsers} active login${otherBranchActiveUsers === 1 ? '' : 's'} assigned to other branches.` : ''}</p>
     <section class="staff-account-register" data-staff-account-register data-staff-user-query="${escapeHtml(staffListFilters.search)}" aria-label="Staff accounts">
       <p class="muted">Current sign-in usernames are shown below. Use Refresh to see changes made by staff while this page is open.</p>
+      ${canManageMfaPolicy ? '<p class="muted">Lost or replaced sign-in device? Use <strong>Lost phone / reset biometrics</strong> on the staff member’s row. Password reset is a separate step when needed. For a disabled account or unfinished password setup, use Edit to resolve that first.</p>' : ''}
       <div class="admin-list-sort-toolbar admin-list-toolbar-search staff-user-list-toolbar">
         <label class="admin-list-search">Search staff accounts
           <input type="search" name="staff-account-filter" data-staff-user-search value="${escapeHtml(staffListFilters.search)}" placeholder="Name, username, department or branch" autocomplete="off" data-lpignore="true" data-1p-ignore readonly aria-label="Search staff accounts">
@@ -23641,7 +23749,7 @@ function renderStaffUsers() {
           <div class="staff-user-avatar">${escapeHtml((user.DisplayName || user.Username || 'U').split(/\s+/).slice(0,2).map((part) => part[0]).join('').toUpperCase())}</div>
           <div class="staff-user-copy"><strong>${escapeHtml(user.DisplayName || user.LoginUsername || user.Username)}</strong><span>@${escapeHtml(user.LoginUsername || user.Username)} • ${escapeHtml(user.Role)}</span><small>${escapeHtml(user.Department || (user.Role === 'External Auditor' ? 'Financial audit' : 'No department'))} • ${escapeHtml(staffBranchLabel(user))}${schoolEdition && user.Role !== 'External Auditor' ? ` / ${escapeHtml(user.SchoolSectionAccess || 'All sections')}` : ''}${user.Role === 'External Auditor' ? ` • Audit ${escapeHtml(user.AuditDateFrom)}–${escapeHtml(user.AuditDateTo)} • Expires ${escapeHtml(user.AuditExpiresAt)}` : ''}${yes(user.PasswordSetupRequired) ? ' • Password setup required' : yes(user.MustChangePassword) ? ' • Password change required' : ''}</small><small class="staff-mfa-account-state">${escapeHtml(staffMfaAccountLabel(user.Username))}</small></div>
           <span class="workflow-status ${yes(user.Active) ? 'status-approved' : 'status-rejected'}">${yes(user.Active) ? 'Active' : 'Disabled'}</span>
-          <div class="staff-user-actions"><button type="button" class="compact-icon-action compact-edit-action" data-edit-user="${escapeHtml(user.Username)}" aria-label="Edit ${escapeHtml(user.DisplayName || user.Username)}" title="Edit staff account"><span aria-hidden="true">&#9998;</span></button><button type="button" class="compact-icon-action compact-delete-action" data-delete-user="${escapeHtml(user.Username)}" aria-label="Delete ${escapeHtml(user.DisplayName || user.Username)}" title="Delete staff account"><span aria-hidden="true">&#128465;&#65038;</span></button></div>
+          <div class="staff-user-actions${canResetStaffBiometrics(user) ? ' has-recovery-action' : ''}">${staffBiometricRecoveryAction(user)}<button type="button" class="compact-icon-action compact-edit-action" data-edit-user="${escapeHtml(user.Username)}" aria-label="Edit ${escapeHtml(user.DisplayName || user.Username)}" title="Edit staff account"><span aria-hidden="true">&#9998;</span></button><button type="button" class="compact-icon-action compact-delete-action" data-delete-user="${escapeHtml(user.Username)}" aria-label="Delete ${escapeHtml(user.DisplayName || user.Username)}" title="Delete staff account"><span aria-hidden="true">&#128465;&#65038;</span></button></div>
         </article>
       `; }).join('') : '<p class="muted">No database staff accounts found. Create the first shared staff account.</p>'}
       <p class="muted" data-staff-user-empty hidden>No staff accounts match your search and filters.</p>
@@ -23691,11 +23799,10 @@ function renderStaffUsers() {
         <div class="role-access-actions"><p class="status" id="staffMfaPolicyStatus"></p><button type="button" id="saveStaffMfaPolicy">Save two-factor policy</button></div>
       </div>
       <div class="staff-mfa-admin-reset">
-        <div><strong>Account recovery reset</strong><p class="muted">Use only after verifying the staff member's identity. This revokes every passkey, authenticator secret and unused recovery code for the selected account.</p></div>
+        <div><strong>Lost phone / account recovery</strong><p class="muted">The same recovery is available beside each staff account. Verify the staff member's identity before resetting registered security methods. Password reset remains separate.</p></div>
         <div class="staff-mfa-reset-form">
           <label>Staff account<select id="staffMfaResetUser"><option value="">Choose staff account</option>${resettableStaff.map((user) => `<option value="${escapeHtml(user.Username)}">${escapeHtml(user.DisplayName || user.Username)} (@${escapeHtml(user.LoginUsername || user.Username)})</option>`).join('')}</select></label>
-          <label>Your current password<input id="staffMfaResetPassword" type="password" autocomplete="current-password"></label>
-          <button type="button" class="danger" id="resetStaffMfa">Reset two-factor methods</button>
+          <button type="button" class="secondary" id="resetStaffMfa"${currentUser?.subscriptionReadOnly || currentUser?.subscriptionActive === false ? ' disabled' : ''}>Open staff recovery</button>
         </div>
         <p class="status" id="staffMfaResetStatus"></p>
       </div>`}
@@ -24050,34 +24157,13 @@ function bindStaffUserEvents() {
   });
   document.getElementById('resetStaffMfa')?.addEventListener('click', async (event) => {
     const targetUsername = clean(document.getElementById('staffMfaResetUser')?.value);
-    const currentPassword = document.getElementById('staffMfaResetPassword')?.value || '';
-    const targetUser = staffUsersData.find((user) => clean(user.Username).toLowerCase() === targetUsername.toLowerCase());
     if (!targetUsername) {
       setStatus(document.getElementById('staffMfaResetStatus'), 'Choose the staff account to reset.', 'bad');
       return;
     }
-    if (!currentPassword) {
-      setStatus(document.getElementById('staffMfaResetStatus'), 'Enter your current administrator password.', 'bad');
-      return;
-    }
-    if (!await window.DynamaxDialogs.confirm({
-      title: 'Reset two-factor authentication',
-      message: `Revoke every two-factor method and recovery code for ${targetUser?.DisplayName || targetUsername}? The staff member will need to enrol again when policy requires it.`,
-      tone: 'danger',
-      confirmText: 'Reset security methods'
-    })) return;
-    const button = event.currentTarget;
-    setButtonLoading(button, true, 'Resetting...', 'Reset two-factor methods');
-    try {
-      const data = await mfaRequest('admin-reset', { targetUsername, currentPassword });
-      staffMfaAdminData = await mfaRequest('admin-status');
-      renderStaffUsers();
-      setStatus(document.getElementById('staffMfaResetStatus'), data.message, 'ok');
-    } catch (error) {
-      setStatus(document.getElementById('staffMfaResetStatus'), error.message || String(error), 'bad');
-      if (button.isConnected) setButtonLoading(button, false, 'Resetting...', 'Reset two-factor methods');
-    }
+    openStaffBiometricRecovery(targetUsername);
   });
+  panelEl.querySelectorAll('[data-recover-staff-biometrics]').forEach(button => button.addEventListener('click', () => openStaffBiometricRecovery(button.dataset.recoverStaffBiometrics)));
   document.querySelector('[data-close-user-dialog]')?.addEventListener('click', () => document.getElementById('staffUserDialog').close());
   panelEl.querySelectorAll('[data-edit-user]').forEach((button) => button.addEventListener('click', () => openStaffUserDialog(button.dataset.editUser)));
   panelEl.querySelectorAll('[data-delete-user]').forEach((button) => button.addEventListener('click', async () => {

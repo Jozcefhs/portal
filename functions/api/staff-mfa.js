@@ -26,7 +26,8 @@ function response(data, status = 200, cookies = [], extraHeaders = {}) {
   return Response.json(data, { status, headers });
 }
 
-export async function onRequestPost({ request, env }) {
+export async function onRequestPost(context) {
+  const { request, env } = context;
   try {
     requireFirestoreEnv(env);
     const body = await readJsonBody(request, { maxBytes: 64 * 1024 });
@@ -82,8 +83,9 @@ export async function onRequestPost({ request, env }) {
       return response({ ok: true, message: 'Organisation two-factor policy saved.', policy });
     }
     if (action === 'admin-reset') {
-      await adminResetStaffMfa(env, request, body);
-      return response({ ok: true, message: 'Two-factor authentication reset for the selected staff account.' });
+      const result = await adminResetStaffMfa(env, request, body);
+      if (context.data) context.data.securityAuditHandled = true;
+      return response({ ok: true, ...result });
     }
     return response({ ok: false, message: 'Choose a valid two-factor authentication action.' }, 400);
   } catch (error) {
