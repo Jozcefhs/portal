@@ -1389,9 +1389,13 @@ function feeOverrideKey(fee, app) {
   // fee for one class, rather than adding a second textbook/tuition charge.
   const period = field => ['all', '*', ''].includes(normalizeMatchText(fee[field]))
     ? normalizeMatchText(app[field]) : normalizeMatchText(fee[field]);
+  const feeSection = normalizeMatchText(fee.SchoolSection || fee.schoolSection);
+  const accountSection = normalizeMatchText(app.SchoolSection || app.schoolSection);
+  const effectiveSection = ['all', '*', ''].includes(feeSection)
+    ? (['all', '*', ''].includes(accountSection) ? schoolSectionFor(app) : accountSection) : feeSection;
   return [
     feeBranchId(fee),
-    normalizeMatchText(fee.SchoolSection || fee.schoolSection || app.SchoolSection || app.schoolSection || ''),
+    effectiveSection,
     normalizeMatchText(fee.FeeName || fee.FeeCode || ''),
     normalizeMatchText(fee.FeeCategory || ''),
     normalizeMatchText(fee.Currency || 'NGN'), period('AcademicSession'), period('Term')

@@ -48,6 +48,36 @@ test('a staff-child price covering all classes replaces a matching class-specifi
   assert.equal(preview.rows[0].code, 'BOOKS_STAFF');
 });
 
+test('all-section rates and category-specific section rates form one matching component', async () => {
+  for (const SchoolSection of ['', 'All', '*']) {
+    for (const [section, ClassName] of [['primary', 'Grade 3'], ['secondary', 'Grade 7']]) {
+      const student = { ...account, ClassName, SchoolSection: section };
+      const standard = fee('TUITION_STANDARD', 100000, { FeeName: 'Tuition', ClassName, SchoolSection });
+      const special = fee('TUITION_STAFF', 60000, { FeeName: 'Tuition', BillingCategory: student.BillingCategory, SchoolSection: section });
+      const data = { schoolProfile: {}, feeItems: [standard, special], invoices: [], payments: [], ledger: [], accountSummaries: [] };
+      const before = JSON.stringify(data);
+      const preview = await buildStudentBillingPreview(student, data);
+      assert.equal(preview.expectedTotal, 60000, `${section}/${SchoolSection || 'legacy blank'}`);
+      assert.deepEqual(preview.rows.map(row => row.code), ['TUITION_STAFF']);
+      assert.deepEqual(applyBillingCategoryOverrides([special, standard], student).map(row => row.FeeCode), ['TUITION_STAFF']);
+      assert.equal(JSON.stringify(data), before, 'preview must not mutate fee rules or recorded transactions');
+    }
+  }
+});
+
+test('effective section for legacy profiles uses the class before applying a total discount', () => {
+  for (const [section, ClassName] of [['primary', 'Grade 3'], ['secondary', 'Grade 7']]) {
+    const student = { ...account, ClassName, SchoolSection: '', BillingDiscount: rule };
+    const standard = fee('TUITION_STANDARD', 100000, { FeeName: 'Tuition', ClassName, SchoolSection: 'All' });
+    const special = fee('TUITION_STAFF', 60000, { FeeName: 'Tuition', BillingCategory: student.BillingCategory, SchoolSection: section });
+    const result = applyBillingCategoryOverrides([standard, special], student);
+    assert.deepEqual(result.map(row => row.FeeCode), ['TUITION_STAFF']);
+    assert.equal(result[0].Amount, 54000);
+    assert.equal(result[0].BillingDiscount.BaseTotal, 60000);
+    assert.equal(result[0].BillingDiscount.TotalDiscount, 6000);
+  }
+});
+
 test('category overrides keep separate branches, periods, currencies and different named components distinct', () => {
   const original = fee('BOOKS_G7', 148060, { FeeName: 'Textbooks', ClassName: 'Grade 7' });
   const special = fee('BOOKS_STAFF', 120065, { FeeName: 'Textbooks', BillingCategory: 'School Staff Child' });
