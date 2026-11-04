@@ -509,6 +509,10 @@ parentOnboardingAccessForm?.addEventListener('submit', async (event) => {
   setActionLoading(button, true, 'Checking...', normalText);
   setInlineStatus(parentOnboardingAccessStatus, 'Confirming the student record...');
   try {
+    const onboardingToken = personalOnboardingToken();
+    if (!onboardingToken || onboardingToken === '12345678') {
+      throw new Error('The old shared link and temporary password no longer provide access. Ask your school to open Students in your child\'s branch and copy the personal parent link from your child\'s row. Open that full link, or paste it here.');
+    }
     const response = await fetch('/api/parent-dashboard', {
       method: 'POST',
       cache: 'no-store',
@@ -516,7 +520,7 @@ parentOnboardingAccessForm?.addEventListener('submit', async (event) => {
       body: freshBody({
         action: 'beginParentOnboarding',
         admissionNo: document.getElementById('onboardingAdmissionNo').value.trim(),
-        onboardingToken: personalOnboardingToken()
+        onboardingToken
       })
     });
     const data = await response.json();

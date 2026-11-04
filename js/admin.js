@@ -760,6 +760,49 @@ async function copyTextToClipboard(value) {
   if (!copied) throw new Error('The browser could not copy the link.');
 }
 
+function personalParentOnboardingUrl(data, expected, origin = window.location.origin) {
+  const invalid = () => new Error('The service did not return a personal link for the selected learner. Reload Students and issue the link from that learner\'s row.');
+  try {
+    if (!clean(data?.onboardingPath)) throw invalid();
+    const url = new URL(data.onboardingPath, origin);
+    const params = new URLSearchParams(url.hash.slice(1));
+    const token = clean(params.get('access'));
+    if (url.origin !== origin || url.pathname !== '/parent-dashboard' || url.search
+        || params.get('onboarding') !== '1' || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token)
+        || token.length > 4096 || clean(params.get('admission')).toLowerCase() !== clean(expected.admissionNo).toLowerCase()
+        || clean(data.admissionNo).toLowerCase() !== clean(expected.admissionNo).toLowerCase()) throw invalid();
+    // The API verifies the signature. Here we only guard against copying a
+    // shared page or a response for a different selected learner.
+    const encoded = token.split('.')[0].replace(/-/g, '+').replace(/_/g, '/');
+    const payload = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(encoded), char => char.charCodeAt(0))));
+    if (payload.purpose !== 'parent-onboarding' || payload.scopePath !== expected.scopePath
+        || payload.documentId !== expected.documentId || !clean(expected.scopePath) || !clean(expected.documentId)
+        || clean(payload.admissionNo).toLowerCase() !== clean(expected.admissionNo).toLowerCase()
+        || !Number.isFinite(payload.exp) || payload.exp <= Math.floor(Date.now() / 1000)) throw invalid();
+    return url.href;
+  } catch { throw invalid(); }
+}
+
+function showPersonalParentLinkForManualCopy(url, admissionNo) {
+  const dialog = document.createElement('dialog');
+  dialog.setAttribute('aria-label', 'Copy personal parent link');
+  dialog.style.cssText = 'box-sizing:border-box;width:min(620px,94vw);max-height:90vh;overflow:auto;border:1px solid #ccdbea;border-radius:16px;padding:24px';
+  dialog.innerHTML = `<h2>Personal parent link issued</h2><p>The browser could not copy automatically. Copy this full link for ${escapeHtml(admissionNo)} and send it only to that learner's parent. It replaces the previous link and expires in 7 days.</p><label>Personal link<textarea readonly style="box-sizing:border-box;width:100%;min-height:120px;overflow-wrap:anywhere"></textarea></label><p role="status" aria-live="polite"></p><button type="button" data-copy-personal-link>Copy link</button> <button type="button" data-close-personal-link>Close</button>`;
+  dialog.querySelector('textarea').value = url;
+  dialog.querySelector('[data-copy-personal-link]').onclick = async () => {
+    try {
+      await copyTextToClipboard(url);
+      dialog.querySelector('[role=status]').textContent = 'Personal link copied.';
+    } catch {
+      dialog.querySelector('textarea').select();
+      dialog.querySelector('[role=status]').textContent = 'Use your browser\'s Copy command to copy the selected full link.';
+    }
+  };
+  dialog.querySelector('[data-close-personal-link]').onclick = () => dialog.close();
+  dialog.addEventListener('close', () => dialog.remove());
+  document.body.append(dialog); dialog.showModal(); dialog.querySelector('textarea').select();
+}
+
 function pick(row, keys) {
   for (const key of keys) {
     if (row && row[key] !== undefined && row[key] !== null && clean(row[key]) !== '') return row[key];
@@ -4209,15 +4252,6 @@ function bindStudentEditor(students) {
       setButtonLoading(button, false, '', 'Preview billing reconciliation');
     }
   });
-  panelEl.querySelector('[data-copy-shared-parent-onboarding]')?.addEventListener('click', async () => {
-    const onboardingUrl = new URL('/parent-dashboard#onboarding=1', window.location.origin).href;
-    try {
-      await copyTextToClipboard(onboardingUrl);
-      setStatus(dashboardStatus, `Shared parent profile link copied: ${onboardingUrl}. This page requires a personal access link. Use the link icon beside the intended learner to issue one.`, 'ok');
-    } catch (error) {
-      setStatus(dashboardStatus, error.message || String(error), 'bad');
-    }
-  });
   document.querySelector('[data-close-student-dialog]')?.addEventListener('click', () => document.getElementById('studentProfileDialog')?.close());
   panelEl.querySelectorAll('[data-edit-student]').forEach((button) => button.addEventListener('click', () => {
     const student = students.find((row) => clean(pick(row, ['AdmissionNo', 'AccountRef', '__id'])).toLowerCase() === clean(button.dataset.editStudent).toLowerCase());
@@ -4260,6 +4294,7 @@ function bindStudentEditor(students) {
   });
   panelEl.querySelectorAll('[data-parent-onboarding-student]').forEach((button) => button.addEventListener('click', async () => {
     const admissionNo = clean(button.dataset.parentOnboardingStudent);
+    const requestBranch = clean(selectedBranchId || currentUser?.branchId);
     setButtonLoading(button, true, '...', '🔗');
     try {
       const response = await staffFetch('/api/staff-students', {
@@ -4272,13 +4307,20 @@ function bindStudentEditor(students) {
       });
       const data = await response.json().catch(() => ({ ok: false, message: 'Student service did not return JSON.' }));
       if (!response.ok || !data.ok) throw new Error(data.message || 'Could not reissue parent onboarding.');
-      const onboardingUrl = new URL(data.onboardingPath, window.location.origin).href;
-      await copyTextToClipboard(onboardingUrl);
-      setStatus(dashboardStatus, `Personal link copied for ${admissionNo} (${data.branchName}, ${data.schoolSection}). Send it only to this learner's parent. It expires in 7 days and replaces the previous link.`, 'ok');
-      setButtonLoading(button, false, '', '🔗');
+      if (!button.isConnected || requestBranch !== clean(selectedBranchId || currentUser?.branchId)) return;
+      const onboardingUrl = personalParentOnboardingUrl(data, { admissionNo,
+        scopePath: button.dataset.parentOnboardingScope, documentId: button.dataset.parentOnboardingId });
+      try {
+        await copyTextToClipboard(onboardingUrl);
+        setStatus(dashboardStatus, `Personal link copied for ${admissionNo} (${data.branchName}, ${data.schoolSection}). Send it only to this learner's parent. It expires in 7 days and replaces the previous link.`, 'ok');
+      } catch {
+        showPersonalParentLinkForManualCopy(onboardingUrl, admissionNo);
+        setStatus(dashboardStatus, `Personal link issued for ${admissionNo}. Copy the full link from the open dialog; no shared password is needed.`, 'ok');
+      }
     } catch (error) {
       setStatus(dashboardStatus, error.message || String(error), 'bad');
-      setButtonLoading(button, false, '', '🔗');
+    } finally {
+      if (button.isConnected) setButtonLoading(button, false, '', '🔗');
     }
   }));
   document.getElementById('studentProfileForm')?.addEventListener('submit', async (event) => {
@@ -20914,7 +20956,7 @@ function renderSection(active) {
     const learner = staffLearnerTerms();
     const handoff = takeRecordsDeskHandoff('students');
     const reference = recordsDeskHandoffReference(handoff);
-    panelEl.innerHTML = recordsDeskHandoffBanner(handoff, reference) + `<div class="student-onboarding-link-action"><button type="button" class="secondary" data-copy-shared-parent-onboarding>Copy parent setup page</button>${currentUser?.role === 'Super Admin' && (currentUser.allowedSections || []).includes('accounts') ? '<button type="button" class="secondary" data-review-all-student-billing>Review all student billing</button>' : ''}</div><p class="status" role="status" aria-live="polite" data-student-maintenance-status></p><button type="button" class="secondary" data-refresh-student-defaults hidden>Refresh Students to view saved defaults</button>` + studentClassExportToolbar(students) + studentAdmissionYearIntakeToolbar(students) + table(learner.Plural, students, [
+    panelEl.innerHTML = recordsDeskHandoffBanner(handoff, reference) + `<p class="muted" data-personal-parent-link-help>To give a parent access, use the link icon beside their child. Each personal link is tied to that learner and branch; there is no shared temporary password.</p><div class="student-onboarding-link-action">${currentUser?.role === 'Super Admin' && (currentUser.allowedSections || []).includes('accounts') ? '<button type="button" class="secondary" data-review-all-student-billing>Review all student billing</button>' : ''}</div><p class="status" role="status" aria-live="polite" data-student-maintenance-status></p><button type="button" class="secondary" data-refresh-student-defaults hidden>Refresh Students to view saved defaults</button>` + studentClassExportToolbar(students) + studentAdmissionYearIntakeToolbar(students) + table(learner.Plural, students, [
       { label: 'Admission No', value: (row) => pick(row, ['AdmissionNo', 'AccountRef', '__id']) },
       { label: 'Name', render: studentSearchIdentity },
       { label: 'Class', value: studentExportClass },

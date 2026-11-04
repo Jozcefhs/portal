@@ -19,6 +19,7 @@ test('phone student actions use a full-width single column with safe grid sizing
 });
 
 test('all student action buttons share the responsive container, including admin-only actions', () => {
-  assert.match(admin, /class="student-onboarding-link-action"[\s\S]*?data-copy-shared-parent-onboarding[\s\S]*?data-review-all-student-billing/);
+  assert.match(admin, /data-personal-parent-link-help[\s\S]*?class="student-onboarding-link-action"[\s\S]*?data-review-all-student-billing/);
+  assert.doesNotMatch(admin, /data-copy-shared-parent-onboarding/);
   assert.match(admin, /querySelector\('\.student-onboarding-link-action'\)\?\.insertAdjacentHTML\('beforeend',[\s\S]*?data-save-student-profile-defaults[\s\S]*?data-review-boardwear-all/);
 });

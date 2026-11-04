@@ -1,4 +1,4 @@
-import { prepareParentOnboarding, issueParentOnboarding } from '../lib/parent-onboarding.js';
+import { prepareParentOnboarding, issueStaffParentOnboarding } from '../lib/parent-onboarding.js';
 import { securityAuditList } from './security-audit.js';
 import { loadDatedHistory } from '../lib/history-date-range.js';
 import { assignedStaffBranches, assertStaffScopeManageable, resolveStaffBranchAssignment } from '../lib/staff-branch-access.js';
@@ -4255,6 +4255,8 @@ async function importStudents(env, body) {
       TemporaryPassword: '',
       ParentOnboardingPath: onboarding.onboardingPath,
       ParentOnboardingExpiresAt: onboarding.expiresAt,
+      BranchId: onboarding.identity.branchId,
+      SchoolSection: onboarding.identity.schoolSection,
       OnboardingStatus: 'Pending profile completion'
     });
     imported += 1;
@@ -4263,10 +4265,15 @@ async function importStudents(env, body) {
 }
 
 async function reissueParentOnboarding(env, body) {
-  const accountRef = clean(body.AccountRef || body.AdmissionNo || body.accountRef);
-  const existing = await findStudentByAccountRef(env, accountRef, requestedStudentScope(body));
-  if (!existing) throw applicationNotFound(accountRef);
-  return issueParentOnboarding(env, existing, clean(body.RecordedBy || body.UpdatedBy) || 'Student Register');
+  if (!clean(body.ScopePath) || !clean(body.DocumentId)) {
+    throw Object.assign(new Error('This desktop version cannot copy a personal parent link. In the web companion, select the correct branch, open Students and use the learner\'s parent link button. The old shared link and temporary password no longer provide access.'), { status: 400 });
+  }
+  const actor = await desktopSchoolOperationsActor(env, body, 'students', true);
+  const scope = schoolOperationsScope(body);
+  return issueStaffParentOnboarding(env, { ...actor, branchId: scope.branchId,
+    schoolSectionAccess: scope.schoolSectionAccess || actor.schoolSectionAccess }, {
+    ...body, AccountRef: clean(body.AccountRef || body.AdmissionNo || body.accountRef)
+  });
 }
 
 async function promoteStudents(env, body) {

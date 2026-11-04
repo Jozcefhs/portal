@@ -64,6 +64,28 @@ try {
     assert.deepEqual(errors, []);
     await page.close();
   }
+  // A desktop-exported shared link must explain how to obtain valid access,
+  // without looking up a learner or repeatedly hitting the API.
+  const legacyPage = await browser.newPage({ viewport: { width: 390, height: 900 }, serviceWorkers: 'block' });
+  const legacyCalls = [];
+  await legacyPage.route('**/*', async route => {
+    const url = new URL(route.request().url());
+    if (url.origin !== origin) return route.abort();
+    if (!url.pathname.startsWith('/api/')) return route.continue();
+    if (url.pathname === '/api/parent-dashboard') legacyCalls.push(route.request().postDataJSON());
+    return route.fulfill({ json: { ok: true, settings: {}, profile: {} } });
+  });
+  await legacyPage.goto(`${origin}/parent-dashboard#onboarding=1`);
+  await legacyPage.locator('#onboardingAdmissionNo').fill('DCA/26/001');
+  await legacyPage.locator('#onboardingTemporaryPassword').fill('12345678');
+  await legacyPage.locator('#verifyParentOnboardingBtn').click();
+  await legacyPage.waitForFunction(() => document.getElementById('parentOnboardingAccessStatus').textContent.includes('old shared link'));
+  assert.equal(legacyCalls.length, 0, 'The old common password must not perform learner reads');
+  assert.equal(await legacyPage.locator('#verifyParentOnboardingBtn').isEnabled(), true);
+  await legacyPage.locator('#onboardingTemporaryPassword').fill(`${origin}/parent-dashboard#onboarding=1`);
+  await legacyPage.locator('#verifyParentOnboardingBtn').click();
+  assert.equal(legacyCalls.length, 0, 'A shared page URL without personal proof must not perform learner reads');
+  await legacyPage.close();
   await writeFile(resolve(out, 'proof.json'), JSON.stringify({ ok: true, widths: [390, 1280], scopedLink: true, noAutomaticLearnerReads: true, directPasswordSetup: true, noTokenWebStorage: true }, null, 2));
   console.log('Personal parent onboarding passed at 390px and 1280px.');
 } finally { await browser?.close(); await new Promise(r => server.close(r)); }

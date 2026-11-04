@@ -127,6 +127,29 @@ test('staff link issuance requires the selected row and authorized branch/sectio
   assert.deepEqual(f.commits.at(-1)[0].updateMask.sort(), Object.keys(f.commits.at(-1)[0].data).sort());
 });
 
+test('desktop reissue binds the selected document and directs obsolete shared-link clients to the web without reads', async () => {
+  const f = await fixture();
+  const source = await readFile(new URL('../functions/api/backend.js', import.meta.url), 'utf8');
+  const handler = source.slice(source.indexOf('async function reissueParentOnboarding'), source.indexOf('async function promoteStudents'));
+  let actorReads = 0;
+  const context = vm.createContext({
+    clean: value => String(value ?? '').trim(),
+    desktopSchoolOperationsActor: async () => { actorReads++; return { username: 'staff', branchId: 'garden', schoolSectionAccess: 'all', allowedSections: ['students'] }; },
+    schoolOperationsScope: () => ({ branchId: 'garden', schoolSectionAccess: 'primary' }),
+    issueStaffParentOnboarding: (e, user, body) => onboarding.issueStaffParentOnboarding(e, user, body, f.options)
+  });
+  vm.runInContext(handler, context);
+  f.reads.length = 0; const writes = f.commits.length;
+  await assert.rejects(context.reissueParentOnboarding(env, { AccountRef: admissionNo }), /web companion/);
+  assert.equal(actorReads, 0); assert.equal(f.reads.length, 0); assert.equal(f.commits.length, writes);
+  const issued = await context.reissueParentOnboarding(env, { AccountRef: admissionNo, ScopePath: path('garden'), DocumentId: id });
+  const found = await onboarding.requireParentOnboardingStudent(env, { onboardingToken: tokenFrom(issued.onboardingPath) }, f.options);
+  assert.equal(found.BranchId, 'garden'); assert.equal(found.SchoolSection, 'primary');
+  assert.equal(f.commits.length, writes + 1);
+  await assert.rejects(context.reissueParentOnboarding(env, { AccountRef: admissionNo, ScopePath: path('main'), DocumentId: id }), { status: 403 });
+  assert.equal(f.commits.length, writes + 1);
+});
+
 test('read failures and stale reissues fail closed without replacing another learner or writing a token', async () => {
   const f = await fixture(), count = f.commits.length;
   await assert.rejects(onboarding.requireParentOnboardingStudent(env, { onboardingToken: f.token }, {

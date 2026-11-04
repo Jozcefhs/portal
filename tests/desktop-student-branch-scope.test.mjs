@@ -31,5 +31,8 @@ test('desktop student reads and mutations stay inside the requested branch', () 
 
   assert.match(getStudents, /listSchoolCollection\(env, 'students', requestedStudentScope\(body\)\)/);
   assert.match(updateProfile, /findStudentByAccountRef\(env, accountRef, requestedStudentScope\(body\)\)/);
-  assert.match(reissue, /findStudentByAccountRef\(env, accountRef, requestedStudentScope\(body\)\)/);
+  assert.match(reissue, /issueStaffParentOnboarding\(env/);
+  assert.match(reissue, /desktopSchoolOperationsActor\(env, body, 'students', true\)/);
+  assert.match(reissue, /schoolOperationsScope\(body\)/);
+  assert.doesNotMatch(reissue, /findStudentByAccountRef/);
 });

@@ -28,6 +28,8 @@ test('minimal student import keeps separate names and applies the configured dis
   assert.match(importer, /prepareParentOnboarding\(env, student, importedBy\)/);
   assert.doesNotMatch(importer, /TemporaryPassword: '12345678'/);
   assert.match(importer, /ParentOnboardingPath: onboarding\.onboardingPath/);
+  assert.match(importer, /BranchId: onboarding\.identity\.branchId/);
+  assert.match(importer, /SchoolSection: onboarding\.identity\.schoolSection/);
 
   const persistedStudent = importer.slice(importer.indexOf('const student = {'), importer.indexOf('const saved ='));
   assert.doesNotMatch(persistedStudent, /TemporaryPassword|ParentOnboardingToken:/);
@@ -66,8 +68,9 @@ test('staff can issue a personal link for an explicitly selected learner', () =>
   assert.match(admin, /ScopePath: button\.dataset\.parentOnboardingScope/);
   assert.match(admin, /DocumentId: button\.dataset\.parentOnboardingId/);
   assert.match(admin, /data-parent-onboarding-student/);
-  assert.match(admin, /data-copy-shared-parent-onboarding/);
-  assert.match(admin, /\/parent-dashboard#onboarding=1/);
+  assert.doesNotMatch(admin, /data-copy-shared-parent-onboarding/);
+  assert.match(admin, /data-personal-parent-link-help/);
+  assert.match(admin, /personalParentOnboardingUrl\(data,/);
   assert.match(admin, /copyTextToClipboard\(onboardingUrl\)/);
 });
 
