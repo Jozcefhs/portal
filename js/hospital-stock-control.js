@@ -85,6 +85,6 @@
     function preview(title,markup,note=''){if(!markup){status('Load the records before previewing.',true);return;}$('scPreviewBody').innerHTML=`<h2>${esc(title)}</h2><p>${esc($('branch').selectedOptions[0]?.textContent)} · Snapshot preview</p><p>${esc(note)}</p>${markup}`;$('scPreviewBody').querySelectorAll('button').forEach(e=>e.remove());$('scPreview').showModal();}
     $('scPreviewClose').onclick=()=>$('scPreview').close();$('scPrint').onclick=()=>{$('cardPrint').classList.add('billing-print');$('cardPrint').innerHTML=$('scPreviewBody').innerHTML;$('scPreview').close();window.print();};
     function clear(){cache.clear();for(const key of Object.keys(pages))delete pages[key];batch=detail=historyCursor=historyQuery=null;dirty=false;root.querySelectorAll('form').forEach(f=>f.reset());['scExpiryRows','scCountsRows','scBatchSummary','scCountSummary','scHistoryRows','scPreviewBody'].forEach(id=>$(id).replaceChildren());['scCountForm','scDetail','scExpiryPrevious','scExpiryNext','scCountsPrevious','scCountsNext','scHistoryNext'].forEach(id=>$(id).hidden=true);$('scExpiryNote').textContent='No stock register requested.';$('scCountsNote').textContent='No count history requested.';if($('scPreview').open)$('scPreview').close();}
-    return {clear,permissions,confirmLeave};
+    return {clear,permissions,confirmLeave,invalidate};
   }};
 })();

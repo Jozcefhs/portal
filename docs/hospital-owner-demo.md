@@ -58,3 +58,7 @@ Deployment verified: source commit `d24fc828f913f5d9b20bf127601b90d0e143e520` is
 ### Pharmacy stock control
 
 Use [Pharmacy stock control](https://dynamax-hospital-review.pages.dev/hospital.html?task=stock-control) to inspect batches by expiry dates and counts by recorded dates/status. The demo pharmacist records physical quantities and evidence for an existing batch; the owner reviews and approves/rejects them. The counter cannot approve their own count, and changed stock requires a new count. Preview/print uses the loaded snapshot. No live demo stock adjustments are automatically posted. See [the workflow guide](hospital-stock-control.md).
+
+### Quarantined stock disposal
+
+Open [Quarantined stock disposal](https://dynamax-hospital-review.pages.dev/hospital.html?task=stock-disposal). The pending queue loads when this task opens; the completed register waits for dates. The pharmacist records batch-specific physical disposal evidence, and another authorised officer confirms witnessing it. Only confirmed disposal reduces quarantined stock. Shelf stock, patient returns and all financial records remain unchanged. Preview/print and retained decision history are available. No example disposals are posted automatically; full lifecycle checks use synthetic in-memory stock. See [the workflow guide](hospital-stock-disposal.md).

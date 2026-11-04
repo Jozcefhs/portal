@@ -2,9 +2,9 @@
 
 Scope confirmed: 26 October 2026, Africa/Lagos.
 
-## Latest increment — 30 October 2026
+## Latest increment — 4 November 2026
 
-Pharmacy expiry registers and independently reviewed physical counts extend H05 / H13 / H14 and F01 / F02 / F05 / F06. A pharmacist records a count; another authorised officer approves or rejects it. Pending counts do not change stock or block dispensing. Version checks prevent a stale count from overwriting subsequent stock movements. Existing receipts, clinical and financial records are retained. Registers are date-first, paginated and cached; retries create no duplicate adjustments or audit entries. See [the workflow and verification guide](hospital-stock-control.md).
+Quarantined-stock disposal extends H05 / H13 and F01 / F02 / F05 / F06. A pharmacist records batch-specific disposal evidence; a different authorised officer confirms witnessing it. Pending proposals do not change quantities. Completion reduces quarantined stock only, with permanent references, atomic retry protection and version checks. Existing supplier, patient-return, clinical and financial records remain unchanged. The pending queue is bounded and loads when its task opens; completed history requires dates. See [the workflow guide](hospital-stock-disposal.md).
 
 This increment deploys only to the isolated Hospital Owner's Demo, without record migrations, deletions, desktop compilation or installer release. Patient cards remain NFC and card terminals remain disabled. Perpetual valuation, controlled-drug witnesses, patient self-service, remaining specialist workflows, desktop/offline parity and practitioner validation remain on the complete roadmap.
 
@@ -302,3 +302,11 @@ Final verification for pharmacy procurement: 4,583 repository tests, 12 syntheti
 The user requested continued Hospital work with preservation, duplicate prevention, controlled reads/writes, testing, push and web deployment, without compilation. [Hospital stock control](hospital-stock-control.md) adds dated expiry pages, pharmacist physical counts, separate-officer review, preserved adjustment history, row-version conflict checks and permanent reference guards. No patient charge, supplier payment or journal is generated. The original supplier-remittance deployment remains documented in [its verification record](hospital-remittances-verification.md).
 
 Verification: all 4,612 repository tests and 13 Hospital browser workflows passed. Sixteen stock-control service scenarios and the browser workflows cover concurrency, actual dispensing during pending counts, retries, permissions, mobile operation, snapshots and record preservation. Deployment evidence is recorded after the live Owner Demo checks. Remaining pharmacy priorities include perpetual inventory costing and controlled-drug witnesses; the wider Hospital scope remains open.
+
+### Quarantined-stock disposal — 4 November 2026
+
+The user requested continued Hospital development, testing, push and web deployment, without desktop compilation. This increment closes the missing quarantined-stock disposal step under H05/H13 and F01/F02/F05/F06. Pharmacists record actual disposal evidence; a different authorised officer confirms witnessing it. Approval atomically reduces quarantine only, with immutable proposal/decision history, stock movement, audit and retry receipt. Rejections/cancellations retain evidence and leave quantities unchanged. Patient, clinical, supplier and financial documents are preserved.
+
+Opening this task loads one bounded pending page; history is date-selected, paginated and cached. Browsing and previews add no audit writes. Explicit refresh invalidates stale detail snapshots. Version checks reject approval after a receipt, patient return, dispensing or physical count changes the batch. Permanent references and a pending-batch guard protect duplicate submissions and concurrent decisions. Three additive indexes and three backup collections support the workflow without migration or deletion.
+
+All 4,738 repository tests passed, including 24 new disposal service tests, together with all 14 Hospital browser workflows. Independent review also verified the server guards and led to a cache-freshness fix: explicit register refresh clears cached disposal details, preventing an outdated Pending view after another officer approves. Isolated Owner Demo deployment evidence is recorded separately after verification. The full original checklist remains open: this is not perpetual valuation, a complete controlled-drug register, desktop/offline parity or a claim of practitioner validation. Patient cards remain NFC and card-terminal payments remain disabled.
