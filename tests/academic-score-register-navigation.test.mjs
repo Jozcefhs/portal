@@ -19,7 +19,7 @@ function client(role = 'Super Admin', mounted = false) {
     sections: ['secondary'], sessions: [], terms: [], workspaceDataDeferred: true };
   const context = vm.createContext({ clean: value => String(value ?? '').trim(), escapeHtml: value => String(value ?? ''),
     currentUser: { role }, availableBranches: [{ id: 'main', name: 'Main Branch' }], selectedBranchId: 'main',
-    academicManagementView: 'scorebook', academicManagementTaskViews: { scorebook: 'entry' },
+    academicManagementView: 'scorebook', academicManagementTaskViews: { scorebook: 'entry' }, academicResultDraft: {},
     academicManagementFilters: { section: 'secondary', sessionId: 'session', termId: 'term' },
     academicManagementData: data, academicManagementLoadRequest: 0, activeSection: 'academics',
     panelEl: { querySelector: selector => selector === '[data-academic-class-score-register]' ? mounted ? form : null
@@ -54,7 +54,9 @@ test('direct navigation overrides remembered entry and requests only register se
 
 test('area dropdown reaches the same register and reopening a mounted register makes no request', () => {
   const f = client('Super Admin', true); f.context.bindAcademicAreaNavigation();
+  f.context.academicResultDraft.subjectRequest = { requestId: 'previous-subject-request' };
   f.handlers['[data-academic-view-select]:change']({ currentTarget: { value: 'classRegister' } });
+  assert.equal(f.context.academicResultDraft.subjectRequest, undefined);
   assert.equal(f.calls.length, 0); assert.equal(f.shown.length, 1);
   assert.deepEqual(f.shown[0].slice(0, 2), ['scorebook', 'classRegister']);
   assert.deepEqual(f.focused, ['class']); assert.equal(f.scrolled.length, 1);

@@ -8,6 +8,8 @@ import * as results from '../functions/lib/academic-term-results.js';
 import * as studentStatus from '../functions/lib/student-academic-status.js';
 import * as armTransfer from '../functions/lib/academic-arm-transfer.js';
 import { checkClassroomRemovals } from '../functions/lib/academic-classroom-removal.js';
+import { enforceActorBranch } from '../functions/lib/branch-scope.js';
+import { academicPolicyIssues, defaultAcademicPolicy } from '../functions/lib/academic-policy.js';
 
 const source = await readFile(new URL('../functions/lib/academic-management.js', import.meta.url), 'utf8');
 const clone = value => JSON.parse(JSON.stringify(value));
@@ -25,7 +27,7 @@ const score = { ...period, ...scope, StudentRef: 'S1', SubjectId: 'catering', Sc
   SheetId: 'source-sheet', AssessmentRevisionId: 'scheme',
   ComponentScores: [{ State: 'Numeric', RawScore: 0, ComponentId: 'test' }], CompletionStatus: 'Incomplete', __updateTime: 'score-rev' };
 
-function harness({ scores = [score], termResults = [] } = {}) {
+function harness({ scores = [score], termResults = [], realAuthorization = false } = {}) {
   const state = {
     sessions: [{ ...scope, RecordId: 'session', SessionId: 'session' }],
     terms: [{ ...scope, RecordId: 'term', TermId: 'term', SessionId: 'session' }],
@@ -46,6 +48,8 @@ function harness({ scores = [score], termResults = [] } = {}) {
   let revision = 1;
   const keyFor = collection => Object.keys(management.ACADEMIC_MANAGEMENT_COLLECTIONS).find(key => management.ACADEMIC_MANAGEMENT_COLLECTIONS[key] === collection);
   const context = vm.createContext({ ...management, ...results, ...studentStatus, ...armTransfer, crypto: webcrypto, TextEncoder, TextDecoder, safeScopeId: String,
+    enforceActorBranch, academicPolicyIssues,
+    getSchoolStructure: async () => ({ ActiveBranchId: 'main', Branches: [{ Id: 'main' }, { Id: 'other' }] }),
     getDocuments: async (_env, collection, ids) => ids.map(id => clone((state[keyFor(collection)] || []).find(row => (row.RecordId || row.SheetId) === id) || null)),
     queryCollection: async (_env, collection, options) => {
       queries.push({ collection, options: clone(options) });
@@ -71,15 +75,20 @@ function harness({ scores = [score], termResults = [] } = {}) {
     }
   });
   vm.runInContext(source.replace(/^import[\s\S]*?;\r?\n/gm, '').replace(/^export /gm, ''), context);
-  context.academicScope = async (_env, user, input) => {
+  if (!realAuthorization) context.academicScope = async (_env, user, input) => {
     assert.equal(input.SchoolSection, 'secondary');
     if (input.BranchId !== 'main') throw Object.assign(new Error('Wrong branch'), { status: 403 });
     return { branchId: 'main', section: 'secondary' };
   };
-  context.loadScopedAcademicState = async () => clone(state);
+  context.loadScopedAcademicState = async (_env, requestedScope) => realAuthorization
+    ? Object.fromEntries(Object.entries(state).map(([key, rows]) => [key, clone(management.scopedAcademicRows(
+      rows.filter(row => row.BranchId === requestedScope.branchId), requestedScope))]))
+    : clone(state);
   context.loadPeople = async () => ({ students: [{ AdmissionNo: 'S1', Status: 'Active' }], staff: [] });
   context.bootstrapAcademicManagement = async () => ({ ok: true });
-  context.academicOperationalContext = async () => ({ state: clone(state), scope: { branchId: 'main', section: 'secondary' } });
+  if (!realAuthorization) context.academicOperationalContext = async () => ({ state: clone(state), scope: { branchId: 'main', section: 'secondary' } });
+  // Keep authorization, transitions, revisions, audit and writes real; delivery is outside this fixture.
+  if (realAuthorization) context.notifyAcademicResultLifecycle = async () => {};
   const member = () => state.studentMemberships[0];
   return { state, writes, queries, context, member,
     request: (input = {}, user = teacher) => context.bulkAssignAcademicArmStudentSubjects({}, user, {
@@ -755,6 +764,147 @@ test('finalised results block approval; draft results become ineligible for publ
   await assert.rejects(h.context.changeAcademicTermResultStatus({}, admin, { ResultId: 'result', Status: 'Reviewed' }), { code: 'ACADEMIC_SUBJECT_RESULT_STALE' });
   assert.deepEqual(h.state.studentScores, [score]);
 });
+
+const vicePrincipal = { ...admin, role: 'Vice Principal Academics', username: 'vp-academics',
+  branchId: 'main', schoolSectionAccess: 'secondary' };
+
+function vicePrincipalResultHarness(status = 'Calculated Draft') {
+  const policy = defaultAcademicPolicy();
+  policy.Position.Mode = 'none';
+  policy.ResultAccess.VisibilityMode = 'current-term';
+  policy.ResultAccess.FinancialClearance.Mode = 'none';
+  policy.Promotion.Mode = 'manual-review';
+  policy.Assessment.Components = [{ Id: 'test', Name: 'Test', MaximumScore: 100, WeightPercentage: 100, Required: true }];
+  policy.Assessment.GradeBands = [{ Grade: 'A', MinimumPercentage: 0, MaximumPercentage: 100 }];
+  assert.deepEqual(academicPolicyIssues(policy, { forActivation: true }), []);
+  const result = { ...period, ...scope, ResultId: 'result', RecordId: 'result', StudentRef: 'S1',
+    Status: status, PublicationStatus: status, ResultReference: 'TR-ORIGINAL',
+    Subjects: [{ SubjectId: 'catering', Percentage: 80 }], OverallAverage: 80,
+    TeacherRemark: 'Original teacher comment', PrincipalRemark: 'Original principal comment',
+    PolicySnapshot: policy, __updateTime: 'result-rev' };
+  const h = harness({ termResults: [result], realAuthorization: true });
+  h.result = () => h.state.termResults[0];
+  h.changeResult = (target, input = {}, user = vicePrincipal) => h.context.changeAcademicTermResultStatus({}, user, {
+    ...period, ...scope, ResultId: 'result', RevisionToken: h.result().__updateTime,
+    Status: target, ...input
+  });
+  return h;
+}
+
+test('Vice Principal Academics has approval and controlled-correction rights without ICT self-approval authority', () => {
+  for (const user of [vicePrincipal, management.academicWebActor(vicePrincipal)]) {
+    const permissions = management.academicManagementCapabilities(user);
+    for (const name of ['canApproveSubjectChanges', 'canReviewScores', 'canApproveScores',
+      'canManageScoreCorrections', 'canCalculateResults', 'canReviewResults', 'canPublishResults']) {
+      assert.equal(permissions[name], true, name);
+    }
+    assert.equal(permissions.fullAcademicAccess, false);
+  }
+});
+
+test('Vice Principal Academics approves another officer’s subject request and preserves every saved mark', async () => {
+  const h = harness({ realAuthorization: true });
+  const beforeScores = clone(h.state.studentScores);
+  await h.request({}, teacher);
+  await h.review('Approve', vicePrincipal);
+  assert.deepEqual(h.member().SubjectIds, ['english', 'printing']);
+  assert.equal(h.member().LastSubjectChange.Status, 'Approved');
+  assert.equal(h.member().LastSubjectChange.RequestedByUsername, teacher.username);
+  assert.equal(h.member().LastSubjectChange.ReviewedByUsername, vicePrincipal.username);
+  assert.deepEqual(h.state.studentScores, beforeScores);
+  assert.ok(h.writes.every(write => write.collectionPath !== 'academicStudentScores'));
+  const count = h.writes.length;
+  await assert.rejects(h.review('Approve', vicePrincipal), { code: 'ACADEMIC_SUBJECT_CHANGE_NOT_PENDING' });
+  assert.equal(h.writes.length, count);
+});
+
+test('Vice Principal Academics cannot approve their own subject request', async () => {
+  const h = harness({ realAuthorization: true });
+  await h.request({}, vicePrincipal);
+  const before = clone(h.state);
+  const count = h.writes.length;
+  await assert.rejects(h.review('Approve', vicePrincipal), { code: 'ACADEMIC_SUBJECT_CHANGE_SELF_APPROVAL' });
+  assert.deepEqual(h.state, before);
+  assert.equal(h.writes.length, count);
+});
+
+for (const status of ['Reviewed', 'Approved', 'Published', 'Locked', 'Withdrawn']) {
+  test(`Vice Principal Academics cannot approve subject changes while a result remains ${status}`, async () => {
+    const h = vicePrincipalResultHarness(status);
+    await h.request();
+    const before = clone(h.state);
+    const count = h.writes.length;
+    await assert.rejects(h.review('Approve', vicePrincipal), { code: 'ACADEMIC_RESULT_IMMUTABLE' });
+    assert.deepEqual(h.state, before);
+    assert.equal(h.writes.length, count);
+  });
+}
+
+test('Vice Principal Academics reviews, approves, publishes, withdraws and reopens a result through the controlled lifecycle', async () => {
+  const h = vicePrincipalResultHarness();
+  const before = clone(h.state);
+  for (const target of ['Reviewed', 'Approved', 'Published', 'Locked']) {
+    await h.changeResult(target);
+    assert.equal(h.result().Status, target);
+  }
+  let count = h.writes.length;
+  await assert.rejects(h.changeResult('Calculated Draft', { Reason: 'Correct the subject selection' }), { code: 'ACADEMIC_RESULT_STATUS_INVALID' });
+  await assert.rejects(h.changeResult('Withdrawn', { Reason: 'Correct the subject selection' }), { code: 'ACADEMIC_RESULT_IMPACT_ACKNOWLEDGEMENT_REQUIRED' });
+  await assert.rejects(h.changeResult('Withdrawn', { ImpactAcknowledged: true }), /reason/);
+  assert.equal(h.writes.length, count);
+  await h.changeResult('Withdrawn', { Reason: 'Correct the subject selection', ImpactAcknowledged: true });
+  assert.equal(h.result().WithdrawnFromStatus, 'Locked');
+  await h.changeResult('Calculated Draft', { Reason: 'Reopen for the approved subject correction' });
+  assert.equal(h.result().Status, 'Calculated Draft');
+  assert.equal(h.result().ReopenedByUsername, vicePrincipal.username);
+  for (const field of ['ResultId', 'ResultReference', 'Subjects', 'OverallAverage', 'TeacherRemark', 'PrincipalRemark', 'PolicySnapshot']) {
+    assert.deepEqual(h.result()[field], before.termResults[0][field], field);
+  }
+  assert.deepEqual(h.state.studentScores, before.studentScores);
+  assert.deepEqual(h.state.studentMemberships, before.studentMemberships);
+  assert.deepEqual(h.state.resultEvents.map(row => row.EventType), ['REVIEWED', 'APPROVED', 'PUBLISHED', 'LOCKED', 'WITHDRAWN', 'REOPENED']);
+  assert.ok(h.state.audit.every(row => row.ActorUsername === vicePrincipal.username && row.ActorRole === vicePrincipal.role));
+  assert.ok(h.writes.every(row => ['academicResults', 'academicResultEvents', management.ACADEMIC_MANAGEMENT_COLLECTIONS.audit].includes(row.collectionPath)));
+});
+
+for (const status of ['Reviewed', 'Approved']) {
+  test(`Vice Principal Academics reopens ${status} with a reason before subject approval, retaining result history and scores`, async () => {
+    const h = vicePrincipalResultHarness(status);
+    await h.request();
+    const beforeScores = clone(h.state.studentScores);
+    const beforeResult = clone(h.result());
+    const count = h.writes.length;
+    await assert.rejects(h.changeResult('Calculated Draft'), /reason/);
+    await assert.rejects(h.changeResult('Calculated Draft', { Reason: 'Approved subject correction', RevisionToken: 'stale-result' }), { code: 'ACADEMIC_WRITE_CONFLICT' });
+    assert.equal(h.writes.length, count);
+    await h.changeResult('Calculated Draft', { Reason: 'Approved subject correction' });
+    assert.equal(h.result().ReopenedReason, 'Approved subject correction');
+    assert.equal(h.result().ResultReference, beforeResult.ResultReference);
+    assert.deepEqual(h.result().Subjects, beforeResult.Subjects);
+    assert.equal(h.state.resultEvents[0].EventType, 'REOPENED');
+    await h.review('Approve', vicePrincipal);
+    assert.equal(h.member().LastSubjectChange.Status, 'Approved');
+    assert.equal(h.result().SubjectChangeRecalculationRequired, true);
+    const writesAfterApproval = h.writes.length;
+    await assert.rejects(h.changeResult('Reviewed'), { code: 'ACADEMIC_SUBJECT_RESULT_STALE' });
+    assert.equal(h.writes.length, writesAfterApproval);
+    assert.deepEqual(h.state.studentScores, beforeScores);
+    assert.ok(h.writes.every(row => row.collectionPath !== 'academicStudentScores'));
+  });
+}
+
+for (const invalidScope of [{ BranchId: 'other' }, { SchoolSection: 'primary' }]) {
+  test(`Vice Principal Academics approval remains limited to assigned ${invalidScope.BranchId ? 'branch' : 'school section'}`, async () => {
+    const h = vicePrincipalResultHarness();
+    await h.request();
+    const before = clone(h.state);
+    const count = h.writes.length;
+    await assert.rejects(h.review('Approve', vicePrincipal, invalidScope), { status: 403 });
+    await assert.rejects(h.changeResult('Reviewed', invalidScope), { status: 403 });
+    assert.deepEqual(h.state, before);
+    assert.equal(h.writes.length, count);
+  });
+}
 
 test('score guards are masked revision writes and race with subject changes atomically', async () => {
   const h = harness({ scores: [] });
