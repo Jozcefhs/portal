@@ -29,6 +29,19 @@ function harness(failing, edition = 'school', body = {}, resultOverrides = {}) {
     request:new Request('https://example.invalid/api/notification-scheduler',{method:'POST',headers:{Authorization:authorized?'Bearer test-secret':'Bearer wrong'}})})};
 }
 
+test('daily fee pages run alone, while maintenance never repeats fees or credits',async()=>{
+  const fees=harness(null,'school',{feeRemindersOnly:true});
+  assert.equal((await fees.run()).status,200);
+  assert.deepEqual(fees.calls,['processFeeReminderSchedule']);
+  const maintenance=harness(null,'school',{dailyMaintenanceOnly:true});
+  assert.equal((await maintenance.run()).status,200);
+  assert.ok(!maintenance.calls.includes('processFeeReminderSchedule'));
+  assert.ok(!maintenance.calls.includes('processDueSchoolFeeCredits'));
+  assert.ok(maintenance.calls.includes('processLibraryDueReminders'));
+  const invalid=harness(null,'school',{feeRemindersOnly:true,announcementsOnly:true});
+  assert.equal((await invalid.run()).status,400);assert.equal(invalid.calls.length,0);
+});
+
 test('array and object Firestore errors produce useful classifications without private payloads',()=>{
   for (const status of ['FAILED_PRECONDITION','INVALID_ARGUMENT','PERMISSION_DENIED','UNAUTHENTICATED',
     'RESOURCE_EXHAUSTED','NOT_FOUND','ABORTED','ALREADY_EXISTS','UNAVAILABLE','DEADLINE_EXCEEDED','INTERNAL']) {

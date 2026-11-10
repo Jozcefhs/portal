@@ -169,5 +169,5 @@ test('term activation commits cleanup reservations together and scheduler is aut
   assert.match(save,/assertAcademicTermRetentionEdit/);
   const scheduler=await readFile(new URL('../functions/api/notification-scheduler.js',import.meta.url),'utf8');
   assert.ok(scheduler.indexOf('requireSchedulerAuthorization(context.env')<scheduler.indexOf('await processAcademicCbtPaperRetention'));
-  assert.match(scheduler,/attendanceOnly \|\| identity.edition !== 'school'/);
+  assert.match(scheduler,/attendanceOnly \|\| feeRemindersOnly \|\| dailyMaintenanceOnly \|\| identity.edition !== 'school'/);
 });

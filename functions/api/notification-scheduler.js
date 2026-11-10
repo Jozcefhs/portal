@@ -64,31 +64,37 @@ async function run(context) {
     const announcementsOnly = body.announcementsOnly === true;
     const attendanceOnly = body.attendanceOnly === true;
     const schoolFeeCreditsOnly = body.schoolFeeCreditsOnly === true;
+    const feeRemindersOnly = body.feeRemindersOnly === true;
+    const dailyMaintenanceOnly = body.dailyMaintenanceOnly === true;
+    if ([announcementsOnly, attendanceOnly, schoolFeeCreditsOnly, feeRemindersOnly, dailyMaintenanceOnly].filter(Boolean).length > 1) {
+      throw Object.assign(new Error('Choose one scheduler mode.'), { status: 400 });
+    }
     stage = 'school-fee-credits';
-    const schoolFeeCredits = announcementsOnly || attendanceOnly || identity.edition !== 'school'
+    const schoolFeeCredits = announcementsOnly || attendanceOnly || feeRemindersOnly || dailyMaintenanceOnly || identity.edition !== 'school'
       ? { skipped: true }
       : await processDueSchoolFeeCredits(context.env, {
           today: clean(body.today),
           limit: Number(body.creditLimit || 1000)
         });
     stage = 'fee-reminders';
-    const reminders = announcementsOnly || attendanceOnly || schoolFeeCreditsOnly ? { skipped: true } : await processFeeReminderSchedule(context.env, {
+    const reminders = announcementsOnly || attendanceOnly || schoolFeeCreditsOnly || dailyMaintenanceOnly ? { skipped: true } : await processFeeReminderSchedule(context.env, {
       today: clean(body.today),
-      limit: Number(body.limit || 250)
+      limit: Number(body.limit || 25),
+      cursor: body.reminderCursor
     });
     stage = 'library-reminders';
-    const libraryReminders = announcementsOnly || attendanceOnly || schoolFeeCreditsOnly || identity.edition !== 'school'
+    const libraryReminders = announcementsOnly || attendanceOnly || schoolFeeCreditsOnly || feeRemindersOnly || identity.edition !== 'school'
       ? { skipped: true }
       : await processLibraryDueReminders(context.env, {
           today: clean(body.today), limit: Number(body.libraryLimit || 250)
         });
     stage = 'school-announcements';
-    const schoolAnnouncements = attendanceOnly || schoolFeeCreditsOnly || identity.edition !== 'school' ? { skipped: true } : await processScheduledSchoolAnnouncements(context.env, {
+    const schoolAnnouncements = attendanceOnly || schoolFeeCreditsOnly || feeRemindersOnly || identity.edition !== 'school' ? { skipped: true } : await processScheduledSchoolAnnouncements(context.env, {
         now: clean(body.now),
         limit: Number(body.limit || 100)
       });
     stage = 'organisation-announcements';
-    const churchAnnouncements = attendanceOnly || schoolFeeCreditsOnly || !['faith', 'organization'].includes(identity.edition) ? { skipped: true } : await processScheduledChurchAnnouncements(context.env, {
+    const churchAnnouncements = attendanceOnly || schoolFeeCreditsOnly || feeRemindersOnly || !['faith', 'organization'].includes(identity.edition) ? { skipped: true } : await processScheduledChurchAnnouncements(context.env, {
         now: clean(body.now),
         edition: identity.edition,
         limit: Number(body.limit || 100)
@@ -101,20 +107,20 @@ async function run(context) {
       church: churchAnnouncements
     };
     stage = 'announcement-push-queue';
-    const announcementPush = attendanceOnly || schoolFeeCreditsOnly ? { skipped: true } : await processSchoolAnnouncementPushQueue(context.env, {
+    const announcementPush = attendanceOnly || schoolFeeCreditsOnly || feeRemindersOnly ? { skipped: true } : await processSchoolAnnouncementPushQueue(context.env, {
       now: clean(body.now),
       limit: Number(body.pushJobLimit || 1),
       edition: ['faith', 'organization'].includes(identity.edition) ? 'church' : identity.edition
     });
     stage = 'attendance-presence';
-    const attendancePresence = announcementsOnly || schoolFeeCreditsOnly ? { skipped: true } : await processAttendancePresenceNotifications(context.env, {
+    const attendancePresence = announcementsOnly || schoolFeeCreditsOnly || feeRemindersOnly ? { skipped: true } : await processAttendancePresenceNotifications(context.env, {
       now: clean(body.now),
       limit: Number(body.attendanceLimit || 2)
     });
     stage = 'push-delivery-retries';
-    const pushRetries = announcementsOnly || schoolFeeCreditsOnly ? { skipped: true } : await retryFailedPushDeliveries(context.env, { limit: 50 });
+    const pushRetries = announcementsOnly || schoolFeeCreditsOnly || feeRemindersOnly ? { skipped: true } : await retryFailedPushDeliveries(context.env, { limit: 50 });
     stage = 'cbt-paper-retention';
-    const cbtPaperCleanup = announcementsOnly || attendanceOnly || schoolFeeCreditsOnly || identity.edition !== 'school' ? { skipped: true }
+    const cbtPaperCleanup = announcementsOnly || attendanceOnly || schoolFeeCreditsOnly || feeRemindersOnly || identity.edition !== 'school' ? { skipped: true }
       : await processAcademicCbtPaperRetention(context.env);
     stage = 'result-summary';
     const creditRunFailed = schoolFeeCredits.ok === false;

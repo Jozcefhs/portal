@@ -118,7 +118,8 @@ test('credit-only continuation invokes no notification deliveries or unrelated s
       headers: { Authorization: 'Bearer test' }, body: JSON.stringify({ schoolFeeCreditsOnly: true }) }) });
   assert.equal(response.status, 200); assert.equal(calls, 1); assert.equal((await response.json()).schoolFeeCredits.hasMore, true);
   const workflow = await readFile(new URL('../.github/workflows/notification-reminders.yml', import.meta.url), 'utf8');
-  assert.match(workflow, /schoolFeeCreditsOnly/); assert.match(workflow, /hasMore/);
+  const runner = await readFile(new URL('../scripts/run-daily-notifications.mjs', import.meta.url), 'utf8');
+  assert.match(workflow, /SCHEDULER_MODE: credits/); assert.match(runner, /schoolFeeCreditsOnly/); assert.match(runner, /hasMore/);
 });
 
 test('daily workflow completes every credit page before starting unrelated reminders', async () => {
@@ -128,9 +129,11 @@ test('daily workflow completes every credit page before starting unrelated remin
   assert.ok(creditStep >= 0 && reminderStep > creditStep);
   const credits = workflow.slice(creditStep, reminderStep);
   const reminders = workflow.slice(reminderStep);
-  assert.match(credits, /"schoolFeeCreditsOnly":True/);
-  assert.equal((credits.match(/payload=/g) || []).length, 1, 'Every credit page uses the same credit-only payload');
-  assert.match(credits, /for page in/); assert.match(credits, /hasMore/);
-  assert.doesNotMatch(reminders, /schoolFeeCreditsOnly|for page in/);
-  assert.match(reminders, /"limit":250/);
+  assert.match(credits, /SCHEDULER_MODE: credits/);
+  assert.match(credits, /run-daily-notifications.mjs/);
+  assert.match(reminders, /SCHEDULER_MODE: reminders/);
+  assert.match(reminders, /SCHEDULER_MODE: maintenance/);
+  assert.match(workflow, /githubEnvironment/);
+  assert.match(workflow, /EXPECTED_WORKSPACE_ID/);
+  assert.doesNotMatch(workflow, /secrets.NOTIFICATION_SCHEDULER_URL/);
 });

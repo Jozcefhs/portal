@@ -10,54 +10,63 @@ on:
         required: false
         type: string
 
-concurrency:
-  group: notification-reminders
-  cancel-in-progress: false
-
 jobs:
-  process:
+  prepare:
+    name: Load school scheduler targets
     runs-on: ubuntu-latest
+    outputs:
+      organisations: ${{ steps.matrix.outputs.organisations }}
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Build enabled school matrix
+        id: matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          organisations="$(node scripts/organisation-deployment-matrix.mjs --target all)"
+          schools="$(printf '%s' "$organisations" | jq -c '[.[] | select(.edition == "school")]')"
+          echo "organisations=${schools}" >> "${GITHUB_OUTPUT}"
+
+  process:
+    name: ${{ matrix.organisation.name }}
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment:
+      name: ${{ matrix.organisation.githubEnvironment }}
+      url: https://${{ matrix.organisation.cloudflareProject }}.pages.dev
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        organisation: ${{ fromJSON(needs.prepare.outputs.organisations) }}
+    concurrency:
+      group: notification-reminders-${{ matrix.organisation.id }}
+      cancel-in-progress: false
+    env:
+      ENDPOINT: https://${{ matrix.organisation.cloudflareProject }}.pages.dev/api/notification-scheduler
+      EXPECTED_WORKSPACE_ID: ${{ matrix.organisation.workspaceId }}
+      EXPECTED_EDITION: ${{ matrix.organisation.edition }}
+      SCHEDULER_SECRET: ${{ secrets.NOTIFICATION_SCHEDULER_SECRET }}
+      PROCESS_DATE: ${{ inputs.date }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
       - name: Process school-fee credits
         env:
-          ENDPOINT: ${{ secrets.NOTIFICATION_SCHEDULER_URL }}
-          SCHEDULER_SECRET: ${{ secrets.NOTIFICATION_SCHEDULER_SECRET }}
-          PROCESS_DATE: ${{ inputs.date }}
-        run: |
-          test -n "$ENDPOINT"
-          test -n "$SCHEDULER_SECRET"
-          response_file="$(mktemp)"
-          payload="$(python3 -c 'import json,os; print(json.dumps({"today":os.environ.get("PROCESS_DATE",""),"schoolFeeCreditsOnly":True,"creditLimit":25}))')"
-          for page in $(seq 1 120); do
-            curl --fail-with-body --silent --show-error \
-              --retry 3 --retry-all-errors \
-              -X POST "$ENDPOINT" \
-              -H "Authorization: Bearer $SCHEDULER_SECRET" \
-              -H "Content-Type: application/json" \
-              --data "$payload" --output "$response_file"
-            has_more="$(python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); assert r.get("ok") is True; print("yes" if r.get("schoolFeeCredits",{}).get("hasMore") else "no")' "$response_file")"
-            if [ "$has_more" = "no" ]; then
-              echo "School-fee credit processing completed."
-              exit 0
-            fi
-          done
-          echo "School-fee credit processing retained its cursor but exceeded this run's page limit. Run the workflow again to resume."
-          exit 1
+          SCHEDULER_MODE: credits
+        run: node scripts/run-daily-notifications.mjs
       - name: Process fee reminders
         env:
-          ENDPOINT: ${{ secrets.NOTIFICATION_SCHEDULER_URL }}
-          SCHEDULER_SECRET: ${{ secrets.NOTIFICATION_SCHEDULER_SECRET }}
-          PROCESS_DATE: ${{ inputs.date }}
-        run: |
-          test -n "$ENDPOINT"
-          test -n "$SCHEDULER_SECRET"
-          response_file="$(mktemp)"
-          payload="$(python3 -c 'import json,os; print(json.dumps({"today":os.environ.get("PROCESS_DATE",""),"limit":250,"creditLimit":25}))')"
-          curl --fail-with-body --silent --show-error \
-            --retry 3 --retry-all-errors \
-            -X POST "$ENDPOINT" \
-            -H "Authorization: Bearer $SCHEDULER_SECRET" \
-            -H "Content-Type: application/json" \
-            --data "$payload" --output "$response_file"
-          python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); assert r.get("ok") is True' "$response_file"
-          echo "Daily reminder processing completed."
+          SCHEDULER_MODE: reminders
+        run: node scripts/run-daily-notifications.mjs
+      - name: Process remaining daily notifications
+        env:
+          SCHEDULER_MODE: maintenance
+        run: node scripts/run-daily-notifications.mjs

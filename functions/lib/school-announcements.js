@@ -219,12 +219,12 @@ function pushJobId(notificationId) {
   return `ANN-PUSH-${clean(notificationId)}`.slice(0, 180);
 }
 
-async function queueAnnouncementPush(env, announcement, notification) {
+export async function queueNotificationPush(env, notification, options = {}) {
   const now = new Date().toISOString();
   const record = {
     PushJobId: pushJobId(notification.NotificationId),
     SchoolId: lower(env.DYNAMAX_WORKSPACE_ID),
-    AnnouncementId: announcement.AnnouncementId,
+    AnnouncementId: clean(options.announcementId),
     NotificationId: notification.NotificationId,
     Status: 'Pending',
     AttemptCount: 0,
@@ -233,8 +233,12 @@ async function queueAnnouncementPush(env, announcement, notification) {
     CreatedAt: now,
     UpdatedAt: now
   };
-  const result = await createDocumentIfAbsent(env, 'notificationAnnouncementPushJobs', record.PushJobId, record);
+  const result = await (options.createDocumentIfAbsent || createDocumentIfAbsent)(env, 'notificationAnnouncementPushJobs', record.PushJobId, record);
   return result?.document || record;
+}
+
+async function queueAnnouncementPush(env, announcement, notification) {
+  return queueNotificationPush(env, notification, { announcementId: announcement.AnnouncementId });
 }
 
 export async function sendSchoolAnnouncement(env, announcement, options = {}) {
