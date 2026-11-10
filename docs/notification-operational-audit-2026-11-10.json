@@ -1,0 +1,73 @@
+{
+  "checkedAtUtc": "2026-11-10T12:39:00Z",
+  "auditMode": "Read-only workflow logs, database index metadata, planning-only query and bounded queue metadata. No live scheduler dispatch, notification delivery or business writes.",
+  "latestRuns": {
+    "feeReminders": {
+      "url": "https://github.com/Jozcefhs/portal/actions/runs/42629247152",
+      "createdAtUtc": "2026-11-09T13:52:07Z",
+      "conclusion": "failure",
+      "jobId": 129200943531,
+      "failureStage": "fee-reminders",
+      "httpStatus": 409,
+      "databaseCode": "FAILED_PRECONDITION",
+      "reason": "Required database index missing, unavailable or building at the time of that run.",
+      "currentIndexValidation": {
+        "project": "school-management-suite-27064",
+        "collection": "invoices",
+        "indexId": "CICAgNi47oMK",
+        "state": "READY",
+        "fields": ["ReminderEligible ASC", "NextReminderDate ASC", "__name__ ASC"],
+        "query": "ReminderEligible == true AND NextReminderDate <= 2026-11-10, order NextReminderDate ASC, limit 250",
+        "explainAnalyze": false,
+        "explainHttpStatus": 200,
+        "invoiceDocumentsRead": 0,
+        "writes": 0,
+        "limitation": "The query prerequisite is repaired. A later scheduled reminder success has not been observed; no run was dispatched for verification."
+      }
+    },
+    "attendance": {
+      "url": "https://github.com/Jozcefhs/portal/actions/runs/42774912382",
+      "createdAtUtc": "2026-11-10T07:23:07Z",
+      "conclusion": "success",
+      "eligible": 0,
+      "created": 0,
+      "delivered": 0,
+      "failed": 0
+    },
+    "announcements": {
+      "url": "https://github.com/Jozcefhs/portal/actions/runs/42803589608",
+      "createdAtUtc": "2026-11-10T10:58:24Z",
+      "conclusion": "success",
+      "faithRemaining": 0,
+      "schoolRemaining": 1,
+      "schoolRepeatedCalls": 15,
+      "schoolDelivered": 0,
+      "finding": "One pending homework push job had a literal URL-encoded Firestore document ID while its business PushJobId contained a colon. The claim used the business ID with the queried record's updateTime, so it repeatedly failed optimistic concurrency against a different document.",
+      "boundedMetadataRead": { "pendingDocuments": 1, "failedDocuments": 0, "processingDocuments": 0, "messageContentRead": false },
+      "repair": "Use the actual queried document ID for the claim and subsequent updates. For a proven legacy encoded job, resolve its notification with at most two exact point reads. Validate notification identity and workspace before delivery; retain all saved IDs, records and cursors.",
+      "verification": "Synthetic tests cover legacy/current storage, retry without repeat delivery, missing/foreign records, claim conflicts and transient database errors. No live message was sent by this audit."
+    },
+    "workerSchedulerDeployment": {
+      "url": "https://github.com/Jozcefhs/portal/actions/runs/38927378029",
+      "createdAtUtc": "2026-10-16T15:51:59Z",
+      "conclusion": "failure",
+      "affectedWorkspaces": ["school", "faith"],
+      "reason": "Cloudflare Worker secret deployment returned No access to the specified resource.",
+      "requiredPermission": "Account / Workers Scripts / Edit",
+      "limitation": "No newer successful deployment was found. Worker Cron Trigger operation is unconfirmed. Existing GitHub scheduled calls succeeded but recent actual starts were hours apart despite five-minute cron expressions."
+    }
+  },
+  "historicalFirestoreComparison": {
+    "sourceDocument": "firestore-hourly-review-2026-10-25.md",
+    "sourceCsv": "firestore-hourly-reads-2026-10-23-to-25.csv",
+    "csvTotalsIndependentlyRecomputed": true,
+    "schoolReads": { "2026-10-23": 46913416, "2026-10-24": 11394896, "2026-10-25_00_02_WAT_only": 15368 },
+    "schoolFullDayReductionPercent": 75.71,
+    "faithReads": { "2026-10-23": 207, "2026-10-24": 2904, "2026-10-25_00_02_WAT_only": 1 },
+    "limitations": [
+      "25 October includes only the first two complete hours, not a full day.",
+      "Activity was already lower before the deployments, so the full decrease cannot be attributed solely to repairs.",
+      "Missing Faith monitoring points are not assumed zero; no separate Organisation production baseline was available."
+    ]
+  }
+}

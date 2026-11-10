@@ -429,6 +429,27 @@ export function schoolAnnouncementPushJobIsEligible(row = {}, options = {}) {
   return ['pending', 'failed'].includes(status);
 }
 
+async function pushJobNotification(env, job) {
+  const notificationId = clean(job.NotificationId);
+  if (!notificationId) return null;
+  const logicalJobId = clean(job.PushJobId);
+  // Older atomic homework writes persisted URL-encoded resource IDs. Keep the
+  // original records and resolve their paired notification without a scan.
+  const legacyEncoded = clean(job.__id) !== logicalJobId
+    && clean(job.__id) === encodeURIComponent(logicalJobId);
+  const ids = [...new Set(legacyEncoded ? [encodeURIComponent(notificationId), notificationId] : [notificationId])];
+  for (const id of ids) {
+    const notification = await getDocument(env, 'notifications', id);
+    if (!notification) continue;
+    if (clean(notification.NotificationId) !== notificationId
+      || (clean(notification.SchoolId) && lower(notification.SchoolId) !== lower(env.DYNAMAX_WORKSPACE_ID))) {
+      throw new Error('The queued notification identity does not match its saved job.');
+    }
+    return notification;
+  }
+  return null;
+}
+
 export async function processSchoolAnnouncementPushQueue(env, options = {}) {
   const schoolId = lower(env.DYNAMAX_WORKSPACE_ID);
   const requestedEdition = lower(options.edition);
@@ -458,7 +479,9 @@ export async function processSchoolAnnouncementPushQueue(env, options = {}) {
   let failed = 0;
   let completedJobs = 0;
   for (const job of jobs) {
-    const jobId = clean(job.PushJobId || job.__id);
+    // A business ID may differ from the persisted ID on legacy batch records.
+    // The optimistic-concurrency version belongs to the queried document.
+    const jobId = clean(job.__id || job.PushJobId);
     try {
       await upsertDocument(env, 'notificationAnnouncementPushJobs', jobId, {
         ...job, Status: 'Processing', UpdatedAt: now
@@ -467,7 +490,7 @@ export async function processSchoolAnnouncementPushQueue(env, options = {}) {
       if ([409, 412].includes(Number(error?.status))) continue;
       throw error;
     }
-    const notification = await getDocument(env, 'notifications', clean(job.NotificationId)).catch(() => null);
+    const notification = await pushJobNotification(env, job);
     if (!notification) {
       failed += 1;
       await upsertDocument(env, 'notificationAnnouncementPushJobs', jobId, {
@@ -508,7 +531,8 @@ export async function processSchoolAnnouncementPushQueue(env, options = {}) {
         UpdatedAt: now
       });
       if (completed) completedJobs += 1;
-      const announcement = await getDocument(env, 'notificationAnnouncements', clean(job.AnnouncementId)).catch(() => null);
+      const announcement = clean(job.AnnouncementId)
+        ? await getDocument(env, 'notificationAnnouncements', clean(job.AnnouncementId)).catch(() => null) : null;
       if (announcement) {
         await saveAnnouncement(env, {
           ...announcement,
