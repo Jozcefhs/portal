@@ -1030,34 +1030,45 @@
         {
           "id": "notification-failures",
           "title": "Fix notification scheduler failures",
-          "status": "in_progress",
+          "status": "deployed_with_followups",
           "acceptance": "Meaningful failure evidence, bounded retries and no audit flooding.",
           "evidence": [
             "docs/notification-system.md",
             "docs/notification-operational-audit-2026-11-10.json",
             "tests/notification-push-storage-identity.test.mjs",
-            "docs/release-3.1.64-2026-11-10.md"
+            "docs/release-3.1.64-2026-11-10.md",
+            "docs/notification-scheduler-runtime-2026-11-10.json"
           ],
           "statusHistory": [
             {
               "date": "2026-11-10",
               "status": "historical_delivery_to_verify",
               "note": "Previous historical placeholder retained; current operational evidence now records deployed repairs and unresolved scheduler rollout."
+            },
+            {
+              "date": "2026-11-10",
+              "status": "in_progress",
+              "note": "Earlier CI permission failure is preserved in the operational audit; dedicated-token deployment and natural runtime checks now succeeded."
             }
           ],
-          "verification": "Legacy encoded push-job storage identity repair deployed in shared d1581140/v556 and Hospital 8648c11d/v531. Synthetic retries preserve records and do not repeat delivery. Fee-reminder index READY; planning-only query returned HTTP 200 without reading invoice documents. These facts do not establish healthy scheduled delivery.",
+          "verification": "School and Faith dedicated five-minute Workers deployed successfully from 100a5efa after owner-authorized account-restricted token setup. Both natural cron runs verified; the legacy queue resumed. All 34 targeted scheduler, deployment and retry checks passed. Detailed runtime evidence distinguishes expired device registrations from scheduler faults.",
           "followUps": [
             {
               "id": "notification-worker-secrets-deployment",
-              "status": "in_progress",
-              "runUrl": "https://github.com/Jozcefhs/portal/actions/runs/42818885478",
-              "finding": "Confirmed CI credential authorization failure on the Worker secrets operation, distinct from supported missing-service bootstrap. Scheduler Workers are absent; GitHub scheduled fallback remains active with observed starts hours apart. No account permissions or stored secrets changed.",
-              "acceptance": "Provide a properly authorized scheduler deployment credential, verify successful Worker deployment and runtime identity, then observe normal scheduled operation. Keep this issue open until those checks succeed."
+              "status": "deployed_verified",
+              "runUrl": "https://github.com/Jozcefhs/portal/actions/runs/42820615725",
+              "finding": "Dedicated account-restricted Workers Scripts Edit token configured; School and Faith deployment jobs succeeded. Correct tenant bindings and five-minute triggers verified through read-only Cloudflare inspection. Existing credentials preserved."
             },
             {
               "id": "notification-post-repair-runtime-proof",
+              "status": "deployed_with_followups",
+              "finding": "Natural School and Faith cron runs succeeded. The legacy queue reached 92 of 92 recipients with seven provider-accepted device deliveries and one expired registration retained in history. The separate daily reminder check is tracked below.",
+              "evidence": "docs/notification-scheduler-runtime-2026-11-10.json"
+            },
+            {
+              "id": "notification-daily-reminder-runtime-proof",
               "status": "in_progress",
-              "acceptance": "Observe naturally occurring announcement queue progress and fee-reminder operation after deployment. Do not send test messages to real recipients or assume an index plan proves delivery."
+              "acceptance": "Observe the next natural daily fee-reminder run after the READY index repair. Five-minute announcement/attendance runs do not prove the separate daily reminder stage."
             }
           ]
         },

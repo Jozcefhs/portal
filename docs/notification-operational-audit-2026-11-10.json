@@ -1,6 +1,6 @@
 {
-  "checkedAtUtc": "2026-11-10T12:39:00Z",
-  "auditMode": "Read-only workflow logs, database index metadata, planning-only query and bounded queue metadata. No live scheduler dispatch, notification delivery or business writes.",
+  "checkedAtUtc": "2026-11-10T13:32:08.108Z",
+  "auditMode": "Initial read-only diagnosis followed by owner-authorized dedicated-token configuration and scheduler deployment. Runtime verification observed natural cron events and bounded queue metadata; no manual notification dispatch.",
   "latestRuns": {
     "feeReminders": {
       "url": "https://github.com/Jozcefhs/portal/actions/runs/42629247152",
@@ -60,40 +60,67 @@
         "hospitalCommit": "8648c11dab023da14fe8faff942333d5a15b7b52",
         "sharedTestsPassed": 5040,
         "hospitalTestsPassed": 4818
+      },
+      "postRepairRuntime": {
+        "evidence": "notification-scheduler-runtime-2026-11-10.json",
+        "finding": "The previously stuck School job resumed through its original saved cursor. One expired browser registration was reported by the provider; later natural runs completed without re-sending the already-delivered devices.",
+        "messageContentRead": false,
+        "manualDispatches": 0
       }
     },
     "workerSchedulerDeployment": {
-      "url": "https://github.com/Jozcefhs/portal/actions/runs/42818885478",
-      "createdAtUtc": "2026-10-16T15:51:59Z",
-      "conclusion": "failure",
+      "url": "https://github.com/Jozcefhs/portal/actions/runs/42820615725",
+      "sourceCommit": "100a5efae831986f0cb5bad6e197a2c65e8e8688",
+      "conclusion": "success",
+      "checkedAtUtc": "2026-11-10T13:32:08.108Z",
       "affectedWorkspaces": [
         "school",
         "faith"
       ],
-      "reason": "The GitHub deployment credential was denied access to the Cloudflare Worker secrets API in both environments.",
-      "requiredPermission": "Account / Workers Scripts / Edit",
-      "limitation": "The dedicated Workers are absent. Existing GitHub scheduled calls remain active, but observed starts were hours apart. A credential with the required account permission, successful deployment and subsequent runtime evidence are still needed.",
+      "workersPresent": true,
+      "reason": "A dedicated account-restricted Workers Scripts Edit token is now configured in both GitHub environments; both deployment jobs succeeded.",
       "previousAttempt": {
-        "url": "https://github.com/Jozcefhs/portal/actions/runs/38927378029",
+        "url": "https://github.com/Jozcefhs/portal/actions/runs/42818885478",
         "createdAtUtc": "2026-10-16T15:51:59Z",
-        "conclusion": "failure"
+        "conclusion": "failure",
+        "affectedWorkspaces": [
+          "school",
+          "faith"
+        ],
+        "reason": "The GitHub deployment credential was denied access to the Cloudflare Worker secrets API in both environments.",
+        "requiredPermission": "Account / Workers Scripts / Edit",
+        "limitation": "The dedicated Workers are absent. Existing GitHub scheduled calls remain active, but observed starts were hours apart. A credential with the required account permission, successful deployment and subsequent runtime evidence are still needed.",
+        "previousAttempt": {
+          "url": "https://github.com/Jozcefhs/portal/actions/runs/38927378029",
+          "createdAtUtc": "2026-10-16T15:51:59Z",
+          "conclusion": "failure"
+        },
+        "checkedAtUtc": "2026-11-10T12:59:30.093Z",
+        "workersPresent": false,
+        "bootstrapDiagnosis": "Existing authorized OAuth returned normal missing-service code 10090 and missing-secrets-resource code 10007; Wrangler 4.125 handles both. The CI denial is not evidence of a first-deployment bug.",
+        "credentialOptions": [
+          "Environment NOTIFICATION_WORKER_API_TOKEN restricted to the target account with Workers Scripts Edit",
+          "Existing CLOUDFLARE_API_TOKEN with Workers Scripts Edit for the target account"
+        ],
+        "githubEnvironments": [
+          "production-destinychristianacademy",
+          "production-digc-suite"
+        ],
+        "sideEffects": {
+          "workflowDeploymentRetries": 1,
+          "schedulerEndpointRequests": 0,
+          "secretChanges": 0,
+          "permissionChanges": 0,
+          "notificationsManuallySent": 0
+        }
       },
-      "checkedAtUtc": "2026-11-10T12:59:30.093Z",
-      "workersPresent": false,
-      "bootstrapDiagnosis": "Existing authorized OAuth returned normal missing-service code 10090 and missing-secrets-resource code 10007; Wrangler 4.125 handles both. The CI denial is not evidence of a first-deployment bug.",
-      "credentialOptions": [
-        "Environment NOTIFICATION_WORKER_API_TOKEN restricted to the target account with Workers Scripts Edit",
-        "Existing CLOUDFLARE_API_TOKEN with Workers Scripts Edit for the target account"
-      ],
-      "githubEnvironments": [
-        "production-destinychristianacademy",
-        "production-digc-suite"
-      ],
+      "runtimeEvidence": "notification-scheduler-runtime-2026-11-10.json",
+      "naturalRuntimeVerified": true,
+      "existingDeploymentAndSchedulerSecretsUnchanged": true,
       "sideEffects": {
-        "workflowDeploymentRetries": 1,
-        "schedulerEndpointRequests": 0,
-        "secretChanges": 0,
-        "permissionChanges": 0,
+        "newDedicatedTokens": 1,
+        "newEnvironmentSecrets": 2,
+        "existingTokensModified": 0,
         "notificationsManuallySent": 0
       }
     }

@@ -1,0 +1,329 @@
+{
+  "checkedAtUtc": "2026-11-10T13:32:08.108Z",
+  "method": "Observe natural Cloudflare cron events; no manual notification dispatch.",
+  "deploymentRunUrl": "https://github.com/Jozcefhs/portal/actions/runs/42820615725",
+  "sourceCommit": "100a5efae831986f0cb5bad6e197a2c65e8e8688",
+  "accountScope": "Existing School and Faith Cloudflare account only",
+  "credentialName": "Dynamax notification scheduler",
+  "permissions": [
+    "Account / Workers Scripts / Edit"
+  ],
+  "environmentSecret": "NOTIFICATION_WORKER_API_TOKEN",
+  "environments": [
+    "production-destinychristianacademy",
+    "production-digc-suite"
+  ],
+  "existingSecretsUnchanged": true,
+  "workers": [
+    {
+      "name": "dynamax-notify-destinychristianacademy",
+      "workspaceId": "school",
+      "cron": [
+        "*/5 * * * *"
+      ],
+      "identityVerified": true,
+      "schedulerSecretBindingPresent": true,
+      "deployments": [
+        {
+          "id": "6d86aa82-24e6-4b63-8135-8861654e188d",
+          "createdOn": "2026-11-10T13:20:48.214145Z",
+          "source": "wrangler",
+          "versions": [
+            {
+              "versionId": "d056115b-2217-47c0-b0d9-505a73789d04",
+              "percentage": 100
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "dynamax-notify-digc-suite",
+      "workspaceId": "faith",
+      "cron": [
+        "*/5 * * * *"
+      ],
+      "identityVerified": true,
+      "schedulerSecretBindingPresent": true,
+      "deployments": [
+        {
+          "id": "e5bdb316-8e3b-4e9a-80f9-5c57e32f61fe",
+          "createdOn": "2026-11-10T13:20:57.946322Z",
+          "source": "wrangler",
+          "versions": [
+            {
+              "versionId": "6d51dc9a-701e-43bf-8775-b42f539cb2f2",
+              "percentage": 100
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "events": [
+    {
+      "worker": "dynamax-notify-destinychristianacademy",
+      "versionId": "d056115b-2217-47c0-b0d9-505a73789d04",
+      "cron": "*/5 * * * *",
+      "scheduledAtUtc": "2026-11-10T13:25:33.154Z",
+      "outcome": "exception",
+      "wallTimeMs": 65408,
+      "exceptions": [
+        "One or more notification deliveries failed. Inspect the stage results; completed deliveries are retained."
+      ],
+      "results": [
+        {
+          "event": "notification-scheduler.failed",
+          "cron": "*/5 * * * *",
+          "scheduledTime": 1794317133154,
+          "error": "One or more notification deliveries failed. Inspect the stage results; completed deliveries are retained."
+        }
+      ]
+    },
+    {
+      "worker": "dynamax-notify-destinychristianacademy",
+      "versionId": "d056115b-2217-47c0-b0d9-505a73789d04",
+      "cron": "*/5 * * * *",
+      "scheduledAtUtc": "2026-11-10T13:30:33.154Z",
+      "outcome": "ok",
+      "wallTimeMs": 24943,
+      "exceptions": [],
+      "results": [
+        {
+          "event": "notification-scheduler.completed",
+          "cron": "*/5 * * * *",
+          "scheduledTime": 1794317433154,
+          "ok": true,
+          "workspaceId": "school",
+          "edition": "school",
+          "announcementCalls": 1,
+          "attendanceCalls": 1,
+          "announcements": {
+            "processed": 0,
+            "sent": 0,
+            "failed": 0,
+            "school": {
+              "processed": 0,
+              "sent": 0,
+              "failed": 0
+            },
+            "church": {
+              "skipped": true
+            }
+          },
+          "announcementPush": {
+            "inspected": 1,
+            "delivered": 0,
+            "failed": 0,
+            "remaining": 0
+          },
+          "attendancePresence": {
+            "ok": true,
+            "processedAt": "2026-11-10T13:30:54.713Z",
+            "inspected": 0,
+            "eligible": 0,
+            "created": 0,
+            "duplicates": 0,
+            "delivered": 0,
+            "failed": 0
+          },
+          "pushRetries": {
+            "inspected": 0,
+            "retried": 0,
+            "delivered": 0
+          }
+        }
+      ]
+    },
+    {
+      "worker": "dynamax-notify-digc-suite",
+      "versionId": "6d51dc9a-701e-43bf-8775-b42f539cb2f2",
+      "cron": "*/5 * * * *",
+      "scheduledAtUtc": "2026-11-10T13:25:19.080Z",
+      "outcome": "ok",
+      "wallTimeMs": 7460,
+      "exceptions": [],
+      "results": [
+        {
+          "event": "notification-scheduler.completed",
+          "cron": "*/5 * * * *",
+          "scheduledTime": 1794317119080,
+          "ok": true,
+          "workspaceId": "faith",
+          "edition": "faith",
+          "announcementCalls": 1,
+          "attendanceCalls": 0,
+          "announcements": {
+            "processed": 0,
+            "sent": 0,
+            "failed": 0,
+            "school": {
+              "skipped": true
+            },
+            "church": {
+              "processed": 0,
+              "sent": 0,
+              "failed": 0
+            }
+          },
+          "announcementPush": {
+            "inspected": 0,
+            "delivered": 0,
+            "failed": 0,
+            "remaining": 0
+          },
+          "attendancePresence": {
+            "skipped": true
+          },
+          "pushRetries": {
+            "skipped": true
+          }
+        }
+      ]
+    },
+    {
+      "worker": "dynamax-notify-digc-suite",
+      "versionId": "6d51dc9a-701e-43bf-8775-b42f539cb2f2",
+      "cron": "*/5 * * * *",
+      "scheduledAtUtc": "2026-11-10T13:30:19.080Z",
+      "outcome": "ok",
+      "wallTimeMs": 4117,
+      "exceptions": [],
+      "results": [
+        {
+          "event": "notification-scheduler.completed",
+          "cron": "*/5 * * * *",
+          "scheduledTime": 1794317419080,
+          "ok": true,
+          "workspaceId": "faith",
+          "edition": "faith",
+          "announcementCalls": 1,
+          "attendanceCalls": 0,
+          "announcements": {
+            "processed": 0,
+            "sent": 0,
+            "failed": 0,
+            "school": {
+              "skipped": true
+            },
+            "church": {
+              "processed": 0,
+              "sent": 0,
+              "failed": 0
+            }
+          },
+          "announcementPush": {
+            "inspected": 0,
+            "delivered": 0,
+            "failed": 0,
+            "remaining": 0
+          },
+          "attendancePresence": {
+            "skipped": true
+          },
+          "pushRetries": {
+            "skipped": true
+          }
+        }
+      ]
+    }
+  ],
+  "queueMetadata": {
+    "checkedAt": "2026-11-10T13:31:58.250Z",
+    "queries": [
+      {
+        "collection": "notificationAnnouncementPushJobs",
+        "status": 200,
+        "limit": 30,
+        "errors": [],
+        "rows": [
+          {
+            "Status": "Completed with errors",
+            "LastError": "",
+            "AttemptCount": "12",
+            "TargetCount": "92",
+            "FailureCount": "0",
+            "Delivered": "7",
+            "Failed": "1",
+            "CompletedAt": "2026-11-10T13:30:42.467Z",
+            "UpdatedAt": "2026-11-10T13:30:42.467Z",
+            "Offset": "92"
+          }
+        ]
+      },
+      {
+        "collection": "notificationDeliveries",
+        "status": 200,
+        "limit": 30,
+        "errors": [],
+        "rows": [
+          {
+            "Status": "Invalid subscription",
+            "LastError": "NotRegistered",
+            "AttemptCount": "1",
+            "UpdatedAt": "2026-11-10T13:26:39.212Z"
+          },
+          {
+            "Status": "Delivered",
+            "AttemptCount": "1",
+            "UpdatedAt": "2026-11-10T13:26:34.614Z"
+          },
+          {
+            "Status": "Delivered",
+            "AttemptCount": "1",
+            "UpdatedAt": "2026-11-10T13:26:24.283Z"
+          },
+          {
+            "Status": "Delivered",
+            "AttemptCount": "1",
+            "UpdatedAt": "2026-11-10T13:26:17.193Z"
+          },
+          {
+            "Status": "Delivered",
+            "AttemptCount": "1",
+            "UpdatedAt": "2026-11-10T13:26:11.743Z"
+          },
+          {
+            "Status": "Delivered",
+            "AttemptCount": "1",
+            "UpdatedAt": "2026-11-10T13:26:00.919Z"
+          },
+          {
+            "Status": "Delivered",
+            "AttemptCount": "1",
+            "UpdatedAt": "2026-11-10T13:25:51.393Z"
+          },
+          {
+            "Status": "Delivered",
+            "AttemptCount": "1",
+            "UpdatedAt": "2026-11-10T13:25:49.291Z"
+          },
+          {
+            "Status": "Delivered",
+            "AttemptCount": "1",
+            "UpdatedAt": "2026-11-10T13:21:03.788Z"
+          }
+        ]
+      }
+    ],
+    "writes": 0,
+    "notificationDispatches": 0,
+    "messageContentRead": false,
+    "invalidRegistrationChecks": [
+      {
+        "status": 404,
+        "removed": true
+      }
+    ]
+  },
+  "regressionTests": {
+    "total": 34,
+    "passed": 34,
+    "failed": 0
+  },
+  "limitations": [
+    "Provider acceptance does not prove that a person read a notification.",
+    "Expired browser registrations cannot receive push; the affected device must enable notifications again.",
+    "The separate daily fee-reminder run has not yet been observed after its index repair."
+  ]
+}
