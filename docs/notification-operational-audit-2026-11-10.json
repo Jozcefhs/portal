@@ -16,7 +16,11 @@
         "collection": "invoices",
         "indexId": "CICAgNi47oMK",
         "state": "READY",
-        "fields": ["ReminderEligible ASC", "NextReminderDate ASC", "__name__ ASC"],
+        "fields": [
+          "ReminderEligible ASC",
+          "NextReminderDate ASC",
+          "__name__ ASC"
+        ],
         "query": "ReminderEligible == true AND NextReminderDate <= 2026-11-10, order NextReminderDate ASC, limit 250",
         "explainAnalyze": false,
         "explainHttpStatus": 200,
@@ -43,27 +47,72 @@
       "schoolRepeatedCalls": 15,
       "schoolDelivered": 0,
       "finding": "One pending homework push job had a literal URL-encoded Firestore document ID while its business PushJobId contained a colon. The claim used the business ID with the queried record's updateTime, so it repeatedly failed optimistic concurrency against a different document.",
-      "boundedMetadataRead": { "pendingDocuments": 1, "failedDocuments": 0, "processingDocuments": 0, "messageContentRead": false },
+      "boundedMetadataRead": {
+        "pendingDocuments": 1,
+        "failedDocuments": 0,
+        "processingDocuments": 0,
+        "messageContentRead": false
+      },
       "repair": "Use the actual queried document ID for the claim and subsequent updates. For a proven legacy encoded job, resolve its notification with at most two exact point reads. Validate notification identity and workspace before delivery; retain all saved IDs, records and cursors.",
-      "verification": "Synthetic tests cover legacy/current storage, retry without repeat delivery, missing/foreign records, claim conflicts and transient database errors. No live message was sent by this audit."
+      "verification": "Synthetic tests cover legacy/current storage, retry without repeat delivery, missing/foreign records, claim conflicts and transient database errors. No live message was sent by this audit.",
+      "deployedRepair": {
+        "sharedCommit": "d1581140e8448d9cccd6628ae766aad34216fb1a",
+        "hospitalCommit": "8648c11dab023da14fe8faff942333d5a15b7b52",
+        "sharedTestsPassed": 5040,
+        "hospitalTestsPassed": 4818
+      }
     },
     "workerSchedulerDeployment": {
-      "url": "https://github.com/Jozcefhs/portal/actions/runs/38927378029",
+      "url": "https://github.com/Jozcefhs/portal/actions/runs/42818885478",
       "createdAtUtc": "2026-10-16T15:51:59Z",
       "conclusion": "failure",
-      "affectedWorkspaces": ["school", "faith"],
-      "reason": "Cloudflare Worker secret deployment returned No access to the specified resource.",
+      "affectedWorkspaces": [
+        "school",
+        "faith"
+      ],
+      "reason": "The GitHub deployment credential was denied access to the Cloudflare Worker secrets API in both environments.",
       "requiredPermission": "Account / Workers Scripts / Edit",
-      "limitation": "No newer successful deployment was found. Worker Cron Trigger operation is unconfirmed. Existing GitHub scheduled calls succeeded but recent actual starts were hours apart despite five-minute cron expressions."
+      "limitation": "The dedicated Workers are absent. Existing GitHub scheduled calls remain active, but observed starts were hours apart. A credential with the required account permission, successful deployment and subsequent runtime evidence are still needed.",
+      "previousAttempt": {
+        "url": "https://github.com/Jozcefhs/portal/actions/runs/38927378029",
+        "createdAtUtc": "2026-10-16T15:51:59Z",
+        "conclusion": "failure"
+      },
+      "checkedAtUtc": "2026-11-10T12:59:30.093Z",
+      "workersPresent": false,
+      "bootstrapDiagnosis": "Existing authorized OAuth returned normal missing-service code 10090 and missing-secrets-resource code 10007; Wrangler 4.125 handles both. The CI denial is not evidence of a first-deployment bug.",
+      "credentialOptions": [
+        "Environment NOTIFICATION_WORKER_API_TOKEN restricted to the target account with Workers Scripts Edit",
+        "Existing CLOUDFLARE_API_TOKEN with Workers Scripts Edit for the target account"
+      ],
+      "githubEnvironments": [
+        "production-destinychristianacademy",
+        "production-digc-suite"
+      ],
+      "sideEffects": {
+        "workflowDeploymentRetries": 1,
+        "schedulerEndpointRequests": 0,
+        "secretChanges": 0,
+        "permissionChanges": 0,
+        "notificationsManuallySent": 0
+      }
     }
   },
   "historicalFirestoreComparison": {
     "sourceDocument": "firestore-hourly-review-2026-10-25.md",
     "sourceCsv": "firestore-hourly-reads-2026-10-23-to-25.csv",
     "csvTotalsIndependentlyRecomputed": true,
-    "schoolReads": { "2026-10-23": 46913416, "2026-10-24": 11394896, "2026-10-25_00_02_WAT_only": 15368 },
+    "schoolReads": {
+      "2026-10-23": 46913416,
+      "2026-10-24": 11394896,
+      "2026-10-25_00_02_WAT_only": 15368
+    },
     "schoolFullDayReductionPercent": 75.71,
-    "faithReads": { "2026-10-23": 207, "2026-10-24": 2904, "2026-10-25_00_02_WAT_only": 1 },
+    "faithReads": {
+      "2026-10-23": 207,
+      "2026-10-24": 2904,
+      "2026-10-25_00_02_WAT_only": 1
+    },
     "limitations": [
       "25 October includes only the first two complete hours, not a full day.",
       "Activity was already lower before the deployments, so the full decrease cannot be attributed solely to repairs.",

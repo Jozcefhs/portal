@@ -78,17 +78,47 @@
   ],
   "recentDelivery": {
     "date": "2026-11-10",
-    "webCommit": "f4d8791c6e05ec8f49a057ea9e65aab47b09723f",
+    "webCommit": "d1581140e8448d9cccd6628ae766aad34216fb1a",
     "implementationCommit": "e742f01e167d42dd62f4b1a386272e42b42a1008",
-    "webRelease": "dynamax-v555-student-status-hr-employment",
+    "webRelease": "dynamax-v556-notification-release",
     "url": "https://destinychristianacademy.pages.dev",
-    "verification": "School and Faith 24 served interface assets each matched tested source; nine branch-email setup assets across School, Faith and central platform matched. Unsigned protected APIs denied access. All 11 tenant deployments and their required index application steps succeeded. 5030 shared web tests, 98 focused HR checks, 352 email/sender checks and 1175 desktop tests passed.",
+    "verification": "Final shared repository suite: 5040 passed. School and Faith each served 24 interface assets matching source. All 11 managed tenant deployment jobs completed successfully in run 42818512261. Hospital final suite: 4818 passed, followed by 14 release/cache/download checks; 25 live assets and isolated identity verified. Earlier 98 shared HR, 99 Hospital HR, 352 email/sender checks and 1175 desktop tests remain recorded evidence. No live notification was dispatched for these checks.",
     "desktopSourceCommit": "8cba0d5",
     "desktopMetadataCommit": "3347178",
     "desktopInstaller": "Published v3.1.64; packaged application/TLS/Android integrity checks passed.",
     "installerUrl": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.64.exe",
     "installerSha256": "472b380dd7fe14c76dcb2d88f8671ad430c213fd3827644509eac481fd674d8e",
-    "installerBytes": 42784976
+    "installerBytes": 42784976,
+    "tenantRollout": {
+      "runUrl": "https://github.com/Jozcefhs/portal/actions/runs/42818512261",
+      "successfulJobs": 11,
+      "status": "success"
+    },
+    "hospital": {
+      "sourceCommit": "8648c11dab023da14fe8faff942333d5a15b7b52",
+      "release": "dynamax-v531-hospital-notification-release",
+      "url": "https://dynamax-hospital-review.pages.dev",
+      "deploymentId": "05cdec93-74a4-44ce-a05e-f9649c7e3739",
+      "deploymentUrl": "https://05cdec93.dynamax-hospital-review.pages.dev",
+      "repositoryTests": 4818,
+      "finalReleaseChecks": 14,
+      "liveAssetsVerified": 25,
+      "verification": "Served assets match committed source. Hospital workspace, Firebase project, edition and private-document binding verified as isolated; root redirects to the staff portal. Published v3.1.64 manifest verified. No live notification dispatch, business writes or employee emails."
+    },
+    "publicInstallerVerification": {
+      "downloaded": true,
+      "version": "3.1.64",
+      "bytes": 42784976,
+      "sha256": "472b380dd7fe14c76dcb2d88f8671ad430c213fd3827644509eac481fd674d8e",
+      "matchesPublishedArtifact": true
+    },
+    "evidence": [
+      "docs/release-3.1.64-2026-11-10.md",
+      "docs/notification-operational-audit-2026-11-10.json"
+    ],
+    "openOperationalFollowups": [
+      "Notification Worker scheduler deployment run 42818885478 failed because the CI credential lacks authorization for the Worker secrets operation. Read-only diagnosis confirms scheduler Workers are absent; existing GitHub fallback remains active but observed starts were hours apart. Authorized deployment and naturally occurring runtime progress remain unverified; no account permissions or stored secrets were changed."
+    ]
   },
   "groups": [
     {
@@ -102,7 +132,8 @@
           "evidence": [
             "docs/fee-multiple-classes-2026-11-10.md"
           ],
-          "verification": "The shared single and batch fee-save fix is deployed school-wide in v554 (101ca616). Regression tests cover Main Branch, Area 1 Primary and The Lord's Garden Primary, all three terms and exact class selections with cross-branch exclusion. Read-only audit checked all 94 fee rules: Main86, Area1 3, LordsGarden5. Main CSV selections are intact and Area1 three corrected rules verified. Owner will delete the three Lord's Garden Grade4-to-Grade6 rules; those records were left untouched. No other live fee, invoice or payment was changed."
+          "verification": "The shared single and batch fee-save fix is deployed school-wide in v554 (101ca616). Regression tests cover Main Branch, Area 1 Primary and The Lord's Garden Primary, all three terms and exact class selections with cross-branch exclusion. Read-only audit checked all 94 fee rules: Main86, Area1 3, LordsGarden5. Main CSV selections are intact and Area1 three corrected rules verified. Owner will delete the three Lord's Garden Grade4-to-Grade6 rules; those records were left untouched. No other live fee, invoice or payment was changed.",
+          "latestReleaseEvidence": "docs/release-3.1.64-2026-11-10.md"
         },
         {
           "id": "hr-salary-employment-letters",
@@ -129,7 +160,8 @@
             "installerUrl": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.64.exe",
             "installerSha256": "472b380dd7fe14c76dcb2d88f8671ad430c213fd3827644509eac481fd674d8e",
             "installerBytes": 42784976
-          }
+          },
+          "latestReleaseEvidence": "docs/release-3.1.64-2026-11-10.md"
         },
         {
           "id": "linked-student-lifecycle-status",
@@ -154,7 +186,8 @@
             "installerUrl": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.64.exe",
             "installerSha256": "472b380dd7fe14c76dcb2d88f8671ad430c213fd3827644509eac481fd674d8e",
             "installerBytes": 42784976
-          }
+          },
+          "latestReleaseEvidence": "docs/release-3.1.64-2026-11-10.md"
         },
         {
           "id": "area1-tuition-class-list",
@@ -170,7 +203,8 @@
           ],
           "diagnosis": "Live targeted read confirmed all three rules saved ClassName Grade 3. Desktop sends a comma-separated class list; backend scalar canonicalization reduces it to the first grade.",
           "desktopDelivery": "Included in published v3.1.64, SHA-256 472b380dd7fe14c76dcb2d88f8671ad430c213fd3827644509eac481fd674d8e; desktop1175tests and packaged self-test passed.",
-          "verification": "Deployed v554 at commit 101ca616; 4939 web tests and 50 desktop tests passed. Live three Area 1 tuition fee rules corrected to Grades 3,4,5,6, original amounts/IDs/other fields preserved. No invoice/payment writes. Repeat repair zero changes."
+          "verification": "Deployed v554 at commit 101ca616; 4939 web tests and 50 desktop tests passed. Live three Area 1 tuition fee rules corrected to Grades 3,4,5,6, original amounts/IDs/other fields preserved. No invoice/payment writes. Repeat repair zero changes.",
+          "latestReleaseEvidence": "docs/release-3.1.64-2026-11-10.md"
         },
         {
           "id": "shared-branch-class-catalogue",
@@ -194,7 +228,8 @@
             "webRelease": "dynamax-v553-shared-branch-class-catalogue",
             "sourceCommit": "37ab098ac943c9ea5bdf4101531a10314c689b42",
             "deploymentUrl": "https://0ce5f223.destinychristianacademy.pages.dev"
-          }
+          },
+          "latestReleaseEvidence": "docs/release-3.1.64-2026-11-10.md"
         },
         {
           "id": "advance-fees",
@@ -212,7 +247,8 @@
           "delivery": {
             "webRelease": "dynamax-v552-advance-credit-focused-loading-vendor-sales",
             "sourceCommit": "0c23a397aa5fb36f254da3c8cbe0b18094c31f87"
-          }
+          },
+          "latestReleaseEvidence": "docs/release-3.1.64-2026-11-10.md"
         },
         {
           "id": "load-gates",
@@ -256,7 +292,8 @@
                 "installerBytes": 42784976
               }
             }
-          ]
+          ],
+          "latestReleaseEvidence": "docs/release-3.1.64-2026-11-10.md"
         },
         {
           "id": "vendor-student-type",
@@ -272,7 +309,8 @@
             "webRelease": "dynamax-v552-advance-credit-focused-loading-vendor-sales",
             "sourceCommit": "0c23a397aa5fb36f254da3c8cbe0b18094c31f87"
           },
-          "desktopDelivery": "Included in published v3.1.64, SHA-256 472b380dd7fe14c76dcb2d88f8671ad430c213fd3827644509eac481fd674d8e; desktop1175tests and packaged self-test passed."
+          "desktopDelivery": "Included in published v3.1.64, SHA-256 472b380dd7fe14c76dcb2d88f8671ad430c213fd3827644509eac481fd674d8e; desktop1175tests and packaged self-test passed.",
+          "latestReleaseEvidence": "docs/release-3.1.64-2026-11-10.md"
         },
         {
           "id": "vendor-2000-sales",
@@ -287,7 +325,8 @@
             "webRelease": "dynamax-v552-advance-credit-focused-loading-vendor-sales",
             "sourceCommit": "0c23a397aa5fb36f254da3c8cbe0b18094c31f87"
           },
-          "desktopDelivery": "Included in published v3.1.64, SHA-256 472b380dd7fe14c76dcb2d88f8671ad430c213fd3827644509eac481fd674d8e; desktop1175tests and packaged self-test passed."
+          "desktopDelivery": "Included in published v3.1.64, SHA-256 472b380dd7fe14c76dcb2d88f8671ad430c213fd3827644509eac481fd674d8e; desktop1175tests and packaged self-test passed.",
+          "latestReleaseEvidence": "docs/release-3.1.64-2026-11-10.md"
         },
         {
           "id": "sales-read-budget",
@@ -317,7 +356,8 @@
           "delivery": {
             "webRelease": "dynamax-v552-advance-credit-focused-loading-vendor-sales",
             "sourceCommit": "0c23a397aa5fb36f254da3c8cbe0b18094c31f87"
-          }
+          },
+          "latestReleaseEvidence": "docs/release-3.1.64-2026-11-10.md"
         },
         {
           "id": "request-memory",
@@ -361,7 +401,8 @@
             "installerUrl": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.64.exe",
             "installerSha256": "472b380dd7fe14c76dcb2d88f8671ad430c213fd3827644509eac481fd674d8e",
             "installerBytes": 42784976
-          }
+          },
+          "latestReleaseEvidence": "docs/release-3.1.64-2026-11-10.md"
         }
       ]
     },
@@ -989,10 +1030,35 @@
         {
           "id": "notification-failures",
           "title": "Fix notification scheduler failures",
-          "status": "historical_delivery_to_verify",
+          "status": "in_progress",
           "acceptance": "Meaningful failure evidence, bounded retries and no audit flooding.",
           "evidence": [
-            "docs/notification-system.md"
+            "docs/notification-system.md",
+            "docs/notification-operational-audit-2026-11-10.json",
+            "tests/notification-push-storage-identity.test.mjs",
+            "docs/release-3.1.64-2026-11-10.md"
+          ],
+          "statusHistory": [
+            {
+              "date": "2026-11-10",
+              "status": "historical_delivery_to_verify",
+              "note": "Previous historical placeholder retained; current operational evidence now records deployed repairs and unresolved scheduler rollout."
+            }
+          ],
+          "verification": "Legacy encoded push-job storage identity repair deployed in shared d1581140/v556 and Hospital 8648c11d/v531. Synthetic retries preserve records and do not repeat delivery. Fee-reminder index READY; planning-only query returned HTTP 200 without reading invoice documents. These facts do not establish healthy scheduled delivery.",
+          "followUps": [
+            {
+              "id": "notification-worker-secrets-deployment",
+              "status": "in_progress",
+              "runUrl": "https://github.com/Jozcefhs/portal/actions/runs/42818885478",
+              "finding": "Confirmed CI credential authorization failure on the Worker secrets operation, distinct from supported missing-service bootstrap. Scheduler Workers are absent; GitHub scheduled fallback remains active with observed starts hours apart. No account permissions or stored secrets changed.",
+              "acceptance": "Provide a properly authorized scheduler deployment credential, verify successful Worker deployment and runtime identity, then observe normal scheduled operation. Keep this issue open until those checks succeed."
+            },
+            {
+              "id": "notification-post-repair-runtime-proof",
+              "status": "in_progress",
+              "acceptance": "Observe naturally occurring announcement queue progress and fee-reminder operation after deployment. Do not send test messages to real recipients or assume an index plan proves delivery."
+            }
           ]
         },
         {
@@ -1038,7 +1104,7 @@
           "evidence": [
             "docs/firestore-index-deployment.md"
           ],
-          "verification": "GitHub run42815014391: all11 tenant deployment jobs succeeded and each Apply required Firestore indexes step succeeded, including002/003/004/006/007/009. School/Faith and isolated Hospital vendor request indexes verified READY; Hospital period indexes READY and snapshot Rows unindexed.",
+          "verification": "Final rollout 42818512261: all 11 managed tenant deployment jobs completed successfully. Prior rollout 42815014391 also verified each required index application step, including 002/003/004/006/007/009. School/Faith request indexes and all six Hospital request/period indexes READY; Hospital snapshot Rows unindexed. This tenant rollout is distinct from the still-failing notification Worker scheduler deployment.",
           "delivery": {
             "date": "2026-11-10",
             "webCommit": "f4d8791c6e05ec8f49a057ea9e65aab47b09723f",
@@ -1052,6 +1118,15 @@
             "installerUrl": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.64.exe",
             "installerSha256": "472b380dd7fe14c76dcb2d88f8671ad430c213fd3827644509eac481fd674d8e",
             "installerBytes": 42784976
+          },
+          "verificationHistory": [
+            "GitHub run42815014391: all11 tenant deployment jobs succeeded and each Apply required Firestore indexes step succeeded, including002/003/004/006/007/009. School/Faith and isolated Hospital vendor request indexes verified READY; Hospital period indexes READY and snapshot Rows unindexed."
+          ],
+          "latestDelivery": {
+            "webCommit": "d1581140e8448d9cccd6628ae766aad34216fb1a",
+            "webRelease": "dynamax-v556-notification-release",
+            "runUrl": "https://github.com/Jozcefhs/portal/actions/runs/42818512261",
+            "evidence": "docs/release-3.1.64-2026-11-10.md"
           }
         },
         {
@@ -1093,7 +1168,19 @@
           "acceptance": "Hospital isolated from live school data; provide verified entry URL and role access.",
           "evidence": [
             "../portal/docs/hospital-owner-demo.md"
-          ]
+          ],
+          "latestVerifiedDelivery": {
+            "sourceCommit": "8648c11dab023da14fe8faff942333d5a15b7b52",
+            "release": "dynamax-v531-hospital-notification-release",
+            "url": "https://dynamax-hospital-review.pages.dev",
+            "deploymentId": "05cdec93-74a4-44ce-a05e-f9649c7e3739",
+            "deploymentUrl": "https://05cdec93.dynamax-hospital-review.pages.dev",
+            "repositoryTests": 4818,
+            "finalReleaseChecks": 14,
+            "liveAssetsVerified": 25,
+            "verification": "Served assets match committed source. Hospital workspace, Firebase project, edition and private-document binding verified as isolated; root redirects to the staff portal. Published v3.1.64 manifest verified. No live notification dispatch, business writes or employee emails."
+          },
+          "verification": "Owner-demo URL, 25 served assets, release/installer manifests and Hospital isolation verified on 10 November. Broader Hospital roadmap remains deferred; this evidence does not claim completion of future clinical features."
         },
         {
           "id": "hospital-nfc",
@@ -1174,14 +1261,17 @@
   ],
   "currentPassValidation": {
     "date": "2026-11-10",
-    "repositoryTests": 5030,
+    "repositoryTests": 5040,
     "desktopTests": 1175,
     "focusedHrChecks": 98,
     "emailSenderChecks": 352,
-    "hospitalRepositoryTests": 4808,
+    "hospitalRepositoryTests": 4818,
     "failed": 0,
-    "scope": "Current shared branch catalogue, fee selection, student status, HR employment letters, email options and vendor reads. Historical repairs retain their individual evidence.",
-    "preservation": "No business-data migration or actual email send during this release validation. Existing reviewed fee/pupil repair evidence is retained."
+    "scope": "Final shared branch catalogue, fee selection, student status, HR employment letters, branch email options, vendor reads, legacy notification job storage identity and installer download paths. Historical repairs retain their individual evidence.",
+    "preservation": "No business-data migration or actual email send during this release validation. Existing reviewed fee/pupil repair evidence is retained.",
+    "hospitalFocusedHrChecks": 99,
+    "hospitalFinalReleaseChecks": 14,
+    "notificationValidation": "Legacy and current queue identities, retry suppression, concurrent claims, missing/foreign records and transient failures tested synthetically. Fee-reminder index READY; planning-only query HTTP 200, zero invoice-document reads. Live scheduler deployment remains an operational follow-up, separate from the passing tests."
   },
   "deliveryHistory": [
     {
@@ -1223,6 +1313,20 @@
       "verification": "Seven production assets matched pushed Git blobs; protected endpoints rejected anonymous requests. 4939 web tests, 50 desktop tests. Live Area 1 fee correction verified; retry wrote nothing.",
       "desktopSourceCommit": "e9b6dba",
       "desktopInstaller": "No compilation/release; published installer remains 3.1.63."
+    },
+    {
+      "date": "2026-11-10",
+      "webCommit": "f4d8791c6e05ec8f49a057ea9e65aab47b09723f",
+      "implementationCommit": "e742f01e167d42dd62f4b1a386272e42b42a1008",
+      "webRelease": "dynamax-v555-student-status-hr-employment",
+      "url": "https://destinychristianacademy.pages.dev",
+      "verification": "School and Faith 24 served interface assets each matched tested source; nine branch-email setup assets across School, Faith and central platform matched. Unsigned protected APIs denied access. All 11 tenant deployments and their required index application steps succeeded. 5030 shared web tests, 98 focused HR checks, 352 email/sender checks and 1175 desktop tests passed.",
+      "desktopSourceCommit": "8cba0d5",
+      "desktopMetadataCommit": "3347178",
+      "desktopInstaller": "Published v3.1.64; packaged application/TLS/Android integrity checks passed.",
+      "installerUrl": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.64.exe",
+      "installerSha256": "472b380dd7fe14c76dcb2d88f8671ad430c213fd3827644509eac481fd674d8e",
+      "installerBytes": 42784976
     }
   ],
   "releasePreparation": {
@@ -1233,11 +1337,29 @@
     "published": true,
     "schoolVendorIndexes": "School and Faith all three request indexes READY; Hospital all six request/period indexes READY with snapshot Rows unindexed, default field indexes unchanged.",
     "desktopSourceCommit": "8cba0d5",
-    "webTests": "5030 passed, 0 failed",
+    "webTests": "5040 passed, 0 failed",
     "installerUrl": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.64.exe",
     "sha256": "472b380dd7fe14c76dcb2d88f8671ad430c213fd3827644509eac481fd674d8e",
     "bytes": 42784976,
     "packaging": "Application self-test, TLS bundle and packaged Android CBT integrity passed.",
-    "releaseUrl": "https://github.com/Jozcefhs/portal/releases/tag/desktop-v3.1.64"
-  }
+    "releaseUrl": "https://github.com/Jozcefhs/portal/releases/tag/desktop-v3.1.64",
+    "hospitalTests": "4818 passed, 0 failed; 14 final cache/release/download checks passed after marker-only update",
+    "publicDownloadVerified": "Downloaded public v3.1.64 installer: 42784976 bytes; SHA-256 472b380dd7fe14c76dcb2d88f8671ad430c213fd3827644509eac481fd674d8e matches the published artifact",
+    "openOperationalFollowups": [
+      "Notification Worker scheduler deployment run 42818885478 failed because the CI credential lacks authorization for the Worker secrets operation. Read-only diagnosis confirms scheduler Workers are absent; existing GitHub fallback remains active but observed starts were hours apart. Authorized deployment and naturally occurring runtime progress remain unverified; no account permissions or stored secrets were changed."
+    ]
+  },
+  "validationHistory": [
+    {
+      "date": "2026-11-10",
+      "repositoryTests": 5030,
+      "desktopTests": 1175,
+      "focusedHrChecks": 98,
+      "emailSenderChecks": 352,
+      "hospitalRepositoryTests": 4808,
+      "failed": 0,
+      "scope": "Current shared branch catalogue, fee selection, student status, HR employment letters, email options and vendor reads. Historical repairs retain their individual evidence.",
+      "preservation": "No business-data migration or actual email send during this release validation. Existing reviewed fee/pupil repair evidence is retained."
+    }
+  ]
 }

@@ -61,7 +61,7 @@ jobs:
       cancel-in-progress: true
     env:
       CLOUDFLARE_ACCOUNT_ID: ${{ matrix.organisation.cloudflareAccountId }}
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.NOTIFICATION_WORKER_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN }}
       SCHEDULER_SECRET: ${{ secrets.NOTIFICATION_SCHEDULER_SECRET }}
       WRANGLER_CONFIG: .notification-scheduler.wrangler.json
     steps:
@@ -95,6 +95,7 @@ jobs:
         run: npx wrangler deploy --dry-run --config "${WRANGLER_CONFIG}"
 
       - name: Deploy Worker and five-minute Cron Trigger
+        id: deploy_worker
         shell: bash
         run: |
           set -euo pipefail
@@ -104,19 +105,25 @@ jobs:
           trap cleanup EXIT
           SECRET_FILE="${secret_file}" node -e 'const fs = require("node:fs"); fs.writeFileSync(process.env.SECRET_FILE, JSON.stringify({ SCHEDULER_SECRET: process.env.SCHEDULER_SECRET }), { mode: 0o600 });'
           if ! npx wrangler deploy --config "${WRANGLER_CONFIG}" --keep-vars --secrets-file "${secret_file}"; then
-            echo '::error title=Cloudflare Worker deployment rejected::The CLOUDFLARE_API_TOKEN for this GitHub environment must include Account / Workers Scripts / Edit in addition to the existing Pages and R2 permissions.'
+            echo '::error title=Cloudflare Worker deployment rejected::Check the Cloudflare error above. For a resource-access denial, configure NOTIFICATION_WORKER_API_TOKEN in this GitHub environment with Workers Scripts Edit for the target account, or add that permission to the existing CLOUDFLARE_API_TOKEN. The existing Pages and notification secrets do not need replacing.'
             exit 1
           fi
 
       - name: Write scheduler deployment summary
         if: always()
         shell: bash
+        env:
+          DEPLOY_OUTCOME: ${{ steps.deploy_worker.outcome }}
         run: |
           {
             echo '### ${{ matrix.organisation.name }} notification scheduler'
             echo ''
             echo '- Workspace: `${{ matrix.organisation.workspaceId }}`'
             echo '- Edition: `${{ matrix.organisation.edition }}`'
-            echo '- Trigger: every five minutes on Cloudflare Workers'
+            if [ "${DEPLOY_OUTCOME}" = success ]; then
+              echo '- Deployment succeeded; configured trigger: every five minutes on Cloudflare Workers. Verify subsequent scheduled runtime logs.'
+            else
+              echo '- Deployment did not complete. The five-minute Cloudflare trigger is not confirmed; existing GitHub scheduled workflows remain unchanged.'
+            fi
             echo '- Pages endpoint: `${{ matrix.organisation.cloudflareProject }}.pages.dev/api/notification-scheduler`'
           } >> "${GITHUB_STEP_SUMMARY}"
