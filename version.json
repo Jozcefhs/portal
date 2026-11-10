@@ -1,8 +1,8 @@
 {
-  "version": "3.1.60",
+  "version": "3.1.64",
   "channel": "stable",
   "release_status": "published",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.60.exe",
-  "sha256": "86d7893145e51be39aca5472c3155b274b5afc1d9029a1fc4726adf2fc776c43",
-  "notes": "Dynamax v3.1.60 shows individual test approvals separately from full-term Draft status on desktop and web. Approved tests remain visible, and the web table updates immediately after review without additional scans or losing unsaved work. Existing scores, approvals, payments and history are preserved. Card terminal payments remain disabled."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.64.exe",
+  "sha256": "472b380dd7fe14c76dcb2d88f8671ad430c213fd3827644509eac481fd674d8e",
+  "notes": "Dynamax v3.1.64 adds separate total school-fee discount rates by branch, billing category, class and term; shares branch class and arm setup with Academic Management; preserves every selected class in fee rules; shows Day/Boarding for vendor customers; and supports payment requests covering up to 2,000 sales with detailed reports loaded on demand. Existing records, invoices and payments are preserved. Card terminal payments remain disabled."
 }
