@@ -93,35 +93,52 @@ test('card refund routes enforce feature flags, subscription, role and branch be
   await assert.rejects(f.run('previewCardRefundBatch',{VendorId:c.VendorId},{...user,branchId:'other'}),/unavailable/);
   assert.equal(f.commits.length,0);
 });
+const matchesFilter = (row, f) => f.op === 'in' ? f.value.includes(row[f.field]) : f.op === '>=' ? row[f.field] >= f.value : f.op === '<=' ? row[f.field] <= f.value : row[f.field] === f.value;
 const scope = { ScopeKey:'school--main', BranchId:'main', OrganisationEdition:'school', SchoolSection:'Secondary' };
 const user = { username:'accounts', role:'Accounts Officer', branchId:'main', edition:'school', allowedSections:['vendorSettlements'], schoolSectionAccess:'All' };
 const vendor = (id = 'v1', extra = {}) => ({ ...scope, VendorId:id, Name:`Vendor ${id}`, Active:'YES', BankName:'Test bank',
   BankAccountName:'Vendor name', BankAccountNumber:'1234567890', BankDetailsVersion:'bank1', RuleHistory:[], ...extra });
 const settings = { ...scope, Enabled:true, AccountingConfirmed:true, PayableAccount:'2000', CommissionAccount:'4090', VendorReceivableAccount:'1110', BusinessTimezone:'Africa/Lagos', RuleHistory:[] };
-test('large vendor requests reserve and pay all 600 sales atomically, with retry and conflict protection',async()=>{
+test('large vendor requests reserve and pay all 2,000 sales atomically, with retry and conflict protection',async()=>{
   const f=fixture();
-  for(let i=0;i<600;i++) await f.sale(`large-${i}`,10);
+  for(let i=0;i<2000;i++) await f.sale(`large-${i}`,10);
   const before=JSON.stringify([...f.store]); f.conflict();
-  await assert.rejects(f.request(6000),{code:'VENDOR_WRITE_CONFLICT'});
+  await assert.rejects(f.request(20000),{code:'VENDOR_WRITE_CONFLICT'});
   assert.equal(JSON.stringify([...f.store]),before);
-  await f.request(6000);
+  await f.request(20000);
   const request=f.get('vendorSettlementRequests','VREQ-claim1');
-  assert.equal(request.Allocations.length,600); assert.equal(request.Snapshot.length,600);
-  assert.equal(request.AmountCents,600000); assert.ok(f.commits.at(-1).length>500);
-  assert.equal(f.get('vendorBalances','v1').ReservedCents,600000);
-  const reserved=JSON.stringify([...f.store]); await f.request(6000);
+  assert.equal(request.Allocations.length,2000); assert.equal(request.Snapshot.length,0);
+  assert.equal(request.SnapshotCount,2000); assert.equal(request.SnapshotChunkIds.length,20);
+  const detail = await f.run('requestReport',{SettlementId:request.SettlementId});
+  assert.equal(detail.request.PrintReport.rows.length,2000); assert.equal(detail.request.PrintReport.total.Claimed,20000);
+  const snapshotBefore = JSON.stringify(f.list('vendorSettlementSnapshots'));
+  const assertAtomicSize = writes => {
+    const encoded = writes.map(w => ({update:{name:`projects/test/databases/(default)/documents/${w.collectionPath}/${w.documentId}`,fields:objectToFirestoreFields(w.data)},currentDocument:w.updateTime?{updateTime:w.updateTime}:{exists:false}}));
+    for(const item of encoded) assert.ok(Buffer.byteLength(JSON.stringify(item.update)) < 900 * 1024, 'Each document fits the guarded size limit');
+    assert.ok(Buffer.byteLength(JSON.stringify({writes:encoded})) < 8 * 1024 * 1024, 'The complete reservation/payment fits one atomic commit');
+  };
+  assertAtomicSize(f.commits.at(-1));
+  assert.equal(request.AmountCents,2000000); assert.equal(f.commits.at(-1).length,2024);
+  assert.equal(f.get('vendorBalances','v1').ReservedCents,2000000);
+  const reserved=JSON.stringify([...f.store]); await f.request(20000);
   assert.equal(JSON.stringify([...f.store]),reserved);
-  await f.approve(); await f.pay(6000);
+  await f.approve(); await f.pay(20000);
+  assertAtomicSize(f.commits.at(-1));
+  assert.equal(f.commits.at(-1).length,2006);
   assert.equal(f.get('vendorBalances','v1').ReservedCents,0);
-  assert.equal(f.get('vendorBalances','v1').PaidCents,600000);
-  assert.equal(f.list('vendorClaimLots').reduce((sum,lot)=>sum+lot.PaidCents,0),600000);
-  const paid=JSON.stringify([...f.store]); await f.pay(6000);
+  assert.equal(f.get('vendorBalances','v1').PaidCents,2000000);
+  assert.equal(f.list('vendorClaimLots').reduce((sum,lot)=>sum+lot.PaidCents,0),2000000);
+  const paid=JSON.stringify([...f.store]); await f.pay(20000);
   assert.equal(JSON.stringify([...f.store]),paid);
+  assert.equal(JSON.stringify(f.list('vendorSettlementSnapshots')),snapshotBefore);
 });
 
 test('large vendor request cancellation releases every reservation without paying',async()=>{
-  const f=fixture(); for(let i=0;i<160;i++) await f.sale(`cancel-${i}`,1);
-  await f.request(160); await f.decision('Cancelled','Accounts Officer');
+  const f=fixture(); for(let i=0;i<2000;i++) await f.sale(`cancel-${i}`,1);
+  await f.request(2000); f.queryReads.length=0;
+  await f.decision('Cancelled','Accounts Officer');
+  assert.equal(f.queryReads.filter(row=>row.collection==='vendorClaimLots').length,0,'a clean cancellation reads only its allocated lots');
+  assert.equal(f.commits.at(-1).length,2004);
   assert.equal(f.get('vendorBalances','v1').ReservedCents,0);
   assert.equal(f.list('vendorClaimLots').reduce((sum,lot)=>sum+lot.ReservedCents,0),0);
   assert.equal(f.list('vendorSettlementPayments').length,0);
@@ -132,7 +149,7 @@ function fixture(initial = [], options = {}) {
   let currentChart = options.chart || chart;
   let featureFlags = { vendorSettlements:true, accounting:true, approvals:true, ...options.featureFlags };
   const accessReads = [];
-  const chartReads = [];
+  const chartReads = [], queryReads = [], batchReads = [];
   const put = (collection,id,row) => store.set(`${collection}/${id}`, {
     ...(options.firestoreRoundTrip ? firestoreDocumentToObject({fields:objectToFirestoreFields(row)}) : structuredClone(row)),
     __id:id, __updateTime:`r${++version}` });
@@ -159,11 +176,11 @@ function fixture(initial = [], options = {}) {
     commits.push(structuredClone(writes)); for (const w of writes) put(w.collectionPath,w.documentId,w.data);
   };
   const readDeps = {
-    queryCollectionPages: async (_env,c,opts) => list(c).filter(row => opts.filters.every(f => f.op === 'in' ? f.value.includes(row[f.field]) : row[f.field] === f.value)),
+    queryCollectionPages: async (_env,c,opts) => list(c).filter(row => opts.filters.every(f => matchesFilter(row,f))),
     listBranchCollection: async (_env,c,branch,opts = {}) => list(c).filter(row => (!row.BranchId || row.BranchId === branch)
       && (opts.filters || []).every(f => f.op === 'in' ? f.value.includes(row[f.field]) : row[f.field] === f.value))
   };
-  const functions = vm.runInNewContext(`${source}\n({ handleVendorSettlementAction, prepareVendorSale, snapshotVendorCart })`, {
+  const functions = vm.runInNewContext(`${source}\n({ handleVendorSettlementAction, prepareVendorSale, snapshotVendorCart, rows })`, {
     ...rules, ...readDeps,
     readVendorRows: (env,c,scope,ids) => readVendorRows(env,c,scope,ids,readDeps),
     readVendorInventory: (env,c,branch,ids) => readVendorInventory(env,c,branch,ids,readDeps),
@@ -172,10 +189,12 @@ function fixture(initial = [], options = {}) {
     approvalSnapshot: async () => ({ Version: 1, Kind: 'vendor', Stages: [...(options.approvalStages || ['accounts', 'admin-review', 'director'])] }),
     staffAccessFor:async (_env, actor) => { accessReads.push(actor); return { featureFlags }; },
     getDocument:async (_env,c,id) => structuredClone(get(c,id) || null), listCollection:async (_env,c) => c === 'accountingPeriods' ? list(c) : list(c),
-    getDocuments:async (_env,c,ids) => ids.map(id => structuredClone(get(c,id) || null)),
+    getDocuments:async (_env,c,ids) => { batchReads.push({collection:c,ids:[...ids]}); return ids.map(id => structuredClone(get(c,id) || null)); },
     getAccountingChartRows:async (_env, params) => { chartReads.push(params); return currentChart; }, verifyStaffApprovalPassword:async (_env,username,password) => password === 'test-confirmation',
     findStaffUserRecord:staffLookups.findStaffUserRecord, findStaffLoginRecord:staffLookups.findStaffLoginRecord,
-    queryCollectionPages:async (_env,c,opts) => list(c).filter(row => opts.filters.every(f => f.op === 'in' ? f.value.includes(row[f.field]) : row[f.field] === f.value)), batchCommitDocuments:commit
+    queryCollectionPages:async (_env,c,opts) => { const meter={collection:c,...structuredClone(opts)};queryReads.push(meter);
+      if (options.periodQueryError && opts.cursorField === 'Date') throw options.periodQueryError;
+      const result=list(c).filter(row => opts.filters.every(f => matchesFilter(row,f)));meter.returnedRows=result.length;return result; }, batchCommitDocuments:commit
   });
   const run = (action,body = {},actor = user,options = {}) => functions.handleVendorSettlementAction({},actor,{action,...body},options);
   async function sale(id = 'sale1', gross = 100, extra = {}, items = null) {
@@ -197,7 +216,7 @@ const pay = async (amount,id = 'pay1') => { const r = get('vendorSettlementReque
     Reference:'BANK-1',EvidenceReference:'Slip-1',approvalPassword:'test-confirmation'}); };
   const refund = async (value,id = 'refund1',entryId = 'sale1--v1') => run('refund',{VendorId:'v1',EntryId:entryId,Amount:value,RequestId:id,
     Date:'2026-10-08',Reference:'REFUND-1',EvidenceReference:'REFUND-SLIP',Notes:'Returned unopened',approvalPassword:'test-confirmation'});
-  return { store,put,get,list,commits,commit,run,sale,request,decision,approve,pay,refund,functions, chartReads, accessReads,
+  return { store,put,get,list,commits,commit,run,sale,request,decision,approve,pay,refund,functions, chartReads, accessReads, queryReads, batchReads,
     setFeatureFlags: flags => { featureFlags = flags; },
     setChart: rows => { currentChart = rows; }, conflict:() => { forcedConflict = true; } };
 }
@@ -771,6 +790,7 @@ test('pending / failed payments cannot earn a vendor balance', async () => {
 const commerceSource = (await readFile(new URL('../functions/lib/organization-commerce.js',import.meta.url),'utf8'))
   .replace(/^import[\s\S]*?from '[^']+';\r?\n/gm,'').replace(/export /g,'');
 function commerceFixture(edition = 'school', section = 'tuckShop', options = {}) {
+  const commerceReads = { point: [], list: [], wallet: 0 };
   const scoped = {...scope,ScopeKey:`${edition}--main`,OrganisationEdition:edition,SchoolSection:edition === 'school' ? 'Secondary' : 'All'};
   const f = fixture([['commerceVendors','v1',vendor('v1',scoped)],['settings',`vendor-settlement-${edition}--main`,{...settings,...scoped}]],options);
   const collection = ({tuckShop:'tuckShopInventory',organizationStore:'storeItems',restaurant:'restaurantInventory'})[section];
@@ -779,20 +799,20 @@ function commerceFixture(edition = 'school', section = 'tuckShop', options = {})
     ...rules,queryCollectionPages:async (_env,c,opts) => f.list(c).filter(row => opts.filters.every(q => row[q.field] === q.value))});
   const policy = vm.runInNewContext(`${policySource}\n({withVendorStorePolicy})`,{...rules,getDocuments:async(_env,c,ids)=>ids.map(id=>structuredClone(f.get(c,id)||null))});
   const context = {...f.functions,...access,...policy,inventoryQuantityNumber,procurementMovementBalance,crypto:webcrypto,Date,console,URL,URLSearchParams,
-    batchUpsertDocuments:f.commit,getDocument:async (_env,c,id) => structuredClone(f.get(c,id) || null),listCollection:async (_env,c) => f.list(c),
+    batchUpsertDocuments:f.commit,getDocument:async (_env,c,id) => { commerceReads.point.push({collection:c,id}); return structuredClone(f.get(c,id) || null); },listCollection:async (_env,c) => f.list(c),
     upsertDocument:async (_env,c,id,row) => f.put(c,id,row),patchDocumentFields:async (_env,c,id,row) => f.put(c,id,{...f.get(c,id),...row}),
     createDocumentIfAbsent:async (_env,c,id,row) => { const previous = f.get(c,id); if (!previous) f.put(c,id,row); return {created:!previous,document:previous || f.get(c,id)}; },
     branchPaymentConfiguration:async () => ({online:{enabled:true},paystack:{}}),withPaystackBranchRouting:body => body,
     sendOrganizationCommercePaymentLinkEmail:async () => ({ok:true}),sendOrganizationCommerceReceiptEmail:async () => ({ok:true}),
     fetch:async (_url,options) => { const body = JSON.parse(options.body); return {ok:true,json:async () => ({status:true,data:{authorization_url:'https://payment.example.test',reference:body.reference}})}; }
   };
-  context.listBranchCollection = (_env,c,branch,opts = {}) => Promise.resolve(f.list(c).filter(row => (!row.BranchId || row.BranchId === branch)
-    && (opts.filters || []).every(q => q.op === 'in' ? q.value.includes(row[q.field]) : row[q.field] === q.value)));
+  context.listBranchCollection = (_env,c,branch,opts = {}) => { commerceReads.list.push(c); return Promise.resolve(f.list(c).filter(row => (!row.BranchId || row.BranchId === branch)
+    && (opts.filters || []).every(q => q.op === 'in' ? q.value.includes(row[q.field]) : row[q.field] === q.value))); };
   context.readVendorInventory = (env,c,branch,ids) => readVendorInventory(env,c,branch,ids,context);
   const commerce = vm.runInNewContext(`${commerceSource}\n({COMMERCE_CONFIG,recordManualOrganizationCommerceSale,initializeOnlineOrganizationCommerceSale,finalizeOnlineOrganizationCommerceSale,previewOrganizationCommerceSale,preparePaidCommerceInventoryCompletion,prepareTuckShopWalletCart,listPublicOrganizationStoreItems})`,context);
   const sha256Hex = async value => [...new Uint8Array(await webcrypto.subtle.digest('SHA-256',new TextEncoder().encode(value)))].map(v => v.toString(16).padStart(2,'0')).join('');
   const findStudent = async () => structuredClone(f.get('students','child') || null);
-  const walletAccountPayload = async (_env,student) => ({...student,WalletBalance:Number(student.OpeningWallet || 0)-f.list('ledger').reduce((sum,r) => sum+Number(r.Debit || 0),0),WalletSpentToday:f.list('ledger').reduce((sum,r) => sum+Number(r.Debit || 0),0)});
+  const walletAccountPayload = async (_env,student) => { commerceReads.wallet++; return {...student,WalletBalance:Number(student.OpeningWallet || 0)-f.list('ledger').reduce((sum,r) => sum+Number(r.Debit || 0),0),WalletSpentToday:f.list('ledger').reduce((sum,r) => sum+Number(r.Debit || 0),0)}; };
   const wallet = vm.runInNewContext(`${walletSource}\nrecordWalletPurchase`,{...context,...rules,...commerce,
     normalizeMatchText:rules.lower,asMoneyNumber:v => Math.round(Number(v || 0)*100)/100,
     requestedStudentScope:b => ({branchId:b.UserBranchId,schoolSection:b.UserSchoolSectionAccess}),
@@ -805,7 +825,7 @@ function commerceFixture(edition = 'school', section = 'tuckShop', options = {})
       .sort((a,b) => String(b.Date).localeCompare(String(a.Date)) || b.__id.localeCompare(a.__id)).slice(0,opts.limit)});
   const pos = vm.runInNewContext(`${posSource}\nhandleVendorSalesAction`,{...context,...rules,...commerce,...history,TextEncoder,
     recordWalletPurchase:wallet,getWalletCardAccount:async () => ({account:await walletAccountPayload({},await findStudent())})});
-  return {...f,commerce,pos,wallet,sha256Hex,section,collection,actor:{...user,edition},body:{SaleRequestId:'sale1',PaymentMethod:'Cash',Items:[{Reference:'stock1',Quantity:2}]}};
+  return {...f,commerceReads,commerce,pos,wallet,sha256Hex,section,collection,actor:{...user,edition},body:{SaleRequestId:'sale1',PaymentMethod:'Cash',Items:[{Reference:'stock1',Quantity:2}]}};
 }
 for (const [edition,section] of [['school','tuckShop'],['faith','restaurant'],['organization','organizationStore']]) {
   test(`${edition} actual confirmed opening round trips into read-only POS history without changing balances or past receipts`,async()=>{
@@ -978,7 +998,11 @@ test('vendor wallet checkout atomically links stock, wallet liability, commissio
   assert.equal(f.list('ledger').length,0); assert.equal(f.get(f.collection,'stock1').Quantity,5);
   f.conflict(); await assert.rejects(run('recordVendorWalletPurchase',body),/changed during checkout/);
   assert.equal(f.list('ledger').length,0); assert.equal(f.list('vendorEarnings').length,0);
+  f.commerceReads.wallet=0;f.commerceReads.point.length=0;f.commerceReads.list.length=0;
   const result = await run('recordVendorWalletPurchase',body);
+  assert.equal(f.commerceReads.wallet,1,'checkout reads authoritative wallet history only once');
+  assert.deepEqual(f.commerceReads.point.filter(row=>row.collection===f.collection),[{collection:f.collection,id:'stock1'}]);
+  assert.equal(f.commerceReads.list.includes(f.collection),false,'checkout does not reread the stock catalogue');
   assert.equal(result.account,undefined); assert.equal(result.balance,undefined);
   assert.equal(f.get(f.collection,'stock1').Quantity,3); assert.equal(f.list('ledger')[0].Debit,100);
   assert.equal(f.get('vendorBalances','v1').NetCents,9000);
@@ -988,6 +1012,7 @@ test('vendor wallet checkout atomically links stock, wallet liability, commissio
   assert.ok(journal.Lines.some(l => l.AccountCode === '2000' && l.Credit === 90));
   assert.ok(journal.Lines.some(l => l.AccountCode === '4090' && l.Credit === 10));
   assert.equal((await run('recordVendorWalletPurchase',body)).replayed,true);
+  assert.equal(f.commerceReads.wallet,2,'a replay checks the current wallet once and does not post another sale');
   assert.equal(f.list('ledger').length,1); assert.equal(f.list('vendorEarnings').length,1);
   const refreshed = await run('vendorWalletLookup',{AccountRef:'CHILD/001'});
   assert.equal(refreshed.account.WalletBalance,900); assert.equal(refreshed.account.WalletSpentToday,100);
@@ -1525,4 +1550,94 @@ test('disabling organisation selling preserves already-issued online payments an
   assert.equal(f.list('vendorEarnings').filter(row=>row.Type==='Sale').length,1);
   assert.equal(f.list('vendorEarnings').filter(row=>row.Type==='Stock issue reviewed').length,1);
   assert.equal(f.list('accountingJournals').length,1);
+});
+
+test('request allocation limit rejects more than 2,000 sales without silently truncating the amount', () => {
+  const lots = Array.from({length:2001}, (_, i) => ({LotId:`lot-${i}`,NetCents:100,PaidCents:0,ReservedCents:0}));
+  assert.equal(rules.allocateClaim(lots,200000).length,2000);
+  assert.throws(() => rules.allocateClaim(lots,200100), /up to 2,000 sales/);
+});
+
+test('vendor period reads filter the database by scope, vendor and whole inclusive date range',async()=>{
+  const f=fixture();
+  for (const collection of ['vendorEarnings','vendorClaimLots','vendorSettlementPayments']) {
+    for (const [id,Date,patch] of [
+      ['before','2026-09-30T23:59:59Z',{}],['first','2026-10-01',{}],['last','2026-10-31T23:59:59.999Z',{}],
+      ['after','2026-11-01',{}],['foreign','2026-10-15',{ScopeKey:'school--other',BranchId:'other'}],
+      ['other-vendor','2026-10-15',{VendorId:'v2'}]]) f.put(collection,id,{...scope,VendorId:'v1',Date,...patch});
+    const rows=await f.functions.rows({},collection,scope,'v1',{from:'2026-10-01',to:'2026-10-31'});
+    assert.deepEqual(Array.from(rows,row=>row.__id),['first','last']);
+    const query=f.queryReads.at(-1);
+    assert.equal(query.cursorField,'Date');assert.equal(query.pageSize,250);
+    assert.deepEqual(query.filters.map(row=>row.field),['ScopeKey','VendorId','Date','Date']);
+  }
+  assert.equal(f.queryReads.length,3);assert.equal(f.commits.length,0);
+});
+
+test('a missing date-range index is visible and never falls back to lifetime history',async()=>{
+  const f=fixture([],{periodQueryError:Object.assign(new Error('Query requires an index'),{upstreamCode:'FAILED_PRECONDITION',status:400})});
+  await assert.rejects(f.functions.rows({},'vendorClaimLots',scope,'v1',{from:'2026-10-01',to:'2026-10-31'}),
+    {status:409,code:'VENDOR_PERIOD_INDEX_NOT_READY'});
+  assert.equal(f.queryReads.length,1);assert.equal(f.commits.length,0);
+});
+
+test('statement and payment request read only selected-period sales while open requests remain visible',async()=>{
+  const f=fixture();
+  await f.sale('old-sale',50,{SaleDate:'2026-09-15T10:00:00Z',PaidAt:'2026-09-15T10:00:00Z'});
+  await f.sale('current-sale',100);
+  await f.request(50,'old-request',{From:'2026-09-01',To:'2026-09-30'});
+  f.put('vendorSettlementPayments','old-payment',{...scope,VendorId:'v1',Date:'2026-09-15',Amount:1});
+  f.put('vendorSettlementPayments','current-payment',{...scope,VendorId:'v1',Date:'2026-10-31T22:00:00Z',Amount:2});
+  f.queryReads.length=0;
+  const statement=await f.run('statement',{VendorId:'v1',From:'2026-10-01',To:'2026-10-31'});
+  assert.deepEqual(Array.from(statement.entries,row=>row.SaleNo),['current-sale']);
+  assert.equal(statement.payments.length,1);assert.equal(statement.payments[0].Amount,2);
+  assert.equal(statement.requests[0].SettlementId,'VREQ-old-request','an older open request is not hidden by the sales range');
+  for(const collection of ['vendorEarnings','vendorClaimLots','vendorSettlementPayments']) {
+    const query=f.queryReads.find(row=>row.collection===collection);
+    assert.equal(query.cursorField,'Date');assert.equal(query.returnedRows,1);
+  }
+  f.queryReads.length=0;
+  await f.request(100,'current-request');
+  const query=f.queryReads.find(row=>row.collection==='vendorClaimLots');
+  assert.equal(query.cursorField,'Date');assert.equal(query.returnedRows,1);
+  const request=f.get('vendorSettlementRequests','VREQ-current-request');
+  assert.deepEqual(Array.from(request.Allocations,row=>row.LotId),['current-sale--v1']);
+  assert.equal(f.get('vendorClaimLots','old-sale--v1').ReservedCents,5000);
+});
+
+test('full request report fails closed for a missing or foreign snapshot and cannot expose another vendor', async () => {
+  const f=fixture(); for(let i=0;i<201;i++) await f.sale(`report-${i}`,1);
+  await f.request(201);
+  const request=f.get('vendorSettlementRequests','VREQ-claim1');
+  const id=request.SnapshotChunkIds[0], original=structuredClone(f.get('vendorSettlementSnapshots',id));
+  f.put('vendorSettlementSnapshots',id,{...original,BranchId:'other',ScopeKey:'school--other'});
+  await assert.rejects(f.run('requestReport',{SettlementId:request.SettlementId}),/missing or has a conflicting scope/);
+  f.put('vendorSettlementSnapshots',id,original);
+  const stranger={...user,role:'Vendor User',username:'another-vendor'};
+  await assert.rejects(f.run('requestReport',{SettlementId:request.SettlementId},stranger),/not linked/);
+  const result=await f.run('requestReport',{SettlementId:request.SettlementId});
+  assert.equal(result.request.PrintReport.rows.length,201);
+});
+
+test('partial vendor payments read only their allocated lots and preserve all other reservations', async () => {
+  const f=fixture();
+  for(let i=0;i<5;i++) await f.sale(`period-${i}`,10);
+  await f.sale('earlier',10,{SaleDate:'2026-09-01T12:00:00Z',PaidAt:'2026-09-01T12:00:00Z'});
+  const report=await f.run('statement',{VendorId:'v1',From:'2026-10-01',To:'2026-10-31'});
+  assert.equal(report.entries.length,5);
+  await f.request(50); await f.approve(); await f.pay(10);
+  const reads=f.batchReads.filter(row=>row.collection==='vendorClaimLots');
+  assert.equal(reads.at(-1).ids.length,1);
+  assert.equal(f.get('vendorBalances','v1').ReservedCents,4000);
+});
+
+test('all edition indexes cover bounded vendor statement dates', async () => {
+  for(const edition of ['school','church','organization']) {
+    const config=JSON.parse(await readFile(new URL(`../firestore.${edition}.indexes.json`,import.meta.url),'utf8'));
+    for(const collection of ['vendorEarnings','vendorClaimLots','vendorSettlementPayments'])
+      assert.ok(config.indexes.some(index=>index.collectionGroup===collection && index.fields.map(f=>f.fieldPath).join(',')==='ScopeKey,VendorId,Date'),`${edition}: ${collection}`);
+    assert.ok(config.fieldOverrides.some(field=>field.collectionGroup==='vendorSettlementSnapshots' && field.fieldPath==='Rows'
+      && field.indexes.length===0),`${edition}: immutable report rows are not indexed`);
+  }
 });

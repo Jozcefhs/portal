@@ -75,7 +75,7 @@ test('school-wide counts distinguish missing from ready-to-post, including block
   assert.match(html, /Invoice\(s\): INV-1/);
   assert.match(html, /&lt;unsafe&gt;/);
   assert.doesNotMatch(html, /<unsafe>/);
-  assert.match(html, /Post valid missing charges for 1 reviewed accounts/);
+  assert.match(html, /Apply reviewed billing changes for 1 accounts/);
 });
 
 test('blocked-only report has no posting button and no misleading zero-missing claim', async () => {
@@ -100,7 +100,7 @@ test('profile rechecks are visible without invented totals or inclusion in the p
   assert.match(html, /Not checked/);
   assert.match(html, /CHANGED\/&lt;student&gt;/);
   assert.match(html, /data-refresh-billing-review/);
-  assert.match(html, /Post valid missing charges for 1 reviewed accounts/);
+  assert.match(html, /Apply reviewed billing changes for 1 accounts/);
   assert.equal(report.review, 1, 'finance conflicts and profile rechecks counted separately');
   const recheckOnly = await renderBillingReport({ ...report, rows: [deferred], ready: 0 });
   assert.doesNotMatch(recheckOnly, /data-apply-billing-plans|Recorded credit:/);

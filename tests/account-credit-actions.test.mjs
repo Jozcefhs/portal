@@ -68,7 +68,7 @@ test('credit-action subledger, liability journal and idempotency marker commit t
     .split('async function ', 1)[0];
   assert.match(action, /accountingEditionForRequest\(env\) !== 'school'/);
   assert.match(action, /accountingWriteBranch\(body, account\)/);
-  assert.match(action, /const sourceReconciliation = await syncSchoolAccountCreditJournals/);
+  assert.match(action, /const sourceReconciliation = sourceHistory[\s\S]*?: await syncSchoolAccountCreditJournals/);
   assert.match(action, /sourceReconciliation\.unreconciledLegacyActions/);
   assert.match(action, /await batchUpsertDocuments\(env, \[/);
   assert.match(action, /collectionPath: 'creditActions'.*exists: false/s);

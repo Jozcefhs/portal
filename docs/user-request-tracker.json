@@ -1,0 +1,941 @@
+{
+  "title": "Dynamax user request tracker",
+  "updatedAt": "2026-11-10",
+  "purpose": "Durable checklist for continuing this chat. Read before starting another pass; update evidence and delivery status before closing a request.",
+  "evidencePolicy": "Evidence paths locate implementation, tests or prior notes; their presence alone does not prove a request is deployed or complete. Preserve historical status until the relevant behavior and deployed artifact are verified. Remaining follow-ups are not claims of implemented features.",
+  "statusDefinitions": {
+    "in_progress": "Current pass; not yet claimed delivered.",
+    "deployed_verified": "Verified in this pass with commit/deployment and checks.",
+    "historical_delivery_to_verify": "Request retained from conversation. Existing work/docs may implement it; inspect evidence before marking complete or redoing it.",
+    "deferred_user_priority": "Retained, resume after current urgent school/payment work.",
+    "tested_awaiting_deployment": "Implemented and tests passed; deployment has not yet been verified."
+  },
+  "constraints": [
+    "Preserve all business records, payments and scores; use reviewed corrections and provenance.",
+    "Prevent duplicate receipts, charges, reservations and audit events on retry; never invent records.",
+    "Minimize unrequested reads/writes; cache loaded views, paginate history and require explicit scoped loads when needed.",
+    "Current pass: test, push and deploy web; do not compile or release desktop.",
+    "Patient cards remain NFC. Card-terminal payments remain disabled.",
+    "Scope every record by organization/workspace, branch and school section; matching admission numbers across branches are allowed.",
+    "Historical authorization does not imply historical completion. Record test evidence, source commit and deployed artifact for every closure.",
+    "Never store passwords, one-time codes, private financial exports or payment-provider secrets here."
+  ],
+  "decisions": [
+    {
+      "topic": "Parent advance fees",
+      "choice": "Clear current fees first, save the remainder for future due school fees."
+    },
+    {
+      "topic": "Total-fee discounts",
+      "choice": "Allow separate rates by class and term, scoped to branch and billing category."
+    },
+    {
+      "topic": "Parent bulk onboarding",
+      "choice": "Branch-specific general link plus one-time code for each branch's parent group, including when parent contacts are not yet known; prevent branch leakage even when admission numbers match."
+    },
+    {
+      "topic": "Faith/organization vendor products",
+      "choice": "Allow vendor and organization sales with ownership labels and enable/disable option."
+    },
+    {
+      "topic": "Duplicate transferred marks",
+      "choice": "Restore earlier former-arm marks where the user selected that remedy; retain both versions/history."
+    },
+    {
+      "topic": "Part-payment plans",
+      "choice": "Apply to total school-fee balance while retaining existing per-item rules."
+    },
+    {
+      "topic": "Independent academic progression",
+      "choice": "Ready pupils' scores and results may be submitted, approved and published while incomplete pupils remain pending. Explicitly untaught subjects need a documented exemption rather than invented marks."
+    },
+    {
+      "topic": "Class teacher and assistant",
+      "choice": "Both have the same assigned-classroom access. Give them initial pupil allocation only, open their classroom directly, and retain a read-only classroom score register with preview/print on the web companion."
+    },
+    {
+      "topic": "Arm transfers",
+      "choice": "Move a pupil's working subjects, scores and records with the pupil; do not archive the active records merely because the arm changes. Preserve provenance and score-history evidence."
+    },
+    {
+      "topic": "Current queues versus completed history",
+      "choice": "Load submitted, waiting-confirmation and waiting-approval requests when the module opens. Require date ranges for completed history, not for every setup or navigation screen."
+    },
+    {
+      "topic": "Optional club eligibility",
+      "choice": "Chess, Graphic and Photography apply to all Main Branch classes in First Term."
+    }
+  ],
+  "recentDelivery": {
+    "webCommit": "b955dab0cf52c022c733065d21c994514c5c2d9b",
+    "webRelease": "dynamax-v551-classroom-imports-discounts",
+    "url": "https://destinychristianacademy.pages.dev",
+    "verification": "4,815 repository tests before the current advance/navigation/vendor additions; release asset hashes verified; classroom repair retry made zero changes.",
+    "desktopSourceCommit": "2e4f699",
+    "desktopInstaller": "No new compilation/release in this pass; released version remains 3.1.63."
+  },
+  "groups": [
+    {
+      "group": "current",
+      "items": [
+        {
+          "id": "advance-fees",
+          "title": "Parent school-fee advances",
+          "status": "tested_awaiting_deployment",
+          "acceptance": "Any valid positive amount; clear current due school fees first; retain the rest for later terms; verified/approved payments only; keep separate from spending wallet.",
+          "evidence": [
+            "functions/lib/school-fee-advance.js",
+            "tests/school-fee-advance.test.mjs",
+            "tests/school-fee-credit-scope.test.mjs",
+            "tests/school-fee-credit-scheduler.test.mjs",
+            "tests/school-fee-advance-billing-hooks.test.mjs",
+            "docs/advance-credit-navigation-vendor-pass-2026-11-10.md"
+          ]
+        },
+        {
+          "id": "load-gates",
+          "title": "Remove unnecessary Load gates and audit reads/writes",
+          "status": "tested_awaiting_deployment",
+          "acceptance": "Open setup/navigation interfaces directly. Retain scoped/date loading for actual history; retain snapshots; no audit writes for browsing.",
+          "evidence": [
+            "functions/lib/academic-management.js",
+            "tests/academic-scorebook-opening.test.mjs",
+            "docs/advance-credit-navigation-vendor-pass-2026-11-10.md"
+          ]
+        },
+        {
+          "id": "vendor-student-type",
+          "title": "Show Day/Boarding at vendor and tuck-shop POS",
+          "status": "tested_awaiting_deployment",
+          "acceptance": "Show the selected student's saved student type after NFC scan and search; do not broaden vendor access.",
+          "evidence": [
+            "tests/vendor-customer-lookup.test.mjs",
+            "tests/vendor-pos-layout.test.mjs",
+            "docs/advance-credit-navigation-vendor-pass-2026-11-10.md"
+          ]
+        },
+        {
+          "id": "vendor-2000-sales",
+          "title": "Vendor payment requests covering 2,000 sales",
+          "status": "tested_awaiting_deployment",
+          "acceptance": "Support 2,000 selected sales with retry-safe reservations and immutable details; no duplicate settlement.",
+          "evidence": [
+            "tests/vendor-settlements.test.mjs",
+            "docs/advance-credit-navigation-vendor-pass-2026-11-10.md"
+          ]
+        },
+        {
+          "id": "sales-read-budget",
+          "title": "Audit purchase reads/writes and offline suitability",
+          "status": "tested_awaiting_deployment",
+          "acceptance": "Reduce repeated catalogue/customer/history work; keep wallet/stock validation atomic. Consider offline alternatives only if measured costs justify them and overspending is prevented.",
+          "evidence": [
+            "tests/accounts-wallet-lifetime.test.mjs",
+            "tests/vendor-customer-lookup.test.mjs",
+            "tests/vendor-settlements.test.mjs",
+            "docs/advance-credit-navigation-vendor-pass-2026-11-10.md"
+          ],
+          "remainingFollowUps": [
+            {
+              "id": "wallet-history-checkpoint",
+              "title": "Evaluate a verified wallet-history checkpoint to reduce repeated lifetime reads",
+              "acceptance": "Measure long-history lookup and purchase costs before changing the accounting path. Any checkpoint must remain branch/student scoped, reconcile with immutable transactions, account for late imports/corrections/refunds, and share the same concurrency guard as purchases. Retain a bounded reconciliation path and all history; do not replace real receipt evidence with a cached balance.",
+              "completionEvidence": "Document baseline and resulting read/write counts plus concurrent-sale, reversal, delayed-import and retry tests. This remains follow-up work, not a delivered checkpoint."
+            },
+            {
+              "id": "offline-purchase-evaluation",
+              "title": "Evaluate safe local-network/offline purchases before enabling them",
+              "acceptance": "Compare measured online costs with a coordinated local-server or explicitly bounded offline allowance design. Define authority, device limits, conflict handling and replay-safe synchronization so two disconnected tills cannot spend the same wallet funds or stock. Keep offline financial posting disabled until the design and failure tests justify it.",
+              "completionEvidence": "A documented decision with cost measurements, connectivity assumptions and overspending/duplicate-prevention tests; evaluation does not authorize or claim activation."
+            }
+          ]
+        },
+        {
+          "id": "request-memory",
+          "title": "Keep a durable issue checklist",
+          "status": "tested_awaiting_deployment",
+          "acceptance": "Record every new request and decision, associate tests/commit/deployment, and verify delivery before closing.",
+          "evidence": [
+            "docs/user-request-tracker.json",
+            "docs/advance-credit-navigation-vendor-pass-2026-11-10.md"
+          ]
+        }
+      ]
+    },
+    {
+      "group": "recent",
+      "items": [
+        {
+          "id": "class-term-discounts",
+          "title": "Independent discounts by branch, category, class and term",
+          "status": "deployed_verified",
+          "acceptance": "Percentage/fixed/None; separate rates; prevent overlapping compounding; existing invoices require reviewed corrections.",
+          "evidence": [
+            "docs/class-term-discounts-and-import-recovery.md"
+          ]
+        },
+        {
+          "id": "area1-pupil-recovery",
+          "title": "Recover missing Area 1 imported pupils",
+          "status": "deployed_verified",
+          "acceptance": "Five profiles restored; four Creche memberships added; existing Reception membership retained. Identity confirmation recorded privately; no invented parent data.",
+          "evidence": [
+            "docs/class-term-discounts-and-import-recovery.md"
+          ]
+        },
+        {
+          "id": "garden-classroom-labels",
+          "title": "Unify Nursery 2 and Pre-Nursery Excellence in The Lord's Garden exports",
+          "status": "deployed_verified",
+          "acceptance": "43 profile labels normalized; 22 pupils per classroom; all 44 memberships retained. Existing canonical classes/arms were not duplicate records.",
+          "evidence": [
+            "docs/class-term-discounts-and-import-recovery.md"
+          ]
+        }
+      ]
+    },
+    {
+      "group": "academics",
+      "items": [
+        {
+          "id": "saved-subject-checks",
+          "title": "Check previously saved class subjects when selecting a class",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Web and desktop compulsory-subject selection must restore existing choices.",
+          "evidence": []
+        },
+        {
+          "id": "unused-deletion",
+          "title": "Permanently delete unused classes, arms and subjects",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "No archive-only restriction for unused definitions. Preserve dependent student/score/history records.",
+          "evidence": [
+            "docs/unused-academic-deletion-2026-10-24.md"
+          ]
+        },
+        {
+          "id": "academic-desktop-layout",
+          "title": "Restore desktop Refresh/Local CBT and clipped controls",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Remove wasted headings/spacing and keep record area useful.",
+          "evidence": []
+        },
+        {
+          "id": "friendly-academic-labels",
+          "title": "Remove internal IDs from class, subject, component and comments",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Display actual names; keep technical IDs only where operationally needed.",
+          "evidence": []
+        },
+        {
+          "id": "register-cache-filters",
+          "title": "Retain loaded classroom score data and score filters",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Restore without rereads; Score above/below; subject/test selection; explicit refresh.",
+          "evidence": [
+            "docs/class-teacher-score-review.md"
+          ]
+        },
+        {
+          "id": "session-movement",
+          "title": "Session movement preserves all academic records",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Update memberships; no duplicate history on retry; fix clipped buttons.",
+          "evidence": [
+            "docs/session-movement.md"
+          ]
+        },
+        {
+          "id": "arm-transfer",
+          "title": "Move pupil records and scores with arm transfers",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "No archive that removes active working scores; retain provenance and historical evidence.",
+          "evidence": [
+            "docs/arm-transfer-data-continuity.md"
+          ]
+        },
+        {
+          "id": "score-duplicates",
+          "title": "School-wide duplicate score review and self-service resolution",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Earlier former-arm marks retained where user chose them; preserve both versions; resolve remaining reviewed duplicate cells.",
+          "evidence": [
+            "docs/academic-duplicate-score-resolution.md",
+            "docs/score-register-duplicate-review.md"
+          ]
+        },
+        {
+          "id": "archived-subject-restoration",
+          "title": "Restore requested archived subjects and their scores",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Use archived saved subjects, not pending replacement choices; preserve all scores.",
+          "evidence": [
+            "docs/archived-memberships.md"
+          ]
+        },
+        {
+          "id": "academic-audit",
+          "title": "Academic-specific audit with names and shared security-log styling",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Date-first history, paginated snapshots, no internal ID chains as primary labels.",
+          "evidence": [
+            "tests/academic-audit-log.test.mjs",
+            "tests/academic-audit-repairs.test.mjs"
+          ]
+        },
+        {
+          "id": "active-score-layout",
+          "title": "Apply active score layout and refresh the displayed sheet",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "A successful Apply active layout action must update the saved scheme revision and displayed component layout, clear stale update prompts, preserve all scores and locks, and remain safe on retry.",
+          "evidence": [
+            "tests/academic-score-layout-refresh.test.mjs"
+          ]
+        },
+        {
+          "id": "result-preview",
+          "title": "Fix flashing result preview buttons",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Nursery, Primary and Secondary previews must stay open.",
+          "evidence": []
+        },
+        {
+          "id": "score-approval-schoolwide",
+          "title": "Allow ready scores for all subjects/classes to progress",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Separate component/test approval from whole-term status; incomplete pupils stay pending.",
+          "evidence": []
+        },
+        {
+          "id": "result-readiness",
+          "title": "Results Readiness scoped to selected class/term",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Separate real blockers from historical warnings; recognize explicitly untaught subjects.",
+          "evidence": [
+            "tests/academic-results-readiness.test.mjs"
+          ]
+        },
+        {
+          "id": "batch-results",
+          "title": "Batch review, approve and publish",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Ready pupils progress independently; never block class because another pupil is incomplete/hospitalized.",
+          "evidence": []
+        },
+        {
+          "id": "calculation-performance",
+          "title": "Reduce result calculation latency and unrequested data",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Use focused class/arm/term queries, avoid unnecessary repeated reads.",
+          "evidence": [
+            "docs/academic-navigation-read-repair-2026-10-26.md"
+          ]
+        },
+        {
+          "id": "parent-result-access",
+          "title": "Honor academic and finance rules for parent results",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Confirm published Grade 10 Genius results visible to eligible linked parents.",
+          "evidence": []
+        },
+        {
+          "id": "result-format",
+          "title": "Match parent results to preview and compact printing",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Same colors/table/positions; unwrapped subject names; DOB/release date; Term label; no Weighted label/note; one-decimal averages; two rows/four columns with unwrapped student name; tighter row spacing.",
+          "evidence": []
+        },
+        {
+          "id": "register-status-colors",
+          "title": "Different preview colors for Not enrolled and Not recorded",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Keep readable in preview and print.",
+          "evidence": []
+        },
+        {
+          "id": "classroom-register-access",
+          "title": "Read-only classroom score register and preview/print",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Web companion only; classroom-based; all offered subjects; super admin, ICT and authorized academic roles; teacher/assistant assigned scope. Preserve the separate class-wide administration tools.",
+          "evidence": [
+            "docs/class-teacher-score-review.md"
+          ]
+        },
+        {
+          "id": "assistant-teacher",
+          "title": "Assistant class teacher has matching classroom access",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Apply same permitted classroom read/allocation actions as class teacher.",
+          "evidence": [
+            "docs/academic-teacher-initial-allocation.md"
+          ]
+        },
+        {
+          "id": "teacher-allocation",
+          "title": "Teachers/assistants allocate their own unassigned pupils only",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "No transfer/import/other administrator controls; open directly into assigned classroom.",
+          "evidence": [
+            "docs/academic-teacher-initial-allocation.md"
+          ]
+        },
+        {
+          "id": "score-save-lock",
+          "title": "Separate Save, Lock and Submit mid-term buttons",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Submission requires locked recorded scores; applies to all subject teachers.",
+          "evidence": []
+        },
+        {
+          "id": "vp-academics-approval",
+          "title": "VP Academics subject/result approval rights",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Authorized controlled reopen/review/reapproval flow, preserving published evidence.",
+          "evidence": [
+            "docs/academic-subject-changes.md"
+          ]
+        },
+        {
+          "id": "workflow-status-counts",
+          "title": "Submitted/Approved/Published filters and colored counts",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Use list filtering or distinct colors/counts to separate submitted, approved and published work without deleting or moving canonical academic records. Show branch-wide arm counts, not just class arms; separate subject/test and result states.",
+          "evidence": [
+            "docs/academic-workflow-status-filters.md"
+          ]
+        },
+        {
+          "id": "academic-mobile-toolbar",
+          "title": "Improve academic action layout on mobile",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Clear arranged shortcuts, no overlapping buttons.",
+          "evidence": []
+        },
+        {
+          "id": "branch-imports-arms",
+          "title": "Branch-safe pupil imports and reusable arms",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Same labels/admission numbers across branches must not conflict; recover orphan memberships; fix Nursery 2 Distinction subject allocation.",
+          "evidence": [
+            "docs/academic-branch-import-arm-repair-2026-10-29.md"
+          ]
+        }
+      ]
+    },
+    {
+      "group": "cbt",
+      "items": [
+        {
+          "id": "entrance-setup-guide",
+          "title": "Guide first Mathematics/English/General Knowledge entrance exam",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Question import and candidate access offline/remotely, with current documented navigation.",
+          "evidence": [
+            "docs/entrance-and-remote-exams.md"
+          ]
+        },
+        {
+          "id": "entrance-documents",
+          "title": "Word and PDF entrance question uploads",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Reuse validated normal-CBT import flow; preview before saving.",
+          "evidence": [
+            "docs/entrance-and-remote-exams.md"
+          ]
+        },
+        {
+          "id": "entrance-branch-subjects",
+          "title": "Branch-specific entrance subjects on web and desktop",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Primary and secondary branches independently configure subjects.",
+          "evidence": [
+            "docs/branch-entrance-and-dated-history.md"
+          ]
+        },
+        {
+          "id": "remote-existing-tests",
+          "title": "Eligible enrolled students use existing uploaded online tests",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "No separate registration; provide verified student access URL.",
+          "evidence": [
+            "docs/entrance-and-remote-exams.md"
+          ]
+        },
+        {
+          "id": "answer-comparison",
+          "title": "Student selections versus correct answers, preview/print",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Academic Area Online CBT must open actual attempts, not unrelated empty remote-exam pages.",
+          "evidence": [
+            "docs/LOCAL_CBT_ANSWER_COPIES.md"
+          ]
+        },
+        {
+          "id": "local-answer-upload",
+          "title": "Every local CBT server uploads detailed answers with scores",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Preserve old attempts; web preview/print only after origin server uploads saved answer evidence; no invented answers.",
+          "evidence": [
+            "docs/LOCAL_CBT_ANSWER_COPIES.md"
+          ]
+        }
+      ]
+    },
+    {
+      "group": "finance",
+      "items": [
+        {
+          "id": "revenue-sync",
+          "title": "Repair revenue synchronization and verify completion/retry",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Repair the HTTP 400 checkpoint stall, run authorized synchronization to confirmed completion, and verify retry produces no duplicate payments/journals. Record one logical run audit rather than one success row per internal batch; explain when a server repair needs no desktop release.",
+          "evidence": [
+            "docs/accounting-revenue-sync.md"
+          ]
+        },
+        {
+          "id": "fee-category",
+          "title": "Church/school staff children, scholarship and sibling billing",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Specific category rates override correctly; fees and optional choices remain branch scoped.",
+          "evidence": [
+            "docs/BILLING_CATEGORY_CHARGE_CORRECTION.md"
+          ]
+        },
+        {
+          "id": "fee-lookup",
+          "title": "Fee lookup filters independently verify setup",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Do not require selecting a real student; show matching rules and totals.",
+          "evidence": []
+        },
+        {
+          "id": "billing-discount-discovery",
+          "title": "Accessible total school-fee discount interface",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Percentage/fixed amount on total, retain component rules; visible desktop buttons.",
+          "evidence": [
+            "docs/class-term-discounts-and-import-recovery.md"
+          ]
+        },
+        {
+          "id": "part-payment-plans",
+          "title": "Separate total-fee payment-plan settings",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Percentage, fixed minimum, instalment count; retain existing per-item rules.",
+          "evidence": []
+        },
+        {
+          "id": "manual-reversals",
+          "title": "Fix totals increasing after manual deductions/reversals",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Preserve original payments with linked corrections; no duplicated charges or credit.",
+          "evidence": [
+            "docs/payment-correction-totals-2026-11-03.md"
+          ]
+        },
+        {
+          "id": "billing-conflict-ui",
+          "title": "Self-service and batch tuition/textbook/yearbook conflict resolution",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Keep loaded review; one back button; working recheck; show component calculation and distinguish setup totals from balance.",
+          "evidence": [
+            "docs/billing-conflict-resolution-2026-11-03.md"
+          ]
+        },
+        {
+          "id": "billing-schoolwide",
+          "title": "Resolve same billing gaps across affected pupils",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Tuition category, textbook/yearbook and incorrect gender uniforms; preserve every payment/invoice and use reviewed adjustments.",
+          "evidence": [
+            "docs/BILLING_CATEGORY_CHARGE_CORRECTION.md"
+          ]
+        },
+        {
+          "id": "fee-credit-explanation",
+          "title": "Explain school-fee credit, receipts and wallet separately",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "All Receipts may include optional/wallet money; do not use them as fee credit.",
+          "evidence": []
+        },
+        {
+          "id": "negative-wallet",
+          "title": "Correct false negative wallet balances school-wide",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Lifetime wallet transactions and verified allocation evidence, no manufactured top-ups.",
+          "evidence": [
+            "docs/payment-correction-totals-2026-11-03.md"
+          ]
+        },
+        {
+          "id": "duplicate-bank-transfer",
+          "title": "Reverse one accidentally approved duplicate wallet top-up",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Keep both original records, link compensating reversal to selected duplicate; prevent retry duplicates.",
+          "evidence": []
+        },
+        {
+          "id": "paystack-reconciliation",
+          "title": "Reconcile missing Paystack collections",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Compare verified transaction references with receipts, not payout count alone; prevent duplicate repair.",
+          "evidence": []
+        },
+        {
+          "id": "open-finance-queues",
+          "title": "Load current submitted/confirmation/approval queues immediately",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Only completed history requires date range; cache current workspace and use explicit refresh.",
+          "evidence": [
+            "docs/finance-open-request-queues.md",
+            "docs/finance-open-request-queues-verification.md"
+          ]
+        },
+        {
+          "id": "requisition-attachments",
+          "title": "Always expose authorized read-only attachments",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Accessible without edit permission and after request becomes noneditable.",
+          "evidence": [
+            "docs/finance-attachment-viewing.md"
+          ]
+        },
+        {
+          "id": "final-approval-roles",
+          "title": "Every explicitly authorized officer can act at final approval",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Do not restrict to displayed role examples; preserve financial permission checks.",
+          "evidence": []
+        },
+        {
+          "id": "payment-dialogs",
+          "title": "QR preview without extra success modal; one-click dismiss payment success",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Avoid stacked action dialogs and repeated action listeners.",
+          "evidence": [
+            "docs/staff-action-dialog-repair.md"
+          ]
+        },
+        {
+          "id": "revenue-account-names",
+          "title": "Edit revenue account names on web across editions",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Keep account codes and transactions immutable; edition-appropriate labels.",
+          "evidence": []
+        },
+        {
+          "id": "organization-language",
+          "title": "Remove church/school terminology from Other Organisation",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Income categories/account labels; correct Fee summary labels; retain editable names.",
+          "evidence": []
+        },
+        {
+          "id": "optional-clubs",
+          "title": "Show all configured eligible clubs in parent portal",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Chess, Graphic and Photography available to all Main Branch classes in First Term per user decision.",
+          "evidence": []
+        },
+        {
+          "id": "desktop-fee-controls",
+          "title": "Fix clipped fee setup, class selections and billing-category buttons",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Correct branch class list; visible controls without resizing.",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "group": "access-settings",
+      "items": [
+        {
+          "id": "staff-branch-checkboxes",
+          "title": "Assign one or more branches with checkboxes",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Server-enforced multi-branch permissions, no unintended all-branch access.",
+          "evidence": []
+        },
+        {
+          "id": "international-office",
+          "title": "International studies and parent-correspondence staff role",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Cambridge/international recommendations and official parent letters.",
+          "evidence": []
+        },
+        {
+          "id": "staff-biometric-recovery",
+          "title": "Administrator disables lost-device passkeys",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Password recovery remains available; Mary confirmed successful sign-in; no credentials stored in tracker.",
+          "evidence": [
+            "docs/staff-security-history.md"
+          ]
+        },
+        {
+          "id": "staff-username",
+          "title": "Self-service username change reflected in Staff & permissions",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Immutable account identity and directory update/caches kept consistent.",
+          "evidence": []
+        },
+        {
+          "id": "parent-password-reset",
+          "title": "Parent self-service lost-password recovery",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Correct parent login identifier guidance, no email-input rejection for supported identity flow.",
+          "evidence": [
+            "docs/parent-recovery-and-result-download.md"
+          ]
+        },
+        {
+          "id": "parent-download-result",
+          "title": "Download result beside Print",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Preserve exact shared result presentation and access policies.",
+          "evidence": [
+            "docs/parent-recovery-and-result-download.md"
+          ]
+        },
+        {
+          "id": "branch-parent-onboarding",
+          "title": "Branch-specific shared onboarding link and one-time code",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "User chose former general-link/code experience scoped strictly to branch; shared admission prefixes allowed; no cross-branch learner lookup/update.",
+          "evidence": [
+            "docs/parent-onboarding-branch-isolation-2026-11-03.md"
+          ]
+        },
+        {
+          "id": "branch-configuration",
+          "title": "Branch-specific name format, classes/arms and admissions",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Keep organisation type/workspace boundary explicit; explain any true org-wide settings.",
+          "evidence": []
+        },
+        {
+          "id": "branch-email-provider",
+          "title": "Review branch-specific email delivery configuration",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "The user requested branch-specific email delivery settings. Verify sender/reply-to and provider independence where supported; explicitly explain any technical reason for a shared organisation provider instead of silently treating it as the user's preference.",
+          "evidence": [
+            "docs/email-provider-onboarding.md"
+          ]
+        },
+        {
+          "id": "desktop-settings-layout",
+          "title": "Fix clipped Classes & Arms and Admission Classes dialogs",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Branch-specific controls visible without manual resize.",
+          "evidence": []
+        },
+        {
+          "id": "mojibake",
+          "title": "Remove corrupted characters from biometric/login controls",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Correct UTF-8/icons across web editions.",
+          "evidence": []
+        },
+        {
+          "id": "portal-update-banner",
+          "title": "Fix persistent update banner and stale portal regressions",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Ship matching versioned assets/service worker; retain records and form safety.",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "group": "shared-operations",
+      "items": [
+        {
+          "id": "faith-vendor-ownership",
+          "title": "Faith/organisation vendor ownership labels and org-sales toggle",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Both vendor and organisation may sell when enabled; clear ownership; web and desktop.",
+          "evidence": [
+            "docs/vendor-store-sales-control.md"
+          ]
+        },
+        {
+          "id": "notification-failures",
+          "title": "Fix notification scheduler failures",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Meaningful failure evidence, bounded retries and no audit flooding.",
+          "evidence": [
+            "docs/notification-system.md"
+          ]
+        },
+        {
+          "id": "audit-names-style",
+          "title": "Use actual names and consistent style in every audit surface",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Security, academic and other module logs; preserve immutable evidence.",
+          "evidence": []
+        },
+        {
+          "id": "audit-dedup",
+          "title": "Stop repeated logs for one action and batch previews",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "One logical action/request history; preserve real distinct actions/errors.",
+          "evidence": [
+            "docs/requisition-audit-trail.md"
+          ]
+        },
+        {
+          "id": "date-history",
+          "title": "Date-first loading for large completed/history registers",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "No unrequested full scans; current operational queues remain available.",
+          "evidence": [
+            "docs/branch-entrance-and-dated-history.md"
+          ]
+        },
+        {
+          "id": "firestore-usage",
+          "title": "Hourly Firestore read comparison October 23–25 and regression checks",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Verify actual monitoring where accessible; all editions; avoid unrequested reads and writes.",
+          "evidence": [
+            "docs/firestore-hourly-review-2026-10-25.md",
+            "docs/firestore-read-cost-review-2026-10-24.md"
+          ]
+        },
+        {
+          "id": "tenant-index-access",
+          "title": "Complete tenant index rollout where owner access allows",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Owners provided by user; check access without leaking credentials.",
+          "evidence": [
+            "docs/firestore-index-deployment.md"
+          ]
+        },
+        {
+          "id": "staff-meetings",
+          "title": "Meeting attendance across all editions",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Start/end times, daily/dated, independent GPS/network mapping, department inclusion checkboxes, present/late/absent filters and preview/print; authorized academic-management roles.",
+          "evidence": [
+            "docs/staff-meetings.md"
+          ]
+        },
+        {
+          "id": "card-terminals",
+          "title": "Prepare bank-card terminal integration but leave disabled",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "No hardware yet; Mastercard/Visa/Verve depend on supported provider terminal; do not activate charges.",
+          "evidence": [
+            "docs/card-terminal-setup.md"
+          ]
+        }
+      ]
+    },
+    {
+      "group": "hospital",
+      "items": [
+        {
+          "id": "hospital-full-scope",
+          "title": "Finish the complete Hospital edition checklist",
+          "status": "deferred_user_priority",
+          "acceptance": "Do not reduce the originally agreed feature scope; use hospital-edition-scope.md as authoritative requirement list.",
+          "evidence": [
+            "../portal/docs/hospital-edition-scope.md"
+          ]
+        },
+        {
+          "id": "hospital-owner-demo",
+          "title": "Maintain accessible owner's demo",
+          "status": "deferred_user_priority",
+          "acceptance": "Hospital isolated from live school data; provide verified entry URL and role access.",
+          "evidence": [
+            "../portal/docs/hospital-owner-demo.md"
+          ]
+        },
+        {
+          "id": "hospital-nfc",
+          "title": "Patient cards remain NFC",
+          "status": "deferred_user_priority",
+          "acceptance": "Preserve patient identity and role-based data access; no patient details exposed by card alone.",
+          "evidence": [
+            "../portal/docs/hospital-edition-scope.md"
+          ]
+        },
+        {
+          "id": "hospital-clinical",
+          "title": "Prescriptions, pharmacy and investigation workflows",
+          "status": "deferred_user_priority",
+          "acceptance": "Preserve clinical records, retry-safe orders/results/dispensing.",
+          "evidence": [
+            "../portal/docs/hospital-orders-workflows.md"
+          ]
+        },
+        {
+          "id": "hospital-billing",
+          "title": "Billing, HMO, deposits, prepayments and corporate accounts",
+          "status": "deferred_user_priority",
+          "acceptance": "Multi-invoice HMO/corporate remittances, no duplicate charges/allocations.",
+          "evidence": [
+            "../portal/docs/hospital-billing-workflows.md"
+          ]
+        },
+        {
+          "id": "hospital-inpatient",
+          "title": "Wards, admissions, beds and discharge",
+          "status": "deferred_user_priority",
+          "acceptance": "Prevent double allocation; preserve inpatient and billing history.",
+          "evidence": [
+            "../portal/docs/hospital-inpatient-workflows.md"
+          ]
+        },
+        {
+          "id": "hospital-nursing",
+          "title": "Nursing charts, medication administration and handovers",
+          "status": "deferred_user_priority",
+          "acceptance": "Role permissions, immutable evidence and concurrent-safe actions.",
+          "evidence": [
+            "../portal/docs/hospital-nursing-workflows.md"
+          ]
+        },
+        {
+          "id": "hospital-theatre",
+          "title": "Theatre, surgery and procedures",
+          "status": "deferred_user_priority",
+          "acceptance": "Scheduling, approvals and records as full scope requires.",
+          "evidence": [
+            "../portal/docs/hospital-theatre-workflows.md"
+          ]
+        },
+        {
+          "id": "hospital-procurement",
+          "title": "Pharmacy procurement, supplier billing and remittances",
+          "status": "deferred_user_priority",
+          "acceptance": "Receipts, returns, credits, multi-invoice supplier payments, bounded history.",
+          "evidence": [
+            "../portal/docs/hospital-pharmacy-procurement.md",
+            "../portal/docs/hospital-remittances-verification.md"
+          ]
+        },
+        {
+          "id": "hospital-stock",
+          "title": "Stock counts, expiry, quarantine/disposal and remaining pharmacy work",
+          "status": "deferred_user_priority",
+          "acceptance": "Existing demo has disposal increment; perpetual valuation, controlled-drug witnesses, offline/desktop parity and practitioner validation still need original-scope verification.",
+          "evidence": [
+            "../portal/docs/hospital-stock-disposal-verification.md",
+            "../portal/docs/hospital-edition-scope.md"
+          ]
+        }
+      ]
+    }
+  ],
+  "currentPassValidation": {
+    "date": "2026-11-10",
+    "repositoryTests": 4898,
+    "passed": 4898,
+    "failed": 0,
+    "responsiveChecks": "Parent advance and History by date synthetic Chrome checks passed at 390px and 1280px.",
+    "financialSafety": "Synthetic tests only; no live payment or notification run. No business-data migration.",
+    "schoolIndexes": "Three vendor period indexes READY; snapshot Rows indexing exemption applied."
+  }
+}

@@ -21,6 +21,7 @@ import {
 import { requireGuestFeePaymentToken } from '../lib/guest-fee-payment.js';
 import { resolveSchoolStoreStock } from '../lib/school-store-stock.js';
 import { quoteSchoolFeePaymentPlan } from '../lib/school-fee-payment-plans.js';
+import { SCHOOL_FEES_ADVANCE_CODE, SCHOOL_FEES_ADVANCE_TYPE, schoolFeeAdvanceItem } from '../lib/school-fee-advance.js';
 
 const PAYSTACK_INIT_URL = 'https://api.paystack.co/transaction/initialize';
 function cleanReference(value) {
@@ -148,12 +149,16 @@ export async function onRequestPost(context) {
     const scopePath = String(guestAccess?.scopePath || body.scopePath || body.ScopePath || '').trim();
     const requestedAmount = Number(String(body.amount || '0').replace(/,/g, ''));
     const paymentMethod = normalizePublicPaymentMethod(body.paymentMethod || body.PaymentMethod);
+    const isAdvance = feeCode === SCHOOL_FEES_ADVANCE_CODE;
 
     if (!email || (!session && !guestAccess && !code) || !feeCode) {
       return Response.json({ ok: false, message: 'Email, password or verification code, and fee are required.' }, { status: 400 });
     }
     if (guestAccess && ['WALLET_TOPUP', 'STORE_CART'].includes(feeCode.toUpperCase())) {
       return Response.json({ ok: false, message: 'This parent-approved link can pay school fees only.' }, { status: 403 });
+    }
+    if (isAdvance && (guestAccess || !accountRef || !scopePath || sourceType.toLowerCase() !== 'student')) {
+      return Response.json({ ok: false, message: 'Sign in to the parent dashboard and select an enrolled student before paying fees in advance.' }, { status: 403 });
     }
     await verifyTurnstile(env, request, body, 'init_payment');
 
@@ -175,6 +180,7 @@ export async function onRequestPost(context) {
         AccountRef: accountRef,
         SourceType: sourceType,
         ScopePath: scopePath,
+        AccountOnly: isAdvance,
         IncludeSchoolFeePaymentPlan: feeCode === SCHOOL_FEES_TOTAL_CODE
       });
     } catch (firestoreErr) {
@@ -198,7 +204,7 @@ export async function onRequestPost(context) {
     };
     // The payable lookup has authenticated ownership and branch. Return an already
     // accepted total checkout before applying a newer plan to that same request.
-    if (feeCode === SCHOOL_FEES_TOTAL_CODE) {
+    if (feeCode === SCHOOL_FEES_TOTAL_CODE || isAdvance) {
       const replay = await claimCheckout();
       if (replay) return replay;
     }
@@ -206,6 +212,12 @@ export async function onRequestPost(context) {
 
     let storeCart = [];
     let fee = (feeData.fees || []).find((item) => String(item.FeeCode || '').trim() === feeCode);
+    if (isAdvance) {
+      if (payableAccount.BillingSource !== 'Students' || !payableAccount.StudentDocumentId || !payableAccount.ScopePath) {
+        rejectCheckout('Select an enrolled student before paying fees in advance.', 403);
+      }
+      fee = schoolFeeAdvanceItem(body.amount);
+    }
     if (feeCode === 'STORE_CART') {
       const requestedCart = Array.isArray(body.storeCart) ? body.storeCart.slice(0, 25) : [];
       storeCart = await Promise.all(requestedCart.map(async (entry) => {
@@ -335,7 +347,9 @@ export async function onRequestPost(context) {
     const origin = new URL(request.url).origin;
     const paymentBranchId = String(account.BranchId || 'main').trim().toLowerCase() || 'main';
     const schoolCode = await getSchoolCode(env, paymentBranchId);
-    const reference = cleanReference(`${schoolCode}-${feeCode}-${account.ApplicationReference || account.AccountRef}-${Date.now()}`);
+    const reference = isAdvance
+      ? cleanReference(`${schoolCode.slice(0, 24)}-${SCHOOL_FEES_ADVANCE_CODE}-${crypto.randomUUID()}`)
+      : cleanReference(`${schoolCode}-${feeCode}-${account.ApplicationReference || account.AccountRef}-${Date.now()}`);
     const callbackUrl = `${origin}/payment-success.html?reference=${encodeURIComponent(reference)}`;
     let paymentConfiguration = null;
     if (paymentMethod === 'paystack') {
@@ -353,12 +367,16 @@ export async function onRequestPost(context) {
     }
     await createDocumentIfAbsent(env, 'paymentIntents', safeDocumentId(reference), {
       Reference: reference,
-      PaymentType: isWallet ? 'Wallet' : (isSchoolFeesTotal ? 'SchoolFeesTotal' : 'Fee'),
+      PaymentType: isAdvance ? SCHOOL_FEES_ADVANCE_TYPE : isWallet ? 'Wallet' : (isSchoolFeesTotal ? 'SchoolFeesTotal' : 'Fee'),
       AccountRef: account.AccountRef,
       AccountRefNormalized: safeDocumentId(account.AccountRef).toLowerCase(),
       ApplicationReference: account.ApplicationReference || '',
       AdmissionNo: account.AdmissionNo || '',
       BranchId: paymentBranchId,
+      ...(isAdvance ? { SchoolSection: account.SchoolSection, StudentScopePath: account.ScopePath,
+        StudentDocumentId: account.StudentDocumentId, DisplayName: account.DisplayName || '',
+        ClassName: account.ClassName || '', StudentType: account.StudentType || '', ParentEmail: email,
+        AcademicSession: account.AcademicSession || '', Term: account.Term || '' } : {}),
       FeeCode: feeCode,
       FeeName: fee.FeeName,
       FeeCategory: fee.FeeCategory || '',
@@ -399,6 +417,8 @@ export async function onRequestPost(context) {
           FeeCode: feeCode,
           FeeName: fee.FeeName,
           FeeCategory: fee.FeeCategory || '',
+          ...(isAdvance ? { PaymentType: SCHOOL_FEES_ADVANCE_TYPE, StudentScopePath: account.ScopePath,
+            StudentDocumentId: account.StudentDocumentId } : {}),
           Amount: amount,
           Currency: String(fee.Currency || 'NGN'),
           AuthorizationMode: guestAccess ? 'Parent OTP Guest Payment' : (session ? 'Parent Session' : 'Parent Credential'),
@@ -426,7 +446,7 @@ export async function onRequestPost(context) {
           feeCode,
           feeName: fee.FeeName,
           feeCategory: fee.FeeCategory || '',
-          paymentType: isWallet ? 'Wallet' : (isSchoolFeesTotal ? 'SchoolFeesTotal' : 'Fee'),
+          paymentType: isAdvance ? SCHOOL_FEES_ADVANCE_TYPE : isWallet ? 'Wallet' : (isSchoolFeesTotal ? 'SchoolFeesTotal' : 'Fee'),
           feeItems: schoolFeeItems,
           schoolFeePaymentPlan: isSchoolFeesTotal ? schoolFeeRules : undefined,
           fullSchoolFeeAmount: isSchoolFeesTotal ? configuredAmount : undefined,

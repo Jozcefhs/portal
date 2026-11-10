@@ -1,5 +1,21 @@
 # Dynamax Project Handoff
 
+## Current continuation checklist — 10 November 2026
+
+Start with [the user request tracker](docs/user-request-tracker.json). It retains
+the accumulated requests, decisions, current work and evidence required before
+an item can be marked delivered. Update it whenever the user adds an issue and
+after testing, pushing or deploying. Historical requests marked for verification
+must not be silently dropped or assumed complete.
+
+Current school web work is in `score-register-repair` on
+`codex/school-score-register-release`. The `portal` checkout contains separate
+Hospital development; do not deploy its working tree to the school project.
+The current pass permits web testing, push and deployment, **not desktop
+compilation or installer release**. Card-terminal payments remain disabled.
+The older handoff below is historical context; newer user decisions and the
+tracker take precedence where they differ.
+
 Last updated: 2026-08-21
 
 This is the starting point for continuing the project from another Codex

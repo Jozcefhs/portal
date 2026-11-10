@@ -7,6 +7,7 @@ import { schoolFeeTotalItem } from '../functions/api/parent-dashboard.js';
 import { allocateSchoolFeePayment, onRequestPost } from '../functions/api/init-payment.js';
 import { normalizePublicPaymentMethod, withPaystackBranchRouting } from '../functions/lib/direct-bank-transfer.js';
 import { enforceDesktopDeviceActionScope } from '../functions/api/backend.js';
+import { SCHOOL_FEES_ADVANCE_CODE, SCHOOL_FEES_ADVANCE_TYPE, schoolFeeAdvanceItem } from '../functions/lib/school-fee-advance.js';
 
 const source = await readFile(new URL('../functions/api/init-payment.js', import.meta.url), 'utf8');
 const backend = await readFile(new URL('../functions/api/backend.js', import.meta.url), 'utf8');
@@ -32,6 +33,7 @@ function checkout({ rule = makeRule(), paymentMethod = 'paystack', amount = 1500
     SchoolFeePaymentPlan: { minAmount: 1 }, branchId: 'main' };
   const handler = vm.runInNewContext(`${source.replace(/^import[\s\S]*?;\r?\n/gm, '').replace(/\bexport\s+/g, '')}\n;onRequestPost`, {
     Response, URL, Date, quoteSchoolFeePaymentPlan, normalizePublicPaymentMethod, withPaystackBranchRouting,
+    SCHOOL_FEES_ADVANCE_CODE, SCHOOL_FEES_ADVANCE_TYPE, schoolFeeAdvanceItem,
     SCHOOL_FEES_TOTAL_CODE: 'SCHOOL_FEES_TOTAL', readJsonBody: request => request.json(),
     readParentSession: async () => ({ email: 'parent@example.org' }), verifyTurnstile: async () => {}, requireFirestoreEnv: () => {},
     getPayableFees: async (_env, input) => {

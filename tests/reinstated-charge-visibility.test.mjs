@@ -92,6 +92,7 @@ const generator = source.slice(source.indexOf('async function generateSchoolFeeI
 function generatorHarness(data) {
   const original = structuredClone(data), writes = [];
   const run = vm.runInNewContext(`(${generator})`, {
+    readManagedSchoolFeeCreditSummary: async () => ({ summary: null }),
     clean, lower, sameText, normalizeMatchText: lower, sameFinancialPeriod,
     assertManualPaymentScope: () => {}, scopedPaymentWriteCondition: () => ({}),
     resolveStudentEnrollmentCategory: row => row.EnrollmentCategory,

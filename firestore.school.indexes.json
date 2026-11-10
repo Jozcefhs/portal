@@ -1,6 +1,60 @@
 {
   "indexes": [
     {
+      "collectionGroup": "vendorEarnings",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "ScopeKey",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "VendorId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "Date",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "vendorClaimLots",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "ScopeKey",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "VendorId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "Date",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "vendorSettlementPayments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "ScopeKey",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "VendorId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "Date",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
       "collectionGroup": "payments", "queryScope": "COLLECTION",
       "fields": [{"fieldPath":"Gateway","order":"ASCENDING"},{"fieldPath":"PaidAt","order":"DESCENDING"}]
     },
@@ -529,5 +583,6 @@
     {"collectionGroup":"accountingImprests","queryScope":"COLLECTION","fields":[{"fieldPath":"Status","order":"ASCENDING"},{"fieldPath":"Date","order":"ASCENDING"},{"fieldPath":"__name__","order":"ASCENDING"}]}
   ],
   "fieldOverrides": [
+    { "collectionGroup": "vendorSettlementSnapshots", "fieldPath": "Rows", "indexes": [] }
   ]
 }

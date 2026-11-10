@@ -130,7 +130,7 @@ export async function studentBillingReviewBatch(env, user, body, overrides = {})
       (!clean(row.SchoolSection || row.schoolSection) || clean(row.SchoolSection || row.schoolSection).toLowerCase() === student.SchoolSection);
     const plan = await deps.studentBillingReconciliationPlan(student, { ...config,
       invoices: financialGroups.invoices.filter(matches), accountSummaries: financialGroups.accountSummaries.filter(matches), payments: [], ledger: [] });
-    if (plan.rows.every((row) => Math.abs(row.difference) < 0.005 && row.invoiceIds.length <= 1)) matched += 1;
+    if (!plan.creditReviewOnly && !plan.requiresReview && plan.rows.every((row) => Math.abs(row.difference) < 0.005 && row.invoiceIds.length <= 1)) matched += 1;
     else rows.push(plan);
   }
   return { ok: true, readOnly: true, checked: profiles.length, matched, rows,

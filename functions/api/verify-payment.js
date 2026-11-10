@@ -1,7 +1,8 @@
 // Cloudflare Pages Function: /api/verify-payment
 // Verifies Paystack payment and records it in the configured backend.
 
-import { postChurchDonationToAccounting, recordManualPayment } from './backend.js';
+import { postChurchDonationToAccounting, recordManualPayment, recordSchoolFeeAdvance } from './backend.js';
+import { isSchoolFeeAdvance } from '../lib/school-fee-advance.js';
 import { batchUpsertDocuments, createDocumentIfAbsent, getDocument, upsertDocument } from '../lib/firestore.js';
 import { markDonationPaidByReference, sendChurchDonationReceipt } from '../lib/church-payments.js';
 import { finalizeHotelOnlinePayment } from '../lib/hotel-services.js';
@@ -186,6 +187,8 @@ export async function onRequestPost(context) {
       }, { status: 400 });
     }
     const resolvedPaymentType = paymentType(metadataPaymentType || storedIntentType);
+    const isAdvance = isSchoolFeeAdvance(intent || {}) || isSchoolFeeAdvance(meta);
+    if (isAdvance && !intent) return Response.json({ ok: false, message: 'The saved school-fee advance payment intent was not found.' }, { status: 409 });
     const isChurchDonation = resolvedPaymentType === 'churchdonation';
     const isOrganizationCommerce = resolvedPaymentType === 'organizationcommerce';
     const isHotelReservation = resolvedPaymentType === 'hotelreservation';
@@ -336,7 +339,12 @@ export async function onRequestPost(context) {
     }
     if (firestoreConfigured && !isChurchDonation && !isOrganizationCommerce && !isHotelReservation) {
       try {
-        const firestoreData = await recordManualPayment(env, paymentPayload);
+        const firestoreData = isAdvance
+          ? await recordSchoolFeeAdvance(env, intent, { Reference: tx.reference, Currency: tx.currency,
+            RequestedAmount: Number(tx.requested_amount || tx.amount || 0) / 100,
+            GrossAmount: amount, GatewayFee: gatewayFee, NetAmount: netAmount, Gateway: 'Paystack', Method: 'Online',
+            GatewayReference: tx.reference, PaidAt: tx.paid_at || tx.paidAt || '', ReceiptNo: tx.receipt_number || '' })
+          : await recordManualPayment(env, paymentPayload);
         if (firestoreData && firestoreData.ok) {
           recordData = firestoreData;
         } else {
@@ -417,7 +425,7 @@ export async function onRequestPost(context) {
       }
     }
 
-    if (firestoreConfigured) {
+    if (firestoreConfigured && !isAdvance) {
       if (gatewayFee > 0) {
         const feeId = safeId(`PAYSTACK-FEE-${tx.reference}`);
         await upsertDocument(env, 'paymentGatewayCharges', feeId, {

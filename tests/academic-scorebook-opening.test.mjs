@@ -4,7 +4,8 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import * as management from '../functions/lib/academic-management.js';
 import * as scorebook from '../functions/lib/academic-scorebook.js';
-import { safeScopeId } from '../functions/lib/school-scope.js';
+import { safeScopeId, scopedCollectionPath } from '../functions/lib/school-scope.js';
+import { normalizeClassKey } from '../functions/lib/class-names.js';
 import { academicTeacherScoreClassrooms, loadAcademicClassroomScoreRegister } from '../functions/lib/academic-classroom-score-register.js';
 import { buildAcademicClassScoreRegister } from '../functions/lib/academic-class-score-register.js';
 
@@ -50,7 +51,7 @@ function fixture() {
     academicScoreImports: [row({ ImportId: 'old-import' })]
   };
   const read = async (_env, collection, options) => { calls.push({ collection, options }); return structuredClone(records[collection] || []); };
-  const context = vm.createContext({ ...management, ...scorebook, safeScopeId, TextEncoder, TextDecoder,
+  const context = vm.createContext({ ...management, ...scorebook, safeScopeId, scopedCollectionPath, normalizeClassKey, TextEncoder, TextDecoder,
     academicTeacherScoreClassrooms, loadAcademicClassroomScoreRegister, buildAcademicClassScoreRegister,
     loadAcademicResultsReadiness:async(_env,_state,scope)=>({Scope:scope,Blockers:[],Warnings:[],Counts:{Students:0}}),
     getSchoolStructure: async () => ({ ActiveBranchId: 'main', Branches: [{ Id: 'main' }], Sections: ['primary', 'secondary'] }),
@@ -214,7 +215,7 @@ test('workspace loading requests the remembered task and defaults to the lightwe
   assert.equal(calls[2].WorkspaceLoadMode, 'records'); assert.equal(calls[2].RecordClassId, 'c');
 });
 
-for (const view of ['results', 'outcomes', 'analysis', 'classrooms', 'classstaff', 'teachers', 'students', 'timetable', 'presence', 'attendance', 'clearances', 'readiness', 'cbt']) {
+for (const view of ['results', 'outcomes', 'analysis', 'students', 'timetable', 'presence', 'attendance', 'clearances', 'readiness', 'cbt']) {
   test(`${view}: navigation loads settings without unrequested records or history`, async () => {
     const f = fixture(), before = structuredClone(f.records);
     const data = await f.context.bootstrapAcademicManagement({}, actor, { ...input, View: view, WorkspaceLoadMode: 'navigation' });
@@ -224,6 +225,46 @@ for (const view of ['results', 'outcomes', 'analysis', 'classrooms', 'classstaff
     assert.equal(f.writes.length, 0); assert.deepEqual(f.records, before);
   });
 }
+
+test('classroom setup opens directly without student profiles, memberships, assignments, scores or writes', async () => {
+  const f=fixture(), before=structuredClone(f.records);
+  const data=await f.context.bootstrapAcademicManagement({},actor,{...input,View:'classrooms',WorkspaceLoadMode:'navigation'});
+  assert.equal(data.workspaceDataDeferred,false); assert.equal(data.workspaceSetup,true);
+  assert.equal(data.classroomDetailsDeferred,true); assert.equal(data.workspaceRecordSelection,null);
+  assert.deepEqual(f.calls.map(call=>call.collection).sort(),
+    ['academicArmTemplates','academicArms','academicClasses','academicDepartments','academicSessions','academicTerms']);
+  for(const key of ['students','staff','studentMemberships','teacherAllocations']) assert.equal(data[key].length,0);
+  assert.equal(data.summary.StudentMemberships,'—');
+  assert.equal(f.writes.length,0); assert.deepEqual(f.records,before);
+});
+
+for(const view of ['classstaff','teachers','offerings']) test(`${view}: setup opens directly with only current-period assignments and no pupils`,async()=>{
+  const f=fixture();
+  const data=await f.context.bootstrapAcademicManagement({},actor,{...input,View:view,WorkspaceLoadMode:'navigation'});
+  assert.equal(data.workspaceDataDeferred,false); assert.equal(data.workspaceSetup,true);
+  assert.equal(data.workspaceRecordSelection,null);
+  assert.ok(!f.calls.some(call=>/Memberships|Scores|Results|Attendance|Movements/.test(call.collection)||/students$/.test(call.collection)));
+  for(const collection of ['academicTeacherAllocations','academicSubjectOfferings']) {
+    const call=f.calls.find(item=>item.collection===collection); if(!call) continue;
+    assert.deepEqual(Array.from(call.options.filters,filter=>[filter.field,filter.value]),[['BranchId','main'],['SessionId','s'],['TermId','t']]);
+  }
+  assert.equal(f.calls.filter(call=>call.collection==='academicSessions').length,1);
+  assert.equal(f.calls.filter(call=>call.collection==='academicTerms').length,1);
+  assert.equal(f.writes.length,0);
+});
+
+test('selected-class result loading fetches only named pupils, preserving marks and avoiding a full directory',async()=>{
+  const f=fixture();f.context.getDocument=async()=>({});
+  f.records.academicStudentMemberships=[row({ClassId:'c',SessionId:'s',TermId:'t',StudentRef:'TEST/1'}),row({ClassId:'other',StudentRef:'OTHER/2'})];
+  f.records['schoolBranches/main/sections/secondary/students']=[row({AdmissionNo:'TEST/1',DisplayName:'Example Pupil'})];
+  const before=structuredClone(f.records);
+  const result=await f.context.bootstrapAcademicManagement({},actor,{...input,View:'results',WorkspaceLoadMode:'records',RecordClassId:'c',SessionId:'s',TermId:'t'});
+  const reads=f.calls.filter(call=>/students$/.test(call.collection));
+  assert.equal(reads.length,1);
+  assert.deepEqual(JSON.parse(JSON.stringify(reads[0].options.filters)),[{field:'AdmissionNo',op:'in',value:['TEST/1']}]);
+  assert.equal(result.students[0].StudentName,'Example Pupil');
+  assert.equal(f.writes.length,0);assert.deepEqual(f.records,before);
+});
 
 test('explicit Results reads use the selected branch, period and class without downloading raw marks or attendance', async () => {
   const f = fixture();

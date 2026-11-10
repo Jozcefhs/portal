@@ -346,6 +346,7 @@ test('invoice retry reuses discounted bills and refuses changed discounts withou
   const block = backend.slice(backend.indexOf('async function generateSchoolFeeInvoicesForAccount('), backend.indexOf('function ledgerDocumentId('));
   let policy = rule, catalogue = fees, feeReads = 0, policyReads = 0, counter = 0; const invoices = new Map(), writes = [];
   const run = vm.runInNewContext(`(${block})`, {
+    readManagedSchoolFeeCreditSummary: async () => ({ summary: null }),
     clean, lower, normalizeMatchText: lower, sameText: (a,b) => lower(a) === lower(b), sameFinancialPeriod,
     assertManualPaymentScope, scopedPaymentWriteCondition, isFullScholarship, resolveStudentEnrollmentCategory,
     normalizeFeeItem: row => row, normalizeInvoice: row => row, asMoneyNumber: v => Number(v) || 0,

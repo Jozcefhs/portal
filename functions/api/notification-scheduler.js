@@ -63,6 +63,7 @@ async function run(context) {
     }
     const announcementsOnly = body.announcementsOnly === true;
     const attendanceOnly = body.attendanceOnly === true;
+    const schoolFeeCreditsOnly = body.schoolFeeCreditsOnly === true;
     stage = 'school-fee-credits';
     const schoolFeeCredits = announcementsOnly || attendanceOnly || identity.edition !== 'school'
       ? { skipped: true }
@@ -71,23 +72,23 @@ async function run(context) {
           limit: Number(body.creditLimit || 1000)
         });
     stage = 'fee-reminders';
-    const reminders = announcementsOnly || attendanceOnly ? { skipped: true } : await processFeeReminderSchedule(context.env, {
+    const reminders = announcementsOnly || attendanceOnly || schoolFeeCreditsOnly ? { skipped: true } : await processFeeReminderSchedule(context.env, {
       today: clean(body.today),
       limit: Number(body.limit || 250)
     });
     stage = 'library-reminders';
-    const libraryReminders = announcementsOnly || attendanceOnly || identity.edition !== 'school'
+    const libraryReminders = announcementsOnly || attendanceOnly || schoolFeeCreditsOnly || identity.edition !== 'school'
       ? { skipped: true }
       : await processLibraryDueReminders(context.env, {
           today: clean(body.today), limit: Number(body.libraryLimit || 250)
         });
     stage = 'school-announcements';
-    const schoolAnnouncements = attendanceOnly || identity.edition !== 'school' ? { skipped: true } : await processScheduledSchoolAnnouncements(context.env, {
+    const schoolAnnouncements = attendanceOnly || schoolFeeCreditsOnly || identity.edition !== 'school' ? { skipped: true } : await processScheduledSchoolAnnouncements(context.env, {
         now: clean(body.now),
         limit: Number(body.limit || 100)
       });
     stage = 'organisation-announcements';
-    const churchAnnouncements = attendanceOnly || !['faith', 'organization'].includes(identity.edition) ? { skipped: true } : await processScheduledChurchAnnouncements(context.env, {
+    const churchAnnouncements = attendanceOnly || schoolFeeCreditsOnly || !['faith', 'organization'].includes(identity.edition) ? { skipped: true } : await processScheduledChurchAnnouncements(context.env, {
         now: clean(body.now),
         edition: identity.edition,
         limit: Number(body.limit || 100)
@@ -100,20 +101,20 @@ async function run(context) {
       church: churchAnnouncements
     };
     stage = 'announcement-push-queue';
-    const announcementPush = attendanceOnly ? { skipped: true } : await processSchoolAnnouncementPushQueue(context.env, {
+    const announcementPush = attendanceOnly || schoolFeeCreditsOnly ? { skipped: true } : await processSchoolAnnouncementPushQueue(context.env, {
       now: clean(body.now),
       limit: Number(body.pushJobLimit || 1),
       edition: ['faith', 'organization'].includes(identity.edition) ? 'church' : identity.edition
     });
     stage = 'attendance-presence';
-    const attendancePresence = announcementsOnly ? { skipped: true } : await processAttendancePresenceNotifications(context.env, {
+    const attendancePresence = announcementsOnly || schoolFeeCreditsOnly ? { skipped: true } : await processAttendancePresenceNotifications(context.env, {
       now: clean(body.now),
       limit: Number(body.attendanceLimit || 2)
     });
     stage = 'push-delivery-retries';
-    const pushRetries = announcementsOnly ? { skipped: true } : await retryFailedPushDeliveries(context.env, { limit: 50 });
+    const pushRetries = announcementsOnly || schoolFeeCreditsOnly ? { skipped: true } : await retryFailedPushDeliveries(context.env, { limit: 50 });
     stage = 'cbt-paper-retention';
-    const cbtPaperCleanup = announcementsOnly || attendanceOnly || identity.edition !== 'school' ? { skipped: true }
+    const cbtPaperCleanup = announcementsOnly || attendanceOnly || schoolFeeCreditsOnly || identity.edition !== 'school' ? { skipped: true }
       : await processAcademicCbtPaperRetention(context.env);
     stage = 'result-summary';
     const creditRunFailed = schoolFeeCredits.ok === false;

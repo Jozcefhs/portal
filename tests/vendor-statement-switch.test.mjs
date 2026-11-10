@@ -47,7 +47,9 @@ function workspaceRoot() {
 }
 
 async function fixture(options = {}) {
-  const root=workspaceRoot(),previews=[],window={open(){return {document:{write(html){previews.push(html);},close(){}}};}},reads=[],calls=[];
+  const root=workspaceRoot(),previews=[],windows=[],window={open(){const index=previews.length;previews.push('');
+    const preview={closed:false,close(){this.closed=true;},document:{open(){previews[index]='';},write(html){previews[index]+=html;},close(){}}};
+    windows.push(preview);return preview;}},reads=[],calls=[];
   let policy = options.policy || {RequireNewApproval:true,RequireEditApproval:true,RequireStockApproval:true};
   class FormDataFixture {constructor(form){this.rows=Object.values(form.elements).map(node=>[node.name,node.value]);}[Symbol.iterator](){return this.rows[Symbol.iterator]();}}
   const request=async(action,body,signal)=>{
@@ -55,6 +57,7 @@ async function fixture(options = {}) {
     if(action==='bootstrap') return {vendors:[{VendorId:'v1',Name:'First vendor'},{VendorId:'v2',Name:'Second vendor'}],balances:[],products:options.products || [],requests:options.requests || [],productPolicy:policy,
       settings:{Enabled:true,AccountingConfirmed:true,RecordVersion:'settings-1'},capabilities:options.capabilities || {vendor:true,products:true}};
     if(action==='saveProductPolicy') { policy=body; return {ok:true,message:'Approval controls saved.'}; }
+    if(action==='requestReport') return options.requestReport(body);
     if(action==='statement') return new Promise((resolve,reject)=>reads.push({body,signal,resolve,reject}));
     throw new Error(`Unexpected action: ${action}`);
   };
@@ -65,7 +68,7 @@ async function fixture(options = {}) {
   root.querySelectorAll('[data-tab]').find(node=>node.dataset.tab===(options.tab || (options.products ? 'products' : 'statement'))).onclick();
   const filter=()=>root.querySelector(options.tab==='analysis' ? '[data-analysis-filter]' : '[data-statement-filter]');
   const change=(name,value)=>{filter().elements[name].value=value;filter().onchange({target:filter().elements[name]});};
-  return {root,reads,calls,previews,mounted:{destroy(){mounted.destroy();reads.forEach(read=>read.resolve(null));}},change,filter,result:()=>root.querySelector(options.tab==='analysis' ? '[data-analysis-result]' : '[data-statement-result]'),
+  return {root,reads,calls,previews,windows,mounted:{destroy(){mounted.destroy();reads.forEach(read=>read.resolve(null));}},change,filter,result:()=>root.querySelector(options.tab==='analysis' ? '[data-analysis-result]' : '[data-statement-result]'),
     response(index,amount=0,details={}){const read=reads[index];read.resolve({vendor:{VendorId:read.body.VendorId,Name:read.body.VendorId==='v1'?'First vendor':'Second vendor'},from:read.body.From,to:read.body.To,balance:{Available:amount},availableInPeriod:amount,entries:[],payments:[],...details});}};
 }
 
@@ -97,6 +100,28 @@ test('vendor requisition has full and summary previews with saved totals and app
     assert.match(preview,/Approval \/ payment trail/);
   }
   assert.deepEqual(f.calls.map(call=>call.action),['bootstrap']);
+});
+
+test('large request summaries need no extra read and full print loads its saved report once',async t=>{
+  const saved={SettlementId:'REQ-LARGE',VendorName:'Test vendor',Status:'Submitted',PaymentStatus:'Unpaid',Revision:1,
+    Amount:2010,Paid:0,Unpaid:2010,From:'2026-10-01',To:'2026-10-31',History:[],
+    PrintReport:{complete:false,rows:[],total:{Count:201,Gross:2010,Refund:0,Charge:0,Net:2010,Claimed:2010}}};
+  let resolveReport;
+  const f=await fixture({tab:'requests',requests:[saved],requestReport:()=>new Promise(resolve=>{resolveReport=resolve;})});
+  t.after(()=>f.mounted.destroy());
+  const button=action=>f.root.querySelectorAll('[data-request]').find(node=>node.dataset.action===action);
+  await button('print-summary').onclick();
+  assert.equal(f.calls.length,1);assert.match(f.previews[0],/Total: 201 sales/);
+  const loading=button('print').onclick();
+  assert.equal(f.windows.length,2,'preview opens before waiting for the report');
+  assert.match(f.previews[1],/Loading the saved sales list/);
+  assert.equal(f.calls.at(-1).body.SettlementId,'REQ-LARGE');
+  resolveReport({request:{PrintReport:{...saved.PrintReport,complete:true,rows:[{Serial:1,SaleNo:'SALE-001',Date:'2026-10-12',
+    Items:[{Quantity:1,ItemName:'Saved biscuit'}],Gross:10,Refund:0,Charge:0,Net:10,Claimed:10}]}}});
+  await loading;
+  assert.match(f.previews[1],/Saved biscuit/);assert.doesNotMatch(f.previews[1],/Loading the saved/);
+  await button('print').onclick();
+  assert.equal(f.calls.filter(row=>row.action==='requestReport').length,1,'loaded immutable report is retained');
 });
 
 test('statement renders every monetary column with a no-wrap class without changing values',async t=>{

@@ -18,6 +18,31 @@ jobs:
   process:
     runs-on: ubuntu-latest
     steps:
+      - name: Process school-fee credits
+        env:
+          ENDPOINT: ${{ secrets.NOTIFICATION_SCHEDULER_URL }}
+          SCHEDULER_SECRET: ${{ secrets.NOTIFICATION_SCHEDULER_SECRET }}
+          PROCESS_DATE: ${{ inputs.date }}
+        run: |
+          test -n "$ENDPOINT"
+          test -n "$SCHEDULER_SECRET"
+          response_file="$(mktemp)"
+          payload="$(python3 -c 'import json,os; print(json.dumps({"today":os.environ.get("PROCESS_DATE",""),"schoolFeeCreditsOnly":True,"creditLimit":25}))')"
+          for page in $(seq 1 120); do
+            curl --fail-with-body --silent --show-error \
+              --retry 3 --retry-all-errors \
+              -X POST "$ENDPOINT" \
+              -H "Authorization: Bearer $SCHEDULER_SECRET" \
+              -H "Content-Type: application/json" \
+              --data "$payload" --output "$response_file"
+            has_more="$(python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); assert r.get("ok") is True; print("yes" if r.get("schoolFeeCredits",{}).get("hasMore") else "no")' "$response_file")"
+            if [ "$has_more" = "no" ]; then
+              echo "School-fee credit processing completed."
+              exit 0
+            fi
+          done
+          echo "School-fee credit processing retained its cursor but exceeded this run's page limit. Run the workflow again to resume."
+          exit 1
       - name: Process fee reminders
         env:
           ENDPOINT: ${{ secrets.NOTIFICATION_SCHEDULER_URL }}
@@ -26,9 +51,13 @@ jobs:
         run: |
           test -n "$ENDPOINT"
           test -n "$SCHEDULER_SECRET"
+          response_file="$(mktemp)"
+          payload="$(python3 -c 'import json,os; print(json.dumps({"today":os.environ.get("PROCESS_DATE",""),"limit":250,"creditLimit":25}))')"
           curl --fail-with-body --silent --show-error \
             --retry 3 --retry-all-errors \
             -X POST "$ENDPOINT" \
             -H "Authorization: Bearer $SCHEDULER_SECRET" \
             -H "Content-Type: application/json" \
-            --data "{\"today\":\"$PROCESS_DATE\",\"limit\":250}"
+            --data "$payload" --output "$response_file"
+          python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); assert r.get("ok") is True' "$response_file"
+          echo "Daily reminder processing completed."

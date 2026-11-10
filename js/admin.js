@@ -4295,12 +4295,14 @@ function bindStudentEditor(students) {
     const outcomes = [];
     let completionText = 'Stopped — load a fresh preview before retrying';
     let cancelled = false;
+    const holdCount = plans.filter(plan=>plan.creditReviewOnly).length;
+    const onlyHolds = holdCount === plans.length;
     try {
-      if (!await window.DynamaxDialogs.confirm({ title: 'Post valid missing charges only',
-        message: `Add ${money(plans.reduce((sum, plan) => sum + plan.postingTotal, 0))} in valid missing charges across ${plans.length} reviewed account(s)? Existing invoice amounts and payments will not be replaced. ${plans.filter((plan) => plan.requiresReview).length} account(s) will remain under finance review, with existing allocations unchanged.`,
-        confirmText: 'Post missing charges' })) {
+      if (!await window.DynamaxDialogs.confirm({ title: onlyHolds ? 'Clear reviewed credit hold' : 'Apply reviewed billing changes',
+        message: `${onlyHolds ? 'The current fee setup matches the recorded charges.' : `Add ${money(plans.reduce((sum, plan) => sum + plan.postingTotal, 0))} in valid missing charges across ${plans.length - holdCount} reviewed account(s).`} ${holdCount ? `Clear the reviewed credit hold on ${holdCount} account(s), allowing unused school-fee credit to pay due invoices during the next allocation. No new payment or charge is created by clearing a hold.` : ''} Existing invoice amounts and payments will not be replaced. ${plans.filter((plan) => plan.requiresReview).length} account(s) will remain under finance review, with existing allocations unchanged.`,
+        confirmText: onlyHolds ? 'Clear reviewed credit hold' : 'Apply reviewed changes' })) {
         cancelled = true;
-        completionText = 'Post valid missing charges';
+        completionText = onlyHolds ? 'Clear reviewed credit hold' : 'Apply reviewed changes';
         return;
       }
       for (const plan of plans) {
@@ -4312,7 +4314,7 @@ function bindStudentEditor(students) {
           outcomes.push({ reference: plan.profile.AccountRef, result });
         } catch (error) { failed += 1; outcomes.push({ reference: plan.profile.AccountRef, error: error.message }); }
       }
-      status.innerHTML = `<strong>Missing charges posted for ${changed} accounts; ${failed} submissions need another review; ${outcomes.filter((row) => row.result?.requiresReview).length} posted accounts still need finance review; ${warnings} balance/credit warnings.</strong><ul>${outcomes.map((row) =>
+      status.innerHTML = `<strong>Reviewed changes completed for ${changed} accounts (${outcomes.filter(row=>row.result?.creditReviewCleared).length} credit holds cleared); ${failed} submissions need another review; ${outcomes.filter((row) => row.result?.requiresReview).length} accounts still need finance review; ${warnings} balance/credit warnings.</strong><ul>${outcomes.map((row) =>
         `<li>${escapeHtml(row.reference)}: ${escapeHtml(row.error || row.result.message)}${row.result ? ` Added charges: ${money(row.result.added)}. Recorded credit${row.result.requiresReview ? ' — provisional' : ''}: ${money(row.result.after.recordedCredit)}; remaining charge difference (not balance): ${money(row.result.after.difference)}.` : ''}</li>`).join('')}</ul>`;
       completionText = 'Review complete — load a fresh preview before retrying';
     } catch (error) {
@@ -4360,7 +4362,7 @@ function bindStudentEditor(students) {
           `<tr><td><strong>${escapeHtml(row.profile.DisplayName || '')}</strong><br>${escapeHtml(row.profile.AccountRef)}<br><small>${escapeHtml([row.profile.ClassName, row.profile.StudentType, row.profile.Gender, row.profile.EnrollmentCategory].filter(Boolean).join(' · '))}<br>${escapeHtml([row.profile.AcademicSession, row.profile.Term].filter(Boolean).join(' · '))}</small></td>
           <td>${Array.isArray(row.rows) ? `Current setup: <strong>${money(row.expectedTotal)}</strong><br>Posted: ${money(row.invoicedTotal)}<br>Difference: ${money(row.difference)}<br><strong>Valid missing charges to add: ${money(row.ready ? row.postingTotal : 0)}</strong><br><small>Recorded credit: ${row.recordedCreditSource === 'unavailable' ? 'not loaded' : money(row.recordedCredit)} — unverified</small>` : 'Not checked'}</td>
           <td><strong>${row.needsRecheck ? 'Recheck required — profile not reviewed' : row.ready ? `Eligible for missing-charge posting${row.requiresReview ? ' — other components still need review' : ''}` : 'Blocked — finance review required'}</strong><p>${escapeHtml(row.reason || `${row.eligibleMissing?.length || 0} valid missing component(s)`)}</p>${row.reviewWarning ? `<p>${escapeHtml(row.reviewWarning)}</p>` : ''}${row.rows?.length ? `<details><summary>View ${row.missing?.length || 0} missing / ${row.conflicts?.length || 0} conflicting components</summary><ul>${row.rows.filter((item) => item.missing || item.conflict).map((item) => `<li><strong>${escapeHtml(item.name || item.code)}</strong> (${escapeHtml(item.code)}): ${escapeHtml(row.blockedMissing?.find((blocked) => blocked.code === item.code)?.postingBlock || item.review)}. Current setup ${money(item.expected)}; posted ${money(item.invoiced)}.${item.invoiceIds.length ? ` Invoice(s): ${item.invoiceIds.map(escapeHtml).join(', ')}.` : ''}</li>`).join('')}</ul></details>` : ''}${row.conflicts?.length ? `<p><button type="button" class="secondary" data-review-billing-conflicts="${escapeHtml(row.profile.AccountRef)}">Review / resolve conflicts</button></p>` : ''}</td></tr>`).join('')}</tbody></table></div>
-        <p class="status" data-billing-reconcile-status></p>${ready.length && !currentUser?.subscriptionReadOnly ? `<button type="button" data-apply-billing-plans>Post valid missing charges for ${ready.length} reviewed accounts (${money(ready.reduce((sum, row) => sum + row.postingTotal, 0))})</button>` : ''}${report.recheck ? '<button type="button" data-refresh-billing-review>Run a fresh review</button>' : ''}`;
+        <p class="status" data-billing-reconcile-status></p>${ready.length && !currentUser?.subscriptionReadOnly ? `<button type="button" data-apply-billing-plans>${ready.every(row=>row.creditReviewOnly) ? 'Clear reviewed credit holds' : 'Apply reviewed billing changes'} for ${ready.length} accounts (${money(ready.reduce((sum, row) => sum + row.postingTotal, 0))} in missing charges)</button>` : ''}${report.recheck ? '<button type="button" data-refresh-billing-review>Run a fresh review</button>' : ''}`;
       content.querySelector('[data-apply-billing-plans]')?.addEventListener('click', (e) => reconcilePlans(ready, e.currentTarget, content.querySelector('[data-billing-reconcile-status]')));
       bindBillingConflictButtons(content);
       content.querySelector('[data-refresh-billing-review]')?.addEventListener('click', () => {
@@ -4405,7 +4407,7 @@ function bindStudentEditor(students) {
         <div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>Component / finding</th><th>Current setup</th><th>Posted</th><th>Difference</th></tr></thead><tbody>${preview.rows.map((row) => `<tr><td>${escapeHtml(row.name || row.code)}<br><small>${escapeHtml(row.code)} · ${escapeHtml(row.review)}${row.invoiceIds.length ? `<br>Invoice(s): ${row.invoiceIds.map(escapeHtml).join(', ')}` : ''}</small></td><td>${money(row.expected)}</td><td>${money(row.invoiced)}</td><td>${money(row.difference)}</td></tr>`).join('')}</tbody></table></div>
         <p>Missing or conflicting charges can overstate recorded credit. This figure is unchanged and is not confirmation of money available to refund or transfer. Review the fee setup before approving any corrections.</p>
         <p>Positive differences may require additional charges. Negative differences may require corrections. Finance must check the source invoices and approvals before posting either. No financial changes are made by this preview.</p>
-        ${canReconcile ? `<p><strong>Valid missing charges to add: ${money(preview.ready ? preview.postingTotal : 0)}</strong></p><p>${escapeHtml(preview.reason || (preview.requiresReview ? 'Only valid missing charges will be added. Existing invoices, payments and allocations remain unchanged; the balance remains provisional pending finance review.' : 'Only missing components will be added; available existing credit will be applied without creating another payment.'))}</p>${preview.reviewWarning ? `<p>${escapeHtml(preview.reviewWarning)}</p>` : ''}<p class="status" data-billing-reconcile-status></p>${preview.ready ? '<button type="button" data-apply-billing-plans>Post valid missing charges</button>' : ''}` : ''}`;
+        ${canReconcile ? `<p><strong>Valid missing charges to add: ${money(preview.ready ? preview.postingTotal : 0)}</strong></p><p>${escapeHtml(preview.reason || (preview.requiresReview ? 'Only valid missing charges will be added. Existing invoices, payments and allocations remain unchanged; the balance remains provisional pending finance review.' : 'Only missing components will be added; available existing credit will be applied without creating another payment.'))}</p>${preview.reviewWarning ? `<p>${escapeHtml(preview.reviewWarning)}</p>` : ''}<p class="status" data-billing-reconcile-status></p>${preview.ready ? `<button type="button" data-apply-billing-plans>${preview.creditReviewOnly ? 'Clear reviewed credit hold' : 'Post valid missing charges'}</button>` : ''}` : ''}`;
       const content = document.querySelector('[data-billing-preview-content]');
       content.querySelector('[data-apply-billing-plans]')?.addEventListener('click', (e) => reconcilePlans([preview], e.currentTarget, content.querySelector('[data-billing-reconcile-status]')));
       if (canReconcile) {
@@ -6121,7 +6123,7 @@ function renderTuckShopPOS(data = {}) {
         <div class="tuck-shop-step-heading"><span>2</span><div><small>Customer</small><h5>Identify the buyer</h5></div></div>
         <label class="tuck-shop-customer-type">Customer type<select id="tuckShopCustomerType"><option value="Student" ${tuckShopCustomerType === 'Student' ? 'selected' : ''}>Student · wallet</option><option value="Staff" ${tuckShopCustomerType === 'Staff' ? 'selected' : ''}>Staff · cash, transfer or POS</option></select></label>
         ${tuckShopCustomerType === 'Student' ? `<form id="walletLookupForm" class="tuck-shop-lookup-form"><label>Find student<input id="tuckShopStudentSearch" type="search" list="tuckShopStudentMatches" value="${escapeHtml(tuckShopCustomerSearch)}" placeholder="Name, admission no., card, phone or email" autocomplete="off"><datalist id="tuckShopStudentMatches"></datalist></label><details class="tuck-shop-manual-lookup"><summary>Enter card ID or admission number manually</summary><div><label>Wallet card ID<input name="WalletCardId" autocomplete="off" placeholder="Scan or enter card ID"></label><label>Admission number<input name="AccountRef" autocomplete="off" placeholder="Admission number"></label></div></details><div class="tuck-shop-lookup-footer"><p class="status" data-department-status></p><div class="tuck-shop-lookup-actions" role="group" aria-label="Student lookup methods"><button type="submit" class="tuck-shop-lookup-action tuck-shop-lookup-primary" aria-label="Find student wallet" title="Find student wallet">${tuckShopLookupIcon('search')}<span>Find wallet</span></button><button type="button" id="tuckShopNfcScan" class="tuck-shop-lookup-action" aria-label="Scan NFC student card" title="Scan NFC student card">${tuckShopLookupIcon('card')}<span>Scan card</span></button><button type="button" id="tuckShopFaceLookup" class="tuck-shop-lookup-action" aria-label="Find student by face" title="Find student by face">${tuckShopLookupIcon('face')}<span>Use face</span></button></div></div></form>
-          ${wallet ? `<div class="wallet-account-result"><div><small>Student</small><strong>${escapeHtml(wallet.DisplayName)}</strong><span>${escapeHtml(wallet.AdmissionNo || wallet.AccountRef)} · ${escapeHtml(wallet.ClassName || '')}</span></div><div><small>Wallet balance</small><strong>${money(wallet.WalletBalance)}</strong><span>Spent today ${money(wallet.WalletSpentToday)}</span></div></div><div class="tuck-shop-step-heading"><span>3</span><div><small>Payment</small><h5>Complete sale</h5></div></div><form id="walletPurchaseForm" class="commerce-checkout-form"><input type="hidden" name="AccountRef" value="${escapeHtml(wallet.AccountRef || '')}"><label>Wallet PIN <small>when required</small><input name="WalletPin" type="password" inputmode="numeric" autocomplete="off"></label><div class="commerce-checkout-total"><span>Calculated total</span><strong>${money(total)}</strong></div><div class="config-actionbar"><p class="status" data-department-status></p><button type="submit" ${entries.length ? '' : 'disabled'}>Complete wallet sale</button></div></form>` : '<p class="tuck-shop-payment-prompt">Find the student wallet to continue to payment.</p>'}` : `<form id="tuckShopStaffLookupForm" class="tuck-shop-lookup-form"><label>Find staff member<input name="Query" id="tuckShopStaffSearch" type="search" list="tuckShopStaffMatches" value="${escapeHtml(tuckShopCustomerSearch)}" placeholder="Name, username, staff ID, phone or email" autocomplete="off"><datalist id="tuckShopStaffMatches"></datalist></label><div class="tuck-shop-lookup-footer"><p class="status" data-department-status></p><button type="submit" class="tuck-shop-staff-select">Select staff member</button></div></form>
+          ${wallet ? `<div class="wallet-account-result"><div><small>Student</small><strong>${escapeHtml(wallet.DisplayName)}</strong><span>${escapeHtml(wallet.AdmissionNo || wallet.AccountRef)} · ${escapeHtml(wallet.ClassName || '')}</span><span class="student-type">Student type: ${escapeHtml(wallet.StudentType || 'Not recorded')}</span></div><div><small>Wallet balance</small><strong>${money(wallet.WalletBalance)}</strong><span>Spent today ${money(wallet.WalletSpentToday)}</span></div></div><div class="tuck-shop-step-heading"><span>3</span><div><small>Payment</small><h5>Complete sale</h5></div></div><form id="walletPurchaseForm" class="commerce-checkout-form"><input type="hidden" name="AccountRef" value="${escapeHtml(wallet.AccountRef || '')}"><label>Wallet PIN <small>when required</small><input name="WalletPin" type="password" inputmode="numeric" autocomplete="off"></label><div class="commerce-checkout-total"><span>Calculated total</span><strong>${money(total)}</strong></div><div class="config-actionbar"><p class="status" data-department-status></p><button type="submit" ${entries.length ? '' : 'disabled'}>Complete wallet sale</button></div></form>` : '<p class="tuck-shop-payment-prompt">Find the student wallet to continue to payment.</p>'}` : `<form id="tuckShopStaffLookupForm" class="tuck-shop-lookup-form"><label>Find staff member<input name="Query" id="tuckShopStaffSearch" type="search" list="tuckShopStaffMatches" value="${escapeHtml(tuckShopCustomerSearch)}" placeholder="Name, username, staff ID, phone or email" autocomplete="off"><datalist id="tuckShopStaffMatches"></datalist></label><div class="tuck-shop-lookup-footer"><p class="status" data-department-status></p><button type="submit" class="tuck-shop-staff-select">Select staff member</button></div></form>
           ${staff ? `<div class="wallet-account-result"><div><small>Staff customer</small><strong>${escapeHtml(staff.DisplayName || staff.Name)}</strong><span>${escapeHtml(staff.CustomerRef || staff.Username || '')}</span></div></div><div class="tuck-shop-step-heading"><span>3</span><div><small>Payment</small><h5>Complete sale</h5></div></div><form id="tuckShopStaffSaleForm" class="commerce-checkout-form"><label>Payment method<select name="PaymentMethod"><option>Cash</option><option>Bank Transfer</option><option>POS / Card</option></select></label><label>Payment reference<input name="PaymentReference" placeholder="Required for transfer or POS"></label><div class="commerce-checkout-total"><span>Calculated total</span><strong>${money(total)}</strong></div><div class="config-actionbar"><p class="status" data-department-status></p><button type="submit" ${entries.length ? '' : 'disabled'}>Complete staff sale</button></div></form>` : '<p class="tuck-shop-payment-prompt">Select a staff member to continue to payment.</p>'}`}
       </section>
     </div>
@@ -14279,6 +14281,9 @@ function academicClassroomStaffForm({ role, existing, staff, sessionId, termId, 
 }
 
 function academicClassroomWorkspace(data, rows) {
+  const detailsLoaded = data.classroomDetailsDeferred !== true;
+  const loadedClassId = clean(data.workspaceRecordSelection?.ClassId);
+  const classroomDetailsLoaded = arm => detailsLoaded && (!loadedClassId || loadedClassId === '*' || arm.ClassId === loadedClassId);
   const canStructure = data.permissions?.canManageStructure === true;
   const canAllocate = data.permissions?.canManageAllocations === true;
   const section = academicManagementFilters.section;
@@ -14344,7 +14349,7 @@ function academicClassroomWorkspace(data, rows) {
   </form>` : '';
 
   let selectedWorkspace = '<div class="academic-classroom-empty"><strong>No classroom is open.</strong><span>Create classrooms above, or open an existing classroom from the register below.</span></div>';
-  if (selectedArm && selectedClass) {
+  if (selectedArm && selectedClass && classroomDetailsLoaded(selectedArm)) {
     const seniorNeedsDepartment = selectedStage === 'senior-secondary' && !departments.length;
     const departmentSummary = selectedStage === 'senior-secondary'
       ? `Classroom department: ${selectedDepartment?.Name || (selectedArm.DepartmentId ? 'Inactive or missing department' : 'Mixed departments')}`
@@ -14388,9 +14393,9 @@ function academicClassroomWorkspace(data, rows) {
       if (clean(academicFind(classes, row.ClassId)?.SchoolStage).toLowerCase() !== 'senior-secondary') return 'Not applicable';
       return row.DepartmentId ? academicLabel(departments, row.DepartmentId, row.DepartmentId) : 'Mixed departments';
     } },
-    { label: learner.Plural, value: (row) => periodMemberships.filter((membership) => membership.ArmId === row.ArmId).length },
-    { label: 'Form teacher', value: (row) => { const allocation = periodAllocations.find((item) => item.ArmId === row.ArmId && item.AllocationRole === 'Form Teacher'); return academicLabel(data.staff, allocation?.TeacherUsername, 'Not assigned'); } },
-    { label: 'Assistant', value: (row) => { const allocation = periodAllocations.find((item) => item.ArmId === row.ArmId && item.AllocationRole === 'Assistant Teacher'); return academicLabel(data.staff, allocation?.TeacherUsername, 'Not assigned'); } },
+    { label: learner.Plural, value: (row) => classroomDetailsLoaded(row) ? periodMemberships.filter((membership) => membership.ArmId === row.ArmId).length : 'Open classroom' },
+    { label: 'Form teacher', value: (row) => { if (!classroomDetailsLoaded(row)) return 'Open classroom'; const allocation = periodAllocations.find((item) => item.ArmId === row.ArmId && item.AllocationRole === 'Form Teacher'); return academicLabel(data.staff, allocation?.TeacherUsername, 'Not assigned'); } },
+    { label: 'Assistant', value: (row) => { if (!classroomDetailsLoaded(row)) return 'Open classroom'; const allocation = periodAllocations.find((item) => item.ArmId === row.ArmId && item.AllocationRole === 'Assistant Teacher'); return academicLabel(data.staff, allocation?.TeacherUsername, 'Not assigned'); } },
     { label: 'Action', render: (row) => `<button type="button" data-academic-open-classroom="${escapeHtml(row.ArmId)}">Open classroom</button>` }
   ], { emptyMessage: 'No classrooms exist yet. Use Create classrooms above.' });
   return `${editor}${departmentEditor}${selectedWorkspace}${classroomRegister}`;
@@ -17494,6 +17499,16 @@ async function openAcademicStudentAllocation() {
   form?.querySelector('input:not([type="hidden"]),select')?.focus({preventScroll:true});
 }
 
+async function openAcademicClassroom(armId) {
+  const arm = academicFind(academicManagementData?.arms || [], armId);
+  if (!arm) return;
+  academicClassroomDraft = {sessionId:academicManagementFilters.sessionId,termId:academicManagementFilters.termId,
+    classId:clean(arm.ClassId),armId:clean(arm.ArmId),armTemplateId:clean(arm.ArmTemplateId)};
+  academicManagementView = 'classrooms';
+  academicManagementTaskViews.classrooms = 'manage';
+  await loadAcademicManagement({records:true,classId:arm.ClassId,armId:arm.ArmId});
+}
+
 function academicSubjectResultContext() {
   const context = academicResultDraft.subjectRequest;
   return context && activeSection === 'academics'
@@ -17706,7 +17721,7 @@ function renderAcademicManagement(data = academicManagementData || {}, message =
   else if (academicManagementView === 'readiness') workspace = academicResultsReadinessWorkspace(data);
   else if (academicManagementView === 'cbt') workspace = academicCbtWorkspace(data, rows);
   else workspace = academicStructureWorkspace(data, rows);
-  panelEl.innerHTML = `${academicManagementHeader(data, rows, message)}${data.workspaceRecordSelection || data.teacherWorkspace ? academicRecordLoadForm(data, workspaceTitle) : ''}<section class="academic-management-workspace">${workspace}</section>`;
+  panelEl.innerHTML = `${academicManagementHeader(data, rows, message)}${academicManagementView !== 'classrooms' && (data.workspaceRecordSelection || data.teacherWorkspace) ? academicRecordLoadForm(data, workspaceTitle) : ''}<section class="academic-management-workspace">${workspace}</section>`;
   organizeAcademicManagementWorkspace(academicManagementView);
   renderModuleSummary('academics', data);
   bindAcademicManagement();
@@ -17730,9 +17745,9 @@ async function academicManagementRequest(action, payload = {}, requestOptions = 
     method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
     dynamaxRetrySafe: retrySafe,
     ...(requestOptions.signal ? { signal: requestOptions.signal } : {}),
-    body: JSON.stringify({ action, BranchId: branchId, View: academicManagementView, TeacherAutoScope: true,
+    body: JSON.stringify({ action, BranchId: branchId, View: academicManagementView, TeacherAutoScope: true, WorkspaceLoadMode: 'navigation',
       ...(retainRoom ? {RecordArmId:ownRoom.ArmId} : {}),
-      ...(academicManagementData?.workspaceRecordSelection && (!ownRoom || retainRoom) ? {
+      ...(normalizedAction !== 'bootstrap' && academicManagementData?.workspaceRecordSelection && (!ownRoom || retainRoom) ? {
         WorkspaceLoadMode: 'records', RecordClassId: academicManagementData.workspaceRecordSelection.ClassId
       } : {}),
       ScoreRowsMode: 'on-demand', ...payload })
@@ -17873,9 +17888,13 @@ async function loadAcademicManagement(options = {}) {
     });
     if (activeSection !== 'academics' || requestId !== academicManagementLoadRequest || requestedView !== academicManagementView) return;
     academicManagementFilters.section = section || academicManagementFilters.section;
-    renderAcademicManagement(data, options.message || 'Academic records loaded.');
+    renderAcademicManagement(data, options.message || (data.workspaceSetup
+      ? requestedView === 'classrooms' ? 'Classroom setup ready. Open a classroom to view its pupils and assignments.' : 'Settings and assignments ready.'
+      : 'Academic records loaded.'));
   } catch (error) {
-    if (activeSection === 'academics') panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
+    if (activeSection === 'academics' && requestId === academicManagementLoadRequest && requestedView === academicManagementView) {
+      panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
+    }
   }
 }
 
@@ -20487,7 +20506,7 @@ function bindAcademicManagement() {
     academicResultDraft = { armId: '' };
     academicOutcomeDraft = { armId: '', promotionDecisionId: '', transcriptStudentRef: '' };
     academicAnalysisFilters = { ...academicAnalysisFilters, period: 'annual', classId: '', armId: '', departmentId: '', subjectId: '', teacherUsername: '', studentRef: '', query: '' };
-    renderAcademicManagement(academicManagementData || {});
+    void loadAcademicManagement();
   });
   document.getElementById('academicManagementTerm')?.addEventListener('change', (event) => {
     academicManagementFilters.termId = event.target.value;
@@ -20508,20 +20527,10 @@ function bindAcademicManagement() {
     academicAttendanceDraft = { date: '', mode: 'Daily', classId: '', armId: '', subjectId: '', timetableEntryId: '', reportArmId: '', reportMode: 'Daily' };
     academicScorebookDraft = { classId: '', armId: '', subjectId: '', teacherUsername: '', importPreview: null, importRows: [], importFileName: '', importFormat: 'CSV' };
     academicOutcomeDraft = { armId: '', promotionDecisionId: '', transcriptStudentRef: '' };
-    renderAcademicManagement(academicManagementData || {});
+    void loadAcademicManagement();
   });
-  panelEl.querySelectorAll('[data-academic-open-classroom]').forEach((button) => button.addEventListener('click', () => {
-    const arm = academicFind(academicManagementData?.arms || [], button.dataset.academicOpenClassroom);
-    if (!arm) return;
-    academicClassroomDraft = {
-      sessionId: academicManagementFilters.sessionId,
-      termId: academicManagementFilters.termId,
-      classId: clean(arm.ClassId), armId: clean(arm.ArmId), armTemplateId: clean(arm.ArmTemplateId)
-    };
-    academicManagementView = 'classrooms';
-    academicManagementTaskViews.classrooms = 'manage';
-    renderAcademicManagement(academicManagementData || {});
-  }));
+  panelEl.querySelectorAll('[data-academic-open-classroom]').forEach(button=>button.addEventListener('click',()=>
+    runButtonAction(button,'Opening classroom…',()=>openAcademicClassroom(button.dataset.academicOpenClassroom))));
   panelEl.querySelectorAll('[data-academic-classroom-student-placement]').forEach((form) => {
     const field = form.querySelector('[data-academic-checkbox-purpose="student-arm-candidates"]');
     const help = field?.querySelector('[data-academic-checkbox-help]');

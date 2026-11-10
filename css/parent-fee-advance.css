@@ -1,0 +1,12 @@
+.parent-fee-advance{margin:0 0 16px;padding:16px;border:1px solid #a5cfca;border-left:4px solid #008675;border-radius:10px;background:#f0faf8}
+.parent-fee-advance h3{margin:0 0 8px;color:#0d3d59;font-size:18px}
+.parent-fee-advance p{margin:8px 0;line-height:1.5}
+.parent-fee-advance-controls{display:flex;align-items:flex-end;gap:12px;margin:14px 0}
+.parent-fee-advance-controls>div{flex:1;max-width:360px;min-width:0}
+.parent-fee-advance-controls label{display:block;margin:0 0 6px}
+.parent-fee-advance-controls input{box-sizing:border-box;width:100%;min-width:0;margin:0}
+.parent-fee-advance-controls button{margin:0;min-height:44px;white-space:normal}
+.parent-fee-advance .payment-status{overflow-wrap:anywhere}
+@media(max-width:600px){.parent-fee-advance{padding:12px}.parent-fee-advance-controls{flex-direction:column;align-items:stretch;gap:10px}.parent-fee-advance-controls>div{max-width:none}.parent-fee-advance button{width:100%}}
+html[data-theme="dark"] .parent-fee-advance{background:#102e30;border-color:#356663}
+html[data-theme="dark"] .parent-fee-advance h3{color:#d4efff}

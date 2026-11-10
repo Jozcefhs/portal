@@ -178,11 +178,18 @@ test('school, church, other organisations and the Dynamax control plane use sepa
   assert.equal(churchConfig.firestore.indexes, 'firestore.church.indexes.json');
   assert.equal(organizationConfig.firestore.indexes, 'firestore.organization.indexes.json');
   assert.equal(platformConfig.firestore.indexes, 'firestore.platform.indexes.json');
-  assert.equal(schoolIndexes.indexes.length, 66);
+  assert.equal(schoolIndexes.indexes.length, 69);
   assert.ok(schoolIndexes.indexes.some(index=>index.collectionGroup==='academicStudentMemberships'
     && index.fields.map(field=>field.fieldPath).join(',')==='BranchId,SessionId,TermId,StudentRef'));
-  assert.equal(churchIndexes.indexes.length, 42);
-  assert.equal(organizationIndexes.indexes.length, 42);
+  assert.equal(churchIndexes.indexes.length, 45);
+  assert.equal(organizationIndexes.indexes.length, 45);
+  for (const manifest of [schoolIndexes, churchIndexes, organizationIndexes]) {
+    for (const collection of ['vendorEarnings', 'vendorClaimLots', 'vendorSettlementPayments']) {
+      assert.ok(manifest.indexes.some(index => index.collectionGroup === collection && index.queryScope === 'COLLECTION'
+        && index.fields.map(field => `${field.fieldPath}:${field.order}`).join(',') === 'ScopeKey:ASCENDING,VendorId:ASCENDING,Date:ASCENDING'),
+      `${collection} must retain bounded vendor date-range reads`);
+    }
+  }
   assert.deepEqual(platformIndexes, { indexes: [], fieldOverrides: [] });
   await assert.rejects(access(new URL('../firebase.json', import.meta.url)));
   await assert.rejects(access(new URL('../firestore.indexes.json', import.meta.url)));

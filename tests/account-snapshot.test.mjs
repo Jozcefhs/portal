@@ -129,7 +129,7 @@ function billingLoader(failCollection = '') {
     { __id: 'linked-sibling', AccountRef: 'APP-1', AdmissionNo: 'DCA/26/002' }
   ];
   return { calls, loader: vm.runInNewContext(`(${fn})`, {
-    clean, sameText: (a, b) => lower(a) === lower(b), sameReferenceIdentity: (a, b) => Boolean(a && b && lower(a) === lower(b)),
+    clean, lower, sameText: (a, b) => lower(a) === lower(b), sameReferenceIdentity: (a, b) => Boolean(a && b && lower(a) === lower(b)),
     normalizeStudent: row => row,
     accountRefsFrom: row => [row.AccountRef, row.AdmissionNo, row.ApplicationReference],
     canonicalSchoolBranchId: value => lower(value || 'main'), financialRowMatchesAccount,

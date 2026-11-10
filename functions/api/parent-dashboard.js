@@ -1,7 +1,8 @@
 // Cloudflare Pages Function: /api/parent-dashboard
 // Parent-facing dashboard for child activity and wallet restrictions.
 
-import { getPayableFees, matchingFullScholarshipFeeItems } from './backend.js';
+import { getPayableFees, matchingFullScholarshipFeeItems, calculateDueSchoolFeeCreditAllocations } from './backend.js';
+import { isSchoolFeeAdvance } from '../lib/school-fee-advance.js';
 import { quoteSchoolFeePaymentPlan } from '../lib/school-fee-payment-plans.js';
 import { reviewParentFeeCredit, queryParentFinancialRows } from '../lib/parent-fee-credit-review.js';
 import { isFullScholarship } from '../lib/full-scholarship.js';
@@ -1210,6 +1211,24 @@ export function accountSummaryForKeys(accounts, keys, ledgerEntries, invoiceEntr
   return normalizeAccountSummary(account) || feeAccountSummary(ledgerEntries);
 }
 
+// Compute the available advance from this child's already-loaded financial
+// records, not an admission-only cached summary. No extra queries or writes.
+export function parentAdvanceCreditSummary(child, invoiceEntries = [], ledgerEntries = [], today) {
+  if (child?.SourceType !== 'Student') return {};
+  const selectedScope = { branchId: scopedRecordBranch(child), schoolSection: scopedRecordSection(child) };
+  const scopePath = identityScopePathForCollection(child, 'students');
+  const studentId = clean(child.__id || child.__name).split('/').pop();
+  const belongs = row => recordMatchesSelectedChildScope(row, selectedScope)
+    && financialReferenceMatches(row.AccountRef || row.AdmissionNo || row.ApplicationReference, child);
+  const ledger = ledgerEntries.filter(belongs);
+  const hasAdvance = ledger.some(row => isSchoolFeeAdvance(row)
+    && clean(row.StudentScopePath) === scopePath && studentId && clean(row.StudentDocumentId) === studentId
+    && lower(row.FeeCategory) === 'school fee' && asMoneyNumber(row.Credit) > 0);
+  if (!hasAdvance) return {};
+  const allocation = calculateDueSchoolFeeCreditAllocations(invoiceEntries.filter(belongs), ledger, today);
+  return { SchoolFeeCreditManaged: true, PendingSchoolFeeCredit: allocation.remaining };
+}
+
 function academicResultId(row = {}) {
   return clean(row.ResultId || row.__id || row.__name).split('/').pop();
 }
@@ -2069,6 +2088,7 @@ async function getChildActivity(env, body, options = {}) {
     .sort((a, b) => clean(b.Date).localeCompare(clean(a.Date)));
   const childLedger = ledger.filter((entry) => financialReferenceMatches(entry.AccountRef, child));
   const accountSummary = accountSummaryForKeys(scopedSummaryRows, keys, childLedger, invoices);
+  Object.assign(accountSummary, parentAdvanceCreditSummary(child, scopedInvoiceRows, scopedLedgerRows));
   accountSummary.BillingReview = await reviewParentFeeCredit(env, child, accountSummary, {
     schoolProfile, invoices: scopedInvoiceRows, ledger: scopedLedgerRows,
     payments: scopedPaymentRows, accountSummaries: scopedSummaryRows

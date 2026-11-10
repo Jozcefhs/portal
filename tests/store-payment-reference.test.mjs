@@ -7,6 +7,7 @@ import { normalizeClassKey } from '../functions/lib/class-names.js';
 import { normalizePublicPaymentMethod, withPaystackBranchRouting } from '../functions/lib/direct-bank-transfer.js';
 import { ORGANIZATION_EDITIONS, resolveOrganizationConfig } from '../functions/lib/organization-config.js';
 import { safeScopeId } from '../functions/lib/school-scope.js';
+import { SCHOOL_FEES_ADVANCE_CODE, SCHOOL_FEES_ADVANCE_TYPE, schoolFeeAdvanceItem } from '../functions/lib/school-fee-advance.js';
 
 const readSource = path => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 const [backend, initializer, branchSettings, confirmation] = await Promise.all([
@@ -130,7 +131,7 @@ function checkoutHarness({ paymentMethod = 'paystack', replay = null, documents 
   const moduleSource = initializer.replace(/^import[\s\S]*?;\r?\n/gm, '').replace(/\bexport\s+/g, '');
   const handler = vm.runInNewContext(`${moduleSource}\n;onRequestPost`, {
     Response, URL, Date, normalizeClassKey, normalizePublicPaymentMethod, withPaystackBranchRouting,
-    SCHOOL_FEES_TOTAL_CODE: 'SCHOOL_FEES_TOTAL',
+    SCHOOL_FEES_TOTAL_CODE: 'SCHOOL_FEES_TOTAL', SCHOOL_FEES_ADVANCE_CODE, SCHOOL_FEES_ADVANCE_TYPE, schoolFeeAdvanceItem,
     readJsonBody: request => request.json(),
     readParentSession: async () => ({ email: 'parent@example.org' }),
     verifyTurnstile: async () => {}, requireFirestoreEnv: () => {},

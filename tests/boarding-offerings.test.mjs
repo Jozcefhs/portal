@@ -233,7 +233,8 @@ test('non-stock wallet purchases use the same atomic student guard as offerings 
     return { run: () => run(env, { AccountRef: 'DCA-001', Department: 'Clinic', Amount: 100 }), saved: () => saved, walletCalls: () => walletCalls };
   };
   const success = make(), result = await success.run();
-  assert.equal(result.balance, 900); assert.equal(success.walletCalls(), 2);
+  assert.equal(result.balance, 900); assert.equal(success.walletCalls(), 1);
+  assert.equal(result.account.WalletSpentToday, 100, 'committed debit updates the returned daily total without another history read');
   assert.deepEqual(success.saved().map(write => write.collectionPath), [path, 'ledger', 'accountingJournals']);
   assert.deepEqual(success.saved()[0].updateMask, ['WalletLastPurchaseAt', 'WalletLastPurchaseNo']);
   assert.equal(success.saved()[0].updateTime, 'v1');

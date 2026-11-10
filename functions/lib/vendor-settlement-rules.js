@@ -99,6 +99,7 @@ export function balanceView(balance = {}) {
     Available: needsReview ? 0 : amount(Math.max(0, net - paid - reserved)), NeedsReview: needsReview,
     ReconciliationDifference: amount(net - (Number(balance.GrossCents || 0) - Number(balance.RefundCents || 0) - Number(balance.ChargeCents || 0))) };
 }
+export const VENDOR_CLAIM_SALE_LIMIT = 2000;
 export function allocateClaim(lots, wantedCents) {
   if (!Number.isSafeInteger(wantedCents) || wantedCents <= 0) fail('Request an amount greater than zero.');
   let remaining = wantedCents;
@@ -107,7 +108,10 @@ export function allocateClaim(lots, wantedCents) {
     if (lot.SettlementHold) continue;
     const available = Math.max(0, Number(lot.NetCents || 0) - Number(lot.PaidCents || 0) - Number(lot.ReservedCents || 0));
     const take = Math.min(available, remaining);
-    if (take) allocations.push({ LotId: lot.LotId, AmountCents: take });
+    if (take) {
+      if (allocations.length >= VENDOR_CLAIM_SALE_LIMIT) fail('A payment request can include up to 2,000 sales. Choose a shorter period or a smaller amount.', 400);
+      allocations.push({ LotId: lot.LotId, AmountCents: take });
+    }
     remaining -= take;
     if (!remaining) return allocations;
   }

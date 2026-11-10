@@ -8,7 +8,8 @@ import {
 } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { readJsonBody } from '../lib/request-security.js';
-import { postChurchDonationToAccounting, recordManualPayment, recordSale } from './backend.js';
+import { postChurchDonationToAccounting, recordManualPayment, recordSchoolFeeAdvance, recordSale } from './backend.js';
+import { isSchoolFeeAdvance } from '../lib/school-fee-advance.js';
 import { sendSchoolFormPurchaseEmail } from './verify-form-payment.js';
 import { createPaidStoreOrder } from './verify-payment.js';
 import { recordManualOrganizationCommerceSale } from '../lib/organization-commerce.js';
@@ -96,6 +97,18 @@ async function approveAdmissionForm(env, transfer, user) {
 
 async function approveSchoolPayment(env, transfer, user) {
   const payload = transfer.Payload || {};
+  if (isSchoolFeeAdvance(payload)) {
+    const intent = await getDocument(env, 'paymentIntents', safeId(transfer.Reference));
+    if (!intent || clean(transfer.BranchId) !== clean(intent.BranchId)) throw error('The approved transfer does not match its saved advance branch.', 409);
+    const recorded = await recordSchoolFeeAdvance(env, intent, {
+      Reference: transfer.Reference, RequestedAmount: transfer.Amount, Currency: transfer.Currency,
+      GrossAmount: transfer.Amount, NetAmount: transfer.Amount, GatewayFee: 0,
+      Gateway: 'Direct Bank Transfer', Method: 'Bank Transfer', GatewayReference: transfer.BankReference,
+      PaidAt: transfer.RecordingStartedAt || transfer.ReviewedAt || new Date().toISOString(),
+      RecordedBy: clean(user.displayName || user.username)
+    });
+    return { recorded, orders: [] };
+  }
   const recorded = await recordManualPayment(env, {
     ...payload,
     Amount: transfer.Amount,

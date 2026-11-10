@@ -9,6 +9,7 @@ const dueNotifications = document.getElementById('dueNotifications');
 const payableItems = document.getElementById('payableItems');
 const optionalPayments = document.getElementById('optionalPayments');
 const accountCreditSummary = document.getElementById('accountCreditSummary');
+const schoolFeeAdvance = document.getElementById('schoolFeeAdvance');
 const paymentRecords = document.getElementById('paymentRecords');
 const parentTransferHistory = document.getElementById('parentTransferHistory');
 const parentTransferRecords = document.getElementById('parentTransferRecords');
@@ -95,6 +96,7 @@ const storePageSize = 12;
 let storePage = 1;
 let storeCatalogIdentity = '';
 const parentDocumentIdempotencyKeys = new Map();
+const schoolFeeAdvanceDrafts = new Map();
 let selectedChildLoadController = null;
 let academicResultsRequest = null;
 const academicResultsVersions = new Map();
@@ -1077,11 +1079,16 @@ function accountSummaryFor(child) {
   const totalCredit = Number(String(summary.TotalCredit || '0').replace(/,/g, ''));
   const outstanding = Number(String(summary.OutstandingBalance || '0').replace(/,/g, ''));
   const creditBalance = Number(String(summary.CreditBalance || '0').replace(/,/g, ''));
+  const pendingCredit = Number(String(summary.PendingSchoolFeeCredit ?? '').replace(/,/g, ''));
+  const managedCredit = summary.SchoolFeeCreditManaged === true && summary.PendingSchoolFeeCredit !== undefined
+    && Number.isFinite(pendingCredit) && pendingCredit >= 0;
   return {
     TotalDebit: Number.isFinite(totalDebit) ? totalDebit : 0,
     TotalCredit: Number.isFinite(totalCredit) ? totalCredit : 0,
     OutstandingBalance: Number.isFinite(outstanding) ? outstanding : 0,
     CreditBalance: Number.isFinite(creditBalance) ? creditBalance : 0,
+    SchoolFeeCreditManaged: managedCredit,
+    PendingSchoolFeeCredit: managedCredit ? pendingCredit : 0,
     BillingReview: summary.BillingReview || null
   };
 }
@@ -1099,6 +1106,7 @@ function renderAccountCredit(child) {
     <div><strong>${money(summary.TotalCredit)}</strong><span>Total Fee Payments</span></div>
     <div><strong>${money(summary.OutstandingBalance)}</strong><span>${provisional ? 'Outstanding on Posted Charges' : 'Outstanding Balance'}</span></div>
     <div class="${provisional ? 'credit-review-needed' : summary.CreditBalance > 0 ? 'credit-good' : ''}"><strong>${money(summary.CreditBalance)}</strong><span>${provisional ? 'Provisional Fee Credit — Review Needed' : 'Recorded Fee Credit'}</span></div>
+    ${summary.SchoolFeeCreditManaged ? `<div class="${summary.PendingSchoolFeeCredit > 0 ? 'credit-good' : ''}"><strong>${money(summary.PendingSchoolFeeCredit)}</strong><span>School-fee credit available</span></div><p class="credit-note">This is the unapplied balance from confirmed school-fee payments. It covers fees when they become due, including future terms. It is separate from the spending wallet and from credit already assigned to invoices.</p>` : ''}
     ${creditNote}
   `;
 }
@@ -1581,7 +1589,105 @@ async function payItem(child, fee, container) {
   }
 }
 
+function schoolFeeAdvanceAmount(value) {
+  const text = String(value || '').trim().replace(/,/g, '');
+  if (!/^\d+(?:\.\d{1,2})?$/.test(text)) return null;
+  const [whole, fraction = ''] = text.split('.');
+  const minor = Number(whole) * 100 + Number(fraction.padEnd(2, '0'));
+  return Number.isSafeInteger(minor) && minor > 0 ? minor / 100 : null;
+}
+
+function schoolFeeAdvanceDraft(child) {
+  const identity = childIdentity(child);
+  if (!schoolFeeAdvanceDrafts.has(identity)) schoolFeeAdvanceDrafts.set(identity, { amount: '', busy: false, completed: false, message: '', type: '' });
+  return schoolFeeAdvanceDrafts.get(identity);
+}
+
+function renderSchoolFeeAdvance(child) {
+  if (!schoolFeeAdvance) return;
+  schoolFeeAdvance.hidden = !child || String(child.SourceType || 'Student').toLowerCase() !== 'student';
+  if (schoolFeeAdvance.hidden) { schoolFeeAdvance.replaceChildren(); return; }
+  const draft = schoolFeeAdvanceDraft(child);
+  schoolFeeAdvance.innerHTML = `<section class="parent-fee-advance" aria-labelledby="schoolFeeAdvanceHeading">
+    <h3 id="schoolFeeAdvanceHeading">Pay fees in advance</h3>
+    <p>Pay any amount towards this child's school fees, even when no fees are due. Confirmed payments cover fees already due first. The remaining credit is kept for this child and automatically applied to future fee invoices when they become due.</p>
+    <p class="muted">This is school-fee credit, separate from the spending wallet. Credit is added only after payment is confirmed. Your bank or payment provider may have transaction limits.</p>
+    <div class="parent-fee-advance-controls">
+      <div><label for="schoolFeeAdvanceAmount">Amount to pay in advance (NGN)</label><input id="schoolFeeAdvanceAmount" type="text" min="0.01" step="0.01" inputmode="decimal" autocomplete="off" placeholder="Enter amount" data-finance-input value="${escapeHtml(draft.amount)}" ${draft.busy || draft.requestStarted || draft.completed ? 'disabled' : ''}></div>
+      <button type="button" data-pay-fee-advance ${draft.busy || draft.completed ? 'disabled' : ''} aria-busy="${draft.busy ? 'true' : 'false'}">${draft.busy ? 'Preparing payment...' : draft.completed ? 'Submitted for verification' : draft.requestStarted ? 'Retry payment request' : 'Pay fees in advance'}</button>
+    </div>
+    <p class="payment-status status ${escapeHtml(draft.type)}" role="status" aria-live="polite">${escapeHtml(draft.message)}</p>
+    ${draft.completed ? '<button type="button" class="secondary" data-new-fee-advance>Make another advance payment</button>' : ''}
+  </section>`;
+  const amountInput = schoolFeeAdvance.querySelector('#schoolFeeAdvanceAmount');
+  window.DynamaxFinancialValues?.refresh(amountInput);
+  amountInput.addEventListener('input', () => {
+    draft.amount = amountInput.value;
+    if (!draft.requestStarted) { delete draft.choice; delete draft.idempotencyKey; }
+  });
+  schoolFeeAdvance.querySelector('[data-pay-fee-advance]').addEventListener('click', () => paySchoolFeeAdvance(child));
+  schoolFeeAdvance.querySelector('[data-new-fee-advance]')?.addEventListener('click', () => {
+    schoolFeeAdvanceDrafts.delete(childIdentity(child));
+    renderSchoolFeeAdvance(child);
+    schoolFeeAdvance.querySelector('#schoolFeeAdvanceAmount')?.focus();
+  });
+}
+
+async function paySchoolFeeAdvance(child) {
+  if (!child || String(child.SourceType || 'Student').toLowerCase() !== 'student' || childIdentity(child) !== selectedChildKey) return;
+  const draft = schoolFeeAdvanceDraft(child);
+  if (draft.busy || draft.completed) return;
+  const amount = schoolFeeAdvanceAmount(draft.amount);
+  if (amount === null) {
+    draft.message = 'Enter an amount greater than zero, with at most two decimal places.';
+    draft.type = 'bad'; renderSchoolFeeAdvance(child); return;
+  }
+  draft.busy = true; draft.message = ''; draft.type = '';
+  renderSchoolFeeAdvance(child);
+  const renderCurrent = () => { if (selectedChildKey === childIdentity(child)) renderSchoolFeeAdvance(child); };
+  try {
+    // Retain the exact request after an uncertain response so a retry cannot post twice.
+    draft.choice ||= await window.DynamaxPaymentMethods.choose({ branchId: child.BranchId || 'main', currency: 'NGN', amount });
+    if (!draft.choice || selectedChildKey !== childIdentity(child)) {
+      if (!draft.requestStarted) delete draft.choice;
+      return;
+    }
+    draft.idempotencyKey ||= newIdempotencyKey();
+    const turnstile = window.DynamaxPublicApi?.getTurnstileToken ? await window.DynamaxPublicApi.getTurnstileToken('init_payment') : {};
+    draft.requestStarted = true;
+    const response = await fetch('/api/init-payment', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': draft.idempotencyKey },
+      body: JSON.stringify({ ...authPayload(), accountRef: child.AccountRef, sourceType: child.SourceType || 'Student',
+        scopePath: child.__scopePath || '', feeCode: 'SCHOOL_FEES_ADVANCE', amount, ...draft.choice,
+        idempotencyKey: draft.idempotencyKey, ...turnstile })
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) {
+      if (response.status >= 400 && response.status < 500 && ![408, 409, 429].includes(response.status)) {
+        delete draft.idempotencyKey; delete draft.choice; draft.requestStarted = false;
+      }
+      throw new Error(data.message || 'Could not start the advance payment.');
+    }
+    if (data.directTransfer) {
+      draft.completed = true; draft.type = 'ok';
+      draft.message = `${window.DynamaxPaymentMethods.directTransferMessage(data)} Your school-fee credit will be added after the Accounts Office confirms this transfer.`;
+      return;
+    }
+    if (!data.authorizationUrl) throw new Error('The payment provider did not return a checkout link.');
+    draft.message = 'Opening secure checkout. Credit is added only after successful payment.';
+    draft.type = '';
+    window.location.assign(data.authorizationUrl);
+  } catch (error) {
+    draft.type = 'bad';
+    draft.message = String(error?.message || error || 'Could not start the advance payment.');
+    if (draft.requestStarted) draft.message += ' The outcome is not yet confirmed. Use Retry payment request before starting another payment.';
+  } finally {
+    draft.busy = false; renderCurrent();
+  }
+}
+
 function renderPayableItems(child) {
+  renderSchoolFeeAdvance(child);
   const identity = childIdentity(child);
   const records = childResult(dashboard.payableItems, child, []);
   const busFees = records.filter(isBusFee);
@@ -2781,6 +2887,7 @@ async function loadDashboard({ sessionOnly = false, silent = false } = {}) {
       setStatus(data.message, '');
       return false;
     }
+    if (String(dashboard?.parentEmail || '').toLowerCase() !== String(data.parentEmail || '').toLowerCase()) schoolFeeAdvanceDrafts.clear();
     dashboard = data;
     if (data.parentEmail) document.getElementById('parentEmail').value = data.parentEmail;
     document.getElementById('verificationCode').value = '';
@@ -2907,6 +3014,7 @@ if (signOutDashboardBtn) {
     passportPhotoCache.clear();
     loadedPayables.clear();
     parentDocumentIdempotencyKeys.clear();
+    schoolFeeAdvanceDrafts.clear();
     parentNotifications = [];
     renderParentNotifications();
     if (parentNotificationPanel) parentNotificationPanel.hidden = true;

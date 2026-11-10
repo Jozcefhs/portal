@@ -267,10 +267,16 @@ function requestedItems(body = {}) {
   return [...demand.values()];
 }
 
-async function scopedInventory(env, section, user, { storeCatalogue = false } = {}) {
+async function scopedInventory(env, section, user, { storeCatalogue = false, requestedReferences = null } = {}) {
   const config = configFor(section);
   const schoolSection = lower(user.schoolSectionAccess || user.SchoolSectionAccess || 'All');
-  let rows = (await listBranchCollection(env, config.inventory, scopeFor(user).BranchId, section === 'organizationStore' ? { compatibleFilters: [{ field: 'StoreType', value: 'Organisation Store', knownValues: ['Bookstore', 'Uniform Store', 'Organisation Store'] }] } : {})).filter((row) => visibleInScope(row, user)
+  // Tuck-shop carts already carry exact inventory document IDs. Read only
+  // those lines, then enforce the same branch, section and vendor checks.
+  const selected = section === 'tuckShop' && Array.isArray(requestedReferences);
+  const inventory = selected
+    ? (await Promise.all([...new Set(requestedReferences)].map(reference => getDocument(env, config.inventory, reference)))).filter(Boolean)
+    : await listBranchCollection(env, config.inventory, scopeFor(user).BranchId, section === 'organizationStore' ? { compatibleFilters: [{ field: 'StoreType', value: 'Organisation Store', knownValues: ['Bookstore', 'Uniform Store', 'Organisation Store'] }] } : {});
+  let rows = inventory.filter((row) => visibleInScope(row, user)
     && (scopeFor(user).OrganisationEdition !== 'school' || schoolSection === 'all'
       || lower(row.SchoolSection || 'Secondary') === schoolSection));
   rows = await restrictVendorInventory(env, user, section, rows);
@@ -305,8 +311,8 @@ function findInventoryItem(rows, section, reference) {
 }
 
 async function authoritativeCart(env, section, body, user, inventoryRows = null) {
-  const inventory = inventoryRows || await scopedInventory(env, section, user);
   const demand = requestedItems(body);
+  const inventory = inventoryRows || await scopedInventory(env, section, user, { requestedReferences: demand.map(row => row.Reference) });
   const cart = demand.map((requested) => {
     const item = findInventoryItem(inventory, section, requested.Reference);
     if (!item) throw error(`${requested.Reference} was not found in this branch.`, 404);
@@ -499,7 +505,7 @@ function movementWrites(section, sale, timestamp) {
 }
 
 export async function prepareTuckShopWalletCart(env, body = {}, user = {}, sale = {}) {
-  const inventory = await scopedInventory(env, 'tuckShop', user);
+  const inventory = await scopedInventory(env, 'tuckShop', user, { requestedReferences: requestedItems(body).map(row => row.Reference) });
   const cart = await authoritativeCart(env, 'tuckShop', body, user, inventory);
   const timestamp = nowIso();
   const stockWrites = inventoryWrites('tuckShop', cart, inventory, timestamp);
@@ -564,7 +570,7 @@ export async function recordManualOrganizationCommerceSale(env, section, body = 
     }
     throw error('A sale with this request reference already exists.', 409);
   }
-  const inventory = await scopedInventory(env, section, user);
+  const inventory = await scopedInventory(env, section, user, { requestedReferences: requestedItems(body).map(row => row.Reference) });
   const cart = await authoritativeCart(env, section, body, user, inventory);
   const expectedAmount = money(body.ExpectedAmount || body.expectedAmount);
   const currentAmount = money(cart.reduce((sum, item) => sum + item.Amount, 0));

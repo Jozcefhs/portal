@@ -1220,13 +1220,21 @@ export function academicWorkspaceReadPlan(view, keys, input = {}, { classRegiste
   const mode = input.WorkspaceLoadMode;
   if (classRegister || !['navigation', 'records'].includes(mode)) return { keys, deferred: false, requested: false };
   if (registerOnly) return { keys, deferred: false, requested: false };
-  if (mode === 'navigation' && !['structure', 'bulksetup', 'departments', 'offerings'].includes(view)) {
+  const setupViews = ['classrooms', 'classstaff', 'teachers', 'structure', 'bulksetup', 'departments', 'offerings'];
+  if (mode === 'navigation' && !setupViews.includes(view)) {
     return { keys: ['sessions', 'terms', 'classes'], deferred: true, requested: false };
   }
   const omitted = new Set();
   if (view === 'structure') omitted.add('studentMemberships');
+  // Classroom setup needs definitions, not the pupil directory or memberships.
+  // The existing Open classroom action requests the selected class explicitly.
+  if (view === 'classrooms' && mode === 'navigation') {
+    omitted.add('studentMemberships');
+    omitted.add('teacherAllocations');
+  }
   if (view === 'results') for (const key of ['studentScores', 'scoreSheets', 'studentAttendance', 'schoolCalendars']) omitted.add(key);
-  return { keys: keys.filter(key => !omitted.has(key)), deferred: false, requested: mode === 'records' };
+  return { keys: keys.filter(key => !omitted.has(key)), deferred: false, requested: mode === 'records',
+    setup: mode === 'navigation' && setupViews.includes(view) };
 }
 
 export function academicWorkspaceRecordFilters(key, branchId, scope = {}) {
@@ -2350,16 +2358,27 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}, sc
   const focusedStateKeys = teacherAllocationView || teacherDirect
     ? [...new Set([...readPlan.keys.filter(key => key !== 'studentMovements'), 'teacherAllocations', 'arms'])]
     : readPlan.keys;
-  const includePeople = !registerOnly && !readPlan.deferred && input.IncludePeople !== false && lower(input.IncludePeople) !== 'false';
+  const includePeople = !registerOnly && !readPlan.deferred && !(readPlan.setup && focusedView === 'classrooms')
+    && input.IncludePeople !== false && lower(input.IncludePeople) !== 'false';
   const peopleOptions = includePeople
     ? (loadOptions.classRegister ? { staff: false, students: true }
       : teacherAllocationView ? { staff: false, students: true }
       : ACADEMIC_VIEW_PEOPLE[focusedView] || ACADEMIC_VIEW_PEOPLE.classrooms)
     : { staff: false, students: false };
   const includeReportProfile = !readPlan.deferred && ['results', 'outcomes'].includes(focusedView);
-  const remainingKeys = teacherSelectors ? focusedStateKeys.filter(key => !ACADEMIC_CLASS_TEACHER_STATE_KEYS.includes(key)) : focusedStateKeys;
+  const rosterPeople = peopleOptions.students && readPlan.requested && requestedClassId
+    && ['primary','secondary'].includes(scope.section) && !teacherDirect
+    && !['students','classrooms'].includes(focusedView);
+  // Resolve the active period before loading assignment/configuration records
+  // when the first navigation has not yet selected its session and term.
+  const setupPeriod = readPlan.setup && ['classstaff', 'teachers', 'offerings'].includes(focusedView)
+    && (!clean(input.SessionId) || !clean(input.TermId))
+    ? await loadScopedAcademicState(env, scope, ['sessions', 'terms']) : null;
+  if (setupPeriod) input = {...input, ...currentSelection(setupPeriod, input)};
+  const remainingKeys = teacherSelectors ? focusedStateKeys.filter(key => !ACADEMIC_CLASS_TEACHER_STATE_KEYS.includes(key))
+    : setupPeriod ? focusedStateKeys.filter(key => !['sessions', 'terms'].includes(key)) : focusedStateKeys;
   const [loadedState, people, reportProfile] = await Promise.all([
-    remainingKeys.length ? loadScopedAcademicState(env, scope, remainingKeys, readPlan.requested ? {
+    remainingKeys.length ? loadScopedAcademicState(env, scope, remainingKeys, readPlan.requested || readPlan.setup ? {
       ...scoreReadScope, WorkspaceRead: true, ClassId: requestedClassId,
       SessionId: clean(input.SessionId), TermId: clean(input.TermId),
       ...(teacherAllocationView ? { ClassroomRegisterTeacher: actorUsername(user) } : {})
@@ -2367,13 +2386,21 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}, sc
     teacherDirect && !teacherAllocationView
       ? Promise.resolve({staff:peopleOptions.staff ? [{Username:actorUsername(user),DisplayName:actorName(user),
         Role:clean(user.role || user.Role),Department:clean(user.department || user.Department)}] : [],students:[]})
-      : loadPeople(env, user, scope, peopleOptions),
+      : loadPeople(env, user, scope, rosterPeople ? {...peopleOptions,students:false} : peopleOptions),
     includeReportProfile
       ? getDocument(env, 'settings', 'schoolProfile').catch(() => ({}))
       : Promise.resolve(null)
   ]);
   const rawState = teacherSelectors ? {...teacherSelectors,
-    ...Object.fromEntries(remainingKeys.map(key => [key,loadedState[key] || []]))} : loadedState;
+    ...Object.fromEntries(remainingKeys.map(key => [key,loadedState[key] || []]))}
+    : setupPeriod ? {...loadedState, sessions:setupPeriod.sessions, terms:setupPeriod.terms} : loadedState;
+  if (rosterPeople) {
+    // Names for a selected class come from its membership/result references,
+    // not from downloading every student profile in the school section.
+    people.students = await academicResultBatchRecipients(env,scope,
+      ['studentMemberships','termResults','cumulativeResults','promotionDecisions'].flatMap(key=>rawState[key] || [])
+        .filter(row=>row.ClassId === requestedClassId));
+  }
   if (teacherDirect && !teacherAllocationView && peopleOptions.students) {
     const roster = academicTeacherVisibleMemberships(rawState,actorUsername(user)).filter(row =>
       row.SessionId === teacherWorkspace.SessionId && row.TermId === teacherWorkspace.TermId
@@ -2383,7 +2410,7 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}, sc
   let summary = loadOptions.classRegister || teacherDirect ? academicManagementSummary(rawState)
     : await loadAcademicManagementSummary(env, scope, rawState, focusedStateKeys);
   let state = rawState;
-  if (readPlan.requested && requestedClassId) {
+  if (readPlan.requested && requestedClassId && focusedView !== 'classrooms') {
     state.arms = state.arms.filter(row => row.ClassId === requestedClassId);
   }
   let students = people.students;
@@ -2490,7 +2517,10 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}, sc
     partialAcademicManagement: true,
     loadedAcademicView: focusedView,
     workspaceDataDeferred: readPlan.deferred,
+    classroomDetailsDeferred: focusedView === 'classrooms' && readPlan.setup === true,
+    workspaceSetup: readPlan.setup === true,
     teacherWorkspace,
+    ...(readPlan.setup && focusedView === 'classrooms' ? {students:[],staff:[],studentMemberships:[],teacherAllocations:[]} : {}),
     workspaceRecordSelection: readPlan.requested ? { ClassId: clean(input.RecordClassId), SessionId: clean(input.SessionId), TermId: clean(input.TermId),
       ...(teacherWorkspace ? {ArmId:teacherWorkspace.ArmId} : {}),
       ...(focusedView === 'readiness' ? {ResultType:input.ReadinessResultType === 'Mid-Term' ? 'Mid-Term' : 'End of Term'} : {}) } : null,

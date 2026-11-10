@@ -127,7 +127,7 @@ test('attendance settings and protected scheduler expose configurable push deliv
   assert.match(attendanceSource, /presenceCheck\r?\n  };/);
   assert.match(schedulerSource, /attendanceOnly = body\.attendanceOnly === true/);
   assert.match(schedulerSource, /processAttendancePresenceNotifications/);
-  assert.match(schedulerSource, /announcementsOnly \? \{ skipped: true \} : await retryFailedPushDeliveries/);
+  assert.match(schedulerSource, /announcementsOnly \|\| schoolFeeCreditsOnly \? \{ skipped: true \} : await retryFailedPushDeliveries/);
   assert.match(workflowSource, /cron: "\*\/5 \* \* \* \*"/);
   assert.match(workflowSource, /organisation-deployment-matrix\.mjs/);
   assert.match(workflowSource, /matrix\.organisation\.githubEnvironment/);

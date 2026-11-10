@@ -141,6 +141,21 @@ test('full scholarship still follows the existing exemption rule in batch review
   assert.equal(result.rows.length, 0);
 });
 
+test('a clean managed credit hold remains visible for reviewed clearance in a batch', async () => {
+  const summary = { __id: 'managed', AccountRef: 'TEST/001', BranchId: 'main', SchoolSection: 'secondary', SchoolFeeCreditReviewRequired: true };
+  const f = fixture({ summaries: [summary, { ...summary, __id: 'foreign', BranchId: 'annex' }],
+    overrides: { studentBillingReconciliationPlan: async (_student, data) => {
+      assert.deepEqual(data.accountSummaries, [summary]);
+      return { ready: true, creditReviewOnly: true, requiresReview: false, postingTotal: 0,
+        rows: [{ difference: 0, invoiceIds: ['INV-1'] }] };
+    } } });
+  const result = await batch(f);
+  assert.equal(result.matched, 0);
+  assert.equal(result.ready, 1);
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.rows[0].creditReviewOnly, true);
+});
+
 test('invalid, duplicate or oversized batches fail before any database read', async () => {
   const f = fixture();
   for (const Profiles of [[], [{ AccountRef: '' }], [{ AccountRef: 'TEST/1', revision: '' }, { AccountRef: 'test/1', revision: '' }],

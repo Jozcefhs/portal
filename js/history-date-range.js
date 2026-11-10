@@ -43,7 +43,12 @@ function createHistoryDateWorkspace({ panel, scope, load, title }) {
     toolbar = document.createElement('form');
     toolbar.className = 'workflow-form history-date-range';
     toolbar.setAttribute('aria-label', 'History date range');
-    toolbar.innerHTML = '<p><strong data-history-title></strong> — select the recorded date range before loading history. Current registers remain available. Linked balances retain all their transactions.</p><div class="config-grid"><label>From<input type="date" name="fromDate" required></label><label>To<input type="date" name="toDate" required></label></div><button type="submit">Load selected period</button><p class="status" role="status"></p>';
+    const fields = '<p><strong data-history-title></strong> — select the recorded date range before loading history. Current registers remain available. Linked balances retain all their transactions.</p><div class="config-grid"><label>From<input type="date" name="fromDate" required></label><label>To<input type="date" name="toDate" required></label></div><button type="submit">Load selected period</button><p class="status" role="status"></p>';
+    // Current registers do not require a date choice. Opening this disclosure
+    // is a local UI action; only submitting its dates requests history.
+    toolbar.innerHTML = !config.required && !config.pending
+      ? `<details data-history-options${validHistoryDates(selected) ? ' open' : ''}><summary>History by date</summary>${fields}</details>`
+      : fields;
     if (module === 'payroll') toolbar.querySelector('[role="status"]').textContent = 'Payroll includes the selected months. Year-to-date totals include earlier months in the same year.';
     toolbar.querySelector('[data-history-title]').textContent = config.pending ? 'Finance Requests & Imprest' : title(module);
     if (config.pending) {

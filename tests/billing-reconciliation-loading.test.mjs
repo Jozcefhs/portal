@@ -50,7 +50,7 @@ test('completed single-account reconciliation clears the spinner and retains the
   const ui = reconciliation(() => result());
   await ui.apply([plan()], ui.button, ui.status);
   assertFinished(ui);
-  assert.match(ui.status.innerHTML, /Missing charges posted for 1 accounts; 0 submissions need another review/);
+  assert.match(ui.status.innerHTML, /Reviewed changes completed for 1 accounts \(0 credit holds cleared\); 0 submissions need another review/);
   assert.match(ui.status.innerHTML, /Recorded credit: ₦14000; remaining charge difference \(not balance\): ₦0/);
   assert.equal(ui.requests[0].PostingMode, 'missing-only-v2');
   await ui.apply([plan()], ui.button, ui.status);
@@ -64,7 +64,7 @@ test('multi-account results and credit warnings complete without hiding failed o
   });
   await ui.apply([plan(), plan('TEST/B'), plan('TEST/C')], ui.button, ui.status);
   assertFinished(ui);
-  assert.match(ui.status.innerHTML, /2 accounts; 1 submissions need another review; 0 posted accounts still need finance review; 1 balance\/credit warnings/);
+  assert.match(ui.status.innerHTML, /2 accounts \(0 credit holds cleared\); 1 submissions need another review; 0 accounts still need finance review; 1 balance\/credit warnings/);
   assert.match(ui.status.innerHTML, /Response lost/);
   assert.equal(ui.requests.length, 3);
 });
@@ -73,7 +73,7 @@ test('all failed responses still clear loading and require a new preview rather 
   const ui = reconciliation(() => { throw new Error('Request timed out.'); });
   await ui.apply([plan()], ui.button, ui.status);
   assertFinished(ui);
-  assert.match(ui.status.innerHTML, /0 accounts; 1 submissions need another review/);
+  assert.match(ui.status.innerHTML, /0 accounts \(0 credit holds cleared\); 1 submissions need another review/);
   await ui.apply([plan()], ui.button, ui.status);
   assert.equal(ui.requests.length, 1);
 });

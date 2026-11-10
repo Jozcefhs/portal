@@ -33,6 +33,20 @@
   // stay fresh without invalidating the concurrent read as if records changed.
   // Payment verification is deliberately excluded: it can submit academic data.
   const scopedLiveReads = {
+    // These endpoints perform fresh, scoped lookups/previews. They do not save
+    // records, so opening them must not discard unrelated loaded workspaces.
+    // Keep money, inventory and approval evidence live; do not cache it here.
+    '/api/staff-manual-payments': ['lookup'],
+    '/api/staff-payment-corrections': ['search', 'lookup', 'preview'],
+    '/api/staff-wallet': ['lookup'],
+    '/api/fee-collection-summary': [''],
+    '/api/staff-procurement': ['list', 'records', 'recorddetail', 'lookupinventory', 'previewitemimport'],
+    '/api/staff-vendor-settlements': ['bootstrap', 'statement', 'previewhistorical', 'previewsale', 'previewproductimport', 'previewcardrefundbatch'],
+    '/api/staff-students': ['previewgrade7intake', 'previewintakecorrection', 'previewprofiledefaults'],
+    '/api/local-cbt-answers': ['list', 'review'],
+    // Remote-exam review can complete an expired attempt, so it is deliberately
+    // not a read here. Local copied-answer review above does not change attempts.
+    '/api/portal-cbt-manage': ['state', 'options', 'assessment', 'uploadoptions', 'uploadedtests', 'uploadedresults', 'details', 'cards', 'paperpage'],
     '/api/student-billing-reconciliation': ['preview', 'previewall', 'previewbatch', 'previewreversal', 'previewreversalsall', 'obsoleteroster', 'obsoletebatch', 'previewobsoletereversal', 'previewreinstatedcharges'],
     '/api/student-billing-preview': ['preview', ''],
     '/api/staff-admission-forms': ['genericqr', ''],
@@ -40,7 +54,13 @@
     '/api/staff-church-payments': ['genericqr'],
     '/api/staff-meetings': ['bootstrap', 'setup', 'list', 'report'],
     '/api/staff-session': ['activity'],
-    '/api/staff-academics': ['getacademicsubmissionsettings', 'listacademicsubmissions', 'getacademicreviewarmsummary', 'getacademicduplicatescorereview']
+    '/api/staff-academics': [
+      'getacademicsubmissionsettings', 'listacademicsubmissions', 'getacademicreviewarmsummary', 'getacademicduplicatescorereview',
+      'openscorebook', 'getacademicclassscoreregister', 'getacademicclassroomscoreregister', 'getacademicauditlog', 'getacademicdiary',
+      'previewacademictimetablegeneration', 'previewacademictimetablecopy', 'previewtimetablecopy',
+      'previewacademicscoreimport', 'previewscoresheetimport', 'previewacademictermresultwithdrawal', 'previewtermresultwithdrawal',
+      'previewacademiccbtroster', 'previewacademiccbtrosteradditions', 'getacademiccbtrosteradditions', 'previewacademiccbtlateentry'
+    ]
   };
   function stable(value) {
     if (Array.isArray(value)) return value.map(stable);

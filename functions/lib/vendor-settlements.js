@@ -16,7 +16,7 @@ import { organisationSalesEnabled } from './vendor-store-policy.js';
 import { listBranchCollection } from './branch-reads.js';
 import { readVendorRows, readVendorInventory } from './vendor-read-scope.js';
 import { amount, allocateClaim, balanceView, cents, chargeFor, clean, dateOnly, effectiveRule, fail, lower,
-  normalizeRule, periodKey, plain, ruleDescription, settlementScope, visible } from './vendor-settlement-rules.js';
+  normalizeRule, periodKey, plain, ruleDescription, settlementScope, visible, VENDOR_CLAIM_SALE_LIMIT } from './vendor-settlement-rules.js';
 
 export const VENDOR_COLLECTIONS = Object.freeze({ vendors: 'commerceVendors', balances: 'vendorBalances',
   entries: 'vendorEarnings', lots: 'vendorClaimLots', requests: 'vendorSettlementRequests',
@@ -55,10 +55,19 @@ async function commit(env, writes) {
     throw error;
   }
 }
-async function rows(env, collection, scope, vendorId = '') {
+async function rows(env, collection, scope, vendorId = '', period = null) {
   const filters = [{ field: 'ScopeKey', op: '==', value: scope.ScopeKey }];
   if (vendorId) filters.push({ field: 'VendorId', op: '==', value: vendorId });
-  return (await queryCollectionPages(env, collection, { filters, pageSize: 250, maxRows: 10000 })).filter(row => visible(row, scope));
+  if (period) filters.push({ field: 'Date', op: '>=', value: period.from }, { field: 'Date', op: '<=', value: `${period.to}\uffff` });
+  try {
+    return (await queryCollectionPages(env, collection, { filters, pageSize: 250, maxRows: 10000,
+      ...(period ? { cursorField: 'Date' } : {}) })).filter(row => visible(row, scope));
+  } catch (error) {
+    if (period && (error.upstreamCode === 'FAILED_PRECONDITION' || /requires? an? index|index.*building/i.test(error.message || ''))) {
+      fail('The vendor date-range index is not ready. Please retry after setup completes; no history was loaded or changed.', 409, 'VENDOR_PERIOD_INDEX_NOT_READY');
+    }
+    throw error;
+  }
 }
 async function scoped(env, collection, recordId, scope) {
   const row = await getDocument(env, collection, id(recordId));
@@ -80,10 +89,10 @@ function requireRole(user, allowed) {
 function requireAccess(user, action) {
   if (!clean(user.username)) fail('Sign in to manage vendor settlements.', 401);
   if (!(user.allowedSections || []).includes('vendorSettlements')) fail('Vendor settlements are not available for this account.', 403);
-  if (user.vendorSettlementApprovalOnly && !['bootstrap', 'statement', 'decision'].includes(action)) {
+  if (user.vendorSettlementApprovalOnly && !['bootstrap', 'statement', 'requestReport', 'decision'].includes(action)) {
     fail('Your permission is for reviewing and approving vendor payment requests only.', 403);
   }
-  if (!['bootstrap', 'statement', 'previewCardRefundBatch', 'previewHistorical', 'previewSale', 'previewProductImport', 'salesBootstrap', 'recentVendorSales', 'previewVendorSale', 'vendorWalletLookup', 'vendorCustomerSearch'].includes(action)
+  if (!['bootstrap', 'statement', 'requestReport', 'previewCardRefundBatch', 'previewHistorical', 'previewSale', 'previewProductImport', 'salesBootstrap', 'recentVendorSales', 'previewVendorSale', 'vendorWalletLookup', 'vendorCustomerSearch'].includes(action)
     && (user.subscriptionActive === false || user.subscriptionReadOnly === true)) fail('This workspace is read-only until the subscription is renewed.', 403);
 }
 async function ownVendor(env, user, scope, vendorId) {
@@ -95,10 +104,73 @@ function publicVendor(vendor) {
   const { BankAccountNumber, ...rest } = plain(vendor);
   return { ...rest, BankAccountMasked: BankAccountNumber ? `••••${clean(BankAccountNumber).slice(-4)}` : '', RecordVersion: vendor.__updateTime };
 }
+// Large immutable submission snapshots live in small documents. The request
+// retains all allocation amounts and report totals; opening a module never
+// fetches thousands of product-detail rows just to display request cards.
+function requestSnapshotWrites(scope, request) {
+  const snapshot = request.Snapshot || [];
+  if (snapshot.length <= 200) return [];
+  request.SnapshotTotals = vendorRequestPrintReport(request).total;
+  request.SnapshotCount = snapshot.length;
+  request.SnapshotChunkIds = [];
+  const writes = [];
+  for (let offset = 0; offset < snapshot.length; offset += 100) {
+    const documentId = `${request.SettlementId}--snapshot-${String(offset / 100 + 1).padStart(3, '0')}`;
+    request.SnapshotChunkIds.push(documentId);
+    writes.push(write('vendorSettlementSnapshots', documentId, { ...scope, SettlementId: request.SettlementId,
+      VendorId: request.VendorId, Offset: offset, Rows: snapshot.slice(offset, offset + 100) }));
+  }
+  request.Snapshot = [];
+  return writes;
+}
+async function requestReport(env, user, scope, body) {
+  const request = await scoped(env, VENDOR_COLLECTIONS.requests, body.SettlementId, scope);
+  await ownVendor(env, user, scope, request.VendorId);
+  const ids = request.SnapshotChunkIds || [];
+  if (ids.length) {
+    if (ids.length > Math.ceil(VENDOR_CLAIM_SALE_LIMIT / 100) || new Set(ids).size !== ids.length
+      || ids.some((value, index) => value !== `${request.SettlementId}--snapshot-${String(index + 1).padStart(3, '0')}`)) fail('The saved request snapshot references require review.', 409);
+    const chunks = await getDocuments(env, 'vendorSettlementSnapshots', ids);
+    const byId = new Map(chunks.filter(Boolean).map(row => [row.__id, row]));
+    request.Snapshot = ids.flatMap((chunkId, index) => {
+      const chunk = byId.get(chunkId);
+      if (!chunk || !visible(chunk, scope) || chunk.SettlementId !== request.SettlementId || chunk.VendorId !== request.VendorId
+        || chunk.Offset !== index * 100 || !Array.isArray(chunk.Rows)) fail('A saved request snapshot is missing or has a conflicting scope. No partial report was shown.', 409);
+      return chunk.Rows;
+    });
+    if (request.Snapshot.length !== request.SnapshotCount) fail('The saved request snapshot is incomplete.', 409);
+  }
+  return { ok: true, request: { ...publicRequest(request), PrintReport: vendorRequestPrintReport(request) } };
+}
+function unpaidClaimPortions(allocations, paid, wanted) {
+  const selected = [];
+  for (const allocation of allocations) {
+    const used = Math.min(paid, allocation.AmountCents); paid -= used;
+    const take = Math.min(allocation.AmountCents - used, wanted);
+    if (take > 0) selected.push(allocation);
+    wanted -= take;
+    if (!wanted) break;
+  }
+  if (wanted) fail('The saved request allocations do not cover this amount.', 409);
+  return selected;
+}
+async function selectedClaimLots(env, scope, vendorId, allocations) {
+  const ids = allocations.map(row => row.LotId);
+  if (ids.length > VENDOR_CLAIM_SALE_LIMIT || new Set(ids).size !== ids.length) fail('The saved request allocations require review.', 409);
+  const batches = [];
+  for (let offset = 0; offset < ids.length; offset += 250) batches.push(ids.slice(offset, offset + 250));
+  const groups = await Promise.all(batches.map(group => getDocuments(env, VENDOR_COLLECTIONS.lots, group)));
+  const lots = new Map(groups.flat().filter(Boolean).map(row => [row.__id || row.LotId, row]));
+  for (const lotId of ids) {
+    const lot = lots.get(lotId);
+    if (!lot || !visible(lot, scope) || lot.VendorId !== vendorId || lot.LotId !== lotId) fail('An allocated vendor sale is missing or outside this request.', 409);
+  }
+  return lots;
+}
 function publicRequest(request) {
   const { BankAccountNumber, ...rest } = plain(request);
   return { ...withApprovalRoute(rest), BankAccountMasked: BankAccountNumber ? `••••${clean(BankAccountNumber).slice(-4)}` : '', RecordVersion: request.__updateTime,
-    PrintReport: vendorRequestPrintReport(request),
+    PrintReport: request.SnapshotChunkIds?.length ? { rows: [], total: request.SnapshotTotals, complete: false } : vendorRequestPrintReport(request),
     Amount: amount(request.AmountCents), Paid: amount(request.PaidCents), Unpaid: amount(request.AmountCents - (request.PaidCents || 0)) };
 }
 function balanceFor(vendor, previous = null) {
@@ -421,8 +493,8 @@ async function statement(env, user, scope, body) {
   const from = dateOnly(body.From || '1970-01-01'), to = dateOnly(body.To || new Date().toISOString().slice(0, 10));
   if (from > to) fail('The start date must not follow the end date.');
   const [entries, lots, requests, payments, balance] = await Promise.all([
-    rows(env, VENDOR_COLLECTIONS.entries, scope, vendor.VendorId), rows(env, VENDOR_COLLECTIONS.lots, scope, vendor.VendorId),
-    rows(env, VENDOR_COLLECTIONS.requests, scope, vendor.VendorId), rows(env, VENDOR_COLLECTIONS.payments, scope, vendor.VendorId),
+    rows(env, VENDOR_COLLECTIONS.entries, scope, vendor.VendorId, { from, to }), rows(env, VENDOR_COLLECTIONS.lots, scope, vendor.VendorId, { from, to }),
+    rows(env, VENDOR_COLLECTIONS.requests, scope, vendor.VendorId), rows(env, VENDOR_COLLECTIONS.payments, scope, vendor.VendorId, { from, to }),
     getDocument(env, VENDOR_COLLECTIONS.balances, vendor.VendorId) ]);
   const inRange = row => clean(row.Date).slice(0, 10) >= from && clean(row.Date).slice(0, 10) <= to;
   const selected = entries.filter(inRange).sort((a, b) => clean(a.Date).localeCompare(clean(b.Date)));
@@ -443,7 +515,7 @@ async function requestSettlement(env, user, scope, body) {
   const wanted = cents(body.Amount);
   const previous = await getDocument(env, VENDOR_COLLECTIONS.balances, vendor.VendorId), balance = balanceFor(vendor, previous);
   if (balanceView(balance).NeedsReview || wanted <= 0 || wanted > balance.NetCents - balance.PaidCents - balance.ReservedCents) fail('This amount is unavailable or the vendor balance requires review.', 409);
-  const lots = (await rows(env, VENDOR_COLLECTIONS.lots, scope, vendor.VendorId)).filter(row => row.Date.slice(0, 10) >= from && row.Date.slice(0, 10) <= to)
+  const lots = (await rows(env, VENDOR_COLLECTIONS.lots, scope, vendor.VendorId, { from, to })).filter(row => row.Date.slice(0, 10) >= from && row.Date.slice(0, 10) <= to)
     .sort((a, b) => clean(a.Date).localeCompare(clean(b.Date)));
   const allocations = allocateClaim(lots, wanted);
   const lotsById = new Map(lots.map(lot => [lot.LotId, lot]));
@@ -467,9 +539,10 @@ async function requestSettlement(env, user, scope, body) {
     BankDetailsVersion: vendor.BankDetailsVersion, Revision: replaced ? replaced.Revision + 1 : 1,
     ReplacesSettlementId: replaced?.SettlementId || '', RequestedByUsername: user.username, RequestedBy: actor(user), RequestedAt: timestamp,
     Notes: clean(body.Notes).slice(0, 2000), History: [{ Action: 'Submitted', By: actor(user), Username: user.username, At: timestamp }], UpdatedAt: timestamp };
+  const snapshotWrites = requestSnapshotWrites(scope, request);
   const writes = allocations.map(allocation => { const lot = lotsById.get(allocation.LotId);
     return write(VENDOR_COLLECTIONS.lots, lot.LotId, { ...lot, ReservedCents: lot.ReservedCents + allocation.AmountCents }, lot); });
-  await commit(env, [...writes, ...(replaced ? [write(VENDOR_COLLECTIONS.requests, replaced.SettlementId, { ...replaced, ReplacedBy: settlementId }, replaced)] : []),
+  await commit(env, [...writes, ...snapshotWrites, ...(replaced ? [write(VENDOR_COLLECTIONS.requests, replaced.SettlementId, { ...replaced, ReplacedBy: settlementId }, replaced)] : []),
     write(VENDOR_COLLECTIONS.balances, vendor.VendorId, { ...balance, ReservedCents: balance.ReservedCents + wanted }, previous),
     write(VENDOR_COLLECTIONS.requests, settlementId, request), operationWrite(op, { SettlementId: settlementId }),
     audit(scope, user, 'VENDOR PAYMENT REQUESTED', settlementId, `${vendor.Name}; ${amount(wanted)}; period ${from} to ${to}`)]);
@@ -506,17 +579,21 @@ async function decision(env, user, scope, body, options) {
   const previous = await scoped(env, VENDOR_COLLECTIONS.balances, request.VendorId, scope), writes = [];
   if (['Rejected', 'Cancelled'].includes(next) && request.Status !== 'Rejected') {
     let alreadyPaid = Number(request.PaidCents || 0);
+    const selectedLots = await selectedClaimLots(env, scope, request.VendorId,
+      unpaidClaimPortions(request.Allocations, request.PaidCents, request.AmountCents - request.PaidCents));
     for (const allocation of request.Allocations) {
       const used = Math.min(alreadyPaid, allocation.AmountCents); alreadyPaid -= used;
       const reserved = allocation.AmountCents - used;
       if (!reserved) continue;
-      const lot = await scoped(env, VENDOR_COLLECTIONS.lots, allocation.LotId, scope);
+      const lot = selectedLots.get(allocation.LotId);
       if (lot.ReservedCents < reserved) fail('The claim reservation requires reconciliation.', 409);
       writes.push(write(VENDOR_COLLECTIONS.lots, lot.LotId, { ...lot, ReservedCents: lot.ReservedCents - reserved }, lot));
     }
     const updatedBalance = { ...previous, ReservedCents: previous.ReservedCents - (request.AmountCents - request.PaidCents) };
     const changedLots = new Map(writes.map(w => [w.documentId, w.data]));
-    updatedBalance.ReviewRequired = (await rows(env, VENDOR_COLLECTIONS.lots, scope, request.VendorId))
+    // Releasing a reservation cannot create a new deficit. A clean balance is
+    // guarded in this commit, so only an existing review needs a wider recheck.
+    updatedBalance.ReviewRequired = balanceView(previous).NeedsReview && (await rows(env, VENDOR_COLLECTIONS.lots, scope, request.VendorId))
       .some(lot => { const r = changedLots.get(lot.LotId) || lot; return r.SettlementHold && r.GrossCents > r.RefundedCents || r.NetCents < r.PaidCents + r.ReservedCents; });
     writes.push(write(VENDOR_COLLECTIONS.balances, request.VendorId, updatedBalance, previous));
   } else if (!['Rejected', 'Cancelled'].includes(next) && balanceView(previous).NeedsReview) fail('A refund or adjustment affected this claim. Accounts must reconcile it before approval.', 409);
@@ -555,18 +632,22 @@ async function pay(env, user, scope, body, options) {
     Source: 'Vendor Settlement', SourceId: paymentId, Reference: reference, Description: `Payment to ${request.VendorName}`, VendorId: request.VendorId,
     System: 'YES', Lines: [{ AccountCode: account, Debit: 0, Credit: amount(value), Description: reference }], CreatedAt: timestamp, CreatedBy: actor(user) };
   let remaining = value, alreadyPaid = request.PaidCents, writes = [];
+  const selectedLots = await selectedClaimLots(env, scope, request.VendorId, unpaidClaimPortions(request.Allocations, request.PaidCents, value));
+  const payableTotals = new Map();
   for (const allocation of request.Allocations) {
     const used = Math.min(alreadyPaid, allocation.AmountCents); alreadyPaid -= used;
     const available = allocation.AmountCents - used, take = Math.min(available, remaining);
     if (!take) continue;
-    const lot = await scoped(env, VENDOR_COLLECTIONS.lots, allocation.LotId, scope);
+    const lot = selectedLots.get(allocation.LotId);
     if (lot.ReservedCents < take || lot.NetCents < lot.PaidCents + take) fail('A selected sale was refunded or its reservation changed. Reconcile the request first.', 409);
     writes.push(write(VENDOR_COLLECTIONS.lots, lot.LotId, { ...lot, ReservedCents: lot.ReservedCents - take, PaidCents: lot.PaidCents + take }, lot));
-    journal.Lines.push({ AccountCode: lot.PayableAccount || allocation.PayableAccount || request.PayableAccount, Debit: amount(take), Credit: 0,
-      VendorId: request.VendorId, Description: lot.SaleNo });
+    const payable = clean(lot.PayableAccount || allocation.PayableAccount || request.PayableAccount);
+    payableTotals.set(payable, (payableTotals.get(payable) || 0) + take);
     remaining -= take; if (!remaining) break;
   }
   if (remaining) fail('The approved allocation does not cover this payment.', 409);
+  for (const [AccountCode, total] of payableTotals) journal.Lines.push({ AccountCode, Debit: amount(total), Credit: 0,
+    VendorId: request.VendorId, Description: `Approved sales in ${request.SettlementId}` });
   await validateJournal(env, journal, scope.OrganisationEdition);
   const paid = request.PaidCents + value, updated = { ...request, PaidCents: paid, PaymentStatus: paid === request.AmountCents ? 'Paid' : 'Part-paid',
     History: [...request.History, { Action: 'Payment recorded', PaymentId: paymentId, Amount: amount(value), By: actor(user), Username: user.username, At: timestamp, AuthorizationMethod: authorizationMethod }], UpdatedAt: timestamp };
@@ -838,6 +919,7 @@ export async function handleVendorSettlementAction(env, user, body = {}, options
         products:stock, productCount:stock.length };
     }
     case 'statement': return statement(env, user, scope, body);
+    case 'requestReport': return requestReport(env, user, scope, body);
     case 'saveSettings': return saveSettings(env, user, scope, body);
     case 'saveVendor': return saveVendor(env, user, scope, body);
     case 'setOrganisationSales': return setOrganisationSales(env, user, scope, body);

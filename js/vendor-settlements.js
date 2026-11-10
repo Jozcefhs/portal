@@ -83,7 +83,7 @@
       const submit = form?.querySelector('[type=submit]'); if (submit) { submit.disabled = true; submit.textContent = 'Processing…'; }
       const timer = setTimeout(() => controller.abort(), 45000);
       try {
-        if (!['bootstrap','statement','previewHistorical','previewProductImport','saveVendor','saveSettings'].includes(action)) {
+        if (!['bootstrap','statement','requestReport','previewHistorical','previewProductImport','saveVendor','saveSettings'].includes(action)) {
           body.RequestId ||= form ? (form.dataset.requestId ||= crypto.randomUUID()) : crypto.randomUUID();
         }
         return await request(action, body, controller.signal);
@@ -305,8 +305,9 @@
         ${c.vendor ? `<button data-delivery="${index}" type="button" class="vendor-icon-action" title="Record delivery" aria-label="Record delivery: ${esc(p.ItemName)}">${productIcon('delivery')}</button>` : ''}
         ${c.reviewProducts && p.VendorId ? `<button type="button" data-product-availability="${index}" class="${p.VendorSaleRevoked ? '' : 'vendor-revoke-action'}">${p.VendorSaleRevoked ? 'Restore for sale' : 'Revoke item'}</button>` : ''}</div></td></tr>`).join('') || '<tr role="row"><td role="cell" colspan="4">No products yet. Add a product or upload a CSV; pending products appear above for review.</td></tr>';
     }
-    function print(title, html) {
-      const win = window.open('','_blank'); if (!win) return status('Allow pop-ups to open the print preview.',true);
+    function print(title, html, previewWindow = null) {
+      const win = previewWindow || window.open('','_blank'); if (!win) return status('Allow pop-ups to open the print preview.',true);
+      win.document.open();
       win.document.write(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title><style>body{font:14px Arial;color:#143652;padding:24px}table{width:100%;border-collapse:collapse}td,th{padding:8px;text-align:left;border-bottom:1px solid #ccd}.vendor-amount{text-align:right;white-space:nowrap}thead{display:table-header-group}tr{break-inside:avoid}small{display:block}button{padding:10px}@page{size:landscape;margin:12mm}@media print{button{display:none}body{padding:0;font-size:11px}}</style></head><body><button onclick="window.print()">Print / Save as PDF</button><h1>${esc(title)}</h1><p>Branch: ${esc(data.capabilities.branchId)} · Generated ${esc(DynamaxTime.formatDateTime(new Date()))}</p>${html}</body></html>`);
       win.document.close();
     }
@@ -323,8 +324,16 @@
         ${!c.approvalOnly && r.PaymentStatus !== 'Paid' && !['Cancelled','Rejected'].includes(r.Status) && (c.manage || c.vendor || r.Status === 'Submitted') ? `<button data-request="${esc(r.SettlementId)}" data-action="Cancelled">Withdraw unpaid claim</button>` : ''}
         ${!c.approvalOnly && ['Cancelled','Rejected'].includes(r.Status) && !r.ReplacedBy ? `<button data-request="${esc(r.SettlementId)}" data-action="revise">Revise & resubmit</button>` : ''}</div></article>`;
     }
-    function printRequest(r, summary) {
-      const report = r.PrintReport;
+    async function printRequest(r, summary) {
+      let report = r.PrintReport, previewWindow = null;
+      if (report?.complete === false && !summary) {
+        previewWindow = window.open('', '_blank');
+        if (!previewWindow) return status('Allow pop-ups to open the print preview.', true);
+        previewWindow.document.write('<!doctype html><meta charset="utf-8"><title>Loading vendor request</title><p>Loading the saved sales list…</p>');
+        const result = await call('requestReport', { SettlementId: r.SettlementId });
+        if (!result?.request?.PrintReport || disposed) { previewWindow.close(); return; }
+        report = result.request.PrintReport; r.PrintReport = report;
+      }
       if (!report) return status('Refresh requests to load the complete print report.', true);
       const columns = ['Gross','Refund','Charge','Net','Claimed'];
       const cells = row => columns.map(k => `<td class="vendor-amount">${money(row[k])}</td>`).join('');
@@ -337,7 +346,7 @@
         <table><thead><tr>${summary ? '<th>Included sales</th>' : '<th>S/N</th><th>Date / sale</th><th>Products / agreed rule</th>'}<th>Gross</th><th>Refunds</th><th>Deductions</th><th>Net entitlement</th><th>Claimed in this request</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><th colspan="${summary ? 1 : 3}">Total: ${report.total.Count} sales</th>${cells(report.total)}</tr></tfoot></table>
         <p>Saved submission snapshot. Sales may be partly claimed; net entitlement is not the requested payment. Later refunds and payments do not rewrite this snapshot.</p>
         <p>Requested by ${esc(r.RequestedBy)} · ${esc(r.RequestedAt)}<br>${esc(r.Notes)}</p>
-        <h4>Approval / payment trail</h4><table><thead><tr><th>Action</th><th>Officer</th><th>Date / time</th><th>Notes / reference</th></tr></thead><tbody>${(r.History || []).map(h => `<tr><td>${esc(h.Action)}</td><td>${esc(h.By)}</td><td>${esc(h.At)}</td><td>${esc(h.Notes)} ${esc(h.PaymentId)}</td></tr>`).join('')}</tbody></table>`);
+        <h4>Approval / payment trail</h4><table><thead><tr><th>Action</th><th>Officer</th><th>Date / time</th><th>Notes / reference</th></tr></thead><tbody>${(r.History || []).map(h => `<tr><td>${esc(h.Action)}</td><td>${esc(h.By)}</td><td>${esc(h.At)}</td><td>${esc(h.Notes)} ${esc(h.PaymentId)}</td></tr>`).join('')}</tbody></table>`, previewWindow);
     }
     function statementHTML(s) { return `<h3>${esc(s.vendor.Name)}</h3><p>${esc(s.from)} — ${esc(s.to)} · ${esc(s.vendor.BankName)} ${esc(s.vendor.BankAccountMasked)}</p>${metrics(s.balance)}
       ${s.balance.NeedsReview ? '<p class="vendor-notice">Refunds, overpayments or an unissued paid-sale stock movement require review. Accounts must reconcile the affected records before further requests or payments.</p>' : ''}
@@ -387,7 +396,7 @@
       if (!replaced && !currentStatement) return status('Load a fresh statement for the selected vendor and period before requesting payment.',true);
       showDialog('Submit vendor requisition', `${input('From','From',replaced?.From || currentStatement?.from || today().slice(0,7) + '-01','date','required')}
         ${input('To','To',replaced?.To || currentStatement?.to || today(),'date','required')}${input('Amount','Amount requested',currentStatement?.availableInPeriod ?? replaced?.Amount ?? 0,'number','min="0.01" step="0.01" required')}${notes()}
-        <small class="vendor-full">Confirmed unclaimed earnings are reserved on submission. Approval does not send money. Revisions require the complete approval chain again.</small>`,
+        <small class="vendor-full">Up to 2,000 sales can be included in one request. Confirmed unclaimed earnings are reserved on submission. Approval does not send money. Revisions require the complete approval chain again.</small>`,
         'requestSettlement', b => ({ ...b, VendorId:selected, ...(replaced ? { ReplacesSettlementId:replaced.SettlementId, RecordVersion:replaced.RecordVersion } : {}) }));
     }
     function historicalForm() {

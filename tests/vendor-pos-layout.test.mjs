@@ -102,6 +102,17 @@ test('empty checkout has no space-wasting placeholders but still requires produc
   assert.equal(f.calls.some(row=>row.action.startsWith('record')),false);f.mounted.destroy();
 });
 
+test('student wallet lookup shows day or boarding type without another request',async()=>{
+  for (const StudentType of ['Day Student','Boarding Student']) {
+    const f=await fixture('tuckShop',{walletSummary:{StudentType}});
+    f.input('AccountRef','FIXTURE/001');await f.find();
+    assert.match(f.root.innerHTML,new RegExp(`vendor-pos-student-type[^>]*>${StudentType}`));
+    assert.equal(f.calls.filter(row=>row.action==='vendorWalletLookup').length,1);
+    assert.equal(f.calls.filter(row=>row.action==='recentVendorSales').length,0);
+    f.mounted.destroy();
+  }
+});
+
 test('vendor search is sticky under the staff header, without a clipping scroll ancestor',()=>{
   assert.match(css,/\.vendor-pos \.commerce-search-label\{position:sticky;top:0;z-index:13/);
   assert.match(css,/\.staff-page \.vendor-pos \.commerce-search-label\{top:var\(--staff-topbar-height,68px\)\}/);

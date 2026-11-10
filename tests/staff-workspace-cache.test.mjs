@@ -92,6 +92,65 @@ test('academic deadline reads do not cancel the classroom scorebook loading alon
   assert.equal((await (await scorebook).json()).assessmentScheme.Ready, true);
 });
 
+const auditedLiveReads = [
+  ['staff-manual-payments', ['lookup']], ['staff-payment-corrections', ['lookup', 'preview']], ['staff-wallet', ['lookup']],
+  ['fee-collection-summary', ['']], ['staff-procurement', ['records', 'recordDetail', 'lookupInventory', 'previewItemImport']],
+  ['staff-vendor-settlements', ['bootstrap', 'statement', 'previewHistorical', 'previewSale', 'previewProductImport', 'previewCardRefundBatch']],
+  ['staff-students', ['previewGrade7Intake', 'previewIntakeCorrection', 'previewProfileDefaults']], ['local-cbt-answers', ['review']],
+  ['portal-cbt-manage', ['state', 'options', 'assessment', 'uploadOptions', 'uploadedTests', 'uploadedResults', 'details', 'cards', 'paperPage']],
+  ['staff-academics', ['openScorebook', 'getAcademicClassScoreRegister', 'getAcademicClassroomScoreRegister', 'getAcademicAuditLog',
+    'getAcademicDiary', 'previewAcademicTimetableGeneration', 'previewAcademicTimetableCopy', 'previewTimetableCopy',
+    'previewAcademicScoreImport', 'previewScoreSheetImport', 'previewAcademicTermResultWithdrawal', 'previewTermResultWithdrawal',
+    'previewAcademicCbtRoster', 'previewAcademicCbtRosterAdditions', 'getAcademicCbtRosterAdditions', 'previewAcademicCbtLateEntry']]
+];
+
+test('verified academic, finance and stock reads stay live without evicting loaded records', async () => {
+  const { cache } = fixture(); let records = 0, previews = 0;
+  const savedRecords = () => cache.fetch(url('/api/admin'), post('section', { section: 'accounts' }), async () => { records++; return json(); });
+  await savedRecords(); const revision = cache.version();
+  for (const [path, actions] of auditedLiveReads) for (const action of actions) {
+    const policy = requestPolicy(url(`/api/${path}`), post(action));
+    assert.equal(policy.cacheable, false, `${path}/${action} needs current server evidence`);
+    assert.equal(policy.mutation, false, `${path}/${action} must retain loaded snapshots`);
+    assert.equal(requestPolicy(url('/api/unrecognised'), post(action)).mutation, true, `${action} must be endpoint-scoped`);
+    for (let i = 0; i < 2; i++) await cache.fetch(url(`/api/${path}`), post(action), async () => { previews++; return json(); });
+  }
+  await savedRecords(); assert.equal(records, 1); assert.equal(cache.version(), revision);
+  assert.equal(previews, auditedLiveReads.reduce((sum, [, actions]) => sum + actions.length * 2, 0));
+});
+
+test('loading a classroom register or finance preview cannot cancel an in-flight module read', async () => {
+  for (const [path, action] of [['staff-academics', 'getAcademicClassroomScoreRegister'], ['staff-payment-corrections', 'preview'],
+    ['staff-procurement', 'records'], ['local-cbt-answers', 'review']]) {
+    const { cache } = fixture(), gate = deferred(); let reads = 0;
+    const load = () => cache.fetch(url('/api/staff-academics'), post('bootstrap', { ClassId: 'demo', View: 'scorebook' }),
+      async () => { reads++; await gate.promise; return json({ ok: true, scoreSheets: [{ SheetId: 'saved' }] }); });
+    const pending = load();
+    await cache.fetch(url(`/api/${path}`), post(action), async () => json());
+    gate.resolve(); assert.equal((await (await pending).json()).scoreSheets[0].SheetId, 'saved');
+    await load(); assert.equal(reads, 1);
+  }
+});
+
+test('paired academic, finance and procurement mutations still invalidate every loaded snapshot', async () => {
+  for (const [path, action] of [
+    ['staff-manual-payments', 'post'], ['staff-payment-corrections', 'post'], ['staff-wallet', 'save'],
+    ['staff-procurement', 'importItems'], ['staff-procurement', 'receivePurchase'], ['staff-students', 'applyProfileDefaults'],
+    ['staff-vendor-settlements', 'recordSale'], ['staff-vendor-settlements', 'approveCardRefundBatch'],
+    ['portal-cbt-manage', 'review'], ['portal-cbt-manage', 'approve'], ['portal-cbt-manage', 'post'],
+    ['staff-academics', 'saveAcademicDiaryEntry'], ['staff-academics', 'importAcademicScores'],
+    ['staff-academics', 'changeAcademicTermResultStatus'], ['staff-academics', 'refreshAcademicCbtRoster'],
+    ['staff-academics', 'addAcademicCbtRosterStudents'], ['staff-academics', 'createAcademicCbtLateEntry']
+  ]) {
+    const { cache } = fixture(); let reads = 0;
+    const load = () => cache.fetch(url('/api/admin'), post('section'), async () => { reads++; return json(); });
+    await load();
+    assert.equal(requestPolicy(url(`/api/${path}`), post(action)).mutation, true, action);
+    await cache.fetch(url(`/api/${path}`), post(action), async () => json());
+    await load(); assert.equal(reads, 2, `${path}/${action}`);
+  }
+});
+
 test('idle renewal does not cancel concurrent academic reads or reuse a cached token response', async () => {
   const { cache } = fixture();
   const gate = deferred();

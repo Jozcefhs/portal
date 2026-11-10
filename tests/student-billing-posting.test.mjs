@@ -6,6 +6,7 @@ import { webcrypto } from 'node:crypto';
 import { studentBillingReconciliationPlan, buildStudentBillingPreview,
   buildSchoolInvoiceChargeAccountingJournal, calculateAccountFinancialSummary } from '../functions/api/backend.js';
 import { parentCreditReview } from '../functions/lib/student-billing-diagnostics.js';
+import { readManagedSchoolFeeCreditSummary, schoolFeeCreditSummaryId } from '../functions/lib/school-fee-credit-scope.js';
 import { reviewAllStudentBilling } from '../js/student-maintenance.js';
 import { student, billingFixture, renderBillingReport } from './helpers/billing-credit-review.mjs';
 
@@ -26,16 +27,21 @@ function harness({ configure = () => {}, closed = false, refreshFails = false, b
     rows.forEach((row, index) => Object.assign(row, { __id: row.__id || `${collection}-${index}`, __updateTime: 'v1' }));
   }
   configure(data);
+  for (const summary of data.accountSummaries) if (summary.SchoolFeeCreditManaged === true) Object.assign(summary, {
+    __id: schoolFeeCreditSummaryId(profile.AccountRef, profile), BranchId: profile.BranchId, SchoolSection: profile.SchoolSection,
+    AccountScopePath: profile.__scopePath, StudentDocumentId: profile.__id
+  });
   const originals = copy(data), db = new Map(), commits = [];
   db.set(`${profile.__scopePath}/${profile.__id}`, copy(profile));
   for (const collection of ['feeItems', 'invoices', 'payments', 'ledger', 'accountSummaries']) {
     for (const row of data[collection]) db.set(`${collection}/${row.__id}`, copy(row));
   }
-  const calls = { preflight: 0, allocate: 0, refresh: 0 };
+  const calls = { preflight: 0, allocate: 0, managedAllocate: 0, refresh: 0 };
   let revision = 1;
   const read = () => ({ schoolProfile: {}, ...Object.fromEntries(['feeItems', 'invoices', 'payments', 'ledger', 'accountSummaries']
     .map((collection) => [collection, [...db.entries()].filter(([key]) => key.startsWith(`${collection}/`)).map(([, row]) => copy(row))])) });
   const apply = vm.runInNewContext(`${posting}; reconcileStudentBilling`, {
+    readManagedSchoolFeeCreditSummary,
     crypto: webcrypto, TextEncoder, clean, lower, asMoneyNumber: amount,
     normalizeReferenceText: (value) => lower(value).replace(/[^a-z0-9]/g, ''),
     sameText: (a, b) => lower(a) === lower(b), accountRefsFrom: (row) => [row.AccountRef],
@@ -46,6 +52,12 @@ function harness({ configure = () => {}, closed = false, refreshFails = false, b
     accountingPeriodIsClosed: async () => closed,
     syncSchoolAccountCreditJournals: async () => { calls.preflight++; return {}; },
     applyDueSchoolFeeCreditsForAccount: async () => { calls.allocate++; },
+    applyManagedSchoolFeeCreditForAccount: async (_env, identity, options) => {
+      calls.managedAllocate++; assert.equal(identity.AccountRef, profile.AccountRef);
+      assert.equal(identity.BranchId, 'main'); assert.equal(identity.SchoolSection, 'secondary');
+      assert.equal(options.today, '2026-10-16'); assert.equal(options.summary, undefined, 'Read the committed summary revision');
+      assert.equal(read().accountSummaries[0].SchoolFeeCreditReviewRequired, false);
+    },
     refreshAccountFinancialSummary: async (_env, reference, _linked, scope) => {
       calls.refresh++;
       assert.equal(scope.branchId, 'main'); assert.equal(scope.schoolSectionAccess, 'secondary');
@@ -209,6 +221,107 @@ test('clean bills retain the existing credit preflight and allocation workflow',
   assert.equal(h.calls.preflight, 1); assert.equal(h.calls.allocate, 1); assert.equal(h.calls.refresh, 0);
 });
 
+test('managed school-fee credit uses its scoped allocator after clean missing-charge posting', async () => {
+  const h = harness({ configure: data => { data.invoices = data.invoices.slice(0, 1); Object.assign(data.accountSummaries[0], {
+    SchoolFeeCreditManaged: true, SchoolFeeCreditReviewRequired: true, SchoolFeeCreditReviewReason: 'Old conflict' }); } });
+  const before = JSON.stringify({ payments: h.read().payments, ledger: h.read().ledger });
+  const result = await h.apply((await h.plan()).previewToken);
+  assert.equal(result.requiresReview, false); assert.equal(h.calls.managedAllocate, 1);
+  assert.equal(h.calls.preflight, 0); assert.equal(h.calls.allocate, 0); assert.equal(h.calls.refresh, 0);
+  assert.equal(JSON.stringify({ payments: h.read().payments, ledger: h.read().ledger }), before);
+  assert.equal(h.read().accountSummaries[0].SchoolFeeCreditReviewReason, '');
+});
+
+test('managed accounts still under finance review defer allocations and never refresh a bare-reference summary', async () => {
+  const h = harness({ configure: data => { data.accountSummaries[0].SchoolFeeCreditManaged = true; } });
+  const summary = structuredClone(h.read().accountSummaries);
+  const result = await h.apply((await h.plan()).previewToken);
+  assert.equal(result.requiresReview, true); assert.equal(result.creditAllocationDeferred, true);
+  assert.equal(h.calls.managedAllocate, 0); assert.equal(h.calls.preflight, 0); assert.equal(h.calls.allocate, 0); assert.equal(h.calls.refresh, 0);
+  const saved = h.read().accountSummaries[0];
+  assert.equal(saved.SchoolFeeCreditReviewRequired, true); assert.equal(saved.SchoolFeeCreditReviewReason, result.reviewWarning);
+  for (const [key, value] of Object.entries(summary[0])) if (!['__updateTime', 'UpdatedAt'].includes(key)) assert.deepEqual(saved[key], value);
+  const hold = h.commits[0].find(write => write.collectionPath === 'accountSummaries');
+  assert.equal(hold.updateTime, summary[0].__updateTime); assert.equal(hold.updateMask.includes('TotalCredit'), false);
+});
+
+test('a concurrent managed-credit summary change blocks reconciliation without partial invoices', async () => {
+  const h = harness({ configure: data => { data.accountSummaries[0].SchoolFeeCreditManaged = true; },
+    beforeCommit: db => { [...db.entries()].find(([key]) => key.startsWith('accountSummaries/'))[1].__updateTime = 'concurrent-payment'; } });
+  await assert.rejects(h.apply((await h.plan()).previewToken), /Atomic precondition/);
+  assert.equal(h.commits.length, 0); assert.equal(h.read().invoices.length, h.originals.invoices.length);
+  assert.deepEqual(h.read().payments, h.originals.payments); assert.deepEqual(h.read().ledger, h.originals.ledger);
+});
+
+function matchedHeldBill(data) {
+  data.feeItems = data.feeItems.slice(0, 1);
+  data.invoices = data.invoices.slice(0, 1);
+  Object.assign(data.accountSummaries[0], { SchoolFeeCreditManaged: true,
+    SchoolFeeCreditReviewRequired: true, SchoolFeeCreditReviewReason: 'Previous billing conflict',
+    PendingSchoolFeeCredit: 622065 });
+}
+
+test('a reviewed matched bill can clear its credit hold without changing financial records or allocating credit', async () => {
+  const h = harness({ configure: matchedHeldBill, closed: true });
+  const plan = await h.plan();
+  assert.equal(plan.creditReviewOnly, true); assert.equal(plan.ready, true);
+  assert.equal(plan.postingTotal, 0); assert.equal(plan.requiresReview, false);
+  const result = await h.apply(plan.previewToken);
+  assert.equal(result.creditReviewCleared, true); assert.equal(result.created, 0); assert.equal(result.added, 0);
+  assert.match(result.message, /No invoices, payments or allocations were changed/);
+  assert.deepEqual(h.calls, { preflight: 0, allocate: 0, managedAllocate: 0, refresh: 0 });
+  for (const collection of ['invoices', 'payments', 'ledger', 'feeItems']) for (const row of h.originals[collection]) {
+    const saved = h.read()[collection].find(item => item.__id === row.__id);
+    assert.deepEqual({ ...saved, __updateTime: row.__updateTime }, row, `${collection} content preserved`);
+  }
+  assert.equal(h.read().accountSummaries[0].SchoolFeeCreditReviewRequired, false);
+  assert.equal(h.read().accountSummaries[0].SchoolFeeCreditReviewReason, '');
+  assert.equal(h.read().accountSummaries[0].PendingSchoolFeeCredit, 622065);
+  assert.equal(h.commits[0].some(write => write.collectionPath === 'accountingJournals'), false);
+  const changed = h.commits[0].filter(write => !['accountingAudit', 'accountSummaries'].includes(write.collectionPath));
+  assert.ok(changed.every(write => write.updateMask?.length === 1 && write.updateTime), 'Existing records are unchanged concurrency guards only');
+  await assert.rejects(h.apply(plan.previewToken), /changed since preview/);
+  const fresh = await h.plan();
+  assert.equal(fresh.creditReviewOnly, false); assert.equal(fresh.ready, false);
+  assert.equal(h.commits.length, 1);
+});
+
+test('hold clearing refuses changed fees, incomplete profiles, other scopes and incomplete or conflicting bills', async () => {
+  const edited = harness({ configure: matchedHeldBill }), reviewed = await edited.plan();
+  edited.db.get('feeItems/feeItems-0').Amount += 1;
+  await assert.rejects(edited.apply(reviewed.previewToken), /changed since preview/);
+  assert.equal(edited.read().accountSummaries[0].SchoolFeeCreditReviewRequired, true);
+  for (const kind of ['profile', 'other-branch', 'unknown-period', 'missing-invoice', 'conflicting-invoice']) {
+    const h = harness({ configure: matchedHeldBill });
+    if (kind === 'profile') h.profile.ProfileCompletionStatus = 'Incomplete';
+    else if (kind === 'unknown-period') h.profile.Term = '';
+    else if (kind === 'other-branch') [...h.db.entries()].find(([key]) => key.startsWith('accountSummaries/'))[1].BranchId = 'area-1-primary';
+    else if (kind === 'missing-invoice') h.db.delete('invoices/invoice-0');
+    else h.db.get('invoices/invoice-0').Amount = h.db.get('invoices/invoice-0').Debit = 880821;
+    if (kind === 'other-branch') {
+      await assert.rejects(h.plan(), /another account/);
+      assert.equal(h.commits.length, 0); continue;
+    }
+    const plan = await h.plan();
+    assert.equal(Boolean(plan.creditReviewOnly), false, kind);
+    assert.equal(plan.ready, false, kind);
+    await assert.rejects(h.apply(plan.previewToken));
+    assert.equal(h.commits.length, 0, kind);
+  }
+});
+
+test('concurrent changes to any evidence prevent a partial credit-hold clear', async () => {
+  for (const collection of ['feeItems', 'invoices', 'accountSummaries', student.__scopePath]) {
+    const h = harness({ configure: matchedHeldBill, beforeCommit: db => {
+      [...db.entries()].find(([key]) => key.startsWith(`${collection}/`))[1].__updateTime = 'concurrent-change';
+    } });
+    await assert.rejects(h.apply((await h.plan()).previewToken), /Atomic precondition/);
+    assert.equal(h.commits.length, 0, collection);
+    assert.equal(h.read().accountSummaries[0].SchoolFeeCreditReviewRequired, true, collection);
+    assert.deepEqual(h.read().payments, h.originals.payments); assert.deepEqual(h.read().ledger, h.originals.ledger);
+  }
+});
+
 test('a partially postable account counts as both eligible and needing review, using the gross posting total', async () => {
   const h = harness(), plan = await h.plan();
   const report = await reviewAllStudentBilling(async (_url, body) => body.action === 'previewAll'
@@ -218,7 +331,7 @@ test('a partially postable account counts as both eligible and needing review, u
   assert.equal(report.blockedMissingAccounts, 0);
   const html = await renderBillingReport(report);
   assert.match(html, /other components still need review/);
-  assert.match(html, /Post valid missing charges for 1 reviewed accounts \(₦608,065.00\)/);
+  assert.match(html, /Apply reviewed billing changes for 1 accounts \(₦608,065.00 in missing charges\)/);
   assert.doesNotMatch(html, /Conflicting accounts stay blocked/);
 });
 
