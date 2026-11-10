@@ -1030,14 +1030,15 @@
         {
           "id": "notification-failures",
           "title": "Fix notification scheduler failures",
-          "status": "deployed_with_followups",
+          "status": "deployed_verified",
           "acceptance": "Meaningful failure evidence, bounded retries and no audit flooding.",
           "evidence": [
             "docs/notification-system.md",
             "docs/notification-operational-audit-2026-11-10.json",
             "tests/notification-push-storage-identity.test.mjs",
             "docs/release-3.1.64-2026-11-10.md",
-            "docs/notification-scheduler-runtime-2026-11-10.json"
+            "docs/notification-scheduler-runtime-2026-11-10.json",
+            "docs/daily-fee-reminder-verification-2026-11-10.json"
           ],
           "statusHistory": [
             {
@@ -1051,7 +1052,7 @@
               "note": "Earlier CI permission failure is preserved in the operational audit; dedicated-token deployment and natural runtime checks now succeeded."
             }
           ],
-          "verification": "School and Faith dedicated five-minute Workers deployed successfully from 100a5efa after owner-authorized account-restricted token setup. Both natural cron runs verified; the legacy queue resumed. All 34 targeted scheduler, deployment and retry checks passed. Detailed runtime evidence distinguishes expired device registrations from scheduler faults.",
+          "verification": "School and Faith dedicated five-minute Workers deployed successfully from 100a5efa after owner-authorized account-restricted token setup. Both natural cron runs verified; the legacy queue resumed. All 34 targeted scheduler, deployment and retry checks passed. Detailed runtime evidence distinguishes expired device registrations from scheduler faults. Daily repair deployed from e048facb; final workflow a80f1fcb. Live run and sequential repeat both succeeded; no duplicate reminders or credit allocations on retry. No push devices registered for the three reminded parents.",
           "followUps": [
             {
               "id": "notification-worker-secrets-deployment",
@@ -1061,14 +1062,16 @@
             },
             {
               "id": "notification-post-repair-runtime-proof",
-              "status": "deployed_with_followups",
-              "finding": "Natural School and Faith cron runs succeeded. The legacy queue reached 92 of 92 recipients with seven provider-accepted device deliveries and one expired registration retained in history. The separate daily reminder check is tracked below.",
+              "status": "deployed_verified",
+              "finding": "Natural School and Faith five-minute runs succeeded; legacy queue completed. Separate live daily run and duplicate-suppression verification are now recorded in docs/daily-fee-reminder-verification-2026-11-10.json.",
               "evidence": "docs/notification-scheduler-runtime-2026-11-10.json"
             },
             {
               "id": "notification-daily-reminder-runtime-proof",
-              "status": "in_progress",
-              "acceptance": "Observe the next natural daily fee-reminder run after the READY index repair. Five-minute announcement/attendance runs do not prove the separate daily reminder stage."
+              "status": "deployed_verified",
+              "acceptance": "User-authorized daily run completes and a sequential same-day repeat creates no new reminders or duplicate credit allocations.",
+              "finding": "Daily run 42829316560 completed: 3 unique in-app reminders, 16 reminder metadata updates and existing credit allocated to 7 invoices. Sequential run 42832268558 completed with zero new reminders, reminder updates, queued jobs or credit allocations. All three delivery jobs completed; recipients have no registered push devices.",
+              "evidence": "docs/daily-fee-reminder-verification-2026-11-10.json"
             }
           ]
         },
@@ -1372,5 +1375,11 @@
       "scope": "Current shared branch catalogue, fee selection, student status, HR employment letters, email options and vendor reads. Historical repairs retain their individual evidence.",
       "preservation": "No business-data migration or actual email send during this release validation. Existing reviewed fee/pupil repair evidence is retained."
     }
-  ]
+  ],
+  "latestNotificationVerification": {
+    "date": "2026-11-10",
+    "status": "deployed_verified",
+    "evidence": "docs/daily-fee-reminder-verification-2026-11-10.json",
+    "desktopBuildRequired": false
+  }
 }

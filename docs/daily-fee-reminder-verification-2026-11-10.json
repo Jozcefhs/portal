@@ -1,0 +1,231 @@
+{
+  "checkedAtUtc": "2026-11-10T14:17:43.802Z",
+  "task": "Verify daily fee-reminder completion and duplicate suppression.",
+  "status": "deployed_verified",
+  "backendCommit": "e048facbd08095296a7058948fd6127705b9bd5c",
+  "workflowCommit": "a80f1fcb672cdc7c95997fb5bfe7d966aee3e644",
+  "deploymentRunUrl": "https://github.com/Jozcefhs/portal/actions/runs/42829050164",
+  "previousFailedRun": {
+    "url": "https://github.com/Jozcefhs/portal/actions/runs/42824610718",
+    "finding": "Credit step reported success; combined reminder step returned HTTP 409. Old workflow did not expose the failing stage. Do not infer a specific historical database conflict from this status alone."
+  },
+  "repairs": [
+    "Use enabled School registry targets and environment credentials; verify expected workspace and edition.",
+    "Separate credit, fee reminder, maintenance and durable delivery phases.",
+    "Paginate both invoice queues and exclude empty scheduled dates.",
+    "Aggregate the complete account/branch/section/period/due-date group before creating a total-fee reminder.",
+    "Send only the latest applicable unsent stage; never fall back to an older missed stage on retry.",
+    "Create deterministic in-app events and durable push jobs; reuse completed jobs without resetting delivery progress.",
+    "Patch reminder metadata only, using the actual stored invoice ID and revision preconditions.",
+    "Accept the credit scheduler's completed-date watermark; sequential retries do not rescan credit accounts.",
+    "Drain queued delivery in bounded batches and surface sanitized stage failures."
+  ],
+  "runs": [
+    {
+      "url": "https://github.com/Jozcefhs/portal/actions/runs/42829316560",
+      "jobId": 129874970217,
+      "conclusion": "success",
+      "kind": "owner-authorized live daily run",
+      "summaries": [
+        {
+          "mode": "credits",
+          "date": "2026-11-10",
+          "complete": true,
+          "totals": {
+            "pages": 61,
+            "inspected": 204,
+            "created": 0,
+            "duplicates": 0,
+            "updated": 0,
+            "pushQueued": 0,
+            "creditedInvoices": 7
+          }
+        },
+        {
+          "mode": "reminders",
+          "date": "2026-11-10",
+          "complete": true,
+          "totals": {
+            "pages": 1,
+            "inspected": 14,
+            "created": 3,
+            "duplicates": 0,
+            "updated": 16,
+            "pushQueued": 3,
+            "creditedInvoices": 0
+          }
+        },
+        {
+          "mode": "maintenance",
+          "date": "2026-11-10",
+          "complete": true,
+          "totals": {
+            "pages": 1,
+            "inspected": 0,
+            "created": 0,
+            "duplicates": 0,
+            "updated": 0,
+            "pushQueued": 0,
+            "creditedInvoices": 0
+          }
+        }
+      ]
+    },
+    {
+      "url": "https://github.com/Jozcefhs/portal/actions/runs/42832268558",
+      "jobId": 129885275616,
+      "conclusion": "success",
+      "kind": "sequential same-day repeat after first completed",
+      "summaries": [
+        {
+          "mode": "credits",
+          "date": "2026-11-10",
+          "complete": true,
+          "totals": {
+            "pages": 1,
+            "inspected": 0,
+            "created": 0,
+            "duplicates": 0,
+            "updated": 0,
+            "pushQueued": 0,
+            "creditedInvoices": 0,
+            "delivered": 0
+          }
+        },
+        {
+          "mode": "reminders",
+          "date": "2026-11-10",
+          "complete": true,
+          "totals": {
+            "pages": 1,
+            "inspected": 0,
+            "created": 0,
+            "duplicates": 0,
+            "updated": 0,
+            "pushQueued": 0,
+            "creditedInvoices": 0,
+            "delivered": 0
+          }
+        },
+        {
+          "mode": "maintenance",
+          "date": "2026-11-10",
+          "complete": true,
+          "totals": {
+            "pages": 1,
+            "inspected": 0,
+            "created": 0,
+            "duplicates": 0,
+            "updated": 0,
+            "pushQueued": 0,
+            "creditedInvoices": 0,
+            "delivered": 0
+          }
+        },
+        {
+          "mode": "delivery",
+          "date": "2026-11-10",
+          "complete": true,
+          "totals": {
+            "pages": 1,
+            "inspected": 0,
+            "created": 0,
+            "duplicates": 0,
+            "updated": 0,
+            "pushQueued": 0,
+            "creditedInvoices": 0,
+            "delivered": 0
+          }
+        }
+      ]
+    }
+  ],
+  "regressionTests": {
+    "fullSuite": {
+      "passed": 5050,
+      "failed": 0
+    },
+    "finalRunnerCreditAndDiagnostics": {
+      "passed": 26,
+      "failed": 0
+    }
+  },
+  "preservation": "No records deleted. Reminder updates are limited to seven reminder metadata fields. The normal authorized credit phase applied existing credit to seven invoices; repeat applied zero additional allocations.",
+  "limitations": [
+    "Three unique in-app fee reminders were saved. All three push jobs completed with no failures, but each recipient had zero registered push devices. This is not a claim of browser delivery or parent readership.",
+    "Scheduled daily trigger retained. Both verified live runs were manually dispatched at the user's request; the next natural daily trigger has not yet occurred."
+  ],
+  "deliveryMetadata": {
+    "verifiedAt": "2026-11-10T14:17:43.802Z",
+    "newFeeReminders": 3,
+    "uniqueEventKeys": 3,
+    "metadataOnly": true,
+    "writes": 0,
+    "queue": [
+      {
+        "Status": "Completed",
+        "Offset": 1,
+        "TargetCount": 1,
+        "Delivered": 0,
+        "Failed": 0,
+        "AttemptCount": 1,
+        "UpdatedAt": "2026-11-10T14:14:13.652Z"
+      },
+      {
+        "Status": "Completed",
+        "Offset": 1,
+        "TargetCount": 1,
+        "Delivered": 0,
+        "Failed": 0,
+        "AttemptCount": 1,
+        "UpdatedAt": "2026-11-10T14:15:38.101Z"
+      },
+      {
+        "Status": "Completed",
+        "Offset": 1,
+        "TargetCount": 1,
+        "Delivered": 0,
+        "Failed": 0,
+        "AttemptCount": 1,
+        "UpdatedAt": "2026-11-10T14:15:40.684Z"
+      }
+    ],
+    "deliveries": [
+      {
+        "total": 0,
+        "uniqueRecipientDeviceKeys": 0,
+        "statusCounts": {},
+        "maxAttempts": 0
+      },
+      {
+        "total": 0,
+        "uniqueRecipientDeviceKeys": 0,
+        "statusCounts": {},
+        "maxAttempts": 0
+      },
+      {
+        "total": 0,
+        "uniqueRecipientDeviceKeys": 0,
+        "statusCounts": {},
+        "maxAttempts": 0
+      }
+    ],
+    "recipientDeviceCounts": [
+      {
+        "targetRecipients": 1,
+        "registeredDevices": 0,
+        "activeDevices": 0
+      },
+      {
+        "targetRecipients": 1,
+        "registeredDevices": 0,
+        "activeDevices": 0
+      },
+      {
+        "targetRecipients": 1,
+        "registeredDevices": 0,
+        "activeDevices": 0
+      }
+    ]
+  }
+}
