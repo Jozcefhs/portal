@@ -114,7 +114,9 @@ test('scheduled managed-organisation deployments include only pending registered
       PaystackDeploymentPending: false,
       PaystackDeploymentRequestedAt: '',
       EmailDeploymentPending: true,
-      EmailDeploymentRequestedAt: '2026-09-17T10:00:00.000Z'
+      EmailDeploymentRequestedAt: '2026-09-17T10:00:00.000Z',
+      EmailDeploymentProvider: 'inherit',
+      EmailDeploymentBranchId: 'area-1-primary'
     }
   ], { target: 'all', pendingOnly: true });
   assert.equal(matrix.length, 2);
@@ -122,9 +124,12 @@ test('scheduled managed-organisation deployments include only pending registered
   assert.equal(matrix[0].paystackDeploymentPending, true);
   assert.equal(matrix[0].paystackDeploymentRequestedAt, '2026-09-14T02:30:00.000Z');
   assert.equal(matrix[0].emailDeploymentPending, false);
+  assert.equal(matrix[0].emailDeploymentBranchId, '');
   assert.equal(matrix[1].id, 'digc-suite');
   assert.equal(matrix[1].emailDeploymentPending, true);
   assert.equal(matrix[1].emailDeploymentRequestedAt, '2026-09-17T10:00:00.000Z');
+  assert.equal(matrix[1].emailDeploymentBranchId, 'area-1-primary');
+  assert.equal(matrix[1].emailDeploymentProvider, 'inherit');
 });
 
 test('deployed organisation identity must match its registry boundary', () => {
@@ -178,11 +183,11 @@ test('school, church, other organisations and the Dynamax control plane use sepa
   assert.equal(churchConfig.firestore.indexes, 'firestore.church.indexes.json');
   assert.equal(organizationConfig.firestore.indexes, 'firestore.organization.indexes.json');
   assert.equal(platformConfig.firestore.indexes, 'firestore.platform.indexes.json');
-  assert.equal(schoolIndexes.indexes.length, 69);
+  assert.equal(schoolIndexes.indexes.length, 72);
   assert.ok(schoolIndexes.indexes.some(index=>index.collectionGroup==='academicStudentMemberships'
     && index.fields.map(field=>field.fieldPath).join(',')==='BranchId,SessionId,TermId,StudentRef'));
-  assert.equal(churchIndexes.indexes.length, 45);
-  assert.equal(organizationIndexes.indexes.length, 45);
+  assert.equal(churchIndexes.indexes.length, 48);
+  assert.equal(organizationIndexes.indexes.length, 48);
   for (const manifest of [schoolIndexes, churchIndexes, organizationIndexes]) {
     for (const collection of ['vendorEarnings', 'vendorClaimLots', 'vendorSettlementPayments']) {
       assert.ok(manifest.indexes.some(index => index.collectionGroup === collection && index.queryScope === 'COLLECTION'

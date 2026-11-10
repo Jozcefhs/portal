@@ -1,4 +1,6 @@
-import { batchUpsertDocuments, getDocument, queryCollection, requireFirestoreEnv } from '../lib/firestore.js';
+import { batchUpsertDocuments, getDocument, queryCollection, queryCollectionPages, requireFirestoreEnv } from '../lib/firestore.js';
+import { prepareImportedStudentWrite } from '../lib/student-profile-import.js';
+import { readStudentPlacementGuards } from '../lib/academic-placement-guards.js';
 import { requireConfiguredDesktopSecret, verifyDesktopCredential } from '../lib/backend-security.js';
 import { finishRequestMetric, startRequestMetric } from '../lib/request-metrics.js';
 import { readJsonBody } from '../lib/request-security.js';
@@ -229,6 +231,19 @@ export async function onRequestPost({ request, env }) {
     const imported = [];
     const failures = [];
     const writes = [];
+    const dryPlacementReads = new Map();
+    const cachedPlacementReads = cache => ({
+      getDocument: (env, path, id) => {
+        const key = `${path}/${id}`;
+        if (!cache.has(key)) cache.set(key, getDocument(env, path, id));
+        return cache.get(key);
+      },
+      queryCollectionPages: (env, path, options) => {
+        const key = `${path}/${JSON.stringify(options)}`;
+        if (!cache.has(key)) cache.set(key, queryCollectionPages(env, path, options));
+        return cache.get(key);
+      }
+    });
     for (let index = 0; index < rows.length; index += 1) {
       try {
         validateRow(rows[index], index);
@@ -240,6 +255,15 @@ export async function onRequestPost({ request, env }) {
           UpdatedAt: row.UpdatedAt || new Date().toISOString()
         };
         let inventoryCondition = {};
+        if (collection === 'students') {
+          const planned = await prepareImportedStudentWrite(env, documentId, payload);
+          if (planned.unchanged) { imported.push({ index, documentId }); continue; }
+          if (dryRun) {
+            if (planned.placement) await readStudentPlacementGuards(env, null, planned.placement, cachedPlacementReads(dryPlacementReads));
+            imported.push({ index, documentId: planned.write.documentId });
+          } else writes.push({ index, ...planned.write, placement: planned.placement });
+          continue;
+        }
         if (collection === 'clinicRecords') {
           const protectedFields = ['DispensedItems', 'Revision', 'StockReturnedOnCancellation'];
           const existing = await getDocument(env, collection, documentId);
@@ -280,7 +304,13 @@ export async function onRequestPost({ request, env }) {
     if (!dryRun) {
       for (const group of chunk(writes, IMPORT_BATCH_SIZE)) {
         try {
-          await batchUpsertDocuments(env, group);
+          const guards = new Map(), placementReads = new Map();
+          for (const item of group) if (item.placement) {
+            for (const guard of await readStudentPlacementGuards(env, null, item.placement, cachedPlacementReads(placementReads))) {
+              guards.set(`${guard.collectionPath}/${guard.documentId}`, guard);
+            }
+          }
+          await batchUpsertDocuments(env, [...group.map(({ placement, ...write }) => write), ...guards.values()]);
           group.forEach(({ index, documentId }) => imported.push({ index, documentId }));
         } catch (error) {
           console.error('Database import batch failed', {

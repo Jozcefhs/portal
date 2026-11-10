@@ -39,6 +39,10 @@ The user asked whether the fee editor's part-payment fields are still needed. Th
 
 A possible later UI improvement is to group these fields under “Individual item payment rules” and explain the total-plan precedence, without deleting existing rules.
 
-## Existing concurrency follow-up
+## Assignment and removal concurrency verification
 
-The branch revision guard protects concurrent catalogue edits. It is not a claim that every existing pupil-import/allocation writer shares that guard. A separate follow-up must coordinate all assignment writers with class/arm removal (including legacy profile paths) and test both commit orders. This inherited removal-versus-assignment concern is why the new Settings saver does not perform destructive changes. The existing Academic Management deletion workflow is unchanged apart from the structural revision guard.
+The follow-up now guards allocation, import, transfer, promotion and profile-only placement against concurrent class/arm removal. Each real placement mutation checks the destination revisions in the same atomic batch; several pupils assigned together share one guard per destination. Existing session movement and reactivation guards remain in place. Unchanged retries and score-only edits add no placement writes.
+
+Generic pupil imports preserve existing scoped identities and reject status or placement changes that require the reviewed workflow. Metadata optimization updates only normalized fields with a revision check, so it cannot overwrite a concurrent placement or status change.
+
+Both commit orders are tested: either assignment commits first and removal must recheck dependencies, or removal commits first and assignment fails without changing pupil records. The affected academic checks passed 151 tests, and the final import/race checks passed 56 tests. No live pupil, score or payment records were altered for these checks. The latest owner instruction authorizes an installer build after the remaining release checks pass.

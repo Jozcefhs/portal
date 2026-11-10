@@ -234,23 +234,26 @@ jobs:
           CLOUDFLARE_PROJECT: ${{ matrix.project.CloudflareProject }}
           EMAIL_DEPLOYMENT_REQUESTED_AT: ${{ matrix.project.EmailDeploymentRequestedAt }}
           EMAIL_DEPLOYMENT_PROVIDER: ${{ matrix.project.EmailDeploymentProvider }}
+          EMAIL_DEPLOYMENT_BRANCH_ID: ${{ matrix.project.EmailDeploymentBranchId }}
           TENANT_PORTAL_URL: https://${{ matrix.project.CloudflareProject }}.pages.dev
         shell: bash
         run: |
           set -euo pipefail
-          [[ "${EMAIL_DEPLOYMENT_PROVIDER}" == "brevo" || "${EMAIL_DEPLOYMENT_PROVIDER}" == "gmail" ]] || { echo '::error::Queued email provider is invalid.'; exit 1; }
-          readiness="$(curl --fail-with-body --silent --show-error "${TENANT_PORTAL_URL}/api/email-provider-readiness")"
+          [[ "${EMAIL_DEPLOYMENT_PROVIDER}" == "brevo" || "${EMAIL_DEPLOYMENT_PROVIDER}" == "gmail" || ( "${EMAIL_DEPLOYMENT_PROVIDER}" == "inherit" && -n "${EMAIL_DEPLOYMENT_BRANCH_ID}" ) ]] || { echo '::error::Queued email provider is invalid.'; exit 1; }
+          readiness="$(curl --fail-with-body --silent --show-error --get --data-urlencode "branchId=${EMAIL_DEPLOYMENT_BRANCH_ID}" "${TENANT_PORTAL_URL}/api/email-provider-readiness")"
           jq -e \
+            --arg branchId "${EMAIL_DEPLOYMENT_BRANCH_ID}" \
             --arg provider "${EMAIL_DEPLOYMENT_PROVIDER}" \
             --arg requestedAt "${EMAIL_DEPLOYMENT_REQUESTED_AT}" \
-            '.ok == true and .ready == true and .provider == $provider and .requestedAt == $requestedAt' \
+            '.ok == true and .ready == true and .provider == $provider and .requestedAt == $requestedAt and (.branchId // "") == $branchId' \
             <<<"${readiness}" >/dev/null || { echo '::error::Deployed email provider is not ready or does not match the queued transition.'; exit 1; }
           payload="$(jq -nc \
             --arg password "${DYNAMAX_TENANT_PROVISIONER_SECRET}" \
             --arg projectId "${CLOUDFLARE_PROJECT}" \
             --arg requestedAt "${EMAIL_DEPLOYMENT_REQUESTED_AT}" \
+            --arg branchId "${EMAIL_DEPLOYMENT_BRANCH_ID}" \
             --arg provider "${EMAIL_DEPLOYMENT_PROVIDER}" \
-            '{password:$password,action:"complete-email-deployment",projectId:$projectId,requestedAt:$requestedAt,provider:$provider}')"
+            '{password:$password,action:"complete-email-deployment",projectId:$projectId,requestedAt:$requestedAt,provider:$provider,branchId:$branchId}')"
           curl --fail-with-body --silent --show-error \
             "${DYNAMAX_PLATFORM_URL}/api/tenant-project-pool" \
             -H 'Content-Type: application/json' \

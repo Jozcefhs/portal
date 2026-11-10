@@ -33,6 +33,7 @@
   // stay fresh without invalidating the concurrent read as if records changed.
   // Payment verification is deliberately excluded: it can submit academic data.
   const scopedLiveReads = {
+    '/api/staff-hr': ['getsalarystructure', 'loademploymentletter', 'previewemploymentletter'],
     // These endpoints perform fresh, scoped lookups/previews. They do not save
     // records, so opening them must not discard unrelated loaded workspaces.
     // Keep money, inventory and approval evidence live; do not cache it here.
@@ -41,7 +42,7 @@
     '/api/staff-wallet': ['lookup'],
     '/api/fee-collection-summary': [''],
     '/api/staff-procurement': ['list', 'records', 'recorddetail', 'lookupinventory', 'previewitemimport'],
-    '/api/staff-vendor-settlements': ['bootstrap', 'statement', 'previewhistorical', 'previewsale', 'previewproductimport', 'previewcardrefundbatch'],
+    '/api/staff-vendor-settlements': ['bootstrap', 'statement', 'requesthistory', 'requestreport', 'previewhistorical', 'previewsale', 'previewproductimport', 'previewcardrefundbatch'],
     '/api/staff-students': ['previewgrade7intake', 'previewintakecorrection', 'previewprofiledefaults'],
     '/api/local-cbt-answers': ['list', 'review'],
     // Remote-exam review can complete an expired attempt, so it is deliberately

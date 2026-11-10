@@ -9,7 +9,8 @@ import * as policies from '../functions/lib/academic-policy.js';
 import * as timetable from '../functions/lib/academic-timetable-attendance.js';
 import * as attendanceIdentity from '../functions/lib/academic-attendance-identity.js';
 import { academicCarriedScoreSnapshot } from '../functions/lib/academic-carried-score-review.js';
-import { safeScopeId } from '../functions/lib/school-scope.js';
+import { safeScopeId, scopedCollectionPath } from '../functions/lib/school-scope.js';
+import * as studentRoster from '../functions/lib/academic-student-status-roster.js';
 import { calculateAcademicMidTermResultDrafts } from '../functions/lib/academic-term-results.js';
 import { evaluateAcademicResultAccess } from '../functions/lib/academic-result-access.js';
 import { academicResultWithWeightedComponents } from '../functions/lib/academic-result-marks.js';
@@ -30,7 +31,7 @@ const conflict = () => Object.assign(new Error('Concurrent update'), { status: 4
 
 function managementHarness(records = {}) {
   const context = {
-    ...management, ...scorebook, ...timetable, ...attendanceIdentity, ...cbtRetention, academicCarriedScoreSnapshot, academicResultWithWeightedComponents, academicResultWithSubjectLabels, TextEncoder, TextDecoder, crypto: webcrypto,
+    ...management, ...scorebook, ...timetable, ...attendanceIdentity, ...cbtRetention, ...studentRoster, scopedCollectionPath, academicCarriedScoreSnapshot, academicResultWithWeightedComponents, academicResultWithSubjectLabels, TextEncoder, TextDecoder, crypto: webcrypto,
     getSchoolStructure: async () => ({ ActiveBranchId: 'main', Branches: [{ Id: 'main' }], Sections: ['primary', 'secondary'] }),
     enforceActorBranch: (_actor, branch) => branch, safeScopeId,
     queryCollection: async (_env, collection) => structuredClone(records[collection] || []),

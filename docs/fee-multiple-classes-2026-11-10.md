@@ -25,3 +25,17 @@ The prepared correction changes only class eligibility and update metadata on th
 Final execution, retry verification, tests and deployment evidence are retained in `user-request-tracker.json`. Private snapshots/repair plans remain in ignored `tmp/`.
 
 Validation before deployment: **4,939 web tests passed** and **50 focused desktop tests passed**. The desktop source fix is commit `e9b6dba`; it has not been compiled into a new installer. The server repair accepts the comma-separated selections already sent by the current installer.
+
+## Verified delivery
+
+Web commit `101ca616ee89dcbef841f02a73628cd80d28a8d9` is deployed as `dynamax-v554-multiclass-fee-rules`. Production served files match the pushed Git blobs (Linux LF line endings).
+
+The three reviewed Area 1 tuition records now retain the exact class list Grade 3, Grade 4, Grade 5, Grade 6. Their original IDs, codes, amounts (NGN 123000, 321000, 432000 by term), and other fields were verified unchanged. No invoice or payment was written. One deterministic maintenance audit records the correction. A second application performed zero changes. Grades 2, 7 and other branches remain excluded.
+
+Desktop source `e9b6dba` is pushed only; no new installer was compiled or released.
+
+## School-wide scope and audit
+
+The fix is in the shared single and batch fee-save handlers, not an Area 1 exception. Regression coverage exercises Main Branch, Area 1 Primary and The Lord's Garden Primary, every term, exact selected classes and cross-branch exclusion.
+
+A read-only audit checked all 94 school fee rules (Main Branch 86, Area 1 Primary 3, The Lord's Garden Primary 5). Existing Main Branch multi-class selections remain intact, including intentionally non-contiguous selections. The owner stated that they will delete the three Lord's Garden tuition rules whose generated codes say Grade 4 to Grade 6 but whose saved class is Grade 4. Those rules were left untouched; their intended selection was not guessed from the code. No additional invoices, payments or fee amounts were changed by this audit.

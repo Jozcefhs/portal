@@ -19,8 +19,8 @@ const fee = (index, extra = {}) => ({ BranchId: branch, FeeCode: codes[index], F
 const student = (grade, term = 'First Term', selectedBranch = branch) => ({ BranchId: selectedBranch, SchoolSection: 'primary',
   ClassName: `Grade ${grade}`, StudentType: 'Day Student', BillingCategory: 'Regular', Gender: 'Male', AcademicSession: '2026/2027', Term: term });
 
-function fixture() {
-  const records = new Map(codes.map((code, index) => [code, { ...fee(index), __id: `saved-id-${index}`, __updateTime: `v${index}`,
+function fixture(expectedBranch = branch) {
+  const records = new Map(codes.map((code, index) => [code, { ...fee(index), BranchId: expectedBranch, __id: `saved-id-${index}`, __updateTime: `v${index}`,
     CreatedAt: 'original-created', HistoricalCustomField: 'preserve' }]));
   const commits = [], reads = [];
   const invoices = [{ InvoiceId: 'KEEP-INVOICE', Amount: 123000, PaidAmount: 100000 }];
@@ -32,7 +32,7 @@ function fixture() {
     normalizeFeeBillingCategories: value => Array.isArray(value) ? value : [value || 'All'], feeBillingCategoryText: values => values.join(', '),
     configuredClassNames: async (_env, options) => { reads.push(options); return configured; },
     resolveFeeDocument: async (_env, selectedBranch, code) => {
-      assert.equal(selectedBranch, branch);
+      assert.equal(selectedBranch, expectedBranch);
       const existing = records.get(code);
       return { existing: existing ? structuredClone(existing) : null, documentId: existing?.__id || `new-${code}` };
     },
@@ -95,6 +95,25 @@ test('single save accepts explicit selected-class array and subsequent single-cl
   assert.equal(saved.ClassName, 'Grade 4'); assert.equal(saved.__id, 'saved-id-0');
   assert.equal(feeMatchesApplication(saved, student(3)), false); assert.equal(feeMatchesApplication(saved, student(4)), true);
   assert.ok(f.reads.every(options => options.IncludeArms === false));
+});
+
+test('both fee save paths retain every selected class independently in all school branches', async () => {
+  const branches = ['main', 'area-1-primary', 'the-lord-s-garden-primary'];
+  for (const BranchId of branches) {
+    for (const mode of ['single', 'bulk']) {
+      const f = fixture(BranchId);
+      const items = terms.map((_term, index) => fee(index, { BranchId, ClassNames: ['Grade 3', 'Grade 4', 'Grade 5', 'Grade 6'] }));
+      if (mode === 'bulk') await f.actions.saveFeeItems({}, { BranchId, Items: items });
+      else for (const item of items) await f.actions.saveFeeItem({}, item);
+      for (const saved of f.records.values()) {
+        assert.equal(saved.ClassName, 'Grade 3, Grade 4, Grade 5, Grade 6');
+        assert.equal(saved.BranchId, BranchId);
+        for (const grade of [3, 4, 5, 6]) assert.equal(feeMatchesApplication(saved, student(grade, saved.Term, BranchId)), true);
+        for (const otherBranch of branches.filter(value => value !== BranchId)) assert.equal(feeMatchesApplication(saved, student(3, saved.Term, otherBranch)), false);
+      }
+      assert.equal(f.records.size, 3);
+    }
+  }
 });
 
 test('a first_TO_last fee code never expands noncontiguous selected classes', async () => {

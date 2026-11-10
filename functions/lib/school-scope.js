@@ -1,11 +1,12 @@
 import { listBranchCollection } from './branch-reads.js';
-import { deleteDocument, getDocument, listCollection, queryCollection, upsertDocument } from './firestore.js';
+import { batchCommitDocuments, deleteDocument, getDocument, listCollection, queryCollection, upsertDocument } from './firestore.js';
+import { readStudentPlacementGuards } from './academic-placement-guards.js';
 import { normalizeClassKey } from './class-names.js';
 import { withStudentProfileDefaults } from './student-profile-defaults.js';
 import { withStudentDisplayName } from './student-display-name.js';
 import { branchProfilesForRecords } from './branch-profile-settings.js';
 import { recordBranchId } from './branch-scope.js';
-import { saveStudentStatusWithMemberships, studentStatusChanged } from './student-academic-status.js';
+import { saveStudentStatusWithMemberships, studentStatusChanged, studentProfileHasChanges } from './student-academic-status.js';
 
 function clean(value) { return String(value ?? '').trim(); }
 
@@ -204,6 +205,7 @@ export async function upsertSchoolDocument(env, collection, documentId, data, op
   copy.BranchId = branchId;
   copy.SchoolSection = section;
   const path = existingPath || scopedCollectionPath(collection, branchId, section);
+  let placementGuards = [];
   if (collection === 'students') {
     const current = await getDocument(env, path, documentId);
     if (current) {
@@ -213,13 +215,18 @@ export async function upsertSchoolDocument(env, collection, documentId, data, op
         throw Object.assign(new Error('This student changed after the screen was loaded. Refresh and retry; nothing was saved.'), { status: 409 });
       }
       options = { ...options, updateTime: expected };
-      if (studentStatusChanged(current, copy)) {
-        return saveStudentStatusWithMemberships(env, current, copy, { collectionPath: path, documentId, updateTime: expected });
+      if (studentStatusChanged(current, copy) || options.applicationStatusUpdate || options.synchronizeStudentStatus) {
+        placementGuards = await readStudentPlacementGuards(env, current, copy);
+        return saveStudentStatusWithMemberships(env, current, copy, { collectionPath: path, documentId, updateTime: expected,
+          applicationUpdate: options.applicationStatusUpdate, placementGuards,
+          reconcileMemberships: Boolean(options.synchronizeStudentStatus || options.applicationStatusUpdate) });
       }
+      if (!studentProfileHasChanges(current, copy)) return { ...current, __id: documentId, __scopePath: path, __statusUnchanged: true };
     } else {
       if (options.updateTime || copy.__updateTime) throw Object.assign(new Error('The original student profile no longer exists. Refresh before saving; no replacement was created.'), { status: 409 });
       options = { ...options, exists: false };
     }
+    placementGuards = await readStudentPlacementGuards(env, current, copy);
   }
   if (collection === 'applications') {
     const current = await getDocument(env, path, documentId);
@@ -231,7 +238,11 @@ export async function upsertSchoolDocument(env, collection, documentId, data, op
       ? { updateTime: options.updateTime || copy.__updateTime || current.__updateTime }
       : { exists: false }) };
   }
-  const saved = await upsertDocument(env, path, documentId, copy, options);
+  const saved = placementGuards.length
+    ? (await batchCommitDocuments(env, [...placementGuards, { collectionPath: path, documentId, literalDocumentId: true,
+      data: Object.fromEntries(Object.entries(copy).filter(([key]) => !key.startsWith('__'))),
+      ...(options.updateTime ? { updateTime: options.updateTime } : { exists: false }) }])).writeResults.at(-1)
+    : await upsertDocument(env, path, documentId, copy, options);
   return { ...copy, ...(['applications', 'students'].includes(collection) && saved?.updateTime ? { __updateTime: saved.updateTime } : {}), __scopePath: path };
 }
 

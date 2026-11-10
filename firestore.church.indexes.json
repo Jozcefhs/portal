@@ -1,6 +1,18 @@
 {
   "indexes": [
     {
+      "collectionGroup": "vendorSettlementRequests", "queryScope": "COLLECTION",
+      "fields": [{"fieldPath":"ScopeKey","order":"ASCENDING"},{"fieldPath":"VendorId","order":"ASCENDING"},{"fieldPath":"PaymentStatus","order":"ASCENDING"},{"fieldPath":"RequestedAt","order":"ASCENDING"}]
+    },
+    {
+      "collectionGroup": "vendorSettlementRequests", "queryScope": "COLLECTION",
+      "fields": [{"fieldPath":"ScopeKey","order":"ASCENDING"},{"fieldPath":"VendorId","order":"ASCENDING"},{"fieldPath":"PaymentStatus","order":"ASCENDING"}]
+    },
+    {
+      "collectionGroup": "vendorSettlementRequests", "queryScope": "COLLECTION",
+      "fields": [{"fieldPath":"ScopeKey","order":"ASCENDING"},{"fieldPath":"PaymentStatus","order":"ASCENDING"}]
+    },
+    {
       "collectionGroup": "vendorEarnings",
       "queryScope": "COLLECTION",
       "fields": [

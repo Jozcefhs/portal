@@ -6,6 +6,7 @@ import {
 } from './firestore.js';
 import { normalizeOrganizationEdition } from './organization-config.js';
 import { validTenantControlPublicKey } from './tenant-control-plane.js';
+import { emailProviderBranchId } from './branch-email-provider.js';
 
 export const MANAGED_ORGANISATION_COLLECTION = 'managedOrganisations';
 
@@ -64,6 +65,7 @@ function publicManagedOrganisation(row = {}) {
     EmailDeploymentPending: row.EmailDeploymentPending === true,
     EmailDeploymentRequestedAt: clean(row.EmailDeploymentRequestedAt),
     EmailDeploymentProvider: clean(row.EmailDeploymentProvider).toLowerCase(),
+    EmailDeploymentBranchId: clean(row.EmailDeploymentBranchId).toLowerCase(),
     UpdatedAt: clean(row.UpdatedAt || row.__updateTime || row.CreatedAt)
   };
 }
@@ -207,7 +209,7 @@ export async function completeManagedOrganisationPaystackDeployment(platformEnv,
   };
 }
 
-export async function queueManagedOrganisationEmailDeployment(platformEnv, projectId, requestedAt = new Date().toISOString(), provider = '') {
+export async function queueManagedOrganisationEmailDeployment(platformEnv, projectId, requestedAt = new Date().toISOString(), provider = '', options = {}) {
   const current = await managedOrganisationByProject(platformEnv, projectId);
   if (!current) {
     const error = new Error('The managed organisation was not found.');
@@ -215,7 +217,8 @@ export async function queueManagedOrganisationEmailDeployment(platformEnv, proje
     throw error;
   }
   const timestamp = clean(requestedAt) || new Date().toISOString();
-  const targetProvider = ['brevo', 'gmail'].includes(lower(provider)) ? lower(provider) : '';
+  const branchId = emailProviderBranchId(options.emailBranchId);
+  const targetProvider = (branchId ? ['brevo', 'gmail', 'inherit'] : ['brevo', 'gmail']).includes(lower(provider)) ? lower(provider) : '';
   if (!targetProvider) {
     const error = new Error('A valid target email provider is required for deployment.');
     error.status = 400;
@@ -223,7 +226,8 @@ export async function queueManagedOrganisationEmailDeployment(platformEnv, proje
   }
   if (current.EmailDeploymentPending === true) {
     const sameTransition = clean(current.EmailDeploymentRequestedAt) === timestamp
-      && lower(current.EmailDeploymentProvider) === targetProvider;
+      && lower(current.EmailDeploymentProvider) === targetProvider
+      && lower(current.EmailDeploymentBranchId) === branchId;
     if (sameTransition) return publicManagedOrganisation(current);
     const error = new Error('Another email-provider transition is still being deployed. Wait for it to finish before starting another.');
     error.status = 409;
@@ -234,6 +238,7 @@ export async function queueManagedOrganisationEmailDeployment(platformEnv, proje
     EmailDeploymentPending: true,
     EmailDeploymentRequestedAt: timestamp,
     EmailDeploymentProvider: targetProvider,
+    EmailDeploymentBranchId: branchId,
     UpdatedAt: timestamp
   }, current);
   return publicManagedOrganisation({
@@ -241,22 +246,25 @@ export async function queueManagedOrganisationEmailDeployment(platformEnv, proje
     EmailDeploymentPending: true,
     EmailDeploymentRequestedAt: timestamp,
     EmailDeploymentProvider: targetProvider,
+    EmailDeploymentBranchId: branchId,
     UpdatedAt: timestamp
   });
 }
 
-function cancelledEmailProviderFields(requestedAt, provider, cancelledAt) {
+function cancelledEmailProviderFields(requestedAt, provider, cancelledAt, branchId) {
   return {
     EmailDeploymentPending: false,
     EmailDeploymentQueued: false,
     EmailDeploymentRequestedAt: '',
     EmailDeploymentProvider: '',
+    EmailDeploymentBranchId: '',
     EmailProviderPending: '',
     GmailConnectedEmailPending: '',
     EmailProviderConnectedByPending: '',
     EmailProviderTransitionStatus: 'Cancelled',
     EmailDeploymentCancelledRequestedAt: requestedAt,
     EmailDeploymentCancelledProvider: provider,
+    EmailDeploymentCancelledBranchId: branchId,
     EmailDeploymentCancelledAt: cancelledAt,
     UpdatedAt: cancelledAt
   };
@@ -273,11 +281,13 @@ export async function cancelManagedOrganisationEmailDeployment(
   platformEnv,
   projectId,
   requestedAt,
-  provider = ''
+  provider = '',
+  options = {}
 ) {
+  const branchId = emailProviderBranchId(options.emailBranchId);
   const expectedRequest = clean(requestedAt);
   const expectedProvider = lower(provider);
-  if (!expectedRequest || !['brevo', 'gmail'].includes(expectedProvider)) {
+  if (!expectedRequest || !(branchId ? ['brevo', 'gmail', 'inherit'] : ['brevo', 'gmail']).includes(expectedProvider)) {
     const error = new Error('A valid email-provider transition is required for cancellation.');
     error.status = 400;
     throw error;
@@ -293,7 +303,8 @@ export async function cancelManagedOrganisationEmailDeployment(
 
     if (current.EmailDeploymentPending !== true) {
       const alreadyCancelled = clean(current.EmailDeploymentCancelledRequestedAt) === expectedRequest
-        && lower(current.EmailDeploymentCancelledProvider) === expectedProvider;
+        && lower(current.EmailDeploymentCancelledProvider) === expectedProvider
+        && lower(current.EmailDeploymentCancelledBranchId) === branchId;
       return {
         cancelled: false,
         alreadyCancelled,
@@ -302,7 +313,8 @@ export async function cancelManagedOrganisationEmailDeployment(
     }
 
     if (clean(current.EmailDeploymentRequestedAt) !== expectedRequest
-        || lower(current.EmailDeploymentProvider) !== expectedProvider) {
+        || lower(current.EmailDeploymentProvider) !== expectedProvider
+        || lower(current.EmailDeploymentBranchId) !== branchId) {
       throw emailTransitionSupersededError();
     }
 
@@ -315,7 +327,7 @@ export async function cancelManagedOrganisationEmailDeployment(
     }
 
     const cancelledAt = new Date().toISOString();
-    const fields = cancelledEmailProviderFields(expectedRequest, expectedProvider, cancelledAt);
+    const fields = cancelledEmailProviderFields(expectedRequest, expectedProvider, cancelledAt, branchId);
     try {
       await patchDocumentFieldsIfCurrent(
         platformEnv,
@@ -337,74 +349,54 @@ export async function cancelManagedOrganisationEmailDeployment(
   throw emailTransitionSupersededError();
 }
 
-function completedEmailProviderFields(record, provider, completedAt) {
-  return {
+function completedEmailProviderFields(record, provider, completedAt, branchId) {
+  const activeFields = branchId ? {
+    EmailBranchDeploymentCompletedBranchId: branchId,
+    EmailBranchDeploymentCompletedProvider: provider,
+    EmailBranchDeploymentCompletedEmail: provider === 'gmail' ? clean(record.GmailConnectedEmailPending) : '',
+    EmailBranchDeploymentCompletedAt: completedAt
+  } : {
     EmailProvider: provider,
     GmailConnectedEmail: provider === 'gmail' ? clean(record.GmailConnectedEmailPending) : '',
     EmailProviderConnectedAt: completedAt,
-    EmailProviderConnectedBy: clean(record.EmailProviderConnectedByPending || 'Tenant Super Administrator'),
-    EmailProviderPending: '',
-    GmailConnectedEmailPending: '',
-    EmailProviderConnectedByPending: '',
-    EmailProviderTransitionStatus: 'Connected',
-    EmailProviderFailureCode: '',
-    EmailDeploymentPending: false,
-    EmailDeploymentQueued: false,
-    EmailDeploymentCompletedAt: completedAt,
-    UpdatedAt: completedAt
+    EmailProviderConnectedBy: clean(record.EmailProviderConnectedByPending || 'Tenant Super Administrator')
+  };
+  return {
+    ...activeFields,
+    EmailProviderPending: '', GmailConnectedEmailPending: '', EmailProviderConnectedByPending: '',
+    EmailProviderTransitionStatus: 'Connected', EmailProviderFailureCode: '',
+    EmailDeploymentPending: false, EmailDeploymentQueued: false,
+    EmailDeploymentCompletedAt: completedAt, UpdatedAt: completedAt
   };
 }
 
-export async function completeManagedOrganisationEmailDeployment(platformEnv, projectId, requestedAt, provider = '') {
-  const current = await managedOrganisationByProject(platformEnv, projectId);
-  if (!current) {
-    const error = new Error('The managed organisation was not found.');
-    error.status = 404;
-    throw error;
+export async function completeManagedOrganisationEmailDeployment(platformEnv, projectId, requestedAt, provider = '', requestedBranchId = '') {
+  const branchId = emailProviderBranchId(requestedBranchId);
+  const expectedRequest = clean(requestedAt), expectedProvider = lower(provider);
+  if (!(branchId ? ['brevo', 'gmail', 'inherit'] : ['brevo', 'gmail']).includes(expectedProvider)) {
+    throw Object.assign(new Error('The deployed email provider must be confirmed before completing the queue.'), { status: 400 });
   }
-  const expectedRequest = clean(requestedAt);
-  const expectedProvider = lower(provider);
-  if (!['brevo', 'gmail'].includes(expectedProvider)) {
-    const error = new Error('The deployed email provider must be confirmed before completing the queue.');
-    error.status = 400;
-    throw error;
-  }
-  if (!expectedRequest || clean(current.EmailDeploymentRequestedAt) !== expectedRequest
-      || lower(current.EmailDeploymentProvider) !== expectedProvider) {
-    return { completed: false, organisation: publicManagedOrganisation(current) };
-  }
-  const completedAt = new Date().toISOString();
-  try {
-    await patchDocumentFieldsIfCurrent(
-      platformEnv,
-      MANAGED_ORGANISATION_COLLECTION,
-      clean(current.__id || current.Id),
-      completedEmailProviderFields(current, expectedProvider, completedAt),
-      current
-    );
-  } catch (error) {
-    if (error?.code !== 'FIRESTORE_WRITE_CONFLICT') throw error;
-    const latest = await managedOrganisationByProject(platformEnv, projectId);
-    if (!latest || clean(latest.EmailDeploymentRequestedAt) !== expectedRequest
-        || lower(latest.EmailDeploymentProvider) !== expectedProvider) {
-      return { completed: false, organisation: publicManagedOrganisation(latest || {}) };
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const current = await managedOrganisationByProject(platformEnv, projectId);
+    if (!current) throw Object.assign(new Error('The managed organisation was not found.'), { status: 404 });
+    if (!expectedRequest || clean(current.EmailDeploymentRequestedAt) !== expectedRequest
+        || lower(current.EmailDeploymentProvider) !== expectedProvider
+        || lower(current.EmailDeploymentBranchId) !== branchId) {
+      return { completed: false, organisation: publicManagedOrganisation(current) };
     }
-    await patchDocumentFieldsIfCurrent(
-      platformEnv,
-      MANAGED_ORGANISATION_COLLECTION,
-      clean(latest.__id || latest.Id),
-      completedEmailProviderFields(latest, expectedProvider, completedAt),
-      latest
-    );
+    if (current.EmailDeploymentPending !== true) {
+      return { completed: Boolean(clean(current.EmailDeploymentCompletedAt)), organisation: publicManagedOrganisation(current) };
+    }
+    // Do not finalize a queue whose staged credentials describe another change.
+    if (lower(current.EmailProviderPending) !== expectedProvider) {
+      return { completed: false, organisation: publicManagedOrganisation(current) };
+    }
+    const fields = completedEmailProviderFields(current, expectedProvider, new Date().toISOString(), branchId);
+    try {
+      await patchDocumentFieldsIfCurrent(platformEnv, MANAGED_ORGANISATION_COLLECTION, clean(current.__id || current.Id), fields, current);
+      return { completed: true, organisation: publicManagedOrganisation({ ...current, ...fields }) };
+    } catch (error) {
+      if (error?.code !== 'FIRESTORE_WRITE_CONFLICT' || attempt > 0) throw error;
+    }
   }
-  return {
-    completed: true,
-    organisation: publicManagedOrganisation({
-      ...current,
-      ...completedEmailProviderFields(current, expectedProvider, completedAt),
-      EmailDeploymentPending: false,
-      EmailDeploymentQueued: false,
-      UpdatedAt: completedAt
-    })
-  };
 }

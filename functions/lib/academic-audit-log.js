@@ -24,7 +24,7 @@ export async function academicAuditRecordLabels(env, scope, rows, read = getDocu
     }
   }
   const refs=[...new Set(enriched.map(row=>clean(row.StudentRef)).filter(Boolean))];
-  const people=new Map();
+  const people=new Map(), statuses=new Map();
   if(refs.length) {
     let records=[]; try {records=await read(env,scopedCollectionPath('students',scope.branchId,scope.section),refs.map(studentId));} catch {}
     const missing=refs.filter((_ref,i)=>!records[i]);
@@ -32,9 +32,12 @@ export async function academicAuditRecordLabels(env, scope, rows, read = getDocu
       const legacy=await read(env,'students',missing.map(studentId));
       missing.forEach((ref,i)=>{records[refs.indexOf(ref)]=legacy[i];});
     } catch {}
-    refs.forEach((ref,i)=>{if(sameScope(records[i]) && personName(records[i])) people.set(ref,personName(records[i]));});
+    refs.forEach((ref,i)=>{if(sameScope(records[i])) {
+      if(personName(records[i])) people.set(ref,personName(records[i]));
+      statuses.set(ref,clean(records[i].Status || records[i].status));
+    }});
   }
-  return enriched.map(row=>({...row,RecordLabel:people.get(clean(row.StudentRef)) || row.RecordLabel || row.StudentRef
+  return enriched.map(row=>({...row,...(statuses.has(clean(row.StudentRef)) ? {StudentStatus:statuses.get(clean(row.StudentRef))} : {}),RecordLabel:people.get(clean(row.StudentRef)) || row.RecordLabel || row.StudentRef
     || (/^(?:student|class|subject|arm|session|term)__/.test(clean(row.RecordId)) ? row.RecordId
       : clean(row.RecordType).replace(/([a-z])([A-Z])/g,'$1 $2') || 'Academic record')}));
 }

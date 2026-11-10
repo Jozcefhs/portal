@@ -1,4 +1,5 @@
 import { getDocument } from '../lib/firestore.js';
+import { resolveBranchEmailEnvironment } from '../lib/branch-email-provider.js';
 
 const clean = (value) => String(value ?? '').trim();
 
@@ -13,7 +14,14 @@ async function brevoReady(env) {
   return Boolean(clean(legacy?.BrevoApiKey));
 }
 
-export async function emailProviderReadiness(env = {}) {
+export async function emailProviderReadiness(env = {}, branchId = '') {
+  if (branchId) {
+    try {
+      const scope = await resolveBranchEmailEnvironment(env, branchId);
+      const effective = await emailProviderReadiness(scope.env);
+      return { ...effective, provider: scope.provider, requestedAt: scope.requestedAt, branchId: scope.branchId };
+    } catch { return { provider: 'unsupported', ready: false, requestedAt: '', branchId: String(branchId).trim().toLowerCase() }; }
+  }
   const configured = clean(env.EMAIL_PROVIDER).toLowerCase();
   const provider = configured || 'brevo';
   if (!['brevo', 'gmail'].includes(provider)) {
@@ -38,8 +46,9 @@ export async function emailProviderReadiness(env = {}) {
   };
 }
 
-export async function onRequestGet({ env }) {
-  return Response.json({ ok: true, ...(await emailProviderReadiness(env)) }, {
+export async function onRequestGet({ env, request }) {
+  const branchId = request ? new URL(request.url).searchParams.get('branchId') || '' : '';
+  return Response.json({ ok: true, ...(await emailProviderReadiness(env, branchId)) }, {
     headers: { 'Cache-Control': 'no-store' }
   });
 }

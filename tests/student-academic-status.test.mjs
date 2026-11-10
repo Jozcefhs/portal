@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
-import { saveStudentStatusWithMemberships, studentStatusChanged, studentStatusKind, assertStudentCanHaveActiveMembership, STUDENT_STATUSES } from '../functions/lib/student-academic-status.js';
+import { saveStudentStatusWithMemberships, studentStatusChanged, studentStatusKind, studentProfileHasChanges, assertStudentCanHaveActiveMembership, STUDENT_STATUSES } from '../functions/lib/student-academic-status.js';
+import { enrolledApplication } from '../functions/lib/student-status-links.js';
 import { buildAcademicClassScoreRegister } from '../functions/lib/academic-class-score-register.js';
 
 const clone = value => structuredClone(value);
@@ -25,15 +26,20 @@ function harness() {
     academicAttendance: [{ StudentRef: 'S/1', Status: 'Present' }], payments: [{ Amount: 25000, Reference: 'PAY1' }],
     academicStudentMovements: [{ __id: 'historical', Reason: 'Original allocation' }], academicManagementAudit: []
   };
-  const commits = [];
+  const commits = [], reads = [];
   let beforeCommit = () => {}, sequence = 0;
   const dependencies = {
     now: '2026-10-24T10:00:00.000Z',
-    getDocument: async (_env, collection, id) => clone((state[collection] || []).find(row => row.__id === id) || null),
+    getDocument: async (_env, collection, id) => { reads.push([collection,id]); return clone((state[collection] || []).find(row => row.__id === id) || null); },
     queryCollectionPages: async (_env, collection, options) => {
-      assert.equal(collection, 'academicStudentMemberships');
-      assert.equal(options.maxRows, 400);
-      return clone(state[collection].filter(row => options.filters[0].value.includes(row.StudentRef)));
+      reads.push([collection,options]);
+      if (collection === 'academicStudentMemberships') {
+        assert.equal(options.maxRows, 400);
+        return clone(state[collection].filter(row => options.filters[0].value.includes(row.StudentRef)));
+      }
+      assert.ok(collection.endsWith('applications'));
+      assert.equal(options.maxRows, 10);
+      return clone((state[collection] || []).filter(row => options.filters.some(filter => row[filter.field] === filter.value)));
     },
     batchCommitDocuments: async (_env, writes) => {
       beforeCommit();
@@ -55,10 +61,10 @@ function harness() {
     }
   };
   const current = () => state[profilePath][0];
-  return { state, commits, dependencies, current, race(fn) { beforeCommit = fn; }, async save(Status, extra = {}) {
+  return { state, commits, reads, dependencies, current, race(fn) { beforeCommit = fn; }, async save(Status, extra = {}, options = {}) {
     const before = clone(current());
     return saveStudentStatusWithMemberships({}, before, { ...before, Status, StatusEffectiveDate: '2026-10-24', UpdatedBy: 'Test officer', ...extra },
-      { collectionPath: profilePath, documentId: before.__id, updateTime: before.__updateTime }, dependencies);
+      { collectionPath: profilePath, documentId: before.__id, updateTime: before.__updateTime, ...options }, dependencies);
   } };
 }
 
@@ -186,7 +192,7 @@ test('the common student writer runs status synchronization for web, Accounts an
   const source = await readFile(new URL('../functions/lib/school-scope.js', import.meta.url), 'utf8');
   const h = harness();
   let statusCalls = 0;
-  const context = vm.createContext({ studentStatusChanged,
+  const context = vm.createContext({ studentStatusChanged, studentProfileHasChanges, readStudentPlacementGuards: async () => [],
     saveStudentStatusWithMemberships: async (...args) => { statusCalls++; return saveStudentStatusWithMemberships(...args, h.dependencies); },
     withStudentProfileDefaults: row => row, getDocument: h.dependencies.getDocument,
     upsertDocument: async () => { throw new Error('A status change must use the atomic writer.'); } });
@@ -198,4 +204,87 @@ test('the common student writer runs status synchronization for web, Accounts an
   h.state[profilePath] = [];
   await assert.rejects(context.upsertSchoolDocument({}, 'students', original.__id, { ...clone(original), Status: 'Active' }), { status: 409 });
   assert.equal(h.state[profilePath].length, 0);
+});
+
+const appPath = 'schoolBranches/main/sections/secondary/applications';
+function linkApplication(h, overrides = {}) {
+  h.current().ApplicationReference = 'APP/1';
+  const application = { ...scope, __id:'APP-1', __scopePath:appPath, __updateTime:'app1',
+    ApplicationReference:'APP/1', AdmissionNo:'S/1', Status:'Enrolled', ResultStatus:'Admitted',
+    AcceptanceFeePaid:'YES', Documents:{Certificate:'preserve'}, ...overrides };
+  h.state[appPath] = [application];
+  return application;
+}
+
+test('learner status and enrolled application save atomically; admission milestones and financial records remain unchanged', async () => {
+  const h = harness(); const app = linkApplication(h);
+  const foreign = {...app, BranchId:'annex', __scopePath:'applications'};
+  h.state.applications = [foreign];
+  await h.save('Expelled');
+  assert.equal(h.state[appPath][0].Status,'Expelled');
+  assert.equal(h.state[appPath][0].StudentStatus,'Expelled');
+  assert.equal(h.state[appPath][0].ResultStatus,'Admitted');
+  assert.equal(h.state[appPath][0].AcceptanceFeePaid,'YES');
+  assert.deepEqual(h.state[appPath][0].Documents,{Certificate:'preserve'});
+  assert.deepEqual(h.state.applications,[foreign]);
+  assert.equal(h.commits.length,1);
+  assert.ok(h.commits[0].some(write=>write.collectionPath===appPath && write.updateTime==='app1'));
+});
+
+test('repeating an unchanged status as another officer performs no writes or duplicate history', async () => {
+  const h=harness(); linkApplication(h);
+  await h.save('Suspended', {StatusReason:'Approved temporary leave'});
+  const prior=clone(h.state);
+  const result=await h.save('Suspended', {StatusReason:'Approved temporary leave', UpdatedBy:'Another officer', StatusUpdatedBy:'Another officer'}, {reconcileMemberships:true});
+  assert.equal(result.__statusUnchanged,true);
+  assert.equal(h.commits.length,1);
+  assert.deepEqual(h.state,prior);
+});
+
+test('same terminal status repairs a legacy active membership without altering old scores', async () => {
+  const h=harness(); h.current().Status='Expelled';
+  const marks=clone(h.state.academicStudentScores);
+  await h.save('Expelled',{}, {reconcileMemberships:true});
+  assert.equal(h.state.academicStudentMemberships[0].Status,'Withdrawn');
+  assert.deepEqual(h.state.academicStudentScores,marks);
+  await h.save('Expelled',{}, {reconcileMemberships:true});
+  assert.equal(h.commits.length,1);
+});
+
+test('pre-enrolment application milestones remain independent on every status retry', async () => {
+  const h=harness(); linkApplication(h,{Status:'Admitted'});
+  await h.save('On Leave');
+  assert.equal(h.state[appPath][0].Status,'Admitted');
+  assert.equal(enrolledApplication(h.state[appPath][0]),false);
+  await h.save('Active');
+  assert.equal(h.state[appPath][0].Status,'Admitted');
+  assert.equal(h.state[appPath][0].StudentStatus,'Active');
+});
+
+test('arbitrary legacy document IDs use bounded application-reference queries; unrelated pupils are not read', async () => {
+  const h=harness(); linkApplication(h,{__id:'historical-app-id'});
+  await h.save('Inactive');
+  assert.equal(h.state[appPath][0].StudentStatus,'Inactive');
+  assert.ok(h.reads.some(([path,query])=>path===appPath && query.maxRows===10));
+  const without=harness(); await without.save('Inactive');
+  assert.equal(without.reads.some(([path])=>path.endsWith('applications')),false);
+});
+
+test('duplicate application copies, wrong identity and concurrent application revisions fail without partial changes', async () => {
+  for (const problem of ['duplicate','identity','concurrent']) {
+    const h=harness(), app=linkApplication(h);
+    if(problem==='duplicate') h.state.applications=[{...app,__scopePath:'applications'}];
+    if(problem==='concurrent') h.race(()=>{h.state[appPath][0].__updateTime='changed';});
+    const options=problem==='identity'?{applicationUpdate:{before:{...app,BranchId:'annex'},after:{Status:'Expelled'}}}:{};
+    await assert.rejects(h.save('Expelled',{},options),{status:409});
+    assert.equal(h.current().Status,'Active');
+    assert.equal(h.state.academicStudentMemberships[0].Status,'Active');
+    assert.equal(h.commits.length,0);
+  }
+});
+
+test('a combined identity/placement and status change is rejected instead of overwriting placement', async () => {
+  const h=harness();
+  await assert.rejects(h.save('Expelled',{ClassArm:'Different arm'}),{code:'STUDENT_STATUS_AND_PLACEMENT_CHANGE'});
+  assert.equal(h.commits.length,0);
 });

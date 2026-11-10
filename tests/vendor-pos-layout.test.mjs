@@ -511,6 +511,20 @@ test('live mobile suggestions are escaped buttons and late suggestions cannot ov
   assert.equal(f.root.querySelector('[data-customer-choice]').attrs.type,'button'); f.mounted.destroy();
 });
 
+test('repeated suggestions reuse names only; wallet selection remains live and a remount clears the cache',async()=>{
+  const f=await fixture();
+  const suggest=async query=>{f.input('Query',query);await new Promise(resolve=>setTimeout(resolve,380));};
+  await suggest('Fixture');await suggest('Other');await suggest('Fixture');
+  assert.equal(f.calls.filter(row=>row.action==='vendorCustomerSearch').length,2,'backspacing to a recent query does not reread the branch roster');
+  await f.root.querySelector('[data-customer-choice]').onclick();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(f.calls.filter(row=>row.action==='vendorWalletLookup').length,1,'choosing a cached suggestion still reads the real wallet');
+  f.mounted.destroy();
+  const second=await fixture();second.input('Query','Fixture');await new Promise(resolve=>setTimeout(resolve,380));
+  assert.equal(second.calls.filter(row=>row.action==='vendorCustomerSearch').length,1,'a different mounted branch/user gets no old suggestions');
+  second.mounted.destroy();
+});
+
 test('vendor API adapter retains status codes for safe not-found-only fallback',async()=>{
   const admin=await readFile(new URL('../js/admin.js',import.meta.url),'utf8');
   const adapter=admin.slice(admin.indexOf('window.DynamaxVendorPOS?.mount'),admin.indexOf('window.DynamaxVendorPOS?.mount')+1000);

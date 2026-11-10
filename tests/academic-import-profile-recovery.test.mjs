@@ -1,3 +1,4 @@
+import * as placementGuards from '../functions/lib/academic-placement-guards.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -12,7 +13,7 @@ import { normalizeClassKey } from '../functions/lib/class-names.js';
 
 const source = await readFile(new URL('../functions/lib/academic-management.js', import.meta.url), 'utf8');
 const clone = value => JSON.parse(JSON.stringify(value));
-const scope = { BranchId: 'area-1-primary', SchoolSection: 'primary' };
+const scope = { __updateTime: 'structure-1', BranchId: 'area-1-primary', SchoolSection: 'primary' };
 const period = { SessionId: 'session', TermId: 'term' };
 const reference = 'TEST/26/0356';
 const profilePath = 'schoolBranches/area-1-primary/sections/primary/students';
@@ -45,8 +46,8 @@ function harness(options = {}) {
   store[foreignPath] = [{ ...scope, BranchId: 'main', SchoolSection: 'secondary', AdmissionNo: reference,
     __id: 'TEST-26-0356', DisplayName: 'Different learner', GuardianEmail: 'private@example.invalid' }];
   const h = { state, profiles, writes, store, foreignPath, beforeCommit: null };
-  const rowId = row => row.__id || row.RecordId || row.MembershipId || row.MovementId || row.AuditId || row.ScoreId;
-  const context = vm.createContext({ ...management, ...outcomes, ...studentStatus, ...schoolScope,
+  const rowId = row => row.__id || row.RecordId || row.MembershipId || row.MovementId || row.AuditId || row.ScoreId || row.ArmId || row.ClassId;
+  const context = vm.createContext({ ...placementGuards, ...management, ...outcomes, ...studentStatus, ...schoolScope,
     formatPersonName, normalizeClassKey, crypto: webcrypto, TextEncoder, TextDecoder,
     loadOrganizationNameProfile: async () => ({}),
     batchCommitDocuments: async (_env, batch) => {
@@ -102,7 +103,7 @@ test('re-import restores a missing pupil profile from its active membership with
   assert.deepEqual(h.state.studentScores, scores);
   assert.deepEqual(h.state.studentMovements, movements);
   assert.deepEqual(h.store[h.foreignPath], foreign);
-  assert.equal(h.writes.length, 3, 'one guarded membership field, one profile creation, one audit');
+  assert.equal(h.writes.length, 5, 'membership and destination guards, one profile creation, one audit');
   assert.deepEqual(h.writes[0].data, { Status: 'Active' });
   assert.deepEqual(h.writes[0].updateMask, ['Status']);
   assert.equal(h.writes[1].exists, false);
@@ -168,6 +169,16 @@ test('concurrent transfer or profile creation aborts recovery atomically', async
     assert.equal(h.state.audit.length, 0);
     if (kind === 'membership') assert.equal(h.profiles.length, 0);
     else assert.equal(h.profiles[0].DisplayName, 'Concurrent profile');
+  }
+});
+
+test('profile recovery cannot recreate occupancy after its destination is concurrently removed', async () => {
+  for (const key of ['classes', 'arms']) {
+    const h = harness();
+    h.beforeCommit = () => h.state[key].splice(0, 1);
+    await assert.rejects(h.run(), { code: 'ACADEMIC_WRITE_CONFLICT' });
+    assert.equal(h.profiles.length, 0);
+    assert.equal(h.writes.length, 0);
   }
 });
 

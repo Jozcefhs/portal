@@ -1,5 +1,6 @@
 // Read-only class (all arms) projection. Call only after staff/branch/section checks.
 import { resolvedAcademicScoreEntry } from './academic-duplicate-score-values.js';
+import { activeAcademicStudentRoster } from './academic-student-status-roster.js';
 const clean = value => String(value ?? '').trim();
 const lower = value => clean(value).toLowerCase();
 const active = row => !['inactive', 'archived', 'withdrawn', 'transferred'].includes(lower(row.Status));
@@ -12,7 +13,7 @@ export function buildAcademicClassScoreRegister(data = {}, input = {}) {
   const schoolClass = (data.classes || []).find(row => row.ClassId === input.ClassId);
   if (!schoolClass || !input.SessionId || !input.TermId) throw new Error('Choose a class, academic session and term.');
   const roster = new Map();
-  for (const membership of (data.studentMemberships || []).filter(row => inPeriod(row) && active(row))) {
+  for (const membership of activeAcademicStudentRoster(data.studentMemberships || [], data.students || [], data).filter(row => inPeriod(row) && active(row))) {
     const key = lower(membership.StudentRef);
     if (!key) continue;
     const entry = roster.get(key) || [];

@@ -17,6 +17,9 @@
     let data, disposed = false, busy = false, checkoutId = '', customer = null, notice = '', failed = false;
     let draft = {PaymentMethod:section === 'tuckShop' ? 'Student Wallet' : 'Cash', CollectionMode:'School collected', CustomerName:''};
     const cart = new Map(), addQuantities = new Map(), pending = new Set();
+    // Suggestions contain names/references only. Wallet balances and checkout
+    // eligibility are always re-read after a selection, never taken from here.
+    const suggestionCache = new Map();
     let historyOpen = false, history = null, historicalOpenings = [], historyError = '', historyController = null;
     let search = '', manualLookupOpen = false, customerType = 'Student', customerSearch = '', searchTimer = 0, searchGeneration = 0, searchController = null, scanController = null, faceController = null;
     const icon = kind => tools.lookupIcon?.(kind) || lookupIcon;
@@ -62,11 +65,15 @@
     async function suggestCustomers(query, field) {
       stopSearch();
       if (query.trim().length < 2) return;
+      const key = JSON.stringify([customerType,query.trim().toLowerCase()]), cached = suggestionCache.get(key);
+      if (cached && Date.now() - cached.at < 30000) { showCustomerMatches(cached.customers); return; }
       const generation = searchGeneration, controller = new AbortController(); searchController = controller; pending.add(controller);
       const timer = setTimeout(() => controller.abort(),20000);
       try {
         const result = await request('vendorCustomerSearch',{Section:section,CustomerType:customerType,Query:query},controller.signal);
         if (disposed || generation !== searchGeneration || !field.isConnected || field.value !== query) return;
+        suggestionCache.delete(key); suggestionCache.set(key,{at:Date.now(),customers:result.customers || []});
+        if (suggestionCache.size > 30) suggestionCache.delete(suggestionCache.keys().next().value);
         showCustomerMatches(result.customers || []);
       } catch (error) {
         if (!disposed && generation === searchGeneration && field.isConnected && error.name !== 'AbortError')
@@ -101,6 +108,7 @@
     async function load() {
       const result = await call('salesBootstrap');
       if (!result) return;
+      suggestionCache.clear();
       historyController?.abort(); historyController = null; history = null; historicalOpenings = []; historyError = '';
       data = result; cart.clear(); addQuantities.clear(); checkoutId = ''; customer = null;
       draft.WalletPin = ''; draft.WalletCardId = ''; draft.AccountRef = ''; customerSearch = '';

@@ -25,6 +25,7 @@ import { readStaffSession } from '../lib/staff-auth.js';
 import { requireSetupAdministrator, resolveSetupSettingsAccess } from '../lib/setup-auth.js';
 import { mergedProfileText } from '../lib/profile-settings-update.js';
 import { paystackCredentialFingerprint, paystackSecretMode } from '../lib/paystack-environment.js';
+import { resolveBranchEmailEnvironment } from '../lib/branch-email-provider.js';
 import {
   applyPublicPortalContent,
   PUBLIC_PORTAL_CONTENT_DOCUMENT,
@@ -306,7 +307,15 @@ async function loadProfile(env, options = {}) {
   profile.PaystackConnectionMode = paystackSecretMode(env.PAYSTACK_SECRET_KEY);
   profile.PaystackCredentialFingerprint = await paystackCredentialFingerprint(env.PAYSTACK_SECRET_KEY);
   profile.PaystackSelfServiceAvailable = Boolean(clean(env.TENANT_CONTROL_PLANE_PRIVATE_KEY));
-  Object.assign(profile, emailProviderProfile(env, { legacyBrevoApiKeyConfigured }));
+  try {
+    const emailScope = await resolveBranchEmailEnvironment(env, requestedBranchId);
+    Object.assign(profile, emailProviderProfile(emailScope.env, { legacyBrevoApiKeyConfigured: emailScope.mode === 'inherit' && legacyBrevoApiKeyConfigured }), {
+      EmailProviderMode: emailScope.mode, EmailProviderBranchId: emailScope.branchId, EmailProviderRequestedAt: emailScope.requestedAt
+    });
+  } catch (error) {
+    Object.assign(profile, emailProviderProfile(env), { EmailProvider: 'unsupported', GmailConnectedEmail: '', EmailProviderConnectionReady: false,
+      EmailProviderMode: 'independent', EmailProviderBranchId: requestedBranchId, EmailProviderConfigurationError: error.message });
+  }
   delete profile.GoogleDocumentsUrl;
   delete profile.googleDocumentsUrl;
   profile.DocumentStorageProvider = 'Cloudflare R2';
@@ -593,6 +602,10 @@ export async function onRequestPost(context) {
     delete profile.GmailConnectedEmail;
     delete profile.EmailProviderConnectionReady;
     delete profile.EmailProviderSelfServiceAvailable;
+    delete profile.EmailProviderMode;
+    delete profile.EmailProviderBranchId;
+    delete profile.EmailProviderRequestedAt;
+    delete profile.EmailProviderConfigurationError;
     await upsertDocument(env, 'settings', 'organisationProfile', organizationProfileDocument({
       ...organization,
       WorkspaceId: deployment.workspaceId,

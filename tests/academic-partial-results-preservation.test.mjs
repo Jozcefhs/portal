@@ -6,6 +6,7 @@ import {defaultAcademicPolicy} from '../functions/lib/academic-policy.js';
 import {calculateAcademicTermResultDrafts,calculateAcademicMidTermResultDrafts,ACADEMIC_TERM_RESULT_STATUSES,academicTermResultTransition} from '../functions/lib/academic-term-results.js';
 import {academicPolicyIssues} from '../functions/lib/academic-policy.js';
 import {academicScoreMembershipGuards} from '../functions/lib/academic-management.js';
+import {activeAcademicStudentRoster} from '../functions/lib/academic-student-status-roster.js';
 const source=await readFile(new URL('../functions/lib/academic-management.js',import.meta.url),'utf8');
 function fixture(){
   const policy=defaultAcademicPolicy();policy.Position.Mode='exact-overall';policy.MidTerm={Enabled:true,ComponentIds:['ca']};
@@ -23,6 +24,8 @@ function fixture(){
     schoolClass:{ClassId:'c1',Name:'Grade 10'},arm:{ArmId:'a1',Name:'Brilliance'},policy,policyRevisionIds:['r1'],policyFingerprint:'fingerprint'};
   const writes=[];
   const sandbox=vm.createContext({clean:v=>String(v??'').trim(),lower:v=>String(v??'').trim().toLowerCase(),
+    activeAcademicStudentRoster, studentReference:row=>row.AdmissionNo,
+    academicResultBatchRecipients:async()=>[],
     failure:(message,status=409,code,extra={})=>Object.assign(new Error(message),{status,code,...extra}),statusActive:r=>r.Status==='Active',
     academicTermResultContext:async()=>context,academicOperationalContext:async()=>context,
     calculateAcademicTermResultDrafts,calculateAcademicMidTermResultDrafts,ACADEMIC_TERM_RESULT_STATUSES,academicTermResultTransition,academicPolicyIssues,academicScoreMembershipGuards,
@@ -36,7 +39,7 @@ function fixture(){
     auditWrite:()=>({collectionPath:'academicManagementAudit',documentId:'audit',data:{}}),
     commitAcademicBatch:async(_env,batch)=>writes.push(...batch),academicOperationalResponse:async(_e,_u,_i,_s,message)=>({ok:true,message}),
     academicTermResultIds:value=>value,academicSubjectSelectionChanged:()=>false});
-  for(const name of ['calculateAcademicResultsForType','resultRevisionToken','changeAcademicTermResultStatus']){
+  for(const name of ['academicOperationalStudentRoster','calculateAcademicResultsForType','resultRevisionToken','changeAcademicTermResultStatus']){
     vm.runInContext(source.match(new RegExp(`(?:export )?(?:async )?function ${name}\\([\\s\\S]*?\\n}`))[0].replace('export ',''),sandbox);
   }
   return {state,sandbox,writes,period,context,policy};

@@ -14,7 +14,7 @@ import { assertProcurementInventoryEdit, loadProcurementInventoryControl } from 
 import { PRODUCT_CHANGES, productPolicy, vendorProductContext, prepareVendorProductWrites, handleVendorProductAction } from './vendor-product-management.js';
 import { organisationSalesEnabled } from './vendor-store-policy.js';
 import { listBranchCollection } from './branch-reads.js';
-import { readVendorRows, readVendorInventory } from './vendor-read-scope.js';
+import { readVendorRows, readVendorInventory, readVendorRequests } from './vendor-read-scope.js';
 import { amount, allocateClaim, balanceView, cents, chargeFor, clean, dateOnly, effectiveRule, fail, lower,
   normalizeRule, periodKey, plain, ruleDescription, settlementScope, visible, VENDOR_CLAIM_SALE_LIMIT } from './vendor-settlement-rules.js';
 
@@ -89,10 +89,10 @@ function requireRole(user, allowed) {
 function requireAccess(user, action) {
   if (!clean(user.username)) fail('Sign in to manage vendor settlements.', 401);
   if (!(user.allowedSections || []).includes('vendorSettlements')) fail('Vendor settlements are not available for this account.', 403);
-  if (user.vendorSettlementApprovalOnly && !['bootstrap', 'statement', 'requestReport', 'decision'].includes(action)) {
+  if (user.vendorSettlementApprovalOnly && !['bootstrap', 'statement', 'requestHistory', 'requestReport', 'decision'].includes(action)) {
     fail('Your permission is for reviewing and approving vendor payment requests only.', 403);
   }
-  if (!['bootstrap', 'statement', 'requestReport', 'previewCardRefundBatch', 'previewHistorical', 'previewSale', 'previewProductImport', 'salesBootstrap', 'recentVendorSales', 'previewVendorSale', 'vendorWalletLookup', 'vendorCustomerSearch'].includes(action)
+  if (!['bootstrap', 'statement', 'requestHistory', 'requestReport', 'previewCardRefundBatch', 'previewHistorical', 'previewSale', 'previewProductImport', 'salesBootstrap', 'recentVendorSales', 'previewVendorSale', 'vendorWalletLookup', 'vendorCustomerSearch'].includes(action)
     && (user.subscriptionActive === false || user.subscriptionReadOnly === true)) fail('This workspace is read-only until the subscription is renewed.', 403);
 }
 async function ownVendor(env, user, scope, vendorId) {
@@ -330,7 +330,7 @@ async function bootstrap(env, user, scope) {
   const ids = new Set(vendors.map(vendor => vendor.VendorId));
   const vendorIds = role(user) === 'Vendor User' ? [...ids] : null;
   const [balances, requests, settings, chart, suppliers] = await Promise.all([
-    readVendorRows(env, VENDOR_COLLECTIONS.balances, scope, vendorIds), readVendorRows(env, VENDOR_COLLECTIONS.requests, scope, vendorIds), settingsFor(env, scope),
+    readVendorRows(env, VENDOR_COLLECTIONS.balances, scope, vendorIds), readVendorRequests(env, scope, vendorIds), settingsFor(env, scope),
     management.has(role(user)) ? getAccountingChartRows(env) : Promise.resolve([]),
     management.has(role(user)) ? listBranchCollection(env, 'accountingVendors', scope.BranchId) : Promise.resolve([]) ]);
   return { ok: true, vendors: vendors.map(publicVendor), balances: balances.filter(row => visible(row, scope) && ids.has(row.VendorId)).map(row => ({ VendorId: row.VendorId,
@@ -494,7 +494,7 @@ async function statement(env, user, scope, body) {
   if (from > to) fail('The start date must not follow the end date.');
   const [entries, lots, requests, payments, balance] = await Promise.all([
     rows(env, VENDOR_COLLECTIONS.entries, scope, vendor.VendorId, { from, to }), rows(env, VENDOR_COLLECTIONS.lots, scope, vendor.VendorId, { from, to }),
-    rows(env, VENDOR_COLLECTIONS.requests, scope, vendor.VendorId), rows(env, VENDOR_COLLECTIONS.payments, scope, vendor.VendorId, { from, to }),
+    readVendorRequests(env, scope, [vendor.VendorId]), rows(env, VENDOR_COLLECTIONS.payments, scope, vendor.VendorId, { from, to }),
     getDocument(env, VENDOR_COLLECTIONS.balances, vendor.VendorId) ]);
   const inRange = row => clean(row.Date).slice(0, 10) >= from && clean(row.Date).slice(0, 10) <= to;
   const selected = entries.filter(inRange).sort((a, b) => clean(a.Date).localeCompare(clean(b.Date)));
@@ -505,6 +505,15 @@ async function statement(env, user, scope, body) {
       lots.filter(inRange).reduce((sum, row) => sum + Math.max(0, row.NetCents - row.PaidCents - row.ReservedCents), 0)))),
     requests: requests.map(publicRequest), payments: payments.filter(inRange).map(plain),
     directSales: amount(balance?.DirectSalesCents), directChargeDue: amount((balance?.DirectChargeCents || 0) - (balance?.DirectChargePaidCents || 0)) };
+}
+async function requestHistory(env, user, scope, body) {
+  const vendor = await ownVendor(env, user, scope, body.VendorId);
+  if (!body.From || !body.To) fail('Choose the request date range before loading completed requests.');
+  const from = dateOnly(body.From), to = dateOnly(body.To);
+  if (from > to) fail('The start date must not follow the end date.');
+  const requests = await readVendorRequests(env, scope, [vendor.VendorId], { from, to });
+  return { ok: true, from, to, VendorId: vendor.VendorId, requests: requests.filter(row => visible(row, scope) && row.VendorId === vendor.VendorId).map(row => ({ ...publicRequest(row),
+    ...(role(user) === 'Accounts Officer' ? { BankAccountNumber: row.BankAccountNumber } : {}) })) };
 }
 async function requestSettlement(env, user, scope, body) {
   const vendor = await ownVendor(env, user, scope, body.VendorId), settings = await settingsFor(env, scope);
@@ -919,6 +928,7 @@ export async function handleVendorSettlementAction(env, user, body = {}, options
         products:stock, productCount:stock.length };
     }
     case 'statement': return statement(env, user, scope, body);
+    case 'requestHistory': return requestHistory(env, user, scope, body);
     case 'requestReport': return requestReport(env, user, scope, body);
     case 'saveSettings': return saveSettings(env, user, scope, body);
     case 'saveVendor': return saveVendor(env, user, scope, body);

@@ -16,13 +16,17 @@
     "Preserve all business records, payments and scores; use reviewed corrections and provenance.",
     "Prevent duplicate receipts, charges, reservations and audit events on retry; never invent records.",
     "Minimize unrequested reads/writes; cache loaded views, paginate history and require explicit scoped loads when needed.",
-    "Current pass: test, push and deploy web; do not compile or release desktop.",
+    "Latest owner instruction (10 November 2026): compile and publish a desktop release after all outstanding issues and release checks are resolved. Earlier no-compile constraint is superseded; do not release while unresolved release blockers remain.",
     "Patient cards remain NFC. Card-terminal payments remain disabled.",
     "Scope every record by organization/workspace, branch and school section; matching admission numbers across branches are allowed.",
     "Historical authorization does not imply historical completion. Record test evidence, source commit and deployed artifact for every closure.",
     "Never store passwords, one-time codes, private financial exports or payment-provider secrets here."
   ],
   "decisions": [
+    {
+      "topic": "Branch email delivery",
+      "choice": "Provide both options: inherit the organisation email provider or connect an independent branch Brevo/Google account, retaining branch sender and reply-to settings. Explicitly confirmed by owner on 10 November 2026."
+    },
     {
       "topic": "Parent advance fees",
       "choice": "Clear current fees first, save the remainder for future due school fees."
@@ -74,23 +78,56 @@
   ],
   "recentDelivery": {
     "date": "2026-11-10",
-    "webCommit": "37ab098ac943c9ea5bdf4101531a10314c689b42",
-    "webRelease": "dynamax-v553-shared-branch-class-catalogue",
+    "webCommit": "101ca616ee89dcbef841f02a73628cd80d28a8d9",
+    "webRelease": "dynamax-v554-multiclass-fee-rules",
     "url": "https://destinychristianacademy.pages.dev",
-    "deploymentUrl": "https://0ce5f223.destinychristianacademy.pages.dev",
-    "verification": "4,930 web tests passed; read-only live catalogue audit and unchanged-save planner verified. Seven live assets matched source SHA-256, release/cache markers matched, anonymous protected endpoints denied. No business-data migration.",
-    "desktopSourceCommit": "59ffdd2",
-    "desktopValidation": "37 focused desktop tests passed; source pushed.",
-    "desktopInstaller": "No compilation/release; production version remains 3.1.63."
+    "deploymentUrl": "https://43d14059.destinychristianacademy.pages.dev",
+    "verification": "Seven production assets matched pushed Git blobs; protected endpoints rejected anonymous requests. 4939 web tests, 50 desktop tests. Live Area 1 fee correction verified; retry wrote nothing.",
+    "desktopSourceCommit": "e9b6dba",
+    "desktopInstaller": "No compilation/release; published installer remains 3.1.63."
   },
   "groups": [
     {
       "group": "current",
       "items": [
         {
+          "id": "schoolwide-fee-class-selection-audit",
+          "title": "Apply multi-class fee correction school-wide and inspect all branches",
+          "status": "deployed_verified",
+          "acceptance": "Shared saver/matcher must preserve exact class selections in every branch. Correct confirmed truncated rules without inferring intermediate classes from generated fee codes; preserve amounts, invoices and payments.",
+          "evidence": [
+            "docs/fee-multiple-classes-2026-11-10.md"
+          ],
+          "verification": "The shared single and batch fee-save fix is deployed school-wide in v554 (101ca616). Regression tests cover Main Branch, Area 1 Primary and The Lord's Garden Primary, all three terms and exact class selections with cross-branch exclusion. Read-only audit checked all 94 fee rules: Main86, Area1 3, LordsGarden5. Main CSV selections are intact and Area1 three corrected rules verified. Owner will delete the three Lord's Garden Grade4-to-Grade6 rules; those records were left untouched. No other live fee, invoice or payment was changed."
+        },
+        {
+          "id": "hr-salary-employment-letters",
+          "title": "HR salary structure and employment letters with PDF email delivery across editions",
+          "status": "tested_awaiting_deployment",
+          "acceptance": "Reuse employee payroll salary profiles; show configured employment terms in preview/downloadable PDF and provide authorised explicit email delivery. Preserve history, avoid duplicate sends and unrequested employee/payroll reads. No real employee email during tests.",
+          "evidence": [
+            "docs/student-status-hr-employment-2026-11-10.md",
+            "functions/lib/hr-employment-letters.js",
+            "functions/lib/hr-employment-letter-pdf.js",
+            "js/hr-employment-tools.js"
+          ],
+          "verification": "98 focused tests passed; private R2 PDF hash/scope checks and duplicate-send protection reviewed independently. Hospital owner demo deployed at 7fa7be0f with 4764 tests. School/Faith/managed edition rollout pending current release. Final School/shared suite: 5030 passed, zero failed. No live records or email changed by tests."
+        },
+        {
+          "id": "linked-student-lifecycle-status",
+          "title": "Consistent student status across profiles, Accounts, admissions and classrooms",
+          "status": "tested_awaiting_deployment",
+          "acceptance": "Terminal statuses remove active classroom participation while preserving pupil identity, scores, payments and historical memberships. Temporary leave and suspension retain reversible placement history. Branch-scoped linked records update together and repeated saves are no-ops.",
+          "evidence": [
+            "docs/student-status-hr-employment-2026-11-10.md",
+            "tests/student-status-routes.test.mjs"
+          ],
+          "verification": "151 affected academic tests passed. Terminal and temporary statuses synchronize scoped linked records and active rosters; prior scores/payments remain preserved. No live business records changed for tests. Final School/shared suite: 5030 passed, zero failed. No live records or email changed by tests."
+        },
+        {
           "id": "area1-tuition-class-list",
           "title": "Preserve all selected classes when saving fee rules; correct Area 1 Grade 3–6 tuition",
-          "status": "tested_awaiting_deployment",
+          "status": "deployed_verified",
           "acceptance": "The three TUITION123 term rules must apply to Grades 3,4,5,6, not only Grade 3. Preserve existing fee IDs, codes, amounts, invoices and payments; fix future single and batch saves, test, push and deploy without compilation/release.",
           "evidence": [
             "functions/lib/class-names.js",
@@ -100,7 +137,8 @@
             "docs/fee-multiple-classes-2026-11-10.md"
           ],
           "diagnosis": "Live targeted read confirmed all three rules saved ClassName Grade 3. Desktop sends a comma-separated class list; backend scalar canonicalization reduces it to the first grade.",
-          "desktopDelivery": "Source e9b6dba pushed; 50 focused tests passed. No compilation/release. Current installer CSV requests are supported by backend fix."
+          "desktopDelivery": "Source e9b6dba pushed; 50 focused tests passed. No compilation/release. Current installer CSV requests are supported by backend fix.",
+          "verification": "Deployed v554 at commit 101ca616; 4939 web tests and 50 desktop tests passed. Live three Area 1 tuition fee rules corrected to Grades 3,4,5,6, original amounts/IDs/other fields preserved. No invoice/payment writes. Repeat repair zero changes."
         },
         {
           "id": "shared-branch-class-catalogue",
@@ -161,8 +199,16 @@
           "remainingFollowUps": [
             {
               "id": "remaining-register-cost-audit",
-              "title": "Retain follow-up review of vendor request bootstrap and fuzzy branch-roster searches",
-              "acceptance": "These current-register reads are scoped but remain proportional to history/roster size. Audit status pagination and targeted name search without hiding pending requests or eligible pupils."
+              "title": "Vendor current queues separated from dated completed history; recent suggestions reused",
+              "acceptance": "Preserve every pending request and eligible pupil while keeping completed history opt-in and branch/vendor scoped.",
+              "status": "tested_awaiting_deployment",
+              "verification": "10 November: four pending request documents returned with either 2 or 2,000 completed records; zero browsing writes. Completed-history snapshots retained across navigation. Suggestion results cached only within the mounted workspace for 30 seconds; selected wallet still verified live. 223 focused tests and synthetic Edge at 390/1280px passed. Three additive request indexes must be ready before query activation.",
+              "remainingOptimization": "A new fuzzy name query still reads the permitted roster. Indexed normalized search requires a scoped compatibility/backfill plan; no pupil is omitted to reduce reads.",
+              "evidence": [
+                "tests/vendor-remaining-read-cost.test.mjs",
+                "tests/vendor-request-history-browser.mjs",
+                "docs/advance-credit-navigation-vendor-pass-2026-11-10.md"
+              ]
             }
           ]
         },
@@ -213,13 +259,13 @@
               "id": "wallet-history-checkpoint",
               "title": "Evaluate a verified wallet-history checkpoint to reduce repeated lifetime reads",
               "acceptance": "Measure long-history lookup and purchase costs before changing the accounting path. Any checkpoint must remain branch/student scoped, reconcile with immutable transactions, account for late imports/corrections/refunds, and share the same concurrency guard as purchases. Retain a bounded reconciliation path and all history; do not replace real receipt evidence with a cached balance.",
-              "completionEvidence": "Document baseline and resulting read/write counts plus concurrent-sale, reversal, delayed-import and retry tests. This remains follow-up work, not a delivered checkpoint."
+              "completionEvidence": "10 November evaluation: one live ledger query returns 2 versus 2,000 history entries in synthetic lookup, with zero writes and older refunds included. Existing purchase tests prove one authoritative scan, atomic guards and no duplicate sale on retry. A checkpoint is deliberately not implemented until every wallet writer participates in its shared revision/cursor and late-correction reconciliation; current account query can also read same-account non-wallet rows before filtering. See docs/advance-credit-navigation-vendor-pass-2026-11-10.md and tests/vendor-remaining-read-cost.test.mjs."
             },
             {
               "id": "offline-purchase-evaluation",
               "title": "Evaluate safe local-network/offline purchases before enabling them",
               "acceptance": "Compare measured online costs with a coordinated local-server or explicitly bounded offline allowance design. Define authority, device limits, conflict handling and replay-safe synchronization so two disconnected tills cannot spend the same wallet funds or stock. Keep offline financial posting disabled until the design and failure tests justify it.",
-              "completionEvidence": "A documented decision with cost measurements, connectivity assumptions and overspending/duplicate-prevention tests; evaluation does not authorize or claim activation."
+              "completionEvidence": "10 November decision documented in docs/advance-credit-navigation-vendor-pass-2026-11-10.md: retain online authority. Independent disconnected tills cannot validate shared balance/stock; any future offline design needs centrally reserved device allowances and stock, signed journals, deterministic replay and reconciliation. No offline financial posting was enabled."
             }
           ],
           "delivery": {
@@ -244,15 +290,18 @@
         {
           "id": "academic-removal-allocation-race",
           "title": "Coordinate existing class/arm deletion with concurrent pupil assignment",
-          "status": "historical_delivery_to_verify",
+          "status": "tested_awaiting_deployment",
           "acceptance": "Before changing existing removal workflows, protect every membership allocation/import/transfer/reinstatement, subject-change transfer approval, profile placement and promotion, plus profile-only import/enrollment/reactivation. Reuse destination class/arm CAS checks/touches from Session Movement; one per unique target, no catalogue writes for score edits or reads. Test allocation-first and deletion-first races, preserving all records.",
           "evidence": [
             "functions/lib/student-session-movement.js",
             "functions/lib/academic-management.js",
             "functions/api/backend.js",
-            "docs/shared-branch-class-catalogue-2026-11-10.md"
+            "docs/shared-branch-class-catalogue-2026-11-10.md",
+            "functions/lib/academic-placement-guards.js",
+            "tests/academic-placement-guards.test.mjs"
           ],
-          "reason": "Inherited workflow concurrency concern found in this review. Shared catalogue guard covers structural writers only. New Settings destructive changes are deferred to avoid adding another deletion path; comprehensive assignment coordination is not claimed delivered."
+          "reason": "The shared placement guard now covers allocation/import/transfer/promotion/profile acquisition; existing session movement/reactivation guards retained. No live catalogue or pupil changes.",
+          "verification": "56 final import/race tests passed, including both commit orders, profile-only restoration, unchanged retries and metadata-only masked CAS. Full school run 5001/5003; two separate provider/index assertions being completed. Final School/shared suite: 5030 passed, zero failed. No live records or email changed by tests."
         }
       ]
     },
@@ -666,9 +715,12 @@
         {
           "id": "duplicate-bank-transfer",
           "title": "Reverse one accidentally approved duplicate wallet top-up",
-          "status": "historical_delivery_to_verify",
+          "status": "recorded_verified",
           "acceptance": "Keep both original records, link compensating reversal to selected duplicate; prevent retry duplicates.",
-          "evidence": []
+          "evidence": [
+            "docs/advance-credit-navigation-vendor-pass-2026-11-10.md"
+          ],
+          "verification": "Targeted live read on 10 November of the two DCA/21/1030 wallet receipts confirms the later duplicate has CorrectionTotal NGN13600 and CorrectionStatus Reversed. The earlier receipt is retained without a correction. Both original NGN13600 receipt records remain. This verification made zero writes; no second reversal was attempted."
         },
         {
           "id": "paystack-reconciliation",
@@ -812,11 +864,16 @@
         {
           "id": "branch-email-provider",
           "title": "Review branch-specific email delivery configuration",
-          "status": "historical_delivery_to_verify",
+          "status": "tested_awaiting_deployment",
           "acceptance": "The user requested branch-specific email delivery settings. Verify sender/reply-to and provider independence where supported; explicitly explain any technical reason for a shared organisation provider instead of silently treating it as the user's preference.",
           "evidence": [
-            "docs/email-provider-onboarding.md"
-          ]
+            "docs/email-provider-onboarding.md",
+            "functions/lib/branch-email-provider.js",
+            "tests/branch-email-provider.test.mjs",
+            "tests/branch-email-deployment-queue.test.mjs",
+            "docs/student-status-hr-employment-2026-11-10.md"
+          ],
+          "verification": "Both options confirmed by owner: shared organisation provider or independent branch Brevo/Google account, retaining sender/reply-to. 352 email/sender checks and 8 desktop/mobile browser cases passed, including delayed OAuth/CAS/uncertain-provider outcomes. Final shared suite5030passed. Existing credentials unchanged; Hospital propagation pending final checks."
         },
         {
           "id": "desktop-settings-layout",
@@ -1052,6 +1109,27 @@
       "desktopSourceCommit": "e173f80",
       "desktopValidation": "36 Tk/unit tests passed; source pushed only.",
       "desktopInstaller": "No compilation/release. Production version manifest still 3.1.63 and hash matches the unchanged local file."
+    },
+    {
+      "date": "2026-11-10",
+      "webCommit": "37ab098ac943c9ea5bdf4101531a10314c689b42",
+      "webRelease": "dynamax-v553-shared-branch-class-catalogue",
+      "url": "https://destinychristianacademy.pages.dev",
+      "deploymentUrl": "https://0ce5f223.destinychristianacademy.pages.dev",
+      "verification": "4,930 web tests passed; read-only live catalogue audit and unchanged-save planner verified. Seven live assets matched source SHA-256, release/cache markers matched, anonymous protected endpoints denied. No business-data migration.",
+      "desktopSourceCommit": "59ffdd2",
+      "desktopValidation": "37 focused desktop tests passed; source pushed.",
+      "desktopInstaller": "No compilation/release; production version remains 3.1.63."
     }
-  ]
+  ],
+  "releasePreparation": {
+    "version": "3.1.64",
+    "status": "checks_in_progress",
+    "desktopTests": "1175 passed, 0 failed; localhost CBT tests run in authorized unsandboxed test process; Tk fixture shows its owner window for real hit testing.",
+    "compiled": false,
+    "published": false,
+    "schoolVendorIndexes": "School and Faith all three request indexes READY; Hospital all six request/period indexes READY with snapshot Rows unindexed, default field indexes unchanged.",
+    "desktopSourceCommit": "8cba0d5",
+    "webTests": "5030 passed, 0 failed"
+  }
 }

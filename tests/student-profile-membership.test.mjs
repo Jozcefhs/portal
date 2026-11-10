@@ -1,3 +1,4 @@
+import * as placementGuards from '../functions/lib/academic-placement-guards.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import vm from 'node:vm';
@@ -16,7 +17,7 @@ const managementSource = await readFile(new URL('../functions/lib/academic-manag
 const routeSource = await readFile(new URL('../functions/api/staff-students.js', import.meta.url), 'utf8');
 const strip = source => source.replace(/^import[\s\S]*?;\r?\n/gm, '').replace(/^export /gm, '');
 const clone = value => structuredClone(value);
-const scope = { BranchId: 'main', SchoolSection: 'secondary', Status: 'Active' };
+const scope = { __updateTime: 'structure-1', BranchId: 'main', SchoolSection: 'secondary', Status: 'Active' };
 const period = { SessionId: 'session', TermId: 'term' };
 const actor = { edition: 'school', role: 'ICT', username: 'ict', branchId: 'main', schoolSectionAccess: 'secondary', allowedSections: ['students', 'academics'] };
 const profile = { ...scope, __id: 'student', __scopePath: 'schoolBranches/main/sections/secondary/students', __updateTime: 'profile-1',
@@ -61,7 +62,7 @@ function harness({ user = actor, assessed = true, members = [member] } = {}) {
   let revision = 1;
   const keyFor = path => path === profile.__scopePath ? 'profiles' : Object.keys(management.ACADEMIC_MANAGEMENT_COLLECTIONS).find(key => management.ACADEMIC_MANAGEMENT_COLLECTIONS[key] === path);
   const idOf = row => row.__id || row.RecordId || row.MembershipId || row.ResultId || row.MovementId || row.ScoreId || row.SheetId;
-  const context = vm.createContext({ ...management, ...results, ...studentStatus, ...armTransfer, crypto: webcrypto, TextEncoder, TextDecoder,
+  const context = vm.createContext({ ...placementGuards, ...management, ...results, ...studentStatus, ...armTransfer, crypto: webcrypto, TextEncoder, TextDecoder,
     getDocuments: async (_env, path, ids) => ids.map(id => clone((state[keyFor(path)] || []).find(row => idOf(row) === id) || null)),
     normalizeClassKey, canonicalConfiguredClass, schoolSectionFor, safeScopeId, enforceActorBranch,
     getSchoolStructure: async () => ({ ActiveBranchId: 'main', Branches: [{ Id: 'main' }, { Id: 'annex' }], Sections: ['secondary', 'primary'] }),

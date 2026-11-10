@@ -1,4 +1,5 @@
 import { batchCommitDocuments, getDocument, queryCollectionPages } from './firestore.js';
+import { studentApplicationStatusWrites } from './student-status-links.js';
 
 const clean = value => String(value ?? '').trim();
 const lower = value => clean(value).toLowerCase();
@@ -15,6 +16,12 @@ export function studentStatusKind(value) {
 
 export function studentStatusChanged(before = {}, after = {}) {
   return Object.hasOwn(after, 'Status') && lower(before.Status || before.status || 'Active') !== lower(after.Status || 'Active');
+}
+
+export function studentProfileHasChanges(before = {}, after = {}) {
+  const ignored = new Set(['RevisionToken', 'UpdatedAt', 'UpdatedBy', 'StatusUpdatedAt', 'StatusUpdatedBy']);
+  return Object.entries(after).some(([key, value]) => !key.startsWith('__') && !ignored.has(key)
+    && JSON.stringify(value) !== JSON.stringify(before[key]));
 }
 
 export function assertStudentCanHaveActiveMembership(student, membership) {
@@ -43,13 +50,20 @@ export async function saveStudentStatusWithMemberships(env, before, after, optio
   const section = lower(before.SchoolSection || after.SchoolSection || 'secondary');
   const inScope = row => lower(row.BranchId || 'main') === branch && lower(row.SchoolSection || 'secondary') === section;
   if (lower(after.BranchId || 'main') !== branch || lower(after.SchoolSection || section) !== section) throw failure('Change school placement separately from student status.');
+  const placement = row => [row.ClassName || row.ClassAdmitted, row.ClassArm, row.AcademicSession, row.Term].map(lower);
+  if (JSON.stringify(placement(before)) !== JSON.stringify(placement(after))
+      || ['AcademicClassId', 'AcademicArmId', 'AcademicMembershipId', 'AdmissionNo'].some(field => clean(before[field]) !== clean(after[field]))) {
+    throw failure('Save student status separately from identity, academic-period or classroom changes.', 'STUDENT_STATUS_AND_PLACEMENT_CHANGE');
+  }
   const references = [...new Set([before.AdmissionNo, before.AccountRef, before.StudentRef].map(clean).filter(Boolean))];
   if (!references.length) throw failure('The student admission/account reference is missing.');
   const queryRefs = [...new Set(references.flatMap(value => [value, value.toLowerCase(), value.toUpperCase()]))];
-  const matches = await db.queryCollectionPages(env, 'academicStudentMemberships', {
+  const statusChanged = studentStatusChanged(before, after);
+  const reviewMemberships = statusChanged || options.reconcileMemberships === true;
+  const matches = reviewMemberships ? await db.queryCollectionPages(env, 'academicStudentMemberships', {
     filters: [{ field: 'StudentRef', op: 'in', value: queryRefs }], pageSize: 100, maxRows: 400
-  });
-  if (clean(before.AcademicMembershipId) && !matches.some(row => id(row) === clean(before.AcademicMembershipId))) {
+  }) : [];
+  if (reviewMemberships && clean(before.AcademicMembershipId) && !matches.some(row => id(row) === clean(before.AcademicMembershipId))) {
     const linked = await db.getDocument(env, 'academicStudentMemberships', before.AcademicMembershipId);
     if (linked) matches.push(linked); // Legacy mixed-case references still use the saved membership ID.
   }
@@ -62,6 +76,9 @@ export async function saveStudentStatusWithMemberships(env, before, after, optio
   for (const row of memberships) {
     if (row.SupersededByMembershipId || ['archived', 'closed', 'cancelled', 'transferred'].includes(lower(row.Status))) continue;
     if (kind === 'active' ? row.ProfileStatusManaged !== true : inactiveMembership.has(lower(row.Status)) && row.ProfileStatusManaged !== true) continue;
+    const target = kind === 'temporary' ? 'Inactive' : 'Withdrawn';
+    if (kind !== 'active' && row.Status === target && row.ProfileStatusManaged === true && row.ProfileStudentStatus === status
+        && row.ProfileStatusReason === reason && row.ProfileStatusEffectiveDate === date) continue;
     for (const [collection, periodId] of [['academicSessions', row.SessionId], ['academicTerms', row.TermId]]) {
       const key = `${collection}/${clean(periodId)}`;
       if (!periods.has(key)) periods.set(key, periodId ? await db.getDocument(env, collection, periodId) : null);
@@ -123,7 +140,21 @@ export async function saveStudentStatusWithMemberships(env, before, after, optio
     ...(kind !== 'active' ? { AcademicEnrollmentStatus: kind === 'temporary' ? 'Inactive' : 'Withdrawn' }
       : selected.length ? { AcademicEnrollmentStatus: 'Active', AcademicMembershipId: selected[0].MembershipId || id(selected[0]) } : {}) };
   // Only changed profile fields are written: retained data keeps its stored type.
-  const patch = Object.fromEntries(Object.entries(profile).filter(([key, value]) => !key.startsWith('__') && key !== 'RevisionToken' && JSON.stringify(value) !== JSON.stringify(before[key])));
+  const patch = Object.fromEntries(Object.entries(profile).filter(([key, value]) => !key.startsWith('__')
+    && !['RevisionToken', 'UpdatedAt', 'UpdatedBy', 'StatusUpdatedAt', 'StatusUpdatedBy'].includes(key)
+    && JSON.stringify(value) !== JSON.stringify(before[key])));
+  const linked = await studentApplicationStatusWrites(env, before, profile, options, db);
+  if (!writes.length && !Object.keys(patch).length && !linked.writes.length) {
+    return { ...before, __id: options.documentId, __scopePath: options.collectionPath,
+      __academicStatusMembershipCount: 0, __statusUnchanged: true, __statusApplications: linked.applications };
+  }
+  if (Object.keys(patch).length || writes.length) Object.assign(patch, {
+    UpdatedAt: now, UpdatedBy: actor, StatusUpdatedAt: now, StatusUpdatedBy: actor
+  });
+  else patch.Status = before.Status; // Guard the canonical learner while repairing a linked display.
+  const linkedWriteStart = writes.length;
+  writes.push(...linked.writes);
+  for (const guard of options.placementGuards || []) guards.set(`${guard.collectionPath}/${guard.documentId}`, guard);
   writes.push(...guards.values());
   const auditId = `STATUS-${crypto.randomUUID()}`;
   writes.push({ collectionPath: 'academicManagementAudit', documentId: auditId, exists: false,
@@ -140,5 +171,9 @@ export async function saveStudentStatusWithMemberships(env, before, after, optio
     throw error;
   }
   return { ...profile, __id: options.documentId, __scopePath: options.collectionPath,
-    __updateTime: result?.writeResults?.at(-1)?.updateTime || '', __academicStatusMembershipCount: selected.length };
+    __updateTime: result?.writeResults?.at(-1)?.updateTime || '', __academicStatusMembershipCount: selected.length,
+    __statusApplications: linked.applications.map(application => {
+      const index = linked.writes.findIndex(write => write.collectionPath === application.__scopePath && write.documentId === application.__id);
+      return index < 0 ? application : { ...application, __updateTime: result?.writeResults?.[linkedWriteStart + index]?.updateTime || application.__updateTime };
+    }) };
 }

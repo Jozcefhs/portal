@@ -8,7 +8,7 @@
     'report', 'statement', 'analysis', 'balance', 'balances', 'context', 'taxbreakdown', 'lookupinventory',
     // Vendor read names are noun-first, so the verb-prefix rule below cannot
     // recognise them. Aborted search-as-you-type requests are not saved actions.
-    'salesbootstrap', 'recentvendorsales', 'vendorcustomersearch', 'vendorwalletlookup']);
+    'salesbootstrap', 'recentvendorsales', 'vendorcustomersearch', 'vendorwalletlookup', 'requesthistory', 'requestreport']);
   function isMutation(url, init = {}) {
     if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(String(init.method || 'GET').toUpperCase())) return false;
     if (!/^\/api\/(?:admin$|staff-|approval-settings|finance-workflow|vendor-|procurement|payment-corrections|data-backup|external-audit|backend)/.test(url.pathname)) return false;

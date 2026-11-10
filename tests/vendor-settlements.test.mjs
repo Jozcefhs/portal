@@ -4,7 +4,7 @@ import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 import { webcrypto } from 'node:crypto';
 import * as rules from '../functions/lib/vendor-settlement-rules.js';
-import { readVendorRows, readVendorInventory } from '../functions/lib/vendor-read-scope.js';
+import { readVendorRows, readVendorInventory, readVendorRequests } from '../functions/lib/vendor-read-scope.js';
 import { organisationSalesEnabled } from '../functions/lib/vendor-store-policy.js';
 import { buildWalletPurchaseAccountingJournal } from '../functions/api/backend.js';
 import { objectToFirestoreFields, firestoreDocumentToObject } from '../functions/lib/firestore.js';
@@ -176,13 +176,18 @@ function fixture(initial = [], options = {}) {
     commits.push(structuredClone(writes)); for (const w of writes) put(w.collectionPath,w.documentId,w.data);
   };
   const readDeps = {
-    queryCollectionPages: async (_env,c,opts) => list(c).filter(row => opts.filters.every(f => matchesFilter(row,f))),
+    queryCollectionPages: async (_env,c,opts) => {
+      const result = list(c).filter(row => opts.filters.every(f => matchesFilter(row,f)));
+      queryReads.push({ collection:c, ...structuredClone(opts), returnedRows:result.length });
+      return result;
+    },
     listBranchCollection: async (_env,c,branch,opts = {}) => list(c).filter(row => (!row.BranchId || row.BranchId === branch)
       && (opts.filters || []).every(f => f.op === 'in' ? f.value.includes(row[f.field]) : row[f.field] === f.value))
   };
   const functions = vm.runInNewContext(`${source}\n({ handleVendorSettlementAction, prepareVendorSale, snapshotVendorCart, rows })`, {
     ...rules, ...readDeps,
     readVendorRows: (env,c,scope,ids) => readVendorRows(env,c,scope,ids,readDeps),
+    readVendorRequests: (env,scope,ids,period) => readVendorRequests(env,scope,ids,period,readDeps),
     readVendorInventory: (env,c,branch,ids) => readVendorInventory(env,c,branch,ids,readDeps),
     organisationSalesEnabled, ...productManagement, handleProductImport, handleCardRefundBatch, commitWithReadChecks:commit, crypto:webcrypto, Intl, Date, TextEncoder, console, assertRequisitionTransition, validateRequisitionPosting, accountingChartChoicesForEdition,
     withApprovalRoute, requisitionPendingTransition, approvalFlowLabel, vendorRequestPrintReport, requisitionCapabilities, hasPrincipalApprovalGrant, assertFinanceRoleLimit,
@@ -1639,5 +1644,56 @@ test('all edition indexes cover bounded vendor statement dates', async () => {
       assert.ok(config.indexes.some(index=>index.collectionGroup===collection && index.fields.map(f=>f.fieldPath).join(',')==='ScopeKey,VendorId,Date'),`${edition}: ${collection}`);
     assert.ok(config.fieldOverrides.some(field=>field.collectionGroup==='vendorSettlementSnapshots' && field.fieldPath==='Rows'
       && field.indexes.length===0),`${edition}: immutable report rows are not indexed`);
+    for (const fields of ['ScopeKey,PaymentStatus','ScopeKey,VendorId,PaymentStatus','ScopeKey,VendorId,PaymentStatus,RequestedAt'])
+      assert.ok(config.indexes.some(index=>index.collectionGroup==='vendorSettlementRequests' && index.fields.map(f=>f.fieldPath).join(',')===fields), `${edition}: ${fields}`);
   }
+});
+
+test('vendor bootstrap reads four actionable requests with either 2 or 2,000 completed records and writes nothing', async()=>{
+  for (const historyCount of [2,2000]) {
+    const f=fixture();
+    for(const [index,PaymentStatus] of ['Awaiting approval','Awaiting payment','Part-paid','Unpaid'].entries())
+      f.put('vendorSettlementRequests',`pending-${index}`,{...scope,VendorId:'v1',SettlementId:`pending-${index}`,PaymentStatus,Status:'Submitted',RequestedAt:'2025-01-01',AmountCents:10000});
+    for(let i=0;i<historyCount;i++) f.put('vendorSettlementRequests',`paid-${i}`,{...scope,VendorId:'v1',SettlementId:`paid-${i}`,PaymentStatus:'Paid',Status:'Approved',RequestedAt:'2025-01-01'});
+    f.put('vendorSettlementRequests','foreign',{...scope,ScopeKey:'school--other',VendorId:'v1',PaymentStatus:'Awaiting approval'});
+    const before=JSON.stringify([...f.store]);
+    const result=await f.run('bootstrap');
+    assert.equal(result.requests.length,4);
+    const reads=f.queryReads.filter(row=>row.collection==='vendorSettlementRequests');
+    assert.equal(reads.length,1);assert.equal(reads[0].returnedRows,4);
+    assert.equal(reads[0].filters.find(row=>row.field==='PaymentStatus').op,'in');
+    const old=await readVendorRows({},'vendorSettlementRequests',scope,null,{queryCollectionPages:async(_env,c,options)=>f.list(c).filter(row=>options.filters.every(filter=>matchesFilter(row,filter)))});
+    assert.equal(old.length,historyCount+4,'the former register query also returned every completed request');
+    assert.equal(f.commits.length,0);assert.equal(JSON.stringify([...f.store]),before);
+  }
+});
+
+test('completed request history is date/vendor/branch scoped while older pending requests stay in bootstrap',async()=>{
+  const f=fixture();
+  for(const [id,PaymentStatus,RequestedAt,patch] of [
+    ['paid','Paid','2026-10-01',{}],['rejected','Rejected','2026-10-31T23:59:59.999Z',{}],
+    ['cancelled','Cancelled','2026-10-15',{}],['old-paid','Paid','2026-09-30',{}],
+    ['next-paid','Paid','2026-11-01',{}],['pending','Awaiting approval','2025-01-01',{}],
+    ['other-vendor','Paid','2026-10-15',{VendorId:'v2'}],['foreign','Paid','2026-10-15',{ScopeKey:'school--other'}]])
+    f.put('vendorSettlementRequests',id,{...scope,VendorId:'v1',SettlementId:id,Status:PaymentStatus,PaymentStatus,RequestedAt,...patch});
+  const history=await f.run('requestHistory',{VendorId:'v1',From:'2026-10-01',To:'2026-10-31'});
+  assert.deepEqual(Array.from(history.requests,row=>row.SettlementId),['paid','rejected','cancelled']);
+  const query=f.queryReads.find(row=>row.collection==='vendorSettlementRequests');
+  assert.equal(query.cursorField,'RequestedAt');assert.equal(query.returnedRows,3);
+  assert.equal((await f.run('bootstrap')).requests[0].SettlementId,'pending');
+  await assert.rejects(f.run('requestHistory',{VendorId:'v1',From:'',To:''}),/date/i);
+  await assert.rejects(f.run('requestHistory',{VendorId:'v1',From:'2026-11-01',To:'2026-10-01'}),/date|before|after/i);
+  const stranger={...user,role:'Vendor User',username:'another-vendor'};
+  await assert.rejects(f.run('requestHistory',{VendorId:'v1',From:'2026-10-01',To:'2026-10-31'},stranger),/not linked/);
+  assert.equal(f.commits.length,0);
+});
+
+test('pending request owner chunks respect the combined IN limit and missing index never triggers a history scan',async()=>{
+  const calls=[];
+  await readVendorRequests({},scope,Array.from({length:15},(_,i)=>`v${i}`),null,{queryCollectionPages:async(_env,c,options)=>{calls.push(options);return[];}});
+  assert.equal(calls.length,3);
+  assert.deepEqual(calls.map(row=>row.filters.find(f=>f.field==='VendorId').value.length),[7,7,1]);
+  let reads=0;
+  await assert.rejects(readVendorRequests({},scope,['v1'],null,{queryCollectionPages:async()=>{reads++;throw Object.assign(new Error('requires an index'),{upstreamCode:'FAILED_PRECONDITION'});}}),{status:409,code:'VENDOR_REQUEST_INDEX_NOT_READY'});
+  assert.equal(reads,1);
 });

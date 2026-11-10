@@ -1,4 +1,4 @@
-const CACHE = 'dynamax-v554-multiclass-fee-rules';
+const CACHE = 'dynamax-v555-student-status-hr-employment';
 const SHELL = ['/', '/index.html', '/school.html', '/admin.html', '/setup.html', '/activate-account.html', '/onboarding-status.html', '/parent-dashboard.html', '/payments.html', '/buy-form.html', '/register-organization.html', '/subscription-payment.html', '/plan-management.html', '/give.html', '/store.html', '/hotel-booking.html', '/verify-result.html', '/verify-transcript.html', '/css/style.css', '/css/module-audit.css', '/css/academic-result-preview.css', '/css/school-landing.css', '/css/guest-fee-payment.css', '/css/notifications.css', '/css/payment-methods.css', '/css/store.css', '/css/store-compact.css', '/css/hotel-booking.css', '/js/preferences.js', '/js/action-feedback.js', '/js/app-dialogs.js', '/js/activate-account.js', '/js/onboarding-status.js', '/js/financial-values.js', '/js/launcher.js', '/js/site-config.js', '/js/list-sorting.js', '/js/academic-results-analysis.js', '/js/admin.js', '/js/student-face-lookup.js', '/js/setup.js', '/js/paystack-connection-status.js', '/js/tutorial-module-catalogue.js', '/js/payment-methods.js', '/js/buy-form.js', '/js/give.js', '/js/payments.js', '/js/store.js', '/js/hotel-booking.js', '/js/notifications.js', '/js/web-push.js', '/js/parent-dashboard.js', '/js/verify-result.js', '/js/verify-transcript.js', '/js/register-organization.js', '/js/subscription-payment.js', '/js/plan-management.js', '/images/Logo.png'];
 
 SHELL.push('/js/academic-workflow-status.js');
@@ -9,6 +9,7 @@ SHELL.push('/js/admission-cycles.js', '/css/admission-cycles.css');
 SHELL.push('/css/academic-archived-memberships.css');
 SHELL.push('/css/app-dialogs.css');
 SHELL.push('/js/clinic-referrals.js');
+SHELL.push('/js/hr-employment-tools.js');
 SHELL.push('/css/hotel-self-service.css', '/js/hotel-self-service-admin.js', '/hotel-key-collection.html', '/js/hotel-key-collection.js', '/hotel-dispenser-guide.html');
 SHELL.push('/css/parent-store.css');
 SHELL.push('/css/parent-fee-advance.css');

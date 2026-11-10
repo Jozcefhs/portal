@@ -140,10 +140,11 @@ test('web and desktop settings use the same branch-effective profile contract', 
   assert.match(backendApi, /case 'resetBranchProfileOverrides'/);
   assert.match(setupScript, /SettingsScope: settingsScopeField\.value/);
   assert.match(setupHtml, /id="senderEmail"/);
-  assert.match(setupHtml, /Email-provider credentials remain organisation-wide/);
+  assert.match(setupHtml, /Email-provider credentials are configured securely/);
   assert.match(setupScript, /OrganisationExecutiveReplyToEmail/);
   assert.match(settingsApi, /patchDocumentFields\(env, 'settings', 'brevo'/);
-  assert.doesNotMatch(setupHtml, /BrevoApiKey/);
+  assert.match(setupHtml, /id="branchBrevoApiKey" type="password"/);
+  assert.doesNotMatch(setupHtml, /name="(?:Branch)?BrevoApiKey"/);
   assert.match(setupHtml, /id="paystackSubaccountCode"/);
   assert.match(setupScript, /settingsScopeField\.value === 'branch'[\s\S]*PaystackSubaccountCode/);
   assert.match(desktopSource, /"SettingsScope": "branch" if branch_settings else "organisation"/);

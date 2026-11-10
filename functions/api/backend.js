@@ -6,6 +6,7 @@ import { listBranchCollection } from '../lib/branch-reads.js';
 import { batchCommitDocuments, batchCommitLiteralDocuments, batchUpsertDocuments, createDocumentIfAbsent, deleteDocument, findOneByField, getDocument, listCollection, listCollectionForReport, listCollectionPage, patchDocumentFields, queryCollection, queryCollectionPages, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { feeBranchId, feeRowsForBranch, feeMatchesBranch, feeSetupBranch, resolveFeeDocument, feeDocumentWrite } from '../lib/fee-branch-scope.js';
 import { normalizeRecoveryEmail } from '../lib/staff-password-recovery.js';
+import { resolveBranchEmailEnvironment } from '../lib/branch-email-provider.js';
 import { activeAdmissionRows } from '../lib/admission-cycle.js';
 import { billingComponentDiagnostics, billingDiagnostics } from '../lib/student-billing-diagnostics.js';
 import { loadBranchFinanceRows, loadBranchFinancePage } from '../lib/finance-branch-reads.js';
@@ -23,6 +24,8 @@ import { continueRevenueSync, revenueSyncWrite, revenueSyncReader } from '../lib
 import { mergeSchoolBranchMetadata, saveBranchSchoolSection } from '../lib/branch-school-presentation.js';
 import { canonicalSchoolBranchId, deleteSchoolDocument, getSchoolDocumentById, getSchoolDocumentsById, getSchoolStructure, invalidateSchoolStructureCache, listSchoolCollection, normalizeSchoolStructure, querySchoolCollection, safeScopeId, scopedCollectionPath, schoolCollectionPaths, schoolSectionFor, upsertSchoolDocument } from '../lib/school-scope.js';
 import { canonicalConfiguredClass, canonicalConfiguredClassRule, classNamesMatch } from '../lib/class-names.js';
+import { STUDENT_STATUSES } from '../lib/student-academic-status.js';
+import { applicationLinkedToStudent, enrolledApplication } from '../lib/student-status-links.js';
 import { explicitlyIncludesFullScholarship, isFullScholarship } from '../lib/full-scholarship.js';
 import { categoryApplies, deleteStoreCategory, ensureStoreCategories, resolveStoreCategory, saveStoreCategory } from '../lib/store-categories.js';
 import { assertProcurementInventoryEdit, assertProcurementInventoryMovement, assertProcurementInventoryDeletion, loadProcurementInventoryControl, procurementMovementBalance, inventoryQuantityNumber } from '../lib/procurement-inventory-guard.js';
@@ -2907,10 +2910,18 @@ async function updateStoreOrderStatus(env, body) {
 }
 
 async function saveBrevoSettings(env, body, deploymentIdentity = null) {
+  const branchId = clean(
+    body.DeviceBranchId
+    || (clean(body.SettingsScope || body.settingsScope).toLowerCase() === 'branch'
+      ? body.BranchId || body.branchId
+      : '')
+  );
+  const scopedEmail = await resolveBranchEmailEnvironment(env, branchId);
+  const emailEnv = scopedEmail.env;
   const senderName = clean(body.BrevoSenderName || body.SenderName || body.senderName);
   const senderEmail = clean(body.BrevoSenderEmail || body.SenderEmail || body.senderEmail);
   const submittedApiKey = clean(body.BrevoApiKey || body.ApiKey || body.apiKey);
-  const environmentApiKeyConfigured = Boolean(clean(env.BREVO_API_KEY));
+  const environmentApiKeyConfigured = Boolean(clean(emailEnv.BREVO_API_KEY));
   const executiveSenderName = clean(body.ExecutiveSenderName || body.executiveSenderName);
   const executiveSenderEmail = clean(body.ExecutiveSenderEmail || body.executiveSenderEmail);
   const executiveReplyToEmail = clean(body.ExecutiveReplyToEmail || body.executiveReplyToEmail);
@@ -2922,18 +2933,18 @@ async function saveBrevoSettings(env, body, deploymentIdentity = null) {
     throw err;
   }
   const existing = await getDocument(env, 'settings', 'brevo').catch(() => null);
-  const legacyDatabaseKeyConfigured = Boolean(clean(existing?.BrevoApiKey));
-  const configuredEmailProvider = clean(env.EMAIL_PROVIDER).toLowerCase();
+  const legacyDatabaseKeyConfigured = scopedEmail.mode === 'inherit' && Boolean(clean(existing?.BrevoApiKey));
+  const configuredEmailProvider = clean(emailEnv.EMAIL_PROVIDER).toLowerCase();
   const emailProvider = !configuredEmailProvider
     ? 'brevo'
     : ['brevo', 'gmail'].includes(configuredEmailProvider)
       ? configuredEmailProvider
       : 'unsupported';
   const gmailConnectionReady = Boolean(
-    clean(env.GMAIL_OAUTH_CLIENT_ID)
-    && clean(env.GMAIL_OAUTH_CLIENT_SECRET)
-    && clean(env.GMAIL_REFRESH_TOKEN)
-    && clean(env.GMAIL_CONNECTED_EMAIL)
+    clean(emailEnv.GMAIL_OAUTH_CLIENT_ID)
+    && clean(emailEnv.GMAIL_OAUTH_CLIENT_SECRET)
+    && clean(emailEnv.GMAIL_REFRESH_TOKEN)
+    && clean(emailEnv.GMAIL_CONNECTED_EMAIL)
   );
   const emailProviderConnectionReady = emailProvider === 'gmail'
     ? gmailConnectionReady
@@ -2942,8 +2953,10 @@ async function saveBrevoSettings(env, body, deploymentIdentity = null) {
       : false;
   const providerSettings = {
     EmailProvider: emailProvider,
+    EmailProviderMode: scopedEmail.mode,
+    EmailProviderBranchId: scopedEmail.branchId,
     EmailProviderConnectionReady: emailProviderConnectionReady,
-    GmailConnectedEmail: emailProvider === 'gmail' ? clean(env.GMAIL_CONNECTED_EMAIL) : ''
+    GmailConnectedEmail: emailProvider === 'gmail' ? clean(emailEnv.GMAIL_CONNECTED_EMAIL) : ''
   };
   const now = nowIso();
   const senderFields = organisationScoped ? {
@@ -2971,12 +2984,6 @@ async function saveBrevoSettings(env, body, deploymentIdentity = null) {
     UpdatedAt: now,
     UpdatedBy: clean(body.UserRole || body.UpdatedBy || body.updatedBy) || 'Super Admin'
   };
-  const branchId = clean(
-    body.DeviceBranchId
-    || (clean(body.SettingsScope || body.settingsScope).toLowerCase() === 'branch'
-      ? body.BranchId || body.branchId
-      : '')
-  );
   if (branchId) {
     const defaults = (await getSchoolProfile(env)).profile;
     const saved = await saveBranchProfileOverrides(env, {
@@ -3306,7 +3313,9 @@ async function getSchoolProfile(env, options = {}) {
   const structure = normalizeSchoolStructure(storedStructure || await getSchoolStructure(env));
   const enabledDocuments = documentSettings?.Enabled && typeof documentSettings.Enabled === 'object' ? documentSettings.Enabled : {};
   const organization = resolveOrganizationConfig({ env, organizationProfile, legacyProfile: profile || {} });
-  const configuredEmailProvider = clean(env.EMAIL_PROVIDER).toLowerCase();
+  const scopedEmail = await resolveBranchEmailEnvironment(env, options.branchId || options.BranchId || '');
+  const emailEnv = scopedEmail.env;
+  const configuredEmailProvider = clean(emailEnv.EMAIL_PROVIDER).toLowerCase();
   const emailProvider = !configuredEmailProvider
     ? 'brevo'
     : ['brevo', 'gmail'].includes(configuredEmailProvider)
@@ -3314,13 +3323,13 @@ async function getSchoolProfile(env, options = {}) {
       : 'unsupported';
   const emailProviderConnectionReady = emailProvider === 'gmail'
     ? Boolean(
-        clean(env.GMAIL_OAUTH_CLIENT_ID)
-        && clean(env.GMAIL_OAUTH_CLIENT_SECRET)
-        && clean(env.GMAIL_REFRESH_TOKEN)
-        && clean(env.GMAIL_CONNECTED_EMAIL)
+        clean(emailEnv.GMAIL_OAUTH_CLIENT_ID)
+        && clean(emailEnv.GMAIL_OAUTH_CLIENT_SECRET)
+        && clean(emailEnv.GMAIL_REFRESH_TOKEN)
+        && clean(emailEnv.GMAIL_CONNECTED_EMAIL)
       )
     : emailProvider === 'brevo'
-      ? Boolean(clean(env.BREVO_API_KEY) || clean(brevoSettings?.BrevoApiKey))
+      ? Boolean(clean(emailEnv.BREVO_API_KEY) || (scopedEmail.mode === 'inherit' && clean(brevoSettings?.BrevoApiKey)))
       : false;
   const baseProfile = { ...(profile || {
       SchoolName: 'Dynamax',
@@ -3369,8 +3378,10 @@ async function getSchoolProfile(env, options = {}) {
       OrganisationExecutiveReplyToEmail: clean(profile?.OrganisationExecutiveReplyToEmail || brevoSettings?.OrganisationExecutiveReplyToEmail),
       OrganisationExecutiveReplyToName: clean(profile?.OrganisationExecutiveReplyToName || brevoSettings?.OrganisationExecutiveReplyToName),
       EmailProvider: emailProvider,
+      EmailProviderMode: scopedEmail.mode,
+      EmailProviderBranchId: scopedEmail.branchId,
       EmailProviderConnectionReady: emailProviderConnectionReady,
-      GmailConnectedEmail: emailProvider === 'gmail' ? clean(env.GMAIL_CONNECTED_EMAIL) : '',
+      GmailConnectedEmail: emailProvider === 'gmail' ? clean(emailEnv.GMAIL_CONNECTED_EMAIL) : '',
       FeatureFlags: organization.FeatureFlags,
       PlanEntitlements: organization.PlanEntitlements,
       PlanModuleCatalogVersion: organization.PlanModuleCatalogVersion,
@@ -3997,9 +4008,44 @@ function applicationNotFound(id) {
   return err;
 }
 
+async function saveLinkedApplicationStudentStatus(env, existing, updates, body) {
+  const status = STUDENT_STATUSES.find(value => lower(value) === lower(body.StudentStatus ?? body.Status ?? body.status));
+  if (body.StudentStatus !== undefined && !status) throw Object.assign(new Error('Choose a valid learner status.'), { status: 400 });
+  if (!status) return null; // Admission milestones retain their separate workflow.
+  if (clean(body.RevisionToken) && clean(body.RevisionToken) !== clean(existing.__updateTime)) {
+    throw Object.assign(new Error('This admission record changed after it was loaded. Refresh and retry; nothing was saved.'), { status: 409 });
+  }
+  if (existing.AdmissionDetailsRemovedAt) throw Object.assign(new Error('This application is retained as admission history. Change the enrolled learner status from Students or Accounts.'), { status: 409 });
+  const scope = { branchId: identityRecordBranch(existing), schoolSectionAccess: identityRecordSection(existing) };
+  const reference = clean(existing.ApplicationReference || existing.ApplicationID || existing.applicationReference);
+  let student = reference ? await findStudentByAccountRef(env, reference, scope) : null;
+  if (!student && enrolledApplication(existing) && clean(existing.AdmissionNo)) {
+    student = await findStudentByAccountRef(env, existing.AdmissionNo, scope);
+  }
+  if (!student) {
+    if (enrolledApplication(existing)) throw Object.assign(new Error('The enrolled learner could not be found in this branch. Resolve the admission link before changing learner status.'), { status: 409 });
+    return null;
+  }
+  if (!applicationLinkedToStudent(existing, student)) throw Object.assign(new Error('This admission record is not linked to the selected learner in this branch.'), { status: 409 });
+  for (const field of ['AdmissionNo', 'BranchId', 'SchoolSection', 'ClassArm', 'ClassName', 'ClassAdmitted', 'AcademicSession', 'Term']) {
+    if (Object.hasOwn(updates, field) && clean(updates[field]) !== clean(existing[field])) {
+      throw Object.assign(new Error('Save the learner status separately from identity or classroom changes.'), { status: 409 });
+    }
+  }
+  const now = nowIso();
+  const saved = await saveStudent(env, { ...student, Status: status,
+    StatusReason: clean(body.StatusReason ?? body.Reason ?? student.StatusReason),
+    StatusEffectiveDate: clean(body.StatusEffectiveDate) || (lower(student.Status) === lower(status) ? clean(student.StatusEffectiveDate) : '') || new Date(Date.now() + 3600000).toISOString().slice(0, 10),
+    ExpectedReturnDate: clean(body.ExpectedReturnDate ?? student.ExpectedReturnDate),
+    StatusUpdatedBy: clean(body.RecordedBy || body.UpdatedBy || body.ReviewedBy) || 'Admissions Office', UpdatedAt: now
+  }, { updateTime: student.__updateTime, applicationStatusUpdate: { before: existing, after: updates } });
+  return { ok: true, message: saved.__statusUnchanged ? 'Learner status is already up to date.' : 'Learner status synchronized across the profile, admission record and active classroom. All scores, payments and history were preserved.',
+    application: saved.__statusApplications?.[0] || existing, student: saved };
+}
+
 async function updateApplicationStatus(env, body) {
   const id = applicationIdFrom(body);
-  const existing = id ? await findApplication(env, id) : null;
+  const existing = id ? await findApplication(env, id, schoolOperationsScope(body)) : null;
   if (!existing) throw applicationNotFound(id);
   const now = nowIso();
   const updates = {
@@ -4027,10 +4073,12 @@ async function updateApplicationStatus(env, body) {
     if (!updates.AcceptanceFeePaidAt) updates.AcceptanceFeePaidAt = now;
     updates.AcceptanceFeeReceivedBy = clean(body.RecordedBy) || updates.ReviewedBy;
   }
+  const linkedStatus = await saveLinkedApplicationStudentStatus(env, existing, updates, body);
+  if (linkedStatus) return linkedStatus;
   const saved = await saveApplication(env, { ...existing, ...updates });
 
   const admissionNo = updates.AdmissionNo || pick(existing, ['AdmissionNo']);
-  const student = await findStudent(env, admissionNo, pick(existing, ['ApplicationReference', 'ApplicationID']));
+  const student = admissionNo ? await findStudentByAccountRef(env, admissionNo, { branchId: identityRecordBranch(existing), schoolSectionAccess: identityRecordSection(existing) }) : null;
   if (student && (body.AdmissionNo !== undefined || body.Term !== undefined || body.ClassArm !== undefined || body.Arm !== undefined)) {
     const studentUpdates = { ...student, UpdatedAt: now };
     if (body.AdmissionNo !== undefined) studentUpdates.AdmissionNo = clean(body.AdmissionNo);
@@ -4244,7 +4292,7 @@ async function updateApplicantIntelligence(env, body) {
 
 async function updateApplicationDetails(env, body) {
   const id = applicationIdFrom(body);
-  const existing = id ? await findApplication(env, id) : null;
+  const existing = id ? await findApplication(env, id, schoolOperationsScope(body)) : null;
   if (!existing) throw applicationNotFound(id);
   assertEntranceScoresUnchanged(existing, body);
   const ignored = new Set([
@@ -4259,6 +4307,10 @@ async function updateApplicationDetails(env, body) {
   const classNames = await configuredClassNames(env, { BranchId: identityRecordBranch(existing), SchoolSection: identityRecordSection(existing), IncludeArms: false });
   for (const key of ['ClassApplyingFor', 'ClassAppliedFor', 'ClassAdmitted', 'ClassName']) {
     if (updates[key] !== undefined) updates[key] = canonicalConfiguredClass(updates[key], classNames);
+  }
+  if (body.StudentStatus !== undefined || body.Status !== undefined || body.status !== undefined) {
+    const linkedStatus = await saveLinkedApplicationStudentStatus(env, existing, updates, body);
+    if (linkedStatus) return linkedStatus;
   }
   const saved = await saveApplication(env, { ...existing, ...updates });
   return { ok: true, message: 'Application details updated.', application: saved };
@@ -8001,7 +8053,7 @@ async function updateStudentBillingCategory(env, body) {
 async function updateStudentStatus(env, body) {
   const accountRef = clean(body.AccountRef || body.accountRef || body.AdmissionNo || body.admissionNo);
   const status = clean(body.Status || body.status);
-  const allowed = ['Active', 'Enrolled', 'On Leave', 'Suspended', 'Inactive', 'Withdrawn', 'Expelled', 'Graduated', 'Transferred', 'Left School', 'Deceased'];
+  const allowed = STUDENT_STATUSES;
   if (!accountRef) {
     const err = new Error('Account/admission number is required.');
     err.status = 400;
@@ -8021,14 +8073,14 @@ async function updateStudentStatus(env, body) {
   const saved = await saveStudent(env, {
     ...student,
     Status: normalizedStatus,
-    StatusReason: clean(body.StatusReason || body.statusReason || body.Reason || body.reason),
-    StatusEffectiveDate: clean(body.StatusEffectiveDate || body.statusEffectiveDate) || nowIso().slice(0, 10),
-    ExpectedReturnDate: clean(body.ExpectedReturnDate || body.expectedReturnDate),
+    StatusReason: clean(body.StatusReason ?? body.statusReason ?? body.Reason ?? body.reason ?? student.StatusReason),
+    StatusEffectiveDate: clean(body.StatusEffectiveDate || body.statusEffectiveDate) || (lower(student.Status) === lower(normalizedStatus) ? clean(student.StatusEffectiveDate) : '') || new Date(Date.now() + 3600000).toISOString().slice(0, 10),
+    ExpectedReturnDate: clean(body.ExpectedReturnDate ?? body.expectedReturnDate ?? student.ExpectedReturnDate),
     StatusUpdatedBy: clean(body.UpdatedBy || body.updatedBy) || 'School Office',
     StatusUpdatedAt: nowIso(),
     UpdatedAt: nowIso()
-  });
-  return { ok: true, message: `Student status saved; ${Number(saved.__academicStatusMembershipCount || 0)} active-period membership(s) updated. Scores, attendance, payments and history were preserved.${['Active', 'Enrolled'].includes(saved.Status) && saved.AcademicEnrollmentStatus !== 'Active' ? ' No previous placement was restored; use Academic Management to arrange the current allocation.' : ''}`, student: saved };
+  }, { synchronizeStudentStatus: true });
+  return { ok: true, message: saved.__statusUnchanged ? 'Student status is already up to date.' : `Student status saved; ${Number(saved.__academicStatusMembershipCount || 0)} active-period membership(s) updated. Scores, attendance, payments and history were preserved.${['Active', 'Enrolled'].includes(saved.Status) && saved.AcademicEnrollmentStatus !== 'Active' ? ' No previous placement was restored; use Academic Management to arrange the current allocation.' : ''}`, student: saved };
 }
 
 const DEFAULT_CHART_OF_ACCOUNTS = [
@@ -11724,12 +11776,14 @@ async function optimizeFirestoreData(env, body) {
     rows.forEach((row) => {
       const email = lower(row.ParentEmail || row.VerificationEmail || row.Email);
       const data = {
-        ...withoutFirestoreMetadata(row),
         ...(email ? { ParentEmailNormalized: email } : {}),
         OptimizationVersion: 1,
         OptimizedAt: nowIso()
       };
-      writes.push({ collectionPath: row.__scopePath || collection, documentId: row.__id, data });
+      if (row.OptimizationVersion === 1 && (!email || row.ParentEmailNormalized === email)) return;
+      if (!row.__id || !row.__updateTime) throw Object.assign(new Error('A learner or applicant revision is missing. Refresh before optimizing records.'), { status: 409 });
+      writes.push({ collectionPath: row.__scopePath || collection, documentId: row.__id, data,
+        updateTime: row.__updateTime, updateMask: Object.keys(data), literalDocumentId: true });
     });
   }
   for (let index = 0; index < writes.length; index += 450) {

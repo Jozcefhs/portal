@@ -1,3 +1,4 @@
+import * as placementGuards from '../functions/lib/academic-placement-guards.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import vm from 'node:vm';
@@ -14,7 +15,7 @@ import { academicPolicyIssues, defaultAcademicPolicy } from '../functions/lib/ac
 const source = await readFile(new URL('../functions/lib/academic-management.js', import.meta.url), 'utf8');
 const clone = value => JSON.parse(JSON.stringify(value));
 const period = { SessionId: 'session', TermId: 'term', ClassId: 'class', ArmId: 'arm' };
-const scope = { BranchId: 'main', SchoolSection: 'secondary', Status: 'Active' };
+const scope = { __updateTime: 'structure-1', BranchId: 'main', SchoolSection: 'secondary', Status: 'Active' };
 const teacher = { edition: 'school', role: 'Teacher', username: 'teacher', allowedSections: ['academics'] };
 const admin = { ...teacher, role: 'Principal', username: 'principal' };
 const ict = { ...teacher, role: 'ICT', username: 'ict' };
@@ -47,7 +48,7 @@ function harness({ scores = [score], termResults = [], realAuthorization = false
   const queries = [];
   let revision = 1;
   const keyFor = collection => Object.keys(management.ACADEMIC_MANAGEMENT_COLLECTIONS).find(key => management.ACADEMIC_MANAGEMENT_COLLECTIONS[key] === collection);
-  const context = vm.createContext({ ...management, ...results, ...studentStatus, ...armTransfer, crypto: webcrypto, TextEncoder, TextDecoder, safeScopeId: String,
+  const context = vm.createContext({ ...placementGuards, ...management, ...results, ...studentStatus, ...armTransfer, crypto: webcrypto, TextEncoder, TextDecoder, safeScopeId: String,
     enforceActorBranch, academicPolicyIssues,
     getSchoolStructure: async () => ({ ActiveBranchId: 'main', Branches: [{ Id: 'main' }, { Id: 'other' }] }),
     getDocuments: async (_env, collection, ids) => ids.map(id => clone((state[keyFor(collection)] || []).find(row => (row.RecordId || row.SheetId) === id) || null)),

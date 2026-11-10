@@ -1,3 +1,4 @@
+import * as placementGuards from '../functions/lib/academic-placement-guards.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -8,7 +9,7 @@ import * as outcomes from '../functions/lib/academic-session-outcomes.js';
 import * as studentStatus from '../functions/lib/student-academic-status.js';
 
 const source = await readFile(new URL('../functions/lib/academic-management.js', import.meta.url), 'utf8');
-const scope = { BranchId: 'main', SchoolSection: 'secondary' };
+const scope = { __updateTime: 'structure-1', BranchId: 'main', SchoolSection: 'secondary' };
 const period = { SessionId: 'session', TermId: 'term' };
 const identity = { ...scope, ...period, StudentRef: 'TEST/26/268' };
 const actor = { role: 'Principal', username: 'admin', edition: 'school', allowedSections: ['academics'] };
@@ -64,8 +65,8 @@ function harness({ unassigned = false } = {}) {
   const writes = [];
   const store = Object.fromEntries(Object.entries(state).map(([key, rows]) => [management.ACADEMIC_MANAGEMENT_COLLECTIONS[key], rows]));
   store[profiles[0].__scopePath] = profiles;
-  const id = row => row.RecordId || row.MembershipId || row.MovementId || row.AuditId || row.__id;
-  const context = vm.createContext({ ...management, ...outcomes, ...studentStatus, crypto: webcrypto, TextEncoder, TextDecoder, safeScopeId: String,
+  const id = row => row.RecordId || row.MembershipId || row.MovementId || row.AuditId || row.__id || row.ArmId || row.ClassId;
+  const context = vm.createContext({ ...placementGuards, ...management, ...outcomes, ...studentStatus, crypto: webcrypto, TextEncoder, TextDecoder, safeScopeId: String,
     listSchoolCollection: async () => clone(profiles), loadOrganizationNameProfile: async () => ({}),
     batchCommitDocuments: async (_env, batch) => {
       for (const write of batch) {
@@ -135,6 +136,16 @@ test('a concurrent profile change prevents allocation from overwriting a newer p
   await assert.rejects(h.allocate(), { code: 'ACADEMIC_WRITE_CONFLICT' });
   assert.equal(h.state.studentMemberships[0].ArmId, '');
   assert.equal(h.writes.length, 0);
+});
+
+test('initial allocation cannot commit after its destination class or arm is removed', async () => {
+  for (const key of ['classes', 'arms']) {
+    const h = harness({ unassigned: true }), commit = h.context.batchCommitDocuments;
+    h.context.batchCommitDocuments = async (...args) => { h.state[key].splice(0, 1); return commit(...args); };
+    await assert.rejects(h.allocate(), { code: 'ACADEMIC_WRITE_CONFLICT' });
+    assert.equal(h.state.studentMemberships[0].ArmId, '');
+    assert.equal(h.writes.length, 0);
+  }
 });
 
 test('student register hides only explicitly superseded archives while retaining other history', async () => {

@@ -61,7 +61,8 @@ export async function loadAcademicClassroomScoreRegister(env, scope, state, user
   ]);
   const report = buildAcademicClassScoreRegister({ ...state, assessmentScheme: scheme,
     studentMemberships: roster, studentScores: scores, scoreSheets: sheets.filter(matches),
-    students: labels.map(row => ({ StudentRef: row.StudentRef, StudentName: row.RecordLabel })) }, input);
+    students: labels.map(row => ({ StudentRef: row.StudentRef, StudentName: row.RecordLabel, Status: row.StudentStatus,
+      BranchId: scope.branchId, SchoolSection: scope.section })) }, input);
   return { ...report, ArmId: arm.ArmId, ArmName: clean(arm.Name),
     ClassroomName: `${report.ClassName} / ${clean(arm.Name)}`, ReadOnly: true };
 }

@@ -1,3 +1,4 @@
+import * as placementGuards from '../functions/lib/academic-placement-guards.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -17,7 +18,7 @@ const source = await readFile(new URL('../functions/lib/academic-management.js',
 const clone = value => JSON.parse(JSON.stringify(value));
 const branch = 'garden-primary', section = 'primary';
 const actor = { role: 'Super Admin', username: 'test-admin', edition: 'school', branchId: 'all', schoolSectionAccess: 'All', allowedSections: ['academics'] };
-const scope = { BranchId: branch, SchoolSection: section };
+const scope = { __updateTime: 'structure-1', BranchId: branch, SchoolSection: section };
 const period = { SessionId: 'session', TermId: 'term' };
 const reference = 'TEST/25/0204';
 const profilePath = schoolScope.scopedCollectionPath('students', branch, section);
@@ -43,7 +44,7 @@ function harness() {
     DisplayName: 'Different pupil', GuardianEmail: 'private@example.invalid', ParentAccountId: 'private-parent', ClassName: 'Grade 9', Status: 'Active' };
   seed('schoolBranches/main/sections/secondary/students', foreign);
   seed('academicStudentScores', { RecordId: 'preserved-score', BranchId: 'main', StudentRef: reference, Score: 91 });
-  const context = vm.createContext({ ...management, ...outcomes, ...studentStatus, ...schoolScope, ...branchScope,
+  const context = vm.createContext({ ...placementGuards, ...management, ...outcomes, ...studentStatus, ...schoolScope, ...branchScope,
     normalizeClassKey, formatPersonName, checkClassroomRemovals, branchClassCatalogueRevisionWrite, branchArmNameKey, crypto: webcrypto, TextEncoder, TextDecoder,
     readBranchClassCatalogueRevision: async () => clone(rows('branchSchoolSettings').find(row => row.__id === branch) || null),
     getSchoolStructure: async () => ({ ActiveBranchId: 'main', Branches: [{ Id: 'main' }, { Id: branch }], Sections: ['primary', 'secondary'] }),
@@ -66,7 +67,7 @@ function harness() {
         const list = rows(write.collectionPath), index = list.findIndex(r => (r.RecordId || r.__id) === write.documentId);
         assert.equal(write.data?.BranchId || list[index]?.BranchId, branch, 'never mutate a foreign branch');
         if (write.operation === 'delete') { list.splice(index, 1); continue; }
-        const next = { ...clone(write.data), __id: write.documentId, __updateTime: 'v2' };
+        const next = { ...(write.updateMask ? list[index] : {}), ...clone(write.data), __id: write.documentId, __updateTime: 'v2' };
         if (index < 0) seed(write.collectionPath, next); else list[index] = next;
       }
       writes.push(...clone(batch));

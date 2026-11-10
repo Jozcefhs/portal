@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import * as management from '../functions/lib/academic-management.js';
+import * as studentRoster from '../functions/lib/academic-student-status-roster.js';
 import * as scorebook from '../functions/lib/academic-scorebook.js';
 import { safeScopeId, scopedCollectionPath } from '../functions/lib/school-scope.js';
 import { normalizeClassKey } from '../functions/lib/class-names.js';
@@ -51,7 +52,7 @@ function fixture() {
     academicScoreImports: [row({ ImportId: 'old-import' })]
   };
   const read = async (_env, collection, options) => { calls.push({ collection, options }); return structuredClone(records[collection] || []); };
-  const context = vm.createContext({ ...management, ...scorebook, safeScopeId, scopedCollectionPath, normalizeClassKey, TextEncoder, TextDecoder,
+  const context = vm.createContext({ ...management, ...studentRoster, ...scorebook, safeScopeId, scopedCollectionPath, normalizeClassKey, TextEncoder, TextDecoder,
     academicTeacherScoreClassrooms, loadAcademicClassroomScoreRegister, buildAcademicClassScoreRegister,
     loadAcademicResultsReadiness:async(_env,_state,scope)=>({Scope:scope,Blockers:[],Warnings:[],Counts:{Students:0}}),
     getSchoolStructure: async () => ({ ActiveBranchId: 'main', Branches: [{ Id: 'main' }], Sections: ['primary', 'secondary'] }),
@@ -261,7 +262,7 @@ test('selected-class result loading fetches only named pupils, preserving marks 
   const result=await f.context.bootstrapAcademicManagement({},actor,{...input,View:'results',WorkspaceLoadMode:'records',RecordClassId:'c',SessionId:'s',TermId:'t'});
   const reads=f.calls.filter(call=>/students$/.test(call.collection));
   assert.equal(reads.length,1);
-  assert.deepEqual(JSON.parse(JSON.stringify(reads[0].options.filters)),[{field:'AdmissionNo',op:'in',value:['TEST/1']}]);
+  assert.deepEqual(JSON.parse(JSON.stringify(reads[0].options.filters)),[{field:'AdmissionNo',op:'in',value:['TEST/1','test/1']}]);
   assert.equal(result.students[0].StudentName,'Example Pupil');
   assert.equal(f.writes.length,0);assert.deepEqual(f.records,before);
 });

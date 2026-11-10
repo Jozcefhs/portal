@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 import * as scorebook from '../functions/lib/academic-scorebook.js';
-import { safeScopeId } from '../functions/lib/school-scope.js';
+import { safeScopeId, scopedCollectionPath } from '../functions/lib/school-scope.js';
+import * as studentRoster from '../functions/lib/academic-student-status-roster.js';
 import { academicCbtScoreSources } from '../functions/lib/academic-cbt-multiserver.js';
 import { buildAcademicClassScoreRegister } from '../functions/lib/academic-class-score-register.js';
 import { ACADEMIC_MANAGEMENT_COLLECTIONS as collections, academicCbtScoreBatchDigest } from '../functions/lib/academic-management.js';
@@ -27,7 +28,8 @@ function fixture({ realSheetIds = false, assessment = scheme, environment = env,
   for(const ref of ['DCA/001','DCA/002','DCA/003']) put(collections.studentMemberships,ref.replace('/','-'),{
     ...scope, RecordId:ref.replace('/','-'), StudentRef:ref, Status:'Active'
   });
-  const ctx = vm.createContext({...scorebook, academicCbtScoreSources, safeScopeId,
+  const ctx = vm.createContext({...scorebook, ...studentRoster, academicCbtScoreSources, safeScopeId, scopedCollectionPath,
+    queryCollectionPages:async(_env,col)=>rows(col),
     crypto, TextEncoder,TextDecoder,btoa,atob,console,structuredClone,
     setTimeout:(callback,delay)=>{ delays.push(delay); return setTimeout(callback,0); },
     getDocument:async(_env,col,id)=>structuredClone(db.get(`${col}/${id}`) || null),

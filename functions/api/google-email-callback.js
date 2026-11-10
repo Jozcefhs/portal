@@ -3,11 +3,11 @@ import {
   exchangeGoogleAuthorizationCode,
   fetchVerifiedGoogleEmail,
   googleOAuthCredentials,
-  revokeGoogleRefreshToken,
   sha256Base64Url,
   unprotectPkceVerifier
 } from '../lib/google-email-oauth.js';
 import { requirePlatformFirestoreEnv } from '../lib/platform-firestore.js';
+import { emailProviderBranchId } from '../lib/branch-email-provider.js';
 import {
   assertTenantEmailProjectAssignment,
   loadStoredTenantEmailRegistration,
@@ -23,7 +23,10 @@ function safeCode(error, fallback = 'GOOGLE_EMAIL_CONNECTION_FAILED') {
 }
 
 export function shouldRevokeIssuedGoogleToken(refreshToken, retained, error = {}) {
-  return Boolean(clean(refreshToken) && retained !== true && error?.refreshTokenHandled !== true);
+  // Google revocation can invalidate every token for this user's project
+  // grant, including working organisation/other-branch connections. A failed
+  // setup discards the unstaged token; it must never revoke a shared grant.
+  return false;
 }
 
 function safeReturnOrigin(record, request, env) {
@@ -45,6 +48,10 @@ function setupRedirect(record, request, env, status, message) {
   const target = new URL('/setup.html', safeReturnOrigin(record, request, env));
   target.searchParams.set('emailConnection', status === 'connected' ? 'connected' : 'error');
   target.searchParams.set('emailMessage', clean(message).slice(0, 180));
+  if (record?.BranchId) {
+    target.searchParams.set('scope', 'branch');
+    target.searchParams.set('branch', emailProviderBranchId(record.BranchId));
+  }
   return Response.redirect(target.href, 303);
 }
 
@@ -170,6 +177,7 @@ export async function onRequestGet({ request, env }) {
       throw error;
     }
     await assertTenantEmailProjectAssignment(platformEnv, registration);
+    registration.__emailBranchId = emailProviderBranchId(record.BranchId);
     const { clientId, clientSecret } = googleOAuthCredentials(env);
     const verifier = await unprotectPkceVerifier(
       clientSecret,
@@ -205,9 +213,6 @@ export async function onRequestGet({ request, env }) {
         : 'Google email connected. The secure tenant deployment is now queued.'
     );
   } catch (error) {
-    if (shouldRevokeIssuedGoogleToken(issuedRefreshToken, refreshTokenRetained, error)) {
-      await revokeGoogleRefreshToken(issuedRefreshToken).catch(() => null);
-    }
     if (!record && error?.oauthRecord) record = error.oauthRecord;
     if (platformEnv && stateHash && record && claimed && error?.failureStatePersisted !== true) {
       await markStateFailed(platformEnv, stateHash, safeCode(error)).catch(() => null);

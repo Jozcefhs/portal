@@ -10,6 +10,7 @@ import { academicCbtScoreSources } from './academic-cbt-multiserver.js';
 import { academicResultWithWeightedComponents } from './academic-result-marks.js';
 import { academicResultWithSubjectLabels } from './academic-result-subject-labels.js';
 import { buildAcademicClassScoreRegister } from './academic-class-score-register.js';
+import { activeAcademicStudentRoster, academicRosterWithStudentStatuses } from './academic-student-status-roster.js';
 import { academicTeacherScoreClassrooms, loadAcademicClassroomScoreRegister } from './academic-classroom-score-register.js';
 import { commitAcademicOfferingSetup } from './academic-compulsory-subjects.js';
 import { loadAcademicAuditLog } from './academic-audit-log.js';
@@ -21,6 +22,7 @@ import { commitAcademicResultBatch } from './academic-result-batch-commit.js';
 import { handleDiary } from './academic-diary.js';
 import { commitAcademicSubmission, submissionSettings, submissionPaymentAction } from './academic-submissions.js';
 import { checkClassroomRemovals } from './academic-classroom-removal.js';
+import { appendAcademicPlacementGuards, academicPlacementGuardWrites } from './academic-placement-guards.js';
 import { academicAttendanceId, findExistingAttendance, attendanceCorrectionMatches } from './academic-attendance-identity.js';
 import { isAcademicArmTransfer, preserveAcademicArmSubjects, planAcademicArmDataTransfer } from './academic-arm-transfer.js';
 import { academicCarriedScoreSnapshot } from './academic-carried-score-review.js';
@@ -616,7 +618,8 @@ function recordId(row = {}) {
 
 function statusActive(row) {
   if (!row || typeof row !== 'object') return false;
-  return !['archived', 'inactive', 'closed', 'withdrawn', 'cancelled'].includes(lower(row.Status));
+  return row.ActiveRosterExcluded !== true && !['archived', 'inactive', 'closed', 'withdrawn', 'cancelled',
+    'on leave', 'suspended', 'expelled', 'graduated', 'transferred', 'left school', 'deceased'].includes(lower(row.Status));
 }
 
 export function academicSeniorCoreSubjectIds(departments = []) {
@@ -2124,6 +2127,7 @@ function displayStaff(rows = []) {
 function displayStudents(rows = [], classes = []) {
   return rows.map((row) => ({
     StudentRef: studentReference(row),
+    Status: clean(row.Status || row.status), BranchId: clean(row.BranchId || 'main'),
     StudentName: clean(row.DisplayName || row.ApplicantName || row.StudentName || studentReference(row)),
     AcademicClassId: academicStudentClassId(row, classes),
     AcademicArmId: clean(row.AcademicArmId), AcademicDepartmentCode: clean(row.AcademicDepartmentCode),
@@ -2401,6 +2405,7 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}, sc
       && row.ClassId === teacherWorkspace.ClassId && row.ArmId === teacherWorkspace.ArmId);
     people.students = await academicResultBatchRecipients(env,scope,roster);
   }
+  rawState.studentMemberships = academicRosterWithStudentStatuses(rawState.studentMemberships || [], people.students || [], rawState);
   let summary = loadOptions.classRegister || teacherDirect ? academicManagementSummary(rawState)
     : await loadAcademicManagementSummary(env, scope, rawState, focusedStateKeys);
   let state = rawState;
@@ -2626,6 +2631,7 @@ export async function saveAcademicManagementRecord(env, user = {}, input = {}) {
     const projected = { ...state, studentMemberships: [...state.studentMemberships.filter((row) => recordId(row) !== recordId(record)), record] };
     const compatibility = studentCompatibilityWrite(people, projected, record);
     if (compatibility) writes.push(compatibility);
+    appendAcademicPlacementGuards(writes, state, scope);
   }
   try {
     if (type === 'offering') await commitAcademicOfferingSetup(env,writes,[record],state,user);
@@ -3844,6 +3850,7 @@ export async function bulkAllocateAcademicStudents(env, user = {}, input = {}) {
   }
   const allocated = created + completed;
   if (allocated) {
+    appendAcademicPlacementGuards(writes, state, scope);
     if (allocationGuard) writes.push({
       collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.teacherAllocations,
       documentId: recordId(allocationGuard), data: { Status: allocationGuard.Status }, updateMask: ['Status'],
@@ -4067,6 +4074,7 @@ export async function bulkImportAcademicStudentMemberships(env, user = {}, input
   }
 
   if (imported.length || createdProfiles.length) {
+    appendAcademicPlacementGuards(writes, state, scope);
     writes.push(auditWrite(user, 'BULK IMPORT', 'studentmembership', {
       BranchId: scope.branchId, SchoolSection: scope.section,
       SessionId: sessionId, TermId: termId, MembershipId: `import-${Date.now()}`
@@ -4380,7 +4388,7 @@ export async function reviewAcademicSubjectChange(env, user = {}, input = {}) {
   const superseded = permissions.fullAcademicAccess && decision === 'Approve' && isTransfer
     ? supersededAcademicRequests(academicDuplicateMemberships(state, record), record, movement, scope, user,
       note, 'ICT transfer approval') : { resolutions: new Map(), writes: [] };
-  await commitAcademicBatch(env, [
+  await commitAcademicBatch(env, appendAcademicPlacementGuards([
     ...resultGuards,
     ...superseded.writes,
     ...(decision === 'Approve' && isTransfer ? academicTransferDuplicateWrites(state,
@@ -4392,7 +4400,7 @@ export async function reviewAcademicSubjectChange(env, user = {}, input = {}) {
     auditWrite(user, `${changeLabel.toUpperCase()} ${resolved.Status.toUpperCase()}`, 'studentmembership', record,
       `${existing.StudentRef}: ${resolved.Status.toLowerCase()} ${changeLabel} requested by ${request.RequestedBy}. Request: ${request.Reason}. Review: ${note}. ${armTransfer && decision === 'Approve' ? 'Saved subjects, marks, results and attendance moved with the student; no student was archived.' : 'Existing marks preserved.'}`,
       `${actorName(user)} ${resolved.Status.toLowerCase()} ${request.RequestedBy}'s ${changeLabel} request for ${existing.StudentRef}. ${decision === 'Approve' ? armTransfer ? 'The student and their saved data are now in the destination arm.' : 'The requested placement and subject choices are now active; existing drafts require recalculation.' : 'The current placement, subjects and scores were not changed.'}`)
-  ], 'The student or request changed during review. Reload before trying again.', { allowLargeAtomicBatch: armTransfer });
+  ], state, scope), 'The student or request changed during review. Reload before trying again.', { allowLargeAtomicBatch: armTransfer });
   const response = await bootstrapAcademicManagement(env, user, { ...input, BranchId: scope.branchId, SchoolSection: scope.section, View: 'students' });
   response.message = `${existing.StudentRef}: ${changeLabel} ${resolved.Status.toLowerCase()}. ${decision === 'Approve' ? armTransfer ? 'Saved subjects, marks, results and attendance moved with the student. The same active membership was retained; no student was archived.' : `Old scores remain under their original classrooms and subjects. ${isTransfer ? 'Complete destination subject choices under Student subjects. ' : ''}Assess the new subjects and recalculate draft results separately.` : 'Current placement, subjects and scores are unchanged.'}`;
   return response;
@@ -4534,6 +4542,7 @@ export async function manageAcademicStudentMembership(env, user = {}, input = {}
   const compatibility = studentCompatibilityWrite(people, projected, record);
   if (compatibility) writes.push(compatibility);
   const message = `${movement.MovementType} recorded online for ${existing.StudentRef}.${armTransfer ? ' Saved subjects, marks, results and attendance moved with the student; no student was archived.' : ''}${superseded.resolutions.size ? ` ${superseded.resolutions.size} pending request(s) superseded by ${actionLabel}; the original requests are preserved in Movement history.` : ''}${resetSubjects ? ' Previous subject selections were disconnected; existing scores and history were preserved. Complete the destination Core, Trade and Optional choices under Student subjects.' : ''}`;
+  appendAcademicPlacementGuards(writes, state, scope);
   if (options.prepareOnly === true) return { writes, record, pendingApproval: false, message };
   try {
     await batchCommitDocuments(env, writes, { allowLargeAtomicBatch: armTransfer });
@@ -4635,9 +4644,17 @@ export async function saveStudentProfileAcademicPlacement(env, user, before, aft
   profileWrite.updateTime = before.__updateTime;
   const writes = plan.writes.filter(write => write.collectionPath !== before.__scopePath || write.documentId !== before.__id);
   writes.push(profileWrite);
+  if (!plan.pendingApproval) {
+    appendAcademicPlacementGuards(writes, state, scope);
+    // The profile can acquire a placement that its retained membership already
+    // had; it still shares the destination's deletion fence.
+    for (const guard of academicPlacementGuardWrites(state, plan.record, scope)) {
+      if (!writes.some(write => write.collectionPath === guard.collectionPath && write.documentId === guard.documentId)) writes.push(guard);
+    }
+  }
   const committed = await commitAcademicBatch(env, writes, 'This student, membership or assessment history changed while saving. Refresh and try again; no partial changes were saved.', { allowLargeAtomicBatch: true });
   return { student: { ...profileWrite.data, __id: before.__id, __scopePath: before.__scopePath,
-    __updateTime: committed?.writeResults?.[writes.length - 1]?.updateTime || '' },
+    __updateTime: committed?.writeResults?.[writes.indexOf(profileWrite)]?.updateTime || '' },
     pendingApproval: plan.pendingApproval === true, message: plan.message };
 }
 
@@ -5819,8 +5836,9 @@ export async function saveAcademicStudentAttendance(env, user = {}, input = {}) 
     const version = lesson ? findById(state.timetableVersions, lesson.VersionId) : null;
     if (!lesson || !version || lower(version.Status) !== 'published') throw failure('Choose a lesson from the published timetable.');
   }
-  const memberships = state.studentMemberships.filter((row) => statusActive(row)
-    && row.SessionId === session.SessionId && row.TermId === term.TermId && row.ClassId === schoolClass.ClassId && row.ArmId === arm.ArmId);
+  const rosterProfiles = new Map();
+  const memberships = await academicOperationalStudentRoster(env, scope, state, state.studentMemberships.filter((row) => statusActive(row)
+    && row.SessionId === session.SessionId && row.TermId === term.TermId && row.ClassId === schoolClass.ClassId && row.ArmId === arm.ArmId), rosterProfiles);
   const attendanceRows = normalizeAcademicAttendanceEntries(input.Entries, memberships.map((row) => row.StudentRef));
   const correctionReason = clean(input.CorrectionReason).slice(0, 500);
   const registerDiscriminator = mode === 'Period' ? clean(input.TimetableEntryId) : mode === 'Subject' ? clean(input.SubjectId) : 'daily';
@@ -5895,8 +5913,7 @@ export async function saveAcademicStudentAttendance(env, user = {}, input = {}) 
   }, 'attendance', writes);
   let absenceNotifications = 0;
   if (absentRecords.length) {
-    const people = await loadPeople(env, user, scope, { staff: false }).catch(() => ({ students: [] }));
-    absenceNotifications = await notifyAcademicAbsences(env, people.students || [], absentRecords, {
+    absenceNotifications = await notifyAcademicAbsences(env, [...rosterProfiles.values()].filter(Boolean), absentRecords, {
       scope, actorName: actorName(user), actorUsername: actorUsername(user)
     }).catch(() => 0);
   }
@@ -6043,6 +6060,18 @@ function academicScoreRoster(state, candidate) {
     && (row.SubjectIds || []).includes(candidate.SubjectId));
 }
 
+async function academicOperationalStudentRoster(env, scope, state, memberships, cache = null) {
+  const profiles = cache || new Map();
+  const key = ref => `${scope.branchId}|${scope.section}|${lower(ref)}`;
+  const missing = memberships.filter(row => !profiles.has(key(row.StudentRef)));
+  if (missing.length) {
+    const rows = await academicResultBatchRecipients(env, scope, missing);
+    for (const membership of missing) profiles.set(key(membership.StudentRef), null);
+    for (const row of rows) profiles.set(key(studentReference(row)), row);
+  }
+  return activeAcademicStudentRoster(memberships, [...profiles.values()].filter(Boolean), state);
+}
+
 export function academicScoreTeacherAllocations(state, candidate, options = {}) {
   const classWideSubjectAuthority = options.classWideSubjectAuthority === true;
   return state.teacherAllocations.filter((row) => statusActive(row)
@@ -6113,10 +6142,11 @@ async function academicScoreSheetContext(env, user, input, capability = 'canEnte
   // Submitted built-in CBT evidence is not lost because subject choices or
   // downloaded arm lists changed after the sitting. Class membership is still
   // verified in this branch/period, and existing marks are protected per cell.
-  const roster = options.allowUnassignedCbt === true ? state.studentMemberships.filter(row => statusActive(row)
+  const candidates = options.allowUnassignedCbt === true ? state.studentMemberships.filter(row => statusActive(row)
     && row.SessionId === candidate.SessionId && row.TermId === candidate.TermId
     && row.ClassId === candidate.ClassId && (!candidate.ArmId || clean(row.ArmId) === candidate.ArmId))
     : academicScoreRoster(state, candidate);
+  const roster = await academicOperationalStudentRoster(env, scope, state, candidates, options.rosterProfiles);
   if (!roster.length) throw failure('No students in this classroom are allocated to the selected subject.', 409, 'ACADEMIC_SCORE_ROSTER_EMPTY');
   let scheme;
   if (existing) {
@@ -6736,7 +6766,7 @@ export async function batchReviewAcademicScores(env, user = {}, input = {}) {
     throw failure('Choose Submit or Approve and between 1 and 25 subject sheets per batch.');
   }
   if (!clean(input.SessionId) || !clean(input.TermId) || !clean(input.SchoolSection)) throw failure('Choose a school section, session and term.');
-  const outcomes = [], seen = new Set();
+  const outcomes = [], seen = new Set(), rosterProfiles = new Map();
   for (const item of items) {
     const key = `${clean(item.SheetId)}|${clean(item.ComponentId)}`;
     if (seen.has(key)) continue;
@@ -6749,7 +6779,7 @@ export async function batchReviewAcademicScores(env, user = {}, input = {}) {
     try {
       if (!request.SheetId || !request.ClassId || !request.ArmId || !request.SubjectId) throw failure('Choose a saved classroom subject sheet.');
       const context = await academicScoreSheetContext(env,user,request,'canReviewScores',
-        ACADEMIC_SCOREBOOK_STATE_KEYS.filter(key=>!['scoreImports','scoreSyncBatches'].includes(key)),{workspaceRead:true});
+        ACADEMIC_SCOREBOOK_STATE_KEYS.filter(key=>!['scoreImports','scoreSyncBatches'].includes(key)),{workspaceRead:true,rosterProfiles});
       const result = await changeAcademicScoreSheetStatus(env,user,request,context);
       const saved = await getDocument(env,ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSheets,request.SheetId);
       outcomes.push({SheetId:request.SheetId,ComponentId:request.ComponentId,ok:true,message:result.message,sheet:publicRecord(saved)});
@@ -6955,9 +6985,9 @@ async function calculateAcademicResultsForType(env, user = {}, input = {}, resul
   const { scope, state, session, term, schoolClass, arm, policy, policyRevisionIds, policyFingerprint } = context;
   const midTerm = lower(resultType) === 'mid-term';
   if (!midTerm && (input.NotTaughtSubjectIds || []).length) throw failure('Subjects not taught can be excluded only from a mid-term result.');
-  const memberships = state.studentMemberships.filter((row) => statusActive(row)
+  const memberships = await academicOperationalStudentRoster(env, scope, state, state.studentMemberships.filter((row) => statusActive(row)
     && row.SessionId === session.SessionId && row.TermId === term.TermId
-    && row.ClassId === schoolClass.ClassId && row.ArmId === arm.ArmId);
+    && row.ClassId === schoolClass.ClassId && row.ArmId === arm.ArmId));
   if (memberships.length > 200) throw failure('Calculate at most 200 student results in one classroom batch.');
   const existingResults = state.termResults.filter((row) => row.SessionId === session.SessionId && row.TermId === term.TermId
     && row.ClassId === schoolClass.ClassId && row.ArmId === arm.ArmId
@@ -7123,13 +7153,14 @@ async function academicResultBatchRecipients(env, scope, results) {
   const references = uniqueIds(results.map(row=>row.StudentRef)), students = [];
   for (let offset=0;offset<references.length;offset+=10) {
     const refs=references.slice(offset,offset+10);
-    const options={filters:[{field:'AdmissionNo',op:'in',value:refs}],pageSize:100,maxRows:1000};
+    const referenceVariants = values => [...new Set(values.flatMap(value => [value, lower(value), clean(value).toUpperCase()]))];
+    const options={filters:[{field:'AdmissionNo',op:'in',value:referenceVariants(refs)}],pageSize:100,maxRows:1000};
     const rows=await queryCollectionPages(env,scopedCollectionPath('students',scope.branchId,scope.section),options);
     students.push(...rows.filter(row=>lower(row.BranchId || scope.branchId)===lower(scope.branchId)
       && lower(row.SchoolSection || scope.section)===lower(scope.section)));
     const missing=refs.filter(ref=>!students.some(row=>lower(studentReference(row))===lower(ref)));
     if (missing.length) students.push(...scopedAcademicRows((await queryCollectionPages(env,'students',{
-      ...options,filters:[{field:'AdmissionNo',op:'in',value:missing},
+      ...options,filters:[{field:'AdmissionNo',op:'in',value:referenceVariants(missing)},
         ...(scope.branchId==='main'?[]:[{field:'BranchId',op:'==',value:scope.branchId}])]
     })).filter(row=>lower(row.BranchId || 'main')===lower(scope.branchId)),scope));
   }
@@ -7753,6 +7784,7 @@ export async function changeAcademicPromotionStatus(env, user = {}, input = {}) 
     'PROMOTION', decision, target.toUpperCase(), reason || `${existing.Status} -> ${target}`));
   writes.push(auditWrite(user, target.toUpperCase(), 'promotionDecision', decision,
     reason || `${existing.Status} -> ${target}${destination ? '; destination membership created' : ''}`));
+  appendAcademicPlacementGuards(writes, context.state, context.scope);
   await commitAcademicBatch(env, writes, 'This promotion decision changed while its status was being updated. Reload and try again.');
   return academicOperationalResponse(env, user, input, context.scope,
     `${decision.StudentRef} promotion decision moved to ${target}${destination ? ' and the next-session membership was created' : ''}.`);

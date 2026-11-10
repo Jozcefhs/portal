@@ -1,0 +1,41 @@
+name: Branch email delivery checks
+
+on:
+  push:
+    branches: [main, codex/hospital-edition]
+    paths:
+      - "functions/**/*email*.js"
+      - "functions/lib/cloudflare-pages-secrets.js"
+      - "functions/lib/tenant-control-plane.js"
+      - "functions/lib/tenant-project-pool.js"
+      - "functions/lib/managed-organisations.js"
+      - "js/setup.js"
+      - "tests/*email*.test.mjs"
+      - ".github/workflows/email-delivery-readiness.yml"
+  pull_request:
+    paths:
+      - "functions/**/*email*.js"
+      - "functions/lib/cloudflare-pages-secrets.js"
+      - "functions/lib/tenant-control-plane.js"
+      - "functions/lib/tenant-project-pool.js"
+      - "functions/lib/managed-organisations.js"
+      - "js/setup.js"
+      - "tests/*email*.test.mjs"
+      - ".github/workflows/email-delivery-readiness.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: node --test tests/*email*.test.mjs tests/tenant-project-pool.test.mjs tests/deployment-workflows.test.mjs

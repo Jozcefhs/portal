@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import * as management from '../functions/lib/academic-management.js';
+import * as studentRoster from '../functions/lib/academic-student-status-roster.js';
 import * as scorebook from '../functions/lib/academic-scorebook.js';
 import { safeScopeId, scopedCollectionPath } from '../functions/lib/school-scope.js';
 import { normalizeClassKey } from '../functions/lib/class-names.js';
@@ -30,7 +31,7 @@ function backendFixture() {
     return structuredClone((records[collection]||[]).filter(record=>(options.filters||[]).every(filter=>
       filter.op==='in' ? filter.value.includes(record[filter.field]) : record[filter.field]===filter.value)));
   };
-  const context=vm.createContext({...management,...scorebook,safeScopeId,scopedCollectionPath,normalizeClassKey,academicTeacherScoreClassrooms,TextEncoder,TextDecoder,
+  const context=vm.createContext({...management,...studentRoster,...scorebook,safeScopeId,scopedCollectionPath,normalizeClassKey,academicTeacherScoreClassrooms,TextEncoder,TextDecoder,
     getSchoolStructure:async()=>({ActiveBranchId:'main',Branches:[{Id:'main'}],Sections:['primary','secondary']}),enforceActorBranch:(_actor,branch)=>branch,
     queryCollection:read,queryCollectionPages:read,listBranchCollection:read,listSchoolCollection:read,getDocument:async()=>({}),
     batchCommitDocuments:async(_env,changes)=>writes.push(changes)});

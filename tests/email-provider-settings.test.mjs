@@ -72,9 +72,11 @@ test('organisation settings offer Google OAuth, Brevo fallback and provider test
   assert.match(setupScript, /activeEmailProvider = \['brevo', 'gmail'\]\.includes\(configuredProvider\) \? configuredProvider : 'unsupported'/);
   assert.match(setupScript, /Unsupported provider configuration/);
   assert.match(setupScript, /SettingsScope: 'organisation'/);
-  assert.match(setupScript, /emailProviderPanel\?\.classList\.toggle\('settings-scope-locked', branchMode\)/);
-  assert.match(setupScript, /Reconnecting it affects every branch/);
-  assert.match(setupScript, /Set this branch’s sender and reply-to identities below/);
+  assert.match(setupScript, /const providerChangeLocked = !emailProviderSelfServiceAvailable/);
+  assert.match(setupHtml, /id="inheritEmailProvider"/);
+  assert.match(setupHtml, /id="branchBrevoApiKey" type="password"/);
+  assert.match(setupScript, /SettingsScope: settingsScopeField\.value,\s*BranchId: settingsScopeField\.value === 'branch'/);
+  assert.match(setupScript, /Changes here affect only this branch/);
 });
 
 test('Google callback feedback returns administrators to communication settings', () => {
@@ -84,9 +86,11 @@ test('Google callback feedback returns administrators to communication settings'
   assert.match(setupScript, /cleanUrl\.hash = 'document-settings'/);
 });
 
-test('provider selection remains organisation-only and transient in settings storage', () => {
-  assert.match(settingsApi, /Object\.assign\(profile, emailProviderProfile\(env, \{ legacyBrevoApiKeyConfigured \}\)\)/);
+test('provider status reflects branch credentials without storing them in settings documents', () => {
+  assert.match(settingsApi, /resolveBranchEmailEnvironment\(env, requestedBranchId\)/);
+  assert.match(settingsApi, /emailProviderProfile\(emailScope\.env/);
   assert.match(settingsApi, /delete profile\.EmailProvider/);
+  assert.match(settingsApi, /delete profile\.EmailProviderMode/);
   assert.doesNotMatch(branchSettings, /'EmailProvider'/);
   assert.doesNotMatch(branchSettings, /'GmailConnectedEmail'/);
 });
@@ -95,5 +99,5 @@ test('desktop-compatible sender sync reports the active online provider', () => 
   assert.match(desktopBackend, /EmailProviderConnectionReady:\s*emailProviderConnectionReady/);
   assert.match(desktopBackend, /EmailProvider:\s*emailProvider/);
   assert.match(desktopBackend, /Google Workspace \/ Gmail is active for online delivery/);
-  assert.match(desktopBackend, /clean\(env\.BREVO_API_KEY\) \|\| clean\(brevoSettings\?\.BrevoApiKey\)/);
+  assert.match(desktopBackend, /resolveBranchEmailEnvironment\(env, options\.branchId \|\| options\.BranchId/);
 });

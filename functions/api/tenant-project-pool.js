@@ -130,7 +130,8 @@ export async function onRequestPost({ request, env }) {
         platformEnv,
         body.projectId,
         body.requestedAt,
-        body.provider
+        body.provider,
+        body.branchId
       );
       return Response.json({
         ok: true,
@@ -200,7 +201,7 @@ export async function onRequestPost({ request, env }) {
       }, { headers: { 'Cache-Control': 'no-store' } });
     }
     if (action === 'complete-email-deployment') {
-      const result = await completeTenantEmailDeployment(platformEnv, body.projectId, body.requestedAt, body.provider);
+      const result = await completeTenantEmailDeployment(platformEnv, body.projectId, body.requestedAt, body.provider, body.branchId);
       return Response.json({
         ok: true,
         message: result.completed

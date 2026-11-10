@@ -1,9 +1,11 @@
+import * as placementGuards from '../functions/lib/academic-placement-guards.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 import { webcrypto } from 'node:crypto';
 import * as management from '../functions/lib/academic-management.js';
+import * as studentRoster from '../functions/lib/academic-student-status-roster.js';
 import * as outcomes from '../functions/lib/academic-session-outcomes.js';
 import * as studentStatus from '../functions/lib/student-academic-status.js';
 import { academicAssessmentScheme } from '../functions/lib/academic-scorebook.js';
@@ -14,11 +16,11 @@ import { academicTeacherScoreClassrooms } from '../functions/lib/academic-classr
 const source = await readFile(new URL('../functions/lib/academic-management.js', import.meta.url), 'utf8');
 const ui = await readFile(new URL('../js/admin.js', import.meta.url), 'utf8');
 const copy = value => JSON.parse(JSON.stringify(value));
-const scope = { BranchId: 'garden', SchoolSection: 'primary' };
+const scope = { __updateTime: 'structure-1', BranchId: 'garden', SchoolSection: 'primary' };
 const period = { SessionId: 'session', TermId: 'term' };
 const target = { ...scope, ...period, ClassId: 'class', ArmId: 'arm' };
 const teacher = { username: 'teacher', role: 'Teacher', edition: 'school', branchId: 'garden', allowedSections: ['academics'] };
-const id = row => row.RecordId || row.MembershipId || row.MovementId || row.AllocationId || row.AuditId || row.__id;
+const id = row => row.RecordId || row.MembershipId || row.MovementId || row.AllocationId || row.AuditId || row.__id || row.ArmId || row.ClassId;
 function harness(role = 'Form Teacher') {
   const state = Object.fromEntries(Object.keys(management.ACADEMIC_MANAGEMENT_COLLECTIONS).map(key => [key, []]));
   Object.assign(state, {
@@ -43,7 +45,7 @@ function harness(role = 'Form Teacher') {
   const store = Object.fromEntries(Object.entries(state).map(([key, rows]) => [management.ACADEMIC_MANAGEMENT_COLLECTIONS[key], rows]));
   store[profilePath] = profiles;
   const writes = [], reads = [];
-  const context = vm.createContext({ ...management, ...outcomes, ...studentStatus, normalizeClassKey, academicAssessmentScheme, academicTeacherScoreClassrooms, safeScopeId, crypto: webcrypto, TextEncoder, TextDecoder,
+  const context = vm.createContext({ ...placementGuards, ...management, ...studentRoster, ...outcomes, ...studentStatus, normalizeClassKey, academicAssessmentScheme, academicTeacherScoreClassrooms, safeScopeId, crypto: webcrypto, TextEncoder, TextDecoder,
     listSchoolCollection: async () => copy(profiles), loadOrganizationNameProfile: async () => ({}),
     batchCommitDocuments: async (_env, batch) => {
       for (const w of batch) {

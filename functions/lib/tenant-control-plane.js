@@ -54,7 +54,7 @@ export async function tenantControlCanonicalRequest(details = {}) {
     : ['use-brevo', 'disconnect-google'].includes(action)
       ? details.gmailRefreshToken
       : '';
-  return JSON.stringify([
+  const canonical = [
     action,
     clean(details.workspaceId).toLowerCase(),
     clean(details.portalHost).toLowerCase(),
@@ -62,7 +62,14 @@ export async function tenantControlCanonicalRequest(details = {}) {
     clean(details.issuedAt),
     details.replaceConfirmed === true,
     await tenantControlSecretHash(protectedCredential)
-  ]);
+  ];
+  // Preserve legacy organisation and Paystack signatures. Branch email scope
+  // and its submitted credential are signed together and cannot be swapped.
+  if (clean(details.branchId) || clean(details.settingsScope) === 'branch') {
+    canonical.push('branch-email-v1', clean(details.branchId).toLowerCase(), clean(details.settingsScope).toLowerCase(),
+      await tenantControlSecretHash(details.brevoApiKey));
+  }
+  return JSON.stringify(canonical);
 }
 
 export function assertFreshTenantControlRequest(details = {}, now = Date.now()) {

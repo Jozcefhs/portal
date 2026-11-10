@@ -58,6 +58,7 @@ async function fixture(options = {}) {
       settings:{Enabled:true,AccountingConfirmed:true,RecordVersion:'settings-1'},capabilities:options.capabilities || {vendor:true,products:true}};
     if(action==='saveProductPolicy') { policy=body; return {ok:true,message:'Approval controls saved.'}; }
     if(action==='requestReport') return options.requestReport(body);
+    if(action==='requestHistory') return options.requestHistory ? options.requestHistory(body) : {ok:true,from:body.From,to:body.To,requests:[]};
     if(action==='statement') return new Promise((resolve,reject)=>reads.push({body,signal,resolve,reject}));
     throw new Error(`Unexpected action: ${action}`);
   };
@@ -100,6 +101,29 @@ test('vendor requisition has full and summary previews with saved totals and app
     assert.match(preview,/Approval \/ payment trail/);
   }
   assert.deepEqual(f.calls.map(call=>call.action),['bootstrap']);
+});
+
+test('request queues open without history and retain an explicitly loaded date range across navigation',async t=>{
+  const request={SettlementId:'PAID-1',VendorName:'First vendor',Status:'Approved',PaymentStatus:'Paid',Amount:100,Paid:100,Unpaid:0,History:[]};
+  request.PrintReport=vendorRequestPrintReport(request);
+  const f=await fixture({tab:'requests',requestHistory:async body=>({ok:true,from:body.From,to:body.To,requests:[request]})});
+  t.after(()=>f.mounted.destroy());
+  assert.deepEqual(f.calls.map(row=>row.action),['bootstrap']);
+  assert.match(f.root.querySelector('[data-panel]').innerHTML,/<details><summary>Completed request history/);
+  const load=async()=>{
+    const form=f.root.querySelector('[data-request-history]');
+    form.elements.VendorId.value='v1';form.elements.From.value='2026-10-01';form.elements.To.value='2026-10-31';
+    await form.onsubmit({preventDefault(){}});
+  };
+  await load();
+  assert.equal(f.calls.filter(row=>row.action==='requestHistory').length,1);
+  assert.match(f.root.querySelector('[data-panel]').innerHTML,/Loaded request dates: 2026-10-01 to 2026-10-31/);
+  f.root.querySelectorAll('[data-tab]').find(node=>node.dataset.tab==='products').onclick();
+  f.root.querySelectorAll('[data-tab]').find(node=>node.dataset.tab==='requests').onclick();
+  await load();
+  assert.equal(f.calls.filter(row=>row.action==='requestHistory').length,1,'same retained snapshot needs no new history reads');
+  const print=f.root.querySelectorAll('[data-request]').find(node=>node.dataset.action==='print-summary');
+  await print.onclick();assert.match(f.previews[0],/PAID-1/);
 });
 
 test('large request summaries need no extra read and full print loads its saved report once',async t=>{
