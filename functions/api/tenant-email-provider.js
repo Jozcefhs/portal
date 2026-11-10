@@ -3,6 +3,7 @@ import { createGoogleOAuthStart } from '../lib/google-email-oauth.js';
 import { requirePlatformFirestoreEnv } from '../lib/platform-firestore.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { assertFreshTenantControlRequest, verifyTenantControlRequest } from '../lib/tenant-control-plane.js';
+import { emailProviderBranchId } from '../lib/branch-email-provider.js';
 import {
   findTenantEmailControlRegistration,
   stageBrevoEmailProviderTransition
@@ -26,6 +27,7 @@ async function requireSignedTenantRequest(platformEnv, request, details) {
     RequestId: clean(details.requestId),
     WorkspaceId: clean(details.workspaceId),
     Action: clean(details.action),
+    BranchId: emailProviderBranchId(details.branchId),
     IssuedAt: clean(details.issuedAt),
     ReceivedAt: new Date().toISOString(),
     ExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
@@ -36,7 +38,7 @@ async function requireSignedTenantRequest(platformEnv, request, details) {
     error.code = 'TENANT_CONTROL_REQUEST_REPLAYED';
     throw error;
   }
-  return registration;
+  return { ...registration, __emailBranchId: emailProviderBranchId(details.branchId) };
 }
 
 async function startGoogleEmailConnection(platformEnv, request, env, details, registration) {
@@ -47,6 +49,8 @@ async function startGoogleEmailConnection(platformEnv, request, env, details, re
     Status: 'Pending',
     RequestId: clean(details.requestId),
     WorkspaceId: clean(details.workspaceId),
+    BranchId: registration.__emailBranchId || '',
+    SettingsScope: registration.__emailBranchId ? 'branch' : 'organisation',
     PortalHost: clean(details.portalHost).toLowerCase(),
     CloudflareProject: clean(registration.CloudflareProject),
     RegistrationCollection: clean(registration.__controlCollection || 'tenantRegistrations'),
@@ -76,10 +80,12 @@ async function useBrevo(platformEnv, env, details, registration) {
   const transition = await stageBrevoEmailProviderTransition(platformEnv, env, details, registration);
   return Response.json({
     ok: true,
-    provider: 'brevo',
+    provider: transition.provider,
     deploymentQueued: true,
     stagingUnconfirmed: transition.stagingUnconfirmed === true,
-    message: transition.stagingUnconfirmed === true
+    message: registration.__emailBranchId
+      ? `The branch email provider change is queued. Reload Settings after deployment to check ${transition.provider === 'inherit' ? 'inherited organisation delivery' : 'its independent Brevo connection'}.`
+      : transition.stagingUnconfirmed === true
       ? 'Brevo setup is pending secure deployment verification. Wait a few minutes, then reload Settings; do not select it again yet.'
       : 'Brevo was selected and its verified tenant deployment is queued. Dynamax will remove the Gmail credential from the deployed tenant; revoke the former Google account grant manually after the switch is live if desired.'
   }, { headers: { 'Cache-Control': 'no-store' } });
@@ -90,12 +96,16 @@ export async function onRequestPost({ request, env }) {
     const platformEnv = requirePlatformFirestoreEnv(env);
     const details = await readJsonBody(request, { maxBytes: 16 * 1024 });
     const action = lower(details.action);
-    if (!['start-google-email', 'use-brevo'].includes(action)) {
+    if (!['start-google-email', 'use-brevo', 'inherit-email'].includes(action)) {
       const error = new Error('Unsupported tenant email-control action.');
       error.status = 400;
       throw error;
     }
     const registration = await requireSignedTenantRequest(platformEnv, request, details);
+    if ((details.settingsScope === 'branch') !== Boolean(registration.__emailBranchId)
+        || (action === 'inherit-email' && !registration.__emailBranchId)) {
+      throw Object.assign(new Error('The email-provider branch scope is incomplete.'), { status: 400 });
+    }
     if (action === 'start-google-email') {
       return await startGoogleEmailConnection(platformEnv, request, env, details, registration);
     }

@@ -35,7 +35,10 @@ async function cloudflareRequest(url, options, fetchImpl) {
     const error = new Error('Cloudflare could not apply the encrypted tenant credential. Try again or contact Dynamax support.');
     error.status = response.status >= 400 && response.status < 500 ? 503 : (response.status || 503);
     error.code = 'CLOUDFLARE_SECRET_UPDATE_FAILED';
-    throw definitivePatchError(error);
+    // A timeout or server error can occur after Cloudflare applied the PATCH.
+    // Retain its deployment queue until readiness proves the staged version.
+    error.patchOutcomeUncertain = response.status === 408 || response.status >= 500;
+    throw error;
   }
   return data;
 }

@@ -9,7 +9,7 @@ import { recentVendorSales, recentVendorHistoricalOpenings } from './vendor-sale
 // Only the selected, scope-checked customer's checkout summary is exposed.
 // Never return the full wallet payload, ledger, limits, contacts or PIN data.
 const publicAccount = account => ({
-  ...Object.fromEntries(['AccountRef', 'DisplayName', 'ClassName', 'BranchId', 'SchoolSection', 'WalletCardStatus']
+  ...Object.fromEntries(['AccountRef', 'DisplayName', 'ClassName', 'StudentType', 'BranchId', 'SchoolSection', 'WalletCardStatus']
     .map(key => [key, account[key] || ''])),
   WalletBalance:Number(account.WalletBalance || 0),
   WalletSpentToday:Number(account.WalletSpentToday || 0)

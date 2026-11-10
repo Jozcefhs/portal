@@ -102,6 +102,21 @@ test('selected HR salary and PDF reads stay live without clearing unrelated snap
   }
 });
 
+test('vendor current requests, dated history and exact reports stay live without discarding other workspaces', async () => {
+  const { cache } = fixture(); let libraryReads = 0, vendorReads = 0;
+  const library = () => cache.fetch(url('/api/staff-library'), post('list'), async () => { libraryReads++; return json(); });
+  await library();
+  for (const action of ['bootstrap', 'statement', 'requestHistory', 'requestReport', 'previewHistorical', 'previewSale', 'previewProductImport', 'previewCardRefundBatch']) {
+    const policy = requestPolicy(url('/api/staff-vendor-settlements'), post(action));
+    assert.equal(policy.cacheable, false, action); assert.equal(policy.mutation, false, action);
+    for (let i = 0; i < 2; i++) await cache.fetch(url('/api/staff-vendor-settlements'), post(action), async () => { vendorReads++; return json(); });
+  }
+  await library(); assert.equal(libraryReads, 1); assert.equal(vendorReads, 16);
+  for (const action of ['requestSettlement', 'decision', 'pay', 'recordVendorSale']) {
+    assert.equal(requestPolicy(url('/api/staff-vendor-settlements'), post(action)).mutation, true, action);
+  }
+});
+
 test('homework context reuses scoped snapshots but audience preview stays live and sends invalidate reads', async () => {
   assert.equal(requestPolicy(url('/api/staff-homework'), post('getContext', { SchoolSection: 'primary' })).cacheable, true);
   const preview = requestPolicy(url('/api/staff-homework'), post('previewHomework'));

@@ -17,6 +17,9 @@ const checkPaystackActivationButton = document.getElementById('checkPaystackActi
 const emailProviderPanel = document.getElementById('emailProviderPanel');
 const connectGoogleEmailButton = document.getElementById('connectGoogleEmail');
 const useBrevoEmailButton = document.getElementById('useBrevoEmail');
+const inheritEmailProviderButton = document.getElementById('inheritEmailProvider');
+const branchBrevoApiKey = document.getElementById('branchBrevoApiKey');
+const connectBranchBrevoButton = document.getElementById('connectBranchBrevo');
 const testEmailProviderButton = document.getElementById('testEmailProvider');
 const emailProviderTestRecipient = document.getElementById('emailProviderTestRecipient');
 const emailProviderStatus = document.getElementById('emailProviderStatus');
@@ -89,6 +92,7 @@ let activeEmailProvider = 'brevo';
 let emailProviderConnectionReady = false;
 let emailProviderSelfServiceAvailable = false;
 let emailConnectionCallbackHandled = false;
+let emailProviderMode = 'inherit';
 const organisationOnlyControlIds = [
   'organisationEdition', 'nameFormat', 'webLogoFile', 'removeWebLogo',
   'googleDocumentsUrl', 'subscriptionPlan', 'userLimit'
@@ -325,6 +329,8 @@ function setEmailProviderStatus(message, type = '') {
 }
 
 function updateEmailProviderUI(profile = {}) {
+  emailProviderMode = profile.EmailProviderMode === 'independent' ? 'independent' : 'inherit';
+  if (branchBrevoApiKey) branchBrevoApiKey.value = '';
   const configuredProvider = String(profile.EmailProvider || activeEmailProvider || 'brevo').trim().toLowerCase();
   activeEmailProvider = ['brevo', 'gmail'].includes(configuredProvider) ? configuredProvider : 'unsupported';
   emailProviderConnectionReady = profile.EmailProviderConnectionReady === true;
@@ -396,7 +402,8 @@ async function requestEmailProviderAction(action, extra = {}) {
     body: JSON.stringify({
       action,
       password: unlockedPassword,
-      SettingsScope: 'organisation',
+      SettingsScope: settingsScopeField.value,
+      BranchId: settingsScopeField.value === 'branch' ? settingsBranchField.value : '',
       ...extra
     })
   });
@@ -1114,18 +1121,24 @@ function updateSettingsScopeUI(profile = {}) {
     if (control) control.disabled = connectionLocked;
   });
   paystackConnectionPanel?.classList.toggle('settings-scope-locked', branchMode);
-  const providerChangeLocked = branchMode || !emailProviderSelfServiceAvailable;
-  [connectGoogleEmailButton, useBrevoEmailButton].forEach((control) => {
+  const providerChangeLocked = !emailProviderSelfServiceAvailable;
+  [connectGoogleEmailButton, useBrevoEmailButton, inheritEmailProviderButton, connectBranchBrevoButton, branchBrevoApiKey].forEach((control) => {
     if (control) control.disabled = providerChangeLocked;
   });
-  if (emailProviderTestRecipient) emailProviderTestRecipient.disabled = branchMode || !emailProviderConnectionReady;
-  if (testEmailProviderButton) testEmailProviderButton.disabled = branchMode || !emailProviderConnectionReady;
-  emailProviderPanel?.classList.toggle('settings-scope-locked', branchMode);
+  if (emailProviderTestRecipient) emailProviderTestRecipient.disabled = !emailProviderConnectionReady;
+  if (testEmailProviderButton) testEmailProviderButton.disabled = !emailProviderConnectionReady;
+  emailProviderPanel?.classList.toggle('settings-scope-locked', false);
+  if (useBrevoEmailButton) useBrevoEmailButton.hidden = branchMode || !['gmail', 'unsupported'].includes(activeEmailProvider);
+  if (inheritEmailProviderButton) inheritEmailProviderButton.hidden = !branchMode || emailProviderMode === 'inherit';
+  document.getElementById('branchBrevoConnection').hidden = !branchMode;
+  document.getElementById('emailProviderScopeTitle').textContent = branchMode
+    ? `${branchName} — ${emailProviderMode === 'inherit' ? 'Inherit organisation provider' : 'Independent provider'}`
+    : 'Organisation delivery';
   const emailProviderScopeHelp = document.getElementById('emailProviderScopeHelp');
   if (emailProviderScopeHelp) {
     emailProviderScopeHelp.textContent = branchMode
-      ? `${branchName} inherits the organisation email provider. Only its sender and reply-to identities below can be overridden here.`
-      : 'Every branch uses this provider while retaining its own sender and reply-to identities.';
+      ? `${branchName} can inherit the organisation provider or connect its own Google or Brevo account. Changes here affect only this branch. Set its sender and reply-to identities below.`
+      : 'This is the default sending account for branches that inherit it. Branches with an independent provider keep their own connection.';
   }
   if (branchMode) {
     webLogoDataUrl = '';
@@ -1389,6 +1402,34 @@ useBrevoEmailButton?.addEventListener('click', async () => {
     }
   }
 });
+
+async function changeBranchEmailProvider(button, action) {
+  if (settingsScopeField.value !== 'branch' || !emailProviderSelfServiceAvailable) return;
+  const brevoApiKey = String(branchBrevoApiKey?.value || '').trim();
+  if (action === 'use-brevo' && !brevoApiKey) {
+    setEmailProviderStatus('Enter this branch’s Brevo API key.', 'bad');
+    branchBrevoApiKey?.focus();
+    return;
+  }
+  if (!window.DynamaxActionFeedback.begin(button, 'Updating branch delivery…')) return;
+  let queued = false;
+  try {
+    const data = await requestEmailProviderAction(action, action === 'use-brevo' ? { brevoApiKey } : {});
+    queued = data.deploymentQueued === true;
+    if (branchBrevoApiKey) branchBrevoApiKey.value = '';
+    setEmailProviderStatus(data.message || 'Branch provider change queued. Reload Settings after deployment.', 'ok');
+  } catch (error) {
+    setEmailProviderStatus(error.message, 'bad');
+  } finally {
+    if (button.isConnected) window.DynamaxActionFeedback.end(button);
+    if (queued) [connectGoogleEmailButton, useBrevoEmailButton, inheritEmailProviderButton,
+      connectBranchBrevoButton, branchBrevoApiKey, testEmailProviderButton].forEach(control => {
+      if (control) control.disabled = true;
+    });
+  }
+}
+connectBranchBrevoButton?.addEventListener('click', () => changeBranchEmailProvider(connectBranchBrevoButton, 'use-brevo'));
+inheritEmailProviderButton?.addEventListener('click', () => changeBranchEmailProvider(inheritEmailProviderButton, 'inherit-email'));
 
 testEmailProviderButton?.addEventListener('click', async () => {
   const recipientEmail = String(emailProviderTestRecipient?.value || '').trim();

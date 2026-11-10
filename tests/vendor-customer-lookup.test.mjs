@@ -16,7 +16,7 @@ const actor = {username:'seller',role:'Vendor User',edition:'school',branchId:'m
 function fixture() {
   const activity = {balance:1000,spentToday:200};
   const students = [
-    {AdmissionNo:'DNX-26-006',DisplayName:'Sample Child',ClassName:'Grade 7',WalletCardId:'CARD-6',ParentEmail:'parent@example.test',WalletPinHash:'private',BranchId:'main',SchoolSection:'secondary'},
+    {AdmissionNo:'DNX-26-006',DisplayName:'Sample Child',ClassName:'Grade 7',StudentType:'Boarding Student',WalletCardId:'CARD-6',ParentEmail:'parent@example.test',WalletPinHash:'private',BranchId:'main',SchoolSection:'secondary'},
     {AdmissionNo:'PRI/001',DisplayName:'Primary Child',ClassName:'Primary 1',BranchId:'main',SchoolSection:'primary'},
     {AdmissionNo:'OTHER/001',DisplayName:'Other Child',BranchId:'other',SchoolSection:'secondary'}
   ];
@@ -44,9 +44,10 @@ test('vendor admission lookup canonicalizes formatting/case and returns only ide
     const result=await f.run('vendorWalletLookup',{AccountRef:ref});
     assert.equal(result.account.AccountRef,'DNX-26-006');
     assert.equal(result.account.DisplayName,'Sample Child');
+    assert.equal(result.account.StudentType,'Boarding Student');
     assert.equal(result.account.WalletBalance,1000);
     assert.equal(result.account.WalletSpentToday,200);
-    assert.deepEqual(Object.keys(result.account).sort(),['AccountRef','BranchId','ClassName','DisplayName','SchoolSection','WalletBalance','WalletCardStatus','WalletSpentToday']);
+    assert.deepEqual(Object.keys(result.account).sort(),['AccountRef','BranchId','ClassName','DisplayName','SchoolSection','StudentType','WalletBalance','WalletCardStatus','WalletSpentToday']);
     for(const field of ['WalletPinHash','ParentEmail','WalletCardId','ledger','WalletDailyLimit','WalletTxnLimit','WalletPinThreshold']) assert.equal(result.account[field],undefined);
   }
   assert.equal(f.calls.at(-1).UserSchoolSectionAccess,'secondary');
@@ -56,6 +57,7 @@ test('wallet summary is refreshed for exact card lookup, preserves zero and cann
   const f=fixture();
   const first=await f.run('vendorWalletLookup',{WalletCardId:'card-6',UserBranchId:'other',UserSchoolSectionAccess:'primary'});
   assert.equal(first.account.WalletBalance,1000);
+  assert.equal(first.account.StudentType,'Boarding Student');
   assert.equal(f.calls.at(-1).UserBranchId,'main');
   assert.equal(f.calls.at(-1).UserSchoolSectionAccess,'secondary');
   f.activity.balance=0; f.activity.spentToday=1200;

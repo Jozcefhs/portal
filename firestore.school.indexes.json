@@ -1,5 +1,11 @@
 {
   "indexes": [
+    {"collectionGroup": "vendorSettlementRequests", "queryScope": "COLLECTION", "fields": [{"fieldPath": "ScopeKey", "order": "ASCENDING"}, {"fieldPath": "VendorId", "order": "ASCENDING"}, {"fieldPath": "PaymentStatus", "order": "ASCENDING"}, {"fieldPath": "RequestedAt", "order": "ASCENDING"}]},
+    {"collectionGroup": "vendorSettlementRequests", "queryScope": "COLLECTION", "fields": [{"fieldPath": "ScopeKey", "order": "ASCENDING"}, {"fieldPath": "VendorId", "order": "ASCENDING"}, {"fieldPath": "PaymentStatus", "order": "ASCENDING"}]},
+    {"collectionGroup": "vendorSettlementRequests", "queryScope": "COLLECTION", "fields": [{"fieldPath": "ScopeKey", "order": "ASCENDING"}, {"fieldPath": "PaymentStatus", "order": "ASCENDING"}]},
+    {"collectionGroup": "vendorEarnings", "queryScope": "COLLECTION", "fields": [{"fieldPath": "ScopeKey", "order": "ASCENDING"}, {"fieldPath": "VendorId", "order": "ASCENDING"}, {"fieldPath": "Date", "order": "ASCENDING"}]},
+    {"collectionGroup": "vendorClaimLots", "queryScope": "COLLECTION", "fields": [{"fieldPath": "ScopeKey", "order": "ASCENDING"}, {"fieldPath": "VendorId", "order": "ASCENDING"}, {"fieldPath": "Date", "order": "ASCENDING"}]},
+    {"collectionGroup": "vendorSettlementPayments", "queryScope": "COLLECTION", "fields": [{"fieldPath": "ScopeKey", "order": "ASCENDING"}, {"fieldPath": "VendorId", "order": "ASCENDING"}, {"fieldPath": "Date", "order": "ASCENDING"}]},
     {
       "collectionGroup": "executiveCorrespondence", "queryScope": "COLLECTION",
       "fields": [
@@ -508,5 +514,6 @@
     {"collectionGroup": "hotelAudit", "queryScope": "COLLECTION", "fields": [{"fieldPath": "BranchId", "order": "ASCENDING"}, {"fieldPath": "Timestamp", "order": "ASCENDING"}]}
   ],
   "fieldOverrides": [
+    {"collectionGroup": "vendorSettlementSnapshots", "fieldPath": "Rows", "indexes": []}
   ]
 }

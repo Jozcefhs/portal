@@ -4,6 +4,9 @@ import { getDocument } from '../lib/firestore.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { requireSetupAdministrator, resolveSetupSettingsAccess } from '../lib/setup-auth.js';
 import { signTenantControlRequest } from '../lib/tenant-control-plane.js';
+import { assertConfiguredProfileBranch } from '../lib/branch-profile-settings.js';
+import { emailProviderBranchId, resolveBranchEmailEnvironment } from '../lib/branch-email-provider.js';
+import { emailProviderReadiness } from './email-provider-readiness.js';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
@@ -30,17 +33,14 @@ function assertSameOrigin(request) {
   }
 }
 
-function assertOrganisationScope(actor, body) {
+async function emailSettingsAccess(env, actor, body) {
   const access = resolveSetupSettingsAccess(
     actor,
     body.SettingsScope || body.settingsScope,
     body.BranchId || body.branchId
   );
-  if (access.scope !== 'organisation') {
-    const error = new Error('Only an organisation-wide Super Administrator can change the email provider.');
-    error.status = 403;
-    throw error;
-  }
+  if (access.scope === 'branch') await assertConfiguredProfileBranch(env, emailProviderBranchId(access.branchId));
+  return access;
 }
 
 function tenantControlDetails(env, request, action) {
@@ -64,8 +64,9 @@ function tenantControlDetails(env, request, action) {
   };
 }
 
-async function postTenantControlRequest(env, request, action) {
+async function postTenantControlRequest(env, request, action, access, extra = {}) {
   const { privateKey, details } = tenantControlDetails(env, request, action);
+  if (access.scope === 'branch') Object.assign(details, { settingsScope: 'branch', branchId: emailProviderBranchId(access.branchId), ...extra });
   const signature = await signTenantControlRequest(privateKey, details);
   const response = await fetch(centralEndpoint(env, request), {
     method: 'POST',
@@ -86,7 +87,7 @@ async function postTenantControlRequest(env, request, action) {
   return data;
 }
 
-async function sendTestEmail(env, body, actor) {
+async function sendTestEmail(env, body, actor, access) {
   const recipientEmail = lower(body.recipientEmail || body.toEmail || body.email);
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipientEmail)) {
     const error = new Error('Enter a valid recipient email address for the test.');
@@ -94,13 +95,15 @@ async function sendTestEmail(env, body, actor) {
     throw error;
   }
   await sendConfiguredEmail(env, {
+    branchId: access.scope === 'branch' ? access.branchId : '',
     toEmail: recipientEmail,
     toName: clean(actor.displayName || actor.username) || recipientEmail,
     subject: 'Dynamax email provider test',
     textContent: 'This one-time message confirms that your organisation email provider is connected to Dynamax.',
     htmlContent: '<p>This one-time message confirms that your organisation email provider is connected to Dynamax.</p>'
   });
-  const configuredProvider = lower(env.EMAIL_PROVIDER);
+  const effective = await resolveBranchEmailEnvironment(env, access.scope === 'branch' ? access.branchId : '');
+  const configuredProvider = lower(effective.env.EMAIL_PROVIDER);
   const provider = !configuredProvider
     ? 'brevo'
     : ['brevo', 'gmail'].includes(configuredProvider)
@@ -124,11 +127,11 @@ export async function onRequestPost({ request, env }) {
     assertSameOrigin(request);
     const body = await readJsonBody(request, { maxBytes: 8 * 1024 });
     const actor = await requireSetupAdministrator(env, request, body.password);
-    assertOrganisationScope(actor, body);
+    const access = await emailSettingsAccess(env, actor, body);
     const action = lower(body.action);
-    if (action === 'test') return await sendTestEmail(env, body, actor);
+    if (action === 'test') return await sendTestEmail(env, body, actor, access);
     if (action === 'connect-google') {
-      const data = await postTenantControlRequest(env, request, 'start-google-email');
+      const data = await postTenantControlRequest(env, request, 'start-google-email', access);
       return Response.json({
         ok: true,
         authorizationUrl: clean(data.authorizationUrl),
@@ -136,14 +139,25 @@ export async function onRequestPost({ request, env }) {
         message: clean(data.message) || 'Continue to Google to approve send-only email access.'
       }, { headers: { 'Cache-Control': 'no-store' } });
     }
+    if (action === 'inherit-email') {
+      if (access.scope !== 'branch') throw Object.assign(new Error('Only a branch can inherit the organisation email provider.'), { status: 400 });
+      if (!(await emailProviderReadiness(env)).ready) throw Object.assign(new Error('Configure the organisation email provider before this branch inherits it. Its current connection has not changed.'), { status: 409 });
+      const data = await postTenantControlRequest(env, request, action, access);
+      return Response.json({ ...data, ok: true }, { headers: { 'Cache-Control': 'no-store' } });
+    }
     if (['use-brevo', 'disconnect-google'].includes(action)) {
-      if (!await brevoConfigured(env)) {
+      const branchMode = access.scope === 'branch';
+      const brevoApiKey = clean(body.brevoApiKey);
+      if (branchMode && (!brevoApiKey || brevoApiKey.length > 4096)) {
+        throw Object.assign(new Error('Enter this branch’s Brevo API key to connect its independent account.'), { status: 400 });
+      }
+      if (!branchMode && !await brevoConfigured(env)) {
         const error = new Error('Brevo cannot be selected because this tenant has no Brevo API credential. Connect Brevo before removing the working Google provider.');
         error.status = 409;
         error.code = 'BREVO_EMAIL_NOT_CONFIGURED';
         throw error;
       }
-      const data = await postTenantControlRequest(env, request, 'use-brevo');
+      const data = await postTenantControlRequest(env, request, 'use-brevo', access, branchMode ? { brevoApiKey } : {});
       return Response.json({
         ok: true,
         provider: 'brevo',

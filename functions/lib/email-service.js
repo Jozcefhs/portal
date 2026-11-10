@@ -1,6 +1,7 @@
 import { getDocument } from './firestore.js';
 import { resolveOrganizationConfig } from './organization-config.js';
 import { effectiveBranchProfile } from './branch-profile-settings.js';
+import { resolveBranchEmailEnvironment } from './branch-email-provider.js';
 import {
   classifyGmailFailure,
   gmailFailureError,
@@ -388,6 +389,11 @@ export async function sendConfiguredEmail(env, {
   providerOverride = '',
   senderOverride = null
 }) {
+  const scopedEmail = await resolveBranchEmailEnvironment(env, branchId);
+  env = scopedEmail.env;
+  if (scopedEmail.mode === 'independent' && providerOverride && providerOverride !== scopedEmail.provider) {
+    throw Object.assign(new Error('The selected branch uses a different configured email provider.'), { status: 409, retrySafe: true });
+  }
   const recipient = clean(toEmail);
   if (!validEmail(recipient)) {
     const err = new Error('A valid recipient email address is required.');

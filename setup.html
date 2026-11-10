@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Settings</title>
   <script src="js/preferences.js?v=20260726-biometric"></script>
-  <link rel="stylesheet" href="css/style.css?v=20260923-youtube-tutorials-20261013-settings-heading-paystack-activation">
+  <link rel="stylesheet" href="css/style.css?v=20260923-youtube-tutorials-20261013-settings-heading-paystack-activation-20261110-branch-email">
 </head>
 <body class="settings-page">
   <main class="settings-shell">
@@ -181,12 +181,12 @@
           <div class="settings-subsection">
             <div class="settings-subsection-title">
               <strong>Email delivery provider</strong>
-              <span>Choose the organisation account used for transactional messages.</span>
+              <span>Choose shared delivery or an independent account for a branch.</span>
             </div>
             <div id="emailProviderPanel" class="email-provider-card">
               <div class="email-provider-heading">
                 <div>
-                  <small class="settings-eyebrow">Organisation-wide delivery</small>
+                  <small id="emailProviderScopeTitle" class="settings-eyebrow">Organisation delivery</small>
                   <strong id="emailProviderState">Checking email provider…</strong>
                   <span id="emailProviderAccount">No connected mailbox reported.</span>
                 </div>
@@ -196,6 +196,11 @@
               <div class="email-provider-actions">
                 <button id="connectGoogleEmail" type="button">Connect Google account</button>
                 <button id="useBrevoEmail" type="button" class="settings-secondary-action" hidden>Use Brevo instead</button>
+                <button id="inheritEmailProvider" type="button" class="settings-secondary-action" hidden>Inherit organisation provider</button>
+              </div>
+              <div id="branchBrevoConnection" class="email-provider-test" hidden>
+                <label for="branchBrevoApiKey"><span>Branch Brevo API key</span><input id="branchBrevoApiKey" type="password" autocomplete="new-password" maxlength="4096" placeholder="Enter this branch’s Brevo API key"></label>
+                <button id="connectBranchBrevo" type="button" class="settings-secondary-action">Connect branch Brevo</button>
               </div>
               <div class="email-provider-test">
                 <label for="emailProviderTestRecipient"><span>Send a test email to</span><input id="emailProviderTestRecipient" type="email" autocomplete="email" placeholder="administrator@example.org"></label>
@@ -229,7 +234,7 @@
               <div class="settings-field"><label for="executiveReplyToEmail">Reply-to email</label><input id="executiveReplyToEmail" type="email"></div>
             </div>
           </div>
-          <p class="settings-help">Branches inherit these sender identities until an administrator saves different values for that branch. Email-provider credentials remain organisation-wide and are never exposed here.</p>
+          <p class="settings-help">Branches inherit these sender identities until an administrator saves different values for that branch. Email-provider credentials are configured securely in the delivery panel above and are never exposed here.</p>
         </section>
 
         <section id="parent-settings" class="settings-section" data-school-settings-only>
@@ -581,6 +586,6 @@
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
   <script src="js/app-dialogs.js?v=20261016-grouped-form-validation"></script>
   <script src="js/paystack-connection-status.js?v=20261013-paystack-activation"></script>
-  <script src="js/setup.js?v=20261003-no-school-code-default-20261013-paystack-activation-20261023-configurable-entrance-subjects"></script>
+  <script src="js/setup.js?v=20261110-branch-email-provider"></script>
 </body>
 </html>

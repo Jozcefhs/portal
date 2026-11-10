@@ -78,4 +78,5 @@ jobs:
       paystack_deployment_requested_at: ${{ matrix.organisation.paystackDeploymentRequestedAt || '' }}
       email_deployment_requested_at: ${{ matrix.organisation.emailDeploymentRequestedAt || '' }}
       email_deployment_provider: ${{ matrix.organisation.emailDeploymentProvider || '' }}
+      email_deployment_branch_id: ${{ matrix.organisation.emailDeploymentBranchId || '' }}
     secrets: inherit

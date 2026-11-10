@@ -41,7 +41,8 @@ export function buildManagedOrganisationDeploymentMatrix(registry, managedOrgani
         paystackDeploymentRequestedAt: clean(managed?.PaystackDeploymentRequestedAt),
         emailDeploymentPending: managed?.EmailDeploymentPending === true,
         emailDeploymentRequestedAt: clean(managed?.EmailDeploymentRequestedAt),
-        emailDeploymentProvider: lower(managed?.EmailDeploymentProvider)
+        emailDeploymentProvider: lower(managed?.EmailDeploymentProvider),
+        emailDeploymentBranchId: lower(managed?.EmailDeploymentBranchId)
       };
     })
     .filter((organisation) => !pendingOnly

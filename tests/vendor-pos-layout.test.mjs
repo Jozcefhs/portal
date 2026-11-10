@@ -102,6 +102,17 @@ test('empty checkout has no space-wasting placeholders but still requires produc
   assert.equal(f.calls.some(row=>row.action.startsWith('record')),false);f.mounted.destroy();
 });
 
+test('student wallet lookup shows day or boarding type without another request',async()=>{
+  for (const StudentType of ['Day Student','Boarding Student']) {
+    const f=await fixture('tuckShop',{walletSummary:{StudentType}});
+    f.input('AccountRef','FIXTURE/001');await f.find();
+    assert.match(f.root.innerHTML,new RegExp(`vendor-pos-student-type[^>]*>${StudentType}`));
+    assert.equal(f.calls.filter(row=>row.action==='vendorWalletLookup').length,1);
+    assert.equal(f.calls.filter(row=>row.action==='recentVendorSales').length,0);
+    f.mounted.destroy();
+  }
+});
+
 test('vendor search is sticky under the staff header, without a clipping scroll ancestor',()=>{
   assert.match(css,/\.vendor-pos \.commerce-search-label\{position:sticky;top:0;z-index:13/);
   assert.match(css,/\.staff-page \.vendor-pos \.commerce-search-label\{top:var\(--staff-topbar-height,68px\)\}/);
@@ -498,6 +509,20 @@ test('live mobile suggestions are escaped buttons and late suggestions cannot ov
   assert.doesNotMatch(f.root.querySelector('[data-customer-matches]').innerHTML,/<script>/);
   assert.match(f.root.querySelector('[data-customer-matches]').innerHTML,/&lt;script&gt;Unsafe/);
   assert.equal(f.root.querySelector('[data-customer-choice]').attrs.type,'button'); f.mounted.destroy();
+});
+
+test('repeated suggestions reuse names only; wallet selection remains live and a remount clears the cache',async()=>{
+  const f=await fixture();
+  const suggest=async query=>{f.input('Query',query);await new Promise(resolve=>setTimeout(resolve,380));};
+  await suggest('Fixture');await suggest('Other');await suggest('Fixture');
+  assert.equal(f.calls.filter(row=>row.action==='vendorCustomerSearch').length,2,'backspacing to a recent query does not reread the branch roster');
+  await f.root.querySelector('[data-customer-choice]').onclick();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(f.calls.filter(row=>row.action==='vendorWalletLookup').length,1,'choosing a cached suggestion still reads the real wallet');
+  f.mounted.destroy();
+  const second=await fixture();second.input('Query','Fixture');await new Promise(resolve=>setTimeout(resolve,380));
+  assert.equal(second.calls.filter(row=>row.action==='vendorCustomerSearch').length,1,'a different mounted branch/user gets no old suggestions');
+  second.mounted.destroy();
 });
 
 test('vendor API adapter retains status codes for safe not-found-only fallback',async()=>{

@@ -1,10 +1,11 @@
 import {
   getDocument,
-  patchDocumentFields,
+  batchCommitDocuments,
+  patchDocumentFieldsIfCurrent,
   queryCollection
 } from './firestore.js';
 import { patchPagesProductionSecrets } from './cloudflare-pages-secrets.js';
-import { revokeGoogleRefreshToken } from './google-email-oauth.js';
+import { branchEmailSecretValues, emailProviderBranchId } from './branch-email-provider.js';
 import {
   cancelManagedOrganisationEmailDeployment,
   findManagedOrganisationForTenant,
@@ -16,6 +17,8 @@ import {
   assertTenantEmailDeploymentCurrent,
   assertTenantProjectAssignment,
   cancelTenantEmailDeployment,
+  readTenantEmailDeploymentCurrent,
+  TENANT_PROJECT_POOL_COLLECTION,
   queueTenantEmailDeployment
 } from './tenant-project-pool.js';
 
@@ -131,11 +134,12 @@ export async function loadStoredTenantEmailRegistration(platformEnv, collection,
 export async function queueTenantEmailProviderDeployment(platformEnv, registration, requestedAt, provider) {
   const project = clean(registration.CloudflareProject);
   if (registration.__managedOrganisation === true) {
-    return queueManagedOrganisationEmailDeployment(platformEnv, project, requestedAt, provider);
+    return queueManagedOrganisationEmailDeployment(platformEnv, project, requestedAt, provider, { emailBranchId: emailProviderBranchId(registration.__emailBranchId) });
   }
   return queueTenantEmailDeployment(platformEnv, project, requestedAt, provider, {
     registrationReference: clean(registration.__id || registration.Reference || registration.Id),
-    workspaceId: clean(registration.WorkspaceId)
+    workspaceId: clean(registration.WorkspaceId),
+    emailBranchId: emailProviderBranchId(registration.__emailBranchId)
   });
 }
 
@@ -147,7 +151,42 @@ export async function updateTenantEmailProviderMetadata(platformEnv, registratio
     error.status = 409;
     throw error;
   }
-  await patchDocumentFields(platformEnv, collection, documentId, values);
+  const branchId = emailProviderBranchId(registration.__emailBranchId);
+  const requestedAt = clean(values.EmailDeploymentRequestedAt);
+  const provider = lower(values.EmailProviderPending);
+  const superseded = () => Object.assign(new Error('This email-provider transition was superseded before its metadata could be saved.'), {
+    status: 409, code: 'EMAIL_PROVIDER_TRANSITION_SUPERSEDED'
+  });
+  if (!requestedAt || !(branchId ? ['brevo', 'gmail', 'inherit'] : ['brevo', 'gmail']).includes(provider)
+      || emailProviderBranchId(values.EmailDeploymentBranchId) !== branchId) throw superseded();
+  const current = await getDocument(platformEnv, collection, documentId);
+  if (!current || !activeTenantControlRecord(current)
+      || clean(current.CloudflareProject) !== clean(registration.CloudflareProject)
+      || lower(current.WorkspaceId) !== lower(registration.WorkspaceId)
+      || portalHost(current.PortalUrl) !== portalHost(registration.PortalUrl)) {
+    throw Object.assign(new Error('The tenant assignment changed before its email-provider metadata could be saved.'), {
+      status: 409, code: 'TENANT_PROJECT_ASSIGNMENT_CHANGED'
+    });
+  }
+  const expected = { registrationReference: documentId, workspaceId: current.WorkspaceId,
+    emailBranchId: branchId, requestedAt, provider };
+  if (registration.__managedOrganisation === true) {
+    if (current.EmailDeploymentPending !== true || clean(current.EmailDeploymentRequestedAt) !== requestedAt
+        || lower(current.EmailDeploymentProvider) !== provider || lower(current.EmailDeploymentBranchId) !== branchId) throw superseded();
+    if (Object.entries(values).every(([key, value]) => current[key] === value)) return;
+    await patchDocumentFieldsIfCurrent(platformEnv, collection, documentId, values, current);
+    return;
+  }
+  const slot = await readTenantEmailDeploymentCurrent(platformEnv, registration.CloudflareProject, expected);
+  // The slot and registration must still describe this transition when the
+  // metadata is committed. A delayed retry cannot replace a newer branch job.
+  if (Object.entries(values).every(([key, value]) => current[key] === value)) return;
+  const storedFields = row => Object.fromEntries(Object.entries(row).filter(([key]) => !key.startsWith('__')));
+  await batchCommitDocuments(platformEnv, [
+    { collectionPath: TENANT_PROJECT_POOL_COLLECTION, documentId: clean(slot.__id || slot.Id),
+      data: storedFields(slot), updateTime: slot.__updateTime },
+    { collectionPath: collection, documentId, data: { ...storedFields(current), ...values }, updateTime: current.__updateTime }
+  ]);
 }
 
 export async function cancelTenantEmailProviderTransition(
@@ -158,14 +197,15 @@ export async function cancelTenantEmailProviderTransition(
 ) {
   const timestamp = clean(requestedAt);
   const targetProvider = lower(provider);
-  if (!timestamp || !['brevo', 'gmail'].includes(targetProvider)) return { cancelled: false };
+  if (!timestamp || !['brevo', 'gmail', 'inherit'].includes(targetProvider)) return { cancelled: false };
   const project = clean(registration.CloudflareProject);
   if (registration.__managedOrganisation === true) {
     return cancelManagedOrganisationEmailDeployment(
       platformEnv,
       project,
       timestamp,
-      targetProvider
+      targetProvider,
+      { emailBranchId: emailProviderBranchId(registration.__emailBranchId) }
     );
   }
   const registrationId = clean(registration.__id || registration.Reference || registration.Id);
@@ -176,7 +216,8 @@ export async function cancelTenantEmailProviderTransition(
     targetProvider,
     {
       registrationReference: registrationId,
-      workspaceId: clean(registration.WorkspaceId)
+      workspaceId: clean(registration.WorkspaceId),
+      emailBranchId: emailProviderBranchId(registration.__emailBranchId)
     }
   );
 }
@@ -202,7 +243,8 @@ export async function assertTenantEmailProjectAssignment(platformEnv, registrati
   if (registration.__managedOrganisation === true) return true;
   await assertTenantProjectAssignment(platformEnv, clean(registration.CloudflareProject), {
     registrationReference: registrationId,
-    workspaceId: clean(registration.WorkspaceId)
+    workspaceId: clean(registration.WorkspaceId),
+    emailBranchId: emailProviderBranchId(registration.__emailBranchId)
   });
   return true;
 }
@@ -219,7 +261,8 @@ export async function assertTenantEmailTransitionCurrent(
   const current = await getDocument(platformEnv, collection, registrationId);
   if (!current
       || clean(current.EmailDeploymentRequestedAt) !== clean(requestedAt)
-      || lower(current.EmailProviderPending) !== lower(provider)) {
+      || lower(current.EmailProviderPending) !== lower(provider)
+      || clean(current.EmailDeploymentBranchId) !== emailProviderBranchId(registration.__emailBranchId)) {
     const error = new Error('This email-provider transition was superseded before its credentials could be staged.');
     error.status = 409;
     error.code = 'EMAIL_PROVIDER_TRANSITION_SUPERSEDED';
@@ -239,7 +282,8 @@ export async function assertTenantEmailTransitionCurrent(
     registrationReference: registrationId,
     workspaceId: clean(registration.WorkspaceId),
     requestedAt: clean(requestedAt),
-    provider: lower(provider)
+    provider: lower(provider),
+    emailBranchId: emailProviderBranchId(registration.__emailBranchId)
   });
   return true;
 }
@@ -282,6 +326,12 @@ export async function stageBrevoEmailProviderTransition(
   const assertAssignment = options.assertAssignment || assertTenantEmailProjectAssignment;
   const assertTransition = options.assertTransition || assertTenantEmailTransitionCurrent;
   const requestedAt = clean(options.requestedAt) || new Date().toISOString();
+  const branchId = emailProviderBranchId(registration.__emailBranchId);
+  const provider = lower(_details.action) === 'inherit-email' ? 'inherit' : 'brevo';
+  if (provider === 'inherit' && !branchId) throw Object.assign(new Error('Choose a branch to inherit organisation email.'), { status: 400 });
+  const secrets = branchId
+    ? await branchEmailSecretValues(registration.WorkspaceId, branchId, provider, requestedAt, { brevoApiKey: _details.brevoApiKey })
+    : brevoSecretValues(requestedAt);
   let deploymentQueued = false;
 
   // Persist a deployment outbox before changing the Pages configuration. If a
@@ -289,10 +339,11 @@ export async function stageBrevoEmailProviderTransition(
   // grant remain usable and the timestamp mismatch prevents false completion.
   try {
     await assertAssignment(platformEnv, registration);
-    await queueDeployment(platformEnv, registration, requestedAt, 'brevo');
+    await queueDeployment(platformEnv, registration, requestedAt, provider);
     deploymentQueued = true;
     await updateMetadata(platformEnv, registration, {
-      EmailProviderPending: 'brevo',
+      EmailProviderPending: provider,
+      EmailDeploymentBranchId: branchId,
       GmailConnectedEmailPending: '',
       EmailProviderConnectedByPending: 'Tenant Super Administrator',
       EmailProviderTransitionStatus: 'Queued',
@@ -300,33 +351,33 @@ export async function stageBrevoEmailProviderTransition(
       EmailDeploymentRequestedAt: requestedAt,
       UpdatedAt: requestedAt
     });
-    await assertTransition(platformEnv, registration, requestedAt, 'brevo');
+    await assertTransition(platformEnv, registration, requestedAt, provider);
   } catch (cause) {
     if (deploymentQueued) {
       await retryTransitionWrite(() => cancelDeployment(
         platformEnv,
         registration,
         requestedAt,
-        'brevo'
+        provider
       )).catch(() => null);
     }
     throw cause;
   }
   try {
-    await patchSecrets(env, clean(registration.CloudflareProject), brevoSecretValues(requestedAt));
+    await patchSecrets(env, clean(registration.CloudflareProject), secrets);
   } catch (cause) {
     if (cause?.patchOutcomeUncertain === false) {
       await retryTransitionWrite(() => cancelDeployment(
         platformEnv,
         registration,
         requestedAt,
-        'brevo'
+        provider
       )).catch(() => null);
       throw cause;
     }
     return {
       requestedAt,
-      provider: 'brevo',
+      provider,
       deploymentQueued: true,
       stagingUnconfirmed: true
     };
@@ -336,7 +387,7 @@ export async function stageBrevoEmailProviderTransition(
   // may still need it until the verified Brevo deployment is live. The Gmail
   // credential is removed from Dynamax's staged secrets; an administrator may
   // revoke the remaining Google account grant manually after readiness passes.
-  return { requestedAt, provider: 'brevo', deploymentQueued: true };
+  return { requestedAt, provider, deploymentQueued: true };
 }
 
 export async function stageGoogleEmailProviderTransition(
@@ -350,7 +401,6 @@ export async function stageGoogleEmailProviderTransition(
   const queueDeployment = options.queueDeployment || queueTenantEmailProviderDeployment;
   const updateMetadata = options.updateMetadata || updateTenantEmailProviderMetadata;
   const cancelDeployment = options.cancelDeployment || cancelTenantEmailProviderTransition;
-  const revokeRefreshToken = options.revokeRefreshToken || revokeGoogleRefreshToken;
   const assertAssignment = options.assertAssignment || assertTenantEmailProjectAssignment;
   const assertTransition = options.assertTransition || assertTenantEmailTransitionCurrent;
   const markConnected = options.markConnected || (async () => {});
@@ -358,6 +408,7 @@ export async function stageGoogleEmailProviderTransition(
   const markPending = options.markPending || (async () => {});
   const connectedAt = clean(options.connectedAt) || new Date().toISOString();
   const project = clean(registration.CloudflareProject);
+  const branchId = emailProviderBranchId(registration.__emailBranchId);
   let pagesPatchAttempted = false;
   let deploymentQueued = false;
 
@@ -370,6 +421,7 @@ export async function stageGoogleEmailProviderTransition(
     deploymentQueued = true;
     await retryTransitionWrite(() => updateMetadata(platformEnv, registration, {
       EmailProviderPending: 'gmail',
+      EmailDeploymentBranchId: branchId,
       GmailConnectedEmailPending: clean(connection.connectedEmail),
       EmailProviderConnectedByPending: 'Tenant Super Administrator',
       EmailProviderTransitionStatus: 'Queued',
@@ -379,7 +431,9 @@ export async function stageGoogleEmailProviderTransition(
     }));
     await assertTransition(platformEnv, registration, connectedAt, 'gmail');
     pagesPatchAttempted = true;
-    await patchSecrets(env, project, {
+    await patchSecrets(env, project, branchId
+      ? await branchEmailSecretValues(registration.WorkspaceId, branchId, 'gmail', connectedAt, connection)
+      : {
       EMAIL_PROVIDER: 'gmail',
       EMAIL_PROVIDER_DEPLOYMENT_REQUESTED_AT: connectedAt,
       GMAIL_OAUTH_CLIENT_ID: clean(connection.clientId),
@@ -388,9 +442,8 @@ export async function stageGoogleEmailProviderTransition(
       GMAIL_CONNECTED_EMAIL: clean(connection.connectedEmail)
     });
   } catch (cause) {
-    // Before dispatch, or after an authoritative Cloudflare rejection, the new
-    // grant cannot be in a tenant deployment and is safe to revoke. A network
-    // exception after dispatch is ambiguous, so never revoke or roll back then.
+    // A network exception after dispatch is ambiguous: keep the queue so no
+    // later transition can replace credentials whose staging is unconfirmed.
     if (pagesPatchAttempted && cause?.patchOutcomeUncertain !== false) {
       const pendingCode = 'GOOGLE_EMAIL_SECRET_STAGING_UNCONFIRMED';
       let pendingStatePersisted = false;
@@ -418,7 +471,9 @@ export async function stageGoogleEmailProviderTransition(
         'gmail'
       )).catch(() => null);
     }
-    await revokeRefreshToken(connection.refreshToken);
+    // Discard the unstaged credential without calling Google's revoke API:
+    // revocation can invalidate this account's existing grants for the whole
+    // OAuth project, including another branch or the organisation connection.
     const failureCode = pagesPatchAttempted
       ? 'GOOGLE_EMAIL_SECRET_STAGING_REJECTED'
       : 'GOOGLE_EMAIL_CONNECTION_OUTBOX_FAILED';

@@ -115,8 +115,8 @@ test('Google token exchange requires a refresh token and userinfo requires a ver
   );
 });
 
-test('callback cleanup revokes only an issued token that was not staged or already handled', () => {
-  assert.equal(shouldRevokeIssuedGoogleToken('issued-token', false, {}), true);
+test('callback failures never revoke a Google grant that may serve another branch', () => {
+  assert.equal(shouldRevokeIssuedGoogleToken('issued-token', false, {}), false);
   assert.equal(shouldRevokeIssuedGoogleToken('issued-token', true, {}), false);
   assert.equal(shouldRevokeIssuedGoogleToken('issued-token', false, { refreshTokenHandled: true }), false);
   assert.equal(shouldRevokeIssuedGoogleToken('', false, {}), false);
@@ -272,7 +272,7 @@ test('post-stage Google state failures remain queued and never roll back a worki
   assert.equal(result.oauthStateFinalizationPending, true);
 });
 
-test('a Google outbox failure preserves the deployed provider and revokes only the unused new grant', async () => {
+test('a Google outbox failure preserves shared grants without automatic revocation', async () => {
   const events = [];
   let failureCode = '';
   await assert.rejects(stageGoogleEmailProviderTransition({}, {}, { CloudflareProject: 'tenant-school-1' }, {
@@ -300,12 +300,12 @@ test('a Google outbox failure preserves the deployed provider and revokes only t
     }
   }), (error) => error.code === 'GOOGLE_EMAIL_CONNECTION_OUTBOX_FAILED'
     && error.failureStatePersisted === true);
-  assert.deepEqual(events, ['assignment', 'queue', 'queue', 'queue', 'revoke', 'state:failed']);
+  assert.deepEqual(events, ['assignment', 'queue', 'queue', 'queue', 'state:failed']);
   assert.equal(events.includes('secrets'), false);
   assert.equal(failureCode, 'GOOGLE_EMAIL_CONNECTION_OUTBOX_FAILED');
 });
 
-test('a Gmail metadata failure cancels its queue before revocation so a new OAuth attempt can proceed', async () => {
+test('a Gmail metadata failure cancels its queue without revoking other branch grants', async () => {
   const registration = { CloudflareProject: 'tenant-school-1' };
   const connection = {
     clientId: 'client-id',
@@ -357,7 +357,6 @@ test('a Gmail metadata failure cancels its queue before revocation so a new OAut
   assert.deepEqual(events, [
     'queue:2026-09-17T12:02:35.000Z',
     'cancel:2026-09-17T12:02:35.000Z',
-    'revoke:first',
     'queue:2026-09-17T12:02:36.000Z',
     'metadata:retry',
     'secrets:retry',
@@ -403,7 +402,7 @@ test('an ambiguous Pages patch remains pending without rollback, revocation or a
   assert.equal(events.includes('revoke'), false);
 });
 
-test('an authoritative Pages rejection cancels the Gmail queue and revokes the unstaged grant', async () => {
+test('an authoritative Pages rejection cancels the Gmail queue without revoking shared grants', async () => {
   const events = [];
   const rejection = new Error('Cloudflare rejected the update');
   rejection.patchOutcomeUncertain = false;
@@ -438,7 +437,6 @@ test('an authoritative Pages rejection cancels the Gmail queue and revokes the u
     'transition',
     'secrets:rejected',
     'cancel:gmail:2026-09-17T12:02:46.000Z',
-    'revoke:unstaged-token',
     'state:GOOGLE_EMAIL_SECRET_STAGING_REJECTED'
   ]);
 });
@@ -581,6 +579,15 @@ test('Cloudflare email credentials are patched together and Gmail credentials ca
     && error.patchOutcomeUncertain === false);
 });
 
+test('Cloudflare server errors and request timeouts keep staging ownership uncertain', async () => {
+  for (const status of [408, 500, 502, 503, 504]) {
+    await assert.rejects(patchPagesProductionSecrets({
+      CLOUDFLARE_ACCOUNT_ID: 'account-1', CLOUDFLARE_PAGES_API_TOKEN: 'fake-control-token'
+    }, 'tenant-school-1', { EMAIL_PROVIDER: 'gmail' }, async () => Response.json({ success: false }, { status })),
+    error => error.code === 'CLOUDFLARE_SECRET_UPDATE_FAILED' && error.patchOutcomeUncertain === true);
+  }
+});
+
 test('the signed switch-to-Brevo request binds the refresh token without exposing it in canonical metadata', async () => {
   const pair = controlKeyPair();
   const details = {
@@ -598,7 +605,8 @@ test('the signed switch-to-Brevo request binds the refresh token without exposin
 
 test('email-provider endpoints preserve tenant authority, replay protection and secret boundaries', () => {
   assert.match(localApi, /requireSetupAdministrator/);
-  assert.match(localApi, /access\.scope !== 'organisation'/);
+  assert.match(localApi, /resolveSetupSettingsAccess/);
+  assert.match(localApi, /assertConfiguredProfileBranch\(env, emailProviderBranchId\(access\.branchId\)\)/);
   assert.match(localApi, /assertSameOrigin/);
   assert.match(localApi, /TENANT_CONTROL_PLANE_PRIVATE_KEY/);
   assert.match(localApi, /sendConfiguredEmail/);
@@ -643,14 +651,15 @@ test('pooled and managed tenants expose independent email deployment queue metad
     assert.match(workflow, /\.ready == true/);
     assert.match(workflow, /\.provider == \$provider/);
     assert.match(workflow, /\.requestedAt == \$requestedAt/);
+    assert.match(workflow, /--data-urlencode "branchId=\$\{EMAIL_DEPLOYMENT_BRANCH_ID\}"/);
+    assert.match(workflow, /\(\.branchId \/\/ ""\) == \$branchId/);
+    assert.match(workflow, /provider:\$provider,branchId:\$branchId/);
   }
   const completion = pool.slice(
     pool.indexOf('export async function completeTenantEmailDeployment'),
     pool.indexOf('export async function resetTenantPaystackConnection')
   );
-  assert.ok(
-    completion.indexOf("patchDocumentFieldsIfCurrent(\n        platformEnv,\n        'tenantRegistrations'")
-      < completion.indexOf('TENANT_PROJECT_POOL_COLLECTION, slotDocumentId'),
-    'registration metadata must finalize before the pool pending flag is cleared'
-  );
-});
+  assert.match(completion, /batchCommitDocuments\(platformEnv, writes\)/,
+    'registration metadata and pool pending flag must finalize in the same guarded commit');
+  assert.match(completion, /updateTime: slot\.__updateTime/);
+  assert.match(completion, /updateTime: registration\.__updateTime/);});

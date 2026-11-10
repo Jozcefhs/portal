@@ -17,6 +17,9 @@
     let data, disposed = false, busy = false, checkoutId = '', customer = null, notice = '', failed = false;
     let draft = {PaymentMethod:section === 'tuckShop' ? 'Student Wallet' : 'Cash', CollectionMode:'School collected', CustomerName:''};
     const cart = new Map(), addQuantities = new Map(), pending = new Set();
+    // Suggestions contain names/references only. Wallet balances and checkout
+    // eligibility are always re-read after a selection, never taken from here.
+    const suggestionCache = new Map();
     let historyOpen = false, history = null, historicalOpenings = [], historyError = '', historyController = null;
     let search = '', manualLookupOpen = false, customerType = 'Student', customerSearch = '', searchTimer = 0, searchGeneration = 0, searchController = null, scanController = null, faceController = null;
     const icon = kind => tools.lookupIcon?.(kind) || lookupIcon;
@@ -62,11 +65,15 @@
     async function suggestCustomers(query, field) {
       stopSearch();
       if (query.trim().length < 2) return;
+      const key = JSON.stringify([customerType,query.trim().toLowerCase()]), cached = suggestionCache.get(key);
+      if (cached && Date.now() - cached.at < 30000) { showCustomerMatches(cached.customers); return; }
       const generation = searchGeneration, controller = new AbortController(); searchController = controller; pending.add(controller);
       const timer = setTimeout(() => controller.abort(),20000);
       try {
         const result = await request('vendorCustomerSearch',{Section:section,CustomerType:customerType,Query:query},controller.signal);
         if (disposed || generation !== searchGeneration || !field.isConnected || field.value !== query) return;
+        suggestionCache.delete(key); suggestionCache.set(key,{at:Date.now(),customers:result.customers || []});
+        if (suggestionCache.size > 30) suggestionCache.delete(suggestionCache.keys().next().value);
         showCustomerMatches(result.customers || []);
       } catch (error) {
         if (!disposed && generation === searchGeneration && field.isConnected && error.name !== 'AbortError')
@@ -101,6 +108,7 @@
     async function load() {
       const result = await call('salesBootstrap');
       if (!result) return;
+      suggestionCache.clear();
       historyController?.abort(); historyController = null; history = null; historicalOpenings = []; historyError = '';
       data = result; cart.clear(); addQuantities.clear(); checkoutId = ''; customer = null;
       draft.WalletPin = ''; draft.WalletCardId = ''; draft.AccountRef = ''; customerSearch = '';
@@ -174,7 +182,7 @@
         <form data-lookup-form class="tuck-shop-lookup-form"><label>${wallet ? 'Find student' : 'Find staff member'}<input name="Query" data-customer-search type="search" value="${esc(customerSearch)}" placeholder="${wallet ? 'Name, admission no., card, phone or email' : 'Name, username, staff ID, phone or email'}" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="search" maxlength="120"></label><div class="tuck-shop-student-matches" data-customer-matches aria-live="polite" hidden></div>
         ${wallet ? `<details class="tuck-shop-manual-lookup" data-manual-lookup${manualLookupOpen ? ' open' : ''}><summary>Enter card ID or admission number manually</summary><div><label>Wallet card ID<input name="WalletCardId" value="${esc(draft.WalletCardId)}" autocomplete="off" placeholder="Scan or enter card ID"></label><label>Admission number<input name="AccountRef" value="${esc(draft.AccountRef)}" autocomplete="off" placeholder="Admission number"></label></div></details>` : ''}
         <div class="tuck-shop-lookup-footer"><p class="status" data-department-status role="status"></p>${wallet ? `<div class="tuck-shop-lookup-actions" role="group" aria-label="Student lookup methods"><button type="submit" data-find class="tuck-shop-lookup-action tuck-shop-lookup-primary" aria-label="Find student wallet" title="Find student wallet">${icon('search')}<span>Find wallet</span></button><button type="button" data-scan class="tuck-shop-lookup-action" aria-label="Scan NFC student card" title="Scan NFC student card">${icon('card')}<span>Scan card</span></button><button type="button" data-face class="tuck-shop-lookup-action" aria-label="Find student by face" title="Find student by face">${icon('face')}<span>Use face</span></button></div>` : '<button type="submit" data-find class="tuck-shop-staff-select">Select staff member</button>'}</div></form>
-        ${customer ? `<div class="wallet-account-result vendor-pos-customer" data-customer><div><small>${wallet ? 'Student' : 'Staff customer'}</small><strong>${esc(customer.DisplayName)}</strong><span>${esc([customer.AccountRef,customer.ClassName].filter(Boolean).join(' · '))}</span></div>${wallet ? `<div data-wallet-summary><small>Wallet balance</small><strong>${money(customer.WalletBalance)}</strong><span>Spent today ${money(customer.WalletSpentToday)}</span></div>` : ''}</div>` : ''}` : ''}
+        ${customer ? `<div class="wallet-account-result vendor-pos-customer" data-customer><div><small>${wallet ? 'Student' : 'Staff customer'}</small><strong>${esc(customer.DisplayName)}</strong><span>${esc([customer.AccountRef,customer.ClassName].filter(Boolean).join(' · '))}</span>${wallet ? `<strong class="vendor-pos-student-type">${esc(customer.StudentType || 'Student type not recorded')}</strong>` : ''}</div>${wallet ? `<div data-wallet-summary><small>Wallet balance</small><strong>${money(customer.WalletBalance)}</strong><span>Spent today ${money(customer.WalletSpentToday)}</span></div>` : ''}</div>` : ''}` : ''}
         ${!school || customer ? `<div class="tuck-shop-step-heading" data-payment-heading><span>3</span><div><small>Payment</small><h5>Complete sale</h5></div></div>` : ''}
         <form class="vendor-pos-form" data-payment-form${school && !customer ? ' hidden' : ''}><div class="commerce-checkout-form vendor-pos-payment" data-payment${school && !customer ? ' hidden' : ''}>
         ${!wallet ? `<label>Payment method<select name="PaymentMethod">${['Cash','Bank Transfer','POS / Card'].map(method => `<option${method === draft.PaymentMethod ? ' selected' : ''}>${method}</option>`).join('')}</select></label>${!school ? `<label>Customer name<input name="CustomerName" value="${esc(draft.CustomerName)}" maxlength="160" placeholder="Walk-in customer"></label>` : ''}<label>Who receives the money?<select name="CollectionMode"><option value="School collected"${draft.CollectionMode === 'School collected' ? ' selected' : ''}>${esc(collectionLabel('School collected'))}</option><option${draft.CollectionMode === 'Vendor collected' ? ' selected' : ''}>Vendor collected</option></select></label>${draft.PaymentMethod !== 'Cash' ? `<label>Payment reference<input name="PaymentReference" value="${esc(draft.PaymentReference)}" required maxlength="200"></label>` : ''}` : ''}

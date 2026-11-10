@@ -5,6 +5,7 @@ import { listBranchCollection } from '../lib/branch-reads.js';
 import { batchCommitDocuments, batchCommitLiteralDocuments, batchUpsertDocuments, createDocumentIfAbsent, deleteDocument, findOneByField, getDocument, listCollection, listCollectionForReport, listCollectionPage, patchDocumentFields, queryCollection, queryCollectionPages, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { feeBranchId, feeRowsForBranch, feeMatchesBranch, feeSetupBranch, resolveFeeDocument, feeDocumentWrite } from '../lib/fee-branch-scope.js';
 import { normalizeRecoveryEmail } from '../lib/staff-password-recovery.js';
+import { resolveBranchEmailEnvironment } from '../lib/branch-email-provider.js';
 import { activeAdmissionRows } from '../lib/admission-cycle.js';
 import { billingComponentDiagnostics, billingDiagnostics } from '../lib/student-billing-diagnostics.js';
 import { loadBranchFinanceRows, loadBranchFinancePage } from '../lib/finance-branch-reads.js';
@@ -2800,10 +2801,18 @@ async function updateStoreOrderStatus(env, body) {
 }
 
 async function saveBrevoSettings(env, body, deploymentIdentity = null) {
+  const branchId = clean(
+    body.DeviceBranchId
+    || (clean(body.SettingsScope || body.settingsScope).toLowerCase() === 'branch'
+      ? body.BranchId || body.branchId
+      : '')
+  );
+  const scopedEmail = await resolveBranchEmailEnvironment(env, branchId);
+  const emailEnv = scopedEmail.env;
   const senderName = clean(body.BrevoSenderName || body.SenderName || body.senderName);
   const senderEmail = clean(body.BrevoSenderEmail || body.SenderEmail || body.senderEmail);
   const submittedApiKey = clean(body.BrevoApiKey || body.ApiKey || body.apiKey);
-  const environmentApiKeyConfigured = Boolean(clean(env.BREVO_API_KEY));
+  const environmentApiKeyConfigured = Boolean(clean(emailEnv.BREVO_API_KEY));
   const executiveSenderName = clean(body.ExecutiveSenderName || body.executiveSenderName);
   const executiveSenderEmail = clean(body.ExecutiveSenderEmail || body.executiveSenderEmail);
   const executiveReplyToEmail = clean(body.ExecutiveReplyToEmail || body.executiveReplyToEmail);
@@ -2815,18 +2824,18 @@ async function saveBrevoSettings(env, body, deploymentIdentity = null) {
     throw err;
   }
   const existing = await getDocument(env, 'settings', 'brevo').catch(() => null);
-  const legacyDatabaseKeyConfigured = Boolean(clean(existing?.BrevoApiKey));
-  const configuredEmailProvider = clean(env.EMAIL_PROVIDER).toLowerCase();
+  const legacyDatabaseKeyConfigured = scopedEmail.mode === 'inherit' && Boolean(clean(existing?.BrevoApiKey));
+  const configuredEmailProvider = clean(emailEnv.EMAIL_PROVIDER).toLowerCase();
   const emailProvider = !configuredEmailProvider
     ? 'brevo'
     : ['brevo', 'gmail'].includes(configuredEmailProvider)
       ? configuredEmailProvider
       : 'unsupported';
   const gmailConnectionReady = Boolean(
-    clean(env.GMAIL_OAUTH_CLIENT_ID)
-    && clean(env.GMAIL_OAUTH_CLIENT_SECRET)
-    && clean(env.GMAIL_REFRESH_TOKEN)
-    && clean(env.GMAIL_CONNECTED_EMAIL)
+    clean(emailEnv.GMAIL_OAUTH_CLIENT_ID)
+    && clean(emailEnv.GMAIL_OAUTH_CLIENT_SECRET)
+    && clean(emailEnv.GMAIL_REFRESH_TOKEN)
+    && clean(emailEnv.GMAIL_CONNECTED_EMAIL)
   );
   const emailProviderConnectionReady = emailProvider === 'gmail'
     ? gmailConnectionReady
@@ -2835,8 +2844,10 @@ async function saveBrevoSettings(env, body, deploymentIdentity = null) {
       : false;
   const providerSettings = {
     EmailProvider: emailProvider,
+    EmailProviderMode: scopedEmail.mode,
+    EmailProviderBranchId: scopedEmail.branchId,
     EmailProviderConnectionReady: emailProviderConnectionReady,
-    GmailConnectedEmail: emailProvider === 'gmail' ? clean(env.GMAIL_CONNECTED_EMAIL) : ''
+    GmailConnectedEmail: emailProvider === 'gmail' ? clean(emailEnv.GMAIL_CONNECTED_EMAIL) : ''
   };
   const now = nowIso();
   const senderFields = organisationScoped ? {
@@ -2864,12 +2875,6 @@ async function saveBrevoSettings(env, body, deploymentIdentity = null) {
     UpdatedAt: now,
     UpdatedBy: clean(body.UserRole || body.UpdatedBy || body.updatedBy) || 'Super Admin'
   };
-  const branchId = clean(
-    body.DeviceBranchId
-    || (clean(body.SettingsScope || body.settingsScope).toLowerCase() === 'branch'
-      ? body.BranchId || body.branchId
-      : '')
-  );
   if (branchId) {
     const defaults = (await getSchoolProfile(env)).profile;
     const saved = await saveBranchProfileOverrides(env, {
@@ -3199,7 +3204,9 @@ async function getSchoolProfile(env, options = {}) {
   const structure = normalizeSchoolStructure(storedStructure || await getSchoolStructure(env));
   const enabledDocuments = documentSettings?.Enabled && typeof documentSettings.Enabled === 'object' ? documentSettings.Enabled : {};
   const organization = resolveOrganizationConfig({ env, organizationProfile, legacyProfile: profile || {} });
-  const configuredEmailProvider = clean(env.EMAIL_PROVIDER).toLowerCase();
+  const scopedEmail = await resolveBranchEmailEnvironment(env, options.branchId || options.BranchId || '');
+  const emailEnv = scopedEmail.env;
+  const configuredEmailProvider = clean(emailEnv.EMAIL_PROVIDER).toLowerCase();
   const emailProvider = !configuredEmailProvider
     ? 'brevo'
     : ['brevo', 'gmail'].includes(configuredEmailProvider)
@@ -3207,13 +3214,13 @@ async function getSchoolProfile(env, options = {}) {
       : 'unsupported';
   const emailProviderConnectionReady = emailProvider === 'gmail'
     ? Boolean(
-        clean(env.GMAIL_OAUTH_CLIENT_ID)
-        && clean(env.GMAIL_OAUTH_CLIENT_SECRET)
-        && clean(env.GMAIL_REFRESH_TOKEN)
-        && clean(env.GMAIL_CONNECTED_EMAIL)
+        clean(emailEnv.GMAIL_OAUTH_CLIENT_ID)
+        && clean(emailEnv.GMAIL_OAUTH_CLIENT_SECRET)
+        && clean(emailEnv.GMAIL_REFRESH_TOKEN)
+        && clean(emailEnv.GMAIL_CONNECTED_EMAIL)
       )
     : emailProvider === 'brevo'
-      ? Boolean(clean(env.BREVO_API_KEY) || clean(brevoSettings?.BrevoApiKey))
+      ? Boolean(clean(emailEnv.BREVO_API_KEY) || (scopedEmail.mode === 'inherit' && clean(brevoSettings?.BrevoApiKey)))
       : false;
   const baseProfile = { ...(profile || {
       SchoolName: 'Dynamax',
@@ -3262,8 +3269,10 @@ async function getSchoolProfile(env, options = {}) {
       OrganisationExecutiveReplyToEmail: clean(profile?.OrganisationExecutiveReplyToEmail || brevoSettings?.OrganisationExecutiveReplyToEmail),
       OrganisationExecutiveReplyToName: clean(profile?.OrganisationExecutiveReplyToName || brevoSettings?.OrganisationExecutiveReplyToName),
       EmailProvider: emailProvider,
+      EmailProviderMode: scopedEmail.mode,
+      EmailProviderBranchId: scopedEmail.branchId,
       EmailProviderConnectionReady: emailProviderConnectionReady,
-      GmailConnectedEmail: emailProvider === 'gmail' ? clean(env.GMAIL_CONNECTED_EMAIL) : '',
+      GmailConnectedEmail: emailProvider === 'gmail' ? clean(emailEnv.GMAIL_CONNECTED_EMAIL) : '',
       FeatureFlags: organization.FeatureFlags,
       PlanEntitlements: organization.PlanEntitlements,
       PlanModuleCatalogVersion: organization.PlanModuleCatalogVersion,
@@ -7086,7 +7095,9 @@ export async function recordWalletPurchase(env, body, options = {}) {
       }
       throw error;
     }
-    const updatedAccount = await walletAccountPayload(env, student);
+    // The atomic sale succeeded; reuse its verified wallet snapshot for this response.
+    const updatedAccount = { ...account, WalletBalance: asMoneyNumber(account.WalletBalance - amount),
+      WalletSpentToday: asMoneyNumber(account.WalletSpentToday + amount) };
     return { ok: true, message: 'Tuck-shop sale paid from the student wallet; stock updated.',
       ledger: entry, sale, balance: updatedAccount.WalletBalance, account: updatedAccount };
   }
@@ -7111,7 +7122,8 @@ export async function recordWalletPurchase(env, body, options = {}) {
     }
     throw error;
   }
-  const updatedAccount = await walletAccountPayload(env, student);
+  const updatedAccount = { ...account, WalletBalance: asMoneyNumber(account.WalletBalance - amount),
+    WalletSpentToday: asMoneyNumber(account.WalletSpentToday + amount) };
   return {
     ok: true,
     message: 'Wallet purchase recorded.',

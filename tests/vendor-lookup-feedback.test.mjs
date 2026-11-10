@@ -8,7 +8,7 @@ const [feedback, cacheSource, admin] = await Promise.all([
 ].map(path => readFile(new URL(`../${path}`, import.meta.url), 'utf8')));
 const requestSource = admin.slice(admin.indexOf('const TRANSIENT_API_STATUS_CODES'), admin.indexOf('async function refreshStaffSiteProfile'));
 const historySource = await readFile(new URL('../js/history-date-range.js', import.meta.url), 'utf8');
-const reads = ['salesBootstrap', 'recentVendorSales', 'vendorCustomerSearch', 'vendorWalletLookup', 'previewVendorSale'];
+const reads = ['salesBootstrap', 'recentVendorSales', 'vendorCustomerSearch', 'vendorWalletLookup', 'previewVendorSale', 'requestHistory', 'requestReport'];
 const post = (action, extra = {}) => ({ method: 'POST', body: JSON.stringify({ action, Section: 'tuckShop', ...extra }) });
 function fixture(network = async () => Response.json({ ok: true })) {
   const alerts = [], requests = [], session = new AbortController();
