@@ -22,7 +22,7 @@ import { getAccountingChartRows, invalidateAccountingChartRows, primeAccountingC
 import { continueRevenueSync, revenueSyncWrite, revenueSyncReader } from '../lib/accounting-revenue-sync.js';
 import { mergeSchoolBranchMetadata, saveBranchSchoolSection } from '../lib/branch-school-presentation.js';
 import { canonicalSchoolBranchId, deleteSchoolDocument, getSchoolDocumentById, getSchoolDocumentsById, getSchoolStructure, invalidateSchoolStructureCache, listSchoolCollection, normalizeSchoolStructure, querySchoolCollection, safeScopeId, scopedCollectionPath, schoolCollectionPaths, schoolSectionFor, upsertSchoolDocument } from '../lib/school-scope.js';
-import { canonicalConfiguredClass, classNamesMatch } from '../lib/class-names.js';
+import { canonicalConfiguredClass, canonicalConfiguredClassRule, classNamesMatch } from '../lib/class-names.js';
 import { explicitlyIncludesFullScholarship, isFullScholarship } from '../lib/full-scholarship.js';
 import { categoryApplies, deleteStoreCategory, ensureStoreCategories, resolveStoreCategory, saveStoreCategory } from '../lib/store-categories.js';
 import { assertProcurementInventoryEdit, assertProcurementInventoryMovement, assertProcurementInventoryDeletion, loadProcurementInventoryControl, procurementMovementBalance, inventoryQuantityNumber } from '../lib/procurement-inventory-guard.js';
@@ -5133,10 +5133,10 @@ async function saveFeeItem(env, body) {
   }
   const [target, classNames] = await Promise.all([
     resolveFeeDocument(env, branchId, feeCode),
-    configuredClassNames(env, { BranchId: branchId })
+    configuredClassNames(env, { BranchId: branchId, IncludeArms: false })
   ]);
   const existing = target.existing || {};
-  const className = canonicalConfiguredClass(clean(body.ClassName || body.className) || 'All', classNames);
+  const className = canonicalConfiguredClassRule(body.ClassNames ?? body.classNames ?? body.ClassName ?? body.className ?? 'All', classNames);
   const billingCategories = normalizeFeeBillingCategories(
     body.BillingCategories ?? body.billingCategories ?? body.BillingCategory ?? body.billingCategory
   );
@@ -5147,6 +5147,7 @@ async function saveFeeItem(env, body) {
     FeeName: clean(body.FeeName || body.feeName),
     FeeCategory: clean(body.FeeCategory || body.feeCategory) || 'School Fee',
     ClassName: className,
+    ...(Object.hasOwn(existing, 'className') ? { className } : {}),
     StudentType: clean(body.StudentType || body.studentType) || 'All',
     BillingCategories: billingCategories,
     BillingCategory: feeBillingCategoryText(billingCategories),
@@ -5188,7 +5189,7 @@ async function saveFeeItems(env, body) {
     err.status = 413;
     throw err;
   }
-  const classNames = await configuredClassNames(env, { BranchId: branchId });
+  const classNames = await configuredClassNames(env, { BranchId: branchId, IncludeArms: false });
   const seenFeeCodes = new Set();
   const prepared = items.map((item) => {
     if (clean(item.BranchId || item.branchId) && feeBranchId(item) !== branchId) {
@@ -5221,13 +5222,15 @@ async function saveFeeItems(env, body) {
     const billingCategories = normalizeFeeBillingCategories(
       item.BillingCategories ?? item.billingCategories ?? item.BillingCategory ?? item.billingCategory
     );
+    const className = canonicalConfiguredClassRule(item.ClassNames ?? item.classNames ?? item.ClassName ?? item.className ?? 'All', classNames);
     return normalizeFeeItem({
       ...(targets[index].existing || {}),
       BranchId: branchId,
       FeeCode: feeCode,
       FeeName: clean(item.FeeName || item.feeName),
       FeeCategory: clean(item.FeeCategory || item.feeCategory) || 'School Fee',
-      ClassName: canonicalConfiguredClass(clean(item.ClassName || item.className) || 'All', classNames),
+      ClassName: className,
+      ...(Object.hasOwn(targets[index].existing || {}, 'className') ? { className } : {}),
       StudentType: clean(item.StudentType || item.studentType) || 'All',
       BillingCategories: billingCategories,
       BillingCategory: feeBillingCategoryText(billingCategories),

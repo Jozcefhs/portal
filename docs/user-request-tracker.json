@@ -74,23 +74,38 @@
   ],
   "recentDelivery": {
     "date": "2026-11-10",
-    "webCommit": "0c23a397aa5fb36f254da3c8cbe0b18094c31f87",
-    "webRelease": "dynamax-v552-advance-credit-focused-loading-vendor-sales",
+    "webCommit": "37ab098ac943c9ea5bdf4101531a10314c689b42",
+    "webRelease": "dynamax-v553-shared-branch-class-catalogue",
     "url": "https://destinychristianacademy.pages.dev",
-    "deploymentUrl": "https://eb546361.destinychristianacademy.pages.dev",
-    "verification": "4,898 repository tests passed; synthetic Chrome parent/history checks passed at 390px/1280px. Seven served asset SHA-256 hashes matched local committed files. Anonymous payment input denied and parent/vendor endpoints returned 401. Three vendor date indexes READY; no live payment or notification test.",
-    "desktopSourceCommit": "e173f80",
-    "desktopValidation": "36 Tk/unit tests passed; source pushed only.",
-    "desktopInstaller": "No compilation/release. Production version manifest still 3.1.63 and hash matches the unchanged local file."
+    "deploymentUrl": "https://0ce5f223.destinychristianacademy.pages.dev",
+    "verification": "4,930 web tests passed; read-only live catalogue audit and unchanged-save planner verified. Seven live assets matched source SHA-256, release/cache markers matched, anonymous protected endpoints denied. No business-data migration.",
+    "desktopSourceCommit": "59ffdd2",
+    "desktopValidation": "37 focused desktop tests passed; source pushed.",
+    "desktopInstaller": "No compilation/release; production version remains 3.1.63."
   },
   "groups": [
     {
       "group": "current",
       "items": [
         {
+          "id": "area1-tuition-class-list",
+          "title": "Preserve all selected classes when saving fee rules; correct Area 1 Grade 3–6 tuition",
+          "status": "tested_awaiting_deployment",
+          "acceptance": "The three TUITION123 term rules must apply to Grades 3,4,5,6, not only Grade 3. Preserve existing fee IDs, codes, amounts, invoices and payments; fix future single and batch saves, test, push and deploy without compilation/release.",
+          "evidence": [
+            "functions/lib/class-names.js",
+            "functions/api/backend.js",
+            "tests/fee-multiple-classes.test.mjs",
+            "../suite/tests/test_fee_multiclass_ui.py",
+            "docs/fee-multiple-classes-2026-11-10.md"
+          ],
+          "diagnosis": "Live targeted read confirmed all three rules saved ClassName Grade 3. Desktop sends a comma-separated class list; backend scalar canonicalization reduces it to the first grade.",
+          "desktopDelivery": "Source e9b6dba pushed; 50 focused tests passed. No compilation/release. Current installer CSV requests are supported by backend fix."
+        },
+        {
           "id": "shared-branch-class-catalogue",
           "title": "Use one branch-specific class and arm setup in Settings and Academic Management",
-          "status": "tested_awaiting_deployment",
+          "status": "deployed_verified",
           "acceptance": "Use existing academic class/arm IDs in both screens. Preserve all placements, scores and records; no global fallback, duplicate creation or navigation writes. Test, push and deploy; do not compile/release.",
           "evidence": [
             "functions/lib/branch-class-catalogue.js",
@@ -104,7 +119,12 @@
           ],
           "verification": "Read-only live audit: 28 classes and 103 arms across three school branches; unchanged setup plans zero changes/removals for each branch. No live business-data migration.",
           "desktopDelivery": "Source commit 59ffdd2 pushed; 37 focused tests passed, including small-window footer. No compilation/release.",
-          "behavior": "Settings shares existing definitions and permits additions/progression/safe formatting; remove/deactivate definitions through existing Academic Management review. No separate destructive Settings path."
+          "behavior": "Settings shares existing definitions and permits additions/progression/safe formatting; remove/deactivate definitions through existing Academic Management review. No separate destructive Settings path.",
+          "delivery": {
+            "webRelease": "dynamax-v553-shared-branch-class-catalogue",
+            "sourceCommit": "37ab098ac943c9ea5bdf4101531a10314c689b42",
+            "deploymentUrl": "https://0ce5f223.destinychristianacademy.pages.dev"
+          }
         },
         {
           "id": "advance-fees",
@@ -1005,12 +1025,12 @@
     }
   ],
   "currentPassValidation": {
-    "passed": 4930,
-    "scope": "Shared branch catalogue and duplicate/stale-write protections. Existing assignment/removal concurrency follow-up retained explicitly.",
+    "passed": 4939,
+    "scope": "Shared branch catalogue, exact multi-class fee saves, and live fee-rule correction preview. Existing assignment/removal concurrency follow-up retained.",
     "date": "2026-11-10",
     "failed": 0,
-    "desktopTests": 37,
-    "repositoryTests": 4930,
+    "desktopTests": 50,
+    "repositoryTests": 4939,
     "preservation": "Read-only catalogue audit: 28 classes, 103 arms; all three unchanged setup plans produce zero changes and removals. No live record migration."
   },
   "deliveryHistory": [
@@ -1021,6 +1041,17 @@
       "verification": "4,815 repository tests before the current advance/navigation/vendor additions; release asset hashes verified; classroom repair retry made zero changes.",
       "desktopSourceCommit": "2e4f699",
       "desktopInstaller": "No new compilation/release in this pass; released version remains 3.1.63."
+    },
+    {
+      "date": "2026-11-10",
+      "webCommit": "0c23a397aa5fb36f254da3c8cbe0b18094c31f87",
+      "webRelease": "dynamax-v552-advance-credit-focused-loading-vendor-sales",
+      "url": "https://destinychristianacademy.pages.dev",
+      "deploymentUrl": "https://eb546361.destinychristianacademy.pages.dev",
+      "verification": "4,898 repository tests passed; synthetic Chrome parent/history checks passed at 390px/1280px. Seven served asset SHA-256 hashes matched local committed files. Anonymous payment input denied and parent/vendor endpoints returned 401. Three vendor date indexes READY; no live payment or notification test.",
+      "desktopSourceCommit": "e173f80",
+      "desktopValidation": "36 Tk/unit tests passed; source pushed only.",
+      "desktopInstaller": "No compilation/release. Production version manifest still 3.1.63 and hash matches the unchanged local file."
     }
   ]
 }

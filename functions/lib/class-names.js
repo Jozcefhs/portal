@@ -39,6 +39,39 @@ export function canonicalConfiguredClass(value, configured = []) {
   return clean(typeof match === 'string' ? match : match?.ClassName || match?.className) || clean(value);
 }
 
+// Fee rules can cover several explicitly selected classes. Never pass the
+// whole CSV through the single-class alias matcher: "Grade 3, Grade 4" would
+// otherwise normalize to Grade 3 and silently discard the other selections.
+export function canonicalConfiguredClassRule(value, configured = []) {
+  const entries = (Array.isArray(value) ? value : [value])
+    .flatMap(item => clean(item).split(',')).map(clean).filter(Boolean);
+  if (!entries.length) {
+    if (Array.isArray(value)) {
+      throw Object.assign(new Error('Select at least one applicable class, or explicitly choose All classes.'), { status: 400 });
+    }
+    return 'All';
+  }
+  const all = entries.filter(item => ['all', '*'].includes(item.toLowerCase()));
+  if (all.length && all.length !== entries.length) {
+    throw Object.assign(new Error('Choose All classes or individual classes, not both.'), { status: 400 });
+  }
+  if (all.length) return 'All';
+  const seen = new Set();
+  const rangeOrCompound = /\b(?:and|to|through)\b|[&;|\/+\r\n]|\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s*[-\u2013\u2014]\s*(?:(?:grade|class|primary|basic|nursery|kg|jss|sss?)\s*)?(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/i;
+  return entries.map(item => {
+    const exact = configured.map(row => clean(typeof row === 'string' ? row : row?.ClassName || row?.className))
+      .find(name => name.toLowerCase() === item.toLowerCase());
+    if (rangeOrCompound.test(item)) {
+      throw Object.assign(new Error('Select each applicable class individually, or enter comma-separated class names. Class ranges are not supported.'), { status: 400 });
+    }
+    return exact || canonicalConfiguredClass(item, configured);
+  }).filter(item => {
+    const key = normalizeClassKey(item);
+    if (seen.has(key)) return false;
+    seen.add(key); return true;
+  }).join(', ');
+}
+
 // Catalogue rows carry real class identities. A spelling alias may select one
 // identity, but must never silently choose between two configured classes.
 export function canonicalCatalogueClassName(value, classes = [], options = {}) {

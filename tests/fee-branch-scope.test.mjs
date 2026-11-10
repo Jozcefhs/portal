@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { feeBranchId, feeRowsForBranch, feeMatchesBranch, feeSetupBranch, scopedFeeDocumentId, resolveFeeDocument, feeDocumentWrite } from '../functions/lib/fee-branch-scope.js';
 import { feeMatchesApplication, feeCodeRenameAllowed, getAccountsOverview } from '../functions/api/backend.js';
+import { canonicalConfiguredClassRule } from '../functions/lib/class-names.js';
 
 test('legacy fees belong only to Main; empty branches do not inherit charges', () => {
   const rows = [{ FeeCode: 'OLD' }, { FeeCode: 'GLOBAL-OLD', BranchId: 'all' }, { FeeCode: 'MAIN', BranchId: 'main' }, { FeeCode: 'NORTH', BranchId: 'north' }];
@@ -92,7 +93,7 @@ test('actual single, bulk, delete and seed actions cannot change Main from anoth
     feeSetupBranch, feeBranchId, feeRowsForBranch, feeCodeRenameAllowed, feeDocumentWrite,
     resolveFeeDocument: (env, branch, code) => resolveFeeDocument(env, branch, code, db),
     configuredClassNames: async (_env, scope) => { assert.equal(scope.BranchId, 'north'); return []; },
-    canonicalConfiguredClass: value => value, normalizeFeeItem: row => row,
+    canonicalConfiguredClass: value => value, canonicalConfiguredClassRule, normalizeFeeItem: row => row,
     normalizeFeeBillingCategories: value => value || ['All'], feeBillingCategoryText: values => values.join(', '),
     requireAccountingRole: (body, roles) => { if (!roles.includes(body.UserRole)) throw Object.assign(new Error('role'), { status: 403 }); },
     clean, asMoneyNumber: value => Number(value) || 0, yesNo: value => clean(value).toUpperCase(), nowIso: () => 'now',
