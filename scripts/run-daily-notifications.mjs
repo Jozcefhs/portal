@@ -6,7 +6,7 @@ export async function runDailyNotifications(env = process.env, dependencies = {}
   const log = dependencies.log || console.log;
   const pause = dependencies.pause || (ms => new Promise(resolve => setTimeout(resolve, ms)));
   const mode = env.SCHEDULER_MODE;
-  const modes = { credits: 'schoolFeeCreditsOnly', reminders: 'feeRemindersOnly', maintenance: 'dailyMaintenanceOnly' };
+  const modes = { credits: 'schoolFeeCreditsOnly', reminders: 'feeRemindersOnly', maintenance: 'dailyMaintenanceOnly', delivery: 'announcementsOnly' };
   if (!modes[mode] || !env.SCHEDULER_SECRET || !env.ENDPOINT || !env.EXPECTED_WORKSPACE_ID || env.EXPECTED_EDITION !== 'school') {
     throw new Error('Daily scheduler configuration is incomplete.');
   }
@@ -14,14 +14,14 @@ export async function runDailyNotifications(env = process.env, dependencies = {}
   if (endpoint.protocol !== 'https:' || endpoint.pathname !== '/api/notification-scheduler') throw new Error('Invalid scheduler endpoint.');
   const today = env.PROCESS_DATE || new Date().toISOString().slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(today) || new Date(`${today}T00:00:00Z`).toISOString().slice(0, 10) !== today) throw new Error('Invalid processing date.');
-  const totals = { pages: 0, inspected: 0, created: 0, duplicates: 0, updated: 0, pushQueued: 0, creditedInvoices: 0 };
+  const totals = { pages: 0, inspected: 0, created: 0, duplicates: 0, updated: 0, pushQueued: 0, creditedInvoices: 0, delivered: 0 };
   let cursor;
   for (let page = 1; page <= 1000; page++) {
     let data;
     for (let attempt = 0; attempt < 4; attempt++) {
       const response = await request(endpoint, {
         method: 'POST', headers: { Authorization: `Bearer ${env.SCHEDULER_SECRET}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ [modes[mode]]: true, today, creditLimit: 25, limit: 25,
+        body: JSON.stringify({ [modes[mode]]: true, today, creditLimit: 25, limit: 25, pushJobLimit: mode === 'delivery' ? 5 : 1,
           reminderCursor: cursor, expectedWorkspaceId: env.EXPECTED_WORKSPACE_ID, expectedEdition: env.EXPECTED_EDITION }),
         signal: AbortSignal.timeout(120000)
       });
@@ -37,7 +37,9 @@ export async function runDailyNotifications(env = process.env, dependencies = {}
       await pause(1000 * 2 ** attempt);
     }
     if (data.workspaceId !== env.EXPECTED_WORKSPACE_ID || data.edition !== env.EXPECTED_EDITION) throw new Error('Scheduler response belongs to a different workspace.');
-    const result = mode === 'credits' ? data.schoolFeeCredits : mode === 'reminders' ? data.reminders : {};
+    const result = mode === 'credits' ? data.schoolFeeCredits : mode === 'reminders' ? data.reminders
+      : mode === 'delivery' ? { ...data.announcementPush,
+          hasMore: Number(data.announcementPush?.remaining || 0) > 0 || Number(data.announcements?.processed || 0) > 0 } : {};
     // The credit scheduler's completed-date watermark deliberately returns
     // skipped on a same-day retry: this is successful, zero-write completion.
     if (!result || (result.skipped && !(mode === 'credits' && result.ok === true && result.hasMore === false))) {

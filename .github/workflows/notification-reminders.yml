@@ -70,3 +70,7 @@ jobs:
         env:
           SCHEDULER_MODE: maintenance
         run: node scripts/run-daily-notifications.mjs
+      - name: Complete queued reminder delivery
+        env:
+          SCHEDULER_MODE: delivery
+        run: node scripts/run-daily-notifications.mjs

@@ -127,6 +127,13 @@ test('a completed credit watermark is successful on a same-day retry with no fur
  })});
  assert.equal(totals.pages,1);assert.equal(totals.creditedInvoices,0);
 });
+test('daily delivery drains bounded durable batches without rerunning fee or credit processing',async()=>{
+ let calls=0;const totals=await runDailyNotifications({...workflowEnv,SCHEDULER_MODE:'delivery'},{log:()=>{},fetch:async(_url,init)=>{
+  calls++;const body=JSON.parse(init.body);assert.equal(body.announcementsOnly,true);assert.equal(body.pushJobLimit,5);
+  assert.equal(body.feeRemindersOnly,undefined);assert.equal(body.schoolFeeCreditsOnly,undefined);
+  return Response.json({ok:true,workspaceId:'school',edition:'school',announcementPush:{remaining:calls===1?2:0,delivered:1},announcements:{processed:0}});
+ }});assert.equal(calls,2);assert.equal(totals.delivered,2);
+});
 test('daily runner forwards cursors and validates tenant without exposing response identities',async()=>{
  const bodies=[],logs=[]; const result=await runDailyNotifications(workflowEnv,{log:row=>logs.push(row),fetch:async(_url,init)=>{
   bodies.push(JSON.parse(init.body)); return Response.json({ok:true,workspaceId:'school',edition:'school',private:'parent@example.invalid',
