@@ -1,0 +1,43 @@
+{
+  "verifiedAt": "2026-11-10",
+  "sourceCommit": "77a195e9c0a8f2469e34286eb65ecf24d7578e38",
+  "deployment": "7fa7be0f",
+  "url": "https://dynamax-hospital-review.pages.dev/admin.html?section=humanResources",
+  "workspace": "dynamax-hospital-review",
+  "edition": "hospital",
+  "webRelease": "dynamax-v528-hospital-hr-employment",
+  "feature": "Human Resources: Salary & letters",
+  "validation": {
+    "repositoryTestsPassed": 4764,
+    "focusedHrAndCacheTestsPassed": 45,
+    "finalReleaseMarkerTestsPassed": 7,
+    "syntheticBrowserWidths": [1366, 390],
+    "syntheticBrowserPassed": true,
+    "liveAssetHashesMatched": ["admin.html", "js/admin.js", "js/hr-employment-tools.js", "js/staff-workspace-cache.js", "sw.js"],
+    "liveDeploymentIdentityMatched": true,
+    "livePrivateDocumentBindingConfirmed": true,
+    "liveSalaryReads": {"owner": 200, "doctor": 403, "nurse": 403, "unauthenticated": 401}
+  },
+  "preservation": {
+    "liveBusinessWriteRequests": 0,
+    "liveEmploymentEmailsSent": 0,
+    "salaryProfileIdsPreserved": true,
+    "pastPayrollAndPaymentsUnchanged": true,
+    "pdfStorage": "Private R2 objects; scoped reference, size and hash metadata in Firestore",
+    "duplicateSending": "Atomic revision-guarded claim; uncertain delivery requires review and is not automatically resent"
+  },
+  "navigation": "Human Resources > Salary & letters > choose employee > Load employee setup",
+  "limits": [
+    "Advanced configurable payroll components remain editable through Accounts > Payroll; HR shows their saved calculation.",
+    "At most 100 saved letter summaries are loaded for one employee; additional history is preserved and the interface indicates truncation.",
+    "Provider delivery was tested using mocks. No real employment letter was sent.",
+    "This is a Hospital owner-demo web rollout, not desktop compilation or an installer release."
+  ],
+  "localEvidence": [
+    "tmp/hospital-hr-r2-full-20261110.txt",
+    "tmp/hospital-hr-live-20261110.json",
+    "tmp/hospital-hr-deploy-20261110.txt",
+    "tmp/hr-employment-ui/hr-1366.png",
+    "tmp/hr-employment-ui/hr-390.png"
+  ]
+}
