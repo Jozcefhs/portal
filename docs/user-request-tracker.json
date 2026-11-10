@@ -78,13 +78,17 @@
   ],
   "recentDelivery": {
     "date": "2026-11-10",
-    "webCommit": "101ca616ee89dcbef841f02a73628cd80d28a8d9",
-    "webRelease": "dynamax-v554-multiclass-fee-rules",
+    "webCommit": "f4d8791c6e05ec8f49a057ea9e65aab47b09723f",
+    "implementationCommit": "e742f01e167d42dd62f4b1a386272e42b42a1008",
+    "webRelease": "dynamax-v555-student-status-hr-employment",
     "url": "https://destinychristianacademy.pages.dev",
-    "deploymentUrl": "https://43d14059.destinychristianacademy.pages.dev",
-    "verification": "Seven production assets matched pushed Git blobs; protected endpoints rejected anonymous requests. 4939 web tests, 50 desktop tests. Live Area 1 fee correction verified; retry wrote nothing.",
-    "desktopSourceCommit": "e9b6dba",
-    "desktopInstaller": "No compilation/release; published installer remains 3.1.63."
+    "verification": "School and Faith 24 served interface assets each matched tested source; nine branch-email setup assets across School, Faith and central platform matched. Unsigned protected APIs denied access. All 11 tenant deployments and their required index application steps succeeded. 5030 shared web tests, 98 focused HR checks, 352 email/sender checks and 1175 desktop tests passed.",
+    "desktopSourceCommit": "8cba0d5",
+    "desktopMetadataCommit": "3347178",
+    "desktopInstaller": "Published v3.1.64; packaged application/TLS/Android integrity checks passed.",
+    "installerUrl": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.64.exe",
+    "installerSha256": "472b380dd7fe14c76dcb2d88f8671ad430c213fd3827644509eac481fd674d8e",
+    "installerBytes": 42784976
   },
   "groups": [
     {
@@ -103,7 +107,7 @@
         {
           "id": "hr-salary-employment-letters",
           "title": "HR salary structure and employment letters with PDF email delivery across editions",
-          "status": "tested_awaiting_deployment",
+          "status": "deployed_verified",
           "acceptance": "Reuse employee payroll salary profiles; show configured employment terms in preview/downloadable PDF and provide authorised explicit email delivery. Preserve history, avoid duplicate sends and unrequested employee/payroll reads. No real employee email during tests.",
           "evidence": [
             "docs/student-status-hr-employment-2026-11-10.md",
@@ -111,18 +115,46 @@
             "functions/lib/hr-employment-letter-pdf.js",
             "js/hr-employment-tools.js"
           ],
-          "verification": "98 focused tests passed; private R2 PDF hash/scope checks and duplicate-send protection reviewed independently. Hospital owner demo deployed at 7fa7be0f with 4764 tests. School/Faith/managed edition rollout pending current release. Final School/shared suite: 5030 passed, zero failed. No live records or email changed by tests."
+          "verification": "98 focused tests passed; private R2 PDF hash/scope checks and duplicate-send protection reviewed independently. Hospital owner demo deployed at 7fa7be0f with 4764 tests. School/Faith/managed editions deployed and verified. Final School/shared suite: 5030 passed, zero failed. No live records or email changed by tests.",
+          "delivery": {
+            "date": "2026-11-10",
+            "webCommit": "f4d8791c6e05ec8f49a057ea9e65aab47b09723f",
+            "implementationCommit": "e742f01e167d42dd62f4b1a386272e42b42a1008",
+            "webRelease": "dynamax-v555-student-status-hr-employment",
+            "url": "https://destinychristianacademy.pages.dev",
+            "verification": "School and Faith 24 served interface assets each matched tested source; nine branch-email setup assets across School, Faith and central platform matched. Unsigned protected APIs denied access. All 11 tenant deployments and their required index application steps succeeded. 5030 shared web tests, 98 focused HR checks, 352 email/sender checks and 1175 desktop tests passed.",
+            "desktopSourceCommit": "8cba0d5",
+            "desktopMetadataCommit": "3347178",
+            "desktopInstaller": "Published v3.1.64; packaged application/TLS/Android integrity checks passed.",
+            "installerUrl": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.64.exe",
+            "installerSha256": "472b380dd7fe14c76dcb2d88f8671ad430c213fd3827644509eac481fd674d8e",
+            "installerBytes": 42784976
+          }
         },
         {
           "id": "linked-student-lifecycle-status",
           "title": "Consistent student status across profiles, Accounts, admissions and classrooms",
-          "status": "tested_awaiting_deployment",
+          "status": "deployed_verified",
           "acceptance": "Terminal statuses remove active classroom participation while preserving pupil identity, scores, payments and historical memberships. Temporary leave and suspension retain reversible placement history. Branch-scoped linked records update together and repeated saves are no-ops.",
           "evidence": [
             "docs/student-status-hr-employment-2026-11-10.md",
             "tests/student-status-routes.test.mjs"
           ],
-          "verification": "151 affected academic tests passed. Terminal and temporary statuses synchronize scoped linked records and active rosters; prior scores/payments remain preserved. No live business records changed for tests. Final School/shared suite: 5030 passed, zero failed. No live records or email changed by tests."
+          "verification": "151 affected academic tests passed. Terminal and temporary statuses synchronize scoped linked records and active rosters; prior scores/payments remain preserved. No live business records changed for tests. Final School/shared suite: 5030 passed, zero failed. No live records or email changed by tests.",
+          "delivery": {
+            "date": "2026-11-10",
+            "webCommit": "f4d8791c6e05ec8f49a057ea9e65aab47b09723f",
+            "implementationCommit": "e742f01e167d42dd62f4b1a386272e42b42a1008",
+            "webRelease": "dynamax-v555-student-status-hr-employment",
+            "url": "https://destinychristianacademy.pages.dev",
+            "verification": "School and Faith 24 served interface assets each matched tested source; nine branch-email setup assets across School, Faith and central platform matched. Unsigned protected APIs denied access. All 11 tenant deployments and their required index application steps succeeded. 5030 shared web tests, 98 focused HR checks, 352 email/sender checks and 1175 desktop tests passed.",
+            "desktopSourceCommit": "8cba0d5",
+            "desktopMetadataCommit": "3347178",
+            "desktopInstaller": "Published v3.1.64; packaged application/TLS/Android integrity checks passed.",
+            "installerUrl": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.64.exe",
+            "installerSha256": "472b380dd7fe14c76dcb2d88f8671ad430c213fd3827644509eac481fd674d8e",
+            "installerBytes": 42784976
+          }
         },
         {
           "id": "area1-tuition-class-list",
@@ -137,7 +169,7 @@
             "docs/fee-multiple-classes-2026-11-10.md"
           ],
           "diagnosis": "Live targeted read confirmed all three rules saved ClassName Grade 3. Desktop sends a comma-separated class list; backend scalar canonicalization reduces it to the first grade.",
-          "desktopDelivery": "Source e9b6dba pushed; 50 focused tests passed. No compilation/release. Current installer CSV requests are supported by backend fix.",
+          "desktopDelivery": "Included in published v3.1.64, SHA-256 472b380dd7fe14c76dcb2d88f8671ad430c213fd3827644509eac481fd674d8e; desktop1175tests and packaged self-test passed.",
           "verification": "Deployed v554 at commit 101ca616; 4939 web tests and 50 desktop tests passed. Live three Area 1 tuition fee rules corrected to Grades 3,4,5,6, original amounts/IDs/other fields preserved. No invoice/payment writes. Repeat repair zero changes."
         },
         {
@@ -156,7 +188,7 @@
             "docs/shared-branch-class-catalogue-2026-11-10.md"
           ],
           "verification": "Read-only live audit: 28 classes and 103 arms across three school branches; unchanged setup plans zero changes/removals for each branch. No live business-data migration.",
-          "desktopDelivery": "Source commit 59ffdd2 pushed; 37 focused tests passed, including small-window footer. No compilation/release.",
+          "desktopDelivery": "Included in published v3.1.64, SHA-256 472b380dd7fe14c76dcb2d88f8671ad430c213fd3827644509eac481fd674d8e; desktop1175tests and packaged self-test passed.",
           "behavior": "Settings shares existing definitions and permits additions/progression/safe formatting; remove/deactivate definitions through existing Academic Management review. No separate destructive Settings path.",
           "delivery": {
             "webRelease": "dynamax-v553-shared-branch-class-catalogue",
@@ -201,14 +233,28 @@
               "id": "remaining-register-cost-audit",
               "title": "Vendor current queues separated from dated completed history; recent suggestions reused",
               "acceptance": "Preserve every pending request and eligible pupil while keeping completed history opt-in and branch/vendor scoped.",
-              "status": "tested_awaiting_deployment",
-              "verification": "10 November: four pending request documents returned with either 2 or 2,000 completed records; zero browsing writes. Completed-history snapshots retained across navigation. Suggestion results cached only within the mounted workspace for 30 seconds; selected wallet still verified live. 223 focused tests and synthetic Edge at 390/1280px passed. Three additive request indexes must be ready before query activation.",
+              "status": "deployed_verified",
+              "verification": "10 November: four pending request documents returned with either 2 or 2,000 completed records; zero browsing writes. Completed-history snapshots retained across navigation. Suggestion results cached only within the mounted workspace for 30 seconds; selected wallet still verified live. 223 focused tests and synthetic Edge at 390/1280px passed. Three additive request indexes must be ready before query activation. Deployed in v555; all three request indexes are READY. Remaining normalized fuzzy-search optimization is a documented future change, not a hidden result limit.",
               "remainingOptimization": "A new fuzzy name query still reads the permitted roster. Indexed normalized search requires a scoped compatibility/backfill plan; no pupil is omitted to reduce reads.",
               "evidence": [
                 "tests/vendor-remaining-read-cost.test.mjs",
                 "tests/vendor-request-history-browser.mjs",
                 "docs/advance-credit-navigation-vendor-pass-2026-11-10.md"
-              ]
+              ],
+              "delivery": {
+                "date": "2026-11-10",
+                "webCommit": "f4d8791c6e05ec8f49a057ea9e65aab47b09723f",
+                "implementationCommit": "e742f01e167d42dd62f4b1a386272e42b42a1008",
+                "webRelease": "dynamax-v555-student-status-hr-employment",
+                "url": "https://destinychristianacademy.pages.dev",
+                "verification": "School and Faith 24 served interface assets each matched tested source; nine branch-email setup assets across School, Faith and central platform matched. Unsigned protected APIs denied access. All 11 tenant deployments and their required index application steps succeeded. 5030 shared web tests, 98 focused HR checks, 352 email/sender checks and 1175 desktop tests passed.",
+                "desktopSourceCommit": "8cba0d5",
+                "desktopMetadataCommit": "3347178",
+                "desktopInstaller": "Published v3.1.64; packaged application/TLS/Android integrity checks passed.",
+                "installerUrl": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.64.exe",
+                "installerSha256": "472b380dd7fe14c76dcb2d88f8671ad430c213fd3827644509eac481fd674d8e",
+                "installerBytes": 42784976
+              }
             }
           ]
         },
@@ -226,7 +272,7 @@
             "webRelease": "dynamax-v552-advance-credit-focused-loading-vendor-sales",
             "sourceCommit": "0c23a397aa5fb36f254da3c8cbe0b18094c31f87"
           },
-          "desktopDelivery": "Source tested and pushed at e173f80. Restricted-vendor student type and chunked full-print support need the next requested installer; not present in released 3.1.63."
+          "desktopDelivery": "Included in published v3.1.64, SHA-256 472b380dd7fe14c76dcb2d88f8671ad430c213fd3827644509eac481fd674d8e; desktop1175tests and packaged self-test passed."
         },
         {
           "id": "vendor-2000-sales",
@@ -241,7 +287,7 @@
             "webRelease": "dynamax-v552-advance-credit-focused-loading-vendor-sales",
             "sourceCommit": "0c23a397aa5fb36f254da3c8cbe0b18094c31f87"
           },
-          "desktopDelivery": "Source tested and pushed at e173f80. Restricted-vendor student type and chunked full-print support need the next requested installer; not present in released 3.1.63."
+          "desktopDelivery": "Included in published v3.1.64, SHA-256 472b380dd7fe14c76dcb2d88f8671ad430c213fd3827644509eac481fd674d8e; desktop1175tests and packaged self-test passed."
         },
         {
           "id": "sales-read-budget",
@@ -290,7 +336,7 @@
         {
           "id": "academic-removal-allocation-race",
           "title": "Coordinate existing class/arm deletion with concurrent pupil assignment",
-          "status": "tested_awaiting_deployment",
+          "status": "deployed_verified",
           "acceptance": "Before changing existing removal workflows, protect every membership allocation/import/transfer/reinstatement, subject-change transfer approval, profile placement and promotion, plus profile-only import/enrollment/reactivation. Reuse destination class/arm CAS checks/touches from Session Movement; one per unique target, no catalogue writes for score edits or reads. Test allocation-first and deletion-first races, preserving all records.",
           "evidence": [
             "functions/lib/student-session-movement.js",
@@ -301,7 +347,21 @@
             "tests/academic-placement-guards.test.mjs"
           ],
           "reason": "The shared placement guard now covers allocation/import/transfer/promotion/profile acquisition; existing session movement/reactivation guards retained. No live catalogue or pupil changes.",
-          "verification": "56 final import/race tests passed, including both commit orders, profile-only restoration, unchanged retries and metadata-only masked CAS. Full school run 5001/5003; two separate provider/index assertions being completed. Final School/shared suite: 5030 passed, zero failed. No live records or email changed by tests."
+          "verification": "56 final import/race tests passed, including both commit orders, profile-only restoration, unchanged retries and metadata-only masked CAS. Full school run 5001/5003; two separate provider/index assertions being completed. Final School/shared suite: 5030 passed, zero failed. No live records or email changed by tests.",
+          "delivery": {
+            "date": "2026-11-10",
+            "webCommit": "f4d8791c6e05ec8f49a057ea9e65aab47b09723f",
+            "implementationCommit": "e742f01e167d42dd62f4b1a386272e42b42a1008",
+            "webRelease": "dynamax-v555-student-status-hr-employment",
+            "url": "https://destinychristianacademy.pages.dev",
+            "verification": "School and Faith 24 served interface assets each matched tested source; nine branch-email setup assets across School, Faith and central platform matched. Unsigned protected APIs denied access. All 11 tenant deployments and their required index application steps succeeded. 5030 shared web tests, 98 focused HR checks, 352 email/sender checks and 1175 desktop tests passed.",
+            "desktopSourceCommit": "8cba0d5",
+            "desktopMetadataCommit": "3347178",
+            "desktopInstaller": "Published v3.1.64; packaged application/TLS/Android integrity checks passed.",
+            "installerUrl": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.64.exe",
+            "installerSha256": "472b380dd7fe14c76dcb2d88f8671ad430c213fd3827644509eac481fd674d8e",
+            "installerBytes": 42784976
+          }
         }
       ]
     },
@@ -315,7 +375,8 @@
           "acceptance": "Percentage/fixed/None; separate rates; prevent overlapping compounding; existing invoices require reviewed corrections.",
           "evidence": [
             "docs/class-term-discounts-and-import-recovery.md"
-          ]
+          ],
+          "desktopDelivery": "Included in published v3.1.64, SHA-256 472b380dd7fe14c76dcb2d88f8671ad430c213fd3827644509eac481fd674d8e; desktop1175tests and packaged self-test passed."
         },
         {
           "id": "area1-pupil-recovery",
@@ -864,7 +925,7 @@
         {
           "id": "branch-email-provider",
           "title": "Review branch-specific email delivery configuration",
-          "status": "tested_awaiting_deployment",
+          "status": "deployed_verified",
           "acceptance": "The user requested branch-specific email delivery settings. Verify sender/reply-to and provider independence where supported; explicitly explain any technical reason for a shared organisation provider instead of silently treating it as the user's preference.",
           "evidence": [
             "docs/email-provider-onboarding.md",
@@ -873,7 +934,22 @@
             "tests/branch-email-deployment-queue.test.mjs",
             "docs/student-status-hr-employment-2026-11-10.md"
           ],
-          "verification": "Both options confirmed by owner: shared organisation provider or independent branch Brevo/Google account, retaining sender/reply-to. 352 email/sender checks and 8 desktop/mobile browser cases passed, including delayed OAuth/CAS/uncertain-provider outcomes. Final shared suite5030passed. Existing credentials unchanged; Hospital propagation pending final checks."
+          "verification": "Both options confirmed by owner: shared organisation provider or independent branch Brevo/Google account, retaining sender/reply-to. 352 email/sender checks and 8 desktop/mobile browser cases passed, including delayed OAuth/CAS/uncertain-provider outcomes. Final shared suite5030passed. Existing credentials unchanged. Hospital port passed 4808 tests; separate deployment evidence is kept in the Hospital repository.",
+          "delivery": {
+            "date": "2026-11-10",
+            "webCommit": "f4d8791c6e05ec8f49a057ea9e65aab47b09723f",
+            "implementationCommit": "e742f01e167d42dd62f4b1a386272e42b42a1008",
+            "webRelease": "dynamax-v555-student-status-hr-employment",
+            "url": "https://destinychristianacademy.pages.dev",
+            "verification": "School and Faith 24 served interface assets each matched tested source; nine branch-email setup assets across School, Faith and central platform matched. Unsigned protected APIs denied access. All 11 tenant deployments and their required index application steps succeeded. 5030 shared web tests, 98 focused HR checks, 352 email/sender checks and 1175 desktop tests passed.",
+            "desktopSourceCommit": "8cba0d5",
+            "desktopMetadataCommit": "3347178",
+            "desktopInstaller": "Published v3.1.64; packaged application/TLS/Android integrity checks passed.",
+            "installerUrl": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.64.exe",
+            "installerSha256": "472b380dd7fe14c76dcb2d88f8671ad430c213fd3827644509eac481fd674d8e",
+            "installerBytes": 42784976
+          },
+          "providerVerification": "School and Faith use ready inherited Brevo; central Google OAuth credentials are configured. Independent account consent/delivery was not performed in production. No test emails or credential replacements were made."
         },
         {
           "id": "desktop-settings-layout",
@@ -957,11 +1033,26 @@
         {
           "id": "tenant-index-access",
           "title": "Complete tenant index rollout where owner access allows",
-          "status": "historical_delivery_to_verify",
+          "status": "deployed_verified",
           "acceptance": "Owners provided by user; check access without leaking credentials.",
           "evidence": [
             "docs/firestore-index-deployment.md"
-          ]
+          ],
+          "verification": "GitHub run42815014391: all11 tenant deployment jobs succeeded and each Apply required Firestore indexes step succeeded, including002/003/004/006/007/009. School/Faith and isolated Hospital vendor request indexes verified READY; Hospital period indexes READY and snapshot Rows unindexed.",
+          "delivery": {
+            "date": "2026-11-10",
+            "webCommit": "f4d8791c6e05ec8f49a057ea9e65aab47b09723f",
+            "implementationCommit": "e742f01e167d42dd62f4b1a386272e42b42a1008",
+            "webRelease": "dynamax-v555-student-status-hr-employment",
+            "url": "https://destinychristianacademy.pages.dev",
+            "verification": "School and Faith 24 served interface assets each matched tested source; nine branch-email setup assets across School, Faith and central platform matched. Unsigned protected APIs denied access. All 11 tenant deployments and their required index application steps succeeded. 5030 shared web tests, 98 focused HR checks, 352 email/sender checks and 1175 desktop tests passed.",
+            "desktopSourceCommit": "8cba0d5",
+            "desktopMetadataCommit": "3347178",
+            "desktopInstaller": "Published v3.1.64; packaged application/TLS/Android integrity checks passed.",
+            "installerUrl": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.64.exe",
+            "installerSha256": "472b380dd7fe14c76dcb2d88f8671ad430c213fd3827644509eac481fd674d8e",
+            "installerBytes": 42784976
+          }
         },
         {
           "id": "staff-meetings",
@@ -1082,13 +1173,15 @@
     }
   ],
   "currentPassValidation": {
-    "passed": 4939,
-    "scope": "Shared branch catalogue, exact multi-class fee saves, and live fee-rule correction preview. Existing assignment/removal concurrency follow-up retained.",
     "date": "2026-11-10",
+    "repositoryTests": 5030,
+    "desktopTests": 1175,
+    "focusedHrChecks": 98,
+    "emailSenderChecks": 352,
+    "hospitalRepositoryTests": 4808,
     "failed": 0,
-    "desktopTests": 50,
-    "repositoryTests": 4939,
-    "preservation": "Read-only catalogue audit: 28 classes, 103 arms; all three unchanged setup plans produce zero changes and removals. No live record migration."
+    "scope": "Current shared branch catalogue, fee selection, student status, HR employment letters, email options and vendor reads. Historical repairs retain their individual evidence.",
+    "preservation": "No business-data migration or actual email send during this release validation. Existing reviewed fee/pupil repair evidence is retained."
   },
   "deliveryHistory": [
     {
@@ -1120,16 +1213,31 @@
       "desktopSourceCommit": "59ffdd2",
       "desktopValidation": "37 focused desktop tests passed; source pushed.",
       "desktopInstaller": "No compilation/release; production version remains 3.1.63."
+    },
+    {
+      "date": "2026-11-10",
+      "webCommit": "101ca616ee89dcbef841f02a73628cd80d28a8d9",
+      "webRelease": "dynamax-v554-multiclass-fee-rules",
+      "url": "https://destinychristianacademy.pages.dev",
+      "deploymentUrl": "https://43d14059.destinychristianacademy.pages.dev",
+      "verification": "Seven production assets matched pushed Git blobs; protected endpoints rejected anonymous requests. 4939 web tests, 50 desktop tests. Live Area 1 fee correction verified; retry wrote nothing.",
+      "desktopSourceCommit": "e9b6dba",
+      "desktopInstaller": "No compilation/release; published installer remains 3.1.63."
     }
   ],
   "releasePreparation": {
     "version": "3.1.64",
-    "status": "checks_in_progress",
+    "status": "published",
     "desktopTests": "1175 passed, 0 failed; localhost CBT tests run in authorized unsandboxed test process; Tk fixture shows its owner window for real hit testing.",
-    "compiled": false,
-    "published": false,
+    "compiled": true,
+    "published": true,
     "schoolVendorIndexes": "School and Faith all three request indexes READY; Hospital all six request/period indexes READY with snapshot Rows unindexed, default field indexes unchanged.",
     "desktopSourceCommit": "8cba0d5",
-    "webTests": "5030 passed, 0 failed"
+    "webTests": "5030 passed, 0 failed",
+    "installerUrl": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.64.exe",
+    "sha256": "472b380dd7fe14c76dcb2d88f8671ad430c213fd3827644509eac481fd674d8e",
+    "bytes": 42784976,
+    "packaging": "Application self-test, TLS bundle and packaged Android CBT integrity passed.",
+    "releaseUrl": "https://github.com/Jozcefhs/portal/releases/tag/desktop-v3.1.64"
   }
 }

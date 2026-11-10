@@ -1,8 +1,8 @@
 {
-  "version": "3.1.63",
+  "version": "3.1.64",
   "channel": "stable",
   "release_status": "published",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.63.exe",
-  "sha256": "9095a324a21bffbdca0d6c9344440b8f128c9aee5e41cb4c2e5e7118b96c59c3",
-  "notes": "Dynamax v3.1.63 adds branch-specific total school-fee part-payment plans: percentage, fixed minimum and equal installments with optional due dates. Existing per-item rules remain available. Includes a local preview, secure versioned settings and a visible dialog footer. Existing invoices, payments and records are preserved. Card terminal payments remain disabled."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.64.exe",
+  "sha256": "472b380dd7fe14c76dcb2d88f8671ad430c213fd3827644509eac481fd674d8e",
+  "notes": "Dynamax v3.1.64 adds separate total school-fee discount rates by branch, billing category, class and term; shares branch class and arm setup with Academic Management; preserves every selected class in fee rules; shows Day/Boarding for vendor customers; and supports payment requests covering up to 2,000 sales with detailed reports loaded on demand. Existing records, invoices and payments are preserved. Card terminal payments remain disabled."
 }
