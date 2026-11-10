@@ -11,6 +11,7 @@ import { CHURCH_COLLECTIONS, churchCollectionPath } from './church-foundation.js
 import { resolveOrganizationConfig } from './organization-config.js';
 import { requiredDeploymentIdentity } from './deployment-identity.js';
 import { effectiveBranchProfile } from './branch-profile-settings.js';
+import { getBranchClassCatalogue } from './branch-class-catalogue.js';
 import { staffRecordMatchesEdition } from './records-desk.js';
 import { loadStaffPosition } from './staff-position.js';
 import { withStaffEmployment, employmentDirectoryRow } from './staff-employment.js';
@@ -657,7 +658,7 @@ async function saveMetricPreferences(env, user, scope, input) {
   return metricIds;
 }
 
-async function metricData(env, scope, selectedIds, correspondenceRows = null, user = {}) {
+async function metricData(env, scope, selectedIds, correspondenceRows = null, user = {}, loadedClasses = null) {
   const selected = new Set(selectedIds);
   const needStaff = ['staffTotal', 'activeStaff', 'staffByDepartment'].some((id) => selected.has(id));
   let staff = needStaff
@@ -679,7 +680,9 @@ async function metricData(env, scope, selectedIds, correspondenceRows = null, us
         schoolSectionAccess: scope.schoolSection
       })).filter((row) => visibleSchoolRow(row, scope));
     }
-    if (selected.has('classTotal')) classes = await listCollection(env, 'settings/academics/classes');
+    if (selected.has('classTotal')) classes = loadedClasses || (await getBranchClassCatalogue(env, {
+      branchId: scope.branchId, section: scope.schoolSection, includeArms: false, includeInactive: false
+    })).classes;
   } else {
     const path = (collection) => churchCollectionPath(collection, scope.branchId);
     const loads = await Promise.all([
@@ -805,16 +808,18 @@ async function searchDirectory(env, body, capabilities, scope, user = {}) {
         ));
     }
     if (type === 'class') {
-      return (await listCollection(env, 'settings/academics/classes'))
+      return (await getBranchClassCatalogue(env, {
+        branchId: scope.branchId, section: scope.schoolSection, includeInactive: false
+      })).classes
         .filter((row) => active(row.Active))
         .map((row) => searchResult(
           type,
-          row.__id || row.ClassName,
+          row.ClassId || row.AcademicClassId || row.ClassName,
           row.ClassName || row.__id,
           clean(row.Arms) ? `Arms: ${clean(row.Arms)}` : 'School class',
           '',
           '',
-          { BranchId: scope.branchId, SchoolSection: scope.schoolSection },
+          { BranchId: scope.branchId, SchoolSection: row.SchoolSection },
           { CLASS: row.ClassName || row.__id }
         ));
     }
@@ -855,6 +860,19 @@ async function authoritativeRecipientTokens(env, correspondence, scope, user = {
   const id = lower(correspondence.RecipientId);
   if (!id || !['student', 'staff', 'member', 'department', 'class'].includes(type)) return {};
   const capabilities = executiveOfficeCapabilities(user, scope.edition);
+  if (type === 'class') {
+    if (!capabilities.canSearchClasses) throw inputError('This linked recipient type is not available to this executive account.', 403);
+    const classes = (await getBranchClassCatalogue(env, {
+      branchId: scope.branchId, section: scope.schoolSection, includeArms: false, includeInactive: false
+    })).classes;
+    const exact = classes.filter(row => lower(row.ClassId || row.AcademicClassId) === id);
+    // Old drafts used the Settings document ID. Resolve that preserved link
+    // within this branch only; never borrow another branch's similarly named class.
+    const matches = exact.length ? exact : classes.filter(row => [row.LegacyDocumentId, row.ClassName,
+      safeId(row.ClassName).replace(/_+/g, '_').replace(/-+/g, '-')].some(value => lower(value) === id));
+    if (matches.length !== 1) throw inputError('The linked class is no longer uniquely available in this branch or section. Select the class again.', 409);
+    return { CLASS: clean(matches[0].ClassName), RECIPIENT_NAME: clean(matches[0].ClassName) };
+  }
   const rows = (await searchDirectory(env, { query: correspondence.RecipientId, type }, capabilities, scope, user)).results;
   const exact = rows.find((row) => lower(row.id) === id);
   if (!exact) throw inputError('The linked recipient is no longer available in this branch or section.', 404);
@@ -1579,7 +1597,9 @@ async function bootstrap(env, user, scope, capabilities, identity) {
   const [customTemplates, correspondence, classes, metricIds, approvalProfile, signatory] = await Promise.all([
     loadCustomTemplates(env, scope),
     loadScopedCorrespondence(env, scope),
-    scope.edition === 'school' && !scope.officeKey ? listCollection(env, 'settings/academics/classes') : [],
+    scope.edition === 'school' && !scope.officeKey ? getBranchClassCatalogue(env, {
+      branchId: scope.branchId, section: scope.schoolSection, includeInactive: false
+    }).then(catalogue => catalogue.classes) : [],
     loadMetricPreferences(env, user, scope),
     loadStaffApprovalProfile(env, user.username).catch(() => null),
     loadStaffPosition(env, user)
@@ -1605,7 +1625,7 @@ async function bootstrap(env, user, scope, capabilities, identity) {
     templates: [...builtInTemplates(scope.edition, scope.officeKey), ...customTemplates.map(publicTemplate)],
     correspondence: correspondence.slice(0, 150).map((row) => publicCorrespondence(row, true)),
     classes: classes.filter((row) => active(row.Active)).map((row) => ({
-      id: clean(row.__id || row.ClassName),
+      id: clean(row.ClassId || row.AcademicClassId || row.ClassName),
       name: clean(row.ClassName || row.__id),
       arms: clean(row.Arms)
     })),
@@ -1613,7 +1633,7 @@ async function bootstrap(env, user, scope, capabilities, identity) {
     signatory,
     metricPreferences: metricIds,
     availableMetrics: metricDefinitions(scope.edition, scope.officeKey),
-    metrics: await metricData(env, scope, metricIds, correspondence, user)
+    metrics: await metricData(env, scope, metricIds, correspondence, user, classes)
   };
 }
 

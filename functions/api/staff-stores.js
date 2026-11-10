@@ -4,7 +4,8 @@ import { withVendorStorePolicy } from '../lib/vendor-store-policy.js';
 import { batchCommitDocuments, listCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { listSchoolCollection, schoolSectionFor } from '../lib/school-scope.js';
-import { canonicalConfiguredClass } from '../lib/class-names.js';
+import { canonicalCatalogueClassName } from '../lib/class-names.js';
+import { getBranchClassCatalogue } from '../lib/branch-class-catalogue.js';
 import { categoryApplies, deleteStoreCategory, ensureStoreCategories, resolveStoreCategory, saveStoreCategory } from '../lib/store-categories.js';
 import {
   beginIdempotentRequest,
@@ -124,17 +125,21 @@ export async function onRequestPost(context) {
       if (itemId && !existing) { const err = new Error('Store item not found or is outside your permitted workspace.'); err.status = 404; throw err; }
       const duplicate = scopedItems.find((row) => lower(row.ItemCode) === lower(itemCode) && clean(row.__id) !== clean(existing?.__id));
       if (duplicate) { const err = new Error(`Item code ${itemCode} is already in use. Edit that item instead.`); err.status = 409; throw err; }
-      const configuredClasses = await listCollection(env, 'settings/academics/classes').catch(() => []);
+      const itemBranch = clean(existing?.BranchId || user.branchId) || 'main';
+      const itemSection = clean(existing?.SchoolSection) || (lower(user.schoolSectionAccess) === 'all' ? 'Secondary' : clean(user.schoolSectionAccess || 'Secondary'));
+      const configuredClasses = section !== 'organizationStore' && lower(user.edition || user.OrganisationEdition || 'school') === 'school'
+        ? (await getBranchClassCatalogue(env, { branchId: itemBranch, section: lower(itemSection), includeArms: false, includeInactive: false })).classes
+        : [];
       const procurementControlled = await loadProcurementInventoryControl(env, user);
       const payload = {
         ...(existing || {}),
         StoreType: storeType, ItemCode: itemCode, ItemName: itemName,
         CategoryId: category.CategoryId, Category: category.Name, Size: clean(body.Size), Gender: section === 'organizationStore' ? 'All' : (clean(body.Gender) || 'All'),
-        ClassName: section === 'organizationStore' ? 'All' : canonicalConfiguredClass(clean(body.ClassName) || 'All', configuredClasses), Price: Math.max(0, Number(body.Price || 0) || 0),
+        ClassName: section === 'organizationStore' ? 'All' : canonicalCatalogueClassName(clean(body.ClassName) || 'All', configuredClasses), Price: Math.max(0, Number(body.Price || 0) || 0),
         Quantity: Math.max(0, Number(body.Quantity ?? existing?.Quantity ?? 0) || 0), Active: yes(body.Active ?? true) ? 'YES' : 'NO',
-        BranchId: clean(existing?.BranchId || user.branchId) || 'main',
+        BranchId: itemBranch,
         OrganisationEdition: clean(existing?.OrganisationEdition || user.edition || user.OrganisationEdition) || 'school',
-        SchoolSection: clean(existing?.SchoolSection) || (clean(user.schoolSectionAccess) === 'All' ? 'Secondary' : clean(user.schoolSectionAccess || 'Secondary')),
+        SchoolSection: itemSection,
         UpdatedAt: new Date().toISOString(), UpdatedBy: user.displayName || user.username
       };
       delete payload.__id;

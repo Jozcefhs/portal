@@ -66,6 +66,10 @@
     {
       "topic": "Optional club eligibility",
       "choice": "Chess, Graphic and Photography apply to all Main Branch classes in First Term."
+    },
+    {
+      "topic": "Shared branch class catalogue",
+      "choice": "Settings Classes & Arms and Academic Management must use the same branch-specific definitions and stable IDs. Preserve placements, scores and history."
     }
   ],
   "recentDelivery": {
@@ -83,6 +87,25 @@
     {
       "group": "current",
       "items": [
+        {
+          "id": "shared-branch-class-catalogue",
+          "title": "Use one branch-specific class and arm setup in Settings and Academic Management",
+          "status": "tested_awaiting_deployment",
+          "acceptance": "Use existing academic class/arm IDs in both screens. Preserve all placements, scores and records; no global fallback, duplicate creation or navigation writes. Test, push and deploy; do not compile/release.",
+          "evidence": [
+            "functions/lib/branch-class-catalogue.js",
+            "functions/lib/academic-management.js",
+            "functions/api/backend.js",
+            "tests/branch-class-catalogue.test.mjs",
+            "tests/branch-academic-class-setup.test.mjs",
+            "tests/branch-class-catalogue-consumers.test.mjs",
+            "../suite/tests/test_shared_class_catalogue_desktop.py",
+            "docs/shared-branch-class-catalogue-2026-11-10.md"
+          ],
+          "verification": "Read-only live audit: 28 classes and 103 arms across three school branches; unchanged setup plans zero changes/removals for each branch. No live business-data migration.",
+          "desktopDelivery": "Source commit 59ffdd2 pushed; 37 focused tests passed, including small-window footer. No compilation/release.",
+          "behavior": "Settings shares existing definitions and permits additions/progression/safe formatting; remove/deactivate definitions through existing Academic Management review. No separate destructive Settings path."
+        },
         {
           "id": "advance-fees",
           "title": "Parent school-fee advances",
@@ -197,6 +220,19 @@
             "webRelease": "dynamax-v552-advance-credit-focused-loading-vendor-sales",
             "sourceCommit": "0c23a397aa5fb36f254da3c8cbe0b18094c31f87"
           }
+        },
+        {
+          "id": "academic-removal-allocation-race",
+          "title": "Coordinate existing class/arm deletion with concurrent pupil assignment",
+          "status": "historical_delivery_to_verify",
+          "acceptance": "Before changing existing removal workflows, protect every membership allocation/import/transfer/reinstatement, subject-change transfer approval, profile placement and promotion, plus profile-only import/enrollment/reactivation. Reuse destination class/arm CAS checks/touches from Session Movement; one per unique target, no catalogue writes for score edits or reads. Test allocation-first and deletion-first races, preserving all records.",
+          "evidence": [
+            "functions/lib/student-session-movement.js",
+            "functions/lib/academic-management.js",
+            "functions/api/backend.js",
+            "docs/shared-branch-class-catalogue-2026-11-10.md"
+          ],
+          "reason": "Inherited workflow concurrency concern found in this review. Shared catalogue guard covers structural writers only. New Settings destructive changes are deferred to avoid adding another deletion path; comprehensive assignment coordination is not claimed delivered."
         }
       ]
     },
@@ -561,7 +597,8 @@
           "title": "Separate total-fee payment-plan settings",
           "status": "historical_delivery_to_verify",
           "acceptance": "Percentage, fixed minimum, instalment count; retain existing per-item rules.",
-          "evidence": []
+          "evidence": [],
+          "latestClarification": "10 November 2026: the fee-editor fields remain individual item rules as previously requested. Total-fee plans take precedence when configured; Existing fee-item rules uses the fallback. Suggested grouping/precedence text only, no finance UI change in this pass."
         },
         {
           "id": "manual-reversals",
@@ -968,13 +1005,13 @@
     }
   ],
   "currentPassValidation": {
+    "passed": 4930,
+    "scope": "Shared branch catalogue and duplicate/stale-write protections. Existing assignment/removal concurrency follow-up retained explicitly.",
     "date": "2026-11-10",
-    "repositoryTests": 4898,
-    "passed": 4898,
     "failed": 0,
-    "responsiveChecks": "Parent advance and History by date synthetic Chrome checks passed at 390px and 1280px.",
-    "financialSafety": "Synthetic tests only; no live payment or notification run. No business-data migration.",
-    "schoolIndexes": "Three vendor period indexes READY; snapshot Rows indexing exemption applied."
+    "desktopTests": 37,
+    "repositoryTests": 4930,
+    "preservation": "Read-only catalogue audit: 28 classes, 103 arms; all three unchanged setup plans produce zero changes and removals. No live record migration."
   },
   "deliveryHistory": [
     {

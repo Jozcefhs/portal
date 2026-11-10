@@ -11,6 +11,7 @@ import * as branchScope from '../functions/lib/branch-scope.js';
 import { normalizeClassKey } from '../functions/lib/class-names.js';
 import { formatPersonName } from '../functions/lib/person-name-format.js';
 import { checkClassroomRemovals } from '../functions/lib/academic-classroom-removal.js';
+import { branchClassCatalogueRevisionWrite, branchArmNameKey } from '../functions/lib/branch-class-catalogue.js';
 
 const source = await readFile(new URL('../functions/lib/academic-management.js', import.meta.url), 'utf8');
 const clone = value => JSON.parse(JSON.stringify(value));
@@ -43,7 +44,8 @@ function harness() {
   seed('schoolBranches/main/sections/secondary/students', foreign);
   seed('academicStudentScores', { RecordId: 'preserved-score', BranchId: 'main', StudentRef: reference, Score: 91 });
   const context = vm.createContext({ ...management, ...outcomes, ...studentStatus, ...schoolScope, ...branchScope,
-    normalizeClassKey, formatPersonName, checkClassroomRemovals, crypto: webcrypto, TextEncoder, TextDecoder,
+    normalizeClassKey, formatPersonName, checkClassroomRemovals, branchClassCatalogueRevisionWrite, branchArmNameKey, crypto: webcrypto, TextEncoder, TextDecoder,
+    readBranchClassCatalogueRevision: async () => clone(rows('branchSchoolSettings').find(row => row.__id === branch) || null),
     getSchoolStructure: async () => ({ ActiveBranchId: 'main', Branches: [{ Id: 'main' }, { Id: branch }], Sections: ['primary', 'secondary'] }),
     loadOrganizationNameProfile: async () => ({}), queryCollection: query, queryCollectionPages: query,
     listSchoolCollection: async (_env, collection, options) => {

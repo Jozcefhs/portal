@@ -26,6 +26,7 @@ import { isAcademicArmTransfer, preserveAcademicArmSubjects, planAcademicArmData
 import { academicCarriedScoreSnapshot } from './academic-carried-score-review.js';
 import { enforceActorBranch } from './branch-scope.js';
 import { normalizeClassKey } from './class-names.js';
+import { readBranchClassCatalogueRevision, branchClassCatalogueRevisionWrite, branchArmNameKey } from './branch-class-catalogue.js';
 import { assertStudentCanHaveActiveMembership, studentStatusChanged } from './student-academic-status.js';
 import { staffRecordMatchesEdition } from './records-desk.js';
 import { createNotification } from './notifications.js';
@@ -779,7 +780,9 @@ export function academicInitialAllocationCandidates(state = {}, students = [], c
 }
 
 export function academicLegacyClassCompatibilityEnabled(input = {}) {
-  return !clean(input.DeviceBranchId || input.deviceBranchId);
+  // Kept for older consumers: every branch now uses the academic catalogue.
+  // A web request must never write organisation-wide legacy class defaults.
+  return false;
 }
 
 function assertUserSection(user = {}, section = '') {
@@ -805,8 +808,7 @@ async function academicScope(env, user = {}, input = {}, { requireSection = fals
   return {
     branchId: safeScopeId(branchId),
     section,
-    structure,
-    legacyClassCompatibility: academicLegacyClassCompatibilityEnabled(input)
+    structure
   };
 }
 
@@ -1802,6 +1804,13 @@ function validateAcademicRecord(state, type, record, people = {}) {
     if (record.StartDate < session.StartDate || record.EndDate > session.EndDate) throw failure('Term dates must fall within the selected academic session.');
   }
   if (type === 'arm') {
+    const equivalent = state.arms.find(row => recordId(row) !== recordId(record)
+      && row.ClassId === record.ClassId
+      && lower(row.SchoolSection || record.SchoolSection) === lower(record.SchoolSection)
+      && branchArmNameKey(row.Name) === branchArmNameKey(record.Name));
+    if (equivalent && (!people.existing || branchArmNameKey(people.existing.Name) !== branchArmNameKey(record.Name))) {
+      throw failure(`${equivalent.Name} already exists in this class. Edit or reactivate its original arm record instead of creating another copy.`, 409, 'ACADEMIC_ARM_AMBIGUOUS');
+    }
     const schoolClass = assertReference(findById(state.classes, record.ClassId), 'The selected class is not active.');
     if (schoolClass.SchoolSection !== record.SchoolSection) throw failure('The class arm must belong to the same school section as its class.');
     const schoolStage = schoolStageValue(schoolClass.SchoolStage, schoolClass.SchoolSection, schoolClass.Name);
@@ -1814,6 +1823,18 @@ function validateAcademicRecord(state, type, record, people = {}) {
     }
   }
   if (type === 'class') {
+    const nameKey = normalizeClassKey(record.Name);
+    if (people.existing && nameKey !== normalizeClassKey(people.existing.Name)) {
+      // Billing rules, admission defaults and imported profiles can still use
+      // the class label. Retaining ClassId alone cannot migrate those links.
+      throw failure('Only display formatting of an existing class name can be changed here. A different class name needs a reviewed setup and transfer so linked fee rules and pupil records remain correct. The existing class and records are unchanged.', 409, 'ACADEMIC_CLASS_RENAME_REVIEW_REQUIRED');
+    }
+    if (!people.existing || nameKey !== normalizeClassKey(people.existing.Name)) {
+      const equivalent = state.classes.find(row => recordId(row) !== recordId(record)
+        && lower(row.SchoolSection || record.SchoolSection) === lower(record.SchoolSection)
+        && normalizeClassKey(row.Name) === nameKey);
+      if (equivalent) throw failure(`${equivalent.Name} already exists in this school section. Edit or reactivate that original class instead of creating another spelling.`, 409, 'ACADEMIC_CLASS_AMBIGUOUS');
+    }
     if (record.NextClassId) {
       if (record.NextClassId === record.ClassId) throw failure('A class cannot be its own next class.');
       const nextClass = assertReference(findById(state.classes, record.NextClassId), 'The selected next class is not active.');
@@ -1988,33 +2009,6 @@ function withoutMetadata(row = {}) {
   const copy = { ...row };
   ['__id', '__name', '__createTime', '__updateTime', '__scopePath', 'RevisionToken'].forEach((key) => delete copy[key]);
   return copy;
-}
-
-function legacyClassWrite(state, projectedRecord, type, scope = {}) {
-  if (scope.legacyClassCompatibility === false) return null;
-  const schoolClass = type === 'class'
-    ? projectedRecord
-    : findById(state.classes, projectedRecord.ClassId);
-  if (!schoolClass) return null;
-  const projectedArms = type === 'arm'
-    ? [...state.arms.filter((row) => recordId(row) !== recordId(projectedRecord)), projectedRecord]
-    : state.arms;
-  const arms = projectedArms.filter((row) => row.ClassId === schoolClass.ClassId && statusActive(row))
-    .sort((a, b) => clean(a.Name).localeCompare(clean(b.Name), undefined, { numeric: true, sensitivity: 'base' }))
-    .map((row) => clean(row.Name)).filter(Boolean);
-  return {
-    collectionPath: 'settings/academics/classes',
-    documentId: clean(schoolClass.LegacyDocumentId) || legacyDocumentId(schoolClass.Name),
-    data: {
-      ClassName: schoolClass.Name,
-      SchoolStage: schoolClass.SchoolStage,
-      Arms: arms.join(', '),
-      Active: statusActive(schoolClass) ? 'YES' : 'NO',
-      SortOrder: Number(schoolClass.SortOrder || 100),
-      UpdatedAt: nowIso(),
-      UpdatedBy: 'Academic Management'
-    }
-  };
 }
 
 function studentCompatibilityWrite(people, state, record) {
@@ -2567,6 +2561,8 @@ export async function saveAcademicManagementRecord(env, user = {}, input = {}) {
   if (!definition) throw failure('Choose a valid academic record type.');
   requireCapability(user, definition.capability);
   const scope = await academicScope(env, user, input, { requireSection: true });
+  const catalogueChange = ['class', 'arm', 'armtemplate'].includes(type);
+  const catalogueRevision = catalogueChange ? await readBranchClassCatalogueRevision(env, scope.branchId) : null;
   const peopleOptions = type === 'teacherallocation'
     ? { students: false }
     : type === 'studentmembership'
@@ -2625,10 +2621,7 @@ export async function saveAcademicManagementRecord(env, user = {}, input = {}) {
   if (type === 'studentmembership' && !existing) {
     writes.push(movementWrite(user, academicMovementForState(state, input, scope, null, record)));
   }
-  if (['class', 'arm'].includes(type)) {
-    const compatibility = legacyClassWrite(state, record, type, scope);
-    if (compatibility) writes.push(compatibility);
-  }
+  if (catalogueChange) writes.push(branchClassCatalogueRevisionWrite(scope.branchId, catalogueRevision, actorName(user), timestamp));
   if (type === 'studentmembership') {
     const projected = { ...state, studentMemberships: [...state.studentMemberships.filter((row) => recordId(row) !== recordId(record)), record] };
     const compatibility = studentCompatibilityWrite(people, projected, record);
@@ -2800,10 +2793,170 @@ async function commitAcademicBatch(env, writes, conflictMessage, options = {}) {
   }
 }
 
+function classSetupSection(row, scope, existing = null) {
+  const supplied = lower(row.SchoolSection || row.schoolSection);
+  if (supplied && !['primary', 'secondary'].includes(supplied)) throw failure('Choose Primary or Secondary for each class.');
+  const current = existing ? schoolSectionFor({ ...existing, ClassName: existing.Name }) : '';
+  if (current && supplied && current !== supplied) throw failure('An existing class cannot be moved to another school section. Its pupils and history must keep the same identity.', 409, 'ACADEMIC_SECTION_MISMATCH');
+  const name = normalizeClassKey(row.ClassName || row.Name);
+  const inferred = /^(creche|prenursery|nursery[1-3]|primary[1-6]|reception|kindergarten)$/.test(name) ? 'primary'
+    : /^(grade(?:[7-9]|1[0-2])|jss[1-3]|ss[1-3])$/.test(name) ? 'secondary' : '';
+  const section = current || supplied || scope.section || inferred;
+  if (!section) throw failure(`Choose the school section for ${clean(row.ClassName || row.Name)} before saving.`);
+  if (scope.section && section !== scope.section) throw failure('This class belongs to another school section.', 403, 'ACADEMIC_SECTION_FORBIDDEN');
+  return section;
+}
+
+function classSetupArmKey(value) {
+  return branchArmNameKey(value);
+}
+
+// Plan only catalogue changes. Never rewrite placements, subject selections,
+// scores or other historical records when a display name is edited.
+export function planBranchAcademicClassSetup(state, scope, input = {}) {
+  const supplied = input.Classes || input.classes || input.SchoolClasses;
+  if (!Array.isArray(supplied) || supplied.length > 150) throw failure('Supply up to 150 class definitions.');
+  const freshCatalogue = Object.hasOwn(input, 'CatalogueRevision') || Object.hasOwn(input, 'CatalogueRevisionToken');
+  const projected = { ...state, classes: [...state.classes], arms: [...state.arms], armTemplates: [...state.armTemplates] };
+  const changes = [], removals = [], deactivations = [], seen = new Set(), suppliedClassIds = new Set();
+  const addChange = (type, record, existing, row = {}) => {
+    if (existing && clean(row.RevisionToken) && clean(row.RevisionToken) !== clean(existing.__updateTime)) {
+      throw failure('This class or arm changed after it was loaded. Refresh before saving.', 409, 'ACADEMIC_WRITE_CONFLICT');
+    }
+    changes.push({ type, record, existing });
+    const key = type === 'class' ? 'classes' : type === 'arm' ? 'arms' : 'armTemplates';
+    projected[key] = [...projected[key].filter(item => recordId(item) !== recordId(record)), record];
+  };
+  for (const row of supplied) {
+    const name = clean(row.ClassName || row.Name);
+    if (!name) throw failure('Every class needs a name.');
+    const requestedId = clean(row.AcademicClassId || row.ClassId);
+    const explicitSection = lower(row.SchoolSection || row.schoolSection);
+    let matches = requestedId ? state.classes.filter(item => item.ClassId === requestedId)
+      : state.classes.filter(item => normalizeClassKey(item.Name) === normalizeClassKey(name)
+        && (!explicitSection || schoolSectionFor({ ...item, ClassName: item.Name }) === explicitSection));
+    if (requestedId && !matches.length) throw failure(`${name} is no longer in this branch. Refresh the class list.`, 409, 'ACADEMIC_WRITE_CONFLICT');
+    if (matches.length > 1) throw failure(`${name} matches more than one saved class. Select its school section and original class record.`, 409, 'ACADEMIC_CLASS_AMBIGUOUS');
+    const existing = matches[0] || null;
+    const section = classSetupSection(row, scope, existing), context = { ...scope, section };
+    const key = `${section}|${normalizeClassKey(name)}`;
+    if (seen.has(key)) throw failure(`${name} appears more than once in this class setup.`, 409, 'ACADEMIC_CLASS_AMBIGUOUS');
+    seen.add(key);
+    const conflict = projected.classes.find(item => item.ClassId !== existing?.ClassId
+      && schoolSectionFor({ ...item, ClassName: item.Name }) === section && normalizeClassKey(item.Name) === normalizeClassKey(name));
+    if (conflict) throw failure(`${name} already exists in this school section. Edit its existing record.`, 409, 'ACADEMIC_CLASS_AMBIGUOUS');
+    const desiredStatus = Object.hasOwn(row, 'Active') ? (activeValue(row.Active, true) ? 'Active' : 'Archived')
+      : clean(row.Status) || existing?.Status || 'Active';
+    const classInput = { ...(existing || {}), Name: name, Status: desiredStatus,
+      SortOrder: row.SortOrder ?? row.Progression ?? existing?.SortOrder,
+      SchoolStage: row.SchoolStage || existing?.SchoolStage || (section === 'secondary' && /^(grade[7-9]|jss[1-3])$/.test(normalizeClassKey(name)) ? 'junior-secondary' : '') };
+    const record = normalizeAcademicClass(classInput, context, existing);
+    suppliedClassIds.add(record.ClassId);
+    const classChanged = !existing || ['Name', 'Status', 'SortOrder', 'SchoolStage'].some(field => clean(record[field]) !== clean(existing[field]));
+    if (classChanged) {
+      if (existing && !freshCatalogue && !clean(row.RevisionToken)
+        && (record.Name !== existing.Name || statusActive(record) !== statusActive(existing))) {
+        throw failure('Refresh Classes & Arms before changing an existing class name or status. An older desktop can add definitions; use Academic Management to edit existing ones.', 409, 'ACADEMIC_WRITE_CONFLICT');
+      }
+      validateAcademicRecord(projected, 'class', record, { existing });
+      addChange('class', record, existing, row);
+      if (existing && statusActive(existing) && !statusActive(record)) deactivations.push({ type: 'class', record: existing });
+    }
+    if (!Object.hasOwn(row, 'Arms')) continue;
+    const armNames = (Array.isArray(row.Arms) ? row.Arms : clean(row.Arms).split(','))
+      .map(item => clean(typeof item === 'object' ? item.Name || item.ArmName : item)).filter(Boolean);
+    const armKeys = armNames.map(classSetupArmKey);
+    if (armKeys.some((key, index) => !key || armKeys.indexOf(key) !== index)) throw failure(`${name} has a repeated arm name.`, 409, 'ACADEMIC_ARM_AMBIGUOUS');
+    const existingArms = state.arms.filter(item => item.ClassId === record.ClassId && statusActive(item));
+    for (const armName of armNames) {
+      const armMetadata = (Array.isArray(row.ArmRecords) ? row.ArmRecords : []).filter(item => classSetupArmKey(item.Name || item.ArmName) === classSetupArmKey(armName));
+      if (armMetadata.length > 1) throw failure(`${name} / ${armName} has ambiguous arm metadata.`, 409, 'ACADEMIC_ARM_AMBIGUOUS');
+      const expectedArm = armMetadata[0];
+      const armMatches = expectedArm?.ArmId ? state.arms.filter(item => item.ArmId === expectedArm.ArmId)
+        : state.arms.filter(item => item.ClassId === record.ClassId && classSetupArmKey(item.Name) === classSetupArmKey(armName));
+      if (armMatches.length > 1) throw failure(`${name} / ${armName} matches duplicate saved arms. Resolve them in Academic Management first.`, 409, 'ACADEMIC_ARM_AMBIGUOUS');
+      const previous = armMatches[0];
+      if (expectedArm?.ArmId && (!previous || previous.ClassId !== record.ClassId || effectiveAcademicSection(previous, scope) !== section)) {
+        throw failure('An arm no longer belongs to this class and section. Refresh before saving.', 409, 'ACADEMIC_WRITE_CONFLICT');
+      }
+      if (previous && !statusActive(previous)) throw failure(`${name} / ${armName} is archived. Reactivate its original record in Academic Management first.`, 409);
+      if (previous && previous.Name === armName) continue;
+      if (previous && !freshCatalogue && !clean(expectedArm?.RevisionToken)) throw failure('Refresh before renaming an existing arm.', 409, 'ACADEMIC_WRITE_CONFLICT');
+      const templates = projected.armTemplates.filter(item => effectiveAcademicSection(item, scope) === section
+        && classSetupArmKey(item.Name) === classSetupArmKey(armName));
+      if (templates.length > 1) throw failure(`${armName} has duplicate reusable definitions. Resolve them in Academic Management first.`, 409, 'ACADEMIC_ARM_AMBIGUOUS');
+      let template = templates[0];
+      if (!previous && template && !statusActive(template)) throw failure(`${armName} has an archived reusable definition. Reactivate that original definition in Academic Management first.`, 409);
+      if (!previous && !template) {
+        template = normalizeAcademicArmTemplate({ Name: armName, Code: safeScopeId(armName, 'arm').toUpperCase(), Status: 'Active' }, context);
+        availableAcademicArmId(projected.armTemplates, template, 'ArmTemplateId');
+        addChange('armtemplate', template, null);
+      }
+      const arm = normalizeAcademicArm({ ...(previous || {}), ClassId: record.ClassId, Name: armName,
+        ArmTemplateId: previous?.ArmTemplateId || template?.ArmTemplateId || '',
+        IsClassroom: previous?.IsClassroom ?? true, Status: 'Active',
+        Capacity: previous?.Capacity ?? template?.DefaultCapacity, SortOrder: previous?.SortOrder ?? template?.SortOrder }, context, previous);
+      if (!previous) availableAcademicArmId(projected.arms, arm, 'ArmId');
+      validateAcademicRecord(projected, 'arm', arm, { existing: previous });
+      addChange('arm', arm, previous, expectedArm);
+    }
+    const omitted = existingArms.filter(item => !armKeys.includes(classSetupArmKey(item.Name))
+      && !changes.some(change => change.type === 'arm' && change.existing?.ArmId === item.ArmId));
+    if (omitted.length && !freshCatalogue) throw failure('This older desktop cannot safely remove saved arms. Use Academic Management to remove unused classrooms, or refresh with the updated Classes & Arms screen.', 409, 'ACADEMIC_WRITE_CONFLICT');
+    for (const arm of omitted) removals.push({ type: 'arm', record: arm });
+  }
+  for (const id of uniqueIds(input.DeletedClassIds)) {
+    if (!freshCatalogue) throw failure('Refresh the branch catalogue before deleting a class.', 409, 'ACADEMIC_WRITE_CONFLICT');
+    const record = findById(state.classes, id);
+    if (!record) continue;
+    if (scope.section && effectiveAcademicSection(record, scope) !== scope.section) throw failure('The class belongs to another school section.', 403);
+    if (suppliedClassIds.has(id) || changes.some(change => ['class', 'arm'].includes(change.type) && change.record.ClassId === id)) {
+      throw failure('A class cannot be included in the saved setup and deleted in the same request. Remove it from the saved rows before requesting deletion.');
+    }
+    removals.push({ type: 'class', record });
+    state.arms.filter(arm => arm.ClassId === id).forEach(arm => removals.push({ type: 'arm', record: arm }));
+  }
+  const uniqueRemovals = [...new Map(removals.map(item => [`${item.type}|${recordId(item.record)}`, item])).values()];
+  return { changes, removals: uniqueRemovals, deactivations, projected };
+}
+
+export async function saveBranchAcademicClassSetup(env, user = {}, input = {}) {
+  requireWritableSubscription(user);
+  requireCapability(user, 'canManageStructure');
+  const scope = await academicScope(env, user, input);
+  const catalogueRevision = await readBranchClassCatalogueRevision(env, scope.branchId);
+  const state = await loadScopedAcademicState(env, scope, ['classes', 'arms', 'armTemplates', 'departments']);
+  const plan = planBranchAcademicClassSetup(state, scope, input);
+  if (plan.removals.length || plan.deactivations.length) {
+    throw failure('Remove or deactivate classes and arms through Academic Management so their current assignments can be reviewed. This setup screen saves additions and display changes only. No records were changed.', 409, 'ACADEMIC_CLASS_REMOVAL_REVIEW_REQUIRED');
+  }
+  if (!plan.changes.length && !plan.removals.length) return { ok: true, changed: false, message: 'The branch classes and arms already match. No records were changed.' };
+  const suppliedRevision = clean(input.CatalogueRevision ?? input.CatalogueRevisionToken);
+  if ((Object.hasOwn(input, 'CatalogueRevision') || Object.hasOwn(input, 'CatalogueRevisionToken'))
+    && suppliedRevision !== clean(catalogueRevision?.ClassCatalogueRevision)) {
+    throw failure('The branch class catalogue changed after it was loaded. Refresh before saving.', 409, 'ACADEMIC_WRITE_CONFLICT');
+  }
+  const timestamp = nowIso(), writes = [];
+  for (const change of plan.changes) {
+    stampAcademicRecord(change.record, user, change.existing);
+    writes.push({ collectionPath: RECORD_TYPES[change.type].collection, documentId: recordId(change.record), data: withoutMetadata(change.record),
+      ...writePrecondition(change.existing, change.existing?.__updateTime) });
+  }
+  const audit = auditWrite(user, 'SAVE BRANCH CLASS SETUP', 'class', { BranchId: scope.branchId, SchoolSection: scope.section, RecordId: scope.branchId },
+    `${plan.changes.length} class/arm definitions saved. Existing pupils, placements, scores and historical records were preserved.`);
+  audit.data.CatalogueChanges = plan.changes.map(({ type, record, existing }) => ({ Type: type, RecordId: recordId(record), Before: existing ? withoutMetadata(existing) : null, After: withoutMetadata(record) }));
+  writes.push(audit, branchClassCatalogueRevisionWrite(scope.branchId, catalogueRevision, actorName(user), timestamp));
+  if (writes.length > 450) throw failure('Save fewer class and arm changes at a time. No records were changed.');
+  await commitAcademicBatch(env, writes, 'The branch catalogue changed while saving. Refresh and try again; no partial changes were saved.');
+  return { ok: true, changed: true, saved: plan.changes.length, removed: plan.removals.length,
+    message: 'Branch classes and arms saved. Academic Management uses these same definitions; existing pupil records and scores were preserved.' };
+}
+
 export async function bulkCreateAcademicClasses(env, user = {}, input = {}) {
   requireWritableSubscription(user);
   requireCapability(user, 'canManageStructure');
   const scope = await academicScope(env, user, input, { requireSection: true });
+  const catalogueRevision = await readBranchClassCatalogueRevision(env, scope.branchId);
   const rows = parseAcademicClassBatch(input, scope);
   if (!rows.length) throw failure('Enter at least one class definition.');
   if (rows.length > 50) throw failure('Create at most 50 classes in one batch.');
@@ -2828,10 +2981,7 @@ export async function bulkCreateAcademicClasses(env, user = {}, input = {}) {
     createdRecords.push(record);
     writes.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.classes, documentId: record.ClassId, data: withoutMetadata(record), exists: false });
   }
-  createdRecords.forEach((record) => {
-    const compatibility = legacyClassWrite(projected, record, 'class', scope);
-    if (compatibility) writes.push(compatibility);
-  });
+  if (createdRecords.length) writes.push(branchClassCatalogueRevisionWrite(scope.branchId, catalogueRevision, actorName(user), nowIso()));
   if (createdRecords.length) writes.push(auditWrite(user, 'BULK CREATE', 'class', {
     BranchId: scope.branchId, SchoolSection: scope.section, ClassId: `bulk-${Date.now()}`
   }, `${createdRecords.length} class(es) created; ${skipped} already matched.`));
@@ -2850,6 +3000,7 @@ export async function bulkCreateAcademicArmTemplates(env, user = {}, input = {})
   requireWritableSubscription(user);
   requireCapability(user, 'canManageStructure');
   const scope = await academicScope(env, user, input, { requireSection: true });
+  const catalogueRevision = await readBranchClassCatalogueRevision(env, scope.branchId);
   const rows = parseAcademicArmTemplateBatch(input);
   if (!rows.length) throw failure('Enter at least one reusable arm definition.');
   if (rows.length > 50) throw failure('Create at most 50 reusable arms in one batch.');
@@ -2876,6 +3027,7 @@ export async function bulkCreateAcademicArmTemplates(env, user = {}, input = {})
   if (createdRecords.length) writes.push(auditWrite(user, 'BULK CREATE', 'armtemplate', {
     BranchId: scope.branchId, SchoolSection: scope.section, ArmTemplateId: `bulk-${Date.now()}`
   }, `${createdRecords.length} reusable arm(s) created; ${skipped} already matched.`));
+  if (createdRecords.length) writes.push(branchClassCatalogueRevisionWrite(scope.branchId, catalogueRevision, actorName(user), nowIso()));
   await commitAcademicBatch(env, writes, 'The reusable arm catalogue changed while this batch was being saved. Reload and try again.');
   const response = await bootstrapAcademicManagement(env, user, {
     ...input, BranchId: scope.branchId, SchoolSection: scope.section, View: 'bulksetup'
@@ -3002,6 +3154,7 @@ export async function bulkApplyAcademicArmTemplates(env, user = {}, input = {}) 
   requireWritableSubscription(user);
   requireCapability(user, 'canManageStructure');
   const scope = await academicScope(env, user, input, { requireSection: true });
+  const catalogueRevision = await readBranchClassCatalogueRevision(env, scope.branchId);
   const classIds = uniqueIds(input.ClassIds || input.ClassId);
   const templateIds = uniqueIds(input.ArmTemplateIds || input.ArmTemplateId);
   const removalRequested = Array.isArray(input.RemoveClassrooms) && input.RemoveClassrooms.length > 0;
@@ -3073,11 +3226,7 @@ export async function bulkApplyAcademicArmTemplates(env, user = {}, input = {}) 
     }
   }
   const changedRecords = [...createdRecords, ...upgradedRecords, ...removedRecords];
-  const affectedClassIds = new Set(changedRecords.map((row) => row.ClassId));
-  classes.filter((row) => affectedClassIds.has(row.ClassId)).forEach((schoolClass) => {
-    const compatibility = legacyClassWrite(projected, schoolClass, 'class', scope);
-    if (compatibility) writes.push(compatibility);
-  });
+  if (changedRecords.length) writes.push(branchClassCatalogueRevisionWrite(scope.branchId, catalogueRevision, actorName(user), nowIso()));
   if (changedRecords.length) writes.push(auditWrite(user, 'BULK APPLY', 'arm', {
     BranchId: scope.branchId, SchoolSection: scope.section, ArmId: `bulk-${Date.now()}`
   }, `${createdRecords.length} classroom(s) created; ${upgradedRecords.length} existing arm(s) upgraded to classrooms; ${removedRecords.length} empty classroom(s) permanently deleted with history preserved; ${skipped} already matched.`));
@@ -3171,6 +3320,7 @@ export async function bulkAssignAcademicClassroomDepartments(env, user = {}, inp
   requireWritableSubscription(user);
   requireCapability(user, 'canManageStructure');
   const scope = await academicScope(env, user, input, { requireSection: true });
+  const catalogueRevision = await readBranchClassCatalogueRevision(env, scope.branchId);
   if (scope.section !== 'secondary') throw failure('Senior classroom departments are available only in Secondary school.');
   const assignments = Array.isArray(input.Assignments) ? input.Assignments : [];
   if (!assignments.length || assignments.length > 100) throw failure('Choose between 1 and 100 Senior classroom departments to update.');
@@ -3200,11 +3350,12 @@ export async function bulkAssignAcademicClassroomDepartments(env, user = {}, inp
     });
     writes.push(auditWrite(user, 'UPDATE', 'arm', record, `Classroom department: ${schoolClass.Name} / ${record.Name} -> ${findById(state.departments, departmentId)?.Name || 'Mixed departments'}. Existing student subject selections and scores were not changed.`));
   }
+  const changed = writes.length / 2;
+  if (changed) writes.push(branchClassCatalogueRevisionWrite(scope.branchId, catalogueRevision, actorName(user), nowIso()));
   await commitAcademicBatch(env, writes, 'A classroom changed while its department was being saved. Reload and try again.');
   const response = await bootstrapAcademicManagement(env, user, {
     ...input, BranchId: scope.branchId, SchoolSection: scope.section, View: 'classrooms'
   });
-  const changed = writes.length / 2;
   response.message = changed
     ? `${changed} Senior classroom department${changed === 1 ? '' : 's'} saved. Existing subject selections and scores are unchanged; review student subjects before saving new selections.`
     : 'The selected classroom departments already match the saved settings.';
@@ -4598,6 +4749,8 @@ export async function archiveAcademicManagementRecord(env, user = {}, input = {}
   }
   requireCapability(user, ['teacherallocation', 'studentmembership'].includes(type) ? 'canManageAllocations' : 'canArchive');
   const scope = await academicScope(env, user, input, { requireSection: true });
+  const catalogueChange = ['class', 'arm', 'armtemplate'].includes(type);
+  const catalogueRevision = catalogueChange ? await readBranchClassCatalogueRevision(env, scope.branchId) : null;
   const state = await loadScopedAcademicState(env, scope, ACADEMIC_RECORD_DEPENDENCY_STATE_KEYS[type]);
   const stateKey = Object.keys(ACADEMIC_MANAGEMENT_COLLECTIONS).find((key) => ACADEMIC_MANAGEMENT_COLLECTIONS[key] === definition.collection);
   const existing = findById(state[stateKey] || [], input.RecordId);
@@ -4625,10 +4778,7 @@ export async function archiveAcademicManagementRecord(env, user = {}, input = {}
     { collectionPath: definition.collection, documentId: recordId(existing), data: archived, updateTime: revisionToken },
     auditWrite(user, 'ARCHIVE', type, archived, clean(existing.Name || existing.StudentRef || existing.TeacherUsername))
   ];
-  if (['class', 'arm'].includes(type)) {
-    const compatibility = legacyClassWrite(state, archived, type, scope);
-    if (compatibility) writes.push(compatibility);
-  }
+  if (catalogueChange) writes.push(branchClassCatalogueRevisionWrite(scope.branchId, catalogueRevision, actorName(user), nowIso()));
   await commitAcademicBatch(env, writes, 'The classroom or academic record changed while archiving. Refresh and try again; no partial changes were saved.');
   const response = await bootstrapAcademicManagement(env, user, {
     ...input, BranchId: scope.branchId, SchoolSection: scope.section,
@@ -4647,6 +4797,8 @@ export async function deleteAcademicManagementRecord(env, user = {}, input = {})
   }
   const definition = RECORD_TYPES[type];
   const scope = await academicScope(env, user, input, { requireSection: true });
+  const catalogueChange = ['class', 'arm', 'armtemplate'].includes(type);
+  const catalogueRevision = catalogueChange ? await readBranchClassCatalogueRevision(env, scope.branchId) : null;
   const state = await loadScopedAcademicState(env, scope, ACADEMIC_RECORD_DEPENDENCY_STATE_KEYS[type]);
   const stateKey = Object.keys(ACADEMIC_MANAGEMENT_COLLECTIONS).find((key) => ACADEMIC_MANAGEMENT_COLLECTIONS[key] === definition.collection);
   const existing = findById(state[stateKey] || [], input.RecordId);
@@ -4688,19 +4840,7 @@ export async function deleteAcademicManagementRecord(env, user = {}, input = {})
   if (type === 'class') {
     for (const classroomRecord of classroomTargets) writes.push(...academicPermanentDeleteWrites(user, 'arm', classroomRecord));
   }
-  if (type === 'class' && scope.legacyClassCompatibility) {
-    writes.push({
-      collectionPath: 'settings/academics/classes',
-      documentId: clean(existing.LegacyDocumentId) || legacyDocumentId(existing.Name),
-      operation: 'delete'
-    });
-  }
-  if (type === 'arm') {
-    const projected = { ...state, arms: state.arms.filter((row) => recordId(row) !== recordId(existing)) };
-    const schoolClass = findById(projected.classes, existing.ClassId);
-    const compatibility = schoolClass ? legacyClassWrite(projected, schoolClass, 'class', scope) : null;
-    if (compatibility) writes.push(compatibility);
-  }
+  if (catalogueChange) writes.push(branchClassCatalogueRevisionWrite(scope.branchId, catalogueRevision, actorName(user), nowIso()));
   await commitAcademicBatch(env, writes, 'This academic record changed while it was being deleted. Reload and try again.');
   const response = await bootstrapAcademicManagement(env, user, {
     ...input, BranchId: scope.branchId, SchoolSection: scope.section,

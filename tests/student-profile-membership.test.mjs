@@ -7,7 +7,7 @@ import * as management from '../functions/lib/academic-management.js';
 import * as results from '../functions/lib/academic-term-results.js';
 import * as studentStatus from '../functions/lib/student-academic-status.js';
 import * as armTransfer from '../functions/lib/academic-arm-transfer.js';
-import { normalizeClassKey, canonicalConfiguredClass } from '../functions/lib/class-names.js';
+import { normalizeClassKey, canonicalConfiguredClass, canonicalCatalogueClassName } from '../functions/lib/class-names.js';
 import { schoolSectionFor, safeScopeId } from '../functions/lib/school-scope.js';
 import { enforceActorBranch } from '../functions/lib/branch-scope.js';
 import { studentWalletProfile } from '../functions/lib/student-wallet-profile.js';
@@ -100,7 +100,8 @@ function harness({ user = actor, assessed = true, members = [member] } = {}) {
     return data;
   };
   const route = vm.runInNewContext(`${strip(routeSource)}\nonRequestPost`, {
-    Response, crypto: webcrypto, Date, TextEncoder, schoolSectionFor, canonicalConfiguredClass, studentWalletProfile,
+    Response, crypto: webcrypto, Date, TextEncoder, schoolSectionFor, canonicalCatalogueClassName, studentWalletProfile,
+    getBranchClassCatalogue: async (_env, scope) => ({ classes: clone(state.classes.filter(row => row.BranchId === scope.branchId && row.SchoolSection === scope.section).map(row => ({ ...row, ClassName: row.Name }))) }),
     academicWebActor: context.academicWebActor, studentProfilePlacementChanged: context.studentProfilePlacementChanged,
     saveStudentProfileAcademicPlacement: (...args) => context.saveStudentProfileAcademicPlacement(...args),
     requireFirestoreEnv: () => {}, requireStaffSession: async () => user, readJsonBody: request => request.json(),

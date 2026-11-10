@@ -38,3 +38,23 @@ export function canonicalConfiguredClass(value, configured = []) {
   const match = configured.find((item) => normalizeClassKey(typeof item === 'string' ? item : item?.ClassName || item?.className) === wanted);
   return clean(typeof match === 'string' ? match : match?.ClassName || match?.className) || clean(value);
 }
+
+// Catalogue rows carry real class identities. A spelling alias may select one
+// identity, but must never silently choose between two configured classes.
+export function canonicalCatalogueClassName(value, classes = [], options = {}) {
+  const name = clean(value), wanted = normalizeClassKey(name);
+  if (!wanted || ['all', '*'].includes(wanted)) return name || 'All';
+  const nameOf = row => clean(typeof row === 'string' ? row : row?.ClassName || row?.Name || row?.className);
+  const exact = classes.filter(row => nameOf(row).toLowerCase() === name.toLowerCase());
+  const matches = exact.length ? exact : classes.filter(row => normalizeClassKey(nameOf(row)) === wanted);
+  const identities = new Map(matches.map(row => [
+    clean(row?.ClassId || row?.AcademicClassId || row?.__id) || nameOf(row).toLowerCase(), row
+  ]));
+  if (identities.size > 1) {
+    if (options.allowAmbiguous === true) return name;
+    throw Object.assign(new Error('This class name matches more than one configured class. Select its exact name in the correct school section.'), {
+      status: 409, code: 'AMBIGUOUS_CLASS_CATALOGUE_NAME'
+    });
+  }
+  return nameOf(identities.values().next().value) || name;
+}

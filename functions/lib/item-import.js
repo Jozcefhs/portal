@@ -3,7 +3,8 @@ import { enforceActorBranch } from './branch-scope.js';
 import { schoolSectionFor } from './school-scope.js';
 import { requireSchoolLibraryAccess } from './school-library.js';
 import { categoryApplies, categoryKey } from './store-categories.js';
-import { canonicalConfiguredClass } from './class-names.js';
+import { canonicalCatalogueClassName } from './class-names.js';
+import { getBranchClassCatalogue } from './branch-class-catalogue.js';
 import { ITEM_IMPORT_LIMITS, ITEM_IMPORT_MODULES, normalizeItemImportRow, duplicateItemImportRows, itemImportKey } from '../../js/item-import-csv.js';
 import { guardProcurementImportRow, loadProcurementInventoryControl } from './procurement-inventory-guard.js';
 
@@ -58,7 +59,11 @@ export async function handleItemImport(env, user, body) {
   const storeType = section === 'uniformStore' ? 'Uniform Store' : 'Bookstore';
   const titles = section === 'library' ? await queryCollection(env, 'libraryTitles', { filters: [{ field: 'BranchId', op: '==', value: branchId }] }) : [];
   const categories = ['bookstore', 'uniformStore'].includes(section) ? await listCollection(env, 'storeCategories') : [];
-  const classes = ['bookstore', 'uniformStore'].includes(section) ? await listCollection(env, 'settings/academics/classes') : [];
+  const classes = edition === 'school' && ['bookstore', 'uniformStore'].includes(section)
+    ? (await getBranchClassCatalogue(env, {
+      branchId, section: ['primary', 'secondary'].includes(lower(user.schoolSectionAccess)) ? lower(user.schoolSectionAccess) : '',
+      includeArms: false, includeInactive: false
+    })).classes : [];
   const writes = new Map(), views = [], timestamp = new Date().toISOString();
   const add = (collectionPath, documentId, data) => writes.set(`${collectionPath}/${documentId}`, { collectionPath, documentId, data, exists: false });
   for (const { row, errors } of normalized) {
@@ -92,8 +97,11 @@ export async function handleItemImport(env, user, body) {
       const scope = { BranchId: branchId, SchoolSection: row.SchoolSection, OrganisationEdition: edition };
       let data, documentId;
       if (store) {
+        let className;
+        try { className = canonicalCatalogueClassName(row.ClassName, classes.filter(value => lower(value.SchoolSection) === lower(row.SchoolSection))); }
+        catch (error) { errors.push(error.message); view.Status = 'Error'; continue; }
         const category = categories.find(value => categoryApplies(value, storeType) && categoryKey(value.Name) === categoryKey(row.Category) && clean(value.Active || 'YES') !== 'NO');
-        data = { ...scope, StoreType: storeType, ItemCode: row.ItemCode, ItemName: row.ItemName, Category: category?.Name || row.Category, CategoryId: category?.CategoryId || '', Size: row.Size, Gender: row.Gender, ClassName: canonicalConfiguredClass(row.ClassName, classes), Price: row.Price, Quantity: row.Quantity, Active: row.Active, UpdatedAt: timestamp, UpdatedBy: user.displayName || actor };
+        data = { ...scope, StoreType: storeType, ItemCode: row.ItemCode, ItemName: row.ItemName, Category: category?.Name || row.Category, CategoryId: category?.CategoryId || '', Size: row.Size, Gender: row.Gender, ClassName: className, Price: row.Price, Quantity: row.Quantity, Active: row.Active, UpdatedAt: timestamp, UpdatedBy: user.displayName || actor };
         documentId = safeId(`${storeType}-${row.ItemCode}-${branchId}-${row.SchoolSection}`);
       } else {
         data = { ...scope, ItemName: row.ItemName, Category: row.Category, Unit: row.Unit, Quantity: row.Quantity, ReorderLevel: row.ReorderLevel, Notes: row.Notes, Price: 0, Active: '', LastUpdated: timestamp, UpdatedBy: user.displayName || actor };

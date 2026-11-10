@@ -240,7 +240,8 @@ for (const [edition, section, storeType] of [['school', 'bookstore', 'Bookstore'
     const f = fixture(), user = { username: 'store', branchId: 'main', edition, schoolSectionAccess: 'All', allowedSections: [section] };
     const api = await f.load('functions/api/staff-stores.js', {
       requireFirestoreEnv: () => {}, requireStaffSession: async () => user, readJsonBody: request => request.json(),
-      resolveStoreCategory: async () => ({ CategoryId: 'CAT', Name: 'General' }), canonicalConfiguredClass: value => value
+      resolveStoreCategory: async () => ({ CategoryId: 'CAT', Name: 'General' }), canonicalCatalogueClassName: value => value,
+      getBranchClassCatalogue: async () => ({ classes: [] })
     });
     f.docs.set('storeItems/scoped', { ...managed, ItemCode: 'SUPPLY', ItemName: 'Supply', Quantity: 10, StoreType: storeType, BranchId: 'main', SchoolSection: 'Secondary', OrganisationEdition: edition });
     const call = data => api.onRequestPost({ env: {}, request: new Request('https://example.invalid', { method: 'POST', body: JSON.stringify({ section, action: 'saveitem', ItemId: 'scoped', ItemCode: 'SUPPLY', ItemName: 'Supply', Price: 100, ...data }) }) });

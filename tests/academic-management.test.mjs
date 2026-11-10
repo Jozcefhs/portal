@@ -994,11 +994,12 @@ test('a subject teacher can load every student in the class who offers that subj
   assert.deepEqual(visible.map((row) => row.StudentRef), ['G1-D-1', 'G1-E-1']);
 });
 
-test('Academic writes are audited, optimistic and preserve legacy class/student compatibility', () => {
+test('Academic writes are audited, optimistic and preserve student compatibility with a canonical branch class catalogue', () => {
   assert.match(librarySource, /batchCommitDocuments/);
   assert.match(librarySource, /ACADEMIC_WRITE_CONFLICT/);
   assert.match(librarySource, /academicManagementAudit/);
-  assert.match(librarySource, /settings\/academics\/classes/);
+  assert.match(librarySource, /branchClassCatalogueRevisionWrite/);
+  assert.doesNotMatch(librarySource, /collectionPath: 'settings\/academics\/classes'/);
   assert.match(librarySource, /ClassName: clean\(schoolClass\?\.Name\)/);
   assert.match(librarySource, /SubjectIds: uniqueIds/);
   assert.match(librarySource, /record\.CoreSubjectIds = coreSubjectIds/);
@@ -1364,7 +1365,7 @@ test('class teachers and assistants are assigned across multiple classroom rows 
   assert.match(styleSource, /\.academic-class-staff-row\{display:grid;grid-template-columns:repeat\(3,minmax\(0,1fr\)\) 36px/);
 });
 
-test('branch-paired class and arm actions never write the organisation legacy class catalogue', () => {
+test('web and desktop class and arm actions never write the organisation legacy class catalogue', () => {
   for (const Action of [
     'saveAcademicClass',
     'saveAcademicArm',
@@ -1379,27 +1380,23 @@ test('branch-paired class and arm actions never write the organisation legacy cl
       `${Action} must suppress organisation-wide legacy class compatibility for branch devices`
     );
   }
-  assert.equal(academicLegacyClassCompatibilityEnabled({ Action: 'saveAcademicClass' }), true);
-
-  assert.match(
-    librarySource,
-    /legacyClassCompatibility: academicLegacyClassCompatibilityEnabled\(input\)/
-  );
+  assert.equal(academicLegacyClassCompatibilityEnabled({ Action: 'saveAcademicClass' }), false);
+  assert.doesNotMatch(librarySource, /collectionPath: 'settings\/academics\/classes'/);
   const saveSource = librarySource.slice(
     librarySource.indexOf('export async function saveAcademicManagementRecord'),
     librarySource.indexOf('function uniqueStudentReferences')
   );
-  assert.match(saveSource, /legacyClassWrite\(state, record, type, scope\)/);
+  assert.match(saveSource, /branchClassCatalogueRevisionWrite/);
   const bulkClassSource = librarySource.slice(
     librarySource.indexOf('export async function bulkCreateAcademicClasses'),
     librarySource.indexOf('export async function bulkCreateAcademicArmTemplates')
   );
-  assert.match(bulkClassSource, /legacyClassWrite\(projected, record, 'class', scope\)/);
+  assert.match(bulkClassSource, /branchClassCatalogueRevisionWrite/);
   const bulkArmSource = librarySource.slice(
     librarySource.indexOf('export async function bulkApplyAcademicArmTemplates'),
     librarySource.indexOf('export async function bulkApplyAcademicSubjects')
   );
-  assert.match(bulkArmSource, /legacyClassWrite\(projected, schoolClass, 'class', scope\)/);
+  assert.match(bulkArmSource, /branchClassCatalogueRevisionWrite/);
   assert.match(bulkArmSource, /IsClassroom: true/);
   assert.match(bulkArmSource, /!activeValue\(existing\.IsClassroom, false\)/);
   assert.match(bulkArmSource, /existing arm\(s\) upgraded to classrooms/);
@@ -1408,13 +1405,12 @@ test('branch-paired class and arm actions never write the organisation legacy cl
     librarySource.indexOf('export async function archiveAcademicManagementRecord'),
     librarySource.indexOf('export async function deleteAcademicManagementRecord')
   );
-  assert.match(archiveSource, /legacyClassWrite\(state, archived, type, scope\)/);
+  assert.match(archiveSource, /branchClassCatalogueRevisionWrite/);
   const deleteSource = librarySource.slice(
     librarySource.indexOf('export async function deleteAcademicManagementRecord'),
     librarySource.indexOf('function academicOperationalViewForCapability')
   );
-  assert.match(deleteSource, /if \(type === 'class' && scope\.legacyClassCompatibility\)/);
-  assert.match(deleteSource, /legacyClassWrite\(projected, schoolClass, 'class', scope\)/);
+  assert.match(deleteSource, /branchClassCatalogueRevisionWrite/);
 });
 
 test('Academic Management staff candidates include active Teachers and exact Academics Department Users', () => {

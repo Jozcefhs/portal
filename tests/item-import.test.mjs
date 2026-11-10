@@ -8,7 +8,7 @@ import { productCsv } from '../js/vendor-product-import.js';
 import { enforceActorBranch } from '../functions/lib/branch-scope.js';
 import { schoolSectionFor } from '../functions/lib/school-scope.js';
 import { categoryApplies, categoryKey } from '../functions/lib/store-categories.js';
-import { canonicalConfiguredClass } from '../functions/lib/class-names.js';
+import { canonicalCatalogueClassName } from '../functions/lib/class-names.js';
 import { requireSchoolLibraryAccess } from '../functions/lib/school-library.js';
 import { guardProcurementImportRow, loadProcurementInventoryControl } from '../functions/lib/procurement-inventory-guard.js';
 
@@ -20,9 +20,10 @@ const rowFor = section => section === 'library' ? { Title: 'Mathematics', Author
 
 function fixture(initial = []) {
   const documents = new Map(initial.map(([collection, id, data]) => [`${collection}/${id}`, { ...structuredClone(data), __id: id }]));
-  const commits = []; let reads = 0, conflict = false;
+  const commits = [], catalogueScopes = []; let reads = 0, conflict = false;
   const list = collection => [...documents.entries()].filter(([key]) => key.startsWith(`${collection}/`)).map(([, row]) => structuredClone(row));
-  const context = { crypto: webcrypto, TextEncoder, ITEM_IMPORT_LIMITS, ITEM_IMPORT_MODULES, normalizeItemImportRow, duplicateItemImportRows, itemImportKey, enforceActorBranch, schoolSectionFor, requireSchoolLibraryAccess, categoryApplies, categoryKey, canonicalConfiguredClass,
+  const context = { crypto: webcrypto, TextEncoder, ITEM_IMPORT_LIMITS, ITEM_IMPORT_MODULES, normalizeItemImportRow, duplicateItemImportRows, itemImportKey, enforceActorBranch, schoolSectionFor, requireSchoolLibraryAccess, categoryApplies, categoryKey, canonicalCatalogueClassName,
+    getBranchClassCatalogue: async (_env, scope) => { reads++; catalogueScopes.push(structuredClone(scope)); return { classes: list('academicClasses').filter(row => row.BranchId === scope.branchId && (!scope.section || row.SchoolSection === scope.section)) }; },
     guardProcurementImportRow,
     loadProcurementInventoryControl: (env, scope) => loadProcurementInventoryControl(env, scope, async (_env, collection, id) => structuredClone(documents.get(`${collection}/${id}`) || null)),
     listCollection: async (_env, collection) => { reads++; return list(collection); },
@@ -42,8 +43,37 @@ function fixture(initial = []) {
   const handle = vm.runInNewContext(`${source}\nhandleItemImport`, context);
   const preview = (section, Rows = [rowFor(section)], actor = user) => handle({}, actor, { section, Rows, action: 'preview', BranchId: 'main' });
   const save = (section, Rows, PreviewDigest, RequestId = 'request-0001') => handle({}, user, { section, Rows, action: 'import', Confirmed: true, PreviewDigest, RequestId, BranchId: 'main' });
-  return { handle, preview, save, commits, list, documents, get reads() { return reads; }, conflict: () => { conflict = true; } };
+  return { handle, preview, save, commits, list, documents, catalogueScopes, get reads() { return reads; }, conflict: () => { conflict = true; } };
 }
+
+test('mixed-section stock imports use one branch catalogue read and retain each section’s distinct class name', async () => {
+  const f = fixture([
+    ['academicClasses', 'primary', { BranchId: 'main', SchoolSection: 'primary', ClassId: 'primary', ClassName: 'Primary 1' }],
+    ['academicClasses', 'secondary', { BranchId: 'main', SchoolSection: 'secondary', ClassId: 'secondary', ClassName: 'Grade 1' }],
+    ['academicClasses', 'foreign', { BranchId: 'other', SchoolSection: 'primary', ClassId: 'foreign', ClassName: 'Basic 1' }]
+  ]);
+  const Rows = ['Primary', 'Secondary'].map((SchoolSection, i) => ({ ...rowFor('bookstore'), SchoolSection, ClassName: 'Basic One', ItemCode: `CLASS-${i}`, RowNumber: i + 2 }));
+  const preview = await f.preview('bookstore', Rows);
+  assert.equal(preview.valid, true);
+  assert.equal(f.catalogueScopes.length, 1);
+  assert.equal(f.catalogueScopes[0].branchId, 'main');
+  assert.equal(f.catalogueScopes[0].includeArms, false);
+  await f.save('bookstore', Rows, preview.PreviewDigest);
+  assert.deepEqual(f.list('storeItems').map(row => [row.SchoolSection, row.ClassName]), [['Primary', 'Primary 1'], ['Secondary', 'Grade 1']]);
+});
+
+test('an ambiguous real class alias blocks stock import rather than picking the first class', async () => {
+  const f = fixture([
+    ['academicClasses', 'grade', { BranchId: 'main', SchoolSection: 'primary', ClassId: 'grade', ClassName: 'Grade 1' }],
+    ['academicClasses', 'primary', { BranchId: 'main', SchoolSection: 'primary', ClassId: 'primary', ClassName: 'Primary 1' }]
+  ]);
+  const Rows = [{ ...rowFor('bookstore'), SchoolSection: 'Primary', ClassName: 'Basic One' }];
+  const preview = await f.preview('bookstore', Rows);
+  assert.equal(preview.valid, false);
+  assert.match(preview.rows[0].Errors.join(' '), /more than one configured class/);
+  await assert.rejects(f.save('bookstore', Rows, preview.PreviewDigest), /Correct all highlighted rows/);
+  assert.equal(f.commits.length, 0);
+});
 
 test('all five modules have separate round-trippable CSV templates', () => {
   assert.deepEqual(Object.keys(ITEM_IMPORT_MODULES), ['clinic', 'kitchen', 'bookstore', 'uniformStore', 'library']);

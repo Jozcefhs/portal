@@ -16,6 +16,14 @@ compilation or installer release**. Card-terminal payments remain disabled.
 The older handoff below is historical context; newer user decisions and the
 tracker take precedence where they differ.
 
+Shared branch class/arm setup is documented in
+`docs/shared-branch-class-catalogue-2026-11-10.md`. Use the academic catalogue
+and existing IDs in both Settings and Academic Management; never re-seed
+retired global/branch snapshots during reads. See the tracker for current test,
+push and deployment evidence. Desktop source updates do not authorize an
+installer build. The user's per-item part-payment rules remain intentionally
+available alongside the separate total-fee plans.
+
 Last updated: 2026-08-21
 
 This is the starting point for continuing the project from another Codex

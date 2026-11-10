@@ -2,15 +2,15 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-test('branch class and admission settings inherit until explicitly made independent', async () => {
+test('branch classes use the academic catalogue while admission settings can inherit defaults', async () => {
   const [backend, desktop] = await Promise.all([
     readFile(new URL('../functions/api/backend.js', import.meta.url), 'utf8'),
     readFile(new URL('../../suite/main.py', import.meta.url), 'utf8')
   ]);
   assert.match(backend, /organisationBranches\/\$\{safeScopeId\(branchId\)\}\/\$\{collectionName\}/);
-  assert.match(backend, /ClassSetupMode: 'inherit'/);
+  assert.match(backend, /saveBranchAcademicClassSetup/);
+  assert.match(backend, /getBranchClassCatalogue/);
   assert.match(backend, /AdmissionSetupMode: 'inherit'/);
-  assert.match(backend, /ClassSetupMode'.*'independent'/s);
   assert.match(backend, /AdmissionSetupMode'.*'independent'/s);
   assert.match(backend, /case 'resetSchoolClasses'/);
   assert.match(backend, /case 'resetAdmissionClasses'/);

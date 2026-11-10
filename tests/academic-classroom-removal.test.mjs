@@ -103,6 +103,8 @@ function runtime(f) {
   const commits = [], capabilities = [];
   const ctx = vm.createContext({ checkClassroomRemovals, requireWritableSubscription: () => {},
     requireCapability: (_user, name) => capabilities.push(name), academicScope: async () => f.scope,
+    readBranchClassCatalogueRevision: async () => null,
+    branchClassCatalogueRevisionWrite: branchId => ({ collectionPath: 'branchSchoolSettings', documentId: branchId, exists: false, data: { BranchId: branchId } }),
     uniqueIds: value => value || [], loadScopedAcademicState: async () => f.state,
     findById: (rows, id) => rows.find(row => row.ArmId === id || row.ClassId === id), assertReference: row => row,
     lower: value => String(value || '').toLowerCase(), clean: value => String(value || '').trim(),
@@ -111,8 +113,6 @@ function runtime(f) {
     withoutMetadata: row => Object.fromEntries(Object.entries(row).filter(([key]) => !key.startsWith('__'))),
     nowIso: () => 'now', actorName: () => 'Manager', stampAcademicRecord: () => {},
     ACADEMIC_MANAGEMENT_COLLECTIONS: { arms: 'academicArms' },
-    legacyClassWrite: (state, schoolClass) => ({ collectionPath: 'legacy', documentId: schoolClass.ClassId,
-      data: { Arms: state.arms.filter(row => row.ClassId === schoolClass.ClassId && row.Status === 'Active').map(row => row.Name) } }),
     auditWrite: () => ({ collectionPath: 'audit', data: {} }), commitAcademicBatch: async (_env, writes) => commits.push(writes),
     bootstrapAcademicManagement: async () => ({}), failure: message => new Error(message) });
   Object.assign(ctx, { RECORD_TYPES: { arm: { collection: 'academicArms' } },
@@ -122,7 +122,7 @@ function runtime(f) {
   vm.runInContext(body, ctx);
   return { ctx, commits, capabilities };
 }
-test('removal-only bulk save atomically deletes unused targets and retains audit snapshots and updates the legacy classroom list', async () => {
+test('removal-only bulk save atomically deletes unused targets and retains audit snapshots under the branch catalogue guard', async () => {
   const f = fixture(), { ctx, commits, capabilities } = runtime(f);
   const result = await ctx.bulkApplyAcademicArmTemplates({}, {}, f.input);
   assert.equal(result.bulkResult.Removed, 5);
@@ -130,7 +130,8 @@ test('removal-only bulk save atomically deletes unused targets and retains audit
   assert.equal(commits.length, 1);
   assert.equal(commits[0].filter(write => write.operation === 'delete').length, 5);
   assert.equal(commits[0].filter(write => write.data?.DeletedRecord?.ArmId).length, 5);
-  assert.ok(commits[0].filter(write => write.collectionPath === 'legacy').every(write => !write.data.Arms.length));
+  assert.equal(commits[0].filter(write => write.collectionPath === 'branchSchoolSettings').length, 1);
+  assert.equal(commits[0].some(write => write.collectionPath === 'legacy'), false);
   assert.ok(f.state.arms.every(row => row.Status === 'Active'));
 });
 test('an occupied classroom blocks the entire batch before any write', async () => {
@@ -139,14 +140,14 @@ test('an occupied classroom blocks the entire batch before any write', async () 
   await assert.rejects(ctx.bulkApplyAcademicArmTemplates({}, {}, f.input));
   assert.equal(commits.length, 0);
 });
-test('removing a formerly occupied classroom writes only the classroom, legacy choices and audit', async () => {
+test('removing a formerly occupied classroom writes only its definition, catalogue guard and audit', async () => {
   const f = fixture();
   const protectedRecords = { studentScores: [{ Score: 72, ArmId: 'g11-virtue' }], studentMovements: [{ FromArmId: 'g11-virtue', ToArmId: 'g11-merit' }],
     studentAttendance: [{ ArmId: 'g11-virtue', Status: 'Present' }], weeklyDiaries: [{ ArmId: 'g11-virtue', Status: 'Approved' }] };
   Object.assign(f.state, structuredClone(protectedRecords));
   const { ctx, commits } = runtime(f);
   await ctx.bulkApplyAcademicArmTemplates({}, {}, f.input);
-  assert.ok(commits.flat().every(write => ['academicArms', 'legacy', 'audit'].includes(write.collectionPath)));
+  assert.ok(commits.flat().every(write => ['academicArms', 'branchSchoolSettings', 'audit'].includes(write.collectionPath)));
   for (const [key, value] of Object.entries(protectedRecords)) assert.deepEqual(f.state[key], value);
 });
 test('a stale classroom revision aborts the atomic batch without modifying history', async () => {
@@ -177,7 +178,7 @@ test('archive preserves the catalogue identity; delete removes it and preserves 
       assert.equal(removed.operation, 'delete');
       assert.equal(commits[0].find(write => write.data?.DeletedRecord)?.data.DeletedRecord.Name, 'Virtue');
     }
-    assert.ok(commits[0].every(write => ['academicArms', 'legacy', 'audit'].includes(write.collectionPath)));
+    assert.ok(commits[0].every(write => ['academicArms', 'branchSchoolSettings', 'audit'].includes(write.collectionPath)));
   }
 });
 

@@ -109,7 +109,8 @@ import { approvalSnapshot, handleApprovalSettings } from '../lib/approval-settin
 import { getTuckShopCatalog, recordTuckShopStaffSale, searchTuckShopCustomers } from '../lib/school-tuck-shop.js';
 import { handleStudentConductAction } from '../lib/student-conduct.js';
 import { handleSchoolLibraryAction } from '../lib/school-library.js';
-import { handleAcademicManagementAction } from '../lib/academic-management.js';
+import { handleAcademicManagementAction, saveBranchAcademicClassSetup } from '../lib/academic-management.js';
+import { getBranchClassCatalogue } from '../lib/branch-class-catalogue.js';
 import { moveStudentSession } from '../lib/student-session-movement.js';
 import { saveStudentLoginPassword } from '../lib/student-login-credentials.js';
 import { defaultModulesForRole } from '../lib/role-module-access.js';
@@ -399,7 +400,8 @@ async function configuredClassNames(env, options = {}) {
     clean(env.FIREBASE_PROJECT_ID),
     clean(env.DYNAMAX_WORKSPACE_ID),
     clean(env.ORGANISATION_EDITION || env.ORGANIZATION_EDITION),
-    branchId ? safeScopeId(branchId) : 'organisation'
+    branchId ? safeScopeId(branchId) : 'organisation',
+    lower(options.SchoolSection || options.UserSchoolSectionAccess)
   ].join('|');
   const now = Date.now();
   const cached = configuredClassCache.get(cacheKey);
@@ -597,7 +599,7 @@ async function updateStudentProfile(env, body) {
     updated.WalletCardStatus = studentWalletProfile(existing).WalletCardStatus;
   }
   if (body.ClassName !== undefined) {
-    updated.ClassName = canonicalConfiguredClass(body.ClassName, await configuredClassNames(env));
+    updated.ClassName = canonicalConfiguredClass(body.ClassName, await configuredClassNames(env, { BranchId: identityRecordBranch(existing), SchoolSection: identityRecordSection(existing), IncludeArms: false }));
     updated.ClassAdmitted = updated.ClassName;
   }
   if (body.ParentEmail !== undefined) updated.ParentEmail = lower(body.ParentEmail);
@@ -2853,7 +2855,7 @@ async function saveStoreItem(env, body) {
   if (items.some(row => row.__id !== existing.__id && sameText(row.ItemCode, itemCode) && schoolSectionFor(row) === schoolSection.toLowerCase())) {
     throw Object.assign(new Error('That item code already exists in this branch and section.'), { status: 409 });
   }
-  const className = canonicalConfiguredClass(clean(body.ClassName) || 'All', await configuredClassNames(env));
+  const className = canonicalConfiguredClass(clean(body.ClassName) || 'All', await configuredClassNames(env, { BranchId: scope.BranchId, SchoolSection: schoolSection, IncludeArms: false }));
   const payload = {
     ...existing, StoreType: storeType, ItemCode: itemCode, ItemName: itemName,
     BranchId: scope.BranchId, SchoolSection: schoolSection, OrganisationEdition: 'school',
@@ -4254,7 +4256,7 @@ async function updateApplicationDetails(env, body) {
   Object.entries(body || {}).forEach(([key, value]) => {
     if (!ignored.has(key)) updates[key] = value;
   });
-  const classNames = await configuredClassNames(env);
+  const classNames = await configuredClassNames(env, { BranchId: identityRecordBranch(existing), SchoolSection: identityRecordSection(existing), IncludeArms: false });
   for (const key of ['ClassApplyingFor', 'ClassAppliedFor', 'ClassAdmitted', 'ClassName']) {
     if (updates[key] !== undefined) updates[key] = canonicalConfiguredClass(updates[key], classNames);
   }
@@ -4294,15 +4296,15 @@ async function importStudents(env, body) {
     err.status = 400;
     throw err;
   }
-  const [existingStudents, classNames, defaultProfile] = await Promise.all([
-    listSchoolCollection(env, 'students'),
-    configuredClassNames(env),
-    getDocument(env, 'settings', 'schoolProfile').catch(() => null)
-  ]);
-  const importedBy = clean(body.ImportedBy || body.importedBy) || 'Admissions Office';
   const importScope = requestedStudentScope(body);
   const structure = await getSchoolStructure(env);
   const branchId = canonicalSchoolBranchId(importScope.branchId || structure.ActiveBranchId);
+  const [existingStudents, classNames, defaultProfile] = await Promise.all([
+    listSchoolCollection(env, 'students'),
+    configuredClassNames(env, { BranchId: branchId, SchoolSection: importScope.schoolSectionAccess, IncludeArms: false }),
+    getDocument(env, 'settings', 'schoolProfile').catch(() => null)
+  ]);
+  const importedBy = clean(body.ImportedBy || body.importedBy) || 'Admissions Office';
   const schoolProfile = await effectiveBranchProfile(env, defaultProfile || {}, branchId);
   let imported = 0;
   let skipped = 0;
@@ -4622,7 +4624,7 @@ async function enrollStudent(env, body) {
       'ENROLLMENT_APPLICATION_REFERENCE_CONFLICT'
     );
   }
-  const admittedClass = canonicalConfiguredClass(pick(existing, ['ClassApplyingFor', 'ClassName']), await configuredClassNames(env));
+  const admittedClass = canonicalConfiguredClass(pick(existing, ['ClassApplyingFor', 'ClassName']), await configuredClassNames(env, { BranchId: identityRecordBranch(existing), SchoolSection: identityRecordSection(existing), IncludeArms: false }));
   const studentData = {
     __scopePath: studentScopePath,
     BranchId: identityRecordBranch(existing),
@@ -4952,8 +4954,7 @@ async function replaceSettingsCollection(env, collectionPath, rows, normalizeRow
 
 async function markIndependentBranchSetup(env, context, field, updatedBy) {
   if (context.scope !== 'branch') return;
-  await upsertDocument(env, BRANCH_SCHOOL_SETTINGS_COLLECTION, context.branchId, {
-    ...context.metadata,
+  await patchDocumentFields(env, BRANCH_SCHOOL_SETTINGS_COLLECTION, context.branchId, {
     BranchId: context.branchId,
     BranchName: context.branchName,
     [field]: 'independent',
@@ -4964,100 +4965,41 @@ async function markIndependentBranchSetup(env, context, field, updatedBy) {
 
 export async function getSchoolClasses(env, options = {}) {
   const context = await schoolSettingsContext(env, options);
-  const independent = independentBranchSetup(context, 'ClassSetupMode');
-  const collectionPath = independent
-    ? branchSchoolCollection(context.branchId, 'schoolClasses')
-    : 'settings/academics/classes';
-  const classes = (await listCollection(env, collectionPath))
-    .map(normalizeSchoolClass)
-    .sort((a, b) => asMoneyNumber(a.SortOrder) - asMoneyNumber(b.SortOrder));
-  // Fee setup may need newer academic classes absent from the legacy setup.
-  // Read only this branch's small catalogue, never its learners or history.
-  if (context.scope === 'branch' && options.IncludeAcademicClasses === true) {
-    const academicClasses = await queryCollection(env, 'academicClasses', {
-      filters: [{ field: 'BranchId', op: '==', value: context.branchId }], limit: 500
-    });
-    if (academicClasses.length >= 500) throw new Error('The branch class catalogue exceeds the supported setup size. Please review its class definitions.');
-    const known = new Set(classes.map(row => clean(row.ClassName).toLowerCase()));
-    for (const row of academicClasses) {
-      const name = clean(row.Name || row.ClassName);
-      if (!name || known.has(name.toLowerCase()) || clean(row.Status).toLowerCase() !== 'active') continue;
-      known.add(name.toLowerCase());
-      classes.push(normalizeSchoolClass({ ClassName: name, Active: 'YES', BranchId: context.branchId, SortOrder: row.SortOrder || 100 }));
-    }
-    classes.sort((a, b) => asMoneyNumber(a.SortOrder) - asMoneyNumber(b.SortOrder));
+  if (context.scope === 'branch') {
+    const assignedSection = lower(options.UserSchoolSectionAccess);
+    const section = ['primary', 'secondary'].includes(assignedSection) ? assignedSection : clean(options.SchoolSection);
+    const catalogue = await getBranchClassCatalogue(env, { branchId: context.branchId,
+      section, metadata: context.metadata, includeInactive: true, includeArms: options.IncludeArms !== false });
+    return { ok: true, backend: 'firestore', ...catalogue, settingsScope: 'branch',
+      branchId: context.branchId, branchName: context.branchName, inherited: false, setupMode: 'academic',
+      message: `${context.branchName} classes and arms are shared with Academic Management.` };
   }
-  return {
-    ok: true,
-    message: context.scope === 'branch'
-      ? `${context.branchName} ${independent ? 'independent classes' : 'inherited organisation classes'} loaded.`
-      : 'Organisation class defaults loaded from the database.',
-    backend: 'firestore',
-    settingsScope: context.scope,
-    branchId: context.branchId,
-    branchName: context.branchName,
-    inherited: context.scope === 'branch' && !independent,
-    setupMode: independent ? 'independent' : 'inherit',
-    classes
-  };
+  // Explicit organisation defaults remain a historical template only. A branch
+  // never falls back to them or resurrects a deleted academic classroom.
+  const classes = (await listCollection(env, 'settings/academics/classes')).map(normalizeSchoolClass)
+    .sort((a,b) => asMoneyNumber(a.SortOrder) - asMoneyNumber(b.SortOrder));
+  return { ok:true, backend:'firestore', classes, settingsScope:'organisation', branchId:'', branchName:'',
+    inherited:false, setupMode:'organisation', message:'Organisation class templates loaded.' };
 }
 
 async function saveSchoolClasses(env, body) {
-  const classes = Array.isArray(body.Classes || body.classes) ? (body.Classes || body.classes) : [];
-  if (!classes.length) {
-    const err = new Error('Classes list is required.');
-    err.status = 400;
-    throw err;
-  }
-  const updatedAt = nowIso();
-  const updatedBy = clean(body.UpdatedBy || body.updatedBy) || 'School Office';
   const context = await schoolSettingsContext(env, body, true);
-  const collectionPath = context.scope === 'branch'
-    ? branchSchoolCollection(context.branchId, 'schoolClasses')
-    : 'settings/academics/classes';
-  const result = await replaceSettingsCollection(env, collectionPath, classes, normalizeSchoolClass, (item, className, saved) => ({
-      ClassName: className,
-      Arms: clean(item.Arms || item.arms || item.ClassArms),
-      Active: yesNo(item.Active ?? item.active ?? 'YES') || 'YES',
-      SortOrder: asMoneyNumber(item.SortOrder || item.sortOrder || saved + 1),
-      BranchId: context.branchId,
-      UpdatedAt: updatedAt,
-      UpdatedBy: updatedBy
-    }));
-  await markIndependentBranchSetup(env, context, 'ClassSetupMode', updatedBy);
+  const actor = await desktopSchoolOperationsActor(env, body, 'academics', true);
+  const result = await saveBranchAcademicClassSetup(env, {
+    ...actor, ...desktopStaffAssignmentActor(body), sourcePlatform: 'Desktop'
+  }, { ...body, BranchId: context.branchId });
   invalidateConfiguredClassCache();
-  const normalizedClasses = result.rows
-    .sort((a, b) => asMoneyNumber(a.SortOrder) - asMoneyNumber(b.SortOrder));
-  return {
-    ok: true,
-    message: `${context.scope === 'branch' ? `${context.branchName} independent` : 'Organisation default'} classes saved (${result.saved}).`,
-    saved: result.saved,
-    backend: 'firestore',
-    settingsScope: context.scope,
-    branchId: context.branchId,
-    branchName: context.branchName,
-    inherited: false,
-    setupMode: context.scope === 'branch' ? 'independent' : 'organisation',
-    classes: normalizedClasses
-  };
+  return { ...await getSchoolClasses(env, { ...body, BranchId: context.branchId }),
+    ...result, canonicalSource:'academic', inherited:false, setupMode:'academic' };
 }
 
 async function resetSchoolClasses(env, body) {
-  const context = await schoolSettingsContext(env, { ...body, SettingsScope: 'branch' }, true);
-  for (const row of await listCollection(env, branchSchoolCollection(context.branchId, 'schoolClasses'))) {
-    const id = clean(row.__id || safeDocumentId(row.ClassName || ''));
-    if (id) await deleteDocument(env, branchSchoolCollection(context.branchId, 'schoolClasses'), id);
-  }
-  await upsertDocument(env, BRANCH_SCHOOL_SETTINGS_COLLECTION, context.branchId, {
-    ...context.metadata,
-    BranchId: context.branchId,
-    BranchName: context.branchName,
-    ClassSetupMode: 'inherit',
-    UpdatedAt: nowIso(),
-    UpdatedBy: clean(body.UpdatedBy || body.updatedBy || body.UserRole) || 'School Office'
-  });
-  invalidateConfiguredClassCache();
-  return getSchoolClasses(env, { BranchId: context.branchId });
+  await schoolSettingsContext(env, body, true);
+  // Old installers still expose this button. Inheritance would detach the
+  // branch from its academic IDs, so fail clearly without changing any data.
+  const error = new Error('Classes and arms now share this branch’s Academic Management setup. Organisation defaults cannot replace it. Add or edit classes in either setup screen.');
+  error.status = 409;
+  throw error;
 }
 
 export async function getAdmissionClasses(env, options = {}) {
@@ -5160,8 +5102,7 @@ async function resetAdmissionClasses(env, body) {
     const id = clean(row.__id || safeDocumentId(row.ClassName || ''));
     if (id) await deleteDocument(env, collectionPath, id);
   }
-  await upsertDocument(env, BRANCH_SCHOOL_SETTINGS_COLLECTION, context.branchId, {
-    ...context.metadata,
+  await patchDocumentFields(env, BRANCH_SCHOOL_SETTINGS_COLLECTION, context.branchId, {
     BranchId: context.branchId,
     BranchName: context.branchName,
     AdmissionSetupMode: 'inherit',

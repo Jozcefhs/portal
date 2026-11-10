@@ -165,6 +165,8 @@ function batchHarness(state = fixture()) {
   const writes = [];
   const context = vm.createContext({
     ...management, ...timetable, ...scorebook, crypto: webcrypto, safeScopeId: String, TextEncoder, TextDecoder,
+    readBranchClassCatalogueRevision: async () => null,
+    branchClassCatalogueRevisionWrite: branchId => ({ collectionPath: 'branchSchoolSettings', documentId: branchId, exists: false, data: { BranchId: branchId } }),
     batchCommitDocuments: async (_env, changes) => { writes.push(...clone(changes)); },
     queryCollection: async () => []
   });
@@ -258,13 +260,13 @@ test('import template accepts mixed Core subject codes and no longer requests a 
   assert.ok(!forms.includes('name="DepartmentId"'));
 });
 
-test('switching a classroom to Mixed writes only the classroom and audit, not student selections or scores', async () => {
+test('switching a classroom to Mixed writes only its definition, audit and catalogue guard, not student selections or scores', async () => {
   const state = fixture();
   state.arms[0].DepartmentId = 'social';
   state.arms[0].__updateTime = 'arm-rev';
   const { saveClassroom, writes } = batchHarness(state);
   await saveClassroom();
   assert.equal(writes.find(row => row.collectionPath === 'academicArms').data.DepartmentId, '');
-  assert.deepEqual(new Set(writes.map(row => row.collectionPath)), new Set(['academicArms', 'academicManagementAudit']));
+  assert.deepEqual(new Set(writes.map(row => row.collectionPath)), new Set(['academicArms', 'academicManagementAudit', 'branchSchoolSettings']));
   assert.deepEqual(state.studentMemberships, [base]);
 });

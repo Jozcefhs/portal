@@ -17,6 +17,8 @@ function runtime(type,row,patch={}) {
  const commits=[],profiles=[];
  const ctx=vm.createContext({clean,lower,recordId,academicPermanentDeleteDependants,academicRecordInCurrentUse,checkClassroomRemovals,
   requireWritableSubscription:()=>{},requireCapability:()=>{},normalizedRecordType:lower,
+  readBranchClassCatalogueRevision:async()=>null,nowIso:()=> 'now',actorName:()=> 'Manager',
+  branchClassCatalogueRevisionWrite:branchId=>({collectionPath:'branchSchoolSettings',documentId:branchId,exists:false,data:{BranchId:branchId}}),
   RECORD_TYPES:Object.fromEntries(Object.entries(types).map(([key,val])=>[key,{collection:collections[val]}])),
   ACADEMIC_MANAGEMENT_COLLECTIONS:collections,ACADEMIC_RECORD_DEPENDENCY_STATE_KEYS:{},
   academicScope:async()=>({branchId:'main',section:'secondary'}),loadScopedAcademicState:async()=>state,

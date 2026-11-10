@@ -1,9 +1,10 @@
-import { batchCommitDocuments, listCollection, requireFirestoreEnv } from '../lib/firestore.js';
+import { batchCommitDocuments, requireFirestoreEnv } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { issueStaffParentOnboarding } from '../lib/parent-onboarding.js';
 import { issueStaffBranchParentOnboarding } from '../lib/parent-branch-onboarding.js';
 import { listSchoolCollection, schoolSectionFor, upsertSchoolDocument } from '../lib/school-scope.js';
-import { canonicalConfiguredClass } from '../lib/class-names.js';
+import { canonicalCatalogueClassName } from '../lib/class-names.js';
+import { getBranchClassCatalogue } from '../lib/branch-class-catalogue.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { saveStudentLoginPassword } from '../lib/student-login-credentials.js';
 import { admissionYearIntakeFingerprint, admissionYearIntakePlan } from '../lib/student-intake-bulk.js';
@@ -196,8 +197,11 @@ export async function onRequestPost(context) {
       updated.WalletCardStatus = studentWalletProfile(existing).WalletCardStatus;
     }
     if (body.ClassName !== undefined) {
-      const configuredClasses = await listCollection(env, 'settings/academics/classes').catch(() => []);
-      updated.ClassName = canonicalConfiguredClass(body.ClassName, configuredClasses);
+      const catalogue = lower(user.edition || user.OrganisationEdition || 'school') === 'school' ? await getBranchClassCatalogue(env, {
+        branchId: lower(existing.BranchId || user.branchId || 'main'),
+        section: schoolSectionFor(existing), includeArms: false, includeInactive: true
+      }) : { classes: [] };
+      updated.ClassName = canonicalCatalogueClassName(body.ClassName, catalogue.classes);
       updated.ClassAdmitted = updated.ClassName;
     }
     if (body.ParentEmail !== undefined) updated.ParentEmail = lower(body.ParentEmail);
