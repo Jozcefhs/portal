@@ -8,7 +8,9 @@
     "deployed_verified": "Verified in this pass with commit/deployment and checks.",
     "historical_delivery_to_verify": "Request retained from conversation. Existing work/docs may implement it; inspect evidence before marking complete or redoing it.",
     "deferred_user_priority": "Retained, resume after current urgent school/payment work.",
-    "tested_awaiting_deployment": "Implemented and tests passed; deployment has not yet been verified."
+    "tested_awaiting_deployment": "Implemented and tests passed; deployment has not yet been verified.",
+    "deployed_with_followups": "Tested changes deployed and verified; the listed cost/rollout follow-ups remain open.",
+    "recorded_verified": "Durable tracker saved and pushed; later requests and delivery evidence must continue to be recorded."
   },
   "constraints": [
     "Preserve all business records, payments and scores; use reviewed corrections and provenance.",
@@ -67,12 +69,15 @@
     }
   ],
   "recentDelivery": {
-    "webCommit": "b955dab0cf52c022c733065d21c994514c5c2d9b",
-    "webRelease": "dynamax-v551-classroom-imports-discounts",
+    "date": "2026-11-10",
+    "webCommit": "0c23a397aa5fb36f254da3c8cbe0b18094c31f87",
+    "webRelease": "dynamax-v552-advance-credit-focused-loading-vendor-sales",
     "url": "https://destinychristianacademy.pages.dev",
-    "verification": "4,815 repository tests before the current advance/navigation/vendor additions; release asset hashes verified; classroom repair retry made zero changes.",
-    "desktopSourceCommit": "2e4f699",
-    "desktopInstaller": "No new compilation/release in this pass; released version remains 3.1.63."
+    "deploymentUrl": "https://eb546361.destinychristianacademy.pages.dev",
+    "verification": "4,898 repository tests passed; synthetic Chrome parent/history checks passed at 390px/1280px. Seven served asset SHA-256 hashes matched local committed files. Anonymous payment input denied and parent/vendor endpoints returned 401. Three vendor date indexes READY; no live payment or notification test.",
+    "desktopSourceCommit": "e173f80",
+    "desktopValidation": "36 Tk/unit tests passed; source pushed only.",
+    "desktopInstaller": "No compilation/release. Production version manifest still 3.1.63 and hash matches the unchanged local file."
   },
   "groups": [
     {
@@ -81,7 +86,7 @@
         {
           "id": "advance-fees",
           "title": "Parent school-fee advances",
-          "status": "tested_awaiting_deployment",
+          "status": "deployed_verified",
           "acceptance": "Any valid positive amount; clear current due school fees first; retain the rest for later terms; verified/approved payments only; keep separate from spending wallet.",
           "evidence": [
             "functions/lib/school-fee-advance.js",
@@ -90,44 +95,69 @@
             "tests/school-fee-credit-scheduler.test.mjs",
             "tests/school-fee-advance-billing-hooks.test.mjs",
             "docs/advance-credit-navigation-vendor-pass-2026-11-10.md"
-          ]
+          ],
+          "delivery": {
+            "webRelease": "dynamax-v552-advance-credit-focused-loading-vendor-sales",
+            "sourceCommit": "0c23a397aa5fb36f254da3c8cbe0b18094c31f87"
+          }
         },
         {
           "id": "load-gates",
           "title": "Remove unnecessary Load gates and audit reads/writes",
-          "status": "tested_awaiting_deployment",
+          "status": "deployed_with_followups",
           "acceptance": "Open setup/navigation interfaces directly. Retain scoped/date loading for actual history; retain snapshots; no audit writes for browsing.",
           "evidence": [
             "functions/lib/academic-management.js",
             "tests/academic-scorebook-opening.test.mjs",
             "docs/advance-credit-navigation-vendor-pass-2026-11-10.md"
+          ],
+          "delivery": {
+            "webRelease": "dynamax-v552-advance-credit-focused-loading-vendor-sales",
+            "sourceCommit": "0c23a397aa5fb36f254da3c8cbe0b18094c31f87"
+          },
+          "remainingFollowUps": [
+            {
+              "id": "remaining-register-cost-audit",
+              "title": "Retain follow-up review of vendor request bootstrap and fuzzy branch-roster searches",
+              "acceptance": "These current-register reads are scoped but remain proportional to history/roster size. Audit status pagination and targeted name search without hiding pending requests or eligible pupils."
+            }
           ]
         },
         {
           "id": "vendor-student-type",
           "title": "Show Day/Boarding at vendor and tuck-shop POS",
-          "status": "tested_awaiting_deployment",
+          "status": "deployed_verified",
           "acceptance": "Show the selected student's saved student type after NFC scan and search; do not broaden vendor access.",
           "evidence": [
             "tests/vendor-customer-lookup.test.mjs",
             "tests/vendor-pos-layout.test.mjs",
             "docs/advance-credit-navigation-vendor-pass-2026-11-10.md"
-          ]
+          ],
+          "delivery": {
+            "webRelease": "dynamax-v552-advance-credit-focused-loading-vendor-sales",
+            "sourceCommit": "0c23a397aa5fb36f254da3c8cbe0b18094c31f87"
+          },
+          "desktopDelivery": "Source tested and pushed at e173f80. Restricted-vendor student type and chunked full-print support need the next requested installer; not present in released 3.1.63."
         },
         {
           "id": "vendor-2000-sales",
           "title": "Vendor payment requests covering 2,000 sales",
-          "status": "tested_awaiting_deployment",
+          "status": "deployed_verified",
           "acceptance": "Support 2,000 selected sales with retry-safe reservations and immutable details; no duplicate settlement.",
           "evidence": [
             "tests/vendor-settlements.test.mjs",
             "docs/advance-credit-navigation-vendor-pass-2026-11-10.md"
-          ]
+          ],
+          "delivery": {
+            "webRelease": "dynamax-v552-advance-credit-focused-loading-vendor-sales",
+            "sourceCommit": "0c23a397aa5fb36f254da3c8cbe0b18094c31f87"
+          },
+          "desktopDelivery": "Source tested and pushed at e173f80. Restricted-vendor student type and chunked full-print support need the next requested installer; not present in released 3.1.63."
         },
         {
           "id": "sales-read-budget",
           "title": "Audit purchase reads/writes and offline suitability",
-          "status": "tested_awaiting_deployment",
+          "status": "deployed_with_followups",
           "acceptance": "Reduce repeated catalogue/customer/history work; keep wallet/stock validation atomic. Consider offline alternatives only if measured costs justify them and overspending is prevented.",
           "evidence": [
             "tests/accounts-wallet-lifetime.test.mjs",
@@ -148,17 +178,25 @@
               "acceptance": "Compare measured online costs with a coordinated local-server or explicitly bounded offline allowance design. Define authority, device limits, conflict handling and replay-safe synchronization so two disconnected tills cannot spend the same wallet funds or stock. Keep offline financial posting disabled until the design and failure tests justify it.",
               "completionEvidence": "A documented decision with cost measurements, connectivity assumptions and overspending/duplicate-prevention tests; evaluation does not authorize or claim activation."
             }
-          ]
+          ],
+          "delivery": {
+            "webRelease": "dynamax-v552-advance-credit-focused-loading-vendor-sales",
+            "sourceCommit": "0c23a397aa5fb36f254da3c8cbe0b18094c31f87"
+          }
         },
         {
           "id": "request-memory",
           "title": "Keep a durable issue checklist",
-          "status": "tested_awaiting_deployment",
+          "status": "recorded_verified",
           "acceptance": "Record every new request and decision, associate tests/commit/deployment, and verify delivery before closing.",
           "evidence": [
             "docs/user-request-tracker.json",
             "docs/advance-credit-navigation-vendor-pass-2026-11-10.md"
-          ]
+          ],
+          "delivery": {
+            "webRelease": "dynamax-v552-advance-credit-focused-loading-vendor-sales",
+            "sourceCommit": "0c23a397aa5fb36f254da3c8cbe0b18094c31f87"
+          }
         }
       ]
     },
@@ -937,5 +975,15 @@
     "responsiveChecks": "Parent advance and History by date synthetic Chrome checks passed at 390px and 1280px.",
     "financialSafety": "Synthetic tests only; no live payment or notification run. No business-data migration.",
     "schoolIndexes": "Three vendor period indexes READY; snapshot Rows indexing exemption applied."
-  }
+  },
+  "deliveryHistory": [
+    {
+      "webCommit": "b955dab0cf52c022c733065d21c994514c5c2d9b",
+      "webRelease": "dynamax-v551-classroom-imports-discounts",
+      "url": "https://destinychristianacademy.pages.dev",
+      "verification": "4,815 repository tests before the current advance/navigation/vendor additions; release asset hashes verified; classroom repair retry made zero changes.",
+      "desktopSourceCommit": "2e4f699",
+      "desktopInstaller": "No new compilation/release in this pass; released version remains 3.1.63."
+    }
+  ]
 }
