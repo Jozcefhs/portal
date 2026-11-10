@@ -12,6 +12,7 @@ on:
       - "functions/lib/payroll/**"
       - "js/hr-employment-tools.js"
       - "tests/hr-employment*.mjs"
+      - "tests/human-resources.test.mjs"
       - ".github/workflows/hr-employment-readiness.yml"
   pull_request:
     paths:
@@ -23,6 +24,7 @@ on:
       - "functions/lib/payroll/**"
       - "js/hr-employment-tools.js"
       - "tests/hr-employment*.mjs"
+      - "tests/human-resources.test.mjs"
       - ".github/workflows/hr-employment-readiness.yml"
   workflow_dispatch:
 

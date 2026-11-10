@@ -25,18 +25,32 @@ import {
 const adminJs = await readFile(new URL('../js/admin.js', import.meta.url), 'utf8');
 const portalCss = await readFile(new URL('../css/style.css', import.meta.url), 'utf8');
 const apiSource = await readFile(new URL('../functions/api/staff-hr.js', import.meta.url), 'utf8');
-const desktopSource = await readFile(new URL('../../suite/main.py', import.meta.url), 'utf8');
+
+const expectedHrRoles = [
+  'HR Director', 'HR Manager', 'HR Business Partner', 'HR Officer', 'HR Assistant', 'Recruitment Officer',
+  'Learning & Development Officer', 'Employee Relations Officer',
+  'Performance Management Officer', 'Compensation & Benefits Officer',
+  'Payroll Officer', 'Health & Safety Officer', 'Line Manager'
+];
 
 test('HR role catalogue covers leadership and specialist responsibilities', () => {
-  for (const role of [
-    'HR Director', 'HR Manager', 'HR Business Partner', 'HR Officer', 'HR Assistant', 'Recruitment Officer',
-    'Learning & Development Officer', 'Employee Relations Officer',
-    'Performance Management Officer', 'Compensation & Benefits Officer',
-    'Payroll Officer', 'Health & Safety Officer', 'Line Manager'
-  ]) {
+  for (const role of expectedHrRoles) {
     assert.equal(HUMAN_RESOURCES_ROLES.includes(role), true);
     assert.equal(humanResourcesRole(role), true);
     assert.match(adminJs, new RegExp(role.replace(/[&]/g, '\\&')));
+  }
+});
+
+test('desktop HR role catalogue matches the shared web catalogue when the desktop checkout is present', async (t) => {
+  let desktopSource;
+  try {
+    desktopSource = await readFile(new URL('../../suite/main.py', import.meta.url), 'utf8');
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+    t.skip('The separate desktop checkout is absent in this portal-only checkout.');
+    return;
+  }
+  for (const role of expectedHrRoles) {
     assert.match(desktopSource, new RegExp(role.replace(/[&]/g, '\\&')));
   }
 });
