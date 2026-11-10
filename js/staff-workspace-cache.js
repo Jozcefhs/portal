@@ -33,6 +33,7 @@
   // stay fresh without invalidating the concurrent read as if records changed.
   // Payment verification is deliberately excluded: it can submit academic data.
   const scopedLiveReads = {
+    '/api/staff-hr': ['getsalarystructure', 'loademploymentletter', 'previewemploymentletter'],
     '/api/staff-meetings': ['bootstrap', 'setup', 'list', 'report'],
     '/api/staff-session': ['activity'],
     '/api/staff-academics': ['getacademicsubmissionsettings', 'listacademicsubmissions']

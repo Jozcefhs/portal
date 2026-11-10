@@ -7,6 +7,7 @@ import { readJsonBody } from '../lib/request-security.js';
 import { branchRecordVisible, enforceActorBranch, recordBranchId } from '../lib/branch-scope.js';
 import { staffRecordMatchesEdition } from '../lib/records-desk.js';
 import { staffEmploymentDetails } from '../lib/staff-employment.js';
+import { handleHrEmploymentLetter } from '../lib/hr-employment-letters.js';
 import {
   hrCapabilitiesFor,
   normalizeHrCandidate,
@@ -694,7 +695,8 @@ export async function onRequestPost(context) {
     const action = lower(body.action || 'list');
     const capabilities = hrCapabilitiesFor(user);
     let result;
-    if (action === 'list') result = await listWorkspace(context.env, user, body);
+    if (['getsalarystructure', 'savesalarystructure', 'previewemploymentletter', 'saveemploymentletter', 'loademploymentletter', 'sendemploymentletter'].includes(action)) result = await handleHrEmploymentLetter(context.env, user, body);
+    else if (action === 'list') result = await listWorkspace(context.env, user, body);
     else if (action === 'saveemployee') result = await saveEmployee(context.env, user, body, capabilities);
     else if (action === 'saveleave') result = await saveLeave(context.env, user, body, capabilities);
     else if (action === 'reviewleave') result = await reviewLeave(context.env, user, body, capabilities);

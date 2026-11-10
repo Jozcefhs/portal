@@ -9879,6 +9879,9 @@ function renderHumanResources(data) {
   const compliance = data.compliance || [];
   const exits = data.exits || [];
   const capabilities = data.capabilities || {};
+  const hasEmploymentTools = Boolean(capabilities.canViewSalaryStructure || capabilities.canManageSalaryStructure || capabilities.canIssueEmploymentLetters);
+  const employmentToolsPanel = document.createElement('section');
+  employmentToolsPanel.className = 'hr-workspace-stack';
   const username = clean(currentUser?.username);
   const vacancyOptions = `<option value="">Choose vacancy</option>${vacancies.map((row) => `<option value="${escapeHtml(row.VacancyId || row.__id)}">${escapeHtml([row.Title, row.Department, row.Status].filter(Boolean).join(' · '))}</option>`).join('')}`;
   const pendingLeave = leave.filter((row) => /pending/i.test(clean(row.Status))).length;
@@ -10178,6 +10181,7 @@ function renderHumanResources(data) {
 
   panelEl.innerHTML = `<div class="workflow-intro"><div><p class="eyebrow">People operations</p><h2>Human Resources</h2><p class="muted">Manage the employee journey from recruitment and employment records through wellbeing, development, compliance and exit.</p></div><div class="hr-workspace-actions"><label for="humanResourcesPeopleSearch">Find a person<input id="humanResourcesPeopleSearch" type="search" placeholder="Name, ID, email, phone or department" autocomplete="off"></label><small data-hr-workspace-search-count>Searches every HR register</small><button type="button" id="refreshHumanResources">Refresh</button></div></div><p id="humanResourcesStatus" class="status"></p>`;
   panelEl.append(overviewPanel, peoplePanel, recordsPanel, leavePanel);
+  if (hasEmploymentTools) panelEl.append(employmentToolsPanel);
   if (capabilities.canManageRecruitment || vacancies.length) panelEl.append(recruitmentPanel);
   panelEl.append(performancePanel, trainingPanel);
   if (capabilities.canManageCompensation || capabilities.canReviewCompensation || compensation.length) panelEl.append(compensationPanel);
@@ -10188,6 +10192,7 @@ function renderHumanResources(data) {
   mountWorkspaceTabs('humanResources', [
     { key: 'overview', label: 'Overview', icon: '\u25A6', nodes: overviewPanel },
     { key: 'people', label: 'People', icon: '\u{1F465}', count: directory.length, nodes: peoplePanel },
+    { key: 'salaryLetters', label: 'Salary & letters', icon: '\u{1F4C4}', nodes: hasEmploymentTools ? employmentToolsPanel : [] },
     { key: 'records', label: 'Records', icon: '\u{1F5C2}', count: employmentHistory.length, nodes: recordsPanel },
     { key: 'leave', label: 'Time & leave', icon: '\u{1F334}', count: pendingLeave + timeRecords.length, nodes: leavePanel },
     { key: 'recruitment', label: 'Recruitment', icon: '\u{1F4CB}', count: openVacancies, nodes: capabilities.canManageRecruitment || vacancies.length ? recruitmentPanel : [] },
@@ -10199,6 +10204,12 @@ function renderHumanResources(data) {
     { key: 'exit', label: 'Exit', icon: '\u21AA', count: activeExits, nodes: capabilities.canManageExit || exits.length ? exitPanel : [] }
   ]);
   renderModuleSummary('humanResources', data);
+
+  if (hasEmploymentTools) window.DynamaxHrEmployment?.mount(employmentToolsPanel, {
+    directory, capabilities, request: humanResourcesRequest, personPicker: hrPersonPicker,
+    confirm: options => window.DynamaxDialogs.confirm(options),
+    isCurrent: () => employmentToolsPanel.isConnected && activeSection === 'humanResources' && humanResourcesData === data
+  });
 
   document.getElementById('refreshHumanResources')?.addEventListener('click', (event) => runButtonAction(event.currentTarget, 'Refreshing...', loadHumanResources));
   bindHrWorkspaceSearch(panelEl);

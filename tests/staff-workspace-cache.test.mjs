@@ -86,6 +86,22 @@ test('academic submission settings and register are live reads; saves and paymen
   }
 });
 
+test('selected HR salary and PDF reads stay live without clearing unrelated snapshots', async () => {
+  const { cache } = fixture(); let listReads = 0, selectedReads = 0;
+  const list = () => cache.fetch(url('/api/staff-hr'), post('list'), async () => { listReads++; return json(); });
+  await list();
+  for (const action of ['getSalaryStructure', 'loadEmploymentLetter', 'previewEmploymentLetter']) {
+    const policy = requestPolicy(url('/api/staff-hr'), post(action));
+    assert.equal(policy.cacheable, false); assert.equal(policy.mutation, false);
+    assert.equal(requestPolicy(url('/api/other'), post(action)).mutation, true);
+    for (let i = 0; i < 2; i++) await cache.fetch(url('/api/staff-hr'), post(action), async () => { selectedReads++; return json(); });
+  }
+  await list(); assert.equal(listReads, 1); assert.equal(selectedReads, 6);
+  for (const action of ['saveSalaryStructure', 'saveEmploymentLetter', 'sendEmploymentLetter']) {
+    assert.equal(requestPolicy(url('/api/staff-hr'), post(action)).mutation, true);
+  }
+});
+
 test('homework context reuses scoped snapshots but audience preview stays live and sends invalidate reads', async () => {
   assert.equal(requestPolicy(url('/api/staff-homework'), post('getContext', { SchoolSection: 'primary' })).cacheable, true);
   const preview = requestPolicy(url('/api/staff-homework'), post('previewHomework'));

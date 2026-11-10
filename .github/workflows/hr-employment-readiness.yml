@@ -1,0 +1,43 @@
+name: HR salary and employment letter checks
+
+on:
+  push:
+    branches: [main, codex/hospital-edition]
+    paths:
+      - "functions/api/staff-hr.js"
+      - "functions/lib/hr-*.js"
+      - "functions/lib/human-resources.js"
+      - "functions/lib/staff-employment.js"
+      - "functions/lib/email-service.js"
+      - "functions/lib/payroll/**"
+      - "js/hr-employment-tools.js"
+      - "tests/hr-employment*.mjs"
+      - ".github/workflows/hr-employment-readiness.yml"
+  pull_request:
+    paths:
+      - "functions/api/staff-hr.js"
+      - "functions/lib/hr-*.js"
+      - "functions/lib/human-resources.js"
+      - "functions/lib/staff-employment.js"
+      - "functions/lib/email-service.js"
+      - "functions/lib/payroll/**"
+      - "js/hr-employment-tools.js"
+      - "tests/hr-employment*.mjs"
+      - ".github/workflows/hr-employment-readiness.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: node --test tests/hr-employment*.test.mjs tests/human-resources.test.mjs tests/staff-employment.test.mjs tests/payroll/profile-import-safety.test.mjs tests/email-provider-gmail.test.mjs tests/email-sender-scope.test.mjs
