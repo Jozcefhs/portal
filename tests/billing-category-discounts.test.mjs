@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { normalizeBillingDiscount, applyTotalBillingDiscount, billingFeesWithPostedAmounts, billingDiscountId,
-  selectBillingDiscount, loadBillingDiscount, loadBillingDiscounts, handleBillingDiscounts } from '../functions/lib/billing-category-discounts.js';
+  selectBillingDiscount, desktopBillingOverview, loadBillingDiscount, loadBillingDiscounts, handleBillingDiscounts } from '../functions/lib/billing-category-discounts.js';
 import { applyBillingCategoryOverrides, feeMatchesApplication, isSchoolFeeInvoice, buildStudentBillingPreview,
   studentBillingReconciliationPlan, getAccountsOverview, resolveStudentEnrollmentCategory, sameFinancialPeriod } from '../functions/api/backend.js';
 import { feeBranchId } from '../functions/lib/fee-branch-scope.js';
@@ -20,6 +20,8 @@ const fee = (FeeCode, Amount, extra = {}) => ({ ...period, __id: FeeCode, __upda
   FeeCategory: 'School Fee', BillingCategory: 'All', ClassName: 'All', StudentType: 'All', Gender: 'All', Active: 'YES', PayableOnline: 'YES', ...extra });
 const fees = [fee('TUITION', 100000), fee('BOOKS', 30000), fee('EXAM', 20000)];
 const discounted = (items = fees, changes = {}, owner = account) => applyBillingCategoryOverrides(items, { ...owner, BillingDiscount: { ...rule, ...changes } });
+const selectedRate = (id, changes = {}) => ({ RateId: id, DiscountType: 'Percentage', DiscountValue: 25,
+  ClassScope: 'Selected', ClassNames: ['Grade 7'], TermScope: 'Selected', TermNames: ['First Term'], ...changes });
 
 for (const category of ['School Staff Child', 'Church Staff Child', 'Sibling Discount', 'Partial Scholarship', 'Sponsored']) {
   test(`${category} receives a total percentage discount without modifying fee rules`, () => {
@@ -108,6 +110,41 @@ test('fixed discount applies once per matching term and never crosses branches/c
   assert.deepEqual(discounted(fees, { BranchId: 'annex' }), fees);
   assert.deepEqual(discounted(fees, { Name: 'Church Staff Child' }), fees);
 });
+test('one scoped rate replaces the default for each matching class and fee period', () => {
+  const amounts = (owner, policy) => discounted(items, policy, owner).map(row => row.Amount);
+  const items = [fee('A', 1000, { Term: 'All' }), fee('B', 1000, { Term: '  first  TERM ' }), fee('C', 1000, { Term: 'Second Term' }),
+    fee('D', 1000, { Term: 'Third Term' })];
+  const policy = { Rates: [
+    selectedRate('first', { DiscountType: 'Fixed amount', DiscountValue: 201 }),
+    selectedRate('second', { TermNames: ['Second Term'], DiscountValue: 50 }),
+    selectedRate('third', { TermNames: ['Third Term'], DiscountType: 'None', DiscountValue: 0 }),
+    selectedRate('other-class', { ClassNames: ['Primary 1'], TermScope: 'All', TermNames: [] })
+  ] };
+  assert.deepEqual(amounts({ ...account, ClassName: ' grade  7 ' }, policy), [899.5, 899.5, 500, 1000]);
+  assert.deepEqual(amounts({ ...account, ClassName: 'Primary 1' }, policy), [750, 750, 750, 750]);
+  assert.deepEqual(amounts({ ...account, ClassName: 'Grade 8' }, policy), [900, 900, 900, 900]);
+  assert.deepEqual(amounts({ ...account, Term: '*' }, policy), [900, 799, 500, 1000]);
+  assert.deepEqual(amounts({ ...account, ClassName: '', ClassApplyingFor: 'Grade 7' }, policy), [900, 900, 900, 900]);
+  assert.equal(discounted(items, policy)[0].BillingDiscount.RateId, 'first');
+  assert.throws(() => discounted(items, { Rates: [selectedRate('a'), selectedRate('b')] }), /Overlapping/);
+});
+
+test('re-quoting uses original amounts after changing class, term, category or removing the policy', () => {
+  const policy = { DiscountType: 'None', DiscountValue: 0, Rates: [selectedRate('creche', { ClassNames: ['Crèche'] })] };
+  const pupil = { ...account, ClassName: 'Crèche' }, items = [fee('A', 1500, { Term: 'All' })];
+  const quote = discounted(items, policy, pupil);
+  assert.equal(quote[0].Amount, 1125);
+  for (const changes of [{ ClassName: 'Playgroup' }, { ClassName: '' }, { Term: 'Third Term' }, { BillingCategory: 'Regular' }]) {
+    assert.deepEqual(discounted(quote, policy, { ...pupil, ...changes }), items);
+  }
+  assert.deepEqual(applyBillingCategoryOverrides(quote, pupil), items);
+  const posted = quote.map(row => ({ ...row, Debit: row.Amount, Status: 'Part Paid', Credit: 125 }));
+  const before = JSON.stringify(posted);
+  const checkout = billingFeesWithPostedAmounts(items, { ...pupil, ClassName: 'Playgroup' }, posted);
+  assert.equal(checkout[0].Amount, 1125);
+  assert.equal(checkout[0].BillingDiscount.RateId, 'creche');
+  assert.equal(JSON.stringify(posted), before);
+});
 test('full scholarship continues to charge only explicitly assigned exceptions', () => {
   const owner = { ...account, BillingCategory: 'Full Scholarship' };
   const matching = [...fees, fee('EXCEPTION', 1000, { BillingCategory: 'Full Scholarship' })].filter(row => feeMatchesApplication(row, owner));
@@ -147,10 +184,22 @@ test('bounded loaders use a single point read or a small branch query', async ()
   } });
   assert.equal(selectBillingDiscount([rule], { ...account, BranchId: 'annex' }), null);
 });
-function settings() {
-  let saved = null; const commits = [], reads = [];
+function settings(initial = null) {
+  let saved = initial; const commits = [], reads = [], optionReads = [];
+  const classes = ['Grade 7', 'Grade 8', 'Playgroup', 'Crèche'];
   const deps = { getDocument: async (...args) => { reads.push(args.slice(1)); return saved; },
-    queryCollection: async () => saved ? [saved] : [], listCollection: async () => [],
+    queryCollection: async (_env, path, { filters }) => {
+      if (path === 'billingCategoryDiscounts') return saved ? [saved] : [];
+      assert.equal(path, 'academicTerms'); optionReads.push(path);
+      assert.deepEqual(filters, [{ field: 'BranchId', op: '==', value: 'main' }]);
+      return [{ Name: 'Summer Term', BranchId: 'main', Status: 'Planned' }, { Name: 'Archive', BranchId: 'main', Status: 'Closed' },
+        { Name: 'Foreign', BranchId: 'annex', Status: 'Active' }];
+    }, listCollection: async () => [],
+    getSchoolClasses: async (_env, options) => {
+      optionReads.push('classes');
+      assert.deepEqual(options, { BranchId: 'main', IncludeAcademicClasses: true });
+      return { classes: [...classes.map(ClassName => ({ ClassName, Active: 'YES' })), { ClassName: 'Retired', Active: 'NO' }] };
+    },
     batchCommitLiteralDocuments: async (_env, writes) => {
       assert.equal(writes.length, 2); assert.equal(writes[0].collectionPath, 'billingCategoryDiscounts');
       assert.equal(writes[1].collectionPath, 'accountingAudit');
@@ -159,7 +208,7 @@ function settings() {
       return { writeResults: [{ updateTime: saved.__updateTime }, { updateTime: saved.__updateTime }] };
     } };
   const user = { username: 'finance', role: 'Accounts Officer', branchId: 'main', BranchIds: ['main'], allowedSections: ['accounts'] };
-  return { deps, user, commits, reads };
+  return { deps, user, commits, reads, classes, optionReads };
 }
 test('save is atomic, optimistic and repeat-safe with one audit per actual change', async () => {
   const h = settings(), body = { ...rule, recordVersion: '', action: 'save' };
@@ -184,6 +233,69 @@ test('unauthorised roles, branches, devices and read-only subscriptions cannot s
   for (const action of ['getBillingDiscountSettings', 'saveBillingDiscountSettings'])
     assert.doesNotThrow(() => enforceDesktopDeviceActionScope({ type: 'device', branchId: 'main' }, action, {}));
 });
+test('editor catalogues are opt-in; legacy rules read as the default without any writes', async () => {
+  const h = settings({ ...rule, __updateTime: 'v0' });
+  const list = IncludeOptions => handleBillingDiscounts({}, h.user, { action: 'list', IncludeOptions }, h.deps);
+  const lookup = await list(false);
+  assert.equal(lookup.scopedRatesVersion, 1); assert.deepEqual(lookup.rules[0].Rates, []);
+  assert.equal(lookup.rules[0].DiscountValue, 10); assert.ok(!Object.hasOwn(lookup, 'classes')); assert.deepEqual(h.optionReads, []);
+  const editor = await list(true);
+  assert.deepEqual(editor.classes, h.classes);
+  assert.deepEqual(editor.terms, ['First Term', 'Second Term', 'Third Term', 'Summer Term']);
+  assert.deepEqual(h.optionReads.sort(), ['academicTerms', 'classes']); assert.equal(h.commits.length, 0);
+});
+test('legacy desktop fee lookup blocks only policies that can change its estimate; account previews get their actual rate', async () => {
+  const legacy = settings({ ...rule, __updateTime: 'v1' });
+  const lookup = (h, options = {}) => handleBillingDiscounts({}, h.user, { action: 'list', ...options }, { ...h.deps, desktopClient: true });
+  assert.equal((await lookup(legacy)).rules[0].DiscountValue, 10);
+  const policy = { ...rule, Rates: [selectedRate('g7')] }, scoped = settings(policy);
+  await assert.rejects(lookup(scoped), /Update the desktop app/);
+  assert.equal((await lookup(scoped, { ScopedRatesVersion: 1 })).rules[0].Rates.length, 1);
+  assert.equal((await handleBillingDiscounts({}, scoped.user, { action: 'list', IncludeOptions: true }, scoped.deps)).rules[0].Rates.length, 1);
+  const exempt = settings({ ...rule, Rates: [selectedRate('excluded', { DiscountType: 'None', DiscountValue: 0 })] });
+  await assert.rejects(lookup(exempt), /Update the desktop app/);
+  const sameAmounts = settings({ ...rule, Rates: [selectedRate('same', { DiscountValue: 10 })] });
+  assert.equal((await lookup(sameAmounts)).rules.length, 1);
+  const overview = { accounts: [{ ...account, BillingDiscount: policy }, { ...account, Term: 'Second Term', BillingDiscount: policy }] };
+  assert.deepEqual(desktopBillingOverview(overview).accounts.map(row => row.BillingDiscount.DiscountValue), [25, 10]);
+  assert.equal(desktopBillingOverview(overview, 1), overview);
+  assert.equal(overview.accounts[0].BillingDiscount.DiscountValue, 10);
+});
+
+test('rate edits and deletion preserve the default and other rates, reject overlaps, and retry without a second audit', async () => {
+  const h = settings({ ...rule, __updateTime: 'v0' });
+  const save = (fields, recordVersion) => handleBillingDiscounts({}, h.user, { action: 'save', Name: rule.Name, recordVersion, ...fields }, h.deps);
+  const first = selectedRate('A', { ClassNames: ['Grade 8', 'Grade 7', 'Grade 8'] });
+  const second = selectedRate('B', { TermNames: ['Summer Term'] });
+  const created = await save(first, 'v0');
+  assert.equal(created.rule.DiscountValue, 10);
+  assert.deepEqual(created.rule.Rates[0].ClassNames, ['Grade 7', 'Grade 8']);
+  assert.equal((await save({ ...first, ClassNames: ['Grade 7', 'Grade 8'] }, 'v0')).changed, false);
+  await assert.rejects(save(second, 'v0'), /Reload/);
+  await save(second, 'v1');
+  await assert.rejects(save(selectedRate('C', { TermScope: 'All', TermNames: [] }), 'v2'), /overlaps/);
+  await assert.rejects(save(selectedRate('C', { ClassScope: 'All', ClassNames: [] }), 'v2'), /overlaps/);
+  for (const changes of [{ ClassNames: [] }, { TermNames: [] }, { ClassNames: ['*'] }, { TermNames: ['All'] },
+    { ClassNames: ['Retired'] }, { TermNames: ['Foreign'] }, { ClassScope: 'All', ClassNames: [], TermScope: 'All', TermNames: [] }]) {
+    await assert.rejects(save(selectedRate('C', changes), 'v2'));
+  }
+  // A legacy client's default-rate change keeps scoped rates intact.
+  const updated = await save({ DiscountType: 'Percentage', DiscountValue: 5 }, 'v2');
+  assert.equal(updated.rule.Rates.length, 2); assert.equal(updated.rule.DiscountValue, 5);
+  h.classes.splice(h.classes.indexOf('Grade 8'), 1);
+  const retained = await save({ RateId: 'A', DiscountType: 'Fixed amount', DiscountValue: 100 }, 'v3');
+  assert.deepEqual(retained.rule.Rates[0].ClassNames, ['Grade 7', 'Grade 8']);
+  assert.deepEqual(retained.rule.Rates[0].TermNames, ['First Term']);
+  const trimmed = await save({ ...first, ClassNames: ['Grade 7'] }, 'v4');
+  assert.deepEqual(trimmed.rule.Rates[0].ClassNames, ['Grade 7']);
+  await assert.rejects(save(first, 'v5'), /available in this branch/);
+  await assert.rejects(save({ RateId: 'A', RemoveRate: true }, 'v4'), /Reload/);
+  const removed = await save({ RateId: 'A', RemoveRate: true }, 'v5');
+  assert.deepEqual(removed.rule.Rates.map(rate => rate.RateId), ['B']); assert.equal(removed.rule.DiscountValue, 5);
+  assert.equal((await save({ RateId: 'A', RemoveRate: true }, 'v5')).changed, false);
+  assert.equal(h.commits.length, 6); assert.equal(h.commits[5][1].data.Before.Rates.length, 2);
+  assert.equal(h.commits[5][1].data.After.Rates.length, 1);
+});
 
 test('account overview and billing review share discounted totals; posted records stay unchanged', async () => {
   const data = { schoolProfile: {}, accounts: [], students: [account], applications: [], payments: [], invoices: [], ledger: [],
@@ -198,6 +310,30 @@ test('account overview and billing review share discounted totals; posted record
   const plan = await studentBillingReconciliationPlan(account, billed);
   assert.equal(plan.conflicts.length, 1); assert.equal(plan.postingTotal, 45000);
   assert.equal(JSON.stringify(billed), before);
+});
+test('preview and missing-charge review use the rate for this class and term without changing posted transactions', async () => {
+  const policy = { ...rule, Rates: [selectedRate('first'), selectedRate('second', { TermNames: ['Second Term'], DiscountValue: 40 })] };
+  const termFees = fees.map(item => ({ ...item, Term: 'All' }));
+  for (const [ClassName, Term, expected, tuition] of [
+    ['Grade 7', 'First Term', 112500, 75000], ['Grade 7', 'Second Term', 90000, 60000], ['Grade 8', 'First Term', 135000, 90000]
+  ]) {
+    const pupil = { ...account, ClassName, Term };
+    const data = { ...period, feeItems: termFees, billingCategoryDiscounts: [policy], payments: [], accountSummaries: [], ledger: [],
+      invoices: [{ ...period, ClassName: 'Grade 7', Term, AccountRef: pupil.AccountRef, InvoiceId: 'OLD', FeeCode: 'TUITION',
+        Debit: 100000, Credit: 5000, FeeCategory: 'School Fee' }] };
+    const before = JSON.stringify(data);
+    const preview = await buildStudentBillingPreview(pupil, data);
+    assert.equal(preview.expectedTotal, expected);
+    const plan = await studentBillingReconciliationPlan(pupil, data);
+    assert.equal(plan.conflicts.length, 1); assert.equal(plan.postingTotal, expected - tuition);
+    assert.equal(JSON.stringify(data), before);
+  }
+  const noBase = { ...policy, DiscountType: 'None', DiscountValue: 0 };
+  const missing = await buildStudentBillingPreview({ ...account, ClassName: '' }, {
+    feeItems: termFees, billingCategoryDiscounts: [noBase],
+    invoices: [{ ...period, ClassName: 'Grade 7', AccountRef: account.AccountRef, InvoiceId: 'HIST', FeeCode: 'TUITION', Debit: 100000 }]
+  });
+  assert.equal(missing.expectedTotal, 150000); assert.equal(missing.profile.ClassName, '');
 });
 
 const backend = await readFile(new URL('../functions/api/backend.js', import.meta.url), 'utf8');
@@ -215,7 +351,8 @@ test('invoice retry reuses discounted bills and refuses changed discounts withou
     normalizeFeeItem: row => row, normalizeInvoice: row => row, asMoneyNumber: v => Number(v) || 0,
     yesNo: v => lower(v) === 'yes' ? 'YES' : 'NO', applyBillingCategoryOverrides, feeMatchesApplication, isSchoolFeeInvoice,
     isWalletFee: () => false, feeBranchId, loadBillingDiscount: async () => { policyReads++; return policy; },
-    loadBranchFinanceRows: async () => { feeReads++; return catalogue; }, queryAccountRows: async () => [...invoices.values()],
+    loadBranchFinanceRows: async () => { feeReads++; return catalogue; },
+    queryAccountRows: async (_env, _collection, ref) => [...invoices.values()].filter(invoice => invoice.AccountRef === ref),
     resolvedPeriodValue: (v,fallback) => !v || lower(v) === 'all' ? fallback : v, normalizeReferenceText: lower,
     ledgerDocumentId: () => `NEW-${++counter}`, schoolSectionFor: row => row.SchoolSection,
     invoiceReminderFields: () => ({}), nowIso: () => '2026-11-03T00:00:00Z', feeDueDate: v => v, safeDocumentId: v => v,
@@ -239,4 +376,22 @@ test('invoice retry reuses discounted bills and refuses changed discounts withou
   invoices.set('LEGACY-DUPLICATE', { ...invoices.values().next().value, InvoiceId: 'LEGACY-DUPLICATE' });
   await assert.rejects(run({}, body, account.AccountRef), /Multiple existing invoices/);
   assert.equal(writes.length, 3); assert.equal(invoices.size, 4, 'existing duplicate records are preserved for review');
+  // A single policy read serves the whole generation batch regardless of whose
+  // class and term are encountered first. The selected rate belongs to each bill.
+  policy = { ...rule, DiscountType: 'None', DiscountValue: 0, Rates: [selectedRate('g7-first'),
+    selectedRate('g7-second', { TermNames: ['Second Term'], DiscountValue: 50 })] };
+  catalogue = fees.map(item => ({ ...item, Term: 'All' }));
+  const learners = [['Grade 8', 'First Term', 150000], ['Grade 7', 'First Term', 112500],
+    ['Grade 7', 'Second Term', 75000], ['', 'First Term', 150000]];
+  for (const order of [learners, [...learners].reverse()]) {
+    const shared = new Map(), readsBefore = policyReads;
+    for (const [ClassName, Term, expected] of order) {
+      const ref = `TEST/25/BATCH-${counter}`;
+      const pupil = { ...account, AdmissionNo: ref, AccountRef: ref, ClassName, Term };
+      await run({}, { ...body, ResolvedStudent: pupil }, ref, null, shared);
+      const bills = [...invoices.values()].filter(item => item.AccountRef === ref);
+      assert.equal(bills.reduce((sum, invoice) => sum + invoice.Debit, 0), expected);
+    }
+    assert.equal(policyReads, readsBefore + 1);
+  }
 });

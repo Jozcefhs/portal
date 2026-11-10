@@ -173,6 +173,18 @@ test('unrelated conflicts, ambiguous rules, identities, periods and malformed so
   }
 });
 
+test('a rate for a different class leaves the quote at full price and keeps historical recovery under finance review', async () => {
+  const h = harness({ configure: (data, student) => {
+    data.billingCategoryDiscounts = [{ __id: 'policy', __updateTime: 'v1', BranchId: 'main', Name: student.BillingCategory,
+      DiscountType: 'None', DiscountValue: 0, Rates: [{ RateId: 'other', DiscountType: 'Percentage', DiscountValue: 30,
+        ClassScope: 'Selected', ClassNames: ['Different programme'], TermScope: 'All', TermNames: [] }] }];
+  } });
+  const standard = await harness().plan(), reviewed = await h.plan();
+  assert.equal(reviewed.expectedTotal, standard.expectedTotal);
+  assert.equal(reviewed.ready, false); assert.match(reviewed.reason, /dedicated billing review/);
+  await assert.rejects(h.post(reviewed.previewToken)); assert.equal(h.commits.length, 0);
+});
+
 test('unknown gender or type allows only the same neutral policy for every possible classification, preserving the incomplete profile', async () => {
   for (const missing of [['Gender'], ['StudentType', 'Gender']]) {
     const h = harness({ configure: (_d, p) => { for (const key of missing) delete p[key]; p.ProfileCompletionStatus = 'Needs completion'; } });

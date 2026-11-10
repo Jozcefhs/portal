@@ -21336,21 +21336,23 @@ function renderSection(active) {
       button.type = 'button'; button.className = 'secondary'; button.textContent = 'Billing categories & discounts';
       button.addEventListener('click', async () => {
         if (button.disabled) return;
+        const user = currentUser, branch = selectedBranchId, signal = staffSessionAbortController.signal;
+        if (!branch || branch === 'all') { alert('Choose one working branch before opening billing discounts.'); return; }
+        const isCurrent = () => currentUser === user && selectedBranchId === branch && activeSection === 'accounts' && !signal.aborted;
         button.disabled = true;
         try {
-        const user = currentUser, branch = selectedBranchId, signal = staffSessionAbortController.signal;
-        const isCurrent = () => currentUser === user && selectedBranchId === branch && !signal.aborted;
-        const { openBillingDiscounts } = await import('./billing-discounts.js?v=20261103');
-        if (!isCurrent()) return;
-        await openBillingDiscounts(async payload => {
-          if (!isCurrent()) throw new Error('The workspace changed. Reopen billing discounts.');
-          const response = await staffFetch('/api/billing-discounts', { method: 'POST', credentials: 'same-origin', cache: 'no-store', signal,
-            headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...payload, BranchId: branch }) });
-          const data = await response.json();
-          if (!response.ok || !data.ok) throw new Error(data.message || 'Billing discounts could not be loaded.');
-          return data;
-        }, { isCurrent });
-        } catch (error) { alert(error.message || 'Billing discounts could not be opened.'); }
+          const { openBillingDiscounts } = await import('./billing-discounts.js?v=20261105-class-term-discounts');
+          if (!isCurrent()) return;
+          await openBillingDiscounts(async payload => {
+            if (!isCurrent()) throw new Error('The workspace changed. Reopen billing discounts.');
+            const response = await staffFetch('/api/billing-discounts', { method: 'POST', credentials: 'same-origin', cache: 'no-store', signal,
+              headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...payload, BranchId: branch }) });
+            const data = await response.json();
+            if (!response.ok || !data.ok) throw new Error(data.message || 'Billing discount settings could not be updated.');
+            return data;
+          }, { isCurrent, branchName: availableBranches.find(row => row.id === branch)?.name || branch,
+            readOnly: user.subscriptionReadOnly === true || user.subscriptionActive === false });
+        } catch (error) { if (isCurrent()) alert(error.message || 'Billing discounts could not be opened.'); }
         finally { button.disabled = false; }
       });
       panelEl.querySelector('.workflow-intro')?.append(button);

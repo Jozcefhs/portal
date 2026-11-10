@@ -1,14 +1,15 @@
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { handleBillingDiscounts } from '../lib/billing-category-discounts.js';
+import { getSchoolClasses } from './backend.js';
 
 export async function onRequestPost(context) {
   const { env, request } = context;
   const headers = { 'Cache-Control': 'no-store' };
   try {
     const user = await requireStaffSession(env, request);
-    const body = await readJsonBody(request, { maxBytes: 8192 });
-    const result = await handleBillingDiscounts(env, user, body);
+    const body = await readJsonBody(request, { maxBytes: 128 * 1024 });
+    const result = await handleBillingDiscounts(env, user, body, { getSchoolClasses });
     if (context.data) {
       context.data.securityAuditActor = user;
       if (body.action === 'list' || result.changed === false) context.data.securityAuditNoChange = true;

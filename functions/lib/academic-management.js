@@ -3720,6 +3720,7 @@ export async function bulkImportAcademicStudentMemberships(env, user = {}, input
   const skipped = [];
   const imported = [];
   const createdProfiles = [];
+  const restoredProfiles = [];
   const seenStudents = new Set();
 
   for (let index = 0; index < rows.length; index += 1) {
@@ -3748,7 +3749,71 @@ export async function bulkImportAcademicStudentMemberships(env, user = {}, input
           rowNumber
         )
         : null;
+      const existing = findAcademicStudentMembership(projected.studentMemberships, {
+        BranchId: scope.branchId, SchoolSection: scope.section, SessionId: sessionId, TermId: termId, StudentRef: row.StudentRef
+      });
       let student = people.students.find((candidate) => lower(studentReference(candidate)) === studentKey);
+      if (existing) {
+        const existingClass = findById(state.classes, existing.ClassId);
+        const existingArm = findById(state.arms, existing.ArmId);
+        const placement = [clean(existingClass?.Name) || 'another class', clean(existingArm?.Name)].filter(Boolean).join(' / ');
+        const recoveryHelp = !student ? ` To restore the missing pupil profile, import ${row.StudentRef} with its saved class ${clean(existingClass?.Name) || 'shown in the membership register'} and leave the arm and subject columns blank.` : '';
+        if (!statusActive(existing)) {
+          throw failure(`${row.StudentRef} has a ${clean(existing.Status) || 'historical'} membership in ${placement}. Review its saved membership before restoring or reallocating it.`, 409, 'ACADEMIC_IMPORT_MEMBERSHIP_CONFLICT');
+        }
+        if (existing.ClassId !== schoolClass.ClassId || (arm && existing.ArmId !== arm.ArmId)) {
+          throw failure(`${row.StudentRef} already belongs to ${placement} in this term. Use the transfer workflow to change its placement.${recoveryHelp}`, 409, 'ACADEMIC_IMPORT_MEMBERSHIP_CONFLICT');
+        }
+        // Blank CSV choices retain the saved curriculum. Re-importing an existing
+        // pupil must not recalculate subjects from settings changed after import.
+        for (const [codes, field, label] of [
+          [row.CoreSubjectCodes, 'CoreSubjectIds', 'Core'],
+          [row.TradeSubjectCodes, 'TradeSubjectIds', 'Trade'],
+          [row.OptionalSubjectCodes, 'OptionalSubjectIds', 'optional']
+        ]) {
+          if (!codes.length) continue;
+          const requested = codes.map(code => academicImportReference(
+            state.subjects.filter(candidate => lower(candidate.SchoolSection) === scope.section), code,
+            ['SubjectId', 'RecordId', 'Code', 'Name'], `${label} subject code`, rowNumber
+          ).SubjectId);
+          if (JSON.stringify(sortedIds(requested)) !== JSON.stringify(sortedIds(existing[field]))) {
+            throw failure(`${row.StudentRef} already has different saved ${label} subjects. Use Student subjects to review changes.${recoveryHelp}`, 409, 'ACADEMIC_IMPORT_MEMBERSHIP_CONFLICT');
+          }
+        }
+        if (student) {
+          assertStudentCanHaveActiveMembership(student, existing);
+          skipped.push(row.StudentRef);
+          continue;
+        }
+        if (clean(existing.ArmId) && (!existingArm || existingArm.ClassId !== existing.ClassId
+          || lower(existingArm.SchoolSection) !== scope.section || clean(existingArm.BranchId) !== scope.branchId)) {
+          throw failure(`${row.StudentRef} has an unresolved saved classroom. Review its membership before restoring the pupil profile.`, 409, 'ACADEMIC_REFERENCE_INVALID');
+        }
+        const documentId = academicStudentDocumentId(row.StudentRef);
+        if (people.students.some(candidate => lower(candidate.__id) === lower(documentId))) {
+          throw failure(`Student reference "${row.StudentRef}" conflicts with another student record.`, 409, 'ACADEMIC_IMPORT_STUDENT_ID_CONFLICT');
+        }
+        const recovered = importedAcademicStudentProfile(row, scope, schoolClass, existingArm, session, term, user, nameProfile);
+        const department = findById(state.departments, existing.DepartmentId);
+        Object.assign(recovered, {
+          AcademicDepartmentId: clean(existing.DepartmentId), AcademicDepartment: clean(department?.Name),
+          AcademicDepartmentCode: clean(department?.Code), AcademicMembershipId: clean(existing.MembershipId || recordId(existing)),
+          AcademicEnrollmentStatus: clean(existing.Status), SchoolStage: clean(existing.SchoolStage || schoolClass.SchoolStage),
+          ProfileRestoredFromMembershipId: recordId(existing), ProfileRestoredAt: nowIso()
+        });
+        // This narrow guard serializes recovery with a concurrent class transfer.
+        // The membership's saved placement, curriculum and history stay intact.
+        writes.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships,
+          documentId: recordId(existing), data: { Status: existing.Status }, updateMask: ['Status'],
+          ...writePrecondition(existing, existing.__updateTime) });
+        writes.push({ collectionPath: recovered.__scopePath, documentId: recovered.__id,
+          data: withoutMetadata(recovered), exists: false });
+        people.students.push(recovered);
+        createdProfiles.push(recovered);
+        restoredProfiles.push(row.StudentRef);
+        skipped.push(row.StudentRef);
+        continue;
+      }
       let createdProfile = null;
       if (!student) {
         // Admission references identify pupils within this branch and section.
@@ -3776,9 +3841,6 @@ export async function bulkImportAcademicStudentMemberships(env, user = {}, input
       const coreSubjectIds = resolveSubjectIds(row.CoreSubjectCodes, 'Core subject code');
       const tradeSubjectIds = resolveSubjectIds(row.TradeSubjectCodes, 'Trade subject code');
       const optionalSubjectIds = resolveSubjectIds(row.OptionalSubjectCodes, 'optional subject code');
-      const existing = findAcademicStudentMembership(projected.studentMemberships, {
-        BranchId: scope.branchId, SchoolSection: scope.section, SessionId: sessionId, TermId: termId, StudentRef: row.StudentRef
-      });
       const record = normalizeAcademicStudentMembership({
         SessionId: sessionId, TermId: termId, StudentRef: row.StudentRef,
         ClassId: schoolClass.ClassId, ArmId: arm?.ArmId || '', DepartmentId: departmentId,
@@ -3804,13 +3866,6 @@ export async function bulkImportAcademicStudentMemberships(env, user = {}, input
           exists: false
         });
       }
-      if (existing) {
-        if (!membershipMateriallyChanged(existing, record)) {
-          skipped.push(row.StudentRef);
-          continue;
-        }
-        throw failure(`${row.StudentRef} already has a different membership in this term. Use the transfer workflow instead.`, 409, 'ACADEMIC_IMPORT_MEMBERSHIP_CONFLICT');
-      }
       stampAcademicRecord(record, user);
       projected.studentMemberships.push(record);
       imported.push(record);
@@ -3834,19 +3889,20 @@ export async function bulkImportAcademicStudentMemberships(env, user = {}, input
     writes.push(auditWrite(user, 'BULK IMPORT', 'studentmembership', {
       BranchId: scope.branchId, SchoolSection: scope.section,
       SessionId: sessionId, TermId: termId, MembershipId: `import-${Date.now()}`
-    }, `${imported.length} student membership(s) imported; ${createdProfiles.length} incomplete student profile(s) created; ${skipped.length} exact match(es) skipped.`));
+    }, `${imported.length} student membership(s) imported; ${createdProfiles.length} incomplete student profile(s) created${restoredProfiles.length ? ` (${restoredProfiles.length} restored from existing memberships)` : ''}; ${skipped.length} existing membership(s) retained.`));
     await commitAcademicBatch(env, writes, 'A selected student changed while the CSV was being imported. Reload and try again.');
   }
   const response = await bootstrapAcademicManagement(env, user, {
     ...input, BranchId: scope.branchId, SchoolSection: scope.section, View: 'students'
   });
   response.message = imported.length || createdProfiles.length
-    ? `${imported.length} student membership${imported.length === 1 ? '' : 's'} imported online${createdProfiles.length ? `; ${createdProfiles.length} missing student profile${createdProfiles.length === 1 ? '' : 's'} created for completion in Students` : ''}${skipped.length ? `; ${skipped.length} exact match${skipped.length === 1 ? '' : 'es'} skipped` : ''}.`
+    ? `${imported.length} student membership${imported.length === 1 ? '' : 's'} imported online${createdProfiles.length ? `; ${createdProfiles.length} missing student profile${createdProfiles.length === 1 ? '' : 's'} created for completion in Students` : ''}${restoredProfiles.length ? `; ${restoredProfiles.length} profile${restoredProfiles.length === 1 ? '' : 's'} restored with saved classroom and subjects preserved` : ''}${skipped.length ? `; ${skipped.length} existing membership${skipped.length === 1 ? '' : 's'} retained` : ''}.`
     : 'Every CSV row already has this exact academic membership.';
   response.importResult = {
     Requested: rows.length,
     Imported: imported.length,
     ProfilesCreated: createdProfiles.length,
+    ProfilesRestored: restoredProfiles.length,
     Skipped: skipped.length
   };
   return response;

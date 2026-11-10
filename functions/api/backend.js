@@ -10,7 +10,7 @@ import { activeAdmissionRows } from '../lib/admission-cycle.js';
 import { billingComponentDiagnostics, billingDiagnostics } from '../lib/student-billing-diagnostics.js';
 import { loadBranchFinanceRows, loadBranchFinancePage } from '../lib/finance-branch-reads.js';
 import { onlineCollectionsPage } from '../lib/online-collections-page.js';
-import { applyTotalBillingDiscount, billingFeesWithPostedAmounts, selectBillingDiscount, loadBillingDiscount, loadBillingDiscounts, handleBillingDiscounts } from '../lib/billing-category-discounts.js';
+import { applyTotalBillingDiscount, billingFeesWithPostedAmounts, desktopBillingOverview, selectBillingDiscount, loadBillingDiscount, loadBillingDiscounts, handleBillingDiscounts } from '../lib/billing-category-discounts.js';
 import { loadSchoolFeePaymentPlans, selectSchoolFeePaymentPlan, quoteSchoolFeePaymentPlan, handleSchoolFeePaymentPlans } from '../lib/school-fee-payment-plans.js';
 import { financeMoney, financeDate, financeData, financeWrite, financeFailure, financeOperationId, journalFinancialSignature, assertFinanceRoleLimit } from '../lib/accounting-mutation-guards.js';
 import { getAccountingChartRows, invalidateAccountingChartRows, primeAccountingChartRows } from '../lib/accounting-reference-cache.js';
@@ -1418,7 +1418,7 @@ export function applyBillingCategoryOverrides(fees, app) {
       if (feeBillingSpecificity(item, app) === bestSpecificity) result.push(item);
     });
   });
-  return app.BillingDiscount ? applyTotalBillingDiscount(result, app, isSchoolFeeInvoice) : result;
+  return applyTotalBillingDiscount(result, app, isSchoolFeeInvoice);
 }
 
 export function matchingFullScholarshipFeeItems(feeRows, account = {}) {
@@ -2033,9 +2033,10 @@ export async function getPayableFees(env, body = {}) {
   const billingApp = { ...app, BranchId: feeBranchId(student || app),
     SchoolSection: student?.SchoolSection || app.SchoolSection };
   if (student) {
-    if (student.ClassAdmitted || student.ClassName) {
-      billingApp.ClassApplyingFor = student.ClassAdmitted || student.ClassName;
-      billingApp.ClassAdmitted = student.ClassAdmitted || student.ClassName;
+    billingApp.ClassName = studentProfileValue(student, 'ClassName', ['className', 'ClassApplyingFor', 'ClassAdmitted', 'classAdmitted']);
+    if (billingApp.ClassName) {
+      billingApp.ClassApplyingFor = billingApp.ClassName;
+      billingApp.ClassAdmitted = billingApp.ClassName;
     }
     if (student.AcademicSession) billingApp.AcademicSession = student.AcademicSession;
     if (student.Term) billingApp.Term = student.Term;
@@ -2079,7 +2080,7 @@ export async function getPayableFees(env, body = {}) {
     queryAccountRows(env, 'ledger', accountRef), loadBillingDiscount(env, billingApp),
     body.IncludeSchoolFeePaymentPlan === false ? null : loadSchoolFeePaymentPlans(env, feeBranchId(billingApp))
   ]);
-  billingApp.BillingDiscount = billingDiscount;
+  billingApp.BillingDiscount = billingDiscount && selectBillingDiscount([billingDiscount], billingApp);
   const correctedInvoices = correctedPayableInvoices(invoiceRows, ledgerRows);
   ledgerRows = payableLedgerAfterPaymentCorrections(ledgerRows);
   const allFees = feeRowsForBranch(feeRows, feeBranchId(billingApp)).map(normalizeFeeItem)
@@ -2445,7 +2446,7 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
   const normalizedStoredLedger = storedLedger.map(normalizeLedger);
   const accountMap = new Map();
   const accountAliasMap = new Map();
-  const studentWalletProfiles = new Map();
+  const studentRegisterFields = new Map();
   const accountKeyForRefs = (refs, fallback) => {
     // Admission/account reference is the primary identity. Do not merge two
     // students merely because a bad import reused an application reference.
@@ -2466,7 +2467,7 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
     if (!accountRef) return;
     const key = accountKeyForRefs(refs, accountRef);
     const existing = accountMap.get(key) || {};
-    if (studentWallet) studentWalletProfiles.set(key, studentWallet);
+    if (studentWallet) studentRegisterFields.set(key, { ...studentWallet, ClassName: normalized.ClassName });
     accountMap.set(key, {
       ...existing,
       ...normalized,
@@ -2491,13 +2492,11 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
       Enrolled: clean(existing.Enrolled || normalized.Enrolled),
       AdmissionLetterSent: clean(existing.AdmissionLetterSent || normalized.AdmissionLetterSent)
     });
-    // Cards live on the student register, not legacy accounting snapshots.
-    // Preserve an explicitly unassigned card too, and remove stale aliases so
-    // the desktop's all-field search cannot match a replaced card.
-    const walletProfile = studentWalletProfiles.get(key);
-    if (walletProfile) {
+    // A historical invoice must not restore a cleared class or wallet card.
+    const registerFields = studentRegisterFields.get(key);
+    if (registerFields) {
       const account = accountMap.get(key);
-      Object.assign(account, walletProfile);
+      Object.assign(account, registerFields);
       delete account.walletCardId;
       delete account.walletCardStatus;
     }
@@ -12159,7 +12158,7 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     case 'saveBillingDiscountSettings':
       return handleBillingDiscounts(env, { username: body.UserUsername, role: body.UserRole, branchId: body.UserBranchId,
         ...desktopStaffAssignmentActor(body), deviceBranchId: body.DeviceBranchId, allowedSections: ['accounts'] },
-      { ...body, action: action === 'getBillingDiscountSettings' ? 'list' : 'save' });
+      { ...body, action: action === 'getBillingDiscountSettings' ? 'list' : 'save' }, { getSchoolClasses, desktopClient: true });
     case 'deleteBillingCategory':
       return deleteBillingCategory(env, body);
     case 'getPartPaymentSettings':
@@ -12547,7 +12546,8 @@ export async function onRequestPost(context) {
       }
     }
     finishRequestMetric(metric, { status: 200, action });
-    return Response.json(data, { headers: { 'Cache-Control': 'no-store' } });
+    const responseData = ['getAccountsOverview', 'getAccountSnapshot'].includes(action) ? desktopBillingOverview(data, body.ScopedRatesVersion) : data;
+    return Response.json(responseData, { headers: { 'Cache-Control': 'no-store' } });
   } catch (err) {
     const status = err.status || 500;
     if (status >= 500) console.error('Firestore backend failure', err);
