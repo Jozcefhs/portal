@@ -5732,14 +5732,64 @@ function studentExportClass(row) {
   return `${className} / ${arm}`;
 }
 
+function studentClassExportGroups(students) {
+  // Group the loaded register by classroom identity, not a profile's spelling.
+  // A legacy label may join an identified classroom only when exactly one fits.
+  const labelKey = value => clean(value).normalize('NFKC').toLowerCase().replace(/([a-z])\s*(\d)/g, '$1 $2').replace(/\s+/g, ' ');
+  const descriptions = students.map(row => {
+    const path = /^schoolBranches\/([^/]+)\/sections\/([^/]+)\/students$/.exec(clean(row.__scopePath));
+    const branch = labelKey(path?.[1] || row.BranchId || 'main');
+    const section = labelKey(path?.[2] || row.SchoolSection);
+    const classId = clean(row.AcademicClassId), armId = clean(row.AcademicArmId);
+    const arm = labelKey(row.ClassArm), label = studentExportClass(row);
+    let schoolClass = labelKey(pick(row, ['ClassName', 'ClassAdmitted']));
+    if (arm && schoolClass.endsWith(` / ${arm}`)) schoolClass = schoolClass.slice(0, -(arm.length + 3)).trim();
+    else if (arm && schoolClass.endsWith(` ${arm}`)) schoolClass = schoolClass.slice(0, -(arm.length + 1)).trim();
+    return { row, branch, section, classId, armId, schoolClass, arm, label, identityCount: Number(Boolean(classId)) + Number(Boolean(armId)) };
+  }).filter(item => item.label).sort((left, right) => right.identityCount - left.identityCount);
+  const groups = new Map();
+  for (const item of descriptions) {
+    let group;
+    if (item.identityCount < 2) {
+      const candidates = [...groups.values()].filter(candidate => candidate.branch === item.branch && candidate.section === item.section
+        && (item.classId ? candidate.classId === item.classId : candidate.classNames.has(item.schoolClass))
+        && (item.armId ? candidate.armId === item.armId : candidate.armNames.has(item.arm)));
+      if (candidates.length === 1) group = candidates[0];
+    }
+    const groupKey = JSON.stringify([item.branch, item.section, item.classId ? ['id', item.classId] : ['name', item.schoolClass],
+      item.armId ? ['id', item.armId] : ['name', item.arm]]);
+    group ||= groups.get(groupKey);
+    if (!group) {
+      group = { key: groupKey, branch: item.branch, section: item.section, classId: item.classId, armId: item.armId,
+        classNames: new Set(), armNames: new Set(), labels: new Map(), rows: [] };
+      groups.set(groupKey, group);
+    }
+    group.classNames.add(item.schoolClass); group.armNames.add(item.arm);
+    group.labels.set(item.label, (group.labels.get(item.label) || 0) + 1);
+    group.rows.push(item.row);
+  }
+  const result = [...groups.values()].map(group => ({ ...group, label: [...group.labels]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0], undefined, { numeric: true }))[0][0] }))
+    .sort((left, right) => left.label.localeCompare(right.label, undefined, { numeric: true }) || left.key.localeCompare(right.key));
+  const repeated = new Map();
+  for (const group of result) {
+    const label = labelKey(group.label);
+    if (!repeated.has(label)) repeated.set(label, []);
+    repeated.get(label).push(group);
+  }
+  for (const matches of repeated.values()) matches.forEach((group, index) => {
+    group.optionLabel = matches.length > 1 ? `${group.label} · separate classroom ${index + 1}` : group.label;
+  });
+  return result;
+}
+
 function studentClassExportToolbar(students) {
-  const classes = [...new Set(students.map(studentExportClass).filter(Boolean))]
-    .sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
+  const classes = studentClassExportGroups(students);
   return `<div class="student-class-export-action">
     <label>Export students by class
       <select data-student-export-class aria-label="Choose a class for student CSV export">
         <option value="">Choose class</option>
-        ${classes.map((className) => `<option value="${escapeHtml(className)}">${escapeHtml(className)}</option>`).join('')}
+        ${classes.map(group => `<option value="${escapeHtml(group.key)}">${escapeHtml(group.optionLabel)}</option>`).join('')}
       </select>
     </label>
     <button type="button" class="secondary" data-student-export-csv disabled>Export class CSV</button>
@@ -5849,14 +5899,14 @@ function bindStudentAdmissionYearIntake() {
   });
 }
 
-function studentClassExportCsv(students, className) {
+function studentClassExportCsv(students, classroomKey) {
   const headings = [
     'AdmissionNo', 'FirstName', 'MiddleName', 'Surname', 'DisplayName', 'Gender',
     'ClassName', 'ClassArm', 'StudentType', 'BillingCategory', 'EnrollmentCategory',
     'AcademicSession', 'Term', 'ParentName', 'ParentPhone', 'ParentEmail',
     'ProfileCompletionStatus', 'Status', 'BranchId'
   ];
-  const rows = students.filter((row) => studentExportClass(row) === className);
+  const rows = studentClassExportGroups(students).find(group => group.key === classroomKey)?.rows || [];
   return [headings, ...rows.map((row) => headings.map((heading) => {
     if (heading === 'ClassName') return studentExportClass(row);
     if (heading === 'AdmissionNo') return pick(row, ['AdmissionNo', 'AccountRef', '__id']);
@@ -5870,17 +5920,18 @@ function bindStudentClassExport(students) {
   const button = panelEl.querySelector('[data-student-export-csv]');
   const count = panelEl.querySelector('[data-student-export-count]');
   if (!select || !button || !count) return;
+  const groups = new Map(studentClassExportGroups(students).map(group => [group.key, group]));
   select.addEventListener('change', () => {
-    const className = select.value;
-    const total = students.filter((row) => studentExportClass(row) === className).length;
+    const group = groups.get(select.value);
+    const total = group?.rows.length || 0;
     button.disabled = !total;
-    count.textContent = className ? `${total} ${total === 1 ? 'student' : 'students'} in this class` : 'Choose a class to export';
+    count.textContent = group ? `${total} ${total === 1 ? 'student' : 'students'} in this class` : 'Choose a class to export';
   });
   button.addEventListener('click', () => {
-    const className = select.value;
-    if (!className || !students.some((row) => studentExportClass(row) === className)) return;
-    const fileClass = className.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '') || 'class';
-    downloadCsvFile(`students-${fileClass}.csv`, studentClassExportCsv(students, className));
+    const group = groups.get(select.value);
+    if (!group?.rows.length) return;
+    const fileClass = group.optionLabel.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '') || 'class';
+    downloadCsvFile(`students-${fileClass}.csv`, studentClassExportCsv(students, group.key));
   });
 }
 
