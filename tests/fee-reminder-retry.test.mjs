@@ -121,6 +121,12 @@ test('generic queue uses deterministic create-only jobs and does not reset compl
 
 const workflowEnv={SCHEDULER_MODE:'reminders',ENDPOINT:'https://school.example.invalid/api/notification-scheduler',
  SCHEDULER_SECRET:'private',EXPECTED_WORKSPACE_ID:'school',EXPECTED_EDITION:'school',PROCESS_DATE:'2026-11-10'};
+test('a completed credit watermark is successful on a same-day retry with no further processing',async()=>{
+ const totals=await runDailyNotifications({...workflowEnv,SCHEDULER_MODE:'credits'},{log:()=>{},fetch:async()=>Response.json({
+  ok:true,workspaceId:'school',edition:'school',schoolFeeCredits:{ok:true,skipped:true,hasMore:false}
+ })});
+ assert.equal(totals.pages,1);assert.equal(totals.creditedInvoices,0);
+});
 test('daily runner forwards cursors and validates tenant without exposing response identities',async()=>{
  const bodies=[],logs=[]; const result=await runDailyNotifications(workflowEnv,{log:row=>logs.push(row),fetch:async(_url,init)=>{
   bodies.push(JSON.parse(init.body)); return Response.json({ok:true,workspaceId:'school',edition:'school',private:'parent@example.invalid',

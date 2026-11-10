@@ -38,7 +38,11 @@ export async function runDailyNotifications(env = process.env, dependencies = {}
     }
     if (data.workspaceId !== env.EXPECTED_WORKSPACE_ID || data.edition !== env.EXPECTED_EDITION) throw new Error('Scheduler response belongs to a different workspace.');
     const result = mode === 'credits' ? data.schoolFeeCredits : mode === 'reminders' ? data.reminders : {};
-    if (!result || result.skipped) throw new Error(`Daily ${mode} was not executed.`);
+    // The credit scheduler's completed-date watermark deliberately returns
+    // skipped on a same-day retry: this is successful, zero-write completion.
+    if (!result || (result.skipped && !(mode === 'credits' && result.ok === true && result.hasMore === false))) {
+      throw new Error(`Daily ${mode} was not executed.`);
+    }
     totals.pages++;
     for (const key of Object.keys(totals).filter(key => key !== 'pages')) totals[key] += Number(result[key] || 0);
     log(JSON.stringify({ mode, date: today, page, ...Object.fromEntries(Object.keys(totals).filter(key => key !== 'pages').map(key => [key, Number(result[key] || 0)])), hasMore: result.hasMore === true }));
