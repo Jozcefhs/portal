@@ -11,7 +11,12 @@ async function managePortalDomain(env, request) {
   if (request.headers.get('Origin') !== url.origin) throw domainError('Open domain setup directly in the portal.', 403);
   const body = await readJsonBody(request, { maxBytes: 4096 });
   if (!['status', 'attach', 'activate'].includes(body.action)) throw domainError('Unknown domain setup action.');
-  const actor = await requireSetupAdministrator(env, request, body.password);
+  const actor = await requireSetupAdministrator(env, request, body.password).catch(error => {
+    if (error.status === 503 && !String(env.ADMIN_WEB_PASSWORD || '').trim()) {
+      throw domainError('Sign in as a Super Administrator to manage the portal address.', 401);
+    }
+    throw error;
+  });
   if (resolveSetupSettingsAccess(actor).scope !== 'organisation' || actor.assignedBranchIds?.length
       || !['', 'all'].includes(String(actor.schoolSectionAccess || '').toLowerCase())) {
     throw domainError('Custom domains require an organisation-wide Super Administrator.', 403);

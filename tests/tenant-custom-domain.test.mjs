@@ -59,7 +59,11 @@ test('primary switch checks a staff session and a recent verified payment on the
     PortalReturnVerifiedOrigin: host, PortalPaymentCredential: 'current', PortalReturnVerifiedAt: new Date().toISOString() };
   const signed = [];
   const post = route('portal-domain', {
-    requireSetupAdministrator: async () => actor, resolveSetupSettingsAccess: () => ({ scope: 'organisation' }),
+    requireSetupAdministrator: async () => {
+      if (!actor) throw domainError('Setup login is not configured.', 503);
+      return actor;
+    },
+    resolveSetupSettingsAccess: () => ({ scope: 'organisation' }),
     requiredDeploymentIdentity: () => ({ workspaceId: 'tenant-one' }), readJsonBody: request => request.json(),
     getDocument: async () => intent, paystackCredentialFingerprint: async () => 'current',
     signTenantControlRequest: async (_key, details) => { signed.push(details); return 'signed'; },
@@ -69,6 +73,10 @@ test('primary switch checks a staff session and a recent verified payment on the
     method: 'POST', headers: { Origin: headerOrigin }, body: JSON.stringify({ action: 'activate', paymentReference: 'valid-reference' })
   }) });
   assert.equal((await run()).status, 403);
+  actor = null;
+  const signedOut = await run();
+  assert.equal(signedOut.status, 401);
+  assert.match((await signedOut.json()).message, /Sign in as a Super Administrator/);
   actor = { source: 'staff-session' };
   assert.equal((await run(host, 'https://unrelated.example.org')).status, 403);
   intent = { ...intent, PortalReturnVerifiedOrigin: 'https://tenant-one.pages.dev' };
@@ -86,19 +94,24 @@ test('platform keeps the current address until Cloudflare activation and scoped 
     __updateTime: 'revision', CloudflareProject: 'tenant-one', TenantControlPublicKey: 'key', CustomPortalHostname: hostname,
     PaystackConnected: true };
   let status = 'pending';
+  let lookups = 0;
   const writes = [];
   const post = route('tenant-custom-domain', {
     requirePlatformFirestoreEnv: () => ({}), assertFreshTenantControlRequest: () => {},
-    queryCollection: async () => [registration], verifyTenantControlRequest: async () => true,
+    queryCollection: async () => { lookups++; return [registration]; }, verifyTenantControlRequest: async () => true,
     assertTenantProjectAssignment: async () => {}, readJsonBody: request => request.json(),
     pagesDomain: async () => ({ name: hostname, status }), domainSetupState,
     patchDocumentFieldsIfCurrent: async (_env, _collection, _id, patch, version) => writes.push([patch, version])
   });
-  const run = (paymentCheck = 'checkout-verified', observedOrigin = 'https://' + hostname) => post({
+  const run = (paymentCheck = 'checkout-verified', observedOrigin = 'https://' + hostname,
+    headers = { 'X-Dynamax-Tenant-Signature': 'signed' }) => post({
     env: {}, request: new Request('https://dynamax.cc/api/tenant-custom-domain', { method: 'POST',
+      headers,
       body: JSON.stringify({ action: 'domain-activate', portalHost: 'tenant-one.pages.dev', workspaceId: 'tenant-one', paymentCheck, observedOrigin })
     })
   });
+  assert.equal((await run('checkout-verified', 'https://' + hostname, {})).status, 401);
+  assert.equal(lookups, 0);
   assert.equal((await run()).status, 409);
   status = 'active';
   assert.equal((await run('not-configured')).status, 409);
@@ -144,7 +157,8 @@ test('root setup waits for approved active DNS before Pages attachment and still
     domainSetupState, patchDocumentFieldsIfCurrent: async (_env, _collection, _id, data) => writes.push(data)
   });
   const run = (action, extra = {}) => post({ env: {}, request: new Request('https://dynamax.cc/api/tenant-custom-domain',
-    { method: 'POST', body: JSON.stringify({ action, hostname: host, domainKind: 'root', portalHost: 'tenant-one.pages.dev',
+    { method: 'POST', headers: { 'X-Dynamax-Tenant-Signature': 'signed' },
+      body: JSON.stringify({ action, hostname: host, domainKind: 'root', portalHost: 'tenant-one.pages.dev',
       observedOrigin: 'https://' + host, workspaceId: 'tenant-one', ...extra }) }) });
   assert.equal((await run('domain-attach', { domainKind: 'either' })).status, 400);
   assert.equal((await (await run('domain-attach')).json()).status, 'awaiting-zone');

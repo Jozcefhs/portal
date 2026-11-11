@@ -13,6 +13,8 @@ async function manageDomain(env, request) {
   const details = await readJsonBody(request, { maxBytes: 4096 });
   if (!actions.includes(details.action)) throw domainError('Unknown domain setup action.');
   assertFreshTenantControlRequest(details);
+  const signature = request.headers.get('X-Dynamax-Tenant-Signature');
+  if (!signature) throw domainError('Missing tenant request signature.', 401);
   const rows = await queryCollection(platform, collection, {
     filters: [{ field: 'WorkspaceId', op: '==', value: details.workspaceId }], limit: 20
   });
@@ -21,8 +23,9 @@ async function manageDomain(env, request) {
       /retired|terminat|cancel|reject|delet|expired/i.test(String(value || ''))));
   if (candidates.length !== 1) throw domainError('An active, assigned subscriber workspace is required.', 403);
   const registration = candidates[0];
-  if (!await verifyTenantControlRequest(registration.TenantControlPublicKey, details,
-    request.headers.get('X-Dynamax-Tenant-Signature'))) throw domainError('Invalid tenant request signature.', 401);
+  if (!await verifyTenantControlRequest(registration.TenantControlPublicKey, details, signature)) {
+    throw domainError('Invalid tenant request signature.', 401);
+  }
   const project = registration.CloudflareProject;
   if (registration.PortalUrl !== 'https://' + project + '.pages.dev') throw domainError('The assigned project does not match the portal.', 409);
   const id = registration.__id || registration.Reference;
