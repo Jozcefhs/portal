@@ -334,7 +334,7 @@ export async function issueTenantActivation(platformEnv, registration = {}, deli
     return {
       issued: false,
       alreadyActivated: true,
-      loginUrl: new URL('/admin.html', portalDetails(registration.PortalUrl).origin).href
+      loginUrl: new URL('/admin.html', portalDetails(registration.PrimaryPortalUrl || registration.PortalUrl).origin).href
     };
   }
 
@@ -386,7 +386,7 @@ export async function issueTenantActivation(platformEnv, registration = {}, deli
       return {
         issued: false,
         alreadyActivated: true,
-        loginUrl: new URL('/admin.html', portalDetails(registration.PortalUrl).origin).href
+        loginUrl: new URL('/admin.html', portalDetails(registration.PrimaryPortalUrl || registration.PortalUrl).origin).href
       };
     }
     return {

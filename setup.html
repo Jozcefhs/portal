@@ -535,6 +535,35 @@
               <label for="onlinePaymentEnabled">Automated online payment</label>
               <select id="onlinePaymentEnabled" name="OnlinePaymentEnabled"><option value="YES">Enabled &mdash; Card, USSD and bank through Paystack</option><option value="NO">Disabled</option></select>
             </div>
+            <div class="settings-field full-width paystack-connection-card" id="portalDomainPanel">
+              <strong>Custom portal address</strong>
+              <label for="portalDomainKind">Address type</label>
+              <select id="portalDomainKind">
+                <option value="subdomain">Subdomain</option>
+                <option value="root">Root domain</option>
+              </select>
+              <p id="portalDomainRootIntro" hidden>A root domain needs a DNS zone in Dynamax’s Cloudflare account. Dynamax Support will verify ownership and help prepare your website and email records before you change nameservers.</p>
+              <label for="portalDomainHost">Your domain</label>
+              <input id="portalDomainHost" type="text" maxlength="253" placeholder="portal.sampleacademy.com" autocomplete="off" spellcheck="false">
+              <div class="paystack-connection-controls">
+                <button type="button" id="portalDomainAttach">Start domain setup</button>
+                <button type="button" id="portalDomainCheck" class="settings-secondary-action">Check status</button>
+              </div>
+              <p id="portalDomainStatus" class="status" role="status"></p>
+              <div id="portalDomainDetails" hidden>
+                <div id="portalDomainRootSteps" hidden></div>
+                <p id="portalDomainDnsHelp"></p>
+                <code id="portalDomainDns"></code>
+                <p id="portalDomainCertificate" hidden></p>
+                <p id="portalDomainPrimary"></p>
+                <p><a id="portalDomainSignIn" target="_blank" rel="noopener" hidden>Open staff sign-in on the new address</a></p>
+                <p id="portalDomainInstructions" hidden></p>
+                <label id="portalDomainPaymentLabel" hidden>Completed payment reference
+                  <input id="portalDomainPayment" type="text" maxlength="140" autocomplete="off">
+                </label>
+                <button type="button" id="portalDomainActivate" hidden>Make this address primary</button>
+              </div>
+            </div>
             <div class="settings-field full-width paystack-connection-card" id="paystackConnectionPanel">
               <div class="paystack-connection-heading">
                 <div>
@@ -586,6 +615,6 @@
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
   <script src="js/app-dialogs.js?v=20261016-grouped-form-validation"></script>
   <script src="js/paystack-connection-status.js?v=20261013-paystack-activation"></script>
-  <script src="js/setup.js?v=20261110-branch-email-provider"></script>
+  <script src="js/setup.js?v=20261111-root-portal-domain"></script>
 </body>
 </html>

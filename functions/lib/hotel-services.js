@@ -812,6 +812,7 @@ export async function initPublicHotelReservationPayment(env, body = {}, requestO
   };
   const intent = {
     PaymentType: 'HotelReservation',
+    PortalCheckoutOrigin: origin.origin,
     Reference: reference,
     ReservationId: reservationId,
     BranchId: branchId,

@@ -470,6 +470,27 @@ async function tenantPoolRequest(payload) {
   return data;
 }
 
+document.getElementById('approveRootPortalZone')?.addEventListener('click', async event => {
+  const button = event.currentTarget;
+  const status = document.getElementById('rootPortalApprovalStatus');
+  const review = document.getElementById('rootPortalDnsReviewed');
+  button.disabled = true;
+  try {
+    const data = await tenantPoolRequest({
+      action: 'approve-root-portal-zone',
+      registrationReference: document.getElementById('rootPortalRegistration').value.trim(),
+      zoneId: document.getElementById('rootPortalZone').value.trim(),
+      ownershipAndDnsReviewed: review.checked
+    });
+    setStatus(status, data.message, 'ok');
+    review.checked = false;
+  } catch (error) {
+    setStatus(status, error.message, 'bad');
+  } finally {
+    button.disabled = false;
+  }
+});
+
 async function loadTenantPool(message = '') {
   try {
     tenantPoolState = await tenantPoolRequest({ action: 'load' });

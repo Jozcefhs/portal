@@ -134,6 +134,17 @@
           </div>
           <p class="plan-entitlement-help">The project ID is permanent. If Google Cloud shows <strong>No organization</strong>, create empty projects in Google Cloud first and list their IDs here. The worker consumes only listed projects that are not already registered; it never reuses an assigned tenant project. Leave this inventory blank when the provisioner can create projects under a Google organisation or folder.</p>
         </div>
+        <details>
+          <summary>Approve a subscriber root domain</summary>
+          <p>Verify the subscriber controls the domain. Prepare a full zone in the Pages account and review the existing website, mail and verification records with the subscriber before approving.</p>
+          <div class="tenant-pool-actions-grid">
+            <label>Subscriber reference<input id="rootPortalRegistration" type="text" maxlength="180"></label>
+            <label>Cloudflare zone ID<input id="rootPortalZone" type="text" maxlength="32"></label>
+            <label><input id="rootPortalDnsReviewed" type="checkbox"> Ownership verified and DNS reviewed</label>
+            <button type="button" id="approveRootPortalZone">Approve zone</button>
+          </div>
+          <p id="rootPortalApprovalStatus" class="status" role="status"></p>
+        </details>
         <p id="tenantPoolStatus" class="status" aria-live="polite"></p>
       </section>
       <div class="settings-savebar"><div><strong>Publish plans, prices and module access</strong><p id="planPricingStatus" class="status">Review the plans before saving.</p></div><button id="savePlanPricing" type="submit">Save plans &amp; pricing</button></div>
@@ -182,6 +193,6 @@
   <script src="js/app-dialogs.js?v=20261016-grouped-form-validation"></script>
   <script src="js/tutorial-module-catalogue.js?v=20261011-procurement-tutorials"></script>
   <script src="js/owner-help-settings.js?v=20261011-help-devices"></script>
-  <script src="js/plan-management.js?v=20261011-help-devices"></script>
+  <script src="js/plan-management.js?v=20261011-help-devices-20261111-root-portal-domain"></script>
 </body>
 </html>

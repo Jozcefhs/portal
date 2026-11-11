@@ -2,8 +2,9 @@
 // Verifies Paystack payment and records it in the configured backend.
 
 import { postChurchDonationToAccounting, recordManualPayment, recordSchoolFeeAdvance } from './backend.js';
+import { paystackCredentialFingerprint } from '../lib/paystack-environment.js';
 import { isSchoolFeeAdvance } from '../lib/school-fee-advance.js';
-import { batchUpsertDocuments, createDocumentIfAbsent, getDocument, upsertDocument } from '../lib/firestore.js';
+import { batchUpsertDocuments, createDocumentIfAbsent, getDocument, patchDocumentFieldsIfCurrent, upsertDocument } from '../lib/firestore.js';
 import { markDonationPaidByReference, sendChurchDonationReceipt } from '../lib/church-payments.js';
 import { finalizeHotelOnlinePayment } from '../lib/hotel-services.js';
 import { registerDonorFromPaidDonation } from '../lib/church-donation-management.js';
@@ -142,6 +143,21 @@ function extractMetadata(data) {
   return metadata;
 }
 
+async function recordCustomPortalReturn(env, request, intent, reference) {
+  const origin = new URL(request.url).origin;
+  if (!intent?.__updateTime || intent.Status !== 'Completed' || intent.Reference !== reference
+      || intent.PortalCheckoutOrigin !== origin || request.headers.get('Origin') !== origin
+      || new URL(origin).hostname.endsWith('.pages.dev') || !origin.startsWith('https://')) return;
+  const fingerprint = await paystackCredentialFingerprint(env.PAYSTACK_SECRET_KEY);
+  if (intent.PortalReturnVerifiedOrigin === origin && intent.PortalPaymentCredential === fingerprint
+      && Date.now() - Date.parse(intent.PortalReturnVerifiedAt) < 86400000) return;
+  await patchDocumentFieldsIfCurrent(env, 'paymentIntents', safeId(reference), {
+    PortalReturnVerifiedOrigin: origin,
+    PortalReturnVerifiedAt: new Date().toISOString(),
+    PortalPaymentCredential: fingerprint
+  }, intent);
+}
+
 export async function onRequestPost(context) {
   let idempotency = null;
   try {
@@ -252,6 +268,9 @@ export async function onRequestPost(context) {
       fingerprintPayload: { reference: tx.reference || reference }
     });
     if (idempotency.replay) {
+      if (idempotency.response?.ok && idempotency.response.portalPaymentRecorded === true) {
+        await recordCustomPortalReturn(env, request, intent, tx.reference).catch(() => {});
+      }
       return Response.json(idempotency.response, {
         status: idempotency.status || (idempotency.response?.ok === false ? 409 : 200),
         headers: { 'Cache-Control': 'no-store', 'Idempotency-Replayed': 'true' }
@@ -475,7 +494,15 @@ export async function onRequestPost(context) {
           CompletedAt: new Date().toISOString(),
           GrossAmount: amount,
           GatewayFee: gatewayFee,
-          NetAmount: netAmount
+          NetAmount: netAmount,
+          ...(!recordErrors.filter(Boolean).length && intent.PortalCheckoutOrigin === new URL(request.url).origin
+            && request.headers.get('Origin') === intent.PortalCheckoutOrigin
+            && intent.PortalCheckoutOrigin.startsWith('https://')
+            && !new URL(intent.PortalCheckoutOrigin).hostname.endsWith('.pages.dev') ? {
+              PortalReturnVerifiedOrigin: intent.PortalCheckoutOrigin,
+              PortalReturnVerifiedAt: new Date().toISOString(),
+              PortalPaymentCredential: await paystackCredentialFingerprint(env.PAYSTACK_SECRET_KEY)
+            } : {})
         });
       }
     }
@@ -484,6 +511,7 @@ export async function onRequestPost(context) {
     const result = {
       ok: true,
       message: warningText ? `Payment verified and recorded with warning: ${warningText}` : 'Payment verified and recorded.',
+      portalPaymentRecorded: !warningText,
       payment: recordData?.payment || {},
       donation: donation || null,
       reference: tx.reference,

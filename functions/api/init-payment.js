@@ -367,6 +367,7 @@ export async function onRequestPost(context) {
     }
     await createDocumentIfAbsent(env, 'paymentIntents', safeDocumentId(reference), {
       Reference: reference,
+      PortalCheckoutOrigin: origin,
       PaymentType: isAdvance ? SCHOOL_FEES_ADVANCE_TYPE : isWallet ? 'Wallet' : (isSchoolFeesTotal ? 'SchoolFeesTotal' : 'Fee'),
       AccountRef: account.AccountRef,
       AccountRefNormalized: safeDocumentId(account.AccountRef).toLowerCase(),

@@ -683,6 +683,7 @@ export async function initializeOnlineOrganizationCommerceSale(env, request, sec
   const intent = {
     Reference: reference,
     PaymentType: 'OrganizationCommerce',
+    PortalCheckoutOrigin: new URL(request.url).origin,
     SaleId: id,
     SaleType: section,
     BranchId: sale.BranchId,

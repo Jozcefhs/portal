@@ -1,4 +1,5 @@
-import { createDocumentIfAbsent, getDocument, queryCollection } from '../lib/firestore.js';
+import { createDocumentIfAbsent, getDocument, patchDocumentFieldsIfCurrent, queryCollection } from '../lib/firestore.js';
+import { customPortalHostname, domainError, readRootPortalZone } from '../lib/tenant-custom-domain.js';
 import { requirePlatformAdmin } from '../lib/platform-admin.js';
 import { secureTextEqual } from '../lib/backend-security.js';
 import { requirePlatformFirestoreEnv } from '../lib/platform-firestore.js';
@@ -17,6 +18,7 @@ import {
 } from '../lib/managed-organisations.js';
 import {
   assignWaitingTenantRegistrations,
+  assertTenantProjectAssignment,
   claimNextTenantProvisioningRequest,
   ensureTenantPoolCapacity,
   finishTenantProvisioningRequest,
@@ -84,6 +86,32 @@ export async function onRequestPost({ request, env }) {
     const action = clean(body.action || 'load').toLowerCase();
     requireTenantPoolAccess(env, body.password, action);
     const platformEnv = requirePlatformFirestoreEnv(env);
+    if (action === 'approve-root-portal-zone') {
+      const reference = clean(body.registrationReference);
+      if (!/^[A-Za-z0-9._-]{1,180}$/.test(reference) || body.ownershipAndDnsReviewed !== true) {
+        throw domainError('Enter the subscriber reference and confirm ownership and DNS review.');
+      }
+      const registration = await getDocument(platformEnv, 'tenantRegistrations', reference);
+      if (registration?.CustomPortalDomainKind !== 'root' || !registration.CustomPortalHostname) {
+        throw domainError('This subscriber has no root domain request.', 404);
+      }
+      await assertTenantProjectAssignment(platformEnv, registration.CloudflareProject, {
+        registrationReference: registration.Reference || reference, workspaceId: registration.WorkspaceId
+      });
+      const hostname = customPortalHostname(registration.CustomPortalHostname, 'root');
+      const zoneId = clean(body.zoneId).toLowerCase();
+      if (registration.CustomPortalRootZoneId && registration.CustomPortalRootZoneId !== zoneId) {
+        throw domainError('A different zone is already approved for this request.', 409);
+      }
+      await readRootPortalZone(env, hostname, zoneId);
+      if (!registration.CustomPortalRootZoneId) {
+        await patchDocumentFieldsIfCurrent(platformEnv, 'tenantRegistrations', reference, {
+          CustomPortalRootZoneId: zoneId, CustomPortalRootZoneApprovedAt: new Date().toISOString()
+        }, registration);
+      }
+      return Response.json({ ok: true, message: 'DNS zone approved for ' + hostname + '.' },
+        { headers: { 'Cache-Control': 'no-store' } });
+    }
     if (action === 'load') {
       return Response.json({ ok: true, ...(await loadTenantProjectPool(platformEnv)) }, {
         headers: { 'Cache-Control': 'no-store' }

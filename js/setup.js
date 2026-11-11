@@ -1615,3 +1615,111 @@ if ('IntersectionObserver' in window) {
 
 // Public pages can read the school profile, but setup editing stays locked until password entry.
 installAcademicPolicyTutorial();
+
+const portalDomainPanel = document.getElementById('portalDomainPanel');
+if (portalDomainPanel) {
+  const domainField = id => document.getElementById('portalDomain' + id);
+  const buttons = ['Attach', 'Check', 'Activate'].map(domainField);
+  const statusLabels = {
+    'not-configured': 'No custom address configured',
+    'not-attached': 'Ready to connect the address to your portal',
+    'awaiting-zone': 'Waiting for Dynamax Support to prepare and approve the DNS zone',
+    'awaiting-nameservers': 'Waiting for Cloudflare to activate the DNS zone',
+    initializing: 'Waiting for DNS', pending: 'Waiting for DNS or certificate verification',
+    active: 'DNS and HTTPS active', deactivated: 'Domain deactivated',
+    blocked: 'Domain blocked by Cloudflare', error: 'Domain verification failed'
+  };
+
+  function updateDomainKind() {
+    const root = domainField('Kind').value === 'root';
+    domainField('RootIntro').hidden = !root;
+    domainField('Host').placeholder = root ? 'sampleacademy.com' : 'portal.sampleacademy.com';
+  }
+
+  function showDomainState(data) {
+    domainField('Status').textContent = statusLabels[data.status] || 'Verification pending';
+    domainField('Details').hidden = !data.hostname;
+    domainField('Host').value = data.hostname || domainField('Host').value;
+    domainField('Host').readOnly = Boolean(data.hostname);
+    if (data.hostname) domainField('Kind').value = data.domainKind;
+    domainField('Kind').disabled = Boolean(data.hostname);
+    updateDomainKind();
+    domainField('Attach').hidden = Boolean(data.hostname && data.status !== 'not-attached');
+    domainField('Attach').textContent = data.hostname ? 'Connect address to portal' : 'Start domain setup';
+    if (!data.hostname) return;
+    const root = data.domainKind === 'root';
+    const steps = domainField('RootSteps');
+    steps.hidden = !root;
+    steps.replaceChildren();
+    if (root) {
+      const guidance = document.createElement('p');
+      guidance.textContent = data.nameservers.length
+        ? data.zoneStatus === 'active'
+          ? 'Cloudflare has verified the nameservers for this DNS zone.'
+          : 'After confirming your website and email records have been copied, sign in to your domain registrar and replace its nameservers with the values below. Then select Check status.'
+        : 'Give Dynamax Support this subscriber reference and domain so they can prepare your DNS zone. ' + data.registrationReference + ' · ' + data.hostname;
+      steps.append(guidance);
+      if (data.nameservers.length) {
+        const nameservers = document.createElement('ul');
+        data.nameservers.forEach(value => {
+          const item = document.createElement('li');
+          item.textContent = value;
+          nameservers.append(item);
+        });
+        steps.append(nameservers);
+      }
+    }
+    domainField('DnsHelp').textContent = data.dns
+      ? root ? 'Cloudflare manages this root DNS record when the address is connected. Connecting the root domain directs its website traffic to Dynamax.'
+        : 'Copy this record to your DNS provider.'
+      : '';
+    domainField('Dns').textContent = data.dns ? [data.dns.type, data.dns.name, data.dns.target].join('  ') : '';
+    const certificate = domainField('Certificate');
+    certificate.hidden = !data.certificateRecord;
+    certificate.textContent = data.certificateRecord
+      ? [data.certificateRecord.type, data.certificateRecord.name, data.certificateRecord.target].join('  ') : '';
+    domainField('Primary').textContent = 'Primary portal address ' + data.primaryUrl;
+    const origin = 'https://' + data.hostname;
+    const ready = data.status === 'active' && data.primaryUrl !== origin;
+    const here = location.origin === origin;
+    const link = domainField('SignIn');
+    link.href = origin + '/admin.html';
+    link.hidden = !ready || here;
+    const instructions = domainField('Instructions');
+    instructions.hidden = !ready;
+    instructions.textContent = !here
+      ? 'Sign in on the new address, then open Application Settings there and check status.'
+      : data.paymentRequired
+        ? 'Complete a standard school-fee or store checkout on this address, then enter its payment reference. Use an authorised payment or your existing Paystack test environment.'
+        : 'Your staff session on this address will be checked when you make it primary.';
+    domainField('PaymentLabel').hidden = !ready || !here || !data.paymentRequired;
+    domainField('Activate').hidden = !ready || !here;
+  }
+
+  async function runDomainAction(action) {
+    if (activeSettingsAccess.scope !== 'organisation' || activeSettingsAccess.scopeLocked) {
+      domainField('Status').textContent = 'Switch to organisation settings to manage the portal address.';
+      return;
+    }
+    buttons.forEach(button => { button.disabled = true; });
+    try {
+      const response = await fetch('/api/portal-domain', {
+        method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, password: unlockedPassword,
+          hostname: domainField('Host').value, domainKind: domainField('Kind').value, paymentReference: domainField('Payment').value })
+      });
+      const data = await response.json();
+      if (!response.ok || data.ok !== true) throw new Error(data.message || 'Domain setup could not be completed.');
+      showDomainState(data);
+    } catch (error) {
+      domainField('Status').textContent = error.message;
+    } finally {
+      buttons.forEach(button => { button.disabled = false; });
+    }
+  }
+
+  domainField('Kind').addEventListener('change', updateDomainKind);
+  domainField('Attach').addEventListener('click', () => runDomainAction('attach'));
+  domainField('Check').addEventListener('click', () => runDomainAction('status'));
+  domainField('Activate').addEventListener('click', () => runDomainAction('activate'));
+}

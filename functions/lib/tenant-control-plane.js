@@ -69,6 +69,9 @@ export async function tenantControlCanonicalRequest(details = {}) {
     canonical.push('branch-email-v1', clean(details.branchId).toLowerCase(), clean(details.settingsScope).toLowerCase(),
       await tenantControlSecretHash(details.brevoApiKey));
   }
+  if (action.startsWith('domain-')) {
+    canonical.push(clean(details.hostname), clean(details.observedOrigin), clean(details.paymentCheck), clean(details.domainKind));
+  }
   return JSON.stringify(canonical);
 }
 
