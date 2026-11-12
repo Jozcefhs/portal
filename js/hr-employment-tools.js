@@ -22,7 +22,7 @@
   }
 
   function mount(root, { directory = [], capabilities = {}, request, personPicker, confirm, payGradeRoot,
-    branches = [], workingBranch = '', isCurrent = () => root.isConnected } = {}) {
+    branches = [], workingBranch = '', onGradeChanged, isCurrent = () => root.isConnected } = {}) {
     if (!root || typeof request !== 'function') return;
     const viewSalary = Boolean(capabilities.canViewSalaryStructure || capabilities.canManageSalaryStructure || capabilities.canIssueEmploymentLetters);
     if (!viewSalary) { root.replaceChildren(); return; }
@@ -420,7 +420,7 @@
       }, true));
     }
     const gradeWorkspace = capabilities.canManageSalaryStructure && payGradeRoot && global.DynamaxHrPayGrades?.mount(payGradeRoot, {
-      directory, request, isCurrent, confirm, branches, workingBranch, getTemplates: loadTemplates, normalizeComponents,
+      directory, request, isCurrent, confirm, branches, workingBranch, onGradeChanged, getTemplates: loadTemplates, normalizeComponents,
       onApplied(usernames) {
         for (const name of usernames) cache.delete(name);
         if (!usernames.includes(active)) return;

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { hrEmploymentLetterService, normalizeEmploymentLetterTerms } from '../functions/lib/hr-employment-letters.js';
+import { hrEmploymentLetterService, loadHrDirectoryPayGrades, normalizeEmploymentLetterTerms } from '../functions/lib/hr-employment-letters.js';
 import { hrCapabilitiesFor } from '../functions/lib/human-resources.js';
 
 const clone = value => structuredClone(value);
@@ -248,6 +248,45 @@ test('HR grade assignments leave salaries intact and determine who is selected f
   assert.equal((await f.call('applyPayGrade', { ...selection, PreviewVersion: preview.previewVersion })).updatedCount, 2);
   assert.equal(f.records.get('payrollProfiles/existing-profile-id').PayGradeRevision, renamed.Revision);
   assert.deepEqual(payroll().filter(([path]) => !path.startsWith('payrollProfiles/')), before.filter(([path]) => !path.startsWith('payrollProfiles/')));
+});
+
+test('HR directory reads only scoped grade labels, preferring assignments over older payroll snapshots', async () => {
+  const f = fixture();
+  const BranchId = f.user.branchId;
+  const create = async (name, user = f.user) => (await f.call('savePayGrade', { PayGrade: name, PayLevel: 'Level 2', BasicSalary: 180000 }, user)).grade;
+  const previous = await create('Officer'), current = await create('Senior officer');
+  const other = await create('Other branch officer', { ...f.user, branchId: 'other' });
+  const staff = f.records.get('staffUsers/stable-staff-id');
+  const legacy = { __id: 'legacy-id', Username: 'legacy', LoginUsername: 'previous-login', BranchId };
+  const unassigned = { __id: 'unassigned-id', Username: 'unassigned', BranchId };
+  const wrongEdition = { __id: 'wrong-edition', Username: 'wrong-edition', BranchId };
+  const wrongBranch = { __id: 'wrong-branch', Username: 'wrong-branch', BranchId };
+  const gradeProfile = (id, Username, PayGradeId, extra = {}) => f.row('payrollProfiles', id,
+    { Username, PayGradeId, BranchId, OrganisationEdition: f.user.edition, BasicSalary: 888888, ...extra });
+  gradeProfile('employee-old-grade', 'employee', previous.GradeId);
+  gradeProfile('legacy-profile', 'previous-login', previous.GradeId);
+  gradeProfile('foreign-branch-grade', 'wrong-branch', other.GradeId);
+  gradeProfile('foreign-edition-profile', 'wrong-edition', previous.GradeId, { OrganisationEdition: 'faith' });
+  await f.call('assignPayGradeMembers', { GradeId: current.GradeId, GradeRevision: current.Revision, Usernames: ['employee'] });
+  const calls = [];
+  const query = async (_env, collection, options) => {
+    calls.push(collection);
+    assert.ok(options.select.every(field => !/salary|allowances|deductions|account/i.test(field)));
+    return [...f.records].filter(([path, row]) => path.startsWith(`${collection}/`)
+      && options.filters.every(filter => filter.value.includes(row[filter.field])))
+      .map(([, row]) => ({ __id: row.__id, ...Object.fromEntries(options.select.map(field => [field, row[field]])) }));
+  };
+  const all = () => loadHrDirectoryPayGrades(f.env, [staff, legacy, unassigned, wrongEdition, wrongBranch], { query });
+  const labels = await all();
+  assert.deepEqual(calls, ['hrPayGrades', 'hrPayGradeAssignments', 'payrollProfiles']);
+  assert.deepEqual(labels.get(staff), { GradeId: current.GradeId, PayGrade: 'Senior officer', PayLevel: 'Level 2' });
+  assert.deepEqual(labels.get(legacy), { GradeId: previous.GradeId, PayGrade: 'Officer', PayLevel: 'Level 2' });
+  assert.equal(labels.size, 2);
+  calls.length = 0;
+  assert.equal((await loadHrDirectoryPayGrades(f.env, [staff], { query })).size, 1);
+  assert.deepEqual(calls, ['hrPayGrades', 'hrPayGradeAssignments']);
+  await f.call('deletePayGrade', { GradeId: current.GradeId, GradeRevision: current.Revision });
+  assert.equal((await all()).has(staff), false, 'a deleted assignment does not revive an earlier payroll grade');
 });
 
 test('pay grade application fails atomically when a selected payroll profile changes during commit', async () => {

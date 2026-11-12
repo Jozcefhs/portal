@@ -1,4 +1,4 @@
-import { getDocument, getDocuments, queryCollection, createDocumentIfAbsent, updateDocumentIfCurrent, batchCommitLiteralDocuments } from './firestore.js';
+import { getDocument, getDocuments, queryCollection, queryCollectionPages, createDocumentIfAbsent, updateDocumentIfCurrent, batchCommitLiteralDocuments } from './firestore.js';
 import { findStaffUserRecord } from './staff-auth.js';
 import { branchRecordVisible, recordBranchId, enforceActorBranch } from './branch-scope.js';
 import { requiredDeploymentIdentity } from './deployment-identity.js';
@@ -35,6 +35,67 @@ const LETTER_SUMMARY_FIELDS = ['LetterId', 'EmployeeKey', 'Username', 'EmployeeN
   'LetterDate', 'Status', 'FileName', 'CreatedAt', 'SentAt', 'SignatureApplied'];
 const digest = async value => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(value))))]
   .map(byte => byte.toString(16).padStart(2, '0')).join('');
+const payGradeScopeId = (identity, branchId) => digest([identity.workspaceId, identity.edition, branchId]);
+const legacyGradeProfileFields = ['Username', 'BranchId', 'branchId', 'Active', 'CalculationMode',
+  'Edition', 'edition', 'OrganisationEdition', 'organisationEdition', 'OrganizationEdition', 'organizationEdition'];
+const legacyGradeProfileVisible = (profile, edition) => staffRecordMatchesEdition(profile, { edition })
+  && lower(profile.Active) !== 'no' && clean(profile.CalculationMode).toUpperCase() !== 'CONFIGURABLE_PAYE';
+
+export async function loadHrDirectoryPayGrades(env, staff, { query = queryCollectionPages } = {}) {
+  const result = new Map();
+  if (!staff.length) return result;
+  const identity = requiredDeploymentIdentity(env);
+  const branches = [...new Set(staff.map(row => recordBranchId(row)))];
+  const scopeIds = await Promise.all(branches.map(branch => payGradeScopeId(identity, branch)));
+  const scopeForBranch = new Map(branches.map((branch, index) => [branch, scopeIds[index]]));
+  const scopeFor = row => scopeForBranch.get(recordBranchId(row));
+  const lookup = async (collection, field, ids, select) => {
+    const queries = [];
+    for (let offset = 0; offset < ids.length; offset += 25) {
+      queries.push(query(env, collection, { filters: [{ field, op: 'in', value: ids.slice(offset, offset + 25) }], select }));
+    }
+    return (await Promise.all(queries)).flat();
+  };
+  const grades = await lookup(PAY_GRADES, 'ScopeId', scopeIds, ['ScopeId', 'PayGrade', 'PayLevel']);
+  if (!grades.length) return result;
+  const gradeById = new Map(grades.map(row => [row.__id, row]));
+  const activeScopes = new Set(grades.map(row => row.ScopeId));
+  const assignments = await lookup(PAY_GRADE_ASSIGNMENTS, 'ScopeId', [...activeScopes], ['ScopeId', 'StaffId', 'PayGradeId']);
+  const scopedKey = (scope, key) => `${scope}/${key}`;
+  const byStaffId = new Map(assignments.map(row => [scopedKey(row.ScopeId, row.StaffId), row.PayGradeId]));
+  const byAlias = new Map(), legacyScopes = new Set();
+  function assign(row, grade) {
+    if (grade?.ScopeId !== scopeFor(row)) return;
+    result.set(row, { GradeId: grade.__id, PayGrade: clean(grade.PayGrade), PayLevel: clean(grade.PayLevel) });
+  }
+  for (const row of staff) {
+    const scope = scopeFor(row);
+    if (!activeScopes.has(scope)) continue;
+    for (const alias of staffEmploymentAliases(row)) {
+      const aliasKey = scopedKey(scope, alias);
+      byAlias.set(aliasKey, byAlias.has(aliasKey) ? null : row);
+    }
+    const key = scopedKey(scope, row.__id);
+    if (byStaffId.has(key)) {
+      assign(row, gradeById.get(byStaffId.get(key)));
+      continue;
+    }
+    legacyScopes.add(scope);
+  }
+  const legacyGradeIds = grades.filter(row => legacyScopes.has(row.ScopeId)).map(row => row.__id);
+  const profiles = await lookup('payrollProfiles', 'PayGradeId', legacyGradeIds, [...legacyGradeProfileFields, 'PayGradeId']);
+  const legacy = new Map();
+  for (const profile of profiles) {
+    const grade = gradeById.get(profile.PayGradeId);
+    const scope = scopeFor(profile);
+    const row = byAlias.get(scopedKey(scope, lower(profile.Username)));
+    if (!row || byStaffId.has(scopedKey(scope, row.__id)) || grade?.ScopeId !== scope || !legacyGradeProfileVisible(profile, identity.edition)) continue;
+    legacy.set(row, legacy.has(row) && legacy.get(row) !== grade ? null : grade);
+  }
+  for (const [row, grade] of legacy) assign(row, grade);
+  return result;
+}
+
 const bytesDigest = async bytes => [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(byte => byte.toString(16).padStart(2, '0')).join('');
 const base64 = bytes => { let binary = ''; for (const byte of bytes) binary += String.fromCharCode(byte); return btoa(binary); };
 const summary = row => ({ ...Object.fromEntries(LETTER_SUMMARY_FIELDS.map(key => [key, row[key] ?? ''])), LetterVersion: clean(row.__updateTime) });
@@ -435,7 +496,7 @@ export function hrEmploymentLetterService(overrides = {}) {
     const [assignments, profiles] = await Promise.all([
       db.queryCollection(env, PAY_GRADE_ASSIGNMENTS, { filters, select: ['ScopeId', 'StaffId'], limit: 1001 }),
       db.queryCollection(env, 'payrollProfiles', { filters,
-        select: ['Username', 'BranchId', 'OrganisationEdition', 'Active', 'CalculationMode'], limit: 1001 })
+        select: legacyGradeProfileFields, limit: 1001 })
     ]);
     if (assignments.length > 1000 || profiles.length > 1000) throw fail('Too many staff are assigned to load in one selection. Choose the employees directly.', 413);
     const assignedIds = new Set(assignments.filter(row => row.ScopeId === scopeId).map(row => row.StaffId).filter(Boolean));
@@ -444,8 +505,7 @@ export function hrEmploymentLetterService(overrides = {}) {
     const assigned = (await db.getDocuments(env, 'staffUsers', [...assignedIds])).filter(active);
     const selected = new Set(assigned.map(staffUsername));
     const legacyNames = [...new Set(profiles.filter(row => recordBranchId(row) === branchId
-      && staffRecordMatchesEdition(row, { edition: identity.edition })
-      && lower(row.Active) !== 'no' && clean(row.CalculationMode).toUpperCase() !== 'CONFIGURABLE_PAYE')
+      && legacyGradeProfileVisible(row, identity.edition))
       .map(row => lower(row.Username)).filter(name => name && !selected.has(name)))];
     const legacy = (await batchStaffRows(env, user, identity, branchId, legacyNames, { skipMissing: true }))
       .filter(row => active(row) && !assignedIds.has(row.__id));
@@ -459,7 +519,7 @@ export function hrEmploymentLetterService(overrides = {}) {
 
   async function payGrades(env, user, identity, body, action) {
     const branchId = enforceActorBranch(user, body.BranchId);
-    const scopeId = await digest([identity.workspaceId, identity.edition, branchId]);
+    const scopeId = await payGradeScopeId(identity, branchId);
     if (action === 'listpaygrades') {
       const rows = await db.queryCollection(env, PAY_GRADES, { filters: [{ field: 'ScopeId', op: '==', value: scopeId }], limit: 501 });
       if (rows.length > 500) throw fail('The branch pay grade list is too large to load.', 413);

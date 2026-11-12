@@ -7,6 +7,8 @@ const { chromium } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODUL
 const browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || 'msedge', headless: true });
 const source = await readFile(new URL('../js/hr-employment-tools.js', import.meta.url), 'utf8');
 const payGradesSource = await readFile(new URL('../js/hr-pay-grades.js', import.meta.url), 'utf8');
+const adminSource = await readFile(new URL('../js/admin.js', import.meta.url), 'utf8');
+const directorySource = adminSource.slice(adminSource.indexOf('function bindHrWorkspaceSearch('), adminSource.indexOf('function hrRoleGuide('));
 const css = await readFile(new URL('../css/style.css', import.meta.url), 'utf8');
 await mkdir(new URL('../tmp/hr-employment-ui/', import.meta.url), { recursive: true });
 try {
@@ -17,6 +19,7 @@ try {
   await page.evaluate(() => document.body.classList.add('staff-page'));
   await page.addScriptTag({ content: source });
   await page.addScriptTag({ content: payGradesSource });
+  await page.addScriptTag({ content: `const clean = value => String(value ?? '').trim(); const lower = value => clean(value).toLowerCase();\n${directorySource}` });
   await page.evaluate(() => {
     window.calls = [];
     window.confirmations = [];
@@ -32,6 +35,20 @@ try {
       chidi: { employee: { Username: 'chidi', DisplayName: 'Chidi Example', BranchId: 'annex' }, profile: null, salaryEditable: true, letters: [] },
       efe: { employee: { Username: 'efe', DisplayName: 'Efe Example', BranchId: 'annex' }, profile: { BasicSalary: 0 }, salaryEditable: true, letters: [] }
     };
+    const directory = Object.values(employees).map(row => row.employee);
+    directory.find(row => row.Username === 'efe').PayGradeAssignment = { GradeId: 'previous', PayGrade: 'Clerk', PayLevel: 'Level 1' };
+    const fixture = document.createElement('section');
+    fixture.className = 'hr-workspace-stack';
+    fixture.innerHTML = `<input id="humanResourcesPeopleSearch">
+      <div data-hr-pay-filters><label>Pay grade<select data-hr-grade-filter></select></label>
+      <label>Pay level<select data-hr-level-filter></select></label><small data-hr-pay-count></small></div>
+      <table class="admin-table hr-staff-directory" aria-label="Staff directory"><tbody>
+      ${directory.map((row, index) => `<tr data-list-row data-list-index="${index}"><td>${row.DisplayName}</td>
+        <td><span data-hr-pay-grade>${row.PayGradeAssignment?.PayGrade || 'Unassigned'}</span></td>
+        <td><span data-hr-pay-level>${row.PayGradeAssignment?.PayLevel || '—'}</span></td></tr>`).join('')}
+      </tbody></table>`;
+    document.querySelector('main').append(fixture);
+    const onGradeChanged = bindHrWorkspaceSearch(fixture, directory);
     const letters = {}, templates = { Allowances: ['Housing'], Deductions: ['Loan'] };
     let templateVersion = 'initial-catalog';
     let payGrade = null, assigned = [];
@@ -113,7 +130,7 @@ try {
     };
     const assertNeverOtherEmployee = body => { if (body.Username !== 'ada' || body.PayrollVersion !== 'pay-v1') throw new Error('Wrong payroll identity/version'); };
     window.mountHr = edition => window.DynamaxHrEmployment.mount(document.getElementById('hr'), {
-      edition, directory: Object.values(employees).map(row => row.employee),
+      edition, directory, onGradeChanged,
       capabilities: { canViewSalaryStructure: true, canManageSalaryStructure: true, canIssueEmploymentLetters: true }, request,
       payGradeRoot: document.getElementById('hr-grades'), workingBranch: 'all',
       branches: [{ id: 'annex', name: 'Annex' }, { id: 'new-branch', name: 'New Branch' }],
@@ -292,6 +309,8 @@ try {
   await gradesDialog.getByRole('button', { name: 'Assign grade and level only' }).click();
   await gradesDialog.getByText('Grade and level assigned to 2 staff. Their saved salaries are unchanged.').waitFor();
   assert.equal(await page.evaluate(() => calls.filter(row => row.action === 'applyPayGrade').length), 0);
+  const staffRows = page.locator('.hr-staff-directory tr');
+  assert.deepEqual(await staffRows.filter({ hasText: 'Ada Example' }).locator('td').allTextContents(), ['Ada Example', 'Officer', 'Level 2']);
   await gradesDialog.getByRole('button', { name: 'Clear selection' }).click();
   await gradesDialog.getByRole('button', { name: 'Select staff on this grade and level' }).click();
   await gradesDialog.getByText('2 staff on this grade and level selected.').waitFor();
@@ -319,6 +338,7 @@ try {
   await gradesDialog.getByLabel('New pay level', { exact: true }).fill('Level 3');
   await gradesDialog.getByRole('button', { name: 'Save grade and level names' }).click();
   await gradesDialog.getByText('Grade and level names saved.').waitFor();
+  assert.deepEqual(await staffRows.filter({ hasText: 'Ada Example' }).locator('td').allTextContents(), ['Ada Example', 'Senior officer', 'Level 3']);
   assert.equal(await gradesDialog.getByLabel('Grade and level', { exact: true })
     .locator('option:checked').textContent(), 'Senior officer · Level 3');
   await gradeManage.click();
@@ -332,6 +352,19 @@ try {
   assert.equal(await page.evaluate(() => calls.filter(row => row.action === 'applyPayGrade').length), 1);
   await gradesDialog.getByRole('button', { name: 'Close', exact: true }).click();
   await page.getByText(/Pay grade Officer · Level 2/).waitFor();
+  assert.deepEqual(await staffRows.filter({ hasText: 'Ada Example' }).locator('td').allTextContents(), ['Ada Example', 'Unassigned', '—']);
+  const gradeFilter = page.locator('[data-hr-grade-filter]'), levelFilter = page.locator('[data-hr-level-filter]');
+  const callsBeforeFilters = await page.evaluate(() => calls.length);
+  await gradeFilter.selectOption({ label: 'Clerk' });
+  assert.equal(await page.locator('[data-hr-pay-count]').textContent(), '1 of 4 staff shown');
+  await levelFilter.selectOption({ label: 'Unassigned' });
+  assert.equal(await page.locator('[data-hr-pay-count]').textContent(), '0 of 4 staff shown');
+  await gradeFilter.selectOption({ label: 'All grades' });
+  assert.equal(await page.locator('[data-hr-pay-count]').textContent(), '3 of 4 staff shown');
+  await page.locator('#humanResourcesPeopleSearch').fill('Ada');
+  assert.equal(await page.locator('[data-hr-pay-count]').textContent(), '1 of 4 staff shown');
+  assert.equal(await staffRows.filter({ hasText: 'Chidi Example' }).isVisible(), false);
+  assert.equal(await page.evaluate(() => calls.length), callsBeforeFilters, 'grade, level and name filters do not request data');
   for (const edition of ['faith', 'organisation', 'hospital']) {
     const before = await page.evaluate(() => calls.length);
     await page.evaluate(value => mountHr(value), edition);

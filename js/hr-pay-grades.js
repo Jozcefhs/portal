@@ -16,7 +16,7 @@
         `${escape(row.Name)} ${format(row.Amount)}`).join(' · ') : '—'}</div>`).join('');
   }
 
-  function mount(root, { directory, request, branches = [], workingBranch = '', getTemplates, normalizeComponents, onApplied, isCurrent, confirm }) {
+  function mount(root, { directory, request, branches = [], workingBranch = '', getTemplates, normalizeComponents, onApplied, onGradeChanged = () => {}, isCurrent, confirm }) {
     const knownBranches = new Map(branches.filter(row => key(row.id) && key(row.id) !== 'all').map(row => [key(row.id), row.name || row.id]));
     const fixedBranch = key(workingBranch) === 'all' ? '' : key(workingBranch);
     if (fixedBranch && !knownBranches.has(fixedBranch)) knownBranches.set(fixedBranch, fixedBranch);
@@ -322,6 +322,7 @@
           PayGrade: namesForm.elements.PayGrade.value, PayLevel: namesForm.elements.PayLevel.value });
         if (!isCurrent()) return;
         cache.set(branch, grades().map(row => row.GradeId === gradeId ? result.grade : row));
+        onGradeChanged({ branch, grade: result.grade });
         renderGrades();
         showStatus('Grade and level names saved.');
       });
@@ -335,6 +336,7 @@
       if (!approved || !isCurrent()) return;
       await request('deletePayGrade', { BranchId: branch, GradeId: gradeId, GradeRevision: current.Revision });
       if (!isCurrent()) return;
+      onGradeChanged({ branch, gradeId });
       cache.set(branch, grades().filter(row => row.GradeId !== gradeId));
       gradeId = '';
       selected.clear();
@@ -370,8 +372,11 @@
     }));
     find('[data-grade-assign]').addEventListener('click', () => work(async () => {
       clearPreview();
-      const result = await request('assignPayGradeMembers', { ...batchBody(), GradeRevision: grade().Revision });
+      const payload = batchBody();
+      const current = grade();
+      const result = await request('assignPayGradeMembers', { ...payload, GradeRevision: current.Revision });
       if (!isCurrent()) return;
+      onGradeChanged({ branch, grade: current, usernames: payload.Usernames });
       showStatus(result.assignedCount
         ? `Grade and level assigned to ${result.assignedCount} staff. Their saved salaries are unchanged.`
         : 'All selected staff already have this grade and level.');
@@ -392,11 +397,14 @@
     }));
     find('[data-grade-apply]').addEventListener('click', () => work(async () => {
       const payload = batchBody();
-      const { previewVersion, changedCount } = preview;
+      const { previewVersion, changedCount, grade: reviewedGrade } = preview;
       clearPreview();
       const result = changedCount ? await request('applyPayGrade', { ...payload, PreviewVersion: previewVersion }) : { updatedCount: 0 };
       if (!isCurrent()) return;
-      if (result.updatedCount) onApplied(payload.Usernames);
+      if (result.updatedCount) {
+        onGradeChanged({ branch, grade: reviewedGrade, usernames: payload.Usernames });
+        onApplied(payload.Usernames);
+      }
       const more = selected.size > payload.Usernames.length;
       if (more) {
         payload.Usernames.forEach(username => selected.delete(username));
