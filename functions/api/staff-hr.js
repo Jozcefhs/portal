@@ -695,7 +695,10 @@ export async function onRequestPost(context) {
     const action = lower(body.action || 'list');
     const capabilities = hrCapabilitiesFor(user);
     let result;
-    if (['getsalarystructure', 'savesalarystructure', 'previewemploymentletter', 'saveemploymentletter', 'loademploymentletter', 'sendemploymentletter'].includes(action)) result = await handleHrEmploymentLetter(context.env, user, body);
+    if (['getsalarystructure', 'savesalarystructure', 'listsalarytemplates', 'addsalarytemplate',
+      'previewemploymentletter', 'saveemploymentletter', 'loademploymentletter', 'sendemploymentletter'].includes(action)) {
+      result = await handleHrEmploymentLetter(context.env, user, body);
+    }
     else if (action === 'list') result = await listWorkspace(context.env, user, body);
     else if (action === 'saveemployee') result = await saveEmployee(context.env, user, body, capabilities);
     else if (action === 'saveleave') result = await saveLeave(context.env, user, body, capabilities);

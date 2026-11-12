@@ -22,6 +22,7 @@ const fail = (message, status = 400) => Object.assign(new Error(message), { stat
 const now = () => new Date().toISOString();
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const LETTERS = 'hrEmploymentLetters';
+const SALARY_TEMPLATES = 'hrSalaryTemplates';
 const LETTER_SUMMARY_FIELDS = ['LetterId', 'EmployeeKey', 'Username', 'EmployeeName', 'RecipientEmail', 'BranchId', 'WorkspaceId', 'OrganisationEdition',
   'LetterDate', 'Status', 'FileName', 'CreatedAt', 'SentAt', 'SignatureApplied'];
 const digest = async value => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(value))))]
@@ -207,12 +208,43 @@ export function hrEmploymentLetterService(overrides = {}) {
     const id = `EMP-${(await digest(snapshot)).slice(0, 32)}`;
     return { row: { ...snapshot, LetterId: id, Status: 'Draft', FileName: `Employment_${id}.pdf` }, profile: documentProfile, signatureDataUrl };
   }
+  async function salaryTemplates(env, user, identity, body, action) {
+    const branchId = enforceActorBranch(user, body.BranchId);
+    const id = await digest([identity.workspaceId, identity.edition, branchId]);
+    const adding = action === 'addsalarytemplate';
+    const kind = clean(body.Kind);
+    const name = clean(body.Name).replace(/\s+/g, ' ');
+    if (adding) {
+      if (!['Allowances', 'Deductions'].includes(kind)) throw fail('Choose allowance or deduction.');
+      if (!name || name.length > 120 || /[\u0000-\u001f\u007f]/.test(name)) throw fail('Enter a name of up to 120 characters.');
+    }
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const row = await db.getDocument(env, SALARY_TEMPLATES, id);
+      const templates = { Allowances: row?.Allowances || [], Deductions: row?.Deductions || [] };
+      if (!adding) return { ok: true, templates };
+      if (templates[kind].some(existing => lower(existing) === lower(name))) {
+        return { ok: true, templates, message: 'That name is already available in the reusable list.' };
+      }
+      if (templates[kind].length >= 200) throw fail('This branch already has 200 reusable items of this type.', 409);
+      templates[kind] = [...templates[kind], name].sort((a, b) => a.localeCompare(b));
+      try {
+        await db.batchCommitLiteralDocuments(env, [{ collectionPath: SALARY_TEMPLATES, documentId: id,
+          data: { ...templates, BranchId: branchId, WorkspaceId: identity.workspaceId, OrganisationEdition: identity.edition,
+            UpdatedAt: db.now(), UpdatedBy: lower(user.username) }, ...condition(row) }]);
+        return { ok: true, templates, message: `${name} added to the reusable list.` };
+      } catch (error) {
+        if (error.status !== 409) throw error;
+      }
+    }
+    throw fail('The reusable list changed while saving. Try adding the item again.', 409);
+  }
   return async function handle(env, user, body) {
     const identity = db.requiredDeploymentIdentity(env), capabilities = hrCapabilitiesFor(user), action = lower(body.action);
     if (!(user.allowedSections || []).includes('humanResources') || !clean(user.username) || lower(user.edition || identity.edition) !== identity.edition) throw fail('Human Resources access is required.', 403);
     if (!capabilities.canViewSalaryStructure) throw fail('Your role cannot view employee salary structures or employment letters.', 403);
-    if (['savesalarystructure', 'saveemploymentletter', 'sendemploymentletter'].includes(action) && (user.subscriptionReadOnly === true || user.subscriptionActive === false)) throw fail('Human Resources changes are read-only until the subscription is renewed.', 403);
-    if (action === 'savesalarystructure' && !capabilities.canManageSalaryStructure) throw fail('Your role cannot change salary structures.', 403);
+    if (['savesalarystructure', 'addsalarytemplate', 'saveemploymentletter', 'sendemploymentletter'].includes(action) && (user.subscriptionReadOnly === true || user.subscriptionActive === false)) throw fail('Human Resources changes are read-only until the subscription is renewed.', 403);
+    if (['savesalarystructure', 'listsalarytemplates', 'addsalarytemplate'].includes(action) && !capabilities.canManageSalaryStructure) throw fail('Your role cannot change salary structures.', 403);
+    if (['listsalarytemplates', 'addsalarytemplate'].includes(action)) return salaryTemplates(env, user, identity, body, action);
     if (action.includes('employmentletter') && !capabilities.canIssueEmploymentLetters) throw fail('Your role cannot prepare or send employment letters.', 403);
     const target = await targetFor(env, user, body, identity);
     if (['savesalarystructure', 'saveemploymentletter', 'sendemploymentletter'].includes(action)

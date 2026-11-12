@@ -86,6 +86,37 @@ function fixture({ edition = 'school', role = 'HR Manager', branch = 'north', pr
     async send(letter) { return call('sendEmploymentLetter', { LetterId: letter.LetterId, LetterVersion: letter.LetterVersion, ConfirmedRecipientEmail: letter.RecipientEmail, ConfirmSend: true }); } };
 }
 
+test('reusable salary names are branch scoped and retries do not change payroll or duplicate names', async () => {
+  const f = fixture();
+  const payroll = clone(f.records.get('payrollProfiles/existing-profile-id'));
+  assert.deepEqual((await f.call('listSalaryTemplates')).templates, { Allowances: [], Deductions: [] });
+  assert.deepEqual((await f.call('addSalaryTemplate', { Kind: 'Allowances', Name: '  Housing   allowance  ', Amount: 999 })).templates,
+    { Allowances: ['Housing allowance'], Deductions: [] });
+  await f.call('addSalaryTemplate', { Kind: 'Allowances', Name: 'HOUSING allowance' });
+  assert.equal(f.writes.length, 1);
+  await f.call('addSalaryTemplate', { Kind: 'Deductions', Name: 'Staff association' });
+  assert.deepEqual((await f.call('listSalaryTemplates')).templates,
+    { Allowances: ['Housing allowance'], Deductions: ['Staff association'] });
+  await assert.rejects(f.call('addSalaryTemplate', { Kind: 'Allowances', Name: 'Other', BranchId: 'another-branch' }), { status: 403 });
+  const other = { ...f.user, branchId: 'another-branch' };
+  assert.deepEqual((await f.call('listSalaryTemplates', {}, other)).templates, { Allowances: [], Deductions: [] });
+  await assert.rejects(f.call('addSalaryTemplate', { Kind: 'Deductions', Name: 'Other' }, { ...f.user, subscriptionReadOnly: true }), { status: 403 });
+  await assert.rejects(f.call('addSalaryTemplate', { Kind: 'Allowances', Name: 'Other' }, { ...f.user, role: 'Payroll Officer' }), { status: 403 });
+  assert.deepEqual(f.records.get('payrollProfiles/existing-profile-id'), payroll);
+  assert.deepEqual(f.queries, []);
+  assert.ok(f.reads.every(read => read.startsWith('hrSalaryTemplates/')));
+});
+
+test('concurrent reusable additions cannot replace each other', async () => {
+  const f = fixture();
+  await f.call('listSalaryTemplates');
+  const id = f.reads[0].split('/')[1];
+  f.state.beforeCommit = () => f.row('hrSalaryTemplates', id, { Allowances: ['Housing'], Deductions: [] });
+  await f.call('addSalaryTemplate', { Kind: 'Allowances', Name: 'Transport' });
+  assert.deepEqual((await f.call('listSalaryTemplates')).templates.Allowances, ['Housing', 'Transport']);
+  assert.equal(f.writes.length, 1);
+});
+
 test('salary and letter access is limited to permitted HR roles', async () => {
   for (const role of ['Teacher', 'HR Assistant', 'Line Manager', 'Recruitment Officer']) {
     const f = fixture({ role });

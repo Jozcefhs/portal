@@ -1,6 +1,7 @@
 (function (global) {
   'use strict';
   const clean = value => String(value ?? '').trim();
+  const componentKey = value => clean(value).replace(/\s+/g, ' ').toLowerCase();
   const escape = value => clean(value).replace(/[&<>"']/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[char]));
   const letterFields = ['LetterDate', 'StartDate', 'Position', 'Department', 'EmploymentType', 'WorkLocation', 'ReportingTo',
     'Probation', 'NoticePeriod', 'WorkingHours', 'Benefits', 'Terms', 'AcceptanceDeadline'];
@@ -24,7 +25,8 @@
     if (!root || typeof request !== 'function') return;
     const viewSalary = Boolean(capabilities.canViewSalaryStructure || capabilities.canManageSalaryStructure || capabilities.canIssueEmploymentLetters);
     if (!viewSalary) { root.replaceChildren(); return; }
-    const issueLetters = Boolean(capabilities.canIssueEmploymentLetters), cache = new Map();
+    const issueLetters = Boolean(capabilities.canIssueEmploymentLetters), cache = new Map(), templateCache = new Map();
+    const componentKinds = ['Allowances', 'Deductions'];
     root.classList.add('hr-employment-tools');
     const picker = personPicker ? personPicker('hrEmploymentToolsUsername', 'Staff member', directory)
       : `<label>Staff member<select name="Username" aria-label="Staff member"><option value="">Choose staff member</option>${directory.map(row => `<option value="${escape(row.Username)}">${escape(row.DisplayName || row.Username)}</option>`).join('')}</select></label>`;
@@ -35,7 +37,22 @@
       </form><p data-hr-employment-status class="status" role="status">Choose an employee to load salary details and saved letters.</p></section>
       <div data-hr-employee-content hidden>
         <section class="config-group hr-form-card"><header><strong>Salary structure</strong><small data-hr-salary-description></small></header>
-          <p data-hr-salary-summary></p><div data-hr-salary-breakdown></div><form data-hr-salary-form class="workflow-form config-form"><fieldset data-hr-salary-fields disabled><legend>Monthly salary · NGN</legend><div class="config-grid">
+          <p data-hr-salary-summary></p><div data-hr-salary-breakdown></div>
+          <details data-hr-template-tools hidden><summary>Manage reusable allowances and deductions</summary>
+            <form data-hr-template-form class="workflow-form config-form">
+              <fieldset><legend>Reusable names for this branch</legend><div class="config-grid">
+                <label>Type<select name="Kind"><option value="Allowances">Allowance</option><option value="Deductions">Deduction</option></select></label>
+                <label>Reusable name<input name="Name" maxlength="120" required></label>
+              </div><div class="config-dialog-actions"><button type="submit">Add reusable item</button><button type="button" data-hr-refresh-templates>Refresh reusable items</button></div></fieldset>
+            </form>
+          </details><p data-hr-template-status class="status" role="status" hidden></p>
+          <style>
+            .hr-employment-tools .hr-template-row{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:8px;align-items:center;margin:8px 0}
+            .hr-employment-tools .hr-template-choice{display:flex;align-items:center;gap:8px;overflow-wrap:anywhere}
+            .hr-employment-tools .hr-template-choice input{width:auto;flex:none}
+            .hr-employment-tools [data-hr-template-tools]{margin-bottom:12px}
+          </style>
+          <form data-hr-salary-form class="workflow-form config-form"><fieldset data-hr-salary-fields disabled><legend>Monthly salary · NGN</legend><div class="config-grid">
             <label>Basic salary (NGN)<input name="BasicSalary" type="number" min="0" step="0.01" required></label>
             <div class="config-grid-span"><strong>Allowances</strong><div data-hr-components="Allowances"></div><button type="button" data-hr-add-component="Allowances">Add allowance</button></div>
             <div class="config-grid-span"><strong>Other deductions</strong><div data-hr-components="Deductions"></div><button type="button" data-hr-add-component="Deductions">Add deduction</button><p><small>Existing pension, tax and payroll settings stay in Payroll.</small></p></div>
@@ -57,6 +74,7 @@
       </div>`;
     const find = selector => root.querySelector(selector), loader = find('[data-hr-employee-loader]'), selector = loader.elements.Username;
     const content = find('[data-hr-employee-content]'), salaryForm = find('[data-hr-salary-form]'), letterForm = find('[data-hr-letter-form]');
+    const templateForm = find('[data-hr-template-form]'), templateStatus = find('[data-hr-template-status]');
     let active = '', loaded = null, savedLetter = null, preview = null, busy = false, generation = 0;
     const username = () => clean(selector.value).toLowerCase();
     const current = (name = active, sequence = generation) => isCurrent() && name === username() && sequence === generation;
@@ -65,6 +83,12 @@
       if (node) { node.textContent = message; node.className = `status ${bad ? 'bad' : 'ok'}`; }
     };
     const canEditSalary = () => Boolean(loaded && capabilities.canManageSalaryStructure && loaded.salaryEditable !== false);
+    const branchFor = data => clean(data?.employee?.BranchId).toLowerCase();
+    const showTemplateStatus = (message = '', bad = false) => {
+      templateStatus.textContent = message;
+      templateStatus.hidden = !message;
+      templateStatus.className = `status ${bad ? 'bad' : 'ok'}`;
+    };
     const updateButtons = () => {
       root.querySelectorAll('button').forEach(button => { button.disabled = busy; });
       selector.disabled = busy;
@@ -72,6 +96,8 @@
       find('[data-hr-salary-fields]').disabled = busy || !canEditSalary();
       find('[data-hr-save-salary]').hidden = !capabilities.canManageSalaryStructure;
       find('[data-hr-save-salary]').disabled = busy || !canEditSalary();
+      find('[data-hr-template-tools]').hidden = !canEditSalary();
+      templateForm.querySelector('fieldset').disabled = busy || !canEditSalary();
       if (issueLetters) {
         letterForm.querySelectorAll('input,textarea,select').forEach(input => { input.disabled = busy; });
         find('[data-hr-saved-letters]').disabled = busy;
@@ -86,10 +112,39 @@
       row.querySelector('button').addEventListener('click', () => row.remove());
       find(`[data-hr-components="${kind}"]`).append(row);
     };
-    for (const kind of ['Allowances', 'Deductions']) find(`[data-hr-add-component="${kind}"]`).addEventListener('click', () => addComponent(kind));
-    const readComponents = kind => normalizeComponents([...find(`[data-hr-components="${kind}"]`).children].map(row => ({
-      Name: row.querySelector('[data-hr-component-name]').value, Amount: row.querySelector('[data-hr-component-amount]').value
-    })));
+    for (const kind of componentKinds) find(`[data-hr-add-component="${kind}"]`).addEventListener('click', () => addComponent(kind));
+    const componentRows = kind => [...find(`[data-hr-components="${kind}"]`).children].flatMap(row => {
+      const choice = row.querySelector('[data-hr-template-choice]');
+      if (choice && !choice.checked) return [];
+      return [{ Name: choice ? row.dataset.componentName : row.querySelector('[data-hr-component-name]').value,
+        Amount: row.querySelector('[data-hr-component-amount]').value }];
+    });
+    const addTemplateRow = (kind, name, component) => {
+      const row = document.createElement('div');
+      row.className = 'hr-template-row';
+      row.dataset.componentName = component?.Name || name;
+      row.innerHTML = `<label class="hr-template-choice"><input type="checkbox" data-hr-template-choice>${escape(name)}</label>
+        <label>Amount (NGN)<input data-hr-component-amount aria-label="${escape(name)} amount (NGN)" type="number" min="0.01" step="0.01" required></label>`;
+      const choice = row.querySelector('[data-hr-template-choice]'), amount = row.querySelector('[data-hr-component-amount]');
+      choice.checked = Boolean(component);
+      amount.value = component?.Amount ?? '';
+      amount.disabled = !choice.checked;
+      choice.addEventListener('change', () => { amount.disabled = !choice.checked; });
+      find(`[data-hr-components="${kind}"]`).append(row);
+    };
+    const renderComponents = (kind, components) => {
+      const templates = canEditSalary() ? templateCache.get(branchFor(loaded))?.[kind] || [] : [];
+      const names = new Map(templates.map(name => [componentKey(name), name]));
+      find(`[data-hr-components="${kind}"]`).replaceChildren();
+      for (const component of components) {
+        const key = componentKey(component.Name || component.Code);
+        const name = names.get(key);
+        if (!name) { addComponent(kind, component); continue; }
+        addTemplateRow(kind, name, component);
+        names.delete(key);
+      }
+      for (const name of names.values()) addTemplateRow(kind, name);
+    };
     const letterPayload = () => ({ Username: active, ...Object.fromEntries(letterFields.map(field => [field, clean(letterForm.elements[field].value)])) });
     const populateLetters = () => {
       if (!issueLetters) return;
@@ -111,10 +166,8 @@
       loaded = data; content.hidden = false;
       const employee = data.employee || {}, profile = data.profile || {};
       salaryForm.elements.BasicSalary.value = profile.BasicSalary ?? '0';
-      for (const kind of ['Allowances', 'Deductions']) {
-        find(`[data-hr-components="${kind}"]`).replaceChildren();
-        (profile[kind] || []).forEach(component => addComponent(kind, component));
-      }
+      for (const kind of componentKinds) renderComponents(kind, profile[kind] || []);
+      showTemplateStatus();
       find('[data-hr-salary-description]').textContent = data.salaryEditable === false
         ? 'This employee uses configurable payroll components. Review the saved summary here and edit components in Accounts → Payroll.'
         : 'This is the existing payroll salary profile. Saving changes future payroll calculations; posted payroll and payments are unchanged.';
@@ -132,6 +185,26 @@
       try { return await work(); } catch (error) { if (isCurrent()) status(error.message || String(error), true, letter); }
       finally { busy = false; if (isCurrent()) updateButtons(); }
     };
+    const updateTemplates = (action, fields = {}) => perform(async () => {
+      if (!canEditSalary()) return;
+      const name = active, sequence = generation, branch = branchFor(loaded);
+      try {
+        const result = await request(action, { ...fields, BranchId: branch });
+        if (!current(name, sequence)) return;
+        templateCache.set(branch, result.templates);
+        for (const kind of componentKinds) renderComponents(kind, componentRows(kind));
+        templateForm.elements.Name.value = '';
+        showTemplateStatus(result.message || 'Reusable items refreshed.');
+      } catch (error) {
+        if (current(name, sequence)) showTemplateStatus(error.message || String(error), true);
+      }
+    });
+    templateForm.addEventListener('submit', event => {
+      event.preventDefault();
+      if (!templateForm.reportValidity()) return;
+      updateTemplates('addSalaryTemplate', { Kind: templateForm.elements.Kind.value, Name: templateForm.elements.Name.value });
+    });
+    find('[data-hr-refresh-templates]').addEventListener('click', () => updateTemplates('listSalaryTemplates'));
     const loadEmployee = force => perform(async () => {
       const name = username();
       if (!name) throw new Error('Choose a staff member first.');
@@ -139,7 +212,19 @@
       status('Loading selected employee...');
       const data = !force && cache.has(name) ? cache.get(name) : await request('getSalaryStructure', { Username: name });
       if (!current(name, sequence)) return;
+      const branch = branchFor(data);
+      let templateError = '';
+      if (capabilities.canManageSalaryStructure && data.salaryEditable !== false && !templateCache.has(branch)) {
+        try {
+          const result = await request('listSalaryTemplates', { BranchId: branch });
+          templateCache.set(branch, result.templates);
+        } catch (error) {
+          templateError = 'Reusable items could not be loaded. Use Refresh reusable items to try again.';
+        }
+      }
+      if (!current(name, sequence)) return;
       cache.set(name, data); showEmployee(data); status('Employee setup loaded. Use Refresh for changes made elsewhere.');
+      if (templateError) showTemplateStatus(templateError, true);
     });
     loader.addEventListener('submit', event => { event.preventDefault(); loadEmployee(false); });
     find('[data-hr-refresh-employee]').addEventListener('click', () => loadEmployee(true));
@@ -156,7 +241,7 @@
         const BasicSalary = Number(salaryForm.elements.BasicSalary.value);
         if (!Number.isFinite(BasicSalary) || BasicSalary < 0) throw new Error('Enter a valid basic salary.');
         const saved = await request('saveSalaryStructure', { Username: name, PayrollVersion: loaded.PayrollVersion || '', BasicSalary,
-          Allowances: readComponents('Allowances'), Deductions: readComponents('Deductions'), Currency: 'NGN', PayFrequency: 'Monthly' });
+          Allowances: normalizeComponents(componentRows('Allowances')), Deductions: normalizeComponents(componentRows('Deductions')), Currency: 'NGN', PayFrequency: 'Monthly' });
         const result = { ...loaded, ...saved, letters: saved.letters || loaded.letters || [] };
         cache.set(name, result);
         if (!current(name, sequence)) return;

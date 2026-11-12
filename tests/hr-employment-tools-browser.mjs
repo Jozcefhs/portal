@@ -26,12 +26,18 @@ try {
         profile: { BasicSalary: 150000, Allowances: [{ Name: 'Housing', Amount: 20000 }], Deductions: [{ Name: 'Loan', Amount: 1000 }], Currency: 'NGN' }, PayrollVersion: 'pay-v1', salaryEditable: true,
         salary: { GrossPay: 170000, Earnings: [{ Name: 'Basic salary', Amount: 150000 }, { Name: 'Housing', Amount: 20000 }], Deductions: [{ Name: 'Loan', Amount: 1000 }], Currency: 'NGN' }, letters: [] },
       bola: { employee: { Username: 'bola', EmployeeId: 'EMP-BOLA', DisplayName: 'Bola Example', Position: 'Officer', Department: 'Operations', WorkEmail: 'bola@example.invalid' },
-        profile: { BasicSalary: 200000, CalculationMode: 'Configurable', Allowances: [], Deductions: [] }, PayrollVersion: 'pay-b1', salaryEditable: false, salary: { GrossPay: 250000, Earnings: [{ Name: 'Configured earnings', Amount: 250000 }], Deductions: [], Currency: 'NGN' }, letters: [], lettersTruncated: true }
+        profile: { BasicSalary: 200000, CalculationMode: 'Configurable', Allowances: [], Deductions: [] }, PayrollVersion: 'pay-b1', salaryEditable: false, salary: { GrossPay: 250000, Earnings: [{ Name: 'Configured earnings', Amount: 250000 }], Deductions: [], Currency: 'NGN' }, letters: [], lettersTruncated: true },
+      chidi: { employee: { Username: 'chidi', DisplayName: 'Chidi Example', BranchId: 'annex' }, profile: null, salaryEditable: true, letters: [] }
     };
-    const letters = {};
+    const letters = {}, templates = { Allowances: ['Housing'], Deductions: ['Loan'] };
     const request = async (action, body) => {
       window.calls.push({ action, body: structuredClone(body) });
       if (action === 'getSalaryStructure') return structuredClone(employees[body.Username]);
+      if (action === 'listSalaryTemplates') return { templates: structuredClone(templates) };
+      if (action === 'addSalaryTemplate') {
+        templates[body.Kind].push(body.Name);
+        return { templates: structuredClone(templates), message: `${body.Name} added to the reusable list.` };
+      }
       if (action === 'saveSalaryStructure') {
         assertNeverOtherEmployee(body);
         Object.assign(employees.ada.profile, body); employees.ada.PayrollVersion = 'pay-v2';
@@ -67,10 +73,20 @@ try {
   assert.equal(await page.evaluate(() => calls.length), 0, 'selection without load stays read-free');
   await page.getByRole('button', { name: 'Load employee setup', exact: true }).click();
   await page.getByText('Employee setup loaded. Use Refresh for changes made elsewhere.').waitFor();
+  assert.equal(await page.getByRole('checkbox', { name: 'Housing', exact: true }).isChecked(), true);
+  assert.equal(await page.getByLabel('Housing amount (NGN)').inputValue(), '20000');
+  assert.equal(await page.getByRole('checkbox', { name: 'Loan', exact: true }).isChecked(), true);
   await page.getByLabel('Basic salary (NGN)', { exact: true }).fill('160000');
-  await page.getByRole('button', { name: 'Add allowance', exact: true }).click();
-  await page.getByLabel('Allowance name', { exact: true }).last().fill('Transport');
-  await page.locator('[data-hr-components="Allowances"] [data-hr-component-amount]').last().fill('10000');
+  await page.getByText('Manage reusable allowances and deductions', { exact: true }).click();
+  await page.getByLabel('Reusable name', { exact: true }).fill('Transport');
+  await page.getByRole('button', { name: 'Add reusable item', exact: true }).click();
+  await page.getByText('Transport added to the reusable list.').waitFor();
+  assert.equal(await page.getByLabel('Basic salary (NGN)', { exact: true }).inputValue(), '160000');
+  assert.equal(await page.getByLabel('Transport amount (NGN)').isDisabled(), true);
+  await page.getByRole('checkbox', { name: 'Transport', exact: true }).check();
+  await page.getByLabel('Transport amount (NGN)').fill('10000');
+  await page.getByRole('checkbox', { name: 'Loan', exact: true }).uncheck();
+  assert.equal(await page.getByLabel('Loan amount (NGN)').isDisabled(), true);
   await page.getByRole('button', { name: 'Add deduction', exact: true }).click();
   await page.getByLabel('Deduction name', { exact: true }).last().fill('Temporary row');
   await page.getByRole('button', { name: 'Remove deduction', exact: true }).last().click();
@@ -78,14 +94,22 @@ try {
   await page.getByText('Salary saved on existing payroll profile.').waitFor();
   assert.equal(await page.evaluate(() => calls.filter(row => row.action === 'saveSalaryStructure').length), 1);
   assert.deepEqual(await page.evaluate(() => calls.find(row => row.action === 'saveSalaryStructure').body.Allowances), [{Name:'Housing',Amount:20000},{Name:'Transport',Amount:10000}]);
+  assert.deepEqual(await page.evaluate(() => calls.find(row => row.action === 'saveSalaryStructure').body.Deductions), []);
   await page.getByLabel('Staff member', { exact: true }).selectOption('bola');
   await page.getByRole('button', { name: 'Load employee setup', exact: true }).click();
   await page.getByText('Configured earnings', { exact: true }).waitFor();
   assert.equal(await page.locator('[data-hr-letter-history-limit]').isVisible(), true);
   assert.equal(await page.getByLabel('Basic salary (NGN)', { exact: true }).isDisabled(), true);
+  await page.getByLabel('Staff member', { exact: true }).selectOption('chidi');
+  await page.getByRole('button', { name: 'Load employee setup', exact: true }).click();
+  await page.getByText('Chidi Example · No saved salary structure yet.').waitFor();
+  assert.equal(await page.getByRole('checkbox', { name: 'Transport', exact: true }).isChecked(), false);
+  assert.equal(await page.getByLabel('Transport amount (NGN)').inputValue(), '');
   await page.getByLabel('Staff member', { exact: true }).selectOption('ada');
   assert.equal(await page.locator('[data-hr-letter-history-limit]').isVisible(), false);
-  assert.equal(await page.evaluate(() => calls.filter(row => row.action === 'getSalaryStructure').length), 2, 'return to loaded employee uses cache');
+  assert.equal(await page.evaluate(() => calls.filter(row => row.action === 'getSalaryStructure').length), 3, 'return to loaded employee uses cache');
+  assert.equal(await page.evaluate(() => calls.filter(row => row.action === 'listSalaryTemplates').length), 1, 'reuse the branch list when switching employees');
+  assert.equal(await page.getByRole('checkbox', { name: 'Transport', exact: true }).isChecked(), true);
   assert.equal(await page.getByLabel('Basic salary (NGN)', { exact: true }).inputValue(), '160000');
   await page.getByLabel('Letter date', { exact: true }).fill('2026-11-10');
   await page.getByLabel('Work location', { exact: true }).fill('Annex office');
