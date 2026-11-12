@@ -89,10 +89,27 @@ try {
   assert.equal(await page.getByLabel('Housing amount (NGN)').inputValue(), '20000');
   assert.equal(await page.getByRole('checkbox', { name: 'Loan', exact: true }).isChecked(), true);
   await page.getByLabel('Basic salary (NGN)', { exact: true }).fill('160000');
-  await page.getByText('Manage reusable allowances and deductions', { exact: true }).click();
+  const manageItems = page.getByRole('button', { name: 'Manage reusable items', exact: true });
+  const itemDialog = page.getByRole('dialog', { name: 'Reusable salary items', exact: true });
+  await manageItems.click();
+  await itemDialog.waitFor();
+  const layout = await itemDialog.boundingBox();
+  assert.ok(layout.width <= 460 && layout.height < 370, 'the catalog opens as a compact dialog');
+  assert.equal(await itemDialog.getByRole('button', { name: 'Save reusable name', exact: true }).isVisible(), false);
+  for (const viewport of [{ width: 320, height: 568 }, { width: 568, height: 300 }]) {
+    await page.setViewportSize(viewport);
+    const box = await itemDialog.boundingBox();
+    assert.ok(box.width <= viewport.width - 24 && box.height <= viewport.height - 32, 'the dialog fits narrow and short screens');
+    assert.equal(await itemDialog.evaluate(dialog => dialog.scrollWidth <= dialog.clientWidth), true, 'the dialog needs no horizontal scrolling');
+    if (viewport.width === 320) await itemDialog.screenshot({ path: fileURLToPath(new URL('../tmp/hr-employment-ui/reusable-items-320.png', import.meta.url)) });
+  }
+  await page.setViewportSize({ width: 1366, height: 1000 });
   await page.getByLabel('Reusable name', { exact: true }).fill('Transport');
   await page.getByRole('button', { name: 'Add reusable item', exact: true }).click();
   await page.getByText('Transport added to the reusable list.').waitFor();
+  await page.keyboard.press('Escape');
+  assert.equal(await itemDialog.isVisible(), false);
+  assert.equal(await manageItems.evaluate(button => button === document.activeElement), true);
   assert.equal(await page.getByLabel('Basic salary (NGN)', { exact: true }).inputValue(), '160000');
   assert.equal(await page.getByLabel('Transport amount (NGN)').isDisabled(), true);
   await page.getByRole('checkbox', { name: 'Transport', exact: true }).check();
@@ -107,8 +124,10 @@ try {
   assert.equal(await page.evaluate(() => calls.filter(row => row.action === 'saveSalaryStructure').length), 1);
   assert.deepEqual(await page.evaluate(() => calls.find(row => row.action === 'saveSalaryStructure').body.Allowances), [{Name:'Housing',Amount:20000},{Name:'Transport',Amount:10000}]);
   assert.deepEqual(await page.evaluate(() => calls.find(row => row.action === 'saveSalaryStructure').body.Deductions), []);
+  await manageItems.click();
   const reusableItem = page.getByLabel('Reusable item', { exact: true });
   await reusableItem.selectOption({ label: 'Transport' });
+  assert.equal(await itemDialog.getByRole('button', { name: 'Add reusable item', exact: true }).isVisible(), false);
   assert.equal(await page.getByLabel('Updated name', { exact: true }).inputValue(), 'Transport');
   await page.getByLabel('Updated name', { exact: true }).fill('Transport support');
   await page.getByRole('button', { name: 'Save reusable name', exact: true }).click();
@@ -120,6 +139,8 @@ try {
   await page.getByRole('button', { name: 'Delete reusable item', exact: true }).click();
   await page.getByText('Housing removed from the reusable list.', { exact: true }).waitFor();
   await page.evaluate(() => { acceptSend = false; });
+  await itemDialog.getByRole('button', { name: 'Close', exact: true }).click();
+  assert.equal(await itemDialog.isVisible(), false);
   assert.deepEqual(await page.getByLabel('Allowance name', { exact: true }).evaluateAll(rows => rows.map(row => row.value)), ['Housing', 'Transport']);
   assert.deepEqual(await page.locator('.hr-component-row [data-hr-component-amount]').evaluateAll(rows => rows.map(row => row.value)), ['20000', '10000']);
   assert.equal(await page.evaluate(() => calls.filter(row => row.action === 'saveSalaryStructure').length), 1, 'catalog edits do not save the salary form');

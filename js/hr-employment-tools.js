@@ -38,29 +38,51 @@
       <div data-hr-employee-content hidden>
         <section class="config-group hr-form-card"><header><strong>Salary structure</strong><small data-hr-salary-description></small></header>
           <p data-hr-salary-summary></p><div data-hr-salary-breakdown></div>
-          <details data-hr-template-tools hidden><summary>Manage reusable allowances and deductions</summary>
-            <p><small>Editing this list affects future selections. Staff keep their saved names and amounts.</small></p>
-            <form data-hr-template-form class="workflow-form config-form">
-              <fieldset><legend>Reusable names for this branch</legend><div class="config-grid">
-                <label>Type<select name="Kind"><option value="Allowances">Allowance</option><option value="Deductions">Deduction</option></select></label>
+          <button type="button" data-hr-open-templates aria-haspopup="dialog" hidden>Manage reusable items</button>
+          <dialog class="hr-template-dialog" data-hr-template-tools aria-labelledby="hr-template-heading">
+            <header><h2 id="hr-template-heading">Reusable salary items</h2><button type="button" data-hr-close-templates>Close</button></header>
+            <label>Reusable item<select name="ExistingItem" aria-label="Reusable item"></select></label>
+            <form data-hr-template-form>
+              <fieldset><div class="hr-template-add-fields">
+                <label>Type<select name="Kind" aria-label="Type"><option value="Allowances">Allowance</option><option value="Deductions">Deduction</option></select></label>
                 <label>Reusable name<input name="Name" maxlength="120" required></label>
-              </div><div class="config-dialog-actions"><button type="submit">Add reusable item</button><button type="button" data-hr-refresh-templates>Refresh reusable items</button></div></fieldset>
+              </div><div class="hr-template-actions"><button type="submit">Add reusable item</button></div></fieldset>
             </form>
-            <form data-hr-template-editor class="workflow-form config-form">
-              <fieldset><legend>Edit or delete a reusable item</legend><div class="config-grid">
-                <label>Reusable item<select name="ExistingItem" aria-label="Reusable item"></select></label>
-                <label>Updated name<input name="UpdatedName" maxlength="120" required></label>
-              </div><div class="config-dialog-actions">
+            <form data-hr-template-editor hidden>
+              <fieldset><label>Updated name<input name="UpdatedName" maxlength="120" required></label>
+              <div class="hr-template-actions">
                 <button type="submit" data-hr-rename-template>Save reusable name</button>
                 <button type="button" data-hr-delete-template>Delete reusable item</button>
               </div></fieldset>
             </form>
-          </details><p data-hr-template-status class="status" role="status" hidden></p>
+            <footer><button type="button" data-hr-refresh-templates>Refresh reusable items</button>
+              <p data-hr-template-status class="status" role="status" hidden></p></footer>
+          </dialog>
           <style>
-            .hr-employment-tools .hr-template-row{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:8px;align-items:center;margin:8px 0}
+            .hr-employment-tools .hr-template-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(100px,32%);gap:8px;align-items:center;margin:4px 0}
             .hr-employment-tools .hr-template-choice{display:flex;align-items:center;gap:8px;overflow-wrap:anywhere}
-            .hr-employment-tools .hr-template-choice input{width:auto;flex:none}
-            .hr-employment-tools [data-hr-template-tools]{margin-bottom:12px}
+            .hr-employment-tools .hr-template-choice input{width:18px;height:18px;min-height:0;flex:none}
+            .hr-employment-tools [data-hr-open-templates]{margin:0 0 8px;min-height:40px}
+            .hr-employment-tools .hr-template-dialog{
+              box-sizing:border-box;width:min(460px,calc(100vw - 24px));max-height:calc(100dvh - 32px);
+              overflow:auto;overscroll-behavior:contain;padding:16px;margin:auto;border:1px solid var(--line,#cbd7e5);
+              border-radius:14px;background:var(--surface,#fff);color:var(--text,#172b42);box-shadow:0 18px 52px #102a6733
+            }
+            .hr-employment-tools .hr-template-dialog::backdrop{background:#0d223f66}
+            .hr-template-dialog header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}
+            .hr-template-dialog h2{font-size:17px;margin:0}
+            .hr-template-dialog form,.hr-template-dialog fieldset{margin:0;padding:0;border:0;background:transparent}
+            .hr-template-dialog fieldset{margin-top:8px}
+            .hr-template-dialog label{display:grid;gap:3px;margin:0;font-size:12px;font-weight:650;min-width:0}
+            .hr-template-dialog label input,.hr-template-dialog label select{margin:0;min-height:40px;font-size:16px}
+            .hr-template-add-fields{display:grid;grid-template-columns:minmax(136px,.8fr) minmax(0,1.2fr);gap:8px}
+            .hr-template-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+            .hr-template-dialog button{width:auto;min-height:40px;margin:0;padding:7px 11px;white-space:normal}
+            .hr-template-dialog [data-hr-close-templates],.hr-template-dialog [data-hr-refresh-templates]{background:transparent;color:var(--primary,#174875);border:1px solid var(--line,#cbd7e5)}
+            .hr-template-dialog [data-hr-delete-template]{background:transparent;color:#b42338;border:1px solid #e8aeba}
+            .hr-template-dialog footer{margin-top:10px;padding-top:8px;border-top:1px solid var(--line,#cbd7e5)}
+            .hr-template-dialog .status{margin:5px 0 0;overflow-wrap:anywhere}
+            @media(max-width:370px){.hr-employment-tools .hr-template-dialog{padding:12px}.hr-template-dialog .hr-template-actions>button{flex:1 1 auto}}
           </style>
           <form data-hr-salary-form class="workflow-form config-form"><fieldset data-hr-salary-fields disabled><legend>Monthly salary · NGN</legend><div class="config-grid">
             <label>Basic salary (NGN)<input name="BasicSalary" type="number" min="0" step="0.01" required></label>
@@ -85,7 +107,8 @@
     const find = selector => root.querySelector(selector), loader = find('[data-hr-employee-loader]'), selector = loader.elements.Username;
     const content = find('[data-hr-employee-content]'), salaryForm = find('[data-hr-salary-form]'), letterForm = find('[data-hr-letter-form]');
     const templateForm = find('[data-hr-template-form]'), templateStatus = find('[data-hr-template-status]');
-    const templateEditor = find('[data-hr-template-editor]'), templateChoice = templateEditor.elements.ExistingItem;
+    const templateEditor = find('[data-hr-template-editor]'), templateChoice = find('[name="ExistingItem"]');
+    const templateDialog = find('[data-hr-template-tools]'), templateLauncher = find('[data-hr-open-templates]');
     let active = '', loaded = null, savedLetter = null, preview = null, busy = false, generation = 0;
     const username = () => clean(selector.value).toLowerCase();
     const current = (name = active, sequence = generation) => isCurrent() && name === username() && sequence === generation;
@@ -98,7 +121,7 @@
     const selectedTemplate = () => JSON.parse(templateChoice.value || 'null');
     const populateTemplateEditor = () => {
       const templates = templateCache.get(branchFor(loaded))?.templates || {};
-      templateChoice.innerHTML = '<option value="">Choose an item</option>' + componentKinds.map(kind => {
+      templateChoice.innerHTML = '<option value="">Add a new item</option>' + componentKinds.map(kind => {
         const names = templates[kind] || [];
         if (!names.length) return '';
         return `<optgroup label="${kind}">${names.map(name =>
@@ -118,13 +141,12 @@
       find('[data-hr-salary-fields]').disabled = busy || !canEditSalary();
       find('[data-hr-save-salary]').hidden = !capabilities.canManageSalaryStructure;
       find('[data-hr-save-salary]').disabled = busy || !canEditSalary();
-      find('[data-hr-template-tools]').hidden = !canEditSalary();
+      templateLauncher.hidden = !canEditSalary();
       templateForm.querySelector('fieldset').disabled = busy || !canEditSalary();
       templateEditor.querySelector('fieldset').disabled = busy || !canEditSalary();
-      templateChoice.disabled = templateChoice.options.length < 2;
-      templateEditor.elements.UpdatedName.disabled = !templateChoice.value;
-      find('[data-hr-rename-template]').disabled = busy || !templateChoice.value;
-      find('[data-hr-delete-template]').disabled = busy || !templateChoice.value;
+      templateChoice.disabled = busy || templateChoice.options.length < 2;
+      templateForm.hidden = Boolean(templateChoice.value);
+      templateEditor.hidden = !templateChoice.value;
       if (issueLetters) {
         letterForm.querySelectorAll('input,textarea,select').forEach(input => { input.disabled = busy; });
         find('[data-hr-saved-letters]').disabled = busy;
@@ -152,7 +174,7 @@
       const displayName = component?.Name || name;
       row.dataset.componentName = displayName;
       row.innerHTML = `<label class="hr-template-choice"><input type="checkbox" data-hr-template-choice>${escape(displayName)}</label>
-        <label>Amount (NGN)<input data-hr-component-amount aria-label="${escape(displayName)} amount (NGN)" type="number" min="0.01" step="0.01" required></label>`;
+        <input data-hr-component-amount aria-label="${escape(displayName)} amount (NGN)" placeholder="NGN" type="number" min="0.01" step="0.01" required>`;
       const choice = row.querySelector('[data-hr-template-choice]'), amount = row.querySelector('[data-hr-component-amount]');
       choice.checked = Boolean(component);
       amount.value = component?.Amount ?? '';
@@ -236,6 +258,9 @@
         if (current(name, sequence)) showTemplateStatus(error.message || String(error), true);
       }
     });
+    templateLauncher.addEventListener('click', () => templateDialog.showModal());
+    find('[data-hr-close-templates]').addEventListener('click', () => templateDialog.close());
+    templateDialog.addEventListener('cancel', event => { if (busy) event.preventDefault(); });
     templateForm.addEventListener('submit', event => {
       event.preventDefault();
       if (!templateForm.reportValidity()) return;
