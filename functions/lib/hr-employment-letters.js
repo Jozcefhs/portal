@@ -23,6 +23,7 @@ const now = () => new Date().toISOString();
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const LETTERS = 'hrEmploymentLetters';
 const SALARY_TEMPLATES = 'hrSalaryTemplates';
+const SALARY_TEMPLATE_ACTIONS = ['listsalarytemplates', 'addsalarytemplate', 'editsalarytemplate', 'deletesalarytemplate'];
 const LETTER_SUMMARY_FIELDS = ['LetterId', 'EmployeeKey', 'Username', 'EmployeeName', 'RecipientEmail', 'BranchId', 'WorkspaceId', 'OrganisationEdition',
   'LetterDate', 'Status', 'FileName', 'CreatedAt', 'SentAt', 'SignatureApplied'];
 const digest = async value => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(value))))]
@@ -211,40 +212,66 @@ export function hrEmploymentLetterService(overrides = {}) {
   async function salaryTemplates(env, user, identity, body, action) {
     const branchId = enforceActorBranch(user, body.BranchId);
     const id = await digest([identity.workspaceId, identity.edition, branchId]);
+    const listing = action === 'listsalarytemplates';
     const adding = action === 'addsalarytemplate';
+    const deleting = action === 'deletesalarytemplate';
     const kind = clean(body.Kind);
     const name = clean(body.Name).replace(/\s+/g, ' ');
-    if (adding) {
+    const existingName = clean(body.ExistingName);
+    if (!listing) {
       if (!['Allowances', 'Deductions'].includes(kind)) throw fail('Choose allowance or deduction.');
-      if (!name || name.length > 120 || /[\u0000-\u001f\u007f]/.test(name)) throw fail('Enter a name of up to 120 characters.');
+      if (!deleting && (!name || name.length > 120 || /[\u0000-\u001f\u007f]/.test(name))) throw fail('Enter a name of up to 120 characters.');
+      if (!adding && !existingName) throw fail('Select a reusable item.');
     }
     for (let attempt = 0; attempt < 2; attempt++) {
       const row = await db.getDocument(env, SALARY_TEMPLATES, id);
       const templates = { Allowances: row?.Allowances || [], Deductions: row?.Deductions || [] };
-      if (!adding) return { ok: true, templates };
-      if (templates[kind].some(existing => lower(existing) === lower(name))) {
-        return { ok: true, templates, message: 'That name is already available in the reusable list.' };
+      const templateVersion = clean(row?.Revision || row?.__updateTime);
+      const result = { ok: true, templates, templateVersion };
+      if (listing) return result;
+      if (!adding && clean(body.TemplateVersion) !== templateVersion) {
+        throw fail('The reusable list changed. Refresh reusable items and select the item again.', 409);
       }
-      if (templates[kind].length >= 200) throw fail('This branch already has 200 reusable items of this type.', 409);
-      templates[kind] = [...templates[kind], name].sort((a, b) => a.localeCompare(b));
+      const names = [...templates[kind]];
+      const index = names.indexOf(existingName);
+      const duplicate = names.findIndex(value => lower(value) === lower(name));
+      if (adding) {
+        if (duplicate !== -1) return { ...result, message: 'That name is already available in the reusable list.' };
+        if (names.length >= 200) throw fail('This branch already has 200 reusable items of this type.', 409);
+        names.push(name);
+      } else {
+        if (index === -1) throw fail('This reusable item is no longer available. Refresh the list.', 404);
+        if (!deleting && name === existingName) return { ...result, message: 'The reusable name is already saved.' };
+        if (!deleting && duplicate !== -1 && duplicate !== index) throw fail('That name is already used for this type of item.', 409);
+        if (deleting) names.splice(index, 1);
+        else names[index] = name;
+      }
+      templates[kind] = names.sort((a, b) => a.localeCompare(b));
+      const revision = crypto.randomUUID();
       try {
         await db.batchCommitLiteralDocuments(env, [{ collectionPath: SALARY_TEMPLATES, documentId: id,
           data: { ...templates, BranchId: branchId, WorkspaceId: identity.workspaceId, OrganisationEdition: identity.edition,
-            UpdatedAt: db.now(), UpdatedBy: lower(user.username) }, ...condition(row) }]);
-        return { ok: true, templates, message: `${name} added to the reusable list.` };
+            Revision: revision, UpdatedAt: db.now(), UpdatedBy: lower(user.username) }, ...condition(row) }]);
+        const message = adding ? `${name} added to the reusable list.`
+          : deleting ? `${existingName} removed from the reusable list.` : `Reusable name updated to ${name}.`;
+        return { ...result, templateVersion: revision, message };
       } catch (error) {
         if (error.status !== 409) throw error;
+        if (!adding) throw fail('The reusable list changed. Refresh reusable items and select the item again.', 409);
       }
     }
     throw fail('The reusable list changed while saving. Try adding the item again.', 409);
   }
   return async function handle(env, user, body) {
     const identity = db.requiredDeploymentIdentity(env), capabilities = hrCapabilitiesFor(user), action = lower(body.action);
+    const templateAction = SALARY_TEMPLATE_ACTIONS.includes(action);
     if (!(user.allowedSections || []).includes('humanResources') || !clean(user.username) || lower(user.edition || identity.edition) !== identity.edition) throw fail('Human Resources access is required.', 403);
     if (!capabilities.canViewSalaryStructure) throw fail('Your role cannot view employee salary structures or employment letters.', 403);
-    if (['savesalarystructure', 'addsalarytemplate', 'saveemploymentletter', 'sendemploymentletter'].includes(action) && (user.subscriptionReadOnly === true || user.subscriptionActive === false)) throw fail('Human Resources changes are read-only until the subscription is renewed.', 403);
-    if (['savesalarystructure', 'listsalarytemplates', 'addsalarytemplate'].includes(action) && !capabilities.canManageSalaryStructure) throw fail('Your role cannot change salary structures.', 403);
-    if (['listsalarytemplates', 'addsalarytemplate'].includes(action)) return salaryTemplates(env, user, identity, body, action);
+    const writesEmployment = (templateAction && action !== 'listsalarytemplates')
+      || ['savesalarystructure', 'saveemploymentletter', 'sendemploymentletter'].includes(action);
+    if (writesEmployment && (user.subscriptionReadOnly === true || user.subscriptionActive === false)) throw fail('Human Resources changes are read-only until the subscription is renewed.', 403);
+    if ((templateAction || action === 'savesalarystructure') && !capabilities.canManageSalaryStructure) throw fail('Your role cannot change salary structures.', 403);
+    if (templateAction) return salaryTemplates(env, user, identity, body, action);
     if (action.includes('employmentletter') && !capabilities.canIssueEmploymentLetters) throw fail('Your role cannot prepare or send employment letters.', 403);
     const target = await targetFor(env, user, body, identity);
     if (['savesalarystructure', 'saveemploymentletter', 'sendemploymentletter'].includes(action)

@@ -39,11 +39,21 @@
         <section class="config-group hr-form-card"><header><strong>Salary structure</strong><small data-hr-salary-description></small></header>
           <p data-hr-salary-summary></p><div data-hr-salary-breakdown></div>
           <details data-hr-template-tools hidden><summary>Manage reusable allowances and deductions</summary>
+            <p><small>Editing this list affects future selections. Staff keep their saved names and amounts.</small></p>
             <form data-hr-template-form class="workflow-form config-form">
               <fieldset><legend>Reusable names for this branch</legend><div class="config-grid">
                 <label>Type<select name="Kind"><option value="Allowances">Allowance</option><option value="Deductions">Deduction</option></select></label>
                 <label>Reusable name<input name="Name" maxlength="120" required></label>
               </div><div class="config-dialog-actions"><button type="submit">Add reusable item</button><button type="button" data-hr-refresh-templates>Refresh reusable items</button></div></fieldset>
+            </form>
+            <form data-hr-template-editor class="workflow-form config-form">
+              <fieldset><legend>Edit or delete a reusable item</legend><div class="config-grid">
+                <label>Reusable item<select name="ExistingItem" aria-label="Reusable item"></select></label>
+                <label>Updated name<input name="UpdatedName" maxlength="120" required></label>
+              </div><div class="config-dialog-actions">
+                <button type="submit" data-hr-rename-template>Save reusable name</button>
+                <button type="button" data-hr-delete-template>Delete reusable item</button>
+              </div></fieldset>
             </form>
           </details><p data-hr-template-status class="status" role="status" hidden></p>
           <style>
@@ -75,6 +85,7 @@
     const find = selector => root.querySelector(selector), loader = find('[data-hr-employee-loader]'), selector = loader.elements.Username;
     const content = find('[data-hr-employee-content]'), salaryForm = find('[data-hr-salary-form]'), letterForm = find('[data-hr-letter-form]');
     const templateForm = find('[data-hr-template-form]'), templateStatus = find('[data-hr-template-status]');
+    const templateEditor = find('[data-hr-template-editor]'), templateChoice = templateEditor.elements.ExistingItem;
     let active = '', loaded = null, savedLetter = null, preview = null, busy = false, generation = 0;
     const username = () => clean(selector.value).toLowerCase();
     const current = (name = active, sequence = generation) => isCurrent() && name === username() && sequence === generation;
@@ -84,6 +95,17 @@
     };
     const canEditSalary = () => Boolean(loaded && capabilities.canManageSalaryStructure && loaded.salaryEditable !== false);
     const branchFor = data => clean(data?.employee?.BranchId).toLowerCase();
+    const selectedTemplate = () => JSON.parse(templateChoice.value || 'null');
+    const populateTemplateEditor = () => {
+      const templates = templateCache.get(branchFor(loaded))?.templates || {};
+      templateChoice.innerHTML = '<option value="">Choose an item</option>' + componentKinds.map(kind => {
+        const names = templates[kind] || [];
+        if (!names.length) return '';
+        return `<optgroup label="${kind}">${names.map(name =>
+          `<option value="${escape(JSON.stringify([kind, name]))}">${escape(name)}</option>`).join('')}</optgroup>`;
+      }).join('');
+      templateEditor.elements.UpdatedName.value = '';
+    };
     const showTemplateStatus = (message = '', bad = false) => {
       templateStatus.textContent = message;
       templateStatus.hidden = !message;
@@ -98,6 +120,11 @@
       find('[data-hr-save-salary]').disabled = busy || !canEditSalary();
       find('[data-hr-template-tools]').hidden = !canEditSalary();
       templateForm.querySelector('fieldset').disabled = busy || !canEditSalary();
+      templateEditor.querySelector('fieldset').disabled = busy || !canEditSalary();
+      templateChoice.disabled = templateChoice.options.length < 2;
+      templateEditor.elements.UpdatedName.disabled = !templateChoice.value;
+      find('[data-hr-rename-template]').disabled = busy || !templateChoice.value;
+      find('[data-hr-delete-template]').disabled = busy || !templateChoice.value;
       if (issueLetters) {
         letterForm.querySelectorAll('input,textarea,select').forEach(input => { input.disabled = busy; });
         find('[data-hr-saved-letters]').disabled = busy;
@@ -122,9 +149,10 @@
     const addTemplateRow = (kind, name, component) => {
       const row = document.createElement('div');
       row.className = 'hr-template-row';
-      row.dataset.componentName = component?.Name || name;
-      row.innerHTML = `<label class="hr-template-choice"><input type="checkbox" data-hr-template-choice>${escape(name)}</label>
-        <label>Amount (NGN)<input data-hr-component-amount aria-label="${escape(name)} amount (NGN)" type="number" min="0.01" step="0.01" required></label>`;
+      const displayName = component?.Name || name;
+      row.dataset.componentName = displayName;
+      row.innerHTML = `<label class="hr-template-choice"><input type="checkbox" data-hr-template-choice>${escape(displayName)}</label>
+        <label>Amount (NGN)<input data-hr-component-amount aria-label="${escape(displayName)} amount (NGN)" type="number" min="0.01" step="0.01" required></label>`;
       const choice = row.querySelector('[data-hr-template-choice]'), amount = row.querySelector('[data-hr-component-amount]');
       choice.checked = Boolean(component);
       amount.value = component?.Amount ?? '';
@@ -133,7 +161,7 @@
       find(`[data-hr-components="${kind}"]`).append(row);
     };
     const renderComponents = (kind, components) => {
-      const templates = canEditSalary() ? templateCache.get(branchFor(loaded))?.[kind] || [] : [];
+      const templates = canEditSalary() ? templateCache.get(branchFor(loaded))?.templates?.[kind] || [] : [];
       const names = new Map(templates.map(name => [componentKey(name), name]));
       find(`[data-hr-components="${kind}"]`).replaceChildren();
       for (const component of components) {
@@ -167,6 +195,7 @@
       const employee = data.employee || {}, profile = data.profile || {};
       salaryForm.elements.BasicSalary.value = profile.BasicSalary ?? '0';
       for (const kind of componentKinds) renderComponents(kind, profile[kind] || []);
+      populateTemplateEditor();
       showTemplateStatus();
       find('[data-hr-salary-description]').textContent = data.salaryEditable === false
         ? 'This employee uses configurable payroll components. Review the saved summary here and edit components in Accounts → Payroll.'
@@ -185,14 +214,22 @@
       try { return await work(); } catch (error) { if (isCurrent()) status(error.message || String(error), true, letter); }
       finally { busy = false; if (isCurrent()) updateButtons(); }
     };
-    const updateTemplates = (action, fields = {}) => perform(async () => {
+    const updateTemplates = (action, fields = {}, confirmDelete = false) => perform(async () => {
       if (!canEditSalary()) return;
       const name = active, sequence = generation, branch = branchFor(loaded);
       try {
-        const result = await request(action, { ...fields, BranchId: branch });
+        if (confirmDelete) {
+          const message = `Delete “${fields.ExistingName}” from this branch’s reusable list? Staff keep their saved names and amounts.`;
+          const confirmed = confirm
+            ? await confirm({ title: 'Delete reusable item', message, confirmText: 'Delete reusable item' })
+            : global.confirm(message);
+          if (!confirmed || !current(name, sequence)) return;
+        }
+        const result = await request(action, { ...fields, BranchId: branch, TemplateVersion: templateCache.get(branch)?.templateVersion || '' });
         if (!current(name, sequence)) return;
-        templateCache.set(branch, result.templates);
+        templateCache.set(branch, result);
         for (const kind of componentKinds) renderComponents(kind, componentRows(kind));
+        populateTemplateEditor();
         templateForm.elements.Name.value = '';
         showTemplateStatus(result.message || 'Reusable items refreshed.');
       } catch (error) {
@@ -205,6 +242,23 @@
       updateTemplates('addSalaryTemplate', { Kind: templateForm.elements.Kind.value, Name: templateForm.elements.Name.value });
     });
     find('[data-hr-refresh-templates]').addEventListener('click', () => updateTemplates('listSalaryTemplates'));
+    templateChoice.addEventListener('change', () => {
+      templateEditor.elements.UpdatedName.value = selectedTemplate()?.[1] || '';
+      updateButtons();
+    });
+    templateEditor.addEventListener('submit', event => {
+      event.preventDefault();
+      const selected = selectedTemplate();
+      if (!selected || !templateEditor.reportValidity()) return;
+      const [Kind, ExistingName] = selected;
+      updateTemplates('editSalaryTemplate', { Kind, ExistingName, Name: templateEditor.elements.UpdatedName.value });
+    });
+    find('[data-hr-delete-template]').addEventListener('click', () => {
+      const selected = selectedTemplate();
+      if (!selected) return;
+      const [Kind, ExistingName] = selected;
+      updateTemplates('deleteSalaryTemplate', { Kind, ExistingName }, true);
+    });
     const loadEmployee = force => perform(async () => {
       const name = username();
       if (!name) throw new Error('Choose a staff member first.');
@@ -217,7 +271,7 @@
       if (capabilities.canManageSalaryStructure && data.salaryEditable !== false && !templateCache.has(branch)) {
         try {
           const result = await request('listSalaryTemplates', { BranchId: branch });
-          templateCache.set(branch, result.templates);
+          templateCache.set(branch, result);
         } catch (error) {
           templateError = 'Reusable items could not be loaded. Use Refresh reusable items to try again.';
         }

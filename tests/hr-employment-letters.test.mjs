@@ -117,6 +117,34 @@ test('concurrent reusable additions cannot replace each other', async () => {
   assert.equal(f.writes.length, 1);
 });
 
+test('rename and delete update only reusable names and reject stale or duplicate changes', async () => {
+  const f = fixture();
+  const recordsBefore = clone([...f.records]);
+  await f.call('listSalaryTemplates');
+  const id = f.reads[0].split('/')[1];
+  // Existing catalogs from before the edit controls have no Revision field.
+  f.row('hrSalaryTemplates', id, { Allowances: ['Housing allowance', 'Meals'], Deductions: ['Staff association'] });
+  const { templateVersion } = await f.call('listSalaryTemplates');
+  const rename = { Kind: 'Allowances', ExistingName: 'Housing allowance', TemplateVersion: templateVersion };
+  await assert.rejects(f.call('editSalaryTemplate', { ...rename, Name: 'MEALS' }), { status: 409 });
+  assert.equal(f.writes.length, 0);
+  const renamed = await f.call('editSalaryTemplate', { ...rename, Name: 'Housing support' });
+  assert.deepEqual(renamed.templates.Allowances, ['Housing support', 'Meals']);
+  const remove = { Kind: 'Deductions', ExistingName: 'Staff association', TemplateVersion: renamed.templateVersion };
+  await assert.rejects(f.call('deleteSalaryTemplate', { ...remove, TemplateVersion: templateVersion }), { status: 409 });
+  await assert.rejects(f.call('deleteSalaryTemplate', { ...remove, BranchId: 'elsewhere' }), { status: 403 });
+  await assert.rejects(f.call('deleteSalaryTemplate', remove, { ...f.user, subscriptionReadOnly: true }), { status: 403 });
+  const deleted = await f.call('deleteSalaryTemplate', remove);
+  assert.deepEqual(deleted.templates, { Allowances: ['Housing support', 'Meals'], Deductions: [] });
+  await f.call('addSalaryTemplate', { Kind: 'Deductions', Name: 'Staff association' });
+  await assert.rejects(f.call('deleteSalaryTemplate', remove), { status: 409 });
+  assert.deepEqual((await f.call('listSalaryTemplates')).templates.Deductions, ['Staff association']);
+  assert.deepEqual([...f.records].filter(([key]) => !key.startsWith('hrSalaryTemplates/')), recordsBefore);
+  assert.equal(f.writes.length, 3);
+  assert.ok(f.writes.flat().every(write => write.collectionPath === 'hrSalaryTemplates'));
+  assert.ok(f.reads.every(read => read.startsWith('hrSalaryTemplates/')));
+});
+
 test('salary and letter access is limited to permitted HR roles', async () => {
   for (const role of ['Teacher', 'HR Assistant', 'Line Manager', 'Recruitment Officer']) {
     const f = fixture({ role });

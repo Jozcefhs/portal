@@ -30,13 +30,25 @@ try {
       chidi: { employee: { Username: 'chidi', DisplayName: 'Chidi Example', BranchId: 'annex' }, profile: null, salaryEditable: true, letters: [] }
     };
     const letters = {}, templates = { Allowances: ['Housing'], Deductions: ['Loan'] };
+    let templateVersion = 'initial-catalog';
     const request = async (action, body) => {
       window.calls.push({ action, body: structuredClone(body) });
       if (action === 'getSalaryStructure') return structuredClone(employees[body.Username]);
-      if (action === 'listSalaryTemplates') return { templates: structuredClone(templates) };
+      if (action === 'listSalaryTemplates') return { templates: structuredClone(templates), templateVersion };
       if (action === 'addSalaryTemplate') {
         templates[body.Kind].push(body.Name);
-        return { templates: structuredClone(templates), message: `${body.Name} added to the reusable list.` };
+        templateVersion = 'after-add';
+        return { templates: structuredClone(templates), templateVersion, message: `${body.Name} added to the reusable list.` };
+      }
+      if (action === 'editSalaryTemplate' || action === 'deleteSalaryTemplate') {
+        if (body.TemplateVersion !== templateVersion || body.BranchId !== 'annex') throw new Error('Wrong catalog version or branch');
+        const items = templates[body.Kind], index = items.indexOf(body.ExistingName);
+        if (index < 0) throw new Error('Missing reusable item');
+        const editing = action === 'editSalaryTemplate';
+        items.splice(index, 1, ...(editing ? [body.Name] : []));
+        templateVersion = action;
+        const message = editing ? `Reusable name updated to ${body.Name}.` : `${body.ExistingName} removed from the reusable list.`;
+        return { templates: structuredClone(templates), templateVersion, message };
       }
       if (action === 'saveSalaryStructure') {
         assertNeverOtherEmployee(body);
@@ -95,6 +107,22 @@ try {
   assert.equal(await page.evaluate(() => calls.filter(row => row.action === 'saveSalaryStructure').length), 1);
   assert.deepEqual(await page.evaluate(() => calls.find(row => row.action === 'saveSalaryStructure').body.Allowances), [{Name:'Housing',Amount:20000},{Name:'Transport',Amount:10000}]);
   assert.deepEqual(await page.evaluate(() => calls.find(row => row.action === 'saveSalaryStructure').body.Deductions), []);
+  const reusableItem = page.getByLabel('Reusable item', { exact: true });
+  await reusableItem.selectOption({ label: 'Transport' });
+  assert.equal(await page.getByLabel('Updated name', { exact: true }).inputValue(), 'Transport');
+  await page.getByLabel('Updated name', { exact: true }).fill('Transport support');
+  await page.getByRole('button', { name: 'Save reusable name', exact: true }).click();
+  await page.getByText('Reusable name updated to Transport support.', { exact: true }).waitFor();
+  await reusableItem.selectOption({ label: 'Housing' });
+  await page.getByRole('button', { name: 'Delete reusable item', exact: true }).click();
+  assert.equal(await page.evaluate(() => calls.filter(row => row.action === 'deleteSalaryTemplate').length), 0);
+  await page.evaluate(() => { acceptSend = true; });
+  await page.getByRole('button', { name: 'Delete reusable item', exact: true }).click();
+  await page.getByText('Housing removed from the reusable list.', { exact: true }).waitFor();
+  await page.evaluate(() => { acceptSend = false; });
+  assert.deepEqual(await page.getByLabel('Allowance name', { exact: true }).evaluateAll(rows => rows.map(row => row.value)), ['Housing', 'Transport']);
+  assert.deepEqual(await page.locator('.hr-component-row [data-hr-component-amount]').evaluateAll(rows => rows.map(row => row.value)), ['20000', '10000']);
+  assert.equal(await page.evaluate(() => calls.filter(row => row.action === 'saveSalaryStructure').length), 1, 'catalog edits do not save the salary form');
   await page.getByLabel('Staff member', { exact: true }).selectOption('bola');
   await page.getByRole('button', { name: 'Load employee setup', exact: true }).click();
   await page.getByText('Configured earnings', { exact: true }).waitFor();
@@ -103,13 +131,14 @@ try {
   await page.getByLabel('Staff member', { exact: true }).selectOption('chidi');
   await page.getByRole('button', { name: 'Load employee setup', exact: true }).click();
   await page.getByText('Chidi Example · No saved salary structure yet.').waitFor();
-  assert.equal(await page.getByRole('checkbox', { name: 'Transport', exact: true }).isChecked(), false);
-  assert.equal(await page.getByLabel('Transport amount (NGN)').inputValue(), '');
+  assert.equal(await page.getByRole('checkbox', { name: 'Housing', exact: true }).count(), 0);
+  assert.equal(await page.getByRole('checkbox', { name: 'Transport support', exact: true }).isChecked(), false);
+  assert.equal(await page.getByLabel('Transport support amount (NGN)').inputValue(), '');
   await page.getByLabel('Staff member', { exact: true }).selectOption('ada');
   assert.equal(await page.locator('[data-hr-letter-history-limit]').isVisible(), false);
   assert.equal(await page.evaluate(() => calls.filter(row => row.action === 'getSalaryStructure').length), 3, 'return to loaded employee uses cache');
   assert.equal(await page.evaluate(() => calls.filter(row => row.action === 'listSalaryTemplates').length), 1, 'reuse the branch list when switching employees');
-  assert.equal(await page.getByRole('checkbox', { name: 'Transport', exact: true }).isChecked(), true);
+  assert.deepEqual(await page.getByLabel('Allowance name', { exact: true }).evaluateAll(rows => rows.map(row => row.value)), ['Housing', 'Transport']);
   assert.equal(await page.getByLabel('Basic salary (NGN)', { exact: true }).inputValue(), '160000');
   await page.getByLabel('Letter date', { exact: true }).fill('2026-11-10');
   await page.getByLabel('Work location', { exact: true }).fill('Annex office');

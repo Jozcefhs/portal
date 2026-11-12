@@ -695,7 +695,7 @@ export async function onRequestPost(context) {
     const action = lower(body.action || 'list');
     const capabilities = hrCapabilitiesFor(user);
     let result;
-    if (['getsalarystructure', 'savesalarystructure', 'listsalarytemplates', 'addsalarytemplate',
+    if (['getsalarystructure', 'savesalarystructure', 'listsalarytemplates', 'addsalarytemplate', 'editsalarytemplate', 'deletesalarytemplate',
       'previewemploymentletter', 'saveemploymentletter', 'loademploymentletter', 'sendemploymentletter'].includes(action)) {
       result = await handleHrEmploymentLetter(context.env, user, body);
     }
