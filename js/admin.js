@@ -10195,6 +10195,7 @@ function renderHumanResources(data) {
   const hasEmploymentTools = Boolean(capabilities.canViewSalaryStructure || capabilities.canManageSalaryStructure || capabilities.canIssueEmploymentLetters);
   const employmentToolsPanel = document.createElement('section');
   employmentToolsPanel.className = 'hr-workspace-stack';
+  const payGradeToolsPanel = document.createElement('div');
   const username = clean(currentUser?.username);
   const vacancyOptions = `<option value="">Choose vacancy</option>${vacancies.map((row) => `<option value="${escapeHtml(row.VacancyId || row.__id)}">${escapeHtml([row.Title, row.Department, row.Status].filter(Boolean).join(' · '))}</option>`).join('')}`;
   const pendingLeave = leave.filter((row) => /pending/i.test(clean(row.Status))).length;
@@ -10518,8 +10519,10 @@ function renderHumanResources(data) {
   ]);
   renderModuleSummary('humanResources', data);
 
+  if (capabilities.canManageSalaryStructure) panelEl.querySelector('.workflow-intro > div').append(payGradeToolsPanel);
   if (hasEmploymentTools) window.DynamaxHrEmployment?.mount(employmentToolsPanel, {
     directory, capabilities, request: humanResourcesRequest, personPicker: hrPersonPicker,
+    payGradeRoot: payGradeToolsPanel, workingBranch: selectedBranchId, branches: availableBranches,
     confirm: options => window.DynamaxDialogs.confirm(options),
     isCurrent: () => employmentToolsPanel.isConnected && activeSection === 'humanResources' && humanResourcesData === data
   });

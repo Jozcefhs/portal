@@ -7,6 +7,7 @@
   const money = new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN' });
   const format = value => money.format(Number(value || 0));
   const title = grade => `${grade.PayGrade} · ${grade.PayLevel}`;
+  const componentKinds = [['Allowances', 'Allowance'], ['Deductions', 'Deduction']];
 
   function amounts(salary) {
     if (!salary) return '<span>No saved salary profile</span>';
@@ -15,7 +16,17 @@
         `${escape(row.Name)} ${format(row.Amount)}`).join(' · ') : '—'}</div>`).join('');
   }
 
-  function mount(root, { directory, request, readDraft, copyDraft, onApplied, isCurrent, confirm }) {
+  function mount(root, { directory, request, branches = [], workingBranch = '', getTemplates, normalizeComponents, onApplied, isCurrent, confirm }) {
+    const knownBranches = new Map(branches.filter(row => key(row.id) && key(row.id) !== 'all').map(row => [key(row.id), row.name || row.id]));
+    const fixedBranch = key(workingBranch) === 'all' ? '' : key(workingBranch);
+    if (fixedBranch && !knownBranches.has(fixedBranch)) knownBranches.set(fixedBranch, fixedBranch);
+    if (!knownBranches.size) {
+      for (const row of directory) {
+        const id = key(row.BranchId) || 'main';
+        knownBranches.set(id, row.BranchName || (id === 'main' ? 'Main Branch' : id));
+      }
+    }
+    if (!knownBranches.size) knownBranches.set('main', 'Main Branch');
     root.innerHTML = `<style>
       .hr-pay-grade-launcher{margin:0 0 8px;min-height:40px}
       .hr-pay-grade-dialog{box-sizing:border-box;width:min(565px,calc(100vw - 24px));max-height:calc(100dvh - 32px);overflow:auto;overscroll-behavior:contain;
@@ -24,9 +35,12 @@
       .hr-pay-grade-dialog header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}
       .hr-pay-grade-dialog h2{font-size:17px;margin:0}
       .hr-pay-grade-dialog label{display:grid;gap:3px;margin:0;font-size:12px;font-weight:650;min-width:0}
-      .hr-pay-grade-dialog label input,.hr-pay-grade-dialog label select{min-height:40px;font-size:16px;margin:0}
+      .hr-pay-grade-dialog label input,.hr-pay-grade-dialog label select{box-sizing:border-box;width:100%;min-width:0;min-height:40px;font-size:16px;margin:0}
       .hr-pay-grade-dialog section,.hr-pay-grade-dialog form{padding:0;border:0;background:transparent;margin:10px 0 0;min-width:0}
       .hr-pay-grade-dialog .hr-pay-grade-identifiers{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:8px}
+      .hr-pay-grade-components{display:grid;gap:6px;margin-top:8px}
+      .hr-pay-grade-components header{margin:0}
+      .hr-pay-grade-component{display:grid;grid-template-columns:minmax(0,1fr) minmax(95px,34%) auto;align-items:end;gap:6px}
       .hr-pay-grade-dialog .hr-pay-grade-actions{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-top:8px}
       .hr-pay-grade-dialog button{width:auto;min-height:40px;margin:0;padding:7px 10px;white-space:normal}
       .hr-pay-grade-dialog .hr-pay-grade-summary{margin:8px 0;padding:9px;border:1px solid var(--line,#cbd7e5);border-radius:8px;font-size:12px;overflow-wrap:anywhere}
@@ -41,21 +55,34 @@
       .hr-pay-grade-dialog [data-grade-manage]>summary{cursor:pointer;font-size:13px;font-weight:650}
       .hr-pay-grade-dialog [data-grade-delete]{background:transparent;color:#b42338;border:1px solid #e8aeba}
       .hr-pay-grade-dialog [hidden]{display:none}
-      @media(max-width:390px){.hr-pay-grade-dialog{padding:12px}}
+      @media(max-width:390px){
+        .hr-pay-grade-dialog{padding:12px}
+        .hr-pay-grade-component{grid-template-columns:minmax(0,1fr) minmax(92px,38%)}
+        .hr-pay-grade-component button{grid-column:1/-1;justify-self:start}
+      }
     </style>
-    <button type="button" class="hr-pay-grade-launcher" aria-haspopup="dialog" data-grade-open hidden>Pay grades &amp; levels</button>
+    <button type="button" class="hr-pay-grade-launcher" aria-haspopup="dialog" data-grade-open>Pay grades &amp; levels</button>
     <dialog class="hr-pay-grade-dialog" aria-label="Pay grades and levels">
       <header><h2>Pay grades &amp; levels</h2><button type="button" data-grade-close>Close</button></header>
-      <label>Grade and level<select data-grade-choice aria-label="Grade and level"></select></label>
+      <label data-grade-branch-picker hidden>Branch<select data-grade-branch aria-label="Pay grades branch">
+        <option value="">Choose branch</option>${[...knownBranches].map(([id, name]) => `<option value="${escape(id)}">${escape(name)}</option>`).join('')}
+      </select></label>
+      <p data-grade-branch-label></p>
+      <label data-grade-choice-label>Grade and level<select data-grade-choice aria-label="Grade and level"></select></label>
       <form data-grade-setup>
         <div class="hr-pay-grade-identifiers" data-grade-identifiers>
           <label>Pay grade<input name="PayGrade" maxlength="60" required></label>
           <label>Pay level<input name="PayLevel" maxlength="60" required></label>
         </div>
-        <div class="hr-pay-grade-summary" data-grade-amounts hidden></div>
-        <small>Set the basic salary, allowances and deductions in the salary form, then save those amounts to the grade.</small>
+        <label>Grade basic salary (NGN)<input name="BasicSalary" type="number" min="0" step="0.01" required></label>
+        ${componentKinds.map(([kind, label]) => `<div class="hr-pay-grade-components">
+          <header><strong>${kind}</strong><button type="button" data-grade-add="${kind}">Add ${label.toLowerCase()}</button></header>
+          <div class="hr-pay-grade-components" data-grade-components="${kind}"></div>
+          <datalist id="hr-grade-${kind}"></datalist>
+        </div>`).join('')}
         <div class="hr-pay-grade-actions">
-          <button type="submit" data-grade-save>Save grade from salary form</button>
+          <button type="submit" data-grade-save>Save grade salary</button>
+          <button type="button" data-grade-import hidden>Use amounts from staff salary form</button>
           <button type="button" data-grade-copy hidden>Copy amounts to salary form</button>
           <button type="button" data-grade-refresh>Refresh grades</button>
         </div>
@@ -81,6 +108,7 @@
         <div class="hr-pay-grade-staff" data-grade-staff aria-label="Staff to receive this salary"></div>
         <div class="hr-pay-grade-actions"><button type="button" data-grade-preview>Preview batch</button></div>
         <section data-grade-confirmation hidden>
+          <div class="hr-pay-grade-summary" data-grade-amounts></div>
           <p><small>Applying replaces the selected staff’s basic salary, allowances and deductions with this grade’s amounts.</small></p>
           <div class="hr-pay-grade-preview" data-grade-changes></div>
           <div class="hr-pay-grade-actions"><button type="button" data-grade-apply></button></div>
@@ -91,10 +119,12 @@
 
     const find = selector => root.querySelector(selector);
     const opener = find('[data-grade-open]'), dialog = find('dialog'), choice = find('[data-grade-choice]');
+    const branchChoice = find('[data-grade-branch]');
     const setup = find('[data-grade-setup]'), search = find('[data-grade-search]'), staffList = find('[data-grade-staff]');
     const manage = find('[data-grade-manage]'), namesForm = find('[data-grade-names]');
     const status = find('[data-grade-status]'), selected = new Set(), cache = new Map();
-    let employee = null, branch = '', gradeId = '', preview = null, busy = false;
+    let employeeContext = null, branch = '', directBranch = fixedBranch || (knownBranches.size === 1 ? [...knownBranches.keys()][0] : '');
+    let gradeId = '', preview = null, busy = false, dirty = false;
     const grades = () => cache.get(branch) || [];
     const grade = () => grades().find(row => row.GradeId === gradeId);
     const candidates = () => directory.filter(row => row.Active !== false && !/^(exited|terminated|inactive|disabled)$/i.test(clean(row.Status))
@@ -116,6 +146,38 @@
       preview = null;
       find('[data-grade-confirmation]').hidden = true;
     };
+    const salaryChanged = () => {
+      dirty = true;
+      clearPreview();
+      buttons();
+    };
+    function addComponent(kind, row = {}) {
+      const label = componentKinds.find(([field]) => field === kind)[1];
+      const field = document.createElement('div');
+      field.className = 'hr-pay-grade-component';
+      field.innerHTML = `<label>${label} name<input data-grade-component-name list="hr-grade-${kind}" maxlength="120" required value="${escape(row.Name)}"></label>
+        <label>${label} amount (NGN)<input data-grade-component-amount type="number" min="0" step="0.01" required value="${escape(row.Amount)}"></label>
+        <button type="button" aria-label="Remove ${label.toLowerCase()}">Remove</button>`;
+      field.querySelector('button').addEventListener('click', () => { field.remove(); salaryChanged(); });
+      find(`[data-grade-components="${kind}"]`).append(field);
+    }
+    function populateSalary(salary = {}) {
+      setup.elements.BasicSalary.value = salary.BasicSalary ?? '';
+      for (const [kind] of componentKinds) {
+        find(`[data-grade-components="${kind}"]`).replaceChildren();
+        (salary[kind] || []).forEach(row => addComponent(kind, row));
+      }
+    }
+    function readSalary() {
+      const salary = { BasicSalary: setup.elements.BasicSalary.valueAsNumber };
+      for (const [kind] of componentKinds) {
+        salary[kind] = normalizeComponents([...find(`[data-grade-components="${kind}"]`).children].map(row => ({
+          Name: row.querySelector('[data-grade-component-name]').value,
+          Amount: row.querySelector('[data-grade-component-amount]').value
+        })));
+      }
+      return salary;
+    }
     function renderStaff() {
       const term = key(search.value);
       const rows = candidates().filter(row => !term || key(`${row.DisplayName} ${row.Username}`).includes(term));
@@ -127,16 +189,19 @@
     }
     function renderGrade() {
       const row = grade();
+      find('[data-grade-choice-label]').hidden = !branch;
+      setup.hidden = !branch;
       find('[data-grade-identifiers]').hidden = Boolean(row);
-      find('[data-grade-amounts]').hidden = !row;
-      find('[data-grade-amounts]').innerHTML = row ? amounts(row) : '';
-      find('[data-grade-copy]').hidden = !row;
+      find('[data-grade-copy]').hidden = !row || !employeeContext?.copyDraft;
+      find('[data-grade-import]').hidden = !employeeContext?.readDraft;
       manage.hidden = !row;
       manage.open = false;
       namesForm.elements.PayGrade.value = row?.PayGrade || '';
       namesForm.elements.PayLevel.value = row?.PayLevel || '';
       find('[data-grade-batch]').hidden = !row;
-      find('[data-grade-save]').textContent = row ? 'Update grade from salary form' : 'Save grade from salary form';
+      find('[data-grade-save]').textContent = row ? 'Update grade salary' : 'Save grade salary';
+      populateSalary(row || {});
+      dirty = false;
       clearPreview();
       if (row) renderStaff();
       buttons();
@@ -150,7 +215,7 @@
       renderGrade();
     }
     async function work(action) {
-      if (busy || !employee || !isCurrent()) return;
+      if (busy || !branch || !isCurrent()) return;
       busy = true; buttons(); showStatus();
       try { await action(); } catch (error) { if (isCurrent()) showStatus(error.message || String(error), true); }
       finally { busy = false; if (isCurrent()) buttons(); }
@@ -163,17 +228,49 @@
     });
     const batchBody = () => ({ BranchId: branch, GradeId: gradeId, Usernames: [...selected] });
 
-    opener.addEventListener('click', () => {
-      gradeId = employee.profile?.PayGradeId || '';
+    async function populateReusableNames() {
+      const requestedBranch = branch;
+      for (const [kind] of componentKinds) find(`#hr-grade-${kind}`).replaceChildren();
+      if (!requestedBranch || !getTemplates) return;
+      const templates = await getTemplates(requestedBranch).catch(() => null);
+      if (branch !== requestedBranch || !isCurrent() || !templates) return;
+      for (const [kind] of componentKinds) find(`#hr-grade-${kind}`).innerHTML = (templates[kind] || [])
+        .map(name => `<option value="${escape(name)}"></option>`).join('');
+    }
+
+    function open(context = null) {
+      if (!isCurrent() || dialog.open) return;
+      employeeContext = context;
+      branch = key(context?.data?.employee?.BranchId) || (context ? 'main' : directBranch);
+      gradeId = context?.data?.profile?.PayGradeId || '';
       selected.clear();
       search.value = '';
       setup.reset();
       showStatus();
+      const showBranchPicker = !context && !fixedBranch && knownBranches.size > 1;
+      find('[data-grade-branch-picker]').hidden = !showBranchPicker;
+      find('[data-grade-branch-label]').hidden = showBranchPicker;
+      branchChoice.value = branch;
+      find('[data-grade-branch-label]').textContent = branch ? knownBranches.get(branch) || branch : '';
       renderGrades();
       // The assigned grade may be selected after the first scoped load.
-      if (!cache.has(branch)) gradeId = employee.profile?.PayGradeId || '';
+      if (!cache.has(branch)) gradeId = context?.data?.profile?.PayGradeId || '';
       dialog.showModal();
-      if (!cache.has(branch)) loadGrades();
+      if (branch && !cache.has(branch)) loadGrades();
+      populateReusableNames();
+    }
+    opener.addEventListener('click', () => open());
+    branchChoice.addEventListener('change', () => {
+      directBranch = branch = branchChoice.value;
+      gradeId = '';
+      selected.clear();
+      search.value = '';
+      setup.reset();
+      showStatus();
+      find('[data-grade-branch-label]').textContent = knownBranches.get(branch) || '';
+      renderGrades();
+      if (branch && !cache.has(branch)) loadGrades();
+      populateReusableNames();
     });
     find('[data-grade-close]').addEventListener('click', () => dialog.close());
     dialog.addEventListener('cancel', event => { if (busy) event.preventDefault(); });
@@ -188,7 +285,7 @@
       event.preventDefault();
       work(async () => {
         const current = grade();
-        const result = await request('savePayGrade', { ...readDraft(), BranchId: branch, GradeId: current?.GradeId || '', GradeRevision: current?.Revision || '',
+        const result = await request('savePayGrade', { ...readSalary(), BranchId: branch, GradeId: current?.GradeId || '', GradeRevision: current?.Revision || '',
           PayGrade: current?.PayGrade || setup.elements.PayGrade.value, PayLevel: current?.PayLevel || setup.elements.PayLevel.value });
         if (!isCurrent()) return;
         cache.set(branch, [...grades().filter(row => row.GradeId !== result.grade.GradeId), result.grade]);
@@ -198,8 +295,17 @@
         showStatus('Pay grade and level saved. Use Preview batch to apply its amounts.');
       });
     });
+    setup.addEventListener('input', salaryChanged);
+    for (const [kind] of componentKinds) find(`[data-grade-add="${kind}"]`).addEventListener('click', () => {
+      addComponent(kind);
+      salaryChanged();
+      find(`[data-grade-components="${kind}"]`).lastElementChild.querySelector('input').focus();
+    });
+    find('[data-grade-import]').addEventListener('click', () => {
+      try { populateSalary(employeeContext.readDraft()); salaryChanged(); } catch (error) { showStatus(error.message, true); }
+    });
     find('[data-grade-copy]').addEventListener('click', () => {
-      try { copyDraft(grade()); dialog.close(); } catch (error) { showStatus(error.message, true); }
+      try { employeeContext.copyDraft(grade()); dialog.close(); } catch (error) { showStatus(error.message, true); }
     });
     namesForm.addEventListener('submit', event => {
       event.preventDefault();
@@ -257,10 +363,12 @@
       showStatus(members.length ? `${members.length} staff on this grade and level selected.` : 'No active staff are assigned to this grade and level.');
     }));
     find('[data-grade-preview]').addEventListener('click', () => work(async () => {
+      if (dirty) throw new Error('Save the grade salary before previewing the batch.');
       clearPreview();
       const result = await request('getPayGradePreview', batchBody());
       if (!isCurrent()) return;
       cache.set(branch, [...grades().filter(row => row.GradeId !== gradeId), result.grade]);
+      renderGrades();
       find('[data-grade-amounts]').innerHTML = amounts(result.grade);
       preview = result;
       find('[data-grade-changes]').innerHTML = result.staff.map(row => `<details><summary>${escape(row.DisplayName)} · ${escape(row.Username)}</summary>${amounts(row.current)}</details>`).join('');
@@ -276,13 +384,7 @@
       onApplied(payload.Usernames);
       showStatus(result.updatedCount ? `Salary structure saved for ${result.updatedCount} staff.` : 'All selected staff are up to date.');
     }));
-    return {
-      setEmployee(data) {
-        employee = data;
-        branch = key(data?.employee?.BranchId) || 'main';
-        opener.hidden = !data;
-      }
-    };
+    return { openForEmployee: open };
   }
 
   global.DynamaxHrPayGrades = { mount };

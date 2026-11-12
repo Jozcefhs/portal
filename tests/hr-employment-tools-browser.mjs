@@ -13,7 +13,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 1366, height: 1000 }, acceptDownloads: true });
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
-  await page.setContent(`<style>${css}</style><main id="hr" style="max-width:1150px;margin:auto;padding:12px"></main>`);
+  await page.setContent(`<style>${css}</style><main style="max-width:1150px;margin:auto;padding:12px"><div id="hr-grades"></div><section id="hr"></section></main>`);
   await page.evaluate(() => document.body.classList.add('staff-page'));
   await page.addScriptTag({ content: source });
   await page.addScriptTag({ content: payGradesSource });
@@ -110,13 +110,46 @@ try {
     window.mountHr = edition => window.DynamaxHrEmployment.mount(document.getElementById('hr'), {
       edition, directory: Object.values(employees).map(row => row.employee),
       capabilities: { canViewSalaryStructure: true, canManageSalaryStructure: true, canIssueEmploymentLetters: true }, request,
+      payGradeRoot: document.getElementById('hr-grades'), workingBranch: 'all',
+      branches: [{ id: 'annex', name: 'Annex' }, { id: 'new-branch', name: 'New Branch' }],
       confirm: async options => { window.confirmations.push(options); return window.acceptSend; }
     });
     window.mountHr('school');
   });
   assert.equal(await page.evaluate(() => calls.length), 0, 'opening must not read payroll or letters');
+  await page.getByRole('button', { name: 'Pay grades & levels', exact: true }).click();
+  const gradesDialog = page.getByRole('dialog', { name: 'Pay grades and levels' });
+  assert.equal(await page.evaluate(() => calls.length), 0, 'the grade dialog waits for a branch when scope is all branches');
+  assert.equal(await gradesDialog.getByRole('option', { name: 'New Branch' }).count(), 1, 'branches without staff can be selected');
+  await gradesDialog.getByLabel('Pay grades branch').selectOption('annex');
+  await gradesDialog.locator('#hr-grade-Allowances option[value="Housing"]').waitFor({ state: 'attached' });
+  await gradesDialog.getByLabel('Pay grade', { exact: true }).fill('Officer');
+  await gradesDialog.getByLabel('Pay level', { exact: true }).fill('Level 2');
+  await gradesDialog.getByLabel('Grade basic salary (NGN)').fill('160000');
+  await gradesDialog.getByRole('button', { name: 'Add allowance', exact: true }).click();
+  await gradesDialog.getByLabel('Allowance name').last().fill('Housing');
+  await gradesDialog.getByLabel('Allowance amount (NGN)').last().fill('20000');
+  await gradesDialog.getByRole('button', { name: 'Add allowance', exact: true }).click();
+  await gradesDialog.getByLabel('Allowance name').last().fill('Transport');
+  await gradesDialog.getByLabel('Allowance amount (NGN)').last().fill('10000');
+  await gradesDialog.getByRole('button', { name: 'Add deduction', exact: true }).click();
+  await gradesDialog.getByLabel('Deduction name').fill('Loan');
+  await gradesDialog.getByLabel('Deduction amount (NGN)').fill('750');
+  await page.setViewportSize({ width: 320, height: 568 });
+  assert.equal(await gradesDialog.evaluate(dialog => dialog.scrollWidth <= dialog.clientWidth), true);
+  await gradesDialog.getByRole('button', { name: 'Save grade salary', exact: true }).click();
+  await gradesDialog.getByText('Pay grade and level saved. Use Preview batch to apply its amounts.').waitFor();
+  assert.deepEqual(await page.evaluate(() => {
+    const { BasicSalary, Allowances, Deductions, BranchId } = calls.find(row => row.action === 'savePayGrade').body;
+    return { BasicSalary, Allowances, Deductions, BranchId };
+  }), { BasicSalary: 160000, Allowances: [{ Name: 'Housing', Amount: 20000 }, { Name: 'Transport', Amount: 10000 }],
+    Deductions: [{ Name: 'Loan', Amount: 750 }], BranchId: 'annex' });
+  await gradesDialog.getByRole('button', { name: 'Close', exact: true }).click();
+  await page.setViewportSize({ width: 1366, height: 1000 });
+  assert.equal(await page.getByLabel('Staff member', { exact: true }).inputValue(), '');
+  assert.equal(await page.evaluate(() => calls.filter(row => ['getSalaryStructure', 'saveSalaryStructure'].includes(row.action)).length), 0);
   await page.getByLabel('Staff member', { exact: true }).selectOption('ada');
-  assert.equal(await page.evaluate(() => calls.length), 0, 'selection without load stays read-free');
+  assert.equal(await page.evaluate(() => calls.filter(row => row.action === 'getSalaryStructure').length), 0, 'selection without load stays read-free');
   await page.getByRole('button', { name: 'Load employee setup', exact: true }).click();
   await page.getByText('Employee setup loaded. Use Refresh for changes made elsewhere.').waitFor();
   assert.equal(await page.getByRole('checkbox', { name: 'Housing', exact: true }).isChecked(), true);
@@ -151,7 +184,7 @@ try {
   await page.getByRole('checkbox', { name: 'Loan', exact: true }).uncheck();
   assert.equal(await page.getByLabel('Loan amount (NGN)').isDisabled(), true);
   await page.getByRole('button', { name: 'Add deduction', exact: true }).click();
-  await page.getByLabel('Deduction name', { exact: true }).last().fill('Temporary row');
+  await page.locator('#hr').getByLabel('Deduction name', { exact: true }).last().fill('Temporary row');
   await page.getByRole('button', { name: 'Remove deduction', exact: true }).last().click();
   await page.getByRole('button', { name: 'Save salary structure', exact: true }).click();
   await page.getByText('Salary saved on existing payroll profile.').waitFor();
@@ -175,7 +208,7 @@ try {
   await page.evaluate(() => { acceptSend = false; });
   await itemDialog.getByRole('button', { name: 'Close', exact: true }).click();
   assert.equal(await itemDialog.isVisible(), false);
-  assert.deepEqual(await page.getByLabel('Allowance name', { exact: true }).evaluateAll(rows => rows.map(row => row.value)), ['Housing', 'Transport']);
+  assert.deepEqual(await page.locator('#hr').getByLabel('Allowance name', { exact: true }).evaluateAll(rows => rows.map(row => row.value)), ['Housing', 'Transport']);
   assert.deepEqual(await page.locator('.hr-component-row [data-hr-component-amount]').evaluateAll(rows => rows.map(row => row.value)), ['20000', '10000']);
   assert.equal(await page.evaluate(() => calls.filter(row => row.action === 'saveSalaryStructure').length), 1, 'catalog edits do not save the salary form');
   await page.getByLabel('Staff member', { exact: true }).selectOption('bola');
@@ -197,7 +230,7 @@ try {
   assert.equal(await page.locator('[data-hr-letter-history-limit]').isVisible(), false);
   assert.equal(await page.evaluate(() => calls.filter(row => row.action === 'getSalaryStructure').length), 3, 'return to loaded employee uses cache');
   assert.equal(await page.evaluate(() => calls.filter(row => row.action === 'listSalaryTemplates').length), 1, 'reuse the branch list when switching employees');
-  assert.deepEqual(await page.getByLabel('Allowance name', { exact: true }).evaluateAll(rows => rows.map(row => row.value)), ['Housing', 'Transport']);
+  assert.deepEqual(await page.locator('#hr').getByLabel('Allowance name', { exact: true }).evaluateAll(rows => rows.map(row => row.value)), ['Housing', 'Transport']);
   assert.equal(await page.getByLabel('Basic salary (NGN)', { exact: true }).inputValue(), '160000');
   await page.getByLabel('Letter date', { exact: true }).fill('2026-11-10');
   await page.getByLabel('Work location', { exact: true }).fill('Annex office');
@@ -243,23 +276,20 @@ try {
   await page.getByText('Employee setup loaded. Use Refresh for changes made elsewhere.').waitFor();
   assert.equal(await page.getByLabel('Basic salary (NGN)', { exact: true }).inputValue(), '0', 'an explicitly saved zero stays visible');
   await page.getByLabel('Staff member', { exact: true }).selectOption('ada');
-  await page.getByRole('checkbox', { name: 'Loan', exact: true }).check();
-  await page.getByLabel('Loan amount (NGN)').fill('750');
-  const gradeButton = page.getByRole('button', { name: 'Pay grades & levels', exact: true });
+  const gradeButton = page.getByRole('button', { name: 'Pay grades for this branch', exact: true });
   await gradeButton.click();
-  const gradesDialog = page.getByRole('dialog', { name: 'Pay grades and levels' });
-  await gradesDialog.getByLabel('Pay grade', { exact: true }).fill('Officer');
-  await gradesDialog.getByLabel('Pay level', { exact: true }).fill('Level 2');
-  await gradesDialog.getByRole('button', { name: 'Save grade from salary form' }).click();
-  await gradesDialog.getByText('Pay grade and level saved. Use Preview batch to apply its amounts.').waitFor();
-  assert.deepEqual(await page.evaluate(() => {
-    const { BasicSalary, Allowances, Deductions, BranchId } = calls.find(row => row.action === 'savePayGrade').body;
-    return { BasicSalary, Allowances, Deductions, BranchId };
-  }), { BasicSalary: 160000, Allowances: [{ Name: 'Housing', Amount: 20000 }, { Name: 'Transport', Amount: 10000 }],
-    Deductions: [{ Name: 'Loan', Amount: 750 }], BranchId: 'annex' });
+  await gradesDialog.getByLabel('Grade and level', { exact: true }).selectOption({ label: 'Officer · Level 2' });
+  assert.equal(await gradesDialog.getByLabel('Grade basic salary (NGN)').inputValue(), '160000');
+  assert.equal(await page.evaluate(() => calls.filter(row => row.action === 'listPayGrades').length), 1, 'both entry points share the branch catalogue');
   assert.equal(await gradesDialog.getByRole('checkbox', { name: /Bola/ }).count(), 0);
   await gradesDialog.getByRole('checkbox', { name: /Ada Example/ }).check();
   await gradesDialog.getByRole('checkbox', { name: /Chidi Example/ }).check();
+  await gradesDialog.getByLabel('Grade basic salary (NGN)').fill('161000');
+  await gradesDialog.getByRole('button', { name: 'Preview batch' }).click();
+  await gradesDialog.getByText('Save the grade salary before previewing the batch.').waitFor();
+  assert.equal(await page.evaluate(() => calls.filter(row => row.action === 'getPayGradePreview').length), 0);
+  await gradesDialog.getByRole('button', { name: 'Update grade salary', exact: true }).click();
+  await gradesDialog.getByText('Pay grade and level saved. Use Preview batch to apply its amounts.').waitFor();
   await gradesDialog.getByRole('button', { name: 'Preview batch' }).click();
   await gradesDialog.getByText('Ada Example · ada', { exact: true }).waitFor();
   await gradesDialog.getByText('Chidi Example · chidi', { exact: true }).waitFor();

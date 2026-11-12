@@ -21,11 +21,12 @@
     return new Blob([Uint8Array.from(bytes, char => char.charCodeAt(0))], { type: 'application/pdf' });
   }
 
-  function mount(root, { directory = [], capabilities = {}, request, personPicker, confirm, isCurrent = () => root.isConnected } = {}) {
+  function mount(root, { directory = [], capabilities = {}, request, personPicker, confirm, payGradeRoot,
+    branches = [], workingBranch = '', isCurrent = () => root.isConnected } = {}) {
     if (!root || typeof request !== 'function') return;
     const viewSalary = Boolean(capabilities.canViewSalaryStructure || capabilities.canManageSalaryStructure || capabilities.canIssueEmploymentLetters);
     if (!viewSalary) { root.replaceChildren(); return; }
-    const issueLetters = Boolean(capabilities.canIssueEmploymentLetters), cache = new Map(), templateCache = new Map();
+    const issueLetters = Boolean(capabilities.canIssueEmploymentLetters), cache = new Map(), templateCache = new Map(), templateLoads = new Map();
     const componentKinds = ['Allowances', 'Deductions'];
     root.classList.add('hr-employment-tools');
     const picker = personPicker ? personPicker('hrEmploymentToolsUsername', 'Staff member', directory)
@@ -39,7 +40,7 @@
         <section class="config-group hr-form-card"><header><strong>Salary structure</strong><small data-hr-salary-description></small></header>
           <p data-hr-salary-summary></p><div data-hr-salary-breakdown></div>
           <button type="button" data-hr-open-templates aria-haspopup="dialog" hidden>Manage reusable items</button>
-          <div data-hr-pay-grades style="display:inline-block"></div>
+          <button type="button" data-hr-pay-grades aria-haspopup="dialog" hidden>Pay grades for this branch</button>
           <dialog class="hr-template-dialog" data-hr-template-tools aria-labelledby="hr-template-heading">
             <header><h2 id="hr-template-heading">Reusable salary items</h2><button type="button" data-hr-close-templates>Close</button></header>
             <label>Reusable item<select name="ExistingItem" aria-label="Reusable item"></select></label>
@@ -118,7 +119,17 @@
       if (node) { node.textContent = message; node.className = `status ${bad ? 'bad' : 'ok'}`; }
     };
     const canEditSalary = () => Boolean(loaded && capabilities.canManageSalaryStructure && loaded.salaryEditable !== false);
-    const branchFor = data => clean(data?.employee?.BranchId).toLowerCase();
+    const branchFor = data => clean(data?.employee?.BranchId).toLowerCase() || 'main';
+    const loadTemplates = async branch => {
+      if (templateCache.has(branch)) return templateCache.get(branch).templates;
+      if (!templateLoads.has(branch)) {
+        templateLoads.set(branch, request('listSalaryTemplates', { BranchId: branch }).then(result => {
+          if (!templateCache.has(branch)) templateCache.set(branch, result);
+          return templateCache.get(branch).templates;
+        }).finally(() => templateLoads.delete(branch)));
+      }
+      return templateLoads.get(branch);
+    };
     const selectedTemplate = () => JSON.parse(templateChoice.value || 'null');
     const populateTemplateEditor = () => {
       const templates = templateCache.get(branchFor(loaded))?.templates || {};
@@ -136,11 +147,8 @@
       templateStatus.className = `status ${bad ? 'bad' : 'ok'}`;
     };
     const updateButtons = () => {
-      root.querySelectorAll('button').forEach(button => {
-        if (!button.closest('[data-hr-pay-grades]')) button.disabled = busy;
-      });
-      const gradeLauncher = find('[data-grade-open]');
-      if (gradeLauncher) gradeLauncher.disabled = busy;
+      root.querySelectorAll('button').forEach(button => { button.disabled = busy; });
+      find('[data-hr-pay-grades]').hidden = !gradeWorkspace || !loaded;
       selector.disabled = busy;
       find('[data-hr-refresh-employee]').disabled = busy || !active;
       find('[data-hr-salary-fields]').disabled = busy || !canEditSalary();
@@ -219,7 +227,6 @@
     };
     const showEmployee = data => {
       loaded = data; content.hidden = false;
-      gradeWorkspace?.setEmployee(data);
       const employee = data.employee || {}, profile = data.profile || {};
       salaryForm.elements.BasicSalary.value = profile.BasicSalary ?? '';
       for (const kind of componentKinds) renderComponents(kind, profile[kind] || []);
@@ -302,8 +309,7 @@
       let templateError = '';
       if (capabilities.canManageSalaryStructure && data.salaryEditable !== false && !templateCache.has(branch)) {
         try {
-          const result = await request('listSalaryTemplates', { BranchId: branch });
-          templateCache.set(branch, result);
+          await loadTemplates(branch);
         } catch (error) {
           templateError = 'Reusable items could not be loaded. Use Refresh reusable items to try again.';
         }
@@ -316,7 +322,6 @@
     find('[data-hr-refresh-employee]').addEventListener('click', () => loadEmployee(true));
     selector.addEventListener('change', () => {
       generation++; active = username(); loaded = null; savedLetter = null; preview = null; content.hidden = true;
-      gradeWorkspace?.setEmployee(null);
       if (cache.has(active)) { showEmployee(cache.get(active)); status('Restored employee setup without another request.'); }
       else status('Click Load employee setup for this staff member.');
       updateButtons();
@@ -414,8 +419,21 @@
         status(result.message || 'Employment letter delivery processed.', false, true);
       }, true));
     }
-    const gradeWorkspace = capabilities.canManageSalaryStructure && global.DynamaxHrPayGrades?.mount(find('[data-hr-pay-grades]'), {
-      directory, request, isCurrent, confirm,
+    const gradeWorkspace = capabilities.canManageSalaryStructure && payGradeRoot && global.DynamaxHrPayGrades?.mount(payGradeRoot, {
+      directory, request, isCurrent, confirm, branches, workingBranch, getTemplates: loadTemplates, normalizeComponents,
+      onApplied(usernames) {
+        for (const name of usernames) cache.delete(name);
+        if (!usernames.includes(active)) return;
+        if (root.getClientRects().length) loadEmployee(true);
+        else {
+          loaded = null;
+          content.hidden = true;
+          status('Salary updated. Load employee setup to see the saved amounts.');
+        }
+      }
+    });
+    find('[data-hr-pay-grades]').addEventListener('click', () => gradeWorkspace?.openForEmployee({
+      data: loaded,
       readDraft() {
         if (!canEditSalary() || !salaryForm.checkValidity()) {
           throw new Error('Close this window and enter a valid basic salary and amounts for all selected items in the salary form.');
@@ -428,12 +446,8 @@
         salaryForm.elements.BasicSalary.value = grade.BasicSalary;
         for (const kind of componentKinds) renderComponents(kind, grade[kind]);
         status('Grade amounts copied to the salary form. Review the draft before saving.');
-      },
-      onApplied(usernames) {
-        for (const name of usernames) cache.delete(name);
-        if (usernames.includes(active)) loadEmployee(true);
       }
-    });
+    }));
     updateButtons();
   }
 
