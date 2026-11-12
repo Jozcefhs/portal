@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { hrEmploymentLetterService, normalizeEmploymentLetterTerms } from '../functions/lib/hr-employment-letters.js';
 import { hrCapabilitiesFor } from '../functions/lib/human-resources.js';
 
@@ -37,6 +38,10 @@ function fixture({ edition = 'school', role = 'HR Manager', branch = 'north', pr
     items.forEach(validate);
     writes.push(clone(items));
     for (const item of items) {
+      if (item.operation === 'delete') {
+        records.delete(`${item.collectionPath}/${item.documentId}`);
+        continue;
+      }
       const old = records.get(`${item.collectionPath}/${item.documentId}`);
       row(item.collectionPath, item.documentId, item.updateMask ? { ...old, ...item.data } : item.data);
     }
@@ -223,6 +228,43 @@ test('pay grade application fails atomically when a selected payroll profile cha
   const advanced = fixture({ advanced: true });
   const special = (await advanced.call('savePayGrade', { PayGrade: 'Officer', PayLevel: '1', BasicSalary: 80000 })).grade;
   await assert.rejects(advanced.call('getPayGradePreview', { ...selection, GradeId: special.GradeId }), /advanced payroll components/);
+});
+
+test('renaming and deleting an existing pay grade preserves salary snapshots and leaves its names reusable', async () => {
+  const f = fixture();
+  const key = parts => createHash('sha256').update(JSON.stringify(parts)).digest('hex');
+  const ScopeId = key(['test-workspace', f.user.edition, f.user.branchId]);
+  const GradeId = key([ScopeId, 'officer', '1']);
+  const grade = { GradeId, ScopeId, PayGrade: 'Officer', PayLevel: '1', BasicSalary: 100000, Allowances: [], Deductions: [], Revision: 'before' };
+  f.row('hrPayGrades', GradeId, grade);
+  f.row('payrollProfiles', 'existing-profile-id', { ...f.records.get('payrollProfiles/existing-profile-id'),
+    PayGradeId: GradeId, PayGrade: 'Officer', PayLevel: '1', PayGradeRevision: 'before' });
+  const payroll = clone([...f.records].filter(([path]) => path.startsWith('payroll')));
+  const before = await f.call('getPayGradePreview', { GradeId, Usernames: ['employee'] });
+  const rename = { GradeId, GradeRevision: 'before', PayGrade: 'Senior officer', PayLevel: '2' };
+  const other = await f.call('savePayGrade', { PayGrade: 'Other', PayLevel: '3', BasicSalary: 100000 });
+  await assert.rejects(f.call('renamePayGrade', { ...rename, PayGrade: 'OTHER', PayLevel: '3' }), { status: 409 });
+  const updated = (await f.call('renamePayGrade', { ...rename, BasicSalary: 999999 })).grade;
+  assert.equal(updated.GradeId, GradeId);
+  assert.equal(updated.BasicSalary, grade.BasicSalary);
+  assert.equal(updated.PayGrade, 'Senior officer');
+  assert.deepEqual((await f.call('listPayGradeMembers', { GradeId })).usernames, ['employee']);
+  await assert.rejects(f.call('applyPayGrade', { GradeId, Usernames: ['employee'], PreviewVersion: before.previewVersion }), { status: 409 });
+  const reused = (await f.call('savePayGrade', { PayGrade: 'Officer', PayLevel: '1', BasicSalary: 150000 })).grade;
+  assert.notEqual(reused.GradeId, GradeId);
+  assert.deepEqual((await f.call('listPayGradeMembers', { GradeId: reused.GradeId })).usernames, []);
+  await assert.rejects(f.call('deletePayGrade', rename), { status: 409 });
+  const remove = { GradeId, GradeRevision: updated.Revision };
+  await assert.rejects(f.call('deletePayGrade', remove, { ...f.user, subscriptionReadOnly: true }), { status: 403 });
+  await assert.rejects(f.call('deletePayGrade', remove, { ...f.user, branchId: 'elsewhere' }), { status: 404 });
+  await f.call('deletePayGrade', remove);
+  assert.equal(f.records.has(`hrPayGrades/${GradeId}`), false);
+  const recreated = (await f.call('savePayGrade', { PayGrade: updated.PayGrade, PayLevel: updated.PayLevel, BasicSalary: 180000 })).grade;
+  assert.notEqual(recreated.GradeId, GradeId);
+  assert.deepEqual((await f.call('listPayGradeMembers', { GradeId: recreated.GradeId })).usernames, []);
+  assert.ok(f.records.has(`hrPayGrades/${other.grade.GradeId}`));
+  assert.deepEqual([...f.records].filter(([path]) => path.startsWith('payroll')), payroll);
+  assert.ok(f.writes.flat().every(write => ['hrPayGrades', 'hrPayGradeNames'].includes(write.collectionPath)));
 });
 
 test('selected employee load is bounded, read-only and omits bank/tax/private details', async () => {

@@ -43,6 +43,16 @@ try {
         payGrade = { ...body, GradeId: 'example-grade', Revision: 'grade-1' };
         return { grade: structuredClone(payGrade) };
       }
+      if (action === 'renamePayGrade') {
+        if (body.GradeRevision !== payGrade.Revision) throw new Error('Grade revision changed');
+        payGrade = { ...payGrade, PayGrade: body.PayGrade, PayLevel: body.PayLevel, Revision: 'grade-2' };
+        return { grade: structuredClone(payGrade) };
+      }
+      if (action === 'deletePayGrade') {
+        if (body.GradeRevision !== payGrade.Revision) throw new Error('Grade revision changed');
+        payGrade = null;
+        return { ok: true };
+      }
       if (action === 'listPayGradeMembers') return { usernames: assigned };
       if (action === 'getPayGradePreview') return { grade: structuredClone(payGrade), previewVersion: 'checked-version',
         changedCount: body.Usernames.length, staff: body.Usernames.map(name => ({
@@ -261,6 +271,23 @@ try {
   assert.deepEqual(await page.evaluate(() => calls.find(row => row.action === 'applyPayGrade').body.Usernames), ['ada', 'chidi']);
   await gradesDialog.getByRole('button', { name: 'Select staff on this grade and level' }).click();
   await gradesDialog.getByText('2 staff on this grade and level selected.').waitFor();
+  const gradeManage = gradesDialog.getByText('Edit or delete grade and level', { exact: true });
+  await gradeManage.click();
+  await gradesDialog.getByLabel('New pay grade', { exact: true }).fill('Senior officer');
+  await gradesDialog.getByLabel('New pay level', { exact: true }).fill('Level 3');
+  await gradesDialog.getByRole('button', { name: 'Save grade and level names' }).click();
+  await gradesDialog.getByText('Grade and level names saved.').waitFor();
+  assert.equal(await gradesDialog.getByLabel('Grade and level', { exact: true })
+    .locator('option:checked').textContent(), 'Senior officer · Level 3');
+  await gradeManage.click();
+  await page.evaluate(() => { acceptSend = false; });
+  await gradesDialog.getByRole('button', { name: 'Delete grade and level', exact: true }).click();
+  assert.equal(await page.evaluate(() => calls.filter(row => row.action === 'deletePayGrade').length), 0);
+  await page.evaluate(() => { acceptSend = true; });
+  await gradesDialog.getByRole('button', { name: 'Delete grade and level', exact: true }).click();
+  await gradesDialog.getByText('Grade and level deleted.').waitFor();
+  assert.equal(await gradesDialog.getByLabel('Grade and level', { exact: true }).locator('option').count(), 1);
+  assert.equal(await page.evaluate(() => calls.filter(row => row.action === 'applyPayGrade').length), 1);
   await gradesDialog.getByRole('button', { name: 'Close', exact: true }).click();
   await page.getByText(/Pay grade Officer · Level 2/).waitFor();
   for (const edition of ['faith', 'organisation', 'hospital']) {

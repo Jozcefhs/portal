@@ -25,8 +25,9 @@ const LETTERS = 'hrEmploymentLetters';
 const SALARY_TEMPLATES = 'hrSalaryTemplates';
 const SALARY_TEMPLATE_ACTIONS = ['listsalarytemplates', 'addsalarytemplate', 'editsalarytemplate', 'deletesalarytemplate'];
 const PAY_GRADES = 'hrPayGrades';
-export const HR_PAY_GRADE_ACTIONS = ['listpaygrades', 'savepaygrade', 'listpaygrademembers', 'getpaygradepreview', 'applypaygrade'];
-const PAY_GRADE_WRITE_ACTIONS = ['savepaygrade', 'applypaygrade'];
+const PAY_GRADE_NAMES = 'hrPayGradeNames';
+const PAY_GRADE_WRITE_ACTIONS = ['savepaygrade', 'renamepaygrade', 'deletepaygrade', 'applypaygrade'];
+export const HR_PAY_GRADE_ACTIONS = ['listpaygrades', 'listpaygrademembers', 'getpaygradepreview', ...PAY_GRADE_WRITE_ACTIONS];
 const payGradeFields = profile => Object.fromEntries(['PayGradeId', 'PayGrade', 'PayLevel', 'PayGradeRevision']
   .map(key => [key, clean(profile?.[key])]));
 const LETTER_SUMMARY_FIELDS = ['LetterId', 'EmployeeKey', 'Username', 'EmployeeName', 'RecipientEmail', 'BranchId', 'WorkspaceId', 'OrganisationEdition',
@@ -372,6 +373,54 @@ export function hrEmploymentLetterService(overrides = {}) {
     GradeId: row.__id || row.GradeId, PayGrade: row.PayGrade, PayLevel: row.PayLevel, Revision: row.Revision, ...salaryValues(row)
   });
 
+  function gradeNames(body) {
+    const PayGrade = clean(body.PayGrade).replace(/\s+/g, ' '), PayLevel = clean(body.PayLevel).replace(/\s+/g, ' ');
+    if ([PayGrade, PayLevel].some(value => !value || value.length > 60 || /[\u0000-\u001f\u007f]/.test(value))) {
+      throw fail('Enter a pay grade and a level of up to 60 characters each.');
+    }
+    return { PayGrade, PayLevel };
+  }
+
+  const gradeNameKey = (scopeId, names) => digest([scopeId, lower(names.PayGrade), lower(names.PayLevel)]);
+  const gradeRevision = user => ({ Revision: crypto.randomUUID(), UpdatedAt: db.now(), UpdatedBy: lower(user.username) });
+
+  async function gradeNameSlot(env, scopeId, names) {
+    const nameId = await gradeNameKey(scopeId, names);
+    const [claim, legacy] = await Promise.all([
+      db.getDocument(env, PAY_GRADE_NAMES, nameId), db.getDocument(env, PAY_GRADES, nameId)
+    ]);
+    // Earlier versions used the name key as the grade document ID. Once
+    // renamed, that document keeps its ID and no longer occupies the old name.
+    const legacyMatch = legacy?.ScopeId === scopeId && lower(legacy.PayGrade) === lower(names.PayGrade)
+      && lower(legacy.PayLevel) === lower(names.PayLevel);
+    if (legacyMatch && claim && claim.GradeId !== nameId) throw fail('This grade and level has conflicting name records.', 409);
+    return { nameId, gradeId: claim?.GradeId || (legacyMatch ? nameId : ''), legacy: legacyMatch ? legacy : null };
+  }
+
+  async function scopedGrade(env, scopeId, gradeId) {
+    if (!/^[a-f0-9]{64}$/.test(gradeId)) throw fail('Select a pay grade and level.');
+    const row = await db.getDocument(env, PAY_GRADES, gradeId);
+    if (!row || row.ScopeId !== scopeId) throw fail('This pay grade and level is unavailable in your branch.', 404);
+    return row;
+  }
+
+  function assertGradeRevision(row, revision) {
+    if (clean(row?.Revision) !== clean(revision)) {
+      throw fail('This grade and level already exists or changed. Refresh pay grades before saving.', 409);
+    }
+  }
+
+  const claimGradeName = (nameId, gradeId) => ({
+    collectionPath: PAY_GRADE_NAMES, documentId: nameId, data: { GradeId: gradeId }, exists: false
+  });
+
+  async function releaseGradeName(env, nameId, gradeId) {
+    const claim = await db.getDocument(env, PAY_GRADE_NAMES, nameId);
+    if (!claim) return [];
+    if (claim.GradeId !== gradeId) throw fail('The grade name changed. Refresh pay grades and try again.', 409);
+    return [{ collectionPath: PAY_GRADE_NAMES, documentId: nameId, operation: 'delete', ...condition(claim) }];
+  }
+
   async function payGrades(env, user, identity, body, action) {
     const branchId = enforceActorBranch(user, body.BranchId);
     const scopeId = await digest([identity.workspaceId, identity.edition, branchId]);
@@ -381,30 +430,53 @@ export function hrEmploymentLetterService(overrides = {}) {
       return { ok: true, grades: rows.map(gradeView) };
     }
     if (action === 'savepaygrade') {
-      const PayGrade = clean(body.PayGrade).replace(/\s+/g, ' '), PayLevel = clean(body.PayLevel).replace(/\s+/g, ' ');
-      if ([PayGrade, PayLevel].some(value => !value || value.length > 60 || /[\u0000-\u001f\u007f]/.test(value))) {
-        throw fail('Enter a pay grade and a level of up to 60 characters each.');
-      }
+      const names = gradeNames(body);
       const salary = salaryValues(body);
       if ([...salary.Allowances, ...salary.Deductions].some(row => row.Name.length > 120)) {
         throw fail('Allowance and deduction names must use at most 120 characters.');
       }
-      const GradeId = await digest([scopeId, lower(PayGrade), lower(PayLevel)]);
-      const row = await db.getDocument(env, PAY_GRADES, GradeId);
-      if (clean(row?.Revision) !== clean(body.GradeRevision)) {
-        throw fail('This grade and level already exists or changed. Refresh pay grades before saving.', 409);
+      const requestedId = clean(body.GradeId);
+      const slot = requestedId ? null : await gradeNameSlot(env, scopeId, names);
+      const existingId = requestedId || slot?.gradeId;
+      const row = existingId ? slot?.legacy || await scopedGrade(env, scopeId, existingId) : null;
+      assertGradeRevision(row, body.GradeRevision);
+      if (row && (row.PayGrade !== names.PayGrade || row.PayLevel !== names.PayLevel)) {
+        throw fail('Use Edit grade and level to change the name.', 409);
       }
       if (row && JSON.stringify(salaryValues(row)) === JSON.stringify(salary)) return { ok: true, grade: gradeView(row) };
-      const data = { GradeId, PayGrade, PayLevel, ...salary, ScopeId: scopeId, BranchId: branchId, WorkspaceId: identity.workspaceId,
-        OrganisationEdition: identity.edition, Revision: crypto.randomUUID(), UpdatedAt: db.now(), UpdatedBy: lower(user.username) };
-      await db.batchCommitLiteralDocuments(env, [{ collectionPath: PAY_GRADES, documentId: GradeId, data, ...condition(row) }]);
+      const GradeId = existingId || await digest([scopeId, crypto.randomUUID()]);
+      const data = { GradeId, ...names, ...salary, ScopeId: scopeId, BranchId: branchId, WorkspaceId: identity.workspaceId,
+        OrganisationEdition: identity.edition, ...gradeRevision(user) };
+      const writes = [{ collectionPath: PAY_GRADES, documentId: GradeId, data, ...condition(row) }];
+      if (!row) writes.push(claimGradeName(slot.nameId, GradeId));
+      await db.batchCommitLiteralDocuments(env, writes);
       return { ok: true, grade: gradeView(data) };
     }
 
     const gradeId = clean(body.GradeId);
-    if (!/^[a-f0-9]{64}$/.test(gradeId)) throw fail('Select a pay grade and level.');
-    const grade = await db.getDocument(env, PAY_GRADES, gradeId);
-    if (!grade || grade.ScopeId !== scopeId) throw fail('This pay grade and level is unavailable in your branch.', 404);
+    const grade = await scopedGrade(env, scopeId, gradeId);
+    if (action === 'renamepaygrade' || action === 'deletepaygrade') {
+      assertGradeRevision(grade, body.GradeRevision);
+      const oldNameId = await gradeNameKey(scopeId, grade);
+      const target = { collectionPath: PAY_GRADES, documentId: gradeId, ...condition(grade) };
+      if (action === 'deletepaygrade') {
+        await db.batchCommitLiteralDocuments(env, [{ ...target, operation: 'delete' },
+          ...await releaseGradeName(env, oldNameId, gradeId)]);
+        return { ok: true };
+      }
+      const names = gradeNames(body);
+      if (names.PayGrade === grade.PayGrade && names.PayLevel === grade.PayLevel) return { ok: true, grade: gradeView(grade) };
+      const data = { ...names, ...gradeRevision(user) };
+      const writes = [{ ...target, data, updateMask: Object.keys(data) }];
+      const newNameId = await gradeNameKey(scopeId, names);
+      if (newNameId !== oldNameId) {
+        const slot = await gradeNameSlot(env, scopeId, names);
+        if (slot.gradeId) throw fail('That grade and level already exists in this branch.', 409);
+        writes.push(claimGradeName(slot.nameId, gradeId), ...await releaseGradeName(env, oldNameId, gradeId));
+      }
+      await db.batchCommitLiteralDocuments(env, writes);
+      return { ok: true, grade: gradeView({ ...grade, ...data }) };
+    }
     if (action === 'listpaygrademembers') {
       const rows = await db.queryCollection(env, 'payrollProfiles', { filters: [{ field: 'PayGradeId', op: '==', value: gradeId }],
         select: ['Username', 'BranchId', 'OrganisationEdition', 'Active', 'CalculationMode'], limit: 1001 });

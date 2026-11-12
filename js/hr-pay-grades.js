@@ -15,7 +15,7 @@
         `${escape(row.Name)} ${format(row.Amount)}`).join(' · ') : '—'}</div>`).join('');
   }
 
-  function mount(root, { directory, request, readDraft, copyDraft, onApplied, isCurrent }) {
+  function mount(root, { directory, request, readDraft, copyDraft, onApplied, isCurrent, confirm }) {
     root.innerHTML = `<style>
       .hr-pay-grade-launcher{margin:0 0 8px;min-height:40px}
       .hr-pay-grade-dialog{box-sizing:border-box;width:min(565px,calc(100vw - 24px));max-height:calc(100dvh - 32px);overflow:auto;overscroll-behavior:contain;
@@ -37,6 +37,9 @@
       .hr-pay-grade-dialog .hr-pay-grade-preview details{padding:6px 8px;font-size:12px;overflow-wrap:anywhere}
       .hr-pay-grade-dialog .hr-pay-grade-preview details+details{border-top:1px solid var(--line,#cbd7e5)}
       .hr-pay-grade-dialog .status{margin:8px 0 0;overflow-wrap:anywhere}
+      .hr-pay-grade-dialog [data-grade-manage]{margin-top:8px;padding:8px;border:1px solid var(--line,#cbd7e5);border-radius:8px}
+      .hr-pay-grade-dialog [data-grade-manage]>summary{cursor:pointer;font-size:13px;font-weight:650}
+      .hr-pay-grade-dialog [data-grade-delete]{background:transparent;color:#b42338;border:1px solid #e8aeba}
       .hr-pay-grade-dialog [hidden]{display:none}
       @media(max-width:390px){.hr-pay-grade-dialog{padding:12px}}
     </style>
@@ -57,6 +60,20 @@
           <button type="button" data-grade-refresh>Refresh grades</button>
         </div>
       </form>
+      <details data-grade-manage hidden>
+        <summary>Edit or delete grade and level</summary>
+        <form data-grade-names>
+          <div class="hr-pay-grade-identifiers">
+            <label>New pay grade<input name="PayGrade" maxlength="60" required></label>
+            <label>New pay level<input name="PayLevel" maxlength="60" required></label>
+          </div>
+          <small>These controls edit the grade catalogue. Staff keep their saved salary amounts and grade details.</small>
+          <div class="hr-pay-grade-actions">
+            <button type="submit">Save grade and level names</button>
+            <button type="button" data-grade-delete>Delete grade and level</button>
+          </div>
+        </form>
+      </details>
       <section data-grade-batch hidden>
         <label>Find staff<input data-grade-search type="search" placeholder="Name or username"></label>
         <div class="hr-pay-grade-actions"><button type="button" data-grade-members>Select staff on this grade and level</button>
@@ -75,6 +92,7 @@
     const find = selector => root.querySelector(selector);
     const opener = find('[data-grade-open]'), dialog = find('dialog'), choice = find('[data-grade-choice]');
     const setup = find('[data-grade-setup]'), search = find('[data-grade-search]'), staffList = find('[data-grade-staff]');
+    const manage = find('[data-grade-manage]'), namesForm = find('[data-grade-names]');
     const status = find('[data-grade-status]'), selected = new Set(), cache = new Map();
     let employee = null, branch = '', gradeId = '', preview = null, busy = false;
     const grades = () => cache.get(branch) || [];
@@ -113,6 +131,10 @@
       find('[data-grade-amounts]').hidden = !row;
       find('[data-grade-amounts]').innerHTML = row ? amounts(row) : '';
       find('[data-grade-copy]').hidden = !row;
+      manage.hidden = !row;
+      manage.open = false;
+      namesForm.elements.PayGrade.value = row?.PayGrade || '';
+      namesForm.elements.PayLevel.value = row?.PayLevel || '';
       find('[data-grade-batch]').hidden = !row;
       find('[data-grade-save]').textContent = row ? 'Update grade from salary form' : 'Save grade from salary form';
       clearPreview();
@@ -166,7 +188,7 @@
       event.preventDefault();
       work(async () => {
         const current = grade();
-        const result = await request('savePayGrade', { ...readDraft(), BranchId: branch, GradeRevision: current?.Revision || '',
+        const result = await request('savePayGrade', { ...readDraft(), BranchId: branch, GradeId: current?.GradeId || '', GradeRevision: current?.Revision || '',
           PayGrade: current?.PayGrade || setup.elements.PayGrade.value, PayLevel: current?.PayLevel || setup.elements.PayLevel.value });
         if (!isCurrent()) return;
         cache.set(branch, [...grades().filter(row => row.GradeId !== result.grade.GradeId), result.grade]);
@@ -179,6 +201,34 @@
     find('[data-grade-copy]').addEventListener('click', () => {
       try { copyDraft(grade()); dialog.close(); } catch (error) { showStatus(error.message, true); }
     });
+    namesForm.addEventListener('submit', event => {
+      event.preventDefault();
+      work(async () => {
+        const current = grade();
+        const result = await request('renamePayGrade', { BranchId: branch, GradeId: gradeId, GradeRevision: current.Revision,
+          PayGrade: namesForm.elements.PayGrade.value, PayLevel: namesForm.elements.PayLevel.value });
+        if (!isCurrent()) return;
+        cache.set(branch, grades().map(row => row.GradeId === gradeId ? result.grade : row));
+        renderGrades();
+        showStatus('Grade and level names saved.');
+      });
+    });
+    find('[data-grade-delete]').addEventListener('click', () => work(async () => {
+      const current = grade();
+      const message = `Delete “${title(current)}” from this branch’s pay grades? Staff keep their saved salary amounts and grade details.`;
+      const approved = confirm
+        ? await confirm({ title: 'Delete grade and level', message, confirmText: 'Delete grade and level', tone: 'danger' })
+        : global.confirm(message);
+      if (!approved || !isCurrent()) return;
+      await request('deletePayGrade', { BranchId: branch, GradeId: gradeId, GradeRevision: current.Revision });
+      if (!isCurrent()) return;
+      cache.set(branch, grades().filter(row => row.GradeId !== gradeId));
+      gradeId = '';
+      selected.clear();
+      setup.reset();
+      renderGrades();
+      showStatus('Grade and level deleted.');
+    }));
     search.addEventListener('input', renderStaff);
     staffList.addEventListener('change', event => {
       const checkbox = event.target;

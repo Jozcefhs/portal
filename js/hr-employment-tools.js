@@ -415,7 +415,7 @@
       }, true));
     }
     const gradeWorkspace = capabilities.canManageSalaryStructure && global.DynamaxHrPayGrades?.mount(find('[data-hr-pay-grades]'), {
-      directory, request, isCurrent,
+      directory, request, isCurrent, confirm,
       readDraft() {
         if (!canEditSalary() || !salaryForm.checkValidity()) {
           throw new Error('Close this window and enter a valid basic salary and amounts for all selected items in the salary form.');
