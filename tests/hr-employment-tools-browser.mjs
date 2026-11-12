@@ -27,7 +27,8 @@ try {
         salary: { GrossPay: 170000, Earnings: [{ Name: 'Basic salary', Amount: 150000 }, { Name: 'Housing', Amount: 20000 }], Deductions: [{ Name: 'Loan', Amount: 1000 }], Currency: 'NGN' }, letters: [] },
       bola: { employee: { Username: 'bola', EmployeeId: 'EMP-BOLA', DisplayName: 'Bola Example', Position: 'Officer', Department: 'Operations', WorkEmail: 'bola@example.invalid' },
         profile: { BasicSalary: 200000, CalculationMode: 'Configurable', Allowances: [], Deductions: [] }, PayrollVersion: 'pay-b1', salaryEditable: false, salary: { GrossPay: 250000, Earnings: [{ Name: 'Configured earnings', Amount: 250000 }], Deductions: [], Currency: 'NGN' }, letters: [], lettersTruncated: true },
-      chidi: { employee: { Username: 'chidi', DisplayName: 'Chidi Example', BranchId: 'annex' }, profile: null, salaryEditable: true, letters: [] }
+      chidi: { employee: { Username: 'chidi', DisplayName: 'Chidi Example', BranchId: 'annex' }, profile: null, salaryEditable: true, letters: [] },
+      efe: { employee: { Username: 'efe', DisplayName: 'Efe Example', BranchId: 'annex' }, profile: { BasicSalary: 0 }, salaryEditable: true, letters: [] }
     };
     const letters = {}, templates = { Allowances: ['Housing'], Deductions: ['Loan'] };
     let templateVersion = 'initial-catalog';
@@ -152,6 +153,10 @@ try {
   await page.getByLabel('Staff member', { exact: true }).selectOption('chidi');
   await page.getByRole('button', { name: 'Load employee setup', exact: true }).click();
   await page.getByText('Chidi Example · No saved salary structure yet.').waitFor();
+  assert.equal(await page.getByLabel('Basic salary (NGN)', { exact: true }).inputValue(), '');
+  await page.getByRole('button', { name: 'Save salary structure', exact: true }).click();
+  assert.equal(await page.getByLabel('Basic salary (NGN)', { exact: true }).evaluate(input => input.validity.valueMissing), true);
+  assert.equal(await page.evaluate(() => calls.filter(row => row.action === 'saveSalaryStructure').length), 1, 'blank salary is never submitted');
   assert.equal(await page.getByRole('checkbox', { name: 'Housing', exact: true }).count(), 0);
   assert.equal(await page.getByRole('checkbox', { name: 'Transport support', exact: true }).isChecked(), false);
   assert.equal(await page.getByLabel('Transport support amount (NGN)').inputValue(), '');
@@ -200,6 +205,10 @@ try {
   await page.getByRole('button', { name: 'Load saved letter', exact: true }).click();
   await page.getByText('Saved letter loaded.', { exact: true }).waitFor();
   assert.equal(await page.getByRole('button', { name: 'Send employment letter', exact: true }).isDisabled(), true, 'saved Uncertain state is not resendable');
+  await page.getByLabel('Staff member', { exact: true }).selectOption('efe');
+  await page.getByRole('button', { name: 'Load employee setup', exact: true }).click();
+  await page.getByText('Employee setup loaded. Use Refresh for changes made elsewhere.').waitFor();
+  assert.equal(await page.getByLabel('Basic salary (NGN)', { exact: true }).inputValue(), '0', 'an explicitly saved zero stays visible');
   for (const edition of ['faith', 'organisation', 'hospital']) {
     const before = await page.evaluate(() => calls.length);
     await page.evaluate(value => mountHr(value), edition);

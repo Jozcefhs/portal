@@ -215,7 +215,7 @@
     const showEmployee = data => {
       loaded = data; content.hidden = false;
       const employee = data.employee || {}, profile = data.profile || {};
-      salaryForm.elements.BasicSalary.value = profile.BasicSalary ?? '0';
+      salaryForm.elements.BasicSalary.value = profile.BasicSalary ?? '';
       for (const kind of componentKinds) renderComponents(kind, profile[kind] || []);
       populateTemplateEditor();
       showTemplateStatus();
@@ -317,7 +317,7 @@
       event.preventDefault(); if (!canEditSalary() || !salaryForm.reportValidity()) return;
       perform(async () => {
         const name = active, sequence = generation;
-        const BasicSalary = Number(salaryForm.elements.BasicSalary.value);
+        const BasicSalary = salaryForm.elements.BasicSalary.valueAsNumber;
         if (!Number.isFinite(BasicSalary) || BasicSalary < 0) throw new Error('Enter a valid basic salary.');
         const saved = await request('saveSalaryStructure', { Username: name, PayrollVersion: loaded.PayrollVersion || '', BasicSalary,
           Allowances: normalizeComponents(componentRows('Allowances')), Deductions: normalizeComponents(componentRows('Deductions')), Currency: 'NGN', PayFrequency: 'Monthly' });
