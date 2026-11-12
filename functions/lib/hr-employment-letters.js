@@ -1,4 +1,4 @@
-import { getDocument, queryCollection, createDocumentIfAbsent, updateDocumentIfCurrent, batchCommitLiteralDocuments } from './firestore.js';
+import { getDocument, getDocuments, queryCollection, createDocumentIfAbsent, updateDocumentIfCurrent, batchCommitLiteralDocuments } from './firestore.js';
 import { findStaffUserRecord } from './staff-auth.js';
 import { branchRecordVisible, recordBranchId, enforceActorBranch } from './branch-scope.js';
 import { requiredDeploymentIdentity } from './deployment-identity.js';
@@ -24,6 +24,11 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const LETTERS = 'hrEmploymentLetters';
 const SALARY_TEMPLATES = 'hrSalaryTemplates';
 const SALARY_TEMPLATE_ACTIONS = ['listsalarytemplates', 'addsalarytemplate', 'editsalarytemplate', 'deletesalarytemplate'];
+const PAY_GRADES = 'hrPayGrades';
+export const HR_PAY_GRADE_ACTIONS = ['listpaygrades', 'savepaygrade', 'listpaygrademembers', 'getpaygradepreview', 'applypaygrade'];
+const PAY_GRADE_WRITE_ACTIONS = ['savepaygrade', 'applypaygrade'];
+const payGradeFields = profile => Object.fromEntries(['PayGradeId', 'PayGrade', 'PayLevel', 'PayGradeRevision']
+  .map(key => [key, clean(profile?.[key])]));
 const LETTER_SUMMARY_FIELDS = ['LetterId', 'EmployeeKey', 'Username', 'EmployeeName', 'RecipientEmail', 'BranchId', 'WorkspaceId', 'OrganisationEdition',
   'LetterDate', 'Status', 'FileName', 'CreatedAt', 'SentAt', 'SignatureApplied'];
 const digest = async value => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(value))))]
@@ -58,13 +63,42 @@ function safeProfile(profile) {
   const values = payrollProfileValues({}, profile);
   return { ...Object.fromEntries(['EmployeeId', 'BasicSalary', 'Allowances', 'Deductions', 'CalculationMode', 'Currency', 'PayFrequency']
     .map(key => [key, profile[key] ?? ({ Currency: 'NGN', PayFrequency: 'Monthly', CalculationMode: 'LEGACY_FLAT_RATE', Allowances: [], Deductions: [] }[key] ?? '')])),
-    BasicSalary: values.BasicSalary, Allowances: values.Allowances, Deductions: values.Deductions };
+    BasicSalary: values.BasicSalary, Allowances: values.Allowances, Deductions: values.Deductions, ...payGradeFields(profile) };
+}
+
+function salaryValues(body, existing = {}) {
+  if (clean(body.Currency || 'NGN').toUpperCase() !== 'NGN' || lower(body.PayFrequency || 'Monthly') !== 'monthly') {
+    throw fail('Linked payroll salary structures currently use NGN per month.');
+  }
+  const { BasicSalary, Allowances, Deductions } = payrollProfileValues({
+    BasicSalary: body.BasicSalary, Allowances: body.Allowances, Deductions: body.Deductions
+  }, existing);
+  if (Allowances.length > 40 || Deductions.length > 40) throw fail('Use no more than 40 allowances and 40 deductions.');
+  return { BasicSalary, Allowances, Deductions, Currency: 'NGN', PayFrequency: 'Monthly' };
+}
+
+function assertSalaryEmployeeActive(target) {
+  if (['false', 'no', '0', 'disabled', 'inactive'].includes(lower(target.staff.Active))
+      || ['exited', 'terminated', 'inactive', 'disabled'].includes(lower(target.employee.Status))) {
+    throw fail('This employee is inactive. Review their employment status before changing salary or issuing a letter.', 409);
+  }
+}
+
+function assertSalaryProfileEditable(target) {
+  if (clean(target.profile?.CalculationMode).toUpperCase() === 'CONFIGURABLE_PAYE') {
+    throw fail('This employee uses advanced payroll components. Update those assignments in Accounts.', 409);
+  }
+}
+
+function salaryMatches(profile, desired) {
+  const current = safeProfile(profile);
+  return current && Object.entries(desired).every(([key, value]) => JSON.stringify(current[key]) === JSON.stringify(value));
 }
 
 // All reads below are for one explicitly selected staff identity. No payroll run,
 // payslip, bank account or full employee collection is loaded to open HR.
 export function hrEmploymentLetterService(overrides = {}) {
-  const db = { getDocument, queryCollection, createDocumentIfAbsent, updateDocumentIfCurrent, batchCommitLiteralDocuments, findStaffUserRecord,
+  const db = { getDocument, getDocuments, queryCollection, createDocumentIfAbsent, updateDocumentIfCurrent, batchCommitLiteralDocuments, findStaffUserRecord,
     requiredDeploymentIdentity, getDocumentBranding, documentBrandingMatchesDeployment, effectiveBranchProfile, loadStaffApprovalProfile,
     loadStaffPosition, sendConfiguredEmail, createEmploymentLetterPdf, now, ...overrides };
   const storage = { putStoredDocument, getStoredDocument, deleteStoredDocument, ...overrides };
@@ -115,21 +149,69 @@ export function hrEmploymentLetterService(overrides = {}) {
     if (branchId !== recordBranchId(staff)) throw fail('This employee belongs to another branch. Select their saved branch; salary setup cannot transfer staff between branches.', 403);
     const canonicalUsername = clean(staff.Username || staff.username || staff.__id), aliases = staffEmploymentAliases(staff);
     const employees = await Promise.all([...new Set(aliases.map(employmentDocumentId))].map(id => db.getDocument(env, 'hrEmployees', id)));
+    const usernames = [...new Set([canonicalUsername, ...aliases].filter(Boolean))].slice(0, 10);
+    const profiles = await db.queryCollection(env, 'payrollProfiles', { filters: [{ field: 'Username', op: 'in', value: usernames }], limit: 11 });
+    return targetFromRows(staff, branchId, identity, employees, profiles, body.EmployeeId);
+  }
+
+  async function targetFromRows(staff, branchId, identity, employees, profiles, employeeId = '') {
+    const canonicalUsername = clean(staff.Username || staff.username || staff.__id), aliases = staffEmploymentAliases(staff);
     const employment = staffEmploymentDetails(staff, employees.filter(Boolean), identity.edition);
     const employee = { ...employment, Username: canonicalUsername, EmployeeId: clean(employment.EmployeeId),
       DisplayName: clean(employment.DisplayName || staff.DisplayName || canonicalUsername), Department: clean(employment.Department || staff.Department),
       Position: clean(employment.Position || staff.Position), EmploymentType: clean(employment.EmploymentType || staff.EmploymentType),
       HireDate: clean(employment.HireDate), WorkEmail: lower(employment.WorkEmail || staff.Email), BranchId: branchId };
-    const usernames = [...new Set([canonicalUsername, ...aliases].filter(Boolean))].slice(0, 10);
-    const profiles = await db.queryCollection(env, 'payrollProfiles', { filters: [{ field: 'Username', op: 'in', value: usernames }], limit: 11 });
     if (profiles.length > 10) throw fail('Too many payroll profiles match this employee. Resolve the duplicate profiles in Accounts first.', 409);
     const scoped = profiles.filter(row => recordBranchId(row) === branchId && staffRecordMatchesEdition(row, { edition: identity.edition, username: canonicalUsername }));
     if (scoped.length > 1 || profiles.some(row => !scoped.includes(row))) throw fail('The employee has conflicting payroll profiles or a profile in another branch. Review the existing payroll identity in Accounts first.', 409);
     const profile = scoped[0] || null;
-    if (clean(body.EmployeeId) && clean(body.EmployeeId) !== clean(profile?.EmployeeId || employee.EmployeeId)) throw fail('The selected employee payroll identity changed. Load the employee again.', 409);
+    if (clean(employeeId) && clean(employeeId) !== clean(profile?.EmployeeId || employee.EmployeeId)) throw fail('The selected employee payroll identity changed. Load the employee again.', 409);
     const employeeKey = (await digest([identity.workspaceId, identity.edition, branchId, 'staff', clean(staff.__id) || lower(canonicalUsername)])).slice(0, 40);
     return { identity, staff, employee, profile, employeeKey, employeeRecords: employees.filter(row => row
       && recordBranchId(row, branchId) === branchId && aliases.includes(lower(row.Username || row.username))) };
+  }
+
+  async function lookupByNames(env, collection, field, values, maxPerName) {
+    const names = [...new Set(values)];
+    const queries = [];
+    for (let offset = 0; offset < names.length; offset += 25) {
+      const group = names.slice(offset, offset + 25);
+      const limit = group.length * maxPerName + 1;
+      queries.push(db.queryCollection(env, collection, { filters: [{ field, op: 'in', value: group }], limit }).then(rows => {
+        if (rows.length >= limit) throw fail('Too many records match the selected staff. Resolve duplicate identities first.', 409);
+        return rows;
+      }));
+    }
+    return (await Promise.all(queries)).flat();
+  }
+
+  async function batchSalaryTargets(env, user, identity, branchId, usernames) {
+    const documentIds = usernames.map(name => employmentDocumentId(name).slice(0, 120));
+    if (documentIds.some(id => !id || id === '.' || id === '..')) throw fail('The selection includes an invalid username.');
+    const direct = await db.getDocuments(env, 'staffUsers', documentIds);
+    const matches = (row, username) => [row?.Username, row?.username, row?.__id].some(value => lower(value) === username);
+    const missing = usernames.filter((name, index) => !matches(direct[index], name));
+    const indexed = await lookupByNames(env, 'staffUsers', 'UsernameKey', missing, 2);
+    const staff = usernames.map((name, index) => {
+      const rows = matches(direct[index], name) ? [direct[index]] : indexed.filter(row => matches(row, name));
+      const row = rows[0];
+      if (rows.length !== 1 || !branchRecordVisible(row, user) || recordBranchId(row) !== branchId
+          || !staffRecordMatchesEdition(row, { ...user, edition: identity.edition })) {
+        throw fail(`${name}: Employee was not uniquely found in this branch.`, 409);
+      }
+      return row;
+    });
+    const aliasesFor = row => [...new Set([clean(row.Username || row.username || row.__id), ...staffEmploymentAliases(row)].filter(Boolean))];
+    const aliases = staff.map(aliasesFor);
+    const [employees, profiles] = await Promise.all([
+      db.getDocuments(env, 'hrEmployees', [...new Set(staff.flatMap(staffEmploymentAliases).map(employmentDocumentId).filter(Boolean))]),
+      lookupByNames(env, 'payrollProfiles', 'Username', aliases.flat(), 10)
+    ]);
+    return Promise.all(staff.map((row, index) => {
+      const ids = staffEmploymentAliases(row).map(employmentDocumentId);
+      return targetFromRows(row, branchId, identity, employees.filter(record => record && ids.includes(record.__id)),
+        profiles.filter(profile => aliases[index].includes(profile.Username)));
+    }));
   }
   async function salaryFor(env, target, payrollDate = db.now().slice(0, 10)) {
     const profile = target.profile;
@@ -262,57 +344,142 @@ export function hrEmploymentLetterService(overrides = {}) {
     }
     throw fail('The reusable list changed while saving. Try adding the item again.', 409);
   }
+  async function salaryWritePlan(env, user, target, desired, timestamp, action, { batch = false } = {}) {
+    const employeeId = clean(target.profile?.EmployeeId || target.employee.EmployeeId) || `EMP-HR-${target.employeeKey.slice(0, 24)}`;
+    const documentId = target.profile?.__id || employeeId.replace(/[\/\\?#\[\]]/g, '-');
+    if (!documentId || documentId.length > 140) throw fail('The saved employee payroll identity is invalid. Review it in Accounts.', 409);
+    if (!batch && !target.profile && await db.getDocument(env, 'payrollProfiles', documentId)) {
+      throw fail('That employee ID already belongs to a payroll profile. Review it in Accounts before creating another.', 409);
+    }
+    const payload = { ...plain(target.profile), ...desired, EmployeeId: employeeId, Username: target.employee.Username,
+      DisplayName: target.employee.DisplayName, BranchId: target.employee.BranchId, OrganisationEdition: target.identity.edition,
+      Department: target.employee.Department, Position: target.employee.Position, EmploymentType: target.employee.EmploymentType,
+      CalculationMode: target.profile?.CalculationMode || 'LEGACY_FLAT_RATE', Active: target.profile?.Active || 'YES',
+      CreatedAt: target.profile?.CreatedAt || timestamp, CreatedBy: target.profile?.CreatedBy || clean(user.displayName || user.username),
+      UpdatedAt: timestamp, UpdatedBy: clean(user.displayName || user.username) };
+    const changeId = `SAL-${(await digest([target.employeeKey, clean(target.profile?.__updateTime), desired])).slice(0, 32)}`;
+    return { documentId, writes: [
+      ...identityGuards(target),
+      { collectionPath: 'payrollProfiles', documentId, data: payload, ...condition(target.profile) },
+      { collectionPath: 'hrSalaryRevisions', documentId: changeId, exists: false, data: { RevisionId: changeId, EmployeeKey: target.employeeKey,
+        Username: target.employee.Username, EmployeeId: employeeId, BranchId: target.employee.BranchId, OrganisationEdition: target.identity.edition,
+        Before: safeProfile(target.profile), After: safeProfile(payload), ChangedAt: timestamp, ChangedBy: lower(user.username) } },
+      auditWrite(changeId, user, target, action, timestamp)
+    ] };
+  }
+
+  const gradeView = row => ({
+    GradeId: row.__id || row.GradeId, PayGrade: row.PayGrade, PayLevel: row.PayLevel, Revision: row.Revision, ...salaryValues(row)
+  });
+
+  async function payGrades(env, user, identity, body, action) {
+    const branchId = enforceActorBranch(user, body.BranchId);
+    const scopeId = await digest([identity.workspaceId, identity.edition, branchId]);
+    if (action === 'listpaygrades') {
+      const rows = await db.queryCollection(env, PAY_GRADES, { filters: [{ field: 'ScopeId', op: '==', value: scopeId }], limit: 501 });
+      if (rows.length > 500) throw fail('The branch pay grade list is too large to load.', 413);
+      return { ok: true, grades: rows.map(gradeView) };
+    }
+    if (action === 'savepaygrade') {
+      const PayGrade = clean(body.PayGrade).replace(/\s+/g, ' '), PayLevel = clean(body.PayLevel).replace(/\s+/g, ' ');
+      if ([PayGrade, PayLevel].some(value => !value || value.length > 60 || /[\u0000-\u001f\u007f]/.test(value))) {
+        throw fail('Enter a pay grade and a level of up to 60 characters each.');
+      }
+      const salary = salaryValues(body);
+      if ([...salary.Allowances, ...salary.Deductions].some(row => row.Name.length > 120)) {
+        throw fail('Allowance and deduction names must use at most 120 characters.');
+      }
+      const GradeId = await digest([scopeId, lower(PayGrade), lower(PayLevel)]);
+      const row = await db.getDocument(env, PAY_GRADES, GradeId);
+      if (clean(row?.Revision) !== clean(body.GradeRevision)) {
+        throw fail('This grade and level already exists or changed. Refresh pay grades before saving.', 409);
+      }
+      if (row && JSON.stringify(salaryValues(row)) === JSON.stringify(salary)) return { ok: true, grade: gradeView(row) };
+      const data = { GradeId, PayGrade, PayLevel, ...salary, ScopeId: scopeId, BranchId: branchId, WorkspaceId: identity.workspaceId,
+        OrganisationEdition: identity.edition, Revision: crypto.randomUUID(), UpdatedAt: db.now(), UpdatedBy: lower(user.username) };
+      await db.batchCommitLiteralDocuments(env, [{ collectionPath: PAY_GRADES, documentId: GradeId, data, ...condition(row) }]);
+      return { ok: true, grade: gradeView(data) };
+    }
+
+    const gradeId = clean(body.GradeId);
+    if (!/^[a-f0-9]{64}$/.test(gradeId)) throw fail('Select a pay grade and level.');
+    const grade = await db.getDocument(env, PAY_GRADES, gradeId);
+    if (!grade || grade.ScopeId !== scopeId) throw fail('This pay grade and level is unavailable in your branch.', 404);
+    if (action === 'listpaygrademembers') {
+      const rows = await db.queryCollection(env, 'payrollProfiles', { filters: [{ field: 'PayGradeId', op: '==', value: gradeId }],
+        select: ['Username', 'BranchId', 'OrganisationEdition', 'Active', 'CalculationMode'], limit: 1001 });
+      if (rows.length > 1000) throw fail('Too many staff are assigned to load in one selection. Choose the employees directly.', 413);
+      return { ok: true, usernames: rows.filter(row => recordBranchId(row) === branchId
+        && staffRecordMatchesEdition(row, { edition: identity.edition })
+        && lower(row.Active) !== 'no' && clean(row.CalculationMode).toUpperCase() !== 'CONFIGURABLE_PAYE').map(row => lower(row.Username)).filter(Boolean) };
+    }
+
+    const usernames = Array.isArray(body.Usernames) ? [...new Set(body.Usernames.map(lower).filter(Boolean))].sort() : [];
+    if (!usernames.length || usernames.length > 50) throw fail('Select between 1 and 50 staff for the batch.');
+    const desired = { ...salaryValues(grade), PayGradeId: gradeId, PayGrade: grade.PayGrade, PayLevel: grade.PayLevel, PayGradeRevision: grade.Revision };
+    const targets = await batchSalaryTargets(env, user, identity, branchId, usernames);
+    for (const target of targets) {
+      try {
+        assertSalaryEmployeeActive(target);
+        assertSalaryProfileEditable(target);
+        if (['no', 'false', '0', 'disabled', 'inactive'].includes(lower(target.profile?.Active))) throw fail('The payroll profile is inactive.', 409);
+        if (target.profile && (clean(target.profile.Currency || 'NGN').toUpperCase() !== 'NGN'
+            || lower(target.profile.PayFrequency || 'Monthly') !== 'monthly')) throw fail('The payroll profile uses a different currency or pay frequency.', 409);
+      } catch (error) {
+        if (!error.status || error.status >= 500) throw error;
+        throw fail(`${target.employee.Username}: ${error.message}`, error.status);
+      }
+    }
+    if (new Set(targets.map(target => target.employeeKey)).size !== targets.length) throw fail('The selection includes more than one login for the same employee.', 409);
+    const changed = targets.filter(target => !salaryMatches(target.profile, desired));
+    const previewVersion = await digest([scopeId, gradeId, grade.Revision, lower(user.username), targets.map(target => [
+      target.employeeKey, clean(target.staff.__updateTime), clean(target.profile?.__updateTime),
+      target.employeeRecords.map(row => [row.__id, row.__updateTime]).sort((a, b) => a[0].localeCompare(b[0]))
+    ])]);
+    if (action === 'getpaygradepreview') {
+      return { ok: true, grade: gradeView(grade), previewVersion, changedCount: changed.length, staff: targets.map(target => ({
+        Username: target.employee.Username, DisplayName: target.employee.DisplayName, current: safeProfile(target.profile)
+      })) };
+    }
+    if (!changed.length) return { ok: true, updatedCount: 0 };
+    if (clean(body.PreviewVersion) !== previewVersion) throw fail('The grade, employee or payroll data changed. Preview the batch again.', 409);
+    const timestamp = db.now();
+    const plans = await Promise.all(changed.map(target => salaryWritePlan(env, user, target, desired, timestamp, 'APPLY PAY GRADE SALARY STRUCTURE', { batch: true })));
+    const writes = plans.flatMap(plan => plan.writes);
+    if (new Set(writes.map(write => `${write.collectionPath}/${write.documentId}`)).size !== writes.length) {
+      throw fail('The selection has overlapping payroll or employee records. Resolve the duplicate links before applying.', 409);
+    }
+    // Guard the exact grade revision in the same commit as the profile writes.
+    writes.push({ collectionPath: PAY_GRADES, documentId: gradeId, data: { Revision: grade.Revision }, updateMask: ['Revision'], ...condition(grade) });
+    await db.batchCommitLiteralDocuments(env, writes);
+    return { ok: true, updatedCount: changed.length };
+  }
+
   return async function handle(env, user, body) {
     const identity = db.requiredDeploymentIdentity(env), capabilities = hrCapabilitiesFor(user), action = lower(body.action);
     const templateAction = SALARY_TEMPLATE_ACTIONS.includes(action);
+    const gradeAction = HR_PAY_GRADE_ACTIONS.includes(action);
     if (!(user.allowedSections || []).includes('humanResources') || !clean(user.username) || lower(user.edition || identity.edition) !== identity.edition) throw fail('Human Resources access is required.', 403);
     if (!capabilities.canViewSalaryStructure) throw fail('Your role cannot view employee salary structures or employment letters.', 403);
     const writesEmployment = (templateAction && action !== 'listsalarytemplates')
-      || ['savesalarystructure', 'saveemploymentletter', 'sendemploymentletter'].includes(action);
+      || PAY_GRADE_WRITE_ACTIONS.includes(action) || ['savesalarystructure', 'saveemploymentletter', 'sendemploymentletter'].includes(action);
     if (writesEmployment && (user.subscriptionReadOnly === true || user.subscriptionActive === false)) throw fail('Human Resources changes are read-only until the subscription is renewed.', 403);
-    if ((templateAction || action === 'savesalarystructure') && !capabilities.canManageSalaryStructure) throw fail('Your role cannot change salary structures.', 403);
+    if ((templateAction || gradeAction || action === 'savesalarystructure') && !capabilities.canManageSalaryStructure) throw fail('Your role cannot change salary structures.', 403);
     if (templateAction) return salaryTemplates(env, user, identity, body, action);
+    if (gradeAction) return payGrades(env, user, identity, body, action);
     if (action.includes('employmentletter') && !capabilities.canIssueEmploymentLetters) throw fail('Your role cannot prepare or send employment letters.', 403);
     const target = await targetFor(env, user, body, identity);
-    if (['savesalarystructure', 'saveemploymentletter', 'sendemploymentletter'].includes(action)
-      && (['false', 'no', '0', 'disabled', 'inactive'].includes(lower(target.staff.Active))
-        || ['exited', 'terminated', 'inactive', 'disabled'].includes(lower(target.employee.Status)))) {
-      throw fail('This employee is inactive. Review their employment status before changing salary or issuing a letter.', 409);
-    }
+    if (['savesalarystructure', 'saveemploymentletter', 'sendemploymentletter'].includes(action)) assertSalaryEmployeeActive(target);
     if (action === 'getsalarystructure') return salaryResult(env, user, target, { withLetters: capabilities.canIssueEmploymentLetters });
     if (action === 'savesalarystructure') {
-      if (clean(target.profile?.CalculationMode).toUpperCase() === 'CONFIGURABLE_PAYE') throw fail('This employee uses advanced payroll components. Update those assignments in Accounts; the existing configuration has been preserved.', 409);
-      if (clean(body.Currency || 'NGN').toUpperCase() !== 'NGN' || lower(body.PayFrequency || 'Monthly') !== 'monthly') throw fail('Linked payroll salary structures currently use NGN per month.');
-      const values = payrollProfileValues({ BasicSalary: body.BasicSalary, Allowances: body.Allowances, Deductions: body.Deductions }, target.profile || {});
-      if (values.Allowances.length > 40 || values.Deductions.length > 40) throw fail('Use no more than 40 allowances and 40 deductions.');
-      const desired = { BasicSalary: values.BasicSalary, Allowances: values.Allowances, Deductions: values.Deductions, Currency: 'NGN', PayFrequency: 'Monthly' };
-      const current = safeProfile(target.profile);
-      if (current && JSON.stringify(desired) === JSON.stringify({ BasicSalary: current.BasicSalary, Allowances: current.Allowances, Deductions: current.Deductions, Currency: current.Currency, PayFrequency: current.PayFrequency })) {
+      assertSalaryProfileEditable(target);
+      const desired = salaryValues(body, target.profile || {});
+      if (salaryMatches(target.profile, desired)) {
         return { ...await salaryResult(env, user, target), message: 'The salary structure is already saved. No records were changed.' };
       }
       if (!Object.hasOwn(body, 'PayrollVersion') || clean(body.PayrollVersion) !== clean(target.profile?.__updateTime)) throw fail('This salary structure changed or has not been loaded. Load the employee again before saving.', 409);
-      const timestamp = db.now(), employeeId = clean(target.profile?.EmployeeId || target.employee.EmployeeId) || `EMP-HR-${target.employeeKey.slice(0, 24)}`;
-      const documentId = target.profile?.__id || employeeId.replace(/[\/\\?#\[\]]/g, '-');
-      if (!documentId || documentId.length > 140) throw fail('The saved employee payroll identity is invalid. Review it in Accounts.', 409);
-      if (!target.profile) {
-        const collision = await db.getDocument(env, 'payrollProfiles', documentId);
-        if (collision) throw fail('That employee ID already belongs to a payroll profile. Review it in Accounts before creating another.', 409);
-      }
-      const payload = { ...plain(target.profile), ...desired, EmployeeId: employeeId, Username: target.employee.Username,
-        DisplayName: target.employee.DisplayName, BranchId: target.employee.BranchId, OrganisationEdition: identity.edition,
-        Department: target.employee.Department, Position: target.employee.Position, EmploymentType: target.employee.EmploymentType,
-        CalculationMode: target.profile?.CalculationMode || 'LEGACY_FLAT_RATE', Active: target.profile?.Active || 'YES',
-        CreatedAt: target.profile?.CreatedAt || timestamp, CreatedBy: target.profile?.CreatedBy || clean(user.displayName || user.username),
-        UpdatedAt: timestamp, UpdatedBy: clean(user.displayName || user.username) };
-      const changeId = `SAL-${(await digest([target.employeeKey, clean(target.profile?.__updateTime), desired])).slice(0, 32)}`;
-      await db.batchCommitLiteralDocuments(env, [
-        ...identityGuards(target),
-        { collectionPath: 'payrollProfiles', documentId, data: payload, ...condition(target.profile) },
-        { collectionPath: 'hrSalaryRevisions', documentId: changeId, exists: false, data: { RevisionId: changeId, EmployeeKey: target.employeeKey,
-          Username: target.employee.Username, EmployeeId: employeeId, BranchId: target.employee.BranchId, OrganisationEdition: identity.edition,
-          Before: safeProfile(target.profile), After: safeProfile(payload), ChangedAt: timestamp, ChangedBy: lower(user.username) } },
-        auditWrite(changeId, user, target, 'SAVE EMPLOYEE SALARY STRUCTURE', timestamp)
-      ]);
+      const { documentId, writes } = await salaryWritePlan(env, user, target, desired, db.now(), 'SAVE EMPLOYEE SALARY STRUCTURE');
+      await db.batchCommitLiteralDocuments(env, writes);
       target.profile = await db.getDocument(env, 'payrollProfiles', documentId);
       if (!target.profile) throw fail('The salary was saved but could not be reloaded. Load the employee again before making another change.', 503);
       return { ...await salaryResult(env, user, target), message: 'Salary structure saved. Existing payroll runs, payslips and payment records were preserved.' };

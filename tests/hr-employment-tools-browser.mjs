@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 const { chromium } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || 'msedge', headless: true });
 const source = await readFile(new URL('../js/hr-employment-tools.js', import.meta.url), 'utf8');
+const payGradesSource = await readFile(new URL('../js/hr-pay-grades.js', import.meta.url), 'utf8');
 const css = await readFile(new URL('../css/style.css', import.meta.url), 'utf8');
 await mkdir(new URL('../tmp/hr-employment-ui/', import.meta.url), { recursive: true });
 try {
@@ -15,6 +16,7 @@ try {
   await page.setContent(`<style>${css}</style><main id="hr" style="max-width:1150px;margin:auto;padding:12px"></main>`);
   await page.evaluate(() => document.body.classList.add('staff-page'));
   await page.addScriptTag({ content: source });
+  await page.addScriptTag({ content: payGradesSource });
   await page.evaluate(() => {
     window.calls = [];
     window.confirmations = [];
@@ -32,9 +34,30 @@ try {
     };
     const letters = {}, templates = { Allowances: ['Housing'], Deductions: ['Loan'] };
     let templateVersion = 'initial-catalog';
+    let payGrade = null, assigned = [];
     const request = async (action, body) => {
       window.calls.push({ action, body: structuredClone(body) });
       if (action === 'getSalaryStructure') return structuredClone(employees[body.Username]);
+      if (action === 'listPayGrades') return { grades: payGrade ? [structuredClone(payGrade)] : [] };
+      if (action === 'savePayGrade') {
+        payGrade = { ...body, GradeId: 'example-grade', Revision: 'grade-1' };
+        return { grade: structuredClone(payGrade) };
+      }
+      if (action === 'listPayGradeMembers') return { usernames: assigned };
+      if (action === 'getPayGradePreview') return { grade: structuredClone(payGrade), previewVersion: 'checked-version',
+        changedCount: body.Usernames.length, staff: body.Usernames.map(name => ({
+          Username: name, DisplayName: employees[name].employee.DisplayName, current: employees[name].profile
+        })) };
+      if (action === 'applyPayGrade') {
+        if (body.PreviewVersion !== 'checked-version') throw new Error('Preview the batch first');
+        assigned = body.Usernames;
+        for (const name of assigned) {
+          const { BasicSalary, Allowances, Deductions, GradeId, PayGrade, PayLevel } = payGrade;
+          employees[name].profile = { ...employees[name].profile, BasicSalary, Allowances, Deductions, PayGradeId: GradeId, PayGrade, PayLevel };
+          employees[name].PayrollVersion = 'grade-applied';
+        }
+        return { updatedCount: assigned.length };
+      }
       if (action === 'listSalaryTemplates') return { templates: structuredClone(templates), templateVersion };
       if (action === 'addSalaryTemplate') {
         templates[body.Kind].push(body.Name);
@@ -209,6 +232,37 @@ try {
   await page.getByRole('button', { name: 'Load employee setup', exact: true }).click();
   await page.getByText('Employee setup loaded. Use Refresh for changes made elsewhere.').waitFor();
   assert.equal(await page.getByLabel('Basic salary (NGN)', { exact: true }).inputValue(), '0', 'an explicitly saved zero stays visible');
+  await page.getByLabel('Staff member', { exact: true }).selectOption('ada');
+  await page.getByRole('checkbox', { name: 'Loan', exact: true }).check();
+  await page.getByLabel('Loan amount (NGN)').fill('750');
+  const gradeButton = page.getByRole('button', { name: 'Pay grades & levels', exact: true });
+  await gradeButton.click();
+  const gradesDialog = page.getByRole('dialog', { name: 'Pay grades and levels' });
+  await gradesDialog.getByLabel('Pay grade', { exact: true }).fill('Officer');
+  await gradesDialog.getByLabel('Pay level', { exact: true }).fill('Level 2');
+  await gradesDialog.getByRole('button', { name: 'Save grade from salary form' }).click();
+  await gradesDialog.getByText('Pay grade and level saved. Use Preview batch to apply its amounts.').waitFor();
+  assert.deepEqual(await page.evaluate(() => {
+    const { BasicSalary, Allowances, Deductions, BranchId } = calls.find(row => row.action === 'savePayGrade').body;
+    return { BasicSalary, Allowances, Deductions, BranchId };
+  }), { BasicSalary: 160000, Allowances: [{ Name: 'Housing', Amount: 20000 }, { Name: 'Transport', Amount: 10000 }],
+    Deductions: [{ Name: 'Loan', Amount: 750 }], BranchId: 'annex' });
+  assert.equal(await gradesDialog.getByRole('checkbox', { name: /Bola/ }).count(), 0);
+  await gradesDialog.getByRole('checkbox', { name: /Ada Example/ }).check();
+  await gradesDialog.getByRole('checkbox', { name: /Chidi Example/ }).check();
+  await gradesDialog.getByRole('button', { name: 'Preview batch' }).click();
+  await gradesDialog.getByText('Ada Example · ada', { exact: true }).waitFor();
+  await gradesDialog.getByText('Chidi Example · chidi', { exact: true }).waitFor();
+  assert.equal(await page.evaluate(() => calls.filter(row => row.action === 'applyPayGrade').length), 0);
+  const box = await gradesDialog.boundingBox();
+  assert.ok(box.width <= 366 && box.height <= 968, 'the pay grade dialog fits the phone viewport');
+  await gradesDialog.getByRole('button', { name: 'Apply to 2 staff' }).click();
+  await gradesDialog.getByText('Salary structure saved for 2 staff.').waitFor();
+  assert.deepEqual(await page.evaluate(() => calls.find(row => row.action === 'applyPayGrade').body.Usernames), ['ada', 'chidi']);
+  await gradesDialog.getByRole('button', { name: 'Select staff on this grade and level' }).click();
+  await gradesDialog.getByText('2 staff on this grade and level selected.').waitFor();
+  await gradesDialog.getByRole('button', { name: 'Close', exact: true }).click();
+  await page.getByText(/Pay grade Officer · Level 2/).waitFor();
   for (const edition of ['faith', 'organisation', 'hospital']) {
     const before = await page.evaluate(() => calls.length);
     await page.evaluate(value => mountHr(value), edition);

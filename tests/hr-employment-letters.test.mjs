@@ -11,7 +11,7 @@ function fixture({ edition = 'school', role = 'HR Manager', branch = 'north', pr
   let version = 20, sendCount = 0, pdfCount = 0;
   const records = new Map(), reads = [], queries = [], writes = [], sent = [], objects = new Map(), storageCalls = [];
   const row = (collection, id, value) => records.set(`${collection}/${id}`, { ...value, __id: id, __updateTime: `v${++version}` });
-  row('staffUsers', 'stable-staff-id', { Username: 'employee', DisplayName: 'Example Employee', Email: 'employee@example.org', Active: true,
+  row('staffUsers', 'stable-staff-id', { Username: 'employee', UsernameKey: 'employee', DisplayName: 'Example Employee', Email: 'employee@example.org', Active: true,
     BranchId: branch, OrganisationEdition: edition, Position: 'Operations Officer', Department: 'Operations' });
   row('hrEmployees', 'employee', { Username: 'employee', EmployeeId: 'EMP-101', DisplayName: 'Example Employee', Position: 'Operations Officer',
     Department: 'Operations', WorkEmail: 'employee@example.org', EmploymentType: 'Permanent', HireDate: '2026-12-01', Status: 'Active', BranchId: branch, OrganisationEdition: edition });
@@ -43,13 +43,15 @@ function fixture({ edition = 'school', role = 'HR Manager', branch = 'north', pr
   };
   const service = hrEmploymentLetterService({
     now: () => '2026-11-10T10:00:00.000Z', getDocument: get,
+    getDocuments: (env, collection, ids) => Promise.all(ids.map(id => get(env, collection, id))),
     findStaffUserRecord: async (_env, username, options) => {
       assert.equal(options.allowListFallback, false); reads.push(`staff:${username}`);
       return clone([...records.entries()].find(([key, value]) => key.startsWith('staffUsers/') && [value.Username, value.LoginUsername, value.__id].includes(username))?.[1] || null);
     },
     queryCollection: async (_env, collection, options) => {
       queries.push({ collection, options: clone(options) });
-      assert.ok(options.limit <= 101);
+      assert.ok(options.limit <= 101 || collection === 'hrPayGrades' || (collection === 'payrollProfiles'
+        && (options.filters[0].field === 'PayGradeId' || options.filters[0].value.length <= 25)));
       const selected = [...records.entries()].filter(([key]) => key.startsWith(`${collection}/`)).map(([, value]) => value)
         .filter(value => options.filters.every(filter => filter.op === 'in' ? filter.value.includes(value[filter.field]) : value[filter.field] === filter.value)).slice(0, options.limit);
       return clone(selected.map(value => options.select ? { ...Object.fromEntries(options.select.map(key => [key, value[key]])), __id: value.__id, __updateTime: value.__updateTime } : value));
@@ -156,6 +158,71 @@ test('salary and letter access is limited to permitted HR roles', async () => {
   await assert.rejects(f.call('saveSalaryStructure', { BasicSalary: 10, PayrollVersion: '' }), error => error.status === 403);
   await assert.rejects(f.draft(), error => error.status === 403);
   assert.equal(hrCapabilitiesFor({ role: 'HR Manager' }).canIssueEmploymentLetters, true);
+});
+
+test('save a pay grade and apply its exact amounts to multiple staff only after a current preview', async () => {
+  const f = fixture();
+  const branch = f.user.branchId, edition = f.user.edition;
+  f.row('staffUsers', 'second-id', { Username: 'second', UsernameKey: 'second', DisplayName: 'Second employee',
+    BranchId: branch, OrganisationEdition: edition, Active: true });
+  f.row('hrEmployees', 'second', { Username: 'second', EmployeeId: 'EMP-102', BranchId: branch, OrganisationEdition: edition });
+  const save = { PayGrade: 'Officer', PayLevel: 'Level 2', BasicSalary: 180000,
+    Allowances: [{ Name: 'Housing', Amount: 25000 }], Deductions: [{ Name: 'Association', Amount: 2000 }] };
+  const original = clone(f.records.get('payrollProfiles/existing-profile-id'));
+  const historic = [...f.records].filter(([path]) => /^payroll(?:Runs|Items|Payments)\//.test(path));
+  const created = (await f.call('savePayGrade', save)).grade;
+  assert.deepEqual((await f.call('listPayGrades')).grades, [created]);
+  assert.deepEqual((await f.call('listPayGrades', {}, { ...f.user, branchId: 'other' })).grades, []);
+  assert.deepEqual(f.records.get('payrollProfiles/existing-profile-id'), original);
+  await assert.rejects(f.call('savePayGrade', save), { status: 409 });
+  const selection = { GradeId: created.GradeId, Usernames: ['employee', 'second'] };
+  const first = await f.call('getPayGradePreview', selection);
+  assert.equal(first.changedCount, 2);
+  assert.equal(first.staff[0].current.BasicSalary, 100000);
+  assert.equal(first.staff[1].current, null);
+  await assert.rejects(f.call('applyPayGrade', selection), { status: 409 });
+  const updated = (await f.call('savePayGrade', { ...save, GradeRevision: created.Revision, BasicSalary: 190000 })).grade;
+  assert.deepEqual(f.records.get('payrollProfiles/existing-profile-id'), original);
+  await assert.rejects(f.call('applyPayGrade', { ...selection, PreviewVersion: first.previewVersion }), { status: 409 });
+  const second = await f.call('getPayGradePreview', selection);
+  await assert.rejects(f.call('applyPayGrade', { ...selection, PreviewVersion: second.previewVersion },
+    { ...f.user, subscriptionReadOnly: true }), { status: 403 });
+  const apply = { ...selection, PreviewVersion: second.previewVersion };
+  assert.equal((await f.call('applyPayGrade', apply)).updatedCount, 2);
+  for (const path of ['payrollProfiles/existing-profile-id', 'payrollProfiles/EMP-102']) {
+    const profile = f.records.get(path);
+    assert.equal(profile.BasicSalary, 190000);
+    assert.deepEqual(profile.Allowances, save.Allowances);
+    assert.deepEqual(profile.Deductions, save.Deductions);
+    assert.equal(profile.PayGradeId, created.GradeId);
+    assert.equal(profile.PayGradeRevision, updated.Revision);
+  }
+  assert.equal(f.records.get('payrollProfiles/existing-profile-id').BankName, original.BankName);
+  assert.equal(f.records.get('payrollProfiles/existing-profile-id').TaxRate, original.TaxRate);
+  assert.deepEqual((await f.call('listPayGradeMembers', selection)).usernames.sort(), ['employee', 'second']);
+  assert.deepEqual([...f.records].filter(([path]) => /^payroll(?:Runs|Items|Payments)\//.test(path)), historic);
+  const writes = f.writes.length;
+  assert.equal((await f.call('applyPayGrade', apply)).updatedCount, 0);
+  assert.equal(f.writes.length, writes);
+  assert.equal([...f.records].filter(([path]) => path.startsWith('hrSalaryRevisions/')).length, 2);
+});
+
+test('pay grade application fails atomically when a selected payroll profile changes during commit', async () => {
+  const f = fixture();
+  const grade = (await f.call('savePayGrade', { PayGrade: 'Officer', PayLevel: '1', BasicSalary: 80000 })).grade;
+  const selection = { GradeId: grade.GradeId, Usernames: ['employee'] };
+  const preview = await f.call('getPayGradePreview', selection);
+  f.state.beforeCommit = () => {
+    const current = f.records.get('payrollProfiles/existing-profile-id');
+    f.row('payrollProfiles', 'existing-profile-id', { ...current, BasicSalary: 125000, __updateTime: 'later-payroll-revision' });
+  };
+  await assert.rejects(f.call('applyPayGrade', { ...selection, PreviewVersion: preview.previewVersion }), { status: 409 });
+  assert.equal(f.records.get('payrollProfiles/existing-profile-id').BasicSalary, 125000);
+  assert.equal(f.records.get('payrollProfiles/existing-profile-id').PayGradeId, undefined);
+  assert.equal(f.writes.length, 1);
+  const advanced = fixture({ advanced: true });
+  const special = (await advanced.call('savePayGrade', { PayGrade: 'Officer', PayLevel: '1', BasicSalary: 80000 })).grade;
+  await assert.rejects(advanced.call('getPayGradePreview', { ...selection, GradeId: special.GradeId }), /advanced payroll components/);
 });
 
 test('selected employee load is bounded, read-only and omits bank/tax/private details', async () => {

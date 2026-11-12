@@ -7,7 +7,7 @@ import { readJsonBody } from '../lib/request-security.js';
 import { branchRecordVisible, enforceActorBranch, recordBranchId } from '../lib/branch-scope.js';
 import { staffRecordMatchesEdition } from '../lib/records-desk.js';
 import { staffEmploymentDetails } from '../lib/staff-employment.js';
-import { handleHrEmploymentLetter } from '../lib/hr-employment-letters.js';
+import { handleHrEmploymentLetter, HR_PAY_GRADE_ACTIONS } from '../lib/hr-employment-letters.js';
 import {
   hrCapabilitiesFor,
   normalizeHrCandidate,
@@ -696,7 +696,7 @@ export async function onRequestPost(context) {
     const capabilities = hrCapabilitiesFor(user);
     let result;
     if (['getsalarystructure', 'savesalarystructure', 'listsalarytemplates', 'addsalarytemplate', 'editsalarytemplate', 'deletesalarytemplate',
-      'previewemploymentletter', 'saveemploymentletter', 'loademploymentletter', 'sendemploymentletter'].includes(action)) {
+      'previewemploymentletter', 'saveemploymentletter', 'loademploymentletter', 'sendemploymentletter', ...HR_PAY_GRADE_ACTIONS].includes(action)) {
       result = await handleHrEmploymentLetter(context.env, user, body);
     }
     else if (action === 'list') result = await listWorkspace(context.env, user, body);

@@ -39,6 +39,7 @@
         <section class="config-group hr-form-card"><header><strong>Salary structure</strong><small data-hr-salary-description></small></header>
           <p data-hr-salary-summary></p><div data-hr-salary-breakdown></div>
           <button type="button" data-hr-open-templates aria-haspopup="dialog" hidden>Manage reusable items</button>
+          <div data-hr-pay-grades style="display:inline-block"></div>
           <dialog class="hr-template-dialog" data-hr-template-tools aria-labelledby="hr-template-heading">
             <header><h2 id="hr-template-heading">Reusable salary items</h2><button type="button" data-hr-close-templates>Close</button></header>
             <label>Reusable item<select name="ExistingItem" aria-label="Reusable item"></select></label>
@@ -135,7 +136,11 @@
       templateStatus.className = `status ${bad ? 'bad' : 'ok'}`;
     };
     const updateButtons = () => {
-      root.querySelectorAll('button').forEach(button => { button.disabled = busy; });
+      root.querySelectorAll('button').forEach(button => {
+        if (!button.closest('[data-hr-pay-grades]')) button.disabled = busy;
+      });
+      const gradeLauncher = find('[data-grade-open]');
+      if (gradeLauncher) gradeLauncher.disabled = busy;
       selector.disabled = busy;
       find('[data-hr-refresh-employee]').disabled = busy || !active;
       find('[data-hr-salary-fields]').disabled = busy || !canEditSalary();
@@ -214,6 +219,7 @@
     };
     const showEmployee = data => {
       loaded = data; content.hidden = false;
+      gradeWorkspace?.setEmployee(data);
       const employee = data.employee || {}, profile = data.profile || {};
       salaryForm.elements.BasicSalary.value = profile.BasicSalary ?? '';
       for (const kind of componentKinds) renderComponents(kind, profile[kind] || []);
@@ -224,7 +230,8 @@
         : 'This is the existing payroll salary profile. Saving changes future payroll calculations; posted payroll and payments are unchanged.';
       const currency = data.salary?.Currency || profile.Currency || 'NGN';
       const gross = data.salary?.GrossPay;
-      find('[data-hr-salary-summary]').textContent = `${employee.DisplayName || active}${employee.EmployeeId ? ` · ${employee.EmployeeId}` : ''}${gross !== undefined ? ` · Gross monthly salary: ${new Intl.NumberFormat('en-NG', { style: 'currency', currency }).format(Number(gross) || 0)}` : ' · No saved salary structure yet.'}`;
+      const grade = [profile.PayGrade, profile.PayLevel].filter(Boolean).join(' · ');
+      find('[data-hr-salary-summary]').textContent = `${employee.DisplayName || active}${employee.EmployeeId ? ` · ${employee.EmployeeId}` : ''}${grade ? ` · Pay grade ${grade}` : ''}${gross !== undefined ? ` · Gross monthly salary: ${new Intl.NumberFormat('en-NG', { style: 'currency', currency }).format(Number(gross) || 0)}` : ' · No saved salary structure yet.'}`;
       const breakdown = [['Earning', data.salary?.Earnings], ['Deduction', data.salary?.Deductions]]
         .flatMap(([type, rows]) => (Array.isArray(rows) ? rows : []).map(row => ({ type, ...row })));
       find('[data-hr-salary-breakdown]').innerHTML = breakdown.length ? `<div class="table-scroll"><table class="admin-table"><thead><tr><th>Type</th><th>Salary component</th><th>Amount (${escape(currency)})</th></tr></thead><tbody>${breakdown.map(row => `<tr><td>${escape(row.type)}</td><td>${escape(row.Name || row.Code)}</td><td>${Number(row.Amount || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td></tr>`).join('')}</tbody></table></div>` : '';
@@ -309,6 +316,7 @@
     find('[data-hr-refresh-employee]').addEventListener('click', () => loadEmployee(true));
     selector.addEventListener('change', () => {
       generation++; active = username(); loaded = null; savedLetter = null; preview = null; content.hidden = true;
+      gradeWorkspace?.setEmployee(null);
       if (cache.has(active)) { showEmployee(cache.get(active)); status('Restored employee setup without another request.'); }
       else status('Click Load employee setup for this staff member.');
       updateButtons();
@@ -406,6 +414,26 @@
         status(result.message || 'Employment letter delivery processed.', false, true);
       }, true));
     }
+    const gradeWorkspace = capabilities.canManageSalaryStructure && global.DynamaxHrPayGrades?.mount(find('[data-hr-pay-grades]'), {
+      directory, request, isCurrent,
+      readDraft() {
+        if (!canEditSalary() || !salaryForm.checkValidity()) {
+          throw new Error('Close this window and enter a valid basic salary and amounts for all selected items in the salary form.');
+        }
+        return { BasicSalary: salaryForm.elements.BasicSalary.valueAsNumber,
+          Allowances: normalizeComponents(componentRows('Allowances')), Deductions: normalizeComponents(componentRows('Deductions')) };
+      },
+      copyDraft(grade) {
+        if (!canEditSalary()) throw new Error('Open an editable salary profile to use the salary form.');
+        salaryForm.elements.BasicSalary.value = grade.BasicSalary;
+        for (const kind of componentKinds) renderComponents(kind, grade[kind]);
+        status('Grade amounts copied to the salary form. Review the draft before saving.');
+      },
+      onApplied(usernames) {
+        for (const name of usernames) cache.delete(name);
+        if (usernames.includes(active)) loadEmployee(true);
+      }
+    });
     updateButtons();
   }
 

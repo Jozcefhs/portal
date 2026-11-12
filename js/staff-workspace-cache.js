@@ -33,7 +33,8 @@
   // stay fresh without invalidating the concurrent read as if records changed.
   // Payment verification is deliberately excluded: it can submit academic data.
   const scopedLiveReads = {
-    '/api/staff-hr': ['getsalarystructure', 'loademploymentletter', 'previewemploymentletter'],
+    '/api/staff-hr': ['getsalarystructure', 'loademploymentletter', 'previewemploymentletter', 'listsalarytemplates',
+      'listpaygrades', 'listpaygrademembers', 'getpaygradepreview'],
     // These endpoints perform fresh, scoped lookups/previews. They do not save
     // records, so opening them must not discard unrelated loaded workspaces.
     // Keep money, inventory and approval evidence live; do not cache it here.

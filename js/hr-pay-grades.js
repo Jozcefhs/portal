@@ -1,0 +1,239 @@
+(function (global) {
+  'use strict';
+
+  const clean = value => String(value ?? '').trim();
+  const key = value => clean(value).toLowerCase();
+  const escape = value => clean(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+  const money = new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN' });
+  const format = value => money.format(Number(value || 0));
+  const title = grade => `${grade.PayGrade} · ${grade.PayLevel}`;
+
+  function amounts(salary) {
+    if (!salary) return '<span>No saved salary profile</span>';
+    return `<strong>Basic ${format(salary.BasicSalary)}</strong>` + [['Allowances', salary.Allowances], ['Deductions', salary.Deductions]]
+      .map(([label, rows]) => `<div><small>${label}</small> ${rows?.length ? rows.map(row =>
+        `${escape(row.Name)} ${format(row.Amount)}`).join(' · ') : '—'}</div>`).join('');
+  }
+
+  function mount(root, { directory, request, readDraft, copyDraft, onApplied, isCurrent }) {
+    root.innerHTML = `<style>
+      .hr-pay-grade-launcher{margin:0 0 8px;min-height:40px}
+      .hr-pay-grade-dialog{box-sizing:border-box;width:min(565px,calc(100vw - 24px));max-height:calc(100dvh - 32px);overflow:auto;overscroll-behavior:contain;
+        margin:auto;padding:16px;border:1px solid var(--line,#cbd7e5);border-radius:14px;background:var(--surface,#fff);color:var(--text,#172b42)}
+      .hr-pay-grade-dialog::backdrop{background:#0d223f66}
+      .hr-pay-grade-dialog header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}
+      .hr-pay-grade-dialog h2{font-size:17px;margin:0}
+      .hr-pay-grade-dialog label{display:grid;gap:3px;margin:0;font-size:12px;font-weight:650;min-width:0}
+      .hr-pay-grade-dialog label input,.hr-pay-grade-dialog label select{min-height:40px;font-size:16px;margin:0}
+      .hr-pay-grade-dialog section,.hr-pay-grade-dialog form{padding:0;border:0;background:transparent;margin:10px 0 0;min-width:0}
+      .hr-pay-grade-dialog .hr-pay-grade-identifiers{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:8px}
+      .hr-pay-grade-dialog .hr-pay-grade-actions{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-top:8px}
+      .hr-pay-grade-dialog button{width:auto;min-height:40px;margin:0;padding:7px 10px;white-space:normal}
+      .hr-pay-grade-dialog .hr-pay-grade-summary{margin:8px 0;padding:9px;border:1px solid var(--line,#cbd7e5);border-radius:8px;font-size:12px;overflow-wrap:anywhere}
+      .hr-pay-grade-dialog .hr-pay-grade-staff,.hr-pay-grade-dialog .hr-pay-grade-preview{max-height:165px;overflow:auto;overscroll-behavior:contain;
+        border:1px solid var(--line,#cbd7e5);border-radius:8px;margin-top:6px}
+      .hr-pay-grade-dialog .hr-pay-grade-staff label{display:flex;align-items:center;gap:8px;padding:5px 8px;min-height:34px;overflow-wrap:anywhere}
+      .hr-pay-grade-dialog .hr-pay-grade-staff input{width:18px;height:18px;min-height:0;flex:none}
+      .hr-pay-grade-dialog .hr-pay-grade-preview details{padding:6px 8px;font-size:12px;overflow-wrap:anywhere}
+      .hr-pay-grade-dialog .hr-pay-grade-preview details+details{border-top:1px solid var(--line,#cbd7e5)}
+      .hr-pay-grade-dialog .status{margin:8px 0 0;overflow-wrap:anywhere}
+      .hr-pay-grade-dialog [hidden]{display:none}
+      @media(max-width:390px){.hr-pay-grade-dialog{padding:12px}}
+    </style>
+    <button type="button" class="hr-pay-grade-launcher" aria-haspopup="dialog" data-grade-open hidden>Pay grades &amp; levels</button>
+    <dialog class="hr-pay-grade-dialog" aria-label="Pay grades and levels">
+      <header><h2>Pay grades &amp; levels</h2><button type="button" data-grade-close>Close</button></header>
+      <label>Grade and level<select data-grade-choice aria-label="Grade and level"></select></label>
+      <form data-grade-setup>
+        <div class="hr-pay-grade-identifiers" data-grade-identifiers>
+          <label>Pay grade<input name="PayGrade" maxlength="60" required></label>
+          <label>Pay level<input name="PayLevel" maxlength="60" required></label>
+        </div>
+        <div class="hr-pay-grade-summary" data-grade-amounts hidden></div>
+        <small>Set the basic salary, allowances and deductions in the salary form, then save those amounts to the grade.</small>
+        <div class="hr-pay-grade-actions">
+          <button type="submit" data-grade-save>Save grade from salary form</button>
+          <button type="button" data-grade-copy hidden>Copy amounts to salary form</button>
+          <button type="button" data-grade-refresh>Refresh grades</button>
+        </div>
+      </form>
+      <section data-grade-batch hidden>
+        <label>Find staff<input data-grade-search type="search" placeholder="Name or username"></label>
+        <div class="hr-pay-grade-actions"><button type="button" data-grade-members>Select staff on this grade and level</button>
+          <button type="button" data-grade-clear>Clear selection</button><small data-grade-count></small></div>
+        <div class="hr-pay-grade-staff" data-grade-staff aria-label="Staff to receive this salary"></div>
+        <div class="hr-pay-grade-actions"><button type="button" data-grade-preview>Preview batch</button></div>
+        <section data-grade-confirmation hidden>
+          <p><small>Applying replaces the selected staff’s basic salary, allowances and deductions with this grade’s amounts.</small></p>
+          <div class="hr-pay-grade-preview" data-grade-changes></div>
+          <div class="hr-pay-grade-actions"><button type="button" data-grade-apply></button></div>
+        </section>
+      </section>
+      <p class="status" data-grade-status role="status" hidden></p>
+    </dialog>`;
+
+    const find = selector => root.querySelector(selector);
+    const opener = find('[data-grade-open]'), dialog = find('dialog'), choice = find('[data-grade-choice]');
+    const setup = find('[data-grade-setup]'), search = find('[data-grade-search]'), staffList = find('[data-grade-staff]');
+    const status = find('[data-grade-status]'), selected = new Set(), cache = new Map();
+    let employee = null, branch = '', gradeId = '', preview = null, busy = false;
+    const grades = () => cache.get(branch) || [];
+    const grade = () => grades().find(row => row.GradeId === gradeId);
+    const candidates = () => directory.filter(row => row.Active !== false && !/^(exited|terminated|inactive|disabled)$/i.test(clean(row.Status))
+      && (key(row.BranchId) || 'main') === branch && row.Username);
+    const showStatus = (message = '', bad = false) => {
+      status.textContent = message;
+      status.hidden = !message;
+      status.className = `status ${bad ? 'bad' : 'ok'}`;
+    };
+    const buttons = () => {
+      dialog.querySelectorAll('button, input, select').forEach(control => { control.disabled = busy; });
+      setup.elements.PayGrade.disabled = busy || Boolean(grade());
+      setup.elements.PayLevel.disabled = busy || Boolean(grade());
+      find('[data-grade-preview]').disabled = busy || !selected.size;
+      find('[data-grade-apply]').disabled = busy || !preview?.changedCount;
+      find('[data-grade-count]').textContent = `${selected.size} selected`;
+    };
+    const clearPreview = () => {
+      preview = null;
+      find('[data-grade-confirmation]').hidden = true;
+    };
+    function renderStaff() {
+      const term = key(search.value);
+      const rows = candidates().filter(row => !term || key(`${row.DisplayName} ${row.Username}`).includes(term));
+      staffList.innerHTML = rows.length ? rows.map(row => {
+        const username = key(row.Username);
+        return `<label><input type="checkbox" value="${escape(username)}" ${selected.has(username) ? 'checked' : ''}>${escape(row.DisplayName || row.Username)} <small>${escape(row.Username)}</small></label>`;
+      }).join('') : '<p>No matching staff in this branch.</p>';
+      buttons();
+    }
+    function renderGrade() {
+      const row = grade();
+      find('[data-grade-identifiers]').hidden = Boolean(row);
+      find('[data-grade-amounts]').hidden = !row;
+      find('[data-grade-amounts]').innerHTML = row ? amounts(row) : '';
+      find('[data-grade-copy]').hidden = !row;
+      find('[data-grade-batch]').hidden = !row;
+      find('[data-grade-save]').textContent = row ? 'Update grade from salary form' : 'Save grade from salary form';
+      clearPreview();
+      if (row) renderStaff();
+      buttons();
+    }
+    function renderGrades() {
+      const rows = [...grades()].sort((a, b) => title(a).localeCompare(title(b), undefined, { numeric: true }));
+      choice.innerHTML = '<option value="">New grade and level</option>' + rows.map(row =>
+        `<option value="${escape(row.GradeId)}">${escape(title(row))}</option>`).join('');
+      choice.value = grade() ? gradeId : '';
+      gradeId = choice.value;
+      renderGrade();
+    }
+    async function work(action) {
+      if (busy || !employee || !isCurrent()) return;
+      busy = true; buttons(); showStatus();
+      try { await action(); } catch (error) { if (isCurrent()) showStatus(error.message || String(error), true); }
+      finally { busy = false; if (isCurrent()) buttons(); }
+    }
+    const loadGrades = () => work(async () => {
+      const result = await request('listPayGrades', { BranchId: branch });
+      if (!isCurrent()) return;
+      cache.set(branch, result.grades);
+      renderGrades();
+    });
+    const batchBody = () => ({ BranchId: branch, GradeId: gradeId, Usernames: [...selected] });
+
+    opener.addEventListener('click', () => {
+      gradeId = employee.profile?.PayGradeId || '';
+      selected.clear();
+      search.value = '';
+      setup.reset();
+      showStatus();
+      renderGrades();
+      // The assigned grade may be selected after the first scoped load.
+      if (!cache.has(branch)) gradeId = employee.profile?.PayGradeId || '';
+      dialog.showModal();
+      if (!cache.has(branch)) loadGrades();
+    });
+    find('[data-grade-close]').addEventListener('click', () => dialog.close());
+    dialog.addEventListener('cancel', event => { if (busy) event.preventDefault(); });
+    find('[data-grade-refresh]').addEventListener('click', loadGrades);
+    choice.addEventListener('change', () => {
+      gradeId = choice.value;
+      selected.clear();
+      showStatus();
+      renderGrade();
+    });
+    setup.addEventListener('submit', event => {
+      event.preventDefault();
+      work(async () => {
+        const current = grade();
+        const result = await request('savePayGrade', { ...readDraft(), BranchId: branch, GradeRevision: current?.Revision || '',
+          PayGrade: current?.PayGrade || setup.elements.PayGrade.value, PayLevel: current?.PayLevel || setup.elements.PayLevel.value });
+        if (!isCurrent()) return;
+        cache.set(branch, [...grades().filter(row => row.GradeId !== result.grade.GradeId), result.grade]);
+        gradeId = result.grade.GradeId;
+        setup.reset();
+        renderGrades();
+        showStatus('Pay grade and level saved. Use Preview batch to apply its amounts.');
+      });
+    });
+    find('[data-grade-copy]').addEventListener('click', () => {
+      try { copyDraft(grade()); dialog.close(); } catch (error) { showStatus(error.message, true); }
+    });
+    search.addEventListener('input', renderStaff);
+    staffList.addEventListener('change', event => {
+      const checkbox = event.target;
+      if (checkbox.checked && selected.size >= 50) {
+        checkbox.checked = false;
+        showStatus('Select up to 50 staff per batch.', true);
+        return;
+      }
+      if (checkbox.checked) selected.add(checkbox.value);
+      else selected.delete(checkbox.value);
+      clearPreview();
+      buttons();
+    });
+    find('[data-grade-clear]').addEventListener('click', () => { selected.clear(); clearPreview(); renderStaff(); });
+    find('[data-grade-members]').addEventListener('click', () => work(async () => {
+      const result = await request('listPayGradeMembers', { BranchId: branch, GradeId: gradeId });
+      if (!isCurrent()) return;
+      const assigned = new Set(result.usernames);
+      const members = candidates().map(row => key(row.Username)).filter(username => assigned.has(username));
+      if (members.length > 50) throw new Error(`${members.length} active staff are assigned. Select up to 50 for each batch.`);
+      selected.clear();
+      members.forEach(username => selected.add(username));
+      search.value = '';
+      clearPreview();
+      renderStaff();
+      showStatus(members.length ? `${members.length} staff on this grade and level selected.` : 'No active staff are assigned to this grade and level.');
+    }));
+    find('[data-grade-preview]').addEventListener('click', () => work(async () => {
+      clearPreview();
+      const result = await request('getPayGradePreview', batchBody());
+      if (!isCurrent()) return;
+      cache.set(branch, [...grades().filter(row => row.GradeId !== gradeId), result.grade]);
+      find('[data-grade-amounts]').innerHTML = amounts(result.grade);
+      preview = result;
+      find('[data-grade-changes]').innerHTML = result.staff.map(row => `<details><summary>${escape(row.DisplayName)} · ${escape(row.Username)}</summary>${amounts(row.current)}</details>`).join('');
+      find('[data-grade-confirmation]').hidden = false;
+      find('[data-grade-apply]').textContent = result.changedCount ? `Apply to ${result.changedCount} staff` : 'All selected staff are up to date';
+    }));
+    find('[data-grade-apply]').addEventListener('click', () => work(async () => {
+      const payload = batchBody();
+      const version = preview.previewVersion;
+      clearPreview();
+      const result = await request('applyPayGrade', { ...payload, PreviewVersion: version });
+      if (!isCurrent()) return;
+      onApplied(payload.Usernames);
+      showStatus(result.updatedCount ? `Salary structure saved for ${result.updatedCount} staff.` : 'All selected staff are up to date.');
+    }));
+    return {
+      setEmployee(data) {
+        employee = data;
+        branch = key(data?.employee?.BranchId) || 'main';
+        opener.hidden = !data;
+      }
+    };
+  }
+
+  global.DynamaxHrPayGrades = { mount };
+})(window);

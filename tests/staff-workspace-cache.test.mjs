@@ -93,7 +93,8 @@ test('academic deadline reads do not cancel the classroom scorebook loading alon
 });
 
 const auditedLiveReads = [
-  ['staff-hr', ['getSalaryStructure', 'loadEmploymentLetter', 'previewEmploymentLetter']],
+  ['staff-hr', ['getSalaryStructure', 'loadEmploymentLetter', 'previewEmploymentLetter', 'listSalaryTemplates',
+    'listPayGrades', 'listPayGradeMembers', 'getPayGradePreview']],
   ['staff-manual-payments', ['lookup']], ['staff-payment-corrections', ['lookup', 'preview']], ['staff-wallet', ['lookup']],
   ['fee-collection-summary', ['']], ['staff-procurement', ['records', 'recordDetail', 'lookupInventory', 'previewItemImport']],
   ['staff-vendor-settlements', ['bootstrap', 'statement', 'previewHistorical', 'previewSale', 'previewProductImport', 'previewCardRefundBatch']],
