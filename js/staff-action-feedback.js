@@ -30,7 +30,7 @@
     if (url.pathname === '/api/staff-vendor-settlements' && ['approvecardrefundbatch', 'postcardrefundbatch'].includes(action)) return false;
     // This form owns its reviewed duplicate warning and final receipt outcome.
     if (url.pathname === '/api/staff-manual-payments') return false;
-    if (url.pathname === '/api/staff-hr' && ['savepaygrade', 'renamepaygrade', 'deletepaygrade', 'applypaygrade'].includes(action)) return false;
+    if (url.pathname === '/api/staff-hr' && ['savepaygrade', 'renamepaygrade', 'deletepaygrade', 'assignpaygrademembers', 'applypaygrade'].includes(action)) return false;
     return true;
   }
   function report(message, type = 'ok', options = {}) {

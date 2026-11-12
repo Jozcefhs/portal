@@ -54,6 +54,11 @@ try {
         return { ok: true };
       }
       if (action === 'listPayGradeMembers') return { usernames: assigned };
+      if (action === 'assignPayGradeMembers') {
+        if (body.GradeRevision !== payGrade.Revision) throw new Error('Grade revision changed');
+        assigned = [...new Set([...assigned, ...body.Usernames])];
+        return { assignedCount: body.Usernames.length };
+      }
       if (action === 'getPayGradePreview') return { grade: structuredClone(payGrade), previewVersion: 'checked-version',
         changedCount: body.Usernames.length, staff: body.Usernames.map(name => ({
           Username: name, DisplayName: employees[name].employee.DisplayName, current: employees[name].profile
@@ -138,7 +143,7 @@ try {
   await page.setViewportSize({ width: 320, height: 568 });
   assert.equal(await gradesDialog.evaluate(dialog => dialog.scrollWidth <= dialog.clientWidth), true);
   await gradesDialog.getByRole('button', { name: 'Save grade salary', exact: true }).click();
-  await gradesDialog.getByText('Pay grade and level saved. Use Preview batch to apply its amounts.').waitFor();
+  await gradesDialog.getByText('Pay grade and level saved. Use Preview salary batch to apply its amounts.').waitFor();
   assert.deepEqual(await page.evaluate(() => {
     const { BasicSalary, Allowances, Deductions, BranchId } = calls.find(row => row.action === 'savePayGrade').body;
     return { BasicSalary, Allowances, Deductions, BranchId };
@@ -284,13 +289,20 @@ try {
   assert.equal(await gradesDialog.getByRole('checkbox', { name: /Bola/ }).count(), 0);
   await gradesDialog.getByRole('checkbox', { name: /Ada Example/ }).check();
   await gradesDialog.getByRole('checkbox', { name: /Chidi Example/ }).check();
+  await gradesDialog.getByRole('button', { name: 'Assign grade and level only' }).click();
+  await gradesDialog.getByText('Grade and level assigned to 2 staff. Their saved salaries are unchanged.').waitFor();
+  assert.equal(await page.evaluate(() => calls.filter(row => row.action === 'applyPayGrade').length), 0);
+  await gradesDialog.getByRole('button', { name: 'Clear selection' }).click();
+  await gradesDialog.getByRole('button', { name: 'Select staff on this grade and level' }).click();
+  await gradesDialog.getByText('2 staff on this grade and level selected.').waitFor();
+  assert.equal(await gradesDialog.getByRole('checkbox', { name: /Chidi Example/ }).isChecked(), true);
   await gradesDialog.getByLabel('Grade basic salary (NGN)').fill('161000');
-  await gradesDialog.getByRole('button', { name: 'Preview batch' }).click();
+  await gradesDialog.getByRole('button', { name: 'Preview salary batch' }).click();
   await gradesDialog.getByText('Save the grade salary before previewing the batch.').waitFor();
   assert.equal(await page.evaluate(() => calls.filter(row => row.action === 'getPayGradePreview').length), 0);
   await gradesDialog.getByRole('button', { name: 'Update grade salary', exact: true }).click();
-  await gradesDialog.getByText('Pay grade and level saved. Use Preview batch to apply its amounts.').waitFor();
-  await gradesDialog.getByRole('button', { name: 'Preview batch' }).click();
+  await gradesDialog.getByText('Pay grade and level saved. Use Preview salary batch to apply its amounts.').waitFor();
+  await gradesDialog.getByRole('button', { name: 'Preview salary batch' }).click();
   await gradesDialog.getByText('Ada Example · ada', { exact: true }).waitFor();
   await gradesDialog.getByText('Chidi Example · chidi', { exact: true }).waitFor();
   assert.equal(await page.evaluate(() => calls.filter(row => row.action === 'applyPayGrade').length), 0);
@@ -326,6 +338,39 @@ try {
     assert.equal(await page.evaluate(() => calls.length), before, `${edition} workspace opening is read-free`);
     assert.equal(await page.getByRole('button', { name: 'Load employee setup', exact: true }).count(), 1);
   }
+  await page.evaluate(() => {
+    const directory = Array.from({ length: 51 }, (_, index) => ({
+      Username: `staff-${String(index + 1).padStart(2, '0')}`, BranchId: 'annex'
+    }));
+    const grade = { GradeId: 'large-grade', PayGrade: 'Officer', PayLevel: 'Level 1', BasicSalary: 150000 };
+    window.batchCalls = [];
+    window.DynamaxHrPayGrades.mount(document.getElementById('hr-grades'), {
+      directory, workingBranch: 'annex', branches: [{ id: 'annex', name: 'Annex' }],
+      isCurrent: () => true, onApplied: () => {}, getTemplates: async () => ({}),
+      request: async (action, body) => {
+        batchCalls.push({ action, body });
+        if (action === 'listPayGrades') return { grades: [grade] };
+        if (action === 'listPayGradeMembers') return { usernames: directory.map(row => row.Username) };
+        if (action === 'getPayGradePreview') return { grade, previewVersion: 'large-grade-version', changedCount: body.Usernames.length,
+          staff: body.Usernames.map(Username => ({ Username, DisplayName: Username, current: null })) };
+        if (action === 'applyPayGrade') return { updatedCount: body.Usernames.length };
+        throw new Error(`Unexpected action ${action}`);
+      }
+    });
+  });
+  await page.getByRole('button', { name: 'Pay grades & levels', exact: true }).click();
+  await gradesDialog.getByLabel('Grade and level', { exact: true }).selectOption({ label: 'Officer · Level 1' });
+  await gradesDialog.getByRole('button', { name: 'Select staff on this grade and level' }).click();
+  await gradesDialog.getByText('51 selected · 50 per batch', { exact: true }).waitFor();
+  await gradesDialog.getByRole('button', { name: 'Preview first 50 salaries' }).click();
+  await gradesDialog.getByRole('button', { name: 'Apply to 50 staff' }).click();
+  await gradesDialog.getByText('Salary structure saved for 50 staff. 1 remaining in the selection.').waitFor();
+  await gradesDialog.getByRole('button', { name: 'Preview salary batch' }).click();
+  await gradesDialog.getByRole('button', { name: 'Apply to 1 staff' }).click();
+  await gradesDialog.getByText('Salary structure saved for 1 staff.').waitFor();
+  const saved = await page.evaluate(() => batchCalls.filter(row => row.action === 'applyPayGrade').flatMap(row => row.body.Usernames));
+  assert.equal(saved.length, 51);
+  assert.equal(new Set(saved).size, 51);
   assert.deepEqual(errors, []);
   console.log('HR employment browser checks passed: scoped cached loading, existing salary edit, configured profile read-only, PDF cache, explicit sending, all editions and mobile layout.');
 } finally { await browser.close(); }

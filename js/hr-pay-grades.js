@@ -105,8 +105,12 @@
         <label>Find staff<input data-grade-search type="search" placeholder="Name or username"></label>
         <div class="hr-pay-grade-actions"><button type="button" data-grade-members>Select staff on this grade and level</button>
           <button type="button" data-grade-clear>Clear selection</button><small data-grade-count></small></div>
-        <div class="hr-pay-grade-staff" data-grade-staff aria-label="Staff to receive this salary"></div>
-        <div class="hr-pay-grade-actions"><button type="button" data-grade-preview>Preview batch</button></div>
+        <div class="hr-pay-grade-staff" data-grade-staff aria-label="Staff selected for this pay grade"></div>
+        <div class="hr-pay-grade-actions">
+          <button type="button" data-grade-assign>Assign grade and level only</button>
+          <button type="button" data-grade-preview>Preview salary batch</button>
+        </div>
+        <small>Grade assignment leaves saved salaries unchanged.</small>
         <section data-grade-confirmation hidden>
           <div class="hr-pay-grade-summary" data-grade-amounts></div>
           <p><small>Applying replaces the selected staff’s basic salary, allowances and deductions with this grade’s amounts.</small></p>
@@ -138,9 +142,12 @@
       dialog.querySelectorAll('button, input, select').forEach(control => { control.disabled = busy; });
       setup.elements.PayGrade.disabled = busy || Boolean(grade());
       setup.elements.PayLevel.disabled = busy || Boolean(grade());
-      find('[data-grade-preview]').disabled = busy || !selected.size;
-      find('[data-grade-apply]').disabled = busy || !preview?.changedCount;
-      find('[data-grade-count]').textContent = `${selected.size} selected`;
+      find('[data-grade-assign]').disabled = busy || !selected.size || selected.size > 50;
+      const previewButton = find('[data-grade-preview]');
+      previewButton.disabled = busy || !selected.size;
+      previewButton.textContent = selected.size > 50 ? 'Preview first 50 salaries' : 'Preview salary batch';
+      find('[data-grade-apply]').disabled = busy || !(preview?.changedCount || selected.size > 50 && preview);
+      find('[data-grade-count]').textContent = `${selected.size} selected${selected.size > 50 ? ' · 50 per batch' : ''}`;
     };
     const clearPreview = () => {
       preview = null;
@@ -226,7 +233,7 @@
       cache.set(branch, result.grades);
       renderGrades();
     });
-    const batchBody = () => ({ BranchId: branch, GradeId: gradeId, Usernames: [...selected] });
+    const batchBody = () => ({ BranchId: branch, GradeId: gradeId, Usernames: [...selected].slice(0, 50) });
 
     async function populateReusableNames() {
       const requestedBranch = branch;
@@ -292,7 +299,7 @@
         gradeId = result.grade.GradeId;
         setup.reset();
         renderGrades();
-        showStatus('Pay grade and level saved. Use Preview batch to apply its amounts.');
+        showStatus('Pay grade and level saved. Use Preview salary batch to apply its amounts.');
       });
     });
     setup.addEventListener('input', salaryChanged);
@@ -354,13 +361,20 @@
       if (!isCurrent()) return;
       const assigned = new Set(result.usernames);
       const members = candidates().map(row => key(row.Username)).filter(username => assigned.has(username));
-      if (members.length > 50) throw new Error(`${members.length} active staff are assigned. Select up to 50 for each batch.`);
       selected.clear();
       members.forEach(username => selected.add(username));
       search.value = '';
       clearPreview();
       renderStaff();
       showStatus(members.length ? `${members.length} staff on this grade and level selected.` : 'No active staff are assigned to this grade and level.');
+    }));
+    find('[data-grade-assign]').addEventListener('click', () => work(async () => {
+      clearPreview();
+      const result = await request('assignPayGradeMembers', { ...batchBody(), GradeRevision: grade().Revision });
+      if (!isCurrent()) return;
+      showStatus(result.assignedCount
+        ? `Grade and level assigned to ${result.assignedCount} staff. Their saved salaries are unchanged.`
+        : 'All selected staff already have this grade and level.');
     }));
     find('[data-grade-preview]').addEventListener('click', () => work(async () => {
       if (dirty) throw new Error('Save the grade salary before previewing the batch.');
@@ -373,16 +387,23 @@
       preview = result;
       find('[data-grade-changes]').innerHTML = result.staff.map(row => `<details><summary>${escape(row.DisplayName)} · ${escape(row.Username)}</summary>${amounts(row.current)}</details>`).join('');
       find('[data-grade-confirmation]').hidden = false;
-      find('[data-grade-apply]').textContent = result.changedCount ? `Apply to ${result.changedCount} staff` : 'All selected staff are up to date';
+      find('[data-grade-apply]').textContent = result.changedCount ? `Apply to ${result.changedCount} staff`
+        : selected.size > 50 ? 'Continue to next batch' : 'All selected staff are up to date';
     }));
     find('[data-grade-apply]').addEventListener('click', () => work(async () => {
       const payload = batchBody();
-      const version = preview.previewVersion;
+      const { previewVersion, changedCount } = preview;
       clearPreview();
-      const result = await request('applyPayGrade', { ...payload, PreviewVersion: version });
+      const result = changedCount ? await request('applyPayGrade', { ...payload, PreviewVersion: previewVersion }) : { updatedCount: 0 };
       if (!isCurrent()) return;
-      onApplied(payload.Usernames);
-      showStatus(result.updatedCount ? `Salary structure saved for ${result.updatedCount} staff.` : 'All selected staff are up to date.');
+      if (result.updatedCount) onApplied(payload.Usernames);
+      const more = selected.size > payload.Usernames.length;
+      if (more) {
+        payload.Usernames.forEach(username => selected.delete(username));
+        renderStaff();
+      }
+      const message = result.updatedCount ? `Salary structure saved for ${result.updatedCount} staff.` : 'This batch is up to date.';
+      showStatus(more ? `${message} ${selected.size} remaining in the selection.` : message);
     }));
     return { openForEmployee: open };
   }

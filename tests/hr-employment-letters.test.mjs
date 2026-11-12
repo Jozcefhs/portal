@@ -55,7 +55,7 @@ function fixture({ edition = 'school', role = 'HR Manager', branch = 'north', pr
     },
     queryCollection: async (_env, collection, options) => {
       queries.push({ collection, options: clone(options) });
-      assert.ok(options.limit <= 101 || collection === 'hrPayGrades' || (collection === 'payrollProfiles'
+      assert.ok(options.limit <= 101 || collection === 'hrPayGrades' || collection === 'hrPayGradeAssignments' || (collection === 'payrollProfiles'
         && (options.filters[0].field === 'PayGradeId' || options.filters[0].value.length <= 25)));
       const selected = [...records.entries()].filter(([key]) => key.startsWith(`${collection}/`)).map(([, value]) => value)
         .filter(value => options.filters.every(filter => filter.op === 'in' ? filter.value.includes(value[filter.field]) : value[filter.field] === filter.value)).slice(0, options.limit);
@@ -210,6 +210,44 @@ test('save a pay grade and apply its exact amounts to multiple staff only after 
   assert.equal((await f.call('applyPayGrade', apply)).updatedCount, 0);
   assert.equal(f.writes.length, writes);
   assert.equal([...f.records].filter(([path]) => path.startsWith('hrSalaryRevisions/')).length, 2);
+});
+
+test('HR grade assignments leave salaries intact and determine who is selected for the next batch', async () => {
+  const f = fixture();
+  const { branchId: BranchId, edition: OrganisationEdition } = f.user;
+  f.row('staffUsers', 'second-id', { Username: 'second', UsernameKey: 'second', BranchId, OrganisationEdition, Active: true });
+  f.row('staffUsers', 'outsider', { Username: 'outsider', BranchId: 'other', OrganisationEdition, Active: true });
+  const createGrade = async PayLevel => (await f.call('savePayGrade', { PayGrade: 'Officer', PayLevel, BasicSalary: 180000 })).grade;
+  const first = await createGrade('Level 1'), second = await createGrade('Level 2');
+  f.row('payrollProfiles', 'existing-profile-id', { ...f.records.get('payrollProfiles/existing-profile-id'), PayGradeId: first.GradeId });
+  const payroll = () => clone([...f.records].filter(([path]) => path.startsWith('payroll')));
+  const before = payroll();
+  const oldSelection = { GradeId: first.GradeId, Usernames: ['employee'] };
+  assert.deepEqual((await f.call('listPayGradeMembers', oldSelection)).usernames, ['employee']);
+  const stale = await f.call('getPayGradePreview', oldSelection);
+  const selection = { GradeId: second.GradeId, GradeRevision: second.Revision, Usernames: ['employee', 'second'] };
+  await assert.rejects(f.call('assignPayGradeMembers', selection, { ...f.user, subscriptionReadOnly: true }), { status: 403 });
+  await assert.rejects(f.call('assignPayGradeMembers', { ...selection, Usernames: ['employee', 'outsider'] }), { status: 409 });
+  await assert.rejects(f.call('assignPayGradeMembers', { ...selection, GradeRevision: 'stale' }), { status: 409 });
+  const readsBeforeAssignment = f.reads.length, queriesBeforeAssignment = f.queries.length;
+  assert.equal((await f.call('assignPayGradeMembers', selection)).assignedCount, 2);
+  assert.ok(f.reads.slice(readsBeforeAssignment).every(path => !path.startsWith('payroll')));
+  assert.ok(f.queries.slice(queriesBeforeAssignment).every(({ collection }) => !collection.startsWith('payroll')));
+  assert.deepEqual(payroll(), before);
+  const writes = f.writes.length;
+  assert.equal((await f.call('assignPayGradeMembers', selection)).assignedCount, 0);
+  assert.equal(f.writes.length, writes);
+  assert.deepEqual((await f.call('listPayGradeMembers', oldSelection)).usernames, []);
+  assert.deepEqual((await f.call('listPayGradeMembers', selection)).usernames.sort(), ['employee', 'second']);
+  await assert.rejects(f.call('applyPayGrade', { ...oldSelection, PreviewVersion: stale.previewVersion }), /different pay grade/);
+  const renamed = (await f.call('renamePayGrade', { ...selection, PayGrade: 'Senior officer', PayLevel: 'Level 3' })).grade;
+  assert.deepEqual((await f.call('listPayGradeMembers', selection)).usernames.sort(), ['employee', 'second']);
+  const preview = await f.call('getPayGradePreview', selection);
+  assert.equal(preview.changedCount, 2);
+  assert.equal(preview.staff[1].current, null);
+  assert.equal((await f.call('applyPayGrade', { ...selection, PreviewVersion: preview.previewVersion })).updatedCount, 2);
+  assert.equal(f.records.get('payrollProfiles/existing-profile-id').PayGradeRevision, renamed.Revision);
+  assert.deepEqual(payroll().filter(([path]) => !path.startsWith('payrollProfiles/')), before.filter(([path]) => !path.startsWith('payrollProfiles/')));
 });
 
 test('pay grade application fails atomically when a selected payroll profile changes during commit', async () => {

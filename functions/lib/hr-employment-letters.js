@@ -26,7 +26,8 @@ const SALARY_TEMPLATES = 'hrSalaryTemplates';
 const SALARY_TEMPLATE_ACTIONS = ['listsalarytemplates', 'addsalarytemplate', 'editsalarytemplate', 'deletesalarytemplate'];
 const PAY_GRADES = 'hrPayGrades';
 const PAY_GRADE_NAMES = 'hrPayGradeNames';
-const PAY_GRADE_WRITE_ACTIONS = ['savepaygrade', 'renamepaygrade', 'deletepaygrade', 'applypaygrade'];
+const PAY_GRADE_ASSIGNMENTS = 'hrPayGradeAssignments';
+const PAY_GRADE_WRITE_ACTIONS = ['savepaygrade', 'renamepaygrade', 'deletepaygrade', 'assignpaygrademembers', 'applypaygrade'];
 export const HR_PAY_GRADE_ACTIONS = ['listpaygrades', 'listpaygrademembers', 'getpaygradepreview', ...PAY_GRADE_WRITE_ACTIONS];
 const payGradeFields = profile => Object.fromEntries(['PayGradeId', 'PayGrade', 'PayLevel', 'PayGradeRevision']
   .map(key => [key, clean(profile?.[key])]));
@@ -186,27 +187,35 @@ export function hrEmploymentLetterService(overrides = {}) {
     return (await Promise.all(queries)).flat();
   }
 
-  async function batchSalaryTargets(env, user, identity, branchId, usernames) {
+  const staffUsername = row => lower(row?.Username || row?.username || row?.__id);
+  const staffInGradeScope = (row, user, identity, branchId) => row && branchRecordVisible(row, user)
+    && recordBranchId(row) === branchId && staffRecordMatchesEdition(row, { ...user, edition: identity.edition });
+  const gradeAssignmentId = (scopeId, row) => digest([scopeId, row.__id]);
+
+  async function batchStaffRows(env, user, identity, branchId, usernames, { skipMissing = false } = {}) {
     const documentIds = usernames.map(name => employmentDocumentId(name).slice(0, 120));
     if (documentIds.some(id => !id || id === '.' || id === '..')) throw fail('The selection includes an invalid username.');
     const direct = await db.getDocuments(env, 'staffUsers', documentIds);
     const matches = (row, username) => [row?.Username, row?.username, row?.__id].some(value => lower(value) === username);
     const missing = usernames.filter((name, index) => !matches(direct[index], name));
     const indexed = await lookupByNames(env, 'staffUsers', 'UsernameKey', missing, 2);
-    const staff = usernames.map((name, index) => {
+    return usernames.map((name, index) => {
       const rows = matches(direct[index], name) ? [direct[index]] : indexed.filter(row => matches(row, name));
       const row = rows[0];
-      if (rows.length !== 1 || !branchRecordVisible(row, user) || recordBranchId(row) !== branchId
-          || !staffRecordMatchesEdition(row, { ...user, edition: identity.edition })) {
+      if (rows.length !== 1 || !staffInGradeScope(row, user, identity, branchId)) {
+        if (skipMissing) return null;
         throw fail(`${name}: Employee was not uniquely found in this branch.`, 409);
       }
       return row;
-    });
+    }).filter(Boolean);
+  }
+
+  async function batchSalaryTargets(env, identity, branchId, staff, { readProfiles = true } = {}) {
     const aliasesFor = row => [...new Set([clean(row.Username || row.username || row.__id), ...staffEmploymentAliases(row)].filter(Boolean))];
     const aliases = staff.map(aliasesFor);
     const [employees, profiles] = await Promise.all([
       db.getDocuments(env, 'hrEmployees', [...new Set(staff.flatMap(staffEmploymentAliases).map(employmentDocumentId).filter(Boolean))]),
-      lookupByNames(env, 'payrollProfiles', 'Username', aliases.flat(), 10)
+      readProfiles ? lookupByNames(env, 'payrollProfiles', 'Username', aliases.flat(), 10) : []
     ]);
     return Promise.all(staff.map((row, index) => {
       const ids = staffEmploymentAliases(row).map(employmentDocumentId);
@@ -421,6 +430,33 @@ export function hrEmploymentLetterService(overrides = {}) {
     return [{ collectionPath: PAY_GRADE_NAMES, documentId: nameId, operation: 'delete', ...condition(claim) }];
   }
 
+  async function gradeMembers(env, user, identity, branchId, scopeId, gradeId) {
+    const filters = [{ field: 'PayGradeId', op: '==', value: gradeId }];
+    const [assignments, profiles] = await Promise.all([
+      db.queryCollection(env, PAY_GRADE_ASSIGNMENTS, { filters, select: ['ScopeId', 'StaffId'], limit: 1001 }),
+      db.queryCollection(env, 'payrollProfiles', { filters,
+        select: ['Username', 'BranchId', 'OrganisationEdition', 'Active', 'CalculationMode'], limit: 1001 })
+    ]);
+    if (assignments.length > 1000 || profiles.length > 1000) throw fail('Too many staff are assigned to load in one selection. Choose the employees directly.', 413);
+    const assignedIds = new Set(assignments.filter(row => row.ScopeId === scopeId).map(row => row.StaffId).filter(Boolean));
+    const active = row => staffInGradeScope(row, user, identity, branchId)
+      && !['false', 'no', '0', 'disabled', 'inactive'].includes(lower(row.Active));
+    const assigned = (await db.getDocuments(env, 'staffUsers', [...assignedIds])).filter(active);
+    const selected = new Set(assigned.map(staffUsername));
+    const legacyNames = [...new Set(profiles.filter(row => recordBranchId(row) === branchId
+      && staffRecordMatchesEdition(row, { edition: identity.edition })
+      && lower(row.Active) !== 'no' && clean(row.CalculationMode).toUpperCase() !== 'CONFIGURABLE_PAYE')
+      .map(row => lower(row.Username)).filter(name => name && !selected.has(name)))];
+    const legacy = (await batchStaffRows(env, user, identity, branchId, legacyNames, { skipMissing: true }))
+      .filter(row => active(row) && !assignedIds.has(row.__id));
+    const keys = await Promise.all(legacy.map(row => gradeAssignmentId(scopeId, row)));
+    const current = await db.getDocuments(env, PAY_GRADE_ASSIGNMENTS, keys);
+    legacy.forEach((row, index) => {
+      if (!current[index]) selected.add(staffUsername(row));
+    });
+    return { ok: true, usernames: [...selected] };
+  }
+
   async function payGrades(env, user, identity, body, action) {
     const branchId = enforceActorBranch(user, body.BranchId);
     const scopeId = await digest([identity.workspaceId, identity.edition, branchId]);
@@ -478,21 +514,44 @@ export function hrEmploymentLetterService(overrides = {}) {
       return { ok: true, grade: gradeView({ ...grade, ...data }) };
     }
     if (action === 'listpaygrademembers') {
-      const rows = await db.queryCollection(env, 'payrollProfiles', { filters: [{ field: 'PayGradeId', op: '==', value: gradeId }],
-        select: ['Username', 'BranchId', 'OrganisationEdition', 'Active', 'CalculationMode'], limit: 1001 });
-      if (rows.length > 1000) throw fail('Too many staff are assigned to load in one selection. Choose the employees directly.', 413);
-      return { ok: true, usernames: rows.filter(row => recordBranchId(row) === branchId
-        && staffRecordMatchesEdition(row, { edition: identity.edition })
-        && lower(row.Active) !== 'no' && clean(row.CalculationMode).toUpperCase() !== 'CONFIGURABLE_PAYE').map(row => lower(row.Username)).filter(Boolean) };
+      return gradeMembers(env, user, identity, branchId, scopeId, gradeId);
     }
 
     const usernames = Array.isArray(body.Usernames) ? [...new Set(body.Usernames.map(lower).filter(Boolean))].sort() : [];
     if (!usernames.length || usernames.length > 50) throw fail('Select between 1 and 50 staff for the batch.');
+    const assigning = action === 'assignpaygrademembers';
+    if (assigning) assertGradeRevision(grade, body.GradeRevision);
+    const staff = await batchStaffRows(env, user, identity, branchId, usernames);
+    if (new Set(staff.map(row => row.__id)).size !== staff.length) throw fail('The selection includes more than one login for the same employee.', 409);
+    const keys = await Promise.all(staff.map(row => gradeAssignmentId(scopeId, row)));
+    const [targets, assignments] = await Promise.all([
+      batchSalaryTargets(env, identity, branchId, staff, { readProfiles: !assigning }),
+      db.getDocuments(env, PAY_GRADE_ASSIGNMENTS, keys)
+    ]);
+    const gradeGuard = { collectionPath: PAY_GRADES, documentId: gradeId, data: { Revision: grade.Revision }, updateMask: ['Revision'], ...condition(grade) };
+    if (assigning) {
+      const timestamp = db.now();
+      const changes = targets.flatMap((target, index) => {
+        assertSalaryEmployeeActive(target);
+        const existing = assignments[index];
+        if (existing?.PayGradeId === gradeId) return [];
+        const data = { ScopeId: scopeId, StaffId: target.staff.__id, PayGradeId: gradeId, UpdatedAt: timestamp, UpdatedBy: lower(user.username) };
+        const assignment = { collectionPath: PAY_GRADE_ASSIGNMENTS, documentId: keys[index], data, ...condition(existing) };
+        const audit = auditWrite(`GRADE-${crypto.randomUUID()}`, user, target, 'ASSIGN PAY GRADE AND LEVEL', timestamp);
+        audit.data.Details = `${target.employee.DisplayName} · ${grade.PayGrade} / ${grade.PayLevel}`;
+        return [{ target, assignment, audit }];
+      });
+      if (!changes.length) return { ok: true, assignedCount: 0 };
+      const guards = changes.flatMap(({ target }) => identityGuards(target));
+      const distinctGuards = [...new Map(guards.map(write => [`${write.collectionPath}/${write.documentId}`, write])).values()];
+      await db.batchCommitLiteralDocuments(env, [gradeGuard, ...distinctGuards, ...changes.flatMap(({ assignment, audit }) => [assignment, audit])]);
+      return { ok: true, assignedCount: changes.length };
+    }
     const desired = { ...salaryValues(grade), PayGradeId: gradeId, PayGrade: grade.PayGrade, PayLevel: grade.PayLevel, PayGradeRevision: grade.Revision };
-    const targets = await batchSalaryTargets(env, user, identity, branchId, usernames);
-    for (const target of targets) {
+    for (const [index, target] of targets.entries()) {
       try {
         assertSalaryEmployeeActive(target);
+        if (assignments[index] && assignments[index].PayGradeId !== gradeId) throw fail('This employee is assigned to a different pay grade and level. Update their assignment before applying this salary.', 409);
         assertSalaryProfileEditable(target);
         if (['no', 'false', '0', 'disabled', 'inactive'].includes(lower(target.profile?.Active))) throw fail('The payroll profile is inactive.', 409);
         if (target.profile && (clean(target.profile.Currency || 'NGN').toUpperCase() !== 'NGN'
@@ -502,7 +561,6 @@ export function hrEmploymentLetterService(overrides = {}) {
         throw fail(`${target.employee.Username}: ${error.message}`, error.status);
       }
     }
-    if (new Set(targets.map(target => target.employeeKey)).size !== targets.length) throw fail('The selection includes more than one login for the same employee.', 409);
     const changed = targets.filter(target => !salaryMatches(target.profile, desired));
     const previewVersion = await digest([scopeId, gradeId, grade.Revision, lower(user.username), targets.map(target => [
       target.employeeKey, clean(target.staff.__updateTime), clean(target.profile?.__updateTime),
@@ -522,7 +580,7 @@ export function hrEmploymentLetterService(overrides = {}) {
       throw fail('The selection has overlapping payroll or employee records. Resolve the duplicate links before applying.', 409);
     }
     // Guard the exact grade revision in the same commit as the profile writes.
-    writes.push({ collectionPath: PAY_GRADES, documentId: gradeId, data: { Revision: grade.Revision }, updateMask: ['Revision'], ...condition(grade) });
+    writes.push(gradeGuard);
     await db.batchCommitLiteralDocuments(env, writes);
     return { ok: true, updatedCount: changed.length };
   }
