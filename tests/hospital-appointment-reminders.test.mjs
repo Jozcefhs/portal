@@ -117,3 +117,16 @@ test('corrected contact can be explicitly reconfirmed before sending, retaining 
 test('closing an uncertain send does not make it eligible for another send',async()=>{
  const f=await fixture();await f.queue();f.s=f.make('reception',{sendConfiguredEmail:async()=>{throw Error('network uncertain');}});await f.send();f.setTime('2026-10-26T12:11:00Z');f.s=f.make('admin');await f.change('confirm-cancelled',{ConfirmProviderReview:true});await assert.rejects(f.queue({ReplaceUnsent:true,Revision:f.row().__updateTime,DueAt:'2026-10-26T12:12:00Z'}),/cannot be scheduled again/);assert.equal(f.sent.length,0);
 });
+
+test('repeated unsent contact corrections retain separate skip events and send only once',async()=>{
+ const f=await fixture();await f.queue();
+ for(const Email of ['corrected@example.test','latest@example.test']){
+  f.rows('Patients')[0].Email=Email;
+  assert.equal((await f.send()).Status,'Skipped');
+  await f.queue({ReplaceUnsent:true,Revision:f.row().__updateTime});
+ }
+ const skipped=f.rows('AppointmentReminderEvents').filter(e=>e.Type==='Skipped');
+ assert.equal(skipped.length,2);assert.equal(new Set(skipped.map(e=>e.EventId)).size,2);
+ assert.deepEqual(skipped.map(e=>e.Snapshot.ToEmail),['patient@example.test','corrected@example.test']);
+ await f.send();await f.send();assert.equal(f.sent.length,1);assert.equal(f.sent[0].toEmail,'latest@example.test');
+});

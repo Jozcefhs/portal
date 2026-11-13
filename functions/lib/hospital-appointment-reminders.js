@@ -42,7 +42,7 @@ export function createHospitalAppointmentReminders(ctx){
     return {ok:true,preview:draft,reminder:view(existing),blocked,connection:await connection(a.BranchId),Token:await hash([draft,a.__updateTime,p.__updateTime])};
   }
   async function finish(row,Status,Reason='',provider={}){
-    const key=await hash([row.ReminderId,row.Attempt,Status]),next={...strip(row),Status,Reason,UpdatedAt:clock(),UpdatedBy:actor,...provider};
+    const key=await hash([row.ReminderId,row.Attempt,Status,row.__updateTime]),next={...strip(row),Status,Reason,UpdatedAt:clock(),UpdatedBy:actor,...provider};
     await db.batchCommitLiteralDocuments(env,[write('AppointmentReminders',row.ReminderId,next,row),event(key,next,Status,Reason),auditWrite(key,'Appointment reminder '+Status.toLowerCase(),row.BranchId,{}, {ReminderId:row.ReminderId,AppointmentId:row.AppointmentId,Reason})]);
     return {ok:true,ReminderId:row.ReminderId,Status};
   }
