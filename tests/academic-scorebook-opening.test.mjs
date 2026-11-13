@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { webcrypto } from 'node:crypto';
 import vm from './helpers/module-policy-vm.mjs';
 import * as management from '../functions/lib/academic-management.js';
 import * as studentRoster from '../functions/lib/academic-student-status-roster.js';
@@ -64,6 +65,50 @@ function fixture() {
   vm.runInContext(source.replace(/^import[\s\S]*?;\r?\n/gm, '').replace(/^export /gm, ''), context);
   return { context, calls, writes, records };
 }
+
+test('saved Trade selection survives save response, reload and branch switching without pupil or score writes', async () => {
+  const f = fixture(), settings = new Map(), settingReads = [];
+  f.context.getSchoolStructure = async () => ({ActiveBranchId:'main',
+    Branches:['main','north','new-branch'].map(Id => ({Id})), Sections:['primary','secondary']});
+  f.context.crypto = webcrypto;
+  f.context.getDocument = async (_env, collection, id) => {
+    assert.equal(collection, 'settings');
+    assert.match(id, /^academic-curriculum-/);
+    settingReads.push(id);
+    return structuredClone(settings.get(id) || null);
+  };
+  f.context.batchCommitDocuments = async (_env, changes) => {
+    f.writes.push(...structuredClone(changes));
+    for (const change of changes) {
+      if (change.collectionPath === 'settings') settings.set(change.documentId,
+        {...structuredClone(change.data), __updateTime: 'saved-revision'});
+    }
+  };
+  const before = structuredClone(f.records);
+  const request = {BranchId:'main', SchoolSection:'secondary', View:'offerings', WorkspaceLoadMode:'navigation',
+    SessionId:'s', TermId:'t', IncludePeople:false, IncludeAssessmentPolicy:false};
+  const save = await f.context.configureAcademicSeniorChoiceSubjects({}, actor,
+    {...request, RequireTradeSubject:'false', TradeSubjectIds:[], OptionalSubjectIds:[]});
+  assert.equal(save.curriculumSettings.RequireTradeSubject, false, 'save response must confirm Optional');
+  assert.deepEqual(f.writes.map(change => change.collectionPath), ['settings', 'academicManagementAudit']);
+  assert.equal(settings.get('academic-curriculum-main').RequireTradeSubject, false);
+  assert.deepEqual(f.records, before);
+
+  f.writes.length = 0;
+  await f.context.configureAcademicSeniorChoiceSubjects({}, actor,
+    {...request, RequireTradeSubject:'false', TradeSubjectIds:[], OptionalSubjectIds:[]});
+  assert.equal(f.writes.length, 0, 'saving an unchanged policy must be a no-op');
+  settings.set('academic-curriculum-north', {RequireTradeSubject:true});
+  for (const [branchId, expected] of [['main',false],['north',true],['main',false],['new-branch',true]]) {
+    settingReads.length = 0;
+    const loaded = await f.context.bootstrapAcademicManagement({}, actor, {...request, BranchId:branchId});
+    assert.equal(loaded.curriculumSettings.RequireTradeSubject, expected, branchId);
+    assert.deepEqual(settingReads, [`academic-curriculum-${branchId}`], 'one existing branch setting read only');
+  }
+  assert.deepEqual(f.records, before);
+  assert.equal(f.writes.length, 0);
+  assert.ok(!f.calls.some(call => ['academicStudentMemberships','academicStudentScores','students'].includes(call.collection)));
+});
 
 test('opening the class register reads only its three selector collections, no people, scores, history, policy or writes', async () => {
   const f = fixture(), before = structuredClone(f.records);

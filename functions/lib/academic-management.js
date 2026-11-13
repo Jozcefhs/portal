@@ -2172,6 +2172,9 @@ function sortAcademicState(state) {
   const byName = (a, b) => clean(a.Name).localeCompare(clean(b.Name), undefined, { numeric: true, sensitivity: 'base' });
   const byOrder = (a, b) => Number(a.SortOrder || 100) - Number(b.SortOrder || 100) || byName(a, b);
   return {
+    // Keep the saved branch policy alongside the sorted collections. Dropping
+    // it here makes the response silently fall back to compulsory Trade.
+    curriculumSettings: state.curriculumSettings,
     sessions: [...state.sessions].sort((a, b) => clean(b.StartDate).localeCompare(clean(a.StartDate))),
     terms: [...state.terms].sort((a, b) => clean(a.StartDate).localeCompare(clean(b.StartDate))),
     classes: [...state.classes].sort(byOrder), armTemplates: [...state.armTemplates].sort(byName), arms: [...state.arms].sort(byName),

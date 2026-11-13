@@ -37,3 +37,9 @@ Deployment: https://2761d753.destinychristianacademy.pages.dev
 School/workspace identity and subscription bridge passed live checks. Twenty-seven served assets, including the settings form/script, report renderer, PDF exporter and previously delivered HR/academic interfaces, matched tested source. Installer metadata remains 3.1.64; no installer was compiled or released. No authenticated parent record was opened or altered during this pass. Generated PDF verification used synthetic fixtures.
 
 The isolated `codex/school-result-sections` worktree contains this tested source. The original school checkout has unrelated pending edits and was deliberately not overwritten; future deployments must include the pushed implementation above. Hospital development remains paused for this school pass.
+
+## Saved Trade selection follow-up
+
+The branch's saved curriculum setting was read correctly but discarded by `sortAcademicState`, so the response defaulted to compulsory Trade selection even after Optional was saved. The sorted response now preserves that setting. Senior subject choices also show the active saved value separately from an unsaved selection. No data migration, policy change, pupil placement change or score rewrite is performed by this repair, and no additional database requests are introduced.
+
+Verification: 84 targeted academic tests passed, including actual save-response/reload/branch-switch coverage, an unchanged-save retry with zero writes, and protection of existing pupil and score records. A browser check passed for the actual form renderer and payload at desktop/mobile widths, including the active label during an unsaved edit and zero network requests. Web marker: `dynamax-v561-active-trade-selection`. No desktop compilation or installer release.
