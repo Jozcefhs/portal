@@ -353,3 +353,11 @@ Deployed and verified on 13 November 2026: source `d3580827565b63f51a44e58e24306
 - Next H02 workflow: controlled appointment reminders with duplicate prevention and delivery evidence, followed by patient self-booking and live queue coordination. The full Hospital roadmap remains open. No emails, desktop compilation or installer release in this increment.
 
 - Live verification passed: source `f5912cf5`, deployment `36875ef9`, marker `dynamax-v537-hospital-recurring-clinics`. Both indexes are READY; eight assets match source. Sign-in, role/confirmation/date guards, cached loading, no-request editor opening and desktop/phone layouts passed. Three sample visits remained unchanged with zero business mutations or emails. See the Owner Demo guide for evidence.
+
+
+### 14 November 2026 — H02 appointment reminders
+
+- Added explicit patient-consented appointment email preview/scheduling, dated completed registers, cached pages, delivery history and controlled retry/outcome review. Branch email settings are reused; bookings and clinical/financial records are preserved.
+- One reminder identity per booking slot, conditional claims, cancellation/contact checks and no automatic retry after unknown provider outcomes prevent duplicate reminders. Corrected unsent messages preserve previous snapshots. A dedicated five-minute scheduler processes at most five due reminders; it does not scan patients or all appointments.
+- Verification: repository regression tests and 29 focused reminder tests; synthetic-provider browser workflow at desktop/phone sizes; existing appointment, waitlist and recurring clinic browser regressions. Coverage includes concurrent sends, lost claim/final responses, branch/role/date guards, changed contacts and zero-write repeat processing. Deployment targets only the Hospital Owner Demo. No real reminder emails, desktop compilation or installer release.
+- Next H02 work: patient self-booking and live clinic queue/overrun coordination, plus practitioner validation. Email acceptance is tracked; inbox delivery webhooks, SMS and WhatsApp remain outside this increment. The original Hospital roadmap remains open.

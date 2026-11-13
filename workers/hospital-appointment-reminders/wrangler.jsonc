@@ -1,0 +1,12 @@
+{
+  "name": "dynamax-hospital-appointment-reminders",
+  "main": "index.js",
+  "compatibility_date": "2026-11-01",
+  "workers_dev": false,
+  "triggers": {"crons": ["*/5 * * * *"]},
+  "vars": {
+    "HOSPITAL_REMINDER_ENDPOINT": "https://dynamax-hospital-review.pages.dev/api/hospital-appointment-reminders",
+    "HOSPITAL_REMINDER_WORKSPACE": "dynamax-hospital-review"
+  },
+  "observability": {"enabled": true}
+}

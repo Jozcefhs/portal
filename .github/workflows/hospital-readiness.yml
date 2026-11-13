@@ -6,6 +6,7 @@ on:
   pull_request:
     paths:
       - "functions/**"
+      - "workers/hospital-appointment-reminders/**"
       - "js/hospital*.js"
       - "hospital.html"
       - "css/hospital.css"
