@@ -41,6 +41,12 @@ export function createHospitalInpatientService(context){
     return {branchId,admission,visit,person};
   }
   const changed=(row,fields)=>JSON.stringify(stable(fields))!==JSON.stringify(stable(Object.fromEntries(Object.keys(fields).map(k=>[k,row?.[k]]))));
+  async function summaryFor(c,key){
+    if(!key)return null;
+    const summary=await read('DischargeSummaries',id(key));
+    if(!summary||summary.SummaryId!==key||summary.AdmissionId!==c.admission.AdmissionId||summary.PatientId!==c.person.PatientId||summary.VisitId!==c.visit.VisitId||summary.BranchId!==c.branchId)fail('Review the discharge summary reference.',409);
+    return summary;
+  }
   function movement(key,c,Type,extra={}){
     return write('AdmissionEvents',key,{EventId:key,AdmissionId:c.admission.AdmissionId,PatientId:c.person.PatientId,
       PatientName:patientName(c.person),HospitalNumber:c.person.HospitalNumber,VisitId:c.visit.VisitId,BranchId:c.branchId,
@@ -145,8 +151,7 @@ export function createHospitalInpatientService(context){
     },
     async inpatientAdmission(body){
       requireCapability('inpatient.read');const c=await current(body);
-      const summary=capabilities.includes('inpatient.clinical')&&c.admission.DischargeSummaryId?await read('DischargeSummaries',c.admission.DischargeSummaryId):null;
-      if(summary&&(summary.AdmissionId!==c.admission.AdmissionId||summary.PatientId!==c.person.PatientId||summary.BranchId!==c.branchId))fail('Review the discharge summary reference.',409);
+      const summary=capabilities.includes('inpatient.clinical')?await summaryFor(c,c.admission.LatestDischargeSummaryId||c.admission.DischargeSummaryId):null;
       await auditRead(body,'View hospital admission',c.branchId,c.person,{AdmissionId:c.admission.AdmissionId});
       return {ok:true,admission:view(c.admission),patient:patientSummary(c.person),visit:view(c.visit),summary:view(summary)};
     },
@@ -173,7 +178,7 @@ export function createHospitalInpatientService(context){
       if(body.ConfirmClinicalReview!==true)fail('Confirm clinical review of the patient, medications, investigations and follow-up.');
       return operation(body,'signHospitalDischarge',async key=>{
         const c=await current(body,true);version(c.visit,body.VisitRevision);
-        const previous=c.admission.DischargeSummaryId?await read('DischargeSummaries',c.admission.DischargeSummaryId):null;
+        const previous=await summaryFor(c,c.admission.DischargeSummaryId);
         if(previous&&!changed(previous,fields)&&c.visit.DischargeApprovalId===previous.SummaryId)return {writes:[],result:{Unchanged:true,AdmissionId:c.admission.AdmissionId}};
         const Reason=previous?inpatientText(body.Reason,'summary replacement reason',1000):'';
         const summary={...fields,SummaryId:key,AdmissionId:c.admission.AdmissionId,PatientId:c.person.PatientId,VisitId:c.visit.VisitId,BranchId:c.branchId,
@@ -182,6 +187,27 @@ export function createHospitalInpatientService(context){
           write('Visits',c.visit.VisitId,{...strip(c.visit),DischargeApprovalId:key},c.visit),
           write('Admissions',c.admission.AdmissionId,{...strip(c.admission),DischargeSummaryId:key,DischargeAuthor:summary.SignedByName,DischargeSignedAt:clock(),UpdatedAt:clock()},c.admission),
           movement(key,c,'Discharge summary signed'),auditWrite(key,'Sign hospital discharge summary',c.branchId,c.person,{AdmissionId:c.admission.AdmissionId})],result:{AdmissionId:c.admission.AdmissionId,PatientId:c.person.PatientId}};
+      });
+    },
+    async amendHospitalDischarge(body){
+      requireCapability('inpatient.discharge');await branch(body);confirm(body);
+      const fields=dischargeFields(body.Summary),Reason=inpatientText(body.Reason,'discharge amendment reason',1000);
+      if(body.ConfirmClinicalReview!==true)fail('Confirm clinical review of the patient, medications, investigations and follow-up.');
+      return operation(body,'amendHospitalDischarge',async key=>{
+        const c=await current(body);version(c.admission,body.Revision);version(c.visit,body.VisitRevision);
+        if(c.admission.Status!=='Discharged'||!c.admission.DischargedAt||c.visit.Status!=='Completed'||c.visit.AdmissionId!==c.admission.AdmissionId||!c.admission.DischargeSummaryId||c.visit.DischargeApprovalId!==c.admission.DischargeSummaryId)fail('Only a completed discharge with its original signed summary can be amended. Refresh the admission.',409);
+        const previous=await summaryFor(c,c.admission.LatestDischargeSummaryId||c.admission.DischargeSummaryId);
+        if(previous.OriginalDischargeSummaryId&&previous.OriginalDischargeSummaryId!==c.admission.DischargeSummaryId)fail('Review the discharge summary reference.',409);
+        if(!changed(previous,fields))return {writes:[],result:{Unchanged:true,AdmissionId:c.admission.AdmissionId}};
+        const summary={...fields,SummaryId:key,AdmissionId:c.admission.AdmissionId,PatientId:c.person.PatientId,VisitId:c.visit.VisitId,BranchId:c.branchId,
+          Type:'Post-discharge amendment',PreviousSummaryId:previous.SummaryId,OriginalDischargeSummaryId:c.admission.DischargeSummaryId,
+          Reason,CreatedAt:clock(),SignedBy:actor,SignedByName:clean(user.displayName)||actor};
+        // Keep the departure summary/approval and all closed visit, occupancy and billing records intact.
+        return {writes:[write('DischargeSummaries',key,summary,null),
+          write('Admissions',c.admission.AdmissionId,{...strip(c.admission),LatestDischargeSummaryId:key,LastAmendedAt:summary.CreatedAt,LastAmendedBy:summary.SignedByName,UpdatedAt:clock()},c.admission),
+          movement(key,c,'Discharge summary amended',{SummaryId:key,PreviousSummaryId:previous.SummaryId}),
+          auditWrite(key,'Amend hospital discharge summary',c.branchId,c.person,{AdmissionId:c.admission.AdmissionId,SummaryId:key,PreviousSummaryId:previous.SummaryId})],
+          result:{AdmissionId:c.admission.AdmissionId,PatientId:c.person.PatientId,SummaryId:key}};
       });
     },
     async dischargeHospitalPatient(body){

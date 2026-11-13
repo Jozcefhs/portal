@@ -22,7 +22,7 @@ export async function onRequestPost({ request, env, data }) {
       'theatreRooms','saveTheatreRoom','prepareTheatre','theatreVisit','saveProcedureBooking','theatreRegister','theatreCase','theatreHistory','cancelProcedure','recordProcedurePreoperative','startProcedure','signProcedureOperative','completeProcedureRecovery','amendProcedureRecord',
       'nursingContext','nursingRegister','saveNursingChart','nursingPrescriptions','nursingMedication','nursingSupplies','planMedicationDose','recordMedicationDose','saveNursingHandover','acknowledgeNursingHandover','nursingInbox',
       'prepareHospitalBed','inpatientWards','inpatientWard','inpatientBeds','saveHospitalWard','saveHospitalBed','inpatientVisit','admitHospitalPatient',
-      'inpatientAdmissions','inpatientAdmission','transferHospitalBed','signHospitalDischarge','dischargeHospitalPatient','inpatientHistory',
+      'inpatientAdmissions','inpatientAdmission','transferHospitalBed','signHospitalDischarge','amendHospitalDischarge','dischargeHospitalPatient','inpatientHistory',
       'clinicalContext','clinicalHistory','recordTriage','saveConsultation','signConsultation','amendClinicalEntry',
       'orderVisitContext','createOrder','listOrders','orderDetails','orderHistory','releasedReportHistory','cancelOrder','reviewPrescription','receiveMedicine','stockBatches','stockHistory','quarantineStock',
       'dispensePrescription','returnDispensedMedicine','dispensingHistory','recordSpecimen','recordInvestigationReport','verifyInvestigationReport',

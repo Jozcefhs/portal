@@ -1,6 +1,6 @@
 # Hospital wards, admissions and discharge
 
-Development increment: 27 October 2026. Web companion and shared backend on `codex/hospital-edition`. Test and push only: no deployment, compilation or installer release. All verification uses synthetic records.
+Initial increment: 27 October 2026; discharge amendments added 13 November 2026. Web companion and shared backend on `codex/hospital-edition`, deployed only to the isolated Hospital Owner Demo. No desktop compilation or installer release. Workflow verification uses synthetic records.
 
 ## Staff workflow
 
@@ -13,6 +13,19 @@ Development increment: 27 October 2026. Web companion and shared backend on `cod
 7. Discharge releases the bed and closes the open visit/admission together. A released bed, including a bed vacated on transfer, shows **Needs preparation**. Staff must explicitly confirm **Mark bed ready** before it can be allocated again. A future admission needs a new check-in visit.
 
 Financial records remain independent: discharge does not mark an invoice paid, waive a balance, delete charges or cancel orders/reports. Bed charges can use the existing explicit service-charge workflow and its reference guards. This increment does not automatically calculate per-night charges or claim that discharge itself creates a charge. Card-terminal payments remain disabled.
+
+## Correcting a summary after discharge
+
+1. A Doctor or Medical Director opens **Wards and admissions**, selects the original admission dates, then opens the discharged admission.
+2. Expand **Amend discharge summary**. The latest signed content is prefilled; enter the correction and a new reason, confirm the patient and clinical review, then choose **Sign discharge amendment**.
+3. The current summary shows **Amended after discharge**, the reason, author and signing time. **Print signed summary** previews/prints the latest signed version.
+4. To inspect or print an earlier version, select dates under **Admission history**, choose **Signed summaries**, then **Load history**. Expand the required version and choose **Preview / print this version**. Earlier versions are labelled explicitly. Printing uses already loaded content and issues no database request.
+
+An amendment is a new immutable summary linked to its predecessor and the original departure summary. `Admissions.LatestDischargeSummaryId` points to it; `Admissions.DischargeSummaryId` and the completed visit's discharge approval remain the departure references. Discharge time, original author, bed occupancy, future admissions, clinical source records and all financial documents remain unchanged. No existing document is deleted or migrated. Existing summary/history indexes and backup collections cover amendments without another collection.
+
+Only clinicians with discharge permission may sign an amendment. Nurses may read and print; admission administrators cannot read clinical content or amendment reasons. Administrative movement/audit records contain identifiers and authors, not clinical text. Patient, branch, admission, visit and summary references are checked on the server. A stale or competing correction fails atomically and must be reviewed again against the refreshed summary.
+
+One changed amendment uses **five exact reads, no queries and five atomic writes** (summary, admission pointer, movement, audit and retry receipt). A completed request retry uses **one read and zero writes**. An unchanged fresh submission uses five reads and zero writes. Opening the editor, printing and revisiting a cached history page generate no database work. Actual clinical-record access retains its existing single access audit.
 
 ## Permissions and record integrity
 
@@ -37,4 +50,6 @@ Financial records remain independent: discharge does not mark an invoice paid, w
 
 `tests/hospital-inpatients.test.mjs` covers permissions, unique codes, no-op writes, replay and lost responses, competing admissions/beds, cross-branch duplicate prevention, atomic transfers/discharge, preparation, clinical approval invalidation, privacy, original financial/clinical record preservation, bounded date queries, equal-timestamp pagination and backup relationships. `scripts/verify-hospital-inpatients-ui.mjs` exercises the real service against synthetic fixtures in a browser, including role switching, unsaved changes, cache reuse, printing, expiry and phone layout. Existing Hospital browser and full repository regression suites are run as well.
 
-H08 remains partial on the master checklist: inpatient nursing charts, medication administration records, broader handover workflows, post-discharge summary amendments, desktop/offline parity and practitioner validation remain future work. Cross-branch inpatient transfers and automatic recurring bed billing are not implemented here. The existing outpatient triage, signed clinical entries, orders and billing remain linked to the same visit. This increment is not a claim that the entire Hospital edition is complete or ready for live patient care.
+`tests/hospital-discharge-amendments.test.mjs` additionally covers immutable version chains, subsequent admissions, original record preservation, role/branch/privacy boundaries, required review/reason, bad references, concurrent edits, lost responses, no-op saves and fixed read/write budgets. The inpatient browser check includes required reasons, retry after a lost response, latest/historical print previews, escaped clinical text, cached history and mobile layouts.
+
+H08 remains partial on the master checklist. Nursing charts, medication administration and shift handovers were added in a later increment; post-discharge amendments are now available on the web. Automatic medication schedules, broader handovers, cross-branch inpatient transfers, recurring bed billing, desktop/offline parity and practitioner validation remain outstanding. This increment does not claim the entire Hospital edition is complete or ready for live patient care.

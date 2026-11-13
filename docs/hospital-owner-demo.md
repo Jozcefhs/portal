@@ -16,6 +16,12 @@ The medicine update adds **Pharmacy → Medicine catalogue**. The owner can crea
 
 ## Deployment isolation
 
+### Discharge summary amendments
+
+Open [Wards and admissions](https://dynamax-hospital-review.pages.dev/hospital.html?task=inpatients) using the demo clinician account. Load admissions for the relevant admission dates, open a discharged admission and choose **Amend discharge summary**. Enter the correction and reason, verify the patient and clinical review, then sign. Nurses can preview/print the latest summary and earlier versions under **Admission history → Signed summaries**. The owner retains administrative access without gaining clinical editing or summary-reading rights.
+
+All earlier signed versions, completed visits, original departure dates, bed assignments and billing records are preserved. A correction cannot reopen a bed or create a charge. Live verification does not create discharge/amendment examples automatically; complete workflow testing uses synthetic in-memory records. See [the inpatient guide](hospital-inpatient-workflows.md).
+
 ### Supplier payment remittances
 
 Deployed and verified on 30 October 2026: [Hospital demo](https://dynamax-hospital-review.pages.dev/hospital.html?task=procurement), [verification](hospital-remittances-verification.md).
