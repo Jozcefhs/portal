@@ -83,6 +83,21 @@ test('primary switch checks a staff session and a recent verified payment on the
   assert.equal((await run()).status, 409);
   assert.equal(signed.length, 0);
   intent = { ...intent, PortalReturnVerifiedOrigin: host };
+  const validIntent = { ...intent };
+  for (const invalid of [
+    { Status: 'Pending' },
+    { Reference: 'different-reference' },
+    { PortalCheckoutOrigin: 'https://tenant-one.pages.dev' },
+    { PortalPaymentCredential: 'previous-key' },
+    { PortalReturnVerifiedAt: new Date(Date.now() - 86400001).toISOString() },
+    { PortalReturnVerifiedAt: new Date(Date.now() + 3600000).toISOString() },
+    { PortalReturnVerifiedAt: 'invalid-date' }
+  ]) {
+    intent = { ...validIntent, ...invalid };
+    assert.equal((await run()).status, 409);
+    assert.equal(signed.length, 0);
+  }
+  intent = validIntent;
   assert.equal((await run()).status, 200);
   assert.equal(signed[0].paymentCheck, 'checkout-verified');
   assert.equal(signed[0].observedOrigin, host);
@@ -120,6 +135,30 @@ test('platform keeps the current address until Cloudflare activation and scoped 
   assert.equal((await run()).status, 200);
   assert.equal(writes[0][0].PrimaryPortalUrl, 'https://' + hostname);
   assert.equal(writes[0][1].updateTime, 'revision');
+  assert.equal((await run()).status, 200);
+  assert.equal(writes.length, 1, 'Repeating activation must not create another write.');
+});
+
+test('domain checks never create an attachment on a provider failure or a status-only request', async () => {
+  const env = { CLOUDFLARE_ACCOUNT_ID: 'account', CLOUDFLARE_PAGES_API_TOKEN: 'token' };
+  for (const status of [401, 403, 429, 503]) {
+    const methods = [];
+    await assert.rejects(pagesDomain(env, 'tenant-one', 'portal.example.com', {
+      attach: true, fetcher: async (_url, init) => {
+        methods.push(init.method);
+        return Response.json({ success: false }, { status });
+      }
+    }), { status: 502 });
+    assert.deepEqual(methods, ['GET']);
+  }
+  const methods = [];
+  assert.equal(await pagesDomain(env, 'tenant-one', 'portal.example.com', {
+    fetcher: async (_url, init) => {
+      methods.push(init.method);
+      return Response.json({}, { status: 404 });
+    }
+  }), null);
+  assert.deepEqual(methods, ['GET']);
 });
 
 test('root zone inspection checks the exact domain and the Pages account', async () => {

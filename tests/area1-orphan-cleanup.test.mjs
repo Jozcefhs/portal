@@ -1,0 +1,9 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {planArea1OlderEntries} from '../scripts/area1-orphan-cleanup.mjs';
+import {AREA1_PROJECT,AREA1_STUDENTS} from '../scripts/area1-admission-prefix.mjs';
+const s=stringValue=>({stringValue}),base=`projects/${AREA1_PROJECT}/databases/(default)/documents/`;
+const doc=(collection,id,extra)=>({name:base+collection+'/'+id,updateTime:'v1',fields:{BranchId:s('area-1-primary'),...extra}});
+const profiles=Array.from({length:351},(_,i)=>doc(AREA1_STUDENTS,'p'+i,{AdmissionNo:s('DCA/25/'+(i+1000))}));
+const m=(id,ref)=>doc('academicStudentMemberships',id,{StudentRef:s(ref),ClassId:s('class1'),TermId:s('term1'),SessionId:s('session1'),SchoolSection:s('primary')});
+test('only unlinked older entries are removed; matching alternate-reference history is retained',()=>{const old=m('old','DCA/25/01000'),good=m('good','DCA/25/1000'),orphan=m('orphan','DCA/26/');const history=doc('academicStudentMovements','h',{StudentRef:s('DCA/25/01000')});const plan=planArea1OlderEntries(profiles,[old,good,orphan],[history],[]);assert.equal(plan.remove.length,2);assert.equal(plan.patch.length,1);assert.equal(plan.patch[0].after.fields.StudentRef.stringValue,'DCA/25/1000');assert.equal(plan.patch[0].after.name,history.name);});
+test('retained profile pointers, scores, scope and identity ambiguity prevent deletion',()=>{const old=m('old','DCA/26/');assert.throws(()=>planArea1OlderEntries(profiles,[old],[],[doc('academicStudentScores','score',{StudentRef:s('DCA/26/')})]),/has scores/);const linked=structuredClone(profiles);linked[0].fields.AcademicMembershipId=s('old');assert.throws(()=>planArea1OlderEntries(linked,[old],[],[]),/points/);assert.throws(()=>planArea1OlderEntries(profiles.slice(1),[],[],[]),/351/);const wrong={...old,fields:{...old.fields,BranchId:s('main')}};assert.throws(()=>planArea1OlderEntries(profiles,[wrong],[],[]),/out-of-branch/);});
