@@ -35,7 +35,8 @@
   const scopedLiveReads = {
     // Vendor history and exact saved reports stay fresh without clearing other loaded workspaces.
     '/api/staff-vendor-settlements': ['bootstrap', 'statement', 'requesthistory', 'requestreport', 'previewhistorical', 'previewsale', 'previewproductimport', 'previewcardrefundbatch'],
-    '/api/staff-hr': ['getsalarystructure', 'loademploymentletter', 'previewemploymentletter'],
+    '/api/staff-hr': ['getsalarystructure', 'loademploymentletter', 'previewemploymentletter', 'listsalarytemplates',
+      'listpaygrades', 'listpaygrademembers', 'getpaygradepreview'],
     '/api/staff-meetings': ['bootstrap', 'setup', 'list', 'report'],
     '/api/staff-session': ['activity'],
     '/api/staff-academics': ['getacademicsubmissionsettings', 'listacademicsubmissions']

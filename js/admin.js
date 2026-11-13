@@ -9778,23 +9778,48 @@ function bindHrPersonPickers(root = document) {
   });
 }
 
-function bindHrWorkspaceSearch(root = document) {
+function bindHrWorkspaceSearch(root, directory) {
   const search = root.querySelector('#humanResourcesPeopleSearch');
   const count = root.querySelector('[data-hr-workspace-search-count]');
-  if (!search) return;
-  const rows = [...root.querySelectorAll('.hr-workspace-stack .admin-table tbody tr')]
-    .filter((row) => !/no records found/i.test(clean(row.textContent)));
+  const filters = root.querySelector('[data-hr-pay-filters]');
+  const gradeSelect = filters?.querySelector('[data-hr-grade-filter]');
+  const levelSelect = filters?.querySelector('[data-hr-level-filter]');
+  const staffCount = filters?.querySelector('[data-hr-pay-count]');
+  const rows = [...root.querySelectorAll('.hr-workspace-stack .admin-table tbody tr[data-list-row]')];
+  const staffRows = new Map([...root.querySelectorAll('.hr-staff-directory tr[data-list-row]')]
+    .map(row => [row, directory[Number(row.dataset.listIndex)]]));
+  const filterKey = value => clean(value) ? `value:${lower(value)}` : 'unassigned';
+  const rebuildFilters = () => {
+    for (const [select, field, label] of [[gradeSelect, 'PayGrade', 'All grades'], [levelSelect, 'PayLevel', 'All levels']]) {
+      const previous = select.value;
+      const options = new Map(directory.map(row => {
+        const value = row.PayGradeAssignment?.[field];
+        return [filterKey(value), clean(value) || 'Unassigned'];
+      }));
+      const sorted = [...options].sort((a, b) => a[1].localeCompare(b[1], undefined, { numeric: true }));
+      select.replaceChildren(new Option(label, ''), ...sorted.map(([value, text]) => new Option(text, value)));
+      if (options.has(previous)) select.value = previous;
+    }
+  };
   const render = () => {
     const query = lower(search.value);
     const terms = query.split(/\s+/).filter(Boolean);
-    let matches = 0;
+    let matches = 0, staffMatches = 0;
     rows.forEach((row) => {
       const searchable = lower(`${row.textContent} ${row.dataset.listSearch || ''}`);
-      const matched = terms.every((term) => searchable.includes(term));
+      const staff = staffRows.get(row);
+      const assignment = staff?.PayGradeAssignment;
+      const gradeMatch = !staff || ((!gradeSelect?.value || gradeSelect.value === filterKey(assignment?.PayGrade))
+        && (!levelSelect?.value || levelSelect.value === filterKey(assignment?.PayLevel)));
+      const matched = gradeMatch && terms.every((term) => searchable.includes(term));
       row.hidden = !matched;
-      if (matched) matches += 1;
+      if (matched) {
+        matches += 1;
+        if (staff) staffMatches += 1;
+      }
     });
     if (count) count.textContent = query ? `${matches} matching HR record${matches === 1 ? '' : 's'}` : 'Searches every HR register';
+    if (staffCount) staffCount.textContent = `${staffMatches} of ${staffRows.size} staff shown`;
   };
   search.addEventListener('input', render);
   search.addEventListener('keydown', (event) => {
@@ -9802,6 +9827,24 @@ function bindHrWorkspaceSearch(root = document) {
     search.value = '';
     render();
   });
+  if (!filters) return undefined;
+  rebuildFilters();
+  filters.addEventListener('change', render);
+  render();
+  return ({ branch, grade, gradeId = grade?.GradeId, usernames }) => {
+    const names = usernames && new Set(usernames.map(lower));
+    for (const [row, staff] of staffRows) {
+      if ((lower(staff.BranchId) || 'main') !== branch) continue;
+      if (names ? !names.has(lower(staff.Username)) : staff.PayGradeAssignment?.GradeId !== gradeId) continue;
+      staff.PayGradeAssignment = grade
+        ? { GradeId: grade.GradeId, PayGrade: grade.PayGrade, PayLevel: grade.PayLevel }
+        : null;
+      row.querySelector('[data-hr-pay-grade]').textContent = clean(grade?.PayGrade) || 'Unassigned';
+      row.querySelector('[data-hr-pay-level]').textContent = clean(grade?.PayLevel) || '—';
+    }
+    rebuildFilters();
+    render();
+  };
 }
 
 function hrRoleGuide() {
@@ -9882,6 +9925,7 @@ function renderHumanResources(data) {
   const hasEmploymentTools = Boolean(capabilities.canViewSalaryStructure || capabilities.canManageSalaryStructure || capabilities.canIssueEmploymentLetters);
   const employmentToolsPanel = document.createElement('section');
   employmentToolsPanel.className = 'hr-workspace-stack';
+  const payGradeToolsPanel = document.createElement('div');
   const username = clean(currentUser?.username);
   const vacancyOptions = `<option value="">Choose vacancy</option>${vacancies.map((row) => `<option value="${escapeHtml(row.VacancyId || row.__id)}">${escapeHtml([row.Title, row.Department, row.Status].filter(Boolean).join(' · '))}</option>`).join('')}`;
   const pendingLeave = leave.filter((row) => /pending/i.test(clean(row.Status))).length;
@@ -9913,16 +9957,25 @@ function renderHumanResources(data) {
         <div class="config-dialog-actions"><p class="status"></p><button type="submit">Save employment record</button></div>
       </form>
     </section>` : ''}
+    ${data.payGradesLoaded ? `<div class="hr-person-picker" data-hr-pay-filters>
+      <label>Pay grade<select data-hr-grade-filter></select></label>
+      <label>Pay level<select data-hr-level-filter></select></label>
+      <small data-hr-pay-count aria-live="polite"></small>
+    </div>` : ''}
     ${table('Staff directory', directory, [
       { label: 'Employee ID', value: (row) => row.EmployeeId },
       { label: 'Staff', value: (row) => row.DisplayName || row.Username },
       { label: 'Position', value: (row) => row.Position || row.Role },
       { label: 'Department', value: (row) => row.Department },
+      ...(data.payGradesLoaded ? [
+        { label: 'Pay grade', render: (row) => `<span data-hr-pay-grade>${escapeHtml(clean(row.PayGradeAssignment?.PayGrade) || 'Unassigned')}</span>` },
+        { label: 'Pay level', render: (row) => `<span data-hr-pay-level>${escapeHtml(clean(row.PayGradeAssignment?.PayLevel) || '—')}</span>` }
+      ] : []),
       { label: 'Employment', value: (row) => row.EmploymentType },
       { label: 'Manager', value: (row) => row.ManagerUsername },
       { label: 'Status', value: (row) => row.Status || (row.Active === false ? 'Inactive' : 'Active') },
       ...(capabilities.canManagePeople ? [{ label: 'Action', render: (row) => `<button type="button" class="compact-icon-action compact-edit-action" data-edit-hr-employee="${escapeHtml(row.Username)}" aria-label="Edit ${escapeHtml(row.DisplayName || row.Username)}" title="Edit employment record"><span aria-hidden="true">&#9998;</span></button>` }] : [])
-    ])}`;
+    ], { className: 'hr-staff-directory' })}`;
 
   const recordsPanel = document.createElement('section');
   recordsPanel.className = 'hr-workspace-stack';
@@ -10205,14 +10258,16 @@ function renderHumanResources(data) {
   ]);
   renderModuleSummary('humanResources', data);
 
+  const onGradeChanged = bindHrWorkspaceSearch(panelEl, directory);
+  if (capabilities.canManageSalaryStructure) panelEl.querySelector('.workflow-intro > div').append(payGradeToolsPanel);
   if (hasEmploymentTools) window.DynamaxHrEmployment?.mount(employmentToolsPanel, {
     directory, capabilities, request: humanResourcesRequest, personPicker: hrPersonPicker,
+    payGradeRoot: payGradeToolsPanel, workingBranch: selectedBranchId, branches: availableBranches, onGradeChanged,
     confirm: options => window.DynamaxDialogs.confirm(options),
     isCurrent: () => employmentToolsPanel.isConnected && activeSection === 'humanResources' && humanResourcesData === data
   });
 
   document.getElementById('refreshHumanResources')?.addEventListener('click', (event) => runButtonAction(event.currentTarget, 'Refreshing...', loadHumanResources));
-  bindHrWorkspaceSearch(panelEl);
   bindHrPersonPickers(panelEl);
   hrFormStaffNameSync(document.getElementById('hrEmployeeForm'), directory);
   hrFormStaffNameSync(document.getElementById('hrLeaveForm'), directory);
@@ -10333,7 +10388,7 @@ function renderHumanResources(data) {
 async function loadHumanResources() {
   if (activeSection !== 'humanResources') return;
   try {
-    const data = await humanResourcesRequest('list');
+    const data = await humanResourcesRequest('list', { IncludePayGrades: true });
     if (activeSection !== 'humanResources') return;
     renderHumanResources(data);
   } catch (error) {

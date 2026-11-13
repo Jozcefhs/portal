@@ -7,7 +7,7 @@ import { readJsonBody } from '../lib/request-security.js';
 import { branchRecordVisible, enforceActorBranch, recordBranchId } from '../lib/branch-scope.js';
 import { staffRecordMatchesEdition } from '../lib/records-desk.js';
 import { staffEmploymentDetails } from '../lib/staff-employment.js';
-import { handleHrEmploymentLetter } from '../lib/hr-employment-letters.js';
+import { handleHrEmploymentLetter, HR_PAY_GRADE_ACTIONS, loadHrDirectoryPayGrades } from '../lib/hr-employment-letters.js';
 import {
   hrCapabilitiesFor,
   normalizeHrCandidate,
@@ -152,15 +152,18 @@ async function listWorkspace(env, user, body = {}) {
   const employeeCases = lifecycle('EmployeeCase');
   const compliance = lifecycle('Compliance');
   const exits = lifecycle('Exit');
-  const safeStaff = editionStaff.filter((row) => branchRecordVisible(row, user))
-    .map(safeHrStaffUser).filter((row) => row.Username);
-  const directory = safeStaff.map((row) => {
+  const staffSource = new Map();
+  const directory = editionStaff.filter((row) => branchRecordVisible(row, user)).flatMap((staff) => {
+    const row = safeHrStaffUser(staff);
+    if (!row.Username) return [];
     const employment = staffEmploymentDetails(row, scopedEmployees, user.edition || 'school');
     // Private fields remain in HR, but only on the matching scoped employee.
     const employee = scopedEmployees.find(item => lower(item.Username) === lower(row.Username)
       && recordBranchId(item, row.BranchId) === recordBranchId(row)
       && staffRecordMatchesEdition(item, { ...user, username: row.Username }));
-    return { ...row, ...(employee || {}), ...employment, Username: row.Username, Role: row.Role, BranchId: row.BranchId };
+    const entry = { ...row, ...(employee || {}), ...employment, Username: row.Username, Role: row.Role, BranchId: row.BranchId };
+    staffSource.set(entry, staff);
+    return [entry];
   });
   const role = clean(user.role || user.Role);
   const directReports = new Set(directory
@@ -196,10 +199,16 @@ async function listWorkspace(env, user, body = {}) {
   const visibleExits = capabilities.canManageExit || capabilities.canSeeAllHrRecords
     ? exits
     : exits.filter((row) => lower(row.Username) === username);
+  const payGradesLoaded = body.IncludePayGrades === true && capabilities.canViewSalaryStructure;
+  if (payGradesLoaded) {
+    const assignments = await loadHrDirectoryPayGrades(env, visibleDirectory.map(row => staffSource.get(row)));
+    visibleDirectory.forEach(row => { row.PayGradeAssignment = assignments.get(staffSource.get(row)) || null; });
+  }
   return {
     ok: true,
     capabilities,
-    roles: [...new Set(safeStaff.map((row) => row.Role).filter(Boolean))].sort(),
+    roles: [...new Set(directory.map((row) => row.Role).filter(Boolean))].sort(),
+    payGradesLoaded,
     directory: visibleDirectory.sort((a, b) => clean(a.DisplayName).localeCompare(clean(b.DisplayName))),
     leave: sorted(visibleLeave, 'SubmittedAt'),
     vacancies: capabilities.canManageRecruitment || capabilities.canSeeAllHrRecords ? sorted(scopedVacancies, 'CreatedAt') : [],
@@ -695,7 +704,10 @@ export async function onRequestPost(context) {
     const action = lower(body.action || 'list');
     const capabilities = hrCapabilitiesFor(user);
     let result;
-    if (['getsalarystructure', 'savesalarystructure', 'previewemploymentletter', 'saveemploymentletter', 'loademploymentletter', 'sendemploymentletter'].includes(action)) result = await handleHrEmploymentLetter(context.env, user, body);
+    if (['getsalarystructure', 'savesalarystructure', 'listsalarytemplates', 'addsalarytemplate', 'editsalarytemplate', 'deletesalarytemplate',
+      'previewemploymentletter', 'saveemploymentletter', 'loademploymentletter', 'sendemploymentletter', ...HR_PAY_GRADE_ACTIONS].includes(action)) {
+      result = await handleHrEmploymentLetter(context.env, user, body);
+    }
     else if (action === 'list') result = await listWorkspace(context.env, user, body);
     else if (action === 'saveemployee') result = await saveEmployee(context.env, user, body, capabilities);
     else if (action === 'saveleave') result = await saveLeave(context.env, user, body, capabilities);
