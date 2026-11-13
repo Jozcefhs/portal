@@ -125,6 +125,32 @@
       "group": "current",
       "items": [
         {
+          "id": "hr-reusable-salary-pay-grades-completion-audit",
+          "title": "Complete reusable HR salary items, grades/levels, assignment and salary batches on the web companion",
+          "status": "deployed_verified",
+          "acceptance": "Reusable allowance/deduction CRUD; compact forms; blank new basic salary; independent grade/level setup and CRUD; assignment without salary changes; batch salary preview/apply; HR staff grade/level columns and filters. Preserve saved salary and payroll snapshots, avoid duplicate writes and unrequested reads. Web only.",
+          "evidence": [
+            "docs/hr-salary-pay-grades-audit-2026-11-13.md",
+            "functions/lib/hr-employment-letters.js",
+            "functions/api/staff-hr.js",
+            "js/hr-pay-grades.js",
+            "js/hr-employment-tools.js",
+            "tests/hr-employment-tools-browser.mjs"
+          ],
+          "verification": "180 shared focused tests passed. Hospital 100 focused checks and 4724 full top-level tests passed. Both synthetic browser checks passed. School, Faith and 11 tenant HR assets match tested source. Hospital missing rollout fixed and six live assets verified; isolated workspace plus anonymous/doctor denial and synthetic owner salary-read verified. No business writes or emails during verification.",
+          "delivery": {
+            "date": "2026-11-13",
+            "sharedSource": "0ebb97258b33268b6ef380f695d60f25793adb1e",
+            "hospitalSource": "bd323c7c825f81b32c206b28fe990c124f017cc4",
+            "hospitalTestedSource": "de84a27ab6024b6cf297a0791129043d9068c33f",
+            "hospitalSourceTree": "77aeaf250bf00d748994e5cbf4e7315212a3c89a",
+            "hospitalRelease": "dynamax-v532-hospital-hr-pay-grades",
+            "hospitalUrl": "https://dynamax-hospital-review.pages.dev/admin",
+            "hospitalDeployment": "https://f1d0dc1e.dynamax-hospital-review.pages.dev",
+            "desktop": "No compilation or release; web companion only"
+          }
+        },
+        {
           "id": "schoolwide-fee-class-selection-audit",
           "title": "Apply multi-class fee correction school-wide and inspect all branches",
           "status": "deployed_verified",
@@ -945,10 +971,10 @@
         {
           "id": "parent-password-reset",
           "title": "Parent self-service lost-password recovery",
-          "status": "in_progress",
+          "status": "deployed_with_followups",
           "acceptance": "Parent and staff recovery codes must reach the saved recovery address without duplicate sends; keep account lookup non-enumerating and codes private.",
-          "verification": "13 November: parent legacy credentials lacking a separate Email field now use their validated credential identity. Parent and staff recovery now record protected provider acceptance/failure metadata. 205 focused tests passed; repair deployed in commit 0ebb9725. Recent live recovery records include successful used codes, so a total provider outage is not established. Provider acceptance and inbox delivery remain separate checks.",
-          "remaining": "Owner reports all parents who tried were affected. Do not ask again for one parent email. Inspect signed-in Brevo transactional delivery logs or a fresh recovery receipt to diagnose actual failed deliveries. No live recovery emails were triggered in this verification. Automatic approval review rejected direct use of the stored provider API key; do not bypass this through another route.",
+          "verification": "13 November: legacy parent Email-field repair and protected delivery metadata deployed in 0ebb9725 after 205 focused tests. Signed-in Brevo logs for 6–13 November show 15 parent recovery Sent and 15 Delivered events, with zero bounce/error/blocked/deferred/invalid/complaint/unsubscribe events. Latest 20 parent recovery records include 16 used codes. Staff subject has zero Brevo events for 1 October–13 November; two recent requests matched active accounts without recovery emails. Only 30 of 276 saved staff accounts have a recovery email. No emails, credentials or business records were changed by this inspection.",
+          "remaining": "Owner declined a deliberate live staff recovery test to avoid interrupting staff work. Do not trigger a test email or reset an existing staff account. Live staff delivery remains unverified pending an authorised genuine recovery request. Staff without a saved login recovery email need that field configured in Staff & permissions or their own Login details; do not silently copy HR contacts. Do not claim provider delivery proves inbox placement or that current configuration proves historical configuration. Direct provider-key access was rejected earlier; continue using authorised browser delivery evidence. Owner explicitly approved pushing the recovery notes and existing tracker to Jozcefhs/portal.",
           "evidence": [
             "docs/parent-recovery-and-result-download.md",
             "functions/lib/password-recovery-delivery.js",
