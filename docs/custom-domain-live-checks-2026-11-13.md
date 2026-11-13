@@ -27,3 +27,12 @@ Behavioral checks cover the first advance callback, webhook-first verification f
 The Cloudflare dashboard showed tenant 001's current production deployment and its default pages.dev address. The custom-domain panel repeatedly failed to load. Authenticated Cloudflare REST reads returned HTTP 503 with `no healthy upstream`. No temporary domain, DNS record or primary-address change was made during these attempts.
 
 Actual authenticated sign-in and successful checkout on the temporary custom host remain unverified. Automated regression tests are not evidence of a completed live checkout. Resume only after Cloudflare domain controls are available, attach a temporary subdomain to tenant 001, validate HTTPS, use an authorized tenant account and payment route, verify the return and replay behavior, then remove the temporary connection. Never redirect the central root domain for this test.
+
+## Push and deployment
+
+- Repair pushed as `2eaf532c` on `codex/school-score-register-release`.
+- Targeted tenant deployment commit `c27a6e91ac7b4e0fc56c8ca068bf42c2a526cfa7` is pushed on `codex/custom-domain-payment-checks`, based on tenant 001's existing production commit `0ebb97258b33268b6ef380f695d60f25793adb1e`. Only the repair, its tests and this note were added; unrelated school/hospital branch changes were not deployed over the tenant.
+- Cloudflare deployment completed at `https://5df86f68.dynamax-tenant-001.pages.dev`, production alias `https://dynamax-tenant-001.pages.dev`.
+- Both deployment and production URLs returned HTTP 200 for the staff sign-in and setup pages. Empty payment verification returned HTTP 400, and unauthenticated domain management returned HTTP 401, as expected. These probes created no payments and changed no domain settings.
+- The `dynamax.cc` DNS zone was confirmed active/full. Pages project and custom-domain reads continued to return HTTP 503, even though deployment upload completed.
+- No desktop compilation or release was performed.
