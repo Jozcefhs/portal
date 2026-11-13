@@ -25,4 +25,14 @@ Settings → Academic policy → Nursery and primary provides independent decisi
 - PDF browser check: single-page and long two-page downloads, long learner/subject names, repeated table heading, rendered pixel assertions for all continuation-page borders, access denial and lazy loading.
 - Release metadata: `dynamax-v559-section-result-layout`.
 
-Production deployment and source SHA are recorded after deployment verification. Hospital development remains paused for this school pass.
+## Delivery
+
+Implementation commit: `ad8e00669f3532582dcda697d311faf021c86937`, pushed to `codex/school-score-register-release`.
+
+Production: https://destinychristianacademy.pages.dev
+
+Deployment: https://2761d753.destinychristianacademy.pages.dev
+
+School/workspace identity and subscription bridge passed live checks. Twenty-seven served assets, including the settings form/script, report renderer, PDF exporter and previously delivered HR/academic interfaces, matched tested source. Installer metadata remains 3.1.64; no installer was compiled or released. No authenticated parent record was opened or altered during this pass. Generated PDF verification used synthetic fixtures.
+
+The isolated `codex/school-result-sections` worktree contains this tested source. The original school checkout has unrelated pending edits and was deliberately not overwritten; future deployments must include the pushed implementation above. Hospital development remains paused for this school pass.

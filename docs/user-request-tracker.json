@@ -1423,7 +1423,10 @@
   ],
   "schoolResultSectionPass": {
     "date": "2026-11-13",
-    "status": "tested_awaiting_deployment",
+    "status": "deployed_verified",
+    "implementationCommit": "ad8e00669f3532582dcda697d311faf021c86937",
+    "deploymentUrl": "https://2761d753.destinychristianacademy.pages.dev",
+    "liveVerification": "School/workspace identity and subscription bridge passed; 27 served assets matched tested source. PDF checks used synthetic fixtures; no parent records opened or altered.",
     "requests": [
       "Remove Junior and Senior result footer labels from nursery and primary",
       "Show numeric assessment contributions without maximum denominators",
