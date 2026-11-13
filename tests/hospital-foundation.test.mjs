@@ -50,6 +50,14 @@ test('opening the workspace loads only branch settings and no patient or visit h
   assert.equal(f.queries.length, 0); assert.equal(f.reads.length, 0); assert.equal(f.commits.length, 0);
 });
 
+test('workspace access identifies the authenticated policy branch, never a caller-supplied branch', async () => {
+  const f = fixture({ ...actor, activeBranchId: 'main', branchId: 'main' });
+  assert.equal((await f.service.state({ BranchId: 'north', activeBranchId: 'north' })).activeBranchId, 'main');
+  const all = fixture({ ...actor, branchAccess: 'all', assignedBranchIds: [], activeBranchId: 'all' });
+  assert.equal((await all.service.state()).activeBranchId, 'all', 'organisation-wide policies cannot be mistaken for a concrete branch');
+  assert.equal(f.queries.length + f.reads.length + f.commits.length, 0);
+});
+
 test('registration replay and concurrent retries create one patient, number and audit event', async () => {
   const f = fixture(), input = request({ Patient: profile });
   const results = await Promise.all([f.service.savePatient(input), f.service.savePatient(input)]);

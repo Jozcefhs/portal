@@ -92,12 +92,16 @@
     if (!data.authenticated || data.user.edition !== 'hospital') throw new Error('Sign in to a Hospital staff workspace to continue.');
     idle.start({username:data.user.username, session:data.session}); session = true;
     const previous = $('branch').value || new URLSearchParams(location.search).get('branch');
-    // Resolve fresh branch-specific role policies after selecting the branch.
-    state = await fetchJson('/api/staff-hospital', {action:'state'});
+    // A known branch is validated by the server before resolving its role policy.
+    state = await fetchJson('/api/staff-hospital', {action:'state'}, previous || '');
     $('branch').innerHTML = state.branches.map(row => `<option value="${esc(row.id)}">${esc(row.name)}</option>`).join('');
-    if (state.branches.some(row => row.id === previous)) $('branch').value = previous;
+    const preferred = state.branches.find(row => row.id.toLowerCase() === String(previous || state.activeBranchId || '').toLowerCase());
+    if (preferred) $('branch').value = preferred.id;
     if (!$('branch').value) throw new Error('No hospital branch is assigned to this account.');
-    state = await api('state'); loadedBranch = $('branch').value; permissions(); $('workspace').hidden = false;
+    // Organisation-wide access needs its first concrete branch resolved. Reuse
+    // the response when it already contains that branch's fresh permissions.
+    if (String(state.activeBranchId || '').toLowerCase() !== $('branch').value.toLowerCase()) state = await api('state');
+    loadedBranch = $('branch').value; permissions(); $('workspace').hidden = false;
     status('Hospital reception ready. Search for a patient or choose dates to load visits.');
   }
   function showTab(name) { for(const id of ['patients','reception','care','orders','billing','inpatients','nursing','theatre','appointments','referrals','procurement','stockControl','stockDisposal'])$(id).hidden=name!==id; }

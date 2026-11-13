@@ -135,7 +135,8 @@ export function createHospitalService(env, user, overrides = {}) {
       branches = configuredStaffBranches(await db.getSchoolStructure(env));
       const assigned = assignedStaffBranches(user);
       const permitted = branches.filter(row => assigned === null || assigned.includes(clean(row.id).toLowerCase()));
-      return { ok: true, ownerDemo: env.HOSPITAL_OWNER_DEMO === 'true', branches: permitted, capabilities, readOnly: user.subscriptionReadOnly === true };
+      return { ok: true, ownerDemo: env.HOSPITAL_OWNER_DEMO === 'true', branches: permitted,
+        activeBranchId: clean(user.activeBranchId || user.branchId).toLowerCase(), capabilities, readOnly: user.subscriptionReadOnly === true };
     },
     async search(body) {
       requireCapability('patients.read'); const branchId = await branch(body);
