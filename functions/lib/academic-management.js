@@ -6791,8 +6791,18 @@ export async function batchReviewAcademicScores(env, user = {}, input = {}) {
     message:`${outcomes.filter(row=>row.ok).length} subject sheets processed; ${outcomes.filter(row=>!row.ok).length} need attention. Saved marks were not changed.`};
 }
 
-async function loadAcademicCalculationScores(env, scope, sheets) {
+async function loadAcademicCalculationScores(env, scope, sheets, studentRef = '') {
   const sheetIds = uniqueIds(sheets.map(row=>row.SheetId));
+  if (clean(studentRef)) {
+    // One pupil's correction needs only that pupil's scores, never every
+    // classmate's marks. Sheet identity retains support for older arm metadata.
+    const scores = await queryCollectionPages(env, ACADEMIC_MANAGEMENT_COLLECTIONS.studentScores, {
+      filters:[{field:'StudentRef',op:'==',value:clean(studentRef)}],pageSize:500,maxRows:50000,readTime:nowIso()
+    });
+    const selected = new Set(sheetIds);
+    return scopedAcademicRows(scores.filter(row => selected.has(clean(row.SheetId))
+      && lower(row.StudentRef) === lower(studentRef) && lower(row.BranchId || 'main') === lower(scope.branchId)),scope);
+  }
   const groups = [];
   for (let offset=0; offset<sheetIds.length; offset+=10) groups.push(sheetIds.slice(offset,offset+10));
   const scores = [], readTime = nowIso();
@@ -6821,12 +6831,21 @@ async function academicTermResultContext(env, user, input, capability = 'canCalc
   const schoolClass = assertReference(findById(state.classes, input.ClassId), 'Choose an active class.');
   const arm = assertReference(findById(state.arms, input.ArmId), 'Choose an active classroom arm.');
   if (arm.ClassId !== schoolClass.ClassId) throw failure('The selected arm does not belong to this class.');
+  const selectedResult = calculation && clean(input.ResultId) ? findById(state.termResults, input.ResultId) : null;
+  if (calculation && clean(input.ResultId)) {
+    if (!selectedResult || selectedResult.SessionId !== session.SessionId || selectedResult.TermId !== term.TermId
+      || selectedResult.ClassId !== schoolClass.ClassId || selectedResult.ArmId !== arm.ArmId) {
+      throw failure('The result is not in the selected classroom and term.', 409);
+    }
+    if (lower(selectedResult.Status) !== 'calculated draft') throw failure('Reopen this result as a Calculated Draft before recalculating it.', 409);
+    writePrecondition(selectedResult, resultRevisionToken(input, selectedResult.ResultId));
+  }
   const scopeChain = academicPolicyScopeChain({
     BranchId: scope.branchId, SectionId: scope.section, ClassId: schoolClass.ClassId
   });
   const [policyView, scores] = await Promise.all([
     loadAcademicPolicyView(env, {scope:scopeChain.at(-1),scopeChain,period:{Session:session.Name,Term:term.Name}}),
-    calculation ? loadAcademicCalculationScores(env,scope,state.scoreSheets) : Promise.resolve(null)
+    calculation ? loadAcademicCalculationScores(env,scope,state.scoreSheets,selectedResult?.StudentRef) : Promise.resolve(null)
   ]);
   if (calculation) state.studentScores = scores;
   const policyRevisionIds = (policyView.Sources || []).map((row) => clean(row.RevisionId)).filter(Boolean);
@@ -6992,12 +7011,23 @@ async function calculateAcademicResultsForType(env, user = {}, input = {}, resul
   const existingResults = state.termResults.filter((row) => row.SessionId === session.SessionId && row.TermId === term.TermId
     && row.ClassId === schoolClass.ClassId && row.ArmId === arm.ArmId
     && (midTerm ? lower(row.ResultType) === 'mid-term' : lower(row.ResultType || 'End of Term') !== 'mid-term'));
+  const selectedResult = clean(input.ResultId) ? existingResults.find(row => row.ResultId === clean(input.ResultId)) : null;
+  if (clean(input.ResultId)) {
+    if (!selectedResult) throw failure('The selected result does not match this report type, classroom and term.', 409);
+    if (lower(selectedResult.Status) !== 'calculated draft') throw failure('Reopen this result as a Calculated Draft before recalculating it.', 409);
+    writePrecondition(selectedResult, resultRevisionToken(input, selectedResult.ResultId));
+    if (!memberships.some(row => lower(row.StudentRef) === lower(selectedResult.StudentRef))) {
+      throw failure('This student is no longer active in the selected classroom. Check their current placement.', 409);
+    }
+  }
   // A student's incomplete or already reviewed result must not hold classmates
   // back, including requests from older web/desktop clients without this flag.
   const allowPartial = true;
-  const preservedResults = allowPartial ? existingResults.filter(row => lower(row.Status) !== 'calculated draft') : [];
+  const preservedResults = existingResults.filter(row => lower(row.Status) !== 'calculated draft'
+    || (selectedResult && row.ResultId !== selectedResult.ResultId));
   const preservedRefs = new Set(preservedResults.map(row => lower(row.StudentRef)));
-  const calculationMemberships = memberships.filter(row => !preservedRefs.has(lower(row.StudentRef)));
+  const calculationMemberships = memberships.filter(row => !preservedRefs.has(lower(row.StudentRef))
+    && (!selectedResult || lower(row.StudentRef) === lower(selectedResult.StudentRef)));
   if (!calculationMemberships.length) throw failure('There are no new or draft results to calculate. Existing reviewed, approved and published results remain unchanged.', 409);
   const ids = new Map();
   const references = new Map();
@@ -7028,6 +7058,7 @@ async function calculateAcademicResultsForType(env, user = {}, input = {}, resul
     TermDates: { StartDate: term.StartDate, EndDate: term.EndDate },
     AttendanceMode: 'Daily',
     ExistingResults: existingResults,
+    PreservedResults: preservedResults.filter(row => memberships.some(member => lower(member.StudentRef) === lower(row.StudentRef))),
     Policy: policy,
     PolicyRevisionIds: policyRevisionIds,
     PolicyFingerprint: policyFingerprint,
@@ -7087,7 +7118,7 @@ async function calculateAcademicResultsForType(env, user = {}, input = {}, resul
     BranchId: scope.branchId, SchoolSection: scope.section
   }, `${calculation.Results.length} ${resultType} Calculated Draft result(s); ${(calculation.PendingResults || []).length} pending; ${preservedResults.length} existing reviewed or published results preserved; policy ${policyFingerprint}`));
   const committed = await commitAcademicBatch(env, writes, 'One or more term results changed while the classroom was being calculated. Reload and try again.', { allowLargeAtomicBatch: true });
-  const message = `${calculation.Results.length} ${resultType.toLowerCase()} result${calculation.Results.length === 1 ? '' : 's'} calculated as Draft from recorded scores. ${(calculation.PendingResults || []).length} students remain pending; ${preservedResults.length} existing reviewed or published results preserved.`;
+  const message = `${calculation.Results.length} ${resultType.toLowerCase()} result${calculation.Results.length === 1 ? '' : 's'} calculated as Draft from recorded scores. ${(calculation.PendingResults || []).length} students remain pending; ${preservedResults.length} other saved results preserved.`;
   if (input.ResultResponseMode === 'delta') {
     // Keep preserved results current too: another officer may have reviewed or
     // published them since the client loaded its snapshot. No extra reads.

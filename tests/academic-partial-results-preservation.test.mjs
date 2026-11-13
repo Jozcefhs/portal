@@ -155,3 +155,45 @@ test('recalculation after an arm transfer retains the existing result ID and par
   assert.equal(write.data.ResultReference,'stable-parent-link');assert.equal(write.data.OverallAverage,75);
   assert.equal(write.updateTime,'moved-v1');assert.ok(!f.writes.some(row=>row.documentId==='result-good'));
 });
+
+test('one stale mid-term draft recalculates from locked CA marks without writing classmates or source scores',async()=>{
+  const f=fixture();
+  f.state.termResults[0]={...f.state.termResults[0],OverallAverage:90,SubjectCount:1,Subjects:[{SubjectId:'math',Total:90}]};
+  f.state.termResults[1].CalculationPending=true;
+  f.state.termResults.push({...f.period,ResultId:'target',ResultReference:'stable',StudentRef:'good',
+    Status:'Calculated Draft',SubjectChangeRecalculationRequired:true,__updateTime:'target-v1'});
+  f.state.subjects.push({SubjectId:'ict',Name:'ICT'});
+  f.state.studentMemberships[0].SubjectIds.push('ict');
+  f.state.scoreSheets.push({...f.period,SheetId:'ict-sheet',SubjectId:'ict',Status:'Locked',AssessmentRevisionId:'r1'});
+  f.state.studentScores.push({...f.period,SheetId:'ict-sheet',SubjectId:'ict',StudentRef:'good',AssessmentRevisionId:'r1',
+    CompletionStatus:'Incomplete',LockedComponentIds:['ca'],ComponentScores:[{ComponentId:'ca',State:'Numeric',RawScore:95}]});
+  const before=structuredClone(f.state);
+  await f.sandbox.calculateAcademicResultsForType({}, {},{...f.period,ResultId:'target',RevisionToken:'target-v1'},'Mid-Term');
+  const writes=f.writes.filter(row=>row.collectionPath==='academicResults');
+  assert.equal(writes.length,1);assert.equal(writes[0].documentId,'target');
+  const result=writes[0].data;
+  assert.equal(result.SubjectCount,2);assert.equal(result.OverallAverage,85);assert.equal(result.ClassAverage,87.5);
+  assert.equal(result.OverallPosition,2);assert.equal(result.AssessedStudentCount,2);
+  assert.equal(result.SubjectChangeRecalculationRequired,false);assert.equal(result.ResultReference,'stable');
+  assert.equal(result.Status,'Calculated Draft');assert.equal(result.Subjects.find(row=>row.SubjectId==='ict').Total,95);
+  assert.ok(!f.writes.some(row=>/Scores/.test(row.collectionPath)));
+  assert.deepEqual(f.state,before);
+  f.state.termResults[2]={...result,__updateTime:'target-v2'};
+  const count=f.writes.length;
+  await assert.rejects(f.sandbox.calculateAcademicResultsForType({}, {},{...f.period,ResultId:'target',RevisionToken:'target-v1'},'Mid-Term'));
+  assert.equal(f.writes.length,count,'a repeated stale request cannot duplicate the recalculation or history');
+});
+
+test('targeted recalculation rejects published, foreign-period and inactive-student results without writes',async()=>{
+  for(const change of ['published','wrong-type','wrong-class','inactive']){
+    const f=fixture();
+    const target={...f.period,ResultId:'target',StudentRef:'good',Status:'Calculated Draft',__updateTime:'target-v1'};
+    if(change==='published')target.Status='Published';
+    if(change==='wrong-type')target.ResultType='End of Term';
+    if(change==='wrong-class')target.ClassId='another-class';
+    if(change==='inactive')f.state.studentMemberships[0].Status='Expelled';
+    f.state.termResults.push(target);
+    await assert.rejects(f.sandbox.calculateAcademicResultsForType({}, {},{...f.period,ResultId:'target',RevisionToken:'target-v1'},'Mid-Term'));
+    assert.equal(f.writes.length,0,change);
+  }
+});

@@ -85,6 +85,21 @@ test('calculation rejects missing selectors before reads and fails rather than u
   await assert.rejects(f.context.loadAcademicCalculationScores({}, {branchId:'main',section:'secondary'},[{SheetId:'sheet'}]),/database page failed/);
 });
 
+test('single-result calculation reads only that student’s marks and refuses foreign or stale results before score reads',async()=>{
+  const f=fixture();
+  Object.assign(f.records.academicResults[0],{StudentRef:'TEST/0/0',Status:'Calculated Draft',__updateTime:'v1'});
+  const result=await f.context.academicTermResultContext({},actor,{...input,ResultId:'result-0',RevisionToken:'v1'});
+  assert.equal(result.state.studentScores.length,16);
+  const reads=f.calls.filter(row=>row.collection==='academicStudentScores');
+  assert.equal(reads.length,1);assert.equal(reads[0].count,16);
+  assert.deepEqual(Array.from(reads[0].options.filters,filter=>[filter.field,filter.op,filter.value]),[['StudentRef','==','TEST/0/0']]);
+  for(const request of [{ResultId:'result-1',RevisionToken:'v1'},{ResultId:'result-0',RevisionToken:'stale'}]){
+    f.calls.length=0;
+    await assert.rejects(f.context.academicTermResultContext({},actor,{...input,...request}));
+    assert.ok(!f.calls.some(row=>row.collection==='academicStudentScores'));
+  }
+});
+
 test('mid-term math ignores other classrooms and preserved students instead of processing their component scores',()=>{
   const p=policy.defaultAcademicPolicy();p.Position.Mode='none';p.MidTerm={Enabled:true,ComponentIds:['ca']};
   p.Assessment.Components=[{Id:'ca',Name:'CA1',MaximumScore:100,WeightPercentage:100,Required:true}];

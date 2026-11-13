@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
+import { DEFAULT_BILLING_CATEGORIES } from '../functions/lib/billing-category-discounts.js';
 
 // Exercise the full payable loader, retaining its real identity checks and fee
 // calculations. Only persistence/configuration boundaries use in-memory data.
@@ -76,3 +77,50 @@ test('parent payable loader returns optional services with no school bill or add
   assert.deepEqual(reads, Array(2).fill([pupil.__scopePath, 'feeItems', 'payments', 'invoices', 'ledger']).flat());
   assert.equal(JSON.stringify({ pupil, rules }), before);
 });
+
+for (const category of [...DEFAULT_BILLING_CATEGORIES, 'Community Bursary']) {
+  test(`optional services: ${category} respects every branch, section, rate and compulsory exemption`, async () => {
+    for (const branch of ['main', 'area-1-primary', 'the-lord-s-garden-primary']) for (const section of ['primary', 'secondary']) {
+      const student = {...pupil,BranchId:branch,SchoolSection:section,BillingCategory:category,
+        __scopePath:`schoolBranches/${branch}/sections/${section}/students`};
+      const common = {...defaults,BranchId:branch,SchoolSection:section};
+      const rules = [
+        {...common,FeeCode:'CLUB',FeeName:'Chess',FeeCategory:'Club'},
+        {...common,FeeCode:'BUS',FeeName:'Bus',FeeCategory:'Bus Service'},
+        {...common,FeeCode:'BUS_CATEGORY',FeeName:'Bus',FeeCategory:'Bus Service',BillingCategory:category,Amount:2500},
+        {...common,FeeCode:'TUITION',FeeName:'Tuition',FeeCategory:'School Fee',Amount:90000},
+        {...common,FeeCode:'SCHOLARSHIP_ONLY',FeeName:'Assigned fee',FeeCategory:'School Fee',BillingCategory:'Full Scholarship',Amount:100},
+        ...[
+          {FeeCode:'FOREIGN_BRANCH',BranchId:'other-branch'},
+          {FeeCode:'FOREIGN_SECTION',SchoolSection:section==='primary'?'secondary':'primary'},
+          {FeeCode:'FOREIGN_CATEGORY',BillingCategory:'A different private category'},
+          {FeeCode:'FOREIGN_CLASS',ClassName:'Grade 12'},
+          {FeeCode:'FOREIGN_TERM',Term:'Second Term'},
+          {FeeCode:'INACTIVE',Active:'NO'}, {FeeCode:'OFFLINE',PayableOnline:'NO'}
+        ].map(row=>({...common,FeeCategory:'Club',FeeName:row.FeeCode,...row}))
+      ];
+      const before=JSON.stringify({student,rules});const reads=[];
+      const rejectWrite=()=>{throw Error('Viewing payment options must not write');};
+      const run=vm.runInNewContext(`${code}
+        getSchoolProfile=async()=>({profile:{}});queryAccountRows=readAccountRows;getPayableFees;`,{
+        ...imports,URL,Date,crypto,fetch:()=>{throw Error('Unexpected network');},
+        getDocument:async(_env,path)=>{assert.equal(path,student.__scopePath);reads.push(path);return structuredClone(student);},
+        loadBranchFinanceRows:async(_env,path,id)=>{assert.equal(path,'feeItems');assert.equal(id,branch);reads.push(path);return structuredClone(rules);},
+        readAccountRows:async(_env,path,ref)=>{assert.equal(ref,student.AdmissionNo);reads.push(path);return [];},
+        loadBillingDiscount:async()=>null,loadSchoolFeePaymentPlans:async()=>[],
+        upsertDocument:rejectWrite,patchDocumentFields:rejectWrite,deleteDocument:rejectWrite,
+        createDocumentIfAbsent:rejectWrite,batchCommitDocuments:rejectWrite,batchCommitLiteralDocuments:rejectWrite,batchUpsertDocuments:rejectWrite
+      });
+      const response=await run({}, {AccountRef:student.AdmissionNo,SourceType:'Student',ScopePath:student.__scopePath,
+        Email:student.ParentEmail,AuthenticatedParentEmail:student.ParentEmail});
+      assert.equal(response.ok,true);
+      assert.deepEqual(Array.from(response.fees,row=>row.FeeCode).sort(),
+        ['CLUB','BUS_CATEGORY',category==='Full Scholarship'?'SCHOLARSHIP_ONLY':'TUITION'].sort(),`${branch}/${section}`);
+      assert.equal(response.fees.find(row=>row.FeeCode==='BUS_CATEGORY').Amount,2500);
+      assert.equal(response.schoolFeeTotal,category==='Full Scholarship'?100:90000);
+      assert.equal(response.schoolFeeBreakdown.length,1,'elective services never enter compulsory billing');
+      assert.equal(reads.length,5,'category checks reuse the bounded payable reads');
+      assert.equal(JSON.stringify({student,rules}),before);
+    }
+  });
+}

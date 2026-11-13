@@ -10,6 +10,7 @@ import { enforceDesktopDeviceActionScope } from '../functions/api/backend.js';
 import { SCHOOL_FEES_ADVANCE_CODE, SCHOOL_FEES_ADVANCE_TYPE, schoolFeeAdvanceItem } from '../functions/lib/school-fee-advance.js';
 import { applyBillingCategoryOverrides, feeMatchesApplication } from '../functions/api/backend.js';
 import { billingFeesWithPostedAmounts, selectBillingDiscount } from '../functions/lib/billing-category-discounts.js';
+import { DEFAULT_BILLING_CATEGORIES } from '../functions/lib/billing-category-discounts.js';
 
 const source = await readFile(new URL('../functions/api/init-payment.js', import.meta.url), 'utf8');
 const backend = await readFile(new URL('../functions/api/backend.js', import.meta.url), 'utf8');
@@ -25,11 +26,11 @@ function quote(rule, items = components) {
 }
 
 function checkout({ rule = makeRule(), paymentMethod = 'paystack', amount = 15000,
-  feeCode = 'SCHOOL_FEES_TOTAL', items = components, replay = null, suppliedQuote = true } = {}) {
+  feeCode = 'SCHOOL_FEES_TOTAL', items = components, replay = null, suppliedQuote = true, accountOverrides = {}, replayAfterCompletion = false } = {}) {
   const calls = { fees: [], intents: [], gateway: [], transfer: [], completed: [], failed: [] };
   const plan = quote(rule, items);
   const account = { AccountRef: 'DEMO/26/001', AdmissionNo: 'DEMO/26/001', BranchId: 'primary',
-    SchoolSection: 'primary', AcademicSession: '2026/2027', Term: 'First Term', DisplayName: 'Demo Learner' };
+    SchoolSection: 'primary', AcademicSession: '2026/2027', Term: 'First Term', DisplayName: 'Demo Learner', ...accountOverrides };
   const body = { feeCode, amount, paymentMethod, accountRef: account.AccountRef, idempotencyKey: 'demo-plan-checkout',
     // These untrusted inputs must never change the server quote or authenticated branch.
     SchoolFeePaymentPlan: { minAmount: 1 }, branchId: 'main' };
@@ -42,10 +43,11 @@ function checkout({ rule = makeRule(), paymentMethod = 'paystack', amount = 1500
       calls.fees.push(input);
       return { ok: true, account, fees: items, schoolFeeBreakdown: items, ...(suppliedQuote ? { schoolFeePaymentPlan: plan } : {}) };
     },
-    beginIdempotentRequest: async () => replay ? { replay: true, response: replay, status: 200 } : { owner: true },
+    beginIdempotentRequest: async () => replay || (replayAfterCompletion && calls.completed.length)
+      ? { replay: true, response: replay || calls.completed[0], status: 200 } : { owner: true },
     completeIdempotentRequest: async (_env, _claim, result) => calls.completed.push(result),
     failIdempotentRequest: async (_env, _claim, error) => calls.failed.push(error.message),
-    getSchoolCode: async (_env, branch) => { assert.equal(branch, 'primary'); return 'DEMO'; },
+    getSchoolCode: async (_env, branch) => { assert.equal(branch, account.BranchId); return 'DEMO'; },
     branchPaymentConfiguration: async () => ({ online: { enabled: true }, paystack: {} }),
     createDocumentIfAbsent: async (_env, collection, id, document) => { calls.intents.push({ collection, id, document }); return { created: true }; },
     createDirectTransferRequest: async (_env, payload) => { calls.transfer.push(payload); return { ok: true, reference: payload.reference }; },
@@ -64,6 +66,28 @@ function checkout({ rule = makeRule(), paymentMethod = 'paystack', amount = 1500
 }
 
 for (const paymentMethod of ['paystack', 'direct_bank_transfer']) {
+  test(`${paymentMethod}: optional checkout works for every category and branch without duplicate intent on retry`,async()=>{
+    for(const BillingCategory of [...DEFAULT_BILLING_CATEGORIES,'Community Bursary']){
+      for(const BranchId of ['main','area-1-primary','the-lord-s-garden-primary']){
+        const account={BillingCategory,BranchId,SchoolSection:BranchId==='main'?'secondary':'primary',ClassName:'Grade 3',Term:'First Term',AcademicSession:'2026/2027'};
+        const rules=[{...account,BillingCategory:'All',FeeCode:'CLUB',FeeName:'Chess',FeeCategory:'Club',Amount:5000,AllowInstallment:'NO'},
+          {...account,BillingCategory,FeeCode:'CLUB_RATE',FeeName:'Chess',FeeCategory:'Club',Amount:3000,AllowInstallment:'NO'},
+          {...account,BillingCategory:'All',BranchId:'foreign',FeeCode:'FOREIGN',FeeName:'Other',FeeCategory:'Club',Amount:2000}];
+        const items=applyBillingCategoryOverrides(rules.filter(row=>feeMatchesApplication(row,account)),account)
+          .map(row=>({...row,OriginalAmount:row.Amount,PaidAmount:0}));
+        assert.deepEqual(items.map(row=>row.FeeCode),['CLUB_RATE']);
+        const f=checkout({paymentMethod,feeCode:'CLUB_RATE',amount:3000,items,accountOverrides:account,replayAfterCompletion:true});
+        assert.equal((await f.run()).response.status,200);
+        assert.equal((await f.run()).response.status,200);
+        assert.equal(f.calls.intents.length,1);assert.equal(f.calls.intents[0].document.BranchId,BranchId);
+        assert.equal(f.calls.intents[0].document.Amount,3000);
+        assert.equal(f.calls.gateway.length+f.calls.transfer.length,1);
+        const denied=checkout({paymentMethod,feeCode:'FOREIGN',amount:2000,items,accountOverrides:account});
+        assert.equal((await denied.run()).response.status,400);assert.equal(denied.calls.intents.length,0);
+      }
+    }
+  });
+
   test(`${paymentMethod}: Full Scholarship can buy an eligible optional item without compulsory fees`, async () => {
     const student = { BillingCategory: 'Full Scholarship', BranchId: 'primary', SchoolSection: 'primary',
       ClassName: 'Grade 3', AcademicSession: '2026/2027', Term: 'First Term' };

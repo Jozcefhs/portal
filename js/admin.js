@@ -16608,10 +16608,10 @@ function printAcademicWeightedResult(record) {
 }
 
 function academicTermResultActions(row, permissions = {}) {
-  if (row.CalculationPending) return '<span class="muted">Pending — complete the missing assessments and recalculate.</span>';
   const actions = [];
   const status = clean(row.Status || 'Calculated Draft');
-  if (status === 'Calculated Draft' && permissions.canReviewResults) actions.push(['Reviewed', 'Mark reviewed', '&#10003;']);
+  const needsCalculation = row.CalculationPending || row.SubjectChangeRecalculationRequired;
+  if (status === 'Calculated Draft' && !needsCalculation && permissions.canReviewResults) actions.push(['Reviewed', 'Mark reviewed', '&#10003;']);
   if (status === 'Reviewed' && permissions.canReviewResults) actions.push(['Approved', 'Approve result', '&#10004;']);
   if (status === 'Approved' && permissions.canPublishResults) actions.push(['Published', 'Publish to eligible parents', '&#10148;']);
   if (status === 'Published' && permissions.canPublishResults) actions.push(['Locked', 'Lock published result', '&#128274;']);
@@ -16620,7 +16620,44 @@ function academicTermResultActions(row, permissions = {}) {
   const remarkButton = status === 'Calculated Draft' && permissions.canEnterScores
     ? `<button type="button" class="compact-icon-action compact-edit-action" data-academic-result-remarks="${escapeHtml(row.ResultId)}" title="Edit draft remarks" aria-label="Edit draft remarks">&#9998;</button>` : '';
   const workflow = actions.map(([target, title, icon]) => `<button type="button" class="compact-icon-action ${target === 'Withdrawn' ? 'academic-archive-action' : 'compact-edit-action'}" data-academic-result-status="${escapeHtml(target)}" data-academic-result-id="${escapeHtml(row.ResultId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">${icon}</button>`).join('');
-  return `<div class="academic-management-row-actions"><button type="button" class="secondary" data-academic-weighted-result="${escapeHtml(row.ResultId)}">View / Print</button>${remarkButton}${workflow}</div>`;
+  const recalculate = status === 'Calculated Draft' && permissions.canCalculateResults
+    ? `<button type="button" data-academic-result-recalculate="${escapeHtml(row.ResultId)}">Recalculate result</button>` : '';
+  const pending = needsCalculation ? `<span class="muted">${row.SubjectChangeRecalculationRequired ? 'Subjects changed. Recalculate this draft before review.' : 'Complete the missing assessments, then recalculate this draft.'}</span>` : '';
+  return `<div class="academic-management-row-actions"><button type="button" class="secondary" data-academic-weighted-result="${escapeHtml(row.ResultId)}">View / Print</button>${recalculate}${remarkButton}${workflow}${pending}</div>`;
+}
+
+function bindAcademicResultRecalculation(panel) {
+  panel.querySelectorAll('[data-academic-result-recalculate]').forEach(button => button.addEventListener('click', async () => {
+    const result = academicFind(academicManagementData?.termResults || [], button.dataset.academicResultRecalculate);
+    if (!result || result.Status !== 'Calculated Draft' || !academicManagementData?.permissions?.canCalculateResults) return;
+    const scopeKey = () => JSON.stringify([selectedBranchId,currentUser?.username,academicManagementFilters.section,
+      academicManagementFilters.sessionId,academicManagementFilters.termId,academicResultDraft.armId]);
+    const requestedScope = scopeKey();
+    const isCurrent = () => button.isConnected && activeSection === 'academics'
+      && academicManagementView === 'results' && requestedScope === scopeKey();
+    const midTerm = clean(result.ResultType).toLowerCase() === 'mid-term';
+    const exclusions = midTerm ? result.NotTaughtSubjects || [] : [];
+    await runButtonAction(button, 'Recalculating...', async () => {
+      if (!await window.DynamaxDialogs.confirm({title:'Recalculate this result',
+        message:`Recalculate ${academicLabel(academicManagementData.students,result.StudentRef,result.StudentRef)}’s ${midTerm ? 'mid-term' : 'end-of-term'} draft from the latest recorded scores? Other students’ results stay unchanged.${exclusions.length ? ` Previously recorded untaught subjects remain excluded: ${exclusions.map(row=>row.SubjectName).join(', ')}.` : ''}`,
+        confirmText:'Recalculate result'}) || !isCurrent()) return;
+      try {
+        const data = await academicManagementRequest(midTerm ? 'calculateAcademicMidTermResults' : 'calculateAcademicTermResults', {
+          SchoolSection:academicManagementFilters.section,SessionId:result.SessionId,TermId:result.TermId,
+          ClassId:result.ClassId,ArmId:result.ArmId,ResultId:result.ResultId,RevisionToken:result.RevisionToken,
+          AttendanceMode:'Daily',AllowPartialResults:true,ResultResponseMode:'delta',
+          ...(midTerm ? {NotTaughtSubjectIds:exclusions.map(row=>row.SubjectId),
+            NotTaughtReason:[...new Set(exclusions.map(row=>row.Reason).filter(Boolean))].join('; ')} : {})
+        });
+        if (isCurrent()) renderAcademicManagement(data,data.message);
+      } catch(error) {
+        if (isCurrent()) await showAcademicCalculationFailure(document.getElementById('academicManagementStatus'),error,{
+          title:'Result needs attention',shortMessage:'This result was not recalculated.',
+          message:'Check the listed subjects and assessments. Saved scores and other students’ results are preserved.'
+        });
+      }
+    });
+  }));
 }
 
 function academicMidTermNotTaughtMarkup(rows, selectedArm, results) {
@@ -20113,6 +20150,7 @@ function bindAcademicManagement() {
       }catch(error){setStatus(document.getElementById('academicManagementStatus'),error.message,'bad');}
     });
   });
+  bindAcademicResultRecalculation(panelEl);
   panelEl.querySelectorAll('[data-academic-result-status]').forEach((button) => button.addEventListener('click', async () => {
     const result = academicFind(academicManagementData?.termResults || [], button.dataset.academicResultId);
     if (!result) return;

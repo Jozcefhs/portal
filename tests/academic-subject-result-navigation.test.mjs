@@ -35,6 +35,18 @@ test('published and locked results still require withdrawal before reopening', (
   }
 });
 
+test('pending and stale drafts offer recalculation instead of an unusable review action',()=>{
+  for(const flags of [{CalculationPending:true},{SubjectChangeRecalculationRequired:true}]){
+    const html=resultActions({Status:'Calculated Draft',...flags},{canCalculateResults:true,canReviewResults:true});
+    assert.match(html,/data-academic-result-recalculate="result"/);
+    assert.doesNotMatch(html,/data-academic-result-status="Reviewed"/);
+    assert.doesNotMatch(resultActions({Status:'Calculated Draft',...flags},{canReviewResults:true}),/data-academic-result-recalculate/);
+  }
+  for(const Status of ['Reviewed','Approved','Published','Locked','Withdrawn']){
+    assert.doesNotMatch(resultActions({Status},{canCalculateResults:true}),/data-academic-result-recalculate/);
+  }
+});
+
 function navigationHarness() {
   const loads = [], tasks = [], messages = [], focus = [];
   const context = vm.createContext({ clean, escapeHtml,

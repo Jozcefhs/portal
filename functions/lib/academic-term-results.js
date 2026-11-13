@@ -299,10 +299,22 @@ export function calculateAcademicTermResultDrafts(input = {}) {
   const pendingRefs = new Set(pendingResults.map(row => lower(row.StudentRef)));
   results = results.filter(row => !pendingRefs.has(lower(row.StudentRef)));
   if (!results.length) return {Ready:false, Issues:[...new Set(issues)], Results:[], PendingResults:pendingResults};
-  results.forEach(row => {row.AssessedStudentCount = results.length; row.PendingStudentCount = pendingResults.length;});
+  // Recalculating one draft still compares it with the saved classroom cohort.
+  // Clone preserved snapshots: their published marks, positions and history must
+  // never be rewritten as a side effect of another student's correction.
+  const calculatedRefs = new Set(results.map(row => lower(row.StudentRef)));
+  const preserved = (input.PreservedResults || []).filter(row => contextMatches(row, options)
+    && lower(row.ResultType || 'End of Term') === lower(input.ResultType || 'End of Term')
+    && !calculatedRefs.has(lower(row.StudentRef)) && !pendingRefs.has(lower(row.StudentRef))
+    && !row.CalculationPending && !row.SubjectChangeRecalculationRequired
+    && ['calculated draft','reviewed','approved','published','locked'].includes(lower(row.Status))
+    && Array.isArray(row.Subjects) && row.Subjects.length && Number.isFinite(Number(row.OverallAverage)))
+    .map(row => ({...row,Subjects:row.Subjects.map(subject => ({...subject}))}));
+  const cohort = [...results, ...preserved];
+  results.forEach(row => {row.AssessedStudentCount = cohort.length; row.PendingStudentCount = pendingResults.length;});
 
   const subjectRows = new Map();
-  results.forEach((result) => result.Subjects.forEach((subject) => {
+  cohort.forEach((result) => result.Subjects.forEach((subject) => {
     const rows = subjectRows.get(lower(subject.SubjectId)) || [];
     rows.push({ StudentRef: result.StudentRef, Subject: subject });
     subjectRows.set(lower(subject.SubjectId), rows);
@@ -315,7 +327,7 @@ export function calculateAcademicTermResultDrafts(input = {}) {
     });
   });
 
-  const eligibleForOverall = results.filter((row) => row.SubjectCount >= policy.Position.MinimumAssessedSubjects);
+  const eligibleForOverall = cohort.filter((row) => row.SubjectCount >= policy.Position.MinimumAssessedSubjects);
   const classAverage = eligibleForOverall.length
     ? rounded(eligibleForOverall.reduce((sum, row) => sum + Number(row.OverallAverage || 0), 0) / eligibleForOverall.length)
     : 0;

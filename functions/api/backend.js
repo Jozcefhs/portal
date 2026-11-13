@@ -219,16 +219,17 @@ function feeBillingCategoryText(value) {
 function feeBillingCategoryMatches(fee, app = {}) {
   const category = app.BillingCategory || 'Regular';
   const categories = feeBillingCategories(fee);
-  if (isFullScholarship(category)) {
+  const optional = isOptionalSubscriptionFee(fee);
+  if (isFullScholarship(category) || optional) {
     const sameScope = (rule, actual) => !clean(rule) || ['all', '*'].includes(normalizeMatchText(rule)) ||
       normalizeMatchText(rule) === normalizeMatchText(actual);
     // Scholarship exempts compulsory fees, not a parent's choice to buy an
     // optional service. Keep the service's other eligibility and pricing rules.
-    const categoryMatches = isOptionalSubscriptionFee(fee)
+    const categoryMatches = optional
       ? feeFieldMatches(categories, category, true)
       : explicitlyIncludesFullScholarship(categories);
     return categoryMatches &&
-      sameScope(fee.BranchId || fee.branchId, app.BranchId || app.branchId || 'main') &&
+      feeMatchesBranch(fee, app) &&
       sameScope(fee.SchoolSection || fee.schoolSection, app.SchoolSection || app.schoolSection || schoolSectionFor(app));
   }
   return feeFieldMatches(categories, category, true);
