@@ -42,6 +42,25 @@ test('one branch/date query, bounded page and authorised names; no other module 
   const end=await loadAcademicAuditLog({},scope,{...input,Cursor:result.academicAudit.nextCursor},second.db);
   assert.equal(second.calls[0][2].startAfterName,row(49).__name); assert.equal(end.academicAudit.nextCursor,null);
 });
+
+test('corrected name parts replace imported aliases using the branch name order without rewriting history',async()=>{
+  const calls=[];
+  const pupil={BranchId:'garden',SchoolSection:'primary',AdmissionNo:'TEST/550',
+    FirstName:'Adira',Surname:'El-kanah',DisplayName:'EL-KANAH ADIRAH',ApplicantName:'EL-KANAH ADIRAH',StudentName:'EL-KANAH ADIRAH'};
+  const before=structuredClone(pupil);
+  const records={'schoolBranches/garden/sections/primary/students':[pupil],
+    settings:[{NameFormat:'Surname, first name, middle name'}],
+    branchProfileOverrides:[{OverrideFields:['NameFormat'],Values:{NameFormat:'First name, middle name, surname'}}]};
+  const load=()=>academicAuditRecordLabels({}, {branchId:'garden',section:'primary'},[{StudentRef:'TEST/550'}],
+    async(_env,path,ids)=>{calls.push({path,ids});return records[path]||[];});
+  assert.equal((await load())[0].RecordLabel,'Adira El-kanah');
+  assert.deepEqual(pupil,before);
+  assert.deepEqual(calls.map(row=>row.path),['schoolBranches/garden/sections/primary/students','settings','branchProfileOverrides']);
+  pupil.FirstName='Updated';
+  assert.equal((await load())[0].RecordLabel,'Updated El-kanah');
+  pupil.BranchId='other';
+  assert.equal((await load())[0].RecordLabel,'TEST/550');
+});
 test('cursor cannot cross dates, branch, school section or collection',async()=>{
   const valid={context:'main|secondary|2026-10-01|2026-10-26',name:row(1).__name,timestamp:row(1).Timestamp};
   for(const cursor of [{...valid,context:'other|secondary|2026-10-01|2026-10-26'},

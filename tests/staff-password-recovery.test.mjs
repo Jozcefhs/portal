@@ -7,6 +7,7 @@ import { hashStaffPassword } from '../functions/lib/staff-auth.js';
 import { requiredDeploymentIdentity } from '../functions/lib/deployment-identity.js';
 import { externalAuditAccessExpired } from '../functions/lib/external-audit.js';
 import { normalizeRecoveryEmail } from '../functions/lib/staff-password-recovery.js';
+import { deliverPasswordRecovery } from '../functions/lib/password-recovery-delivery.js';
 const read = path => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 const unmodule = source => source.replace(/^import[\s\S]*?from ['"][^'"]+['"];\r?$/gm, '').replace(/^export /gm, '');
 const recoverySource = await read('functions/lib/staff-password-recovery.js');
@@ -49,7 +50,8 @@ async function fixture(edition = 'school', overrides = {}) {
   const context = vm.createContext({ ...common, credentialStateId: epoch.credentialStateId,
     hashStaffPassword, requiredDeploymentIdentity, externalAuditAccessExpired,
     findStaffLoginRecord: async (_env, login) => clone([...docs.values()].find(row => row.LoginUsername === login)),
-    escapeEmailHtml: value => value, sendConfiguredEmail: async (_env, message) => emails.push(message) });
+    escapeEmailHtml: value => value, deliverPasswordRecovery: (env,path,id,message)=>deliverPasswordRecovery(env,path,id,message,
+      {...database,sendConfiguredEmail:async(_env,message)=>{emails.push(message);return {provider:'brevo',providerMessageId:'test-receipt'};}}) });
   vm.runInContext(unmodule(recoverySource), context);
   const auth = vm.createContext({ ...common, staffCredentialEpochCurrent: epoch.staffCredentialEpochCurrent,
     requisitionEditGrant: () => false });

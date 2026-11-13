@@ -1,6 +1,8 @@
 import { queryCollection, getDocuments } from './firestore.js';
 import { scopedCollectionPath } from './school-scope.js';
 import { securityAuditDisplayLabels } from './security-audit-labels.js';
+import { withStudentDisplayName } from './student-display-name.js';
+import { applyBranchProfileOverrides } from './branch-profile-settings.js';
 
 const clean = value => String(value ?? '').trim();
 const fail = message => Object.assign(new Error(message), {status:400, code:'ACADEMIC_AUDIT_FILTER_INVALID'});
@@ -32,8 +34,20 @@ export async function academicAuditRecordLabels(env, scope, rows, read = getDocu
       const legacy=await read(env,'students',missing.map(studentId));
       missing.forEach((ref,i)=>{records[refs.indexOf(ref)]=legacy[i];});
     } catch {}
+    // Imported aliases can outlive a correction to FirstName/Surname. Use the
+    // same current-profile formatter as the pupil register, with this branch's
+    // name order. Only two settings documents, once per requested page/report.
+    let profile = {};
+    if(records.some(row=>sameScope(row) && (row.FirstName || row.Surname || row.MiddleName))) {
+      const [defaults, overrides] = await Promise.all([
+        read(env,'settings',['schoolProfile']),
+        read(env,'branchProfileOverrides',[scope.branchId])
+      ]);
+      profile = applyBranchProfileOverrides(defaults[0] || {}, overrides[0] || null, scope.branchId);
+    }
     refs.forEach((ref,i)=>{if(sameScope(records[i])) {
-      if(personName(records[i])) people.set(ref,personName(records[i]));
+      const name = personName(withStudentDisplayName(records[i],profile));
+      if(name) people.set(ref,name);
       statuses.set(ref,clean(records[i].Status || records[i].status));
     }});
   }

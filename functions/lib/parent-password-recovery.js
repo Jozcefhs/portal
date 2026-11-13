@@ -1,7 +1,8 @@
 import {batchCommitLiteralDocuments,getDocument} from './firestore.js';
 import {getParentCredential,hashParentPassword,parentCredentialId} from './parent-auth.js';
 import {requiredDeploymentIdentity} from './deployment-identity.js';
-import {sendConfiguredEmail,escapeEmailHtml} from './email-service.js';
+import {escapeEmailHtml} from './email-service.js';
+import {deliverPasswordRecovery} from './password-recovery-delivery.js';
 
 const clean=v=>String(v??'').trim();
 export const PARENT_RECOVERY_MESSAGE='If a parent password has been set for this email address, a one-time recovery code will be sent. Check your inbox and spam folder. For first-time access or a changed email address, contact the school.';
@@ -18,9 +19,11 @@ export async function requestParentPasswordRecovery(env,value){
   catch(error){if([409,412].includes(Number(error.status))||error.code==='FIRESTORE_WRITE_CONFLICT')return;throw error;}
   const row=await getParentCredential(env,email);if(!row?.PasswordHash||!row.Salt)return;
   const code=Array.from(crypto.getRandomValues(new Uint8Array(24)),b=>b.toString(16).padStart(2,'0')).join(''),tokenId=await digest(code);
-  await batchCommitLiteralDocuments(env,[{collectionPath:'parentPasswordRecovery',documentId:tokenId,exists:false,data:{Email:email,Fingerprint:await fingerprint(row),WorkspaceId:identity.workspaceId,Edition:identity.edition,CreatedAt:new Date(now).toISOString(),ExpiresAt:new Date(now+900000).toISOString(),UsedAt:''}}]);
+  await batchCommitLiteralDocuments(env,[{collectionPath:'parentPasswordRecovery',documentId:tokenId,exists:false,data:{Email:email,Fingerprint:await fingerprint(row),WorkspaceId:identity.workspaceId,Edition:identity.edition,CreatedAt:new Date(now).toISOString(),ExpiresAt:new Date(now+900000).toISOString(),UsedAt:'',DeliveryStatus:'Pending'}}]);
   // The saved login address is the only destination; the request cannot redirect recovery.
-  await sendConfiguredEmail(env,{toEmail:row.Email,toName:'Parent',subject:'Parent portal password recovery',
+  // getParentCredential has already verified the saved email or legacy document
+  // ID against this address. Legacy credentials may lack a separate Email field.
+  await deliverPasswordRecovery(env,'parentPasswordRecovery',tokenId,{toEmail:email,toName:'Parent',subject:'Parent portal password recovery',
     textContent:`A password reset was requested for your parent portal account.\n\nYour one-time code is:\n${code}\n\nPaste it into the Forgot password page you opened from your school portal. It expires in 15 minutes. Do not share it. If you did not request this, ignore this message; your password has not changed.`,
     htmlContent:`<p>A password reset was requested for your parent portal account.</p><p>Your one-time code:</p><p><strong>${escapeEmailHtml(code)}</strong></p><p>Paste it into the Forgot password page opened from your school portal. It expires in 15 minutes. Do not share it.</p><p>If you did not request this, ignore this message; your password has not changed.</p>`});
 }

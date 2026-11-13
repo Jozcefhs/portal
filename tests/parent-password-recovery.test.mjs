@@ -1,6 +1,7 @@
 import test from 'node:test';import assert from 'node:assert/strict';import vm from 'node:vm';import {readFile} from 'node:fs/promises';
 import {hashParentPassword,verifyParentPasswordHash} from '../functions/lib/parent-auth.js';
 import {requiredDeploymentIdentity} from '../functions/lib/deployment-identity.js';
+import {deliverPasswordRecovery} from '../functions/lib/password-recovery-delivery.js';
 const read=p=>readFile(new URL('../'+p,import.meta.url),'utf8'),unmodule=s=>s.replace(/^import[\s\S]*?from ['"][^'"]+['"];\r?$/gm,'').replace(/^export /gm,'');
 const [authSource,recoverySource,apiSource]=await Promise.all(['functions/lib/parent-auth.js','functions/lib/parent-password-recovery.js','functions/api/parent-password-recovery.js'].map(read));
 async function fixture(){
@@ -10,7 +11,7 @@ async function fixture(){
   const batchCommitLiteralDocuments=async(_env,writes)=>{for(const w of writes){const row=docs.get(w.collectionPath+'/'+w.documentId);if(w.exists===false&&row||w.updateTime&&w.updateTime!==row?.__updateTime)throw Object.assign(Error('Conflict'),{status:412});}batches.push(clone(writes));for(const w of writes)put(w.collectionPath,w.documentId,w.updateMask?{...docs.get(w.collectionPath+'/'+w.documentId),...w.data}:w.data);};
   put('parentCredentials','parent@example.com',{Email:'parent@example.com',...await hashParentPassword('OldParentPass9'),CreatedAt:'2026-01-01',CustomField:'preserve'});put('students','example',{ParentEmail:'parent@example.com',Scores:['unchanged'],BranchId:'main'});
   const common={crypto,Date,TextEncoder,TextDecoder,Uint8Array,btoa,atob,console,getDocument,batchCommitLiteralDocuments};const auth=vm.createContext(common);vm.runInContext(unmodule(authSource),auth);
-  const recovery=vm.createContext({...common,getParentCredential:auth.getParentCredential,hashParentPassword,parentCredentialId:auth.parentCredentialId,requiredDeploymentIdentity,sendConfiguredEmail:async(_env,message)=>emails.push(message),escapeEmailHtml:v=>v});vm.runInContext(unmodule(recoverySource),recovery);
+  const recovery=vm.createContext({...common,getParentCredential:auth.getParentCredential,hashParentPassword,parentCredentialId:auth.parentCredentialId,requiredDeploymentIdentity,deliverPasswordRecovery:(env,path,id,message)=>deliverPasswordRecovery(env,path,id,message,{batchCommitLiteralDocuments,sendConfiguredEmail:async(_env,message)=>{emails.push(message);return {provider:'brevo',providerMessageId:'test-receipt'};}}),escapeEmailHtml:v=>v});vm.runInContext(unmodule(recoverySource),recovery);
   const api=vm.createContext({...common,Response,URL,requireFirestoreEnv:()=>{},consumeRequestAllowance:async()=>({allowed:true}),readJsonBody:(r)=>r.json(),requestParentPasswordRecovery:recovery.requestParentPasswordRecovery,resetParentPassword:recovery.resetParentPassword,parentRecoveryEmail:recovery.parentRecoveryEmail,PARENT_RECOVERY_MESSAGE:'Generic recovery acknowledgement',clearParentSessionCookie:auth.clearParentSessionCookie});vm.runInContext(unmodule(apiSource),api);
   const request=(body,headers={})=>new Request('https://school.test/api/parent-password-recovery',{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://school.test',...headers},body:JSON.stringify(body)});
   const post=body=>api.onRequestPost({env,request:request(body),waitUntil:p=>pending.push(p)}),code=()=>emails.at(-1)?.textContent.match(/[a-f0-9]{48}/)?.[0];
@@ -24,6 +25,16 @@ test('reset atomically preserves records, uses salted passwords and invalidates 
   assert.ok(await f.auth.readParentSession(f.env,session(old)));await f.recovery.requestParentPasswordRecovery(f.env,'parent@example.com');await f.recovery.resetParentPassword(f.env,f.code(),'NewParentPass9');
   const row=f.docs.get('parentCredentials/parent@example.com');assert.ok(await verifyParentPasswordHash(row,'NewParentPass9'));assert.equal(await verifyParentPasswordHash(row,'OldParentPass9'),false);assert.equal(row.CustomField,'preserve');assert.equal(row.CreatedAt,'2026-01-01');assert.deepEqual(f.docs.get('students/example'),student);assert.equal(await f.auth.readParentSession(f.env,session(old)),null);
   assert.ok(await f.auth.readParentSession(f.env,session(await f.auth.createParentSession(f.env,'parent@example.com'))));assert.equal(f.batches.at(-1).length,3);assert.equal([...f.docs.keys()].filter(k=>k.startsWith('staffSecurityAudit/')).length,1);
+});
+
+test('legacy parent credentials without an Email field send to the verified credential identity',async()=>{
+  const f=await fixture(),row=f.docs.get('parentCredentials/parent@example.com');delete row.Email;
+  await f.recovery.requestParentPasswordRecovery(f.env,'parent@example.com');
+  assert.equal(f.emails.length,1);assert.equal(f.emails[0].toEmail,'parent@example.com');
+  const token=[...f.docs].find(([key])=>key.startsWith('parentPasswordRecovery/'))[1];
+  assert.equal(token.DeliveryStatus,'Accepted');assert.equal(token.DeliveryMessageId,'test-receipt');
+  await f.recovery.resetParentPassword(f.env,f.code(),'NewParentPass9');
+  assert.ok(await verifyParentPasswordHash(f.docs.get('parentCredentials/parent@example.com'),'NewParentPass9'));
 });
 test('a recovery code is single-use under concurrency and no reset can partially write',async()=>{
   const f=await fixture();await f.recovery.requestParentPasswordRecovery(f.env,'parent@example.com');const results=await Promise.allSettled([f.recovery.resetParentPassword(f.env,f.code(),'NewParentPass9'),f.recovery.resetParentPassword(f.env,f.code(),'SecondParentPass9')]);assert.equal(results.filter(r=>r.status==='fulfilled').length,1);assert.equal([...f.docs.keys()].filter(k=>k.startsWith('staffSecurityAudit/')).length,1);await assert.rejects(f.recovery.resetParentPassword(f.env,f.code(),'RetryParentPass9'),/already used/);

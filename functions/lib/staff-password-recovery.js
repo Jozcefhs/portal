@@ -2,7 +2,8 @@ import { batchCommitLiteralDocuments, getDocument } from './firestore.js';
 import { findStaffLoginRecord, hashStaffPassword } from './staff-auth.js';
 import { requiredDeploymentIdentity } from './deployment-identity.js';
 import { externalAuditAccessExpired } from './external-audit.js';
-import { sendConfiguredEmail, escapeEmailHtml } from './email-service.js';
+import { escapeEmailHtml } from './email-service.js';
+import { deliverPasswordRecovery } from './password-recovery-delivery.js';
 import { credentialStateId } from './staff-credential-state.js';
 
 const clean = value => String(value ?? '').trim();
@@ -73,9 +74,9 @@ export async function requestStaffPasswordRecovery(env, username) {
   const id = await digest(code);
   await batchCommitLiteralDocuments(env, [{ collectionPath: TOKEN_COLLECTION, documentId: id, exists: false,
     data: { StaffId: row.__id, Username: row.Username, Fingerprint: await fingerprint(row),
-      WorkspaceId: identity.workspaceId, Edition: identity.edition, UsedAt: '',
+      WorkspaceId: identity.workspaceId, Edition: identity.edition, UsedAt: '', DeliveryStatus: 'Pending',
       CreatedAt: new Date(now).toISOString(), ExpiresAt: new Date(now + 15 * 60_000).toISOString() } }]);
-  await sendConfiguredEmail(env, {
+  await deliverPasswordRecovery(env, TOKEN_COLLECTION, id, {
     toEmail: email, toName: clean(row.DisplayName || row.Username), branchId: clean(row.BranchId),
     subject: 'Staff password recovery code',
     textContent: `A password reset was requested for your staff login in ${identity.workspaceId}.\n\nYour one-time code is:\n${code}\n\nCopy this code into the password recovery page you opened from your organisation's staff sign-in screen. It expires in 15 minutes. Do not share it. If you did not request this, ignore this email; your password has not changed.`,
