@@ -8,6 +8,8 @@ import { allocateSchoolFeePayment, onRequestPost } from '../functions/api/init-p
 import { normalizePublicPaymentMethod, withPaystackBranchRouting } from '../functions/lib/direct-bank-transfer.js';
 import { enforceDesktopDeviceActionScope } from '../functions/api/backend.js';
 import { SCHOOL_FEES_ADVANCE_CODE, SCHOOL_FEES_ADVANCE_TYPE, schoolFeeAdvanceItem } from '../functions/lib/school-fee-advance.js';
+import { applyBillingCategoryOverrides, feeMatchesApplication } from '../functions/api/backend.js';
+import { billingFeesWithPostedAmounts, selectBillingDiscount } from '../functions/lib/billing-category-discounts.js';
 
 const source = await readFile(new URL('../functions/api/init-payment.js', import.meta.url), 'utf8');
 const backend = await readFile(new URL('../functions/api/backend.js', import.meta.url), 'utf8');
@@ -162,6 +164,55 @@ test('parent total uses the same immutable quote and keeps paid components in th
   assert.deepEqual(parent.SchoolFeePaymentPlan, plan);
   assert.equal(parent.Components.length, 2);
 });
+
+for (const paymentMethod of ['paystack', 'direct_bank_transfer']) {
+  test(`${paymentMethod}: discounts precede total plans and confirmed credits reduce the next installment`, async () => {
+    const account = { BranchId: 'primary', SchoolSection: 'primary', ClassName: 'Grade 3',
+      AcademicSession: '2026/2027', Term: 'First Term', StudentType: 'Day Student', BillingCategory: 'Sibling Discount' };
+    const baseFees = [
+      { ...account, FeeCode: 'TUITION', FeeName: 'Tuition', FeeCategory: 'School Fee', BillingCategory: 'All', Amount: 80000 },
+      { ...account, FeeCode: 'BOOKS', FeeName: 'Books', FeeCategory: 'School Fee', BillingCategory: 'All', Amount: 20000 }
+    ];
+    const before = JSON.stringify(baseFees);
+    for (const [DiscountType, DiscountValue] of [['Percentage', 10], ['Fixed amount', 10000]]) {
+      const policy = { Name: account.BillingCategory, BranchId: 'primary', DiscountType: 'None', DiscountValue: 0,
+        Rates: [{ RateId: 'grade3-first', DiscountType, DiscountValue, ClassScope: 'Selected', ClassNames: ['Grade 3'],
+          TermScope: 'Selected', TermNames: ['First Term'] }], recordVersion: 'discount-v1' };
+      const pupil = { ...account, BillingDiscount: selectBillingDiscount([policy], account) };
+      const discounted = applyBillingCategoryOverrides(baseFees.filter(fee => feeMatchesApplication(fee, pupil)), pupil);
+      assert.deepEqual(discounted.map(fee => fee.Amount), [72000, 18000]);
+      for (const [details, expectedMinimum] of [
+        [{ Mode: 'Percentage', Value: 25, PercentageBasis: 'Total school fees' }, 22500],
+        [{ Mode: 'Percentage', Value: 25, PercentageBasis: 'Outstanding balance' }, 13750],
+        [{ Mode: 'Fixed minimum', Value: 20000 }, 20000],
+        [{ Mode: 'Equal installments', InstallmentCount: 3 }, 25000],
+        [{ Mode: 'Full payment' }, 55000]
+      ]) {
+        const items = discounted.map((fee, index) => ({ ...fee, OriginalAmount: fee.Amount,
+          PaidAmount: index === 0 ? 35000 : 0, Amount: fee.Amount - (index === 0 ? 35000 : 0), AllowInstallment: 'NO' }));
+        const harness = checkout({ paymentMethod, rule: makeRule(details), items, amount: expectedMinimum });
+        assert.equal(harness.plan.originalTotal, 90000);
+        assert.equal(harness.plan.total, 55000);
+        assert.equal(harness.plan.minAmount, expectedMinimum);
+        const parent = schoolFeeTotalItem(items, harness.plan);
+        assert.equal(parent.MinAmount || parent.Amount, expectedMinimum);
+        const { response, data } = await harness.run();
+        assert.equal(response.status, 200, data.message);
+        assert.equal(harness.calls.intents.length, 1);
+        assert.equal(harness.calls.intents[0].document.Amount, expectedMinimum);
+        const underpayment = checkout({ paymentMethod, rule: makeRule(details), items, amount: expectedMinimum - 0.01 });
+        assert.equal((await underpayment.run()).response.status, 400);
+        assert.equal(underpayment.calls.intents.length, 0);
+      }
+      // Saved bills remain the payment basis when a later discount is configured.
+      const posted = baseFees.map(fee => ({ ...fee, InvoiceId: fee.FeeCode, Debit: fee.Amount, Credit: 0, Status: 'Unpaid' }));
+      const retained = billingFeesWithPostedAmounts(discounted, pupil, posted);
+      assert.equal(retained.reduce((sum, fee) => sum + fee.Amount, 0), 100000);
+      assert.equal(quote(makeRule({ Mode: 'Percentage', Value: 25 }), retained.map(fee => ({ ...fee, OriginalAmount: fee.Amount }))).minAmount, 25000);
+    }
+    assert.equal(JSON.stringify(baseFees), before);
+  });
+}
 
 test('aggregate allocations stop at the exact received amount without inventing credits', () => {
   for (const amount of [0.01, 15000, 60000.01, 80000]) {
