@@ -222,7 +222,12 @@ function feeBillingCategoryMatches(fee, app = {}) {
   if (isFullScholarship(category)) {
     const sameScope = (rule, actual) => !clean(rule) || ['all', '*'].includes(normalizeMatchText(rule)) ||
       normalizeMatchText(rule) === normalizeMatchText(actual);
-    return explicitlyIncludesFullScholarship(categories) &&
+    // Scholarship exempts compulsory fees, not a parent's choice to buy an
+    // optional service. Keep the service's other eligibility and pricing rules.
+    const categoryMatches = isOptionalSubscriptionFee(fee)
+      ? feeFieldMatches(categories, category, true)
+      : explicitlyIncludesFullScholarship(categories);
+    return categoryMatches &&
       sameScope(fee.BranchId || fee.branchId, app.BranchId || app.branchId || 'main') &&
       sameScope(fee.SchoolSection || fee.schoolSection, app.SchoolSection || app.schoolSection || schoolSectionFor(app));
   }
@@ -1435,6 +1440,7 @@ export function matchingFullScholarshipFeeItems(feeRows, account = {}) {
   if (!isFullScholarship(account.BillingCategory)) return [];
   return applyBillingCategoryOverrides(feeRows.map(normalizeFeeItem).filter((fee) =>
     yesNo(fee.Active) === 'YES' && asMoneyNumber(fee.Amount) > 0 &&
+    explicitlyIncludesFullScholarship(feeBillingCategories(fee)) &&
     !isWalletFee(fee) && !isAcceptanceFeeLike(fee) && feeMatchesApplication(fee, account)
   ), account);
 }

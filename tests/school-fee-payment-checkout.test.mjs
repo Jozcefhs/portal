@@ -64,6 +64,28 @@ function checkout({ rule = makeRule(), paymentMethod = 'paystack', amount = 1500
 }
 
 for (const paymentMethod of ['paystack', 'direct_bank_transfer']) {
+  test(`${paymentMethod}: Full Scholarship can buy an eligible optional item without compulsory fees`, async () => {
+    const student = { BillingCategory: 'Full Scholarship', BranchId: 'primary', SchoolSection: 'primary',
+      ClassName: 'Grade 3', AcademicSession: '2026/2027', Term: 'First Term' };
+    const common = { BranchId: 'primary', SchoolSection: 'primary', ClassName: 'All', BillingCategory: 'All',
+      StudentType: 'All', AcademicSession: 'All', Term: 'First Term', PayableOnline: 'YES', Active: 'YES' };
+    const rules = [{ ...common, FeeCode: 'CLUB_CHESS', FeeName: 'Chess', FeeCategory: 'Club', Amount: 5000 },
+      { ...common, FeeCode: 'TUITION', FeeName: 'Tuition', FeeCategory: 'School Fee', Amount: 100000 }];
+    const items = applyBillingCategoryOverrides(rules.filter(row => feeMatchesApplication(row, student)), student)
+      .map(row => ({ ...row, OriginalAmount: row.Amount, PaidAmount: 0, AllowInstallment: 'NO' }));
+    assert.deepEqual(items.map(row => row.FeeCode), ['CLUB_CHESS']);
+    const { run, calls } = checkout({ paymentMethod, feeCode: 'CLUB_CHESS', amount: 5000, items });
+    const { response, data } = await run();
+    assert.equal(response.status, 200, data.message);
+    assert.equal(calls.intents.length, 1);
+    assert.equal(calls.intents[0].document.Amount, 5000);
+    assert.equal(calls.intents[0].document.FeeCode, 'CLUB_CHESS');
+    assert.equal(calls.fees[0].IncludeSchoolFeePaymentPlan, false);
+    const rejected = checkout({ paymentMethod, feeCode: 'TUITION', amount: 100000, items });
+    assert.equal((await rejected.run()).response.status, 400);
+    assert.equal(rejected.calls.intents.length, 0);
+  });
+
   test(`${paymentMethod}: aggregate minimum allows partial total without relaxing individual fee rules`, async () => {
     const before = JSON.stringify(components);
     const { run, calls, plan } = checkout({ paymentMethod });

@@ -25,6 +25,9 @@ const fee = { Active: 'YES', PayableOnline: 'YES', FeeCategory: 'School Fee', Cl
   StudentType: 'All', Gender: 'All', EnrollmentCategory: 'All', AcademicProgress: 'All',
   AcademicSession: 'All', Term: 'All', FeeCode: 'TUI', FeeName: 'Tuition', Amount: 100000,
   BillingCategory: 'All' };
+const optionalFees = ['Club', 'Bus Service', 'Transport', 'Optional', 'Others'].map((category, index) => ({
+  ...fee, FeeCode: `SERVICE_${index}`, FeeName: `${category} service`, FeeCategory: category, Amount: 5000
+}));
 const result = { ResultId: 'result-1', Status: 'Published', AcademicSession: '2026/2027',
   Term: 'First Term', ClassName: 'Grade 7', Subjects: [{ SubjectName: 'Math', Total: 80 }] };
 const period = { AcademicSession: '2026/2027', Term: 'First Term' };
@@ -49,6 +52,38 @@ test('only the exact Full Scholarship category is exempt, regardless of case/whi
 
 for (const section of ['primary', 'secondary']) {
   const pupil = { ...student, SchoolSection: section, ClassName: section === 'primary' ? 'Primary 5' : 'Grade 7' };
+  test(`${section} scholarship parents can choose optional services without compulsory billing or result restrictions`, async () => {
+    for (const branch of ['main', 'area-1-primary', 'the-lords-garden-primary']) {
+      const account = { ...pupil, BranchId: branch };
+      const rows = [fee, ...optionalFees].map(row => ({ ...row, BranchId: branch, SchoolSection: section }));
+      const before = JSON.stringify(rows);
+      const matched = applyBillingCategoryOverrides(rows.filter(row => feeMatchesApplication(row, account)), account);
+      assert.deepEqual(matched.map(row => row.FeeCode), optionalFees.map(row => row.FeeCode));
+      assert.equal(matched.reduce((sum, row) => sum + row.Amount, 0), 25000);
+      assert.equal((await buildStudentBillingPreview(account, { feeItems: rows })).expectedTotal, 0);
+      const scholarshipFees = matchingFullScholarshipFeeItems(rows, account);
+      assert.deepEqual(scholarshipFees, []);
+      assert.equal(decision({ student: account, scholarshipFees }).Allowed, true);
+      assert.equal(JSON.stringify(rows), before);
+    }
+  });
+
+  test(`${section} optional services still enforce scope and retain scholarship-specific prices`, () => {
+    const service = { ...optionalFees[0], SchoolSection: section };
+    for (const mismatch of [{ BranchId: 'other' }, { SchoolSection: section === 'primary' ? 'secondary' : 'primary' },
+      { ClassName: 'Grade 12' }, { StudentType: 'Boarding' }, { AcademicSession: '2025/2026' },
+      { Term: 'Second Term' }, { Gender: 'Male' }, { EnrollmentCategory: 'New Intake' },
+      { BillingCategory: 'Regular' }]) {
+      assert.equal(feeMatchesApplication({ ...service, ...mismatch }, pupil), false, JSON.stringify(mismatch));
+    }
+    const exception = { ...service, FeeCode: 'SERVICE_SCHOLARSHIP', BillingCategory: 'Full Scholarship', Amount: 3000 };
+    const matched = applyBillingCategoryOverrides([service, exception], pupil);
+    assert.deepEqual(matched.map(row => [row.FeeCode, row.Amount]), [['SERVICE_SCHOLARSHIP', 3000]]);
+    const unchanged = applyBillingCategoryOverrides([service], { ...pupil,
+      BillingDiscount: { Name: 'Full Scholarship', Mode: 'Percentage', Value: 100, Active: 'YES' } });
+    assert.equal(unchanged[0].Amount, 5000);
+  });
+
   test(`${section} Full Scholarship excludes generic fees and keeps only explicit assignments`, async () => {
     const exception = { ...fee, FeeCode: 'EX', FeeName: 'Special materials', Amount: 5000,
       BillingCategories: ['Sponsored', 'Full Scholarship'] };
@@ -216,7 +251,7 @@ test('actual invoice generator treats scholarship-without-assigned-fees as a suc
   const source = await readFile(new URL('../functions/api/backend.js', import.meta.url), 'utf8');
   const block = source.slice(source.indexOf('async function generateSchoolFeeInvoicesForAccount('),
     source.indexOf('function ledgerDocumentId('));
-  let items = [fee];
+  let items = [fee, ...optionalFees];
   const writes = [];
   let creditApplications = 0;
   const lower = (value) => String(value ?? '').trim().toLowerCase();
