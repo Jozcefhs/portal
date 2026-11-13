@@ -94,7 +94,7 @@ test('parent screen and print rows include weighted marks and escape labels', as
   vm.runInContext(await readFile(new URL('../js/academic-result-template.js', import.meta.url), 'utf8'), ctx);
   const record = academicResultWithWeightedComponents(result()); record.Subjects[0].SubjectName = '<Maths>';
   const markup = ctx.DynamaxAcademicResultTemplate.weightedMarkup(record);
-  assert.match(markup, /<th>CA1<\/th>/);
+  assert.match(markup, /<th>CA1 \(10\)<\/th>/);
   assert.doesNotMatch(markup, /Weighted|Totals use unrounded marks/);
   assert.match(markup, />8.5<\/td>/);
   assert.doesNotMatch(markup, /8.5 \/ 10/);

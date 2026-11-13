@@ -6,6 +6,7 @@ The six report requests in this pass are implemented in the shared web result re
 
 - Nursery and primary reports show Grade key / Progression criteria instead of Junior / Senior columns.
 - Assessment cells show only the earned contribution (for example, `7.8`), without the maximum denominator. Mid-term totals are explicitly labelled Total (%).
+- Follow-up: the contribution maximum now appears once in the heading, for example `CA1 (10)` and `Exam (70)`. It comes from saved result components, not today's settings. Where exemptions give subjects different maxima, the heading says `(varies)` instead of mislabelling the scores. This is presentation only and adds no reads or writes.
 - Sample reports use Alex Sample and an inert Sample signature illustration; they do not fetch the real signatory image or a verification QR record.
 - PDF capture accommodates unwrapped names/subjects and draws all four outer borders on every page, including continuation pages. Access is rechecked before exporting; PDF libraries load only on demand.
 - Mid-term component display uses the original full-term weights in the result's saved policy snapshot. Published percentage totals and grades remain unchanged. End-of-term components retain exemption-aware weighting. Incomplete historical snapshots are not used to invent marks.

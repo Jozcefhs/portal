@@ -22,10 +22,16 @@
 `;
 
 function weightedMarkup(record) {
-  const columns = [...new Map((record.Subjects || []).flatMap(subject => (subject.WeightedComponents || [])
-    .map(component => [component.ComponentId, component]))).values()];
+  const components = (record.Subjects || []).flatMap(subject => subject.WeightedComponents || []);
+  const columns = [...new Map(components.map(component => [component.ComponentId, component])).values()];
+  const heading = component => {
+    const maxima = [...new Set(components.filter(row => row.ComponentId === component.ComponentId && present(row.MaximumMark)
+      && Number.isFinite(Number(row.MaximumMark)) && Number(row.MaximumMark) > 0).map(row => Number(row.MaximumMark)))];
+    const maximum = maxima.length === 1 ? ` (${maxima[0]})` : maxima.length > 1 ? ' (varies)' : '';
+    return escapeHtml((component.Name || 'Assessment') + maximum);
+  };
   return `<table class="report-table subject-table" style="--report-column-count:${columns.length + 3}"><colgroup>${'<col>'.repeat(columns.length + 3)}</colgroup><thead><tr><th>Subject</th>${columns.map(component =>
-    `<th>${escapeHtml(component.Name || 'Assessment')}</th>`).join('')}<th>${clean(record.ResultType).toLowerCase() === 'mid-term' ? 'Total (%)' : 'Total'}</th><th>Grade</th></tr></thead><tbody>${(record.Subjects || []).map(subject =>
+    `<th>${heading(component)}</th>`).join('')}<th>${clean(record.ResultType).toLowerCase() === 'mid-term' ? 'Total (%)' : 'Total'}</th><th>Grade</th></tr></thead><tbody>${(record.Subjects || []).map(subject =>
     `<tr><td>${escapeHtml(subject.SubjectName || 'Subject')}</td>${columns.map(column => {
       const component = (subject.WeightedComponents || []).find(row => row.ComponentId === column.ComponentId);
       return `<td title="${component?.MaximumMark == null ? '' : escapeHtml(`Term contribution; maximum ${component.MaximumMark}`)}">${component?.State === 'Exempt' ? 'Exempt' : component?.WeightedMark == null ? '—'

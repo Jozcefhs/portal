@@ -23,7 +23,7 @@ test('official parent copy uses the approved report structure without extra subj
   const before = structuredClone(result);
   const html = template.render(child, result, options);
   for (const name of ['identity','subject','summary','remarks','criteria','verification']) assert.match(html,new RegExp(`report-table ${name}-table`));
-  assert.match(html,/<th>Subject<\/th><th>CA1<\/th><th>Exam/);
+  assert.match(html,/<th>Subject<\/th><th>CA1 \(10\)<\/th><th>Exam \(70\)/);
   assert.doesNotMatch(html,/Weighted|Exempt assessments are excluded|Totals use unrounded marks|no reliable saved breakdown/);
   assert.match(html,/<td[^>]*>7.2<\/td>/);
   assert.match(html,/<td[^>]*>50.4<\/td>/);
@@ -46,6 +46,17 @@ test('custom assessments, exemptions, zero and unavailable marks retain their re
   assert.match(html,/Research project/);assert.match(html,/<td[^>]*>0<\/td><td[^>]*>Exempt<\/td><td[^>]*>—<\/td>/);
   assert.doesNotMatch(html,/project-internal|>null<|>undefined</);
   assert.match(html,/<td>72<\/td><td>A<\/td>/,'Saved total and grade must not be recalculated');
+});
+
+test('assessment headings use saved contribution maxima, without inventing a common maximum', () => {
+  const record=structuredClone(result);
+  record.ResultType='Mid-Term';
+  assert.match(template.weightedMarkup(record),/<th>CA1 \(10\)<\/th>/);
+  assert.match(template.weightedMarkup(record),/<th>Total \(%\)<\/th>/);
+  record.Subjects.push({...record.Subjects[0],WeightedComponents:[{ComponentId:'ca1',Name:'CA1',WeightedMark:8,MaximumMark:12.5}]});
+  assert.match(template.weightedMarkup(record),/<th>CA1 \(varies\)<\/th>/);
+  record.Subjects.forEach(subject=>subject.WeightedComponents.forEach(component=>component.MaximumMark=null));
+  assert.match(template.weightedMarkup(record),/<th>CA1<\/th>/);
 });
 
 test('not-taught subjects remain visible on mid-term reports, without fake marks or staff-only reasons',()=>{
