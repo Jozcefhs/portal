@@ -1,6 +1,6 @@
 {
   "title": "Dynamax user request tracker",
-  "updatedAt": "2026-11-10",
+  "updatedAt": "2026-11-13",
   "purpose": "Durable checklist for continuing this chat. Read before starting another pass; update evidence and delivery status before closing a request.",
   "evidencePolicy": "Evidence paths locate implementation, tests or prior notes; their presence alone does not prove a request is deployed or complete. Preserve historical status until the relevant behavior and deployed artifact are verified. Remaining follow-ups are not claims of implemented features.",
   "statusDefinitions": {
@@ -442,6 +442,19 @@
     {
       "group": "academics",
       "items": [
+        {
+          "id": "corrected-pupil-name-classroom-register",
+          "title": "Use the corrected pupil profile name in classroom score registers",
+          "status": "deployed_verified",
+          "acceptance": "Use current name parts and branch name order; preserve scores, placements and historical aliases. Refresh only the requested classroom, retaining loaded score caches otherwise.",
+          "verification": "13 November: verified corrected name in the live Nursery 1 / Excellence classroom register in The Lord's Garden Primary. 205 focused tests passed from a clean candidate containing only this repair and recovery-delivery changes. No business records were changed.",
+          "implementationCommit": "0ebb97258b33268b6ef380f695d60f25793adb1e",
+          "evidence": [
+            "functions/lib/academic-audit-log.js",
+            "tests/academic-audit-log.test.mjs",
+            "https://github.com/Jozcefhs/portal/actions/runs/43419669272"
+          ]
+        },
         {
           "id": "saved-subject-checks",
           "title": "Check previously saved class subjects when selecting a class",
@@ -932,10 +945,16 @@
         {
           "id": "parent-password-reset",
           "title": "Parent self-service lost-password recovery",
-          "status": "historical_delivery_to_verify",
-          "acceptance": "Correct parent login identifier guidance, no email-input rejection for supported identity flow.",
+          "status": "in_progress",
+          "acceptance": "Parent and staff recovery codes must reach the saved recovery address without duplicate sends; keep account lookup non-enumerating and codes private.",
+          "verification": "13 November: parent legacy credentials lacking a separate Email field now use their validated credential identity. Parent and staff recovery now record protected provider acceptance/failure metadata. 205 focused tests passed; repair deployed in commit 0ebb9725. Recent live recovery records include successful used codes, so a total provider outage is not established. Provider acceptance and inbox delivery remain separate checks.",
+          "remaining": "Owner reports all parents who tried were affected. Do not ask again for one parent email. Inspect signed-in Brevo transactional delivery logs or a fresh recovery receipt to diagnose actual failed deliveries. No live recovery emails were triggered in this verification. Automatic approval review rejected direct use of the stored provider API key; do not bypass this through another route.",
           "evidence": [
-            "docs/parent-recovery-and-result-download.md"
+            "docs/parent-recovery-and-result-download.md",
+            "functions/lib/password-recovery-delivery.js",
+            "tests/password-recovery-delivery.test.mjs",
+            "tests/parent-password-recovery.test.mjs",
+            "tests/staff-password-recovery.test.mjs"
           ]
         },
         {
