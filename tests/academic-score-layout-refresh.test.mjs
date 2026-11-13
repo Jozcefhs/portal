@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import vm from 'node:vm';
+import vm from './helpers/module-policy-vm.mjs';
 import { academicAssessmentScheme, migrateAcademicScoreLayout } from '../functions/lib/academic-scorebook.js';
 
 const admin = await readFile(new URL('../js/admin.js', import.meta.url), 'utf8');

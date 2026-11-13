@@ -1,3 +1,4 @@
+import { modulePermissionRole } from '../lib/module-authority.js';
 import { loadDatedHistory } from '../lib/history-date-range.js';
 import { listBranchCollection } from '../lib/branch-reads.js';
 import { getDocument, listCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
@@ -92,7 +93,7 @@ function assertCapability(capabilities, key, message) {
 
 async function assertLineManagerTarget(env, user, username, known = null) {
   const staff = known || await knownStaff(env, user, username);
-  if (clean(user.role || user.Role) !== 'Line Manager') return staff;
+  if (modulePermissionRole(user, 'humanResources') !== 'Line Manager') return staff;
   const employee = await getDocument(env, 'hrEmployees', safeId(username)).catch(() => null);
   if (!employee || !branchRecordVisible(employee, user, { inferredBranchId: recordBranchId(staff) }) ||
       lower(employee.ManagerUsername) !== actorUsername(user)) {
@@ -165,7 +166,7 @@ async function listWorkspace(env, user, body = {}) {
     staffSource.set(entry, staff);
     return [entry];
   });
-  const role = clean(user.role || user.Role);
+  const role = modulePermissionRole(user, 'humanResources');
   const directReports = new Set(directory
     .filter((row) => lower(row.ManagerUsername) === username)
     .map((row) => lower(row.Username)));

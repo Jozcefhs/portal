@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import vm from 'node:vm';
+import vm from './helpers/module-policy-vm.mjs';
 import { admissionYearIntakePlan, admissionYearIntakeFingerprint } from '../functions/lib/student-intake-bulk.js';
 import { schoolSectionFor } from '../functions/lib/school-scope.js';
 import { securityAuditAction } from '../functions/lib/security-audit.js';

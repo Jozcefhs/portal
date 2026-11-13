@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import vm from 'node:vm';
+import vm from './helpers/module-policy-vm.mjs';
 import { readFile } from 'node:fs/promises';
 import { webcrypto } from 'node:crypto';
 import * as workflow from '../functions/lib/requisition-workflow.js';
@@ -10,6 +10,7 @@ import { staffRequisitionEventNotification } from '../functions/lib/notification
 import { buildRequisitionPosting } from '../functions/lib/requisition-posting.js';
 import { vendorRequestPrintReport } from '../functions/lib/vendor-request-print.js';
 import { requisitionChangedFields } from '../functions/lib/requisition-edit-history.js';
+import { assignedStaffBranches } from '../functions/lib/staff-branch-access.js';
 
 const source = (await readFile(new URL('../functions/lib/approval-settings.js', import.meta.url), 'utf8'))
   .replace(/^import .*;\r?\n/gm, '').replaceAll('export ', '');
@@ -48,7 +49,7 @@ function fixture(edition) {
   const store = new Map(), writes = [];
   let serial = 0;
   const handlers = vm.runInNewContext(`${source}\n({handleApprovalSettings, approvalSnapshot})`, {
-    ...workflow, resolveOrganizationConfig, crypto: webcrypto, Date,
+    ...workflow, assignedStaffBranches, resolveOrganizationConfig, crypto: webcrypto, Date,
     getDocument: async (_env, collection, id) => structuredClone(store.get(`${collection}/${id}`) || null),
     batchCommitDocuments: async (_env, changes) => {
       for (const w of changes) {

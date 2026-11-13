@@ -1,3 +1,4 @@
+import { modulePermissionRole } from './module-authority.js';
 import { batchCommitDocuments, getDocument, queryCollectionPages } from './firestore.js';
 import { studentBillingIdentity, studentProfileValue } from './student-billing-profile.js';
 import { financeMoney, financeDate, financeOperationId } from './accounting-mutation-guards.js';
@@ -276,7 +277,7 @@ export async function getReinstatedSchoolChargeRecoveryData(env, student, overri
 
 export async function recoverReinstatedSchoolCharges(env, student, token, actor, approvalReason, overrides = {}) {
   const identity = studentBillingIdentity(student), db = { ...defaults, ...overrides };
-  if (actor?.role !== 'Super Admin' || actor.edition !== 'school' || actor.subscriptionReadOnly || actor.subscriptionActive === false ||
+  if (modulePermissionRole(actor, 'accounts') !== 'Super Admin' || actor.edition !== 'school' || actor.subscriptionReadOnly || actor.subscriptionActive === false ||
     !same(actor.branchId, identity.branch) || !['accounts', 'students'].every(section => actor.allowedSections?.includes(section)) ||
     !same(actor.schoolSectionAccess || 'All', 'All') && !same(actor.schoolSectionAccess, identity.section) ||
     !clean(actor.username) || !clean(approvalReason) || clean(approvalReason).length > 500) {

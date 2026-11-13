@@ -1,3 +1,4 @@
+import { modulePermissionRole } from './module-authority.js';
 import { batchCommitDocuments, getDocument, queryCollection } from './firestore.js';
 import { listBranchCollection } from './branch-reads.js';
 import { enforceActorBranch } from './branch-scope.js';
@@ -28,7 +29,7 @@ function requireAccess(user, write = false) {
   if (write && (user.subscriptionActive === false || user.subscriptionReadOnly === true)) {
     throw failure(user.subscriptionMessage || 'Library records are read-only until the subscription is renewed.', 403);
   }
-  if (write && !MANAGERS.has(clean(user.assignedRole || user.AssignedRole || user.role || user.Role))) {
+  if (write && !MANAGERS.has(modulePermissionRole(user, 'library'))) {
     throw failure('Only an authorised library officer can change lending records.', 403);
   }
 }
@@ -292,7 +293,7 @@ async function load(env, user, body) {
   return {
     ok: true, branchId,
     permissions: { canManage: user.subscriptionActive !== false && user.subscriptionReadOnly !== true
-      && MANAGERS.has(clean(user.assignedRole || user.AssignedRole || user.role || user.Role)) },
+      && MANAGERS.has(modulePermissionRole(user, 'library')) },
     policy: normalizeLibraryPolicy(policy),
     titles: scopedTitles.sort((a, b) => clean(a.Title).localeCompare(clean(b.Title))),
     copies: copyViews.sort((a, b) => clean(a.Barcode).localeCompare(clean(b.Barcode))),

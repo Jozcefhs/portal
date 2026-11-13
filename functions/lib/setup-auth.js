@@ -1,3 +1,4 @@
+import { hasFullModuleAccess } from './module-authority.js';
 import { secureTextEqual } from './backend-security.js';
 import { readStaffSession, requireStaffSession } from './staff-auth.js';
 
@@ -34,11 +35,11 @@ export function resolveSetupSettingsAccess(actor = {}, requestedScope = '', requ
   };
 }
 
-export async function requireSetupAdministrator(env, request, password = '') {
+export async function requireSetupAdministrator(env, request, password = '', module = '') {
   const session = await readStaffSession(env, request).catch(() => null);
   if (session) {
     const staff = await requireStaffSession(env, request);
-    if (clean(staff.role || staff.Role) !== 'Super Admin') {
+    if (clean(staff.role || staff.Role) !== 'Super Admin' && !(module && hasFullModuleAccess(staff, module))) {
       const error = new Error('Only a Super Administrator can open organisation or branch settings.');
       error.status = 403;
       throw error;

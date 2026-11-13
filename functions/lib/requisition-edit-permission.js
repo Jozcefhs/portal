@@ -1,3 +1,4 @@
+import { hasFullModuleAccess } from './module-authority.js';
 const clean = (value) => String(value ?? '').trim();
 const enabled = (value) => ['yes', 'true', '1', 'on', 'enabled'].includes(clean(value).toLowerCase());
 
@@ -7,7 +8,7 @@ export function requisitionEditRole(user = {}) {
 
 export function isRequisitionEditAdministrator(user = {}) {
   // Director has the same administrator authority as Super Admin throughout the platform.
-  return ['Super Admin', 'Director'].includes(requisitionEditRole(user));
+  return hasFullModuleAccess(user, 'financeRequests') || ['Super Admin', 'Director'].includes(requisitionEditRole(user));
 }
 
 export function requisitionEditEligible(user = {}) {

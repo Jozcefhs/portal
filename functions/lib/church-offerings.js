@@ -1,3 +1,4 @@
+import { modulePermissionRole } from './module-authority.js';
 import { loadDatedHistory } from './history-date-range.js';
 import { deleteDocument, getDocument, listCollection, upsertDocument } from './firestore.js';
 import {
@@ -52,7 +53,7 @@ const POST_ROLES = new Set(['Super Admin', 'Treasurer']);
 const ROUTE_ROLES = new Set(['Super Admin', 'Church Administrator', 'Treasurer']);
 
 export function offeringCapabilities(user = {}) {
-  const role = clean(user.role || user.Role);
+  const role = modulePermissionRole(user, 'offerings');
   return {
     canView: VIEW_ROLES.has(role),
     canCapture: CAPTURE_ROLES.has(role),
@@ -416,7 +417,7 @@ async function resolveOfferingActionState(env, user, body = {}, offering) {
     env, churchCollectionPath(CHURCH_COLLECTIONS.offeringApprovalRoutes, branchId)
   ).catch(() => []);
   const route = resolveOfferingApprovalRoute(routeRows, offering || {});
-  const role = clean(user.role || user.Role);
+  const role = modulePermissionRole(user, 'offerings');
   return {
     branchId,
     route,
@@ -561,7 +562,7 @@ export async function listChurchOfferings(env, user, body = {}) {
   const occurrencesById = new Map(references.occurrences.map((row) => [clean(row.OccurrenceId || row.__id), row]));
   const rows = offerings.map((row) => {
     const route = resolveOfferingApprovalRoute(routes, row);
-    const role = clean(user.role || user.Role);
+    const role = modulePermissionRole(user, 'offerings');
     return publicOfferingRow(row, {
       route,
       canApprove: isRoleAllowedForRoute(route, role, 'approval'),

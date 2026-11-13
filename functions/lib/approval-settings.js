@@ -1,3 +1,5 @@
+import { hasFullModuleAccess } from './module-authority.js';
+import { assignedStaffBranches } from './staff-branch-access.js';
 import { getDocument, batchCommitDocuments } from './firestore.js';
 import { resolveOrganizationConfig } from './organization-config.js';
 import { APPROVAL_STAGES, validateApprovalStages, approvalFlowLabel } from './requisition-workflow.js';
@@ -6,7 +8,8 @@ const clean = value => String(value ?? '').trim();
 const defaults = () => ({ staff: APPROVAL_STAGES.map(s => s.id), vendor: APPROVAL_STAGES.map(s => s.id) });
 const fail = (message, status) => { throw Object.assign(new Error(message), { status }); };
 export function canManageApprovalSettings(user = {}) {
-  return clean(user.assignedRole || user.AssignedRole || user.role || user.Role) === 'Super Admin';
+  return clean(user.assignedRole || user.AssignedRole || user.role || user.Role) === 'Super Admin'
+    || (assignedStaffBranches(user) === null && hasFullModuleAccess(user, ['financeRequests', 'vendorSettlements']));
 }
 async function load(env) {
   const organizationProfile = await getDocument(env, 'settings', 'organisationProfile');
@@ -23,7 +26,7 @@ export async function approvalSnapshot(env, kind) {
     SettingsRevision: record?.Revision || 0, CapturedAt: new Date().toISOString() };
 }
 export async function handleApprovalSettings(env, user, body = {}) {
-  if (!clean(user.username) || !canManageApprovalSettings(user)) fail('Only Super Admin can configure requisition approvals.', 403);
+  if (!clean(user.username) || !canManageApprovalSettings(user)) fail('Requisition approval settings require organisation-wide finance management access.', 403);
   const action = body.Command || body.action || 'get';
   if (!['get', 'save'].includes(action)) fail('Unknown approval settings action.', 400);
   if (action === 'save' && (user.subscriptionActive === false || user.subscriptionReadOnly === true)) fail('This workspace is read-only.', 403);
@@ -39,7 +42,7 @@ export async function handleApprovalSettings(env, user, body = {}) {
       Edition: edition, UpdatedAt: timestamp, UpdatedBy: user.username }, ...(record ? { updateTime: record.__updateTime } : { exists: false }) },
     { collectionPath: 'accountingAudit', documentId: auditId, exists: false, data: {
       AuditId: auditId, Timestamp: timestamp, Action: 'Configured requisition approval stages', EntityType: 'Approval settings',
-      EntityId: id, User: user.displayName || user.username, ActorUsername: user.username, UserRole: 'Super Admin',
+      EntityId: id, User: user.displayName || user.username, ActorUsername: user.username, UserRole: clean(user.assignedRole || user.role || user.Role),
       SourcePlatform: user.sourcePlatform || 'Web', BranchId: user.branchId || 'main', OrganisationEdition: edition, Details: details } }
   ]);
   return { ok: true, message: 'Approval settings saved for new requests across all branches. Existing requests are unchanged.' };

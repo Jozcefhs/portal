@@ -1,3 +1,4 @@
+import { modulePermissionRole } from './module-authority.js';
 import { batchCommitLiteralDocuments, listCollection } from './firestore.js';
 import { requiredDeploymentIdentity } from './deployment-identity.js';
 import { canonicalRecordEdition, staffRecordMatchesEdition } from './records-desk.js';
@@ -22,7 +23,7 @@ function fail(message, status = 400) {
 }
 
 export function canManageAttendanceGroups(user = {}) {
-  const role = clean(user.role || user.Role);
+  const role = modulePermissionRole(user, 'staffAttendance');
   const edition = canonicalRecordEdition(user.edition || user.Edition || user.OrganisationEdition);
   return MANAGE_ROLES.has(role)
     || (edition === 'school' && role === 'ICT')

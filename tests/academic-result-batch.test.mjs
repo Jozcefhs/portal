@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import vm from 'node:vm';
+import vm from './helpers/module-policy-vm.mjs';
 import {readFile} from 'node:fs/promises';
 import {defaultAcademicPolicy} from '../functions/lib/academic-policy.js';
 import {calculateAcademicTermResultDrafts,calculateAcademicMidTermResultDrafts} from '../functions/lib/academic-term-results.js';

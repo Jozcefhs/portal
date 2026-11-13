@@ -1,3 +1,4 @@
+import { modulePermissionRole } from '../lib/module-authority.js';
 import { getDocument, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { putStoredDocument, resolveDocumentStorage } from '../lib/document-storage.js';
 import { validateFinanceAttachment } from '../lib/finance-attachments.js';
@@ -59,7 +60,7 @@ async function assertFinanceUploadAccess(env, user, input) {
   if (activeBranch && activeBranch !== 'all' && lower(imprest.BranchId || 'main') !== activeBranch) {
     throw errorWithStatus('The selected imprest record does not belong to the active branch.', 403);
   }
-  const privileged = ['Super Admin', 'Accounts Officer'].includes(clean(user.role));
+  const privileged = ['Super Admin', 'Accounts Officer'].includes(modulePermissionRole(user, 'financeRequests'));
   if (!privileged && !same(imprest.CustodianUsername || imprest.RequestedByUsername, user.username)) {
     throw errorWithStatus('Only the imprest custodian or Accounts can upload its retirement receipts.', 403);
   }

@@ -1,3 +1,4 @@
+import { modulePermissionRole } from './module-authority.js';
 import {
   deleteSchoolDocument,
   getSchoolStructure,
@@ -57,7 +58,7 @@ function caseId(value = '') {
 function capabilities(user = {}) {
   const edition = lower(user.edition || user.Edition || user.OrganisationEdition || user.OrganizationEdition) || 'school';
   const allowed = new Set((user.allowedSections || user.TabAccess || []).map(clean).filter(Boolean));
-  const role = clean(user.role || user.Role);
+  const role = modulePermissionRole(user, 'studentConduct');
   const permittedRoles = new Set([
     'Super Admin', 'Principal', 'Vice Principal Academics', 'Vice Principal Administration',
     'Management', 'Admissions Officer', 'Student Welfare Officer'

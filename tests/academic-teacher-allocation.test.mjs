@@ -1,7 +1,7 @@
 import * as placementGuards from '../functions/lib/academic-placement-guards.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import vm from 'node:vm';
+import vm from './helpers/module-policy-vm.mjs';
 import { readFile } from 'node:fs/promises';
 import { webcrypto } from 'node:crypto';
 import * as management from '../functions/lib/academic-management.js';

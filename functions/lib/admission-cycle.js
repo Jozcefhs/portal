@@ -1,3 +1,4 @@
+import { modulePermissionRole } from './module-authority.js';
 import { batchCommitDocuments, getDocument, listCollection, listCollectionPage } from './firestore.js';
 import { schoolCollectionPaths } from './school-scope.js';
 import { requiredDeploymentIdentity } from './deployment-identity.js';
@@ -61,7 +62,7 @@ export async function admissionCycleId(env, scope) {
 }
 
 export function requireAdmissionCycleAdministrator(user) {
-  if (user.role !== 'Super Admin' || user.assignedBranchId ||
+  if (modulePermissionRole(user, 'admissions') !== 'Super Admin' || user.assignedBranchId ||
       (user.canSwitchBranches !== true && user.branchId) ||
       !['', 'all'].includes(lower(user.schoolSectionAccess))) {
     throw error('Only a school-wide Super Administrator can close admission cycles or remove applicant details.', 403);

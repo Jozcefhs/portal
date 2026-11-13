@@ -1,3 +1,4 @@
+import { modulePermissionRole } from '../lib/module-authority.js';
 import { getDocument, queryCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { readJsonBody } from '../lib/request-security.js';
@@ -45,7 +46,7 @@ function internalScope(user, body) {
 export function authorizedScope(user, body) {
   if (!(user.allowedSections || []).includes('externalAudit')) fail('External Audit is not assigned to this account.', 403);
   if (user.role === EXTERNAL_AUDITOR_ROLE) return externalAuditScope(user, body);
-  if (user.role === 'Super Admin') return internalScope(user, body);
+  if (modulePermissionRole(user, 'externalAudit') === 'Super Admin') return internalScope(user, body);
   fail('This role cannot open the financial audit workspace.', 403);
 }
 
@@ -174,7 +175,7 @@ async function createFinding(env, user, body, scope) {
 }
 
 async function respondFinding(env, user, body, scope) {
-  if (user.role !== 'Super Admin') fail('Only a Super Administrator can respond to audit findings.', 403);
+  if (modulePermissionRole(user, 'externalAudit') !== 'Super Admin') fail('Only a Super Administrator can respond to audit findings.', 403);
   const id = clean(body.findingId);
   if (!FINDING_ID.test(id)) fail('Choose a valid audit finding.');
   const response = clean(body.response).slice(0, 3000);

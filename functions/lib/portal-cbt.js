@@ -1,3 +1,4 @@
+import { hasFullModuleAccess } from './module-authority.js';
 import { getDocument, queryCollectionPages, batchCommitDocuments } from './firestore.js';
 import { listSchoolCollection, querySchoolCollection } from './school-scope.js';
 import { enforceActorBranch } from './branch-scope.js';
@@ -48,7 +49,7 @@ export function portalCbtScope(env, user, input) {
   if (!['all', '', section].includes(access)) throw fail('This school section is not assigned to your account.', 403);
   const branch = enforceActorBranch(user, input.BranchId);
   const permissions = academicManagementCapabilities(user);
-  const admission = ['Super Admin', 'Director', 'Admin', 'Admissions Officer', 'Principal', 'Head Teacher', 'Management', 'ICT', 'Examination Officer'].includes(user.role)
+  const admission = (hasFullModuleAccess(user, 'academics') || hasFullModuleAccess(user, 'admissions') || ['Super Admin', 'Director', 'Admin', 'Admissions Officer', 'Principal', 'Head Teacher', 'Management', 'ICT', 'Examination Officer'].includes(user.role))
     && (user.allowedSections || []).some(value => ['admissions', 'applications', 'academics'].includes(value));
   if (input.Audience === 'applicant' ? !admission : !permissions.canReviewScores) throw fail('Your role cannot manage these examinations.', 403);
   return { BranchId: branch, SchoolSection: section, WorkspaceId: requiredDeploymentIdentity(env).workspaceId };

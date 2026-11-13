@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import vm from 'node:vm';
+import vm from './helpers/module-policy-vm.mjs';
 import { featureFlagsForEdition } from '../functions/lib/organization-config.js';
 import { modulesForEdition } from '../functions/lib/role-module-access.js';
 

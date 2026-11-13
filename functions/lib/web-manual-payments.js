@@ -1,3 +1,4 @@
+import { modulePermissionRole } from './module-authority.js';
 import { getAccountSnapshot, recordManualPayment, feeMatchesAccountPeriod, applyBillingCategoryOverrides } from '../api/backend.js';
 import { getDocument } from './firestore.js';
 import { assertManualPaymentScope } from './manual-payment-scope.js';
@@ -9,7 +10,7 @@ const ioDefaults = { snapshot: getAccountSnapshot, record: recordManualPayment,
   payment: (env, reference) => getDocument(env, 'payments', reference) };
 
 export function webManualPaymentScope(user = {}) {
-  if (user.edition !== 'school' || !['Super Admin', 'Accounts Officer'].includes(user.role)
+  if (user.edition !== 'school' || !['Super Admin', 'Accounts Officer'].includes(modulePermissionRole(user, 'accounts'))
       || !(user.allowedSections || []).includes('accounts')) {
     throw financeFailure('Only authorised school Accounts users may record manual payments.', 403);
   }

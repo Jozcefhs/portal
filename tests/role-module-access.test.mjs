@@ -112,7 +112,7 @@ test('Director and Admin exist in every edition with distinct permission boundar
     assert.equal(allowedSectionsFor(
       { role: 'Management', assignedRole: 'Admin', tabAccess: ['staffUsers', 'financeRequests'] },
       flags, { edition }
-    ).includes('staffUsers'), false);
+    ).includes('staffUsers'), true);
   }
 });
 

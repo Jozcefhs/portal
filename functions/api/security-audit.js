@@ -1,3 +1,4 @@
+import { modulePermissionRole } from '../lib/module-authority.js';
 import { securityAuditDisplayLabels } from '../lib/security-audit-labels.js';
 import { requireFirestoreEnv } from '../lib/firestore.js';
 import { branchRecordVisible } from '../lib/branch-scope.js';
@@ -9,7 +10,7 @@ const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
 
 function ensureAuditAccess(user) {
-  if (user.role === 'Super Admin' || (user.allowedSections || []).includes('securityAudit')) return;
+  if (modulePermissionRole(user, 'securityAudit') === 'Super Admin' || (user.allowedSections || []).includes('securityAudit')) return;
   const error = new Error('Your role is not permitted to view the security audit log.');
   error.status = 403;
   throw error;

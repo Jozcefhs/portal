@@ -1,3 +1,4 @@
+import { modulePermissionRole } from './module-authority.js';
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
 
@@ -33,7 +34,7 @@ export function humanResourcesRole(role) {
 }
 
 export function hrCapabilitiesFor(user = {}) {
-  const role = clean(user.role || user.Role);
+  const role = modulePermissionRole(user, 'humanResources');
   const generalist = HR_GENERALISTS.has(role);
   const leader = HR_LEADERS.has(role);
   const executive = [

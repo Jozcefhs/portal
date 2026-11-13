@@ -1,3 +1,4 @@
+import { hasFullModuleAccess } from './module-authority.js';
 function clean(value) {
   return String(value ?? '').trim();
 }
@@ -84,12 +85,13 @@ export function requisitionWorkflowStatus(record = {}) {
 
 export function requisitionCapabilities(user = {}) {
   const role = clean(user.assignedRole || user.AssignedRole || user.role || user.Role || user.UserRole);
+  const full = hasFullModuleAccess(user, 'financeRequests');
   return {
-    canConfirmRequisitions: role === 'Accounts Officer',
-    canReviewRequisitions: role === 'Admin',
-    canApproveRequisitions: ['Director', 'Super Admin'].includes(role) || hasPrincipalApprovalGrant(user),
-    canApproveFinalStage: hasPrincipalApprovalGrant(user),
-    canPostRequisitions: role === 'Accounts Officer'
+    canConfirmRequisitions: full || role === 'Accounts Officer',
+    canReviewRequisitions: full || role === 'Admin',
+    canApproveRequisitions: full || ['Director', 'Super Admin'].includes(role) || hasPrincipalApprovalGrant(user),
+    canApproveFinalStage: full || hasPrincipalApprovalGrant(user),
+    canPostRequisitions: full || role === 'Accounts Officer'
   };
 }
 
@@ -172,8 +174,9 @@ export function assertRequisitionTransition(record = {}, userRole = '', requeste
     err.code = 'REQUISITION_STAGE_COMPLETE';
     throw err;
   }
-  const delegated = transition.nextStatus === REQUISITION_STATUS.APPROVED && hasPrincipalApprovalGrant(user); // Any enabled final stage; never payment posting.
-  if (!(transition.roles || [transition.role]).includes(role) && !delegated) {
+  const full = hasFullModuleAccess(user, record.SettlementId ? 'vendorSettlements' : 'financeRequests');
+  const delegated = !full && transition.nextStatus === REQUISITION_STATUS.APPROVED && hasPrincipalApprovalGrant(user); // Any enabled final stage; never payment posting.
+  if (!full && !(transition.roles || [transition.role]).includes(role) && !delegated) {
     const err = new Error(`Only ${transition.role} can ${transition.verb} a requisition at the ${currentStatus} stage.`);
     err.status = 403;
     err.code = 'REQUISITION_STAGE_ROLE_REQUIRED';

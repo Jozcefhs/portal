@@ -1,3 +1,4 @@
+import { modulePermissionRole } from './module-authority.js';
 import { batchCommitDocuments, getDocument, queryCollectionPages } from './firestore.js';
 import { financialPreviewFingerprint } from './financial-preview-fingerprint.js';
 import { studentBillingIdentity, studentProfileValue } from './student-billing-profile.js';
@@ -313,7 +314,7 @@ export async function getObsoleteSchoolChargeReversalData(env, student, override
 
 export async function reverseObsoleteSchoolCharges(env, student, token, actor, approvalReason, overrides = {}) {
   const identity = studentBillingIdentity(student);
-  if (actor.role !== 'Super Admin' || actor.edition !== 'school' || actor.subscriptionReadOnly || actor.subscriptionActive === false ||
+  if (modulePermissionRole(actor, 'accounts') !== 'Super Admin' || actor.edition !== 'school' || actor.subscriptionReadOnly || actor.subscriptionActive === false ||
     !same(actor.branchId, identity.branch) || !['accounts', 'students'].every(section => actor.allowedSections?.includes(section)) ||
     (!same(actor.schoolSectionAccess || 'All', 'All') && !same(actor.schoolSectionAccess, identity.section)) ||
     !clean(approvalReason) || clean(approvalReason).length > 500) fail('Writable Super Admin approval in this school scope and a reason are required.', 403);

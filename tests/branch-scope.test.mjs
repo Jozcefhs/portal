@@ -51,6 +51,6 @@ test('branch isolation is wired into staff permissions, income analytics and HR'
   assert.match(staffUsers, /listSecurityAudit\(env, actor\)/);
   assert.match(incomeAnalytics, /resolveRequestedBranch\(user, body\.branchId/);
   assert.match(incomeAnalytics, /assignedBranch\s*\?\s*\[assignedBranch\]/);
-  assert.match(humanResources, /visibleHrRows\(staffUsers|editionStaff\.filter\(\(row\) => branchRecordVisible\(row, user\)\)/);
+  assert.match(humanResources, /visibleHrRows\(staffUsers|branchRecordVisible\(row, user\)/);
   assert.match(humanResources, /BranchId: branchId/);
 });

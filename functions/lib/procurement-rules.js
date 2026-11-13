@@ -1,3 +1,4 @@
+import { hasFullModuleAccess } from './module-authority.js';
 import { normalizeOrganizationEdition, filterSectionsForFeatures } from './organization-config.js';
 import { schoolSectionFor } from './school-scope.js';
 
@@ -27,16 +28,17 @@ export function scopeFor(user) {
   return { BranchId, OrganisationEdition, ScopeKey: `${OrganisationEdition}--${BranchId}` };
 }
 export function capabilitiesFor(user, scope) {
-  const canManage = managers.has(role(user));
+  const full = hasFullModuleAccess(user, 'procurement');
+  const canManage = full || managers.has(role(user));
   const approvalDisabled = user.approvalEnabled === false || ['no', 'false', '0'].includes(lower(user.ApprovalEnabled));
   const approvalGranted = user.approvalEnabled === true || ['yes', 'true', '1', 'on'].includes(lower(user.ApprovalEnabled));
-  const canApprove = approvers.has(role(user)) && (role(user) === 'Super Admin' || (approvalGranted && !approvalDisabled));
+  const canApprove = full || approvers.has(role(user)) && (role(user) === 'Super Admin' || (approvalGranted && !approvalDisabled));
   const supported = scope.OrganisationEdition === 'school' ? ['clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore', 'restaurant'] : ['organizationStore', 'restaurant'];
   const enabled = filterSectionsForFeatures(supported, user.featureFlags);
-  const receiveDepartments = enabled.filter(key => (user.allowedSections || []).includes(key));
+  const receiveDepartments = enabled.filter(key => full || (user.allowedSections || []).includes(key));
   const branchWide = scope.OrganisationEdition !== 'school' || lower(user.schoolSectionAccess || user.SchoolSectionAccess || 'all') === 'all';
   return { canManage, canApprove, canReviewRequests: canManage, canConfigure: canApprove && branchWide,
-    canOverride: role(user) === 'Super Admin', canRequest: canManage || receiveDepartments.length > 0,
+    canOverride: full || role(user) === 'Super Admin', canRequest: canManage || receiveDepartments.length > 0,
     canReceive: receiveDepartments.length > 0, departments: canManage || canApprove ? enabled : receiveDepartments, receiveDepartments };
 }
 export function schoolSectionsFor(user, scope) {

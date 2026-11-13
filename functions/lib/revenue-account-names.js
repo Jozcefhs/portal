@@ -1,3 +1,4 @@
+import { modulePermissionRole } from './module-authority.js';
 import { getDocument, batchCommitLiteralDocuments } from './firestore.js';
 import { getAccountingChartRows, invalidateAccountingChartRows } from './accounting-reference-cache.js';
 import { accountingChartForEdition, accountingCodeAllowedForEdition } from './accounting-edition-scope.js';
@@ -7,9 +8,9 @@ import { assignedStaffBranches } from './staff-branch-access.js';
 const clean = value => String(value ?? '').trim();
 const fail = (message, status = 400) => { throw Object.assign(new Error(message), { status }); };
 export function canRenameRevenueAccounts(user = {}) {
-  return ['Super Admin', 'Director', 'Accounts Officer', 'Treasurer'].includes(clean(user.assignedRole || user.role))
+  return ['Super Admin', 'Director', 'Accounts Officer', 'Treasurer'].includes(modulePermissionRole(user, ['accounts', 'funds', 'incomeAnalytics']))
     && assignedStaffBranches(user) === null
-    && ['funds', 'incomeAnalytics', 'accounting'].some(section => (user.allowedSections || []).includes(section))
+    && ['accounts', 'funds', 'incomeAnalytics', 'accounting'].some(section => (user.allowedSections || []).includes(section))
     && user.subscriptionActive !== false && user.subscriptionReadOnly !== true;
 }
 const publicAccount = row => ({ documentId: row.__id, code: clean(row.Code), name: clean(row.Name),

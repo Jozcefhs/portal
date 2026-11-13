@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import vm from 'node:vm';
+import vm from './helpers/module-policy-vm.mjs';
 import { extractFunction, source, fixture as workspaceFixture, renderWorkspace } from './helpers/academic-register-fixture.mjs';
 import { academicManagementCapabilities, academicWebActor, getAcademicClassScoreRegister } from '../functions/lib/academic-management.js';
 

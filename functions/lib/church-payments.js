@@ -1,3 +1,4 @@
+import { modulePermissionRole } from './module-authority.js';
 import { loadDatedHistory } from './history-date-range.js';
 import {
   createDocumentIfAbsent,
@@ -148,7 +149,7 @@ const DONATION_VIEW_ROLES = new Set(['Super Admin', 'Pastor', 'Church Administra
 const DONATION_MANAGE_ROLES = new Set(['Super Admin', 'Church Administrator', 'Treasurer']);
 
 export function donationCapabilities(user = {}) {
-  const role = clean(user.role || user.Role);
+  const role = modulePermissionRole(user, 'donations');
   return {
     canView: DONATION_VIEW_ROLES.has(role),
     canCollect: DONATION_MANAGE_ROLES.has(role),

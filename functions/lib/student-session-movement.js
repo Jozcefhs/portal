@@ -1,3 +1,4 @@
+import { academicCurriculumSettingId } from './academic-curriculum-settings.js';
 import { batchCommitDocuments, getDocument, queryCollectionPages } from './firestore.js';
 import { listBranchCollection } from './branch-reads.js';
 import { normalizeClassKey } from './class-names.js';
@@ -37,6 +38,7 @@ export async function moveStudentSession(env, user, initialProfile, input, cache
       if (!state) {
         state = Object.fromEntries(await Promise.all(Object.entries(collections).map(async ([key, collection]) => [key,
           (await db.listBranchCollection(env, collection, branch)).filter(row => sameScope(row, branch, section))])));
+        if (section === 'secondary') state.curriculumSettings = await db.getDocument(env, 'settings', academicCurriculumSettingId(branch)) || {};
         cache.set(cacheKey, state);
       }
       const resolve = (rows, name, label, compare = (row, value) => lower(row.Name) === lower(value)) => {

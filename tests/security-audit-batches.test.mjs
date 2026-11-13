@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import vm from 'node:vm';
+import vm from './helpers/module-policy-vm.mjs';
 import { loadCompleteSecurityAudit } from '../js/security-audit-workspace.js';
 import { normalizedLegacyAudit } from '../functions/lib/security-audit.js';
 import { auditWords, auditSentence, auditNarrative, auditActionContext } from '../functions/lib/audit-language.js';

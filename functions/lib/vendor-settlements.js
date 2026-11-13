@@ -1,3 +1,4 @@
+import { hasFullModuleAccess, modulePermissionRole } from './module-authority.js';
 import { batchCommitDocuments, getDocument, getDocuments, queryCollectionPages, listCollection } from './firestore.js';
 import { commitWithReadChecks } from './firestore-checked-commit.js';
 import { handleCardRefundBatch } from './card-refund-batch.js';
@@ -84,7 +85,7 @@ function assertEnabled(settings) {
   if (settings.Enabled !== true || settings.AccountingConfirmed !== true) fail('Accounts must confirm the vendor arrangement and account mappings before vendor sales or settlements are enabled.', 409);
 }
 function requireRole(user, allowed) {
-  if (!allowed.has(role(user))) fail('Your role cannot perform this vendor action.', 403);
+  if (!(hasFullModuleAccess(user, 'vendorSettlements') || allowed.has(role(user)))) fail('Your role cannot perform this vendor action.', 403);
 }
 function requireAccess(user, action) {
   if (!clean(user.username)) fail('Sign in to manage vendor settlements.', 401);
@@ -331,8 +332,8 @@ async function bootstrap(env, user, scope) {
   const vendorIds = role(user) === 'Vendor User' ? [...ids] : null;
   const [balances, requests, settings, chart, suppliers] = await Promise.all([
     readVendorRows(env, VENDOR_COLLECTIONS.balances, scope, vendorIds), readVendorRequests(env, scope, vendorIds), settingsFor(env, scope),
-    management.has(role(user)) ? getAccountingChartRows(env) : Promise.resolve([]),
-    management.has(role(user)) ? listBranchCollection(env, 'accountingVendors', scope.BranchId) : Promise.resolve([]) ]);
+    (hasFullModuleAccess(user, 'vendorSettlements') || management.has(role(user))) ? getAccountingChartRows(env) : Promise.resolve([]),
+    (hasFullModuleAccess(user, 'vendorSettlements') || management.has(role(user))) ? listBranchCollection(env, 'accountingVendors', scope.BranchId) : Promise.resolve([]) ]);
   return { ok: true, vendors: vendors.map(publicVendor), balances: balances.filter(row => visible(row, scope) && ids.has(row.VendorId)).map(row => ({ VendorId: row.VendorId,
     ...balanceView(row), DirectSales: amount(row.DirectSalesCents), DirectChargeDue: amount(row.DirectChargeCents - row.DirectChargePaidCents) })),
     requests: requests.filter(row => visible(row, scope) && ids.has(row.VendorId)).map(row => ({ ...publicRequest(row),
@@ -341,11 +342,11 @@ async function bootstrap(env, user, scope) {
     settings: { ...plain(settings), RecordVersion: settings.__updateTime || '' },
     chart: accountingChartChoicesForEdition(chart, scope.OrganisationEdition).map(row => ({ Code: clean(row.Code || row.__id),
       Name: row.Name, Type: row.Type, Active: activeAccount(row) ? 'YES' : 'NO' })),
-    capabilities: { manage: management.has(role(user)), operate: canOperate(user), vendor: role(user) === 'Vendor User',
+    capabilities: { manage: (hasFullModuleAccess(user, 'vendorSettlements') || management.has(role(user))), operate: canOperate(user), vendor: role(user) === 'Vendor User',
       approvalOnly: user.vendorSettlementApprovalOnly === true,
-      products: canOperate(user) || role(user) === 'Vendor User' && vendors.some(v => !['no','false','0','inactive','disabled'].includes(lower(v.Active ?? 'YES'))), reviewProducts: management.has(role(user)),
-      configureApprovals: role(user) === 'Super Admin',
-      approveFinalStage: hasPrincipalApprovalGrant(user), confirm: role(user) === 'Accounts Officer', review: role(user) === 'Admin', approve: requisitionCapabilities(user).canApproveRequisitions, pay: role(user) === 'Accounts Officer',
+      products: canOperate(user) || role(user) === 'Vendor User' && vendors.some(v => !['no','false','0','inactive','disabled'].includes(lower(v.Active ?? 'YES'))), reviewProducts: (hasFullModuleAccess(user, 'vendorSettlements') || management.has(role(user))),
+      configureApprovals: modulePermissionRole(user, 'vendorSettlements') === 'Super Admin',
+      approveFinalStage: hasFullModuleAccess(user, 'vendorSettlements') || hasPrincipalApprovalGrant(user), confirm: hasFullModuleAccess(user, 'vendorSettlements') || role(user) === 'Accounts Officer', review: hasFullModuleAccess(user, 'vendorSettlements') || role(user) === 'Admin', approve: hasFullModuleAccess(user, 'vendorSettlements') || requisitionCapabilities(user).canApproveRequisitions, pay: hasFullModuleAccess(user, 'vendorSettlements') || role(user) === 'Accounts Officer',
       saleSections: (scope.OrganisationEdition === 'school' ? ['tuckShop'] : ['organizationStore','restaurant']).filter(section => (user.allowedSections || []).includes(section)),
       edition: scope.OrganisationEdition, section: scope.SchoolSection, branchId: scope.BranchId } };
 }
@@ -568,7 +569,7 @@ async function decision(env, user, scope, body, options) {
   }
   let method = 'Authenticated session', transition = null;
   if (next === 'Cancelled') {
-    if (request.RequestedByUsername !== user.username && !management.has(role(user))) fail('Only the requester or Accounts can cancel this request.', 403);
+    if (request.RequestedByUsername !== user.username && !(hasFullModuleAccess(user, 'vendorSettlements') || management.has(role(user)))) fail('Only the requester or Accounts can cancel this request.', 403);
     if (['Cancelled'].includes(request.Status) || request.PaymentStatus === 'Paid') fail('This request cannot be cancelled. Review it with Accounts.', 409);
     if (!['Submitted', 'Rejected'].includes(request.Status)) {
       requireRole(user, management);
@@ -580,7 +581,7 @@ async function decision(env, user, scope, body, options) {
   } else {
     transition = assertRequisitionTransition(request, user, next);
     if (hasPrincipalApprovalGrant(user)) {
-      assertFinanceRoleLimit(await listCollection(env, 'accountingApprovalLimits'), role(user), 'Vendor Payment Request', amount(request.AmountCents));
+      assertFinanceRoleLimit(await listCollection(env, 'accountingApprovalLimits'), modulePermissionRole(user, 'vendorSettlements'), 'Vendor Payment Request', amount(request.AmountCents));
     }
     method = await authorize(env, user, body, options);
   }

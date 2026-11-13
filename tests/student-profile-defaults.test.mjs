@@ -65,7 +65,7 @@ test('maintenance is branch-scoped, revision-guarded, audited, and has no financ
   const route = await readFile(new URL('../functions/api/staff-students.js', import.meta.url), 'utf8');
   const start = route.indexOf("if (['previewprofiledefaults', 'applyprofiledefaults']");
   const source = route.slice(start, route.indexOf("if (['previewintakecorrection', 'applyintakecorrection']", start));
-  assert.match(source, /user.role !== 'Super Admin'/);
+  assert.match(source, /modulePermissionRole\(user, 'students'\) !== 'Super Admin'/);
   assert.match(source, /user.subscriptionReadOnly/);
   assert.match(source, /visibleToUser\(row, user\)/);
   assert.match(source, /updateTime: row.__updateTime/);

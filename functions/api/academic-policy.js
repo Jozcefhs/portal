@@ -74,7 +74,7 @@ export async function onRequestPost(context) {
     const { request, env } = context;
     schoolOnly(env);
     const body = await readJsonBody(request, { maxBytes: 512 * 1024 });
-    const actor = await requireSetupAdministrator(env, request, body.password);
+    const actor = await requireSetupAdministrator(env, request, body.password, 'academics');
     const settingsAccess = resolveSetupSettingsAccess(
       actor,
       body.SettingsScope || body.settingsScope || body.Scope?.Type,

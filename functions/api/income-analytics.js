@@ -1,3 +1,4 @@
+import { modulePermissionRole } from '../lib/module-authority.js';
 import { listCollection, queryCollection, requireFirestoreEnv } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { buildIncomeAnalytics, journalMatchesIncomeBranch, resolveIncomePeriod } from '../lib/income-analytics.js';
@@ -60,7 +61,7 @@ export async function onRequestPost(context) {
       throw error;
     }
     const body = await readJsonBody(request, { maxBytes: 256 * 1024 });
-    const privileged = ['Super Admin', 'Accounts Officer', 'Management', 'Treasurer', 'Auditor'].includes(clean(user.role));
+    const privileged = ['Super Admin', 'Accounts Officer', 'Management', 'Treasurer', 'Auditor'].includes(modulePermissionRole(user, 'incomeAnalytics'));
     const assignedBranch = actorBranchScope(user);
     const effectiveBranch = resolveRequestedBranch(user, body.branchId, {
       allowAll: privileged,

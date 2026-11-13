@@ -1,3 +1,4 @@
+import { modulePermissionRole } from '../lib/module-authority.js';
 import { batchCommitDocuments, requireFirestoreEnv } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { issueStaffParentOnboarding } from '../lib/parent-onboarding.js';
@@ -43,7 +44,7 @@ export async function onRequestPost(context) {
       const err = new Error('Choose a valid student action.'); err.status = 400; throw err;
     }
     if (['previewprofiledefaults', 'applyprofiledefaults'].includes(action)) {
-      if (user.role !== 'Super Admin' || user.edition !== 'school' || !clean(user.branchId) ||
+      if (modulePermissionRole(user, 'students') !== 'Super Admin' || user.edition !== 'school' || !clean(user.branchId) ||
         !(user.allowedSections || []).includes('accounts') || user.subscriptionReadOnly) {
         const err = new Error('Select a school branch and use a writable Super Admin account with Students and Accounts access.'); err.status = 403; throw err;
       }
@@ -78,7 +79,7 @@ export async function onRequestPost(context) {
       return Response.json({ ...summary, updated: next.length, remaining: plan.changes.length - next.length }, { headers: { 'Cache-Control': 'no-store' } });
     }
     if (['previewintakecorrection', 'applyintakecorrection'].includes(action)) {
-      if (user.role !== 'Super Admin' || user.edition !== 'school' || !clean(user.branchId) ||
+      if (modulePermissionRole(user, 'students') !== 'Super Admin' || user.edition !== 'school' || !clean(user.branchId) ||
           ['all', '*'].includes(lower(user.branchId)) ||
           !(user.allowedSections || []).includes('accounts') || user.subscriptionReadOnly) {
         const err = new Error('Select a school branch and use a writable Super Admin account with Students and Accounts access to correct intake.');

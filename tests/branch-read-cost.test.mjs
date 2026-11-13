@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import vm from 'node:vm';
+import vm from './helpers/module-policy-vm.mjs';
 import { listBranchCollection, branchCollectionPage } from '../functions/lib/branch-reads.js';
 
 const snapshot = '2026-10-24T10:00:00.000Z';

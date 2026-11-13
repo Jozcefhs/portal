@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
-import vm from 'node:vm';
+import vm from './helpers/module-policy-vm.mjs';
 import {webcrypto} from 'node:crypto';
 import {executiveOfficeCapabilities, normalizeCorrespondenceDraft, normalizeTemplate, requestedExecutiveScope} from '../functions/lib/executive-correspondence.js';
 import {rolesForEdition, defaultModulesForRole} from '../functions/lib/role-module-access.js';

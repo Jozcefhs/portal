@@ -1,3 +1,4 @@
+import { modulePermissionRole } from './module-authority.js';
 import { batchCommitLiteralDocuments as batchCommitDocuments, listCollection, patchDocumentFields, upsertDocument } from './firestore.js';
 import { staffEmploymentDetails } from './staff-employment.js';
 import {
@@ -116,7 +117,7 @@ export function normalizeAttendanceReportPeriod(input = {}) {
 }
 
 export function canReportStaffAttendance(user = {}) {
-  const role = clean(user.role || user.Role);
+  const role = modulePermissionRole(user, 'staffAttendance');
   return canManageStaffAttendance(user) || REPORT_ROLES.has(role) || hrCapabilitiesFor(user).canManageTime;
 }
 

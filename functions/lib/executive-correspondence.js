@@ -1,3 +1,4 @@
+import { hasFullModuleAccess, modulePermissionRole } from './module-authority.js';
 import { desktopExecutiveLetterHtml } from './executive-letter-layout.js';
 import {
   createDocumentIfAbsent,
@@ -42,7 +43,7 @@ const TRANSITION_COLLECTION = 'executiveCorrespondenceTransitions';
 const AUDIT_COLLECTION = 'executiveCorrespondenceAudit';
 const PREFERENCE_COLLECTION = 'executiveMetricPreferences';
 const INTERNATIONAL_OFFICE = 'international-studies';
-const internationalOfficer = user => canonicalExecutiveRole(user.role || user.Role) === 'International Studies Officer';
+const internationalOfficer = user => canonicalExecutiveRole(modulePermissionRole(user, 'executiveOffice')) === 'International Studies Officer';
 
 function validateOfficeContent(kind, recipientType, officeKey) {
   if (officeKey !== INTERNATIONAL_OFFICE) return;
@@ -143,7 +144,7 @@ export function canonicalExecutiveRole(value) {
 
 export function executiveOfficeCapabilities(user = {}, editionValue = '') {
   const edition = lower(editionValue || user.edition || user.OrganisationEdition) || 'school';
-  const role = canonicalExecutiveRole(user.role || user.Role);
+  const role = canonicalExecutiveRole(modulePermissionRole(user, 'executiveOffice'));
   const allowed = new Set((user.allowedSections || user.AllowedSections || []).map(clean).filter(Boolean));
   const sectionAllowed = !allowed.size || allowed.has('executiveOffice');
   const editionAllowed = role === 'Super Admin' ||
@@ -156,7 +157,7 @@ export function executiveOfficeCapabilities(user = {}, editionValue = '') {
     role,
     edition,
     canSearchStudents: enabled && school,
-    canSearchStaff: enabled && !internationalOfficer(user),
+    canSearchStaff: enabled && (hasFullModuleAccess(user, 'executiveOffice') || !internationalOfficer(user)),
     canSearchClasses: enabled && school,
     canSearchMembers: enabled && !school,
     canSearchDepartments: enabled && !school,

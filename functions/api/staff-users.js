@@ -1,3 +1,4 @@
+import { modulePermissionRole } from '../lib/module-authority.js';
 import { getDocument, listCollection, patchDocumentFields, requireFirestoreEnv, updateDocumentIfCurrent, upsertDocument } from '../lib/firestore.js';
 import { hashStaffPassword, invalidateStaffAccessCache, requireStaffSession } from '../lib/staff-auth.js';
 import { readJsonBody } from '../lib/request-security.js';
@@ -205,7 +206,7 @@ async function audit(env, actor, action, username, details = '', branchId = '') 
 }
 
 function ensureSuperAdmin(actor) {
-  if (actor.role === 'Super Admin') return;
+  if (modulePermissionRole(actor, 'staffUsers') === 'Super Admin') return;
   const err = new Error('Only Super Admin can manage staff accounts.');
   err.status = 403;
   throw err;
@@ -630,6 +631,8 @@ async function saveRoleAccess(env, actor, body) {
     ...(existing || {}),
     Edition: normalizeOrganizationEdition(actor.edition),
     Scopes: scopes,
+    FullAccessScopes: { ...(existing?.FullAccessScopes || {}), [scope]: { ...(existing?.FullAccessScopes?.[scope] || {}),
+      [role]: scopedTabAccess(body.Modules || body.modules, actor) } },
     UpdatedAt: nowIso(),
     UpdatedBy: actor.displayName || actor.username
   };
@@ -661,6 +664,8 @@ async function resetRoleAccess(env, actor, body) {
     ...(existing || {}),
     Edition: normalizeOrganizationEdition(actor.edition),
     Scopes: withoutRoleModules(existing, scope, role),
+    FullAccessScopes: Object.fromEntries(Object.entries(existing?.FullAccessScopes || {}).map(([key, roles]) => [key,
+      key === scope ? Object.fromEntries(Object.entries(roles).filter(([name]) => name !== role)) : roles])),
     UpdatedAt: nowIso(),
     UpdatedBy: actor.displayName || actor.username
   };

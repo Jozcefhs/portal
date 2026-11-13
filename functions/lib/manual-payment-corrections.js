@@ -1,3 +1,4 @@
+import { modulePermissionRole } from './module-authority.js';
 import { batchCommitDocuments, getDocument, queryCollection, queryCollectionPages, listCollectionForReport } from './firestore.js';
 import { searchStudentPaymentHistory } from './manual-payment-search.js';
 import { isCorrectablePaymentGateway, isDirectBankReceipt, directTransferReceiptId, assertVerifiedBankReceipt } from './manual-payment-eligibility.js';
@@ -19,7 +20,7 @@ const patch = (collection, row, fields) => ({ ...financeWrite(collection, row.__
 const version = row => { if (!row?.__id || !row.__updateTime) fail('A record has no current database version. Refresh before correcting it.'); return row; };
 
 export function correctionScope(user) {
-  if (!clean(user.username) || user.edition !== 'school' || !roles.has(user.assignedRole || user.role)
+  if (!clean(user.username) || user.edition !== 'school' || !roles.has(modulePermissionRole(user, 'accounts'))
     || !(user.allowedSections || []).includes('accounts')) fail('Only authorised school Accounts users may correct manual payments.', 403);
   const branch = lower(user.branchId), section = lower(user.schoolSectionAccess || 'All');
   if (!branch || branch === 'all' || !['all', 'primary', 'secondary'].includes(section)) fail('Select one working branch and an authorised school section.', 403);

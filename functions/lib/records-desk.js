@@ -1,3 +1,4 @@
+import { hasFullModuleAccess, modulePermissionRole } from './module-authority.js';
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
 const enabledValue = (value) => ['yes', 'true', '1', 'enabled'].includes(lower(value));
@@ -55,7 +56,7 @@ export function recordsDeskCapabilities(user = {}) {
   const enabled = allowed.has('recordsDesk');
   const schoolEdition = edition === 'school';
   const organisationEdition = ['church', 'faith', 'organization'].includes(edition);
-  const role = clean(user.role);
+  const role = modulePermissionRole(user, 'recordsDesk');
   const executive = allowed.has('executiveOffice') && EXECUTIVE_ROLES.has(role);
   const schoolExecutive = executive && [
     'Principal', 'Vice Principal Academics', 'Vice Principal Administration'
@@ -73,7 +74,7 @@ export function recordsDeskCapabilities(user = {}) {
     canSearchStudents: enabled && schoolEdition,
     canSearchApplicants: enabled && schoolEdition && allowed.has('admissions'),
     canSearchStaff: enabled && (
-      (allowed.has('staffUsers') && role === 'Super Admin') ||
+      hasFullModuleAccess(user, 'recordsDesk') || (allowed.has('staffUsers') && modulePermissionRole(user, 'staffUsers') === 'Super Admin') ||
       schoolExecutive || ministryExecutive
     ),
     canSearchMembers: enabled && organisationEdition && (allowed.has('members') || ministryExecutive),
@@ -87,7 +88,7 @@ export function recordsDeskCapabilities(user = {}) {
     canViewStudentConduct: schoolEdition && allowed.has('studentConduct'),
     canUseStudentFaceLookup: enabled && schoolEdition,
     canManageStudentFaceTemplates: enabled && schoolEdition && studentFaceManagementEnabled,
-    canViewStaffSecurity: allowed.has('staffUsers') && clean(user.role) === 'Super Admin',
+    canViewStaffSecurity: allowed.has('staffUsers') && modulePermissionRole(user, 'staffUsers') === 'Super Admin',
     canViewMemberContact: ministryExecutive || allowed.has('members'),
     canViewPastoralNotes: PASTORAL_ROLES.has(clean(user.role)),
     canViewDepartmentRoster: ministryExecutive || allowed.has('members'),

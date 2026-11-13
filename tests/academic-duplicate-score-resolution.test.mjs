@@ -5,7 +5,7 @@ import {academicScoreCell,resolvedAcademicScoreEntry} from '../functions/lib/aca
 import {buildAcademicClassScoreRegister} from '../functions/lib/academic-class-score-register.js';
 import {handleAcademicManagementAction} from '../functions/lib/academic-management.js';
 import {readFile} from 'node:fs/promises';
-import vm from 'node:vm';
+import vm from './helpers/module-policy-vm.mjs';
 const scope={branchId:'main',section:'secondary'};
 const period={BranchId:'main',SchoolSection:'secondary',SessionId:'session',TermId:'term',ClassId:'grade9'};
 const input={...period,ArmId:'perfection',SubjectId:'music',StudentRef:'TEST/1',TestId:'ca1'};

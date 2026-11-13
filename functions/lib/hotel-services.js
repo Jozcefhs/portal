@@ -1,3 +1,4 @@
+import { modulePermissionRole } from './module-authority.js';
 import { loadDatedHistory } from './history-date-range.js';
 import {
   batchCommitDocuments,
@@ -108,7 +109,7 @@ function roleFor(user = {}) {
 }
 
 export function hotelCapabilities(user = {}) {
-  const role = roleFor(user);
+  const role = modulePermissionRole(user, 'hotel');
   return {
     canView: Boolean(role),
     canManageRooms: ROOM_MANAGERS.has(role),

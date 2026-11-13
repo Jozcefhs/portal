@@ -1,3 +1,4 @@
+import { modulePermissionRole } from './module-authority.js';
 import { getDocument, listCollection, batchCommitLiteralDocuments } from './firestore.js';
 import { feeBranchId, feeSetupBranch } from './fee-branch-scope.js';
 import { assignedStaffBranches } from './staff-branch-access.js';
@@ -150,7 +151,7 @@ export function quoteSchoolFeePaymentPlan({ rule = null, originalTotal, balance,
 
 export async function handleSchoolFeePaymentPlans(env, user = {}, body = {}, overrides = {}) {
   const db = { getDocument, listCollection, batchCommitLiteralDocuments, ...overrides };
-  const role = user.assignedRole || user.role;
+  const role = modulePermissionRole(user, 'accounts');
   if (user.edition && key(user.edition) !== 'school') fail('Part-payment plans are available only in the School edition.', 403);
   if (!clean(user.username) || !['Super Admin', 'Director', 'Accounts Officer', 'Management', 'Treasurer'].includes(role)
       || !(user.allowedSections || []).some(section => ['accounts', 'accounting'].includes(section))) fail('Accounts access is required to manage part-payment plans.', 403);

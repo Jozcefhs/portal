@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { runInNewContext } from 'node:vm';
+import { runInNewContext } from './helpers/module-policy-vm.mjs';
 import { academicSubjectTeacherCandidates, academicManagementCapabilities } from '../functions/lib/academic-management.js';
 import { staffRecordMatchesEdition } from '../functions/lib/records-desk.js';
 
@@ -35,9 +35,9 @@ const staff = [
 ];
 
 test('Teacher candidates do not need an Academics department, but remain active and section-scoped', () => {
-  assert.deepEqual(academicSubjectTeacherCandidates(staff, 'primary').map(row => row.Username), ['teacher', 'science', 'academics']);
-  assert.deepEqual(academicSubjectTeacherCandidates(staff, 'secondary').map(row => row.Username), ['teacher', 'secondary', 'academics']);
-  assert.deepEqual(academicSubjectTeacherCandidates(staff).map(row => row.Username), ['teacher', 'science', 'secondary', 'academics']);
+  assert.deepEqual(academicSubjectTeacherCandidates(staff, 'primary').map(row => row.Username), ['teacher', 'science', 'academics', 'accounts']);
+  assert.deepEqual(academicSubjectTeacherCandidates(staff, 'secondary').map(row => row.Username), ['teacher', 'secondary', 'academics', 'accounts']);
+  assert.deepEqual(academicSubjectTeacherCandidates(staff).map(row => row.Username), ['teacher', 'science', 'secondary', 'academics', 'accounts']);
   assert.equal(academicSubjectTeacherCandidates([{ Role: ' teacher ', Active: true }]).length, 1);
 });
 
@@ -59,7 +59,7 @@ test('web Teacher selectors agree with the server and render Teacher accounts wi
   const html = helpers.academicTeacherWorkspace(data, rows);
   assert.match(html, /value="teacher">Ada Teacher \(Teacher\)<\/option>/);
   assert.match(html, /value="science">Ben Science \(Teacher · Science\)<\/option>/);
-  assert.doesNotMatch(html, /value="(?:inactive|disabled|secondary|accounts|department-other)"/);
+  assert.doesNotMatch(html, /value="(?:inactive|disabled|secondary|department-other)"/);
   assert.doesNotMatch(admin, /Only active Department Users in the Academics department are listed|No eligible Academics Department Users/);
 });
 
@@ -78,8 +78,9 @@ test('server accepts Teacher subject, form and assistant allocations, and still 
   for (const role of ['Subject Teacher', 'Form Teacher', 'Assistant Teacher']) {
     assert.doesNotThrow(() => validateAcademicRecord(state, 'teacherallocation', allocation(role), { staff }));
     assert.doesNotThrow(() => validateAcademicRecord(state, 'teacherallocation', { ...allocation(role), TeacherUsername: 'academics' }, { staff }));
+    assert.doesNotThrow(() => validateAcademicRecord(state, 'teacherallocation', { ...allocation(role), TeacherUsername: 'accounts' }, { staff }));
   }
-  for (const username of ['accounts', 'department-other']) {
+  for (const username of ['department-other']) {
     assert.throws(() => validateAcademicRecord(state, 'teacherallocation', { ...allocation('Subject Teacher'), TeacherUsername: username }, { staff }),
       error => error.code === 'ACADEMIC_TEACHER_DEPARTMENT_INVALID');
   }
@@ -102,7 +103,7 @@ test('Teacher candidates still pass through the existing edition and branch boun
     listSchoolCollection: async () => { throw new Error('Students are not needed'); }
   });
   const people = await load({}, { edition: 'school' }, { branchId: 'main', section: 'primary' }, { students: false });
-  assert.deepEqual(Array.from(academicSubjectTeacherCandidates(people.staff, 'primary'), row => row.Username), ['teacher', 'science', 'academics']);
+  assert.deepEqual(Array.from(academicSubjectTeacherCandidates(people.staff, 'primary'), row => row.Username), ['teacher', 'science', 'academics', 'accounts']);
 });
 
 test('selection eligibility does not grant Teacher accounts administrator permissions', () => {

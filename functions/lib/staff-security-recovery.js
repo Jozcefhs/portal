@@ -1,3 +1,4 @@
+import { modulePermissionRole } from './module-authority.js';
 import { batchCommitLiteralDocuments, getDocument, queryCollectionPages } from './firestore.js';
 import { credentialStateId } from './staff-credential-state.js';
 import { verifyStaffApprovalPassword } from './staff-auth.js';
@@ -32,7 +33,7 @@ async function resolveTarget(env, value, db) {
 
 export async function recoverStaffSecurity(env, actor, body = {}, overrides = {}) {
   const db = { ...dependencies, ...overrides };
-  if (actor?.role !== 'Super Admin' || assignedStaffBranches(actor) !== null) fail('Only an organisation-wide Super Administrator can recover staff sign-in.', 403);
+  if (modulePermissionRole(actor, 'staffUsers') !== 'Super Admin' || assignedStaffBranches(actor) !== null) fail('Only an organisation-wide Super Administrator can recover staff sign-in.', 403);
   if (actor.subscriptionReadOnly || actor.subscriptionActive === false) fail('The subscription is read-only.', 403);
   if (!await db.verifyStaffApprovalPassword(env, actor.username, body.currentPassword)) fail('The current administrator password is incorrect.', 401);
   const targetInput = clean(body.targetUsername), operationId = clean(body.operationId), reason = clean(body.reason);

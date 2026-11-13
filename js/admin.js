@@ -178,7 +178,7 @@ function staffWorkspaceReadScope() {
   return JSON.stringify([selectedBranchId, currentUser?.username, currentUser?.role,
     currentUser?.assignedRole, currentUser?.edition, currentUser?.department,
     currentUser?.schoolSectionAccess, currentUser?.allowedSections, currentUser?.branchIds,
-    currentUser?.tabAccess, currentUser?.approvalEnabled, currentUser?.approvalMaxAmount,
+    currentUser?.tabAccess, currentUser?.fullAccessModules, currentUser?.approvalEnabled, currentUser?.approvalMaxAmount,
     currentUser?.approvalAccounts, currentUser?.requisitionEditEnabled,
     currentUser?.auditDateFrom, currentUser?.auditDateTo, currentUser?.auditExpiresAt,
     currentUser?.subscriptionActive, currentUser?.subscriptionReadOnly]);
@@ -492,6 +492,14 @@ const tabIcons = {
   securityAudit: '\u{1F6E1}',
   staffUsers: '\u2699'
 };
+
+function hasFullModuleAccess(user, module) {
+  return user?.subscriptionActive !== false && (Array.isArray(module) ? module : [module]).some(key =>
+    user?.allowedSections?.includes(key) && user?.fullAccessModules?.includes(key) === true);
+}
+function modulePermissionRole(user, module) {
+  return hasFullModuleAccess(user, module) ? 'Super Admin' : (user?.assignedRole || user?.role || '');
+}
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -4390,7 +4398,7 @@ function bindStudentEditor(students) {
     const status = form.querySelector('[data-student-form-status]');
     setButtonLoading(button, true, 'Loading preview…');
     try {
-      const canReconcile = currentUser?.role === 'Super Admin';
+      const canReconcile = modulePermissionRole(currentUser, 'accounts') === 'Super Admin';
       const response = await staffFetch(canReconcile ? '/api/student-billing-reconciliation' : '/api/student-billing-preview', {
         method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'preview', AccountRef: form.elements.AccountRef.value })
@@ -4564,7 +4572,7 @@ function renderAdmissionDocuments(row) {
   if (!uploaded.length) return '<span class="muted">None uploaded</span>';
   const links = uploaded.map((item) => {
     const query = `applicationReference=${encodeURIComponent(reference)}&documentType=${encodeURIComponent(item.key)}&scopePath=${encodeURIComponent(scopePath)}`;
-    const canDelete = ['Super Admin', 'Admissions Officer'].includes(clean(currentUser?.role));
+    const canDelete = ['Super Admin', 'Admissions Officer'].includes(modulePermissionRole(currentUser, 'admissions'));
     const fileName = item.fileName || `${reference}-${item.key}`;
     return `<div class="document-action-row"><span>${escapeHtml(item.label)}</span><button type="button" class="payslip-download document-file-action" data-protected-file="${escapeHtml(`/api/staff-document?${query}&mode=view`)}" data-file-mode="view" data-file-name="${escapeHtml(fileName)}">View</button><button type="button" class="payslip-download document-file-action" data-protected-file="${escapeHtml(`/api/staff-document?${query}&mode=download`)}" data-file-mode="download" data-file-name="${escapeHtml(fileName)}">Download</button>${canDelete ? `<button type="button" class="document-delete compact-icon-action compact-delete-action" data-delete-document="${escapeHtml(item.key)}" data-application-reference="${escapeHtml(reference)}" data-application-scope="${escapeHtml(scopePath)}" aria-label="Delete ${escapeHtml(item.label)}" title="Delete document"><span aria-hidden="true">&#128465;&#65038;</span></button>` : ''}</div>`;
   }).join('');
@@ -5800,7 +5808,7 @@ function studentClassExportToolbar(students) {
 }
 
 function studentAdmissionYearIntakeToolbar(students) {
-  if (currentUser?.role !== 'Super Admin' || currentUser?.edition !== 'school' || !(currentUser.allowedSections || []).includes('accounts')) return '';
+  if (modulePermissionRole(currentUser, 'accounts') !== 'Super Admin' || currentUser?.edition !== 'school' || !(currentUser.allowedSections || []).includes('accounts')) return '';
   const sessions = [...new Set(students
     .map((row) => clean(row.AcademicSession).replace(/\s/g, ''))
     .filter(Boolean))].sort((left, right) => right.localeCompare(left));
@@ -8129,9 +8137,9 @@ async function loadChurchServices() {
 
 function canEditRevenueAccountNames() {
   const user = currentUser || {};
-  return ['Super Admin', 'Director', 'Accounts Officer', 'Treasurer'].includes(user.assignedRole || user.role)
+  return ['Super Admin', 'Director', 'Accounts Officer', 'Treasurer'].includes(modulePermissionRole(user, ['accounts', 'funds', 'incomeAnalytics']))
     && user.branchAccess === 'all'
-    && ['funds', 'incomeAnalytics', 'accounting'].some(section => (user.allowedSections || []).includes(section))
+    && ['accounts', 'funds', 'incomeAnalytics', 'accounting'].some(section => (user.allowedSections || []).includes(section))
     && user.subscriptionActive !== false && user.subscriptionReadOnly !== true;
 }
 
@@ -12201,7 +12209,7 @@ function renderExecutiveOverview() {
   const charts = executiveMetricCharts();
   const records = executiveCorrespondenceRows();
   const recent = records.slice(0, 5);
-  const canManageStaff = currentUser?.role === 'Super Admin' && activeTabs.some(([key]) => key === 'staffUsers');
+  const canManageStaff = modulePermissionRole(currentUser, 'staffUsers') === 'Super Admin' && activeTabs.some(([key]) => key === 'staffUsers');
   return `
     <section class="executive-overview-grid">
       <article class="executive-hero-card">
@@ -13418,7 +13426,7 @@ function academicManagementStaffCandidates(rows = [], schoolSection = academicMa
     const department = clean(row.Department || row.department).toLowerCase();
     const active = row.Active ?? row.active;
     const assigned = clean(row.SchoolSectionAccess || row.schoolSectionAccess || 'all').toLowerCase();
-    return (role === 'teacher' || (role === 'department user' && department === 'academics'))
+    return (role === 'teacher' || department === 'academics')
       && active !== false
       && active !== 0
       && !/^(no|false|0|inactive)$/.test(clean(active).toLowerCase())
@@ -13850,6 +13858,7 @@ function academicStudentSubjectProfile(data, membership) {
     curriculumStatus: stage !== 'senior-secondary' ? (membership.CurriculumStatus || '-')
       : !classroom ? 'Pending Classroom Assignment'
         : !selectedCoreSubjectIds.length ? 'Pending Core Selection'
+          : data.curriculumSettings?.RequireTradeSubject === false ? 'Complete'
           : !tradeSubjectIds.length ? 'Trade Subjects Not Configured'
             : selectedTradeSubjectIds.length ? 'Complete' : 'Pending Trade Selection',
     unavailableSubjectIds: [...selected].filter((id) => !roles.has(id)),
@@ -14506,7 +14515,7 @@ function academicClassStaffWorkspace(data, rows) {
     <input type="hidden" name="TermId" value="${escapeHtml(termId)}">
     <div class="academic-management-editor-heading"><div><small>Classroom leadership</small><h3>Assign class teachers</h3><p class="muted">Add as many rows as needed. Choosing a classroom loads its current class teacher and assistant for direct editing.</p></div><strong>${classrooms.length} classroom${classrooms.length === 1 ? '' : 's'}</strong></div>
     ${classrooms.length ? `<div class="academic-class-staff-list" data-academic-class-staff-rows>${rowHtml()}${rowHtml()}${rowHtml()}</div><template data-academic-class-staff-template>${rowHtml()}</template><button type="button" class="secondary" data-academic-class-staff-add>Add another row</button>` : '<div class="academic-classroom-empty"><strong>No classrooms are available.</strong><span>Create classrooms before assigning class teachers.</span></div>'}
-    <p class="muted">Active Teacher accounts and Academics Department Users are listed. Leaving Assistant blank removes the current assistant for a selected classroom.</p>
+    <p class="muted">Active Teachers and all staff in the Academics department are listed, regardless of role. Leaving Assistant blank removes the current assistant for a selected classroom.</p>
     <button type="submit"${ready ? '' : ' disabled'}>Save class assignments</button>
   </form>`;
   return `${form}${currentRegister}`;
@@ -14807,10 +14816,11 @@ function academicOfferingsWorkspace(data, rows) {
     <form class="academic-management-editor academic-management-editor-wide" data-academic-workflow="configureAcademicSeniorChoiceSubjects" data-academic-senior-choice-subjects>
       <div class="academic-management-editor-heading"><div><small>School-wide Senior curriculum</small><h3>Configure Senior subject choices</h3><p class="muted">Choose from the reusable subject catalogue once. These Trade and Optional subjects become available to students in every current and future Senior Secondary classroom.</p></div></div>
       <input type="hidden" name="SchoolSection" value="secondary">
+      <label>Trade subject selection<select name="RequireTradeSubject"><option value="true"${data.curriculumSettings?.RequireTradeSubject !== false ? ' selected' : ''}>Compulsory — at least one</option><option value="false"${data.curriculumSettings?.RequireTradeSubject === false ? ' selected' : ''}>Optional — none required</option></select><small>Applies to Senior classes in this branch. Existing subjects and scores are retained.</small></label>
       ${academicCheckboxField({
-        name: 'TradeSubjectIds', label: 'Trade subjects', required: true, idPrefix: 'senior-choice-trade-subjects',
+        name: 'TradeSubjectIds', label: 'Trade subjects', idPrefix: 'senior-choice-trade-subjects',
         options: seniorChoiceOptions,
-        help: 'Every Senior student must choose at least one of these subjects. Subjects already used as department Core are disabled.'
+        help: 'When compulsory selection is enabled, each Senior student must choose at least one. Department Core subjects are disabled.'
       })}
       ${academicCheckboxField({
         name: 'OptionalSubjectIds', label: 'Optional subjects', idPrefix: 'senior-choice-optional-subjects',
@@ -14853,7 +14863,7 @@ function academicOfferingsWorkspace(data, rows) {
       <label>Subject<select name="SubjectId" required>${academicSelectOptions(subjects, '', (row) => `${row.Code} - ${row.Name}`, 'Choose subject')}</select></label>
       <label>Status<select name="Status"><option>Active</option><option>Inactive</option></select></label>
     </div>
-    <label>Subject role<select name="SubjectRole"><option>Core</option><option>Trade</option><option>Optional</option></select><small>Core is locked for every applicable student. Every Senior student must select at least one Trade subject. Optional subjects can be selected per student in the arm register.</small></label>
+    <label>Subject role<select name="SubjectRole"><option>Core</option><option>Trade</option><option>Optional</option></select><small>Core is locked for every applicable student. Trade selection follows this branch’s compulsory/optional setting. Optional subjects can be selected per student in the arm register.</small></label>
     <p class="muted">Junior Secondary offerings become Core automatically. Senior Core subjects follow the classroom department; mixed classrooms allow individual Core choices.</p>
     <button type="submit">Save subject offering</button>
   </form>` : '';
@@ -14897,7 +14907,7 @@ function academicTeacherWorkspace(data, rows) {
     <div class="academic-management-editor-heading"><div><small>Subject teaching</small><h3>Assign a subject teacher</h3><p class="muted">Choose one teacher and one subject, then select the exact classrooms taught for that subject. Repeat the process if the teacher handles another subject.</p></div></div>
     <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
     <div class="academic-management-form-grid academic-management-form-grid-4">
-      <label>Teacher<select name="TeacherUsername" required>${academicSelectOptions(staff, '', (row) => `${row.DisplayName} (${row.Role}${row.Department ? ` · ${row.Department}` : ''})`, staff.length ? 'Choose teacher' : 'No eligible teaching staff')}</select><small>Active Teacher accounts and Academics Department Users are listed.</small></label>
+      <label>Teacher<select name="TeacherUsername" required>${academicSelectOptions(staff, '', (row) => `${row.DisplayName} (${row.Role}${row.Department ? ` · ${row.Department}` : ''})`, staff.length ? 'Choose teacher' : 'No eligible teaching staff')}</select><small>Active Teachers and all staff in the Academics department are listed, regardless of role.</small></label>
       <label>Subject<select name="SubjectId" required>${academicSelectOptions(subjects, '', (row) => `${row.Code} - ${row.Name}`, 'Choose subject')}</select><small data-academic-teacher-subject-help>Choose a teacher to see saved subjects and classrooms.</small></label>
       <label>Session<select name="SessionId" required>${academicSelectOptions(sessions, academicManagementFilters.sessionId, (row) => row.Name, 'Choose session')}</select></label>
       <label>Term<select name="TermId" required>${academicSelectOptions(terms, academicManagementFilters.termId, (row) => row.Name, 'Choose term')}</select></label>
@@ -14922,7 +14932,7 @@ function academicTeacherWorkspace(data, rows) {
     <div class="academic-management-editor-heading"><div><small>Correct saved allocation</small><h3>Edit subject-teacher allocation</h3><p class="muted">Change the teacher, subject, classroom or academic period, then update the existing allocation.</p></div><button type="button" class="academic-form-reset" data-academic-reset="teacherAllocation">Cancel edit</button></div>
     <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
     <div class="academic-management-form-grid academic-management-form-grid-3">
-      <label>Teacher<select name="TeacherUsername" required>${academicSelectOptions(staff, '', (row) => `${row.DisplayName} (${row.Role}${row.Department ? ` · ${row.Department}` : ''})`, staff.length ? 'Choose teacher' : 'No eligible teaching staff')}</select><small>Active Teacher accounts and Academics Department Users are listed.</small></label>
+      <label>Teacher<select name="TeacherUsername" required>${academicSelectOptions(staff, '', (row) => `${row.DisplayName} (${row.Role}${row.Department ? ` · ${row.Department}` : ''})`, staff.length ? 'Choose teacher' : 'No eligible teaching staff')}</select><small>Active Teachers and all staff in the Academics department are listed, regardless of role.</small></label>
       <label>Subject<select name="SubjectId" required>${academicSelectOptions(subjects, '', (row) => `${row.Code} - ${row.Name}`, 'Choose subject')}</select></label>
       <label>Classroom<select name="ClassroomId" required>${academicSelectOptions(classrooms, '', (row) => `${academicLabel(classes, row.ClassId)} / ${row.Name}`, 'Choose classroom')}</select></label>
       <label>Session<select name="SessionId" required>${academicSelectOptions(sessions, '', (row) => row.Name, 'Choose session')}</select></label>
@@ -15124,7 +15134,7 @@ function academicArmSubjectRegister(data, rows, canManage) {
       <header><div><strong><span class="academic-serial">${index + 1}.</span> ${escapeHtml(studentName)}</strong><small>${escapeHtml(membership.StudentRef)} · ${escapeHtml(department)}</small></div><div class="academic-arm-student-subject-status"><span>${escapeHtml(curriculumStatus)}</span><strong data-academic-student-subject-total>${selectedTotal} subject${selectedTotal === 1 ? '' : 's'} total</strong></div></header>
       <div class="academic-arm-student-subject-groups">
         <fieldset><legend>Core · ${profile.mixedClassroom ? 'choose for this student' : 'locked'} ${countBadge('Core')}</legend><div class="academic-checkbox-options">${subjectChecks('Core', profile.coreSubjectIds, profile.selectedCoreSubjectIds, !profile.mixedClassroom)}</div></fieldset>
-        <fieldset><legend>Trade · choose at least one ${countBadge('Trade')}</legend><div class="academic-checkbox-options">${subjectChecks('Trade', profile.tradeSubjectIds, profile.selectedTradeSubjectIds)}</div></fieldset>
+        <fieldset><legend>Trade · ${data.curriculumSettings?.RequireTradeSubject === false ? 'optional' : 'choose at least one'} ${countBadge('Trade')}</legend><div class="academic-checkbox-options">${subjectChecks('Trade', profile.tradeSubjectIds, profile.selectedTradeSubjectIds)}</div></fieldset>
         <fieldset><legend>Optional ${countBadge('Optional')}</legend><div class="academic-checkbox-options">${subjectChecks('Optional', profile.optionalSubjectIds, profile.selectedOptionalSubjectIds)}</div></fieldset>
       </div>
       ${membership.PendingSubjectChange ? `<p class="academic-arm-subject-warning">${data.permissions?.fullAcademicAccess ? 'ICT can save revised subject choices directly. The earlier pending request will be preserved in Movement history as superseded.' : 'A subject change is awaiting approval. Current subjects remain active; review or cancel the request below.'}</p>` : ''}
@@ -15132,7 +15142,7 @@ function academicArmSubjectRegister(data, rows, canManage) {
       ${profile.reclassifiedSubjectIds.length ? `<p class="academic-arm-subject-warning">These subjects now appear under their current curriculum category: ${escapeHtml(profile.reclassifiedSubjectIds.map((id) => academicLabel(rows.subjects, id, id)).join(', '))}. Review the choices and save; existing scores are preserved.</p>` : ''}
     </article>`;
   }).join('');
-  const tradeConfigured = memberships.length && memberships.every((membership) => academicStudentSubjectProfile(data, membership).tradeSubjectIds.length);
+  const tradeConfigured = data.curriculumSettings?.RequireTradeSubject === false || memberships.length && memberships.every((membership) => academicStudentSubjectProfile(data, membership).tradeSubjectIds.length);
   const help = !classId ? 'Choose a Senior Secondary class.'
     : !armId ? 'Choose a class arm to display its assigned students.'
       : !memberships.length ? 'No students are assigned to this arm for the selected period.'
@@ -18162,7 +18172,7 @@ function academicWorkflowPayload(form) {
         throw new Error(`${row.dataset.studentName || 'Each student'} must have at least one Core subject.`);
       }
       const tradeSubjectIds = [...row.querySelectorAll('[data-academic-student-subject-role="Trade"]:checked')].map((input) => input.value);
-      if (!tradeSubjectIds.length) {
+      if (!tradeSubjectIds.length && academicManagementData?.curriculumSettings?.RequireTradeSubject !== false) {
         row.querySelector('[data-academic-student-subject-role="Trade"]')?.focus();
         throw new Error(`${row.dataset.studentName || 'Each student'} must have at least one Trade subject.`);
       }
@@ -21332,7 +21342,7 @@ function renderSection(active) {
       const result = await response.json();
       if (!response.ok || !result.ok) throw new Error(result.message || 'Vendor request failed.');
       return result;
-    }, { configureApprovals: clean(currentUser?.assignedRole || currentUser?.role) === 'Super Admin' ? configureRequisitionApprovals : null });
+    }, { configureApprovals: modulePermissionRole(currentUser, 'financeRequests') === 'Super Admin' ? configureRequisitionApprovals : null });
   } else if (active === 'academics') {
     panelEl.innerHTML = '<p class="muted">Loading Academic Management...</p>';
     loadAcademicManagement();
@@ -21366,7 +21376,7 @@ function renderSection(active) {
       { label: 'Uploaded Documents', render: renderAdmissionDocuments }
     ]);
     bindDocumentDeleteEvents();
-    if (['Super Admin', 'Admissions Officer', 'Principal', 'Head Teacher', 'Management', 'ICT', 'Examination Officer'].includes(currentUser?.role)) {
+    if (['Super Admin', 'Admissions Officer', 'Principal', 'Head Teacher', 'Management', 'ICT', 'Examination Officer'].includes(modulePermissionRole(currentUser, 'students'))) {
       const examLink = document.createElement('a');
       examLink.className = 'btn secondary'; examLink.textContent = 'Entrance examinations';
       examLink.href = `/exams-admin.html?audience=applicant&branch=${encodeURIComponent(selectedBranchId || 'main')}&section=${encodeURIComponent(clean(currentUser?.schoolSectionAccess).toLowerCase() === 'primary' ? 'primary' : 'secondary')}`;
@@ -21389,7 +21399,7 @@ function renderSection(active) {
     const learner = staffLearnerTerms();
     const handoff = takeRecordsDeskHandoff('students');
     const reference = recordsDeskHandoffReference(handoff);
-    panelEl.innerHTML = recordsDeskHandoffBanner(handoff, reference) + `<p class="muted" data-personal-parent-link-help>For a branch parent group, use Branch parent setup link. For one learner, use the link icon beside their name. Existing parent accounts continue to use their private passwords.</p><div class="student-onboarding-link-action"><button type="button" class="secondary" data-branch-parent-onboarding${!clean(selectedBranchId || currentUser?.branchId) || ['all', '*'].includes(clean(selectedBranchId || currentUser?.branchId)) || currentUser?.subscriptionReadOnly ? ' disabled' : ''}>Branch parent setup link</button>${currentUser?.role === 'Super Admin' && (currentUser.allowedSections || []).includes('accounts') ? '<button type="button" class="secondary" data-review-all-student-billing>Review all student billing</button>' : ''}</div><p class="status" role="status" aria-live="polite" data-student-maintenance-status></p><button type="button" class="secondary" data-refresh-student-defaults hidden>Refresh Students to view saved defaults</button>` + studentClassExportToolbar(students) + studentAdmissionYearIntakeToolbar(students) + table(learner.Plural, students, [
+    panelEl.innerHTML = recordsDeskHandoffBanner(handoff, reference) + `<p class="muted" data-personal-parent-link-help>For a branch parent group, use Branch parent setup link. For one learner, use the link icon beside their name. Existing parent accounts continue to use their private passwords.</p><div class="student-onboarding-link-action"><button type="button" class="secondary" data-branch-parent-onboarding${!clean(selectedBranchId || currentUser?.branchId) || ['all', '*'].includes(clean(selectedBranchId || currentUser?.branchId)) || currentUser?.subscriptionReadOnly ? ' disabled' : ''}>Branch parent setup link</button>${modulePermissionRole(currentUser, 'accounts') === 'Super Admin' && (currentUser.allowedSections || []).includes('accounts') ? '<button type="button" class="secondary" data-review-all-student-billing>Review all student billing</button>' : ''}</div><p class="status" role="status" aria-live="polite" data-student-maintenance-status></p><button type="button" class="secondary" data-refresh-student-defaults hidden>Refresh Students to view saved defaults</button>` + studentClassExportToolbar(students) + studentAdmissionYearIntakeToolbar(students) + table(learner.Plural, students, [
       { label: 'Admission No', value: (row) => pick(row, ['AdmissionNo', 'AccountRef', '__id']) },
       { label: 'Name', render: studentSearchIdentity },
       { label: 'Class', value: studentExportClass },
@@ -21418,7 +21428,7 @@ function renderSection(active) {
         pick(row, ['Status'])
       ].filter(Boolean).join(' ')
     }) + renderStudentEditor(students);
-    if (currentUser?.role === 'Super Admin' && (currentUser.allowedSections || []).includes('accounts')) {
+    if (modulePermissionRole(currentUser, 'accounts') === 'Super Admin' && (currentUser.allowedSections || []).includes('accounts')) {
       panelEl.querySelector('.student-onboarding-link-action')?.insertAdjacentHTML('beforeend', '<button type="button" class="secondary" data-save-student-profile-defaults>Save missing profile defaults</button><button type="button" class="secondary" data-review-boardwear-all>Review returning-student Boarding Wear</button><button type="button" class="secondary" data-review-obsolete-charges>Review incorrect school fee charges</button>');
     }
     panelEl.querySelector('[data-branch-parent-onboarding]')?.addEventListener('click', openBranchParentOnboardingDialog);
@@ -21495,7 +21505,7 @@ function renderSection(active) {
       ...(feeSummary ? [{ key: 'feeSummary', label: 'Fee summary', icon: '\u{1F9FE}', nodes: feeSummary }] : []),
       ...clubMembers
     ]);
-    if (['Super Admin', 'Director', 'Accounts Officer', 'Management', 'Treasurer'].includes(currentUser?.assignedRole || currentUser?.role)) {
+    if (['Super Admin', 'Director', 'Accounts Officer', 'Management', 'Treasurer'].includes(modulePermissionRole(currentUser, 'accounts'))) {
       const button = document.createElement('button');
       button.type = 'button'; button.className = 'secondary'; button.textContent = 'Billing categories & discounts';
       button.addEventListener('click', async () => {
@@ -23192,8 +23202,8 @@ async function resetOrganizationTestData(payload, currentPassword, confirmation)
 }
 
 function renderDataBackup() {
-  if (clean(currentUser?.role) !== 'Super Admin') {
-    panelEl.innerHTML = '<p class="status bad">Only a Super Administrator can access Backup &amp; Restore.</p>';
+  if (modulePermissionRole(currentUser, 'dataBackup') !== 'Super Admin') {
+    panelEl.innerHTML = '<p class="status bad">Only an authorised administrator can access Backup &amp; Restore.</p>';
     return;
   }
   panelEl.innerHTML = `
@@ -23712,7 +23722,7 @@ function canResetStaffBiometrics(target = {}) {
   const branchIds = user.assignedBranchIds ?? user.BranchIds ?? user.branchIds;
   const legacyBranch = lower(user.assignedBranchId || (user.canSwitchBranches === true ? '' : user.BranchId || user.branchId));
   const organisationWide = mode === 'all' || (mode !== 'selected' && !Array.isArray(branchIds) && (!legacyBranch || legacyBranch === 'all'));
-  return clean(user.role) === 'Super Admin' && organisationWide && !currentUser?.subscriptionReadOnly
+  return modulePermissionRole(user, 'staffUsers') === 'Super Admin' && organisationWide && !currentUser?.subscriptionReadOnly
     && currentUser?.subscriptionActive !== false && Boolean(clean(target.Username))
     && lower(target.Username) !== lower(currentUser?.username) && yes(target.Active) && !yes(target.PasswordSetupRequired);
 }
@@ -24118,7 +24128,7 @@ function renderStaffUsers() {
           <small data-requisition-edit-help>Separate from approval authority. Edits restart Accounts review and record the officer's name. Final-approved, paid and posted documents remain locked.</small>
           <label>Maximum approval amount<input name="ApprovalMaxAmount" type="number" min="0" step="0.01" value="0" data-finance-input><small>Zero blocks approval. Super Admin is unrestricted.</small></label>
         </div><div class="approval-account-list config-option-list"><strong>Accounts this user may approve directly from</strong>${staffApprovalAccounts.length ? staffApprovalAccounts.map((account) => `<label class="check-row"><input type="checkbox" name="ApprovalAccountOption" value="${escapeHtml(account.Code)}"> ${escapeHtml(account.Code)} - ${escapeHtml(account.Name || '')}</label>`).join('') : '<small>Create active Chart of Accounts entries in the desktop Finance tab first.</small>'}</div></section>
-        <section class="config-group" data-staff-tabs-group><header><strong>Additional module access</strong><small>Select extra modules for this staff member. Their role's default modules remain available automatically, including future role changes. Unchecked boxes do not remove role access. Leave all clear to use only the role defaults. My Payroll and Finance Requests &amp; Imprest remain available to ordinary staff accounts.</small></header><div class="approval-account-list config-option-list config-option-grid">${permissionTabs.map(([key, label]) => `<label class="check-row"><input type="checkbox" name="TabAccessOption" value="${escapeHtml(key)}"> ${escapeHtml(label)}</label>`).join('')}</div></section>
+        <section class="config-group" data-staff-tabs-group><header><strong>Additional module access</strong><small>Select extra modules to grant full module permissions within this staff member’s assigned branches. Their role's default modules remain available automatically, including future role changes. Unchecked boxes do not remove role access. Leave all clear to use only the role defaults. My Payroll and Finance Requests &amp; Imprest remain available to ordinary staff accounts.</small></header><div class="approval-account-list config-option-list config-option-grid">${permissionTabs.map(([key, label]) => `<label class="check-row"><input type="checkbox" name="TabAccessOption" value="${escapeHtml(key)}"> ${escapeHtml(label)}</label>`).join('')}</div></section>
         <section class="config-group"><header><strong>Security</strong><small>Password and account-state controls.</small></header><div class="config-grid">
           <label>New or reset password<input name="Password" type="password" minlength="6" autocomplete="new-password"><small>Required for a new account. Leave blank when editing unless resetting it.</small></label>
           <label>Password recovery email<input name="RecoveryEmail" type="email" maxlength="254" autocomplete="off"><small>Password recovery codes go to this inbox, not to HR contact details. No administrator email verification is needed. Staff can set or change it in their own Login details using their current password.</small></label>
@@ -24153,8 +24163,8 @@ function renderRoleAccessEditor(role = staffRoleAccessSelectedRole, roles = staf
   document.querySelectorAll('[name="RoleModuleOption"]').forEach((input) => {
     const fixed = ['External Auditor', 'Vendor User'].includes(staffRoleAccessSelectedRole);
     const procurement = staffRoleAccessSelectedRole === 'Procurement Officer' && input.value === 'procurement';
-    input.checked = allowed.has(input.value) || (!fixed && (universalStaffModules.has(input.value) || procurement));
-    input.disabled = fixed || universalStaffModules.has(input.value) || procurement;
+    input.checked = universalStaffModules.has(input.value) ? (policy.fullAccessModules || []).includes(input.value) : allowed.has(input.value) || (!fixed && procurement);
+    input.disabled = fixed || procurement;
     if (input.disabled) input.closest('label')?.setAttribute('title', fixed
       ? 'This role has a fixed, restricted workspace.'
       : procurement ? 'Procurement is included for every Procurement Officer.'
@@ -24172,6 +24182,7 @@ function renderRoleAccessEditor(role = staffRoleAccessSelectedRole, roles = staf
       : policy.locallyConfigured
         ? `Saved specifically for ${policy.source === 'global' ? 'all branches' : `branch ${policy.source}`}.`
         : 'Inheriting the organisation-wide role policy.';
+    if (!['External Auditor', 'Vendor User'].includes(staffRoleAccessSelectedRole)) source.textContent += ' Checked modules grant full module permissions in the assigned branches. Personal requisitions and payslips remain available without a management grant.';
     if (staffRoleAccessSelectedRole === 'Procurement Officer') source.textContent += ' Procurement is always included when enabled in the organisation plan.';
     if (staffRoleAccessSelectedRole === 'Recruitment Officer') source.textContent += ' Recruitment Officer is an HR role. For purchasing and supplies, choose Procurement Officer.';
   }
@@ -24750,7 +24761,7 @@ async function loadStaffUsers() {
   try {
     const [data, mfaAdministration] = await Promise.all([
       staffUserRequest('list', { includeAudit: false }),
-      clean(currentUser?.role) === 'Super Admin'
+      modulePermissionRole(currentUser, 'staffUsers') === 'Super Admin'
         ? mfaRequest('admin-status').catch((error) => ({ policy: null, accounts: [], error: error.message || String(error) }))
         : Promise.resolve(null)
     ]);

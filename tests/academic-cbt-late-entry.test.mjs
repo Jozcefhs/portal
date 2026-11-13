@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
-import vm from 'node:vm';
+import vm from './helpers/module-policy-vm.mjs';
 import {academicCbtLateEntryPlan as plan, academicCbtLateEntryRecord as record, sameCbtAssessmentPeriod, academicCbtAllStudentRefs} from '../functions/lib/academic-cbt-late-entry.js';
 import {academicCbtRosterAdditionPlan} from '../functions/lib/academic-cbt-roster-additions.js';
 import {commitAcademicCbtLateEntry} from '../functions/lib/academic-cbt-late-entry-commit.js';

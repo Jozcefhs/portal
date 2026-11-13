@@ -1,3 +1,4 @@
+import { modulePermissionRole } from './module-authority.js';
 import { getDocument, queryCollection, listCollection, batchCommitLiteralDocuments } from './firestore.js';
 import { feeBranchId, feeSetupBranch } from './fee-branch-scope.js';
 import { assignedStaffBranches } from './staff-branch-access.js';
@@ -222,7 +223,7 @@ async function resolveSavedScope(input, previous, body, dimension, loadOptions) 
 
 export async function handleBillingDiscounts(env, user, body, overrides = {}) {
   const db = { getDocument, queryCollection, listCollection, batchCommitLiteralDocuments, ...overrides };
-  const role = user.assignedRole || user.role;
+  const role = modulePermissionRole(user, 'accounts');
   if (!clean(user.username) || !['Super Admin', 'Director', 'Accounts Officer', 'Management', 'Treasurer'].includes(role) ||
       !(user.allowedSections || []).some(section => ['accounts', 'accounting'].includes(section))) fail('Accounts access is required to manage billing discounts.', 403);
   const branch = feeSetupBranch({ BranchId: body.BranchId || user.branchId || 'main', DeviceBranchId: user.deviceBranchId });

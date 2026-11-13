@@ -1,3 +1,5 @@
+import { assignedStaffBranches } from '../lib/staff-branch-access.js';
+import { modulePermissionRole } from '../lib/module-authority.js';
 import { requireFirestoreEnv } from '../lib/firestore.js';
 import { requireStaffSession, verifyStaffApprovalPassword } from '../lib/staff-auth.js';
 import { readJsonBody } from '../lib/request-security.js';
@@ -17,7 +19,7 @@ const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
 
 function requireBackupAdministrator(user) {
-  if (clean(user.role || user.Role) === 'Super Admin') return;
+  if (modulePermissionRole(user, 'dataBackup') === 'Super Admin' && assignedStaffBranches(user) === null) return;
   const error = new Error('Only a Super Administrator can back up or restore organisation data.');
   error.status = 403;
   throw error;

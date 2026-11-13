@@ -213,9 +213,7 @@ export function withRequiredRoleModules(role, modules = [], edition = 'school', 
     if (!normalized.includes('securityAudit')) normalized.push('securityAudit');
     if (!normalized.includes('staffUsers')) normalized.push('staffUsers');
   }
-  return normalizeModuleList(role === 'Admin'
-    ? normalized.filter((key) => !['staffUsers', 'dataBackup', 'securityAudit'].includes(key))
-    : normalized, edition, featureFlags);
+  return normalizeModuleList(normalized, edition, featureFlags);
 }
 
 function roleMapForScope(document, scope) {
@@ -239,6 +237,22 @@ export function configuredModulesForUser(document, user = {}, role = clean(user.
   return null;
 }
 
+export function explicitModulesForUser(document, user = {}, edition = 'school', featureFlags = null) {
+  const role = clean(user.assignedRole || user.AssignedRole || user.role || user.Role);
+  const scope = roleAccessScope(user);
+  const local = roleMapForScope(document, scope);
+  const global = roleMapForScope(document, 'global');
+  const source = Object.hasOwn(local, role) ? scope : 'global';
+  const configured = Object.hasOwn(local, role) ? local[role] : global[role] || [];
+  const explicit = document?.FullAccessScopes?.[source]?.[role]
+    ?? normalizeModuleList(configured, edition, featureFlags).filter(key => !STAFF_SELF_SERVICE_MODULES.includes(key));
+  const personal = user.tabAccess ?? user.TabAccess ?? [];
+  return normalizeModuleList([
+    ...normalizeModuleList(explicit, edition, featureFlags),
+    ...normalizeModuleList(personal, edition, featureFlags)
+  ], edition, featureFlags);
+}
+
 export function roleAccessView(document, user = {}, edition = 'school', featureFlags = null) {
   const scope = roleAccessScope(user);
   const local = roleMapForScope(document, scope);
@@ -253,6 +267,7 @@ export function roleAccessView(document, user = {}, edition = 'school', featureF
         : defaultModulesForRole(role, { edition, featureFlags }), edition, featureFlags);
     return [role, {
       modules,
+      fullAccessModules: explicitModulesForUser(document, { ...user, role, assignedRole: role, tabAccess: [] }, edition, featureFlags),
       source: localConfigured ? scope : globalConfigured ? 'global' : 'default',
       locallyConfigured: localConfigured
     }];

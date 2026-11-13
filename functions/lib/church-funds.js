@@ -1,3 +1,4 @@
+import { modulePermissionRole } from './module-authority.js';
 import { loadDatedHistory } from './history-date-range.js';
 import { getDocument, listCollection, upsertDocument } from './firestore.js';
 import {
@@ -26,7 +27,7 @@ const VIEW_ROLES = new Set(['Super Admin', 'Pastor', 'Church Administrator', 'Tr
 const MANAGE_ROLES = new Set(['Super Admin', 'Treasurer']);
 
 export function fundCapabilities(user = {}) {
-  const role = clean(user.role || user.Role);
+  const role = modulePermissionRole(user, 'funds');
   return {
     canView: VIEW_ROLES.has(role),
     canManageFunds: MANAGE_ROLES.has(role),

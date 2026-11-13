@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import vm from 'node:vm';
+import vm from './helpers/module-policy-vm.mjs';
 import { canonicalRecordEdition, staffRecordMatchesEdition } from '../functions/lib/records-desk.js';
 import { staffEmploymentDetails } from '../functions/lib/staff-employment.js';
 import { requiredDeploymentIdentity } from '../functions/lib/deployment-identity.js';

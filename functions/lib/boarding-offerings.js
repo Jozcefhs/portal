@@ -1,3 +1,4 @@
+import { modulePermissionRole } from './module-authority.js';
 import { batchCommitDocuments, getDocument, listCollectionForReport, queryCollectionPages } from './firestore.js';
 import { getAccountingChartRows } from './accounting-reference-cache.js';
 import { validateRequisitionPosting } from './requisition-posting.js';
@@ -53,7 +54,7 @@ async function verifyPreviews(env, user, scope, input, tokens) {
   }
 }
 export function offeringScope(user) {
-  if (!clean(user.username) || lower(user.edition) !== 'school' || !roles.has(clean(user.assignedRole || user.role))
+  if (!clean(user.username) || lower(user.edition) !== 'school' || !roles.has(modulePermissionRole(user, 'accounts'))
     || !(user.allowedSections || []).includes('accounts')) fail('Only school Accounts Officers, Directors and Super Admins with Accounts access may manage boarding offerings.', 403);
   if (!clean(user.branchId) || lower(user.branchId) === 'all') fail('Select one working branch before managing boarding offerings.', 403);
   const section = lower(user.schoolSectionAccess || 'All');

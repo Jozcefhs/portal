@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import vm from 'node:vm';
+import vm from './helpers/module-policy-vm.mjs';
 import { featureFlagsForEdition } from '../functions/lib/organization-config.js';
 import { allowedSectionsFor, sectionAccessFor } from '../functions/lib/staff-auth.js';
 import {
@@ -90,7 +90,7 @@ for (const edition of editions) {
     }
     for (const role of ['Admin', 'Management']) {
       const sections = allowedSectionsFor({ role, assignedRole: 'Admin', tabAccess: extras }, flags, { edition, roleModules: extras });
-      for (const key of ['staffUsers', 'dataBackup', 'securityAudit']) assert.ok(!sections.includes(key));
+      for (const key of ['staffUsers', 'dataBackup', 'securityAudit']) assert.ok(sections.includes(key));
       assert.ok(!sections.includes(edition === 'school' ? 'offerings' : 'students'));
     }
   });

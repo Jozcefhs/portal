@@ -1,3 +1,5 @@
+import { hasFullModuleAccess } from './module-authority.js';
+import { assignedStaffBranches } from './staff-branch-access.js';
 import {
   batchCommitDocuments,
   getDocument,
@@ -148,7 +150,7 @@ async function organizationResetPlan(env) {
 
 export async function previewOrganizationReset(env, user) {
   const actor = restoreActor(user);
-  if (actor.role !== 'Super Admin') throw restoreError('Only a Super Administrator can preview a test-data reset.', 403, 'RESET_FORBIDDEN');
+  if (actor.role !== 'Super Admin' && !actor.fullBackupAccess) throw restoreError('Only a Super Administrator can preview a test-data reset.', 403, 'RESET_FORBIDDEN');
   const plan = await organizationResetPlan(env);
   const listed = await plan.bucket.list({ prefix: plan.r2Prefix, limit: 1000 });
   return {
@@ -284,7 +286,8 @@ function restoreActor(user = {}) {
   return {
     username: lower(user.username || user.Username || user.__id),
     displayName: clean(user.displayName || user.DisplayName || user.username || user.Username),
-    role: clean(user.role || user.Role)
+    role: clean(user.role || user.Role),
+    fullBackupAccess: hasFullModuleAccess(user, 'dataBackup') && assignedStaffBranches(user) === null
   };
 }
 
@@ -374,7 +377,7 @@ async function currentRestoreJob(env, jobId, actor) {
 
 export async function prepareOrganizationRestore(env, user, manifest = {}, collectionPaths = [], safetyBackupCreated = false) {
   const actor = restoreActor(user);
-  if (actor.role !== 'Super Admin') throw restoreError('Only a Super Administrator can restore organisation data.', 403, 'BACKUP_RESTORE_FORBIDDEN');
+  if (actor.role !== 'Super Admin' && !actor.fullBackupAccess) throw restoreError('Only a Super Administrator can restore organisation data.', 403, 'BACKUP_RESTORE_FORBIDDEN');
   if (!safetyBackupCreated) throw restoreError('Create and download the automatic safety backup before restoring older data.', 409, 'BACKUP_SAFETY_REQUIRED');
   const identity = requiredDeploymentIdentity(env);
   validateManifest(identity, manifest);
@@ -406,7 +409,7 @@ export async function prepareOrganizationRestore(env, user, manifest = {}, colle
 
 export async function prepareOrganizationReset(env, user, options = {}) {
   const actor = restoreActor(user);
-  if (actor.role !== 'Super Admin') throw restoreError('Only a Super Administrator can reset organisation test data.', 403, 'RESET_FORBIDDEN');
+  if (actor.role !== 'Super Admin' && !actor.fullBackupAccess) throw restoreError('Only a Super Administrator can reset organisation test data.', 403, 'RESET_FORBIDDEN');
   if (options.safetyBackupCreated !== true) {
     throw restoreError('Download the automatic encrypted safety backup before resetting test data.', 409, 'RESET_SAFETY_REQUIRED');
   }

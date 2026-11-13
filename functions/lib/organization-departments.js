@@ -1,3 +1,4 @@
+import { hasFullModuleAccess } from './module-authority.js';
 import { loadDatedHistory } from './history-date-range.js';
 import { batchUpsertDocuments, deleteDocument, getDocument, listCollection, upsertDocument } from './firestore.js';
 import { CHURCH_COLLECTIONS, churchCollectionPath, safeChurchDocumentId } from './church-foundation.js';
@@ -35,15 +36,15 @@ const ORGANIZATION_MANAGE_ROLES = new Set(['Executive Director', 'Organisation A
 
 export function departmentCapabilities(user = {}) {
   const organizationRole = organizationOperationsRole(user);
-  const canManage = MANAGE_ROLES.has(role(user)) || ORGANIZATION_MANAGE_ROLES.has(organizationRole);
+  const canManage = hasFullModuleAccess(user, 'members') || MANAGE_ROLES.has(role(user)) || ORGANIZATION_MANAGE_ROLES.has(organizationRole);
   const canRecord = canManage || role(user) === 'Membership Officer' || organizationRole === 'Records Officer';
   return {
     canView: VIEW_ROLES.has(role(user)) || canRecord || Boolean((user.allowedSections || []).includes('members')),
     canManageDepartments: canManage,
     canManageMembers: canRecord,
     canRecordMeetings: canRecord,
-    canSubmitOfferings: OFFERING_ROLES.has(role(user)) || ['Executive Director', 'Organisation Administrator'].includes(organizationRole),
-    canConfirmRemittance: REMITTANCE_ROLES.has(role(user)),
+    canSubmitOfferings: hasFullModuleAccess(user, 'members') || OFFERING_ROLES.has(role(user)) || ['Executive Director', 'Organisation Administrator'].includes(organizationRole),
+    canConfirmRemittance: hasFullModuleAccess(user, 'members') || REMITTANCE_ROLES.has(role(user)),
     canManagePrograms: canManage,
     canManageForeignVisitors: canRecord
   };

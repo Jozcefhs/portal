@@ -1,3 +1,4 @@
+import { modulePermissionRole } from '../lib/module-authority.js';
 import { financeRequestPage, FINANCE_QUEUES } from '../lib/finance-request-queue.js';
 import { batchUpsertDocuments, deleteDocument, findOneByField, getDocument, listCollection, queryCollection, queryCollectionPages, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { getAccountingChartRows } from '../lib/accounting-reference-cache.js';
@@ -313,11 +314,11 @@ function capabilities(user) {
   return {
     canSubmit: Boolean(userDepartment(user)),
     canConfigureApprovals: canManageApprovalSettings(user),
-    canApprove: clean(user.role) === 'Super Admin' || Boolean(user.approvalEnabled),
-    canAdminOverride: clean(user.role) === 'Super Admin',
+    canApprove: modulePermissionRole(user, 'financeRequests') === 'Super Admin' || Boolean(user.approvalEnabled),
+    canAdminOverride: modulePermissionRole(user, 'financeRequests') === 'Super Admin',
     canEditRequisitions: canEditRequisitions(user),
-    canAccountsReview: ['Super Admin', 'Accounts Officer'].includes(clean(user.role)),
-    canViewAll: ['Super Admin', 'Director', 'Admin', 'Management', 'Accounts Officer'].includes(clean(user.assignedRole || user.role)),
+    canAccountsReview: ['Super Admin', 'Accounts Officer'].includes(modulePermissionRole(user, 'financeRequests')),
+    canViewAll: ['Super Admin', 'Director', 'Admin', 'Management', 'Accounts Officer'].includes(modulePermissionRole(user, 'financeRequests')),
     ...requisitionCapabilities(user)
   };
 }
@@ -676,15 +677,15 @@ async function submitBill(env, user, body) {
 }
 
 async function approvalLimitAllows(env, user, transactionType, value) {
-  assertFinanceRoleLimit(await listCollection(env, 'accountingApprovalLimits'), clean(user.role), transactionType, value);
-  if (user.role === 'Super Admin') return true;
+  assertFinanceRoleLimit(await listCollection(env, 'accountingApprovalLimits'), modulePermissionRole(user, 'financeRequests'), transactionType, value);
+  if (modulePermissionRole(user, 'financeRequests') === 'Super Admin') return true;
   if (!user.approvalEnabled) return false;
   const maximum = amount(user.approvalMaxAmount);
   return maximum > 0 && value <= maximum;
 }
 
 function approvalAccountAllows(user, existing, isBill) {
-  if (user.role === 'Super Admin') return true;
+  if (modulePermissionRole(user, 'financeRequests') === 'Super Admin') return true;
   const allowed = Array.isArray(user.approvalAccounts) ? user.approvalAccounts.map(lower).filter(Boolean) : [];
   if (!allowed.length) return false;
   const accountCode = clean(isBill ? existing.AccountCode : existing.ExpenseAccount);
@@ -725,7 +726,7 @@ async function advanceRequisition(env, user, body, request) {
   const requestedStatus = requestedRequisitionStatus(body.decision || body.status);
   const transition = assertRequisitionTransition(existing, user, requestedStatus);
   if (hasPrincipalApprovalGrant(user)) {
-    assertFinanceRoleLimit(await listCollection(env, 'accountingApprovalLimits'), clean(user.assignedRole || user.role), 'Expense', amount(existing.Amount));
+    assertFinanceRoleLimit(await listCollection(env, 'accountingApprovalLimits'), modulePermissionRole(user, 'financeRequests'), 'Expense', amount(existing.Amount));
   }
   if (transition.event === 'Posted') {
     if (!clean(body.recordVersion) || clean(body.recordVersion) !== clean(existing.__updateTime)) {
@@ -892,9 +893,9 @@ async function reviewRecord(env, user, body, request) {
     throw err;
   }
   const currentStatus = lower(existing.Status);
-  const isAdminOverride = user.role === 'Super Admin' && currentStatus === 'approved';
+  const isAdminOverride = modulePermissionRole(user, 'financeRequests') === 'Super Admin' && currentStatus === 'approved';
   if (currentStatus !== 'submitted' && !isAdminOverride) {
-    const err = new Error(`Only Submitted records can be reviewed${user.role === 'Super Admin' ? ', or an Approved record can be overridden by an administrator' : ''}. This record is ${existing.Status || 'unknown'}.`);
+    const err = new Error(`Only Submitted records can be reviewed${modulePermissionRole(user, 'financeRequests') === 'Super Admin' ? ', or an Approved record can be overridden by an administrator' : ''}. This record is ${existing.Status || 'unknown'}.`);
     err.status = 409;
     throw err;
   }

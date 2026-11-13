@@ -1,3 +1,4 @@
+import { modulePermissionRole } from './module-authority.js';
 import { loadDatedHistory } from './history-date-range.js';
 import { batchUpsertDocuments, getDocument, listCollection, upsertDocument } from './firestore.js';
 import {
@@ -72,7 +73,7 @@ export function organizationOperationsRole(user = {}) {
 }
 
 export function membershipCapabilities(user = {}) {
-  const role = clean(user.role || user.Role);
+  const role = modulePermissionRole(user, 'members');
   const personnelAccess = ORGANIZATION_PERSONNEL_ROLES.has(organizationOperationsRole(user));
   return {
     canView: MEMBER_ROLES.has(role) || personnelAccess,

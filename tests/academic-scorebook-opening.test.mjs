@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import vm from 'node:vm';
+import vm from './helpers/module-policy-vm.mjs';
 import * as management from '../functions/lib/academic-management.js';
 import * as studentRoster from '../functions/lib/academic-student-status-roster.js';
 import * as scorebook from '../functions/lib/academic-scorebook.js';
@@ -58,7 +58,7 @@ function fixture() {
     getSchoolStructure: async () => ({ ActiveBranchId: 'main', Branches: [{ Id: 'main' }], Sections: ['primary', 'secondary'] }),
     enforceActorBranch: (_actor, branch) => branch,
     queryCollection: read, queryCollectionPages: read, listBranchCollection: read, listSchoolCollection: read,
-    getDocument: async () => { throw new Error('Opening the register must not load assessment policy'); },
+    getDocument: async (_env, collection, id) => { if (collection === 'settings' && id === 'academic-curriculum-main') return null; throw new Error('Opening the register must not load assessment policy'); },
     batchCommitDocuments: async (_env, changes) => { writes.push(changes); }
   });
   vm.runInContext(source.replace(/^import[\s\S]*?;\r?\n/gm, '').replace(/^export /gm, ''), context);

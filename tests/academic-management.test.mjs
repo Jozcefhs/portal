@@ -1413,20 +1413,21 @@ test('web and desktop class and arm actions never write the organisation legacy 
   assert.match(deleteSource, /branchClassCatalogueRevisionWrite/);
 });
 
-test('Academic Management staff candidates include active Teachers and exact Academics Department Users', () => {
+test('Academic Management staff candidates include active Teachers and Academics staff regardless of role', () => {
   const candidates = academicSubjectTeacherCandidates([
     { Username: 'academics-all', Role: 'Department User', Department: 'Academics', Active: true, SchoolSectionAccess: 'All' },
     { Username: 'academics-primary', Role: 'Department User', Department: 'Academics', Active: 'YES', SchoolSectionAccess: 'Primary' },
+    { Username: 'academic-accounts', Role: 'Accounts Officer', Department: 'Academics', Active: true, SchoolSectionAccess: 'Primary' },
     { Username: 'teacher', Role: 'Teacher', Department: '', Active: true, SchoolSectionAccess: 'All' },
     { Username: 'wrong-department', Role: 'Department User', Department: 'Academic Department', Active: true, SchoolSectionAccess: 'All' },
     { Username: 'inactive', Role: 'Department User', Department: 'Academics', Active: false, SchoolSectionAccess: 'All' },
     { Username: 'secondary', Role: 'Department User', Department: 'Academics', Active: true, SchoolSectionAccess: 'Secondary' }
   ], 'primary');
-  assert.deepEqual(candidates.map((row) => row.Username), ['academics-all', 'academics-primary', 'teacher']);
+  assert.deepEqual(candidates.map((row) => row.Username), ['academics-all', 'academics-primary', 'academic-accounts', 'teacher']);
   assert.match(librarySource, /ACADEMIC_TEACHER_DEPARTMENT_INVALID/);
   assert.match(librarySource, /staff: displayStaff\(academicSubjectTeacherCandidates\(visibleStaff, scope\.section\)\)/);
   assert.match(adminSource, /function academicManagementStaffCandidates/);
-  assert.match(adminSource, /role === 'teacher' \|\| \(role === 'department user' && department === 'academics'\)/);
+  assert.match(adminSource, /role === 'teacher' \|\| department === 'academics'/);
 });
 
 test('subject-teacher allocations can be corrected atomically or permanently deleted', () => {
@@ -1546,7 +1547,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /data-academic-workflow="bulkAssignAcademicArmStudentSubjects"/);
   assert.match(adminSource, /function academicArmSubjectRegister/);
   assert.match(adminSource, /profile\.mixedClassroom \? 'choose for this student' : 'locked'/);
-  assert.match(adminSource, /Trade · choose at least one/);
+  assert.match(adminSource, /Trade ·.*optional.*choose at least one/);
   assert.match(adminSource, /must have at least one Trade subject/);
   assert.match(adminSource, /Assignments: assignments/);
   assert.match(adminSource, /function updateAcademicArmStudentSubjectCounts/);

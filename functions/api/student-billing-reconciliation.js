@@ -1,3 +1,4 @@
+import { modulePermissionRole } from '../lib/module-authority.js';
 import { getDocument, listCollectionForReport, queryCollectionPages, requireFirestoreEnv } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { schoolCollectionPaths, querySchoolCollection } from '../lib/school-scope.js';
@@ -18,7 +19,7 @@ export async function onRequestPost({ request, env }) {
   try {
     requireFirestoreEnv(env);
     const user = await requireStaffSession(env, request);
-    if (user.role !== 'Super Admin' || user.edition !== 'school' || !clean(user.branchId) || ['all', '*'].includes(clean(user.branchId).toLowerCase()) ||
+    if (modulePermissionRole(user, 'accounts') !== 'Super Admin' || user.edition !== 'school' || !clean(user.branchId) || ['all', '*'].includes(clean(user.branchId).toLowerCase()) ||
       !(user.allowedSections || []).includes('accounts') || !(user.allowedSections || []).includes('students')) {
       fail('Select a school branch and use a Super Admin account with Accounts and Students access.', 403);
     }

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import vm from 'node:vm';
+import vm from './helpers/module-policy-vm.mjs';
 import { readFile } from 'node:fs/promises';
 
 const backend = await readFile(new URL('../functions/lib/academic-management.js', import.meta.url), 'utf8');

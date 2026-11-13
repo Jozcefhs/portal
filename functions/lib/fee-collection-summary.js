@@ -1,3 +1,4 @@
+import { modulePermissionRole } from './module-authority.js';
 import { listCollectionPage, queryCollection } from './firestore.js';
 import { recordBranchId, resolveRequestedBranch } from './branch-scope.js';
 import { feeBranchId } from './fee-branch-scope.js';
@@ -25,7 +26,7 @@ export function feeCollectionDate(value) {
 }
 
 export function feeCollectionScope(user, body) {
-  if (!clean(user.username) || !financeRoles.has(user.assignedRole || user.role)
+  if (!clean(user.username) || !financeRoles.has(modulePermissionRole(user, 'accounts'))
     || !(user.allowedSections || []).some(section => ['accounts', 'incomeAnalytics'].includes(section))) {
     fail('Your staff account is not permitted to view fee collection totals.', 403);
   }

@@ -168,7 +168,7 @@ test('preview token changes on profile or charge changes but permits newly recei
 
 test('reconciliation route requires branch-scoped school finance authority and complete reports', async () => {
   const route = await readFile(new URL('../functions/api/student-billing-reconciliation.js', import.meta.url), 'utf8');
-  assert.match(route, /user.role !== 'Super Admin'/);
+  assert.match(route, /modulePermissionRole\(user, 'accounts'\) !== 'Super Admin'/);
   assert.match(route, /user.edition !== 'school'/);
   assert.match(route, /includes\('accounts'\)/);
   assert.match(route, /includes\('students'\)/);

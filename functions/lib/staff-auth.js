@@ -9,6 +9,7 @@ import {
 import { deploymentIdentityDetails, requiredDeploymentIdentity } from './deployment-identity.js';
 import {
   configuredModulesForUser,
+  explicitModulesForUser,
   defaultModulesForRole,
   withRequiredRoleModules
 } from './role-module-access.js';
@@ -412,6 +413,7 @@ export function sectionAccessFor(user = {}, organization = {}, roleAccess = null
     gracePeriodEndsAt: clean(organization.GracePeriodEndsAt || organization.gracePeriodEndsAt),
     dataRetentionEndsAt: clean(organization.DataRetentionEndsAt || organization.dataRetentionEndsAt),
     subscriptionMessage: clean(organization.SubscriptionMessage || organization.subscriptionMessage),
+    fullAccessModules: explicitModulesForUser(roleAccess, user, edition, featureFlags).filter(module => effectiveAllowedSections.includes(module)),
     allowedSections: effectiveAllowedSections,
     vendorSettlementApprovalOnly,
     availableSections,

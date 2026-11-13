@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import vm from 'node:vm';
+import vm from './helpers/module-policy-vm.mjs';
 import * as workflow from '../functions/lib/requisition-workflow.js';
 import { sectionAccessFor } from '../functions/lib/staff-auth.js';
 import { featureFlagsForEdition } from '../functions/lib/organization-config.js';

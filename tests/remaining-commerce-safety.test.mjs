@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import vm from 'node:vm';
+import vm from './helpers/module-policy-vm.mjs';
 import { enforceActorBranch } from '../functions/lib/branch-scope.js';
 import * as procurementGuards from '../functions/lib/procurement-inventory-guard.js';
 import { assertNoKeyHandoff, guestAccessWrite } from '../functions/lib/hotel-self-service.js';

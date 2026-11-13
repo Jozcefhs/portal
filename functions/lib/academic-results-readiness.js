@@ -1,3 +1,4 @@
+import { academicTradeRequired } from './academic-curriculum-settings.js';
 import {queryCollectionPages} from './firestore.js';
 import {scopedCollectionPath} from './school-scope.js';
 import {academicPolicyIssues, academicPolicyScopeChain} from './academic-policy.js';
@@ -76,10 +77,10 @@ export function buildAcademicResultsReadiness(state, scope, policyView = {}, stu
     const assigned = membership.SubjectIds || [];
     for (const subjectId of assigned) if (!subjects.has(lower(subjectId))) add(blockers, 'MISSING_SUBJECT_REFERENCE', 'A currently assigned subject is missing from the catalogue. Restore or correctly relink the subject; preserve its existing scores.', membership);
     const hasTrade = assigned.some(subjectId => lower(subjects.get(lower(subjectId))?.SeniorChoiceRole) === 'trade');
-    if (/senior/i.test(membership.SchoolStage || schoolClass?.SchoolStage || '') && !hasTrade) {
+    if (academicTradeRequired(state) && /senior/i.test(membership.SchoolStage || schoolClass?.SchoolStage || '') && !hasTrade) {
       add(warnings, 'TRADE_SELECTION_REVIEW', 'No assigned subject is currently classified as Trade. Review the saved choices; a Trade subject already selected but not taught should remain selected.', membership);
     }
-    if (/pending/i.test(clean(membership.CurriculumStatus))) {
+    if (/pending/i.test(clean(membership.CurriculumStatus)) && !(!academicTradeRequired(state) && lower(membership.CurriculumStatus) === 'pending trade selection')) {
       add(warnings, 'SAVED_CURRICULUM_FLAG', `Saved curriculum flag: ${membership.CurriculumStatus}. Actual subject and mark checks below determine readiness; this flag alone does not block results.`, membership);
     }
     if (result && (result.ArmId !== membership.ArmId || result.SubjectChangeRecalculationRequired || (result.SubjectSelectionSnapshot &&

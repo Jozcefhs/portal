@@ -1,3 +1,4 @@
+import { modulePermissionRole } from './module-authority.js';
 import { loadDatedHistory } from './history-date-range.js';
 import { getDocument, listCollection, upsertDocument } from './firestore.js';
 import {
@@ -28,7 +29,7 @@ const SERVICE_OCCURRENCE_STATUSES = new Map([
 ]);
 
 export function serviceCapabilities(user = {}) {
-  const role = clean(user.role || user.Role);
+  const role = modulePermissionRole(user, 'services');
   const organizationRole = organizationOperationsRole(user);
   const canManage = MANAGE_ROLES.has(role) || ORGANIZATION_MANAGE_ROLES.has(organizationRole);
   const canView = VIEW_ROLES.has(role) || ORGANIZATION_MANAGE_ROLES.has(organizationRole) || organizationRole === 'Records Officer';

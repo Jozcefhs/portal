@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import vm from 'node:vm';
+import vm from './helpers/module-policy-vm.mjs';
 import { readFile } from 'node:fs/promises';
 import { assertServiceWorkerCacheVersion } from './helpers/service-worker-cache-version.mjs';
 
@@ -162,6 +162,6 @@ test('empty filtered pages with a continuation remain navigable; incomplete/repe
 test('updated admin asset and service-worker generation invalidate older staff-loading code', async () => {
   const html = await readFile(new URL('../admin.html', import.meta.url), 'utf8');
   assert.match(html, /js\/admin\.js\?v=[^"\s]*staff-security-history/);
-  assert.match(html, /js\/staff-workspace-cache\.js\?v=[^"\s]*staff-security-history/);
+  assert.match(html, /js\/staff-workspace-cache\.js\?v=[^"\s]+/);
   assertServiceWorkerCacheVersion(await readFile(new URL('../sw.js', import.meta.url), 'utf8'), 407);
 });

@@ -1,3 +1,4 @@
+import { modulePermissionRole } from './module-authority.js';
 import { loadDatedHistory } from './history-date-range.js';
 import {
   batchCommitDocuments,
@@ -31,7 +32,7 @@ function actor(user = {}) {
 }
 
 function requireRole(user, roles, message) {
-  if (!roles.has(clean(user.role || user.Role))) fail(message, 403);
+  if (!roles.has(modulePermissionRole(user, 'donations'))) fail(message, 403);
 }
 
 function branchFor(user, body = {}) {
@@ -297,7 +298,7 @@ export async function markCurrencySettlementAccounting(env, branchId, batchId, s
 export async function donationWorkspaceSupplement(env, user, body = {}, donations = []) {
   requireRole(user, VIEW_ROLES, 'This staff account cannot view donation management data.');
   const branchId = branchFor(user, body);
-  const canManage = MANAGE_ROLES.has(clean(user.role || user.Role));
+  const canManage = MANAGE_ROLES.has(modulePermissionRole(user, 'donations'));
   const [donors, settings, settlements] = await Promise.all([
     canManage ? listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.donors, branchId)).catch(() => []) : Promise.resolve([]),
     getDonationCurrencySettings(env, branchId),

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import vm from 'node:vm';
+import vm from './helpers/module-policy-vm.mjs';
 import { billingPreviewStudent } from '../functions/api/student-billing-preview.js';
 
 const source = (await readFile(new URL('../functions/api/student-billing-reconciliation.js', import.meta.url), 'utf8'))

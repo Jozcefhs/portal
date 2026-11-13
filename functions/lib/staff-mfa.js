@@ -1,3 +1,4 @@
+import { modulePermissionRole } from './module-authority.js';
 import QRCode from 'qrcode';
 import { staffCredentialEpochCurrent, staffCredentialWriteGuard } from './staff-credential-state.js';
 import { recoverStaffSecurity } from './staff-security-recovery.js';
@@ -774,7 +775,7 @@ export async function saveStaffMfaPolicy(env, request, body = {}) {
   const assignedBranchId = clean(
     user.assignedBranchId || (user.canSwitchBranches === false ? user.branchId : '')
   );
-  if (clean(user.role) !== 'Super Admin' || assignedBranchId) {
+  if (modulePermissionRole(user, 'staffUsers') !== 'Super Admin' || assignedBranchId) {
     const error = new Error('Only an organisation-wide Super Administrator can change the two-factor policy.');
     error.status = 403;
     throw error;
@@ -816,7 +817,7 @@ export async function staffMfaAdministrationStatus(env, request) {
   const assignedBranchId = clean(
     user.assignedBranchId || (user.canSwitchBranches === false ? user.branchId : '')
   );
-  if (clean(user.role) !== 'Super Admin' || assignedBranchId) {
+  if (modulePermissionRole(user, 'staffUsers') !== 'Super Admin' || assignedBranchId) {
     const error = new Error('Only an organisation-wide Super Administrator can view two-factor status.');
     error.status = 403;
     throw error;

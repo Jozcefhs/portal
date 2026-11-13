@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import vm from 'node:vm';
+import vm from './helpers/module-policy-vm.mjs';
 import { studentBillingReviewRoster, studentBillingReviewBatch } from '../functions/lib/student-billing-review.js';
 import { studentBillingReconciliationPlan } from '../functions/api/backend.js';
 

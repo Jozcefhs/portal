@@ -1,3 +1,4 @@
+import { modulePermissionRole } from '../lib/module-authority.js';
 import { requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { readJsonBody, beginIdempotentRequest, completeIdempotentRequest, failIdempotentRequest } from '../lib/request-security.js';
@@ -42,7 +43,7 @@ export async function onRequestPost(context) {
     const { env, request } = context;
     requireFirestoreEnv(env);
     const user = await requireStaffSession(env, request);
-    if (user.role !== 'Super Admin') throw auditError('Only a Super Administrator can supply supporting audit documents.', 403);
+    if (modulePermissionRole(user, 'externalAudit') !== 'Super Admin') throw auditError('Only a Super Administrator can supply supporting audit documents.', 403);
     const input = await readJsonBody(request, { maxBytes: 12 * 1024 * 1024 });
     const scope = authorizedScope(user, input);
     if (scope.branchId === 'all') throw auditError('Choose the branch this document belongs to before uploading it.');

@@ -1,3 +1,5 @@
+import { hasFullModuleAccess, modulePermissionRole } from './module-authority.js';
+import { academicTradeRequired, academicCurriculumSettingId } from './academic-curriculum-settings.js';
 import { listBranchCollection } from './branch-reads.js';
 import { batchCommitDocuments, getDocument, getDocuments, listCollection, queryCollection, queryCollectionPages } from './firestore.js';
 import { commitAcademicCbtRoster } from './academic-cbt-roster-commit.js';
@@ -654,7 +656,7 @@ function isAcademicsDepartmentUser(user = {}) {
 }
 
 function isAcademicsDepartmentStaff(row = {}) {
-  return lower(row.Role || row.role) === 'teacher' || isAcademicsDepartmentUser(row);
+  return lower(row.Role || row.role) === 'teacher' || lower(row.Department || row.department) === 'academics';
 }
 
 export function academicSubjectTeacherCandidates(rows = [], schoolSection = '') {
@@ -674,14 +676,14 @@ export function academicWebActor(user = {}) {
 }
 
 export function academicManagementCapabilities(user = {}) {
-  const role = clean(user.role || user.Role);
+  const role = modulePermissionRole(user, 'academics');
   const allowed = new Set((user.allowedSections || user.TabAccess || []).map(clean).filter(Boolean));
   const school = isSchoolEdition(user);
-  const academicsDepartmentUser = isAcademicsDepartmentUser(user);
+  const academicsDepartmentUser = !hasFullModuleAccess(user, 'academics') && isAcademicsDepartmentUser(user);
   const enabled = school && (allowed.has('academics') || academicsDepartmentUser);
   return {
     enabled,
-    fullAcademicAccess: enabled && role === 'ICT' && user[ACADEMIC_WEB_ACTOR] === true,
+    fullAcademicAccess: enabled && clean(user.assignedRole || user.role || user.Role) === 'ICT' && user[ACADEMIC_WEB_ACTOR] === true,
     canManageStructure: enabled && STRUCTURE_MANAGERS.has(role),
     canManageAllocations: enabled && ALLOCATION_MANAGERS.has(role),
     canAllocateClassStudents: enabled && (ALLOCATION_MANAGERS.has(role)
@@ -1399,10 +1401,11 @@ export function academicMigrationReadiness(state = {}, students = []) {
     if (stage === 'senior-secondary' && arm?.DepartmentId && !departments.has(arm.DepartmentId)) {
       add('Warning', 'PENDING_SENIOR_DEPARTMENT', 'Choose a valid department for this classroom, or set it to Mixed departments.', 'student membership', id, membershipLabel(row));
     }
-    if (stage === 'senior-secondary' && !(row.TradeSubjectIds || []).length) {
+    if (stage === 'senior-secondary' && academicTradeRequired(state) && !(row.TradeSubjectIds || []).length) {
       add('Warning', 'PENDING_TRADE_SUBJECT', 'This Senior student must choose at least one Trade subject.', 'student membership', id, membershipLabel(row));
     }
-    if (/pending/i.test(clean(row.CurriculumStatus))) {
+    if (/pending/i.test(clean(row.CurriculumStatus)) && !(stage === 'senior-secondary'
+      && !academicTradeRequired(state) && lower(row.CurriculumStatus) === 'pending trade selection')) {
       add('Warning', 'PENDING_CURRICULUM', 'This student curriculum is still marked for completion.', 'student membership', id, membershipLabel(row));
     }
     if (lower(row.Status) === 'active') {
@@ -1595,7 +1598,7 @@ export function applyAcademicStudentCurriculum(state = {}, record = {}, options 
   }
   const selectedTrade = uniqueIds([...suppliedTrade, ...requestedSubjects.filter((subjectId) => tradeSet.has(subjectId))]);
   const selectedOptional = uniqueIds([...suppliedOptional, ...requestedSubjects.filter((subjectId) => optionalSet.has(subjectId))]);
-  if (record.SchoolStage === 'senior-secondary' && options.requireTradeSelection === true) {
+  if (record.SchoolStage === 'senior-secondary' && options.requireTradeSelection === true && academicTradeRequired(state)) {
     if (!tradeAvailable.length) throw failure('Configure at least one school-wide Senior Trade subject before completing subject selection.');
     if (!selectedTrade.length) throw failure('Every Senior Secondary student must select at least one Trade subject.');
   }
@@ -1610,6 +1613,7 @@ export function applyAcademicStudentCurriculum(state = {}, record = {}, options 
       ? 'Pending Classroom Assignment'
       : !coreSubjectIds.length
         ? 'Pending Core Selection'
+      : !academicTradeRequired(state) ? 'Complete'
       : !tradeAvailable.length
         ? 'Trade Subjects Not Configured'
         : record.TradeSubjectIds.length ? 'Complete' : 'Pending Trade Selection';
@@ -1918,7 +1922,7 @@ function validateAcademicRecord(state, type, record, people = {}) {
     const teacher = people.staff.find((row) => lower(row.Username || row.username || row.__id) === record.TeacherUsername);
     if (!teacher || !activeValue(teacher.Active, true)) throw failure('The selected teacher is not an active staff account in this branch.');
     if (!isAcademicsDepartmentStaff(teacher)) {
-      throw failure('Academic Management staff must have the Teacher role or the Department User role in the Academics department.', 409, 'ACADEMIC_TEACHER_DEPARTMENT_INVALID');
+      throw failure('Select an active Teacher or a staff member in the Academics department.', 409, 'ACADEMIC_TEACHER_DEPARTMENT_INVALID');
     }
     const teacherSection = lower(teacher.SchoolSectionAccess || teacher.schoolSectionAccess || 'all');
     if (['primary', 'secondary'].includes(teacherSection) && teacherSection !== record.SchoolSection) {
@@ -2085,11 +2089,13 @@ export function scopedAcademicRows(rows, scope) {
 }
 
 function scopedAcademicState(state, scope) {
-  return Object.fromEntries(Object.entries(state).map(([key, rows]) => [key, scopedAcademicRows(rows, scope)]));
+  return Object.fromEntries(Object.entries(state).map(([key, rows]) => [key, key === 'curriculumSettings' ? rows : scopedAcademicRows(rows, scope)]));
 }
 
 async function loadScopedAcademicState(env, scope, requestedKeys, scoreReadScope = {}) {
-  return scopedAcademicState(await loadAcademicState(env, scope.branchId, requestedKeys, scoreReadScope), scope);
+  const state = scopedAcademicState(await loadAcademicState(env, scope.branchId, requestedKeys, scoreReadScope), scope);
+  if (scope.section !== 'primary' && requestedKeys.includes('subjects') && (requestedKeys.includes('departments') || scoreReadScope.IncludeCurriculumSettings)) state.curriculumSettings = await getDocument(env, 'settings', academicCurriculumSettingId(scope.branchId)) || {};
+  return state;
 }
 
 export function academicManagementSummary(state = {}) {
@@ -2377,7 +2383,7 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}, sc
     : setupPeriod ? focusedStateKeys.filter(key => !['sessions', 'terms'].includes(key)) : focusedStateKeys;
   const [loadedState, people, reportProfile] = await Promise.all([
     remainingKeys.length ? loadScopedAcademicState(env, scope, remainingKeys, readPlan.requested || readPlan.setup ? {
-      ...scoreReadScope, WorkspaceRead: true, ClassId: requestedClassId,
+      ...scoreReadScope, WorkspaceRead: true, ClassId: requestedClassId, IncludeCurriculumSettings: focusedView === 'readiness',
       SessionId: clean(input.SessionId), TermId: clean(input.TermId),
       ...(teacherAllocationView ? { ClassroomRegisterTeacher: actorUsername(user) } : {})
     } : teacherRegisterOnly || teacherAllocationView ? { ClassroomRegisterTeacher: actorUsername(user), SessionId: input.SessionId, TermId: input.TermId } : scoreReadScope) : Promise.resolve({}),
@@ -2389,7 +2395,7 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}, sc
       ? getDocument(env, 'settings', 'schoolProfile').catch(() => ({}))
       : Promise.resolve(null)
   ]);
-  const rawState = teacherSelectors ? {...teacherSelectors,
+  const rawState = teacherSelectors ? {...teacherSelectors, curriculumSettings: loadedState.curriculumSettings || teacherSelectors.curriculumSettings,
     ...Object.fromEntries(remainingKeys.map(key => [key,loadedState[key] || []]))}
     : setupPeriod ? {...loadedState, sessions:setupPeriod.sessions, terms:setupPeriod.terms} : loadedState;
   if (rosterPeople) {
@@ -2546,6 +2552,7 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}, sc
     })),
     allocationPeriod: teacherAllocationView ? allocationPeriod : null,
     ...(teacherAllocationView ? { studentMovements: [] } : {}),
+    curriculumSettings: { RequireTradeSubject: academicTradeRequired(state) },
     sections: scope.structure.Sections,
     ...(selection ? { selection } : {}),
     ...(includeAssessmentPolicy && ['scorebook', 'cbt'].includes(focusedView) ? { assessmentScheme } : {}),
@@ -3095,12 +3102,14 @@ export async function configureAcademicSeniorChoiceSubjects(env, user = {}, inpu
   }
   const tradeSubjectIds = uniqueIds(input.TradeSubjectIds || input.TradeSubjectId);
   const optionalSubjectIds = uniqueIds(input.OptionalSubjectIds || input.OptionalSubjectId);
-  if (!tradeSubjectIds.length) throw failure('Choose at least one school-wide Senior Trade subject.');
   const tradeSet = new Set(tradeSubjectIds);
   const overlap = optionalSubjectIds.filter((subjectId) => tradeSet.has(subjectId));
   if (overlap.length) throw failure('A subject cannot be both Trade and Optional. Choose only one category for each subject.');
 
   const state = await loadScopedAcademicState(env, scope, ACADEMIC_DEPARTMENT_STATE_KEYS);
+  const requireTrade = input.RequireTradeSubject === undefined ? academicTradeRequired(state)
+    : ![false, 'false', 'no', 'off', '0'].includes(typeof input.RequireTradeSubject === 'string' ? lower(input.RequireTradeSubject) : input.RequireTradeSubject);
+  if (requireTrade && !tradeSubjectIds.length) throw failure('Choose at least one Trade subject, or turn off compulsory Trade selection.');
   const configuredIds = new Set([...tradeSubjectIds, ...optionalSubjectIds]);
   const coreSubjectIds = new Set(academicSeniorCoreSubjectIds(state.departments));
   if ([...configuredIds].some((subjectId) => coreSubjectIds.has(subjectId))) {
@@ -3115,6 +3124,12 @@ export async function configureAcademicSeniorChoiceSubjects(env, user = {}, inpu
 
   const writes = [];
   let updated = 0;
+  if (requireTrade !== academicTradeRequired(state)) {
+    writes.push({ collectionPath: 'settings', documentId: academicCurriculumSettingId(scope.branchId),
+      data: { ...withoutMetadata(state.curriculumSettings), BranchId: scope.branchId, RequireTradeSubject: requireTrade, UpdatedAt: nowIso(), UpdatedBy: actorUsername(user) },
+      ...(state.curriculumSettings?.__updateTime ? { updateTime: state.curriculumSettings?.__updateTime } : { exists: false }) });
+    updated += 1;
+  }
   state.subjects.filter((subject) => lower(subject.SchoolSection) === 'secondary').forEach((subject) => {
     const desiredRole = tradeSet.has(subject.SubjectId)
       ? 'Trade'
@@ -3137,7 +3152,7 @@ export async function configureAcademicSeniorChoiceSubjects(env, user = {}, inpu
     BranchId: scope.branchId,
     SchoolSection: scope.section,
     SubjectId: `senior-choices-${Date.now()}`
-  }, `${tradeSubjectIds.length} school-wide Senior Trade subject(s) and ${optionalSubjectIds.length} Optional subject(s) configured.`));
+  }, `${tradeSubjectIds.length} school-wide Senior Trade subject(s) and ${optionalSubjectIds.length} Optional subject(s) configured. Trade selection ${requireTrade ? 'required' : 'optional'}.`));
   await commitAcademicBatch(env, writes, 'The subject catalogue changed while Senior choices were being saved. Reload and try again.');
   const response = await bootstrapAcademicManagement(env, user, {
     ...input,

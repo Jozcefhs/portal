@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import vm from 'node:vm';
+import vm from './helpers/module-policy-vm.mjs';
 import { readFile } from 'node:fs/promises';
 import { canonicalCatalogueClassName } from '../functions/lib/class-names.js';
 import { schoolSectionFor } from '../functions/lib/school-scope.js';

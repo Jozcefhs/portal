@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import vm from 'node:vm';
+import vm from './helpers/module-policy-vm.mjs';
 import { assertAcademicScoreSheetAuthority, academicScorebookSnapshot, ACADEMIC_SCOREBOOK_STATE_KEYS } from '../functions/lib/academic-management.js';
 import { academicComponentReviews } from '../functions/lib/academic-component-review.js';
 

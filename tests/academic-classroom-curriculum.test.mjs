@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { webcrypto } from 'node:crypto';
-import vm from 'node:vm';
+import vm from './helpers/module-policy-vm.mjs';
 import * as management from '../functions/lib/academic-management.js';
 import * as timetable from '../functions/lib/academic-timetable-attendance.js';
 import * as scorebook from '../functions/lib/academic-scorebook.js';
@@ -30,7 +30,7 @@ function fixture() {
       { ...scope, DepartmentId: 'old', SchoolStage: 'senior-secondary', CoreSubjectIds: ['history'], Status: 'Inactive' }
     ],
     subjects: ['english', 'physics', 'economics', 'history', 'catering', 'music'].map(id => ({
-      ...scope, SubjectId: id, Name: id, SeniorChoiceRole: id === 'catering' ? 'Trade' : id === 'music' ? 'Optional' : ''
+      ...scope, SubjectId: id, Code: id, Name: id, SeniorChoiceRole: id === 'catering' ? 'Trade' : id === 'music' ? 'Optional' : ''
     })),
     offerings: [], teacherAllocations: [], studentMemberships: [clone(base)]
   };
@@ -177,6 +177,7 @@ function batchHarness(state = fixture()) {
   const user = { edition: 'school', role: 'Super Admin', allowedSections: ['academics'], username: 'admin' };
   return {
     writes,
+    configure: input => context.configureAcademicSeniorChoiceSubjects({}, user, { BranchId: 'main', SchoolSection: 'secondary', ...input }),
     save: (selection = {}, actor = user) => context.bulkAssignAcademicArmStudentSubjects({}, actor, {
       ...period, ...scope, Assignments: [{ MembershipId: 'membership', RevisionToken: 'rev-1', TradeSubjectIds: ['catering'], OptionalSubjectIds: [], ...selection }]
     }),
@@ -269,4 +270,59 @@ test('switching a classroom to Mixed writes only its definition, audit and catal
   assert.equal(writes.find(row => row.collectionPath === 'academicArms').data.DepartmentId, '');
   assert.deepEqual(new Set(writes.map(row => row.collectionPath)), new Set(['academicArms', 'academicManagementAudit', 'branchSchoolSettings']));
   assert.deepEqual(state.studentMemberships, [base]);
+});
+
+
+test('Trade can be optional without changing Core rules, existing choices or any scores', () => {
+  const state = fixture(); state.curriculumSettings = {RequireTradeSubject:false};
+  const before = clone(state);
+  const record = {...clone(base), SubjectIds:['english','physics'], TradeSubjectIds:[]};
+  const saved = management.applyAcademicStudentCurriculum(state,record,{requireTradeSelection:true});
+  assert.equal(saved.CurriculumStatus,'Complete');
+  assert.deepEqual(saved.TradeSubjectIds,[]);
+  assert.deepEqual(saved.SubjectIds,['english','physics']);
+  assert.deepEqual(state,before);
+  assert.throws(()=>management.applyAcademicStudentCurriculum(state,{...record,SubjectIds:[],CoreSubjectIds:[]},{requireTradeSelection:true}),/Core/);
+  const kept=management.applyAcademicStudentCurriculum(state,clone(base),{requireTradeSelection:true});
+  assert.deepEqual(kept.SubjectIds,base.SubjectIds);
+  state.curriculumSettings.RequireTradeSubject=true;
+  assert.throws(()=>management.applyAcademicStudentCurriculum(state,clone(record),{requireTradeSelection:true}),/at least one Trade/);
+});
+
+test('Trade switch saves only branch settings and audit, and repeating it writes nothing',async()=>{
+  const state=fixture();const h=batchHarness(state);
+  await h.configure({TradeSubjectIds:['catering'],OptionalSubjectIds:['music'],RequireTradeSubject:false});
+  assert.deepEqual(h.writes.map(w=>w.collectionPath),['settings','academicManagementAudit']);
+  const setting=h.writes[0];
+  assert.equal(setting.documentId,'academic-curriculum-main');assert.equal(setting.exists,false);
+  assert.equal(setting.data.BranchId,'main');assert.equal(setting.data.RequireTradeSubject,false);
+  state.curriculumSettings={...setting.data,__updateTime:'setting-revision'};
+  const retry=batchHarness(state);
+  await retry.configure({TradeSubjectIds:['catering'],OptionalSubjectIds:['music'],RequireTradeSubject:false});
+  assert.equal(retry.writes.length,0);
+  await retry.configure({TradeSubjectIds:['catering'],OptionalSubjectIds:['music'],RequireTradeSubject:true});
+  assert.equal(retry.writes[0].updateTime,'setting-revision');
+  assert.equal(retry.writes[0].data.RequireTradeSubject,true);
+});
+
+test('optional Trade allows an empty Trade catalogue and no stale pending-Trade warning',async()=>{
+  const state=fixture();state.curriculumSettings={RequireTradeSubject:false};
+  state.studentMemberships[0].CurriculumStatus='Pending Trade Selection';
+  state.studentMemberships[0].TradeSubjectIds=[];
+  state.studentMemberships[0].SubjectIds=['english','physics'];
+  const before=clone(state);
+  const readiness=management.academicMigrationReadiness(state,[{AdmissionNo:'S1'}]);
+  assert.ok(!readiness.Issues.some(row=>['PENDING_TRADE_SUBJECT','PENDING_CURRICULUM'].includes(row.Code || row.Issue)));
+  assert.deepEqual(state,before);
+  await batchHarness(state).configure({RequireTradeSubject:false,TradeSubjectIds:[],OptionalSubjectIds:['music']});
+  await assert.rejects(batchHarness(state).configure({RequireTradeSubject:true,TradeSubjectIds:[],OptionalSubjectIds:['music']}),/Choose at least one Trade/);
+});
+
+
+test('web curriculum status follows the saved branch Trade switch',()=>{
+ const state=fixture();state.curriculumSettings={RequireTradeSubject:false};
+ const membership={...clone(base),SubjectIds:['english','physics'],TradeSubjectIds:[]};
+ assert.equal(browserContext().academicStudentSubjectProfile(state,membership).curriculumStatus,'Complete');
+ state.curriculumSettings.RequireTradeSubject=true;
+ assert.equal(browserContext().academicStudentSubjectProfile(state,membership).curriculumStatus,'Pending Trade Selection');
 });

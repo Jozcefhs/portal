@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import vm from 'node:vm';
+import vm from './helpers/module-policy-vm.mjs';
 import { historyDateRange, loadDatedHistory } from '../functions/lib/history-date-range.js';
 import { enforceActorBranch } from '../functions/lib/branch-scope.js';
 

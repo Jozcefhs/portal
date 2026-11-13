@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import vm from 'node:vm';
+import vm from './helpers/module-policy-vm.mjs';
 import * as management from '../functions/lib/academic-management.js';
 import * as studentRoster from '../functions/lib/academic-student-status-roster.js';
 import * as scorebook from '../functions/lib/academic-scorebook.js';
