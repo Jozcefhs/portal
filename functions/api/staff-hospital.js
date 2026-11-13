@@ -19,7 +19,7 @@ export async function onRequestPost({ request, env, data }) {
       'medicineCatalog','saveMedicineCatalogItem','medicineCatalogHistory',
       'referralContext','signReferral','referralRegister','referralDetails','updateReferral','referralHistory',
       'appointmentSchedules','saveAppointmentSchedule','saveAppointment','appointmentRegister','appointmentDetails','closeAppointment','checkInAppointment','appointmentHistory',
-      'theatreRooms','saveTheatreRoom','prepareTheatre','theatreVisit','saveProcedureBooking','theatreRegister','theatreCase','theatreHistory','cancelProcedure','recordProcedurePreoperative','startProcedure','signProcedureOperative','completeProcedureRecovery','amendProcedureRecord',
+      'theatreRooms','saveTheatreRoom','prepareTheatre','theatreVisit','saveProcedureBooking','theatreRegister','theatreCase','theatreHistory','cancelProcedure','recordProcedurePreoperative','startProcedure','signProcedureOperative','completeProcedureRecovery','amendProcedureRecord','procedureHandoverQueue','sendProcedureHandover','respondProcedureHandover',
       'nursingContext','nursingRegister','saveNursingChart','nursingPrescriptions','nursingMedication','nursingSupplies','planMedicationDose','recordMedicationDose','saveNursingHandover','acknowledgeNursingHandover','nursingInbox',
       'prepareHospitalBed','inpatientWards','inpatientWard','inpatientBeds','saveHospitalWard','saveHospitalBed','inpatientVisit','admitHospitalPatient',
       'inpatientAdmissions','inpatientAdmission','transferHospitalBed','signHospitalDischarge','amendHospitalDischarge','dischargeHospitalPatient','inpatientHistory',

@@ -1,6 +1,6 @@
 # Hospital theatre, surgery and procedure workflows
 
-Development increment: 27 October 2026. Web companion and shared backend on `codex/hospital-edition`. Test and push only; no deployment, compilation or installer release. All verification uses synthetic records.
+Initial increment: 27 October 2026; receiving-officer acknowledgement added 13 November 2026. Web companion and shared backend on `codex/hospital-edition`. Deployment is restricted to the isolated Hospital Owner Demo. No desktop compilation or installer release. Mutation verification uses synthetic records.
 
 ## Staff workflow
 
@@ -45,4 +45,21 @@ The full repository suite passed **4,378 top-level tests**, including **184 Hosp
 
 Coverage includes scheduling overlap/concurrency, cross-branch clinician reservations, midnight boundaries, active overruns, start/cancel races, closure races, immutable booking/note history, clinical authorisation, allergy changes, inpatient links, failed-save draft retention, duplicate charge prevention, lost responses, exact database-operation budgets, equal-time pagination, backup references, privacy and desktop/phone layouts.
 
-S03 remains partial on the saved Hospital roadmap. Detailed anaesthetic time-series charts/devices, configurable local surgical checklists, consent attachments/e-signatures, individual team/equipment scheduling, structured consumable/implant/sterilisation inventory, direct theatre-to-nursing recipient acknowledgement, desktop/offline parity and practitioner validation remain pending. No deployment, compile or release is included; this increment does not claim that the full Hospital edition is ready for live care.
+S03 remains partial on the saved Hospital roadmap. Detailed anaesthetic time-series charts/devices, configurable local surgical checklists, consent attachments/e-signatures, individual team/equipment scheduling, structured consumable/implant/sterilisation inventory, desktop/offline parity and practitioner validation remain pending. The isolated Owner Demo deployment does not establish practitioner validation or readiness of the whole Hospital edition for live care. No desktop compilation or installer release is included.
+
+
+## Recovery handover acknowledgement — 13 November 2026
+
+When completing recovery, enter the receiving clinical officer's staff username. The server resolves the active Nurse, Doctor or Medical Director in the same branch, records their saved display name and rejects a handover to yourself. The receiving officer opens **Theatre and procedures → My recovery handovers → Load pending handovers → Review handover**. After checking the recovery note, patient identity and outstanding tasks, choose **Acknowledged** or **Clarification requested**, enter a note and save. This is the recipient's recorded response, not an acknowledgement on their behalf.
+
+The recovery author or Medical Director can send an older completed recovery to a named recipient or redirect a handover, with a reason. Address clarification through **Amend a signed note → Recovery**. A changed recovery version requires a new acknowledgement; prior content and responses remain in dated procedure history. A signed amendment also refreshes the named recipient's pending entry. Acknowledged entries leave the pending queue. Clarification requests remain visible until resolved. The procedure register and individual case show the current receipt status. Preview/print uses the loaded current or historical snapshot without another request.
+
+Receiving a handover changes only the case's receipt fields and appends its event, audit and retry receipt. It does not reopen/close a visit, allocate/release a bed, discharge a patient, administer medicines or post a charge. Legacy records are not migrated. Completed case and patient revision checks, named-recipient checks, module/branch/role permissions, patient/review confirmations and atomic writes protect responses. Simultaneous decisions cannot overwrite one another, and retries cannot duplicate history. Unchanged repeated sends/responses write nothing.
+
+The pending queue is explicitly loaded, scoped to branch and recipient, fetching 31/displaying 30 with stable cursor pagination. It returns saved summary labels with no per-row patient reads, polling or complete-history scans. One clinical access audit is written per actual queue request; cached repeat loads and printing add no requests or audit writes. Case actions clear affected caches. Branch/session changes clear clinical views. One additive Firestore index supports the queue; existing case/event backup collections remain sufficient.
+
+Service budget: a changed recipient response uses three exact reads, no queries and four atomic writes (case, event, audit, operation receipt). Replaying a completed request uses one exact read and zero writes. Sending additionally validates the recipient through one username query limited to two matches. Completing recovery and amending its recipient-linked version add this same bounded staff validation to their existing operations. These synthetic operation budgets exclude authentication/configuration and explicit UI context refresh; they are not measurements of live cloud billing.
+
+Verification: **4,746 top-level tests passed**, including ten new handover tests and 23 existing theatre tests. Theatre, inpatient and nursing synthetic browser workflows passed. Coverage includes wrong recipients, branch/module/read-only controls, stale versions, simultaneous replies, lost responses, closed visits, unchanged saves, clarification/amendment history, legacy routing, equal-time pagination, cache reuse, print without requests, escaped notes and desktop/phone layouts. See `tests/hospital-theatre-handovers.test.mjs` and `scripts/verify-hospital-theatre-ui.mjs`.
+
+Theatre remains partial for detailed anaesthetic charts, local checklists, consent attachments, equipment/team scheduling, consumable/implant inventory, desktop/offline parity and practitioner validation. No clinical or financial record is changed by deployment verification. NFC identity remains supported and card-terminal payments remain disabled.

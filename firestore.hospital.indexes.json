@@ -1,5 +1,6 @@
 {
   "indexes": [
+    {"collectionGroup": "hospitalProcedureCases", "queryScope": "COLLECTION", "fields": [{"fieldPath": "BranchId", "order": "ASCENDING"}, {"fieldPath": "RecoveryRecipient", "order": "ASCENDING"}, {"fieldPath": "RecoveryPending", "order": "ASCENDING"}, {"fieldPath": "RecoverySentAt", "order": "ASCENDING"}, {"fieldPath": "__name__", "order": "ASCENDING"}]},
     {"collectionGroup": "vendorSettlementRequests", "queryScope": "COLLECTION", "fields": [{"fieldPath": "ScopeKey", "order": "ASCENDING"}, {"fieldPath": "VendorId", "order": "ASCENDING"}, {"fieldPath": "PaymentStatus", "order": "ASCENDING"}, {"fieldPath": "RequestedAt", "order": "ASCENDING"}]},
     {"collectionGroup": "vendorSettlementRequests", "queryScope": "COLLECTION", "fields": [{"fieldPath": "ScopeKey", "order": "ASCENDING"}, {"fieldPath": "VendorId", "order": "ASCENDING"}, {"fieldPath": "PaymentStatus", "order": "ASCENDING"}]},
     {"collectionGroup": "vendorSettlementRequests", "queryScope": "COLLECTION", "fields": [{"fieldPath": "ScopeKey", "order": "ASCENDING"}, {"fieldPath": "PaymentStatus", "order": "ASCENDING"}]},

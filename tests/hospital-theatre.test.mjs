@@ -126,7 +126,7 @@ test('start versus cancellation and recovery retries commit only one transition'
   const result=await Promise.allSettled([f.start(c),f.doctor.cancelProcedure(f.caseBody(c,{Reason:'Competing cancellation'}))]);assert.equal(result.filter(r=>r.status==='fulfilled').length,1);
   const row=f.rows('ProcedureCases')[0];assert.ok(['In procedure','Cancelled'].includes(row.Status));assert.equal(f.rows('ProcedureEvents').length,3);
   if(row.Status==='In procedure'){
-    await f.signOp(c);const b=f.caseBody(c,{Note:recovery,ConfirmHandover:true});await f.nurse.completeProcedureRecovery(b);reset(f);assert.equal((await f.nurse.completeProcedureRecovery(b)).replayed,true);assert.equal(f.reads.length,1);assert.equal(f.commits.length,0);
+    await f.signOp(c);const b=f.caseBody(c,{Note:recovery,Recipient:'doctor',ConfirmHandover:true});await f.nurse.completeProcedureRecovery(b);reset(f);assert.equal((await f.nurse.completeProcedureRecovery(b)).replayed,true);assert.equal(f.reads.length,1);assert.equal(f.commits.length,0);
   }
 });
 test('closed visits retain amendments without reopening the visit or adding charges',async()=>{
@@ -137,7 +137,7 @@ test('theatre mutation budgets use exact resource locks without scanning history
   const f=await theatreFixture();reset(f);const c=await f.book();assert.equal(f.reads.length,9);assert.equal(f.queries.length,1);assert.equal(f.queries[0].limit,2);assert.equal(f.commits.length,1);assert.equal(f.commits[0].length,9);
   reset(f);await f.preop(c);assert.equal(f.reads.length,5);assert.equal(f.queries.length,0);assert.equal(f.commits[0].length,6);
   reset(f);await f.start(c);assert.equal(f.reads.length,8);assert.equal(f.queries.length,0);assert.equal(f.commits[0].length,9);
-  await f.signOp(c);reset(f);await f.complete(c);assert.equal(f.reads.length,11);assert.equal(f.queries.length,0);assert.equal(f.commits[0].length,11);
+  await f.signOp(c);reset(f);await f.complete(c);assert.equal(f.reads.length,11);assert.equal(f.queries.length,1);assert.equal(f.queries[0].limit,2);assert.equal(f.commits[0].length,11);
 });
 
 test('clinician scheduling conflicts are prevented across branches without exposing the other branch patient',async()=>{

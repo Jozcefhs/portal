@@ -19,7 +19,7 @@ export async function theatreFixture(){
   f.preop=c=>f.nurse.recordProcedurePreoperative(f.caseBody(c,{Note:preoperative,ConfirmChecks:true}));
   f.start=c=>f.doctor.startProcedure(f.caseBody(c,{ConfirmTimeOut:true}));
   f.signOp=c=>f.doctor.signProcedureOperative(f.caseBody(c,{Note:operative,ConfirmClinicalReview:true}));
-  f.complete=c=>f.nurse.completeProcedureRecovery(f.caseBody(c,{Note:recovery,ConfirmHandover:true}));
+  f.complete=c=>f.nurse.completeProcedureRecovery(f.caseBody(c,{Note:recovery,Recipient:'doctor',ConfirmHandover:true}));
   f.finish=async c=>{await f.preop(c);await f.start(c);await f.signOp(c);await f.complete(c);};
   return f;
 }

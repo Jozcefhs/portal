@@ -47,6 +47,28 @@ export function createHospitalTheatreService(ctx){
       ||assigned!==null&&!assigned.includes(BranchId))fail('Choose an active Doctor or Medical Director assigned to this branch.');
     return clean(u.DisplayName)||username;
   }
+  async function handoverRecipient(body,BranchId){
+    const Recipient=field(body,'Recipient',120,true).toLowerCase();
+    if(Recipient===actor.toLowerCase())fail('Choose another clinical officer to receive this handover.');
+    const rows=await db.queryCollection(env,'staffUsers',{filters:[eq('UsernameKey',Recipient)],limit:2}),u=rows[0],assigned=u?assignedStaffBranches(u):[];
+    if(rows.length!==1||clean(u.Username).toLowerCase()!==Recipient||!['Nurse','Doctor','Medical Director'].includes(u.Role)
+      ||!['true','yes','1'].includes(String(u.Active??true).toLowerCase())||clean(u.OrganisationEdition||u.OrganizationEdition).toLowerCase()!=='hospital'
+      ||assigned!==null&&!assigned.includes(BranchId))fail('Choose an active Nurse, Doctor or Medical Director assigned to this Hospital branch.');
+    return {Recipient,RecipientName:clean(u.DisplayName)||Recipient};
+  }
+  function handoverFields(key,recoveryId,recipient,Reason=''){
+    const RecoveryHandover={...recipient,HandoverId:key,RecoveryVersionId:recoveryId,Status:'Awaiting acknowledgement',Reason,...stamp()};
+    return {RecoveryHandover,RecoveryRecipient:recipient.Recipient,RecoveryPending:true,RecoverySentAt:clock()};
+  }
+  async function completedHandover(body){
+    // A response changes only its case/history, never visit, bed or financial state.
+    const BranchId=await branch(body),row=await read('ProcedureCases',body.CaseId);
+    if(!row||row.BranchId!==BranchId||row.PatientId!==body.PatientId)fail('Choose a procedure for this patient and branch.',404);
+    confirm(body);revision(row,body.Revision);
+    if(row.Status!=='Completed'||!row.RecoveryId||!row.Recovery)fail('Complete recovery before sending or responding to a handover.',409);
+    const person=await patient(row.PatientId,BranchId);
+    return {BranchId,row,person,visit:{VisitId:row.VisitId}};
+  }
   // Exact resource/day documents serialize bookings; no historical overlap scan.
   async function reservations(old,next){
     const definitions=new Map();
@@ -146,9 +168,43 @@ export function createHospitalTheatreService(ctx){
       if(body.ConfirmHandover!==true)fail('Confirm the patient has left the theatre and handover has occurred.');
       return operation(body,'completeProcedureRecovery',async key=>{const c=await current(body,true);if(c.row.Status!=='Recovery'||c.visit.ActiveProcedureCaseId!==c.row.CaseId)fail('Complete the operative record before recovery handover.',409);
         const room=await roomFor(c.row.TheatreId,c.BranchId);if(room.ActiveCaseId!==c.row.CaseId)fail('Review the theatre occupancy before handover.',409);
-        const Recovery={Content,...stamp()},row={...strip(c.row),Status:'Completed',CompletedAt:clock(),RecoveryId:key,Recovery};
+        const recipient=await handoverRecipient(body,c.BranchId),Recovery={Content:{...Content,ReceivingOfficer:recipient.RecipientName},...stamp()},row={...strip(c.row),Status:'Completed',CompletedAt:clock(),RecoveryId:key,Recovery,...handoverFields(key,key,recipient)};
         return {writes:[...await reservations(c.row,null),...await activeResources(c,true),touch(c,key,-1,{ActiveProcedureCaseId:''}),write('Theatres',room.TheatreId,{...strip(room),ActiveCaseId:'',Ready:false},room),
-          write('ProcedureCases',row.CaseId,row,c.row),event(key,c,'Complete recovery and handover',Recovery),audit(key,c,'Complete recovery and handover')],result:result(c)};});},
+          write('ProcedureCases',row.CaseId,row,c.row),event(key,c,'Complete recovery and handover',{...Recovery,Handover:row.RecoveryHandover}),audit(key,c,'Complete recovery and handover')],result:result(c)};});},
+    async procedureHandoverQueue(body){
+      requireCapability('theatre.read');const BranchId=await branch(body);
+      const r=await page('ProcedureCases',[eq('BranchId',BranchId),eq('RecoveryRecipient',actor.toLowerCase()),eq('RecoveryPending',true)],'RecoverySentAt',body);
+      await auditRead(body,'View incoming recovery handovers',BranchId,{}, {ResultCount:r.rows.length});
+      return {ok:true,cases:r.rows.map(row=>({CaseId:row.CaseId,PatientId:row.PatientId,PatientName:row.PatientName,HospitalNumber:row.HospitalNumber,Reference:row.Reference,Procedure:row.Procedure,TheatreName:row.TheatreName,RecoverySentAt:row.RecoverySentAt,HandoverStatus:row.RecoveryHandover?.Status})),next:r.next};
+    },
+    async sendProcedureHandover(body){
+      requireCapability('theatre.work');await branch(body);const Reason=field(body,'Reason',1000,true);
+      return operation(body,'sendProcedureHandover',async key=>{
+        const c=await completedHandover(body);
+        if(c.row.Recovery.RecordedBy!==actor&&user.role!=='Medical Director')fail('Only the recovery author or Medical Director may send or redirect this handover.',403);
+        const recipient=await handoverRecipient(body,c.BranchId),old=c.row.RecoveryHandover;
+        if(old?.Recipient===recipient.Recipient&&old.RecoveryVersionId===c.row.RecoveryId&&old.Status!=='Clarification requested')return {writes:[],result:{...result(c),Unchanged:true}};
+        if(old?.Status==='Clarification requested'&&old.RecoveryVersionId===c.row.RecoveryId&&old.Recipient===recipient.Recipient)fail('Amend the recovery record to address the clarification before sending it again.',409);
+        const row={...strip(c.row),...handoverFields(key,c.row.RecoveryId,recipient,Reason)};
+        return {writes:[write('ProcedureCases',row.CaseId,row,c.row),event(key,c,'Send recovery handover',{...row.Recovery,Handover:row.RecoveryHandover},Reason),audit(key,c,'Send recovery handover')],result:result(c)};
+      });
+    },
+    async respondProcedureHandover(body){
+      requireCapability('theatre.work');await branch(body);const Note=field(body,'Note',2000,true),Decision=body.Decision;
+      if(!['Acknowledged','Clarification requested'].includes(Decision))fail('Acknowledge receipt or request clarification.');
+      if(body.ConfirmReview!==true)fail('Confirm you reviewed the recovery record and outstanding tasks.');
+      return operation(body,'respondProcedureHandover',async key=>{
+        const c=await completedHandover(body),old=c.row.RecoveryHandover;
+        if(!old||old.Recipient!==actor.toLowerCase()||clean(old.RecordedBy).toLowerCase()===actor.toLowerCase())fail('Only the named receiving officer can respond to this handover.',403);
+        if(old.HandoverId!==body.HandoverId||old.RecoveryVersionId!==c.row.RecoveryId)fail('This handover version changed. Refresh before responding.',409);
+        if(old.Status!=='Awaiting acknowledgement'){
+          if(old.Status===Decision&&old.Response?.Note===Note)return {writes:[],result:{...result(c),Unchanged:true}};
+          fail('This version already has a response. Ask the sender to amend the recovery record if needed.',409);
+        }
+        const RecoveryHandover={...old,Status:Decision,Response:{Note,...stamp()}},row={...strip(c.row),RecoveryHandover,RecoveryPending:Decision!=='Acknowledged'};
+        return {writes:[write('ProcedureCases',row.CaseId,row,c.row),event(key,c,'Respond to recovery handover',{...row.Recovery,Handover:RecoveryHandover}),audit(key,c,'Respond to recovery handover')],result:result(c)};
+      });
+    },
     async amendProcedureRecord(body){requireCapability('theatre.work');await branch(body);const Kind=body.Kind,Content=theatreNote(Kind,body.Note),Reason=field(body,'Reason',1000,true);
       if(Kind==='Operative')requireCapability('theatre.sign');
       return operation(body,'amendProcedureRecord',async key=>{const c=await current(body,true,true),previous=c.row[Kind];if(!previous)fail('Choose an existing signed procedure note.',404);
@@ -156,6 +212,11 @@ export function createHospitalTheatreService(ctx){
         if(same(previous.Content,Content))return {writes:[],result:{...result(c),Unchanged:true}};
         if(Kind==='Preoperative'&&c.row.Status==='Scheduled')fail('Repeat the preoperative checks to replace the current review.');
         const amended={...previous,Content,...stamp()},row={...strip(c.row),[Kind]:amended,[`${Kind}Id`]:key};
-        return {writes:[touch(c,key),write('ProcedureCases',row.CaseId,row,c.row),event(key,c,`Amend ${Kind.toLowerCase()} record`,amended,Reason),audit(key,c,`Amend ${Kind.toLowerCase()} record`)],result:result(c)};});}
+        if(Kind==='Recovery'&&c.row.RecoveryHandover){
+          // Keep the named recipient; a changed clinical version needs its own response.
+          const recipient=await handoverRecipient({Recipient:c.row.RecoveryHandover.Recipient},c.BranchId);
+          Object.assign(row,handoverFields(key,key,recipient,Reason));
+        }
+        return {writes:[touch(c,key),write('ProcedureCases',row.CaseId,row,c.row),event(key,c,`Amend ${Kind.toLowerCase()} record`,{...amended,...(Kind==='Recovery'&&row.RecoveryHandover?{Handover:row.RecoveryHandover}:{})},Reason),audit(key,c,`Amend ${Kind.toLowerCase()} record`)],result:result(c)};});}
   };
 }

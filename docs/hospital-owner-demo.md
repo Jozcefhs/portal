@@ -70,3 +70,10 @@ Use [Pharmacy stock control](https://dynamax-hospital-review.pages.dev/hospital.
 Open [Quarantined stock disposal](https://dynamax-hospital-review.pages.dev/hospital.html?task=stock-disposal). The pending queue loads when this task opens; the completed register waits for dates. The pharmacist records batch-specific physical disposal evidence, and another authorised officer confirms witnessing it. Only confirmed disposal reduces quarantined stock. Shelf stock, patient returns and all financial records remain unchanged. Preview/print and retained decision history are available. No example disposals are posted automatically; full lifecycle checks use synthetic in-memory stock. See [the workflow guide](hospital-stock-disposal.md).
 
 Deployed and verified on 4 November 2026: source `8ce4629c`, deployment `41f8dffa`. All 4,738 repository tests and 14 Hospital browser workflows passed. All three additive indexes are READY. Live checks confirmed permissions, bounded/cached loading, preview/print, desktop/phone layouts, matching deployed assets and unchanged sampled records, with zero business mutations. No desktop build or installer release occurred. See [the verification record](hospital-stock-disposal-verification.md).
+
+
+### Recovery handover acknowledgement
+
+Open [Theatre and procedures](https://dynamax-hospital-review.pages.dev/hospital.html?task=theatre). The clinical demo accounts can view **My recovery handovers** and load their named pending handovers. Complete recovery with a different receiving officer's staff username; that recipient can acknowledge or request clarification. Authors/Medical Directors can correct or redirect the handover. Each version and response remains in dated history with preview/print. The owner retains room configuration without access to private clinical records.
+
+Local verification passed 4,746 automated tests and theatre/inpatient/nursing browser workflows with synthetic data. Live deployment verification is recorded below after the additive index and web update. The feature creates no automatic example clinical records, stock movements or financial entries. No desktop compilation or installer release.

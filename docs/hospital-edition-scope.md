@@ -2,9 +2,9 @@
 
 Scope confirmed: 26 October 2026, Africa/Lagos.
 
-## Latest increment — 4 November 2026
+## Latest increment — 13 November 2026
 
-Quarantined-stock disposal extends H05 / H13 and F01 / F02 / F05 / F06. A pharmacist records batch-specific disposal evidence; a different authorised officer confirms witnessing it. Pending proposals do not change quantities. Completion reduces quarantined stock only, with permanent references, atomic retry protection and version checks. Existing supplier, patient-return, clinical and financial records remain unchanged. The pending queue is bounded and loads when its task opens; completed history requires dates. See [the workflow guide](hospital-stock-disposal.md).
+Theatre recovery handovers now identify a clinical recipient who can acknowledge receipt or request clarification. Corrections require a fresh acknowledgement; every earlier note and response remains in dated history. The pending queue is bounded, cached and explicitly loaded, and current/historical handovers support preview/print. This follows the post-discharge summary amendment increment, also recorded in the delivery log. See [the theatre guide](hospital-theatre-workflows.md).
 
 This increment deploys only to the isolated Hospital Owner's Demo, without record migrations, deletions, desktop compilation or installer release. Patient cards remain NFC and card terminals remain disabled. Perpetual valuation, controlled-drug witnesses, patient self-service, remaining specialist workflows, desktop/offline parity and practitioner validation remain on the complete roadmap.
 
@@ -321,3 +321,15 @@ The user requested continued Hospital work, tests, push and deployment while pre
 - Verification: **4,735 top-level repository tests passed**, including 11 new amendment tests and the existing 20 inpatient tests. Inpatient, nursing and theatre browser workflows passed with synthetic data. Coverage includes lost responses, concurrent edits, wrong references, read-only/module/role/branch controls, subsequent admissions, escaped clinical text, retained versions, printing, cache reuse, session clearing and desktop/phone layout. Release-marker checks also passed after the web cache update.
 
 See [the inpatient guide](hospital-inpatient-workflows.md) and [Owner Demo](hospital-owner-demo.md). Web deployment is restricted to `dynamax-hospital-review`; no real patient/financial mutation is part of live verification. The wider H08 roadmap remains open for cross-branch transfers, automatic bed billing, advanced medication schedules and practitioner validation. Desktop/offline parity and the other unchecked specialist requirements remain pending. Patient cards remain NFC; card terminals stay disabled. No compilation or installer release.
+
+
+### Recovery handover recipient acknowledgement — 13 November 2026
+
+The user requested continued Hospital work with preserved records, duplicate prevention, controlled reads/writes, tests, push and isolated web deployment, without compilation. This increment closes the direct theatre receiving-officer acknowledgement gap under H03/H08/S03.
+
+- New recovery handovers identify an active clinical recipient in the same branch. That officer acknowledges receipt or requests clarification. Authors/Medical Directors can route legacy records or redirect a handover; changes require reasons. Recovery amendments require a fresh response and retain every previous signed note and receipt in history. Current and historical handovers support preview/print.
+- Responses touch only the case and append an immutable event, audit and operation receipt. Visits, beds, patient records, medicines, inventory and finance remain unchanged. Atomic revision/fingerprint checks protect concurrent responses and retries. No migration or deletion occurs.
+- The explicitly loaded pending queue fetches 31/displays 30 per page, carries saved labels and uses a bounded cache. No polling or per-row lookups. History remains date-selected. Responses use three exact reads and four atomic writes; completed retries use one read/no writes; unchanged saves write nothing. Recipient validation uses one bounded staff query. One additive index supports the queue.
+- **4,746 repository tests passed**, including ten new handover tests. Theatre, inpatient and nursing browser workflows passed with synthetic data and desktop/phone checks. See [the theatre workflow guide](hospital-theatre-workflows.md) and [Owner Demo](hospital-owner-demo.md) for usage and deployment evidence.
+
+The complete Hospital scope remains open. Next theatre gaps include detailed anaesthetic charts, local checklists, consent attachments and consumable/implant inventory; other specialist gaps and practitioner validation remain tracked above. Patient cards remain NFC; card terminals remain disabled. No desktop compilation or installer release.
