@@ -116,7 +116,14 @@ try {
     assert.equal(await type.inputValue(), 'Percentage');
     assert.equal(await value.inputValue(), '15');
     for (const name of ['Classes', 'Terms']) assert.equal(await label(name).inputValue(), 'All', 'legacy defaults retain all coverage');
+    await category('Full Scholarship');
+    await status('Full Scholarship is automatically exempt');
+    assert.equal(await save.isDisabled(), true);
+    assert.equal(await add.count(), 0);
+    assert.equal(calls.length, 1);
     await category('Sibling Discount');
+    for (const name of ['Classes', 'Terms']) assert.equal(await label(name).inputValue(), 'All');
+    await add.click();
     for (const name of ['Classes', 'Terms']) assert.equal(await label(name).inputValue(), 'Selected');
     await type.selectOption('Percentage'); await value.fill('10');
     await save.click(); await status('Choose at least one class');
@@ -170,7 +177,7 @@ try {
     assert.equal(await label('Autumn Term (no longer offered)').isChecked(), true);
     await value.fill('975'); await save.click(); await status('Discount saved');
     assert.deepEqual(calls.at(-1).ClassNames, archived.ClassNames); assert.deepEqual(calls.at(-1).TermNames, archived.TermNames);
-    await category('Founders'); await type.selectOption('Percentage'); await value.fill('3');
+    await category('Founders'); await add.click(); await type.selectOption('Percentage'); await value.fill('3');
     await label('Classes').selectOption('All'); await label('Second Term').check();
     await save.click(); await status('Discount saved');
     assert.equal(calls.at(-1).ClassScope, 'All'); assert.deepEqual(calls.at(-1).ClassNames, []);

@@ -2,7 +2,7 @@ import { batchCommitDocuments, getDocument, queryCollectionPages } from './fires
 import { financialPreviewFingerprint } from './financial-preview-fingerprint.js';
 import { studentBillingIdentity, studentProfileValue } from './student-billing-profile.js';
 import { financeMoney } from './accounting-mutation-guards.js';
-import { isFullScholarship } from './full-scholarship.js';
+import { explicitlyIncludesFullScholarship, isFullScholarship } from './full-scholarship.js';
 import { getStudentBillingData, buildStudentBillingPreview, normalizeInvoice, normalizeFeeItem, normalizePayment,
   normalizeLedger, feeMatchesAccountPeriod, isSchoolFeeInvoice, sameFinancialPeriod,
   isAvailableSchoolCreditReceipt, paymentCreditedAmount, journalLineSignature,
@@ -108,15 +108,17 @@ export async function obsoleteSchoolChargeReversalPlan(student, data, { candidat
   const preview = await buildStudentBillingPreview(student, data);
   const savedType = savedValue(student, 'StudentType');
   const profile = { ...preview.profile, StudentType: savedType };
+  const fullScholarship = isFullScholarship(profile.BillingCategory);
   const profiles = savedType ? [profile] : ['Day Student', 'Boarding Student'].map(StudentType => ({ ...profile, StudentType }));
   const invoices = (data.invoices || []).map(normalizeInvoice);
   const current = invoices.filter(row => sameFinancialPeriod(row, profile.AcademicSession, profile.Term) && !closedInvoice(row));
-  const candidates = current.filter(row => (!invoiceIds || invoiceIds.some(id => same(id, row.InvoiceId))) && supported(row) && isSchoolFeeInvoice(row) && row.Debit > 0 &&
+  const candidates = current.filter(row => (!invoiceIds || invoiceIds.some(id => same(id, row.InvoiceId))) &&
+    (fullScholarship || supported(row)) && isSchoolFeeInvoice(row) && row.Debit > 0 &&
     preview.rows.some(component => same(component.code, row.FeeCode) && component.expected === 0));
   const fees = (data.feeItems || []).map(normalizeFeeItem);
   const charges = [], replacementInvoicesToCreate = [];
   for (const invoice of candidates) {
-    const componentFees = fees.filter(fee => same(fee.FeeCode, invoice.FeeCode) && supported(fee) && active(fee.Active));
+    const componentFees = fees.filter(fee => same(fee.FeeCode, invoice.FeeCode) && (fullScholarship || supported(fee)) && active(fee.Active));
     const rulesByType = profiles.map(candidate => componentFees.filter(fee =>
       feeMatchesAccountPeriod(fee, candidate, { enrollmentCategoryOverride: 'Returning' })));
     // A configured fee can also belong exclusively to another class. Prove
@@ -169,16 +171,21 @@ export async function obsoleteSchoolChargeReversalPlan(student, data, { candidat
     // Full Scholarship is an explicit existing policy: ordinary fees are exempt;
     // fees explicitly assigned to scholarship students still apply. Never infer
     // a general exemption merely because a category has no matching rule.
-    const scholarshipRules = componentFees.filter(fee =>
+    const originalCategory = clean(invoice.BillingCategory || invoice.billingCategory) || 'Regular';
+    const scholarshipRules = fullScholarship ? componentFees.filter(fee =>
+      isSchoolFeeInvoice(fee) && same(fee.FeeName, invoice.FeeName) &&
+      !explicitlyIncludesFullScholarship(fee.BillingCategories) &&
       (!clean(fee.SchoolSection || fee.schoolSection) || same(fee.SchoolSection || fee.schoolSection, profile.SchoolSection)) &&
-      feeMatchesAccountPeriod({ ...fee, BillingCategory: 'Regular', BillingCategories: ['Regular'] }, { ...profile, BillingCategory: 'Regular' }));
-    const scholarshipExempt = isFullScholarship(profile.BillingCategory) && classificationsSaved &&
-      (tuition(invoice) || /\btextbooks?\b/i.test(invoice.FeeName)) && scholarshipRules.length === 1 &&
-      !fees.some(fee => active(fee.Active) && same(fee.FeeName, invoice.FeeName) && feeMatchesAccountPeriod(fee, profile));
+      feeMatchesAccountPeriod(fee, { ...profile, BillingCategory: originalCategory })) : [];
+    const scholarshipExempt = fullScholarship && classificationsSaved && !isFullScholarship(originalCategory) &&
+      scholarshipRules.length === 1 && !fees.some(fee => active(fee.Active) && same(fee.FeeName, invoice.FeeName) &&
+        (!clean(fee.SchoolSection || fee.schoolSection) || same(fee.SchoolSection || fee.schoolSection, profile.SchoolSection)) &&
+        potentiallyApplies(fee, profile, student));
     const rules = differentCategory ? categoryRules : scholarshipExempt ? scholarshipRules : (differentGender ? genderRulesByType : differentClass ? classRulesByType : rulesByType).flat();
     let reason = '';
-    if (tuition(invoice) && !differentCategory && !scholarshipExempt) reason = 'Tuition correction requires a verified category replacement or an explicit Full Scholarship exemption.';
-    else if (uniform(invoice) && !differentGender) reason = 'Uniform correction requires a saved Male or Female profile and one active fee rule proving that only the gender does not match.';
+    if (fullScholarship && !scholarshipExempt && !differentCategory) reason = 'Verify the original school fee rule and any explicit Full Scholarship exception before reversing this charge.';
+    else if (tuition(invoice) && !differentCategory && !scholarshipExempt) reason = 'Tuition correction requires a verified category replacement or an explicit Full Scholarship exemption.';
+    else if (uniform(invoice) && !differentGender && !scholarshipExempt) reason = 'Uniform correction requires a saved Male or Female profile and one active fee rule proving that only the gender does not match.';
     else if (!differentCategory && !scholarshipExempt && !differentGender && !differentClass && !same(profile.EnrollmentCategory, 'New Intake')) reason = 'This correction requires one verified rule showing that the charge belongs to another class, or a returning-only charge on a New Intake profile. Check the saved class and fee rule.';
     else if (['ClassName', 'AcademicSession', 'Term'].some(field => !savedValue(student, field))) reason = 'Verify the saved class, session and term first.';
     else if (current.filter(row => same(row.FeeCode, invoice.FeeCode)).length !== 1) reason = 'Duplicate invoices for this component require individual finance review.';
@@ -268,7 +275,7 @@ export async function obsoleteSchoolChargeReversalPlan(student, data, { candidat
   if (!candidateOnly && writeCount > 450) reason = 'Too many source records for one safe correction; individual finance review is required.';
   const amount = money(charges.reduce((sum, row) => sum + row.amount, 0));
   const releasedCredit = money(charges.reduce((sum, row) => sum + row.releasedCredit, 0));
-  const previewToken = candidateOnly ? '' : await financialPreviewFingerprint({ kind: 'obsolete-school-fees-v6-category', invoiceIds, replacementInvoicesToCreate,
+  const previewToken = candidateOnly ? '' : await financialPreviewFingerprint({ kind: 'obsolete-school-fees-v7-scholarship', invoiceIds, replacementInvoicesToCreate,
     // Other students' no-op fee guards advance revisions. Keep all rule values
     // in the token; the commit still guards the freshly read fee revisions.
     profile, revision: student.__updateTime, charges, reallocations, feeItems: (data.feeItems || []).map(({ __updateTime, __createTime, ...rule }) => rule), invoices: data.invoices, ledger: data.ledger,
@@ -289,7 +296,7 @@ export async function getObsoleteSchoolChargeReversalData(env, student, override
   const data = await db.getStudentBillingData(env, student, { section: student.SchoolSection });
   const journals = [];
   const preview = await obsoleteSchoolChargeReversalPlan(student, data, { candidateOnly: true, invoiceIds: overrides.invoiceIds || null });
-  const targetIds = new Set(preview.reallocations.map(row => lower(row.invoiceId)));
+  const targetIds = new Set([...preview.charges, ...preview.reallocations].map(row => lower(row.invoiceId)));
   // Bound concurrency; financial history is scoped to one student, not the school.
   for (const invoice of data.invoices.map(normalizeInvoice).filter(row => supported(row) || targetIds.has(lower(row.InvoiceId)))) journals.push(...await db.queryCollectionPages(env, 'accountingJournals', {
     filters: [{ field: 'SourceId', op: '==', value: invoice.InvoiceId }], pageSize: 250, maxRows: 2000

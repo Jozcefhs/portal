@@ -60,10 +60,12 @@ export async function openBillingDiscounts(request, { isCurrent = () => true, br
   add.hidden = readOnly;
   let rules = [], loaded = false, busy = false, editingId = '', draftId = '', displayedCategory = '';
   const current = () => rules.find(row => key(row.Name) === key(name.value));
+  const scholarshipSelected = () => key(name.value) === 'full scholarship';
+  const scholarshipMessage = 'Full Scholarship is automatically exempt. Use Fee Setup to assign a fee explicitly to Full Scholarship.';
   const active = () => isCurrent() && dialog.isConnected && dialog.open;
   function updateControls() {
     fieldset.disabled = busy || !loaded;
-    saveButton.disabled = busy || !loaded || readOnly;
+    saveButton.disabled = busy || !loaded || readOnly || scholarshipSelected();
     reload.disabled = busy;
   }
   const setLimits = () => { value.max = type.value === 'Percentage' ? '100' : '100000000'; value.disabled = type.value === 'None'; if (value.disabled) value.value = '0'; };
@@ -82,6 +84,7 @@ export async function openBillingDiscounts(request, { isCurrent = () => true, br
   }
   function selectRate(id) {
     const policy = current(), rates = policy?.Rates || [];
+    const scholarship = scholarshipSelected();
     const rate = id === 'default' ? { ...policy, ClassScope: 'All', TermScope: 'All' } : rates.find(row => row.RateId === id);
     editingId = rate ? id : '';
     if (!editingId) draftId = crypto.randomUUID();
@@ -93,13 +96,15 @@ export async function openBillingDiscounts(request, { isCurrent = () => true, br
       button.setAttribute('aria-pressed', String(item.RateId === editingId));
       button.style.cssText = 'width:100%;min-width:0;margin:0;text-align:left;white-space:normal;overflow-wrap:anywhere;border:1px solid var(--line)';
       if (item.RateId !== editingId) { button.style.background = 'Canvas'; button.style.color = 'CanvasText'; }
-      button.textContent = isDefault ? `Category default · ${rateAmount(item)} · All classes, all terms` : `${rateAmount(item)} · ${rateScope(item)}`;
+      button.textContent = isDefault ? `Category default · ${scholarship ? 'Automatic exemption' : rateAmount(item)} · All classes, all terms` : `${rateAmount(item)} · ${rateScope(item)}`;
       button.onclick = () => selectRate(item.RateId);
       ratesList.append(button);
     }
     const heading = editingId === 'default' ? 'Category default' : 'Selected rate';
-    form.querySelector('[data-editor-heading]').textContent = editingId ? heading : 'New rate';
-    remove.hidden = readOnly || !editingId || editingId === 'default';
+    form.querySelector('[data-editor-heading]').textContent = scholarship ? 'Automatic Full Scholarship exemption' : editingId ? heading : 'New rate';
+    form.querySelector('[data-policy]').hidden = scholarship;
+    add.hidden = readOnly || scholarship;
+    remove.hidden = readOnly || scholarship || !editingId || editingId === 'default';
     type.value = rate?.DiscountType || 'None';
     value.value = rate?.DiscountValue || 0;
     setLimits();
@@ -107,12 +112,13 @@ export async function openBillingDiscounts(request, { isCurrent = () => true, br
       item.scope.disabled = editingId === 'default';
       showOptions(item, rate);
     }
-    status.textContent = readOnly ? 'Read-only access. Choose a billing category to view its discount.' : '';
+    status.textContent = scholarship ? scholarshipMessage : readOnly ? 'Read-only access. Choose a billing category to view its discount.' : '';
+    updateControls();
   }
   function selectCategory() {
     displayedCategory = key(name.value);
     const policy = current();
-    selectRate(policy?.Rates?.[0]?.RateId || (policy || readOnly ? 'default' : ''));
+    selectRate(scholarshipSelected() ? 'default' : policy?.Rates?.[0]?.RateId || 'default');
   }
   for (const { scope, list } of coverage) scope.onchange = () => { list.hidden = scope.value !== 'Selected'; };
   name.oninput = name.onchange = () => { if (key(name.value) !== displayedCategory) selectCategory(); };

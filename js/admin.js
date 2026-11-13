@@ -4158,7 +4158,7 @@ function bindStudentEditor(students) {
         await reviewReinstated();
         if (isCurrent()) recoveryControl.textContent = 'Recheck textbook / yearbook charges';
       } else {
-        const { openObsoleteChargeReview } = await import('./obsolete-charge-review.js?v=20261103-school-fee-category-audit');
+        const { openObsoleteChargeReview } = await import('./obsolete-charge-review.js?v=20261113-scholarship-billing');
         await openObsoleteChargeReview({ dialog, content, request, isCurrent, accountRef, loadedAccounts, onResults, readOnly: user.subscriptionReadOnly || user.subscriptionActive === false,
           confirm: options => window.DynamaxDialogs.confirm(options),
           notify: (title, message, tone) => window.DynamaxDialogs.alert({ title, message, tone: tone === 'error' ? 'danger' : 'success', confirmText: 'Close' }) });
@@ -21467,7 +21467,7 @@ function renderSection(active) {
         const isCurrent = () => currentUser === user && selectedBranchId === branch && activeSection === 'accounts' && !signal.aborted;
         button.disabled = true;
         try {
-          const { openBillingDiscounts } = await import('./billing-discounts.js?v=20261105-class-term-discounts');
+          const { openBillingDiscounts } = await import('./billing-discounts.js?v=20261113-scholarship-billing');
           if (!isCurrent()) return;
           await openBillingDiscounts(async payload => {
             if (!isCurrent()) throw new Error('The workspace changed. Reopen billing discounts.');

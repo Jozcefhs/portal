@@ -750,6 +750,38 @@ test('selected tuition and textbook scholarship exemptions preserve unrelated fe
   assert.equal(h.commits.length, 1);
 });
 
+test('a Full Scholarship can reverse ordinary fees beyond tuition and textbooks while retaining explicit fees', async () => {
+  const h = harness({ configure: (data, profile) => {
+    categoryChargeFixture(data, profile);
+    profile.BillingCategory = 'Full Scholarship';
+    const ordinary = data.feeItems.find(row => row.FeeCode === 'TUI_1T');
+    const stationery = { ...ordinary, __id: 'stationery-rule', FeeCode: 'STA', FeeName: 'Stationeries', Amount: 15000, BillingCategory: 'All' };
+    const exception = { ...stationery, __id: 'scholarship-rule', FeeCode: 'LAB', FeeName: 'Lab materials', Amount: 3000, BillingCategory: 'Full Scholarship' };
+    data.feeItems.push(stationery, exception);
+    for (const fee of [stationery, exception]) {
+      const invoice = { ...fee, __id: 'INV-' + fee.FeeCode, InvoiceId: 'INV-' + fee.FeeCode, AccountRef: profile.AccountRef,
+        AcademicSession: profile.AcademicSession, Term: profile.Term, Credit: 0, Status: 'Unpaid' };
+      data.invoices.push(invoice);
+      const journal = buildSchoolInvoiceChargeAccountingJournal(invoice);
+      data.journals.push({ ...journal, __id: safeDocumentId(journal.JournalNo), __updateTime: 'v1' });
+    }
+  } });
+  const ids = ['INV-STA'], deps = { ...h.deps, invoiceIds: ids };
+  const before = h.read();
+  const snapshot = await getObsoleteSchoolChargeReversalData({}, h.profile, deps);
+  assert.equal(snapshot.journals.some(row => row.SourceId === 'INV-STA'), true);
+  const plan = await obsoleteSchoolChargeReversalPlan(h.profile, snapshot, { invoiceIds: ids });
+  assert.equal(plan.ready, true, plan.reason);
+  assert.equal(plan.charges[0].basis, 'full-scholarship');
+  assert.equal(plan.amount, 15000);
+  await reverseObsoleteSchoolCharges({}, h.profile, plan.previewToken, actor, 'Apply the saved scholarship exemption.', deps);
+  assert.deepEqual(withoutRevision(h.read().invoices.find(row => row.InvoiceId === 'INV-LAB')),
+    withoutRevision(before.invoices.find(row => row.InvoiceId === 'INV-LAB')));
+  for (const key of ['payments', 'ledger']) assert.deepEqual(h.read()[key].map(withoutRevision), before[key].map(withoutRevision));
+  await assert.rejects(reverseObsoleteSchoolCharges({}, h.profile, plan.previewToken, actor, 'Check a repeat.', deps));
+  assert.equal(h.commits.length, 1);
+});
+
 test('scholarship exemptions require explicit saved category, actual rule evidence and no explicit payable exception', async () => {
   for (const change of [
     (d,p) => { p.BillingCategory = 'Sponsored'; }, (d,p) => { p.StudentType = ''; },
