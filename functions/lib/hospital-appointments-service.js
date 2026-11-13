@@ -1,3 +1,4 @@
+import {createHospitalAppointmentWaitlistService} from './hospital-appointment-waitlist-service.js';
 import {clean,fail,id,digest,stable,patientSummary,patientName} from './hospital-model.js';
 import {field,dateFilters,watDay} from './hospital-orders-model.js';
 import {assignedStaffBranches} from './staff-branch-access.js';
@@ -62,7 +63,9 @@ export function createHospitalAppointmentsService(ctx){
     });
   }
   const identity=row=>({AppointmentId:row.AppointmentId,PatientId:row.PatientId,...(row.VisitId?{VisitId:row.VisitId}:{})});
+  const waitlist=createHospitalAppointmentWaitlistService(ctx,{clinician});
   return {
+    ...waitlist.methods,
     async appointmentSchedules(body){
       requireCapability('appointments.read');const BranchId=await branch(body),filters=[eq('BranchId',BranchId),...dateFilters(body.DateRange,'DayStartAt')];
       const r=await page('AppointmentSchedules',filters,'DayStartAt',body);
@@ -96,6 +99,7 @@ export function createHospitalAppointmentsService(ctx){
         if(person.Status!=='Active')fail('This patient registration is not active.',409);
         const FollowUpVisitId=clean(body.FollowUpVisitId);
         const selected={...times,Reference,PatientId:person.PatientId,ScheduleId:schedule.ScheduleId,FollowUpVisitId};
+        const waiting=await waitlist.prepareBooking(body,old,selected,schedule,person,key);
         if(old&&old.Status==='Scheduled'&&same(Object.fromEntries(Object.keys(selected).map(k=>[k,old[k]||''])),selected))return {writes:[],result:{...identity(old),Unchanged:true}};
         if(old){revision(old,body.Revision);if(old.Status!=='Scheduled')fail('Only scheduled appointments can be rescheduled.',409);
           if(old.FollowUpVisitId!==FollowUpVisitId)fail('The original follow-up visit link cannot be changed.');
@@ -104,9 +108,9 @@ export function createHospitalAppointmentsService(ctx){
         if(!old&&FollowUpVisitId){const visit=await read('Visits',FollowUpVisitId);if(!visit||visit.PatientId!==person.PatientId||visit.BranchId!==BranchId)fail('Choose a previous visit for this patient and branch.',404);}
         const ClinicianName=await clinician(schedule.Clinician,BranchId);
         const row={...strip(old),...selected,AppointmentId,BranchId,PatientName:patientName(person),HospitalNumber:person.HospitalNumber,
-          Clinician:schedule.Clinician,ClinicianName,Department:schedule.Department,Status:'Scheduled',CreatedAt:old?.CreatedAt||clock(),...stamp()};
+          Clinician:schedule.Clinician,ClinicianName,Department:schedule.Department,...(waiting.WaitlistId?{WaitlistId:waiting.WaitlistId}:{}),Status:'Scheduled',CreatedAt:old?.CreatedAt||clock(),...stamp()};
         const [locks,schedules]=await Promise.all([reservations(old,row),scheduleWrites(old,row,schedule)]);
-        return {writes:[...locks,...schedules,write('Appointments',AppointmentId,row,old),event(key,row,old?'Rescheduled':'Booked',Reason),
+        return {writes:[...waiting.writes,...locks,...schedules,write('Appointments',AppointmentId,row,old),event(key,row,old?'Rescheduled':'Booked',Reason),
           auditWrite(key,old?'Reschedule appointment':'Book appointment',BranchId,person,{AppointmentId})],result:identity(row)};
       });
     },

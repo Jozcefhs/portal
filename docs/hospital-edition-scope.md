@@ -2,11 +2,11 @@
 
 Scope confirmed: 26 October 2026, Africa/Lagos.
 
-## Latest increment — 13 November 2026
+## Latest increment — 14 November 2026
 
-Theatre recovery handovers now identify a clinical recipient who can acknowledge receipt or request clarification. Corrections require a fresh acknowledgement; every earlier note and response remains in dated history. The pending queue is bounded, cached and explicitly loaded, and current/historical handovers support preview/print. This follows the post-discharge summary amendment increment, also recorded in the delivery log. See [the theatre guide](hospital-theatre-workflows.md).
+H02 now includes branch-specific appointment waitlists: scheduling preferences, cancellation with reasons, conversion into a guarded clinic appointment, and retained request history with preview/print. Only one active request per patient/department is allowed. Booking and closing the waiting request occur in one atomic commit. This follows recovery handover acknowledgement. See [the appointment guide](hospital-appointments-workflows.md).
 
-This increment deploys only to the isolated Hospital Owner's Demo, without record migrations, deletions, desktop compilation or installer release. Patient cards remain NFC and card terminals remain disabled. Perpetual valuation, controlled-drug witnesses, patient self-service, remaining specialist workflows, desktop/offline parity and practitioner validation remain on the complete roadmap.
+This increment deploys only to the isolated Hospital Owner's Demo, without record migrations, deletions, desktop compilation or installer release. Patient cards remain NFC and card terminals remain disabled. Recurring clinic schedules, reminder delivery, patient self-service, specialist workflows, desktop/offline parity and practitioner validation remain on the full roadmap.
 
 The user wants Hospital to become the fourth Dynamax edition, alongside School, Faith and Other Organisations, and wants every feature in the proposed Hospital scope included. This document is the implementation checklist for that full scope, covering the web companion, desktop and shared backend.
 
@@ -336,3 +336,11 @@ The complete Hospital scope remains open. Next theatre gaps include detailed ana
 
 
 Deployed and verified on 13 November 2026: source `d3580827565b63f51a44e58e24306df698f544af`, deployment [570b5499](https://570b5499.dynamax-hospital-review.pages.dev). The additive recipient/pending index is READY. Eight deployed assets match the tested commit. Owner, Medical Director and Nurse demo sign-ins passed; clinical recipients can load their queue, while owner-only administrative access and unauthenticated requests cannot read it. Required-note validation rejects incomplete responses before any mutation. Workspace entry requests state only; two explicit pending-list loads issue one queue request. Desktop and 390-pixel phone checks passed without browser errors. Bounded before/after checks found the three original sample visits unchanged. Live verification performed no clinical, stock or financial mutations and sent no emails; ordinary sign-in sessions and clinical-read audit entries are expected. Local mutation tests used synthetic in-memory records. No desktop compilation or installer release. See [verification evidence](hospital-recovery-handovers-verification.md).
+
+### 14 November 2026 — H02 appointment waitlist
+
+- Added branch-scoped Waiting, Booked and Cancelled requests, patient/department duplicate guards, reasoned preference changes and immutable snapshots. Appointment conversion shares clinic/theatre availability guards and commits all changes together. No visit, charge or payment is created by joining or booking from the waitlist.
+- Waiting pages fetch 31/display 30; completed requests/history require dates. Loaded pages are cached; preview/print performs no reads. Current details refresh exact records. New create: four exact reads/five writes; conversion: eight exact reads, one clinician query limited to two and ten atomic writes. Completed request replay: one read/zero writes. Unchanged save: zero writes. Authentication, branch configuration and explicit detail reloads are separate.
+- Verification: 4,764 top-level tests passed, including 18 waitlist tests. New waitlist and existing appointment browser workflows passed at desktop and phone sizes. Tests cover lost response, concurrent conversion/cancellation/edit, duplicate references, stale revisions, role/module/branch/subscription restrictions, bounded pagination, backup discovery and record preservation. All three additive Firestore indexes are READY in the Hospital demo only.
+- Next: recurring clinic availability templates with explicit date-range generation and no duplicate schedules; then controlled reminders and patient self-booking. H02 remains partial; no messages were sent and no desktop build was made.
+- Live deployment evidence is recorded in the owner-demo guide after verification.
