@@ -143,14 +143,21 @@ function extractMetadata(data) {
   return metadata;
 }
 
+function isCustomPortalReturn(request, intent) {
+  const url = new URL(request.url);
+  return intent?.PortalCheckoutOrigin === url.origin && request.headers.get('Origin') === url.origin
+    && url.protocol === 'https:' && !url.hostname.endsWith('.pages.dev');
+}
+
 async function recordCustomPortalReturn(env, request, intent, reference) {
   const origin = new URL(request.url).origin;
   if (!intent?.__updateTime || intent.Status !== 'Completed' || intent.Reference !== reference
-      || intent.PortalCheckoutOrigin !== origin || request.headers.get('Origin') !== origin
-      || new URL(origin).hostname.endsWith('.pages.dev') || !origin.startsWith('https://')) return;
+      || !isCustomPortalReturn(request, intent)) return;
   const fingerprint = await paystackCredentialFingerprint(env.PAYSTACK_SECRET_KEY);
+  const verifiedAt = Date.parse(intent.PortalReturnVerifiedAt);
+  const now = Date.now();
   if (intent.PortalReturnVerifiedOrigin === origin && intent.PortalPaymentCredential === fingerprint
-      && Date.now() - Date.parse(intent.PortalReturnVerifiedAt) < 86400000) return;
+      && Number.isFinite(verifiedAt) && verifiedAt <= now && now - verifiedAt < 86400000) return;
   await patchDocumentFieldsIfCurrent(env, 'paymentIntents', safeId(reference), {
     PortalReturnVerifiedOrigin: origin,
     PortalReturnVerifiedAt: new Date().toISOString(),
@@ -508,6 +515,13 @@ export async function onRequestPost(context) {
     }
 
     const warningText = recordErrors.filter(Boolean).join(' | ');
+    // Advance settlement completes the intent atomically with its receipt and
+    // allocations, outside the ordinary intent update above. Read that version
+    // only for a genuine custom-host return and patch verification evidence.
+    if (isAdvance && !warningText && isCustomPortalReturn(request, intent)) {
+      const completedIntent = await getDocument(env, 'paymentIntents', safeId(tx.reference || reference));
+      await recordCustomPortalReturn(env, request, completedIntent, tx.reference || reference);
+    }
     const result = {
       ok: true,
       message: warningText ? `Payment verified and recorded with warning: ${warningText}` : 'Payment verified and recorded.',
