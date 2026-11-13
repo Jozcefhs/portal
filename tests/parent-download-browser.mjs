@@ -13,13 +13,27 @@ try{
   });
   assert.equal(urls.some(u=>u.includes('pdf-lib')||u.includes('html2canvas')),false,'PDF libraries are lazy');
   for(const [name,long]of [['result.pdf',false],['long-result.pdf',true]]){
-    if(long)await page.evaluate(()=>{report.Subjects=Array.from({length:45},(_,i)=>({...report.Subjects[i%10],SubjectName:'Subject '+(i+1)}));});
+    if(long)await page.evaluate(()=>{child.DisplayName='Sample Learner With Several Long Given Names And A Long Family Name';report.Subjects=Array.from({length:45},(_,i)=>({...report.Subjects[i%10],SubjectName:i%10===0?'Computer Hardware and GSM Repairs — Practical Skills':'Subject '+(i+1)}));});
     const pending=page.waitForEvent('download');await page.locator('#download').click();const download=await pending;assert.match(download.suggestedFilename(),/\.pdf$/);await download.saveAs(resolve(out,name));await page.waitForFunction(()=>!document.querySelector('#download').disabled);
     const pdf=await PDFDocument.load(await readFile(resolve(out,name)));assert.ok(pdf.getPageCount()>=1);if(long)assert.ok(pdf.getPageCount()>1);console.log(JSON.stringify({file:name,pages:pdf.getPageCount()}));
   }
   assert.equal(await page.evaluate(()=>requests),2);await page.evaluate(()=>denied=true);await page.locator('#download').click();await page.waitForFunction(()=>!document.querySelector('#download').disabled);assert.match(await page.locator('#status').textContent(),/not currently available/);
   // Render the actual generated PDF for visual QA using the bundled PDF.js.
   for(const file of ['result.pdf','long-result.pdf']){const bytes=[...await readFile(resolve(out,file))];const count=await page.evaluate(async bytes=>{document.querySelectorAll('.pdf-review').forEach(e=>e.remove());const lib=await import('/vendor/exam-documents/pdf.min.mjs');lib.GlobalWorkerOptions.workerSrc='/vendor/exam-documents/pdf.worker.min.mjs';const pdf=await lib.getDocument({data:new Uint8Array(bytes)}).promise;for(let i=1;i<=pdf.numPages;i++){const p=await pdf.getPage(i),viewport=p.getViewport({scale:1.4}),canvas=document.createElement('canvas');canvas.className='pdf-review';canvas.id='pdf-review-'+i;canvas.width=viewport.width;canvas.height=viewport.height;document.body.appendChild(canvas);await p.render({canvasContext:canvas.getContext('2d'),viewport}).promise;}return pdf.numPages;},bytes);for(let i=1;i<=count;i++)await page.locator('#pdf-review-'+i).screenshot({path:resolve(out,file.replace('.pdf','')+'-page-'+i+'.png')});}
+  // Inspect the rendered PDF pixels, including every continuation page. All
+  // four outer edges must be present inside the printable page margins.
+  const borders=await page.locator('.pdf-review').evaluateAll(canvases=>canvases.map(canvas=>{
+    const ctx=canvas.getContext('2d'),{width:w,height:h}=canvas,data=ctx.getImageData(0,0,w,h).data;
+    const dark=(x,y)=>{const p=(y*w+x)*4;return data[p]<150&&data[p+1]<150&&data[p+2]<170;};
+    const x1=Math.round(34.52*1.4),x2=Math.round((595.28-34.52)*1.4),top=Math.round(34.52*1.4);
+    const edgeAt=(x,y)=>[-1,0,1].some(dx=>dark(x+dx,y));
+    let bottom=top;for(let y=top;y<h-20;y++)if(edgeAt(x1,y)&&edgeAt(x2,y))bottom=y;
+    const rows=Array.from({length:Math.max(0,bottom-top-3)},(_,i)=>top+2+i);
+    const columns=Array.from({length:x2-x1-3},(_,i)=>x1+2+i);
+    const horizontal=y=>columns.filter(x=>[-1,0,1].some(dy=>dark(x,y+dy))).length/columns.length;
+    return {left:rows.filter(y=>edgeAt(x1,y)).length/rows.length,right:rows.filter(y=>edgeAt(x2,y)).length/rows.length,top:horizontal(top),bottom:horizontal(bottom)};
+  }));
+  for(const edges of borders)for(const [edge,coverage]of Object.entries(edges))assert.ok(coverage>0.98,`${edge} PDF border coverage: ${coverage}`);
   await page.goto(`http://127.0.0.1:${server.address().port}/parent-password-recovery.html`);let calls=0;await page.route('**/api/parent-password-recovery',async route=>{calls++;const body=route.request().postDataJSON();await route.fulfill({json:{ok:true,message:body.action==='request'?'Check your inbox and spam folder.':'Password reset. Return to parent sign-in.'}});});
   await page.locator('#recoveryEmail').fill('@DCA/22/1076');await page.locator('#requestRecoveryForm button').click();assert.equal(calls,0);await page.locator('dialog[open] [aria-label="Close dialog"]').click();await page.locator('#recoveryEmail').fill('parent@example.com');await page.locator('#requestRecoveryForm button').click();await page.waitForFunction(()=>document.querySelector('#recoveryStatus').textContent.includes('Check your inbox'));await page.locator('#recoveryCode').fill('a'.repeat(48));await page.locator('#newPassword').fill('NewParentPass9');await page.locator('#confirmPassword').fill('MismatchPass9');await page.locator('#resetPasswordForm button[type=submit]').click();assert.equal(calls,1);await page.locator('#confirmPassword').fill('NewParentPass9');await page.locator('#resetPasswordForm button[type=submit]').click();await page.waitForFunction(()=>document.querySelector('#recoveryStatus').textContent.includes('Password reset'));assert.equal(await page.locator('#newPassword').inputValue(),'');assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));await page.screenshot({path:resolve(out,'recovery-mobile.png'),fullPage:true});assert.deepEqual(errors,[]);console.log(JSON.stringify({ok:true,accessRechecked:true,lazyLibraries:true,mobileRecovery:true}));
 }finally{await browser?.close();await new Promise(r=>server.close(r));}

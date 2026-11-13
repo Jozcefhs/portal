@@ -166,7 +166,7 @@ export function evaluateAcademicResultAccess({
     : accessDecision(false, 'FINANCIAL_CLEARANCE_REQUIRED', 'This result is currently unavailable under the school’s financial-clearance policy. Please contact the school accounts office.');
 }
 
-function publicSubjectResult(subject = {}, positionMode = 'none', snapshot = {}) {
+function publicSubjectResult(subject = {}, positionMode = 'none', snapshot = {}, resultType = '') {
   const output = {
     SubjectId: clean(subject.SubjectId || subject.Id),
     SubjectName: clean(subject.SubjectName || subject.Name || subject.Subject),
@@ -174,7 +174,7 @@ function publicSubjectResult(subject = {}, positionMode = 'none', snapshot = {})
     Grade: clean(subject.Grade),
     GradePoint: subject.GradePoint ?? subject.Point ?? '',
     Remark: clean(subject.Remark),
-    WeightedComponents: academicWeightedResultComponents(subject, snapshot)
+    WeightedComponents: academicWeightedResultComponents(subject, snapshot, resultType)
   };
   if (positionMode === 'subject-only') output.Position = subject.Position ?? subject.SubjectPosition ?? '';
   if (positionMode === 'assessed-count') output.AssessedCount = subject.AssessedCount ?? '';
@@ -213,6 +213,8 @@ function publicAcademicResultPolicySnapshot(policy = {}) {
       MinimumOverallAverage: promotion.MinimumOverallAverage ?? null,
       MaximumFailedSubjects: promotion.MaximumFailedSubjects ?? null,
       MinimumAttendancePercentage: promotion.MinimumAttendancePercentage ?? null,
+      Nursery: { ...(promotion.Nursery || {}) },
+      Primary: { ...(promotion.Primary || {}) },
       JuniorSecondary: { ...(promotion.JuniorSecondary || {}) },
       SeniorSecondary: { ...(promotion.SeniorSecondary || {}) }
     }
@@ -237,7 +239,7 @@ export function publicAcademicResult(result = {}, access = {}, policyValue = {})
     })
   };
   if (!access.Allowed) return output;
-  output.Subjects = (result.Subjects || result.SubjectResults || []).map((subject) => publicSubjectResult(subject, policy.Position.Mode, result.PolicySnapshot || {}));
+  output.Subjects = (result.Subjects || result.SubjectResults || []).map((subject) => publicSubjectResult(subject, policy.Position.Mode, result.PolicySnapshot || {}, result.ResultType));
   // A visible status explains the omitted marks without exposing staff-only reasons.
   if (lower(result.ResultType) === 'mid-term') output.NotTaughtSubjects = (result.NotTaughtSubjects || []).map(subject => ({
     SubjectName:clean(subject.SubjectName) || 'Subject', Status:'Not taught this mid-term'
@@ -251,7 +253,7 @@ export function publicAcademicResult(result = {}, access = {}, policyValue = {})
   output.OverallRemark = clean(result.OverallRemark);
   output.Recommendation = clean(result.Recommendation);
   output.Attendance = publicAttendanceSummary(result.Attendance || result.AttendanceSummary || {});
-  output.PolicySnapshot = publicAcademicResultPolicySnapshot(policy);
+  output.PolicySnapshot = publicAcademicResultPolicySnapshot(result.PolicySnapshot || policy);
   if (policy.Position.Mode === 'exact-overall') output.OverallPosition = result.OverallPosition ?? result.Position ?? '';
   if (policy.Position.Mode === 'percentile-band') output.PerformanceBand = clean(result.PerformanceBand || result.PercentileBand);
   if (policy.Position.Mode === 'assessed-count') output.AssessedStudentCount = result.AssessedStudentCount ?? '';

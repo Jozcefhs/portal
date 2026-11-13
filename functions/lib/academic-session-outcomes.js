@@ -1,4 +1,4 @@
-import { academicCumulativePolicyIssues, normalizeAcademicPolicy } from './academic-policy.js';
+import { academicCumulativePolicyIssues, normalizeAcademicPolicy, academicPromotionForStage } from './academic-policy.js';
 import { academicAutomaticResultComments } from './academic-term-results.js';
 import { academicSubjectName } from './academic-result-subject-labels.js';
 
@@ -313,7 +313,7 @@ export function calculateAcademicCumulativeDrafts(input = {}) {
 
 export function evaluateAcademicPromotionDecision(cumulativeResult = {}, policyValue = {}) {
   const policy = normalizeAcademicPolicy(policyValue);
-  const promotion = policy.Promotion;
+  const promotion = academicPromotionForStage(policy, cumulativeResult);
   const criteria = [];
   const reasons = [];
   const failedSubjects = (cumulativeResult.Subjects || []).filter((subject) => ['probation', 'fail'].includes(lower(subject.Classification)));

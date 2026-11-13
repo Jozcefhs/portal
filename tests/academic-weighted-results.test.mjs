@@ -96,8 +96,36 @@ test('parent screen and print rows include weighted marks and escape labels', as
   const markup = ctx.DynamaxAcademicResultTemplate.weightedMarkup(record);
   assert.match(markup, /<th>CA1<\/th>/);
   assert.doesNotMatch(markup, /Weighted|Totals use unrounded marks/);
-  assert.match(markup, /8.5 \/ 10/);
+  assert.match(markup, />8.5<\/td>/);
+  assert.doesNotMatch(markup, /8.5 \/ 10/);
   assert.match(markup, /&lt;Maths&gt;/);
   assert.match(source, /DynamaxAcademicResultTemplate\.weightedMarkup\(record\)/);
   assert.match(source, /DynamaxAcademicResultTemplate\.render\(child, record/);
+});
+
+test('mid-term displays saved full-term contributions while retaining its published percentage', () => {
+  const original = { ResultType: 'Mid-Term', PolicySnapshot: policy, Subjects: [{ Total: 95, Grade: 'A',
+    ComponentScores: [{ ComponentId: 'ca1', State: 'Numeric', RawScore: 95, MaximumScore: 100, WeightPercentage: 100 }] }] };
+  const before = structuredClone(original), current = structuredClone(policy);
+  current.Assessment.Components[0].WeightPercentage = 50;
+  for (const record of [academicResultWithWeightedComponents(original), publicAcademicResult(original, { Allowed: true }, current)]) {
+    assert.equal(record.Subjects[0].WeightedComponents[0].WeightedMark, 9.5);
+    assert.equal(record.Subjects[0].WeightedComponents[0].MaximumMark, 10);
+    assert.equal(record.Subjects[0].Total, 95);
+    assert.equal(record.Subjects[0].Grade, 'A');
+  }
+  assert.deepEqual(original, before);
+  const missing = structuredClone(original); missing.PolicySnapshot = {};
+  assert.equal(academicResultWithWeightedComponents(missing).Subjects[0].WeightedComponents[0].WeightedMark, null);
+});
+
+test('two mid-term components preserve their different original weights and exemptions', () => {
+  const saved = { Assessment: { Components: [{Id:'ca1',WeightPercentage:10},{Id:'ca2',WeightPercentage:20}] } };
+  const subject = { Total: 80, ComponentScores: [
+    {ComponentId:'ca1',State:'Numeric',RawScore:80,MaximumScore:100,WeightPercentage:100/3},
+    {ComponentId:'ca2',State:'Numeric',RawScore:8,MaximumScore:10,WeightPercentage:200/3}
+  ] };
+  assert.deepEqual(academicWeightedResultComponents(subject, saved, 'Mid-Term').map(row=>row.WeightedMark), [8,16]);
+  subject.ComponentScores[0].State='Exempt';
+  assert.deepEqual(academicWeightedResultComponents(subject, saved, 'Mid-Term').map(row=>row.WeightedMark), [null,16]);
 });

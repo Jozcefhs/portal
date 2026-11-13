@@ -430,7 +430,7 @@ function announceSettingsChange() {
 
 function setField(id, value) {
   const node = document.getElementById(id);
-  if (node) node.value = value || '';
+  if (node) node.value = value ?? '';
 }
 
 function policyField(id) {
@@ -594,6 +594,11 @@ function renderAcademicCumulativeTerms(terms = []) {
 }
 
 function updateAcademicPolicyConditionalFields() {
+  document.querySelectorAll('[data-stage-promotion-fields]').forEach(group => {
+    const active = policyField('academic' + group.dataset.stagePromotionFields + 'PromotionMode')?.value === 'criteria';
+    group.hidden = !active;
+    group.querySelectorAll('input').forEach(field => { field.disabled = !active; });
+  });
   const feeMode = policyField('academicFeeClearanceMode')?.value || 'unconfigured';
   document.querySelectorAll('[data-fee-policy-field]').forEach((field) => {
     field.hidden = field.dataset.feePolicyField !== feeMode;
@@ -627,6 +632,13 @@ function renderAcademicPolicy(policy = {}) {
   const probationResit = promotion.ProbationResit || {};
   const juniorPromotion = promotion.JuniorSecondary || {};
   const seniorPromotion = promotion.SeniorSecondary || {};
+  for (const stage of ['Nursery', 'Primary']) {
+    const rule = promotion[stage] || {};
+    setField('academic' + stage + 'PromotionMode', rule.Mode || 'inherit');
+    for (const field of ['MinimumOverallAverage', 'MaximumFailedSubjects', 'MinimumAttendancePercentage']) {
+      setField('academic' + stage + field, rule[field] ?? '');
+    }
+  }
   setField('academicResultVisibility', result.VisibilityMode || 'unconfigured');
   setField('academicFeeClearanceMode', clearance.Mode || 'unconfigured');
   setField('academicMinimumPaidPercentage', clearance.MinimumPaidPercentage ?? 100);
@@ -748,6 +760,11 @@ function academicPolicyFromForm() {
     },
     Promotion: {
       Mode: policyField('academicPromotionMode').value,
+      ...Object.fromEntries(['Nursery', 'Primary'].map(stage => [stage, {
+        Mode: policyField('academic' + stage + 'PromotionMode').value,
+        ...Object.fromEntries(['MinimumOverallAverage', 'MaximumFailedSubjects', 'MinimumAttendancePercentage']
+          .map(field => [field, policyNumber('academic' + stage + field)]))
+      }])),
       ProbationResit: {
         Enabled: policyField('academicProbationResitEnabled').value === 'YES',
         PassPercentage: policyNumber('academicProbationResitPassPercentage', 50)
@@ -1471,6 +1488,7 @@ policyField('addAcademicCumulativeTerm')?.addEventListener('click', () => {
 policyField('academicFeeClearanceMode')?.addEventListener('change', updateAcademicPolicyConditionalFields);
 policyField('academicPromotionMode')?.addEventListener('change', updateAcademicPolicyConditionalFields);
 policyField('academicProbationResitEnabled')?.addEventListener('change', updateAcademicPolicyConditionalFields);
+for (const stage of ['Nursery', 'Primary']) policyField('academic' + stage + 'PromotionMode')?.addEventListener('change', updateAcademicPolicyConditionalFields);
 academicPolicyInheritanceMode?.addEventListener('change', () => {
   if (academicPolicyInheritanceHelp) {
     academicPolicyInheritanceHelp.textContent = academicPolicyInheritanceMode.value === 'independent'

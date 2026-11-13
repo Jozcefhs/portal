@@ -390,7 +390,7 @@
           </div>
 
           <div class="settings-subsection">
-            <div class="settings-subsection-title"><strong>Promotion</strong><span>Junior and Senior rules are independent; authorized staff still approve final decisions.</span></div>
+            <div class="settings-subsection-title"><strong>Promotion by school stage</strong><span>Nursery, primary and secondary decisions can use different criteria. Authorised staff still approve final decisions.</span></div>
             <div class="settings-fields">
               <div class="settings-field"><label for="academicPromotionMode">Promotion method</label><select id="academicPromotionMode"><option value="unconfigured">Choose a policy</option><option value="manual-review">Manual review only</option><option value="division-rules">Separate Junior and Senior rules</option><option value="criteria">General criteria (legacy)</option></select></div>
             </div>
@@ -432,6 +432,27 @@
             </div>
           </div>
 
+          <div class="settings-subsection">
+            <div class="settings-subsection-title"><strong>Nursery and primary</strong><span>Secondary Core-credit rules do not apply here. The assessment, grading and cumulative-term settings above still apply; configure class assessment schemes where tests differ.</span></div>
+            <div class="academic-promotion-rule-card">
+              <div class="settings-subsection-title"><strong>Nursery promotion</strong><span>Applies to nursery pupils in this policy's branch and period.</span></div>
+              <div class="settings-field"><label for="academicNurseryPromotionMode">Decision method</label><select id="academicNurseryPromotionMode"><option value="inherit">Use general policy (head-teacher review if secondary rules are selected)</option><option value="manual-review">Head-teacher review</option><option value="criteria">Separate nursery criteria</option></select></div>
+              <div class="settings-fields two-column" data-stage-promotion-fields="Nursery">
+                <div class="settings-field"><label for="academicNurseryMinimumOverallAverage">Minimum overall average (optional)</label><input id="academicNurseryMinimumOverallAverage" type="number" min="0" max="100" step="0.01"></div>
+                <div class="settings-field"><label for="academicNurseryMaximumFailedSubjects">Maximum failed subjects (optional)</label><input id="academicNurseryMaximumFailedSubjects" type="number" min="0" max="100" step="1"></div>
+                <div class="settings-field"><label for="academicNurseryMinimumAttendancePercentage">Minimum attendance percentage (optional)</label><input id="academicNurseryMinimumAttendancePercentage" type="number" min="0" max="100" step="0.01"></div>
+              </div>
+            </div>
+            <div class="academic-promotion-rule-card">
+              <div class="settings-subsection-title"><strong>Primary promotion</strong><span>Applies to primary pupils in this policy's branch and period.</span></div>
+              <div class="settings-field"><label for="academicPrimaryPromotionMode">Decision method</label><select id="academicPrimaryPromotionMode"><option value="inherit">Use general policy (head-teacher review if secondary rules are selected)</option><option value="manual-review">Head-teacher review</option><option value="criteria">Separate primary criteria</option></select></div>
+              <div class="settings-fields two-column" data-stage-promotion-fields="Primary">
+                <div class="settings-field"><label for="academicPrimaryMinimumOverallAverage">Minimum overall average (optional)</label><input id="academicPrimaryMinimumOverallAverage" type="number" min="0" max="100" step="0.01"></div>
+                <div class="settings-field"><label for="academicPrimaryMaximumFailedSubjects">Maximum failed subjects (optional)</label><input id="academicPrimaryMaximumFailedSubjects" type="number" min="0" max="100" step="1"></div>
+                <div class="settings-field"><label for="academicPrimaryMinimumAttendancePercentage">Minimum attendance percentage (optional)</label><input id="academicPrimaryMinimumAttendancePercentage" type="number" min="0" max="100" step="0.01"></div>
+              </div>
+            </div>
+          </div>
           <div class="academic-policy-validation"><strong>Activation readiness</strong><ul id="academicPolicyIssues"><li>Load or save a policy to review its requirements.</li></ul></div>
           <div class="academic-policy-actions">
             <button id="inheritAcademicPolicyButton" type="button" class="settings-text-button" hidden>Use organisation policy</button>
@@ -615,6 +636,6 @@
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
   <script src="js/app-dialogs.js?v=20261016-grouped-form-validation"></script>
   <script src="js/paystack-connection-status.js?v=20261013-paystack-activation"></script>
-  <script src="js/setup.js?v=20261111-root-portal-domain"></script>
+  <script src="js/setup.js?v=20261113-stage-promotion"></script>
 </body>
 </html>

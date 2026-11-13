@@ -1,4 +1,4 @@
-import { normalizeAcademicPolicy } from './academic-policy.js';
+import { normalizeAcademicPolicy, academicPromotionForStage } from './academic-policy.js';
 import { academicAssessmentScheme, calculateAcademicStudentScore } from './academic-scorebook.js';
 import { schoolCalendarDayIsOpen, schoolCalendarSummary } from './academic-school-calendar.js';
 import { academicSubjectName } from './academic-result-subject-labels.js';
@@ -90,12 +90,12 @@ function gradeForPercentage(policy, percentage) {
   )) || null;
 }
 
-function promotionBenchmark(policy = {}, schoolStage = '') {
-  const promotion = policy.Promotion || {};
-  if (lower(promotion.Mode) === 'division-rules' && lower(schoolStage) === 'junior-secondary') {
+function promotionBenchmark(policy = {}, result = {}) {
+  const promotion = academicPromotionForStage(policy, result);
+  if (lower(promotion.Mode) === 'division-rules' && lower(result.SchoolStage) === 'junior-secondary') {
     return promotion.JuniorSecondary?.PromotedMinimumAverage ?? null;
   }
-  return promotion.MinimumOverallAverage ?? null;
+  return promotion.Mode === 'criteria' ? promotion.MinimumOverallAverage ?? null : null;
 }
 
 export function academicAutomaticResultComments(result = {}, policyInput = {}) {
@@ -105,7 +105,7 @@ export function academicAutomaticResultComments(result = {}, policyInput = {}) {
   const weakestName = academicSubjectName(weakest);
   const weakestScore = Number(weakest?.Total ?? weakest?.WeightedTotal ?? 0);
   const failed = subjects.filter((row) => ['probation', 'fail'].includes(lower(row.Classification)));
-  const benchmark = promotionBenchmark(policy, result.SchoolStage);
+  const benchmark = promotionBenchmark(policy, result);
   const average = Number(result.OverallAverage || 0);
   const attention = weakestName ? ` Greater attention to ${weakestName} will strengthen the overall result.` : '';
   const TeacherRemark = failed.length || weakestScore < 50

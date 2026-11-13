@@ -34,12 +34,16 @@ try {
   const selectors=['.letterhead','.school h1','.passport','.title','.identity-table','.subject-table','.summary-table','.remarks-table'];
   const metrics=async frame=>frame.evaluate(selectors=>Object.fromEntries(selectors.map(selector=>{
     const node=document.querySelector(selector),rect=node.getBoundingClientRect(),style=getComputedStyle(node);
-    return [selector,{x:rect.x,y:rect.y,width:rect.width,height:rect.height,color:style.color,font:style.fontSize}];
+    return [selector,{x:rect.x+scrollX,y:rect.y+scrollY,width:rect.width,height:rect.height,color:style.color,font:style.fontSize}];
   })),selectors);
   for (const stage of ['nursery','primary','secondary']) {
     await page.evaluate(stage=>printAcademicResultSample(stage),stage);
     const frame=await (await page.locator('#academicResultSampleDialog[open] iframe').elementHandle()).contentFrame();
     await frame.waitForSelector('.subject-table');
+    assert.match(await frame.locator('.result-signatory').innerText(),/Alex Sample/);
+    assert.equal(await frame.locator('.result-signatory img').count(),0);
+    if(stage!=='secondary')assert.doesNotMatch(await frame.locator('.criteria-table').innerText(),/JUNIOR|SENIOR/);
+    await frame.locator('.report').screenshot({path:`tmp/result-sample-${stage}.png`});
     const reference=await metrics(frame);
     const fixture=await page.evaluate(()=>window.lastReport);
     const report=await context.newPage();

@@ -4,7 +4,7 @@ const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
 const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value || {}, key);
 
-export const ACADEMIC_POLICY_SCHEMA_VERSION = 4;
+export const ACADEMIC_POLICY_SCHEMA_VERSION = 5;
 export const ACADEMIC_POLICY_SCOPE_TYPES = Object.freeze([
   'organisation',
   'branch',
@@ -159,6 +159,39 @@ function normalizeCumulativeTerm(row = {}, index = 0) {
   };
 }
 
+function normalizeEarlyYearsPromotion(value = {}) {
+  value = value || {};
+  return {
+    Mode: oneOf(value.Mode, ['inherit', 'manual-review', 'criteria'], 'inherit'),
+    MinimumOverallAverage: optionalBoundedNumber(value.MinimumOverallAverage, 0, 100),
+    MaximumFailedSubjects: optionalBoundedInteger(value.MaximumFailedSubjects, 0, 100),
+    MinimumAttendancePercentage: optionalBoundedNumber(value.MinimumAttendancePercentage, 0, 100)
+  };
+}
+
+// Nursery classes can belong to the primary section, so identify the stage
+// before applying section fallback. No catalogue/database reads are needed.
+export function academicResultSchoolStage(result = {}) {
+  const stage = lower(result.SchoolStage);
+  const description = lower([result.ClassName, result.ClassCode].filter(Boolean).join(' '));
+  if (stage === 'nursery' || /nursery|creche|crèche|reception/.test(description)) return 'nursery';
+  if (stage === 'primary' || /primary|\bgrade\s*[1-6]\b/.test(description)) return 'primary';
+  return stage || lower(result.SchoolSection);
+}
+
+export function academicPromotionForStage(policy = {}, result = {}) {
+  const promotion = policy.Promotion || {};
+  const stage = academicResultSchoolStage(result);
+  if (!['nursery', 'primary'].includes(stage)) return promotion;
+  const selected = promotion[stage === 'nursery' ? 'Nursery' : 'Primary'] || {};
+  if (selected.Mode && selected.Mode !== 'inherit') {
+    return { ...promotion, ...selected, RequiredCoreSubjectIds: [], ManualReviewMinimum: null, ManualReviewMaximum: null };
+  }
+  // Secondary credit/division rules never promote a nursery or primary pupil.
+  return promotion.Mode === 'division-rules' ? { ...promotion, Mode: 'manual-review', MinimumOverallAverage: null,
+    MinimumAttendancePercentage: null, MaximumFailedSubjects: null, RequiredCoreSubjectIds: [] } : promotion;
+}
+
 export function defaultAcademicPolicy() {
   return {
     SchemaVersion: ACADEMIC_POLICY_SCHEMA_VERSION,
@@ -206,6 +239,8 @@ export function defaultAcademicPolicy() {
       RequireAllTerms: true,
       ManualReviewMinimum: null,
       ManualReviewMaximum: null,
+      Nursery: normalizeEarlyYearsPromotion(),
+      Primary: normalizeEarlyYearsPromotion(),
       JuniorSecondary: {
         PromotedMinimumAverage: null,
         ProbationMinimumAverage: null
@@ -380,6 +415,8 @@ export function normalizeAcademicPolicy(value = {}) {
           100
         )
       },
+      Nursery: normalizeEarlyYearsPromotion(promotion.Nursery),
+      Primary: normalizeEarlyYearsPromotion(promotion.Primary),
       SeniorSecondary: {
         CreditMinimumPercentage: optionalBoundedNumber(
           seniorPromotion.CreditMinimumPercentage ?? seniorPromotion.creditMinimumPercentage,
@@ -635,6 +672,12 @@ export function academicPolicyIssues(value = {}, options = {}) {
   }
 
   const promotion = policy.Promotion;
+  for (const stage of ['Nursery', 'Primary']) {
+    const rule = promotion[stage];
+    if (rule.Mode === 'criteria' && [rule.MinimumOverallAverage, rule.MaximumFailedSubjects, rule.MinimumAttendancePercentage].every(value => value === null)) {
+      add('STAGE_PROMOTION_CRITERIA_REQUIRED', `Configure at least one ${stage.toLowerCase()} promotion criterion, or choose head-teacher review.`, `Promotion.${stage}`);
+    }
+  }
   if (promotion.ProbationResit.Enabled && promotion.ProbationResit.PassPercentage === null) {
     add('PROBATION_RESIT_PASS_PERCENTAGE_REQUIRED', 'Enter the minimum percentage required to pass a student probation re-sit.', 'Promotion.ProbationResit.PassPercentage');
   }

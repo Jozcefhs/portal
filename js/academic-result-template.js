@@ -25,11 +25,11 @@ function weightedMarkup(record) {
   const columns = [...new Map((record.Subjects || []).flatMap(subject => (subject.WeightedComponents || [])
     .map(component => [component.ComponentId, component]))).values()];
   return `<table class="report-table subject-table" style="--report-column-count:${columns.length + 3}"><colgroup>${'<col>'.repeat(columns.length + 3)}</colgroup><thead><tr><th>Subject</th>${columns.map(component =>
-    `<th>${escapeHtml(component.Name || 'Assessment')}</th>`).join('')}<th>Total</th><th>Grade</th></tr></thead><tbody>${(record.Subjects || []).map(subject =>
+    `<th>${escapeHtml(component.Name || 'Assessment')}</th>`).join('')}<th>${clean(record.ResultType).toLowerCase() === 'mid-term' ? 'Total (%)' : 'Total'}</th><th>Grade</th></tr></thead><tbody>${(record.Subjects || []).map(subject =>
     `<tr><td>${escapeHtml(subject.SubjectName || 'Subject')}</td>${columns.map(column => {
       const component = (subject.WeightedComponents || []).find(row => row.ComponentId === column.ComponentId);
-      return `<td>${component?.State === 'Exempt' ? 'Exempt' : component?.WeightedMark == null ? '—'
-        : `${escapeHtml(component.WeightedMark)} / ${escapeHtml(component.MaximumMark)}`}</td>`;
+      return `<td title="${component?.MaximumMark == null ? '' : escapeHtml(`Term contribution; maximum ${component.MaximumMark}`)}">${component?.State === 'Exempt' ? 'Exempt' : component?.WeightedMark == null ? '—'
+        : escapeHtml(component.WeightedMark)}</td>`;
     }).join('')}<td>${escapeHtml(subject.Total ?? '—')}</td><td>${escapeHtml(subject.Grade || '—')}</td></tr>`).join('')}${clean(record.ResultType).toLowerCase() === 'mid-term' ? (record.NotTaughtSubjects || []).map(subject => `<tr><td>${escapeHtml(subject.SubjectName || 'Subject')}</td><td colspan="${columns.length + 2}">Not taught this mid-term · Not included in average</td></tr>`).join('') : ''}</tbody></table>`;
 }
 
@@ -58,11 +58,31 @@ function reportDate(value, birthDate = false) {
   }).format(date);
 }
 
+function schoolStage(record = {}) {
+  const stage = clean(record.SchoolStage).toLowerCase(), name = clean(record.ClassName).toLowerCase();
+  if (stage === 'nursery' || /nursery|creche|crèche|reception/.test(name)) return 'nursery';
+  if (stage === 'primary' || /primary|\bgrade\s*[1-6]\b/.test(name)) return 'primary';
+  return stage || clean(record.SchoolSection).toLowerCase();
+}
+
 function academicResultCriteriaMarkup(record = {}) {
   const policy = record.PolicySnapshot || {};
   const gradeBands = policy.Assessment?.GradeBands || [];
   const promotion = policy.Promotion || {};
   const gradeRows = gradeBands.map((band) => `<li><strong>${escapeHtml(band.Grade || '')}</strong> ${escapeHtml(band.MinimumPercentage ?? 0)}-${escapeHtml(band.MaximumPercentage ?? 100)}%${band.Remark ? ` - ${escapeHtml(band.Remark)}` : ''}</li>`).join('');
+  const stage = schoolStage(record);
+  if (['nursery', 'primary'].includes(stage)) {
+    const override = promotion[stage === 'nursery' ? 'Nursery' : 'Primary'] || {};
+    const rule = override.Mode && override.Mode !== 'inherit' ? override : promotion;
+    const lines = [];
+    if (rule.Mode === 'criteria') {
+      if (present(rule.MinimumOverallAverage)) lines.push(`Minimum average: ${rule.MinimumOverallAverage}%`);
+      if (present(rule.MaximumFailedSubjects)) lines.push(`Maximum failed subjects: ${rule.MaximumFailedSubjects}`);
+      if (present(rule.MinimumAttendancePercentage)) lines.push(`Minimum attendance: ${rule.MinimumAttendancePercentage}%`);
+    }
+    if (!lines.length) lines.push('Head-teacher review under the approved promotion policy.');
+    return `<table class="report-table criteria-table"><thead><tr><th>Grade key</th><th>Progression criteria</th></tr></thead><tbody><tr><td><ul>${gradeRows || '<li>Uses the approved grading policy for this result.</li>'}</ul></td><td><ul>${lines.map(line => `<li>${escapeHtml(line)}</li>`).join('')}</ul></td></tr></tbody></table>`;
+  }
   const junior = promotion.JuniorSecondary || {};
   const senior = promotion.SeniorSecondary || {};
   const general = [];
@@ -127,20 +147,22 @@ function render(child, record, options = {}) {
   const schoolName = profile.SchoolName || profile.OrganizationName || 'School';
   const logoUrl = profile.DocumentLogoUrl || '/api/document-logo';
   const stampUrl = profile.DocumentStampUrl || '/api/document-stamp';
-  const primary = ['nursery', 'primary'].includes(String(record.SchoolStage || child.SchoolSection || '').toLowerCase())
-    || /(?:nursery|primary|grade\s*[1-6]\b)/i.test(String(record.ClassName || child.ClassName || ''));
+  const primary = ['nursery', 'primary'].includes(schoolStage({ ...child, ...record }));
   const learnerLabel = primary ? 'Pupil' : 'Student';
   const executiveLabel = primary ? 'Head Teacher' : 'Principal';
   const reportTitle = clean(record.ResultType) === 'Mid-Term' ? 'Mid-Term Academic Result' : 'Academic Result';
+  const signature = sampleLabel
+    ? '<svg class="stamp" viewBox="0 0 180 100" role="img" aria-label="Sample signature"><text x="90" y="56" text-anchor="middle" font-family="cursive" font-style="italic" font-size="22" fill="#526b80">Sample signature</text></svg>'
+    : `<img class="stamp" src="${escapeHtml(stampUrl)}" alt="Official stamp" onerror="this.style.visibility='hidden'">`;
   const passport = options.passportDataUrl
     ? `<img class="passport" src="${escapeHtml(options.passportDataUrl)}" alt="Student passport photograph">`
     : `<div class="passport passport-empty" aria-label="Passport photograph unavailable">${escapeHtml(initials(child.DisplayName || child.StudentName || record.StudentName || 'Student'))}</div>`;
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(record.Term || 'Academic Result')}</title><style>${styles}</style></head><body><main class="report"><header class="letterhead"><img class="logo" src="${escapeHtml(logoUrl)}" alt="${escapeHtml(schoolName)} logo" onerror="this.style.visibility='hidden'"><div class="school"><h1>${escapeHtml(schoolName)}</h1><p>${escapeHtml(profile.SchoolAddress || '')}</p><p>${escapeHtml([profile.SchoolPhone, profile.SchoolEmail].filter(Boolean).join(' · '))}</p></div>${passport}</header><section class="title"><h2>${escapeHtml(reportTitle)}</h2></section>${staffWarning ? `<p class="sample">${escapeHtml(staffWarning)}</p>` : ''}${academicResultIdentityMarkup(child, record, learnerLabel)}
   ${weightedMarkup(record)}
   ${academicResultSummaryMarkup(record)}
-  <table class="report-table remarks-table"><tbody><tr><td><p><strong>Form Teacher:</strong> ${escapeHtml(record.TeacherRemark || '-')}</p><p><strong>${executiveLabel}:</strong> ${escapeHtml(record.PrincipalRemark || '-')}</p></td><td class="endorsement result-signatory"><strong class="decision">${escapeHtml(record.Recommendation || record.OverallRemark || 'Pending review')}</strong><img class="stamp" src="${escapeHtml(stampUrl)}" alt="Official stamp" onerror="this.style.visibility='hidden'"><strong>${escapeHtml(profile.ResultSignatoryName || 'Authorized school officer')}</strong><br><small>${escapeHtml(profile.ResultSignatoryTitle || 'Official result signatory')}</small></td></tr></tbody></table>
+  <table class="report-table remarks-table"><tbody><tr><td><p><strong>Form Teacher:</strong> ${escapeHtml(record.TeacherRemark || '-')}</p><p><strong>${executiveLabel}:</strong> ${escapeHtml(record.PrincipalRemark || '-')}</p></td><td class="endorsement result-signatory"><strong class="decision">${escapeHtml(record.Recommendation || record.OverallRemark || 'Pending review')}</strong>${signature}<strong>${escapeHtml(sampleLabel ? 'Alex Sample' : profile.ResultSignatoryName || 'Authorized school officer')}</strong><br><small>${escapeHtml(sampleLabel ? `Sample ${executiveLabel}` : profile.ResultSignatoryTitle || 'Official result signatory')}</small></td></tr></tbody></table>
   ${academicResultCriteriaMarkup(record)}
-  <table class="report-table verification-table"><tbody><tr><td><img src="${escapeHtml(`${origin}/api/academic-result-qr?reference=${encodeURIComponent(record.ResultReference || record.ResultId)}`)}" alt="Result verification QR code"></td><td><strong>Result verification</strong><p class="reference">Result reference: ${escapeHtml(record.ResultReference || record.ResultId)}<br>Verification: ${escapeHtml(`${origin}/verify-result.html?reference=${encodeURIComponent(record.ResultReference || record.ResultId)}`)}</p></td></tr></tbody></table>${sampleLabel ? `<p class="sample">${escapeHtml(sampleLabel.toUpperCase())} SAMPLE PREVIEW · NOT AN OFFICIAL RESULT</p>` : ''}<button class="no-print" onclick="window.print()">${sampleLabel ? 'Print preview' : 'Print result'}</button></main></body></html>`;
+  <table class="report-table verification-table"><tbody><tr><td>${sampleLabel ? '<div style="width:74px;height:74px;display:grid;place-items:center">SAMPLE</div>' : `<img src="${escapeHtml(`${origin}/api/academic-result-qr?reference=${encodeURIComponent(record.ResultReference || record.ResultId)}`)}" alt="Result verification QR code">`}</td><td><strong>Result verification</strong><p class="reference">Result reference: ${escapeHtml(record.ResultReference || record.ResultId)}<br>${sampleLabel ? 'Sample only. No live verification record.' : `Verification: ${escapeHtml(`${origin}/verify-result.html?reference=${encodeURIComponent(record.ResultReference || record.ResultId)}`)}`}</p></td></tr></tbody></table>${sampleLabel ? `<p class="sample">${escapeHtml(sampleLabel.toUpperCase())} SAMPLE PREVIEW · NOT AN OFFICIAL RESULT</p>` : ''}<button class="no-print" onclick="window.print()">${sampleLabel ? 'Print preview' : 'Print result'}</button></main></body></html>`;
 }
 
 

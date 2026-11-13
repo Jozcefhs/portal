@@ -1421,6 +1421,22 @@
       "preservation": "No business-data migration or actual email send during this release validation. Existing reviewed fee/pupil repair evidence is retained."
     }
   ],
+  "schoolResultSectionPass": {
+    "date": "2026-11-13",
+    "status": "tested_awaiting_deployment",
+    "requests": [
+      "Remove Junior and Senior result footer labels from nursery and primary",
+      "Show numeric assessment contributions without maximum denominators",
+      "Use a sample signatory name and sample signature only on sample results",
+      "Restore all PDF borders, including long and multi-page results",
+      "Show original weighted mid-term contributions while preserving published totals",
+      "Add independent nursery and primary promotion criteria to academic policy"
+    ],
+    "evidence": "docs/school-result-sections-2026-11-13.md",
+    "validation": "5124 Node tests passed; report, policy and generated-PDF browser checks passed",
+    "preservation": "No live record writes, score changes, policy activation or result republication",
+    "deliveryConstraint": "Web push and deployment only for this pass; do not compile or release a desktop installer. Hospital work is paused."
+  },
   "latestNotificationVerification": {
     "date": "2026-11-10",
     "status": "deployed_verified",
