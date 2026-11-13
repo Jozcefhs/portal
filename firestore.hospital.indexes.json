@@ -2178,6 +2178,50 @@
           "order": "ASCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "hospitalClinicTemplates",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "BranchId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "Active",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "Name",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "hospitalClinicTemplateEvents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "BranchId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "TemplateId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "CreatedAt",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "ASCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": [

@@ -41,11 +41,12 @@
       $('apSummary').textContent=`Waiting request ${row.Reference} · ${row.Department} · ${row.PreferredFrom} to ${row.PreferredTo} · ${row.ClinicianName||'Any available doctor'}`;
       $('apSchedFrom').value=row.PreferredFrom;const firstPageEnd=new Date(Date.parse(row.PreferredFrom+'T00:00:00Z')+30*86400000).toISOString().slice(0,10);$('apSchedTo').value=row.PreferredTo<firstPageEnd?row.PreferredTo:firstPageEnd;status('Choose a matching clinic schedule, then save the appointment.');
     }});
+    const recurring=window.DynamaxHospitalRecurringClinics.create({api,run,writable,status,cached,dirty,leave,invalidate});
     const range=p=>({fromDate:$(p+'From').value,toDate:$(p+'To').value});
     const checked=(form,name)=>$(form).querySelector(`[name=${name}]`).checked;
     const scope=()=>({PatientId:person.PatientId,...(context?{AppointmentId:context.appointment.AppointmentId,Revision:context.appointment.Revision}:{})});
     async function cached(action,args,refresh=false){const key=JSON.stringify([action,args]);if(refresh)cache.delete(key);if(!cache.has(key)){cache.set(key,await api(action,args));if(cache.size>40)cache.delete(cache.keys().next().value);}return cache.get(key);}
-    function invalidate(){cache.clear();waitlist.invalidate();for(const key of Object.keys(cursors))delete cursors[key];for(const id of ['apSchedules','apRegister','apHistory'])$(id).replaceChildren();for(const id of ['apSchedulesNext','apRegisterNext','apHistoryNext'])$(id).hidden=true;}
+    function invalidate(){cache.clear();waitlist.invalidate();recurring.invalidate();for(const key of Object.keys(cursors))delete cursors[key];for(const id of ['apSchedules','apRegister','apHistory'])$(id).replaceChildren();for(const id of ['apSchedulesNext','apRegisterNext','apHistoryNext'])$(id).hidden=true;}
     function permissions(){
       document.querySelector('[data-tab=appointments]').hidden=!can('appointments.read');
       $('apNewSchedule').hidden=!writable('appointments.configure');$('apScheduleEditor').hidden=editingSchedule===null||!writable('appointments.configure');
@@ -53,7 +54,7 @@
       $('apBookingForm').hidden=!person||!active||!writable('appointments.write');
       $('apArrivalForm').hidden=!context||!active||!writable('appointments.write')||!writable('visits.write');
       $('apClosureForm').hidden=!context||!active||!writable('appointments.write');
-      $('apHistorySection').hidden=!context;$('apRefresh').hidden=!context;waitlist.permissions();
+      $('apHistorySection').hidden=!context;$('apRefresh').hidden=!context;waitlist.permissions();recurring.permissions();
     }
     async function confirmLeave(except=''){return ![...dirty].some(f=>f!==except)||await window.DynamaxDialogs.confirm({title:'Unsaved appointment changes',message:'Discard unsaved appointment or availability changes?',confirmText:'Discard changes'});}
     async function leave(except=''){if(!await confirmLeave(except))return false;for(const form of [...dirty])if(form!==except){$(form).reset();dirty.delete(form);}return true;}
@@ -142,7 +143,7 @@
     $('apClose').onclick=()=>run(async()=>{if(!await leave())return;waitingBooking=null;context=person=sourceVisit=schedule=null;$('apPatient').hidden=true;});
     for(const f of ['apScheduleEditor','apBookingForm','apArrivalForm','apClosureForm'])$(f).oninput=()=>dirty.add(f);
     window.addEventListener('beforeunload',e=>{if(dirty.size){e.preventDefault();e.returnValue='';}});
-    function clear(){waitingBooking=null;waitlist.clear();context=person=sourceVisit=schedule=editingSchedule=null;dirty.clear();invalidate();$('appointments').querySelectorAll('form').forEach(f=>f.reset());$('apPatient').hidden=$('apScheduleEditor').hidden=true;for(const name of ['apName','apIdentity','apSummary','apExistingVisit','apScheduleChoice'])$(name).replaceChildren();}
+    function clear(){waitingBooking=null;waitlist.clear();recurring.clear();context=person=sourceVisit=schedule=editingSchedule=null;dirty.clear();invalidate();$('appointments').querySelectorAll('form').forEach(f=>f.reset());$('apPatient').hidden=$('apScheduleEditor').hidden=true;for(const name of ['apName','apIdentity','apSummary','apExistingVisit','apScheduleChoice'])$(name).replaceChildren();}
     permissions();return {permissions,confirmLeave,clear,openPatient,openVisit:row=>openPatient(row,row)};
   }};
 })();

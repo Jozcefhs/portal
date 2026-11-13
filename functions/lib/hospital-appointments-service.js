@@ -1,3 +1,4 @@
+import {createHospitalRecurringClinicsService} from './hospital-recurring-clinics-service.js';
 import {createHospitalAppointmentWaitlistService} from './hospital-appointment-waitlist-service.js';
 import {clean,fail,id,digest,stable,patientSummary,patientName} from './hospital-model.js';
 import {field,dateFilters,watDay} from './hospital-orders-model.js';
@@ -66,6 +67,7 @@ export function createHospitalAppointmentsService(ctx){
   const waitlist=createHospitalAppointmentWaitlistService(ctx,{clinician});
   return {
     ...waitlist.methods,
+    ...createHospitalRecurringClinicsService(ctx,{clinician}),
     async appointmentSchedules(body){
       requireCapability('appointments.read');const BranchId=await branch(body),filters=[eq('BranchId',BranchId),...dateFilters(body.DateRange,'DayStartAt')];
       const r=await page('AppointmentSchedules',filters,'DayStartAt',body);
