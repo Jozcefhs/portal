@@ -4,9 +4,9 @@ Scope confirmed: 26 October 2026, Africa/Lagos.
 
 ## Latest increment — 14 November 2026
 
-H02 now includes recurring clinic templates with weekdays, WAT availability windows, bounded date preview/generation, pause/edit controls and retained history with preview/print. Daily schedule identities prevent duplicates across templates and manual creation. Existing booked and conflicting clinic days are preserved. This follows appointment waitlists. See [the appointment guide](hospital-appointments-workflows.md).
+H12 now includes separate, revocable patient and authorised guardian access to existing invoices, receipts and advance deposit balances. Reception verifies and invites each recipient; patient/branch boundaries, password sessions, bounded date selection and cached printing protect privacy and reads. This follows recurring clinics, reminders, self-booking and clinic queues. See [the patient portal guide](hospital-patient-portal.md).
 
-This increment deploys only to the isolated Hospital Owner's Demo, without record migrations, deletions, desktop compilation or installer release. Patient cards remain NFC and card terminals remain disabled. Reminder delivery, patient self-service, specialist workflows, desktop/offline parity and practitioner validation remain on the full roadmap.
+This increment deploys only to the isolated Hospital Owner's Demo, without clinical/financial record migrations, deletions, desktop compilation or installer release. Patient cards remain NFC and card terminals remain disabled. The broader patient clinical-document/communication workflows, specialist workflows, desktop/offline parity and practitioner validation remain on the full roadmap.
 
 The user wants Hospital to become the fourth Dynamax edition, alongside School, Faith and Other Organisations, and wants every feature in the proposed Hospital scope included. This document is the implementation checklist for that full scope, covering the web companion, desktop and shared backend.
 
@@ -382,3 +382,10 @@ Deployed and verified on 13 November 2026: source `d3580827565b63f51a44e58e24306
 
 
 - Clinic queue deployment verified: source `f9f56f62`, production deployment `1a410a84`, marker `dynamax-v540-hospital-clinic-queues`. Three indexes READY and six assets matched. The live synthetic call/retry/return/start/complete workflow retained four events and the completed visit. Dated history, cached navigation, local clocks and no-read preview/print passed at desktop/phone sizes. Original sampled visits and patient identity were unchanged; no financial mutations or emails. See the Owner Demo guide. No desktop compilation or installer release.
+
+
+### 14 November 2026 — H12 patient/guardian financial portal
+
+Added Reception-issued patient/guardian grants, one-use activation, password sign-in/change, expiry and revocation. Existing invoices, patient receipts, deposit allocations and advance balances are exposed through a read-only, patient/branch-scoped API. HMO/corporate remittances and clinical records are excluded. Date-limited pagination, memory-only caching and local printing avoid background financial reads and writes. Grant/credential changes retain attributable history and prevent duplicate recipients/retries; no business record is deleted or migrated. See [the implementation and verification guide](hospital-patient-portal.md).
+
+All 4,959 repository tests and patient-portal, billing, self-booking and clinic-queue browser checks pass. Additive indexes and production verification target only the Hospital Owner Demo. H12 remains unchecked because clinical document release, communication and wider desktop/offline parity are still pending. No desktop compilation or installer release. Next: consent-controlled patient access to released clinical documents, with clinician review before publication.

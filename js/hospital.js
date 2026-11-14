@@ -3,7 +3,7 @@
   const $ = id => document.getElementById(id);
   const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[char]));
   let state = {}, selected = null, busy = false, session = false, patientCursor = null, visitCursor = null, lastSearch = null, lastVisitRange = null;
-  let scanController = null, recordEpoch = 0, clinical = null, orders = null, billing = null, inpatients = null, nursing = null, theatre = null, appointments = null, queues = null, referrals = null, procurement = null, stockControl = null, stockDisposal = null, loadedBranch = '';
+  let scanController = null, recordEpoch = 0, clinical = null, orders = null, billing = null, inpatients = null, nursing = null, theatre = null, appointments = null, queues = null, referrals = null, procurement = null, stockControl = null, stockDisposal = null, loadedBranch = '', portalAccess = null;
   const pending = new Map();
   const stockMutations = new Set(['receiveMedicine','quarantineStock','dispensePrescription','returnDispensedMedicine','receivePharmacyPurchase','returnPharmacyPurchase','submitStockCount','reviewStockCount','submitStockDisposal','reviewStockDisposal']);
   const status = (message, bad = false) => { $('status').textContent = message; $('status').className = bad ? 'bad' : 'good'; };
@@ -12,6 +12,7 @@
   const writable = name => can(name) && !state.readOnly;
   function clearRecords() {
     recordEpoch++; scanController?.abort(); selected = null;
+    portalAccess?.clear();
     clinical?.clear();
     orders?.clear();
     billing?.clear();
@@ -70,6 +71,7 @@
     document.querySelector('[data-tab="reception"]').hidden = !can('visits.read');
     document.querySelector('[data-tab="care"]').hidden = !can('clinical.read');
     $('patientForm').querySelectorAll('input,select').forEach(el => { el.disabled = !writable('patients.write'); });
+    portalAccess?.permissions();
     clinical?.permissions();
     orders?.permissions();
     billing?.permissions();
@@ -127,6 +129,7 @@
   $('morePatients').onclick = () => run(() => search(patientCursor));
   $('searchMode').onchange = () => { $('searchValue').value = ''; $('searchValue').placeholder = $('searchMode').value === 'CardUid' ? 'Focus here and tap the NFC reader' : $('searchMode').value === 'HospitalNumber' ? 'H-…' : 'Enter at least two letters of the surname'; $('searchValue').focus(); };
   function editPatient(row = null) {
+    portalAccess?.clear();
     scanController?.abort();
     selected = row; $('patientForm').reset(); $('cardForm').reset(); $('patientPanel').hidden = false; $('existingPatient').hidden = !row; $('printCard').hidden = !row;
     $('duplicateReview').hidden = Boolean(row); $('duplicateReason').value = '';
@@ -138,7 +141,7 @@
   }
   async function openPatient(patientId) { editPatient((await api('details', {PatientId:patientId})).patient); status('Patient registration loaded.'); }
   $('newPatient').onclick = () => editPatient(); $('closePatient').onclick = () => {
-    scanController?.abort(); selected = null; $('patientPanel').hidden = true;
+    portalAccess?.clear(); scanController?.abort(); selected = null; $('patientPanel').hidden = true;
     ['patientForm','cardForm','checkInForm'].forEach(id => $(id).reset());
     ['patientTitle','patientIdentity','cardStatus','cardPrint'].forEach(id => $(id).replaceChildren());
     $('duplicateReason').value = '';
@@ -203,6 +206,7 @@
     if (!selected) return;
     $('cardPrint').classList.remove('billing-print'); $('cardPrint').innerHTML = `<h2>Hospital patient card</h2><p><strong>${esc(selected.DisplayName)}</strong></p><p>${esc(selected.HospitalNumber)}</p><p>NFC identification · ${esc(selected.CardStatus)}</p>`; window.print();
   };
+  portalAccess=window.DynamaxHospitalPortalAccess.create({api,run,writable,status,getPatient:()=>selected});
   stockControl=window.DynamaxHospitalStockControl.create({api,run,can,writable,status});
   stockDisposal=window.DynamaxHospitalStockDisposal.create({api,run,can,writable,status});
   procurement=window.DynamaxHospitalProcurement.create({api,run,can,writable,status});

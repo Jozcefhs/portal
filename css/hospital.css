@@ -54,3 +54,5 @@ textarea{font:inherit;width:100%;min-width:0;padding:10px;border:1px solid #bccd
 @media screen and (max-width:650px){#cqRows table{min-width:0}#cqRows thead{display:none}#cqRows tr{display:block;border:1px solid #cbd9e5;border-radius:8px;margin-bottom:12px;padding:8px}#cqRows td{display:block;border:0;padding:7px;overflow-wrap:anywhere}#cqRows td::before{content:attr(data-label);display:block;font-size:.72rem;color:#526a79;font-weight:700;margin-bottom:3px}#queues .toolbar>label,#queues .toolbar>button{flex:1 1 100%;min-width:0}#queues input,#queues select{max-width:100%;box-sizing:border-box}}
 
 @media print{#cqPreview,#cqAction{display:none!important}}
+
+.portal-access-panel{max-width:900px;border:1px solid #c9dbe8;border-radius:12px;padding:18px;margin:16px 0;background:#f6fafc}.portal-access-panel .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.portal-access-panel input[type=checkbox]{width:auto;min-height:0}.portal-access-panel input[readonly]{font-size:12px}.portal-access-panel .actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}@media(max-width:600px){.portal-access-panel .grid{grid-template-columns:1fr}}

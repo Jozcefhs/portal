@@ -141,3 +141,12 @@ Reception can call, return, start and close visits; clinical closure safeguards 
 Live verification completed on 14 November 2026: source `f9f56f62306c82477a1688946b2bef18ee64fcfa`, production deployment [1a410a84](https://1a410a84.dynamax-hospital-review.pages.dev), marker `dynamax-v540-hospital-clinic-queues`. All three additive indexes are READY. Six deployed public assets match the tested source. The primary Hospital Owner Demo serves this build.
 
 A labelled synthetic patient and visit exercised call, return, start, completion, dated history and preview/print. Replaying the call returned the original receipt without changing the visit revision; exactly four lifecycle events remain. The synthetic visit is retained as Completed. Patient registration fields and all three original sampled visits were unchanged. Desktop and 390-pixel phone checks found no browser errors or page overflow; cached navigation, local clocks and printing issued no extra database requests. No emails or financial mutations occurred. All 4,849 repository tests and the queue, appointment, self-booking and clinical browser workflows passed. Evidence is retained locally in `tmp/hospital-queues-live/verification.json`, screenshots, print PDF and `tmp/hospital-queues-index-status.json`. Credentials and private test state are excluded from Git. No desktop compilation or installer release.
+
+
+## Patient and guardian financial portal (14 November 2026)
+
+Open **Patients and NFC cards**, select a saved patient, then **Patient / guardian portal access**. Verify the recipient and authority, set expiry and create a private invitation. Patient and guardian access are separate. Reception can replace invitations or revoke access; there is no automatic email.
+
+The [patient portal](https://dynamax-hospital-review.pages.dev/hospital-portal.html) supports activation/password sign-in, date-filtered invoices, payment/deposit receipts, patient balances and preview/print/save PDF. Viewing does not post charges or payments. See [the workflow and security guide](hospital-patient-portal.md). No patient password or private invitation is published in this guide.
+
+Local verification: 4,959 repository tests and portal, billing, self-booking and queue browser checks passed. Deployment/live evidence follows after rollout. No desktop compilation or installer release.
