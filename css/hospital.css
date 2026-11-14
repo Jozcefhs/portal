@@ -56,3 +56,7 @@ textarea{font:inherit;width:100%;min-width:0;padding:10px;border:1px solid #bccd
 @media print{#cqPreview,#cqAction{display:none!important}}
 
 .portal-access-panel{max-width:900px;border:1px solid #c9dbe8;border-radius:12px;padding:18px;margin:16px 0;background:#f6fafc}.portal-access-panel .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.portal-access-panel input[type=checkbox]{width:auto;min-height:0}.portal-access-panel input[readonly]{font-size:12px}.portal-access-panel .actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}@media(max-width:600px){.portal-access-panel .grid{grid-template-columns:1fr}}
+
+.hospital-message{border:1px solid #ccdce7;border-left:4px solid #14877d;border-radius:6px;padding:12px;margin:10px 0;background:#f8fbfd;overflow-wrap:anywhere} [data-thread] textarea,[data-compose] textarea{display:block;box-sizing:border-box;width:100%;max-width:100%;font:inherit;padding:10px} [data-thread] form,[data-compose]{margin-top:16px} [data-thread] h3{overflow-wrap:anywhere}
+
+@media(max-width:600px){.message-list thead{display:none}.message-list tr{display:block;border:1px solid #ccdce7;margin:8px 0;border-radius:6px;padding:8px}.message-list td{display:block;border:0;padding:4px;width:auto}.message-list button{width:100%}}

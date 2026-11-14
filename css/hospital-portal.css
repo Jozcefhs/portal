@@ -3,3 +3,7 @@
 @media screen and (max-width:600px){.document-list thead,.invoice-lines thead{display:none}.document-list,.document-list tbody,.invoice-lines,.invoice-lines tbody{display:block}.document-list tr,.invoice-lines tr{display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid #cbdbe6;padding:10px 0}.document-list td,.invoice-lines td{border:0;text-align:left;min-width:0;padding:5px 2px;white-space:normal}.document-list td:first-child,.document-list td:last-child,.invoice-lines td:first-child{grid-column:1/-1}.document-list button{width:100%}td[data-label]:before{display:block;content:attr(data-label);font-size:.75rem;color:#536a7d;margin-bottom:3px}}
 
 .clinical-text p{white-space:pre-wrap;overflow-wrap:anywhere}.clinical-text h3{margin-bottom:.4rem}.clinical-text{break-inside:auto}.clinical-text h3{break-after:avoid}
+
+.hospital-message{border:1px solid #ccdce7;border-left:4px solid #14877d;border-radius:6px;padding:12px;margin:10px 0;background:#f8fbfd;overflow-wrap:anywhere} [data-thread] textarea,[data-compose] textarea{display:block;box-sizing:border-box;width:100%;max-width:100%;font:inherit;padding:10px} [data-thread] form,[data-compose]{margin-top:16px} [data-thread] h3{overflow-wrap:anywhere}
+
+@media(max-width:600px){.message-list thead{display:none}.message-list tr{display:block;border:1px solid #ccdce7;margin:8px 0;border-radius:6px;padding:8px}.message-list td{display:block;border:0;padding:4px;width:auto}.message-list button{width:100%}}

@@ -19,6 +19,7 @@ import { createHospitalBillingService } from './hospital-billing-service.js';
 import { createHospitalTheatreService } from './hospital-theatre-service.js';
 import { createHospitalAppointmentReminders } from './hospital-appointment-reminders.js';
 import { createHospitalAppointmentsService } from './hospital-appointments-service.js';
+import {createHospitalMessages} from './hospital-messages.js';
 import { createHospitalNursingService } from './hospital-nursing-service.js';
 import { createHospitalInpatientService } from './hospital-inpatient-service.js';
 import { createHospitalOrdersService } from './hospital-orders-service.js';
@@ -124,6 +125,7 @@ export function createHospitalService(env, user, overrides = {}) {
     ...createHospitalMedicinesService({env,user,db,collection,capabilities,branch,clock,actor,condition,strip,eq,auditWrite,operation,page}),
     ...createHospitalInvestigationsService({env,user,db,collection,capabilities,branch,clock,actor,condition,strip,eq,auditWrite,operation,page}),
     ...createHospitalReferralsService({env,user,db,collection,capabilities,requireCapability,branch,patient,clock,actor,condition,strip,eq,auditWrite,auditRead,operation,page}),
+    ...createHospitalMessages({env,user,db,collection,requireCapability,branch,patient,clock,actor,condition,strip,operation,auditWrite}),
     ...createHospitalPortalAccess({env,user,db,collection,requireCapability,branch,patient,clock,actor,condition,strip,operation,auditWrite}),
     ...createHospitalPortalClinical({env,user,db,collection,requireCapability,branch,patient,clock,actor,condition,strip,operation,auditWrite}),
     ...createHospitalPatientBookingLinks({env,user,db,collection,requireCapability,branch,patient,clock,actor,condition,strip,operation,auditWrite}),

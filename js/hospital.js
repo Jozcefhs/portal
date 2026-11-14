@@ -3,7 +3,7 @@
   const $ = id => document.getElementById(id);
   const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[char]));
   let state = {}, selected = null, busy = false, session = false, patientCursor = null, visitCursor = null, lastSearch = null, lastVisitRange = null;
-  let scanController = null, recordEpoch = 0, clinical = null, orders = null, billing = null, inpatients = null, nursing = null, theatre = null, appointments = null, queues = null, referrals = null, procurement = null, stockControl = null, stockDisposal = null, loadedBranch = '', portalAccess = null;
+  let scanController = null, recordEpoch = 0, clinical = null, orders = null, billing = null, inpatients = null, nursing = null, theatre = null, appointments = null, queues = null, referrals = null, procurement = null, stockControl = null, stockDisposal = null, loadedBranch = '', portalAccess = null, messages = null;
   const pending = new Map();
   const stockMutations = new Set(['receiveMedicine','quarantineStock','dispensePrescription','returnDispensedMedicine','receivePharmacyPurchase','returnPharmacyPurchase','submitStockCount','reviewStockCount','submitStockDisposal','reviewStockDisposal']);
   const status = (message, bad = false) => { $('status').textContent = message; $('status').className = bad ? 'bad' : 'good'; };
@@ -11,6 +11,7 @@
   const formValues = form => Object.fromEntries([...form.elements].filter(field => field.name).map(field => [field.name,field.value]));
   const writable = name => can(name) && !state.readOnly;
   function clearRecords() {
+    messages?.clear();
     recordEpoch++; scanController?.abort(); selected = null;
     portalAccess?.clear();
     clinical?.clear();
@@ -71,6 +72,8 @@
     document.querySelector('[data-tab="reception"]').hidden = !can('visits.read');
     document.querySelector('[data-tab="care"]').hidden = !can('clinical.read');
     $('patientForm').querySelectorAll('input,select').forEach(el => { el.disabled = !writable('patients.write'); });
+    document.querySelector('[data-tab="messages"]').hidden=!can('clinical.read');
+    $('startPatientMessage').hidden=!selected||!writable('consultations.write');
     portalAccess?.permissions();
     clinical?.permissions();
     orders?.permissions();
@@ -109,8 +112,8 @@
     loadedBranch = $('branch').value; permissions(); $('workspace').hidden = false;
     status('Hospital reception ready. Search for a patient or choose dates to load visits.');
   }
-  function showTab(name) { for(const id of ['patients','reception','care','orders','billing','inpatients','nursing','theatre','appointments','queues','referrals','procurement','stockControl','stockDisposal'])$(id).hidden=name!==id; }
-  document.querySelectorAll('[data-tab]').forEach(button => { button.onclick = () => { showTab(button.dataset.tab); if(button.dataset.tab==='queues'&&can('visits.read'))run(()=>queues.open()); if(button.dataset.tab==='stockDisposal'&&can('stock.read'))run(()=>stockDisposal.open()); }; });
+  function showTab(name) { for(const id of ['messages','patients','reception','care','orders','billing','inpatients','nursing','theatre','appointments','queues','referrals','procurement','stockControl','stockDisposal'])$(id).hidden=name!==id; }
+  document.querySelectorAll('[data-tab]').forEach(button => { button.onclick = () => { showTab(button.dataset.tab); if(button.dataset.tab==='messages'&&can('clinical.read'))run(()=>messages.open()); if(button.dataset.tab==='queues'&&can('visits.read'))run(()=>queues.open()); if(button.dataset.tab==='stockDisposal'&&can('stock.read'))run(()=>stockDisposal.open()); }; });
   $('refresh').onclick = () => run(async () => { if(!await clinical.confirmLeave()||!await orders.confirmLeave()||!await billing.confirmLeave()||!await inpatients.confirmLeave()||!await nursing.confirmLeave()||!await theatre.confirmLeave()||!await appointments.confirmLeave()||!await referrals.confirmLeave()||!await procurement.confirmLeave()||!await stockControl.confirmLeave()||!await stockDisposal.confirmLeave())return; clearRecords(); await loadAccess(); if(!$('stockDisposal').hidden&&can('stock.read'))await stockDisposal.open(); });
   $('branch').onchange = () => run(async () => {
     if(!await clinical.confirmLeave()||!await orders.confirmLeave()||!await billing.confirmLeave()||!await inpatients.confirmLeave()||!await nursing.confirmLeave()||!await theatre.confirmLeave()||!await appointments.confirmLeave()||!await referrals.confirmLeave()||!await procurement.confirmLeave()||!await stockControl.confirmLeave()||!await stockDisposal.confirmLeave()){$('branch').value=loadedBranch;return;}
@@ -206,6 +209,8 @@
     if (!selected) return;
     $('cardPrint').classList.remove('billing-print'); $('cardPrint').innerHTML = `<h2>Hospital patient card</h2><p><strong>${esc(selected.DisplayName)}</strong></p><p>${esc(selected.HospitalNumber)}</p><p>NFC identification · ${esc(selected.CardStatus)}</p>`; window.print();
   };
+  messages=window.DynamaxHospitalMessages.create({host:$('messages'),api,run,status,staff:true,writable:()=>writable('clinical.read'),getPatient:()=>selected});
+  $('startPatientMessage').onclick=()=>run(async()=>{showTab('messages');await messages.compose();});
   portalAccess=window.DynamaxHospitalPortalAccess.create({api,run,writable,status,getPatient:()=>selected});
   stockControl=window.DynamaxHospitalStockControl.create({api,run,can,writable,status});
   stockDisposal=window.DynamaxHospitalStockDisposal.create({api,run,can,writable,status});
@@ -224,6 +229,7 @@
   inpatients.onNursing(row=>nursing.open(row));
   inpatients.onCare(row=>clinical.open(row));inpatients.onBilling(row=>billing.openVisit(row));
   run(async () => { await loadAccess(); const task=new URLSearchParams(location.search).get('task');
+    if(task==='messages'&&can('clinical.read')){showTab('messages');await messages.open();}
     if(task==='stock-control'&&can('stock.read'))showTab('stockControl');
     if(task==='stock-disposal'&&can('stock.read')){showTab('stockDisposal');await stockDisposal.open();}
     if(task==='procurement'&&can('procurement.read'))showTab('procurement');

@@ -11,6 +11,7 @@ export async function onRequestPost({ request, env, data }) {
     if (body.action !== 'state' && cleanBranch(request.headers.get('X-Dynamax-Branch')) !== cleanBranch(body.BranchId)) return Response.json({ ok: false, message: 'Select the working branch before continuing.' }, { status: 403, headers });
     const user = await requireStaffSession(env, request);
     if (!['state', 'search', 'details', 'savePatient', 'assignCard', 'revokeCard', 'checkIn', 'visits', 'updateVisit',
+      'messageRecipients','messageInbox','messageThread','startMessageThread','replyMessageThread','closeMessageThread',
       'patientPortalAccess','issuePatientPortalAccess','revokePatientPortalAccess',
       'clinicalPortalContext','clinicalPortalSharing','publishClinicalPortalDocument','withdrawClinicalPortalDocument',
       'clinicQueue','clinicQueueAction','clinicQueueHistory',

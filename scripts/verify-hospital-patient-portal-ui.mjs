@@ -11,7 +11,7 @@ import {hospitalPatientPortalAction} from '../functions/lib/hospital-patient-por
 const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
 const root=resolve(import.meta.dirname,'..'),output=resolve(root,'tmp/hospital-patient-portal-ui');await mkdir(output,{recursive:true});
 const f=await portalFixture(),calls=[],errors=[];let delay=false,release;
-const assets=hospitalBrowserAssets();for(const p of ['/hospital-portal.html','/js/hospital-patient-portal.js','/css/hospital-portal.css'])assets.add(p);
+const assets=hospitalBrowserAssets();for(const p of ['/hospital-portal.html','/js/hospital-patient-portal.js','/js/hospital-messages-ui.js','/css/hospital-portal.css'])assets.add(p);
 const server=createServer(async(req,res)=>{try{
   const path=new URL(req.url,'http://localhost').pathname;res.setHeader('Content-Type','application/json');
   if(path==='/api/staff-session'){res.end(JSON.stringify({ok:true,authenticated:true,user:actor,session:{id:'portal-fixture-session',lastActivityAt:Date.now(),expiresAt:Date.now()+7200000,serverNow:Date.now()}}));return;}
@@ -50,7 +50,7 @@ try{
  await page.locator('#documentType').selectOption('deposits');await page.locator('#recordsForm button').first().click();await done('Selected documents loaded');await page.locator('[data-document]').click();await done('Document ready');assert.match(await page.locator('#document').textContent(),/Unused advance/);
  await page.locator('#documentType').selectOption('invoices');delay=true;await page.locator('#refresh').click();while(!release)await new Promise(r=>setTimeout(r,10));await page.locator('#logout').click();release();delay=false;await done('Signed out');assert.equal(await page.locator('#workspace').isVisible(),false);assert.equal(await page.locator('#patientName').textContent(),'');
  await page.locator('#accessCode').fill(accessCode);await page.locator('#password').fill(password);await page.locator('#login').click();await done('Signed in. Choose document dates');
- await page.locator('details summary').click();await page.locator('[name=CurrentPassword]').fill(password);await page.locator('[name=Password]').fill('New fixture portal password!');await page.locator('[name=ConfirmPassword]').fill('New fixture portal password!');await page.locator('#passwordForm button').click();await done('Password changed.');
+ await page.getByText('Change password', {exact:true}).click();await page.locator('[name=CurrentPassword]').fill(password);await page.locator('[name=Password]').fill('New fixture portal password!');await page.locator('[name=ConfirmPassword]').fill('New fixture portal password!');await page.locator('#passwordForm button').click();await done('Password changed.');
  await page.locator('#accessCode').fill(accessCode);await page.locator('#password').fill('New fixture portal password!');await page.locator('#login').click();await done('Signed in. Choose document dates');
  await staff.locator('#hpAccessRefresh').click();await staffDone('Portal access refreshed');const patientRow=staff.locator('#hpAccessRows tr').filter({hasText:'Test Patient'});staff.once('dialog',d=>d.accept('Synthetic verification revoke'));await patientRow.locator('[data-revoke]').click();await staffDone('Portal access revoked');
  await page.locator('#refresh').click();await done('Access is unavailable');assert.equal(await page.locator('#workspace').isVisible(),false);assert.equal(await page.evaluate(()=>localStorage.length+sessionStorage.length),0);assert.deepEqual(errors,[]);

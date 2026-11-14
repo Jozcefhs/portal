@@ -6,7 +6,7 @@ export async function onRequestPost({request,env,data}){
   const headers={'Cache-Control':'private, no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff'};
   try{
     if(request.headers.get('Origin')!==new URL(request.url).origin)return Response.json({ok:false,message:'Open the patient portal to continue.'},{status:403,headers});
-    const body=await readJsonBody(request,{maxBytes:4096});
+    const body=await readJsonBody(request,{maxBytes:24*1024});
     if(['login','activate','changePassword'].includes(body.action)){
       const allowance=await consumeRequestAllowance(env,request,{scope:'hospital-portal-auth',maximum:20,windowSeconds:900});
       if(!allowance.allowed)return Response.json({ok:false,message:'Too many attempts. Wait 15 minutes and try again.'},{status:429,headers});

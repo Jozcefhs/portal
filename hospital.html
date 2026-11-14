@@ -28,7 +28,8 @@
   <script src="/js/hospital-stock-disposal.js?v=20261104-stock-disposal" defer></script>
   <script src="/js/hospital-clinic-queues.js?v=540" defer></script>
   <script src="/js/hospital-portal-access.js?v=541" defer></script>
-  <script src="/js/hospital.js?v=541" defer></script>
+  <script src="/js/hospital-messages-ui.js?v=543" defer></script>
+  <script src="/js/hospital.js?v=543" defer></script>
 </head>
 <body>
   <main>
@@ -37,7 +38,7 @@
     <div id="workspace" hidden>
       <div class="toolbar"><label>Working branch<select id="branch"></select></label><button id="refresh" type="button">Refresh access</button></div>
       <p id="hospitalOwnerDemo" class="hint" hidden><strong>Hospital Owner&rsquo;s Demo</strong> &middot; Use synthetic demonstration records only. This workspace has a separate database.</p>
-      <nav aria-label="Hospital tasks"><button type="button" data-tab="patients">Patients and NFC cards</button><button type="button" data-tab="reception">Reception visits</button><button type="button" data-tab="queues" hidden>Clinic queues</button><button type="button" data-tab="appointments" hidden>Appointments</button><button type="button" data-tab="referrals" hidden>Referrals and care transfers</button><button type="button" data-tab="care" hidden>Clinical record</button><button type="button" data-tab="orders" hidden>Prescriptions and investigations</button><button type="button" data-tab="theatre" hidden>Theatre and procedures</button><button type="button" data-tab="nursing" hidden>Nursing and handovers</button><button type="button" data-tab="inpatients" hidden>Wards and admissions</button><button type="button" data-tab="billing" hidden>Billing and HMO</button><button type="button" data-tab="procurement" hidden>Pharmacy procurement</button><button type="button" data-tab="stockControl" hidden>Pharmacy stock control</button><button type="button" data-tab="stockDisposal" hidden>Quarantined stock disposal</button></nav>
+      <nav aria-label="Hospital tasks"><button type="button" data-tab="patients">Patients and NFC cards</button><button type="button" data-tab="reception">Reception visits</button><button type="button" data-tab="queues" hidden>Clinic queues</button><button type="button" data-tab="appointments" hidden>Appointments</button><button type="button" data-tab="referrals" hidden>Referrals and care transfers</button><button type="button" data-tab="messages" hidden>Patient messages</button><button type="button" data-tab="care" hidden>Clinical record</button><button type="button" data-tab="orders" hidden>Prescriptions and investigations</button><button type="button" data-tab="theatre" hidden>Theatre and procedures</button><button type="button" data-tab="nursing" hidden>Nursing and handovers</button><button type="button" data-tab="inpatients" hidden>Wards and admissions</button><button type="button" data-tab="billing" hidden>Billing and HMO</button><button type="button" data-tab="procurement" hidden>Pharmacy procurement</button><button type="button" data-tab="stockControl" hidden>Pharmacy stock control</button><button type="button" data-tab="stockDisposal" hidden>Quarantined stock disposal</button></nav>
       <section id="queues" hidden></section>
       <section id="appointments" hidden></section>
       <section id="theatre" hidden></section>
@@ -48,6 +49,7 @@
       <section id="stockDisposal" hidden></section>
       <section id="billing" hidden></section>
       <section id="orders" hidden></section>
+      <section id="messages" class="card" hidden></section>
       <section id="patients">
         <h2>Find a patient</h2>
         <form id="searchForm" class="toolbar">
@@ -58,7 +60,7 @@
         <p class="hint">For a USB keyboard reader, select NFC card, focus the search field and tap. No patient history loads until you search.</p>
         <div id="matches" class="table-wrap"></div><button id="morePatients" type="button" hidden>Next results</button>
         <section id="patientPanel" hidden>
-          <div class="toolbar"><h2 id="patientTitle">Patient registration</h2><button id="printCard" type="button">Print card layout</button><button id="closePatient" type="button">Close record</button></div>
+          <div class="toolbar"><h2 id="patientTitle">Patient registration</h2><button type="button" id="startPatientMessage" hidden>Open patient conversation</button><button id="printCard" type="button">Print card layout</button><button id="closePatient" type="button">Close record</button></div>
           <p id="patientIdentity"></p>
           <form id="patientForm">
             <div class="form-grid">

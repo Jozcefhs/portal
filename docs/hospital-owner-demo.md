@@ -169,3 +169,8 @@ Aggregate evidence is in [hospital-patient-portal-verification.json](hospital-pa
 - Source `f312443e404f0becdab32c563ec6128c9a170908`; deployment [cdc99461](https://cdc99461.dynamax-hospital-review.pages.dev); marker `dynamax-v542-hospital-portal-clinical`. One new index is READY; nine live assets matched source.
 - All 4,968 repository tests passed. Clinical and existing financial portal browser checks passed. Live patient and guardian synthetic tests confirmed both document types, access boundaries, retry/no-op publication, cached lists, duplicate-free access events, print without requests and withdrawal. Six synthetic source records and three existing demo visits were preserved. Test grants were revoked; the labelled synthetic sources remain for review. No real email or financial transaction was created.
 - [Workflow and safeguards](hospital-portal-clinical.md), [aggregate verification](hospital-portal-clinical-verification.json). No desktop compilation or installer release.
+
+
+### Patient and guardian messages
+
+Use the separate demo Doctor account: open **Patients and NFC cards**, select an existing synthetic patient, then **Open patient conversation**. A verified named portal recipient is required. Doctors and nurses can open [Patient messages](https://dynamax-hospital-review.pages.dev/hospital.html?task=messages) to review the bounded active inbox. Closed history requires dates. The patient/guardian signs in at [the patient portal](https://dynamax-hospital-review.pages.dev/hospital-portal.html) and expands **Messages with your care team**. No email or push alerts are sent. Owner administration does not grant access to clinical conversations; use the clinician demo role. See [the guide](hospital-patient-messages.md).

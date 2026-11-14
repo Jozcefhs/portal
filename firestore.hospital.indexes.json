@@ -2274,7 +2274,11 @@
           "order": "ASCENDING"
         }
       ]
-    }
+    },
+    {"collectionGroup":"hospitalPortalThreads","queryScope":"COLLECTION","fields":[{"fieldPath":"BranchId","order":"ASCENDING"},{"fieldPath":"Status","order":"ASCENDING"},{"fieldPath":"UpdatedAt","order":"ASCENDING"},{"fieldPath":"__name__","order":"ASCENDING"}]},
+    {"collectionGroup":"hospitalPortalThreads","queryScope":"COLLECTION","fields":[{"fieldPath":"BranchId","order":"ASCENDING"},{"fieldPath":"PatientId","order":"ASCENDING"},{"fieldPath":"GrantId","order":"ASCENDING"},{"fieldPath":"GrantAccessVersion","order":"ASCENDING"},{"fieldPath":"Status","order":"ASCENDING"},{"fieldPath":"UpdatedAt","order":"ASCENDING"},{"fieldPath":"__name__","order":"ASCENDING"}]},
+    {"collectionGroup":"hospitalPortalMessages","queryScope":"COLLECTION","fields":[{"fieldPath":"BranchId","order":"ASCENDING"},{"fieldPath":"ThreadId","order":"ASCENDING"},{"fieldPath":"Sequence","order":"ASCENDING"},{"fieldPath":"__name__","order":"ASCENDING"}]},
+    {"collectionGroup":"hospitalPortalGrants","queryScope":"COLLECTION","fields":[{"fieldPath":"BranchId","order":"ASCENDING"},{"fieldPath":"PatientId","order":"ASCENDING"},{"fieldPath":"CreatedAt","order":"ASCENDING"},{"fieldPath":"__name__","order":"ASCENDING"}]}
   ],
   "fieldOverrides": [
 

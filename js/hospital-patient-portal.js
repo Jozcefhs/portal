@@ -10,8 +10,9 @@
   function loginMode(activation){activating=activation;$('signInTitle').textContent=activation?'Activate private access':'Sign in';$('login').textContent=activation?'Set password and activate':'Sign in';
     $('passwordLabel').textContent=activation?'Choose a password (at least 12 characters)':'Password';$('password').autocomplete=activation?'new-password':'current-password';
     for(const name of ['invitationLabel','confirmLabel','normalLogin'])$(name).hidden=!activation;$('confirmPassword').required=activation;$('invitationToken').required=activation;}
+  let messages=null;
   function clear(text='Signed out.'){
-    epoch++;clearTimeout(timer);clearTimeout(idleTimer);expires=0;context=current=null;pages=[];pageIndex=0;cache.clear();authRetry=null;
+    messages?.clear();$('messagesPanel').open=false;epoch++;clearTimeout(timer);clearTimeout(idleTimer);expires=0;context=current=null;pages=[];pageIndex=0;cache.clear();authRetry=null;
     for(const id of ['patientName','patientContext','recipient','records','document','loadedAt'])$(id).replaceChildren();
     $('workspace').hidden=true;$('signIn').hidden=false;$('documentPanel').hidden=true;$('loginForm').reset();$('passwordForm').reset();loginMode(false);message(text);
   }
@@ -30,7 +31,7 @@
       if(!response.ok||data.ok===false)throw new Error(data.message||'The request could not finish.');return data;
     }finally{clearTimeout(timeout);}
   }
-  async function run(work){if(busy)return;busy=true;const controls=[...document.querySelectorAll('button,input,select')].filter(e=>!e.disabled&&e.id!=='logout');controls.forEach(e=>e.disabled=true);message('Please wait…');
+  async function run(work){if(busy)return;busy=true;const controls=[...document.querySelectorAll('button,input,select,textarea')].filter(e=>!e.disabled&&e.id!=='logout');controls.forEach(e=>e.disabled=true);message('Please wait…');
     try{if(expires&&Date.now()>=expires){logout('Your secure session expired. Sign in again.');return;}await work();}
     catch(e){if(!e.stale)message(e.name==='AbortError'?'The connection timed out. Retry the same action.':e.message,true);}
     finally{controls.forEach(e=>e.disabled=false);busy=false;}}
@@ -40,6 +41,8 @@
     $('recipient').textContent=`${context.access.Kind} access: ${context.access.RecipientName} · valid until ${date(context.access.AccessUntil)}`;
     $('from').value=context.Today.slice(0,7)+'-01';$('to').value=context.Today;$('workspace').hidden=false;$('signIn').hidden=true;$('loginForm').reset();
     $('loadedAt').textContent='No records have been requested.';message('Signed in. Choose document dates to continue.');}
+  messages=window.DynamaxHospitalMessages.create({host:$('patientMessages'),api:(action,body)=>api({action,...body}),run,status:message});
+  $('messagesPanel').ontoggle=()=>{if($('messagesPanel').open&&context)run(()=>messages.open());};
   $('loginForm').onsubmit=e=>{e.preventDefault();run(async()=>{
     if(activating&&$('password').value!==$('confirmPassword').value)throw new Error('The passwords do not match.');
     const body={action:activating?'activate':'login',AccessCode:$('accessCode').value.trim(),Password:$('password').value,...(activating?{InvitationToken:$('invitationToken').value.trim()}:{})};

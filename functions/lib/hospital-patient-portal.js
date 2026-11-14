@@ -1,3 +1,4 @@
+import {patientMessages} from './hospital-messages-patient.js';
 import {readPortalClinical} from './hospital-portal-clinical-reader.js';
 import {getDocument,queryCollection,batchCommitLiteralDocuments} from './firestore.js';
 import {getSchoolStructure} from './school-scope.js';
@@ -21,7 +22,7 @@ const number=(row,key)=>Number.isSafeInteger(row[key])?row[key]:0;
 // No public patient search, financial mutation, NFC login or booking-token login.
 export async function hospitalPatientPortalAction(env,sessionToken,body,overrides={}){
   if(requiredDeploymentIdentity(env).edition!=='hospital')fail('Patient portal is available only in the Hospital edition.',403);
-  if(!['activate','login','logout','context','invoices','receipts','deposits','investigations','discharges','document','changePassword'].includes(body.action))fail('Choose a valid patient portal action.');
+  if(!['activate','login','logout','context','invoices','receipts','deposits','investigations','discharges','document','changePassword','messageInbox','messageThread','replyMessageThread'].includes(body.action))fail('Choose a valid patient portal action.');
   if(['PatientId','BranchId','Payer','Kind','GrantId'].some(k=>k in body))fail('Use the patient access issued by Reception.',403);
   const db={getDocument,queryCollection,batchCommitLiteralDocuments,getSchoolStructure,...overrides},collection=name=>hospitalCollectionPath(env,name);
   const clock=()=>(overrides.now?overrides.now():new Date()).toISOString();
@@ -100,6 +101,10 @@ export async function hospitalPatientPortalAction(env,sessionToken,body,override
     access:{RecipientName:grant.RecipientName,Kind:grant.Kind,AccessUntil:grant.AccessUntil},ExpiresAt:session.ExpiresAt,Today:new Date(Date.parse(clock())+3600000).toISOString().slice(0,10)};
   if(body.action==='context')return {ok:true,...context};
   if(['investigations','discharges'].includes(body.action==='document'?body.DocumentType:body.action))return readPortalClinical({env,db,collection,read,write,commit,clock,grant,person,session,context,body});
+  if(['messageInbox','messageThread','replyMessageThread'].includes(body.action)){
+    if(body.action==='replyMessageThread'&&entitlement.subscriptionReadOnly===true)fail('The portal currently permits viewing only. Contact the hospital.',403);
+    return patientMessages({env,db,collection,read,write,commit,clock,grant,person,session,body});
+  }
   const types={invoices:'Invoices',receipts:'Payments',deposits:'Funds'};
   function matching(row,type){return row&&row.PatientId===person.PatientId&&row.BranchId===grant.BranchId&&(type==='invoices'||type==='receipts'&&row.Payer==='Patient'||type==='deposits'&&row.Kind==='Patient');}
   function view(row,type,detail=false){
