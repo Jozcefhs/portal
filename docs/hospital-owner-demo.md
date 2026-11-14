@@ -149,4 +149,4 @@ Open **Patients and NFC cards**, select a saved patient, then **Patient / guardi
 
 The [patient portal](https://dynamax-hospital-review.pages.dev/hospital-portal.html) supports activation/password sign-in, date-filtered invoices, payment/deposit receipts, patient balances and preview/print/save PDF. Viewing does not post charges or payments. See [the workflow and security guide](hospital-patient-portal.md). No patient password or private invitation is published in this guide.
 
-Local verification: 4,959 repository tests and portal, billing, self-booking and queue browser checks passed. Deployment/live evidence follows after rollout. No desktop compilation or installer release.
+Local verification: 4,960 repository tests and portal, billing, self-booking and queue browser checks passed. Deployment/live evidence follows after rollout. No desktop compilation or installer release.

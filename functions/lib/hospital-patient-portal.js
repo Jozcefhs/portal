@@ -96,7 +96,7 @@ export async function hospitalPatientPortalAction(env,sessionToken,body,override
     await commit([write('PortalGrants',grant.GrantId,next,grant),event(key,'Change patient portal password')]);return {ok:true,clearCookie:true};
   }
   const context={patient:{DisplayName:patientName(person),HospitalNumber:person.HospitalNumber},branch:{Name:selectedBranch.name||selectedBranch.id},
-    access:{RecipientName:grant.RecipientName,Kind:grant.Kind,AccessUntil:grant.AccessUntil},ExpiresAt:session.ExpiresAt,Today:clock().slice(0,10)};
+    access:{RecipientName:grant.RecipientName,Kind:grant.Kind,AccessUntil:grant.AccessUntil},ExpiresAt:session.ExpiresAt,Today:new Date(Date.parse(clock())+3600000).toISOString().slice(0,10)};
   if(body.action==='context')return {ok:true,...context};
   const types={invoices:'Invoices',receipts:'Payments',deposits:'Funds'};
   function matching(row,type){return row&&row.PatientId===person.PatientId&&row.BranchId===grant.BranchId&&(type==='invoices'||type==='receipts'&&row.Payer==='Patient'||type==='deposits'&&row.Kind==='Patient');}

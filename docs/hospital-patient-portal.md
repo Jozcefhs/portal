@@ -1,6 +1,6 @@
 # Hospital patient and guardian financial portal
 
-Scope: H12 patient/guardian financial access, H07 billing and F01/F02/F03/F05 security, isolation, audit and efficient data access. Web companion only in this increment. Patient NFC cards remain staff identity lookup; they do not authenticate the portal.
+Scope: H12 patient/guardian financial access, H07 billing and F01/F02/F04-F06 security, isolation, audit and efficient data access. Web companion only in this increment. Patient NFC cards remain staff identity lookup; they do not authenticate the portal.
 
 ## Reception workflow
 
@@ -36,6 +36,6 @@ Grant changes use existing operation receipts, deterministic recipient identitie
 
 Four additive indexes support patient/branch grant lookup and dated patient invoices, receipts and deposits. No existing index is removed. Financial list queries request at most 31 rows to show 30 and determine continuation. Cursors are bound to recipient, document type and dates. Document access is a direct scoped lookup. No polling, background history scan, per-row patient fetch or print request is used.
 
-Local verification on 14 November 2026: **4,959 repository tests passed**. Eight portal backend cases cover branch/patient isolation, guardian authority, concurrent activation, retries, permission/entitlement changes, revocation, password change, expiry, rate limits, pagination, financial field whitelisting and unchanged billing records. The patient portal browser flow covers desktop/390-pixel layout, activation, password sign-in/change, invoices/receipts/deposits, cached loads, printing without reads/writes and clearing in-flight responses on sign-out. Existing billing, patient self-booking and clinic queue browser checks also passed. Live deployment evidence is recorded in the owner-demo guide after rollout.
+Local verification on 14 November 2026: **4,960 repository tests passed**. Nine portal backend cases cover branch/patient isolation, guardian authority, concurrent activation, retries, permission/entitlement changes, revocation, password change, expiry, rate limits, WAT date boundaries, pagination, financial field whitelisting and unchanged billing records. The patient portal browser flow covers desktop/390-pixel layout, activation, password sign-in/change, invoices/receipts/deposits, cached loads, printing without reads/writes and clearing in-flight responses on sign-out. Existing billing, patient self-booking and clinic queue browser checks also passed. Live deployment evidence is recorded in the owner-demo guide after rollout.
 
 No desktop compilation or installer release is part of this increment.

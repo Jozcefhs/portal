@@ -85,3 +85,13 @@ test('password change invalidates sessions; attempts are bounded; weak activatio
 test('concurrent invitation activation has one winner and never duplicates the grant',async()=>{
   const f=await portalFixture(),out=await Promise.allSettled([f.activate(),f.activate()]);assert.equal(out.filter(r=>r.status==='fulfilled').length,1);assert.equal(f.rows('PortalSessions').length,1);assert.equal(f.rows('PortalGrants').length,1);
 });
+
+test('default document dates use WAT across UTC midnight and retain date-bounded queries',async()=>{
+  const f=await portalFixture();f.db.now=()=>new Date('2026-10-26T23:30:00.000Z');
+  const auth=await f.activate(),context=await f.call({action:'context'},auth.cookieToken);
+  assert.equal(context.Today,'2026-10-27');
+  await f.call({action:'invoices',From:context.Today,To:context.Today},auth.cookieToken);
+  const q=f.queries.at(-1);
+  assert.equal(q.filters.find(x=>x.field==='CreatedAt'&&x.op==='>=').value,'2026-10-26T23:00:00.000Z');
+  assert.equal(q.filters.find(x=>x.field==='CreatedAt'&&x.op==='<').value,'2026-10-27T23:00:00.000Z');
+});
