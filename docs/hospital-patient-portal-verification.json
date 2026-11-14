@@ -1,0 +1,42 @@
+{
+  "source": "112cae81623decc715bb383f94bc5bbe44e63a17",
+  "assets": [
+    "admin.html",
+    "hospital.html",
+    "hospital-portal.html",
+    "css/hospital.css",
+    "css/hospital-portal.css",
+    "js/hospital.js",
+    "js/hospital-portal-access.js",
+    "js/hospital-patient-portal.js",
+    "sw.js"
+  ],
+  "emailsSent": 0,
+  "financialMutations": 0,
+  "receptionEntryPoint": true,
+  "grantRetryWithoutDuplicate": true,
+  "secureSessionCookie": true,
+  "patientSignIn": true,
+  "boundedFinancialQueries": true,
+  "cachedRepeatLoads": true,
+  "scopeAndOriginGuards": true,
+  "revokedSessionsDenied": true,
+  "guardianSignIn": true,
+  "passwordSignIn": true,
+  "anonymousDenied": true,
+  "financialDocumentsChecked": {
+    "Invoices": 0,
+    "Payments": 0,
+    "Funds": 0
+  },
+  "patientFieldsUnchanged": true,
+  "originalVisitsUnchanged": 3,
+  "browserErrors": 0,
+  "deployment": "https://aa68f14d.dynamax-hospital-review.pages.dev",
+  "marker": "dynamax-v541-hospital-patient-portal",
+  "repositoryTestsPassed": 4960,
+  "portalBackendTests": 9,
+  "indexesReady": 4,
+  "desktopCompiled": false,
+  "installerReleased": false
+}

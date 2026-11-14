@@ -149,4 +149,13 @@ Open **Patients and NFC cards**, select a saved patient, then **Patient / guardi
 
 The [patient portal](https://dynamax-hospital-review.pages.dev/hospital-portal.html) supports activation/password sign-in, date-filtered invoices, payment/deposit receipts, patient balances and preview/print/save PDF. Viewing does not post charges or payments. See [the workflow and security guide](hospital-patient-portal.md). No patient password or private invitation is published in this guide.
 
-Local verification: 4,960 repository tests and portal, billing, self-booking and queue browser checks passed. Deployment/live evidence follows after rollout. No desktop compilation or installer release.
+Local verification: 4,960 repository tests and portal, billing, self-booking and queue browser checks passed. Live rollout evidence is recorded below. No desktop compilation or installer release.
+
+
+Live verification completed on 14 November 2026: source `112cae81623decc715bb383f94bc5bbe44e63a17`, production deployment [aa68f14d](https://aa68f14d.dynamax-hospital-review.pages.dev), marker `dynamax-v541-hospital-patient-portal`. The primary Hospital Owner Demo serves the deployed source; nine public assets match Git. All four additive indexes are READY.
+
+Owner sign-in and the Reception access entry point passed. Both a patient and an authorised guardian activated separate private access and obtained Secure, HttpOnly, SameSite=Strict host cookies. Guardian password sign-in also passed. Anonymous and cross-origin requests were rejected; callers could not choose a different patient or retrieve another document. Revoking each grant denied its existing session and cleared the private page on the next request. Replaying issue/revoke requests returned the existing receipt without changing the grant revision. The synthetic patient and two revoked grants remain for audit; no invitation or password is published.
+
+All three dated financial queries succeeded against the deployed indexes. The labelled synthetic verification patient has no invoices, payments or deposits; detailed invoice/receipt calculations, rendering and zero-request printing were verified in the local synthetic browser/backend tests, not claimed as a live posted transaction test. No live financial records were created, edited or deleted and no emails were sent. Patient registration fields and all three sampled original visits were unchanged. Phone/desktop checks found no page overflow or browser errors; repeated list loads reused cached data. The final Nigeria-time default-date correction passed the full **4,960-test** repository suite, including nine portal cases.
+
+Aggregate evidence is in [hospital-patient-portal-verification.json](hospital-patient-portal-verification.json). Local screenshots and proof remain in `tmp/hospital-patient-portal-live/`; credentials and private invitation state remain outside Git. No desktop compilation or installer release.
