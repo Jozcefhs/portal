@@ -102,7 +102,7 @@ test('scheduler endpoint rejects missing secret and wrong workspace without data
 });
 test('scheduler worker validates identity and has no public send trigger',async()=>{
  const e={HOSPITAL_REMINDER_ENDPOINT:'https://hospital.test/api/hospital-appointment-reminders',HOSPITAL_REMINDER_WORKSPACE:'test-hospital',HOSPITAL_REMINDER_SCHEDULER_SECRET:'synthetic-secret'};let calls=0;
- const r=await runWorker(e,async(url,o)=>{calls++;assert.equal(o.redirect,'error');assert.equal(JSON.parse(o.body).expectedWorkspaceId,'test-hospital');return Response.json({ok:true,edition:'hospital',workspaceId:'test-hospital',checked:0});});assert.equal(r.checked,0);assert.equal(calls,1);await assert.rejects(runWorker({...e,HOSPITAL_REMINDER_ENDPOINT:'http://unsafe.test/api/hospital-appointment-reminders'}),/Invalid/);await assert.rejects(runWorker(e,async()=>Response.json({ok:true,workspaceId:'other'})),/Unexpected/);
+ const r=await runWorker(e,async(url,o)=>{calls++;assert.equal(o.redirect,'manual');assert.equal(JSON.parse(o.body).expectedWorkspaceId,'test-hospital');return Response.json({ok:true,edition:'hospital',workspaceId:'test-hospital',checked:0});});assert.equal(r.checked,0);assert.equal(calls,1);await assert.rejects(runWorker({...e,HOSPITAL_REMINDER_ENDPOINT:'http://unsafe.test/api/hospital-appointment-reminders'}),/Invalid/);await assert.rejects(runWorker(e,async()=>Response.json({ok:true,workspaceId:'other'})),/Unexpected/);
 });
 test('reminder records are included in backup registry and all query indexes exist',()=>{
  for(const c of ['AppointmentReminders','AppointmentReminderEvents'])assert.ok(HOSPITAL_COLLECTIONS.includes(c));const indexes=JSON.parse(readFileSync(new URL('../firestore.hospital.indexes.json',import.meta.url))).indexes;assert.equal(indexes.filter(i=>i.collectionGroup==='hospitalAppointmentReminders').length,3);assert.equal(indexes.filter(i=>i.collectionGroup==='hospitalAppointmentReminderEvents').length,1);
@@ -129,4 +129,10 @@ test('repeated unsent contact corrections retain separate skip events and send o
  assert.equal(skipped.length,2);assert.equal(new Set(skipped.map(e=>e.EventId)).size,2);
  assert.deepEqual(skipped.map(e=>e.Snapshot.ToEmail),['patient@example.test','corrected@example.test']);
  await f.send();await f.send();assert.equal(f.sent.length,1);assert.equal(f.sent[0].toEmail,'latest@example.test');
+});
+
+test('scheduler rejects redirects without forwarding its secret to another host',async()=>{
+ const e={HOSPITAL_REMINDER_ENDPOINT:'https://hospital.test/api/hospital-appointment-reminders',HOSPITAL_REMINDER_WORKSPACE:'test-hospital',HOSPITAL_REMINDER_SCHEDULER_SECRET:'synthetic-secret'};let calls=0;
+ await assert.rejects(runWorker(e,async(url,o)=>{calls++;assert.equal(o.redirect,'manual');return new Response(null,{status:302,headers:{Location:'https://other.example.test/'}});}),/returned 302/);
+ assert.equal(calls,1);
 });
