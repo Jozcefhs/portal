@@ -223,7 +223,7 @@ export function createHospitalInpatientService(context){
         return {writes:[write('Admissions',c.admission.AdmissionId,{...strip(c.admission),Status:'Discharged',DischargedAt:clock(),DischargedBy:actor,UpdatedAt:clock()},c.admission),
           write('Beds',bed.BedId,{...strip(bed),AdmissionId:'',PatientId:'',PatientName:'',HospitalNumber:'',Ready:false,UpdatedAt:clock()},bed),countWard(ward,-1),
           write('OpenAdmissions',c.person.PatientId,{...strip(lock),AdmissionId:''},lock),
-          write('Visits',c.visit.VisitId,{...strip(c.visit),Status:'Completed',UpdatedAt:clock(),DischargedAt:clock()},c.visit),
+          write('Visits',c.visit.VisitId,{...strip(c.visit),Status:'Completed',UpdatedAt:clock(),DischargedAt:clock(),ClosedAt:clock(),...(c.visit.QueueStartedAt&&!c.visit.QueueFinishedAt?{QueueFinishedAt:clock()}:{})},c.visit),
           write('OpenVisits',visitLockId,{...strip(visitLock),VisitId:''},visitLock),
           movement(key,c,'Discharged',{FromWard:ward.Name,FromBed:bed.Name}),auditWrite(key,'Discharge hospital patient',c.branchId,c.person,{AdmissionId:c.admission.AdmissionId})],result:{AdmissionId:c.admission.AdmissionId,PatientId:c.person.PatientId}};
       });

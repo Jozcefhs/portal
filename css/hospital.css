@@ -48,3 +48,9 @@ textarea{font:inherit;width:100%;min-width:0;padding:10px;border:1px solid #bccd
 
 /* Weekly clinic selection stays compact on phones. */
 .rc-weekdays{display:flex;flex-wrap:wrap;gap:8px 20px;margin:12px 0}.rc-weekdays label{display:flex;align-items:center;gap:6px}.rc-weekdays input{width:auto}#rcDetail{max-width:1080px}#rcFields:disabled{opacity:.85}
+
+/* Clinic queue: responsive operational register with a bounded print preview. */
+#queues{min-width:0}#queues small{display:block;color:#52687e}.cq-state{display:inline-block;background:#e7f2f7;color:#143e60;border-radius:5px;padding:4px 7px;font-weight:700}#cqRows button{margin:3px;max-width:100%}#cqRows td{vertical-align:top}#cqAction,#cqPreview{width:min(980px,94vw);max-height:90vh;overflow:auto;border:1px solid #b8cddd;border-radius:12px;padding:20px}#cqAction{width:min(500px,94vw)}#cqAction::backdrop,#cqPreview::backdrop{background:#122b46aa}#cqAction label{margin:15px 0}#cqPreviewBody{overflow:auto}#cqHistory{max-width:100%;overflow:auto}
+@media screen and (max-width:650px){#cqRows table{min-width:0}#cqRows thead{display:none}#cqRows tr{display:block;border:1px solid #cbd9e5;border-radius:8px;margin-bottom:12px;padding:8px}#cqRows td{display:block;border:0;padding:7px;overflow-wrap:anywhere}#cqRows td::before{content:attr(data-label);display:block;font-size:.72rem;color:#526a79;font-weight:700;margin-bottom:3px}#queues .toolbar>label,#queues .toolbar>button{flex:1 1 100%;min-width:0}#queues input,#queues select{max-width:100%;box-sizing:border-box}}
+
+@media print{#cqPreview,#cqAction{display:none!important}}

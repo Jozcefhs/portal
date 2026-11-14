@@ -3,7 +3,7 @@
   const $ = id => document.getElementById(id);
   const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[char]));
   let state = {}, selected = null, busy = false, session = false, patientCursor = null, visitCursor = null, lastSearch = null, lastVisitRange = null;
-  let scanController = null, recordEpoch = 0, clinical = null, orders = null, billing = null, inpatients = null, nursing = null, theatre = null, appointments = null, referrals = null, procurement = null, stockControl = null, stockDisposal = null, loadedBranch = '';
+  let scanController = null, recordEpoch = 0, clinical = null, orders = null, billing = null, inpatients = null, nursing = null, theatre = null, appointments = null, queues = null, referrals = null, procurement = null, stockControl = null, stockDisposal = null, loadedBranch = '';
   const pending = new Map();
   const stockMutations = new Set(['receiveMedicine','quarantineStock','dispensePrescription','returnDispensedMedicine','receivePharmacyPurchase','returnPharmacyPurchase','submitStockCount','reviewStockCount','submitStockDisposal','reviewStockDisposal']);
   const status = (message, bad = false) => { $('status').textContent = message; $('status').className = bad ? 'bad' : 'good'; };
@@ -19,6 +19,7 @@
     nursing?.clear();
     theatre?.clear();
     appointments?.clear();
+    queues?.clear();
     referrals?.clear();
     procurement?.clear();
     stockControl?.clear();
@@ -57,6 +58,7 @@
     const result = await fetchJson('/api/staff-hospital', {...payload, RequestId}, $('branch').value);
     if (write) {
       pending.delete(key);
+      if(['checkIn','checkInAppointment','updateVisit','clinicQueueAction','saveConsultation','signConsultation','dischargeHospitalPatient'].includes(action))queues?.invalidate();
       if (stockMutations.has(action)) stockDisposal?.invalidate();
       if (['submitStockDisposal','reviewStockDisposal'].includes(action)) stockControl?.invalidate();
     }
@@ -75,6 +77,7 @@
     nursing?.permissions();
     theatre?.permissions();
     appointments?.permissions();
+    queues?.permissions();
     referrals?.permissions();
     procurement?.permissions();
     stockControl?.permissions();
@@ -104,8 +107,8 @@
     loadedBranch = $('branch').value; permissions(); $('workspace').hidden = false;
     status('Hospital reception ready. Search for a patient or choose dates to load visits.');
   }
-  function showTab(name) { for(const id of ['patients','reception','care','orders','billing','inpatients','nursing','theatre','appointments','referrals','procurement','stockControl','stockDisposal'])$(id).hidden=name!==id; }
-  document.querySelectorAll('[data-tab]').forEach(button => { button.onclick = () => { showTab(button.dataset.tab); if(button.dataset.tab==='stockDisposal'&&can('stock.read'))run(()=>stockDisposal.open()); }; });
+  function showTab(name) { for(const id of ['patients','reception','care','orders','billing','inpatients','nursing','theatre','appointments','queues','referrals','procurement','stockControl','stockDisposal'])$(id).hidden=name!==id; }
+  document.querySelectorAll('[data-tab]').forEach(button => { button.onclick = () => { showTab(button.dataset.tab); if(button.dataset.tab==='queues'&&can('visits.read'))run(()=>queues.open()); if(button.dataset.tab==='stockDisposal'&&can('stock.read'))run(()=>stockDisposal.open()); }; });
   $('refresh').onclick = () => run(async () => { if(!await clinical.confirmLeave()||!await orders.confirmLeave()||!await billing.confirmLeave()||!await inpatients.confirmLeave()||!await nursing.confirmLeave()||!await theatre.confirmLeave()||!await appointments.confirmLeave()||!await referrals.confirmLeave()||!await procurement.confirmLeave()||!await stockControl.confirmLeave()||!await stockDisposal.confirmLeave())return; clearRecords(); await loadAccess(); if(!$('stockDisposal').hidden&&can('stock.read'))await stockDisposal.open(); });
   $('branch').onchange = () => run(async () => {
     if(!await clinical.confirmLeave()||!await orders.confirmLeave()||!await billing.confirmLeave()||!await inpatients.confirmLeave()||!await nursing.confirmLeave()||!await theatre.confirmLeave()||!await appointments.confirmLeave()||!await referrals.confirmLeave()||!await procurement.confirmLeave()||!await stockControl.confirmLeave()||!await stockDisposal.confirmLeave()){$('branch').value=loadedBranch;return;}
@@ -209,6 +212,7 @@
   inpatients=window.DynamaxHospitalInpatients.create({api,run,can,writable,status,navigate:showTab});
   nursing=window.DynamaxHospitalNursing.create({api,run,can,writable,status,navigate:showTab});
   theatre=window.DynamaxHospitalTheatre.create({api,run,can,writable,status,navigate:showTab});
+  queues=window.DynamaxHospitalClinicQueues.create({api,run,can,writable,status,navigate:showTab,openCare:row=>clinical.open(row)});
   appointments=window.DynamaxHospitalAppointments.create({api,run,can,writable,status,navigate:showTab});
   referrals=window.DynamaxHospitalReferrals.create({api,run,can,writable,status,navigate:showTab,followUp:row=>appointments.openVisit(row)});
   $('bookPatientAppointment').onclick=()=>run(()=>appointments.openPatient(selected));
@@ -220,6 +224,7 @@
     if(task==='stock-disposal'&&can('stock.read')){showTab('stockDisposal');await stockDisposal.open();}
     if(task==='procurement'&&can('procurement.read'))showTab('procurement');
     if(task==='referrals'&&can('consultations.write'))showTab('referrals');
+    if(task==='queues'&&can('visits.read'))await queues.open();
     if(task==='appointments'&&can('appointments.read'))showTab('appointments');
     if(task==='theatre'&&(can('theatre.read')||can('theatre.configure')))showTab('theatre');
     if(task==='nursing'&&can('nursing.read'))showTab('nursing');

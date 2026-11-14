@@ -1,3 +1,4 @@
+import {createHospitalClinicQueues,queueSnapshot} from './hospital-clinic-queues.js';
 import {createHospitalPatientBookingLinks} from './hospital-patient-booking-links.js';
 import { createHospitalStockControl } from './hospital-stock-control.js';
 import { createHospitalStockDisposal } from './hospital-stock-disposal.js';
@@ -115,6 +116,7 @@ export function createHospitalService(env, user, overrides = {}) {
     return { rows: shown, next: rows.length > limit ? { id: last.__id, value: last[field] } : null };
   }
   return {
+    ...createHospitalClinicQueues({env,user,db,collection,capabilities,branch,clock,actor,condition,strip,eq,operation,auditWrite,page}),
     ...createHospitalStockControl({env,user,db,collection,capabilities,requireCapability,branch,clock,actor,condition,strip,eq,auditWrite,operation,page}),
     ...createHospitalStockDisposal({env,user,db,collection,capabilities,requireCapability,branch,clock,actor,condition,strip,eq,auditWrite,operation,page}),
     ...createHospitalMedicinesService({env,user,db,collection,capabilities,branch,clock,actor,condition,strip,eq,auditWrite,operation,page}),
@@ -286,10 +288,14 @@ export function createHospitalService(env, user, overrides = {}) {
         const lockId = await digest(JSON.stringify([branchId, row.PatientId]));
         const lock = await db.getDocument(env, collection('OpenVisits'), lockId);
         if (lock?.VisitId !== row.VisitId) fail('This is no longer the patient’s open visit. Reload the queue.', 409);
+        if(row.Status===body.Status)return {writes:[],result:{VisitId:row.VisitId,PatientId:row.PatientId,Unchanged:true}};
         const terminal = ['Completed', 'Cancelled'].includes(body.Status);
+        const timing=terminal?{ClosedAt:clock(),...(row.QueueStartedAt&&!row.QueueFinishedAt?{QueueFinishedAt:clock()}:{})}:(!row.QueueStartedAt?{QueueStartedAt:clock()}:{});
+        const queueAfter={...row,...timing,Status:body.Status};
         const writes = [{ collectionPath: collection('Visits'), documentId: row.VisitId, currentDocument: condition(row),
-          data: { ...strip(row), Status: body.Status, UpdatedAt: clock(), UpdatedBy: actor, ReceptionReason: clean(body.Reason).slice(0, 500) } },
+          data: { ...strip(row), ...timing, Status: body.Status, UpdatedAt: clock(), UpdatedBy: actor, ReceptionReason: clean(body.Reason).slice(0, 500) } },
         auditWrite(key, `Mark reception visit ${body.Status.toLowerCase()}`, branchId, person, { VisitId: row.VisitId })];
+        writes.push({collectionPath:collection('ClinicQueueEvents'),documentId:key,currentDocument:{exists:false},data:{EventId:key,VisitId:row.VisitId,PatientId:row.PatientId,BranchId:branchId,Action:body.Status,Reason:clean(body.Reason).slice(0,500),CreatedAt:clock(),Actor:actor,Before:queueSnapshot(row),After:queueSnapshot(queueAfter)}});
         if (terminal) writes.push({ collectionPath: collection('OpenVisits'), documentId: lockId,
           data: { VisitId: '', PatientId: row.PatientId }, currentDocument: condition(lock) });
         return { writes, result: { VisitId: row.VisitId, PatientId: row.PatientId } };

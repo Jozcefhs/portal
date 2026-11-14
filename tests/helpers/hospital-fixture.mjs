@@ -20,6 +20,7 @@ export function fixture(user = actor, environment = env) {
       for (const filter of options.filters || []) rows = rows.filter(row => {
         const value = row[filter.field];
         if (filter.op === 'ARRAY_CONTAINS') return value?.includes(filter.value);
+        if (filter.op === 'in') return filter.value.includes(value);
         if (filter.op === '==') return value === filter.value;
         if (filter.op === '>=') return value >= filter.value;
         if (filter.op === '<=') return value <= filter.value;

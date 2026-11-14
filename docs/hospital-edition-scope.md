@@ -372,3 +372,10 @@ Deployed and verified on 13 November 2026: source `d3580827565b63f51a44e58e24306
 - Tests and web deployment target the isolated Hospital Owner Demo only. No desktop compilation or installer release. New patient registration, broader patient portal, live clinic queue/overrun coordination, offline/desktop parity and practitioner validation remain pending under H02. The full Hospital roadmap remains open.
 
 - Patient self-booking deployment verified: source `5919e688`, main demo deployment `8b7ca858`, marker `dynamax-v539-hospital-patient-self-booking`; one additive index READY and nine assets matched. All 4,838 repository tests and five appointment-related browser workflows passed. Live synthetic booking/retry/reschedule/cancel/revoke and phone/desktop checks passed; the test booking is retained as cancelled and its link revoked. Original sampled visits were unchanged. No clinical/financial mutations, messages, desktop compilation or release. See the Owner Demo guide for evidence.
+
+
+### 14 November 2026 — H02 clinic queues and waiting times
+
+- Clinic queues now reuse reception visits, with waiting/called/in-progress states, dated completed history, department filters, call/return/start controls, care access, completion/cancellation and print preview. Arrival, service and elapsed times use recorded events; unknown old timings stay unknown.
+- Read-only queue pages use one bounded query, memory caching and locally updated clocks. No polling, per-patient fan-out, duplicate queue records, automatic charges or notifications. Mutations use branch/role/revision guards and atomic operation receipts; before/after queue events are retained.
+- Validation covers retries/concurrency, existing appointment/clinical flows, desktop/phone layouts and all 4,849 repository tests. Deployment is the isolated Hospital Owner Demo; no desktop compilation or installer release. Broader patient portal, offline/desktop parity, practitioner validation and advanced clinic capacity/overrun coordination remain on the Hospital roadmap.

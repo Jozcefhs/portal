@@ -165,7 +165,7 @@ export function createHospitalAppointmentsService(ctx){
         const VisitId=visit?.VisitId||await keyFor('appointment-visit',row.AppointmentId);
         const next={...strip(row),Status:'Arrived',VisitId,ArrivedAt:clock(),...stamp()};
         const visitRow={...(visit?strip(visit):{VisitId,PatientId:row.PatientId,PatientName:patientName(person),HospitalNumber:person.HospitalNumber,
-          BranchId,Department:row.Department,Status:'Waiting',CreatedAt:clock(),CreatedBy:actor}),AppointmentId:row.AppointmentId,AppointmentClinician:row.Clinician,...stamp()};
+          BranchId,Department:row.Department,Status:'Waiting',CreatedAt:clock(),CreatedBy:actor}),AppointmentId:row.AppointmentId,AppointmentClinician:row.Clinician,AppointmentClinicianName:row.ClinicianName,AppointmentStartAt:row.StartAt,AppointmentEndAt:row.EndAt,...stamp()};
         return {writes:[write('Appointments',row.AppointmentId,next,row),write('Visits',VisitId,visitRow,visit),
           write('OpenVisits',lockId,{PatientId:row.PatientId,VisitId},lock),event(key,next,'Checked in'),
           auditWrite(key,'Check in appointment',BranchId,person,{AppointmentId:row.AppointmentId,VisitId})],result:identity(next)};

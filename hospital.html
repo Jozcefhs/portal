@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Hospital workspace · Dynamax</title>
-  <link rel="stylesheet" href="/css/hospital.css?v=20261114-recurring">
+  <link rel="stylesheet" href="/css/hospital.css?v=540">
   <link rel="stylesheet" href="/css/app-dialogs.css">
   <script src="/js/app-dialogs.js?v=20261016-grouped-form-validation" defer></script>
   <script src="/js/staff-idle-session.js" defer></script>
@@ -25,7 +25,8 @@
   <script src="/js/hospital-procurement.js?v=20261030-remittances" defer></script>
   <script src="/js/hospital-stock-control.js?v=20261104-stock-disposal" defer></script>
   <script src="/js/hospital-stock-disposal.js?v=20261104-stock-disposal" defer></script>
-  <script src="/js/hospital.js?v=20261113-branch-access" defer></script>
+  <script src="/js/hospital-clinic-queues.js?v=540" defer></script>
+  <script src="/js/hospital.js?v=540" defer></script>
 </head>
 <body>
   <main>
@@ -34,7 +35,8 @@
     <div id="workspace" hidden>
       <div class="toolbar"><label>Working branch<select id="branch"></select></label><button id="refresh" type="button">Refresh access</button></div>
       <p id="hospitalOwnerDemo" class="hint" hidden><strong>Hospital Owner&rsquo;s Demo</strong> &middot; Use synthetic demonstration records only. This workspace has a separate database.</p>
-      <nav aria-label="Hospital tasks"><button type="button" data-tab="patients">Patients and NFC cards</button><button type="button" data-tab="reception">Reception visits</button><button type="button" data-tab="appointments" hidden>Appointments</button><button type="button" data-tab="referrals" hidden>Referrals and care transfers</button><button type="button" data-tab="care" hidden>Clinical record</button><button type="button" data-tab="orders" hidden>Prescriptions and investigations</button><button type="button" data-tab="theatre" hidden>Theatre and procedures</button><button type="button" data-tab="nursing" hidden>Nursing and handovers</button><button type="button" data-tab="inpatients" hidden>Wards and admissions</button><button type="button" data-tab="billing" hidden>Billing and HMO</button><button type="button" data-tab="procurement" hidden>Pharmacy procurement</button><button type="button" data-tab="stockControl" hidden>Pharmacy stock control</button><button type="button" data-tab="stockDisposal" hidden>Quarantined stock disposal</button></nav>
+      <nav aria-label="Hospital tasks"><button type="button" data-tab="patients">Patients and NFC cards</button><button type="button" data-tab="reception">Reception visits</button><button type="button" data-tab="queues" hidden>Clinic queues</button><button type="button" data-tab="appointments" hidden>Appointments</button><button type="button" data-tab="referrals" hidden>Referrals and care transfers</button><button type="button" data-tab="care" hidden>Clinical record</button><button type="button" data-tab="orders" hidden>Prescriptions and investigations</button><button type="button" data-tab="theatre" hidden>Theatre and procedures</button><button type="button" data-tab="nursing" hidden>Nursing and handovers</button><button type="button" data-tab="inpatients" hidden>Wards and admissions</button><button type="button" data-tab="billing" hidden>Billing and HMO</button><button type="button" data-tab="procurement" hidden>Pharmacy procurement</button><button type="button" data-tab="stockControl" hidden>Pharmacy stock control</button><button type="button" data-tab="stockDisposal" hidden>Quarantined stock disposal</button></nav>
+      <section id="queues" hidden></section>
       <section id="appointments" hidden></section>
       <section id="theatre" hidden></section>
       <section id="nursing" hidden></section>
