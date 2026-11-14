@@ -43,7 +43,7 @@ export function createHospitalPortalAccess(ctx){
         }
         const next={GrantId,PatientId:person.PatientId,BranchId,...fields,AccessUntil,InvitationHash,
           InvitationExpiresAt:new Date(Math.min(Date.parse(AccessUntil),Date.parse(clock())+7*86400000)).toISOString(),
-          Status:'Invited',AuthVersion:key,CreatedAt:old?.CreatedAt||clock(),UpdatedAt:clock(),UpdatedBy:actor};
+          Status:'Invited',AuthVersion:key,ClinicalAccessVersion:key,CreatedAt:old?.CreatedAt||clock(),UpdatedAt:clock(),UpdatedBy:actor};
         const Action=old?'Replace patient portal access':'Authorise patient portal access';
         return {writes:[write('PortalGrants',GrantId,next,old),write('Patients',person.PatientId,strip(person),person),event(key,next,Action,Reason),
           auditWrite(key,Action,BranchId,person,{GrantId,Kind:next.Kind,RecipientName:next.RecipientName,Reason})],

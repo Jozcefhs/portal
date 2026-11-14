@@ -12,6 +12,7 @@ export async function onRequestPost({ request, env, data }) {
     const user = await requireStaffSession(env, request);
     if (!['state', 'search', 'details', 'savePatient', 'assignCard', 'revokeCard', 'checkIn', 'visits', 'updateVisit',
       'patientPortalAccess','issuePatientPortalAccess','revokePatientPortalAccess',
+      'clinicalPortalContext','clinicalPortalSharing','publishClinicalPortalDocument','withdrawClinicalPortalDocument',
       'clinicQueue','clinicQueueAction','clinicQueueHistory',
       'investigationCatalog','saveInvestigationCatalogItem','investigationCatalogHistory',
       'pharmacySuppliers','savePharmacySupplier','savePharmacyPurchase','pharmacyPurchase','transitionPharmacyPurchase','receivePharmacyPurchase','returnPharmacyPurchase','procurementRegister','procurementHistory','saveSupplierBill','supplierBill','transitionSupplierBill','recordSupplierPayment','reverseSupplierPayment','creditSupplierBill',

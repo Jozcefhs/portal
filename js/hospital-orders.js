@@ -56,6 +56,7 @@
     const catalogCache=new Map();
     const catalogAllowed=kind=>can('orders.read')||can(kind==='Laboratory'?'laboratory.work':'imaging.work')||can(kind==='Laboratory'?'laboratory.configure':'imaging.configure');
     const catalogWritable=kind=>writable(kind==='Laboratory'?'laboratory.work':'imaging.work')||writable(kind==='Laboratory'?'laboratory.configure':'imaging.configure');
+    const sharing=window.DynamaxHospitalClinicalSharing.create({host:$('orderPanel'),api,run,status,getScope:()=>current?{DocumentType:'investigations',ParentId:current.order.OrderId,PatientId:current.patient.PatientId}:null,allowed:()=>writable('orders.create')&&!!current&&current.order.Kind!=='Prescription'});
     const dirty=new Set(),editForms=['catalogItemForm','issueOrderForm','reviewRxForm','dispenseRxForm','returnRxForm','specimenForm','reportForm','releaseForm','ackForm','cancelOrderForm','receiveStockForm','quarantineStockForm'];
     const medicines=window.DynamaxHospitalMedicines.create({api,run,can,writable,status,dirty});
     editForms.forEach(id=>$(id).addEventListener('input',()=>{dirty.add(id);if(id==='reportForm')$('confirmOrder').checked=false;permissions();}));
@@ -112,6 +113,7 @@
     $('customInvestigation').onclick=()=>{selectedCatalog=null;$('chosenCatalog').textContent='Custom investigation. Review the service and specimen before issuing.';dirty.add('issueOrderForm');$('confirmIssue').checked=false;};
     const kinds=()=>['Prescription','Laboratory','Imaging'].filter(kind=>can('orders.read')||can(kind==='Prescription'?'pharmacy.work':kind==='Laboratory'?'laboratory.work':'imaging.work'));
     function permissions(){
+      sharing.permissions();
       const available=kinds(),previous=$('ordersKind').value;$('ordersKind').innerHTML=available.map(kind=>`<option>${kind}</option>`).join('');if(available.includes(previous))$('ordersKind').value=previous;
       medicines.permissions();
       document.querySelector('[data-tab=orders]').hidden=!can('pharmacy.configure')&&!available.length&&!['Laboratory','Imaging'].some(catalogAllowed);$('stockWorkspace').hidden=!can('pharmacy.work');$('ordersFilter').hidden=!available.length;
@@ -136,6 +138,7 @@
       if(issue)$('issueOrderForm').querySelector('button:not([type=button])').disabled=!writable('orders.create');
     }
     function clear(){
+      sharing.clear();
       medicines.clear();
       catalogCache.clear();catalogRows=[];catalogCursor=catalogRequest=catalogEdit=selectedCatalog=catalogHistoryCursor=catalogHistoryRange=null;
       $('catalogRows').replaceChildren();$('catalogHistoryRows').replaceChildren();$('chosenCatalog').replaceChildren();$('catalogItemForm').hidden=$('nextCatalog').hidden=true;
@@ -156,6 +159,7 @@
       $('issueAllergies').textContent=`Allergies: ${issue.care.AllergyStatus} ${issue.care.Allergies||''}`;navigate('orders');status('Prescribing context loaded. Review the patient and current allergies.');
     }
     function clearOrder(){
+      sharing.clear();
       current=scope=null;dispenses=[];alerts=[];releasedCursor=releasedRange=alertCursor=dispenseCursor=historyCursor=null;
       $('releasedHistoryRows').replaceChildren();$('nextReleasedHistory').hidden=true;
       $('orderPanel').querySelectorAll('form').forEach(form=>{form.reset();dirty.delete(form.id);});

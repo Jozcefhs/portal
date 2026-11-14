@@ -2236,7 +2236,45 @@
     {"collectionGroup": "hospitalAppointmentSchedules", "queryScope": "COLLECTION", "fields": [{"fieldPath": "BranchId", "order": "ASCENDING"}, {"fieldPath": "Day", "order": "ASCENDING"}, {"fieldPath": "Active", "order": "ASCENDING"}, {"fieldPath": "SelfBookingEnabled", "order": "ASCENDING"}, {"fieldPath": "__name__", "order": "ASCENDING"}]},
     {"collectionGroup": "hospitalVisits", "queryScope": "COLLECTION", "fields": [{"fieldPath": "BranchId", "order": "ASCENDING"}, {"fieldPath": "Status", "order": "ASCENDING"}, {"fieldPath": "CreatedAt", "order": "ASCENDING"}, {"fieldPath": "__name__", "order": "ASCENDING"}]},
     {"collectionGroup": "hospitalVisits", "queryScope": "COLLECTION", "fields": [{"fieldPath": "BranchId", "order": "ASCENDING"}, {"fieldPath": "Status", "order": "ASCENDING"}, {"fieldPath": "Department", "order": "ASCENDING"}, {"fieldPath": "CreatedAt", "order": "ASCENDING"}, {"fieldPath": "__name__", "order": "ASCENDING"}]},
-    {"collectionGroup": "hospitalClinicQueueEvents", "queryScope": "COLLECTION", "fields": [{"fieldPath": "BranchId", "order": "ASCENDING"}, {"fieldPath": "VisitId", "order": "ASCENDING"}, {"fieldPath": "CreatedAt", "order": "ASCENDING"}, {"fieldPath": "__name__", "order": "ASCENDING"}]}
+    {"collectionGroup": "hospitalClinicQueueEvents", "queryScope": "COLLECTION", "fields": [{"fieldPath": "BranchId", "order": "ASCENDING"}, {"fieldPath": "VisitId", "order": "ASCENDING"}, {"fieldPath": "CreatedAt", "order": "ASCENDING"}, {"fieldPath": "__name__", "order": "ASCENDING"}]},
+    {
+      "collectionGroup": "hospitalPortalClinicalDocuments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "BranchId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "PatientId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "GrantId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "GrantAccessVersion",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "DocumentType",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "Status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "PublishedAt",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "ASCENDING"
+        }
+      ]
+    }
   ],
   "fieldOverrides": [
 

@@ -20,7 +20,7 @@ Sign-in retrieves identity and permissions only. Choose document type and a date
 - **Payments and deposit allocations:** original received/allocated amount, refunds and amounts returned to deposits. Deposit allocations are clearly labelled as allocations rather than additional cash receipts.
 - **Advance deposits:** receipt amount, refunds, applied amount and unused balance.
 
-The portal reads existing billing documents; it does not create copies, invoices, payments, refunds, deposits or ledger entries. It does not initiate online payments. Clinical records, investigations and discharge documents require a separate future release/consent workflow and are not exposed here.
+The portal reads existing billing documents; it does not create copies, invoices, payments, refunds, deposits or ledger entries. It does not initiate online payments. Released investigation results and signed discharge summaries now use a separate clinician-reviewed, named-recipient consent workflow. See [Clinical portal documents](hospital-portal-clinical.md). Other clinical records remain outside this portal.
 
 ## Security and record preservation
 
