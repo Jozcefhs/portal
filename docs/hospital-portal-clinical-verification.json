@@ -1,0 +1,57 @@
+{
+  "source": "f312443e404f0becdab32c563ec6128c9a170908",
+  "deployment": "cdc99461",
+  "assets": [
+    "admin.html",
+    "hospital.html",
+    "hospital-portal.html",
+    "css/hospital-portal.css",
+    "js/hospital-orders.js",
+    "js/hospital-inpatients.js",
+    "js/hospital-portal-clinical.js",
+    "js/hospital-patient-portal.js",
+    "sw.js"
+  ],
+  "emailsSent": 0,
+  "financialMutations": 0,
+  "syntheticClinicalSources": true,
+  "syntheticSourcesCreated": 6,
+  "nonClinicianReleaseDenied": true,
+  "retriedSharingCreatesNoDuplicate": true,
+  "repeatedSharingNoChanges": true,
+  "cachedLists": true,
+  "repeatedViewNoNewAuditWrite": true,
+  "printWithoutRequest": true,
+  "withdrawalCheckedOnReopen": true,
+  "patientAndGuardianIsolation": true,
+  "patientClinicalAccess": true,
+  "guardianClinicalAccess": true,
+  "unchangedSyntheticSourceDocuments": 6,
+  "unchangedOriginalSampleVisits": 3,
+  "patientFieldsPreserved": true,
+  "syntheticGrantsRevoked": true,
+  "verifiedAt": "2026-11-14",
+  "repositoryTests": {
+    "tests": 4968,
+    "passed": 4968,
+    "failed": 0
+  },
+  "index": [
+    {
+      "group": "hospitalPortalClinicalDocuments",
+      "fields": [
+        "BranchId",
+        "PatientId",
+        "GrantId",
+        "GrantAccessVersion",
+        "DocumentType",
+        "Status",
+        "PublishedAt",
+        "__name__"
+      ],
+      "state": "READY"
+    }
+  ],
+  "desktopCompiled": false,
+  "installerReleased": false
+}
