@@ -32,3 +32,9 @@ This is not an emergency service. The page directs urgent requests to the hospit
 Targeted tests cover role/branch/recipient boundaries, current consent, revoked/reissued access, concurrent replies, revocation during reply, duplicate prevention, closed history, bounded pagination and preservation of financial records. Browser verification uses the actual hospital page plus patient portal, at desktop and 390px widths. It checks escaped text, named-guardian replies, retained pages, closing/history and privacy clearing. Existing financial and clinical-document browser checks are also run.
 
 Deployment and live synthetic evidence are recorded after rollout in the hospital scope log and this guide. Deployment is limited to `dynamax-hospital-review`; no desktop compilation or installer release.
+
+## Verified deployment — 14 November 2026
+
+Deployed source `b0de4b89`, marker `dynamax-v544-hospital-patient-messages`, deployment `172760c4` on the isolated Hospital Owner Demo. All 4,982 repository tests passed on the final source. The messaging browser flow and existing financial/clinical-document browser flows passed, including 390px display, retained pages, escaped content and clearing drafts when changing patients.
+
+Live HTTPS checks verified named guardian replies, nurse responses, patient/guardian isolation, duplicate retry protection, closed history and read-only retrieval. The final backend is byte-identical to the backend exercised in those live workflows; the final staff inbox and draft safeguard were also checked live. All nine deployed assets match source and four additive indexes are READY. Synthetic patient and financial records were preserved, all test access was revoked, and no real notifications or financial transactions were sent. No desktop compilation or installer release. See [machine-readable verification](hospital-patient-messages-verification.json).
