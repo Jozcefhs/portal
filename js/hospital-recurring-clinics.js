@@ -18,6 +18,7 @@
           <label>Permanent reference<input name="Reference" maxlength="40" required></label><label>Clinic name<input name="Name" maxlength="120" required></label>
           <label>Doctor’s staff username<input name="Clinician" maxlength="120" required></label><label>Receiving department<input name="Department" maxlength="120" required></label>
           <label>Status<select name="Active"><option value="true">Active</option><option value="false">Inactive</option></select></label>
+          <label>Patient self-booking<select name="SelfBookingEnabled"><option value="false">Disabled</option><option value="true">Enabled</option></select></label><label>Patient slot length (minutes)<input name="SlotMinutes" type="number" min="5" max="120" step="5" value="30" required></label>
           <label>Availability windows (WAT)<textarea name="Windows" rows="3" placeholder="09:00-12:00&#10;13:00-16:00" required></textarea><small>One HH:MM-HH:MM window per line.</small></label>
         </div><fieldset class="rc-weekdays"><legend>Repeat every week on</legend>${weekdays.map((name,i)=>`<label class="nurse-check"><input type="checkbox" name="Weekdays" value="${i}">${name}</label>`).join('')}</fieldset>
         <label id="rcReasonLabel">Reason for change<input name="Reason" maxlength="1000" minlength="5"></label></fieldset>
@@ -34,7 +35,7 @@
     function show(){
       const f=$('rcEditor');f.reset();dirty.delete('rcEditor');clearPreview();$('rcHistory').replaceChildren();$('rcHistoryNext').hidden=$('rcPrintHistory').hidden=true;
       for(const key of ['Reference','Name','Clinician','Department'])f.elements[key].value=entry?.[key]||'';
-      f.elements.Reference.readOnly=!!entry?.TemplateId;f.elements.Active.value=String(entry?.Active??true);f.elements.Windows.value=(entry?.Windows||[]).map(w=>`${w.From}-${w.To}`).join('\n');
+      f.elements.SelfBookingEnabled.value=String(entry?.SelfBookingEnabled===true);f.elements.SlotMinutes.value=entry?.SlotMinutes||30;f.elements.Reference.readOnly=!!entry?.TemplateId;f.elements.Active.value=String(entry?.Active??true);f.elements.Windows.value=(entry?.Windows||[]).map(w=>`${w.From}-${w.To}`).join('\n');
       f.querySelectorAll('[name=Weekdays]').forEach(e=>{e.checked=(entry?.Weekdays||[]).includes(Number(e.value));});
       f.elements.Reason.required=!!entry?.TemplateId;$('rcReasonLabel').hidden=!entry?.TemplateId;
       $('rcTitle').textContent=entry?.Name||'New recurring clinic';$('rcDetail').hidden=false;$('rcSection').open=true;permissions();
@@ -59,7 +60,7 @@
     $('rcEditor').onsubmit=e=>{e.preventDefault();run(async()=>{
       if(!await leave('rcEditor'))return;const f=$('rcEditor').elements,Template={};
       for(const k of ['Reference','Name','Clinician','Department'])Template[k]=f[k].value;
-      Template.Active=f.Active.value==='true';Template.Weekdays=[...$('rcEditor').querySelectorAll('[name=Weekdays]:checked')].map(e=>Number(e.value));
+      Template.SelfBookingEnabled=f.SelfBookingEnabled.value==='true';Template.SlotMinutes=Number(f.SlotMinutes.value);Template.Active=f.Active.value==='true';Template.Weekdays=[...$('rcEditor').querySelectorAll('[name=Weekdays]:checked')].map(e=>Number(e.value));
       Template.Windows=f.Windows.value.split(/\r?\n/).map(s=>s.trim()).filter(Boolean).map(line=>{const m=line.match(/^(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})$/);if(!m)throw Error('Use one HH:MM-HH:MM window per line.');return {From:m[1],To:m[2]};});
       const r=await api('saveClinicTemplate',{...(entry?.TemplateId?{TemplateId:entry.TemplateId,Revision:entry.Revision}:{}),Template,Reason:f.Reason.value},true);
       dirty.delete('rcEditor');invalidate();await open(r);status(r.Unchanged?'This clinic template is already saved.':'Recurring clinic template saved.');

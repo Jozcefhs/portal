@@ -18,6 +18,7 @@
         <form id="apScheduleEditor" hidden><h3 id="apScheduleTitle">Clinic schedule</h3><div class="form-grid">
           ${input('Clinician','Doctor’s staff username','maxlength="120" required')}${input('Day','Clinic date (WAT)','type="date" required')}${input('Department','Receiving department','maxlength="120" required')}
           <label>Status<select name="Active"><option value="true">Active</option><option value="false">Inactive</option></select></label>
+          <label>Patient self-booking<select name="SelfBookingEnabled"><option value="false">Disabled</option><option value="true">Enabled</option></select></label><label>Patient slot length (minutes)<input name="SlotMinutes" type="number" min="5" max="120" step="5" value="30" required></label>
           <label>Availability windows (WAT)<textarea name="Windows" placeholder="09:00-12:00&#10;13:00-16:00" rows="3" required></textarea><small>One HH:MM-HH:MM window per line. Saved appointments must remain within the windows.</small></label>
         </div><button>Save clinic schedule</button><button type="button" id="apCloseSchedule" class="secondary">Close schedule editor</button></form>
       </details>
@@ -42,6 +43,7 @@
       $('apSchedFrom').value=row.PreferredFrom;const firstPageEnd=new Date(Date.parse(row.PreferredFrom+'T00:00:00Z')+30*86400000).toISOString().slice(0,10);$('apSchedTo').value=row.PreferredTo<firstPageEnd?row.PreferredTo:firstPageEnd;status('Choose a matching clinic schedule, then save the appointment.');
     }});
     const reminders=window.DynamaxHospitalAppointmentReminders.create({api,run,writable,status,cached,dirty,leave,clearCache:()=>cache.clear(),getAppointment:()=>context?.appointment});
+    const patientLinks=window.DynamaxHospitalPatientBookingLinks.create({api,run,writable,status,getPatient:()=>person});
     const recurring=window.DynamaxHospitalRecurringClinics.create({api,run,writable,status,cached,dirty,leave,invalidate});
     const range=p=>({fromDate:$(p+'From').value,toDate:$(p+'To').value});
     const checked=(form,name)=>$(form).querySelector(`[name=${name}]`).checked;
@@ -55,14 +57,14 @@
       $('apBookingForm').hidden=!person||!active||!writable('appointments.write');
       $('apArrivalForm').hidden=!context||!active||!writable('appointments.write')||!writable('visits.write');
       $('apClosureForm').hidden=!context||!active||!writable('appointments.write');
-      $('apHistorySection').hidden=!context;$('apRefresh').hidden=!context;waitlist.permissions();recurring.permissions();reminders.permissions();
+      $('apHistorySection').hidden=!context;$('apRefresh').hidden=!context;waitlist.permissions();recurring.permissions();reminders.permissions();patientLinks.permissions();
     }
     async function confirmLeave(except=''){return ![...dirty].some(f=>f!==except)||await window.DynamaxDialogs.confirm({title:'Unsaved appointment changes',message:'Discard unsaved appointment or availability changes?',confirmText:'Discard changes'});}
     async function leave(except=''){if(!await confirmLeave(except))return false;for(const form of [...dirty])if(form!==except){$(form).reset();dirty.delete(form);}return true;}
     function reset(form){$(form).reset();dirty.delete(form);}
     function scheduleLabel(row){return `${row.ClinicianName} · ${row.Day} · ${row.Department} · ${row.Windows.map(w=>`${w.From}–${w.To}`).join(', ')} WAT`;}
     function showPerson(){
-      reminders.contextChanged();
+      reminders.contextChanged();patientLinks.contextChanged();
       $('apPatient').hidden=false;$('apName').textContent=person.DisplayName||person.PatientName;
       $('apIdentity').textContent=`${person.HospitalNumber}${sourceVisit?' · Follow-up of an existing visit':''}`;
       $('apSummary').textContent=context?`${context.appointment.Reference} · ${context.appointment.Status} · ${wat(context.appointment.StartAt)} · ${context.appointment.ClinicianName}`:'New appointment';
@@ -103,7 +105,7 @@
     async function editSchedule(row={}){
       if(!await leave())return;editingSchedule=row;reset('apScheduleEditor');const form=$('apScheduleEditor');
       for(const key of ['Clinician','Day','Department'])form.elements[key].value=row[key]||'';
-      form.elements.Active.value=String(row.Active??true);form.elements.Windows.value=(row.Windows||[]).map(w=>`${w.From}-${w.To}`).join('\n');
+      form.elements.SelfBookingEnabled.value=String(row.SelfBookingEnabled===true);form.elements.SlotMinutes.value=row.SlotMinutes||30;form.elements.Active.value=String(row.Active??true);form.elements.Windows.value=(row.Windows||[]).map(w=>`${w.From}-${w.To}`).join('\n');
       form.elements.Clinician.readOnly=form.elements.Day.readOnly=!!row.ScheduleId;permissions();$('apSchedulesSection').open=true;
     }
     $('apNewSchedule').onclick=()=>run(()=>editSchedule());
@@ -111,7 +113,7 @@
     $('apScheduleEditor').onsubmit=e=>{e.preventDefault();run(async()=>{
       if(!await leave('apScheduleEditor'))return;const v=values('apScheduleEditor');
       const Windows=v.Windows.split(/\r?\n/).map(s=>s.trim()).filter(Boolean).map(line=>{const m=line.match(/^(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})$/);if(!m)throw Error('Use one HH:MM-HH:MM window per line.');return {From:m[1],To:m[2]};});
-      await api('saveAppointmentSchedule',{...(editingSchedule?.ScheduleId?{ScheduleId:editingSchedule.ScheduleId,Revision:editingSchedule.Revision}:{}),Schedule:{Clinician:v.Clinician,Day:v.Day,Department:v.Department,Active:v.Active==='true',Windows}},true);
+      await api('saveAppointmentSchedule',{...(editingSchedule?.ScheduleId?{ScheduleId:editingSchedule.ScheduleId,Revision:editingSchedule.Revision}:{}),Schedule:{Clinician:v.Clinician,Day:v.Day,Department:v.Department,Active:v.Active==='true',SelfBookingEnabled:v.SelfBookingEnabled==='true',SlotMinutes:Number(v.SlotMinutes),Windows}},true);
       reset('apScheduleEditor');editingSchedule=null;schedule=null;invalidate();permissions();status('Clinic availability saved. Load schedules to see the updated list.');
     });};
     $('apBookingForm').onsubmit=e=>{e.preventDefault();run(async()=>{
@@ -142,10 +144,10 @@
     }
     $('apChooseSchedule').onclick=()=>{$('apSchedulesSection').open=true;$('apSchedulesSection').scrollIntoView({block:'start'});};
     $('apRefresh').onclick=()=>run(()=>openAppointment(context.appointment));$('apReception').onclick=()=>navigate('reception');
-    $('apClose').onclick=()=>run(async()=>{if(!await leave())return;waitingBooking=null;context=person=sourceVisit=schedule=null;$('apPatient').hidden=true;});
+    $('apClose').onclick=()=>run(async()=>{if(!await leave())return;patientLinks.clear();waitingBooking=null;context=person=sourceVisit=schedule=null;$('apPatient').hidden=true;});
     for(const f of ['apScheduleEditor','apBookingForm','apArrivalForm','apClosureForm'])$(f).oninput=()=>dirty.add(f);
     window.addEventListener('beforeunload',e=>{if(dirty.size){e.preventDefault();e.returnValue='';}});
-    function clear(){waitingBooking=null;waitlist.clear();recurring.clear();reminders.clear();context=person=sourceVisit=schedule=editingSchedule=null;dirty.clear();invalidate();$('appointments').querySelectorAll('form').forEach(f=>f.reset());$('apPatient').hidden=$('apScheduleEditor').hidden=true;for(const name of ['apName','apIdentity','apSummary','apExistingVisit','apScheduleChoice'])$(name).replaceChildren();}
+    function clear(){waitingBooking=null;waitlist.clear();recurring.clear();reminders.clear();patientLinks.clear();context=person=sourceVisit=schedule=editingSchedule=null;dirty.clear();invalidate();$('appointments').querySelectorAll('form').forEach(f=>f.reset());$('apPatient').hidden=$('apScheduleEditor').hidden=true;for(const name of ['apName','apIdentity','apSummary','apExistingVisit','apScheduleChoice'])$(name).replaceChildren();}
     permissions();return {permissions,confirmLeave,clear,openPatient,openVisit:row=>openPatient(row,row)};
   }};
 })();

@@ -43,7 +43,7 @@ export function createHospitalRecurringClinicsService(ctx,{clinician}){
     // At most 31 exact schedule reads; no appointment or patient scans.
     const entries=await Promise.all(days.map(async Day=>{
       const ScheduleId=await keyFor('clinic',row.BranchId,row.Clinician,Day),old=await read('AppointmentSchedules',ScheduleId);
-      const matches=old&&old.Active===true&&old.Department===row.Department&&same(old.Windows,row.Windows);
+      const matches=old&&old.Active===true&&old.Department===row.Department&&same(old.Windows,row.Windows)&&(old.SelfBookingEnabled===true)===(row.SelfBookingEnabled===true)&&(old.SlotMinutes||30)===(row.SlotMinutes||30);
       return {Day,ScheduleId,Status:old?(matches?'Already available':'Needs review'):'Create',
         Department:old?.Department||row.Department,Windows:old?.Windows||row.Windows,Active:old?.Active??true,BookedCount:(old?.Bookings||[]).length};
     }));

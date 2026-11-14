@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="referrer" content="no-referrer"><title>Patient appointments</title><link rel="stylesheet" href="/css/app-dialogs.css"><link rel="stylesheet" href="/css/hospital-booking.css"><script defer src="/js/app-dialogs.js?v=20261016-grouped-form-validation"></script><script defer src="/js/hospital-patient-booking.js"></script></head>
+<body><main>
+  <header><p class="eyebrow">PATIENT APPOINTMENTS</p><h1>Book your clinic visit</h1><p>Choose an available clinic time. For urgent care, contact the hospital directly.</p></header>
+  <p id="message" role="status" aria-live="polite"></p>
+  <section id="access"><h2>Your personal booking link</h2><p>Use the private link given to you by Reception. It belongs to one patient in one branch.</p>
+    <form id="accessForm"><label>Personal link or access code<input id="accessCode" type="password" autocomplete="off" required maxlength="1000"></label><button>Open appointments</button></form></section>
+  <section id="workspace" hidden>
+    <div class="identity"><h2 id="patientName"></h2><p id="identity"></p><p id="expires"></p><div class="toolbar"><button id="refresh" type="button">Refresh my appointment</button><button id="exit" type="button" class="secondary">Close private session</button></div></div>
+    <section id="confirmation" hidden><h2>Your appointment</h2><div id="bookingDetails"></div><button id="print" type="button">Preview / print confirmation</button>
+      <form id="cancelForm" hidden><h3>Cancel appointment</h3><label>Reason<input name="Reason" minlength="5" maxlength="1000" required></label><label class="check"><input name="ConfirmBooking" type="checkbox" required>I want to cancel this appointment</label><button class="secondary">Cancel appointment</button></form></section>
+    <section id="chooser"><h2 id="chooseTitle">Choose a clinic</h2><p>All dates and times are West Africa Time (WAT). Times are reserved only when your booking is confirmed.</p>
+      <form id="clinicForm" class="toolbar"><label>Clinic date<input id="day" type="date" required></label><button>Find clinics</button><button id="refreshClinics" type="button" class="secondary">Refresh clinics</button></form>
+      <div id="clinics"></div><button id="next" type="button" hidden>More clinics</button>
+      <section id="slotSection" hidden><h3 id="clinicName"></h3><button id="refreshSlots" type="button" class="secondary">Refresh available times</button>
+        <form id="bookForm"><fieldset><legend>Available times (WAT)</legend><div id="slots"></div></fieldset><label id="changeReason" hidden>Reason for changing the appointment<input name="Reason" minlength="5" maxlength="1000"></label>
+          <label class="check"><input name="ConfirmBooking" type="checkbox" required>I confirm this appointment for the named patient</label><button id="book">Confirm booking</button></form></section>
+    </section>
+    <p>Booking does not make a payment. Contact Reception about fees, reminders or a new personal link.</p>
+  </section>
+</main></body></html>

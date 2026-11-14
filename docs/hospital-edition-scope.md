@@ -363,3 +363,10 @@ Deployed and verified on 13 November 2026: source `d3580827565b63f51a44e58e24306
 - Next H02 work: patient self-booking and live clinic queue/overrun coordination, plus practitioner validation. Email acceptance is tracked; inbox delivery webhooks, SMS and WhatsApp remain outside this increment. The original Hospital roadmap remains open.
 
 - Live verification completed: Pages source `78ce92b0`, deployment `4daeb08d`; scheduled Worker source `19db1650`, version `e4298d82-6644-4055-b5d2-7d529d5414aa`. Four indexes READY, nine assets matched, three role checks and cached/date-gated desktop/phone screens passed. Two real five-minute invocations succeeded with zero errors after a Workers redirect-mode repair. Three sampled visits remained unchanged and no reminder emails were sent. The demo requires its own email provider before actual sends. See the Owner Demo guide.
+
+
+### 14 November 2026 — H02 patient self-booking
+
+- Existing registered patients can receive a private, branch-bound, expiring link from Reception to book explicitly enabled clinic slots, reschedule/cancel with reasons, and preview/print a confirmation. No clinical records or general patient search are exposed.
+- Shared clinic/doctor/patient reservations, conditional grants, revision guards and request receipts prevent duplicate booking and lost-response retries. Patient identities, NFC associations, prior appointments and financial records are preserved. Reads are bounded/on-demand and cached in memory; print and repeated loads do not write.
+- Tests and web deployment target the isolated Hospital Owner Demo only. No desktop compilation or installer release. New patient registration, broader patient portal, live clinic queue/overrun coordination, offline/desktop parity and practitioner validation remain pending under H02. The full Hospital roadmap remains open.

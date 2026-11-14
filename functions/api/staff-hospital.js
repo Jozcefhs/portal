@@ -18,6 +18,7 @@ export async function onRequestPost({ request, env, data }) {
       'stockDisposalQueue','stockDisposalRegister','stockDisposalDetails','stockDisposalHistory','submitStockDisposal','reviewStockDisposal',
       'medicineCatalog','saveMedicineCatalogItem','medicineCatalogHistory',
       'referralContext','signReferral','referralRegister','referralDetails','updateReferral','referralHistory',
+      'patientBookingLinkStatus','issuePatientBookingLink','revokePatientBookingLink',
       'appointmentWaitlist','appointmentWaitlistDetails','saveAppointmentWaitlist','cancelAppointmentWaitlist','appointmentWaitlistHistory',
       'appointmentReminderPreview','queueAppointmentReminder','appointmentReminders','appointmentReminderDetails','appointmentReminderHistory','changeAppointmentReminder','sendAppointmentReminder',
       'clinicTemplates','clinicTemplateDetails','saveClinicTemplate','previewClinicTemplate','generateClinicTemplate','clinicTemplateHistory',

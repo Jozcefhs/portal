@@ -7,6 +7,8 @@ import {availabilityFields,appointmentTimes,appointmentReference,withinAvailabil
 
 export function createHospitalAppointmentsService(ctx){
   const {env,user,db,collection,requireCapability,branch,patient,clock,actor,condition,strip,eq,auditWrite,auditRead,operation,page}=ctx;
+  // Finish every parallel read before returning a conflict or replay response.
+  const settled=async tasks=>{const rows=await Promise.allSettled(tasks),error=rows.find(r=>r.status==='rejected');if(error)throw error.reason;return rows.map(r=>r.value);};
   const keyFor=(...parts)=>digest(JSON.stringify(parts));
   const read=(name,key)=>db.getDocument(env,collection(name),id(key));
   const write=(name,key,data,old)=>({collectionPath:collection(name),documentId:key,data,currentDocument:condition(old)});
@@ -39,7 +41,7 @@ export function createHospitalAppointmentsService(ctx){
     for(const row of [old,next].filter(Boolean))for(const resource of [`patient:${row.PatientId}`,`clinician:${row.Clinician}`]){
       const day=watDay(row.StartAt);defs.set(JSON.stringify([resource,day]),{resource,day});
     }
-    return Promise.all([...defs.values()].map(async ({resource,day})=>{
+    return settled([...defs.values()].map(async ({resource,day})=>{
       const key=await keyFor('booking',resource,day),saved=await read('TheatreReservations',key);
       const Entries=(saved?.Entries||[]).filter(e=>e.CaseId!==`appointment:${old?.AppointmentId}`);
       if(next&&watDay(next.StartAt)===day&&[`patient:${next.PatientId}`,`clinician:${next.Clinician}`].includes(resource)){
@@ -97,7 +99,7 @@ export function createHospitalAppointmentsService(ctx){
         const AppointmentId=await keyFor('appointment',BranchId,Reference),old=await read('Appointments',AppointmentId);
         if(body.AppointmentId&&body.AppointmentId!==AppointmentId)fail('The permanent booking reference cannot be changed.');
         if(old&&old.PatientId!==body.PatientId)fail('This booking reference is already used. Choose another reference.',409);
-        const [person,schedule]=await Promise.all([patient(body.PatientId,BranchId),scheduleFor(body.ScheduleId,BranchId)]);
+        const [person,schedule]=await settled([patient(body.PatientId,BranchId),scheduleFor(body.ScheduleId,BranchId)]);
         if(person.Status!=='Active')fail('This patient registration is not active.',409);
         const FollowUpVisitId=clean(body.FollowUpVisitId);
         const selected={...times,Reference,PatientId:person.PatientId,ScheduleId:schedule.ScheduleId,FollowUpVisitId};
@@ -111,7 +113,7 @@ export function createHospitalAppointmentsService(ctx){
         const ClinicianName=await clinician(schedule.Clinician,BranchId);
         const row={...strip(old),...selected,AppointmentId,BranchId,PatientName:patientName(person),HospitalNumber:person.HospitalNumber,
           Clinician:schedule.Clinician,ClinicianName,Department:schedule.Department,...(waiting.WaitlistId?{WaitlistId:waiting.WaitlistId}:{}),Status:'Scheduled',CreatedAt:old?.CreatedAt||clock(),...stamp()};
-        const [locks,schedules]=await Promise.all([reservations(old,row),scheduleWrites(old,row,schedule)]);
+        const [locks,schedules]=await settled([reservations(old,row),scheduleWrites(old,row,schedule)]);
         return {writes:[...waiting.writes,...locks,...schedules,write('Appointments',AppointmentId,row,old),event(key,row,old?'Rescheduled':'Booked',Reason),
           auditWrite(key,old?'Reschedule appointment':'Book appointment',BranchId,person,{AppointmentId})],result:identity(row)};
       });
@@ -139,7 +141,7 @@ export function createHospitalAppointmentsService(ctx){
         revision(row,body.Revision);if(row.Status!=='Scheduled')fail('This appointment is no longer scheduled.',409);
         if(body.Status==='Not attended'&&row.EndAt>clock())fail('Wait until the appointment has ended before recording non-attendance.');
         const next={...strip(row),Status:body.Status,ClosureReason:Reason,...stamp()};
-        const [locks,schedules]=await Promise.all([reservations(row,null),scheduleWrites(row,null)]);
+        const [locks,schedules]=await settled([reservations(row,null),scheduleWrites(row,null)]);
         return {writes:[...locks,...schedules,write('Appointments',row.AppointmentId,next,row),event(key,next,body.Status,Reason),
           auditWrite(key,body.Status==='Cancelled'?'Cancel appointment':'Record appointment non-attendance',c.BranchId,c.person,{AppointmentId:row.AppointmentId})],result:identity(next)};
       });

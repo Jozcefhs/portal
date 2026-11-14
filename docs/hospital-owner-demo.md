@@ -114,3 +114,14 @@ The Owner Demo has no email provider configured. Actual reminder delivery requir
 The initial scheduled invocation exposed a Workers-only redirect-mode incompatibility before any external request. The corrected Worker uses manual redirect handling and rejects non-success responses without forwarding its secret. A dedicated redirect regression test and the full 4,814-test suite passed before its redeployment.
 
 Cloudflare saved invocation metrics confirmed successful scheduled runs at **14 November 2026, 00:10:57 and 00:15:57 UTC** (01:10:57 and 01:15:57 WAT), after the Worker correction. Each reported one successful invocation, zero errors and one endpoint subrequest. The unchanged five-minute trigger was confirmed through the schedules API. Evidence is saved locally in `tmp/hospital-reminders-scheduler-proof.json`. Live log streaming was intermittent, so the final run verification uses Cloudflare saved metrics.
+
+
+### Patient self-booking
+
+Open [Appointments](https://dynamax-hospital-review.pages.dev/hospital.html?task=appointments). In **Doctor availability**, enable **Patient self-booking** and choose the slot length for a clinic day. Recurring clinic templates also have these settings for newly generated days.
+
+Find an existing patient under **Patients and NFC cards**, select **Book appointment → Patient self-booking link**, confirm their identity and issue a personal link. Share it privately with that patient or authorised guardian. It expires after seven days; a replacement invalidates the old link. The patient can select an available clinic/date/time, book, change or cancel with a reason, and preview/print the confirmation. Reception can disable the link while retaining the booking. This does not send email, create visits or charge the patient.
+
+See [the workflow and safeguards](hospital-appointments-workflows.md). Deployment verification is recorded below after the index and web rollout. No desktop compilation or installer release.
+
+Local verification before deployment: all 4,838 repository tests passed, including 24 patient self-booking tests. Patient self-booking, Reception appointments, recurring clinics, waitlist and reminder browser workflows passed. Mobile and desktop layout, cached repeated loads, zero-read printing, revocation and in-flight private-session clearing were verified. The desktop version and installer were not changed.

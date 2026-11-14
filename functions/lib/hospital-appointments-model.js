@@ -1,3 +1,4 @@
+import {selfBookingFields} from './hospital-self-booking-model.js';
 import {clean,fail} from './hospital-model.js';
 import {field,dateOnly,watDay} from './hospital-orders-model.js';
 
@@ -13,7 +14,7 @@ export function availabilityFields(input,now){
   for(let i=0;i<Windows.length;i++){
     if(minutes(Windows[i].From)>=minutes(Windows[i].To)||i&&Windows[i].From<Windows[i-1].To)fail('Availability windows must be ordered, non-overlapping and end after they start.');
   }
-  return {Day,Clinician,Department:field(input,'Department',120,true),Active:input.Active,Windows,DayStartAt:new Date(`${Day}T00:00:00+01:00`).toISOString()};
+  return {...selfBookingFields(input),Day,Clinician,Department:field(input,'Department',120,true),Active:input.Active,Windows,DayStartAt:new Date(`${Day}T00:00:00+01:00`).toISOString()};
 }
 export function appointmentTimes(input,now){
   const fields={};
