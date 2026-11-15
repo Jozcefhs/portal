@@ -1,6 +1,6 @@
 {
   "title": "Dynamax user request tracker",
-  "updatedAt": "2026-11-13",
+  "updatedAt": "2026-11-15",
   "purpose": "Durable checklist for continuing this chat. Read before starting another pass; update evidence and delivery status before closing a request.",
   "evidencePolicy": "Evidence paths locate implementation, tests or prior notes; their presence alone does not prove a request is deployed or complete. Preserve historical status until the relevant behavior and deployed artifact are verified. Remaining follow-ups are not claims of implemented features.",
   "statusDefinitions": {
@@ -1445,5 +1445,15 @@
     "status": "deployed_verified",
     "evidence": "docs/daily-fee-reminder-verification-2026-11-10.json",
     "desktopBuildRequired": false
+  },
+  "schoolDebtorsReportPass": {
+    "date": "2026-11-15",
+    "status": "tested_awaiting_deployment",
+    "request": "School Insights: all debtors with search/class filters and preview/print",
+    "scope": "School web companion; existing branch and school-section permissions",
+    "preservation": "Read-only projection of the already loaded Accounts snapshot; no additional database reads for filters, paging or printing; no business-record writes",
+    "deliveryConstraint": "Test, push and deploy web only; no desktop compilation or release",
+    "validation": "5145 Node tests passed; actual School Insights entry, 215-row full print, filters, 1366px/390px layouts, scope cleanup and zero extra network/storage writes verified with synthetic accounts",
+    "evidence": "docs/school-debtors-report-2026-11-15.md"
   }
 }

@@ -2014,6 +2014,7 @@ function installSidebarSwipeGestures() {
 
 function clearStaffWorkspaceState() {
   invalidateStaffWorkspaceReads();
+  window.DynamaxSchoolDebtors?.close();
   staffIdleSession.stop();
   staffSessionTimingData = null;
   stopDesktopSetupRefresh();
@@ -2199,6 +2200,7 @@ function paymentSettingsUrl() {
 
 function clearBranchScopedWorkspaceData() {
   invalidateStaffWorkspaceReads();
+  window.DynamaxSchoolDebtors?.close();
   staffSessionAbortController.abort();
   staffSessionAbortController = new AbortController();
   dashboardSectionRequests.clear();
@@ -20939,6 +20941,7 @@ function schoolInsightChartCards(charts = {}) {
 }
 
 function renderSchoolInsights() {
+  window.DynamaxSchoolDebtors?.close();
   const insights = dashboardData?.departments?.schoolInsights || {};
   const defaulters = insights.defaulters || [];
   const branchName = availableBranches.find((branch) => clean(branch.id).toLowerCase() === clean(selectedBranchId).toLowerCase())?.name
@@ -20952,6 +20955,7 @@ function renderSchoolInsights() {
       </button>
     </div>
     <section class="dashboard-charts" aria-label="School enrolment and fee charts">${schoolInsightChartCards(dashboardData?.charts || {})}</section>
+    <div class="school-debtors-entry"><p class="muted">View every account with an outstanding fee balance in this scope.</p><button type="button" id="viewAllSchoolDebtors">View all debtors${insights.debtorsReport?.available ? ` (${insights.debtorsReport.rows.length})` : ''}</button></div>
     ${table('Top 10 Fee-Payment Defaulters', defaulters, [
       { label: 'Student', value: (row) => pick(row, ['DisplayName', 'AccountRef']) },
       { label: 'Admission / Account No.', value: (row) => pick(row, ['AdmissionNo', 'AccountRef']) },
@@ -20961,6 +20965,12 @@ function renderSchoolInsights() {
       { label: 'Outstanding', render: (row) => `<strong>${escapeHtml(money(row.OutstandingBalance))}</strong>` },
       { label: 'Last Payment', value: (row) => pick(row, ['LastPaymentAt']) || 'No payment recorded' }
     ])}`;
+  document.getElementById('viewAllSchoolDebtors')?.addEventListener('click', () => {
+    window.DynamaxSchoolDebtors.open(panelEl, insights.debtorsReport, {
+      branchName, schoolSection: currentUser?.schoolSectionAccess || 'All',
+      schoolName: currentUser?.organizationName || currentUser?.OrganisationName || 'School'
+    });
+  });
   document.getElementById('refreshSchoolInsights')?.addEventListener('click', async (event) => {
     const button = event.currentTarget;
     const label = button.querySelector('.school-insights-refresh-label');
