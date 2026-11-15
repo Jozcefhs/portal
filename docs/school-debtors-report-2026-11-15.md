@@ -18,4 +18,11 @@ Validation:
 
 Web marker: `dynamax-v562-school-debtors-report`. No desktop build, installer release, real account edit or payment operation is part of this pass.
 
-Deployment evidence will be appended after verification.
+Deployment verification:
+
+- Production: https://destinychristianacademy.pages.dev; immutable deployment: https://3305bcb1.destinychristianacademy.pages.dev.
+- Source pushed to `codex/school-score-register-release` as `c76d030a4fbddc868134bee3769dde778039895c`. Direct GitHub connections timed out, so the connected GitHub service uploaded the exact tested tree. Its tree `ee0316caf56c4fa7e94021b69530c8091c18799c` matches local deployment commit `b2967f0428fe0034c9273683bed0c12a26be31d4` exactly.
+- Live verification on 15 November 2026 matched ten served assets to the deployment source, including the new report, entry point, service worker, existing setup pages, result templates and parent dashboard. Both marker-bearing files serve `dynamax-v562-school-debtors-report`.
+- The deployed workspace and edition are both `school`; the subscription bridge check passed. Unauthenticated School Insights requests return HTTP 401.
+- Aggregate evidence: `docs/school-debtors-report-verification-2026-11-15.json`. Financial functionality and browser checks used synthetic data. These checks do not certify individual live debt balances.
+- No financial records were changed and no desktop compilation or installer release was performed.

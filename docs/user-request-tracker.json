@@ -1448,7 +1448,11 @@
   },
   "schoolDebtorsReportPass": {
     "date": "2026-11-15",
-    "status": "tested_awaiting_deployment",
+    "status": "deployed_verified",
+    "implementationCommit": "c76d030a4fbddc868134bee3769dde778039895c",
+    "deploymentUrl": "https://3305bcb1.destinychristianacademy.pages.dev",
+    "productionUrl": "https://destinychristianacademy.pages.dev",
+    "liveVerification": "Ten assets match the tested source; school identity and subscription bridge passed; unauthenticated School Insights returns 401. No real accounts were edited.",
     "request": "School Insights: all debtors with search/class filters and preview/print",
     "scope": "School web companion; existing branch and school-section permissions",
     "preservation": "Read-only projection of the already loaded Accounts snapshot; no additional database reads for filters, paging or printing; no business-record writes",

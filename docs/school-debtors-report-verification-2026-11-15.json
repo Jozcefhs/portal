@@ -1,0 +1,97 @@
+{
+  "verifiedAt": "2026-11-15T07:56:09.321Z",
+  "featureCommit": "b2967f0428fe0034c9273683bed0c12a26be31d4",
+  "productionUrl": "https://destinychristianacademy.pages.dev",
+  "deploymentUrl": "https://3305bcb1.destinychristianacademy.pages.dev",
+  "marker": "dynamax-v562-school-debtors-report",
+  "identity": {
+    "workspaceId": "school",
+    "edition": "school",
+    "version": "3.1.64"
+  },
+  "assets": [
+    {
+      "path": "admin.html",
+      "status": 200,
+      "matchesTestedSource": true,
+      "sha256": "f0e2ba8c35909c42b4407e5e8ff40e376629321d311a94008d5a70f03f38b65a"
+    },
+    {
+      "path": "sw.js",
+      "status": 200,
+      "matchesTestedSource": true,
+      "sha256": "9ae9ce1c6934346dd8df03b1a84303766d7d715cd45c1c4406fe3c1f1c229d37"
+    },
+    {
+      "path": "js/admin.js",
+      "status": 200,
+      "matchesTestedSource": true,
+      "sha256": "79f55faaf453cef7f8275b0141e1b914dd564d7ae14dda24625f3c9f27a867e9"
+    },
+    {
+      "path": "js/school-debtors.js",
+      "status": 200,
+      "matchesTestedSource": true,
+      "sha256": "928dbc413150812963ece93730075afc94d0c4e743edbce409636789035e28e4"
+    },
+    {
+      "path": "css/school-debtors.css",
+      "status": 200,
+      "matchesTestedSource": true,
+      "sha256": "5c6d717c1a55f46d5c8ffd84d67133b554a2648330e7cdd711f50bbc91f6d95d"
+    },
+    {
+      "path": "js/setup.js",
+      "status": 200,
+      "matchesTestedSource": true,
+      "sha256": "f7efd2f564841e7d9800b06296b6831d7f8b690fef1416639fdb8e275f69834c"
+    },
+    {
+      "path": "setup.html",
+      "status": 200,
+      "matchesTestedSource": true,
+      "sha256": "3c5a52dc64c0191f2392daf372963bf74210f100cbccfeab6ed9ec3765b25663"
+    },
+    {
+      "path": "js/academic-result-template.js",
+      "status": 200,
+      "matchesTestedSource": true,
+      "sha256": "23fa69364fd6ad5bfb5dcea106035c5ea31f0d056dbfa9d3a2b45a4ebf41f2c6"
+    },
+    {
+      "path": "js/academic-result-download.js",
+      "status": 200,
+      "matchesTestedSource": true,
+      "sha256": "178aede8c4dfa2cd1b7238b0615535d3a84be78d7ddba06bea54c1ca954faedb"
+    },
+    {
+      "path": "parent-dashboard.html",
+      "status": 200,
+      "matchesTestedSource": true,
+      "sha256": "fde096cf610e8002cf09764fbda6d181647940ec0220d5e93087de89b9315576"
+    }
+  ],
+  "unauthenticatedInsightsStatus": 401,
+  "tests": {
+    "passed": 5145,
+    "failed": 0,
+    "browser": {
+      "passed": true,
+      "widths": [
+        1366,
+        390
+      ],
+      "fixtureRows": 215,
+      "fullPrint": true,
+      "scopedPrint": true,
+      "extraRequests": 0,
+      "browserStorageWrites": 0,
+      "errors": []
+    }
+  },
+  "liveFinancialRecordsChanged": false,
+  "desktopCompiled": false,
+  "installerReleased": false,
+  "pushedImplementationCommit": "c76d030a4fbddc868134bee3769dde778039895c",
+  "verifiedSourceTree": "ee0316caf56c4fa7e94021b69530c8091c18799c"
+}
