@@ -61,7 +61,17 @@
               <p data-hr-template-status class="status" role="status" hidden></p></footer>
           </dialog>
           <style>
-            .hr-employment-tools .hr-template-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(100px,32%);gap:8px;align-items:center;margin:4px 0}
+            .hr-employment-tools [data-hr-salary-fields]{container-type:inline-size}
+            .hr-employment-tools .hr-salary-basic{width:min(100%,16rem);margin-bottom:12px}
+            .hr-employment-tools .hr-salary-components{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 24px;align-items:start;max-width:56rem}
+            .hr-employment-tools .hr-salary-components>section{min-width:0}
+            .hr-employment-tools .hr-salary-components h3{font-size:1rem;margin:0 0 6px}
+            .hr-employment-tools .hr-template-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(5.5rem,8rem);gap:8px;align-items:center;margin:4px 0}
+            .hr-employment-tools .hr-template-row>input{margin:0}
+            @container (max-width:560px){
+              .hr-employment-tools .hr-salary-components{grid-template-columns:minmax(0,1fr)}
+              .hr-employment-tools .hr-template-row{grid-template-columns:minmax(0,1fr) minmax(5.5rem,35%)}
+            }
             .hr-employment-tools .hr-template-choice{display:flex;align-items:center;gap:8px;overflow-wrap:anywhere}
             .hr-employment-tools .hr-template-choice input{width:18px;height:18px;min-height:0;flex:none}
             .hr-employment-tools [data-hr-open-templates]{margin:0 0 8px;min-height:40px}
@@ -86,11 +96,25 @@
             .hr-template-dialog .status{margin:5px 0 0;overflow-wrap:anywhere}
             @media(max-width:370px){.hr-employment-tools .hr-template-dialog{padding:12px}.hr-template-dialog .hr-template-actions>button{flex:1 1 auto}}
           </style>
-          <form data-hr-salary-form class="workflow-form config-form"><fieldset data-hr-salary-fields disabled><legend>Monthly salary · NGN</legend><div class="config-grid">
-            <label>Basic salary (NGN)<input name="BasicSalary" type="number" min="0" step="0.01" required></label>
-            <div class="config-grid-span"><strong>Allowances</strong><div data-hr-components="Allowances"></div><button type="button" data-hr-add-component="Allowances">Add allowance</button></div>
-            <div class="config-grid-span"><strong>Other deductions</strong><div data-hr-components="Deductions"></div><button type="button" data-hr-add-component="Deductions">Add deduction</button><p><small>Existing pension, tax and payroll settings stay in Payroll.</small></p></div>
-          </div></fieldset><div class="config-dialog-actions"><button type="submit" data-hr-save-salary>Save salary structure</button></div></form>
+          <form data-hr-salary-form class="workflow-form config-form">
+            <fieldset data-hr-salary-fields disabled><legend>Monthly salary · NGN</legend>
+              <label class="hr-salary-basic">Basic salary (NGN)<input name="BasicSalary" type="number" min="0" step="0.01" required></label>
+              <div class="hr-salary-components">
+                <section aria-label="Allowances">
+                  <h3>Allowances</h3>
+                  <div data-hr-components="Allowances"></div>
+                  <button type="button" data-hr-add-component="Allowances">Add allowance</button>
+                </section>
+                <section aria-label="Other deductions">
+                  <h3>Other deductions</h3>
+                  <div data-hr-components="Deductions"></div>
+                  <button type="button" data-hr-add-component="Deductions">Add deduction</button>
+                  <p><small>Existing pension, tax and payroll settings stay in Payroll.</small></p>
+                </section>
+              </div>
+            </fieldset>
+            <div class="config-dialog-actions"><button type="submit" data-hr-save-salary>Save salary structure</button></div>
+          </form>
         </section>
         ${issueLetters ? `<section class="config-group hr-form-card"><header><strong>Employment letter</strong><small>Check the saved role, salary and recipient. Enter your organisation's agreed terms; no contract terms are added automatically.</small></header>
           <p data-hr-letter-recipient></p><div class="config-grid"><label>Saved letters<select data-hr-saved-letters><option value="">New letter</option></select></label><div class="config-dialog-actions"><button type="button" data-hr-load-letter>Load saved letter</button><button type="button" data-hr-new-letter>New letter</button></div></div>
