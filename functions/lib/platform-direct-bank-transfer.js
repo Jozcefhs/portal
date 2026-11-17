@@ -6,6 +6,31 @@ export const PLATFORM_PAYMENT_SETTINGS_DOCUMENT = 'dynamaxPaymentSettings';
 const clean = (value) => String(value ?? '').trim();
 const yes = (value) => ['yes', 'true', '1', 'enabled'].includes(clean(value).toLowerCase());
 
+// Called only after authenticated review and the unique bank-reference claim.
+// A customer's submitted reference or proof is never allocation evidence.
+export function verifiedPlatformTransferFields(payment = {}, claim = {}, reviewedAt = '') {
+  const reference = clean(payment.Reference || payment.__id);
+  const registrationReference = clean(payment.RegistrationReference);
+  if (payment.PaymentMethod !== 'Direct Bank Transfer'
+      || !['Approval Processing', 'Paid'].includes(payment.Status)
+      || !reference || !registrationReference || !clean(payment.BankReference)
+      || !clean(payment.Plan) || ['free', 'owner demo'].includes(clean(payment.Plan).toLowerCase())
+      || !Number.isFinite(Number(payment.Amount)) || Number(payment.Amount) <= 0
+      || clean(claim.PaymentReference) !== reference
+      || clean(claim.RegistrationReference) !== registrationReference
+      || !clean(claim.BankReferenceHash) || !Number.isFinite(Date.parse(reviewedAt))) {
+    throw paymentError('A reviewed paid subscription and its unique bank-reference claim are required.', 409);
+  }
+  return {
+    BankTransferVerificationStatus: 'Verified',
+    BankTransferVerifiedAt: reviewedAt,
+    BankTransferVerifiedBy: 'Dynamax administration',
+    BankTransferVerificationReference: reference,
+    BankTransferVerifiedAmount: Number(payment.Amount),
+    BankTransferVerifiedPlan: clean(payment.Plan)
+  };
+}
+
 function paymentError(message, status = 400) {
   const error = new Error(message);
   error.status = status;

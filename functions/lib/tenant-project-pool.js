@@ -37,9 +37,18 @@ export function tenantProjectAssignmentEligibility(registration = {}) {
   const cardVerified = lower(registration.CardVerificationStatus) === 'verified'
     && Boolean(clean(registration.CardVerifiedAt));
   if (cardVerified) return { eligible: true, cardVerified: true, reason: '' };
+  const bankTransferVerified = registration.BankTransferVerificationStatus === 'Verified'
+    && Number.isFinite(Date.parse(registration.BankTransferVerifiedAt))
+    && registration.BankTransferVerifiedBy === 'Dynamax administration'
+    && Boolean(clean(registration.BankTransferVerificationReference))
+    && Number.isFinite(Number(registration.BankTransferVerifiedAmount))
+    && Number(registration.BankTransferVerifiedAmount) > 0
+    && Boolean(clean(registration.BankTransferVerifiedPlan))
+    && !['free', 'owner demo'].includes(lower(registration.BankTransferVerifiedPlan));
+  if (bankTransferVerified) return { eligible: true, bankTransferVerified: true, reason: '' };
   return {
     eligible: false,
-    reason: 'A successful Paystack card verification is required before a tenant project can be assigned.'
+    reason: 'A successful Paystack card verification or an administrator-verified paid bank transfer is required before a tenant project can be assigned.'
   };
 }
 

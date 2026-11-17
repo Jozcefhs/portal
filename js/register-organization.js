@@ -399,7 +399,8 @@ form.addEventListener('submit', async (event) => {
         methodsUrl: '/api/platform-payment-methods',
         amount: selectedAmount,
         currency: planCatalog?.Currency || 'NGN',
-        allowDirectTransfer: false
+        allowDirectTransfer: true,
+        onlineDescription: 'Pay securely by card through Paystack. Subscription renewals use your verified card.'
       });
       if (!paymentChoice) return;
     }
