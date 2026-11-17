@@ -4844,11 +4844,10 @@ export async function recordSale(env, body) {
     err.status = 400;
     throw err;
   }
-  const schoolCode = await getSchoolCode(env);
   const amounts = formSaleFinancialAmounts(body);
   const sale = {
     Time: body.Time || nowIso(),
-    ReceiptNo: receiptNo || `${schoolCode}-FORM-${Date.now()}`,
+    ReceiptNo: receiptNo || `${await getSchoolCode(env, body.BranchId || body.branchId || 'main')}-FORM-${Date.now()}`,
     ApplicantName: clean(body.ApplicantName),
     Email: email,
     Phone: clean(body.Phone),

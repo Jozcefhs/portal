@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { resolveOrganizationConfig } from '../functions/lib/organization-config.js';
+import { admissionFormReceiptNumber, resolveAdmissionFormReceipt } from '../functions/lib/admission-form-receipt.js';
 import { mergedProfileText } from '../functions/lib/profile-settings-update.js';
 
 const files = ['functions/api/settings.js', 'functions/api/backend.js', 'functions/api/submit-application.js',
@@ -90,7 +91,7 @@ test('new application/admission/receipt numbering never assumes DCA and preserve
     normalizeSchoolCode, pick: (row, keys) => keys.map(key => row[key]).find(Boolean)
   });
   const application = extract('functions/api/submit-application.js', 'nextApplicationReference');
-  const receipt = extract('functions/api/verify-form-payment.js', 'makeReceiptNo');
+  const receipt = (reference, code) => admissionFormReceiptNumber(reference, code, '2026-11-17T08:00:00Z');
   const year = String(new Date().getFullYear()).slice(-2);
   assert.match(admission([], ''), /^ORG\//);
   assert.match(application([]), /^ORG\//);
@@ -101,6 +102,44 @@ test('new application/admission/receipt numbering never assumes DCA and preserve
   const historical = [{ AdmissionNo: 'DCA/21/000001' }];
   admission(historical, '', 'BPS');
   assert.equal(historical[0].AdmissionNo, 'DCA/21/000001');
+});
+
+test('a branch override supplies the code for a new checkout', async () => {
+  const normalizeSchoolCode = extract('functions/api/backend.js', 'normalizeSchoolCode');
+  const getSchoolCode = extract('functions/api/backend.js', 'getSchoolCode', {
+    normalizeSchoolCode, resolveOrganizationConfig, requireFirestoreEnv: () => {},
+    getDocument: async (_env, _path, id) => id === 'organisationProfile' ? { Code: 'TENANT001' } : {},
+    effectiveBranchProfile: async (_env, _profile, branchId) => branchId === 'primary' ? { SchoolCode: 'T001P' } : {}
+  });
+  assert.equal(await getSchoolCode({}, 'main'), 'TENANT001');
+  assert.equal(await getSchoolCode({}, 'primary'), 'T001P');
+  assert.equal(admissionFormReceiptNumber('T001P-FORM-1794893630719', 'T001P', '2026-11-17T08:00:00Z'),
+    'T001P/FORM/2026/630719');
+});
+
+test('reserved receipt numbers survive code and year changes without another settings lookup', async () => {
+  const unexpectedRead = () => { throw new Error('Unexpected read'); };
+  assert.equal(await resolveAdmissionFormReceipt({
+    reference: 'T001P-FORM-1794893630719',
+    intent: { ReceiptNo: 'T001P/FORM/2026/630719', CreatedAt: '2026-11-17T08:00:00Z' },
+    paymentDate: '2027-01-01T00:01:00Z',
+    lookupExisting: unexpectedRead,
+    lookupCode: unexpectedRead
+  }), 'T001P/FORM/2026/630719');
+});
+
+test('legacy verification reuses the posted receipt, including a previously issued prefix', async () => {
+  const reference = 'DCA-FORM-1794893630719';
+  const unexpectedRead = () => { throw new Error('Unexpected settings read'); };
+  const args = { reference, intent: { CreatedAt: '2026-11-17T08:00:00Z' }, lookupCode: unexpectedRead };
+  assert.equal(await resolveAdmissionFormReceipt({
+    ...args,
+    lookupExisting: async paymentReference => {
+      assert.equal(paymentReference, reference);
+      return 'PREVIOUS/FORM/2026/630719';
+    }
+  }), 'PREVIOUS/FORM/2026/630719');
+  assert.equal(await resolveAdmissionFormReceipt({ ...args, lookupExisting: async () => '' }), 'DCA/FORM/2026/630719');
 });
 
 test('no school-specific default remains in production settings or reference-generation source', () => {
