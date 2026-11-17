@@ -2,6 +2,7 @@
 // Starts Paystack checkout for admission form purchase.
 
 import { getAdmissionClasses, getSchoolCode } from './backend.js';
+import { admissionFormReceiptNumber } from '../lib/admission-form-receipt.js';
 import { createDocumentIfAbsent, getDocument, requireFirestoreEnv } from '../lib/firestore.js';
 import { effectiveBranchProfile } from '../lib/branch-profile-settings.js';
 import { admissionSubmissionFence } from '../lib/admission-cycle.js';
@@ -105,7 +106,9 @@ export async function onRequestPost(context) {
     }
 
     const origin = new URL(request.url).origin;
-    const reference = cleanReference(`${await getSchoolCode(env)}-FORM-${Date.now()}`);
+    const schoolCode = await getSchoolCode(env, branchId);
+    const checkoutTime = Date.now();
+    const reference = cleanReference(`${schoolCode}-FORM-${checkoutTime}`);
     const callbackUrl = `${origin}/payment-success.html?type=form&reference=${encodeURIComponent(reference)}&branch=${encodeURIComponent(branchId)}`;
     let paymentConfiguration = null;
     if (paymentMethod === 'paystack') {
@@ -124,6 +127,7 @@ export async function onRequestPost(context) {
     await createDocumentIfAbsent(env, 'paymentIntents', reference, {
       Reference: reference,
       PaymentType: 'AdmissionForm',
+      ...(paymentMethod === 'paystack' ? { ReceiptNo: admissionFormReceiptNumber(reference, schoolCode, checkoutTime) } : {}),
       ApplicantName: applicantName,
       ParentEmail: email,
       Phone: phone,
@@ -136,7 +140,7 @@ export async function onRequestPost(context) {
       PaystackSubaccountCode: paymentConfiguration?.paystack?.subaccountCode || '',
       PaystackSettlementMode: paymentConfiguration?.paystack?.settlementMode || '',
       Status: paymentMethod === 'direct_bank_transfer' ? 'Awaiting Verification' : 'Pending',
-      CreatedAt: new Date().toISOString()
+      CreatedAt: new Date(checkoutTime).toISOString()
     });
 
     if (paymentMethod === 'direct_bank_transfer') {

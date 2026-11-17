@@ -2,7 +2,8 @@
 // Verifies a Paystack admission form purchase, records the form sale, and sends the school email.
 
 import { getSchoolCode, recordSale as recordSaleInFirestore } from './backend.js';
-import { createDocumentIfAbsent, getDocument, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
+import { createDocumentIfAbsent, getDocument, queryCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
+import { resolveAdmissionFormReceipt } from '../lib/admission-form-receipt.js';
 import { effectiveBranchProfile } from '../lib/branch-profile-settings.js';
 import { sendConfiguredEmail } from '../lib/email-service.js';
 import { paymentIntentReference, paymentIntentType } from '../lib/payment-intent.js';
@@ -58,13 +59,6 @@ function addDays(date, days) {
 
 function formatDateOnly(date) {
   return date.toISOString().slice(0, 10);
-}
-
-function makeReceiptNo(reference, schoolCode = '') {
-  const year = new Date().getFullYear();
-  const prefix = String(schoolCode || '').toUpperCase().replace(/[^A-Z0-9]/g, '') || 'ORG';
-  const suffix = String(reference || '').replace(/[^A-Za-z0-9]/g, '').slice(-6).toUpperCase();
-  return `${prefix}/FORM/${year}/${suffix || Date.now().toString().slice(-6)}`;
 }
 
 function formatNairaAmount(value) {
@@ -252,7 +246,24 @@ export async function onRequestPost(context) {
       });
     }
     const expiryDays = Number(env.ADMISSION_FORM_EXPIRY_DAYS || 30);
-    const receiptNo = makeReceiptNo(tx.reference || reference, await getSchoolCode(env));
+    const paymentDate = tx.paid_at || tx.paidAt || new Date().toISOString();
+    const receiptNo = await resolveAdmissionFormReceipt({
+      reference: tx.reference || reference,
+      intent,
+      paymentDate,
+      lookupCode: () => getSchoolCode(env, branchId),
+      lookupExisting: async (paymentReference) => {
+        const sales = await queryCollection(env, 'formSales', {
+          filters: [{ field: 'PaymentReference', op: '==', value: paymentReference }],
+          select: ['ReceiptNo', 'BranchId'],
+          limit: 2
+        });
+        if (sales.length > 1 || sales.some(sale => safeScopeId(sale.BranchId || 'main') !== branchId)) {
+          throw Object.assign(new Error('The saved form receipt needs review in Admissions.'), { status: 409 });
+        }
+        return clean(sales[0]?.ReceiptNo);
+      }
+    });
     const basePayload = {
       ReceiptNo: receiptNo,
       ApplicantName: meta.applicantName || intent?.ApplicantName || '',
@@ -270,7 +281,7 @@ export async function onRequestPost(context) {
       Gateway: 'Paystack',
       PaymentMethod: 'Online',
       FormLink: `${origin}/verify.html?branch=${encodeURIComponent(branchId)}`,
-      PaymentDate: tx.paid_at || tx.paidAt || new Date().toISOString(),
+      PaymentDate: paymentDate,
       PaymentReference: tx.reference || reference,
       ExpiryDate: formatDateOnly(addDays(new Date(), Number.isFinite(expiryDays) && expiryDays > 0 ? expiryDays : 30)),
       Status: 'PAID',
@@ -299,6 +310,7 @@ export async function onRequestPost(context) {
     }
 
     const verificationCode = recordData.verificationCode || recordData.VerificationCode || '';
+    const recordedReceiptNo = recordData.receiptNo || receiptNo;
     if (intent) {
       await upsertDocument(env, 'paymentIntents', String(tx.reference || reference).replace(/[\/\\?#\[\]]/g, '-'), {
         ...intent,
@@ -307,7 +319,7 @@ export async function onRequestPost(context) {
         GrossAmount: grossAmount,
         GatewayFee: gatewayFee,
         NetAmount: netAmount,
-        ReceiptNo: receiptNo
+        ReceiptNo: recordedReceiptNo
       });
     }
     const emailDeliveryId = `admission-form-${String(tx.reference || reference).replace(/[^A-Za-z0-9_.-]/g, '-').slice(0, 120)}`;
@@ -325,6 +337,7 @@ export async function onRequestPost(context) {
     if (emailClaim.created) {
       emailResult = await sendSchoolFormPurchaseEmail(env, {
         ...basePayload,
+        ReceiptNo: recordedReceiptNo,
         VerificationCode: verificationCode
       }).catch((err) => ({ ok: false, message: String(err && err.message ? err.message : err) }));
       await upsertDocument(env, 'emailDeliveries', emailDeliveryId, {
@@ -349,7 +362,7 @@ export async function onRequestPost(context) {
       message: recordData.duplicate ? 'Admission form purchase was already recorded.' : 'Admission form purchase verified and recorded.',
       applicantName: basePayload.ApplicantName,
       email: basePayload.Email,
-      receiptNo,
+      receiptNo: recordedReceiptNo,
       verificationCode,
       amount: netAmount,
       grossAmount,
