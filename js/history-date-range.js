@@ -27,7 +27,7 @@ function datedHistoryBody(path, body, range) {
   return JSON.stringify({ ...payload, HistoryDateRange: range || {} });
 }
 
-function createHistoryDateWorkspace({ panel, scope, load, title }) {
+function createHistoryDateWorkspace({ panel, scope, load, title, header }) {
   const ranges = new Map();
   let toolbar;
   const key = module => JSON.stringify([scope(), module]);
@@ -46,9 +46,10 @@ function createHistoryDateWorkspace({ panel, scope, load, title }) {
     const fields = '<p><strong data-history-title></strong> — select the recorded date range before loading history. Current registers remain available. Linked balances retain all their transactions.</p><div class="config-grid"><label>From<input type="date" name="fromDate" required></label><label>To<input type="date" name="toDate" required></label></div><button type="submit">Load selected period</button><p class="status" role="status"></p>';
     // Current registers do not require a date choice. Opening this disclosure
     // is a local UI action; only submitting its dates requests history.
-    toolbar.innerHTML = !config.required && !config.pending
+    const dateControls = !config.required && !config.pending
       ? `<details data-history-options${validHistoryDates(selected) ? ' open' : ''}><summary>History by date</summary>${fields}</details>`
       : fields;
+    toolbar.innerHTML = (header?.(module) || '') + dateControls;
     if (module === 'payroll') toolbar.querySelector('[role="status"]').textContent = 'Payroll includes the selected months. Year-to-date totals include earlier months in the same year.';
     toolbar.querySelector('[data-history-title]').textContent = config.pending ? 'Finance Requests & Imprest' : title(module);
     if (config.pending) {

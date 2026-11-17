@@ -24,6 +24,7 @@ import {
   roleAccessScope,
   roleAccessView,
   rolesForEdition,
+  staffExtraModules,
   withRoleModules,
   withoutRoleModules
 } from '../lib/role-module-access.js';
@@ -140,7 +141,17 @@ function scopedApprovalAccounts(value, edition) {
 
 function scopedTabAccess(value, actor) {
   return filterSectionsForFeatures(listValue(value, /[;,]/), actor.featureFlags)
-    .filter((section) => WEB_SECTION_KEY_SET.has(section));
+    .filter((section) => WEB_SECTION_KEY_SET.has(section)
+      && (section !== 'schoolInsights' || actor.edition === 'school'));
+}
+
+function editsSchoolInsights(body, actor) {
+  return body.SchoolInsightsAccessConfigured === true && scopedTabAccess(['schoolInsights'], actor).length > 0;
+}
+
+function keepStoredSchoolInsights(modules, previous, editsInsights) {
+  return !editsInsights && listValue(previous, /[;,]/).includes('schoolInsights') && !modules.includes('schoolInsights')
+    ? [...modules, 'schoolInsights'] : modules;
 }
 
 function ensureRoleAvailable(role, edition) {
@@ -179,8 +190,7 @@ function publicUser(row, edition = 'school', featureFlags = null, profile = {}) 
     ApprovalMaxAmount: Number(row.ApprovalMaxAmount || 0) || 0,
     ApprovalAccounts: scopedApprovalAccounts(row.ApprovalAccounts, normalizedEdition),
     BiometricLookupEnabled: explicitOptIn(row.BiometricLookupEnabled) && normalizedEdition === 'school',
-    TabAccess: filterSectionsForFeatures(listValue(row.TabAccess), featureFlags)
-      .filter((section) => WEB_SECTION_KEY_SET.has(section)),
+    TabAccess: staffExtraModules(row, normalizedEdition, featureFlags),
     Active: row.Active === undefined ? true : activeValue(row.Active),
     PasswordSetupRequired: activeValue(row.PasswordSetupRequired ?? false),
     MustChangePassword: row.MustChangePassword === undefined ? false : activeValue(row.MustChangePassword),
@@ -300,6 +310,7 @@ async function saveUser(env, actor, body) {
     const err = new Error('First name and surname are required.'); err.status = 400; throw err;
   }
   const recoveryEmail = normalizeRecoveryEmail(body.RecoveryEmail ?? existing?.RecoveryEmail);
+  const editsInsights = editsSchoolInsights(body, actor);
   const payload = {
     ...(existing || {}),
     Username: username,
@@ -328,7 +339,8 @@ async function saveUser(env, actor, body) {
     ApprovalMaxAmount: externalAuditor ? 0 : Math.max(0, Number(body.ApprovalMaxAmount || 0) || 0),
     ApprovalAccounts: externalAuditor ? [] : scopedApprovalAccounts(body.ApprovalAccounts, edition),
     BiometricLookupEnabled: !externalAuditor && explicitOptIn(body.BiometricLookupEnabled) && edition === 'school',
-    TabAccess: externalAuditor ? [] : scopedTabAccess(body.TabAccess, actor),
+    TabAccess: externalAuditor ? [] : keepStoredSchoolInsights(scopedTabAccess(body.TabAccess, actor), existing?.TabAccess, editsInsights),
+    ...(editsInsights ? { SchoolInsightsAccessConfigured: true } : {}),
     Active: active,
     PasswordSetupRequired: password ? false : activeValue(existing?.PasswordSetupRequired ?? false),
     MustChangePassword: password ? activeValue(body.MustChangePassword === undefined ? true : body.MustChangePassword) : activeValue(existing?.MustChangePassword || false),
@@ -619,6 +631,8 @@ async function saveRoleAccess(env, actor, body) {
   }
   const existing = await getDocument(env, 'settings', 'roleModuleAccess');
   const scope = roleAccessScope(actor);
+  const insightScopes = existing?.SchoolInsightsAccessScopes || {};
+  const editsInsights = editsSchoolInsights(body, actor);
   const scopes = withRoleModules(
     existing,
     scope,
@@ -627,12 +641,19 @@ async function saveRoleAccess(env, actor, body) {
     actor.edition,
     actor.featureFlags
   );
+  const submittedGrants = scopedTabAccess(body.Modules || body.modules, actor);
+  if (actor.edition === 'school' && !['Vendor User', EXTERNAL_AUDITOR_ROLE].includes(role)) {
+    scopes[scope][role] = keepStoredSchoolInsights(scopes[scope][role], existing?.Scopes?.[scope]?.[role], editsInsights);
+  }
   const saved = {
     ...(existing || {}),
     Edition: normalizeOrganizationEdition(actor.edition),
     Scopes: scopes,
+    ...(editsInsights
+      ? { SchoolInsightsAccessScopes: { ...insightScopes, [scope]: { ...insightScopes[scope], [role]: true } } }
+      : {}),
     FullAccessScopes: { ...(existing?.FullAccessScopes || {}), [scope]: { ...(existing?.FullAccessScopes?.[scope] || {}),
-      [role]: scopedTabAccess(body.Modules || body.modules, actor) } },
+      [role]: keepStoredSchoolInsights(submittedGrants, existing?.FullAccessScopes?.[scope]?.[role], editsInsights) } },
     UpdatedAt: nowIso(),
     UpdatedBy: actor.displayName || actor.username
   };
@@ -664,6 +685,8 @@ async function resetRoleAccess(env, actor, body) {
     ...(existing || {}),
     Edition: normalizeOrganizationEdition(actor.edition),
     Scopes: withoutRoleModules(existing, scope, role),
+    SchoolInsightsAccessScopes: Object.fromEntries(Object.entries(existing?.SchoolInsightsAccessScopes || {}).map(([key, roles]) => [key,
+      key === scope ? Object.fromEntries(Object.entries(roles).filter(([name]) => name !== role)) : roles])),
     FullAccessScopes: Object.fromEntries(Object.entries(existing?.FullAccessScopes || {}).map(([key, roles]) => [key,
       key === scope ? Object.fromEntries(Object.entries(roles).filter(([name]) => name !== role)) : roles])),
     UpdatedAt: nowIso(),

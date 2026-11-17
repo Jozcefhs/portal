@@ -7,6 +7,7 @@ import { normalizeRecoveryEmail } from '../functions/lib/staff-password-recovery
 import { resolveStaffAssignmentBranch, staffAssignmentActor } from '../functions/lib/staff-branch-context.js';
 import { actorBranchScope, branchRecordVisible } from '../functions/lib/branch-scope.js';
 import { staffRoleAllowedForEdition, normalizeOrganizationEdition } from '../functions/lib/organization-config.js';
+import { WEB_SECTION_KEYS, staffExtraModules } from '../functions/lib/role-module-access.js';
 
 const read = (path) => fs.readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 const unmodule = (source) => source.replace(/^import[\s\S]*?from ['"][^'"]+['"];\r?$/gm, '').replace(/^export /gm, '');
@@ -49,7 +50,7 @@ function harness(users = []) {
     ...common, ...staffBranchAccess,
     ...Object.fromEntries(['assertStaffAccountFinalState', 'beginStaffAccountChange', 'commitStaffAccountChanges',
       'resolveStaffAccountTarget', 'staffAccountCondition', 'staffAccountWrite'].map((name) => [name, core[name]])),
-    WEB_SECTION_KEYS: [], EXTERNAL_AUDITOR_ROLE: 'External Auditor', resolveStaffAssignmentBranch,
+    WEB_SECTION_KEYS, staffExtraModules, EXTERNAL_AUDITOR_ROLE: 'External Auditor', resolveStaffAssignmentBranch,
     staffAssignmentActor, actorBranchScope, branchRecordVisible, staffRoleAllowedForEdition, normalizeOrganizationEdition,
     staffRecordMatchesEdition: (row, actor) => !row.OrganisationEdition || row.OrganisationEdition === actor.edition,
     filterSectionsForFeatures: value => value, accountingCodeAllowedForEdition: () => true,
@@ -68,6 +69,18 @@ function harness(users = []) {
 }
 const admin = (username, edition = 'school') => ({ __id: username, Username: username, Role: 'Super Admin', Active: true, OrganisationEdition: edition });
 const actor = (edition = 'school') => ({ username: 'owner', role: 'Super Admin', edition, canSwitchBranches: true });
+
+test('staff account saves preserve or remove School Insights according to the submitted checkbox', async () => {
+  const h = harness([{ Username: 'teacher', Role: 'Teacher', TabAccess: ['accounts'] }]);
+  const draft = { Username: 'teacher', OriginalUsername: 'teacher', Role: 'Teacher' };
+  const saved = await h.context.saveUser({}, actor(), { ...draft, TabAccess: ['schoolInsights'], SchoolInsightsAccessConfigured: true });
+  assert.deepEqual(saved.user.TabAccess, ['schoolInsights']);
+  const olderSave = await h.context.saveUser({}, actor(), { ...draft, TabAccess: [] });
+  assert.deepEqual(olderSave.user.TabAccess, ['schoolInsights']);
+  const cleared = await h.context.saveUser({}, actor(), { ...draft, TabAccess: ['accounts'], SchoolInsightsAccessConfigured: true });
+  assert.deepEqual(cleared.user.TabAccess, ['accounts']);
+  assert.equal(h.docs.get('staffUsers/teacher').SchoolInsightsAccessConfigured, true);
+});
 
 for (const edition of ['school', 'faith', 'organization']) {
   test(`${edition}: new staff creation never edits a duplicate username; explicit edit keeps the original ID`, async () => {
