@@ -1460,6 +1460,19 @@
     "validation": "5145 Node tests passed; actual School Insights entry, 215-row full print, filters, 1366px/390px layouts, scope cleanup and zero extra network/storage writes verified with synthetic accounts",
     "evidence": "docs/school-debtors-report-2026-11-15.md"
   },
+  "subscriberBankTransferPass": {
+    "date": "2026-11-17",
+    "status": "deployed_verified",
+    "request": "Make enabled direct bank transfer available to first-time paid Dynamax subscribers.",
+    "implementationCommit": "4d91f38c",
+    "centralCommit": "86fe8595",
+    "schoolCommit": "b82efc25",
+    "tenantCommit": "102b9f25",
+    "validation": "84 focused tests passed, including pending initialization, zero-write retries, authenticated approval, unique bank-reference claims, single receipt/provisioning request and no paid-period extension on retry. Live checkout and public asset/security checks passed.",
+    "preservation": "No real registrations, payments or bank settings changed during verification. Free-trial card verification and prorated upgrade safeguards retained.",
+    "evidence": "docs/subscriber-bank-transfer-2026-11-17.md",
+    "deliveryConstraint": "Web only; no desktop compilation or release."
+  },
   "storeCollectionWalletPass": {
     "date": "2026-11-17",
     "status": "deployed_verified",
