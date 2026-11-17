@@ -11,6 +11,7 @@ import {
   configuredModulesForUser,
   explicitModulesForUser,
   defaultModulesForRole,
+  staffExtraModules,
   withRequiredRoleModules
 } from './role-module-access.js';
 import { getSchoolStructure } from './school-scope.js';
@@ -277,6 +278,7 @@ function publicUser(user) {
     tabAccess: Array.isArray(user.TabAccess || user.tabAccess)
       ? (user.TabAccess || user.tabAccess).map(clean).filter(Boolean)
       : clean(user.TabAccess || user.tabAccess).split(',').map(clean).filter(Boolean),
+    schoolInsightsAccessConfigured: (user.SchoolInsightsAccessConfigured ?? user.schoolInsightsAccessConfigured) === true,
     mustChangePassword: user.MustChangePassword === undefined && user.mustChangePassword === undefined
       ? false
       : !['no', 'false', '0'].includes(lower(user.MustChangePassword ?? user.mustChangePassword))
@@ -294,9 +296,7 @@ export function allowedSectionsFor(user = {}, featureFlags = null, options = {})
     && (department === 'academic' || department === 'academics' || department.startsWith('academic ') || department.startsWith('academics '))
     ? ['academics']
     : [];
-  const customValue = user.tabAccess ?? user.TabAccess;
-  const custom = (Array.isArray(customValue) ? customValue : clean(customValue).split(/[;,]/))
-    .map(clean).filter(Boolean);
+  const custom = staffExtraModules(user, edition, featureFlags);
   // Account selections are additional grants, never a replacement for the
   // branch/global role policy. An explicitly empty policy still takes precedence
   // over system defaults, and inherited modules are not copied into TabAccess.

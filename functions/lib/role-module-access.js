@@ -8,6 +8,7 @@ const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
 
 export const WEB_SECTION_CATALOG = Object.freeze([
+  Object.freeze({ key: 'schoolInsights', label: 'School Insights' }),
   Object.freeze({ key: 'recordsDesk', label: 'Records Desk' }),
   Object.freeze({ key: 'executiveOffice', label: 'Executive Office' }),
   Object.freeze({ key: 'admissions', label: 'Admissions' }),
@@ -147,7 +148,7 @@ export function rolesForEdition(edition) {
 export function modulesForEdition(edition, featureFlags = null) {
   const allowed = new Set(filterSectionsForFeatures(WEB_SECTION_KEYS, featureFlags));
   if (normalizeOrganizationEdition(edition) !== 'school') {
-    ['admissions', 'formPurchases', 'students', 'academics', 'library', 'studentConduct', 'accounts', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore']
+    ['schoolInsights', 'admissions', 'formPurchases', 'students', 'academics', 'library', 'studentConduct', 'accounts', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore']
       .forEach((key) => allowed.delete(key));
   }
   return WEB_SECTION_CATALOG
@@ -161,6 +162,20 @@ export function normalizeModuleList(value, edition, featureFlags = null) {
     : clean(value).split(/[;,]/);
   const editionKeys = new Set(modulesForEdition(edition, featureFlags).map(({ key }) => key));
   return [...new Set(supplied.map(clean).filter((key) => WEB_SECTION_KEY_SET.has(key) && editionKeys.has(key)))];
+}
+
+// Accounts originally included School Insights. Interpret old selections in
+// memory until the role or account is saved with the separate checkbox.
+function withLegacySchoolInsights(modules, configured) {
+  return !configured && modules.includes('accounts') && !modules.includes('schoolInsights')
+    ? [...modules, 'schoolInsights'] : modules;
+}
+
+export function staffExtraModules(user, edition, featureFlags = null) {
+  return withLegacySchoolInsights(
+    normalizeModuleList(user.tabAccess ?? user.TabAccess, edition, featureFlags),
+    (user.schoolInsightsAccessConfigured ?? user.SchoolInsightsAccessConfigured) === true
+  );
 }
 
 function departmentUserDefaults(department) {
@@ -190,7 +205,7 @@ export function defaultModulesForRole(role, { edition = 'school', featureFlags =
     'Church Administrator', 'Executive Director', 'Organisation Administrator', 'Operations Manager',
     'Department User', 'Clinic User', 'Kitchen User', 'Librarian', 'Tuck Shop User', 'Store User',
     'Restaurant User', 'Hotel User'].includes(name)) base.push('procurement');
-  return withRequiredRoleModules(name, base, edition, featureFlags);
+  return withRequiredRoleModules(name, withLegacySchoolInsights(base, false), edition, featureFlags);
 }
 
 export function roleAccessScope(user = {}) {
@@ -228,13 +243,12 @@ export function configuredModulesForUser(document, user = {}, role = clean(user.
   const scope = roleAccessScope(user);
   const local = roleMapForScope(document, scope);
   const global = roleMapForScope(document, 'global');
-  if (Object.prototype.hasOwnProperty.call(local, role)) {
-    return withRequiredRoleModules(role, local[role], edition, featureFlags);
-  }
-  if (scope !== 'global' && Object.prototype.hasOwnProperty.call(global, role)) {
-    return withRequiredRoleModules(role, global[role], edition, featureFlags);
-  }
-  return null;
+  const source = Object.hasOwn(local, role) ? scope : Object.hasOwn(global, role) ? 'global' : '';
+  if (!source) return null;
+  const modules = normalizeModuleList(roleMapForScope(document, source)[role], edition, featureFlags);
+  return withRequiredRoleModules(role, withLegacySchoolInsights(
+    modules, document?.SchoolInsightsAccessScopes?.[source]?.[role] === true
+  ), edition, featureFlags);
 }
 
 export function explicitModulesForUser(document, user = {}, edition = 'school', featureFlags = null) {
@@ -260,11 +274,8 @@ export function roleAccessView(document, user = {}, edition = 'school', featureF
   const roles = Object.fromEntries(rolesForEdition(edition).map((role) => {
     const localConfigured = Object.prototype.hasOwnProperty.call(local, role);
     const globalConfigured = scope !== 'global' && Object.prototype.hasOwnProperty.call(global, role);
-    const modules = withRequiredRoleModules(role, localConfigured
-      ? local[role]
-      : globalConfigured
-        ? global[role]
-        : defaultModulesForRole(role, { edition, featureFlags }), edition, featureFlags);
+    const modules = configuredModulesForUser(document, user, role, edition, featureFlags)
+      ?? defaultModulesForRole(role, { edition, featureFlags });
     return [role, {
       modules,
       fullAccessModules: explicitModulesForUser(document, { ...user, role, assignedRole: role, tabAccess: [] }, edition, featureFlags),

@@ -51,11 +51,12 @@ test('preview contains every matching row, correct totals, scope, time and escap
   assert.equal((ui.printHtml(report, { search: 'TEST/214' }).match(/<tr>/g) || []).length, 2);
 });
 
-async function route({ branch = 'main', section = 'secondary', records = [], allowed = ['accounts'], overviewFails = false, requestedSection = 'schoolInsights' } = {}) {
+async function route({ branch = 'main', section = 'secondary', records = [], allowed = ['schoolInsights'],
+  overviewFails = false, requestedSection = 'schoolInsights', edition = 'school', subscriptionActive = true } = {}) {
   const reads = [];
   const io = (kind, result) => async (...args) => { reads.push({ kind, args }); return result; };
   const context = vm.createContext({ Response, Date, console, debtorReportRow, schoolDebtorsReport,
-    requireFirestoreEnv: () => {}, requireStaffSession: async () => ({ allowedSections: allowed, edition: 'school', branchId: branch, schoolSectionAccess: section }),
+    requireFirestoreEnv: () => {}, requireStaffSession: async () => ({ allowedSections: allowed, edition, branchId: branch, schoolSectionAccess: section, subscriptionActive }),
     readJsonBody: async () => ({ section: requestedSection }),
     loadFinanceSchoolProfile: io('profile', { SchoolName: 'Sample School', CurrentAcademicSession: '2026/2027' }),
     loadBranchFinanceRows: io('finance', []), loadAccountsWalletLedger: io('wallet', []), listSchoolCollection: io('students', []),
@@ -73,6 +74,7 @@ test('actual School Insights handler returns all authorised debtors without any 
   records.push(account('other', { BranchId: 'other' }), account('primary', { SchoolSection: 'primary' }));
   const result = await route({ records });
   assert.equal(result.response.status, 200, JSON.stringify(result.body));
+  assert.deepEqual(Object.keys(result.body.departments), ['schoolInsights']);
   assert.equal(result.body.departments.schoolInsights.debtorsReport.rows.length, 215);
   assert.equal(result.body.departments.schoolInsights.defaulters.length, 10);
   assert.equal(result.body.summary.defaulters, 215);
@@ -88,10 +90,17 @@ test('report preserves separate branch identities with matching admission number
   assert.equal(result.body.departments.schoolInsights.debtorsReport.rows[0].DisplayName, 'Area Learner');
 });
 
-test('Accounts permission is required before reading debtors', async () => {
-  const result = await route({ allowed: ['students'], records: [account(1)] });
-  assert.equal(result.response.status, 403);
-  assert.equal(result.reads.length, 0);
+test('Insights access does not grant Accounts and restricted requests do not read records', async () => {
+  for (const [options, status] of [
+    [{ allowed: ['students', 'accounts'] }, 403],
+    [{ requestedSection: 'accounts' }, 403],
+    [{ edition: 'faith' }, 403],
+    [{ subscriptionActive: false }, 402]
+  ]) {
+    const result = await route({ ...options, records: [account(1)] });
+    assert.equal(result.response.status, status);
+    assert.equal(result.reads.length, 0);
+  }
 });
 
 test('failed financial overview is explicitly unavailable, never a printable empty report', async () => {

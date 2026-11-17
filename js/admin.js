@@ -47,7 +47,8 @@ const tabsEl = document.getElementById('adminTabs');
 const panelEl = document.getElementById('adminPanel');
 const historyDateWorkspace = window.DynamaxHistoryDates.createHistoryDateWorkspace({
   panel: panelEl, scope: () => JSON.stringify([currentUser?.username, selectedBranchId]),
-  title: module => staffTabLabel(module, module),
+  title: module => module === 'formPurchases' ? 'Purchase history' : staffTabLabel(module, module),
+  header: module => module === 'formPurchases' ? admissionFormPurchaseHeader() : '',
   load: module => { if(module!=='financeRequests')staffWorkspaceReads.clear(); invalidatedDashboardSections.add(module); renderSection(module); }
 });
 const welcomeEl = document.querySelector('.staff-welcome');
@@ -297,6 +298,7 @@ let recordsDeskState = {
 };
 
 const tabConfig = [
+  ['schoolInsights', 'School Insights'],
   ['recordsDesk', 'Records Desk'],
   ['executiveOffice', 'Executive Office'],
   ['admissions', 'Admissions'],
@@ -379,7 +381,7 @@ const tutorialSubfeatureContexts = Object.freeze({
 });
 
 const schoolOnlyWebSections = new Set([
-  'admissions', 'formPurchases', 'students', 'academics', 'library', 'studentConduct', 'accounts',
+  'schoolInsights', 'admissions', 'formPurchases', 'students', 'academics', 'library', 'studentConduct', 'accounts',
   'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore'
 ]);
 
@@ -2383,10 +2385,6 @@ function staffLearnerTerms() {
     : { singular: 'student', plural: 'students', Singular: 'Student', Plural: 'Students' };
 }
 
-function schoolInsightsAvailable(allowed = [], user = currentUser || {}) {
-  return resolveDashboardEdition(user) === 'school' && (allowed || []).includes('accounts');
-}
-
 const genericOrganizationTextReplacements = Object.freeze([
   ['Church Donations', 'Grants & Contributions'],
   ['Church Donation', 'Organisation Contribution'],
@@ -2643,7 +2641,10 @@ function mergeDashboardResponse(current, incoming) {
 
 async function loadDashboard(options = {}) {
   const section = clean(options.section || (legacyDashboardSections.has(activeSection) ? activeSection : ''));
-  if (section === 'formPurchases' && !window.DynamaxHistoryDates.validHistoryDates(historyDateWorkspace.range(section))) { historyDateWorkspace.show(section); return; }
+  if (section === 'formPurchases' && !window.DynamaxHistoryDates.validHistoryDates(historyDateWorkspace.range(section))) {
+    if (activeSection === section) renderSection(section);
+    return;
+  }
   const mode = clean(options.mode || (section ? 'section' : 'shell')).toLowerCase();
   const merge = options.merge === true || mode === 'section';
   const refreshOverview = options.refreshOverview === true && activeSection === 'overview';
@@ -2719,7 +2720,6 @@ async function loadDashboard(options = {}) {
     const allowed = data.allowedSections || currentUser.allowedSections || [];
     const workspaceSections = [
       ...(['External Auditor', 'Vendor User'].includes(dashboardUser.role) ? [] : ['overview']),
-      ...(schoolInsightsAvailable(allowed, data.user || currentUser || {}) ? ['schoolInsights'] : []),
       ...allowed
     ];
     if (!activeSection || !workspaceSections.includes(activeSection)) {
@@ -3499,18 +3499,12 @@ function renderTabs(allowed) {
     dashboardData?.restrictedSections || currentUser?.restrictedSections || []
   );
   const editionTabs = webTabsForEdition();
-  const insightAllowed = schoolInsightsAvailable(allowed, currentUser || {});
-  const insightRestricted = resolveDashboardEdition(currentUser || {}) === 'school'
-    && !insightAllowed
-    && restrictedSet.has('accounts');
   const tabs = [
     ...(!externalAuditor ? [['overview', 'Dashboard']] : []),
-    ...(insightAllowed ? [['schoolInsights', 'School Insights']] : []),
     ...editionTabs.filter(([key]) => allowedSet.has(key))
   ];
   const visibleTabs = [
     ...(!externalAuditor ? [['overview', 'Dashboard', false]] : []),
-    ...(insightAllowed || insightRestricted ? [['schoolInsights', 'School Insights', insightRestricted]] : []),
     ...editionTabs
       .filter(([key]) => allowedSet.has(key) || restrictedSet.has(key))
       .map(([key, label]) => [key, label, restrictedSet.has(key) && !allowedSet.has(key)])
@@ -4956,12 +4950,16 @@ async function loadDirectTransferVerification(contexts = [], workspaceId = '') {
   }
 }
 
-function admissionFormPurchasesWorkspace(rows = []) {
+function admissionFormPurchaseHeader() {
   return `
     <section class="workflow-intro">
       <div><small>Applicant self-service</small><h2>Admission Form Purchases</h2><p class="muted">Share one reusable QR code that opens the public admission form purchase page.</p></div>
       <button type="button" id="admissionFormPurchaseQrButton">&#9638; Purchase QR</button>
-    </section>
+    </section>`;
+}
+
+function admissionFormPurchasesWorkspace(rows = []) {
+  return `
     ${table('Purchase records', rows, [
       { label: 'Receipt', value: (row) => pick(row, ['ReceiptNo', '__id']) },
       { label: 'Applicant', value: (row) => pick(row, ['ApplicantName']) },
@@ -21266,7 +21264,9 @@ function renderSection(active) {
   window.DynamaxVendors?.unmount();
   window.DynamaxVendorPOS?.unmount();
   window.DynamaxProcurement?.unmount();
-  if (!historyDateWorkspace.show(active)) { summaryEl.replaceChildren(); return; }
+  const historyReady = historyDateWorkspace.show(active);
+  if (active === 'formPurchases') bindAdmissionFormPurchaseQr();
+  if (!historyReady) { summaryEl.replaceChildren(); return; }
   if (currentUser?.role === 'Vendor User' && ['tuckShop','organizationStore','restaurant'].includes(active)) {
     summaryEl.replaceChildren();
     window.DynamaxVendorPOS?.mount(panelEl,async (action,payload,signal) => {
@@ -21402,7 +21402,6 @@ function renderSection(active) {
     }
   } else if (active === 'formPurchases') {
     panelEl.innerHTML = admissionFormPurchasesWorkspace(departments.formPurchases || []);
-    bindAdmissionFormPurchaseQr();
     loadDirectTransferVerification(['admission-form'], 'admissionDirectTransferVerification');
   } else if (active === 'students') {
     const students = departments.students || [];
@@ -24412,9 +24411,12 @@ function bindStaffUserEvents() {
   document.getElementById('saveRoleAccess')?.addEventListener('click', async (event) => {
     const button = event.currentTarget;
     const modules = Array.from(document.querySelectorAll('[name="RoleModuleOption"]:checked')).map((input) => input.value);
+    const includesSchoolInsights = Boolean(document.querySelector('[name="RoleModuleOption"][value="schoolInsights"]'));
     setButtonLoading(button, true, 'Saving...', 'Save role access');
     try {
-      const data = await staffUserRequest('save-role-access', { Role: staffRoleAccessSelectedRole, Modules: modules });
+      const data = await staffUserRequest('save-role-access', {
+        Role: staffRoleAccessSelectedRole, Modules: modules, SchoolInsightsAccessConfigured: includesSchoolInsights
+      });
       staffRoleAccessData = data.roleAccess;
       renderRoleAccessEditor(staffRoleAccessSelectedRole);
       setStatus(document.getElementById('roleAccessStatus'), data.message, 'ok');
@@ -24510,6 +24512,7 @@ function bindStaffUserEvents() {
     }
     payload.ApprovalAccounts = Array.from(form.querySelectorAll('[name="ApprovalAccountOption"]:checked')).map((input) => input.value);
     payload.TabAccess = Array.from(form.querySelectorAll('[name="TabAccessOption"]:checked')).map((input) => input.value);
+    payload.SchoolInsightsAccessConfigured = Boolean(form.querySelector('[name="TabAccessOption"][value="schoolInsights"]'));
     if (plansLink) plansLink.hidden = true;
     setButtonLoading(button, true, 'Saving...', 'Save Staff Account');
     try {

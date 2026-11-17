@@ -160,12 +160,12 @@ export async function onRequestPost(context) {
       err.status = 402;
       throw err;
     }
-    if (schoolInsights && (user.edition !== 'school' || !allowed.has('accounts'))) {
-      const err = new Error('School Insights requires school-edition Accounts access.');
+    if (schoolInsights && user.edition !== 'school') {
+      const err = new Error('School Insights is available in the school edition.');
       err.status = 403;
       throw err;
     }
-    if (requestedSection && !schoolInsights && !allowed.has(requestedSection)) {
+    if (requestedSection && !allowed.has(requestedSection)) {
       const err = new Error('That dashboard section is not assigned to this staff account.');
       err.status = 403;
       throw err;

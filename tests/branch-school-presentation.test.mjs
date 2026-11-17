@@ -46,7 +46,7 @@ function context(edition = 'school') {
     availableBranches: configuredStaffBranches({ Branches: branches }), currentUser: { role: 'Super Admin', schoolSectionAccess: 'all' },
     document: { documentElement: { dataset: { edition } } }, requestedWorkspace: edition, organizationTabLabels: { students: 'Personnel' }
   });
-  vm.runInContext(source.slice(source.indexOf('function resolveDashboardEdition('), source.indexOf('function schoolInsightsAvailable(')), ctx);
+  vm.runInContext(source.slice(source.indexOf('function resolveDashboardEdition('), source.indexOf('const genericOrganizationTextReplacements')), ctx);
   return ctx;
 }
 test('web branch switching immediately resolves primary, secondary and mixed labels', () => {

@@ -9,13 +9,14 @@ const [adminJs, adminApi, backend] = await Promise.all([
   readFile(new URL('functions/api/backend.js', portalRoot), 'utf8')
 ]);
 
-test('school insights is a school-only, accounts-protected on-demand workspace', () => {
-  assert.match(adminJs, /function schoolInsightsAvailable\(allowed = \[\], user = currentUser \|\| \{\}\)/);
-  assert.match(adminJs, /resolveDashboardEdition\(user\) === 'school' && \(allowed \|\| \[\]\)\.includes\('accounts'\)/);
-  assert.match(adminJs, /schoolInsightsAvailable\(allowed, currentUser \|\| \{\}\)/);
+test('school insights uses its own school-only module grant and loads on demand', () => {
+  assert.match(adminJs, /const tabConfig = \[\s*\['schoolInsights', 'School Insights'\]/);
+  assert.match(adminJs, /schoolOnlyWebSections = new Set\(\[\s*'schoolInsights'/);
+  assert.match(adminJs, /\[name="RoleModuleOption"\]\[value="schoolInsights"\]/);
+  assert.match(adminJs, /\[name="TabAccessOption"\]\[value="schoolInsights"\]/);
   assert.match(adminJs, /loadDashboard\(\{ mode: 'section', section: active, merge: true \}\)/);
-  assert.match(adminApi, /schoolInsights && \(user\.edition !== 'school' \|\| !allowed\.has\('accounts'\)\)/);
-  assert.match(adminApi, /School Insights requires school-edition Accounts access/);
+  assert.match(adminApi, /schoolInsights && user\.edition !== 'school'/);
+  assert.match(adminApi, /requestedSection && !allowed\.has\(requestedSection\)/);
 });
 
 test('default dashboard remains dedicated to time and attendance', () => {

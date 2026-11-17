@@ -270,7 +270,7 @@ test('every staff module uses a corresponding navigation icon', () => {
 
 test('selected modules replace overview content with a full-height workspace', () => {
   assert.match(adminJs, /const tabs = \[[\s\S]*?!externalAuditor \? \[\['overview', 'Dashboard'\]\] : \[\]\)[\s\S]*?\.\.\.editionTabs\.filter/);
-  assert.match(adminJs, /\.\.\.\(insightAllowed \? \[\['schoolInsights', 'School Insights'\]\] : \[\]\)/);
+  assert.match(adminJs, /const tabConfig = \[\s*\['schoolInsights', 'School Insights'\]/);
   assert.match(adminJs, /restrictedSet\.has\(key\)/);
   assert.match(adminJs, /welcomeEl\.hidden = false/);
   assert.match(adminJs, /welcomeEl\.classList\.toggle\('branch-context-only', !overview\)/);
