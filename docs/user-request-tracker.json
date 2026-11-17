@@ -1,6 +1,6 @@
 {
   "title": "Dynamax user request tracker",
-  "updatedAt": "2026-11-15",
+  "updatedAt": "2026-11-17",
   "purpose": "Durable checklist for continuing this chat. Read before starting another pass; update evidence and delivery status before closing a request.",
   "evidencePolicy": "Evidence paths locate implementation, tests or prior notes; their presence alone does not prove a request is deployed or complete. Preserve historical status until the relevant behavior and deployed artifact are verified. Remaining follow-ups are not claims of implemented features.",
   "statusDefinitions": {
@@ -1459,5 +1459,24 @@
     "deliveryConstraint": "Test, push and deploy web only; no desktop compilation or release",
     "validation": "5145 Node tests passed; actual School Insights entry, 215-row full print, filters, 1366px/390px layouts, scope cleanup and zero extra network/storage writes verified with synthetic accounts",
     "evidence": "docs/school-debtors-report-2026-11-15.md"
+  },
+  "storeCollectionWalletPass": {
+    "date": "2026-11-17",
+    "status": "deployed_verified",
+    "request": "Show paid parent store orders for collection and verify Paystack wallet credits.",
+    "implementationCommit": "51aacbb7",
+    "sharedCommit": "e3841b34c585ffa89389ef17b6d097dc6cd4b9be",
+    "schoolCommit": "ce5fce338ab5ed970000d75bb109fe77f8fa0ffc",
+    "tenantCommit": "0697e8d88b41e3352636e8d907a4b9a6ae0ae062",
+    "deployments": [
+      "https://310713b3.destinychristianacademy.pages.dev",
+      "https://7a9b0220.dynamax-tenant-001.pages.dev"
+    ],
+    "fix": "Collection queue reads paid awaiting-collection and ready orders independently of history dates. Completed history remains date-bounded. Merged results are deduplicated and branch, store, section and edition scoped.",
+    "validation": "116 focused Node tests passed, including duplicate receipt/stock/wallet prevention. Live status-filtered query found two pending orders before staff marked them Collected during validation. Four public assets matched each deployed alias and production URL; unauthenticated store requests returned 401.",
+    "walletVerification": "24 recent Paystack wallet receipts each matched exactly one wallet ledger credit for the credited principal. Current wallet balances include later spending; stale summary snapshots are not authoritative.",
+    "preservation": "Investigation and verification were read-only. No business records, orders, payments, ledger postings, stock quantities or collection statuses were changed by this task.",
+    "deliveryConstraint": "Web only; no desktop compilation or release.",
+    "liveBrowserVerification": "Signed-in Main Branch screen showed no outstanding orders after the two recent purchases were collected by staff during validation. Loading 14–17 November history showed both original orders once, each Collected, with collection controls disabled."
   }
 }
