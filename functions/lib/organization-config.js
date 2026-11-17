@@ -412,6 +412,7 @@ const SECTION_FEATURES = Object.freeze({
   academics: Object.freeze(['students', 'academics']),
   library: Object.freeze(['students', 'library']),
   studentConduct: 'studentConduct',
+  schoolInsights: Object.freeze(['students', 'accounting']),
   accounts: Object.freeze(['students', 'accounting']),
   incomeAnalytics: 'accounting',
   externalAudit: Object.freeze(['accounting', 'externalAudit']),

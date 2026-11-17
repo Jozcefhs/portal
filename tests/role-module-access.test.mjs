@@ -10,6 +10,7 @@ import {
   normalizeModuleList,
   roleAccessView,
   rolesForEdition,
+  staffExtraModules,
   withRoleModules,
   withoutRoleModules
 } from '../functions/lib/role-module-access.js';
@@ -37,6 +38,48 @@ test('role settings use branch policy first, then organisation-wide policy, then
     ['funds', 'incomeAnalytics', 'financeRequests', 'payroll']
   );
   assert.equal(configuredModulesForUser(document, { branchId: 'east' }, 'Pastor', 'faith', flags), null);
+});
+
+test('School Insights is an independent school module in role and staff access', () => {
+  const flags = featureFlagsForEdition('school');
+  const org = { Edition: 'school', FeatureFlags: flags, PlanFeatureFlags: flags };
+  const role = 'Teacher';
+  const user = { role, branchId: 'west' };
+  const policy = { Scopes: { west: { [role]: ['schoolInsights'] } } };
+  const access = sectionAccessFor(user, org, policy);
+  assert.deepEqual(access.allowedSections, ['schoolInsights', 'financeRequests', 'payroll']);
+  assert.deepEqual(access.fullAccessModules, ['schoolInsights']);
+  assert.ok(!sectionAccessFor({ ...user, branchId: 'east' }, org, policy).allowedSections.includes('schoolInsights'));
+  const personal = sectionAccessFor({ ...user, TabAccess: ['schoolInsights'] }, org);
+  assert.ok(personal.allowedSections.includes('schoolInsights'));
+  assert.ok(!personal.allowedSections.includes('accounts'));
+  assert.deepEqual(personal.fullAccessModules, ['schoolInsights']);
+  assert.deepEqual(roleAccessView(policy, user, 'school', flags).modules.find(({ key }) => key === 'schoolInsights'),
+    { key: 'schoolInsights', label: 'School Insights' });
+  assert.ok(!modulesForEdition('organization').some(({ key }) => key === 'schoolInsights'));
+  for (const feature of ['students', 'accounting']) {
+    const restricted = { ...flags, [feature]: false };
+    const result = sectionAccessFor(user, { ...org, FeatureFlags: restricted, PlanFeatureFlags: restricted }, policy);
+    assert.ok(result.restrictedSections.includes('schoolInsights'));
+    assert.ok(!result.allowedSections.includes('schoolInsights'));
+  }
+  for (const role of ['External Auditor', 'Vendor User']) {
+    const result = sectionAccessFor({ role, TabAccess: ['schoolInsights'] }, org, policy);
+    assert.ok(!result.allowedSections.includes('schoolInsights'));
+  }
+});
+
+test('legacy Accounts access keeps Insights until that checkbox is configured separately', () => {
+  const flags = featureFlagsForEdition('school');
+  const role = 'Accounts Officer';
+  const user = { role, branchId: 'west' };
+  const policy = { Scopes: { global: { [role]: ['accounts'] }, west: { [role]: ['accounts'] } },
+    SchoolInsightsAccessScopes: { west: { [role]: true } } };
+  assert.ok(defaultModulesForRole(role, { featureFlags: flags }).includes('schoolInsights'));
+  assert.ok(configuredModulesForUser(policy, { ...user, branchId: 'east' }, role, 'school', flags).includes('schoolInsights'));
+  assert.ok(!configuredModulesForUser(policy, user, role, 'school', flags).includes('schoolInsights'));
+  assert.deepEqual(staffExtraModules({ TabAccess: 'accounts' }, 'school', flags), ['accounts', 'schoolInsights']);
+  assert.deepEqual(staffExtraModules({ TabAccess: ['accounts'], SchoolInsightsAccessConfigured: true }, 'school', flags), ['accounts']);
 });
 
 test('saved role modules preserve universal staff self-service without silently adding HR', () => {

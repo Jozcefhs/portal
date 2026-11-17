@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import vm from './helpers/module-policy-vm.mjs';
 import { loadStaffSecurityHistory } from '../functions/lib/staff-security-history.js';
 import { actorBranchScope, branchRecordVisible } from '../functions/lib/branch-scope.js';
+import { staffExtraModules } from '../functions/lib/role-module-access.js';
 
 const env = { FIREBASE_PROJECT_ID: 'test-project' };
 const actor = { username: 'owner', role: 'Super Admin', edition: 'school', branchId: 'main' };
@@ -115,7 +116,7 @@ test('repeated cursors and failed later reads do not masquerade as complete or p
 const staffSource = await readFile(new URL('../functions/api/staff-users.js', import.meta.url), 'utf8');
 function routeHarness({ user = actor, auditFails = false, staffFails = false, signedIn = true } = {}) {
   const calls = [];
-  const context = vm.createContext({ ...branchAccess, Response, WEB_SECTION_KEYS: [], actorBranchScope, branchRecordVisible,
+  const context = vm.createContext({ ...branchAccess, Response, WEB_SECTION_KEYS: [], staffExtraModules, actorBranchScope, branchRecordVisible,
     requireFirestoreEnv: () => {}, requireStaffSession: async () => {
       if (!signedIn) throw Object.assign(new Error('Sign in required'), { status: 401 });
       return user;
